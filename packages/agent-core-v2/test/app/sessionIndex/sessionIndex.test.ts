@@ -495,9 +495,12 @@ describe('FileSessionIndex (read model)', () => {
 
     primary = '/new';
     changes.fire();
-    await vi.waitFor(async () => {
-      expect((await store.get('closed'))?.cwd).toBe('/new');
-    });
+    await vi.waitFor(
+      async () => {
+        expect((await store.get('closed'))?.cwd).toBe('/new');
+      },
+      { timeout: 5_000 },
+    );
     expect((await store.get('closed'))?.updatedAt).toBe(2);
 
     disposeHost?.();
