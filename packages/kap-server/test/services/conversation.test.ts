@@ -270,7 +270,7 @@ describe('conversation fold', () => {
       userMessage('g1', 'Continue working toward the active goal', { kind: 'system_trigger', name: 'goal_continuation' }),
       userMessage(undefined, 'Report back to the parent agent', { kind: 'system_trigger', name: 'subagent' }),
       turnPrompt(2, 'cron-1', { kind: 'cron_job' }),
-      userMessage('cron-1', 'nightly report', {
+      userMessage('cron-1', '<cron-fire jobId="job-1" cron="0 3 * * *" recurring="true" coalescedCount="2" stale="false">\n<prompt>\nnightly report\n</prompt>\n</cron-fire>', {
         kind: 'cron_job',
         jobId: 'job-1',
         cron: '0 3 * * *',

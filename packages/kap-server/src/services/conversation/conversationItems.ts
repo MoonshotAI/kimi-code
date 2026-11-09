@@ -43,6 +43,8 @@ const CLIENT_SUBMITTED_ORIGINS: ReadonlySet<UserMessageOrigin['kind']> = new Set
 const EXIT_PLAN_MODE = 'ExitPlanMode';
 const PLAN_SAVED_TO_MARKER = 'Plan saved to: ';
 const PLAN_BODY_MARKERS = ['## Approved Plan:\n', '## Plan (auto-approved, not user-reviewed):\n'];
+const CRON_PROMPT_OPEN = '<prompt>\n';
+const CRON_PROMPT_CLOSE = '\n</prompt>';
 const ATTACHED_FILE_NOTICE = /^Attached file "(.+)" \((.+), (\d+) bytes\): (.+) — open it with the Read tool$/s;
 const FILE_ID = String.raw`f_(?:[0-9A-Za-z]{26}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})`;
 const UPLOADED_FILE_PATH = new RegExp(String.raw`(?:^|[\\/])(${FILE_ID})-[^\\/]*$`);
@@ -101,7 +103,7 @@ export function userMessageItem(
     prompt_ids: promptIdsOf(presented, promptId === undefined ? [] : [promptId]),
     placement,
     origin: presented,
-    text: text.join('\n'),
+    text: presented.kind === 'cron' ? cronPromptOf(text.join('\n')) : text.join('\n'),
     attachments,
     skills: origin?.kind === 'user'
       ? (origin.skillActivations ?? []).map(({ skillName, skillPath, skillArgs }) => ({ name: skillName, path: skillPath, args: skillArgs }))
@@ -321,6 +323,13 @@ export function mediaUrlOf(part: MediaPart): string | undefined {
 
 export function mediaTypeOf(url: string): string | undefined {
   return /^data:([^;,]+)[;,]/.exec(url)?.[1];
+}
+
+function cronPromptOf(text: string): string {
+  const start = text.indexOf(CRON_PROMPT_OPEN);
+  const end = text.lastIndexOf(CRON_PROMPT_CLOSE);
+  if (start === -1 || end < start + CRON_PROMPT_OPEN.length) return text;
+  return text.slice(start + CRON_PROMPT_OPEN.length, end);
 }
 
 function originOf(origin: PromptOrigin | undefined): UserMessageOrigin {
