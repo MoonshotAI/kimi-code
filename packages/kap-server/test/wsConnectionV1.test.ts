@@ -60,7 +60,6 @@ function makeBroadcaster(overrides: Record<string, unknown> = {}): SessionEventB
     removeTarget: () => {},
     addGlobalTarget: () => {},
     removeGlobalTarget: () => {},
-    addDiEventTarget: () => {},
     sendPendingInteractions: () => {},
     ...overrides,
   } as unknown as SessionEventBroadcaster;
@@ -98,17 +97,17 @@ function frame(type: string, sessionId: string, seq: number) {
   };
 }
 
-function controlFrame(type: string, payload: Record<string, unknown>, id = 'req-1'): string {
-  return JSON.stringify({ type, id, payload });
+function command(type: string, fields: Record<string, unknown>, requestId = 'req-1'): string {
+  return JSON.stringify({ type, request_id: requestId, ...fields });
 }
 
-function acks(socket: FakeSocket): Array<{ id: string; code: number; payload: unknown }> {
+function responses(socket: FakeSocket): Array<{ request_id: string; code: number; msg?: string }> {
   return socket
     .frames()
-    .filter((f) => (f as { type: string }).type === 'ack') as Array<{
-    id: string;
+    .filter((f) => (f as { type: string }).type === 'response') as Array<{
+    request_id: string;
     code: number;
-    payload: unknown;
+    msg?: string;
   }>;
 }
 
@@ -156,46 +155,35 @@ describe('WsConnectionV1 control frames', () => {
     return { broadcaster, calls, unsubscribes, removals };
   }
 
-  it('acks client_hello with an empty payload and attaches nothing, ignoring legacy fields', async () => {
+  it('sends nothing until a command arrives and ignores handshake and unknown frames', async () => {
     const socket = new FakeSocket();
     const { broadcaster, calls } = makeCapturingBroadcaster();
     const conn = makeConn(socket, { broadcaster });
 
-    socket.emit(
-      'message',
-      controlFrame('client_hello', {
-        client_id: 'c1',
-        subscriptions: ['s1'],
-        cursors: { s1: { seq: 3 } },
-        agent_filter: { s1: ['main'] },
-      }),
-    );
-    await vi.waitFor(() => expect(acks(socket)).toHaveLength(1));
+    socket.emit('message', JSON.stringify({ type: 'client_hello', id: 'hello', payload: { client_id: 'c1' } }));
+    socket.emit('message', JSON.stringify({ type: 'subscribe_v2', id: 'old', payload: { session_id: 's1' } }));
+    socket.emit('message', command('subscribe', { session_id: 's1' }, 'sub'));
+    await vi.waitFor(() => expect(responses(socket)).toHaveLength(1));
 
-    expect(acks(socket)[0]).toMatchObject({ id: 'req-1', code: 0, payload: {} });
-    expect(calls).toHaveLength(0);
-    expect(conn.subscriptionSessionIds).toEqual([]);
-    expect(conn.hasClientHello).toBe(true);
+    expect(socket.frames()).toEqual([{ type: 'response', request_id: 'sub', code: 0 }]);
+    expect(calls).toEqual([{ sessionId: 's1', agentIds: ['main'] }]);
+    expect(socket.closeCalls).toHaveLength(0);
     conn.close();
   });
 
-  it('ignores the removed subscribe and unsubscribe frames', async () => {
+  it('closes the connection with 1008 when a subscribe has no readable request_id', async () => {
     const socket = new FakeSocket();
-    const { broadcaster, calls, unsubscribes } = makeCapturingBroadcaster();
-    const conn = makeConn(socket, { broadcaster });
+    const { broadcaster, calls } = makeCapturingBroadcaster();
+    makeConn(socket, { broadcaster });
 
-    socket.emit('message', controlFrame('subscribe', { session_ids: ['s1'] }, 'old-sub'));
-    socket.emit('message', controlFrame('unsubscribe', { session_ids: ['s1'] }, 'old-unsub'));
-    socket.emit('message', controlFrame('client_hello', { client_id: 'c1' }, 'hello'));
-    await vi.waitFor(() => expect(acks(socket)).toHaveLength(1));
+    socket.emit('message', JSON.stringify({ type: 'subscribe', session_id: 's1' }));
+    await vi.waitFor(() => expect(socket.closeCalls).toHaveLength(1));
 
-    expect(acks(socket)[0]!.id).toBe('hello');
+    expect(socket.closeCalls[0]).toEqual({ code: 1008, reason: 'invalid message' });
     expect(calls).toHaveLength(0);
-    expect(unsubscribes).toHaveLength(0);
-    conn.close();
   });
 
-  it('sends the pending interactions of an accepted session right after the ack', async () => {
+  it('sends the pending interactions of an accepted session right after the response', async () => {
     const socket = new FakeSocket();
     const { broadcaster } = makeCapturingBroadcaster();
     broadcaster.sendPendingInteractions = (sessionId, target) => {
@@ -205,56 +193,52 @@ describe('WsConnectionV1 control frames', () => {
       );
     };
     const conn = makeConn(socket, { broadcaster });
-    const types = () =>
-      socket
-        .frames()
-        .map((f) => (f as { type: string }).type)
-        .filter((type) => type !== 'server_hello');
+    const types = () => socket.frames().map((f) => (f as { type: string }).type);
 
-    socket.emit('message', controlFrame('subscribe_v2', { session_id: 's1' }));
-    await vi.waitFor(() => expect(types()).toEqual(['ack', 'interaction']));
+    socket.emit('message', command('subscribe', { session_id: 's1' }));
+    await vi.waitFor(() => expect(types()).toEqual(['response', 'interaction']));
     conn.close();
   });
 
-  it('forwards subscribe_v2 agent ids to the broadcaster, defaulting to the main agent', async () => {
+  it('forwards subscribe agent ids to the broadcaster, defaulting to the main agent', async () => {
     const socket = new FakeSocket();
     const { broadcaster, calls } = makeCapturingBroadcaster();
     const conn = makeConn(socket, { broadcaster });
 
-    socket.emit('message', controlFrame('subscribe_v2', { session_id: 's1' }));
+    socket.emit('message', command('subscribe', { session_id: 's1' }, 'r1'));
     socket.emit(
       'message',
-      controlFrame('subscribe_v2', { session_id: 's2', agent_ids: ['main', 'agent-0'] }),
+      command('subscribe', { session_id: 's2', agent_ids: ['main', 'agent-0'] }, 'r2'),
     );
-    await vi.waitFor(() => expect(acks(socket)).toHaveLength(2));
+    await vi.waitFor(() => expect(responses(socket)).toHaveLength(2));
 
     expect(calls).toEqual([
       { sessionId: 's1', agentIds: ['main'] },
       { sessionId: 's2', agentIds: ['main', 'agent-0'] },
     ]);
     expect(conn.subscriptionSessionIds).toEqual(['s1', 's2']);
-    expect(acks(socket)[0]).toMatchObject({
-      code: 0,
-      payload: { accepted: ['s1'], not_found: [] },
-    });
+    expect(responses(socket)).toEqual([
+      { type: 'response', request_id: 'r1', code: 0 },
+      { type: 'response', request_id: 'r2', code: 0 },
+    ]);
     conn.close();
   });
 
-  it('acks an invalid subscribe_v2 payload with an error and does not attach', async () => {
+  it('answers an invalid subscribe with 40001 and does not attach', async () => {
     const socket = new FakeSocket();
     const { broadcaster, calls } = makeCapturingBroadcaster();
     const conn = makeConn(socket, { broadcaster });
 
-    socket.emit('message', controlFrame('subscribe_v2', { session_id: 's1', agent_ids: [] }));
-    await vi.waitFor(() => expect(acks(socket)).toHaveLength(1));
+    socket.emit('message', command('subscribe', { session_id: 's1', agent_ids: [] }));
+    await vi.waitFor(() => expect(responses(socket)).toHaveLength(1));
 
     expect(calls).toHaveLength(0);
     expect(conn.subscriptionSessionIds).toEqual([]);
-    expect(acks(socket)[0]!.code).toBe(1);
+    expect(responses(socket)[0]).toMatchObject({ request_id: 'req-1', code: 40001 });
     conn.close();
   });
 
-  it('reports an unknown session with 40401 and the not_found list', async () => {
+  it('reports an unknown session with 40401', async () => {
     const socket = new FakeSocket();
     const { broadcaster } = makeCapturingBroadcaster();
     broadcaster.subscribe = async () => {
@@ -262,18 +246,15 @@ describe('WsConnectionV1 control frames', () => {
     };
     const conn = makeConn(socket, { broadcaster });
 
-    socket.emit('message', controlFrame('subscribe_v2', { session_id: 'gone' }));
-    await vi.waitFor(() => expect(acks(socket)).toHaveLength(1));
+    socket.emit('message', command('subscribe', { session_id: 'gone' }));
+    await vi.waitFor(() => expect(responses(socket)).toHaveLength(1));
 
-    expect(acks(socket)[0]).toMatchObject({
-      code: 40401,
-      payload: { accepted: [], not_found: ['gone'] },
-    });
+    expect(responses(socket)[0]).toMatchObject({ request_id: 'req-1', code: 40401 });
     expect(conn.subscriptionSessionIds).toEqual([]);
     conn.close();
   });
 
-  it('reports why a session cannot be opened without listing it as not found', async () => {
+  it('reports why a session cannot be opened', async () => {
     const socket = new FakeSocket();
     const { broadcaster } = makeCapturingBroadcaster();
     broadcaster.subscribe = async () => {
@@ -281,87 +262,77 @@ describe('WsConnectionV1 control frames', () => {
     };
     const conn = makeConn(socket, { broadcaster });
 
-    socket.emit('message', controlFrame('subscribe_v2', { session_id: 'newer' }));
-    await vi.waitFor(() => expect(acks(socket)).toHaveLength(1));
+    socket.emit('message', command('subscribe', { session_id: 'newer' }));
+    await vi.waitFor(() => expect(responses(socket)).toHaveLength(1));
 
-    expect(acks(socket)[0]).toMatchObject({
+    expect(responses(socket)[0]).toMatchObject({
       code: 40930,
       msg: 'upgrade to read this session',
-      payload: { accepted: [], not_found: [] },
     });
     expect(conn.subscriptionSessionIds).toEqual([]);
     conn.close();
   });
 
-  it('unsubscribe_v2 with agent_ids keeps the session while another agent stays subscribed', async () => {
+  it('unsubscribe with agent_ids keeps the session while another agent stays subscribed', async () => {
     const socket = new FakeSocket();
     const { broadcaster, unsubscribes } = makeCapturingBroadcaster();
     const conn = makeConn(socket, { broadcaster });
 
     socket.emit(
       'message',
-      controlFrame('subscribe_v2', { session_id: 's1', agent_ids: ['main', 'agent-0'] }),
+      command('subscribe', { session_id: 's1', agent_ids: ['main', 'agent-0'] }, 'r1'),
     );
-    socket.emit(
-      'message',
-      controlFrame('unsubscribe_v2', { session_id: 's1', agent_ids: ['main'] }),
-    );
-    await vi.waitFor(() => expect(acks(socket)).toHaveLength(2));
+    socket.emit('message', command('unsubscribe', { session_id: 's1', agent_ids: ['main'] }, 'r2'));
+    await vi.waitFor(() => expect(responses(socket)).toHaveLength(2));
 
     expect(unsubscribes).toEqual([{ sessionId: 's1', agentIds: ['main'] }]);
     expect(conn.subscriptionSessionIds).toEqual(['s1']);
-    expect(acks(socket)[1]).toMatchObject({
-      code: 0,
-      payload: { accepted: ['s1'], not_found: [] },
-    });
+    expect(responses(socket)[1]).toEqual({ type: 'response', request_id: 'r2', code: 0 });
     conn.close();
   });
 
-  it('unsubscribe_v2 drops the session once no agent stays subscribed', async () => {
+  it('unsubscribe drops the session once no agent stays subscribed', async () => {
     const socket = new FakeSocket();
     const { broadcaster, unsubscribes } = makeCapturingBroadcaster();
     const conn = makeConn(socket, { broadcaster });
 
-    socket.emit('message', controlFrame('subscribe_v2', { session_id: 's1' }));
-    socket.emit('message', controlFrame('subscribe_v2', { session_id: 's2' }));
-    socket.emit(
-      'message',
-      controlFrame('unsubscribe_v2', { session_id: 's1', agent_ids: ['main'] }),
-    );
-    socket.emit('message', controlFrame('unsubscribe_v2', { session_id: 's2' }));
-    await vi.waitFor(() => expect(acks(socket)).toHaveLength(4));
+    socket.emit('message', command('subscribe', { session_id: 's1' }, 'r1'));
+    socket.emit('message', command('subscribe', { session_id: 's2' }, 'r2'));
+    socket.emit('message', command('unsubscribe', { session_id: 's1', agent_ids: ['main'] }, 'r3'));
+    socket.emit('message', command('unsubscribe', { session_id: 's2' }, 'r4'));
+    await vi.waitFor(() => expect(responses(socket)).toHaveLength(4));
 
     expect(unsubscribes).toEqual([{ sessionId: 's1', agentIds: ['main'] }, { sessionId: 's2' }]);
     expect(conn.subscriptionSessionIds).toEqual([]);
     conn.close();
   });
 
-  it('unsubscribe_v2 acks an unsubscribed session and leaves the no-op to the broadcaster', async () => {
+  it('unsubscribe answers for an unsubscribed session and leaves the no-op to the broadcaster', async () => {
     const socket = new FakeSocket();
     const { broadcaster, calls, unsubscribes } = makeCapturingBroadcaster();
     const conn = makeConn(socket, { broadcaster });
 
-    socket.emit('message', controlFrame('unsubscribe_v2', { session_id: 's1' }));
-    await vi.waitFor(() => expect(acks(socket)).toHaveLength(1));
+    socket.emit('message', command('unsubscribe', { session_id: 's1' }));
+    await vi.waitFor(() => expect(responses(socket)).toHaveLength(1));
 
     expect(calls).toHaveLength(0);
     expect(unsubscribes).toEqual([{ sessionId: 's1' }]);
     expect(conn.subscriptionSessionIds).toEqual([]);
-    expect(acks(socket)[0]).toMatchObject({ code: 0, payload: { accepted: ['s1'] } });
+    expect(responses(socket)[0]).toEqual({ type: 'response', request_id: 'req-1', code: 0 });
     conn.close();
   });
 
-  it('acks an invalid unsubscribe_v2 payload with an error', async () => {
+  it('answers an invalid unsubscribe with 40001', async () => {
     const socket = new FakeSocket();
     const { broadcaster, unsubscribes } = makeCapturingBroadcaster();
     const conn = makeConn(socket, { broadcaster });
 
-    socket.emit('message', controlFrame('unsubscribe_v2', { agent_ids: ['main'] }));
-    socket.emit('message', controlFrame('unsubscribe_v2', { session_id: 's1', agent_ids: [] }));
-    await vi.waitFor(() => expect(acks(socket)).toHaveLength(2));
+    socket.emit('message', command('unsubscribe', { agent_ids: ['main'] }, 'r1'));
+    socket.emit('message', command('unsubscribe', { session_id: 's1', agent_ids: [] }, 'r2'));
+    await vi.waitFor(() => expect(responses(socket)).toHaveLength(2));
 
     expect(unsubscribes).toHaveLength(0);
-    expect(acks(socket).every((a) => a.code === 1)).toBe(true);
+    expect(responses(socket).every((r) => r.code === 40001)).toBe(true);
     conn.close();
   });
 
@@ -370,12 +341,9 @@ describe('WsConnectionV1 control frames', () => {
     const { broadcaster, calls } = makeCapturingBroadcaster();
     const conn = makeConn(socket, { broadcaster });
 
-    socket.emit('message', controlFrame('subscribe_v2', { session_id: 's1' }));
-    socket.emit('message', controlFrame('unsubscribe_v2', { session_id: 's1' }));
-    socket.emit(
-      'message',
-      controlFrame('subscribe_v2', { session_id: 's1', agent_ids: ['agent-0'] }),
-    );
+    socket.emit('message', command('subscribe', { session_id: 's1' }, 'r1'));
+    socket.emit('message', command('unsubscribe', { session_id: 's1' }, 'r2'));
+    socket.emit('message', command('subscribe', { session_id: 's1', agent_ids: ['agent-0'] }, 'r3'));
     await vi.waitFor(() => expect(calls).toHaveLength(2));
 
     expect(calls[1]).toEqual({ sessionId: 's1', agentIds: ['agent-0'] });
@@ -388,8 +356,8 @@ describe('WsConnectionV1 control frames', () => {
     const { broadcaster, removals } = makeCapturingBroadcaster();
     const conn = makeConn(socket, { broadcaster });
 
-    socket.emit('message', controlFrame('subscribe_v2', { session_id: 's1' }));
-    socket.emit('message', controlFrame('subscribe_v2', { session_id: 's2' }));
+    socket.emit('message', command('subscribe', { session_id: 's1' }, 'r1'));
+    socket.emit('message', command('subscribe', { session_id: 's2' }, 'r2'));
     await vi.waitFor(() => expect(conn.subscriptionSessionIds).toEqual(['s1', 's2']));
 
     socket.emit('close');
@@ -406,19 +374,9 @@ describe('WsConnectionV1 outbound buffer', () => {
     vi.useRealTimers();
   });
 
-  it('sends server_hello immediately without an event buffer size', () => {
-    const socket = new FakeSocket();
-    const conn = makeConn(socket, { flushIntervalMs: 16 });
-    const frames = socket.frames() as Array<{ type: string; payload: Record<string, unknown> }>;
-    expect(frames.map((f) => f.type)).toEqual(['server_hello']);
-    expect(frames[0]!.payload).not.toHaveProperty('max_event_buffer_size');
-    conn.close();
-  });
-
   it('buffers subscription frames and flushes them in order after the interval', async () => {
     const socket = new FakeSocket();
     const conn = makeConn(socket, { flushIntervalMs: 16 });
-    socket.sent = [];
 
     conn.send(frame('turn.started', 's1', 7));
     conn.send(frame('item.delta', 's1', 8));
@@ -441,7 +399,6 @@ describe('WsConnectionV1 outbound buffer', () => {
   it('sends immediate frames at once and preserves FIFO with buffered frames', async () => {
     const socket = new FakeSocket();
     const conn = makeConn(socket, { flushIntervalMs: 16 });
-    socket.sent = [];
 
     conn.send(frame('item.delta', 's1', 1));
     expect(socket.sent).toHaveLength(0);
@@ -459,7 +416,6 @@ describe('WsConnectionV1 outbound buffer', () => {
   it('flushes immediately once the buffered batch reaches maxBatchSize', () => {
     const socket = new FakeSocket();
     const conn = makeConn(socket, { flushIntervalMs: 1000, maxBatchSize: 3 });
-    socket.sent = [];
 
     conn.send(frame('item.delta', 's1', 1));
     conn.send(frame('item.delta', 's1', 2));
@@ -473,7 +429,6 @@ describe('WsConnectionV1 outbound buffer', () => {
   it('defers flushing while the peer is above the watermark, then drains', async () => {
     const socket = new FakeSocket();
     const conn = makeConn(socket, { flushIntervalMs: 16, highWaterMarkBytes: 100 });
-    socket.sent = [];
 
     socket.bufferedAmount = 200;
     conn.send(frame('item.delta', 's1', 1));
@@ -495,7 +450,6 @@ describe('WsConnectionV1 outbound buffer', () => {
   it('force-flushes buffered subscription frames on close', () => {
     const socket = new FakeSocket();
     const conn = makeConn(socket, { flushIntervalMs: 1000 });
-    socket.sent = [];
 
     conn.send(frame('item.delta', 's1', 1));
     expect(socket.sent).toHaveLength(0);
@@ -507,7 +461,6 @@ describe('WsConnectionV1 outbound buffer', () => {
   it('drops buffered frames when the socket is already closed at flush time', async () => {
     const socket = new FakeSocket();
     const conn = makeConn(socket, { flushIntervalMs: 16 });
-    socket.sent = [];
 
     socket.readyState = socket.CLOSED;
     conn.send(frame('item.delta', 's1', 1));
@@ -528,42 +481,29 @@ describe('WsConnectionV1 heartbeat', () => {
     return socket.frames().map((f) => (f as { type: string }).type);
   }
 
-  function sentPings(socket: FakeSocket): Array<{ type: string; payload: { nonce: string } }> {
-    return socket.frames() as Array<{ type: string; payload: { nonce: string } }>;
-  }
-
-  it('advertises the heartbeat interval in server_hello', () => {
-    const socket = new FakeSocket();
-    const conn = makeConn(socket, { heartbeatIntervalMs: 10 });
-    const hello = socket.frames()[0] as { type: string; payload: { heartbeat_ms?: number } };
-    expect(hello.type).toBe('server_hello');
-    expect(hello.payload.heartbeat_ms).toBe(10);
-    conn.close();
-  });
-
-  it('defaults to a 10s heartbeat interval', () => {
+  it('sends nothing on connect and pings every 10 seconds by default', () => {
     const socket = new FakeSocket();
     const conn = makeConn(socket);
-    const hello = socket.frames()[0] as { payload: { heartbeat_ms?: number } };
-    expect(hello.payload.heartbeat_ms).toBe(10_000);
+    expect(socket.sent).toHaveLength(0);
+
+    vi.advanceTimersByTime(9_999);
+    expect(socket.sent).toHaveLength(0);
+    vi.advanceTimersByTime(1);
+    expect(socket.frames()).toEqual([{ type: 'ping' }]);
     conn.close();
   });
 
   it('sends a ping every interval while the peer keeps answering', () => {
     const socket = new FakeSocket();
     const conn = makeConn(socket, { heartbeatIntervalMs: 10 });
-    socket.sent = [];
 
     for (let i = 0; i < 3; i++) {
       vi.advanceTimersByTime(10);
       expect(sentTypes(socket)).toHaveLength(i + 1);
-      socket.emit('message', JSON.stringify({ type: 'pong', payload: { nonce: 'n' } }));
+      socket.emit('message', JSON.stringify({ type: 'pong' }));
     }
 
-    const pings = sentPings(socket);
-    expect(pings.every((f) => f.type === 'ping')).toBe(true);
-    expect(typeof pings[0]!.payload.nonce).toBe('string');
-    expect(new Set(pings.map((f) => f.payload.nonce)).size).toBe(3);
+    expect(socket.frames()).toEqual([{ type: 'ping' }, { type: 'ping' }, { type: 'ping' }]);
     expect(socket.closeCalls).toHaveLength(0);
     conn.close();
   });
@@ -571,7 +511,6 @@ describe('WsConnectionV1 heartbeat', () => {
   it('reaps the connection after two silent cycles', () => {
     const socket = new FakeSocket();
     makeConn(socket, { heartbeatIntervalMs: 10 });
-    socket.sent = [];
 
     vi.advanceTimersByTime(10);
     expect(sentTypes(socket)).toEqual(['ping']);
@@ -589,7 +528,6 @@ describe('WsConnectionV1 heartbeat', () => {
   it('treats any inbound frame — not just pong — as proof of life', () => {
     const socket = new FakeSocket();
     makeConn(socket, { heartbeatIntervalMs: 10 });
-    socket.sent = [];
 
     vi.advanceTimersByTime(15);
     socket.emit('message', JSON.stringify({ type: 'some_future_frame', payload: {} }));
@@ -605,7 +543,6 @@ describe('WsConnectionV1 heartbeat', () => {
   it('stops heartbeating once the socket closes on its own', () => {
     const socket = new FakeSocket();
     makeConn(socket, { heartbeatIntervalMs: 10 });
-    socket.sent = [];
 
     vi.advanceTimersByTime(10);
     expect(sentTypes(socket)).toEqual(['ping']);
@@ -768,7 +705,7 @@ describe('WsConnectionV1 task output', () => {
   }
 
   function taskFrames(socket: FakeSocket): unknown[] {
-    return socket.frames().filter((frame) => (frame as { type: string }).type !== 'server_hello');
+    return socket.frames();
   }
 
   const ok = (requestId: string): unknown =>

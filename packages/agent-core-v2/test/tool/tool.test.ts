@@ -548,6 +548,7 @@ function sessionMetadataStub(agents: Readonly<Record<string, AgentMeta>>): ISess
   return {
     _serviceBrand: undefined,
     ready: Promise.resolve(),
+    effectiveCwd: '/tmp',
     onDidChangeMetadata: Event.None as ISessionMetadata['onDidChangeMetadata'],
     read: async () => ({
       id: 'test-session',

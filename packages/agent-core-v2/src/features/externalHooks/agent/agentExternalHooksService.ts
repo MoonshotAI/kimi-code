@@ -119,6 +119,11 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     this.states.set(externalHooksStopHookContinuationUsedKey, value);
   }
 
+  private async hookCwd(): Promise<string> {
+    await this.sessionMetadata.ready;
+    return this.sessionMetadata.effectiveCwd;
+  }
+
   private fireAndForget(
     event: string,
     inputData: Record<string, unknown>,
@@ -126,13 +131,17 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     signal?: AbortSignal,
   ): void {
     try {
-      void this.runner.fireAndForgetTrigger(event, {
-        matcherValue,
-        signal,
-        cwd: this.sessionContext.cwd,
-        sessionId: this.sessionContext.sessionId,
-        inputData: this.withSessionFacts(inputData),
-      });
+      void this.hookCwd()
+        .then((cwd) =>
+          this.runner.fireAndForgetTrigger(event, {
+            matcherValue,
+            signal,
+            cwd,
+            sessionId: this.sessionContext.sessionId,
+            inputData: this.withSessionFacts(inputData),
+          }),
+        )
+        .catch(() => undefined);
     } catch {}
   }
 
@@ -330,7 +339,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     const block = await this.runner.triggerBlock('PreToolUse', {
       matcherValue: ctx.toolCall.name,
       signal: ctx.signal,
-      cwd: this.sessionContext.cwd,
+      cwd: await this.hookCwd(),
       sessionId: this.sessionContext.sessionId,
       inputData: this.withSessionFacts({
         toolName: ctx.toolCall.name,
@@ -370,7 +379,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     const results = await this.runner.trigger('UserPromptSubmit', {
       matcherValue: input,
       signal,
-      cwd: this.sessionContext.cwd,
+      cwd: await this.hookCwd(),
       sessionId: this.sessionContext.sessionId,
       inputData: this.withSessionFacts({
         prompt: input.map((part) => fromCorePart(part)),
@@ -443,7 +452,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
 
     const block = await this.runner.triggerBlock('Stop', {
       signal: ctx.signal,
-      cwd: this.sessionContext.cwd,
+      cwd: await this.hookCwd(),
       sessionId: this.sessionContext.sessionId,
       inputData: this.withSessionFacts({ stopHookActive: false }),
     });
@@ -457,7 +466,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     await this.runner.trigger('PreCompact', {
       matcherValue: ctx.trigger,
       signal,
-      cwd: this.sessionContext.cwd,
+      cwd: await this.hookCwd(),
       sessionId: this.sessionContext.sessionId,
       inputData: this.withSessionFacts({
         trigger: ctx.trigger,

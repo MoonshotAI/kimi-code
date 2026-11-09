@@ -185,6 +185,7 @@ function workspaceDirsStub(
   return {
     _serviceBrand: undefined,
     ready,
+    primary: '/workspace',
     additionalDirs,
     sharedAdditionalDirs,
     primaryByWorkspace: {},

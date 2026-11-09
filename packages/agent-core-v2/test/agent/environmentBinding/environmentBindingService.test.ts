@@ -127,6 +127,7 @@ function setup(options: {
   agentId?: string;
   sessionCwd?: string;
   seedBinding?: EnvironmentBinding;
+  primaryByWorkspace?: Readonly<Record<string, string>>;
 } = {}) {
   const registry = new EnvironmentRegistry();
   const local = environment('local', 'local-one', 'ready', ['fs', 'process'], LOCAL_HOST);
@@ -183,6 +184,13 @@ function setup(options: {
   sessionState.contributeState(workspaceContextWorkDirKey);
   sessionState.contributeState(workspaceContextAdditionalDirsKey);
   sessionState.set(workspaceContextWorkDirKey, session.cwd);
+  const workspaceInfo = {
+    _serviceBrand: undefined,
+    ready: Promise.resolve(),
+    primaryByWorkspace: options.primaryByWorkspace ?? {},
+    additionalDirs: sessionState.get(workspaceContextAdditionalDirsKey),
+    onDidChange: () => ({ dispose: () => {} }),
+  };
   const makeAgent = (agentId: string) => {
     const agentScopeContext = stubScopeContext(agentId);
     const agentState = new AgentStateService();
@@ -192,6 +200,7 @@ function setup(options: {
       { _serviceBrand: undefined, binding: options.seedBinding ?? { environmentId: 'local' } },
       session,
       workspaceContext,
+      workspaceInfo,
       resolver,
       dispatcher,
       reminder,
@@ -200,7 +209,7 @@ function setup(options: {
     );
     return {
       binding: agentBinding,
-      agentEnvironment: new AgentEnvironmentService(agentScopeContext, agentBinding, registry as unknown as IEnvironmentService, eventBus, session, sessionState),
+      agentEnvironment: new AgentEnvironmentService(agentScopeContext, agentBinding, registry as unknown as IEnvironmentService, eventBus, session, workspaceInfo),
       state: agentState,
     };
   };
@@ -428,6 +437,47 @@ describe('AgentEnvironmentService workspaceRoots', () => {
       seedBinding: { environmentId: 'ghost' },
     });
     expect(uninspectable.agentEnvironment.workspaceRoots().workDir).toBe('/workspace');
+  });
+
+  it('follows the current primary only for a default local binding', () => {
+    const local = setup({
+      sessionCwd: '/old',
+      primaryByWorkspace: { workspace: '/new' },
+    });
+    expect(local.agentEnvironment.workspaceRoots()).toEqual({
+      workDir: '/new',
+      primaryDir: '/new',
+      additionalDirs: [],
+      followsPrimary: true,
+    });
+
+    const explicit = setup({
+      seedBinding: { environmentId: 'local', cwd: '/explicit' },
+      primaryByWorkspace: { workspace: '/new' },
+    });
+    expect(explicit.agentEnvironment.workspaceRoots()).toEqual({
+      workDir: '/explicit',
+      primaryDir: '/new',
+      additionalDirs: ['/new'],
+      followsPrimary: false,
+    });
+  });
+
+  it('keeps remote host cwd independent from the local project primary', () => {
+    const remote = setup({
+      seedBinding: { environmentId: 'remote-cwd' },
+      primaryByWorkspace: { workspace: '/new' },
+    });
+    remote.registry.register(environment('remote-cwd', 'remote-cwd-one', 'ready', ['process'], {
+      ...REMOTE_HOST,
+      cwd: '/remote/initial',
+    }));
+    expect(remote.agentEnvironment.workspaceRoots()).toEqual({
+      workDir: '/remote/initial',
+      primaryDir: undefined,
+      additionalDirs: [],
+      followsPrimary: false,
+    });
   });
 });
 

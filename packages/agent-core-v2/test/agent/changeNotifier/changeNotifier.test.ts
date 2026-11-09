@@ -17,6 +17,7 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { EnvironmentLease } from '#/environment/environment';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
@@ -301,6 +302,10 @@ function createHarness(options: {
         },
         workspaceRoots: () => ({ workDir }),
       } satisfies IAgentEnvironmentService);
+      reg.defineInstance(IAgentEnvironmentBindingService, {
+        _serviceBrand: undefined,
+        current: { environmentId: 'local' },
+      } as IAgentEnvironmentBindingService);
       reg.defineInstance(IEventDispatcher, {
         _serviceBrand: undefined,
         hooks: { onDidRestore: new OrderedHookSlot() },
@@ -1239,7 +1244,7 @@ describe('notifyWorkspaceDirsChanges', () => {
     expect(h.reminders).toHaveLength(1);
     expect(h.reminders[0]?.variant).toBe('workspace_dirs_change');
     expect(h.reminders[0]?.content).toContain('Added directories: /work/B.');
-    expect(h.reminders[0]?.content).toContain(`Session cwd remains ${workDir}.`);
+    expect(h.reminders[0]?.content).toContain(`Default working directory: ${workDir}.`);
 
     h.workspaceDirs.additionalDirs = ['/work/B/'];
     await h.notifier.notifyWorkspaceDirsChanges();
@@ -1316,6 +1321,30 @@ describe('notifyWorkspaceDirsChanges', () => {
     );
     expect(h.reminders[0]?.content).not.toContain('Added directories:');
     expect(h.reminders[0]?.content).not.toContain('Removed directories:');
+  });
+
+  it('reports the effective cwd and complete roots for the current workspace primary swap', async () => {
+    const h = createHarness({ profile: makeProfileData({ profileName: 'default' }) });
+    h.workspaceDirs.primaryByWorkspace = { 'workspace-1': '/work/A' };
+    h.workspaceDirs.additionalDirs = ['/work/B'];
+    await h.notifier.notifyWorkspaceDirsChanges();
+
+    h.workspaceDirs.primaryByWorkspace = { 'workspace-1': '/work/B' };
+    h.workspaceDirs.additionalDirs = ['/work/A'];
+    await h.notifier.notifyWorkspaceDirsChanges();
+
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.content).toContain('Default working directory: /work/A -> /work/B.');
+    expect(h.reminders[0]?.content).toContain('Effective directories: /work/B, /work/A.');
+    expect(h.reminders[0]?.content).not.toContain('Added directories:');
+    expect(h.reminders[0]?.content).not.toContain('Removed directories:');
+
+    h.workspaceDirs.additionalDirs = ['/work/A', '/work/C'];
+    await h.notifier.notifyWorkspaceDirsChanges();
+    expect(h.reminders).toHaveLength(2);
+    expect(h.reminders[1]?.content).toContain('Added directories: /work/C.');
+    expect(h.reminders[1]?.content).not.toContain('Removed directories:');
+    expect(h.reminders[1]?.content).toContain('Effective directories: /work/B, /work/A, /work/C.');
   });
 
   it('does not invent a primary change when a project leaves the cwd association', async () => {

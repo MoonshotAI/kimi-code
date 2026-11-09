@@ -115,9 +115,9 @@ ws.onmessage = (e) => console.log(e.data);
 ws.onopen = () =>
   ws.send(
     JSON.stringify({
-      type: 'subscribe_v2',
-      id: '1',
-      payload: { session_id: process.argv[2] },
+      type: 'subscribe',
+      request_id: '1',
+      session_id: process.argv[2],
     }),
   );
 ```
@@ -1546,6 +1546,8 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 将目录集内的某个源文件夹提升为主目录。服务端做原子交换：该路径成为新的 `root`，原主目录进入 `additional_dirs`；工作区 id 与会话桶不变，全部会话保留。交换后原主目录 `local.toml` 中的附加目录将不再并入（`local.toml` 跟随主目录生效）。
 
+对于已在 `local` 环境上运行且未显式设置 `environmentCwd` 的既有会话，后续工具调用的默认工作目录和相对路径会跟随新的主目录。显式 `environmentCwd` 和远程环境绑定仍使用其配置的目录。附加目录只扩大允许访问的范围，不会成为相对路径的候选根目录；访问这些目录时请使用绝对路径或显式 `cwd`。切换过程中已注册的工具保持可用，工作区原有的信任决定也会在重启后保留。
+
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `workspace_id` | path | string | **必填。** 工作区 id |
@@ -1607,7 +1609,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 #### `POST /api/v1/workspaces/{workspace_id}/untrust`
 
-撤销工作区的持久化信任记录。如果进程或配置覆盖没有使工作区保持受信任，则同时卸载其项目级 MCP 配置。
+撤销与当前目录集关联的持久化工作区信任记录。如果进程或配置覆盖没有使工作区保持受信任，则同时卸载其项目级 MCP 配置。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -2178,7 +2180,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 列出当前连接到本服务的 WebSocket 客户端，按连接时间最早在前。无参数。
 
-成功时 `data` 为 `{ connections }`，每项为 `{ id, connected_at, remote_address, user_agent, has_client_hello, subscriptions }`：`connected_at` 为 ISO 8601 时间戳；`remote_address` 与 `user_agent` 未知时为 `null`；`has_client_hello` 报告客户端是否已发送握手帧；`subscriptions` 列出该连接订阅的会话 id。
+成功时 `data` 为 `{ connections }`，每项为 `{ id, connected_at, remote_address, user_agent, subscriptions }`：`connected_at` 为 ISO 8601 时间戳；`remote_address` 与 `user_agent` 未知时为 `null`；`subscriptions` 列出该连接订阅的会话 id。
 
 ### `GET /api/v2/sessions`
 
@@ -2355,49 +2357,37 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 
 ### 建立连接
 
-唯一端点是 `ws://<host>:<port>/api/v1/ws`；鉴权在升级请求时完成（见上文 [鉴权](#鉴权)）。连接建立后服务端立即发送 `server_hello`：
+唯一端点是 `ws://<host>:<port>/api/v1/ws`；鉴权在升级请求时完成，凭证放在 `Authorization: Bearer <token>` 请求头或 `kimi-code.bearer.<token>` 子协议里（见上文 [鉴权](#鉴权)）。连接不需要握手：建立后即开始接收全局事件，客户端也可以直接发送命令。
 
-```json
-{
-  "type": "server_hello",
-  "timestamp": "2026-01-01T00:00:00.000Z",
-  "payload": {
-    "ws_connection_id": "conn_01JZX4...",
-    "protocol_version": 2,
-    "max_event_buffer_size": 1000,
-    "capabilities": { "event_batching": false, "compression": false }
-  }
-}
-```
+### 心跳
 
-注意服务端不发送心跳，也不会主动断开空闲连接——保活与重连由客户端自己负责。
+服务端每 10 秒发送一次 `{ "type": "ping" }`，客户端回复 `{ "type": "pong" }`。服务端连续 20 秒收不到客户端的任何帧时断开连接。客户端连续 25 秒没有收到任何帧时，应视为连接已断开并重连。
 
-### 控制帧
+### 命令
 
-客户端发送 JSON 帧 `{ "type", "id"?, "payload" }`；每个请求帧都会收到应答 `{ "type": "ack", "id", "code", "msg", "payload" }`，`code` 为 `0` 表示成功。
+客户端发送平铺的 JSON 帧：字段与 `type` 并列，每条命令都带 `request_id`。每条命令收到一条应答 `{ "type": "response", "request_id", "code", "msg"?, "task"? }`，`code` 为 `0` 表示成功。缺少可读的 `request_id` 时，服务端以关闭码 1008 断开连接；不认识的帧类型会被忽略。
 
-| 帧 | payload | 说明 |
+| 帧 | 字段 | 说明 |
 | --- | --- | --- |
-| `subscribe_v2` | `{ session_id, agent_ids? }` | 订阅会话（唯一的会话订阅方式），开始接收所列 agent；`agent_ids` 默认为 `["main"]`，之后对同一会话再发 `subscribe_v2` 会追加 agent。会话无法打开时，ack 带上错误码——`40401` 会把会话列在 `not_found` 里，`40930`、`40931` 等其他错误码说明无法打开的原因——且不建立任何订阅。会话打开后立即发送 ack，先于该订阅的任何帧；各 agent 的对话在 ack 之后加载 |
-| `unsubscribe_v2` | `{ session_id, agent_ids? }` | 停止接收 agent；省略 `agent_ids` 或移除最后一个 agent 时取消整个会话订阅 |
-| `client_hello` | `{ client_id }` | 握手帧，其余字段会被忽略 |
-| `task.watch` | 平铺：`{ request_id, session_id, agent_id, task_id, since_offset?, tail_bytes? }` | 把某个任务的输出流式推送到本连接，无需订阅会话；`agent_id` 是任务所属的 agent（即该任务 `task` 帧上的 `agent_id`），`since_offset` 从客户端已有输出之后续传，`tail_bytes` 是首段输出最多包含的字节数 |
-| `task.unwatch` | 平铺：`{ request_id, session_id, agent_id, task_id }` | 停止推送该任务的输出 |
-| `task.stop` | 平铺：`{ request_id, session_id, agent_id, task_id }` | 停止任务；已结束的任务直接应答其状态 |
-| `task.background` | 平铺：`{ request_id, session_id, agent_id, task_id }` | 让发起任务的工具调用不再等它，任务转入后台继续运行；已在后台或已结束时直接应答其状态，发起方无法不再等它的任务（例如 AgentSwarm 的成员）回复 `40933` |
+| `subscribe` | `{ request_id, session_id, agent_ids? }` | 订阅会话，开始接收所列 agent；`agent_ids` 默认为 `["main"]`，之后对同一会话再发 `subscribe` 会追加 agent。会话无法打开时，应答带上错误码——会话不存在时为 `40401`，`40930`、`40931` 等其他错误码说明无法打开的原因——且不建立任何订阅。会话打开后立即应答，先于该订阅的任何帧；各 agent 的对话在应答之后加载。帧格式错误时应答 `40001` |
+| `unsubscribe` | `{ request_id, session_id, agent_ids? }` | 停止接收 agent；省略 `agent_ids` 或移除最后一个 agent 时取消整个会话订阅 |
+| `task.watch` | `{ request_id, session_id, agent_id, task_id, since_offset?, tail_bytes? }` | 把某个任务的输出流式推送到本连接，无需订阅会话；`agent_id` 是任务所属的 agent（即该任务 `task` 帧上的 `agent_id`），`since_offset` 从客户端已有输出之后续传，`tail_bytes` 是首段输出最多包含的字节数 |
+| `task.unwatch` | `{ request_id, session_id, agent_id, task_id }` | 停止推送该任务的输出 |
+| `task.stop` | `{ request_id, session_id, agent_id, task_id }` | 停止任务；已结束的任务直接应答其状态 |
+| `task.background` | `{ request_id, session_id, agent_id, task_id }` | 让发起任务的工具调用不再等它，任务转入后台继续运行；已在后台或已结束时直接应答其状态，发起方无法不再等它的任务（例如 AgentSwarm 的成员）回复 `40933` |
 
-`task.watch`、`task.unwatch`、`task.stop` 与 `task.background` 是平铺帧：字段与 `type` 并列而不放在 `payload` 下，用 `request_id` 代替 `id`，应答为 `{ "type": "response", "request_id", "code", "msg"?, "task"? }` 而不是 ack；缺少可读的 `request_id` 时服务端以关闭码 1008 断开连接。`task.watch`、`task.stop` 与 `task.background` 成功时，`task` 是任务此刻的状态（形状见下文 `task` 帧，不含 `type`、`session_id`、`agent_id` 与 `event_created_at`）。同一个任务的请求按到达顺序逐个处理，因此在 `task.watch` 尚未应答时发出的 `task.unwatch` 会在它之后生效；不同任务之间、以及它们与其他控制帧之间互不等待。`task.watch` 成功时先应答 `code` 0，再用一个 `task.output` 帧发送最后 `tail_bytes` 字节的输出（默认 32 KiB，最大 1 MiB；`since_offset` 落在这段范围内时只发它之后的部分；没有可发送的输出时 `text` 为空），之后推送实时输出；已结束的任务同样可以 watch。错误：`40001` 帧格式错误（含 `tail_bytes` 超出范围），`40401` 会话不存在，`40406` 该 agent 下没有这个任务，`40933` 该任务不能转入后台（应答仍带任务状态），`50001` 内部错误，`50003` 输出无法读取。
+`task.watch`、`task.stop` 与 `task.background` 成功时，`task` 是任务此刻的状态（形状见下文 `task` 帧，不含 `type`、`session_id`、`agent_id` 与 `event_created_at`）。同一个任务的请求按到达顺序逐个处理，因此在 `task.watch` 尚未应答时发出的 `task.unwatch` 会在它之后生效；不同任务之间、以及它们与其他命令之间互不等待。`task.watch` 成功时先应答 `code` 0，再用一个 `task.output` 帧发送最后 `tail_bytes` 字节的输出（默认 32 KiB，最大 1 MiB；`since_offset` 落在这段范围内时只发它之后的部分；没有可发送的输出时 `text` 为空），之后推送实时输出；已结束的任务同样可以 watch。错误：`40001` 帧格式错误（含 `tail_bytes` 超出范围），`40401` 会话不存在，`40406` 该 agent 下没有这个任务，`40933` 该任务不能转入后台（应答仍带任务状态），`50001` 内部错误，`50003` 输出无法读取。
 
 ### 事件
 
 全局事件是事件帧 `{ "type", "session_id"?, "timestamp", "payload" }`，`type` 即事件类型；会话帧是平铺帧 `{ "type", "session_id", "agent_id", ... }`。按投递范围分两类：
 
 - **全局事件**：发送到每个已建立连接，无需订阅——`session.meta.updated`、`event.session.created`、`event.session.archived`、`event.session.work_changed`、`event.session.status_changed`、`event.workspace.*`、`event.config.*`、`event.model_catalog.*`。
-- **会话帧**：只发给用 `subscribe_v2` 订阅了该会话的连接，且只包含其接收的 agent——`turns`、`turns.removed`、`turns.failed`、`turn.*`、`item.*` 与 `notice`（见 [对话协议](#对话协议)），以及 `task.list`、`task`、`agent`、`usage`、`goal`、`todo`；`interaction` 帧发给该会话的所有订阅者。`task.output` 只发给用 `task.watch` 订阅了该任务输出的连接。
+- **会话帧**：只发给用 `subscribe` 订阅了该会话的连接，且只包含其接收的 agent——`turns`、`turns.removed`、`turns.failed`、`turn.*`、`item.*` 与 `notice`（见 [对话协议](#对话协议)），以及 `task.list`、`task`、`agent`、`usage`、`goal`、`todo`；`interaction` 帧发给该会话的所有订阅者。`task.output` 只发给用 `task.watch` 订阅了该任务输出的连接。
 
 有三个全局生命周期事件可以让跨工作区概览免掉逐工作区轮询。`event.session.archived` 在在线归档与冷归档两条路径上都会发出；其事件帧 `session_id` 是全局水位 `__global__`，真实会话 id 在 payload 里：`{ "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." }`（payload 字段为 `workspace_id` / `sessionId`）。`event.workspace.created` / `updated` 携带完整工作区对象（`{ id, root, name, created_at, last_opened_at, session_count }`——会话创建触碰工作区时也会发 `updated`），`event.workspace.deleted` 携带 `{ "workspace_id", "root" }`。这些事件只覆盖本服务进程内的变更；其他进程（例如写同一 home 目录的 CLI）的变更要等索引 reconcile（约一分钟）才可见，因此概览客户端应保留低频兜底轮询。目前没有会话删除事件。
 
-每个 agent 正在跑的任务——Shell 命令（前台与后台）、subagent（含 swarm 成员）及其他异步工作——由 `task.list` 与 `task` 两种平铺帧同步，和 `interaction` 一样不回放。连接开始接收某个 agent 的任务时（`subscribe_v2` 的 `agent_ids` 中列出、且此前未接收的 agent），先收到一帧 `{ type: "task.list", session_id, agent_id, tasks }`，`tasks` 是该 agent 此刻正在跑的全部任务，客户端用它整份替换本地列表；之后每次变化收到一帧 `{ type: "task", session_id, agent_id, event_created_at, ...任务状态 }`，列出时尚未加入会话的 agent 直接从 `task` 帧开始。任务状态为 `{ task_id, kind: "shell" | "subagent" | "other", status: "running" | "ended", outcome?, phase?, detached, description?, child_agent_id?, parent_tool_call_id?, swarm_index?, command?, started_at?, ended_at?, result_summary?, error?, state_reason?, model?, thinking? }`，每帧都携带完整状态。`detached` 表示发起它的工具调用已不再等它，即后台任务；`outcome`（仅已结束的任务）为 `completed` / `failed` / `timed_out` / `killed` / `lost`；`phase`（仅运行中的 subagent）为 `working` / `suspended`，挂起原因在 `state_reason`；`child_agent_id` 是 subagent 任务的 agent id；`swarm_index` 是 swarm 成员在其 swarm 中的序号；`command` 是 Shell 任务的命令。任务结束时推送它最后一帧 `task`（`status: "ended"`），之后不再出现在 `task.list` 里：已结束任务的结果在会话历史中（工具结果与完成通知），需要精确的最终状态时对它发送 `task.watch`，应答带有其状态。任务与轮次互相独立：撤销轮次不影响任务。任务输出单独推送，形状为 `{ type: "task.output", session_id, agent_id, task_id, offset, text }`，`offset` 是 `text` 在任务输出中的 UTF-8 字节偏移。
+每个 agent 正在跑的任务——Shell 命令（前台与后台）、subagent（含 swarm 成员）及其他异步工作——由 `task.list` 与 `task` 两种平铺帧同步，和 `interaction` 一样不回放。连接开始接收某个 agent 的任务时（`subscribe` 的 `agent_ids` 中列出、且此前未接收的 agent），先收到一帧 `{ type: "task.list", session_id, agent_id, tasks }`，`tasks` 是该 agent 此刻正在跑的全部任务，客户端用它整份替换本地列表；之后每次变化收到一帧 `{ type: "task", session_id, agent_id, event_created_at, ...任务状态 }`，列出时尚未加入会话的 agent 直接从 `task` 帧开始。任务状态为 `{ task_id, kind: "shell" | "subagent" | "other", status: "running" | "ended", outcome?, phase?, detached, description?, child_agent_id?, parent_tool_call_id?, swarm_index?, command?, started_at?, ended_at?, result_summary?, error?, state_reason?, model?, thinking? }`，每帧都携带完整状态。`detached` 表示发起它的工具调用已不再等它，即后台任务；`outcome`（仅已结束的任务）为 `completed` / `failed` / `timed_out` / `killed` / `lost`；`phase`（仅运行中的 subagent）为 `working` / `suspended`，挂起原因在 `state_reason`；`child_agent_id` 是 subagent 任务的 agent id；`swarm_index` 是 swarm 成员在其 swarm 中的序号；`command` 是 Shell 任务的命令。任务结束时推送它最后一帧 `task`（`status: "ended"`），之后不再出现在 `task.list` 里：已结束任务的结果在会话历史中（工具结果与完成通知），需要精确的最终状态时对它发送 `task.watch`，应答带有其状态。任务与轮次互相独立：撤销轮次不影响任务。任务输出单独推送，形状为 `{ type: "task.output", session_id, agent_id, task_id, offset, text }`，`offset` 是 `text` 在任务输出中的 UTF-8 字节偏移。
 
 Agent 自身的状态由另外四种平铺帧同步，每帧都携带完整的值，客户端整份替换本地副本；和任务帧一样不回放。连接开始接收某个 agent 时（规则同 `task.list`），先收到当前的 `agent`、`usage`（该 agent 有模型上下文时）、`goal`（仅主 agent）与 `todo` 帧，之后每当某个值变化就再收到对应的帧；已列出、之后才加入会话的 agent 也会用这几种帧通告自己。订阅会话时如果主 agent 还不存在，服务端会先创建它，所以订阅之后总能收到主 agent 的这几种帧。四种帧都是 `{ type, session_id, agent_id, event_created_at, ... }`：
 
@@ -2408,7 +2398,7 @@ Agent 自身的状态由另外四种平铺帧同步，每帧都携带完整的�
 
 ### 断线恢复
 
-订阅不会跨断线保留。重连后对每个会话重新发送 `subscribe_v2`：每个 agent 会重新从一帧携带最新一页的 `turns` 开始；确认后会补发待处理的交互，并重新收到各 agent 的 `task.list`、`agent`、`usage`、`goal` 与 `todo` 帧。任务输出的订阅同样会丢失：重新发送 `task.watch`，并把 `since_offset` 设为已有输出的末尾。断线期间错过的全局事件不会回放，请通过 REST（例如 `GET /api/v1/sessions`）刷新本地维护的列表。
+订阅不会跨断线保留。重连后对每个会话重新发送 `subscribe`：每个 agent 会重新从一帧携带最新一页的 `turns` 开始；应答之后会补发待处理的交互，并重新收到各 agent 的 `task.list`、`agent`、`usage`、`goal` 与 `todo` 帧。任务输出的订阅同样会丢失：重新发送 `task.watch`，并把 `since_offset` 设为已有输出的末尾。断线期间错过的全局事件不会回放，请通过 REST（例如 `GET /api/v1/sessions`）刷新本地维护的列表。
 
 ### 对话协议
 
