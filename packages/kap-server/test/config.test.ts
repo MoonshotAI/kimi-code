@@ -211,7 +211,7 @@ describe('server-v2 /api/v1/config', () => {
   it('POST { environments } replaces the section and preserves environment ids and field names', async () => {
     await boot([
       '[environments]',
-      'default = "old_box"',
+      'default = "oldBox"',
       '',
       '[environments.old_box]',
       'type = "ssh"',
@@ -223,6 +223,12 @@ describe('server-v2 /api/v1/config', () => {
       'container = "example-container"',
       '',
     ].join('\n'));
+
+    expect((await getConfig())['environments']).toEqual({
+      default: 'old_box',
+      old_box: { type: 'ssh', host: 'old.example.test', defaultCwd: '/srv/old' },
+      container: { type: 'docker', container: 'example-container' },
+    });
 
     const cfg = await patchConfig({
       environments: {
@@ -274,7 +280,7 @@ describe('server-v2 /api/v1/config', () => {
     await boot('[environments.old_name]\ntype = "ssh"\nhost = "old.example.test"\n');
     const environments = {
       my_box: { type: 'ssh', host: 'old.example.test', default_cwd: '/srv/app' },
-      devBox: { command: 'kubectl', args: ['exec', '-i', 'pod', '--'], env: { KUBE_CONFIG: '/tmp/kube', fooBar: '1' } },
+      devBox: { command: 'kubectl', args: ['exec', '-i', 'pod', '--'], env: { KUBE_CONFIG: '/tmp/kube', http_proxy: 'http://127.0.0.1:7890', fooBar: '1' } },
     };
 
     const cfg = await patchConfig({ environments });
@@ -285,7 +291,7 @@ describe('server-v2 /api/v1/config', () => {
     const after = await getConfig();
     expect(after['environments']).toEqual(cfg['environments']);
     expect(Object.keys(after['environments'] as object).toSorted()).toEqual(['devBox', 'my_box']);
-    expect((after['environments'] as Record<string, { env?: unknown; defaultCwd?: unknown }>)['devBox']?.env).toEqual({ KUBE_CONFIG: '/tmp/kube', fooBar: '1' });
+    expect((after['environments'] as Record<string, { env?: unknown; defaultCwd?: unknown }>)['devBox']?.env).toEqual({ KUBE_CONFIG: '/tmp/kube', http_proxy: 'http://127.0.0.1:7890', fooBar: '1' });
     expect((after['environments'] as Record<string, { defaultCwd?: unknown }>)['my_box']?.defaultCwd).toBe('/srv/app');
   });
 
