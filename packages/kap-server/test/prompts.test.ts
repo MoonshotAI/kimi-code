@@ -293,27 +293,35 @@ describe('server-v2 /api/v1 prompts', () => {
     await agent.accessor.get(IAgentProfileService).setModel(model);
   }
 
-  it('submits a prompt and lists it as active', async () => {
+  it('directly steers a message in one request', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
+    const loop = getLiveSessionById(server!.core.accessor, id)!
+      .accessor.get(IAgentLifecycleService)
+      .handleOf('main')!
+      .accessor.get(IAgentLoopService);
+    const submit = vi.spyOn(loop, 'submit');
 
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
-      content: [{ type: 'text', text: 'hello' }],
+    const steered = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/steer`, {
+      content: [{ type: 'text', text: 'direct steer message' }],
+      prompt_id: 'direct-steer-1',
     });
-    expect(submitted.body.code).toBe(0);
-    expect(submitted.body.data.prompt_id).toMatch(/^msg_/);
-    expect(submitted.body.data.status).toBe('running');
-    expect(submitted.body.data.user_message_id).toBe(submitted.body.data.prompt_id);
-
-    const list = await call<{ active: PromptItemWire | null; queued: PromptItemWire[] }>(
-      'GET',
-      `/api/v1/sessions/${id}/prompts`,
+    expect(steered.body.code).toBe(0);
+    expect(steered.body.data.prompt_id).toBe('direct-steer-1');
+    expect(steered.body.data.status).toBe('running');
+    expect(submit).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.objectContaining({ content: [{ type: 'text', text: 'direct steer message' }] }) }),
+      { steerIfActive: true },
     );
-    expect(list.body.code).toBe(0);
-    if (list.body.data.active !== null) {
-      expect(list.body.data.active.prompt_id).toBe(submitted.body.data.prompt_id);
-    }
-    expect(Array.isArray(list.body.data.queued)).toBe(true);
+
+    await vi.waitFor(() => {
+      const history = getLiveSessionById(server!.core.accessor, id)!
+        .accessor.get(IAgentLifecycleService)
+        .handleOf('main')!
+        .accessor.get(IAgentContextMemoryService)
+        .get();
+      expect(JSON.stringify(history)).toContain('direct steer message');
+    });
   });
 
   it('applies swarm_mode before submitting the prompt', async () => {

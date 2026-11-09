@@ -1044,6 +1044,16 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (turn.controller.signal.aborted || machineSignal.aborted) return { type: 'fail' };
     if (turn.stopRequested) return { type: 'fail' };
     if (turn.failedStep !== undefined) return { type: 'fail' };
+    if (turn.steerInterruptStep !== undefined) {
+      const current = turn.current;
+      if (current?.number === turn.steerInterruptStep) {
+        this.closeFailedMachineStep(turn, current, 'interrupted');
+        turn.current = undefined;
+        turn.interruptStep = undefined;
+        this.emitStepInterrupted(turn.id, current.number, 'aborted');
+      }
+      turn.steerInterruptStep = undefined;
+    }
     const consumed = this.mirrorConsumedNudges(turn);
     if (turn.steerController.signal.aborted) {
       turn.steerController = new AbortController();
@@ -1287,6 +1297,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       nudgeCursor: this.nudgeCursor,
       current: undefined,
       interruptStep: undefined,
+      steerInterruptStep: undefined,
       failedStep: undefined,
       stopRequested: false,
       toolStopRequested: false,
@@ -1440,6 +1451,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       case 'promptSteered': {
         const active = this.active;
         if (active === undefined) return;
+        active.steerInterruptStep = active.current?.number;
         const children: { readonly waiter: PromptWaiter; readonly projection: SteeredPrompt }[] = [];
         for (const entry of event.entries) {
           const id = entry.meta?.promptId;
@@ -2406,6 +2418,7 @@ interface ActiveTurn {
   nudgeCursor: number;
   current: MachineStepState | undefined;
   interruptStep: number | undefined;
+  steerInterruptStep: number | undefined;
   failedStep: MachineFailedStep | undefined;
   stopRequested: boolean;
   toolStopRequested: boolean;

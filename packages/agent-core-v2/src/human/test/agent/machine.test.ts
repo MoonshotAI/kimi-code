@@ -1667,7 +1667,7 @@ describe('agent machine input.abort', () => {
     ]);
   });
 
-  it('interrupts an in-flight llm request on steer and starts a new turn for pending prompts', async () => {
+  it('interrupts an in-flight llm request on steer and continues the same turn', async () => {
     let call = 0;
     const signals: AbortSignal[] = [];
     const requester: LlmRequester = {
@@ -1694,27 +1694,31 @@ describe('agent machine input.abort', () => {
     const tools: ToolDefinition[] = [];
     const store = await testStore();
     const actor = createTestAgent(store, requester, tools);
+    const turnStarts: number[] = [];
+    const aborted: unknown[] = [];
+    actor.on('turn.started', (event) => turnStarts.push(event.turnId));
+    actor.on('turn.aborted', (event) => aborted.push(event));
     actor.start();
     actor.send({ type: 'input.submit', entry: { message: createUserMessage('hi') } });
 
     await vi.waitFor(() => {
       expect(call).toBe(1);
     });
-    actor.send({ type: 'input.submit', entry: { message: createUserMessage('queued'), meta: { promptId: 'p1' } } });
     actor.send({ type: 'input.submit', entry: { message: createUserMessage('steered'), meta: { promptId: 'p2' } } });
     actor.send({ type: 'input.steer', id: 'p2' });
     await waitFor(
       actor,
-      (s) => s.matches('idle') && store.getState().history.length === 5,
+      (s) => s.matches('idle') && store.getState().history.length === 4,
       { timeout: 5000 },
     );
 
     expect(signals[0]?.aborted).toBe(true);
+    expect(turnStarts).toEqual([0]);
+    expect(aborted).toHaveLength(0);
     expect(rolesAndTexts(store.getState().history)).toEqual([
       'user:hi',
       'assistant:partial text',
       'user:steered',
-      'user:queued',
       'assistant:second',
     ]);
     const salvaged = store.getState().history[1]?.message;

@@ -1092,6 +1092,7 @@ A prompt is one unit of user input: submitting one enqueues it on the session's 
 | --- | --- |
 | `GET /api/v1/sessions/{session_id}/prompts` | Active and queued prompts |
 | `POST /api/v1/sessions/{session_id}/prompts` | Submit a prompt (content-part array, optional model / permission-mode overrides) |
+| `POST /api/v1/sessions/{session_id}/steer` | Steer message content directly into the active turn |
 | `POST /api/v1/sessions/{session_id}/prompts:steer` | Steer queued prompts into the active turn |
 | `POST /api/v1/sessions/{session_id}/prompts/{prompt_id}:abort` | Abort a running prompt |
 | `POST /api/v1/sessions/{session_id}/prompts/{prompt_id}:steer` | Steer one queued prompt |
@@ -1148,6 +1149,12 @@ On success, `data` is the accepted prompt `{ prompt_id, user_message_id, status,
 - `40903`: `prompt_id` belongs to an already-completed prompt; `data` carries `{ aborted: false }`
 - `40912`: the skill exists but cannot be activated by the user
 - `40927`: `prompt_id` is already reserved by an in-flight prompt
+
+#### `POST /api/v1/sessions/{session_id}/steer`
+
+Directly steers message content into the active turn in one request, without a separate submit-then-steer round trip. The body accepts the same fields as `POST /api/v1/sessions/{session_id}/prompts`, including `content`, `agent_id`, `prompt_id`, `skills`, `profile`, `model`, `thinking`, `permission_mode`, and `disabled_tools`. Media references and bundled skills use the same validation and preparation path as prompt submission.
+
+On success, `data` is the accepted prompt in the same shape as `POST /api/v1/sessions/{session_id}/prompts`. Errors are the same as prompt submission, including validation, media, profile, environment, and idempotency failures.
 
 #### `POST /api/v1/sessions/{session_id}/prompts:steer`
 

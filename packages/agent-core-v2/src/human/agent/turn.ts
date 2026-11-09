@@ -395,6 +395,16 @@ export function createTurnMachine(
               : [...context.produced, { message: salvaged, meta: partial.meta }],
         };
       }),
+      salvageSteered: assign(({ context }) => {
+        const partial = context.accumulator.finish({ source: 'salvaged' });
+        const salvaged = salvageInterruptedMessage(partial.message);
+        return {
+          produced:
+            salvaged === null
+              ? context.produced
+              : [...context.produced, { message: salvaged, meta: partial.meta }],
+        };
+      }),
       collectAborted: assign(({ context }) =>
         collectToolOutcomes({ ...context, outcomes: abortOutcomes(context) }),
       ),
@@ -685,12 +695,12 @@ export function createTurnMachine(
             ],
           },
           'turn.steer': {
-            target: 'aborted',
+            target: 'draining',
             actions: [
               ({ context }) => {
                 context.llmScope.abort();
               },
-              'salvageAborted',
+              'salvageSteered',
             ],
           },
         },
@@ -706,8 +716,7 @@ export function createTurnMachine(
             actions: assign({ outcome: 'aborted' as const }),
           },
           'turn.steer': {
-            target: 'aborted',
-            actions: assign({ outcome: 'aborted' as const }),
+            target: 'draining',
           },
         },
       },
