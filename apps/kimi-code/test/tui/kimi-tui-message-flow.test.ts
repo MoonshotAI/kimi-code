@@ -89,7 +89,7 @@ import {
 } from '#/tui/commands/prompts';
 import { isPromptQueuedMessage, type InlineSkillActivation, type QueuedMessage, type TranscriptEntry } from '#/tui/types';
 import type { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
-import { isToolCallId, monotonicNow, phaseAt } from '#/tui/utils/turn-timeline';
+import { isToolCallId, monotonicNow, phaseAt, TurnTimeline } from '#/tui/utils/turn-timeline';
 import {
   extractMediaAttachments,
   type ExtractionResult,
@@ -4939,7 +4939,11 @@ command = "vim"
         driver.state.ui,
         '/work',
       ));
-      driver.state.transcriptContainer.setTurnActive(true);
+      const timeline = new TurnTimeline();
+      driver.state.transcriptContainer.setTimeline(timeline);
+      timeline.turnStarted();
+      const callId = 'shutdown-live';
+      if (isToolCallId(callId)) timeline.callStarted(callId, 'Read');
       renderTranscript(driver);
 
       const stopped = (driver as unknown as { stop(): Promise<void> }).stop();
@@ -14719,8 +14723,8 @@ describe('activity bar Ctrl+B hint', () => {
 
   it.each([
     ['npm install', false, { transcript: 1, activity: 0 }],
-    ['ls -la', true, { transcript: 0, activity: 1 }],
-  ] as const)('shows the hint for `%s` once when only read-only tools fold', async (command, readonly, counts) => {
+    ['ls -la', true, { transcript: 1, activity: 0 }],
+  ] as const)('shows the hint for `%s` once in its card when only read-only tools fold', async (command, readonly, counts) => {
     expect(isReadonlyBash(command)).toBe(readonly);
     await withTenSecondBash({ toolCallDensity: 'detailed', thinking: 'grouped' }, command, (driver) => {
       expect(hintCounts(driver)).toEqual(counts);
@@ -14786,9 +14790,9 @@ describe('activity bar Ctrl+B hint', () => {
   it.each([
     ['only read-only tools fold', { toolCallDensity: 'detailed', thinking: 'grouped' }, { transcript: 1, activity: 0 }],
     ['every tool folds', COMPACT_GROUPED, { transcript: 0, activity: 1 }],
-  ] as const)('keeps one hint when a folded argument preview becomes `npm install` while %s', async (_name, transcript, counts) => {
+  ] as const)('keeps one hint when an argument preview becomes `npm install` while %s', async (_name, transcript, counts) => {
     await withTenSecondBash(transcript, 'npm install', (driver) => {
-      expect(hintCounts(driver)).toEqual({ transcript: 0, activity: 1 });
+      expect(hintCounts(driver)).toEqual(counts);
 
       emitSlowBash(driver, { type: 'tool.call.started', name: 'Bash', args: { command: 'npm install' } });
       expect(hintCounts(driver)).toEqual(counts);

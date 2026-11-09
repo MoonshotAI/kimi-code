@@ -16,7 +16,6 @@ import {
   type TranscriptPresentationOptions,
 } from '#/tui/config';
 import {
-  itemText,
   TranscriptGroupComponent,
   type TranscriptGroupInteraction,
 } from '#/tui/components/messages/transcript-group';
@@ -28,6 +27,7 @@ import {
   isExpandable,
   isExpandedComponent,
 } from '#/tui/utils/component-capabilities';
+import { itemText } from '#/tui/utils/group-view';
 import {
   foregroundBashHintAt,
   TranscriptItemInspector,
@@ -36,11 +36,9 @@ import {
   type TranscriptItem,
 } from '#/tui/utils/transcript-items';
 import {
-  canFoldItem,
+  foldRule,
   projectTranscript,
-  summarizeGroup,
   type GroupProjection,
-  type GroupSummary,
   type TranscriptProjection,
 } from '#/tui/utils/transcript-projection';
 import { isTurnBoundaryComponent } from '#/tui/utils/transcript-turns';
@@ -48,6 +46,7 @@ import {
   expandCutoffIndex,
   TRANSCRIPT_EXPAND_TURNS,
 } from '#/tui/utils/transcript-window';
+import { TurnTimeline, type TimelineReader } from '#/tui/utils/turn-timeline';
 
 export interface TranscriptGroupingHost {
   withScrollAnchor(toggle: () => void): void;
@@ -55,11 +54,6 @@ export interface TranscriptGroupingHost {
   viewportRows(): number | undefined;
   track(event: string, properties: Record<string, string | number | boolean>): void;
   foldingChanged(): void;
-}
-
-interface GroupSummaryCache {
-  readonly members: readonly LogicalTranscriptItem[];
-  readonly summary: GroupSummary;
 }
 
 interface ProjectionCache {
@@ -76,7 +70,6 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
   private readonly gutter: GutterContainer;
   private readonly inspector = new TranscriptItemInspector();
   private groups = new Map<Component, TranscriptGroupComponent>();
-  private summaries = new Map<Component, GroupSummaryCache>();
   private expandedGroups = new WeakMap<Component, boolean>();
   private openedMembers = new WeakSet<Component>();
   private options: TranscriptPresentationOptions = {
@@ -86,7 +79,7 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
   private sourceVersion = 0;
   private projectionCache: ProjectionCache | undefined;
   private globalExpanded = false;
-  private turnActive = false;
+  private timeline: TimelineReader = new TurnTimeline();
   private host: TranscriptGroupingHost | undefined;
 
   constructor(
@@ -121,9 +114,8 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
     this.host?.foldingChanged();
   }
 
-  setTurnActive(active: boolean): void {
-    if (this.turnActive === active) return;
-    this.turnActive = active;
+  setTimeline(timeline: TimelineReader): void {
+    this.timeline = timeline;
     this.projectionCache = undefined;
     this.ui.requestRender();
   }
@@ -175,7 +167,6 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
   clear(): void {
     this.dispose();
     this.groups.clear();
-    this.summaries.clear();
     this.expandedGroups = new WeakMap();
     this.openedMembers = new WeakSet();
     this.sourceChildren.splice(0);
@@ -253,12 +244,12 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
 
   foldedBashHintAt(): number | undefined {
     if (!transcriptGroupingActive(this.options)) return undefined;
-    // projectTranscript always groups a foldable, unopened Bash call. Its command event
-    // gives the run a summary, and only running thinking stays outside the group.
-    return foregroundBashHintAt(this.sourceChildren, (call) => {
-      const [item] = this.inspector.read([call], this.options);
-      return item?.kind === 'logical' && canFoldItem(item, this.options) && !this.openedMembers.has(call);
-    });
+    const hidden = new Set<Component>();
+    for (const projection of this.project()) {
+      if (projection.kind !== 'group') continue;
+      for (const item of projectionItems(projection)) hidden.add(item.display);
+    }
+    return foregroundBashHintAt(this.sourceChildren, (call) => hidden.has(call));
   }
 
   toolOutputExpandHint(): 'expand' | 'collapse' | null {
@@ -295,6 +286,7 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
       cached !== undefined &&
       cached.sourceVersion === this.sourceVersion &&
       samePresentation(cached.options, this.options) &&
+      cached.projections.every((projection) => projection.kind !== 'group' || projection.pending.every(this.mayStillBeWritten)) &&
       (!checkComponentVersions || (
         cached.componentVersions.length === this.sourceChildren.length &&
         cached.componentVersions.every((version, index) => {
@@ -311,8 +303,7 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
     const viewChildren: Component[] = [];
     const viewSourceIndices: number[] = [];
     const nextGroups = new Map<Component, TranscriptGroupComponent>();
-    const nextSummaries = new Map<Component, GroupSummaryCache>();
-    for (const projection of projections) {
+    for (const [index, projection] of projections.entries()) {
       if (projection.kind === 'single') {
         const { item } = projection;
         if (item.display instanceof ThinkingComponent) {
@@ -329,35 +320,25 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
         expanded = this.globalExpanded && projection.sourceIndex >= cutoff;
         this.expandedGroups.set(projection.anchor, expanded);
       }
-      const cachedSummary = this.summaries.get(projection.anchor);
-      const summary = cachedSummary !== undefined && sameGroupMembers(cachedSummary.members, projection.members)
-        ? cachedSummary.summary
-        : summarizeGroup(projection.members);
-      nextSummaries.set(projection.anchor, { members: projection.members, summary });
-      const active = this.isOpen(projection, projections) && projection.external.length === 0;
       const model = {
         anchor: projection.anchor,
         sourceIndex: projection.sourceIndex,
         members: projection.members,
-        active,
+        pending: projection.pending,
+        last: index === projections.length - 1,
         expanded,
-        summary,
+        timeline: this.timeline,
       };
       const group = this.groups.get(projection.anchor) ?? new TranscriptGroupComponent(model, this);
       group.setModel(model);
       nextGroups.set(projection.anchor, group);
       viewChildren.push(group);
       viewSourceIndices.push(projection.sourceIndex);
-      for (const external of projection.external) {
-        viewChildren.push(external.display);
-        viewSourceIndices.push(external.sourceIndex);
-      }
     }
     for (const [anchor, group] of this.groups) {
       if (!nextGroups.has(anchor)) group.dispose();
     }
     this.groups = nextGroups;
-    this.summaries = nextSummaries;
     this.gutter.clear();
     for (const child of viewChildren) this.gutter.addChild(child);
     this.projectionCache = {
@@ -369,13 +350,6 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
       viewSourceIndices,
     };
     return this.projectionCache;
-  }
-
-  private isOpen(
-    projection: GroupProjection,
-    projections: readonly TranscriptProjection[],
-  ): boolean {
-    return this.turnActive && projections.at(-1) === projection;
   }
 
   private hasExpandedContentAnywhere(projections: readonly TranscriptProjection[]): boolean {
@@ -419,7 +393,7 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
   }
 
   private isOpenedOutsideGroup(item: TranscriptItem): item is LogicalTranscriptItem {
-    return item.kind === 'logical' && this.openedMembers.has(item.display) && canFoldItem(item, this.options);
+    return item.kind === 'logical' && this.openedMembers.has(item.display) && foldRule(item, this.options) !== 'none';
   }
 
   private keepMergedGroupExpanded(closed: Component, previous: readonly TranscriptProjection[]): void {
@@ -439,8 +413,12 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
       this.inspector.read(this.sourceChildren, this.options),
       this.options,
       (component) => this.openedMembers.has(component),
+      this.mayStillBeWritten,
     );
   }
+
+  private readonly mayStillBeWritten = (item: LogicalTranscriptItem): boolean =>
+    item.callId === undefined || this.timeline.call(item.callId)?.settle === undefined;
 
   private applyGlobalExpansion(): void {
     const cache = this.ensureProjection();
@@ -483,20 +461,7 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
 
 function projectionItems(projection: TranscriptProjection): readonly TranscriptItem[] {
   if (projection.kind === 'single') return [projection.item];
-  return [...projection.members, ...projection.external];
-}
-
-function sameGroupMembers(
-  left: readonly LogicalTranscriptItem[],
-  right: readonly LogicalTranscriptItem[],
-): boolean {
-  return left.length === right.length && left.every((item, index) => {
-    const other = right[index];
-    return other !== undefined &&
-      item.display === other.display &&
-      item.projectionVersion === other.projectionVersion &&
-      item.current === other.current;
-  });
+  return [...projection.members, ...projection.pending];
 }
 
 function samePresentation(

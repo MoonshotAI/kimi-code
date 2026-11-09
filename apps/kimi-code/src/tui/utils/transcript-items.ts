@@ -20,9 +20,11 @@ import {
   type ToolFolding,
   type TranscriptPresentationOptions,
 } from '#/tui/config';
-import type { ToolResultBlockData } from '#/tui/types';
+import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 import { FOREGROUND_BASH_HINT_DELAY_MS } from '#/tui/constant/rendering';
+import { STREAMING_ARGS_PREVIEW_MAX_CHARS, UNNAMED_TOOL_CALL_NAME } from '#/tui/constant/streaming';
 import { decodeMcpToolName } from '#/tui/utils/mcp-tool-name';
+import { isToolCallId, type ToolCallId } from '#/tui/utils/turn-timeline';
 import { isReadonlyBash } from '#/utils/readonly-bash';
 
 export interface OutcomeCounts {
@@ -53,7 +55,12 @@ export type SummaryEvent =
   | { readonly kind: 'other'; readonly outcome: OutcomeCounts }
   | { readonly kind: 'silent'; readonly outcome: OutcomeCounts };
 
-export type FoldClass = 'thinking' | 'explore' | 'all';
+type FoldClass = 'thinking' | 'explore' | 'all';
+
+export type FoldTraits =
+  | { readonly kind: FoldClass }
+  | { readonly kind: 'command'; readonly argsComplete: boolean; readonly readonly: boolean }
+  | { readonly kind: 'unnamed' };
 
 export interface ItemLabel {
   readonly verb: string;
@@ -66,7 +73,7 @@ export type ItemStat =
   | { readonly kind: 'note'; readonly text: string };
 
 export type ItemStatus =
-  | { readonly kind: 'running'; readonly startedAtMs: number }
+  | { readonly kind: 'running' }
   | { readonly kind: 'failed' }
   | { readonly kind: 'interrupted' }
   | { readonly kind: 'done'; readonly stat?: ItemStat };
@@ -78,7 +85,8 @@ export interface LogicalTranscriptItem {
   readonly sourceIndex: number;
   readonly projectionVersion: number;
   readonly family: 'thinking' | 'tool';
-  readonly foldClass: FoldClass;
+  readonly fold: FoldTraits;
+  readonly callId?: ToolCallId;
   readonly current: boolean;
   readonly event: SummaryEvent;
   readonly label: ItemLabel;
@@ -283,7 +291,7 @@ export class TranscriptItemInspector {
     else if (component instanceof ToolCallComponent) {
       const role = TOOL_BOUNDARY_ROLES[component.toolCallView.name];
       items = role === undefined
-        ? [this.inspectTool(component, sourceIndex, folding)]
+        ? [this.inspectTool(component, sourceIndex)]
         : [boundary(component, sourceIndex, role)];
     }
     else if (component instanceof ReadGroupComponent) items = this.inspectReadGroup(component, sourceIndex, folding);
@@ -302,7 +310,7 @@ export class TranscriptItemInspector {
       sourceIndex,
       projectionVersion: component.transcriptProjectionVersion,
       family: 'thinking',
-      foldClass: 'thinking',
+      fold: { kind: 'thinking' },
       current: elapsed === undefined,
       event: { kind: 'thought', durationMs },
       label: {
@@ -310,27 +318,15 @@ export class TranscriptItemInspector {
         rowVerb: 'Thought',
         subject: durationMs === undefined ? undefined : `for ${formatDuration(durationMs)}`,
       },
-      status: elapsed === undefined
-        ? { kind: 'running', startedAtMs: component.startedAtMs }
-        : { kind: 'done' },
+      status: elapsed === undefined ? { kind: 'running' } : { kind: 'done' },
     };
   }
 
-  private inspectTool(
-    component: ToolCallComponent,
-    sourceIndex: number,
-    folding: ToolFolding,
-  ): LogicalTranscriptItem {
+  private inspectTool(component: ToolCallComponent, sourceIndex: number): LogicalTranscriptItem {
     const profile = this.profileFor(component);
     const outcome = this.inspectOutcome(component);
     const current = this.isCurrent(component);
     const toolCall = component.toolCallView;
-    let foldClass = profile.foldClass;
-    if (toolCall.name === 'Bash' && toolCall.streamingArguments === undefined && folding === 'readonly') {
-      foldClass = isReadonlyBash(typeof toolCall.args['command'] === 'string' ? toolCall.args['command'] : '')
-        ? 'explore'
-        : 'all';
-    }
     const event = this.inspectEvent(component, profile, outcome);
     return {
       kind: 'logical',
@@ -339,13 +335,12 @@ export class TranscriptItemInspector {
       sourceIndex,
       projectionVersion: component.transcriptProjectionVersion,
       family: profile.foldClass === 'thinking' ? 'thinking' : 'tool',
-      foldClass,
+      fold: foldTraits(toolCall, profile),
+      callId: isToolCallId(toolCall.id) ? toolCall.id : undefined,
       current,
       event,
       label: toolLabel(component),
-      status: current
-        ? { kind: 'running', startedAtMs: component.startedAtMs }
-        : finishedStatus(outcome, toolStat(component, event)),
+      status: current ? { kind: 'running' } : finishedStatus(outcome, toolStat(component, event)),
     };
   }
 
@@ -355,7 +350,7 @@ export class TranscriptItemInspector {
     folding: ToolFolding,
   ): readonly TranscriptItem[] {
     const tools = component.getToolComponents();
-    if (folding !== 'none') return tools.map((tool) => this.inspectTool(tool, sourceIndex, folding));
+    if (folding !== 'none') return tools.map((tool) => this.inspectTool(tool, sourceIndex));
     const first = tools[0];
     const outcome = combineOutcomes(tools.map((tool) => this.inspectOutcome(tool)));
     const path = first?.getReadSnapshot().filePath ?? first?.toolCallView.id ?? '';
@@ -367,13 +362,11 @@ export class TranscriptItemInspector {
       sourceIndex,
       projectionVersion: component.transcriptProjectionVersion,
       family: 'tool',
-      foldClass: 'explore',
+      fold: { kind: 'explore' },
       current: running !== undefined,
       event: { kind: 'read', path, outcome },
       label: { verb: 'Read', rowVerb: 'Read', subject: nonEmpty(path) },
-      status: running === undefined
-        ? finishedStatus(outcome, undefined)
-        : { kind: 'running', startedAtMs: running.startedAtMs },
+      status: running === undefined ? finishedStatus(outcome, undefined) : { kind: 'running' },
     }];
   }
 
@@ -450,6 +443,31 @@ export function formatDuration(ms: number): string {
   const seconds = Math.max(1, Math.round(ms / 1000));
   if (seconds < 60) return `${String(seconds)}s`;
   return `${String(Math.floor(seconds / 60))}m ${String(seconds % 60)}s`;
+}
+
+function foldTraits(toolCall: Readonly<ToolCallBlockData>, profile: ToolProfile): FoldTraits {
+  const argsComplete = argumentsComplete(toolCall.streamingArguments);
+  if (profile.event === 'command') {
+    const command = toolCall.args['command'];
+    return {
+      kind: 'command',
+      argsComplete,
+      readonly: argsComplete && isReadonlyBash(typeof command === 'string' ? command : ''),
+    };
+  }
+  if (!argsComplete && toolCall.name === UNNAMED_TOOL_CALL_NAME) return { kind: 'unnamed' };
+  return { kind: profile.foldClass };
+}
+
+function argumentsComplete(streamed: string | undefined): boolean {
+  if (streamed === undefined) return true;
+  if (streamed.length > STREAMING_ARGS_PREVIEW_MAX_CHARS || !streamed.trimEnd().endsWith('}')) return false;
+  try {
+    const parsed: unknown = JSON.parse(streamed);
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed);
+  } catch {
+    return false;
+  }
 }
 
 function finishedStatus(outcome: OutcomeCounts, stat: ItemStat | undefined): ItemStatus {

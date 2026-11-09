@@ -99,11 +99,12 @@ export const TRANSCRIPT_GROUP_SWEEP_RESTART_GAP_COLUMNS = 14;
 // Every 150 ms the title highlight closes half of what is left to full or off, so it fades out
 // in about a second: the speed it was tuned to on 50 ms frames.
 export const TRANSCRIPT_GROUP_FADE_HALF_LIFE_MS = 150;
-export const TRANSCRIPT_GROUP_HOLD_MS = 450;
 export const TRANSCRIPT_GROUP_TAIL_ELAPSED_MS = 2_000;
 export const TRANSCRIPT_GROUP_COUNT_DELAY_MS = 200;
 export const TRANSCRIPT_TAIL_ENTER_MS = 1_000;
 export const TRANSCRIPT_TAIL_THOUGHT_HOLD_MS = 2_000;
+export const TRANSCRIPT_TAIL_MIN_NAME_COLUMNS = 12;
+export const TRANSCRIPT_TAIL_TIMER_COLUMNS = ' · 99s'.length;
 export const TRANSCRIPT_TAIL_THINKING_THROTTLE_MS = 150;
 export const TRANSCRIPT_TAIL_THINKING_TICK_MS =
   Math.ceil(TRANSCRIPT_TAIL_THINKING_THROTTLE_MS / ANIMATION_FRAME_INTERVAL_MS) * ANIMATION_FRAME_INTERVAL_MS;

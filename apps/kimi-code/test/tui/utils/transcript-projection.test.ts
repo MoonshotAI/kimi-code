@@ -14,12 +14,19 @@ import {
 import type { TranscriptPresentationOptions } from '#/tui/config';
 import { TRANSCRIPT_TAIL_THINKING_TICK_MS } from '#/tui/constant/rendering';
 import type { ToolResultBlockData } from '#/tui/types';
+import {
+  deriveGroupView,
+  fitRunningTail,
+  rowStatusOf,
+  tailText,
+  titleText,
+  type GroupView,
+} from '#/tui/utils/group-view';
 import { TranscriptItemInspector } from '#/tui/utils/transcript-items';
 import {
   projectTranscript,
-  summarizeGroup,
   type GroupProjection,
-  type GroupSummary,
+  type TranscriptProjection,
 } from '#/tui/utils/transcript-projection';
 import {
   countedAt,
@@ -36,6 +43,7 @@ import {
   type CallFacts,
   type Instant,
   type ThinkingFacts,
+  type TimelineReader,
   type ToolCallId,
 } from '#/tui/utils/turn-timeline';
 
@@ -91,8 +99,20 @@ function onlyGroup(components: readonly Component[], presentation = options()): 
   return groups[0] as GroupProjection;
 }
 
-function summary(components: readonly Component[], presentation = options()): GroupSummary {
-  return summarizeGroup(onlyGroup(components, presentation).members);
+function groupView(group: GroupProjection, timeline: TimelineReader = new TurnTimeline(), now = 0, last = false): GroupView {
+  return deriveGroupView({ members: group.members, pending: group.pending, last, timeline }, instant(now));
+}
+
+function fragmentsOf(projection: TranscriptProjection): readonly string[] {
+  if (projection.kind !== 'group') return [];
+  const { title } = groupView(projection);
+  return title.kind === 'summary' ? title.text.split(', ') : [titleText(title)];
+}
+
+function summary(components: readonly Component[], presentation = options()) {
+  const { title } = groupView(onlyGroup(components, presentation));
+  if (title.kind === 'item') return { fragments: [titleText(title)], added: 0, removed: 0, failed: 0, interrupted: 0 };
+  return { ...title, fragments: title.text.split(', ') };
 }
 
 describe('transcript projection', () => {
@@ -150,26 +170,22 @@ describe('transcript projection', () => {
       tool('Read', { path: '/work/b.ts' }),
     ]);
 
-    expect(group.external).toEqual([]);
     expect(group.members.map((item) => item.display)).toContain(current);
-    expect(group.running).toBe(true);
-    expect(summarizeGroup(group.members).fragments).toEqual(['Read 2 files', 'searching 1 pattern']);
+    const { timeline, at } = scriptedTimeline();
+    at(0).turnStarted();
+    at(0).callStarted(callId(current.toolCallView.id), 'Grep');
+    expect(groupView(group, timeline, 300).title).toMatchObject({ text: 'Read 2 files, searching 1 pattern' });
   });
 
-  it('keeps streaming thinking outside and folds it into the summary when finished', () => {
+  it('keeps streaming thinking in the group and titles it first', () => {
     const thinking = new ThinkingComponent('reasoning', true, 'live');
     const components = [tool('Read'), thinking, tool('Grep')];
-    const streaming = onlyGroup(components);
 
-    expect(streaming.external.map((item) => item.display)).toEqual([thinking]);
-    expect(streaming.members.map((item) => item.display)).not.toContain(thinking);
-    expect(summarizeGroup(streaming.members).fragments).toEqual(['Read 1 file', 'searched 1 pattern']);
+    expect(onlyGroup(components).members.map((item) => item.display)).toContain(thinking);
+    expect(summary(components).fragments).toEqual(['Thinking', 'read 1 file', 'searched 1 pattern']);
 
     thinking.finalize({ known: true, ms: 3000 });
-    const finished = onlyGroup(components);
-    expect(finished.external).toEqual([]);
-    expect(finished.members.map((item) => item.display)).toContain(thinking);
-    expect(summarizeGroup(finished.members).fragments).toContain('Thought for 3s');
+    expect(summary(components).fragments).toEqual(['Thought for 3s', 'read 1 file', 'searched 1 pattern']);
   });
 
   it('splits the run around a user-opened member in source order, then restores it', () => {
@@ -180,14 +196,10 @@ describe('transcript projection', () => {
 
     expect(opened.map((projection) => projection.kind)).toEqual(['group', 'single', 'group']);
     expect(opened[1]).toMatchObject({ kind: 'single', item: { display: read } });
-    expect(opened.flatMap((projection) =>
-      projection.kind === 'group' ? [summarizeGroup(projection.members).fragments] : [],
-    )).toEqual([['Thought for 3s'], ['Searched 1 pattern']]);
+    expect(opened.filter((projection) => projection.kind === 'group').map(fragmentsOf))
+      .toEqual([['Thought for 3s'], ['Search']]);
 
-    const restored = onlyGroup(components);
-    expect(restored.external).toEqual([]);
-    expect(summarizeGroup(restored.members).fragments)
-      .toEqual(['Thought for 3s', 'read 1 file', 'searched 1 pattern']);
+    expect(summary(components).fragments).toEqual(['Thought for 3s', 'read 1 file', 'searched 1 pattern']);
   });
 
   it('makes Agent and AgentSwarm boundaries in auto mode', () => {
@@ -217,7 +229,6 @@ describe('transcript projection', () => {
     ];
     const initial = onlyGroup(components);
     expect(initial.anchor).toBe(first);
-    expect(initial.external).toEqual([]);
     expect(initial.members.find((item) => item.display === first)?.current).toBe(true);
     expect(initial.members.find((item) => item.display === third)?.current).toBe(true);
 
@@ -228,29 +239,47 @@ describe('transcript projection', () => {
 
     first.setResult(result(), { known: true, ms: 1 });
     expect(onlyGroup(components).anchor).toBe(first);
-    expect(onlyGroup(components).running).toBe(false);
   });
 
-  it('groups streaming Bash before final arguments classify it', () => {
+  it('holds streaming Bash as a pending member until its arguments parse, before the next call appears', () => {
+    const read = tool('Read', { path: '/work/a.ts' });
     const bash = tool('Bash', { command: '' }, null);
-    bash.updateToolCall({
-      ...bash.toolCallView,
-      streamingArguments: '{"command":"rm -f output.txt"}',
-    });
-    const components = [tool('Read', { path: '/work/a.ts' }), bash, tool('Read', { path: '/work/b.ts' })];
+    bash.updateToolCall({ ...bash.toolCallView, streamingArguments: '{"command":"rm -f out' });
 
-    const streaming = onlyGroup(components);
-    expect(streaming.external).toEqual([]);
-    expect(streaming.members.map((item) => item.display)).toContain(bash);
+    const streaming = onlyGroup([read, bash]);
+    expect(streaming.pending.map((item) => item.display)).toEqual([bash]);
+    expect(streaming.members.map((item) => item.display)).not.toContain(bash);
 
     bash.updateToolCall({
       ...bash.toolCallView,
       args: { command: 'rm -f output.txt' },
-      streamingArguments: undefined,
+      streamingArguments: '{"command":"rm -f output.txt"}',
     });
-    const projections = project(components);
-    expect(projections.map((item) => item.kind)).toEqual(['group', 'single', 'group']);
-    expect(projections.some((item) => item.kind === 'single' && item.item.display === bash)).toBe(true);
+    const next = tool('Read', { path: '/work/b.ts' }, null);
+    next.updateToolCall({ ...next.toolCallView, streamingArguments: '{"path":"/work/b' });
+    const placed = project([read, bash, next]);
+    expect(placed.map((item) => item.kind)).toEqual(['group', 'single', 'group']);
+    expect(placed[1]).toMatchObject({ kind: 'single', item: { display: bash } });
+
+    bash.updateToolCall({ ...bash.toolCallView, streamingArguments: undefined });
+    expect(project([read, bash, next]).map((item) => item.kind)).toEqual(['group', 'single', 'group']);
+  });
+
+  it('joins a streamed read-only command to its group as soon as its arguments parse', () => {
+    const read = tool('Read', { path: '/work/a.ts' });
+    const bash = tool('Bash', { command: '' }, null);
+    bash.updateToolCall({
+      ...bash.toolCallView,
+      args: { command: 'ls src' },
+      streamingArguments: '{"command":"ls src"}',
+    });
+    const write = tool('Write', { path: '/work/b.ts' }, null);
+    write.updateToolCall({ ...write.toolCallView, streamingArguments: '{"path":"/work/b' });
+
+    const projections = project([read, bash, write]);
+    expect(projections.map((item) => item.kind)).toEqual(['group', 'single']);
+    expect((projections[0] as GroupProjection).members.map((item) => item.display)).toEqual([read, bash]);
+    expect((projections[0] as GroupProjection).pending).toEqual([]);
   });
 
   it('makes a running non-foldable tool a boundary immediately', () => {
@@ -278,8 +307,8 @@ describe('transcript projection', () => {
 
   it.each([
     ['compact', 'grouped', ['group']],
-    ['balanced', 'grouped', ['group', 'single', 'single', 'group']],
-    ['detailed', 'grouped', ['group', 'single', 'single', 'group']],
+    ['balanced', 'grouped', ['group', 'single', 'single', 'single', 'group']],
+    ['detailed', 'grouped', ['group', 'single', 'single', 'single', 'group']],
     ['ungrouped', 'grouped', ['group', 'single', 'single', 'single', 'single', 'single']],
     ['compact', 'ungrouped', ['single', 'group']],
   ] as const)('folds %s tool calls with %s thinking', (toolCallDensity, thinking, kinds) => {
@@ -302,7 +331,7 @@ describe('transcript projection', () => {
 
     const group = onlyGroup([read, tool('select_tools'), tool('Grep')]);
     expect(group.members).toHaveLength(3);
-    expect(summarizeGroup(group.members).fragments).toEqual(['Read 1 file', 'searched 1 pattern']);
+    expect(fragmentsOf(group)).toEqual(['Read 1 file', 'searched 1 pattern']);
   });
 
   it('passes through a run containing only select_tools', () => {
@@ -395,7 +424,6 @@ describe('transcript projection', () => {
 
     expect(summaryResult.failed).toBe(0);
     expect(summaryResult.interrupted).toBe(1);
-    expect(summaryResult.allFailed).toBe(false);
   });
 
   it.each(['failed', 'timed_out', 'killed', 'lost'])(
@@ -450,14 +478,13 @@ describe('transcript projection', () => {
     expect(summaryResult.interrupted).toBe(0);
   });
 
-  it('marks an all-failed group', () => {
+  it('counts every failure of an all-failed group without marking the group', () => {
     const summaryResult = summary([
       tool('Bash', {}, result('failed', true)),
       tool('Read', {}, result('missing', true)),
     ], options({ toolCallDensity: 'compact' }));
 
-    expect(summaryResult.failed).toBe(2);
-    expect(summaryResult.allFailed).toBe(true);
+    expect(summaryResult).toMatchObject({ failed: 2, text: 'Read 1 file, ran 1 command' });
   });
 
   it('splits ReadGroup only when tool grouping is enabled', () => {
@@ -817,5 +844,307 @@ describe('turn timeline', () => {
     at(500).turnEnded();
     at(600).turnStarted();
     expect(timeline.thoughtHeldUntil(thought)).toBe(500);
+  });
+});
+
+const compact = options({ toolCallDensity: 'compact' });
+const idOf = (component: ToolCallComponent): ToolCallId => callId(component.toolCallView.id);
+
+function tailAt(view: GroupView, now: number, columns = 120): string | undefined {
+  return view.tail === undefined ? undefined : tailText(view.tail, columns, instant(now));
+}
+
+function streaming(name: string, args: Record<string, unknown> = {}): ToolCallComponent {
+  const component = tool(name, args, null);
+  component.updateToolCall({ ...component.toolCallView, streamingArguments: '{' });
+  return component;
+}
+
+describe('group view', () => {
+  it('counts a 0.1 s Read straight in the past tense and never puts it in the tail', () => {
+    const { timeline, at } = scriptedTimeline();
+    const read = tool('Read', { path: '/work/a.ts' }, null);
+    const group = onlyGroup([thought(1000), read], compact);
+    at(0).turnStarted();
+    at(100).callDelta(idOf(read), 'Read');
+    at(300).callStarted(idOf(read), 'Read');
+    at(400).callResult(idOf(read));
+
+    const titles: string[] = [];
+    for (let now = 300; now <= 3000; now += 10) {
+      const view = groupView(group, timeline, now, true);
+      if (titles.at(-1) !== titleText(view.title)) titles.push(titleText(view.title));
+      expect(tailAt(view, now)).not.toMatch(/^Reading/);
+    }
+    expect(titles).toEqual(['Thought for 1s', 'Thought for 1s, read 1 file']);
+    expect([1399, 1400, 2400].map((now) => tailAt(groupView(group, timeline, now, true), now)))
+      .toEqual(['', 'Waiting for response', 'Waiting for response · 2s']);
+  });
+
+  it('lists parallel slow commands in the tail under one timer that never runs backwards', () => {
+    const { timeline, at } = scriptedTimeline();
+    const calls = [
+      { component: tool('Bash', { command: 'sleep 30' }, null), exec: 300, end: 30_300 },
+      { component: tool('Bash', { command: 'sleep 50' }, null), exec: 310, end: 50_310 },
+      { component: tool('Bash', { command: 'sleep 60' }, null), exec: 320, end: 60_320 },
+    ];
+    at(0).turnStarted();
+    for (const [index, { component }] of calls.entries()) at(index * 100).callDelta(idOf(component), 'Bash');
+    for (const { component, exec } of calls) at(exec).callStarted(idOf(component), 'Bash');
+    for (const { component, end } of calls) at(end).callResult(idOf(component));
+    at(61_000).turnEnded();
+    const group = onlyGroup(calls.map(({ component }) => component), compact);
+
+    const titles: string[] = [];
+    for (let now = 300; now <= 61_100; now += 10) {
+      const view = groupView(group, timeline, now, true);
+      if (titles.at(-1) !== titleText(view.title)) titles.push(titleText(view.title));
+      expect(view.tail).toBeDefined();
+    }
+    expect(titles).toEqual([
+      'Running commands',
+      'Running 1 command',
+      'Running 2 commands',
+      'Running 3 commands',
+      'Ran 3 commands',
+    ]);
+    expect([1320, 2300, 31_000, 60_400].map((now) => tailAt(groupView(group, timeline, now, true), now))).toEqual([
+      'Running sleep 30, sleep 50, sleep 60',
+      'Running sleep 30, sleep 50, sleep 60 · 2s',
+      'Running sleep 50, sleep 60 · 31s',
+      '',
+    ]);
+    expect(groupView(group, timeline, 1320, false)).toMatchObject({ tail: undefined, working: true });
+    expect(groupView(group, timeline, 61_100, true)).toMatchObject({ working: false, live: false });
+  });
+
+  it('drops an argument stream cut by a retry from the tail and never counts it', () => {
+    const { timeline, at } = scriptedTimeline();
+    const read = tool('Read', { path: '/work/a.ts' }, null);
+    const edit = tool('Edit', { path: '/work/a.ts' }, null);
+    const group = onlyGroup([read, edit], compact);
+    at(0).turnStarted();
+    at(100).callDelta(idOf(read), 'Read');
+    at(200).callStarted(idOf(read), 'Read');
+    at(300).callResult(idOf(read));
+    at(500).callDelta(idOf(edit), 'Edit');
+    at(1700).outputEnded();
+    at(4000).abandonUnstarted();
+
+    expect([1600, 1800, 5000].map((now) => tailAt(groupView(group, timeline, now, true), now)))
+      .toEqual(['Preparing Edit', '', 'Waiting for response']);
+    for (const now of [1600, 1800, 5000]) {
+      expect(titleText(groupView(group, timeline, now, true).title)).toBe('Read 1 file');
+    }
+    expect(rowStatusOf(group.members[1] ?? group.members[0], timeline, instant(5000))).toEqual({ kind: 'interrupted' });
+  });
+
+  it('settles an interrupted turn: the running call counts as interrupted and the tail goes blank', () => {
+    const { timeline, at } = scriptedTimeline();
+    const bash = tool('Bash', { command: 'sleep 60' }, null);
+    const edit = tool('Edit', { path: '/work/a.ts' }, null);
+    at(0).turnStarted();
+    at(100).callDelta(idOf(bash), 'Bash');
+    at(200).callDelta(idOf(edit), 'Edit');
+    at(300).callStarted(idOf(bash), 'Bash');
+    at(2000).abandonUnstarted();
+    at(2050).callResult(idOf(bash));
+    at(2100).turnEnded();
+    bash.setResult(result('Interrupted by user', true), { known: true, ms: 1750 });
+    const group = onlyGroup([bash, edit], compact);
+    const view = groupView(group, timeline, 2200, true);
+
+    expect(view.title).toMatchObject({ text: 'Ran 1 command', interrupted: 1, failed: 0 });
+    expect(tailAt(view, 2200)).toBe('');
+    expect(view).toMatchObject({ working: false, live: false });
+  });
+
+  it('drops a call cut by max_tokens from the tail and the title', () => {
+    const { timeline, at } = scriptedTimeline();
+    const write = tool('Write', { path: '/work/a.ts' }, null);
+    const group = onlyGroup([thought(400), write], compact);
+    at(0).turnStarted();
+    at(100).thinkingDelta('plan');
+    at(500).callDelta(idOf(write), 'Write');
+    at(1700).outputEnded();
+    at(1700).abandonUnstarted();
+
+    expect(tailAt(groupView(group, timeline, 1600, true), 1600)).toBe('Preparing Write');
+    for (const now of [1700, 2000, 2600]) {
+      const view = groupView(group, timeline, now, true);
+      expect(titleText(view.title)).toBe('Thought for 1s');
+      expect(tailAt(view, now)).toBe('');
+    }
+  });
+
+  it('gives a finished thought up for good once something else takes the tail, even a wait that is over', () => {
+    const first = scriptedTimeline();
+    const read = tool('Read', { path: '/work/a.ts' }, null);
+    const displaced = onlyGroup([thought(500), read], compact);
+    first.at(0).turnStarted();
+    first.at(100).thinkingDelta('Plan the change');
+    first.at(600).callDelta(idOf(read), 'Read');
+    first.at(2100).callStarted(idOf(read), 'Read');
+    expect([700, 1600, 2200].map((now) => tailAt(groupView(displaced, first.timeline, now, true), now)))
+      .toEqual(['Plan the change', 'Preparing Read', '']);
+
+    const second = scriptedTimeline();
+    const fast = tool('Read', { path: '/work/b.ts' }, null);
+    const grep = tool('Grep', { pattern: 'needle' }, null);
+    const waited = onlyGroup([thought(100), fast, grep], compact);
+    second.at(0).turnStarted();
+    second.at(100).thinkingDelta('Look around');
+    second.at(200).callDelta(idOf(fast), 'Read');
+    second.at(300).callStarted(idOf(fast), 'Read');
+    second.at(400).callResult(idOf(fast));
+    second.at(1500).callDelta(idOf(grep), 'Grep');
+    expect([300, 1450, 1550].map((now) => tailAt(groupView(waited, second.timeline, now, true), now)))
+      .toEqual(['Look around', 'Waiting for response', '']);
+  });
+
+  it('keeps a group of an earlier turn idle while the next turn waits, then waits inside the group', () => {
+    const { timeline, at } = scriptedTimeline();
+    const earlier = tool('Read', { path: '/work/a.ts' });
+    const later = tool('Read', { path: '/work/b.ts' });
+    at(0).turnStarted();
+    at(100).callDelta(idOf(earlier), 'Read');
+    at(200).callStarted(idOf(earlier), 'Read');
+    at(300).callResult(idOf(earlier));
+    at(400).turnEnded();
+    at(10_000).turnStarted();
+    expect(groupView(onlyGroup([earlier], compact), timeline, 14_000, true))
+      .toMatchObject({ tail: { kind: 'blank' }, working: false, live: false });
+
+    at(14_500).callDelta(idOf(later), 'Read');
+    at(14_600).callStarted(idOf(later), 'Read');
+    at(15_000).callResult(idOf(later));
+    const group = onlyGroup([earlier, later], compact);
+    expect([16_000, 17_000].map((now) => tailAt(groupView(group, timeline, now, true), now)))
+      .toEqual(['Waiting for response', 'Waiting for response · 2s']);
+  });
+
+  it('gives up the tail the moment text starts and drops it once the group is not last', () => {
+    const { timeline, at } = scriptedTimeline();
+    const read = tool('Read', { path: '/work/a.ts' });
+    at(0).turnStarted();
+    at(100).callDelta(idOf(read), 'Read');
+    at(200).callStarted(idOf(read), 'Read');
+    at(300).callResult(idOf(read));
+    at(1500).textDelta();
+    const group = onlyGroup([thought(100), read], compact);
+
+    expect([1400, 1500].map((now) => tailAt(groupView(group, timeline, now, true), now)))
+      .toEqual(['Waiting for response', '']);
+    expect(groupView(group, timeline, 1500, false).tail).toBeUndefined();
+  });
+
+  function slowSearchAndTest(): { readonly group: GroupProjection; readonly timeline: TurnTimeline } {
+    const { timeline, at } = scriptedTimeline();
+    const calls = [
+      tool('Grep', { pattern: 'TODO' }, null),
+      tool('Grep', { pattern: 'FIXME' }, null),
+      tool('Grep', { pattern: 'deprecated' }, null),
+      tool('Bash', { command: 'pnpm vitest run --project tui' }, null),
+    ];
+    at(0).turnStarted();
+    for (const call of calls) at(0).callStarted(idOf(call), call.toolCallView.name);
+    return { group: onlyGroup(calls, compact), timeline };
+  }
+
+  it.each([
+    [90, 'Searching "TODO", "FIXME", "deprecated"; running pnpm vitest run --project tui · 2s'],
+    [75, 'Searching "TODO" +2 more; running pnpm vitest run --project tui · 2s'],
+    [60, 'Searching "TODO" +2 more; running pnpm vitest run… · 2s'],
+    [44, 'Searching "TODO" +2 more; running… · 2s'],
+  ])('shortens the slow-call tail to fit %i columns', (width, expected) => {
+    const { group, timeline } = slowSearchAndTest();
+    expect(tailAt(groupView(group, timeline, 2400, true), 2400, width - '  └ '.length)).toBe(expected);
+  });
+
+  it('keeps the names in place when the timer appears or reaches two digits', () => {
+    const { group, timeline } = slowSearchAndTest();
+    const names = [1900, 2400, 9400, 10_400].map((now) =>
+      tailAt(groupView(group, timeline, now, true), now, 56)?.replace(/ · \d+s$/, ''));
+    expect(new Set(names)).toEqual(new Set(['Searching "TODO" +2 more; running pnpm vitest run…']));
+    expect(fitRunningTail([{ verb: 'running', names: ['a'] }], 0)).toBe('');
+  });
+
+  it('titles a group with nothing counted yet by its first member category', () => {
+    const { timeline, at } = scriptedTimeline();
+    const bash = tool('Bash', { command: 'make' }, null);
+    const mcp = tool('mcp__github__create_issue', {}, null);
+    at(0).turnStarted();
+    at(0).callStarted(idOf(bash), 'Bash');
+    at(0).callStarted(idOf(mcp), 'mcp__github__create_issue');
+
+    expect(titleText(groupView(onlyGroup([bash, mcp], compact), timeline, 100).title)).toBe('Running commands');
+    expect(titleText(groupView(onlyGroup([mcp, bash], compact), timeline, 100).title)).toBe('Calling github');
+    expect(titleText(groupView(onlyGroup([mcp, bash], compact), timeline, 200).title))
+      .toBe('Running 1 command, calling github 1 time');
+  });
+
+  it('streams the latest paragraph of a live thought into the tail without a timer', () => {
+    const { timeline, at } = scriptedTimeline();
+    const group = onlyGroup([new ThinkingComponent('reasoning', true, 'live')], compact);
+    at(0).turnStarted();
+    at(100).thinkingDelta('First idea.\n\nSecond');
+    at(600).thinkingDelta(' idea\ngrows');
+
+    expect(titleText(groupView(group, timeline, 500, true).title)).toBe('Thinking');
+    expect([500, 720, 4000].map((now) => tailAt(groupView(group, timeline, now, true), now)))
+      .toEqual(['Second', 'Second idea grows', 'Second idea grows']);
+  });
+
+  it('draws a blank tail instead of repeating the title', () => {
+    const { timeline, at } = scriptedTimeline();
+    const group = onlyGroup([new ThinkingComponent('reasoning', true, 'live')], compact);
+    at(0).turnStarted();
+    at(100).thinkingDelta('\n\n');
+    expect(groupView(group, timeline, 200, true).tail).toEqual({ kind: 'blank' });
+  });
+
+  it('prepares an unnamed pending call as a tool call, then by the name the card shows', () => {
+    const { timeline, at } = scriptedTimeline();
+    const unnamed = streaming('Tool');
+    at(0).turnStarted();
+    at(100).callDelta(idOf(unnamed));
+    const group = onlyGroup([tool('Read', { path: '/work/a.ts' }), unnamed]);
+
+    expect(group.pending.map((item) => item.display)).toEqual([unnamed]);
+    expect(titleText(groupView(group, timeline, 1100, true).title)).toBe('Read a.ts');
+    expect(tailAt(groupView(group, timeline, 1100, true), 1100)).toBe('Preparing a tool call');
+    at(1200).callDelta(idOf(unnamed), 'mcp__github__create_issue');
+    expect(tailAt(groupView(group, timeline, 3200, true), 3200)).toBe('Preparing create_issue · 3s');
+  });
+});
+
+describe('fold rules', () => {
+  it('holds a streaming command only after a titled member and places it once classified', () => {
+    const alone = streaming('Bash');
+    expect(project([alone]).map((projection) => projection.kind)).toEqual(['single']);
+    alone.updateToolCall({ ...alone.toolCallView, args: { command: 'ls' }, streamingArguments: undefined });
+    expect(project([alone]).map((projection) => projection.kind)).toEqual(['single']);
+
+    const read = tool('Read', { path: '/work/a.ts' });
+    const bash = streaming('Bash');
+    const held = onlyGroup([read, bash]);
+    expect(held.members.map((item) => item.display)).toEqual([read]);
+    expect(held.pending.map((item) => item.display)).toEqual([bash]);
+
+    bash.updateToolCall({ ...bash.toolCallView, args: { command: 'ls' }, streamingArguments: undefined });
+    expect(onlyGroup([read, bash]).members.map((item) => item.display)).toEqual([read, bash]);
+    bash.updateToolCall({ ...bash.toolCallView, args: { command: 'npm install' } });
+    expect(project([read, bash]).map((projection) => projection.kind)).toEqual(['group', 'single']);
+  });
+
+  it('folds an unnamed call into the run in compact and titles it as a tool', () => {
+    const { timeline, at } = scriptedTimeline();
+    const unnamed = streaming('Tool');
+    at(0).turnStarted();
+    at(0).callDelta(idOf(unnamed));
+    const group = onlyGroup([unnamed], compact);
+    expect(group.members.map((item) => item.display)).toEqual([unnamed]);
+    expect(titleText(groupView(group, timeline, 100).title)).toBe('Using tools');
+    expect(project([unnamed]).map((projection) => projection.kind)).toEqual(['single']);
   });
 });
