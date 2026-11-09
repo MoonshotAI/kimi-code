@@ -151,7 +151,7 @@ function pluginStub(
     getPluginInfo: async () => {
       throw new Error('getPluginInfo is not used by these tests');
     },
-    previewPlugin: async () => ({ skills: [], mcpServers: [] }),
+    previewPlugin: async () => ({ skills: [], variants: [], mcpServers: [] }),
     listPluginCommands: async () => [],
     checkUpdates: async () => [],
     pluginSkillRoots: async () => skillRoots,
@@ -353,6 +353,21 @@ describe('WorkspaceSkillCatalogService', () => {
       expect(catalog.catalog.getSkill('third-only')?.description).toBe('from third');
       expect(catalog.catalog.getSkill('shared')?.description).toBe('from primary');
       expect(catalog.catalog.getSkill('additional-shared')?.description).toBe('from secondary');
+      expect(
+        catalog.catalog.listSkills().filter((skill) => skill.name === 'shared').map((skill) => skill.description),
+      ).toEqual(['from primary', 'from secondary']);
+      expect(
+        catalog.catalog.getSkill(
+          'shared',
+          await realpath(join(secondary, '.kimi-code', 'skills', 'shared', 'SKILL.md')),
+        )?.description,
+      ).toBe('from secondary');
+      expect(
+        catalog.catalog.getSkill(
+          'shared',
+          join(third, '.kimi-code', 'skills', 'shared', 'SKILL.md'),
+        ),
+      ).toBeUndefined();
       const watchedPaths = watchMockState.calls.map((call) => call.path);
       for (const dir of [primary, secondary, third]) {
         expect(watchedPaths).toContain(await realpath(dir));
@@ -723,7 +738,7 @@ describe('WorkspaceSkillCatalogService', () => {
       calls = 0;
       async discover() {
         this.calls++;
-        return { skills: [], skipped: [], scannedRoots: [], scannedDirectories: [] };
+        return { skills: [], variants: [], skipped: [], scannedRoots: [], scannedDirectories: [] };
       }
     }
     const store = new CountingDiscovery();
@@ -807,7 +822,7 @@ describe('WorkspaceSkillCatalogService', () => {
         const pluginSkills = roots
           .filter((root) => root.plugin !== undefined)
           .map((root) => stubSkill('demo-skill', { source: 'extra', plugin: root.plugin }));
-        return { skills: pluginSkills, skipped: [], scannedRoots: [], scannedDirectories: [] };
+        return { skills: pluginSkills, variants: pluginSkills, skipped: [], scannedRoots: [], scannedDirectories: [] };
       }
     }
     const store = new ExtraRootStore();
@@ -829,7 +844,7 @@ describe('WorkspaceSkillCatalogService', () => {
         declare readonly _serviceBrand: undefined;
         async discover(roots: readonly SkillRoot[]) {
           return {
-            skills: [],
+            skills: [], variants: [],
             skipped: [],
             scannedRoots: roots
               .filter((root) => root.source === 'project')
@@ -864,7 +879,7 @@ describe('WorkspaceSkillCatalogService', () => {
         async discover(roots: readonly SkillRoot[]) {
           const isProject = roots.some((root) => root.source === 'project');
           return {
-            skills: [],
+            skills: [], variants: [],
             skipped: isProject ? [skippedEntry] : [],
             scannedRoots: [],
             scannedDirectories: [],
@@ -1170,8 +1185,10 @@ describe('WorkspaceSkillCatalogService', () => {
       _serviceBrand: undefined,
       discover: async () => {
         scans += 1;
+        const skills = [stubSkill('demo', { description: scans === 1 ? 'stale' : 'fresh' })];
         return {
-          skills: [stubSkill('demo', { description: scans === 1 ? 'stale' : 'fresh' })],
+          skills,
+          variants: skills,
           skipped: [],
           scannedRoots: [scannedDirectory],
           scannedDirectories: [scannedDirectory],

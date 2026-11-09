@@ -1164,7 +1164,7 @@ describe('PluginManager', () => {
         discoverSkills: async (roots) => {
           discoveries += 1;
           if (discoveries === 2) {
-            return { skills: [], skipped: [], scannedRoots: [], scannedDirectories: [] };
+            return { skills: [], variants: [], skipped: [], scannedRoots: [], scannedDirectories: [] };
           }
           return discoverFileSkills(roots);
         },

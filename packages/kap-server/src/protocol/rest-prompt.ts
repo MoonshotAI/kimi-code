@@ -12,6 +12,7 @@ export type { PromptPermissionMode, PromptThinking } from '@moonshot-ai/agent-co
 
 export const promptSkillActivationSchema = z.object({
   name: z.string().min(1),
+  path: z.string().optional(),
   args: z.string().optional(),
 });
 export type PromptSkillActivation = z.infer<typeof promptSkillActivationSchema>;

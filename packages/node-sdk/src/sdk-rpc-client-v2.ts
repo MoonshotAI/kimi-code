@@ -2504,7 +2504,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const agent = await this.agentScope(input.sessionId);
     await agent.accessor
       .get(IAgentSkillService)
-      .activate({ name: input.name, args: input.args });
+      .activate({ name: input.name, path: input.path, args: input.args });
   }
 
   /**

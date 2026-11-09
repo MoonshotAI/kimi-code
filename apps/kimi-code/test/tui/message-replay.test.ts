@@ -1267,8 +1267,8 @@ describe('KimiTUI resume message replay', () => {
           origin: {
             kind: 'user',
             skillActivations: [
-              { activationId: 'act-1', skillName: 'review' },
-              { activationId: 'act-2', skillName: 'security' },
+              { activationId: 'act-1', skillName: 'review', skillPath: '/work/A/review/SKILL.md' },
+              { activationId: 'act-2', skillName: 'security', skillPath: '/work/B/security/SKILL.md' },
             ],
           } as PromptOrigin,
         },
@@ -1279,6 +1279,10 @@ describe('KimiTUI resume message replay', () => {
     expect(entries.map((entry) => entry.kind)).toEqual(['user']);
     expect(entries[0]!.content).toBe('please /skill:review and /skill:security');
     expect(entries[0]!.skillNames).toEqual(['review', 'security']);
+    expect(entries[0]!.inlineSkillActivations).toEqual([
+      { skillName: 'review', path: '/work/A/review/SKILL.md' },
+      { skillName: 'security', path: '/work/B/security/SKILL.md' },
+    ]);
     expect(driver.sessionEventHandler.seenSkillActivationIds.has('act-1')).toBe(true);
     expect(driver.sessionEventHandler.seenSkillActivationIds.has('act-2')).toBe(true);
     const transcript = stripAnsi(driver.state.transcriptContainer.render(120).join('\n'));
@@ -1395,6 +1399,7 @@ describe('KimiTUI resume message replay', () => {
           kind: 'skill_activation',
           activationId: 'act-review',
           skillName: 'review',
+          skillPath: '/work/B/review/SKILL.md',
           skillArgs: 'src/app.ts',
           trigger: 'user-slash',
         },
@@ -1408,6 +1413,9 @@ describe('KimiTUI resume message replay', () => {
     expect(entries.map((entry) => entry.kind)).toEqual(['user']);
     expect(entries[0]!.content).toBe('/skill:review src/app.ts');
     expect(entries[0]!.skillNames).toEqual(['review']);
+    expect(entries[0]!.inlineSkillActivations).toEqual([
+      { skillName: 'review', path: '/work/B/review/SKILL.md' },
+    ]);
     expect(entries[0]!.skillActivationId).toBe('act-review');
     expect(entries[0]!.skillName).toBe('review');
     expect(entries[0]!.skillArgs).toBe('src/app.ts');

@@ -262,7 +262,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
             }
             const catalog = resolved.handle.accessor.get(ISessionSkillCatalog);
             await catalog.ready;
-            const skill = catalog.catalog.getSkill(parsed.id);
+            const skill = catalog.catalog.getSkill(parsed.id, req.body.path);
             if (skill === undefined) {
               throw new Error2(ErrorCodes.SKILL_NOT_FOUND, `Skill "${parsed.id}" was not found`);
             }
@@ -315,6 +315,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
               : undefined;
           await mainAgent.accessor.get(IAgentSkillService).activate({
             name: parsed.id,
+            path: req.body.path,
             args: req.body.args,
             promptId: attempt.id,
             clientMetadata: req.body.metadata === undefined ? undefined : [structuredClone(req.body.metadata)],
@@ -386,19 +387,22 @@ async function listWorkspaceSkillsForRoots(
   ]);
 
   const catalog = new InMemorySkillCatalog();
+  const builtinSkills = visibleBuiltinSkills(builtinProductSkillsEnabled(config), flags);
   const ordered = [
     {
-      skills: visibleBuiltinSkills(builtinProductSkillsEnabled(config), flags),
+      skills: builtinSkills,
+      variants: builtinSkills,
       priority: SKILL_SOURCE_PRIORITY.builtin,
     },
-    { skills: plugin.skills, priority: SKILL_SOURCE_PRIORITY.plugin },
-    { skills: extra.skills, priority: SKILL_SOURCE_PRIORITY.extra },
-    { skills: user.skills, priority: SKILL_SOURCE_PRIORITY.user },
-    { skills: explicit.skills, priority: SKILL_SOURCE_PRIORITY.user },
-    { skills: project.skills, priority: SKILL_SOURCE_PRIORITY.workspace },
+    { skills: plugin.skills, variants: plugin.variants, priority: SKILL_SOURCE_PRIORITY.plugin },
+    { skills: extra.skills, variants: extra.variants, priority: SKILL_SOURCE_PRIORITY.extra },
+    { skills: user.skills, variants: user.variants, priority: SKILL_SOURCE_PRIORITY.user },
+    { skills: explicit.skills, variants: explicit.variants, priority: SKILL_SOURCE_PRIORITY.user },
+    { skills: project.skills, variants: project.variants, priority: SKILL_SOURCE_PRIORITY.workspace },
   ].toSorted((a, b) => a.priority - b.priority);
-  for (const { skills } of ordered) {
+  for (const { skills, variants } of ordered) {
     for (const skill of skills) catalog.register(skill, { replace: true });
+    catalog.registerVariants(variants, { replace: true });
   }
   return catalog.listSkills();
 }
@@ -411,6 +415,7 @@ function toProtocolSkill(skill: SkillElement): SkillDescriptor {
     description: skill.description,
     path: skill.path,
     source: skill.source,
+    workspace_dir: skill.workspaceDir,
   };
   const type = skill.metadata.type;
   const disableModelInvocation = skill.metadata.disableModelInvocation;

@@ -35,7 +35,7 @@ export function registerConnectionsRoutes(
           user_agent: conn.userAgent,
           subscriptions: [...conn.subscriptionSessionIds],
         }))
-        .sort((a, b) => a.connected_at.localeCompare(b.connected_at));
+        .toSorted((a, b) => a.connected_at.localeCompare(b.connected_at));
       reply.send(okEnvelope({ connections }, req.id));
     },
   );

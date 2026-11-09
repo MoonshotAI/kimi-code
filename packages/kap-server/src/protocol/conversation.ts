@@ -88,7 +88,7 @@ const itemFields = {
 
 export const userMessageOriginSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('user') }),
-  z.object({ kind: z.literal('skill'), name: z.string(), args: z.string().optional() }),
+  z.object({ kind: z.literal('skill'), name: z.string(), path: z.string().optional(), args: z.string().optional() }),
   z.object({
     kind: z.literal('plugin_command'),
     plugin_id: z.string(),
@@ -137,7 +137,7 @@ export const userMessageItemSchema = z.object({
   origin: userMessageOriginSchema,
   text: z.string(),
   attachments: z.array(attachmentSchema),
-  skills: z.array(z.object({ name: z.string(), args: z.string().optional() })),
+  skills: z.array(z.object({ name: z.string(), path: z.string().optional(), args: z.string().optional() })),
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 export type UserMessageItem = z.infer<typeof userMessageItemSchema>;
