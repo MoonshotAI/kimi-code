@@ -74,6 +74,7 @@ interface PredictionScope {
   readonly context: IAgentContextMemoryService;
   readonly states: IAgentStateService;
   readonly plan: IAgentPlanService;
+  readonly telemetry: ITelemetryService;
 }
 
 export class SessionPromptPredictionService extends Disposable implements ISessionPromptPredictionService {
@@ -88,7 +89,6 @@ export class SessionPromptPredictionService extends Disposable implements ISessi
     @ISessionUsageService private readonly usage: ISessionUsageService,
     @IFlagService private readonly flags: IFlagService,
     @ILogService private readonly log: ILogService,
-    @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {
     super();
     this._register(this.activity.onDidChange((event) => {
@@ -147,7 +147,7 @@ export class SessionPromptPredictionService extends Disposable implements ISessi
         return null;
       }
       active.requested = true;
-      this.telemetry.track2('prediction_requested', {
+      scope.telemetry.track2('prediction_requested', {
         prediction_id: active.predictionId,
         turn_id: active.expectedTurnId,
       });
@@ -229,7 +229,7 @@ export class SessionPromptPredictionService extends Disposable implements ISessi
           request_id: active.requestId,
         };
         this.log.info('prompt prediction finished', properties);
-        this.telemetry.track2('prediction_generated', properties);
+        scope.telemetry.track2('prediction_generated', properties);
       }
       active.deadline.clear();
       if (this.active === active) {
@@ -277,6 +277,7 @@ export class SessionPromptPredictionService extends Disposable implements ISessi
         context: handle.accessor.get(IAgentContextMemoryService),
         states: handle.accessor.get(IAgentStateService),
         plan: handle.accessor.get(IAgentPlanService),
+        telemetry: handle.accessor.get(ITelemetryService),
       };
     } catch {
       return undefined;

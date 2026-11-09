@@ -80,6 +80,7 @@ describe('SessionPromptPredictionService', () => {
           if (token === IAgentStateService) return { get: () => ({ lastEnded }) };
           if (token === IAgentPlanService) return { status: async () => null };
           if (token === IAgentScopeContext) return { agentContext: { agentId: MAIN_AGENT_ID } };
+          if (token === ITelemetryService) return telemetry;
           throw new Error('unexpected service');
         },
       },
@@ -108,7 +109,7 @@ describe('SessionPromptPredictionService', () => {
     const flags = { enabled: () => enabled } as unknown as IFlagService;
     const log = { info: vi.fn() } as unknown as ILogService;
     const telemetry = { track2: vi.fn() } as unknown as ITelemetryService;
-    const service = new SessionPromptPredictionService(lifecycle, activity, usage, flags, log, telemetry);
+    const service = new SessionPromptPredictionService(lifecycle, activity, usage, flags, log);
 
     await expect(service.predict({ predictionId: 'disabled', expectedTurnId: 0 })).resolves.toBeNull();
     enabled = true;
