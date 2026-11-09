@@ -18,6 +18,7 @@ import {
  */
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
+import { showSettingsSelector } from '#/tui/commands/config';
 import { handleGoalCommand } from '#/tui/commands/goal';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
 import { GutterContainer } from '#/tui/components/chrome/gutter-container';
@@ -34,14 +35,10 @@ import { createTUIState, KimiTUI, type KimiTUIOptions, type KimiTUIStartupInput 
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
 import { ChoicePickerComponent } from '#/tui/components/dialogs/choice-picker';
 import { GoalStartPermissionPromptComponent } from '#/tui/components/dialogs/goal-start-permission-prompt';
-import {
-  SettingsSelectorComponent,
-  ToolCallDensitySelectorComponent,
-} from '#/tui/components/dialogs/settings-selector';
+import { SettingsSelectorComponent } from '#/tui/components/dialogs/settings-selector';
 import { NotifyController } from '#/tui/controllers/notify';
 import {
   editorSlotComponent,
-  editorSlotRows,
   isBlockingPromptPending,
   mountFooter,
   setEditorSlot,
@@ -126,6 +123,22 @@ async function mountFullscreen(height = HEIGHT): Promise<{
 
 function screenRows(vt: VirtualTerminal): string[] {
   return vt.getViewport().map((row) => stripAnsi(row).trimEnd());
+}
+
+function editorReplacementHost(state: ReturnType<typeof createTUIState>): SlashCommandHost {
+  const host = {
+    state,
+    surveyController: { notifyDisplaced: () => {} },
+    disposeEditorReplacement() {},
+    modelMigration: { retry: () => {} },
+    mountEditorReplacement(panel: Component & Focusable) {
+      KimiTUI.prototype.mountEditorReplacement.call(host, panel);
+    },
+    restoreEditor() {
+      KimiTUI.prototype.restoreEditor.call(host);
+    },
+  } as unknown as SlashCommandHost;
+  return host;
 }
 
 function updateQueueDisplay(state: ReturnType<typeof createTUIState>): void {
@@ -1433,34 +1446,79 @@ describe('fullscreen layout', () => {
     state.ui.stop();
   });
 
-  it.each([
-    { rows: 40, preview: true },
-    { rows: 24, preview: false },
-  ])('fits the tool call preview into the dock only when $rows rows leave room for it', async ({ rows, preview }) => {
-    const { state, vt } = await mountFullscreen(rows);
-    const picker = new ToolCallDensitySelectorComponent({
-      current: { toolCallDensity: 'compact', thinking: 'grouped' },
-      getAvailableRows: () => editorSlotRows(state),
-      onSelect: vi.fn(),
-      onCancel: vi.fn(),
+  it('scrolls a transcript setting preview that the terminal is too short for', async () => {
+    const { state, vt } = await mountFullscreen(24);
+    onTestFinished(() => {
+      state.ui.stop();
     });
-    setEditorSlot(state, picker);
-    state.ui.setFocus(picker);
-    const borders = (): number => screenRows(vt).filter((row) => /^ ─{20,}$/.test(row)).length;
+    state.transcriptContainer.addChild(
+      new Text(Array.from({ length: 40 }, (_, i) => `transcript ${String(i + 1)}`).join('\n'), 0, 0),
+    );
+    showSettingsSelector(editorReplacementHost(state));
+    for (let i = 0; i < 4; i++) vt.sendInput('\u001B[B');
+    vt.sendInput('\r');
+    await vt.waitForRender();
+    const panel = (): string[] => screenRows(vt).map((row) => row.replace(/[┃│]$/, '').trim());
+    const borders = (): number[] => panel().flatMap((row, index) => (/^─{20,}$/.test(row) ? [index] : []));
+    const summary = 'Thought for 3s, read 1 file, ran 1 command, edited 1 file +1 -1';
 
-    for (const highlighted of ['Compact', 'Balanced', 'Detailed']) {
-      state.ui.requestRender();
-      await vt.waitForRender();
-      const screen = screenRows(vt).join('\n');
-      expect(screen).toContain(`❯ ${highlighted}`);
-      expect(screen.includes(' Preview')).toBe(preview);
-      expect(screen).toContain('Detailed');
-      expect(borders()).toBe(2);
-      picker.handleInput('\u001B[B');
-    }
+    let rows = panel();
+    expect(rows).toContain('Tool call density');
+    expect(rows).toContain('↑↓ navigate · Enter select · Esc cancel · shift+↑/↓ scroll');
+    const frame = borders();
+    expect(frame).toHaveLength(2);
+    const label = rows.indexOf('Preview');
+    expect(label).toBeGreaterThan(rows.indexOf('Detailed'));
+    expect(rows.slice(label + 1, label + 3)).toEqual(['', summary]);
 
-    picker.dispose();
-    state.ui.stop();
+    vt.sendInput('\u001B[1;2B');
+    await vt.waitForRender();
+    rows = panel();
+    expect(rows).not.toContain('Preview');
+    expect(rows.slice(label, label + 2)).toEqual(['', summary]);
+
+    vt.sendInput(`\u001B[<65;5;${String(label + 2)}M`);
+    await vt.waitForRender();
+    expect(panel().indexOf(summary)).toBeLessThan(label + 1);
+
+    const transcriptTop = (state.ui as TuiAltScreen).viewportTop;
+    vt.sendInput(`\u001B[<64;5;${String(frame[1]! + 1)}M`);
+    await vt.waitForRender();
+    expect((state.ui as TuiAltScreen).viewportTop).toBe(transcriptTop);
+
+    vt.sendInput('\u001B[B');
+    await vt.waitForRender();
+    rows = panel();
+    expect(rows).toContain('❯ Balanced');
+    expect(rows[label]).toBe('Preview');
+    expect(borders()).toEqual(frame);
+  });
+
+  it('shows a whole transcript setting preview without scrolling when the terminal is tall', async () => {
+    const { state, vt } = await mountFullscreen(40);
+    onTestFinished(() => {
+      state.ui.stop();
+    });
+    showSettingsSelector(editorReplacementHost(state));
+    for (let i = 0; i < 5; i++) vt.sendInput('\u001B[B');
+    vt.sendInput('\r');
+    await vt.waitForRender();
+    vt.sendInput('\u001B[B');
+    await vt.waitForRender();
+
+    const rows = screenRows(vt);
+    expect(rows.some((row) => /[┃│]$/.test(row))).toBe(false);
+    const panel = rows.map((row) => row.trim());
+    expect(panel).toContain('Thinking folding');
+    expect(panel).toContain('↑↓ navigate · Enter select · Esc cancel');
+    expect(panel).toContain("❯ Don't fold thinking");
+    const thinking = panel.indexOf('● Check how the app starts before changing it.');
+    expect(thinking).toBeGreaterThan(panel.indexOf('Preview'));
+    expect(panel.slice(thinking + 1, thinking + 3)).toEqual([
+      'start() in src/app.ts takes no arguments, so the port is fixed.',
+      '… (2 more lines, ctrl+o to expand)',
+    ]);
+    expect(panel.filter((row) => /^─{20,}$/.test(row))).toHaveLength(2);
   });
 
   it('does not let a terminal-refocus click change or submit a ChoicePicker', async () => {

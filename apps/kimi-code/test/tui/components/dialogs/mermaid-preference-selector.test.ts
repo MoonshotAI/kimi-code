@@ -58,16 +58,14 @@ describe('transcript display selectors', () => {
 
     const regular = settingsText(false);
     expect(regular).toContain('Usage');
-    expect(regular).not.toContain('Tool calls');
-    expect(regular).not.toContain('Choose whether thinking folds into tool groups.');
+    expect(regular).not.toContain('Tool call density');
+    expect(regular).not.toContain('Thinking folding');
 
-    const fullscreen = settingsText(true);
-    expect(fullscreen).toContain('Tool calls');
-    expect(fullscreen).toContain('Choose how much of each tool call the transcript shows.');
-    expect(fullscreen).toContain('Thinking');
-    expect(fullscreen).toContain('Choose whether thinking folds into tool groups.');
-    expect(fullscreen).not.toContain('Tool call folding');
-    expect(fullscreen).not.toContain('Thinking folding');
+    const fullscreen = settingsText(true).split('\n');
+    expect(fullscreen).toContain('    Tool call density');
+    expect(fullscreen).toContain('    Choose how much of each tool call the transcript shows.');
+    expect(fullscreen).toContain('    Thinking folding');
+    expect(fullscreen).toContain('    Choose whether to fold finished thinking.');
   });
 
   it('offers compact, balanced, and detailed tool calls with the current marker', () => {
@@ -78,6 +76,7 @@ describe('transcript display selectors', () => {
       onCancel: () => {},
     });
     const lines = picker.render(100).map(strip);
+    expect(lines).toContain(' Tool call density');
     expect(lines).toContain('  ❯ Balanced ← current');
     expect(lines).toContain('    Compact');
     expect(lines).toContain('    Fold tool calls into one summary. Subagents and questions stay as cards.');
@@ -106,7 +105,7 @@ describe('transcript display selectors', () => {
     expect(onSelect).toHaveBeenCalledWith('compact');
   });
 
-  it('offers grouped and ungrouped thinking with the current marker', () => {
+  it('offers folding and not folding thinking with the current marker', () => {
     const onSelect = vi.fn();
     const picker = new ThinkingDisplaySelectorComponent({
       current: { toolCallDensity: 'compact', thinking: 'grouped' },
@@ -114,10 +113,11 @@ describe('transcript display selectors', () => {
       onCancel: () => {},
     });
     const lines = picker.render(100).map(strip);
-    expect(lines).toContain('  ❯ Grouped ← current');
-    expect(lines).toContain('    Show thinking inside the group, with the latest line under the title.');
-    expect(lines).toContain('    Ungrouped');
-    expect(lines).toContain('    Show thinking as its own block.');
+    expect(lines).toContain(' Thinking folding');
+    expect(lines).toContain('  ❯ Fold thinking ← current');
+    expect(lines).toContain('    Fold finished thinking into summary groups.');
+    expect(lines).toContain("    Don't fold thinking");
+    expect(lines).toContain('    Show each thinking block as a two-line preview.');
 
     picker.handleInput('\u001B[B');
     picker.handleInput('\r');
@@ -131,7 +131,8 @@ describe('transcript display previews', () => {
   function previewOf(lines: readonly string[]): string[] {
     const start = lines.indexOf(' Preview');
     expect(start).toBeGreaterThan(0);
-    return lines.slice(start + 1, -1).map((line) => line.trimEnd());
+    expect(lines[start + 1]).toBe('');
+    return lines.slice(start + 2, -1).map((line) => line.trimEnd());
   }
 
   it('previews each tool call density with the real transcript at one steady height', () => {
@@ -169,7 +170,7 @@ describe('transcript display previews', () => {
     picker.dispose();
   });
 
-  it('previews grouped and ungrouped thinking under the current tool call density', () => {
+  it('previews folded thinking in the group title and unfolded thinking as two lines and a hint', () => {
     const picker = new ThinkingDisplaySelectorComponent({
       current: { toolCallDensity: 'balanced', thinking: 'grouped' },
       onSelect: () => {},
@@ -186,6 +187,8 @@ describe('transcript display previews', () => {
     ]);
     expect(previewOf(ungrouped).filter(Boolean)).toEqual([
       ' ● Check how the app starts before changing it.',
+      '   start() in src/app.ts takes no arguments, so the port is fixed.',
+      '   … (2 more lines, ctrl+o to expand)',
       '   Read src/app.ts',
       '   Edit src/app.ts · +1 -1',
       '   Bash npm test',

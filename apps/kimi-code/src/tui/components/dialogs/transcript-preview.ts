@@ -7,9 +7,15 @@ import type { TranscriptConfig } from '#/tui/config';
 import { hasDispose } from '#/tui/utils/component-capabilities';
 
 const SAMPLE_FILE = 'src/app.ts';
+const SAMPLE_THINKING = [
+  'Check how the app starts before changing it.',
+  `start() in ${SAMPLE_FILE} takes no arguments, so the port is fixed.`,
+  'Add a port parameter that defaults to 3000.',
+  'Then run the tests to catch any caller that breaks.',
+].join('\n');
 
 function sampleTranscript(): Component[] {
-  const thinking = new ThinkingComponent('Check how the app starts before changing it.');
+  const thinking = new ThinkingComponent(SAMPLE_THINKING);
   thinking.finalize({ known: true, ms: 3_000 });
   const call = (id: string, name: string, args: Record<string, unknown>, output: string): ToolCallComponent =>
     new ToolCallComponent({ id, name, args }, { tool_call_id: id, output, is_error: false });

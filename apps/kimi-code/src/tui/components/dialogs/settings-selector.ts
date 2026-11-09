@@ -1,5 +1,6 @@
 import type { ThinkingDisplay, ToolCallDensity, TranscriptConfig } from '../../config';
-import { ChoicePickerComponent, type ChoiceOption, type ChoicePickerOptions } from './choice-picker';
+import type { DockLayout } from '../chrome/dock-section';
+import { ChoicePickerComponent, PreviewChoicePickerComponent, type ChoiceOption } from './choice-picker';
 import { TranscriptPreview } from './transcript-preview';
 
 export type SettingsSelection =
@@ -39,13 +40,13 @@ const SETTINGS_OPTIONS: readonly ChoiceOption[] = [
   },
   {
     value: 'toolCallDensity',
-    label: 'Tool calls',
+    label: 'Tool call density',
     description: 'Choose how much of each tool call the transcript shows.',
   },
   {
     value: 'thinking',
-    label: 'Thinking',
-    description: 'Choose whether thinking folds into tool groups.',
+    label: 'Thinking folding',
+    description: 'Choose whether to fold finished thinking.',
   },
   {
     value: 'mermaid',
@@ -142,78 +143,57 @@ const TOOL_CALL_DENSITY_OPTIONS = [
 const THINKING_OPTIONS = [
   {
     value: 'grouped',
-    label: 'Grouped',
-    description: 'Show thinking inside the group, with the latest line under the title.',
+    label: 'Fold thinking',
+    description: 'Fold finished thinking into summary groups.',
   },
   {
     value: 'ungrouped',
-    label: 'Ungrouped',
-    description: 'Show thinking as its own block.',
+    label: "Don't fold thinking",
+    description: 'Show each thinking block as a two-line preview.',
   },
 ] as const satisfies readonly (ChoiceOption & { readonly value: ThinkingDisplay })[];
 
 export interface TranscriptSettingSelectorOptions<V> {
   readonly current: TranscriptConfig;
-  readonly getAvailableRows?: () => number;
+  readonly layout?: DockLayout;
   readonly onSelect: (value: V) => void;
   readonly onCancel: () => void;
 }
 
-class TranscriptSettingPickerComponent extends ChoicePickerComponent {
-  constructor(
-    opts: Omit<ChoicePickerOptions, 'preview'>,
-    private readonly preview: TranscriptPreview,
-  ) {
-    super({ ...opts, preview: (value, width) => preview.render(value, width) });
-  }
-
-  override invalidate(): void {
-    this.preview.invalidate();
-  }
-
-  dispose(): void {
-    this.preview.dispose();
-  }
-}
-
-export class ToolCallDensitySelectorComponent extends TranscriptSettingPickerComponent {
+export class ToolCallDensitySelectorComponent extends PreviewChoicePickerComponent {
   constructor(opts: TranscriptSettingSelectorOptions<PickableToolCallDensity>) {
-    super(
-      {
-        title: 'Tool calls',
-        options: TOOL_CALL_DENSITY_OPTIONS,
-        currentValue: opts.current.toolCallDensity,
-        getAvailableRows: opts.getAvailableRows,
-        onSelect: (value) => {
-          const option = TOOL_CALL_DENSITY_OPTIONS.find((candidate) => candidate.value === value);
-          if (option !== undefined) opts.onSelect(option.value);
-        },
-        onCancel: opts.onCancel,
+    super({
+      title: 'Tool call density',
+      options: TOOL_CALL_DENSITY_OPTIONS,
+      currentValue: opts.current.toolCallDensity,
+      onSelect: (value) => {
+        const option = TOOL_CALL_DENSITY_OPTIONS.find((candidate) => candidate.value === value);
+        if (option !== undefined) opts.onSelect(option.value);
       },
-      new TranscriptPreview(new Map(TOOL_CALL_DENSITY_OPTIONS.map(
+      onCancel: opts.onCancel,
+      preview: new TranscriptPreview(new Map(TOOL_CALL_DENSITY_OPTIONS.map(
         (option) => [option.value, { ...opts.current, toolCallDensity: option.value }],
       ))),
-    );
+      layout: opts.layout,
+    });
   }
 }
 
-export class ThinkingDisplaySelectorComponent extends TranscriptSettingPickerComponent {
+export class ThinkingDisplaySelectorComponent extends PreviewChoicePickerComponent {
   constructor(opts: TranscriptSettingSelectorOptions<ThinkingDisplay>) {
-    super(
-      {
-        title: 'Thinking',
-        options: THINKING_OPTIONS,
-        currentValue: opts.current.thinking,
-        getAvailableRows: opts.getAvailableRows,
-        onSelect: (value) => {
-          const option = THINKING_OPTIONS.find((candidate) => candidate.value === value);
-          if (option !== undefined) opts.onSelect(option.value);
-        },
-        onCancel: opts.onCancel,
+    super({
+      title: 'Thinking folding',
+      options: THINKING_OPTIONS,
+      currentValue: opts.current.thinking,
+      onSelect: (value) => {
+        const option = THINKING_OPTIONS.find((candidate) => candidate.value === value);
+        if (option !== undefined) opts.onSelect(option.value);
       },
-      new TranscriptPreview(new Map(THINKING_OPTIONS.map(
+      onCancel: opts.onCancel,
+      preview: new TranscriptPreview(new Map(THINKING_OPTIONS.map(
         (option) => [option.value, { ...opts.current, thinking: option.value }],
       ))),
-    );
+      layout: opts.layout,
+    });
   }
 }

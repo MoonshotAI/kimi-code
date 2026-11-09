@@ -18,6 +18,7 @@ import {
   type TuiMouseEvent,
   type TuiMouseEventResult,
 } from '@moonshot-ai/pi-tui';
+import { DockSection, type DockLayout, type DockPart } from '#/tui/components/chrome/dock-section';
 import { CURRENT_MARK, SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme, type ColorToken } from '#/tui/theme';
 import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
@@ -57,8 +58,6 @@ export interface ChoicePickerOptions {
   readonly spaceSelect?: boolean;
   /** Items per page. Lists longer than this paginate. */
   readonly pageSize?: number;
-  readonly preview?: (value: string, width: number) => readonly string[];
-  readonly getAvailableRows?: () => number;
   readonly onSelect: (value: string) => void;
   /** When provided, Alt+S invokes this with the selected value instead of
    * onSelect — used to apply the choice to the current session only. */
@@ -196,7 +195,15 @@ export class ChoicePickerComponent implements Component, Focusable {
     return changed;
   }
 
+  selectedValue(): string | undefined {
+    return this.list.selected()?.value;
+  }
+
   render(width: number): string[] {
+    return [...this.renderHead(width), ...this.renderFoot(width)];
+  }
+
+  renderHead(width: number, hintSuffix = ''): string[] {
     const searchable = this.opts.searchable === true;
     const view = this.list.view();
     const options = view.items;
@@ -207,7 +214,7 @@ export class ChoicePickerComponent implements Component, Focusable {
     const navParts = ['↑↓ navigate'];
     if (view.page.pageCount > 1) navParts.push('←→ page');
     navParts.push('Enter select', 'Esc cancel');
-    const hint = this.opts.hint ?? navParts.join(' · ');
+    const hint = (this.opts.hint ?? navParts.join(' · ')) + hintSuffix;
 
     const titleSuffix =
       searchable && view.query.length === 0 ? currentTheme.fg('textMuted', '  (type to search)') : '';
@@ -280,34 +287,113 @@ export class ChoicePickerComponent implements Component, Focusable {
     this.choiceRegions = choiceRegions;
 
     lines.push('');
-    const footer: string[] = [];
-    if (view.page.pageCount > 1) {
-      footer.push(
-        currentTheme.fg('textMuted',
-          ` Page ${String(view.page.page + 1)}/${String(view.page.pageCount)}`,
-        ),
-      );
+    return this.finishLines(lines, width);
+  }
+
+  renderFoot(width: number): string[] {
+    const { page } = this.list.view();
+    const lines: string[] = [];
+    if (page.pageCount > 1) {
+      lines.push(currentTheme.fg('textMuted', ` Page ${String(page.page + 1)}/${String(page.pageCount)}`));
     }
-    footer.push(currentTheme.fg('primary', '─'.repeat(width)));
-    lines.push(...this.renderPreview(width, lines.length + footer.length), ...footer);
+    lines.push(currentTheme.fg('primary', '─'.repeat(width)));
+    return this.finishLines(lines, width);
+  }
+
+  private finishLines(lines: readonly string[], width: number): string[] {
     const rendered = lines.map((line) => truncateToWidth(line, width));
     return this.focused ? rendered : rendered.map((line) => currentTheme.fade(line));
   }
+}
 
-  private renderPreview(width: number, otherRows: number): readonly string[] {
-    const { preview, getAvailableRows } = this.opts;
-    if (preview === undefined) return [];
-    const height = Math.max(0, ...this.opts.options.map((option) => preview(option.value, width).length));
-    const selected = this.list.selected();
-    const shown = selected === undefined ? [] : preview(selected.value, width);
-    const block = [
+export interface ChoicePreview {
+  render(value: string, width: number): readonly string[];
+  invalidate(): void;
+  dispose(): void;
+}
+
+export interface PreviewChoicePickerOptions extends ChoicePickerOptions {
+  readonly preview: ChoicePreview;
+  readonly layout?: DockLayout;
+}
+
+export class PreviewChoicePickerComponent extends DockSection implements Focusable {
+  private readonly picker: ChoicePickerComponent;
+
+  constructor(private readonly opts: PreviewChoicePickerOptions) {
+    super(opts.layout);
+    this.picker = new ChoicePickerComponent(opts);
+  }
+
+  get focused(): boolean {
+    return this.picker.focused;
+  }
+
+  set focused(focused: boolean) {
+    this.picker.focused = focused;
+  }
+
+  handleInput(data: string): void {
+    if (this.layout !== undefined && (matchesKey(data, 'shift+up') || matchesKey(data, 'shift+down'))) {
+      this.scrollBody(matchesKey(data, 'shift+up') ? -1 : 1);
+      return;
+    }
+    this.showingNewChoiceFromTop(() => {
+      this.picker.handleInput(data);
+    });
+  }
+
+  override invalidate(): void {
+    super.invalidate();
+    this.opts.preview.invalidate();
+  }
+
+  dispose(): void {
+    this.opts.preview.dispose();
+  }
+
+  protected renderPart(part: DockPart, width: number): string[] {
+    switch (part) {
+      case 'head':
+        return this.picker.renderHead(width, this.bodyOverflows(width) ? ' · shift+↑/↓ scroll' : '');
+      case 'body':
+        return this.renderPreview(width);
+      case 'foot':
+        return this.picker.renderFoot(width);
+    }
+  }
+
+  protected override handlePartMouse(part: DockPart, event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    if (event.type === 'wheel' && part === 'body') return undefined;
+    if (event.type === 'wheel' || part === 'head') {
+      return this.showingNewChoiceFromTop(() => this.picker.handleMouse(event));
+    }
+    if (this.focused) return undefined;
+    if (event.type === 'press') return { handled: true };
+    if (event.type === 'click') return { handled: true, focus: true };
+    return undefined;
+  }
+
+  private showingNewChoiceFromTop<T>(action: () => T): T {
+    const shown = this.picker.selectedValue();
+    const result = action();
+    if (this.picker.selectedValue() !== shown) this.scrollBodyToTop();
+    return result;
+  }
+
+  private renderPreview(width: number): string[] {
+    const { preview, options } = this.opts;
+    const tallestRows = Math.max(0, ...options.map((option) => preview.render(option.value, width).length));
+    const value = this.picker.selectedValue();
+    const shown = value === undefined ? [] : preview.render(value, width);
+    const lines = [
       currentTheme.fg('textMuted', ' Preview'),
-      ...shown,
-      ...Array.from({ length: height - shown.length }, () => ''),
       '',
-    ];
-    if (getAvailableRows !== undefined && otherRows + block.length > getAvailableRows()) return [];
-    return block;
+      ...shown,
+      ...Array.from({ length: tallestRows - shown.length }, () => ''),
+      '',
+    ].map((line) => truncateToWidth(line, width));
+    return this.focused ? lines : lines.map((line) => currentTheme.fade(line));
   }
 }
 

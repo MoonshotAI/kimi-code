@@ -59,8 +59,8 @@ import {
 } from '#/utils/effort-switch-config';
 import { DEFAULT_OAUTH_PROVIDER_NAME } from '#/constant/app';
 import { MAIN_AGENT_ID, NO_ACTIVE_SESSION_MESSAGE, TUI_MODE_RESTART_NOTICE } from '../constant/kimi-tui';
+import { DOCK_PREVIEW_ROWS } from '../constant/rendering';
 import type { QueuedModelSwitch } from '../types';
-import { editorSlotRows } from '../tui-state';
 import { formatErrorMessage } from '../utils/event-payload';
 import { setMarkdownMermaidMode, type MermaidRenderMode } from '../utils/markdown-options';
 import {
@@ -1110,7 +1110,7 @@ function showToolCallDensityPicker(host: SlashCommandHost): void {
   host.mountEditorReplacement(
     new ToolCallDensitySelectorComponent({
       current: host.state.appState.transcript,
-      getAvailableRows: () => editorSlotRows(host.state),
+      layout: host.state.dockContainer === undefined ? undefined : { maxBodyRows: DOCK_PREVIEW_ROWS },
       onSelect: (toolCallDensity) => {
         host.restoreEditor();
         void applyTranscriptConfigChoice(host, {
@@ -1129,7 +1129,7 @@ function showThinkingDisplayPicker(host: SlashCommandHost): void {
   host.mountEditorReplacement(
     new ThinkingDisplaySelectorComponent({
       current: host.state.appState.transcript,
-      getAvailableRows: () => editorSlotRows(host.state),
+      layout: host.state.dockContainer === undefined ? undefined : { maxBodyRows: DOCK_PREVIEW_ROWS },
       onSelect: (thinking) => {
         host.restoreEditor();
         void applyTranscriptConfigChoice(host, {
