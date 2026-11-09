@@ -27,7 +27,7 @@ import type {
   VideoAttachment,
 } from '../utils/image-attachment-store';
 import { extractMediaAttachments, imageExtensionForMime } from '../utils/image-placeholder';
-import { resolveUserInput, type ExpandedOffsetMapper } from '../commands/resolve';
+import { resolveUserInput } from '../commands/resolve';
 import type { PendingExit, QueuedMessage } from '../types';
 import type { TUIState } from '../tui-state';
 import type { BtwPanelController } from './btw-panel';
@@ -45,7 +45,7 @@ export interface EditorKeyboardHost {
    */
   harness?: KimiHarness | undefined;
 
-  handleUserInput(text: string, leadingWhitespace?: number, toBufferOffset?: ExpandedOffsetMapper): void;
+  handleUserInput(text: string, leadingWhitespace?: number): void;
   readonly btwPanelController: BtwPanelController;
   readonly surveyController: SurveyController;
   readonly modelMigration?: ModelMigrationController;
@@ -102,10 +102,9 @@ export class EditorKeyboardController {
     const { host } = this;
     const editor = host.state.editor;
 
-    editor.onSubmit = (text: string, leadingWhitespace = 0, toBufferOffset?: ExpandedOffsetMapper) => {
+    editor.onSubmit = (text: string, leadingWhitespace = 0) => {
       if (host.surveyController.handleSubmit(text)) return;
-      if (toBufferOffset !== undefined) host.handleUserInput(text, leadingWhitespace, toBufferOffset);
-      else if (leadingWhitespace === 0) host.handleUserInput(text);
+      if (leadingWhitespace === 0) host.handleUserInput(text);
       else host.handleUserInput(text, leadingWhitespace);
     };
 
@@ -329,9 +328,9 @@ export class EditorKeyboardController {
         host.state.appState.isCompacting ||
         host.isSteeringQueuedMessages()
       ) return;
-      const expanded = editor.getExpandedTextWithOffsets();
-      const text = expanded.text.trim();
-      const leadingWhitespace = expanded.text.length - expanded.text.trimStart().length;
+      const expandedText = editor.getExpandedText?.() ?? editor.getText();
+      const text = expandedText.trim();
+      const leadingWhitespace = expandedText.length - expandedText.trimStart().length;
       const editorIsBash = editor.inputMode === 'bash';
       let extraction: ReturnType<typeof extractMediaAttachments> | undefined;
       if (!editorIsBash && text.length > 0) {
@@ -366,13 +365,7 @@ export class EditorKeyboardController {
           isCompacting: host.state.appState.isCompacting,
           skillVariantPathForCommand: host.skillVariantPathForCommand === undefined
             ? undefined
-            : (commandName, tokenStart) => {
-                const expandedStart = tokenStart + leadingWhitespace;
-                return host.skillVariantPathForCommand!(
-                  commandName,
-                  expanded.toBufferOffset?.(expandedStart) ?? expandedStart,
-                );
-              },
+            : (commandName, tokenStart) => host.skillVariantPathForCommand!(commandName, tokenStart + leadingWhitespace),
         });
         host.state.queuedMessages.push({
           text,

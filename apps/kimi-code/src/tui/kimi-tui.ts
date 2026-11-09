@@ -68,7 +68,7 @@ import {
   type SkillListSession,
 } from './commands';
 import * as slashCommands from './commands/dispatch';
-import { resolveUserInput, skillVariantPathsForInput, type ExpandedOffsetMapper } from './commands/resolve';
+import { resolveUserInput, skillVariantPathsForInput } from './commands/resolve';
 import { applyTranscriptPresentation, runQueuedModelSwitch } from './commands/config';
 import { promptSshPassword } from './commands/prompts';
 import { CacheHintController } from './controllers/cache-hint-controller';
@@ -1536,11 +1536,7 @@ export class KimiTUI {
     this.updateEditorBorderHighlight();
   }
 
-  handleUserInput(
-    text: string,
-    leadingWhitespace = text.length - text.trimStart().length,
-    toBufferOffset?: ExpandedOffsetMapper,
-  ): void {
+  handleUserInput(text: string, leadingWhitespace = text.length - text.trimStart().length): void {
     const wasBashMode = this.state.appState.inputMode === 'bash';
     if (wasBashMode) {
       // A submit always exits bash mode (the `!` is consumed by this command).
@@ -1556,8 +1552,7 @@ export class KimiTUI {
     // apart from prompts and restore bash mode (see CustomEditor's mode-aware
     // history navigation). The `!` is stripped again when the entry is recalled.
     const historyText = wasBashMode ? `!${text}` : text;
-    if (toBufferOffset !== undefined) void this.persistInputHistory(historyText, leadingWhitespace, toBufferOffset);
-    else if (leadingWhitespace === 0) void this.persistInputHistory(historyText);
+    if (leadingWhitespace === 0) void this.persistInputHistory(historyText);
     else void this.persistInputHistory(historyText, leadingWhitespace);
     if (wasBashMode) {
       // Only one foreground action at a time: queue the shell command while
@@ -1571,8 +1566,7 @@ export class KimiTUI {
       void this.runShellCommandFromInput(text);
       return;
     }
-    if (toBufferOffset !== undefined) slashCommands.dispatchInput(this, text, leadingWhitespace, toBufferOffset);
-    else if (leadingWhitespace === 0) slashCommands.dispatchInput(this, text);
+    if (leadingWhitespace === 0) slashCommands.dispatchInput(this, text);
     else slashCommands.dispatchInput(this, text, leadingWhitespace);
   }
 
@@ -2057,11 +2051,7 @@ export class KimiTUI {
     }
   }
 
-  private async persistInputHistory(
-    text: string,
-    leadingWhitespace = text.length - text.trimStart().length,
-    toBufferOffset?: ExpandedOffsetMapper,
-  ): Promise<void> {
+  private async persistInputHistory(text: string, leadingWhitespace = text.length - text.trimStart().length): Promise<void> {
     const trimmed = text.trim();
     if (trimmed.length === 0) return;
     const activations = text.startsWith('!') ? [] : resolveUserInput({
@@ -2070,10 +2060,8 @@ export class KimiTUI {
       pluginCommandMap: this.pluginCommandMap,
       isStreaming: this.state.appState.streamingPhase !== 'idle',
       isCompacting: this.state.appState.isCompacting,
-      skillVariantPathForCommand: (commandName, start) => {
-        const expandedStart = start + leadingWhitespace;
-        return this.skillVariantPathForCommand(commandName, toBufferOffset?.(expandedStart) ?? expandedStart);
-      },
+      skillVariantPathForCommand: (commandName, start) =>
+        this.skillVariantPathForCommand(commandName, start + leadingWhitespace),
     }).activations;
     const entry: InputHistoryEntry = {
       content: trimmed,

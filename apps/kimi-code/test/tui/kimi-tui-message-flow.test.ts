@@ -889,57 +889,6 @@ describe('KimiTUI message flow', () => {
     });
   });
 
-  it('preserves the selected variant through paste expansion and persisted history', async () => {
-    const session = makeSession({ id: 'ses-lazy' });
-    const path = '/work/B/review/SKILL.md';
-    const { driver } = await makeDriver(session, {
-      listWorkspaceSkills: vi.fn(async () => [
-        { name: 'review', description: 'Review skill', path: '/work/A/review/SKILL.md', source: 'project', workspaceDir: '/work/A' },
-        { name: 'review', description: 'Review skill', path, source: 'project', workspaceDir: '/work/B' },
-      ]),
-      listPluginCommands: vi.fn(async () => []),
-    });
-    await (driver as unknown as { refreshSkillCommands(): Promise<void> }).refreshSkillCommands();
-    driver.persistInputHistory = Object.getPrototypeOf(driver).persistInputHistory;
-    const history = await import('#/utils/history/input-history');
-    const { getInputHistoryFile } = await import('#/utils/paths');
-    const { mkdtemp, rm } = await import('node:fs/promises');
-    const { tmpdir } = await import('node:os');
-    const { join } = await import('pathe');
-    const home = await mkdtemp(join(tmpdir(), 'kimi-skill-paste-history-'));
-    const previousHome = process.env['KIMI_CODE_HOME'];
-    process.env['KIMI_CODE_HOME'] = home;
-    const pastedText = `inside pasted text ${'x'.repeat(1200)}`;
-    try {
-      const editor = driver.state.editor;
-      editor.handleInput(`\u001B[200~${pastedText}\u001B[201~`);
-      editor.insertTextAtCursor(' /skill:review');
-      const collapsedStart = editor.getText().lastIndexOf('/skill:review');
-      const variants = driver as unknown as { skillVariantPaths: Map<number, { commandName: string; path: string }> };
-      variants.skillVariantPaths.set(collapsedStart, { commandName: 'skill:review', path });
-
-      editor.handleInput('\r');
-
-      const expandedStart = pastedText.length + 1;
-      await vi.waitFor(() => {
-        expect(session.promptWithSkills).toHaveBeenCalledWith(`${pastedText} /skill:review`, [
-          { name: 'review', path },
-        ]);
-      });
-      const file = getInputHistoryFile(driver.state.appState.workDir);
-      await vi.waitFor(async () => {
-        const entries = await history.loadInputHistory(file);
-        expect(entries[0]?.inlineSkillActivations).toEqual([
-          expect.objectContaining({ skillName: 'review', path, start: expandedStart }),
-        ]);
-      });
-    } finally {
-      if (previousHome === undefined) delete process.env['KIMI_CODE_HOME'];
-      else process.env['KIMI_CODE_HOME'] = previousHome;
-      await rm(home, { recursive: true, force: true });
-    }
-  });
-
   it('retains valid variant bindings across skill list refreshes', async () => {
     const session = makeSession({ id: 'ses-lazy' });
     const path = '/work/B/review/SKILL.md';

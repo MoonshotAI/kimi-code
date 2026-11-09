@@ -234,9 +234,3 @@ Each card: **decision** and **why not in the app**. Status is `keep` or `absorbe
 **Decision:** `onSubmit` can receive the number of leading whitespace characters removed by trimming. The submitted text and single-argument callbacks are unchanged.
 
 **Why not in the app:** Trimming happens inside the editor before the callback, so the host cannot recover token offsets from the original input.
-
-### editor-paste-expansion-offset-map — keep
-
-**Decision:** Expanded editor text can carry a mapper from expanded offsets back to collapsed buffer offsets. Submit passes the same mapper when paste markers actually expand; callbacks without expansion keep their existing argument shape.
-
-**Why not in the app:** The paste registry and marker replacement are private editor state, and submit clears both before the host resolves tokens in the expanded text.
