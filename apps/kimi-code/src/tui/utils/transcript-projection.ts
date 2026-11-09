@@ -16,7 +16,12 @@ export interface GroupProjection {
   readonly pending: readonly LogicalTranscriptItem[];
 }
 
-export type TranscriptProjection = SingleProjection | GroupProjection;
+export interface RowProjection {
+  readonly kind: 'row';
+  readonly item: LogicalTranscriptItem;
+}
+
+export type TranscriptProjection = SingleProjection | GroupProjection | RowProjection;
 
 export type FoldRule = 'fold' | 'join' | 'pending' | 'none';
 
@@ -43,8 +48,13 @@ export function projectTranscript(
   if (!transcriptGroupingActive(options)) {
     return items.map((item) => ({ kind: 'single', item }));
   }
-  const foldsUnplaced = DENSITY[options.toolCallDensity].folding === 'all';
+  const { folding, unfolded } = DENSITY[options.toolCallDensity];
+  const foldsUnplaced = folding === 'all';
   const projections: TranscriptProjection[] = [];
+  const place = (item: TranscriptItem): TranscriptProjection =>
+    unfolded === 'row' && item.kind === 'logical' && item.family === 'tool' && item.event.kind !== 'silent'
+      ? { kind: 'row', item }
+      : { kind: 'single', item };
   let run: LogicalTranscriptItem[] = [];
   let pending: LogicalTranscriptItem[] = [];
   const flush = (): void => {
@@ -58,7 +68,7 @@ export function projectTranscript(
         pending,
       });
     } else {
-      for (const item of run) projections.push({ kind: 'single', item });
+      for (const item of run) projections.push(place(item));
     }
     run = [];
     pending = [];
@@ -66,7 +76,8 @@ export function projectTranscript(
 
   for (const item of items) {
     if (item.kind === 'transparent') continue;
-    const rule = item.kind === 'logical' && !isOpened(item.display) ? foldRule(item, options) : 'none';
+    const opened = isOpened(item.display);
+    const rule = item.kind === 'logical' && !opened ? foldRule(item, options) : 'none';
     if (item.kind === 'logical') {
       if (rule === 'fold' || (rule === 'join' && titled(run))) {
         run.push(item);
@@ -84,7 +95,7 @@ export function projectTranscript(
       }
     }
     flush();
-    projections.push({ kind: 'single', item });
+    projections.push(opened ? { kind: 'single', item } : place(item));
   }
   flush();
   return projections;

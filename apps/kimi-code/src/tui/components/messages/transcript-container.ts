@@ -17,6 +17,7 @@ import {
 } from '#/tui/config';
 import {
   TranscriptGroupComponent,
+  TranscriptRowComponent,
   type TranscriptGroupInteraction,
 } from '#/tui/components/messages/transcript-group';
 import { SkillActivationComponent } from '#/tui/components/messages/skill-activation';
@@ -70,6 +71,7 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
   private readonly gutter: GutterContainer;
   private readonly inspector = new TranscriptItemInspector();
   private groups = new Map<Component, TranscriptGroupComponent>();
+  private rows = new Map<Component, TranscriptRowComponent>();
   private expandedGroups = new WeakMap<Component, boolean>();
   private openedMembers = new WeakSet<Component>();
   private options: TranscriptPresentationOptions = {
@@ -162,11 +164,13 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
 
   dispose(): void {
     for (const group of this.groups.values()) group.dispose();
+    for (const row of this.rows.values()) row.dispose();
   }
 
   clear(): void {
     this.dispose();
     this.groups.clear();
+    this.rows.clear();
     this.expandedGroups = new WeakMap();
     this.openedMembers = new WeakSet();
     this.sourceChildren.splice(0);
@@ -246,8 +250,11 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
     if (!transcriptGroupingActive(this.options)) return undefined;
     const hidden = new Set<Component>();
     for (const projection of this.project()) {
-      if (projection.kind !== 'group') continue;
-      for (const item of projectionItems(projection)) hidden.add(item.display);
+      if (projection.kind === 'group') {
+        for (const item of projectionItems(projection)) hidden.add(item.display);
+      } else if (projection.kind === 'row' && !isExpandedComponent(projection.item.display)) {
+        hidden.add(projection.item.display);
+      }
     }
     return foregroundBashHintAt(this.sourceChildren, (call) => hidden.has(call));
   }
@@ -303,7 +310,17 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
     const viewChildren: Component[] = [];
     const viewSourceIndices: number[] = [];
     const nextGroups = new Map<Component, TranscriptGroupComponent>();
+    const nextRows = new Map<Component, TranscriptRowComponent>();
     for (const [index, projection] of projections.entries()) {
+      if (projection.kind === 'row') {
+        const { item } = projection;
+        const row = this.rows.get(item.source) ?? new TranscriptRowComponent(item, this.timeline, this);
+        row.setItem(item, this.timeline);
+        nextRows.set(item.source, row);
+        viewChildren.push(row);
+        viewSourceIndices.push(item.sourceIndex);
+        continue;
+      }
       if (projection.kind === 'single') {
         const { item } = projection;
         if (item.display instanceof ThinkingComponent) {
@@ -339,6 +356,10 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
       if (!nextGroups.has(anchor)) group.dispose();
     }
     this.groups = nextGroups;
+    for (const [source, row] of this.rows) {
+      if (!nextRows.has(source)) row.dispose();
+    }
+    this.rows = nextRows;
     this.gutter.clear();
     for (const child of viewChildren) this.gutter.addChild(child);
     this.projectionCache = {
@@ -460,7 +481,7 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
 }
 
 function projectionItems(projection: TranscriptProjection): readonly TranscriptItem[] {
-  if (projection.kind === 'single') return [projection.item];
+  if (projection.kind !== 'group') return [projection.item];
   return [...projection.members, ...projection.pending];
 }
 

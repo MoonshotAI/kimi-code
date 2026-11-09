@@ -307,7 +307,7 @@ describe('transcript projection', () => {
 
   it.each([
     ['compact', 'grouped', ['group']],
-    ['balanced', 'grouped', ['group', 'single', 'single', 'single', 'group']],
+    ['balanced', 'grouped', ['group', 'row', 'row', 'row', 'group']],
     ['detailed', 'grouped', ['group', 'single', 'single', 'single', 'group']],
     ['ungrouped', 'grouped', ['group', 'single', 'single', 'single', 'single', 'single']],
     ['compact', 'ungrouped', ['single', 'group']],

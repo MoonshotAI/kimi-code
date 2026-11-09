@@ -1339,6 +1339,8 @@ describe('TranscriptGroupComponent layout', () => {
   });
 
   it.each([
+    ['balanced', 'abandoned', 'Bash rm -rf ./dist'],
+    ['balanced', 'truncated', 'Bash rm -rf ./dist'],
     ['detailed', 'abandoned', 'rm -rf ./dist'],
     ['detailed', 'truncated', 'Truncated Bash'],
   ] as const)('places a %s command cut off mid-arguments once it is %s', (toolCallDensity, ending, shown) => {
@@ -1363,6 +1365,53 @@ describe('TranscriptGroupComponent layout', () => {
 
     expect(plain(container.render(80))).toContain(shown);
     expect(groupViews(container)).toMatchObject([{ title: '  Thought for 3s, read 1 file' }]);
+  });
+});
+
+describe('TranscriptRowComponent', () => {
+  it('draws a balanced call as one row and opens it into its full card in place', () => {
+    chalk.level = 3;
+    const { container } = makeContainer(options({ toolCallDensity: 'balanced' }));
+    const edit = tool('Edit', { path: '/work/a.ts', old_string: 'one', new_string: 'two' });
+    container.addChild(thought());
+    container.addChild(tool('Read', { path: '/work/a.ts' }));
+    container.addChild(edit);
+    const rows = (): string[] => plain(container.render(80)).split('\n').map((line) => line.trimEnd());
+    const closed = rows();
+
+    expect(closed).toEqual(['', '  Thought for 3s, read 1 file', '', '  Edit a.ts · +1 -1']);
+    expect(container.render(80).join('\n')).toContain(`  ${currentTheme.boldFg('textDim', 'Edit')} `);
+
+    click(container, 3);
+    expect(edit.isExpanded()).toBe(true);
+    expect(rows().slice(2)).toEqual(plain(edit.render(80)).split('\n').map((line) => line.trimEnd()));
+    expect(rows().length).toBeGreaterThan(closed.length);
+
+    click(container, 3);
+    expect(edit.isExpanded()).toBe(false);
+    expect(rows()).toEqual(closed);
+
+    container.toggleToolOutputExpansion();
+    expect(edit.isExpanded()).toBe(true);
+    container.toggleToolOutputExpansion();
+    expect(rows()).toEqual(closed);
+  });
+
+  it('counts a running row and hides its Bash hint from the transcript until it is opened', () => {
+    vi.useFakeTimers();
+    const { container } = makeContainer(options({ toolCallDensity: 'balanced' }));
+    const bash = runningTool('Bash', { command: 'npm install' });
+    container.addChild(bash);
+    liveTurn(container);
+
+    expect(plain(container.render(80)).split('\n')).toEqual(['', '  Bash npm install']);
+    vi.advanceTimersByTime(2_000);
+    expect(plain(container.render(80)).split('\n')).toEqual(['', '  Bash npm install · 2s']);
+    expect(container.foldedBashHintAt()).toBeDefined();
+
+    click(container, 1);
+    expect(container.foldedBashHintAt()).toBeUndefined();
+    container.clear();
   });
 });
 

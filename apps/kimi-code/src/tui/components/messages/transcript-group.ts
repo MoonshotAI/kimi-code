@@ -23,7 +23,7 @@ import {
   type RowStatus,
 } from '#/tui/utils/group-view';
 import type { LogicalTranscriptItem } from '#/tui/utils/transcript-items';
-import { instant, monotonicNow, type Instant } from '#/tui/utils/turn-timeline';
+import { instant, monotonicNow, settledAt, type Instant, type TimelineReader } from '#/tui/utils/turn-timeline';
 import { TitleSweep } from './running-title';
 import { renderHeaderContent, TruncatedHeaderLine } from './truncated-header-line';
 
@@ -315,6 +315,102 @@ export class TranscriptGroupComponent implements Component {
       this.interaction.requestRender();
     }
     if (view.live || this.sweep.intensity > 0) this.frameRequest = this.interaction.requestAnimationFrame(this.onFrame);
+  };
+
+  private stopFrames(): void {
+    if (this.frameRequest === undefined) return;
+    this.interaction.cancelAnimationFrame(this.frameRequest);
+    this.frameRequest = undefined;
+  }
+}
+
+export type TranscriptRowInteraction = Pick<
+  TranscriptGroupInteraction,
+  'toggleRow' | 'requestRender' | 'requestAnimationFrame' | 'cancelAnimationFrame'
+>;
+
+interface RowFrame {
+  readonly item: LogicalTranscriptItem;
+  readonly width: number;
+  readonly palette: ColorPalette;
+  readonly status: string;
+  readonly lines: string[];
+}
+
+export class TranscriptRowComponent implements Component {
+  private frame: RowFrame | undefined;
+  private frameRequest: number | undefined;
+  private disposed = false;
+
+  constructor(
+    private item: LogicalTranscriptItem,
+    private timeline: TimelineReader,
+    private readonly interaction: TranscriptRowInteraction,
+  ) {
+    this.syncFrames();
+  }
+
+  setItem(item: LogicalTranscriptItem, timeline: TimelineReader): void {
+    this.item = item;
+    this.timeline = timeline;
+    this.syncFrames();
+  }
+
+  invalidate(): void {
+    this.frame = undefined;
+    this.item.display.invalidate();
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    this.stopFrames();
+  }
+
+  render(width: number): string[] {
+    if (isExpandedComponent(this.item.display)) return this.item.display.render(width);
+    const now = monotonicNow();
+    const status = rowStatusOf(this.item, this.timeline, now);
+    const key = statusKey(status, now);
+    const previous = this.frame;
+    if (
+      previous?.item === this.item &&
+      previous.width === width &&
+      previous.palette === currentTheme.palette &&
+      previous.status === key
+    ) {
+      return previous.lines;
+    }
+    const lines = ['', `${TITLE_INDENT}${rowLine(this.item, status, Math.max(1, width - TITLE_INDENT.length), now)}`];
+    this.frame = { item: this.item, width, palette: currentTheme.palette, status: key, lines };
+    return lines;
+  }
+
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    if (event.type !== 'click' || event.button !== 'left' || event.y < 1) return undefined;
+    return this.interaction.toggleRow(this.item) ? { handled: true } : undefined;
+  }
+
+  private live(now: Instant): boolean {
+    const facts = this.item.callId === undefined ? undefined : this.timeline.call(this.item.callId);
+    return !this.disposed && !settledAt(facts, now);
+  }
+
+  private syncFrames(): void {
+    if (!this.live(monotonicNow())) {
+      this.stopFrames();
+      return;
+    }
+    this.frameRequest ??= this.interaction.requestAnimationFrame(this.onFrame);
+  }
+
+  private readonly onFrame = (time: number): void => {
+    this.frameRequest = undefined;
+    const now = instant(time);
+    const frame = this.frame;
+    if (frame !== undefined && frame.status !== statusKey(rowStatusOf(this.item, this.timeline, now), now)) {
+      this.interaction.requestRender();
+    }
+    if (this.live(now)) this.frameRequest = this.interaction.requestAnimationFrame(this.onFrame);
   };
 
   private stopFrames(): void {
