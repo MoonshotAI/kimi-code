@@ -474,7 +474,7 @@ async function resolveTrust(
     );
     return undefined;
   }
-  return core.accessor.get(IWorkspaceTrustStore).forRoot(ws.root);
+  return core.accessor.get(IWorkspaceTrustStore).forRoots([ws.root, ...ws.additionalDirs]);
 }
 
 export async function toWireWorkspace(core: Scope, ws: Workspace): Promise<WorkspaceWire> {

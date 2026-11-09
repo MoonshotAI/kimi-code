@@ -322,7 +322,7 @@ describe('agent skill routing', () => {
       await expect(
         agent.promptWithSkills({
           input: [{ type: 'text', text: 'Review this change.' }],
-          skills: [{ name: 'review', args: 'src/app.ts' }],
+          skills: [{ name: 'review', path: '/work/B/review/SKILL.md', args: 'src/app.ts' }],
           steerIfActive,
         }),
       ).resolves.toEqual({
@@ -337,7 +337,7 @@ describe('agent skill routing', () => {
         args: [
           {
             input: [{ type: 'text', text: 'Review this change.' }],
-            skills: [{ name: 'review', args: 'src/app.ts' }],
+            skills: [{ name: 'review', path: '/work/B/review/SKILL.md', args: 'src/app.ts' }],
             steerIfActive,
           },
         ],
@@ -357,6 +357,7 @@ describe('session skills routing', () => {
         description: 'review changes',
         path: '/skills/review/SKILL.md',
         source: 'project',
+        workspaceDir: '/work/B',
       },
     ];
     channel.result = summaries;
@@ -392,14 +393,14 @@ describe('session skills routing', () => {
     const agent = klient.session('s1').agent('main');
 
     channel.result = { turn_id: 3 };
-    await expect(agent.activateSkill({ name: 'review', args: 'src/app.ts' })).resolves.toEqual({
+    await expect(agent.activateSkill({ name: 'review', path: '/work/B/review/SKILL.md', args: 'src/app.ts' })).resolves.toEqual({
       turn_id: 3,
     });
     expect(channel.calls[0]).toEqual({
       scope: { sessionId: 's1', agentId: 'main' },
       service: 'agentSkillService',
       method: 'activate',
-      args: [{ name: 'review', args: 'src/app.ts' }],
+      args: [{ name: 'review', path: '/work/B/review/SKILL.md', args: 'src/app.ts' }],
     });
   });
 

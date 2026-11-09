@@ -274,6 +274,7 @@ export interface TranscriptEntry {
   goalData?: GoalTranscriptData;
   imageAttachmentIds?: readonly number[];
   skillNames?: readonly string[];
+  inlineSkillActivations?: readonly InlineSkillActivation[];
   skillActivationId?: string;
   skillName?: string;
   skillArgs?: string;
@@ -301,7 +302,7 @@ export interface LivePaneState {
 }
 
 export interface PreparedSkillActivations {
-  skills: Array<{ name: string; args?: string }>;
+  skills: Array<{ name: string; path?: string; args?: string }>;
   mediaAttachmentIds: number[];
   stagingPaths: string[];
   cachedVideos: VideoAttachment[];
@@ -309,7 +310,10 @@ export interface PreparedSkillActivations {
 
 export interface InlineSkillActivation {
   readonly skillName: string;
+  readonly path?: string;
   readonly args?: string;
+  readonly start?: number;
+  readonly occurrences?: readonly { commandName: string; start: number }[];
 }
 
 export type ModelSwitchPersistence = 'session' | 'model' | 'model-and-effort';

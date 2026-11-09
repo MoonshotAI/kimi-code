@@ -4,7 +4,7 @@ import type { SkillActivationOrigin } from '#/agent/contextMemory/types';
 import { renderModelToolSkillPrompt } from '#/features/skill/prompt';
 import { IAgentSkillService } from '#/features/skill/skillService';
 import type { ExecutableToolResult, ToolDeliveryMessage, ToolExecution } from '#/tool/toolContract';
-import { isInlineSkillType } from '#/features/skill/catalog/types';
+import { isInlineSkillType, normalizeSkillName } from '#/features/skill/catalog/types';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { renderPrompt } from '#/_base/utils/render-prompt';
@@ -29,6 +29,7 @@ export class SkillTool implements ISkillTool {
   readonly parameters: Record<string, unknown> = toInputJsonSchema(SkillToolInputSchema);
 
   private queryDepth: number = 0;
+  private workspaceDir?: string;
 
   constructor(
     @ISessionSkillCatalog private readonly catalog: ISessionSkillCatalog,
@@ -37,29 +38,30 @@ export class SkillTool implements ISkillTool {
   ) {}
 
   resolveExecution(args: SkillToolInput): ToolExecution {
+    const context = this.queryDepth === 0 && this.workspaceDir === undefined
+      ? this.skill.modelToolContext()
+      : { queryDepth: this.queryDepth, workspaceDir: this.workspaceDir };
     return {
       description: `Invoke skill ${args.skill}`,
       display: { kind: 'skill_call', skill_name: args.skill, args: args.args },
       approvalRule: this.name,
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.skill),
-      execute: () => this.execution(args),
+      execute: () => executeModelSkill(
+        this.catalog,
+        this.skill,
+        args,
+        context.queryDepth,
+        this.sessionContext.sessionId,
+        context.workspaceDir,
+      ),
     };
   }
 
-  withInitialQueryDepth(initialQueryDepth: number): SkillTool {
+  withInitialQueryDepth(initialQueryDepth: number, workspaceDir?: string): SkillTool {
     const clone = new SkillTool(this.catalog, this.skill, this.sessionContext);
     clone.queryDepth = initialQueryDepth;
+    clone.workspaceDir = workspaceDir;
     return clone;
-  }
-
-  private async execution(args: SkillToolInput): Promise<ExecutableToolResult> {
-    return executeModelSkill(
-      this.catalog,
-      this.skill,
-      args,
-      this.queryDepth,
-      this.sessionContext.sessionId,
-    );
   }
 }
 
@@ -69,6 +71,7 @@ export async function executeModelSkill(
   args: SkillToolInput,
   queryDepth: number,
   sessionId: string,
+  parentWorkspaceDir?: string,
 ): Promise<ExecutableToolResult> {
   const currentDepth = queryDepth;
   if (currentDepth >= MAX_SKILL_QUERY_DEPTH) {
@@ -76,7 +79,12 @@ export async function executeModelSkill(
   }
 
   await catalog.ready;
-  const skill = catalog.catalog.getSkill(args.skill);
+  const skill = args.path === undefined && parentWorkspaceDir !== undefined
+    ? catalog.catalog.listSkills().find((candidate) =>
+        candidate.workspaceDir === parentWorkspaceDir &&
+        normalizeSkillName(candidate.name) === normalizeSkillName(args.skill)
+      ) ?? catalog.catalog.getSkill(args.skill)
+    : catalog.catalog.getSkill(args.skill, args.path);
   if (skill === undefined) {
     return errorResult(`Skill "${args.skill}" not found in the current skill listing.`);
   }
@@ -122,7 +130,7 @@ export async function executeModelSkill(
     toolCalls: [],
     origin,
   };
-  skillService.recordModelToolActivation(origin);
+  skillService.recordModelToolActivation(origin, currentDepth + 1);
   return {
     output: `Skill "${skill.name}" loaded inline. Follow its instructions.`,
     delivery: { kind: 'steer', message },

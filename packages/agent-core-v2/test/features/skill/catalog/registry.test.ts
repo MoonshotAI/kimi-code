@@ -92,6 +92,26 @@ describe('InMemorySkillCatalog skill listing', () => {
     expect(rendered).not.toContain('builtin version');
   });
 
+  it('keeps same-name variants available for explicit path selection', () => {
+    const primary = {
+      ...makeSkill('foo', 'project', 'primary', '/tmp/primary/foo/SKILL.md'),
+      workspaceDir: '/tmp/primary',
+    };
+    const secondary = {
+      ...makeSkill('foo', 'project', 'secondary', '/tmp/secondary/foo/SKILL.md'),
+      workspaceDir: '/tmp/secondary',
+    };
+    const registry = makeRegistry([primary]);
+    registry.registerVariants([primary, secondary], { replace: true });
+
+    expect(registry.getSkill('foo')?.description).toBe('primary');
+    expect(registry.getSkill('foo', secondary.path)?.description).toBe('secondary');
+    expect(registry.getSkill('foo', '/tmp/missing/SKILL.md')).toBeUndefined();
+    expect(registry.listSkills().map((skill) => skill.description)).toEqual(['primary', 'secondary']);
+    expect(registry.listDefaultSkills().map((skill) => skill.description)).toEqual(['primary']);
+    expect(registry.getModelSkillListing()).toContain('Workspace: /tmp/secondary');
+  });
+
   it('registerBuiltinSkill stamps non-builtin skills as builtin', () => {
     const registry = new InMemorySkillCatalog();
     registry.registerBuiltinSkill(makeSkill('theme', 'user'));
@@ -105,7 +125,7 @@ describe('InMemorySkillCatalog skill listing', () => {
 });
 
 describe('InMemorySkillCatalog model skill listing', () => {
-  it('lists only model-invocable inline skills', () => {
+  it('lists only model-invocable inline skills without file-loading paths', () => {
     const registry = makeRegistry([
       makeSkill('review', 'user', 'Review code', undefined, {
         type: 'prompt',
@@ -123,10 +143,23 @@ describe('InMemorySkillCatalog model skill listing', () => {
     expect(rendered).toContain('DISREGARD any earlier skill listings');
     expect(rendered).toContain('- review: Review code');
     expect(rendered).toContain('  When to use: When reviewing changes.');
-    expect(rendered).toContain('  Path: /tmp/user/review/SKILL.md');
+    expect(rendered).not.toContain('Path:');
+    expect(rendered).not.toContain('/tmp/user/review/SKILL.md');
     expect(rendered).not.toContain('private');
     expect(rendered).not.toContain('flow-only');
     expect(rendered).not.toContain('sub-step');
+  });
+
+  it('lists skill roots after the skills', () => {
+    const registry = makeRegistry([makeSkill('review', 'user')]);
+    registry.addRoots(['/tmp/project/.agents/skills', '/tmp/user/skills']);
+
+    const rendered = registry.getModelSkillListing();
+    const rootsIdx = rendered.indexOf('### Skill roots');
+
+    expect(rootsIdx).toBeGreaterThan(rendered.indexOf('- review: desc'));
+    expect(rendered.slice(rootsIdx)).toContain('- `/tmp/project/.agents/skills`');
+    expect(rendered.slice(rootsIdx)).toContain('- `/tmp/user/skills`');
   });
 
   it('returns an empty string when no skills are model-invocable', () => {
@@ -136,6 +169,7 @@ describe('InMemorySkillCatalog model skill listing', () => {
       }),
       makeSkill('flow-only', 'user', 'Flow', undefined, { type: 'flow' }),
     ]);
+    registry.addRoots(['/tmp/user/skills']);
 
     expect(registry.getModelSkillListing()).toBe('');
   });
