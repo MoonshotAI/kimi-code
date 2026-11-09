@@ -171,7 +171,7 @@ function summaryMissions(state: TowerStatusState): string[] {
   if (state.missions.length === 0) return ['  (none)'];
   return state.missions.map(
     (mission) =>
-      `  ${mission.id} ${mission.title} — ${mission.status} · owner ${mission.owner ?? '—'} · ${mission.branch}`,
+      `  ${mission.id} ${mission.title} — ${mission.status} · owner ${mission.owner ?? '—'} · ${mission.branch} · kind ${mission.kind}`,
   );
 }
 

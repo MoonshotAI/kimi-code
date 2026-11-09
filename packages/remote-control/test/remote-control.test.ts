@@ -834,7 +834,7 @@ describe('Remote Control tunnel', () => {
   });
 
   it('reconnects the tunnel pair after the relay drops it', async () => {
-    const scenario = await startTunnelScenario();
+    const scenario = await startTunnelScenario({ earlyHttpProbe: 'request-20' });
 
     try {
       scenario.httpConnections[0]!.terminate();
@@ -843,10 +843,14 @@ describe('Remote Control tunnel', () => {
         'request_chunk,response_chunk,abort',
         'request_chunk,response_chunk,abort',
       ]);
-      const reconnectResponsePromise = nextJsonMessage(scenario.httpConnections[1]!);
-      scenario.httpConnections[1]!.send(tunnelRequestFrame('request-20', probeRawRequest(), true));
-      const reconnectResponse = frameBody(await reconnectResponsePromise).toString();
-      expect(reconnectResponse).toContain('HTTP/1.1 200 OK');
+      await waitFor(
+        () => scenario.httpMessages.some((message) => message['request_id'] === 'request-20'),
+        10_000,
+      );
+      const reconnectResponse = scenario.httpMessages.find(
+        (message) => message['request_id'] === 'request-20',
+      )!;
+      expect(frameBody(reconnectResponse).toString()).toContain('HTTP/1.1 200 OK');
 
       await scenario.handle.close();
       await waitFor(() =>
@@ -1865,6 +1869,7 @@ interface TunnelScenario {
   managementConnections: WebSocket[];
   managementMessages: unknown[];
   httpConnections: WebSocket[];
+  httpMessages: Array<Record<string, unknown>>;
   streamConnections: WebSocket[];
   streamMessages: string[];
   uploadBodyBytes: Map<string, number>;
@@ -1888,6 +1893,7 @@ async function startTunnelScenario(
     localServerToken?: string | (() => string);
     bigBytes?: number;
     alignedResponseBytes?: number;
+    earlyHttpProbe?: string;
   } = {},
 ): Promise<TunnelScenario> {
   const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
@@ -2006,6 +2012,7 @@ async function startTunnelScenario(
   const relayServer = createServer();
   const managementConnections: WebSocket[] = [];
   const httpConnections: WebSocket[] = [];
+  const httpMessages: Array<Record<string, unknown>> = [];
   const streamConnections: WebSocket[] = [];
   const registrations: unknown[] = [];
   const managementMessages: unknown[] = [];
@@ -2023,7 +2030,15 @@ async function startTunnelScenario(
       }
     });
   });
-  httpTunnelServer.on('connection', (ws) => httpConnections.push(ws));
+  httpTunnelServer.on('connection', (ws) => {
+    httpConnections.push(ws);
+    ws.on('message', (data) => {
+      httpMessages.push(JSON.parse(rawDataText(data)) as Record<string, unknown>);
+    });
+    if (options.earlyHttpProbe !== undefined && httpConnections.length === 2) {
+      ws.send(tunnelRequestFrame(options.earlyHttpProbe, probeRawRequest(), true));
+    }
+  });
   streamServer.on('connection', (ws) => {
     streamConnections.push(ws);
     ws.on('message', (data) => streamMessages.push(rawDataText(data)));
@@ -2072,6 +2087,7 @@ async function startTunnelScenario(
     managementConnections,
     managementMessages,
     httpConnections,
+    httpMessages,
     streamConnections,
     streamMessages,
     uploadBodyBytes,
