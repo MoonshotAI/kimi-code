@@ -54,7 +54,7 @@ export type ScopeFactory = (
   signal: AbortSignal,
 ) => Promise<ScopeFactoryOutput>;
 
-export type PromptGateVerdict = boolean | { block: boolean; message?: UserMessage };
+export type PromptGateVerdict = boolean | { block: boolean; message?: UserMessage } | { defer: true };
 
 export type PromptGate = (
   queueItemId: string | undefined,
@@ -334,7 +334,7 @@ export function createAgentMachine({
         ({ input, signal }) => input.scopeFactory(input.self, signal),
       ),
       promptGateActor: fromPromise<
-        { id?: string; block: boolean; message?: UserMessage; error?: unknown },
+        { id?: string; block: boolean; defer?: boolean; message?: UserMessage; error?: unknown },
         { gate?: PromptGate; head?: UserEntry }
       >(async ({ input }) => {
         const { gate, head } = input;
@@ -342,6 +342,7 @@ export function createAgentMachine({
         try {
           const verdict = await gate(head.meta?.promptId, head.message);
           if (typeof verdict === 'boolean') return { id: head.meta?.promptId, block: verdict };
+          if ('defer' in verdict) return { id: head.meta?.promptId, block: false, defer: true };
           return { id: head.meta?.promptId, block: verdict.block, message: verdict.message };
         } catch (error) {
           return { id: head.meta?.promptId, block: false, error };
@@ -355,6 +356,18 @@ export function createAgentMachine({
       forwardToParent: ({ self, event }) => {
         self._parent?.send(event);
       },
+      commitNotificationsToHistory: enqueueActions(({ context, enqueue }) => {
+        enqueue.sendTo('store', {
+          type: 'store.append' as const,
+          event: context.notifications.map((entry) => messageAppended({ message: entry })),
+        });
+        enqueue.assign({
+          messages: [...context.messages, ...context.notifications],
+          notifications: [],
+          drainedId: undefined,
+          drainedEntry: undefined,
+        });
+      }),
       commitPendingToHistory: enqueueActions(({ context, enqueue }) => {
         const head = context.queue[0];
         enqueue.sendTo('store', {
@@ -679,6 +692,15 @@ export function createAgentMachine({
                 {
                   guard: ({ context, event }) =>
                     context.paused || context.queue[0]?.meta?.promptId !== event.output.id,
+                  target: 'ready',
+                },
+                {
+                  guard: ({ context, event }) => event.output.defer === true && context.notifications.length > 0,
+                  target: '#agent.running',
+                  actions: ['commitNotificationsToHistory'],
+                },
+                {
+                  guard: ({ event }) => event.output.defer === true,
                   target: 'ready',
                 },
                 {

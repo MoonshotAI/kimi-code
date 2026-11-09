@@ -467,7 +467,7 @@ describe('prompt queue', () => {
     expect(materializedStops).toHaveLength(1);
   });
 
-  it('mirrors a drained steer when cancellation wins before the next gate', async () => {
+  it('keeps a steer that arrives while the turn finishes for the next turn when the turn is cancelled', async () => {
     setup();
     let releaseFinish!: () => void;
     let markFinishing!: () => void;
@@ -483,27 +483,25 @@ describe('prompt queue', () => {
       await next();
     });
     ctx.mockNextResponse({ type: 'text', text: 'active' });
+    ctx.mockNextResponse({ type: 'text', text: 'seeded turn' });
     const steerEvents: TurnSteer[] = [];
     ctx.get(IEventBus).subscribe(TurnSteer, (event) => steerEvents.push(event));
 
     await enqueue(loop, { message: message('active') });
     await finishing;
-    const { id } = loop.submit(
+    loop.submit(
       {
         message: { role: 'user', content: message('stop').content },
         meta: { origin: { kind: 'user' }, tracked: true },
       },
       { steerIfActive: true },
     );
-    await vi.waitFor(() => {
-      expect(loop.snapshot().notificationCount).toBe(0);
-    });
+    expect(loop.snapshot().notificationCount).toBe(1);
     loop.cancel();
     releaseFinish();
     await loop.settled();
 
-    expect(steerEvents).toHaveLength(1);
-    expect(steerEvents[0]?.promptIds).toEqual([id]);
+    expect(steerEvents).toHaveLength(0);
     const materializedStops = ctx
       .get(IAgentContextMemoryService)
       .get()

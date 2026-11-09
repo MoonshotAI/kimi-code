@@ -145,6 +145,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   private readonly queueChange = this._register(new Emitter<void>());
   readonly onDidChangeQueue = this.queueChange.event;
+  private gatingPromptId: string | undefined;
+  private queueKey = '';
+  private loopChange = createControlledPromise<void>();
 
   readonly hooks: IAgentLoopService['hooks'] = {
     onWillBeginStep: new OrderedHookSlot(),
@@ -404,8 +407,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   moveQueued(promptId: string, beforePromptId?: string): void {
     if (this.disposing) throw abortError('Agent loop disposed');
     const snapshot = this.engine?.snapshot();
+    const starting = this.snapshot().startingPromptId;
     const movable = (id: string): boolean =>
-      snapshot !== undefined && id !== snapshot.starting && snapshot.queueIds.includes(id);
+      snapshot !== undefined && id !== starting && snapshot.queueIds.includes(id);
     if (!movable(promptId) || (beforePromptId !== undefined && !movable(beforePromptId))) {
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'prompt is not queued');
     }
@@ -536,6 +540,33 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       return;
     }
     this.machineEngine().notify(createUserEntry(machineUserMessage(nudge.contextMessage)));
+    this.signalLoopChange();
+  }
+
+  private signalQueueChange(): void {
+    const snapshot = this.snapshot();
+    const key = JSON.stringify([snapshot.queue.map((entry) => entry.meta?.promptId), snapshot.startingPromptId]);
+    if (key === this.queueKey) return;
+    this.queueKey = key;
+    this.queueChange.fire();
+  }
+
+  private signalLoopChange(): void {
+    const settled = this.loopChange;
+    this.loopChange = createControlledPromise<void>();
+    settled.resolve();
+  }
+
+  private async continuesActiveTurn(): Promise<boolean> {
+    for (;;) {
+      const active = this.active;
+      if (active === undefined) return false;
+      const chain = active.afterChain;
+      await chain;
+      if (this.active !== active || active.afterChain !== chain) continue;
+      if ((this.engine?.snapshot().notificationCount ?? 0) > 0) return true;
+      await this.loopChange;
+    }
   }
 
   private createWaiter(
@@ -572,7 +603,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         this.active !== undefined && this.active.prompt.tracked ? this.active.prompt.id : undefined,
       queue,
       engineAttached: engine !== undefined,
-      startingPromptId: engineSnapshot?.starting,
+      startingPromptId:
+        engineSnapshot?.starting !== undefined && engineSnapshot.starting === this.gatingPromptId
+          ? this.gatingPromptId
+          : undefined,
       notificationCount: engineSnapshot?.notificationCount ?? 0,
       paused: engineSnapshot?.paused ?? false,
       hasPendingRequests: this.hasPendingRequests(),
@@ -651,6 +685,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     queueItemId: string | undefined,
     message: UserMessage,
   ): Promise<PromptGateVerdict> {
+    this.gatingPromptId = undefined;
+    if (await this.continuesActiveTurn()) return { defer: true };
+    if (this.engine?.snapshot().starting !== queueItemId) return { defer: true };
     const waiter = queueItemId === undefined ? undefined : this.promptWaiters.get(queueItemId);
     const entry =
       queueItemId === undefined
@@ -671,6 +708,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       hookParts: [],
       block: false,
     };
+    this.gatingPromptId = queueItemId;
+    this.signalQueueChange();
     await this.hooks.onBeforeSubmitPrompt.run(ctx);
     if (ctx.block) return { block: true };
     await this.materializeDaemonRefs(promptMessage);
@@ -1147,17 +1186,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     readonly entry?: UserEntry;
   }): boolean {
     if (this.active !== undefined) {
-      if (pending.queueItemId !== undefined && pending.entry !== undefined) {
-        const waiter = this.promptWaiters.get(pending.queueItemId);
-        if (waiter !== undefined) {
-          const engine = this.machineEngine();
-          const head = engine.snapshot().queueIds[0];
-          engine.submit({
-            message: this.gatedEntryMessage(pending.entry),
-            meta: pending.entry.meta,
-          });
-          if (head !== undefined) engine.move(pending.queueItemId, head);
-        }
+      if (pending.queueItemId !== undefined) {
+        throw new BugIndicatingError('A queued prompt started while the previous turn was still active');
       }
       return true;
     }
@@ -1197,14 +1227,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return {
       ...prompt.message,
       content: gateImageFormatParts(prompt.message.content, this.profile.getModelProviderType()),
-    };
-  }
-
-  private gatedEntryMessage(entry: UserEntry): UserMessage {
-    if (entry.meta?.tracked !== true) return { role: 'user', content: [...entry.message.content] };
-    return {
-      role: 'user',
-      content: gateImageFormatParts(entry.message.content, this.profile.getModelProviderType()),
     };
   }
 
@@ -1445,7 +1467,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private projectMachineEvent(event: MachineEngineEvent): void {
     switch (event.type) {
       case 'queueChanged': {
-        this.queueChange.fire();
+        this.signalQueueChange();
         return;
       }
       case 'turnStarted': {
@@ -2248,6 +2270,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private async endTurn(turn: ActiveTurn, result: TurnResult): Promise<void> {
     if (this.active !== turn) return;
     this.active = undefined;
+    this.signalLoopChange();
     this.disarmTurnWatch();
     await this.wire.drainPersisted().catch(() => undefined);
     for (const nudge of this.nudges.slice(this.nudgeCursor)) {

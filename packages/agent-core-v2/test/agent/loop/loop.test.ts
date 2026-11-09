@@ -2523,15 +2523,76 @@ describe('prompt queue', () => {
     expect(queueIds()).toEqual(['b']);
   });
 
+  it('finishes a continued turn before the queued head starts, gating the head once', async () => {
+    let continued = false;
+    loop.hooks.onDidFinishStep.register('test-continue-once', async (_hookCtx, next) => {
+      if (continued) return next();
+      continued = true;
+      loop.notify({
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'continue' }],
+          origin: { kind: 'system_trigger', name: 'stop_hook' },
+        },
+      });
+    });
+    const hooked: string[] = [];
+    loop.hooks.onBeforeSubmitPrompt.register('test-record-gate', async (hookCtx, next) => {
+      const [part] = hookCtx.promptMessage.content;
+      if (part?.type === 'text') hooked.push(part.text);
+      await next();
+    });
+    const started: (string | undefined)[] = [];
+    const turnStarts = ctx.get(IEventBus).subscribe(TurnStarted, (event) => started.push(event.prompt));
+    submit('a');
+    await untilModelRequest();
+    const queues: string[] = [];
+    const subscription = loop.onDidChangeQueue(() =>
+      queues.push(JSON.stringify([queueIds(), loop.snapshot().startingPromptId])),
+    );
+    submit('b');
+    try {
+      for (let round = 0; round < 20 && (heldRequests.length > 0 || queueIds().length > 0); round += 1) {
+        heldRequests.shift()?.();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      await loop.settled();
+    } finally {
+      turnStarts.dispose();
+      subscription.dispose();
+    }
+
+    expect(started).toEqual(['a', 'b']);
+    expect(hooked).toEqual(['a', 'b']);
+    expect(queues).toEqual(['[["b"],null]', '[["b"],"b"]', '[[],null]']);
+    const userTexts = ctx
+      .contextData()
+      .history.filter((message) => message.role === 'user')
+      .map((message) => message.content.map((part) => (part.type === 'text' ? part.text : '')).join(''));
+    expect(userTexts).toEqual(['a', 'continue', 'b']);
+  });
+
   it.each([1, 2, 3, 4, 5])('keeps queue invariants under random operations (seed %i)', async (seed) => {
     const random = seededRandom(seed);
     const pick = <T,>(items: readonly T[]): T | undefined => items[Math.floor(random() * items.length)];
     const queueKey = () => JSON.stringify([queueIds(), loop.snapshot().startingPromptId]);
     const signalled: string[] = [queueKey()];
-    const subscription = loop.onDidChangeQueue(() => signalled.push(queueKey()));
+    let visible = new Set(queueIds());
+    const departed = new Set<string | undefined>();
+    const reentered: (string | undefined)[] = [];
+    const subscription = loop.onDidChangeQueue(() => {
+      signalled.push(queueKey());
+      const current = new Set(queueIds());
+      for (const id of current) if (departed.has(id)) reentered.push(id);
+      for (const id of visible) if (!current.has(id)) departed.add(id);
+      visible = current;
+    });
     const completions: Promise<unknown>[] = [];
     const heldGates: (() => void)[] = [];
-    const gateHook = loop.hooks.onBeforeSubmitPrompt.register('test-random-gate', async (_hookCtx, nextHook) => {
+    const hooked: string[] = [];
+    const gateHook = loop.hooks.onBeforeSubmitPrompt.register('test-random-gate', async (hookCtx, nextHook) => {
+      const [part] = hookCtx.promptMessage.content;
+      if (!hookCtx.isSteer && part?.type === 'text') hooked.push(part.text);
       if (random() < 0.5) await new Promise<void>((resolve) => heldGates.push(resolve));
       await nextHook();
     });
@@ -2606,6 +2667,8 @@ describe('prompt queue', () => {
       for (let index = 1; index < signalled.length; index += 1) {
         expect(signalled[index]).not.toBe(signalled[index - 1]);
       }
+      expect(reentered).toEqual([]);
+      expect(new Set(hooked).size).toBe(hooked.length);
     } finally {
       turnStarts.dispose();
       gateHook.dispose();
