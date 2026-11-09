@@ -1227,8 +1227,14 @@ describe('server /api/v2/sessions batch archive/restore', () => {
 
     const { events, dispose } = collectEvents();
     const before = await readStateJson(created.workspace_id, created.id);
+    const archivedWhenAnnounced: Promise<boolean | undefined>[] = [];
+    const announced = core().get(IEventService).subscribe((event) => {
+      if (event.type === 'event.session.restored') archivedWhenAnnounced.push(indexArchived(created.id));
+    });
 
     const body = await postBatch('/api/v2/sessions:restore', { ids: [created.id] });
+    announced.dispose();
+    expect(await Promise.all(archivedWhenAnnounced)).toEqual([false]);
     expect(body.code).toBe(0);
     expect(body.data?.results).toEqual([{ id: created.id, ok: true }]);
 
@@ -1260,8 +1266,14 @@ describe('server /api/v2/sessions batch archive/restore', () => {
     await postBatch('/api/v2/sessions:archive', { ids: [created.id] });
     expect(await resumeSessionById(core(), created.id)).toBeDefined();
     const { events, dispose } = collectEvents();
+    const archivedWhenAnnounced: Promise<boolean | undefined>[] = [];
+    const announced = core().get(IEventService).subscribe((event) => {
+      if (event.type === 'event.session.restored') archivedWhenAnnounced.push(indexArchived(created.id));
+    });
 
     const body = await postBatch('/api/v2/sessions:restore', { ids: [created.id] });
+    announced.dispose();
+    expect(await Promise.all(archivedWhenAnnounced)).toEqual([false]);
     expect(body.code).toBe(0);
     expect(body.data?.results).toEqual([{ id: created.id, ok: true }]);
 
