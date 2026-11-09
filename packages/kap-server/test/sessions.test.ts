@@ -896,6 +896,35 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(after.permission_mode).toBe('yolo');
   });
 
+  it('applies agent_config and keeps custom metadata when creating a session', async () => {
+    const cwd = home as string;
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd, source: 'composer' },
+      agent_config: { plan_mode: true, permission_mode: 'yolo' },
+    });
+
+    expect(created.body.code).toBe(0);
+    expect(created.body.data.metadata).toMatchObject({ cwd, source: 'composer' });
+    const state = readAgentState(await mainAgentOf(created.body.data.id), false);
+    expect(state.plan_mode).toBe(true);
+    expect(state.permission_mode).toBe('yolo');
+  });
+
+  it('removes the new session when its agent_config cannot be applied', async () => {
+    const cwd = home as string;
+    const listed = async (): Promise<string[]> =>
+      (await getJson<PageWire>('/api/v1/sessions')).body.data.items.map((session) => session.id);
+    const before = await listed();
+
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd },
+      agent_config: { tower_mode: true },
+    });
+
+    expect(created.body.code).not.toBe(0);
+    expect(await listed()).toEqual(before);
+  });
+
   it('rejects tower_mode agent_config when the tower feature is unavailable', async () => {
     const cwd = home as string;
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });

@@ -669,9 +669,9 @@ Creates a session and returns it. The target directory comes from `workspace_id`
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `workspace_id` | body | string | **Required** when `metadata.cwd` is absent. Registered workspace id; the session is created at that workspace's root |
-| `metadata` | body | object | Custom metadata. `metadata.cwd` is the working directory and is **required** when `workspace_id` is absent; with both given, it must equal the workspace root |
+| `metadata` | body | object | Custom metadata. `metadata.cwd` is the working directory and is **required** when `workspace_id` is absent; with both given, it must equal the workspace root. Other keys are kept as the session's custom metadata |
 | `title` | body | string | Initial title (at least 1 character); the session is untitled otherwise |
-| `agent_config` | body | object | Accepted by the schema but currently not applied — set the model and modes through `POST /api/v1/sessions/{session_id}/profile` |
+| `agent_config` | body | object | Partial main-agent config, with the same fields as `POST /api/v1/sessions/{session_id}/profile`, applied before the session is returned. When it cannot be applied, the session is not created and the error is returned |
 
 On success, `data` is [the session object](#the-session-object) of the new session.
 
@@ -745,8 +745,6 @@ Each `agent_config` field is applied immediately to the main agent:
 | `swarm_mode` | boolean | Enter or exit swarm mode |
 | `goal_objective` | string | Create a goal with this objective |
 | `goal_control` | string | `pause` / `resume` / `cancel` the current goal |
-
-The schema also accepts `system_prompt`, `tools`, `mcp_servers` inside `agent_config`, and a top-level `permission_rules` array, but the update route currently does not apply them.
 
 On success, `data` is the updated [session object](#the-session-object).
 

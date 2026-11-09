@@ -669,9 +669,9 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `workspace_id` | body | string | 未提供 `metadata.cwd` 时**必填**。已注册的工作区 id；会话创建于该工作区的根目录 |
-| `metadata` | body | object | 自定义元数据。`metadata.cwd` 为工作目录，未提供 `workspace_id` 时**必填**；两者同时提供时必须等于工作区根目录 |
+| `metadata` | body | object | 自定义元数据。`metadata.cwd` 为工作目录，未提供 `workspace_id` 时**必填**；两者同时提供时必须等于工作区根目录。其他键保存为会话的自定义元数据 |
 | `title` | body | string | 初始标题（至少 1 个字符）；否则会话无标题 |
-| `agent_config` | body | object | schema 接受该字段但当前不会应用——模型与各模式请通过 `POST /api/v1/sessions/{session_id}/profile` 设置 |
+| `agent_config` | body | object | main agent 的部分配置，字段与 `POST /api/v1/sessions/{session_id}/profile` 相同，在返回会话之前应用。无法应用时不创建会话，直接返回错误 |
 
 成功时，`data` 为新会话的 [session 对象](#session-对象)。
 
@@ -745,8 +745,6 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `swarm_mode` | boolean | 进入或退出 swarm 模式 |
 | `goal_objective` | string | 以该文本为内容创建一个目标 |
 | `goal_control` | string | `pause` / `resume` / `cancel` 当前目标 |
-
-schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`，以及顶层的 `permission_rules` 数组，但更新路由当前不会应用它们。
 
 成功时，`data` 为更新后的 [session 对象](#session-对象)。
 

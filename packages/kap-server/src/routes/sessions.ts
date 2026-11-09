@@ -264,21 +264,32 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
           bucket === undefined
             ? await registry.createOrTouch(workDir)
             : ((await registry.touch(bucket.id)) ?? bucket);
-        const handle = await core.accessor.get(ISessionManager).create({
+        const sessions = core.accessor.get(ISessionManager);
+        const handle = await sessions.create({
           workspaceId: resolved.id,
           workDir,
           environmentId: body.environment_id,
           environmentCwd: body.environment_cwd,
           ensureMainAgent: body.environment_id !== undefined && body.environment_id !== 'local',
         });
-        if (typeof body.title === 'string') {
-          await handle.accessor.get(ISessionMetadata).setTitle(body.title);
+        const metadata = handle.accessor.get(ISessionMetadata);
+        const sessionId = (await metadata.read()).id;
+        try {
+          if (typeof body.title === 'string') await metadata.setTitle(body.title);
+          const { cwd: _cwd, ...custom } = body.metadata ?? {};
+          if (Object.keys(custom).length > 0) await metadata.update({ custom });
+          if (body.agent_config !== undefined) {
+            await applySessionAgentConfig(core, sessionId, body.agent_config);
+          }
+        } catch (error) {
+          await sessions.delete(sessionId).catch(() => undefined);
+          throw error;
         }
-        const meta = await handle.accessor.get(ISessionMetadata).read();
+        const meta = await metadata.read();
         const session = toWireSession(
           { ...meta, workspaceId: resolved.id },
           resolved.root,
-          { busy: false, mainTurnActive: false, pendingInteraction: 'none' },
+          resolveSessionFacts(core, sessionId),
         );
         core.accessor.get(IEventService).publish(
           new SessionCreated({ payload: { agentId: 'main', sessionId: session.id, session } }),
