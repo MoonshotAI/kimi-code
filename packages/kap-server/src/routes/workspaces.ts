@@ -497,7 +497,6 @@ function buildDuplicateDirEnvelope(index: number, dir: string, requestId: string
     ErrorCode.WORKSPACE_DUPLICATE_DIR,
     `Duplicate source folder: ${directory}`,
     requestId,
-    undefined,
     [{ path: `additional_dirs.${index}`, directory }],
   );
 }
