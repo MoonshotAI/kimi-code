@@ -338,6 +338,8 @@ On success, `data` is `{ ok: true }`.
 | --- | --- |
 | `GET /api/v1/config` | Read the global config (secret fields redacted) |
 | `POST /api/v1/config` | Merge-patch the config; broadcasts `event.config.changed` |
+| `GET /api/v1/global-agents-md` | Read the global `AGENTS.md` |
+| `PUT /api/v1/global-agents-md` | Write the global `AGENTS.md` |
 
 #### `GET /api/v1/config`
 
@@ -405,6 +407,29 @@ The body is a partial config object — any subset of the response domains above
 | `disable_feedback_survey` | body | boolean | Whether the session rating prompt is turned off |
 
 On success, `data` is the full updated config in the same shape as `GET /api/v1/config`.
+
+#### `GET /api/v1/global-agents-md`
+
+Reads the global `AGENTS.md` from the server's Kimi home directory (`KIMI_CODE_HOME`, or `~/.kimi-code` by default).
+
+On success, `data` is `{ path, content, exists }`: `path` is the absolute file path, `content` is the exact UTF-8 text, and `exists` reports whether the file exists. A missing file returns an empty `content` string with `exists: false`.
+
+- `40411`: the file cannot be read because of filesystem permissions
+- `40906`: the target path is a directory
+
+#### `PUT /api/v1/global-agents-md`
+
+Replaces the global `AGENTS.md` with the exact UTF-8 text in the request body, creating the Kimi home directory and file when needed. An empty string writes an empty file; it does not delete the file.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `content` | body | string | **Required.** Complete file content; whitespace is preserved |
+
+On success, `data` is the saved `{ path, content, exists }` snapshot with `exists: true`.
+
+- `40001`: `content` is missing or is not a string
+- `40411`: the file cannot be written because of filesystem permissions
+- `40906`: the target path is a directory
 
 ### Models and providers
 
