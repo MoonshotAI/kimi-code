@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => {
     getVersion: vi.fn(() => '0.0.1-alpha.2'),
     validateOptions: vi.fn(),
     runUpdatePreflight: vi.fn(),
+    runForcedUpgradePreflight: vi.fn(async () => 'continue'),
     runShell: vi.fn(),
     runPrompt: vi.fn(),
     installCrashHandlers: vi.fn(),
@@ -122,6 +123,10 @@ vi.mock('../../src/cli/options', async () => {
 
 vi.mock('../../src/cli/update/preflight', () => ({
   runUpdatePreflight: mocks.runUpdatePreflight,
+}));
+
+vi.mock('../../src/cli/update/forced', () => ({
+  runForcedUpgradePreflight: mocks.runForcedUpgradePreflight,
 }));
 
 vi.mock('../../src/cli/update/native-swap', () => ({
