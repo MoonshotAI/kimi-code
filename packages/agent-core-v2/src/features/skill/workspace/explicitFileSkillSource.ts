@@ -2,7 +2,7 @@ import { realpath } from 'node:fs/promises';
 import { basename, dirname, join, parse, relative } from 'node:path';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import { Disposable, DisposableMap, DisposableStore } from '#/_base/di/lifecycle';
+import { Disposable, DisposableMap } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
 import type { ILogService } from '#/_base/log/log';
 import { TimeoutTimer } from '#/_base/utils/timer';
@@ -18,7 +18,7 @@ import {
 } from '#/features/skill/catalog/skillSource';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
-import { isWatchEnabled, watch, watchCandidates } from '#human/utils/watch';
+import { isWatchEnabled, watch, watchCandidates, type WatchHandle } from '#human/utils/watch';
 
 const WATCH_DEBOUNCE_MS = 200;
 
@@ -38,7 +38,7 @@ export class ExplicitFileSkillSource extends Disposable implements IExplicitFile
   readonly onDidChange: Event<void> = this.onDidChangeEmitter.event;
   private readonly watchDebounce = this._register(new TimeoutTimer());
   private readonly watchRegistered: Promise<void>;
-  private readonly watches = this._register(new DisposableMap<string, DisposableStore>());
+  private readonly watches = this._register(new DisposableMap<string, WatchHandle>());
   private watchRevision = 0;
 
   constructor(
@@ -97,11 +97,35 @@ export class ExplicitFileSkillSource extends Disposable implements IExplicitFile
       }
     }
     if (this._store.isDisposed || revision !== this.watchRevision) return;
-    const refresh = () => this.updateWatches(candidates);
     for (const [key, { path, entry }] of plan) {
       if (this.watches.has(key)) continue;
-      const resources = this.addWatch(path, entry, refresh);
-      if (resources !== undefined) this.watches.set(key, resources);
+      const logFailure = (error: unknown) => {
+        if (!this._store.isDisposed) {
+          this.log?.warn(`explicit skill watcher failed for ${entry ?? path}: ${String(error)}`);
+        }
+      };
+      try {
+        const handle = entry === undefined
+          ? this.watchTarget(path)
+          : watch(path, {
+              ignored: (changed) => relative(path, changed) !== '' && relative(entry, changed) !== '',
+              listing: false,
+              recursive: false,
+            });
+        this.watches.set(key, handle);
+        handle.onDidChange(() => {
+          if (entry !== undefined) void this.updateWatches(candidates);
+          this.invalidate();
+        });
+        void handle.ready.then(() => {
+          if (this.watches.get(key) !== handle) return;
+          if (entry === undefined) this.invalidate();
+          else void this.updateWatches(candidates);
+        }, logFailure);
+      } catch (error) {
+        this.watches.deleteAndDispose(key);
+        logFailure(error);
+      }
     }
     for (const key of this.watches.keys()) {
       if (plan.has(key)) continue;
@@ -110,48 +134,16 @@ export class ExplicitFileSkillSource extends Disposable implements IExplicitFile
     }
   }
 
-  private addWatch(
-    path: string,
-    entry: string | undefined,
-    refresh: () => Promise<void>,
-  ): DisposableStore | undefined {
-    const logFailure = (error: unknown) => {
-      if (!this._store.isDisposed) {
-        this.log?.warn(`explicit skill watcher failed for ${entry ?? path}: ${String(error)}`);
-      }
-    };
-    const resources = new DisposableStore();
-    try {
-      const root = parse(path).root;
-      const handle = resources.add(entry === undefined
-        ? watchCandidates(root, [path], {
-            ignored: subtreeWatchFilter(root, [path.replace(/[\\/]+$/, '')], {
-              maxDepth: MAX_SKILL_SCAN_DEPTH + 2,
-              skipEntry: isSkillScanExcludedEntry,
-              keepEntryFile: 'SKILL.md',
-            }),
-            signal: true,
-          })
-        : watch(path, {
-            ignored: (changed) => relative(path, changed) !== '' && relative(entry, changed) !== '',
-            listing: false,
-            recursive: false,
-          }));
-      resources.add(handle.onDidChange(() => {
-        if (entry !== undefined) void refresh();
-        this.invalidate();
-      }));
-      void handle.ready.then(() => {
-        if (resources.isDisposed) return;
-        if (entry === undefined) this.invalidate();
-        else void refresh();
-      }, logFailure);
-      return resources;
-    } catch (error) {
-      resources.dispose();
-      logFailure(error);
-      return undefined;
-    }
+  private watchTarget(path: string): WatchHandle {
+    const root = parse(path).root;
+    return watchCandidates(root, [path], {
+      ignored: subtreeWatchFilter(root, [path.replace(/[\\/]+$/, '')], {
+        maxDepth: MAX_SKILL_SCAN_DEPTH + 2,
+        skipEntry: isSkillScanExcludedEntry,
+        keepEntryFile: 'SKILL.md',
+      }),
+      signal: true,
+    });
   }
 
   private invalidate(): void {
