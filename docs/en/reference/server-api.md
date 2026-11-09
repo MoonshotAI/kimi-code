@@ -1755,9 +1755,9 @@ Fuzzy-searches file and directory names across the session workspace. An empty `
 | `limit` | body | integer | Maximum hits, 1–200. Default `50` |
 | `include_globs` | body | string[] | Only paths matching one of these globs |
 | `exclude_globs` | body | string[] | Skip paths matching these globs |
-| `follow_gitignore` | body | boolean | Skip gitignored paths. Default `true` |
+| `follow_gitignore` | body | boolean | Skip gitignored paths when `true`. Default `false` |
 
-On success, `data` is `{ items, truncated }` where each item is `{ path, name, kind, score, match_positions }` — `kind` is `file` / `directory` / `symlink`, `score` is the fuzzy-match score between 0 and 1, and `match_positions` lists the matched character offsets. Hits sort by score (ties by path), and `truncated` reports that hits beyond `limit` were dropped.
+On success, `data` is `{ items, truncated }` where each item is `{ path, name, kind, score, match_positions }` — `kind` is `file` / `directory` / `symlink`, `score` is the fuzzy-match score between 0 and 1, and `match_positions` lists the matched character offsets. Hits prioritize match quality and place ignored hits after non-ignored hits of equal quality. Including ignored hits may require a supplemental scan; `truncated` reports that hits beyond `limit` were dropped.
 
 - `40001`: body validation failure
 - `40401`: neither a session nor a resolvable workspace with that reference
@@ -1969,7 +1969,7 @@ The session-less form of `fs:search`: the workspace travels in the body instead 
 | `limit` | body | integer | Maximum hits, 1–200. Default `50` |
 | `include_globs` | body | string[] | Only paths matching one of these globs |
 | `exclude_globs` | body | string[] | Skip paths matching these globs |
-| `follow_gitignore` | body | boolean | Skip gitignored paths. Default `true` |
+| `follow_gitignore` | body | boolean | Skip gitignored paths when `true`. Default `false` |
 
 On success, `data` is `{ items, truncated }` with the same hit shape and ordering as `fs:search`.
 
@@ -1985,12 +1985,12 @@ Suggests file and directory completion candidates in a workspace without a sessi
 | `workspace` | body | string | **Required.** Registered workspace id or absolute root (registered on the spot) |
 | `query` | body | string | **Required.** Partial path text to complete |
 | `limit` | body | integer | Maximum candidates, 1–200. Default `50` |
-| `follow_gitignore` | body | boolean | Skip gitignored paths. Default `true` |
+| `follow_gitignore` | body | boolean | Skip gitignored paths when `true`. Default `false` |
 | `show_hidden` | body | boolean | Include dotfiles. Default `false` |
 | `include_globs` | body | string[] | Only paths matching one of these globs |
 | `exclude_globs` | body | string[] | Skip paths matching these globs |
 
-On success, `data` is `{ items, truncated }` where each item is `{ path, name, kind, score, match_positions }`, the same hit shape as `fs:search`.
+On success, `data` is `{ items, truncated }` where each item is `{ path, name, kind, score, match_positions }`, the same hit shape as `fs:search`. Candidates prioritize match quality and place ignored candidates after non-ignored candidates of equal quality. A dot-prefixed query also enables hidden-path matching; `show_hidden` remains `false` by default for other queries. Including ignored candidates may require a supplemental scan.
 
 - `40001`: body validation failure
 - `40410`: workspace not found and not a usable absolute path
