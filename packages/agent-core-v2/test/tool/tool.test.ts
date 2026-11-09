@@ -548,6 +548,7 @@ function sessionMetadataStub(agents: Readonly<Record<string, AgentMeta>>): ISess
   return {
     _serviceBrand: undefined,
     ready: Promise.resolve(),
+    effectiveCwd: '/tmp',
     onDidChangeMetadata: Event.None as ISessionMetadata['onDidChangeMetadata'],
     read: async () => ({
       id: 'test-session',
@@ -2404,19 +2405,23 @@ describe('Agent tool execution contract', () => {
     );
   });
 
-  it('rejects a pool that gained the reserved "primary" key through a runtime config edit', async () => {
+  it('accepts a pool that gained a "primary" key through a runtime config edit', async () => {
     const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
-    const context = createAgentToolContext(lifecycle, {
-      initialConfig: {
-        secondaryModel: {
-          defaultModel: 'provider/fast',
-          models: { 'provider/fast': 'fast and cheap' },
+    const context = createAgentToolContext(
+      lifecycle,
+      modelProviderServices(modelCatalogResolving('mock-model', 'provider/fast', 'primary')),
+      {
+        initialConfig: {
+          secondaryModel: {
+            defaultModel: 'provider/fast',
+            models: { 'provider/fast': 'fast and cheap' },
+          },
         },
       },
-    });
+    );
     await (context.get(IConfigService) as StubConfigService).replace(SECONDARY_MODEL_SECTION, {
       defaultModel: 'primary',
-      models: { primary: 'reserved word' },
+      models: { primary: 'ordinary alias' },
     });
 
     const result = await executeAgentTool(context, {
@@ -2424,9 +2429,12 @@ describe('Agent tool execution contract', () => {
       description: 'Find cause',
     });
 
-    expect(result.isError).toBe(true);
-    expect(result.output).toContain('[secondary_model.models] key "primary" is reserved');
-    expect(lifecycle.create).not.toHaveBeenCalled();
+    expect(result.isError).toBeFalsy();
+    expect(lifecycle.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        binding: expect.objectContaining({ model: 'primary' }),
+      }),
+    );
   });
 
   it('points at the [secondary_model.models] config when the bound alias stops resolving', async () => {

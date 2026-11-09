@@ -121,13 +121,12 @@ export class WorkspaceFsService implements IWorkspaceFsService {
   private realRootsCache:
     | { readonly key: string; readonly roots: readonly { dir: string; real: string }[] }
     | undefined = undefined;
-  private readonly workDir: string;
   private readonly workspaceId: string;
   private readonly path: EnvironmentPath;
 
   constructor(
     @IWorkspaceContext workspace: Pick<IWorkspaceContext, 'workspaceId' | 'cwd'>,
-    @IWorkspaceDirs private readonly workspaceDirs: Pick<IWorkspaceDirs, 'additionalDirs'>,
+    @IWorkspaceDirs private readonly workspaceDirs: Pick<IWorkspaceDirs, 'additionalDirs' | 'primary'>,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @IEnvironmentService private readonly resolver: EnvironmentResolver,
     @ITelemetryService private readonly telemetry: ITelemetryService,
@@ -136,7 +135,10 @@ export class WorkspaceFsService implements IWorkspaceFsService {
   ) {
     this.workspaceId = workspace.workspaceId;
     this.path = resolver.inspect({ environmentId }).path ?? POSIX_ENVIRONMENT_PATH;
-    this.workDir = this.path.resolve(workspace.cwd);
+  }
+
+  private get workDir(): string {
+    return this.path.resolve(this.workspaceDirs.primary);
   }
 
   private resolvePathInput(rel: string): string {

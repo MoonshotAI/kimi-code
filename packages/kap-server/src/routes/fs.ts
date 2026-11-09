@@ -162,8 +162,8 @@ function acquireLocalRootedFs(
   try {
     const hostFs = lease.environment.fs!;
     const context = { workspaceId, cwd: roots.workDir };
-    const git = new WorkspaceGitService(context, { current: core.accessor.get(IGitService), onDidChange: Event.None as Event<void> });
-    const fs = new WorkspaceFsService(context, { additionalDirs: roots.additionalDirs }, hostFs, environments, core.accessor.get(ITelemetryService), git);
+    const git = new WorkspaceGitService({ primary: roots.workDir }, { current: core.accessor.get(IGitService), onDidChange: Event.None as Event<void> });
+    const fs = new WorkspaceFsService(context, { primary: roots.workDir, additionalDirs: roots.additionalDirs }, hostFs, environments, core.accessor.get(ITelemetryService), git);
     return { fs, hostFs, lease, environmentId: LOCAL_ENVIRONMENT_ID };
   } catch (error) {
     lease.dispose();

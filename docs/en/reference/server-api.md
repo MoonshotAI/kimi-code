@@ -1070,7 +1070,7 @@ Submits a user prompt to the session. Media references are validated first, then
 | `content` | body | array | **Required.** Non-empty array of content parts; variants below |
 | `agent_id` | body | string | Target agent. Default the main agent |
 | `prompt_id` | body | string | Client-chosen prompt id that makes the submission idempotent, also with `skills`: sending the same request again with the same id returns the result of the first submission, waiting for it while it is still being processed, and does not submit again; reusing the id for a different request fails `40927` |
-| `skills` | body | array | Bundled skill activations, at least 1 entry of `{ name, args? }`; every skill must exist and be user-activatable |
+| `skills` | body | array | Bundled skill activations, at least 1 entry of `{ name, path?, args? }`; every skill must exist and be user-activatable. `path` selects a same-name variant from the session catalog |
 | `profile` | body | string | Agent profile to bind before submitting |
 | `model` | body | string | Model alias to switch the agent to |
 | `thinking` | body | string | Thinking-mode effort level |
@@ -1269,7 +1269,7 @@ Lists the skills available to one session, merged from every source (built-in, p
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
 
-On success, `data` is `{ skills }` where each item is a skill descriptor `{ name, description, path, source, type?, disable_model_invocation? }`: `source` is `project` / `user` / `extra` / `builtin`, `type` classifies the skill (only user-activatable types can be activated), and `disable_model_invocation` hides the skill from the model.
+On success, `data` is `{ skills }` where each item is a skill descriptor `{ name, description, path, source, workspace_dir?, type?, disable_model_invocation? }`: `source` is `project` / `user` / `extra` / `builtin`, `type` classifies the skill (only user-activatable types can be activated), and `disable_model_invocation` hides the skill from the model. `workspace_dir` is the project root for project skills and is omitted for other sources. Same-name skills can appear as multiple variants with distinct `path` values.
 
 - `40401`: session not found (or not activated)
 
@@ -1293,6 +1293,7 @@ Activates a skill in the session — the REST analogue of the `/<skill>` slash c
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
 | `skill_name` | path | string | **Required.** Name of the skill to activate |
+| `path` | body | string | Optional exact `SKILL.md` path from the session catalog, used to select a same-name variant. Must match an entry returned by the catalog |
 | `args` | body | string | Free-form arguments handed to the skill, like the text after a slash command |
 | `prompt_id` | body | string | Client-chosen id of the activation message; it shows up in the `prompt_ids` of the conversation's `user_message` item. Like a prompt submission, sending the same request again with the same id returns the first result without activating again |
 | `attachments` | body | array | Media parts attached to the activation. Image and video parts carry a `source` object whose `kind` is `url` / `base64` / `file` / `session_media` (same shapes as the prompt content parts); file parts carry the top-level `file_id`, `name`, `media_type`, and `size` |
@@ -1547,6 +1548,8 @@ On success, `data` is [the workspace object](#the-workspace-object).
 
 Promotes a source folder in the workspace's dir set to the primary directory. The swap is atomic: the path becomes the new `root` and the previous primary moves into `additional_dirs`; the workspace id and session bucket are unchanged, and all sessions are kept. After the swap, additional directories coming from the previous primary's `local.toml` are no longer merged (`local.toml` follows the primary directory).
 
+For existing sessions on the local environment without an explicit `environmentCwd`, subsequent default tool working directories and relative paths follow the new primary. Explicit `environmentCwd` and remote environment bindings keep their configured directory. Additional directories expand allowed access but are not candidate roots for relative paths; use absolute paths or an explicit cwd to access them. Tools remain registered during the swap, and the workspace's existing trust decision is preserved across restarts.
+
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `workspace_id` | path | string | **Required.** Workspace id |
@@ -1608,7 +1611,7 @@ On success, `data` is `{ trusted: true }`.
 
 #### `POST /api/v1/workspaces/{workspace_id}/untrust`
 
-Revokes the persisted workspace trust record. Unless a process or config override keeps the workspace trusted, its project-level MCP config unloads.
+Revokes the persisted workspace trust records associated with the current dir set. Unless a process or config override keeps the workspace trusted, its project-level MCP config unloads.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -2410,7 +2413,7 @@ A turn is `{ turn_id, ordinal, kind, status, outcome?, end_reason?, error?, retr
 
 Every item has `{ item_id, type, step_index?, status, outcome?, created_at, debug? }`. Items keep the order they appeared in, and an ended item has the `outcome` `completed` unless noted below. When the server runs with `KIMI_CODE_DEBUG=1`, the last item of each ended step carries `debug`: `{ finish_reason?, usage?, timing? }` for the model request of that step, where `timing` holds `first_token_ms`, `stream_ms`, `request_build_ms`, `server_first_token_ms`, `server_decode_ms`, `client_consume_ms`, and `client_blocked_ms` when measured; the item arrives again as `item.ended` once the step ends.
 
-- `user_message`: `{ prompt_ids, placement: "opener" | "steer", origin, text, attachments, skills, metadata? }`. `prompt_ids` lists the prompt ids the input carries — including the `prompt_id` of a bundled skill submission or a skill activation — so a client can retire its optimistic bubble; it is empty for inputs the system triggered. `origin` is `{ kind: "user" }`, `{ kind: "skill", name, args? }`, `{ kind: "plugin_command", plugin_id, command, args? }`, `{ kind: "cron", job_id, schedule, recurring, coalesced_count, stale }`, `{ kind: "hook", hook_event }`, `{ kind: "goal" }` for a goal continuation, `{ kind: "retry" }`, or `{ kind: "system" }`. `text` joins the visible text parts with newlines, without bundled skill instructions, prompt hook output, the notices that point the model at attached files, or image compression notes; it is empty for retries and internal triggers. `attachments` lists the files and media of the input in order as `{ kind: "image" | "video" | "audio" | "file", file_id?, url?, name?, media_type?, size?, ordinal }`: uploaded files carry `file_id`, inline and remote media carry `url`, media the server stored is sent as a `data:` URL in pages, and a file attached by a server-local path carries only its `name`, `media_type` and `size`. `skills` lists the skills activated with the input as `{ name, args? }`, and `metadata` echoes the `metadata` sent with the prompt. A CLI shell command (`!`) and its output arrive as raw text in a `user_message` with `origin: { kind: "system" }`, each in its own ended turn.
+- `user_message`: `{ prompt_ids, placement: "opener" | "steer", origin, text, attachments, skills, metadata? }`. `prompt_ids` lists the prompt ids the input carries — including the `prompt_id` of a bundled skill submission or a skill activation — so a client can retire its optimistic bubble; it is empty for inputs the system triggered. `origin` is `{ kind: "user" }`, `{ kind: "skill", name, path?, args? }`, `{ kind: "plugin_command", plugin_id, command, args? }`, `{ kind: "cron", job_id, schedule, recurring, coalesced_count, stale }`, `{ kind: "hook", hook_event }`, `{ kind: "goal" }` for a goal continuation, `{ kind: "retry" }`, or `{ kind: "system" }`. `text` joins the visible text parts with newlines, without bundled skill instructions, prompt hook output, the notices that point the model at attached files, or image compression notes; it is empty for retries and internal triggers. `attachments` lists the files and media of the input in order as `{ kind: "image" | "video" | "audio" | "file", file_id?, url?, name?, media_type?, size?, ordinal }`: uploaded files carry `file_id`, inline and remote media carry `url`, media the server stored is sent as a `data:` URL in pages, and a file attached by a server-local path carries only its `name`, `media_type` and `size`. `skills` lists the skills activated with the input as `{ name, path?, args? }`, and `metadata` echoes the `metadata` sent with the prompt. A CLI shell command (`!`) and its output arrive as raw text in a `user_message` with `origin: { kind: "system" }`, each in its own ended turn.
 - `assistant_message`: `{ text }`.
 - `reasoning`: `{ text, started_at, duration_ms? }`; `duration_ms` is how long the reasoning streamed, present once the item has ended. Hidden reasoning is never sent.
 - `tool_call`: `{ item_id: tool call id, name, stage?, input?, input_text?, display?, output?, media?, error?, progress?, interaction_id?, agent_refs?, started_at, ended_at? }`. While the call runs, `stage` is `input` while the model streams the arguments (`input_text` holds them as text), `awaiting_approval` while its approval is pending, and `executing` otherwise; `output` streams the tool's live output and `progress` is `{ percent?, status?, custom_kind?, custom_data? }`. Once ended, `output` is the text of the result and `media` lists its images, videos, and audio as `{ kind, file_id?, url?, media_type? }`; the `outcome` is `failed`, with `error` instead of `output`, when the result is an error, and `interrupted` when the turn ended before a result. `interaction_id` links the approval or question raised for the call, whose content comes with the `interaction` frames, and `agent_refs` lists the subagents the call started as `{ agent_id, role: "child" | "member", swarm_index?, task_id? }`. `ExitPlanMode` calls carry the `display` `{ kind: "plan_review", plan, path?, options: [{ label, description }], review: { state: "pending" | "approved" | "rejected" | "cancelled", selected_option?, feedback? } }`.

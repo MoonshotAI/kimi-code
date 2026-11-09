@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { stat } from 'node:fs/promises';
 
 import { join, normalize } from 'pathe';
 import lockfile from 'proper-lockfile';
@@ -50,6 +51,7 @@ export class FileWorkspacePersistence extends Disposable implements IWorkspacePe
   private readonly watchDebounce = this._register(new TimeoutTimer());
   private readonly watchReady: Promise<void>;
   private migration: Promise<void> | undefined;
+  private catalogCache: { readonly version: string; readonly catalog: WorkspaceCatalog } | undefined;
 
   constructor(
     @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
@@ -64,6 +66,7 @@ export class FileWorkspacePersistence extends Disposable implements IWorkspacePe
     this._register(
       handle.onDidChange((change) => {
         if (normalize(change.path) !== normalize(catalogFile)) return;
+        this.catalogCache = undefined;
         this.watchDebounce.cancelAndSet(() => {
           this.changeEmitter.fire();
         }, WATCH_DEBOUNCE_MS);
@@ -74,7 +77,16 @@ export class FileWorkspacePersistence extends Disposable implements IWorkspacePe
   async load(): Promise<WorkspaceCatalog | undefined> {
     await this.ensureMigrated();
     await this.watchReady.catch(() => undefined);
-    return (await this.readProjectsState()).catalog;
+    const version = await this.catalogVersion();
+    if (version !== undefined && this.catalogCache?.version === version) {
+      return this.catalogCache.catalog;
+    }
+    const { catalog } = await this.readProjectsState();
+    this.catalogCache =
+      version !== undefined && version === (await this.catalogVersion())
+        ? { version, catalog }
+        : undefined;
+    return catalog;
   }
 
   async update(mutator: WorkspaceCatalogMutator): Promise<void> {
@@ -108,6 +120,7 @@ export class FileWorkspacePersistence extends Disposable implements IWorkspacePe
         deleted_project_ids: [...next.deletedIds],
         idempotency_keys: { ...(next.idempotencyKeys ?? file.idempotency_keys) },
       };
+      this.catalogCache = undefined;
       await this.docs.set(WORKSPACE_CATALOG_SCOPE, PROJECTS_KEY, nextFile);
       this.changeEmitter.fire();
     });
@@ -190,6 +203,17 @@ export class FileWorkspacePersistence extends Disposable implements IWorkspacePe
       );
     }
     return parseProjectsDocument(raw);
+  }
+
+  private async catalogVersion(): Promise<string | undefined> {
+    const path = this.storage.pathFor(WORKSPACE_CATALOG_SCOPE, PROJECTS_KEY);
+    if (path === undefined) return undefined;
+    try {
+      const metadata = await stat(path, { bigint: true });
+      return `${metadata.dev}:${metadata.ino}:${metadata.size}:${metadata.mtimeNs}:${metadata.ctimeNs}`;
+    } catch {
+      return undefined;
+    }
   }
 
   private async withLock<T>(operation: () => Promise<T>): Promise<T> {

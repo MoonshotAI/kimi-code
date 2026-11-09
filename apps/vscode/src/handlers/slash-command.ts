@@ -51,8 +51,14 @@ export async function runHostSlashCommand(
 ): Promise<boolean> {
   if (command.name.startsWith("skill:")) {
     const skillName = command.name.slice("skill:".length);
+    const skills = await runtime.session.listSkills();
+    const candidates = skills.filter((skill) =>
+      skill.name.toLowerCase() === skillName.toLowerCase() &&
+      skill.scopes === undefined &&
+      (skill.type === undefined || skill.type === "prompt" || skill.type === "inline" || skill.type === "flow"));
+    const skill = candidates.find((candidate) => candidate.name === skillName) ?? candidates[0];
     const result = await runtime.runTurnAction(command.raw, () =>
-      runtime.session.activateSkill(skillName, command.args || undefined));
+      runtime.session.activateSkill(skillName, command.args || undefined, { path: skill?.path }));
     return result.status === "finished";
   }
 

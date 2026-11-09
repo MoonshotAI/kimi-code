@@ -47,10 +47,10 @@ function makeHost(transcript: TranscriptConfig) {
 }
 
 describe('transcript preference commands', () => {
-  it('saves group values, updates appState, and records settings telemetry', async () => {
+  it('saves both display values, updates appState, and records settings telemetry', async () => {
     mocks.saveTuiConfig.mockClear();
-    const host = makeHost({ groupTools: 'auto', groupThinking: true });
-    const transcript: TranscriptConfig = { groupTools: 'explore', groupThinking: false };
+    const host = makeHost({ toolCallDensity: 'compact', thinking: 'grouped' });
+    const transcript: TranscriptConfig = { toolCallDensity: 'detailed', thinking: 'ungrouped' };
 
     await applyTranscriptConfigChoice(host, transcript);
 
@@ -60,12 +60,12 @@ describe('transcript preference commands', () => {
     expect(host.setAppState).toHaveBeenCalledWith({ transcript });
     expect(host.state.transcriptContainer.setPresentationOptions).toHaveBeenCalledWith({
       fullscreen: true,
-      groupTools: 'explore',
-      groupThinking: false,
+      toolCallDensity: 'detailed',
+      thinking: 'ungrouped',
     });
     expect(host.track).toHaveBeenCalledWith('transcript_display_settings', {
-      group_tools: 'explore',
-      group_thinking: false,
+      tool_call_density: 'detailed',
+      thinking: 'ungrouped',
       source: 'settings',
     });
     expect(host.showStatus).toHaveBeenCalledWith('Transcript display settings updated.', 'success');
@@ -73,9 +73,9 @@ describe('transcript preference commands', () => {
 
   it('does not rewrite or track unchanged values', async () => {
     mocks.saveTuiConfig.mockClear();
-    const host = makeHost({ groupTools: 'off', groupThinking: false });
+    const host = makeHost({ toolCallDensity: 'ungrouped', thinking: 'ungrouped' });
 
-    await applyTranscriptConfigChoice(host, { groupTools: 'off', groupThinking: false });
+    await applyTranscriptConfigChoice(host, { toolCallDensity: 'ungrouped', thinking: 'ungrouped' });
 
     expect(mocks.saveTuiConfig).not.toHaveBeenCalled();
     expect(host.setAppState).not.toHaveBeenCalled();
@@ -85,9 +85,9 @@ describe('transcript preference commands', () => {
 
   it('reports a save failure without touching appState or telemetry', async () => {
     mocks.saveTuiConfig.mockRejectedValueOnce(new Error('disk full'));
-    const host = makeHost({ groupTools: 'auto', groupThinking: true });
+    const host = makeHost({ toolCallDensity: 'compact', thinking: 'grouped' });
 
-    await applyTranscriptConfigChoice(host, { groupTools: 'explore', groupThinking: true });
+    await applyTranscriptConfigChoice(host, { toolCallDensity: 'detailed', thinking: 'grouped' });
 
     expect(host.setAppState).not.toHaveBeenCalled();
     expect(host.track).not.toHaveBeenCalled();
@@ -103,7 +103,7 @@ describe('copy on select preference', () => {
     const ui = new TuiAltScreen(new VirtualTerminal(40, 10), undefined, undefined, {
       copyOnSelect,
     });
-    const host = makeHost({ groupTools: 'auto', groupThinking: true });
+    const host = makeHost({ toolCallDensity: 'compact', thinking: 'grouped' });
     Object.assign(host.state, { ui });
     Object.assign(host.state.appState, { copyOnSelect });
     return { host, ui };

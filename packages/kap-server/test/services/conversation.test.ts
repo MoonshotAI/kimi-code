@@ -201,7 +201,7 @@ describe('conversation fold', () => {
     ]);
   });
 
-  it('keeps the visible text, attachments, skills and client metadata of a user message and no server paths', () => {
+  it('keeps visible user content and skill paths while hiding attachment server paths', () => {
     const fileId = 'f_0a1b2c3d-0000-4000-8000-000000000001';
     const state = fold([
       turnPrompt(0, 'p1'),
@@ -240,10 +240,11 @@ describe('conversation fold', () => {
         { kind: 'file', name: 'local.txt', media_type: 'text/plain', size: 9, ordinal: 2 },
         { kind: 'video', file_id: fileId, ordinal: 3 },
       ],
-      skills: [{ name: 'review', args: '--deep' }],
+      skills: [{ name: 'review', path: '/home/example/skills/review', args: '--deep' }],
       metadata: { display_text: 'check this diff' },
     });
-    expect(JSON.stringify(opener)).not.toContain('/home/example');
+    expect(JSON.stringify(opener)).not.toContain('/home/example/notes.md');
+    expect(JSON.stringify(opener)).not.toContain('/home/example/local.txt');
   });
 
   it('maps engine origins to protocol origins and gives system-triggered inputs no prompt ids', () => {
@@ -287,7 +288,7 @@ describe('conversation fold', () => {
 
     const openers = state.turns.map((turn) => turn.items[0]);
     expect(openers.map((item) => (item?.type === 'user_message' ? [item.origin, item.prompt_ids, item.text] : []))).toEqual([
-      [{ kind: 'skill', name: 'commit', args: '-m wip' }, ['k1'], 'User activated the skill'],
+      [{ kind: 'skill', name: 'commit', path: '/home/example/skills/commit', args: '-m wip' }, ['k1'], 'User activated the skill'],
       [{ kind: 'plugin_command', plugin_id: 'example-plugin', command: 'deploy', args: 'staging' }, ['c1'], 'Plugin command'],
       [{ kind: 'retry' }, [], ''],
       [{ kind: 'goal' }, [], ''],

@@ -149,6 +149,7 @@ export interface SetSessionTowerModeRpcInput extends SessionIdRpcInput {
 
 export interface ActivateSkillRpcInput extends SessionIdRpcInput {
   readonly name: string;
+  readonly path?: string;
   readonly args?: string | undefined;
 }
 

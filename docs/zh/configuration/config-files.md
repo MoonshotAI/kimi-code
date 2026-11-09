@@ -218,7 +218,6 @@ default_model = "kimi-code/kimi-for-coding-highspeed"
 - `default_model`：配置 `models` 表时必填，且必须是其中的 key。
 - `models`：value 中英文均可；空字符串表示只列出别名、不给提示。
 - `default_effort` 是节级设置：无论派生绑定到池中哪个条目都生效。想按条目区分档位时不要设置它，改用下文的模型「变体」。
-- `primary` 是保留字，不能作为池中 key。
 
 池别名引用的是 `[models]` 表的当前内容：如果之后删除供应商、登出账号，或其刷新后的模型列表不再包含某个别名，会话启动时会报出指明失效别名的配置错误，修正或移除对应条目即可恢复。系统不会自动改写 `[secondary_model]` 节。
 
@@ -657,8 +656,8 @@ defaultCwd = "/workspace"
 | `[notifications].enabled` | `boolean` | `true` | 是否发送桌面通知 |
 | `[notifications].notification_condition` | `string` | `unfocused` | 何时通知：`unfocused`（仅终端失去焦点时）或 `always`（总是） |
 | `[upgrade].auto_install` | `boolean` | `true` | 是否自动安装新版本 |
-| `[transcript.group].tools` | `string` | `auto` | `fullscreen` 模式下哪些工具调用折进摘要分组：`auto` 折叠除 subagent 和向你提问、通知类工具以外的所有工具调用，`explore` 只折叠读取、搜索和 `ls`、`git status` 这类只读命令，`off` 让每个工具调用保持独立卡片；对应 `/settings` 里的 Tool call folding；`regular` 模式下不生效 |
-| `[transcript.group].group_thinking` | `boolean` | `true` | `fullscreen` 模式下已结束的思考是否折进摘要分组；`false` 改为每段思考显示两行预览；对应 `/settings` 里的 Thinking folding；`regular` 模式下不生效 |
+| `[transcript].tool_call_density` | `string` | `compact` | `fullscreen` 模式下的工具调用密度：`compact`、`balanced` 或 `detailed` |
+| `[transcript].thinking` | `string` | `grouped` | `fullscreen` 模式下的思考折叠：`grouped` 或 `ungrouped` |
 | `[status_line].items` | `string[]` | `[]` | 底部状态栏第一行的内置槽位及顺序：`mode`、`goal`、`model`、`tasks`、`cwd`、`git`、`tips`，未知 id 跳过并告警 |
 | `[status_line].command` | `string` | `""` | 自定义状态栏命令：stdout 首行替换状态栏，stdin 收 JSON 快照；上限 300ms、每秒一次，失败回退内置布局 |
 
@@ -689,9 +688,9 @@ notification_condition = "unfocused" # "unfocused" | "always"
 [upgrade]
 auto_install = true
 
-[transcript.group] # 仅 fullscreen 模式生效
-tools = "auto" # "auto" | "explore" | "off"
-group_thinking = true # false 表示每段思考显示两行预览
+[transcript] # 仅 fullscreen 模式生效
+tool_call_density = "compact" # "compact" | "balanced" | "detailed"
+thinking = "grouped" # "grouped" | "ungrouped"
 
 # [status_line]
 # items = ["mode", "goal", "model", "tasks", "cwd", "git", "tips"]
