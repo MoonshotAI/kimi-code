@@ -852,6 +852,7 @@ describe('WorkspaceFsService.search', () => {
     const dotBackend = fakeFs({
       '.gitignore': '.tmp/**\n',
       '.tmp/ignored.ts': '',
+      'src/ordinary.ts': '',
       'weak-one.tmp.ts': '',
       'weak-two.tmp.ts': '',
     });
@@ -859,6 +860,13 @@ describe('WorkspaceFsService.search', () => {
     const exact = await dotFs.search({ query: '.tmp', limit: 1, follow_gitignore: false });
     expect(exact.items.map((item) => item.path)).toEqual(['.tmp']);
     expect(exact.truncated).toBe(true);
+
+    const direct = await dotFs.search({ query: '.tmp/ignored.ts', limit: 1, follow_gitignore: false });
+    expect(direct.items.map((item) => item.path)).toEqual(['.tmp/ignored.ts']);
+    const filteredDirect = await dotFs.search({ query: '.tmp/ignored.ts', limit: 1, follow_gitignore: true });
+    expect(filteredDirect.items).toEqual([]);
+    const ordinary = await dotFs.search({ query: 'src/ordinary.ts', limit: 1, follow_gitignore: true });
+    expect(ordinary.items.map((item) => item.path)).toEqual(['src/ordinary.ts']);
   });
 
   it('reports symlinks as kind symlink and does not recurse into them', async () => {
@@ -1006,11 +1014,11 @@ describe('WorkspaceFsService.suggest', () => {
     };
   }
 
-  it('matches path segments in order and scopes rg to the longest existing directory prefix', async () => {
+  it('matches path segments across the whole workspace without narrowing the fuzzy root', async () => {
     const captured: string[][] = [];
     const fs = makeSession(
-      { 'apps/desktop/package.json': '' },
-      rgMultiRootHandler({ '/repo/apps': ['desktop/package.json'] }, captured),
+      { 'apps/desktop/package.json': '', 'examples/apps/demo.ts': '' },
+      rgLinesHandler(['apps/desktop/package.json', 'examples/apps/demo.ts'], captured),
     );
     const result = await fs.suggest({
       query: 'apps/de',
@@ -1024,7 +1032,9 @@ describe('WorkspaceFsService.suggest', () => {
       kind: 'directory',
     });
     expect(result.items.map((i) => i.path)).toContain('apps/desktop/package.json');
-    expect(captured.find((args) => args.includes('--files'))).toContain('/repo/apps');
+    expect(result.items.map((i) => i.path)).toContain('examples/apps/demo.ts');
+    const filesArgs = captured.find((args) => args.includes('--files'))!;
+    expect(filesArgs).not.toContain('/repo/apps');
   });
 
   it('allows skipping segments when consuming the query', async () => {
@@ -1067,18 +1077,23 @@ describe('WorkspaceFsService.suggest', () => {
     expect(result.items[0]?.path).toBe('apps');
   });
 
-  it('falls back to fuzzy search when a path prefix does not exist', async () => {
+  it('supplements an exact ignored path returned by neither rg pass', async () => {
     const captured: string[][] = [];
-    const fs = makeSession({}, rgLinesHandler(['apps/desktop/package.json'], captured));
+    const fs = makeSession(
+      { '.gitignore': 'apps/desktop/package.json\n', 'apps/desktop/package.json': '' },
+      rgLinesHandler([], captured),
+    );
     const result = await fs.suggest({
-      query: 'zzz/qqq',
+      query: 'apps/desktop/package.json',
       limit: 50,
-      follow_gitignore: true,
+      follow_gitignore: false,
       show_hidden: false,
     });
-    expect(result.items).toEqual([]);
+    expect(result.items.map((item) => item.path)).toEqual(['apps/desktop/package.json']);
     expect(result.truncated).toBe(false);
-    expect(captured.filter((args) => args.includes('--files'))).toHaveLength(1);
+    const filePasses = captured.filter((args) => args.includes('--files'));
+    expect(filePasses).toHaveLength(2);
+    expect(filePasses.flat()).not.toContain('/repo/apps/desktop');
   });
 
   it('matches basenames across the whole workspace in name mode', async () => {
@@ -1174,14 +1189,14 @@ describe('WorkspaceFsService.suggest', () => {
     expect(captured[2]).toContain('--hidden');
     expect(captured[3]).toContain('--hidden');
 
-    const scopedFs = makeSession(
+    const pathFs = makeSession(
       { '.tmp/ignored.ts': '' },
-      rgMultiRootHandler({ '/repo/.tmp': ['ignored.ts'] }, captured),
+      rgLinesHandler(['.tmp/ignored.ts'], captured),
     );
-    const scoped = await scopedFs.suggest({ query: '.tmp/', limit: 50, follow_gitignore: false, show_hidden: false });
-    expect(scoped.items.map((item) => item.path)).toContain('.tmp/ignored.ts');
+    const pathResult = await pathFs.suggest({ query: '.tmp/', limit: 50, follow_gitignore: false, show_hidden: false });
+    expect(pathResult.items.map((item) => item.path)).toContain('.tmp/ignored.ts');
     expect(captured.filter((args) => args.includes('--files'))).toHaveLength(6);
-    expect(captured.filter((args) => args.includes('--files')).at(-1)).toContain('/repo/.tmp');
+    expect(captured.filter((args) => args.includes('--files')).at(-1)).not.toContain('/repo/.tmp');
   });
 
   it('hides dot-prefixed entries at any depth unless show_hidden is set', async () => {
@@ -1301,11 +1316,14 @@ describe('WorkspaceFsService.suggest', () => {
         'src/ignored-long.ts': '',
         '.gitignore': 'ignored.ts\n',
         'ignored.ts': '',
+        '/outside/secret.ts': '',
       },
       rgMissingHandler,
       events,
       defaultGitStub(),
       ['src/link'],
+      undefined,
+      { 'src/link': '/outside' },
     );
     const result = await fs.suggest({
       query: 'foo',
@@ -1335,6 +1353,14 @@ describe('WorkspaceFsService.suggest', () => {
     });
     expect(linkResult.items.find((i) => i.path === 'src/link')?.kind).toBe('symlink');
     expect(linkResult.items.some((i) => i.path.startsWith('src/link/'))).toBe(false);
+
+    const external = await fs.suggest({
+      query: 'src/link/secret',
+      limit: 50,
+      follow_gitignore: false,
+      show_hidden: false,
+    });
+    expect(external.items).toEqual([]);
 
     const ignored = await fs.suggest({
       query: 'ignored',
@@ -1371,22 +1397,25 @@ describe('WorkspaceFsService.suggest', () => {
     expect(on.items.map((i) => i.path)).toContain('.secret.ts');
   });
 
-  it('passes ignore rules to the walk and reports inventory truncation', async () => {
-    const backend = fakeFs({ '.gitignore': 'node_modules/\n' });
+  it('keeps parent ignore rules for path queries and reports inventory truncation', async () => {
+    const backend = fakeFs({ '.gitignore': 'node_modules/\n', 'node_modules/app.ts': '' });
     let receivedIgnore: readonly string[] | undefined;
-    backend.walk = async (_path, options) => {
+    const walked: string[] = [];
+    backend.walk = async (path, options) => {
+      walked.push(path);
       receivedIgnore = options.ignore;
       return { truncated: true };
     };
     const fs = makeRemoteWalkSession(backend);
 
     const result = await fs.suggest({
-      query: 'app',
+      query: 'node_modules/app',
       limit: 50,
       show_hidden: false,
       follow_gitignore: true,
     });
 
+    expect(walked).toEqual([WORK_DIR]);
     expect(receivedIgnore).toEqual(['node_modules/', '', '.git']);
     expect(result).toEqual({ items: [], truncated: true });
   });
@@ -1530,7 +1559,7 @@ describe('WorkspaceFsService.suggest', () => {
         '/extra/README.md': '',
       },
       rgMultiRootHandler({
-        '/repo/apps': ['desktop/package.json'],
+        '/repo': ['apps/desktop/package.json'],
         '/extra': ['lib/util.ts', 'README.md'],
       }, captured),
       [],
@@ -1547,7 +1576,9 @@ describe('WorkspaceFsService.suggest', () => {
       show_hidden: false,
     });
     expect(pathResult.items[0]?.path).toBe('apps/desktop');
-    expect(captured.find((args) => args.includes('--files'))).toContain('/repo/apps');
+    const filesArgs = captured.find((args) => args.includes('--files'))!;
+    expect(filesArgs).toContain('/repo');
+    expect(filesArgs).not.toContain('/repo/apps');
     const nameResult = await fs.suggest({
       query: 'util',
       limit: 50,
@@ -1791,11 +1822,18 @@ describe('WorkspaceFsService.suggest', () => {
     expect(deadline).toBe(11_000);
   });
 
-  it('does not restart the suggest budget after the rg attempt', async () => {
+  it('includes direct-path probing and rg in the same suggest budget', async () => {
     const backend = fakeFs({ 'src/foo.ts': '' });
     let clock = 1_000;
     vi.spyOn(Date, 'now').mockImplementation(() => clock);
     let deadline: number | undefined;
+    let probed = false;
+    const lstat = backend.lstat.bind(backend);
+    backend.lstat = async (path) => {
+      probed = true;
+      clock += 4_000;
+      return lstat(path);
+    };
     backend.walk = async (_path, options) => {
       deadline = options.deadlineMs;
       return { truncated: false };
@@ -1820,8 +1858,9 @@ describe('WorkspaceFsService.suggest', () => {
     });
     Object.defineProperty(fs, 'rgResolution', { value: { path: 'rg' } });
 
-    await fs.suggest({ query: 'foo', limit: 50, follow_gitignore: false, show_hidden: false });
+    await fs.suggest({ query: 'src/foo', limit: 50, follow_gitignore: false, show_hidden: false });
 
+    expect(probed).toBe(true);
     expect(deadline).toBe(11_000);
   });
 
