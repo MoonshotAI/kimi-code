@@ -45,6 +45,10 @@ import { IProtocolAdapterRegistry, type Protocol } from '#/llm-adapter/protocol/
 import type { ApiErrorEvent, CacheBreakDetectedEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { contentsOf } from '#human/llm/requester';
+import { mergeHeaders } from '#human/llm/endpoint';
+import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
+import { agentRoleOf, requestMetadataHeader } from './requestMetadata';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { WarningIssued } from '#/agent/profile/profileOps';
 
@@ -193,6 +197,7 @@ export class AgentLoopRequester implements LoopRequester {
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    @ISessionMetadata private readonly sessionMetadata: ISessionMetadata,
     @IAgentStateService private readonly states: IAgentStateService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
   ) {
@@ -753,7 +758,7 @@ export class AgentLoopRequester implements LoopRequester {
 
     const messages = overrides.messages ?? this.context.get();
     return {
-      request: this.protocolRegistry.request(model, params),
+      request: this.withRequestMetadata(this.protocolRegistry.request(model, params), model, overrides.source),
       model,
       params,
       modelAlias: resolved.modelAlias,
@@ -766,6 +771,25 @@ export class AgentLoopRequester implements LoopRequester {
       source: overrides.source,
       logFields: logFieldsForSource(overrides.source),
     };
+  }
+
+  private withRequestMetadata(
+    request: InitializedLlmRequester,
+    model: Model,
+    source: AgentLLMRequestSource | undefined,
+  ): InitializedLlmRequester {
+    if (model.providerType !== 'kimi') return request;
+    const metadata = this.sessionMetadata.current()?.agents?.[this.scopeContext.agentId];
+    const header = requestMetadataHeader({
+      agent_role: agentRoleOf(this.scopeContext.agentId, metadata),
+      turn_trigger: source?.type === 'turn' ? source.turnTrigger : undefined,
+      step_reason: source?.type === 'turn' ? source.stepReason : undefined,
+      user_input_id: source?.type === 'turn' ? source.userInputId : undefined,
+    });
+    const endpoint = contentsOf(request).endpoint;
+    return request.with({
+      endpoint: { headers: mergeHeaders(endpoint?.headers, header) },
+    });
   }
 
   private resolveTurnConfig(source: AgentLLMRequestSource | undefined): TurnRequestConfig | undefined {

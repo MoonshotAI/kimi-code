@@ -12,6 +12,8 @@ import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import type { ModelRequestTiming } from '#/llm-adapter/model/generate';
 import type { LogContext } from '#/_base/log/log';
 
+import type { StepReason, TurnTrigger } from './requestMetadata';
+
 export type AgentLLMRequestLogFields = Readonly<LogContext>;
 
 export type AgentLLMRequestSource =
@@ -19,6 +21,9 @@ export type AgentLLMRequestSource =
       readonly type: 'turn';
       readonly turnId: number;
       readonly step?: number;
+      readonly turnTrigger?: TurnTrigger;
+      readonly stepReason?: StepReason;
+      readonly userInputId?: string;
       readonly logFields?: AgentLLMRequestLogFields;
     }
   | {

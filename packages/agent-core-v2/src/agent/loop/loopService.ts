@@ -37,6 +37,7 @@ import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
 import { markInTurnOrigin } from '#/agent/contextMemory/conversationTime';
 import { newMessageId } from '#/agent/contextMemory/messageId';
 import { type ContextMessage, type PromptOrigin } from '#/agent/contextMemory/types';
+import { turnTriggerOf, userInputIdOf, type StepReason } from './requestMetadata';
 import { gateImageFormatParts } from '#/agent/media/image-compress';
 import { daemonFileRefFromPart } from '#/agent/media/mediaRef';
 import { materializePromptDaemonRefs } from '#/agent/media/promptMediaIntake';
@@ -240,14 +241,18 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       toolTurnId: () => this.active?.id,
       steerSignal: () => this.active?.steerController.signal,
       remind: (message) => this.remind({ message }),
-      source: () =>
-        this.active === undefined
-          ? undefined
-          : {
-              type: 'turn',
-              turnId: this.active.id,
-              step: this.active.gatedSteps,
-            },
+      source: () => {
+        const active = this.active;
+        if (active === undefined) return undefined;
+        return {
+          type: 'turn',
+          turnId: active.id,
+          step: active.gatedSteps,
+          turnTrigger: turnTriggerOf(active.prompt.origin),
+          stepReason: active.nextStepReason,
+          userInputId: userInputIdOf(active.prompt.origin, active.prompt.promptId),
+        };
+      },
       gate: (signal) => this.gate(signal),
       promptGate: (queueItemId, message) => this.runPromptGate(queueItemId, message),
       onTrace: (trace) => {
@@ -1063,6 +1068,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     }
     turn.steps = stepOrdinal;
     turn.gatedSteps = stepOrdinal;
+    turn.nextStepReason = this.stepReasonFor(turn, consumed.live);
     const step: MachineStepState = {
       number: stepOrdinal,
       uuid: randomUUID(),
@@ -1285,6 +1291,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       startedAt: Date.now(),
       steps: 0,
       gatedSteps: 0,
+      nextStepReason: 'turn_start',
       nudgeCursor: this.nudgeCursor,
       current: undefined,
       interruptStep: undefined,
@@ -1737,8 +1744,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       }
       case 'recovering': {
         const turn = this.active;
-        const step = turn?.current;
         if (turn === undefined) return;
+        turn.nextStepReason = 'recovery';
+        const step = turn.current;
         if (step !== undefined) {
           this.closeFailedMachineStep(turn, step, 'error');
         }
@@ -1747,8 +1755,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       }
       case 'retrying': {
         const turn = this.active;
-        const step = turn?.current;
         if (turn === undefined) return;
+        turn.nextStepReason = 'retry';
+        const step = turn.current;
         if (step !== undefined) {
           this.closeFailedMachineStep(turn, step, 'error');
         }
@@ -2115,6 +2124,15 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     await this.endTurn(turn, this.machineCompletedResult(turn));
   }
 
+  private stepReasonFor(turn: ActiveTurn, liveNudges: number): StepReason {
+    if (turn.nextStepReason === 'retry' || turn.nextStepReason === 'recovery') {
+      return turn.nextStepReason;
+    }
+    if (liveNudges > 0) return 'notify';
+    if (turn.steps > 0) return 'tool_results';
+    return 'turn_start';
+  }
+
   private hasLiveNudge(): boolean {
     return this.nudges.slice(this.nudgeCursor).some((nudge) => !nudge.dropped);
   }
@@ -2444,6 +2462,7 @@ interface ActiveTurn {
   readonly startedAt: number;
   steps: number;
   gatedSteps: number;
+  nextStepReason: StepReason;
   nudgeCursor: number;
   current: MachineStepState | undefined;
   interruptStep: number | undefined;

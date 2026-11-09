@@ -25,6 +25,8 @@ import { createActor, emit, setup } from '#human/xstate2';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
+import { Event } from '#/_base/event';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { shapeUnsupportedDynamicToolContext } from '#/agent/toolSelect/dynamicTools';
@@ -131,11 +133,37 @@ const history: Message[] = [
   { role: 'user', content: [{ type: 'text', text: 'hello' }] },
 ];
 
+function metadataHeader(
+  service: AgentLoopRequester,
+  source: {
+    readonly type: 'turn';
+    readonly turnId: number;
+    readonly step: number;
+    readonly turnTrigger: 'user';
+    readonly stepReason: 'turn_start';
+    readonly userInputId: string;
+  },
+): string | undefined {
+  const resolved = service['resolveRequest']({ source });
+  return resolved.request.request({}).endpoint?.headers?.['X-Msh-Internal-Metadata'];
+}
+
+function emptySessionMeta(): SessionMeta {
+  return {
+    id: 'test-session',
+    createdAt: 0,
+    updatedAt: 0,
+    archived: false,
+    agents: {},
+  };
+}
+
 function createRequester(
-  calls: { value: number },
+  calls: { value: number } = { value: 0 },
   firstCallError?: Error | null,
   subsequentCallErrors: readonly Error[] = [],
   capturedInputs?: ModelRequestInput[],
+  modelPatch: Partial<Model> = {},
 ): ModelEventRequester {
   const model: Model = {
     id: 'm',
@@ -148,6 +176,7 @@ function createRequester(
     maxContextSize: 1000,
     alwaysThinking: false,
     providerName: 'p',
+    ...modelPatch,
   };
   return {
     model,
@@ -191,6 +220,7 @@ function createService(
     readonly env?: Record<string, string>;
     readonly modelAlias?: () => string;
     readonly prefixRevision?: () => number;
+    readonly metadata?: SessionMeta;
   } = {},
 ) {
   const ix = disposables.add(new TestInstantiationService());
@@ -296,6 +326,18 @@ function createService(
   });
   registerTestEventDispatcher(ix);
   ix.set(IAgentStateService, new AgentStateService());
+  ix.stub(ISessionMetadata, {
+    ready: Promise.resolve(),
+    onDidChangeMetadata: Event.None,
+    current: () => options.metadata,
+    read: async () => options.metadata ?? emptySessionMeta(),
+    update: async () => {},
+    applyPromptMetadata: async () => false,
+    setTitle: async () => {},
+    setGeneratedTitleIfUncustomized: async () => false,
+    setArchived: async () => {},
+    registerAgent: async () => {},
+  });
   const service = ix.createInstance(AgentLoopRequester);
   service.registerMediaPolicy((model, request) =>
     createAgentMediaPolicy(mediaResolver, model, request),
@@ -311,6 +353,45 @@ function createService(
     measuredCalls,
   };
 }
+
+describe('AgentLoopRequester request metadata', () => {
+  const metadata: SessionMeta = {
+    id: 'test-session',
+    createdAt: 0,
+    updatedAt: 0,
+    archived: false,
+    agents: {
+      'test-agent': {
+        type: 'sub',
+        labels: { parentAgentId: 'main', profileName: 'coder' },
+      },
+    },
+  };
+  const source = {
+    type: 'turn' as const,
+    turnId: 1,
+    step: 1,
+    turnTrigger: 'user' as const,
+    stepReason: 'turn_start' as const,
+    userInputId: 'msg_user',
+  };
+
+  it('attaches the internal metadata header only for the Kimi provider', () => {
+    const kimi = createService(
+      createRequester({ value: 0 }, undefined, [], undefined, { providerType: 'kimi' }),
+      { metadata },
+    );
+    const other = createService(createRequester(), { metadata });
+
+    expect(JSON.parse(metadataHeader(kimi.service, source) ?? '{}')).toEqual({
+      agent_role: 'subagent',
+      turn_trigger: 'user',
+      step_reason: 'turn_start',
+      user_input_id: 'msg_user',
+    });
+    expect(metadataHeader(other.service, source)).toBeUndefined();
+  });
+});
 
 describe('AgentLoopRequester measured anchors', () => {
   it('skips the measured anchor when the stream reports no usage', async () => {
