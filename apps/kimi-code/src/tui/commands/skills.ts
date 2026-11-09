@@ -7,6 +7,7 @@ export type SkillListSession = Pick<Session, 'listSkills'>;
 export interface SkillSlashCommands {
   readonly commands: readonly KimiSlashCommand[];
   readonly commandMap: ReadonlyMap<string, string>;
+  readonly defaultPaths: ReadonlyMap<string, string>;
 }
 
 export function isUserActivatableSkill(skill: SkillSummary): boolean {
@@ -41,13 +42,22 @@ export function skillSourceLabel(source: SkillSummary['source'] | undefined): st
 
 export function buildSkillSlashCommands(skills: readonly SkillSummary[]): SkillSlashCommands {
   const commandMap = new Map<string, string>();
+  const defaultPaths = new Map<string, string>();
+  const defaultSkills = new Map<string, SkillSummary>();
   const sortedSkills = [...skills].toSorted(compareSkillSlashCommands);
+  for (const skill of sortedSkills) {
+    const commandName = skill.source === 'builtin' || skill.isSubSkill === true ? skill.name : `skill:${skill.name}`;
+    if (!defaultSkills.has(commandName)) defaultSkills.set(commandName, skill);
+  }
   const commands = sortedSkills.filter(isUserActivatableSkill).filter(isVisibleOnTui).map((skill) => {
     const commandName =
       skill.source === 'builtin' || skill.isSubSkill === true
         ? skill.name
         : `skill:${skill.name}`;
-    if (!commandMap.has(commandName)) commandMap.set(commandName, skill.name);
+    if (!commandMap.has(commandName)) {
+      commandMap.set(commandName, skill.name);
+      if (defaultSkills.get(commandName) !== skill) defaultPaths.set(commandName, skill.path);
+    }
     return {
       name: commandName,
       aliases: [],
@@ -58,5 +68,5 @@ export function buildSkillSlashCommands(skills: readonly SkillSummary[]): SkillS
       workspaceDir: skill.workspaceDir,
     };
   });
-  return { commands, commandMap };
+  return { commands, commandMap, defaultPaths };
 }

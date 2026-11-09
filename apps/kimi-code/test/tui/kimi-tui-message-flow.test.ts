@@ -810,6 +810,27 @@ describe('KimiTUI message flow', () => {
     expect(session.activateSkill).not.toHaveBeenCalled();
   });
 
+  it('binds a manually typed command to the visible variant when the default is hidden', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const path = '/work/B/review/SKILL.md';
+    const { driver } = await makeDriver(session, {
+      listWorkspaceSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/work/A/review/SKILL.md', source: 'project', workspaceDir: '/work/A', scopes: ['web'] },
+        { name: 'review', description: 'Review skill', path, source: 'project', workspaceDir: '/work/B', scopes: ['tui'] },
+      ]),
+      listPluginCommands: vi.fn(async () => []),
+    });
+    await (driver as unknown as { refreshSkillCommands(): Promise<void> }).refreshSkillCommands();
+
+    driver.handleUserInput('/skill:review');
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith('/skill:review', [
+        expect.objectContaining({ name: 'review', path }),
+      ]);
+    });
+  });
+
   it('restores selected variant bindings when recalling a queued skill', async () => {
     const session = makeSession({ id: 'ses-lazy' });
     const { driver } = await makeDriver(session, {

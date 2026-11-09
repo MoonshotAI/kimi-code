@@ -125,6 +125,28 @@ describe('skill slash commands', () => {
     expect(built.commands.map((command) => command.workspaceDir)).toEqual(['/work/A', '/work/B']);
     expect(built.commandMap.get('skill:review')).toBe('review');
     expect([...built.commandMap.keys()].filter((name) => name === 'skill:review')).toHaveLength(1);
+    expect(built.defaultPaths.has('skill:review')).toBe(false);
+  });
+
+  it('uses the first TUI-visible variant as the default path when the default is filtered out', () => {
+    const built = buildSkillSlashCommands([
+      skill('review', 'prompt', {
+        path: '/work/A/review/SKILL.md',
+        workspaceDir: '/work/A',
+        source: 'project',
+        scopes: ['web'],
+      }),
+      skill('review', 'prompt', {
+        path: '/work/B/review/SKILL.md',
+        workspaceDir: '/work/B',
+        source: 'project',
+        scopes: ['tui'],
+      }),
+    ]);
+
+    expect(built.commands).toHaveLength(1);
+    expect(built.commands[0]?.skillPath).toBe('/work/B/review/SKILL.md');
+    expect(built.defaultPaths.get('skill:review')).toBe('/work/B/review/SKILL.md');
   });
 
   it('labels global and built-in sources without changing project metadata', () => {

@@ -388,6 +388,7 @@ export class KimiTUI {
   private surveySettingSubscription: Unsubscribe | undefined;
   private skillCommands: readonly KimiSlashCommand[] = [];
   readonly skillCommandMap = new Map<string, string>();
+  private readonly skillCommandDefaultPaths = new Map<string, string>();
   private readonly skillVariantPaths = new Map<number, { commandName: string; path: string }>();
   private pluginCommands: readonly KimiSlashCommand[] = [];
   readonly pluginCommandMap = new Map<string, string>();
@@ -736,6 +737,10 @@ export class KimiTUI {
     for (const [commandName, skillName] of skillCommands.commandMap) {
       this.skillCommandMap.set(commandName, skillName);
     }
+    this.skillCommandDefaultPaths.clear();
+    for (const [commandName, path] of skillCommands.defaultPaths) {
+      this.skillCommandDefaultPaths.set(commandName, path);
+    }
     for (const [start, selection] of this.skillVariantPaths) {
       const skillName = this.skillCommandMap.get(selection.commandName) ??
         this.skillCommandMap.get(selection.commandName.replace(/^skill:/, ''));
@@ -762,6 +767,10 @@ export class KimiTUI {
     const selection = this.skillVariantPaths.get(tokenStart);
     if (selection?.commandName !== commandName && selection?.commandName !== `skill:${commandName}`) return undefined;
     return selection.path;
+  }
+
+  defaultSkillPathForCommand(commandName: string): string | undefined {
+    return this.skillCommandDefaultPaths.get(commandName) ?? this.skillCommandDefaultPaths.get(`skill:${commandName}`);
   }
 
   async refreshPluginCommands(session?: Session): Promise<void> {
@@ -2061,6 +2070,7 @@ export class KimiTUI {
       isCompacting: this.state.appState.isCompacting,
       skillVariantPathForCommand: (commandName, start) =>
         this.skillVariantPathForCommand(commandName, start),
+      defaultSkillPathForCommand: (commandName) => this.defaultSkillPathForCommand(commandName),
     }).activations;
     const entry: InputHistoryEntry = {
       content: trimmed,

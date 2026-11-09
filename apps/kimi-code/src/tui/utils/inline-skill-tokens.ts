@@ -72,6 +72,7 @@ export interface ExtractInlineSkillActivationsOptions {
   /** Also treat a `/` at the very start of the input as a skill token. */
   readonly includeLeading?: boolean;
   readonly skillVariantPathForCommand?: (commandName: string, tokenStart: number) => string | undefined;
+  readonly defaultSkillPathForCommand?: (commandName: string) => string | undefined;
 }
 
 /**
@@ -99,7 +100,8 @@ export function extractInlineSkillActivations(
     const skillName =
       skillCommandMap.get(token.commandName) ?? skillCommandMap.get(`skill:${token.commandName}`);
     if (skillName === undefined) continue;
-    const path = options?.skillVariantPathForCommand?.(token.commandName, token.start);
+    const path = options?.skillVariantPathForCommand?.(token.commandName, token.start) ??
+      options?.defaultSkillPathForCommand?.(token.commandName);
     const key = `${skillName}\0${path ?? ''}`;
     const existing = byKey.get(key);
     if (existing !== undefined) {

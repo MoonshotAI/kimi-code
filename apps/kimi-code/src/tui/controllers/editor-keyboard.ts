@@ -52,6 +52,7 @@ export interface EditorKeyboardHost {
   readonly skillCommandMap: Map<string, string>;
   readonly pluginCommandMap: Map<string, string>;
   readonly skillVariantPathForCommand?: (commandName: string, tokenStart: number) => string | undefined;
+  readonly defaultSkillPathForCommand?: (commandName: string) => string | undefined;
   retainSkillVariantSelection?(text: string): void;
   beginInputHistoryRecall?(): void;
   restoreInputHistoryEntry?(direction: 1 | -1): void;
@@ -363,6 +364,9 @@ export class EditorKeyboardController {
           skillVariantPathForCommand: host.skillVariantPathForCommand === undefined
             ? undefined
             : (commandName, tokenStart) => host.skillVariantPathForCommand!(commandName, tokenStart),
+          defaultSkillPathForCommand: host.defaultSkillPathForCommand === undefined
+            ? undefined
+            : (commandName) => host.defaultSkillPathForCommand!(commandName),
         });
         host.state.queuedMessages.push({
           text,

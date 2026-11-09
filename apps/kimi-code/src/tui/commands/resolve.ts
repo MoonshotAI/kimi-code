@@ -57,6 +57,7 @@ export interface ResolveSlashCommandInput {
   readonly isStreaming: boolean;
   readonly isCompacting: boolean;
   readonly skillVariantPathForCommand?: (commandName: string, tokenStart: number) => string | undefined;
+  readonly defaultSkillPathForCommand?: (commandName: string) => string | undefined;
 }
 
 export function resolveSlashCommandInput(options: ResolveSlashCommandInput): SlashCommandIntent {
@@ -160,6 +161,7 @@ export function resolveUserInput(options: ResolveSlashCommandInput): {
   const selectedActivations = extractInlineSkillActivations(text, options.skillCommandMap, {
     includeLeading: true,
     skillVariantPathForCommand: options.skillVariantPathForCommand,
+    defaultSkillPathForCommand: options.defaultSkillPathForCommand,
   }).filter((activation) => intent.kind !== 'builtin' || activation.start !== 0);
   const tokens = findInlineSkillTokens(text, {
     isKnownSkill: (name) => resolveSkillCommand(options.skillCommandMap, name) !== undefined,
