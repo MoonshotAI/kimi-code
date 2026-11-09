@@ -292,24 +292,25 @@ describe('AgentToolActivationService', () => {
     expect(alphaConstructions).toBe(0);
   });
 
-  it('withdraws Agent when process becomes unavailable and restores it later', async () => {
+  it('keeps Agent registered with the same identity when process availability changes', async () => {
     const agentOptions = savedContributions.find((record) => record.options.name === 'Agent')!.options;
     registerAgentToolService(IAgentStubTool, AgentStubTool, agentOptions);
     const ix = createActivationHost();
     const registry = ix.get(IAgentToolRegistryService);
     await ix.get(IAgentToolActivationService).activate();
-    expect(registry.resolve('Agent')).toBeInstanceOf(AgentStubTool);
+    const tool = registry.resolve('Agent');
+    expect(tool).toBeInstanceOf(AgentStubTool);
 
     environmentData.capabilities.delete('process');
     environmentChangeEmitter.fire();
-    expect(registry.resolve('Agent')).toBeUndefined();
+    expect(registry.resolve('Agent')).toBe(tool);
 
     environmentData.capabilities.add('process');
     environmentChangeEmitter.fire();
-    expect(registry.resolve('Agent')).toBeInstanceOf(AgentStubTool);
+    expect(registry.resolve('Agent')).toBe(tool);
   });
 
-  it('withdraws and restores only environment-bound tools on capability and status changes', async () => {
+  it('freezes environment-bound tool registrations on capability and status changes', async () => {
     registerAgentToolService(IAlphaTool, AlphaTool, {
       name: 'Alpha',
       requiredEnvironmentCapabilities: ['fs'],
@@ -322,27 +323,22 @@ describe('AgentToolActivationService', () => {
     const ix = createActivationHost();
     const registry = ix.get(IAgentToolRegistryService);
     await ix.get(IAgentToolActivationService).activate();
+    const before = registry.list();
+    const instances = before.map((info) => registry.resolve(info.name));
 
     environmentData.capabilities.delete('fs');
     environmentChangeEmitter.fire();
-    expect(registry.resolve('Alpha')).toBeUndefined();
-    expect(registry.resolve('Beta')).toBeInstanceOf(BetaTool);
-    expect(registry.resolve('Gamma')).toBeInstanceOf(GammaTool);
-
-    environmentData.capabilities.add('fs');
-    environmentChangeEmitter.fire();
-    expect(registry.resolve('Alpha')).toBeInstanceOf(AlphaTool);
+    expect(registry.list()).toEqual(before);
 
     environmentData.available = false;
     environmentChangeEmitter.fire();
-    expect(registry.resolve('Alpha')).toBeUndefined();
-    expect(registry.resolve('Beta')).toBeUndefined();
-    expect(registry.resolve('Gamma')).toBeInstanceOf(GammaTool);
+    expect(registry.list()).toEqual(before);
+    expect(before.every((info, index) => registry.resolve(info.name) === instances[index])).toBe(true);
 
     environmentData.available = true;
+    environmentData.capabilities.add('fs');
     environmentChangeEmitter.fire();
-    expect(registry.resolve('Alpha')).toBeInstanceOf(AlphaTool);
-    expect(registry.resolve('Beta')).toBeInstanceOf(BetaTool);
+    expect(registry.list()).toEqual(before);
   });
 
   it('keeps environment-bound tools registered while the environment is unavailable but reconnectable', async () => {

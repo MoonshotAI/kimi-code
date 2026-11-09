@@ -5,8 +5,10 @@ import { defineState } from '#/state/state';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionStateService } from '#/session/state/sessionState';
 import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
+import { ISessionWorkdir } from '#/session/workdir/workdir';
 
 import { ISessionWorkspaceContext, type PathAccessOperation } from './workspaceContext';
+import { resolveEffectiveWorkspaceRoots } from './workspaceRoots';
 import {
   assertWorkspaceAllowed,
   hostWorkspacePathSemantics,
@@ -25,21 +27,25 @@ export class SessionWorkspaceContextService extends Service implements ISessionW
 
   constructor(
     @ISessionStateService private readonly states: ISessionStateService,
-    @ISessionContext ctx: ISessionContext,
-    @ISessionWorkspaceInfo workspaceInfo: ISessionWorkspaceInfo,
+    @ISessionContext private readonly ctx: ISessionContext,
+    @ISessionWorkspaceInfo private readonly workspaceInfo: ISessionWorkspaceInfo,
+    @ISessionWorkdir private readonly workdir: ISessionWorkdir,
   ) {
     super();
     this.states.contributeState(workspaceContextWorkDirKey);
     this.states.contributeState(workspaceContextAdditionalDirsKey);
-    this.states.set(workspaceContextWorkDirKey, ctx.cwd);
-    this.states.set(workspaceContextAdditionalDirsKey, [...new Set(workspaceInfo.additionalDirs)]);
-    this._register(
-      workspaceInfo.onDidChange(() => {
-        this.states.set(workspaceContextAdditionalDirsKey, [
-          ...new Set(workspaceInfo.additionalDirs),
-        ]);
-      }),
+    this.syncRoots();
+    this._register(this.workspaceInfo.onDidChange(() => this.syncRoots()));
+  }
+
+  private syncRoots(): void {
+    const roots = resolveEffectiveWorkspaceRoots(
+      this.ctx,
+      { environmentId: this.workdir.environmentId, cwd: this.workdir.cwd },
+      this.workspaceInfo,
     );
+    this.states.set(workspaceContextWorkDirKey, roots.workDir);
+    this.states.set(workspaceContextAdditionalDirsKey, [...roots.additionalDirs]);
   }
 
   private get _workDir(): string {
