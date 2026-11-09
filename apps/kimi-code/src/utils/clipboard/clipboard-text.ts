@@ -122,6 +122,8 @@ function runClipboardCommand(command: string, args: readonly string[], input: st
 
 export async function copyTextToClipboard(text: string): Promise<ClipboardCopyMethod> {
   const plan = planClipboardWrite(process.platform, process.env);
+  // Sent before the system clipboard is tried, so a stuck writer cannot hold it up.
+  const osc52Sent = plan.osc52 === 'always' && writeClipboardOSC52(text);
 
   let copied = false;
   if (plan.nativeModule && clipboard?.setText !== undefined) {
@@ -135,9 +137,7 @@ export async function copyTextToClipboard(text: string): Promise<ClipboardCopyMe
     copied = await runClipboardCommand(command, args, text);
   }
 
-  const osc52Emitted =
-    (plan.osc52 === 'always' || (plan.osc52 === 'fallback' && !copied)) && writeClipboardOSC52(text);
   if (copied) return 'native';
-  if (osc52Emitted) return 'osc52';
+  if (osc52Sent || (plan.osc52 === 'fallback' && writeClipboardOSC52(text))) return 'osc52';
   throw new Error(plan.unavailableMessage);
 }

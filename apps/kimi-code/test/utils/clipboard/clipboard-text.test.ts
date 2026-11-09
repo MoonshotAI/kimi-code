@@ -276,6 +276,25 @@ describe('copyTextToClipboard', () => {
     expect(stdout()).toContain(`]52;c;${base64('hello world')}`);
   });
 
+  it('reaches the client terminal of a remote session while the system clipboard is still busy', async () => {
+    stubPlatform('darwin');
+    stubEnv({ SSH_CONNECTION: '10.0.0.1 5000 10.0.0.2 22' });
+    let finishNativeCopy = (): void => {};
+    clipboardMock.setText = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishNativeCopy = resolve;
+        }),
+    );
+    const stdout = captureStdout();
+
+    const copy = copyTextToClipboard('hello world');
+
+    expect(stdout()).toContain(`]52;c;${base64('hello world')}`);
+    finishNativeCopy();
+    await expect(copy).resolves.toBe('native');
+  });
+
   it('falls back to OSC 52 on Linux without a display', async () => {
     stubPlatform('linux');
     const stdout = captureStdout();
