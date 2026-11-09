@@ -1219,7 +1219,7 @@ describe('server /api/v2/sessions batch archive/restore', () => {
     expect(await indexArchived(cold.id)).toBe(true);
   });
 
-  it('restores a cold session without materializing it and publishes no archived event', async () => {
+  it('restores a cold session without materializing it and publishes a restored event', async () => {
     const created = await createSession();
     await closeSessionById(core(), created.id);
     await postBatch('/api/v2/sessions:archive', { ids: [created.id] });
@@ -1242,6 +1242,16 @@ describe('server /api/v2/sessions batch archive/restore', () => {
     expect(await indexArchived(created.id)).toBe(false);
     expect(await listedIds()).toEqual([created.id]);
     expect(events.filter((event) => event.type === 'event.session.archived')).toEqual([]);
+    expect(
+      events
+        .filter((event) => event.type === 'event.session.restored')
+        .map((event) => (event as { readonly payload?: unknown }).payload),
+    ).toEqual([{ sessionId: created.id, workspaceId: created.workspace_id }]);
+
+    const { events: again, dispose: disposeAgain } = collectEvents();
+    await postBatch('/api/v2/sessions:restore', { ids: [created.id] });
+    expect(again.filter((event) => event.type === 'event.session.restored')).toEqual([]);
+    disposeAgain();
     dispose();
   });
 
@@ -1249,6 +1259,7 @@ describe('server /api/v2/sessions batch archive/restore', () => {
     const created = await createSession();
     await postBatch('/api/v2/sessions:archive', { ids: [created.id] });
     expect(await resumeSessionById(core(), created.id)).toBeDefined();
+    const { events, dispose } = collectEvents();
 
     const body = await postBatch('/api/v2/sessions:restore', { ids: [created.id] });
     expect(body.code).toBe(0);
@@ -1256,6 +1267,12 @@ describe('server /api/v2/sessions batch archive/restore', () => {
 
     expect(getLiveSessionById(core(), created.id)).toBeDefined();
     expect(await indexArchived(created.id)).toBe(false);
+    expect(
+      events
+        .filter((event) => event.type === 'event.session.restored')
+        .map((event) => (event as { readonly payload?: unknown }).payload),
+    ).toEqual([{ sessionId: created.id, workspaceId: created.workspace_id }]);
+    dispose();
   });
 
   it('validates the batch body: empty, missing, over the unique cap, duplicates', async () => {

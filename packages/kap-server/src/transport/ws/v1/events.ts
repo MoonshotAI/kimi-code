@@ -18,6 +18,11 @@ export interface SessionArchivedEvent {
   readonly workspace_id: string;
 }
 
+export interface SessionRestoredEvent {
+  readonly type: 'event.session.restored';
+  readonly workspace_id: string;
+}
+
 export interface SessionDeletedEvent {
   readonly type: 'event.session.deleted';
   readonly workspace_id: string;
@@ -109,6 +114,7 @@ export type PushEvent =
   | SessionMetaUpdatedEvent
   | SessionCreatedEvent
   | SessionArchivedEvent
+  | SessionRestoredEvent
   | SessionDeletedEvent
   | WorkspaceCreatedEvent
   | WorkspaceUpdatedEvent
