@@ -95,6 +95,33 @@
       getInputHistory: [],
       getMCPServers: [],
       openNewSessionTab: { ok: true },
+      getPanelSessionTarget: fixture === "panel"
+        ? { sessionId: "session-tests", workDir: "/workspace/packages/api" }
+        : null,
+      setWorkDir: { ok: true, workDir: "/workspace/packages/api" },
+      loadKimiSessionHistory: [
+        {
+          type: "session_start",
+          sessionId: "session-tests",
+          _sessionId: "session-tests",
+        },
+        {
+          type: "TurnBegin",
+          payload: { user_input: "Fix the API integration tests" },
+          _sessionId: "session-tests",
+        },
+        { type: "StepBegin", payload: { n: 1 }, _sessionId: "session-tests" },
+        {
+          type: "ContentPart",
+          payload: { type: "text", text: "The saved API test conversation is open in this panel." },
+          _sessionId: "session-tests",
+        },
+        {
+          type: "stream_complete",
+          result: { status: "finished" },
+          _sessionId: "session-tests",
+        },
+      ],
       markViewActive: { ok: true },
     };
     const requestCounts = {};
@@ -112,7 +139,7 @@
           requestCounts[message.method] = (requestCounts[message.method] || 0) + 1;
           window.__visualRequests.push({ method: message.method, params: message.params });
           if (message.method === "getPlanUsage" && fixture === "loading") return;
-          const result = responses[message.method] || {};
+          const result = Object.hasOwn(responses, message.method) ? responses[message.method] : {};
           const delay = message.method === "openNewSessionTab"
             ? 500
             : message.method === "getPlanUsage" && requestCounts[message.method] > 1

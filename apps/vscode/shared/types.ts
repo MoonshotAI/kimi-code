@@ -44,6 +44,11 @@ export interface WorkspaceStatus {
   workspaceRoot?: string;
 }
 
+export interface PanelSessionTarget {
+  sessionId: string;
+  workDir: string;
+}
+
 export type ErrorPhase = "preflight" | "runtime";
 
 export interface StreamError {

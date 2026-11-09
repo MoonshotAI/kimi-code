@@ -16,6 +16,7 @@ import type {
   WorkspaceStatus,
   LoginStatus,
   PlanUsageResult,
+  PanelSessionTarget,
   UIStreamEvent,
 } from "shared/types";
 
@@ -158,8 +159,12 @@ class Bridge {
     return this.call<{ ok: boolean }>(Methods.OpenFolder);
   }
 
-  openNewSessionTab() {
-    return this.call<{ ok: boolean }>(Methods.OpenNewSessionTab);
+  openNewSessionTab(target?: PanelSessionTarget) {
+    return this.call<{ ok: boolean }>(Methods.OpenNewSessionTab, target);
+  }
+
+  getPanelSessionTarget() {
+    return this.call<PanelSessionTarget | null>(Methods.GetPanelSessionTarget);
   }
 
   markViewActive() {

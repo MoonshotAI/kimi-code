@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 
 import { Events } from "../shared/bridge";
+import type { PanelSessionTarget } from "../shared/types";
 import { KimiWebviewProvider } from "./KimiWebviewProvider";
 import { onSettingsChange, VSCodeSettings } from "./config/vscode-settings";
 import {
@@ -88,15 +89,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     return migrationInFlight;
   };
 
-  const commands: Record<string, () => void | Promise<void>> = {
+  const commands: Record<string, (target?: PanelSessionTarget) => void | Promise<void>> = {
     "kimi.clearAllState": async () => {
       await context.globalState.update("kimi.config", undefined);
       await context.globalState.update("kimi.mcpServers", undefined);
       await context.workspaceState.update("kimi.mcpEnabled", undefined);
       await vscode.window.showInformationMessage("Kimi: Extension UI state cleared.");
     },
-    "kimi.openInTab": () => {
-      provider?.createPanel();
+    "kimi.openInTab": (target?: PanelSessionTarget) => {
+      provider?.createPanel(target);
     },
     "kimi.openInSideBar": async () => {
       await vscode.commands.executeCommand("kimi.webview.focus");

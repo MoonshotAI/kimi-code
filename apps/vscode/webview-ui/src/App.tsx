@@ -1,5 +1,5 @@
 // node/vscode_extension/webview-ui/src/App.tsx
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Header } from "./components/Header";
 import { ChatArea } from "./components/ChatArea";
@@ -24,9 +24,43 @@ function MainContent({
   onAuthAction: () => void;
   onConversationOpened: () => void;
 }) {
-  const { processEvent, startNewConversation, sessionId } = useChatStore();
+  const { processEvent, loadSession, startNewConversation, sessionId } = useChatStore();
   const { setExtensionConfig, extensionConfig } = useSettingsStore();
   const queryClient = useQueryClient();
+  const initialTargetStarted = useRef(false);
+
+  useEffect(() => {
+    if (initialTargetStarted.current) return;
+    initialTargetStarted.current = true;
+    let cancelled = false;
+    void bridge
+      .getPanelSessionTarget()
+      .then(async (target) => {
+        if (target === null || cancelled) return;
+        if (useChatStore.getState().sessionId === target.sessionId) {
+          onConversationOpened();
+          return;
+        }
+        const settings = useSettingsStore.getState();
+        const activeWorkDir = settings.currentWorkDir ?? settings.workspaceRoot;
+        if (target.workDir !== activeWorkDir) {
+          const workDir = target.workDir === settings.workspaceRoot ? null : target.workDir;
+          const result = await bridge.setWorkDir(workDir);
+          if (!result.ok) throw new Error("The conversation working directory is unavailable.");
+          settings.setCurrentWorkDir(workDir);
+        }
+        const events = await bridge.loadSessionHistory(target.sessionId);
+        if (cancelled) return;
+        await loadSession(target.sessionId, events);
+        onConversationOpened();
+      })
+      .catch((error: unknown) => {
+        toast.error(`Unable to open the conversation: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [loadSession, onConversationOpened]);
 
   useEffect(() => {
     return bridge.on(Events.StreamEvent, (event: UIStreamEvent) => {

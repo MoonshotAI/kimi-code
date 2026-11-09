@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { IconSearch, IconDots, IconTrash, IconCheck, IconLoader2 } from "@tabler/icons-react";
+import { IconSearch, IconDots, IconTrash, IconCheck, IconLoader2, IconExternalLink } from "@tabler/icons-react";
 import { Input } from "@/components/ui/input";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { StreamingConfirmDialog } from "./StreamingConfirmDialog";
@@ -34,11 +34,21 @@ interface SessionItemProps {
   session: SessionInfo;
   isSelected: boolean;
   onSelect: () => void;
+  onOpenInNewWindow: () => void;
+  isOpeningInNewWindow: boolean;
   onDelete: () => void;
   dirLabel: string | null; // null = current dir, string = relative path
 }
 
-function SessionItem({ session, isSelected, onSelect, onDelete, dirLabel }: SessionItemProps) {
+function SessionItem({
+  session,
+  isSelected,
+  onSelect,
+  onOpenInNewWindow,
+  isOpeningInNewWindow,
+  onDelete,
+  dirLabel,
+}: SessionItemProps) {
   const [isHovered, setIsHovered] = useState(false);
 
   return (
@@ -85,7 +95,22 @@ function SessionItem({ session, isSelected, onSelect, onDelete, dirLabel }: Sess
                 <IconDots className="size-3.5 text-muted-foreground" />
               </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-32">
+            <DropdownMenuContent align="end" className="w-44">
+              <DropdownMenuItem
+                className="text-xs cursor-pointer"
+                disabled={isOpeningInNewWindow}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenInNewWindow();
+                }}
+              >
+                {isOpeningInNewWindow ? (
+                  <IconLoader2 className="size-3.5 mr-2 animate-spin motion-reduce:animate-none" />
+                ) : (
+                  <IconExternalLink className="size-3.5 mr-2" />
+                )}
+                Open in new window
+              </DropdownMenuItem>
               <DropdownMenuItem
                 className="text-xs text-destructive focus:text-destructive cursor-pointer"
                 onClick={(e) => {
@@ -111,6 +136,7 @@ export function SessionList({ onClose }: SessionListProps) {
   const [deleteTarget, setDeleteTarget] = useState<SessionInfo | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [pendingSession, setPendingSession] = useState<SessionInfo | null>(null);
+  const [openingSessionId, setOpeningSessionId] = useState<string | null>(null);
 
   const queryClient = useQueryClient();
   const { data: kimiSessions = NO_SESSIONS, isPending: loading } = useQuery({
@@ -182,6 +208,21 @@ export function SessionList({ onClose }: SessionListProps) {
     setPendingSession(null);
   };
 
+  const handleOpenInNewWindow = async (session: SessionInfo) => {
+    setOpeningSessionId(session.id);
+    try {
+      const result = await bridge.openNewSessionTab({
+        sessionId: session.id,
+        workDir: session.workDir,
+      });
+      if (!result.ok) throw new Error("The conversation is unavailable.");
+    } catch (error) {
+      toast.error(`Unable to open the conversation in a new window: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setOpeningSessionId(null);
+    }
+  };
+
   const handleDelete = async () => {
     if (!deleteTarget) return;
 
@@ -227,6 +268,10 @@ export function SessionList({ onClose }: SessionListProps) {
                   onSelect={() => {
                     void handleSelect(session);
                   }}
+                  onOpenInNewWindow={() => {
+                    void handleOpenInNewWindow(session);
+                  }}
+                  isOpeningInNewWindow={openingSessionId === session.id}
                   onDelete={() => setDeleteTarget(session)}
                   dirLabel={getWorkDirLabel(session.workDir)}
                 />

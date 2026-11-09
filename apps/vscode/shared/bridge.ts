@@ -63,6 +63,7 @@ export const Methods = {
   ShowLogs: "showLogs",
   ReloadWebview: "reloadWebview",
   OpenNewSessionTab: "openNewSessionTab",
+  GetPanelSessionTarget: "getPanelSessionTarget",
   RespondQuestion: "respondQuestion",
 } as const;
 
@@ -152,9 +153,16 @@ function validateParams(method: RpcMethod, params: unknown): boolean {
     case Methods.ClearTrackedFiles:
     case Methods.ShowLogs:
     case Methods.ReloadWebview:
-    case Methods.OpenNewSessionTab:
+    case Methods.GetPanelSessionTarget:
     case Methods.MarkViewActive:
       return params === undefined;
+
+    case Methods.OpenNewSessionTab:
+      return params === undefined || (
+        isPlainObject(params)
+        && isNonEmptyString(params["sessionId"])
+        && isNonEmptyString(params["workDir"])
+      );
 
     case Methods.GetPlanUsage:
       return isPlainObject(params)

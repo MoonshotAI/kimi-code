@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import type { KimiHarness } from "@moonshot-ai/kimi-code-sdk";
 import { Events, Methods } from "../shared/bridge";
+import type { PanelSessionTarget } from "../shared/types";
 import { BridgeHandler } from "./bridge-handler";
 
 function getNonce(): string {
@@ -66,7 +67,7 @@ export class KimiWebviewProvider implements vscode.WebviewViewProvider {
     });
   }
 
-  createPanel(): vscode.WebviewPanel {
+  createPanel(target?: PanelSessionTarget): vscode.WebviewPanel {
     const webviewId = `panel_${crypto.randomUUID()}`;
 
     const panel = vscode.window.createWebviewPanel("kimiPanel", "Kimi Code", vscode.ViewColumn.One, {
@@ -75,6 +76,7 @@ export class KimiWebviewProvider implements vscode.WebviewViewProvider {
       localResourceRoots: [this.extensionUri],
     });
 
+    if (target !== undefined) this.bridgeHandler.setPanelSessionTarget(webviewId, target);
     this.setupWebview(webviewId, panel.webview);
     this.activeWebviewId = webviewId;
 

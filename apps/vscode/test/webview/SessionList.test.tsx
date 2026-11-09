@@ -9,6 +9,7 @@ const bridge = vi.hoisted(() => ({
   loadSessionHistory: vi.fn(),
   setWorkDir: vi.fn(),
   deleteSession: vi.fn(),
+  openNewSessionTab: vi.fn(),
   abortChat: vi.fn(),
   resetSession: vi.fn(),
   clearTrackedFiles: vi.fn(),
@@ -53,6 +54,7 @@ beforeEach(() => {
   bridge.loadSessionHistory.mockResolvedValue([]);
   bridge.setWorkDir.mockResolvedValue({ ok: true, workDir: "/workspace" });
   bridge.deleteSession.mockResolvedValue({ ok: true });
+  bridge.openNewSessionTab.mockResolvedValue({ ok: true });
   useChatStore.setState({
     sessionId: "current",
     messages: [],
@@ -108,5 +110,22 @@ describe("conversation history", () => {
 
     await waitFor(() => expect(screen.queryByText("Current running chat")).toBeNull());
     expect(screen.queryByText("Older API chat")).not.toBeNull();
+  });
+
+  it("opens a saved conversation in a new panel without switching the current chat", async () => {
+    const user = userEvent.setup();
+    render(<SessionList onClose={vi.fn()} />, { wrapper });
+    await screen.findByText("Older API chat");
+
+    await user.click(screen.getByRole("button", { name: "Conversation actions for Older API chat" }));
+    await user.click(await screen.findByText("Open in new window"));
+
+    expect(bridge.openNewSessionTab).toHaveBeenCalledWith({
+      sessionId: "older",
+      workDir: "/workspace/packages/api",
+    });
+    expect(useChatStore.getState().sessionId).toBe("current");
+    expect(bridge.abortChat).not.toHaveBeenCalled();
+    expect(bridge.loadSessionHistory).not.toHaveBeenCalled();
   });
 });

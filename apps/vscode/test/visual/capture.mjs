@@ -503,7 +503,7 @@ const browser = await chromium.launch({
   executablePath: process.env.KIMI_CHROMIUM_PATH,
 });
 const bundleHash = createHash("sha256").update(await readFile("./dist/webview.js")).digest("hex");
-const results = { origin, bundleHash, generatedAt: new Date().toISOString(), fixtures: [], popovers: {}, sessionHistory: [], workDetails: [], workIsolation: [], nestedExpansion: [], stateManifest: {}, reducedHeight: [] };
+const results = { origin, bundleHash, generatedAt: new Date().toISOString(), fixtures: [], popovers: {}, sessionHistory: [], panelSession: null, workDetails: [], workIsolation: [], nestedExpansion: [], stateManifest: {}, reducedHeight: [] };
 
 for (const fixture of [
   { name: "normal-320", state: "normal", width: 320, height: 720 },
@@ -568,16 +568,54 @@ for (const fixture of [
     throw new Error("The active conversation is not identified in history");
   }
   await page.screenshot({ path: screenshot, fullPage: true });
+  const secondaryRow = page.getByText("Fix the API integration tests", { exact: true }).locator('xpath=ancestor::*[@role="button"][1]');
+  await secondaryRow.hover();
+  await page.getByRole("button", { name: "Conversation actions for Fix the API integration tests", exact: true }).click();
+  const openInNewWindow = page.getByText("Open in new window", { exact: true });
+  await openInNewWindow.waitFor();
+  await page.waitForTimeout(200);
+  const menuScreenshot = `${outputDir}/session-history-menu-${fixture.theme}-${fixture.width}.png`;
+  await page.screenshot({ path: menuScreenshot, fullPage: true });
+  const openInNewWindowStyle = await style(openInNewWindow.locator(".."));
+  await openInNewWindow.click();
+  await page.waitForTimeout(100);
+  const panelRequest = await page.evaluate(() => window.__visualRequests.findLast((request) => request.method === "openNewSessionTab"));
+  if (JSON.stringify(panelRequest?.params) !== JSON.stringify({ sessionId: "session-tests", workDir: "/workspace/packages/api" })) {
+    throw new Error(`Session panel request is incorrect: ${JSON.stringify(panelRequest)}`);
+  }
   results.sessionHistory.push({
     fixture,
     screenshot,
+    menuScreenshot,
     geometry,
     header: await style(page.locator("header")),
     search: await style(page.getByPlaceholder("Search conversations…")),
     currentRow: await style(currentRow),
     running: await style(page.getByText("Running", { exact: true })),
     newConversation: await style(page.getByRole("button", { name: "New conversation in this view" })),
+    openInNewWindow: openInNewWindowStyle,
+    panelRequest,
   });
+  await page.close();
+}
+
+{
+  const page = await browser.newPage({ viewport: { width: 520, height: 720 } });
+  await openFixture(page, "panel", "dark");
+  const restoredText = page.getByText("The saved API test conversation is open in this panel.", { exact: true });
+  await restoredText.waitFor();
+  const screenshot = `${outputDir}/session-panel-restored-dark-520.png`;
+  await page.screenshot({ path: screenshot, fullPage: true });
+  const requests = await page.evaluate(() => window.__visualRequests.filter((request) => ["getPanelSessionTarget", "setWorkDir", "loadKimiSessionHistory"].includes(request.method)));
+  if (requests.map((request) => request.method).join(",") !== "getPanelSessionTarget,setWorkDir,loadKimiSessionHistory") {
+    throw new Error(`Session panel restore order is incorrect: ${JSON.stringify(requests)}`);
+  }
+  results.panelSession = {
+    screenshot,
+    restoredText: await style(restoredText),
+    requests,
+    horizontalOverflow: await page.evaluate(() => document.documentElement.scrollWidth - innerWidth),
+  };
   await page.close();
 }
 
