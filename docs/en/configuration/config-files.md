@@ -218,7 +218,6 @@ Constraints between the fields:
 - `default_model`: required when a `models` table is configured, and must be one of its keys.
 - `models`: values may be Chinese or English; an empty string lists the alias with no hint.
 - `default_effort` is section-wide: every spawn binds it regardless of the chosen pool entry. For per-entry efforts, leave it unset and use model variants (see below).
-- `primary` is a reserved alias and cannot be a pool key.
 
 Pool aliases reference the current `[models]` table: if a provider is later deleted or logged out, or its refreshed model list no longer contains an alias, session startup fails with a configuration error naming the broken alias. Fix or remove the entry to recover. The `[secondary_model]` section itself is never rewritten automatically.
 
@@ -649,6 +648,7 @@ Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a c
 | --- | --- | --- | --- |
 | `theme` | `string` | `auto` | Color theme: `auto`, `dark`, `light`, or the name of a [custom theme](../customization/themes.md) |
 | `tui_mode` | `string` | `regular` | UI layout: `regular` renders into the terminal scrollback; `fullscreen` (experimental) makes parts of the UI mouse-interactive for a smoother experience |
+| `copy_on_select` | `boolean` | `true` | Fullscreen mode only: copy text as soon as you select it; you can also press `Ctrl-C` to copy |
 | `render_latex` | `boolean` | `true` | Render LaTeX math expressions in Markdown messages as Unicode text; `false` keeps the raw source |
 | `disable_paste_burst` | `boolean` | `false` | Disable the non-bracketed paste-burst fallback that keeps rapid multi-line pastes from submitting line by line |
 | `cache_expiry_hint` | `boolean` | `true` | On resume or when submitting after a long idle stretch, warn that the context cache may have expired and offer to compact or start a new session (v2 engine only) |
@@ -657,8 +657,8 @@ Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a c
 | `[notifications].enabled` | `boolean` | `true` | Whether desktop notifications are sent |
 | `[notifications].notification_condition` | `string` | `unfocused` | When to notify: `unfocused` (only when the terminal is not focused) or `always` |
 | `[upgrade].auto_install` | `boolean` | `true` | Whether new versions are installed automatically |
-| `[transcript.group].tools` | `string` | `auto` | Which tool calls fold into summary groups in `fullscreen` mode: `auto` folds every tool call except subagents and tools that ask or notify you, `explore` folds only reads, searches, and read-only commands such as `ls` or `git status`, `off` keeps every tool call as its own card; same as Tool call folding in `/settings`; no effect in `regular` mode |
-| `[transcript.group].group_thinking` | `boolean` | `true` | Whether finished thinking folds into summary groups in `fullscreen` mode; `false` shows a two-line preview of each thinking block instead; same as Thinking folding in `/settings`; no effect in `regular` mode |
+| `[transcript].tool_call_density` | `string` | `compact` | Tool call density in `fullscreen` mode: `compact`, `balanced`, or `detailed` |
+| `[transcript].thinking` | `string` | `grouped` | Thinking folding in `fullscreen` mode: `grouped` or `ungrouped` |
 | `[status_line].items` | `string[]` | `[]` | Built-in slots on the first footer line and their order: `mode`, `goal`, `model`, `tasks`, `cwd`, `git`, `tips`; unknown ids are skipped with a warning |
 | `[status_line].command` | `string` | `""` | Custom status line command: its first stdout line replaces the footer, and a JSON snapshot is passed on stdin; capped at 300ms, throttled to once per second, failures fall back to the built-in layout |
 
@@ -673,6 +673,7 @@ Model, cwd, git branch, permission mode, plan mode, context usage, session id, v
 # ~/.kimi-code/tui.toml
 theme = "auto" # "auto" | "dark" | "light" | custom theme name
 tui_mode = "regular" # "regular" | "fullscreen" ("fullscreen" is experimental)
+copy_on_select = true # fullscreen only: false copies only when you press Ctrl-C
 render_latex = true # false keeps LaTeX math in messages as raw source
 disable_paste_burst = false # true disables non-bracketed paste-burst fallback
 cache_expiry_hint = true # false disables the "cache expired" dialog on resume / idle submit
@@ -688,9 +689,9 @@ notification_condition = "unfocused" # "unfocused" | "always"
 [upgrade]
 auto_install = true
 
-[transcript.group] # fullscreen mode only
-tools = "auto" # "auto" | "explore" | "off"
-group_thinking = true # false shows each thinking block as a two-line preview
+[transcript] # fullscreen mode only
+tool_call_density = "compact" # "compact" | "balanced" | "detailed"
+thinking = "grouped" # "grouped" | "ungrouped"
 
 # [status_line]
 # items = ["mode", "goal", "model", "tasks", "cwd", "git", "tips"]

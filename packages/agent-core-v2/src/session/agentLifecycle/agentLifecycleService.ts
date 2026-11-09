@@ -48,6 +48,12 @@ import { interactions } from '#/human/interaction/facade';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { abortError } from '#/_base/utils/abort';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
+import {
+  PERMISSION_SECTION,
+  type PermissionConfig,
+} from '#/agent/permissionRules/configSection';
+
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { closeTrailingOpenToolExchange } from '#/agent/contextMemory/openToolExchange';
 import { IAgentEnvironmentBindingSeed, IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
@@ -425,6 +431,9 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     if (permissionMode !== undefined && !hasRestoredPermissionMode) {
       handle.accessor.get(IAgentPermissionModeService).setMode(permissionMode);
     }
+    const rules = this.config.get<PermissionConfig | undefined>(PERMISSION_SECTION)?.rules;
+    if (rules === undefined || rules.length === 0) return;
+    handle.accessor.get(IAgentPermissionRulesService).addRules(rules);
   }
 
   async fork(sourceContext: AgentContext, opts?: ForkAgentOptions): Promise<AgentContext> {

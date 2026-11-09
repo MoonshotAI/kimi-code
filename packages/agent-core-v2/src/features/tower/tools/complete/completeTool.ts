@@ -43,6 +43,7 @@ export class TowerCompleteTool implements ITowerCompleteTool {
           const result = await store.complete(
             resolved.caller,
             args.report.trim(),
+            args.key_artifacts,
           );
           const delivery =
             result.message !== undefined

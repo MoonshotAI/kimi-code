@@ -91,12 +91,21 @@ export async function configuredRoots(
   source: SkillSource,
   fs: SkillRootsFs = nodeFs,
 ): Promise<readonly SkillRoot[]> {
-  const projectRoot = await findProjectRoot(fs, workDir);
   const roots: SkillRoot[] = [];
-  for (const dir of dirs) {
-    await pushExistingRoot(fs, roots, resolveConfiguredDir(dir, projectRoot, osHomeDir), source);
+  for (const dir of await configuredRootCandidates(dirs, workDir, osHomeDir, fs)) {
+    await pushExistingRoot(fs, roots, dir, source);
   }
   return roots;
+}
+
+export async function configuredRootCandidates(
+  dirs: readonly string[],
+  workDir: string,
+  osHomeDir: string,
+  fs: SkillRootsFs = nodeFs,
+): Promise<readonly string[]> {
+  const projectRoot = await findProjectRoot(fs, workDir);
+  return dirs.map((dir) => resolveConfiguredDir(dir, projectRoot, osHomeDir));
 }
 
 async function findProjectRoot(fs: SkillRootsFs, workDir: string): Promise<string> {

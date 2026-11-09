@@ -65,17 +65,33 @@ export const DEFAULT_MARKDOWN_CONFIG: MarkdownConfig = {
   mermaid: 'final',
 };
 
-export const TranscriptGroupToolsSchema = z.enum(['auto', 'explore', 'off']);
+export const ToolCallDensitySchema = z.enum(['compact', 'balanced', 'detailed', 'ungrouped']);
+export const ThinkingDisplaySchema = z.enum(['grouped', 'ungrouped']);
 export const TranscriptConfigSchema = z.object({
-  groupTools: TranscriptGroupToolsSchema,
-  groupThinking: z.boolean(),
+  toolCallDensity: ToolCallDensitySchema,
+  thinking: ThinkingDisplaySchema,
 });
-export type TranscriptGroupTools = z.infer<typeof TranscriptGroupToolsSchema>;
+export type ToolCallDensity = z.infer<typeof ToolCallDensitySchema>;
+export type ThinkingDisplay = z.infer<typeof ThinkingDisplaySchema>;
 export type TranscriptConfig = z.infer<typeof TranscriptConfigSchema>;
 
 export const DEFAULT_TRANSCRIPT_CONFIG: TranscriptConfig = {
-  groupTools: 'auto',
-  groupThinking: true,
+  toolCallDensity: 'compact',
+  thinking: 'grouped',
+};
+
+export type ToolFolding = 'all' | 'readonly' | 'none';
+
+export interface ToolCallDensityRule {
+  readonly folding: ToolFolding;
+  readonly unfolded: 'card' | 'row';
+}
+
+export const DENSITY: Readonly<Record<ToolCallDensity, ToolCallDensityRule>> = {
+  compact: { folding: 'all', unfolded: 'card' },
+  balanced: { folding: 'readonly', unfolded: 'row' },
+  detailed: { folding: 'readonly', unfolded: 'card' },
+  ungrouped: { folding: 'none', unfolded: 'card' },
 };
 
 export interface TranscriptPresentationOptions extends TranscriptConfig {
@@ -83,7 +99,8 @@ export interface TranscriptPresentationOptions extends TranscriptConfig {
 }
 
 export function transcriptGroupingActive(options: TranscriptPresentationOptions): boolean {
-  return options.fullscreen && (options.groupTools !== 'off' || options.groupThinking);
+  return options.fullscreen &&
+    (DENSITY[options.toolCallDensity].folding !== 'none' || options.thinking === 'grouped');
 }
 
 export const TuiModeSchema = z.enum(['regular', 'fullscreen']);
@@ -92,6 +109,7 @@ export type TuiMode = z.infer<typeof TuiModeSchema>;
 export const TuiConfigFileSchema = z.object({
   theme: TuiThemeSchema.optional(),
   tui_mode: z.string().optional(),
+  copy_on_select: z.boolean().optional(),
   render_latex: z.boolean().optional(),
   disable_paste_burst: z.boolean().optional(),
   cache_expiry_hint: z.boolean().optional(),
@@ -121,12 +139,8 @@ export const TuiConfigFileSchema = z.object({
     .optional(),
   transcript: z
     .object({
-      group: z
-        .object({
-          tools: z.string().optional(),
-          group_thinking: z.boolean().optional(),
-        })
-        .optional(),
+      tool_call_density: z.unknown().optional(),
+      thinking: z.unknown().optional(),
     })
     .optional(),
 });
@@ -134,6 +148,7 @@ export const TuiConfigFileSchema = z.object({
 export const TuiConfigSchema = z.object({
   theme: TuiThemeSchema,
   tuiMode: TuiModeSchema.optional(),
+  copyOnSelect: z.boolean().optional(),
   /** LaTeX math rendering in Markdown; optional only so older hand-built test
    * fixtures still typecheck. */
   renderLatex: z.boolean().optional(),
@@ -174,6 +189,7 @@ export const DEFAULT_UPGRADE_PREFERENCES: UpgradePreferences = {
 export const DEFAULT_TUI_CONFIG: TuiConfig = TuiConfigSchema.parse({
   theme: 'auto',
   tuiMode: 'regular',
+  copyOnSelect: true,
   renderLatex: true,
   disablePasteBurst: false,
   cacheExpiryHint: true,
@@ -322,14 +338,14 @@ export function normalizeTuiConfig(
       warn(`[tui.toml] ignoring unknown markdown.mermaid value: ${mermaidValue}`);
     }
   }
-  const groupToolsValue = config.transcript?.group?.tools;
-  let groupTools: TranscriptGroupTools = DEFAULT_TRANSCRIPT_CONFIG.groupTools;
-  if (groupToolsValue !== undefined) {
-    const parsed = TranscriptGroupToolsSchema.safeParse(groupToolsValue);
-    if (parsed.success) groupTools = parsed.data;
-    else warn(`[tui.toml] ignoring unknown transcript.group.tools value: ${groupToolsValue}`);
-  }
-  const groupThinking = config.transcript?.group?.group_thinking ?? DEFAULT_TRANSCRIPT_CONFIG.groupThinking;
+  const transcriptValue = <T>(key: string, schema: z.ZodType<T>, value: unknown, fallback: T): T => {
+    if (value === undefined) return fallback;
+    const parsed = schema.safeParse(value);
+    if (parsed.success) return parsed.data;
+    const shown = typeof value === 'string' ? value : JSON.stringify(value);
+    warn(`[tui.toml] ignoring unknown transcript.${key} value: ${shown}`);
+    return fallback;
+  };
   const tuiModeValue = config.tui_mode;
   let tuiMode: TuiMode = 'regular';
   if (tuiModeValue !== undefined) {
@@ -342,6 +358,8 @@ export function normalizeTuiConfig(
   return TuiConfigSchema.parse({
     theme: config.theme ?? DEFAULT_TUI_CONFIG.theme,
     tuiMode,
+    copyOnSelect:
+      config.copy_on_select ?? DEFAULT_TUI_CONFIG.copyOnSelect,
     renderLatex: config.render_latex ?? DEFAULT_TUI_CONFIG.renderLatex,
     disablePasteBurst: config.disable_paste_burst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
     cacheExpiryHint: config.cache_expiry_hint ?? DEFAULT_TUI_CONFIG.cacheExpiryHint,
@@ -367,8 +385,18 @@ export function normalizeTuiConfig(
       mermaid: mermaidMode,
     },
     transcript: {
-      groupTools,
-      groupThinking,
+      toolCallDensity: transcriptValue(
+        'tool_call_density',
+        ToolCallDensitySchema,
+        config.transcript?.tool_call_density,
+        DEFAULT_TRANSCRIPT_CONFIG.toolCallDensity,
+      ),
+      thinking: transcriptValue(
+        'thinking',
+        ThinkingDisplaySchema,
+        config.transcript?.thinking,
+        DEFAULT_TRANSCRIPT_CONFIG.thinking,
+      ),
     },
   });
 }
@@ -397,15 +425,17 @@ export function renderTuiConfig(config: TuiConfig): string {
 # mermaid = "final" # "final" | "off"
 `;
   const transcript = config.transcript;
+  const densityLine = `tool_call_density = "${transcript.toolCallDensity}" # "compact" | "balanced" | "detailed"`;
+  const thinkingLine = `thinking = "${transcript.thinking}" # "grouped" | "ungrouped"`;
   const transcriptSection =
-    transcript.groupTools === DEFAULT_TRANSCRIPT_CONFIG.groupTools &&
-    transcript.groupThinking === DEFAULT_TRANSCRIPT_CONFIG.groupThinking
-      ? `# [transcript.group]
-# Fullscreen transcript grouping preferences.
-# tools = "auto" # "auto" | "explore" | "off"
-# group_thinking = true # true | false
+    transcript.toolCallDensity === DEFAULT_TRANSCRIPT_CONFIG.toolCallDensity &&
+    transcript.thinking === DEFAULT_TRANSCRIPT_CONFIG.thinking
+      ? `# [transcript]
+# Fullscreen transcript display preferences.
+# ${densityLine}
+# ${thinkingLine}
 `
-      : `[transcript.group]\ntools = "${transcript.groupTools}" # "auto" | "explore" | "off"\ngroup_thinking = ${String(transcript.groupThinking)} # true | false\n`;
+      : `[transcript]\n${densityLine}\n${thinkingLine}\n`;
   const statusSection =
     statusLines.length > 0
       ? `[status_line]\n${statusLines.join('\n')}\n`
@@ -422,6 +452,7 @@ export function renderTuiConfig(config: TuiConfig): string {
 
 theme = "${escapeTomlBasicString(config.theme)}" # "auto" | "dark" | "light" | custom theme name
 ${tuiModeLine}
+copy_on_select = ${String(config.copyOnSelect !== false)} # fullscreen only: false copies only when you press Ctrl-C
 render_latex = ${String(config.renderLatex !== false)} # false keeps LaTeX math in assistant messages as raw source
 disable_paste_burst = ${String(config.disablePasteBurst)} # true disables non-bracketed paste-burst fallback
 cache_expiry_hint = ${String(config.cacheExpiryHint !== false)} # false disables the "cache expired" dialog on resume / idle submit

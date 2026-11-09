@@ -19,6 +19,10 @@ import { SessionMediaStoreService } from '#/agent/media/sessionMediaStoreService
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import '#/agent/permissionMode/permissionModeService';
+import { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
+import '#/agent/permissionRules/permissionRulesService';
+import { PERMISSION_SECTION } from '#/agent/permissionRules/configSection';
+
 import {
   permissionModeConfiguredKey,
   permissionModeKey,
@@ -1061,6 +1065,55 @@ describe('AgentLifecycleService', () => {
     await svc.create({ agentId: 'main' });
 
     expect(svc.handleOf('main')!.accessor.get(IAgentStateService).get(permissionModeKey)).toBe('auto');
+  });
+
+  it('loads configured permission rules into a new Agent', async () => {
+    const rule = { decision: 'deny', scope: 'user', pattern: 'Read(/secret.txt)' };
+    ix.stub(IConfigService, {
+      ready: Promise.resolve(),
+      get: ((section: unknown) =>
+        section === PERMISSION_SECTION ? { rules: [rule] } : undefined) as IConfigService['get'],
+      onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
+    } as unknown as IConfigService);
+
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'main' });
+
+    expect(svc.handleOf('main')!.accessor.get(IAgentPermissionRulesService).rules).toEqual([rule]);
+  });
+
+  it('loads configured permission rules into a subagent', async () => {
+    const rule = { decision: 'deny', scope: 'user', pattern: 'Bash(curl *)' };
+    ix.stub(IConfigService, {
+      ready: Promise.resolve(),
+      get: ((section: unknown) =>
+        section === PERMISSION_SECTION ? { rules: [rule] } : undefined) as IConfigService['get'],
+      onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
+    } as unknown as IConfigService);
+
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'agent-1' });
+
+    expect(svc.handleOf('agent-1')!.accessor.get(IAgentPermissionRulesService).rules).toEqual([rule]);
+  });
+
+  it('loads the current permission rules when restoring an Agent', async () => {
+    const rule = { decision: 'deny', scope: 'user', pattern: 'Bash(curl *)' };
+    ix.stub(IAppendLogStore, recordingAppendLog([
+      createWireMetadataRecord(1),
+      { type: 'permission.set_mode', mode: 'manual', time: 2 },
+    ]).store);
+    ix.stub(IConfigService, {
+      ready: Promise.resolve(),
+      get: ((section: unknown) =>
+        section === PERMISSION_SECTION ? { rules: [rule] } : 'manual') as IConfigService['get'],
+      onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
+    } as unknown as IConfigService);
+
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'main' });
+
+    expect(svc.handleOf('main')!.accessor.get(IAgentPermissionRulesService).rules).toEqual([rule]);
   });
 
   it('keeps the restored permission mode instead of overwriting it with the default', async () => {

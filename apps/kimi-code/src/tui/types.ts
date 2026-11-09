@@ -86,6 +86,7 @@ export interface AppState {
   editorCommand: string | null;
   /** Mirrors the TUI config toggle; defaults to false when absent from older fixtures. */
   disablePasteBurst?: boolean;
+  copyOnSelect?: boolean;
   /** LaTeX math rendering in Markdown; defaults to true when absent from older fixtures. */
   renderLatex?: boolean;
   /** Mirrors the TUI config toggle; defaults to true when absent from older fixtures. */

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { ApprovalController } from '#/tui/reverse-rpc/approval/controller';
 import { createApprovalRequestHandler } from '#/tui/reverse-rpc/approval/handler';
+import { instant, isToolCallId, phaseAt, TurnTimeline, type ToolCallId } from '#/tui/utils/turn-timeline';
 
 function approvalEvent(overrides: Partial<ApprovalRequest> = {}): ApprovalRequest {
   return {
@@ -19,6 +20,11 @@ function approvalEvent(overrides: Partial<ApprovalRequest> = {}): ApprovalReques
     },
     ...overrides,
   };
+}
+
+function callId(id: string): ToolCallId {
+  if (!isToolCallId(id)) throw new Error('a tool call id is never empty');
+  return id;
 }
 
 describe('approval reverse-rpc', () => {
@@ -182,5 +188,30 @@ describe('approval reverse-rpc', () => {
       feedback: 'approval handler failed',
     });
     expect(tracker.endInteraction).toHaveBeenCalledTimes(2);
+  });
+
+  it('ends the argument stream of a main-agent call when its approval arrives', async () => {
+    const controller = new ApprovalController();
+    vi.spyOn(controller, 'show').mockResolvedValue({ decision: 'approved' });
+    let now = 0;
+    const timeline = new TurnTimeline(() => instant(now));
+    const handler = createApprovalRequestHandler(controller, undefined, undefined, undefined, timeline);
+    const facts = (id: string) => timeline.call(callId(id));
+    timeline.turnStarted();
+    now = 100;
+    timeline.callDelta(callId('tc-main'), 'Bash');
+
+    now = 400;
+    const approvals = [
+      handler(approvalEvent({ agentId: 'main', toolCallId: 'tc-main' })),
+      handler(approvalEvent({ toolCallId: 'tc-unattributed' })),
+      handler(approvalEvent({ agentId: 'agent-1', toolCallId: 'tc-child' })),
+    ];
+
+    expect(facts('tc-main')).toMatchObject({ start: 100, argsEnd: 400 });
+    expect(phaseAt(facts('tc-main'), instant(400))).toEqual({ kind: 'queued', since: 400 });
+    expect(facts('tc-unattributed')).toMatchObject({ start: 400, name: 'Bash', argsEnd: 400 });
+    expect(facts('tc-child')).toBeUndefined();
+    await Promise.all(approvals.map((approval) => expect(approval).resolves.toEqual({ decision: 'approved' })));
   });
 });

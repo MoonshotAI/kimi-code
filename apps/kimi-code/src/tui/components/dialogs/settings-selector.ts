@@ -1,12 +1,15 @@
-import type { TranscriptGroupTools } from '../../config';
-import { ChoicePickerComponent, type ChoiceOption } from './choice-picker';
+import type { ThinkingDisplay, ToolCallDensity, TranscriptConfig } from '../../config';
+import type { DockLayout } from '../chrome/dock-section';
+import { ChoicePickerComponent, PreviewChoicePickerComponent, type ChoiceOption } from './choice-picker';
+import { TranscriptPreview } from './transcript-preview';
 
 export type SettingsSelection =
   | 'model'
   | 'theme'
   | 'tuiMode'
-  | 'groupTools'
-  | 'groupThinking'
+  | 'toolCallDensity'
+  | 'thinking'
+  | 'copyOnSelect'
   | 'mermaid'
   | 'editor'
   | 'permission'
@@ -37,14 +40,19 @@ const SETTINGS_OPTIONS: readonly ChoiceOption[] = [
     description: 'Choose the regular or fullscreen layout.',
   },
   {
-    value: 'groupTools',
-    label: 'Tool call folding',
-    description: 'Choose which tool calls to fold into summary groups.',
+    value: 'toolCallDensity',
+    label: 'Tool call density',
+    description: 'Choose how much of each tool call the transcript shows.',
   },
   {
-    value: 'groupThinking',
+    value: 'thinking',
     label: 'Thinking folding',
     description: 'Choose whether to fold finished thinking.',
+  },
+  {
+    value: 'copyOnSelect',
+    label: 'Copy on select',
+    description: 'Choose whether selecting text in fullscreen mode copies it.',
   },
   {
     value: 'mermaid',
@@ -83,8 +91,9 @@ function isSettingsSelection(value: string): value is SettingsSelection {
     value === 'model' ||
     value === 'theme' ||
     value === 'tuiMode' ||
-    value === 'groupTools' ||
-    value === 'groupThinking' ||
+    value === 'toolCallDensity' ||
+    value === 'thinking' ||
+    value === 'copyOnSelect' ||
     value === 'mermaid' ||
     value === 'editor' ||
     value === 'permission' ||
@@ -108,7 +117,9 @@ export class SettingsSelectorComponent extends ChoicePickerComponent {
       options: SETTINGS_OPTIONS.filter(
         (option) =>
           opts.fullscreen === true ||
-          (option.value !== 'groupTools' && option.value !== 'groupThinking'),
+          (option.value !== 'toolCallDensity' &&
+            option.value !== 'thinking' &&
+            option.value !== 'copyOnSelect'),
       ),
       onSelect: (value) => {
         if (isSettingsSelection(value)) opts.onSelect(value);
@@ -118,68 +129,108 @@ export class SettingsSelectorComponent extends ChoicePickerComponent {
   }
 }
 
-const GROUP_TOOLS_OPTIONS: readonly ChoiceOption[] = [
-  {
-    value: 'auto',
-    label: 'Fold most tools',
-    description: 'Fold all tools except subagents and communication tools.',
-  },
-  {
-    value: 'explore',
-    label: 'Fold read-only tools',
-    description: 'Fold reads, searches, and other read-only commands.',
-  },
-  {
-    value: 'off',
-    label: 'Show every tool call separately',
-    description: 'Keep each tool call as its own card.',
-  },
-];
+type PickableToolCallDensity = Exclude<ToolCallDensity, 'ungrouped'>;
 
-const GROUP_THINKING_OPTIONS: readonly ChoiceOption[] = [
+const TOOL_CALL_DENSITY_OPTIONS = [
   {
-    value: 'on',
+    value: 'compact',
+    label: 'Compact',
+    description: 'Fold tool calls into one summary. Subagents and questions stay as cards.',
+  },
+  {
+    value: 'balanced',
+    label: 'Balanced',
+    description: 'Fold read-only calls. Edits and commands get one line each that you can open.',
+  },
+  {
+    value: 'detailed',
+    label: 'Detailed',
+    description: 'Fold read-only calls. Edits and commands stay as full cards.',
+  },
+] as const satisfies readonly (ChoiceOption & { readonly value: PickableToolCallDensity })[];
+
+const THINKING_OPTIONS = [
+  {
+    value: 'grouped',
     label: 'Fold thinking',
     description: 'Fold finished thinking into summary groups.',
   },
   {
-    value: 'off',
+    value: 'ungrouped',
     label: "Don't fold thinking",
     description: 'Show each thinking block as a two-line preview.',
   },
-];
+] as const satisfies readonly (ChoiceOption & { readonly value: ThinkingDisplay })[];
 
-export interface TranscriptGroupToolsSelectorOptions {
-  readonly currentValue: TranscriptGroupTools;
-  readonly onSelect: (value: TranscriptGroupTools) => void;
+export interface TranscriptSettingSelectorOptions<V> {
+  readonly current: TranscriptConfig;
+  readonly layout?: DockLayout;
+  readonly onSelect: (value: V) => void;
   readonly onCancel: () => void;
 }
 
-export class TranscriptGroupToolsSelectorComponent extends ChoicePickerComponent {
-  constructor(opts: TranscriptGroupToolsSelectorOptions) {
+export class ToolCallDensitySelectorComponent extends PreviewChoicePickerComponent {
+  constructor(opts: TranscriptSettingSelectorOptions<PickableToolCallDensity>) {
     super({
-      title: 'Tool call folding',
-      options: GROUP_TOOLS_OPTIONS,
-      currentValue: opts.currentValue,
+      title: 'Tool call density',
+      options: TOOL_CALL_DENSITY_OPTIONS,
+      currentValue: opts.current.toolCallDensity,
       onSelect: (value) => {
-        if (value === 'auto' || value === 'explore' || value === 'off') opts.onSelect(value);
+        const option = TOOL_CALL_DENSITY_OPTIONS.find((candidate) => candidate.value === value);
+        if (option !== undefined) opts.onSelect(option.value);
       },
       onCancel: opts.onCancel,
+      preview: new TranscriptPreview(new Map(TOOL_CALL_DENSITY_OPTIONS.map(
+        (option) => [option.value, { ...opts.current, toolCallDensity: option.value }],
+      ))),
+      layout: opts.layout,
     });
   }
 }
 
-export interface TranscriptGroupThinkingSelectorOptions {
+export class ThinkingDisplaySelectorComponent extends PreviewChoicePickerComponent {
+  constructor(opts: TranscriptSettingSelectorOptions<ThinkingDisplay>) {
+    super({
+      title: 'Thinking folding',
+      options: THINKING_OPTIONS,
+      currentValue: opts.current.thinking,
+      onSelect: (value) => {
+        const option = THINKING_OPTIONS.find((candidate) => candidate.value === value);
+        if (option !== undefined) opts.onSelect(option.value);
+      },
+      onCancel: opts.onCancel,
+      preview: new TranscriptPreview(new Map(THINKING_OPTIONS.map(
+        (option) => [option.value, { ...opts.current, thinking: option.value }],
+      ))),
+      layout: opts.layout,
+    });
+  }
+}
+
+const COPY_ON_SELECT_OPTIONS: readonly ChoiceOption[] = [
+  {
+    value: 'on',
+    label: 'On',
+    description: 'Copy text as soon as you select it.',
+  },
+  {
+    value: 'off',
+    label: 'Off',
+    description: 'Press Ctrl-C to copy selected text.',
+  },
+];
+
+export interface CopyOnSelectSelectorOptions {
   readonly currentValue: boolean;
   readonly onSelect: (value: boolean) => void;
   readonly onCancel: () => void;
 }
 
-export class TranscriptGroupThinkingSelectorComponent extends ChoicePickerComponent {
-  constructor(opts: TranscriptGroupThinkingSelectorOptions) {
+export class CopyOnSelectSelectorComponent extends ChoicePickerComponent {
+  constructor(opts: CopyOnSelectSelectorOptions) {
     super({
-      title: 'Thinking folding',
-      options: GROUP_THINKING_OPTIONS,
+      title: 'Copy on select',
+      options: COPY_ON_SELECT_OPTIONS,
       currentValue: opts.currentValue ? 'on' : 'off',
       onSelect: (value) => {
         if (value === 'on' || value === 'off') opts.onSelect(value === 'on');

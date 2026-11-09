@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, parse } from 'node:path';
 
@@ -96,6 +96,20 @@ describe('resolveCommandPath (posix)', () => {
     process.env['PATH'] = nested;
 
     expect(resolveCommandPath('mytool', cwd)).toBeUndefined();
+  });
+
+  it.skipIf(process.platform === 'win32')('refuses a hit reached through a symlink to the cwd', () => {
+    const cwd = realpathSync(makeTempDir('kimi-resolve-cwd-'));
+    mkdirSync(join(cwd, 'bin'));
+    const tool = join(cwd, 'bin', 'mytool');
+    writeFileSync(tool, '#!/bin/sh\nexit 0\n');
+    chmodSync(tool, 0o755);
+    const link = join(makeTempDir('kimi-resolve-link-'), 'workspace');
+    symlinkSync(cwd, link);
+    process.env['PATH'] = join(link, 'bin');
+
+    expect(resolveCommandPath('mytool', cwd)).toBeUndefined();
+    expect(resolveCommandPath('mytool', link)).toBeUndefined();
   });
 
   it.skipIf(process.platform === 'win32')('continues to a safe PATH hit after a workspace executable', () => {

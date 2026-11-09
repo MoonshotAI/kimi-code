@@ -90,7 +90,7 @@ const appState: AppState = {
   editorCommand: null,
   notifications: { enabled: true, condition: 'unfocused' },
   upgrade: { autoInstall: true },
-  transcript: { groupTools: 'auto', groupThinking: true },
+  transcript: { toolCallDensity: 'compact', thinking: 'grouped' },
   availableModels: {},
   availableProviders: {},
   mcpServersSummary: null,
@@ -421,21 +421,21 @@ describe('transcript grouping tip', () => {
 
     const toolGroups = fullscreenFooter({
       ...fullscreenState,
-      transcript: { groupTools: 'explore', groupThinking: false },
+      transcript: { toolCallDensity: 'detailed', thinking: 'ungrouped' },
     });
     expect(toolGroups.render(240)[0]).toContain(TRANSCRIPT_GROUPING_TIP.text);
     toolGroups.dispose();
 
     const noGroups = fullscreenFooter({
       ...fullscreenState,
-      transcript: { groupTools: 'off', groupThinking: false },
+      transcript: { toolCallDensity: 'ungrouped', thinking: 'ungrouped' },
     });
     expect(noGroups.render(240)[0]).not.toContain(TRANSCRIPT_GROUPING_TIP.text);
     noGroups.dispose();
 
     const thoughtGroups = fullscreenFooter({
       ...fullscreenState,
-      transcript: { groupTools: 'off', groupThinking: true },
+      transcript: { toolCallDensity: 'ungrouped', thinking: 'grouped' },
     });
     expect(thoughtGroups.render(240)[0]).toContain(TRANSCRIPT_GROUPING_TIP.text);
     thoughtGroups.dispose();
