@@ -21,8 +21,8 @@ import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model
 import { PermissionSelectorComponent } from '../components/dialogs/permission-selector';
 import {
   SettingsSelectorComponent,
-  TranscriptGroupThinkingSelectorComponent,
-  TranscriptGroupToolsSelectorComponent,
+  ThinkingDisplaySelectorComponent,
+  ToolCallDensitySelectorComponent,
   type SettingsSelection,
 } from '../components/dialogs/settings-selector';
 import { SurveyPreferenceSelectorComponent } from '../components/dialogs/survey-preference-selector';
@@ -59,6 +59,7 @@ import {
 } from '#/utils/effort-switch-config';
 import { DEFAULT_OAUTH_PROVIDER_NAME } from '#/constant/app';
 import { MAIN_AGENT_ID, NO_ACTIVE_SESSION_MESSAGE, TUI_MODE_RESTART_NOTICE } from '../constant/kimi-tui';
+import { DOCK_PREVIEW_ROWS } from '../constant/rendering';
 import type { QueuedModelSwitch } from '../types';
 import { formatErrorMessage } from '../utils/event-payload';
 import { setMarkdownMermaidMode, type MermaidRenderMode } from '../utils/markdown-options';
@@ -1105,15 +1106,16 @@ export async function applyMermaidPreferenceChoice(
   host.showStatus(`Mermaid diagrams ${enabled ? 'enabled' : 'disabled'}.`);
 }
 
-function showTranscriptGroupToolsPicker(host: SlashCommandHost): void {
+function showToolCallDensityPicker(host: SlashCommandHost): void {
   host.mountEditorReplacement(
-    new TranscriptGroupToolsSelectorComponent({
-      currentValue: host.state.appState.transcript.groupTools,
-      onSelect: (groupTools) => {
+    new ToolCallDensitySelectorComponent({
+      current: host.state.appState.transcript,
+      layout: host.state.dockContainer === undefined ? undefined : { maxBodyRows: DOCK_PREVIEW_ROWS },
+      onSelect: (toolCallDensity) => {
         host.restoreEditor();
         void applyTranscriptConfigChoice(host, {
           ...host.state.appState.transcript,
-          groupTools,
+          toolCallDensity,
         });
       },
       onCancel: () => {
@@ -1123,15 +1125,16 @@ function showTranscriptGroupToolsPicker(host: SlashCommandHost): void {
   );
 }
 
-function showTranscriptGroupThinkingPicker(host: SlashCommandHost): void {
+function showThinkingDisplayPicker(host: SlashCommandHost): void {
   host.mountEditorReplacement(
-    new TranscriptGroupThinkingSelectorComponent({
-      currentValue: host.state.appState.transcript.groupThinking,
-      onSelect: (groupThinking) => {
+    new ThinkingDisplaySelectorComponent({
+      current: host.state.appState.transcript,
+      layout: host.state.dockContainer === undefined ? undefined : { maxBodyRows: DOCK_PREVIEW_ROWS },
+      onSelect: (thinking) => {
         host.restoreEditor();
         void applyTranscriptConfigChoice(host, {
           ...host.state.appState.transcript,
-          groupThinking,
+          thinking,
         });
       },
       onCancel: () => {
@@ -1147,8 +1150,8 @@ export async function applyTranscriptConfigChoice(
 ): Promise<void> {
   const current = host.state.appState.transcript;
   if (
-    transcript.groupTools === current.groupTools &&
-    transcript.groupThinking === current.groupThinking
+    transcript.toolCallDensity === current.toolCallDensity &&
+    transcript.thinking === current.thinking
   ) {
     host.showStatus('Transcript display settings unchanged.');
     return;
@@ -1168,8 +1171,8 @@ export async function applyTranscriptConfigChoice(
   host.setAppState({ transcript });
   applyTranscriptPresentation(host);
   host.track('transcript_display_settings', {
-    group_tools: transcript.groupTools,
-    group_thinking: transcript.groupThinking,
+    tool_call_density: transcript.toolCallDensity,
+    thinking: transcript.thinking,
     source: 'settings',
   });
   host.showStatus('Transcript display settings updated.', 'success');
@@ -1244,8 +1247,8 @@ function handleSettingsSelection(host: SlashCommandHost, value: SettingsSelectio
     case 'permission': showPermissionPicker(host); return;
     case 'theme': showThemePicker(host); return;
     case 'tuiMode': showTuiModePicker(host); return;
-    case 'groupTools': showTranscriptGroupToolsPicker(host); return;
-    case 'groupThinking': showTranscriptGroupThinkingPicker(host); return;
+    case 'toolCallDensity': showToolCallDensityPicker(host); return;
+    case 'thinking': showThinkingDisplayPicker(host); return;
     case 'mermaid': showMermaidPreferencePicker(host); return;
     case 'editor': showEditorPicker(host); return;
     case 'survey': showSurveyPreferencePicker(host); return;

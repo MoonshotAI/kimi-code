@@ -4,6 +4,7 @@ import type { Event } from '@moonshot-ai/kimi-code-sdk';
 import { describe, expect, it, vi } from 'vitest';
 
 import { SessionEventHandler } from '#/tui/controllers/session-event-handler';
+import { TurnTimeline } from '#/tui/utils/turn-timeline';
 import { getBuiltInPalette } from '#/tui/theme';
 
 function makeHost() {
@@ -30,6 +31,7 @@ function makeHost() {
     aborted: false,
     sessionEventUnsubscribe: undefined,
     streamingUI: {
+      timeline: new TurnTimeline(),
       setTurnId: vi.fn(),
       setStep: vi.fn(),
       flushNow: vi.fn(),

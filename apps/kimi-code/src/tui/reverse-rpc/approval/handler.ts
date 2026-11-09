@@ -1,7 +1,9 @@
 import type { ApprovalHandler, ApprovalRequest, ApprovalResponse } from '@moonshot-ai/kimi-code-sdk';
 
 import { adaptApprovalRequest } from './adapter';
+import { MAIN_AGENT_ID } from '#/tui/constant/kimi-tui';
 import type { ProgramStatusInteractionTracker } from '#/tui/controllers/program-status';
+import { isToolCallId, type TurnTimeline } from '#/tui/utils/turn-timeline';
 
 import type { ApprovalController } from './controller';
 
@@ -10,8 +12,12 @@ export function createApprovalRequestHandler(
   onResponse?: (request: ApprovalRequest, response: ApprovalResponse) => void,
   resolveEnvironment?: () => string | undefined,
   interactionTracker?: ProgramStatusInteractionTracker,
+  timeline?: Pick<TurnTimeline, 'approvalRequested'>,
 ): ApprovalHandler {
   return async (event: ApprovalRequest): Promise<ApprovalResponse> => {
+    if ((event.agentId ?? MAIN_AGENT_ID) === MAIN_AGENT_ID && isToolCallId(event.toolCallId)) {
+      timeline?.approvalRequested(event.toolCallId, event.toolName);
+    }
     const interaction = interactionTracker?.startInteraction({
       agentId: event.agentId,
       kind: 'permission',

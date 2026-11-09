@@ -28,6 +28,7 @@ export const COMMAND_PREVIEW_LINES = 10;
 export const DOCK_QUEUE_ROWS = 3;
 export const DOCK_UPDATES_ROWS = 6;
 export const DOCK_APPROVAL_ROWS = 6;
+export const DOCK_PREVIEW_ROWS = Number.POSITIVE_INFINITY;
 // Below this terminal height, docked Updates folds to its one-line stub while
 // an approval or question waits: a typical approval (13 rows) plus expanded
 // Updates (7) and the activity rows (2) would leave the transcript under 10.
@@ -97,8 +98,13 @@ export const TRANSCRIPT_GROUP_SWEEP_RESTART_GAP_COLUMNS = 14;
 // Every 150 ms the title highlight closes half of what is left to full or off, so it fades out
 // in about a second: the speed it was tuned to on 50 ms frames.
 export const TRANSCRIPT_GROUP_FADE_HALF_LIFE_MS = 150;
-export const TRANSCRIPT_GROUP_HOLD_MS = 450;
 export const TRANSCRIPT_GROUP_TAIL_ELAPSED_MS = 2_000;
+export const TRANSCRIPT_GROUP_COUNT_DELAY_MS = 200;
+export const TRANSCRIPT_TAIL_ENTER_MS = 1_000;
+export const TRANSCRIPT_TAIL_THOUGHT_HOLD_MS = 2_000;
+export const TRANSCRIPT_TAIL_MIN_NAME_COLUMNS = 12;
+export const TRANSCRIPT_TAIL_TIMER_COLUMNS = ' · 99s'.length;
+export const TRANSCRIPT_TAIL_THINKING_THROTTLE_MS = 150;
 export const FOREGROUND_BASH_HINT_DELAY_MS = 10_000;
 export const DETACH_HINT_TEXT = 'Press Ctrl+B to run in background';
 

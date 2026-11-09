@@ -7,23 +7,38 @@ import {
 } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 
-import { TRANSCRIPT_GROUP_HOLD_MS } from '#/tui/constant/rendering';
 import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
 import { mixColors } from '#/tui/theme/color-mix';
-import { hasRowDetail, isExpandedComponent } from '#/tui/utils/component-capabilities';
-import type { ItemStatus, LogicalTranscriptItem } from '#/tui/utils/transcript-items';
-import type { GroupSummary } from '#/tui/utils/transcript-projection';
-import { elapsedSuffix, shownSeconds, TitleSweep } from './running-title';
+import { hasRowDetail, hasStatusMarker, isExpandedComponent } from '#/tui/utils/component-capabilities';
+import {
+  deriveGroupView,
+  elapsedText,
+  oneLine,
+  rowStatusOf,
+  tailText,
+  titleText,
+  type GroupView,
+  type GroupViewInput,
+  type RowStatus,
+} from '#/tui/utils/group-view';
+import type { LogicalTranscriptItem } from '#/tui/utils/transcript-items';
+import {
+  instant,
+  monotonicNow,
+  settledAt,
+  shownThinkingAt,
+  type Instant,
+  type ShownThinking,
+  type TimelineReader,
+} from '#/tui/utils/turn-timeline';
+import { TitleSweep } from './running-title';
 import { renderHeaderContent, TruncatedHeaderLine } from './truncated-header-line';
 
-export interface TranscriptGroupModel {
+export interface TranscriptGroupModel extends GroupViewInput {
   readonly anchor: Component;
   readonly sourceIndex: number;
-  readonly members: readonly [LogicalTranscriptItem, ...LogicalTranscriptItem[]];
-  readonly active: boolean;
   readonly expanded: boolean;
-  readonly summary: GroupSummary;
 }
 
 export interface TranscriptGroupInteraction {
@@ -35,19 +50,10 @@ export interface TranscriptGroupInteraction {
   cancelAnimationFrame(handle: number): void;
 }
 
-type GroupTitle =
-  | { readonly kind: 'summary' }
-  | { readonly kind: 'item'; readonly item: LogicalTranscriptItem };
-
 type GroupBody =
-  | { readonly kind: 'tail'; readonly items: readonly LogicalTranscriptItem[] }
+  | { readonly kind: 'none' }
   | { readonly kind: 'rows' }
   | { readonly kind: 'detail'; readonly item: LogicalTranscriptItem; readonly withRow: boolean };
-
-interface GroupShape {
-  readonly title: GroupTitle;
-  readonly body: GroupBody;
-}
 
 type HitAction =
   | { readonly kind: 'toggleGroup' }
@@ -77,15 +83,15 @@ interface MemberFrame extends MemberDraft {
 }
 
 interface FrameKey {
+  readonly model: TranscriptGroupModel;
   readonly width: number;
   readonly palette: ColorPalette;
   readonly background: string;
-  readonly summary: GroupSummary;
-  readonly expanded: boolean;
-  readonly active: boolean;
-  readonly animationKey: string;
-  readonly tailKey: string;
   readonly viewportRows: number | undefined;
+  readonly title: string;
+  readonly sweep: string;
+  readonly rows: string;
+  readonly tail: string | undefined;
 }
 
 interface Frame {
@@ -97,6 +103,8 @@ interface Frame {
 }
 
 const MARKER = '●';
+const TITLE_INDENT = '  ';
+const TAIL_HEAD = `${TITLE_INDENT}└ `;
 const MIN_WRAPPED_SUBJECT_WIDTH = 8;
 
 export class TranscriptGroupComponent implements Component {
@@ -106,8 +114,7 @@ export class TranscriptGroupComponent implements Component {
   private frameRequest: number | undefined;
   private disposed = false;
   private readonly sweep = new TitleSweep();
-  private lastActiveAt: number | undefined;
-  private shownAnimation: string | undefined;
+  private shownThinking: ShownThinking | undefined;
 
   constructor(
     model: TranscriptGroupModel,
@@ -118,7 +125,6 @@ export class TranscriptGroupComponent implements Component {
   }
 
   setModel(model: TranscriptGroupModel): void {
-    if (this.model.active) this.lastActiveAt = Date.now();
     this.model = model;
     this.syncFrames();
   }
@@ -136,47 +142,24 @@ export class TranscriptGroupComponent implements Component {
   }
 
   render(width: number): string[] {
-    const now = Date.now();
-    const shape = shapeOf(this.model);
+    const now = monotonicNow();
+    const { view, thinking } = this.paceTail(deriveGroupView(this.model, now), now);
+    this.shownThinking = thinking;
+    if (view.live && this.frameRequest === undefined) this.syncFrames();
+    const key = this.frameKey(view, width, now);
     const previous = this.frame;
-    const base = {
-      width,
-      palette: currentTheme.palette,
-      background: currentTheme.terminalBackground(),
-      summary: this.model.summary,
-      expanded: this.model.expanded,
-      active: this.model.active,
-      viewportRows: this.interaction.viewportRows(),
-    };
-    if (
-      shape.body.kind === 'tail' &&
-      !this.needsClock(now) &&
-      previous !== undefined &&
-      sameFrameKey(previous.key, { ...base, animationKey: 'static', tailKey: '' })
-    ) {
-      return previous.lines;
-    }
-
-    const titleText = titleTextOf(shape, this.model.summary);
-    const animationKey = this.sweep.frameKey;
-    const tail = shape.body.kind === 'tail' ? shape.body.items : [];
-    const key: FrameKey = {
-      ...base,
-      animationKey,
-      tailKey: tail.map((item) => `${String(item.projectionVersion)}:${String(elapsedSeconds(item.status, now))}`).join('|'),
-    };
     const sameKey = previous !== undefined && sameFrameKey(previous.key, key);
-    const title = sameKey ? previous.title : this.renderTitle(shape, titleText, width, now);
+    const title = sameKey ? previous.title : this.renderTitle(view, width, now);
     const sameBase = previous !== undefined &&
       previous.key.width === width &&
-      previous.key.palette === base.palette &&
-      previous.key.background === base.background;
+      previous.key.palette === key.palette &&
+      previous.key.background === key.background;
     const { members, showLess } = this.renderMembers(
-      shape,
+      view,
       width,
       now,
       title.length + 2,
-      base.viewportRows,
+      key.viewportRows,
       sameBase ? previous.members : [],
     );
     if (
@@ -188,28 +171,30 @@ export class TranscriptGroupComponent implements Component {
     }
 
     const lines = ['', ...title];
-    for (const [index, item] of tail.entries()) {
-      lines.push(tailLine(item, index < tail.length - 1 ? '├ ' : '└ ', width, now));
-    }
     const regions: HitRegion[] = [{ start: 1, end: lines.length, action: { kind: 'toggleGroup' } }];
-    if (shape.body.kind !== 'tail') lines.push('');
-    for (const member of members) {
-      const start = lines.length;
-      lines.push(...member.lines);
-      regions.push({
-        start,
-        end: lines.length,
-        action: shape.body.kind === 'rows' ? { kind: 'toggleRow', item: member.item } : { kind: 'toggleGroup' },
-      });
+    if (this.model.expanded) {
+      lines.push('');
+      const rows = bodyOf(this.model, view).kind === 'rows';
+      for (const member of members) {
+        const start = lines.length;
+        lines.push(...member.lines);
+        regions.push({
+          start,
+          end: lines.length,
+          action: rows ? { kind: 'toggleRow', item: member.item } : { kind: 'toggleGroup' },
+        });
+      }
+      if (showLess) {
+        const start = lines.length;
+        lines.push(`${chalk.hex(this.guideColor())('└ ')}${currentTheme.fg('textDim', 'Show less')}`);
+        regions.push({ start, end: lines.length, action: { kind: 'showLess', removedLines: lines.length - 2 } });
+      }
     }
-    if (showLess) {
-      const start = lines.length;
-      lines.push(`${chalk.hex(this.guideColor())('└ ')}${currentTheme.fg('textDim', 'Show less')}`);
-      regions.push({
-        start,
-        end: lines.length,
-        action: { kind: 'showLess', removedLines: Math.max(0, lines.length - collapsedHeight(this.model)) },
-      });
+    if (key.tail !== undefined) {
+      if (!this.model.expanded && key.tail.length > 0) {
+        regions.push({ start: lines.length, end: lines.length + 1, action: { kind: 'toggleGroup' } });
+      }
+      lines.push(key.tail.length === 0 ? '' : currentTheme.dim(`${TAIL_HEAD}${key.tail}`));
     }
     this.frame = { key, title, members, lines, regions };
     return lines;
@@ -232,80 +217,83 @@ export class TranscriptGroupComponent implements Component {
     }
   }
 
-  private renderTitle(shape: GroupShape, text: string, width: number, now: number): string[] {
-    const { summary } = this.model;
-    const offset = visibleWidth(MARKER) + 1;
+  private frameKey(view: GroupView, width: number, now: Instant): FrameKey {
+    const { timeline, expanded } = this.model;
+    return {
+      model: this.model,
+      width,
+      palette: currentTheme.palette,
+      background: currentTheme.terminalBackground(),
+      viewportRows: this.interaction.viewportRows(),
+      title: `${titleText(view.title)}\n${titleSuffix(view, now)}`,
+      sweep: this.sweep.frameKey,
+      rows: expanded
+        ? this.model.members.map((item) => statusKey(rowStatusOf(item, timeline, now), now)).join('\n')
+        : '',
+      tail: view.tail === undefined ? undefined : tailText(view.tail, width - visibleWidth(TAIL_HEAD), now),
+    };
+  }
+
+  private renderTitle(view: GroupView, width: number, now: Instant): string[] {
     const paint = this.sweep.painter();
-    let markerStyle = (value: string): string => paint(value, 0);
-    const textStyle = (value: string): string => paint(value, offset);
-    if (summary.allFailed) markerStyle = (value) => currentTheme.fg('error', value);
-    const head = `${markerStyle(MARKER)} `;
-
-    if (shape.title.kind === 'item') {
-      const { item } = shape.title;
-      const suffix = statusSuffix(item.status, now);
-      if (shape.body.kind === 'detail') {
-        const { verb, subject } = item.label;
-        const full = subject === undefined ? verb : `${verb} ${subject}`;
-        return wrapTextWithAnsi(`${textStyle(full)}${suffix}`, Math.max(1, width - 2))
-          .map((line, index) => `${index === 0 ? head : '  '}${line}`);
-      }
-      this.header.setText({ head, flex: { text, style: textStyle, keep: 'head' }, tail: suffix });
-      return this.header.render(width);
+    const style = (text: string): string => paint(text, TITLE_INDENT.length);
+    const head = this.model.expanded ? `${paint(MARKER, 0)} ` : TITLE_INDENT;
+    const suffix = titleSuffix(view, now);
+    if (view.title.kind === 'item' && this.model.expanded) {
+      const { verb, subject } = view.title.item.label;
+      const full = subject === undefined ? verb : `${verb} ${subject}`;
+      return wrapTextWithAnsi(`${style(full)}${suffix}`, Math.max(1, width - TITLE_INDENT.length))
+        .map((line, index) => `${index === 0 ? head : TITLE_INDENT}${line}`);
     }
-
-    const failed = summary.failed > 0
-      ? currentTheme.fg('error', ` · ${String(summary.failed)} failed`)
-      : '';
-    const interrupted = summary.interrupted > 0
-      ? currentTheme.fg('textDim', ` · ${String(summary.interrupted)} interrupted`)
-      : '';
     this.header.setText({
       head,
-      flex: { text, style: textStyle, keep: 'head' },
-      tail: `${diffText(summary.added, summary.removed)}${failed}${interrupted}`,
+      flex: { text: titleText(view.title), style, keep: 'head' },
+      tail: suffix,
     });
     return this.header.render(width);
   }
 
   private renderMembers(
-    shape: GroupShape,
+    view: GroupView,
     width: number,
-    now: number,
+    now: Instant,
     headerHeight: number,
     viewportRows: number | undefined,
     previous: readonly MemberFrame[],
   ): { readonly members: readonly MemberFrame[]; readonly showLess: boolean } {
-    const body = shape.body;
-    if (body.kind === 'tail') return { members: [], showLess: false };
+    const body = bodyOf(this.model, view);
+    if (body.kind === 'none') return { members: [], showLess: false };
+    const { timeline } = this.model;
     const inner = Math.max(1, width - 2);
+    const draft = (item: LogicalTranscriptItem, form: RowForm, open: boolean, columns: number, index: number): MemberDraft =>
+      memberDraft(item, rowStatusOf(item, timeline, now), form, open, columns, now, previous[index]);
     const drafts = body.kind === 'detail'
-      ? [memberDraft(body.item, body.withRow ? 'wrapped' : 'none', true, body.withRow ? inner : width, now, previous[0])]
+      ? [draft(body.item, body.withRow ? 'wrapped' : 'none', true, body.withRow ? inner : width, 0)]
       : this.model.members.map((item, index) => {
         const open = isExpandedComponent(item.display);
-        return memberDraft(item, open ? 'wrapped' : 'line', open, inner, now, previous[index]);
+        return draft(item, open ? 'wrapped' : 'line', open, inner, index);
       });
-    const height = headerHeight + drafts.reduce((total, draft) => total + draft.row.length + (draft.detail?.length ?? 0), 0);
-    const showLess = overflows(height, viewportRows);
+    const height = headerHeight + drafts.reduce((total, member) => total + member.row.length + (member.detail?.length ?? 0), 0);
+    const showLess = viewportRows !== undefined && height > viewportRows;
     const guide = (text: string): string => chalk.hex(this.guideColor())(text);
-    const members = drafts.map((draft, index): MemberFrame => {
+    const members = drafts.map((member, index): MemberFrame => {
       let branch: Branch = 'bare';
       if (body.kind === 'rows') branch = index === drafts.length - 1 && !showLess ? 'last' : 'middle';
       else if (body.withRow) branch = 'indent';
       const reused = previous[index];
       if (
         reused !== undefined &&
-        reused.item.display === draft.item.display &&
-        reused.row === draft.row &&
-        reused.detail === draft.detail &&
+        reused.item.display === member.item.display &&
+        reused.row === member.row &&
+        reused.detail === member.detail &&
         reused.branch === branch
       ) {
-        return { ...reused, item: draft.item };
+        return { ...reused, item: member.item };
       }
       const prefix = prefixFor(branch, guide);
-      const lines = [...draft.row, ...(draft.detail ?? [])]
+      const lines = [...member.row, ...(member.detail ?? [])]
         .map((line, lineIndex) => `${prefix(lineIndex === 0)}${line}`);
-      return { ...draft, branch, lines };
+      return { ...member, branch, lines };
     });
     return { members, showLess };
   }
@@ -318,42 +306,140 @@ export class TranscriptGroupComponent implements Component {
     );
   }
 
-  private holding(now: number): boolean {
-    return this.lastActiveAt !== undefined && now - this.lastActiveAt < TRANSCRIPT_GROUP_HOLD_MS;
-  }
-
-  private needsClock(now: number): boolean {
-    if (this.model.active || this.sweep.intensity > 0 || this.holding(now)) return true;
-    const body = shapeOf(this.model).body;
-    switch (body.kind) {
-      case 'tail': return body.items.some((item) => item.status.kind === 'running');
-      case 'rows': return this.model.members.some((item) => item.status.kind === 'running');
-      case 'detail': return body.withRow;
-    }
-  }
-
   private syncFrames(): void {
-    if (this.disposed || !this.needsClock(Date.now())) {
+    const now = monotonicNow();
+    if (this.disposed || (!deriveGroupView(this.model, now).live && this.sweep.intensity === 0)) {
       this.stopFrames();
       return;
     }
     if (this.frameRequest !== undefined) return;
-    this.sweep.start(performance.now());
+    this.sweep.start(now);
     this.frameRequest = this.interaction.requestAnimationFrame(this.onFrame);
   }
 
   private readonly onFrame = (time: number): void => {
     this.frameRequest = undefined;
-    const now = Date.now();
-    const columns = visibleWidth(`${MARKER} ${titleTextOf(shapeOf(this.model), this.model.summary)}`);
-    this.sweep.advance(time, columns, this.model.active || this.holding(now));
-    const seconds = this.model.members.map((item) => elapsedSeconds(item.status, now)).join(',');
-    const shown = `${this.sweep.frameKey}|${seconds}`;
-    if (shown !== this.shownAnimation) {
-      this.shownAnimation = shown;
+    const now = instant(time);
+    const { view } = this.paceTail(deriveGroupView(this.model, now), now);
+    this.sweep.advance(now, TITLE_INDENT.length + visibleWidth(titleText(view.title)), view.working);
+    const frame = this.frame;
+    if (frame === undefined || !sameFrameKey(frame.key, this.frameKey(view, frame.key.width, now))) {
       this.interaction.requestRender();
     }
-    if (this.needsClock(now)) this.frameRequest = this.interaction.requestAnimationFrame(this.onFrame);
+    if (view.live || this.sweep.intensity > 0) this.frameRequest = this.interaction.requestAnimationFrame(this.onFrame);
+  };
+
+  private stopFrames(): void {
+    if (this.frameRequest === undefined) return;
+    this.interaction.cancelAnimationFrame(this.frameRequest);
+    this.frameRequest = undefined;
+  }
+
+  private paceTail(view: GroupView, now: Instant): { readonly view: GroupView; readonly thinking?: ShownThinking } {
+    const { tail } = view;
+    if (tail?.kind !== 'thinking' && tail?.kind !== 'thought') return { view };
+    const thinking = shownThinkingAt(this.shownThinking, tail.text, now);
+    return { view: { ...view, tail: { ...tail, text: thinking.text } }, thinking };
+  }
+}
+
+export type TranscriptRowInteraction = Pick<
+  TranscriptGroupInteraction,
+  'toggleRow' | 'requestRender' | 'requestAnimationFrame' | 'cancelAnimationFrame'
+>;
+
+interface RowFrame {
+  readonly item: LogicalTranscriptItem;
+  readonly width: number;
+  readonly palette: ColorPalette;
+  readonly status: string;
+  readonly open: boolean;
+  readonly detail: readonly string[] | undefined;
+  readonly lines: string[];
+}
+
+export class TranscriptRowComponent implements Component {
+  private frame: RowFrame | undefined;
+  private frameRequest: number | undefined;
+  private disposed = false;
+
+  constructor(
+    private item: LogicalTranscriptItem,
+    private timeline: TimelineReader,
+    private readonly interaction: TranscriptRowInteraction,
+  ) {
+    this.syncFrames();
+  }
+
+  setItem(item: LogicalTranscriptItem, timeline: TimelineReader): void {
+    this.item = item;
+    this.timeline = timeline;
+    this.syncFrames();
+  }
+
+  invalidate(): void {
+    this.frame = undefined;
+    this.item.display.invalidate();
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    this.stopFrames();
+  }
+
+  render(width: number): string[] {
+    const now = monotonicNow();
+    const status = rowStatusOf(this.item, this.timeline, now);
+    const key = statusKey(status, now);
+    const { display } = this.item;
+    const open = isExpandedComponent(display);
+    const detail = open && hasRowDetail(display) ? display.renderRowDetail(width) : undefined;
+    const previous = this.frame;
+    if (
+      previous?.item === this.item &&
+      previous.width === width &&
+      previous.palette === currentTheme.palette &&
+      previous.status === key &&
+      previous.open === open &&
+      previous.detail === detail
+    ) {
+      return previous.lines;
+    }
+    const marker = rowMarker(this.item);
+    const indent = ' '.repeat(visibleWidth(marker));
+    const columns = Math.max(1, width - indent.length);
+    const row = open ? wrappedRow(this.item, status, columns, now) : [rowLine(this.item, status, columns, now)];
+    const lines = ['', ...row.map((line, index) => `${index === 0 ? marker : indent}${line}`), ...(detail ?? [])];
+    this.frame = { item: this.item, width, palette: currentTheme.palette, status: key, open, detail, lines };
+    return lines;
+  }
+
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    if (event.type !== 'click' || event.button !== 'left' || event.y < 1) return undefined;
+    return this.interaction.toggleRow(this.item) ? { handled: true } : undefined;
+  }
+
+  private live(now: Instant): boolean {
+    const facts = this.item.callId === undefined ? undefined : this.timeline.call(this.item.callId);
+    return !this.disposed && !settledAt(facts, now);
+  }
+
+  private syncFrames(): void {
+    if (!this.live(monotonicNow())) {
+      this.stopFrames();
+      return;
+    }
+    this.frameRequest ??= this.interaction.requestAnimationFrame(this.onFrame);
+  }
+
+  private readonly onFrame = (time: number): void => {
+    this.frameRequest = undefined;
+    const now = instant(time);
+    const frame = this.frame;
+    if (frame !== undefined && frame.status !== statusKey(rowStatusOf(this.item, this.timeline, now), now)) {
+      this.interaction.requestRender();
+    }
+    if (this.live(now)) this.frameRequest = this.interaction.requestAnimationFrame(this.onFrame);
   };
 
   private stopFrames(): void {
@@ -363,83 +449,61 @@ export class TranscriptGroupComponent implements Component {
   }
 }
 
-function titleTextOf(shape: GroupShape, summary: GroupSummary): string {
-  return shape.title.kind === 'summary' ? summary.fragments.join(', ') : itemText(shape.title.item);
-}
-
-function shapeOf(model: TranscriptGroupModel): GroupShape {
+function bodyOf(model: TranscriptGroupModel, view: GroupView): GroupBody {
+  if (!model.expanded) return { kind: 'none' };
   const [first, ...rest] = model.members;
-  const only = rest.length === 0 ? first : undefined;
-  const title: GroupTitle = only !== undefined && only.status.kind !== 'running'
-    ? { kind: 'item', item: only }
-    : { kind: 'summary' };
-  if (!model.expanded) {
-    return {
-      title,
-      body: { kind: 'tail', items: title.kind === 'summary' && model.active ? tailItems(model.members) : [] },
-    };
-  }
-  if (only !== undefined) return { title, body: { kind: 'detail', item: only, withRow: title.kind === 'summary' } };
-  return { title, body: { kind: 'rows' } };
+  if (rest.length > 0) return { kind: 'rows' };
+  return { kind: 'detail', item: first, withRow: view.title.kind === 'summary' };
 }
 
-function tailItems(members: readonly LogicalTranscriptItem[]): readonly LogicalTranscriptItem[] {
-  const running = members.filter((member) => member.status.kind === 'running');
-  const shown = running.length > 0 ? running : members.slice(-1);
-  return shown.filter((member) => member.family === 'tool');
-}
-
-function collapsedHeight(model: TranscriptGroupModel): number {
-  const body = shapeOf({ ...model, expanded: false }).body;
-  return 2 + (body.kind === 'tail' ? body.items.length : 0);
+function titleSuffix(view: GroupView, now: Instant): string {
+  const { title } = view;
+  if (title.kind === 'item') return statusSuffix(title.status, now);
+  const failed = title.failed > 0 ? currentTheme.fg('error', ` · ${String(title.failed)} failed`) : '';
+  const interrupted = title.interrupted > 0
+    ? currentTheme.fg('textDim', ` · ${String(title.interrupted)} interrupted`)
+    : '';
+  return `${diffText(title.added, title.removed)}${failed}${interrupted}`;
 }
 
 function memberDraft(
   item: LogicalTranscriptItem,
+  status: RowStatus,
   form: RowForm,
   open: boolean,
   width: number,
-  now: number,
+  now: Instant,
   previous: MemberFrame | undefined,
 ): MemberDraft {
-  const rowKey = `${String(item.projectionVersion)}:${item.status.kind}:${form}:${String(elapsedSeconds(item.status, now))}`;
+  const rowKey = `${String(item.projectionVersion)}:${form}:${statusKey(status, now)}`;
   let row: readonly string[] = [];
   if (previous?.item.display === item.display && previous.rowKey === rowKey) row = previous.row;
-  else if (form === 'line') row = [rowLine(item, width, now)];
-  else if (form === 'wrapped') row = wrappedRow(item, width, now);
+  else if (form === 'line') row = [rowLine(item, status, width, now)];
+  else if (form === 'wrapped') row = wrappedRow(item, status, width, now);
   const detail = open && hasRowDetail(item.display) ? item.display.renderRowDetail(width) : undefined;
   return { item, rowKey, row, detail };
 }
 
-function overflows(height: number, viewportRows: number | undefined): boolean {
-  return viewportRows !== undefined && height > viewportRows;
-}
-
 function prefixFor(branch: Branch, guide: (text: string) => string): (first: boolean) => string {
   if (branch === 'bare') return () => '';
-  if (branch === 'indent') return () => '  ';
+  if (branch === 'indent') return () => TITLE_INDENT;
   const first = guide(branch === 'last' ? '└ ' : '├ ');
   const rest = branch === 'last' ? '  ' : guide('│ ');
   return (isFirst) => isFirst ? first : rest;
 }
 
-function oneLine(subject: string): string {
-  const newline = subject.indexOf('\n');
-  return newline < 0 ? subject : `${subject.slice(0, newline)}…`;
+function statusKey(status: RowStatus, now: Instant): string {
+  return status.kind === 'running' && status.since !== undefined
+    ? `running${elapsedText(status.since, now)}`
+    : status.kind;
 }
 
-export function itemText(item: LogicalTranscriptItem): string {
-  const { verb, subject } = item.label;
-  return subject === undefined ? verb : `${verb} ${oneLine(subject)}`;
-}
-
-function elapsedSeconds(status: ItemStatus, now: number): number | undefined {
-  return status.kind === 'running' ? shownSeconds(status.startedAtMs, now) : undefined;
-}
-
-function statusSuffix(status: ItemStatus, now: number): string {
+function statusSuffix(status: RowStatus, now: Instant): string {
   switch (status.kind) {
-    case 'running': return elapsedSuffix(status.startedAtMs, now);
+    case 'running': {
+      const elapsed = status.since === undefined ? '' : elapsedText(status.since, now);
+      return elapsed.length === 0 ? '' : currentTheme.dim(elapsed);
+    }
     case 'failed': return currentTheme.dim(' · failed');
     case 'interrupted': return currentTheme.dim(' · interrupted');
     case 'done': {
@@ -458,23 +522,28 @@ function diffText(added: number, removed: number): string {
   return parts.length === 0 ? '' : ` ${parts.join(' ')}`;
 }
 
-function rowHead(item: LogicalTranscriptItem): string {
-  return currentTheme.boldFg(item.status.kind === 'failed' ? 'error' : 'textDim', item.label.rowVerb);
+function rowHead(item: LogicalTranscriptItem, status: RowStatus): string {
+  return currentTheme.boldFg(status.kind === 'failed' ? 'error' : 'textDim', item.label.rowVerb);
 }
 
-function rowLine(item: LogicalTranscriptItem, width: number, now: number): string {
-  const head = rowHead(item);
+function rowMarker(item: LogicalTranscriptItem): string {
+  const { display } = item;
+  return hasStatusMarker(display) ? display.statusMarker() : TITLE_INDENT;
+}
+
+function rowLine(item: LogicalTranscriptItem, status: RowStatus, width: number, now: Instant): string {
+  const head = rowHead(item, status);
   const { subject } = item.label;
   return renderHeaderContent({
     head: subject === undefined ? head : `${head} `,
     flex: { text: subject === undefined ? '' : oneLine(subject), style: (text) => currentTheme.dim(text), keep: 'head' },
-    tail: statusSuffix(item.status, now),
+    tail: statusSuffix(status, now),
   }, width);
 }
 
-function wrappedRow(item: LogicalTranscriptItem, width: number, now: number): string[] {
-  const head = rowHead(item);
-  const suffix = statusSuffix(item.status, now);
+function wrappedRow(item: LogicalTranscriptItem, status: RowStatus, width: number, now: Instant): string[] {
+  const head = rowHead(item, status);
+  const suffix = statusSuffix(status, now);
   const { rowVerb, subject } = item.label;
   if (subject === undefined) return wrapTextWithAnsi(`${head}${suffix}`, width);
   const indent = visibleWidth(rowVerb) + 1;
@@ -483,24 +552,14 @@ function wrappedRow(item: LogicalTranscriptItem, width: number, now: number): st
     .map((line, index) => `${index === 0 ? `${head} ` : ' '.repeat(indent)}${line}`);
 }
 
-function tailLine(item: LogicalTranscriptItem, branch: string, width: number, now: number): string {
-  const seconds = elapsedSeconds(item.status, now);
-  const line = renderHeaderContent({
-    head: branch,
-    flex: { text: itemText(item), keep: 'head' },
-    tail: seconds === undefined ? '' : ` · ${String(seconds)}s`,
-  }, width);
-  return currentTheme.dim(line);
-}
-
 function sameFrameKey(left: FrameKey, right: FrameKey): boolean {
-  return left.width === right.width &&
+  return left.model === right.model &&
+    left.width === right.width &&
     left.palette === right.palette &&
     left.background === right.background &&
-    left.summary === right.summary &&
-    left.expanded === right.expanded &&
-    left.active === right.active &&
-    left.animationKey === right.animationKey &&
-    left.tailKey === right.tailKey &&
-    left.viewportRows === right.viewportRows;
+    left.viewportRows === right.viewportRows &&
+    left.title === right.title &&
+    left.sweep === right.sweep &&
+    left.rows === right.rows &&
+    left.tail === right.tail;
 }
