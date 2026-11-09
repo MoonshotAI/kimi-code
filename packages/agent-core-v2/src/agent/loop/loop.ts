@@ -205,6 +205,10 @@ export interface PromptSubmitContext {
   block: boolean;
 }
 
+export interface QueuedCompactionContext {
+  readonly instruction?: string;
+}
+
 export interface LoopNotify {
   readonly message?: ContextMessage;
   readonly turnScoped?: boolean;
@@ -258,10 +262,13 @@ export interface IAgentLoopService {
     options?: LoopErrorHandlerRegistrationOptions,
   ): IDisposable;
 
+  enqueueCompaction(instruction?: string): string;
+
   readonly hooks: Hooks<{
     onWillBeginStep: BeforeStepContext;
     onDidFinishStep: AfterStepContext;
     onBeforeSubmitPrompt: PromptSubmitContext;
+    onRunQueuedCompaction: QueuedCompactionContext;
   }>;
 }
 

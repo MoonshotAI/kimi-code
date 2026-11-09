@@ -77,6 +77,7 @@ export const queuedInputSchema = z.object({
   content: z.array(messageContentSchema),
   skills: z.array(z.object({ name: z.string(), args: z.string().optional() })).optional(),
   client_metadata: z.record(z.string(), z.unknown()).optional(),
+  instruction: z.string().optional(),
   created_at: isoDateTimeSchema,
 });
 export type QueuedInput = z.infer<typeof queuedInputSchema>;

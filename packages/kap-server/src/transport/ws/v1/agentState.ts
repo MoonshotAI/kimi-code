@@ -72,7 +72,21 @@ export function readQueuedInputs(handle: IAgentScopeHandle): QueuedInput[] {
   if (snapshot === undefined || !snapshot.engineAttached) return [];
   return snapshot.queue.flatMap((entry): QueuedInput[] => {
     const meta = entry.meta;
-    if (meta?.tracked !== true || meta.promptId === undefined || meta.promptId === snapshot.startingPromptId) return [];
+    if (meta?.promptId === undefined || meta.promptId === snapshot.startingPromptId) return [];
+    if (meta.kind === 'compact') {
+      return [
+        {
+          prompt_id: meta.promptId,
+          user_message_id: meta.promptId,
+          kind: 'compact',
+          delivery: 'queue',
+          content: [],
+          instruction: meta.instruction,
+          created_at: meta.createdAt ?? '',
+        },
+      ];
+    }
+    if (meta.tracked !== true) return [];
     const origin = meta.origin as PromptOrigin | undefined;
     const user = origin?.kind === 'user' ? origin : undefined;
     const skills = user?.skillActivations?.map(({ skillName, skillArgs }) => ({ name: skillName, args: skillArgs }));

@@ -6,6 +6,7 @@ import { defineState } from '#/state/state';
 import { estimateTokensForMessage } from "#/llm-adapter/contract/tokens";
 import { buildCompactionSummaryText, isRealUserInput } from '#/agent/contextMemory/compactionHandoff';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { newMessageId } from '#/agent/contextMemory/messageId';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import type { AgentLLMRequestFinish } from '#/agent/loop/requesterContract';
@@ -50,6 +51,7 @@ import {
   IAgentFullCompactionService,
   type FullCompactionInput,
   type FullCompactionTask,
+  type ManualCompactionRequest,
 } from './fullCompaction';
 import {
   RuntimeCompactionStrategy,
@@ -191,6 +193,12 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
       }),
     );
     this._register(
+      this.loopService.hooks.onRunQueuedCompaction.register('full-compaction', async (ctx, next) => {
+        await this.runQueued(ctx.instruction);
+        await next();
+      }),
+    );
+    this._register(
       this.loopService.registerLoopErrorHandler({
         id: 'full-compaction',
         match: (context) => this.shouldRecoverFromContextOverflow(context.error),
@@ -315,6 +323,35 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   }
 
   begin(input: FullCompactionInput): boolean {
+    return this.start(input, input.source === 'manual');
+  }
+
+  requestManual(instruction?: string): ManualCompactionRequest {
+    const loop = this.loopService.snapshot();
+    if (this._compacting !== null || loop.queue.some((entry) => entry.meta?.kind === 'compact')) {
+      throw new Error2(ErrorCodes.COMPACTION_UNABLE, 'A compaction is already running or queued.');
+    }
+    if (loop.state === 'idle' && !loop.hasPendingRequests && !loop.paused) {
+      this.begin({ source: 'manual', instruction });
+      return { acceptedAs: 'compact', promptId: newMessageId() };
+    }
+    return { acceptedAs: 'queue', promptId: this.loopService.enqueueCompaction(instruction) };
+  }
+
+  private async runQueued(instruction: string | undefined): Promise<void> {
+    await this._compacting?.promise.catch(() => undefined);
+    try {
+      if (!this.start({ source: 'manual', instruction }, false)) return;
+    } catch (error) {
+      void this.dispatcher.dispatch(
+        new AgentErrorEvent({ ...toKimiErrorPayload(error), agentId: this.agent.agentId }),
+      );
+      throw error;
+    }
+    await this._compacting?.promise;
+  }
+
+  private start(input: FullCompactionInput, quiesce: boolean): boolean {
     if (this._compacting) return false;
     const data: CompactionBeginData = { source: input.source, instruction: input.instruction };
     if (data.source === 'manual') {
@@ -323,10 +360,8 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     if (!this.reserveCompactionSlot(data.source)) return false;
 
     const tokenCount = this.validateCompactionStart(data.source);
-    const quiescence = data.source === 'manual'
-      ? this.loopService.tryAcquireQuiescence()
-      : undefined;
-    if (data.source === 'manual' && quiescence === undefined) {
+    const quiescence = quiesce ? this.loopService.tryAcquireQuiescence() : undefined;
+    if (quiesce && quiescence === undefined) {
       throw new Error2(
         ErrorCodes.COMPACTION_UNABLE,
         'Cannot compact while a turn is active or another context change is running. Wait for it to finish, then retry.',

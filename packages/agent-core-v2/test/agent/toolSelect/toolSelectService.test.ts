@@ -25,6 +25,7 @@ import {
   type LoopNotifyHandle,
   type LoopSnapshot,
   type PromptSubmitContext,
+  type QueuedCompactionContext,
   type Turn,
 } from '#/agent/loop/loop';
 import { createToolSelectResolver } from '#/agent/loop/toolSelectPolicy';
@@ -230,6 +231,7 @@ class FakeLoopService implements IAgentLoopService {
     onWillBeginStep: new OrderedHookSlot<BeforeStepContext>(),
     onDidFinishStep: new OrderedHookSlot<AfterStepContext>(),
     onBeforeSubmitPrompt: new OrderedHookSlot<PromptSubmitContext>(),
+    onRunQueuedCompaction: new OrderedHookSlot<QueuedCompactionContext>(),
   };
 
   submit(): never {
@@ -241,6 +243,10 @@ class FakeLoopService implements IAgentLoopService {
   }
 
   moveQueued(): never {
+    throw new Error('unused in this suite');
+  }
+
+  enqueueCompaction(): never {
     throw new Error('unused in this suite');
   }
 

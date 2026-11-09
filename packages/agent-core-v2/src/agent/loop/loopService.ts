@@ -153,6 +153,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     onWillBeginStep: new OrderedHookSlot(),
     onDidFinishStep: new OrderedHookSlot(),
     onBeforeSubmitPrompt: new OrderedHookSlot(),
+    onRunQueuedCompaction: new OrderedHookSlot(),
   };
 
   private readonly errorHandlers: LoopErrorHandler[] = [];
@@ -411,6 +412,27 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return { id, acceptedAs };
   }
 
+  enqueueCompaction(instruction?: string): string {
+    if (this.disposing) throw abortError('Agent loop disposed');
+    this.runGate.begin();
+    const id = newMessageId();
+    const entry: UserEntry = {
+      message: { role: 'user', content: [] },
+      meta: {
+        promptId: id,
+        userMessageId: id,
+        origin: { kind: 'user' },
+        tracked: false,
+        createdAt: new Date().toISOString(),
+        kind: 'compact',
+        instruction,
+      },
+    };
+    if (this.engine !== undefined) this.machineEngine().submit(entry);
+    else this.pendingSubmissions.push(entry);
+    return id;
+  }
+
   moveQueued(promptId: string, beforePromptId?: string): void {
     if (this.disposing) throw abortError('Agent loop disposed');
     const snapshot = this.engine?.snapshot();
@@ -441,6 +463,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const queuedIds = (): Set<string | undefined> => new Set(engine.snapshot().queue.map((item) => item.meta?.promptId));
     if (ids.size !== promptIds.length || ![...ids].every((id) => queuedIds().has(id))) {
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are not pending');
+    }
+    if (engine.snapshot().queue.some((item) => ids.has(item.meta?.promptId as string) && item.meta?.kind === 'compact')) {
+      throw new Error2(ErrorCodes.REQUEST_INVALID, 'a queued compaction cannot be steered');
     }
     for (const id of ids) {
       const entry = engine.snapshot().queue.find((item) => item.meta?.promptId === id);
@@ -712,6 +737,21 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.gatingPromptId = undefined;
     if (await this.continuesActiveTurn()) return { defer: true };
     if (this.engine?.snapshot().starting !== queueItemId) return { defer: true };
+    const head = this.engine?.snapshot().queue[0];
+    if (head?.meta?.kind === 'compact') {
+      this.gatingPromptId = queueItemId;
+      this.signalQueueChange();
+      try {
+        await this.hooks.onRunQueuedCompaction.run({ instruction: head.meta.instruction });
+      } catch (error) {
+        this.logger.warn('queued compaction did not complete', {
+          agentId: this.scopeContext.agentId,
+          promptId: queueItemId,
+          error,
+        });
+      }
+      return { drop: true };
+    }
     const waiter = queueItemId === undefined ? undefined : this.promptWaiters.get(queueItemId);
     const entry =
       queueItemId === undefined
@@ -871,12 +911,25 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         return this.cancelActiveTurn(undefined, cancellation);
       }
       const waiter = this.promptWaiters.get(target.promptId);
-      if (waiter === undefined) {
-        throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, `prompt ${target.promptId} not found`);
-      }
+      if (waiter === undefined) return this.withdrawQueuedCompaction(target.promptId);
       return this.cancelWaiter(waiter, cancellation);
     }
     return this.cancelActiveTurn(target?.turnId, cancellation);
+  }
+
+  private withdrawQueuedCompaction(promptId: string): boolean {
+    const snapshot = this.snapshot();
+    const queued = snapshot.queue.some((entry) => entry.meta?.promptId === promptId && entry.meta.kind === 'compact');
+    if (!queued || promptId === snapshot.startingPromptId) {
+      throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, `prompt ${promptId} not found`);
+    }
+    this.engine?.cancelQueueItem(promptId);
+    const parked = this.pendingSubmissions.findIndex((entry) => entry.meta?.promptId === promptId);
+    if (parked !== -1) {
+      this.pendingSubmissions.splice(parked, 1);
+      this.signalQueueChange();
+    }
+    return true;
   }
 
   private cancelWaiter(waiter: PromptWaiter, cancellation: unknown): boolean {

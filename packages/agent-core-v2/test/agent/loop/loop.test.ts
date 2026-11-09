@@ -2590,6 +2590,67 @@ describe('prompt queue', () => {
     expect(userTexts()).toEqual(['a', 's']);
   });
 
+  it('runs a queued compaction at the head instead of a turn, then continues with the queue', async () => {
+    const compaction = ctx.get(IAgentFullCompactionService);
+    const started: (string | undefined)[] = [];
+    const turnStarts = ctx.get(IEventBus).subscribe(TurnStarted, (event) => started.push(event.prompt));
+    const invalid = expect.objectContaining({ code: ErrorCodes.REQUEST_INVALID });
+
+    submit('a');
+    await untilModelRequest();
+    const compact = loop.enqueueCompaction('keep the plan');
+    submit('b');
+    expect(loop.snapshot().queue.map((entry) => [entry.meta?.promptId, entry.meta?.kind, entry.meta?.instruction])).toEqual([
+      [compact, 'compact', 'keep the plan'],
+      ['b', undefined, undefined],
+    ]);
+    await expect(loop.steer([compact])).rejects.toEqual(invalid);
+    loop.moveQueued('b', compact);
+    loop.moveQueued('b');
+    expect(queueIds()).toEqual([compact, 'b']);
+
+    try {
+      heldRequests.shift()?.();
+      await vi.waitFor(() => expect(compaction.compacting).not.toBeNull());
+      await untilModelRequest();
+      expect(loop.snapshot().startingPromptId).toBe(compact);
+      expect(started).toEqual(['a']);
+      expect(() => loop.cancel({ promptId: compact })).toThrow(notQueued);
+      expect(() => loop.moveQueued('b', compact)).toThrow(notQueued);
+
+      heldRequests.shift()?.();
+      await vi.waitFor(() => expect(started).toEqual(['a', 'b']));
+      expect(compaction.compacting).toBeNull();
+      expect(queueIds()).toEqual([]);
+      heldRequests.shift()?.();
+      await loop.settled();
+    } finally {
+      turnStarts.dispose();
+    }
+  });
+
+  it('withdraws a queued compaction and moves on when a started one is cancelled', async () => {
+    const compaction = ctx.get(IAgentFullCompactionService);
+    submit('a');
+    await untilModelRequest();
+    const withdrawn = loop.enqueueCompaction();
+    expect(loop.cancel({ promptId: withdrawn })).toBe(true);
+    expect(queueIds()).toEqual([]);
+    loop.enqueueCompaction();
+    submit('b');
+
+    heldRequests.shift()?.();
+    await vi.waitFor(() => expect(compaction.compacting).not.toBeNull());
+    compaction.cancel();
+    await vi.waitFor(() => expect(userTexts()).toEqual(['a', 'b']));
+    expect(queueIds()).toEqual([]);
+    for (let round = 0; round < 20 && heldRequests.length > 0; round += 1) {
+      heldRequests.shift()?.();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    await loop.settled();
+  });
+
   it('finishes a continued turn before the queued head starts, gating the head once', async () => {
     let continued = false;
     loop.hooks.onDidFinishStep.register('test-continue-once', async (_hookCtx, next) => {

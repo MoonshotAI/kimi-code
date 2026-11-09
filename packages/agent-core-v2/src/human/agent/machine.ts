@@ -54,7 +54,11 @@ export type ScopeFactory = (
   signal: AbortSignal,
 ) => Promise<ScopeFactoryOutput>;
 
-export type PromptGateVerdict = boolean | { block: boolean; message?: UserMessage } | { defer: true };
+export type PromptGateVerdict =
+  | boolean
+  | { block: boolean; message?: UserMessage }
+  | { defer: true }
+  | { drop: true };
 
 export type PromptGate = (
   queueItemId: string | undefined,
@@ -346,7 +350,7 @@ export function createAgentMachine({
         ({ input, signal }) => input.scopeFactory(input.self, signal),
       ),
       promptGateActor: fromPromise<
-        { id?: string; block: boolean; defer?: boolean; message?: UserMessage; error?: unknown },
+        { id?: string; block: boolean; defer?: boolean; drop?: boolean; message?: UserMessage; error?: unknown },
         { gate?: PromptGate; head?: UserEntry }
       >(async ({ input }) => {
         const { gate, head } = input;
@@ -355,6 +359,7 @@ export function createAgentMachine({
           const verdict = await gate(head.meta?.promptId, head.message);
           if (typeof verdict === 'boolean') return { id: head.meta?.promptId, block: verdict };
           if ('defer' in verdict) return { id: head.meta?.promptId, block: false, defer: true };
+          if ('drop' in verdict) return { id: head.meta?.promptId, block: false, drop: true };
           return { id: head.meta?.promptId, block: verdict.block, message: verdict.message };
         } catch (error) {
           return { id: head.meta?.promptId, block: false, error };
@@ -715,6 +720,11 @@ export function createAgentMachine({
                 {
                   guard: ({ event }) => event.output.defer === true,
                   target: 'ready',
+                },
+                {
+                  guard: ({ event }) => event.output.drop === true,
+                  target: 'ready',
+                  actions: assign(({ context }) => ({ queue: context.queue.slice(1) })),
                 },
                 {
                   guard: ({ event }) => event.output.error !== undefined,

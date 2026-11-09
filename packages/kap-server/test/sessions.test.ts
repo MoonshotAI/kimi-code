@@ -1545,6 +1545,28 @@ describe('server-v2 /api/v1/sessions', () => {
     }
   });
 
+  it('starts :compact at once on an idle session and reports 40910 when there is nothing to compact', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+    });
+    const id = created.body.data.id;
+    const session = getLiveSessionById((server as RunningServer).core.accessor, id);
+    if (session === undefined) throw new Error('expected live session');
+    await session.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
+    const agent = session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
+
+    const empty = await postJson<null>(`/api/v1/sessions/${id}:compact`, {});
+    expect(empty.body.code).toBe(40910);
+
+    agent.accessor.get(IAgentContextMemoryService).append(
+      { role: 'user', content: [{ type: 'text', text: 'first prompt' }], origin: { kind: 'user' } },
+    );
+    const started = await postJson<{ accepted_as: string; prompt_id: string }>(`/api/v1/sessions/${id}:compact`, {});
+    expect(started.body.code).toBe(0);
+    expect(started.body.data).toEqual({ accepted_as: 'compact', prompt_id: expect.any(String) });
+    agent.accessor.get(IAgentFullCompactionService).cancel();
+  });
+
   it('returns 40901 when :reload is requested while prompts are queued', async () => {
     const created = await postJson<SessionWire>('/api/v1/sessions', {
       metadata: { cwd: home as string },

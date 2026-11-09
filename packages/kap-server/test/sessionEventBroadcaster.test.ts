@@ -2008,6 +2008,13 @@ describe('SessionEventBroadcaster', () => {
       await settle();
       main.setQueue([{ ...entry('b'), meta: { ...entry('b').meta, delivery: 'steer' } }]);
       await settle();
+      main.setQueue([
+        {
+          message: { role: 'user', content: [] },
+          meta: { promptId: 'c', tracked: false, kind: 'compact', instruction: 'keep it', createdAt: '2026-11-06T00:00:00.000Z' },
+        },
+      ]);
+      await settle();
       main.setQueue([entry('parked')], undefined, false);
       await settle();
       main.setQueue([]);
@@ -2026,6 +2033,17 @@ describe('SessionEventBroadcaster', () => {
           },
         ],
         [expect.objectContaining({ prompt_id: 'b', delivery: 'steer' })],
+        [
+          {
+            prompt_id: 'c',
+            user_message_id: 'c',
+            kind: 'compact',
+            delivery: 'queue',
+            content: [],
+            instruction: 'keep it',
+            created_at: '2026-11-06T00:00:00.000Z',
+          },
+        ],
         [],
       ]);
     });

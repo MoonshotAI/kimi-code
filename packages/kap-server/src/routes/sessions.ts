@@ -983,14 +983,17 @@ async function compactSessionAction(
   ctx: SessionActionCtx<z.infer<typeof compactSessionRequestSchema>>,
 ): Promise<void> {
   const { core, req, reply, id, body } = ctx;
-  await reloadOnStale(core.accessor, id, async () => {
+  const request = await reloadOnStale(core.accessor, id, async () => {
     const agent = await resolveMainAgent(core, id);
-    agent.accessor
+    return agent.accessor
       .get(IAgentFullCompactionService)
-      .begin({ source: 'manual', instruction: normalizeOptional(body.instruction) });
+      .requestManual(normalizeOptional(body.instruction));
   });
-  requestLog(req)?.info({ session_id: id, action: 'compact' }, 'session action completed');
-  reply.send(okEnvelope({}, req.id));
+  requestLog(req)?.info(
+    { session_id: id, action: 'compact', accepted_as: request.acceptedAs, prompt_id: request.promptId },
+    'session action completed',
+  );
+  reply.send(okEnvelope({ accepted_as: request.acceptedAs, prompt_id: request.promptId }, req.id));
 }
 
 async function undoSessionAction(
