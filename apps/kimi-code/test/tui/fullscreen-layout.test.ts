@@ -30,7 +30,7 @@ import { UserMessageComponent } from '#/tui/components/messages/user-message';
 import * as userMessages from '#/tui/components/messages/user-message';
 import { ActivityPaneComponent } from '#/tui/components/panes/activity-pane';
 import { CHROME_GUTTER } from '#/tui/constant/rendering';
-import { createTUIState, KimiTUI, type KimiTUIOptions } from '#/tui/kimi-tui';
+import { createTUIState, KimiTUI, type KimiTUIOptions, type KimiTUIStartupInput } from '#/tui/kimi-tui';
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
 import { ChoicePickerComponent } from '#/tui/components/dialogs/choice-picker';
 import { GoalStartPermissionPromptComponent } from '#/tui/components/dialogs/goal-start-permission-prompt';
@@ -184,6 +184,58 @@ function addReadGroup(state: ReturnType<typeof createTUIState>): void {
       ),
     );
   }
+}
+
+interface ActivityDockDriver {
+  readonly state: ReturnType<typeof createTUIState>;
+  readonly sessionEventHandler: {
+    handleEvent(event: Record<string, unknown>, sendQueued: () => void): void;
+  };
+  updateActivityPane(): void;
+  beginSessionRequest(): void;
+}
+
+function mountFullscreenKimiTui(): { driver: ActivityDockDriver; vt: VirtualTerminal } {
+  const input: KimiTUIStartupInput = {
+    cliOptions: {
+      session: undefined,
+      continue: false,
+      yolo: false,
+      auto: false,
+      plan: false,
+      model: undefined,
+      outputFormat: undefined,
+      prompt: undefined,
+      skillsDirs: [],
+      agent: undefined,
+      agentFiles: [],
+      environment: undefined,
+    },
+    tuiConfig: {
+      theme: 'dark',
+      disablePasteBurst: false,
+      editorCommand: null,
+      notifications: { enabled: true, condition: 'unfocused' },
+      upgrade: { autoInstall: true },
+      transcript: { toolCallDensity: 'compact', thinking: 'grouped' },
+      tuiMode: 'fullscreen',
+    },
+    version: '0.0.0-test',
+    workDir: '/tmp/kimi-test',
+  };
+  const driver = new KimiTUI(
+    { onConfigSectionChanged: () => () => {} } as never,
+    input,
+  ) as unknown as ActivityDockDriver;
+  const { state } = driver;
+  vi.spyOn(state.terminal, 'setProgress').mockImplementation(() => {});
+  const vt = new VirtualTerminal(WIDTH, HEIGHT);
+  (state.ui as { terminal: Terminal }).terminal = vt;
+  mountFooter(state);
+  state.editorContainer.addChild(state.editor);
+  state.ui.setFocus(state.editor);
+  state.ui.start();
+  return { driver, vt };
 }
 
 async function clickRow(vt: VirtualTerminal, row: number): Promise<void> {
@@ -612,6 +664,42 @@ describe('fullscreen layout', () => {
     expect(rows[promptRow + 1]).toContain('╰');
 
     state.ui.stop();
+  });
+
+  it('keeps the editor on the same row from idle through a working turn to its summary', async () => {
+    const { driver, vt } = mountFullscreenKimiTui();
+    const emit = (event: Record<string, unknown>): void => {
+      driver.sessionEventHandler.handleEvent(
+        { agentId: 'main', sessionId: 'ses-1', turnId: 1, ...event },
+        () => {},
+      );
+    };
+    const dock = async (): Promise<{ editorTop: number; activity: string }> => {
+      driver.state.ui.requestRender();
+      await vt.waitForRender();
+      const rows = screenRows(vt);
+      const editorTop = rows.findIndex((row) => row.includes('╭'));
+      return { editorTop, activity: rows[editorTop - 1]?.trim() ?? '' };
+    };
+
+    driver.updateActivityPane();
+    const idle = await dock();
+    expect(idle).toEqual({ editorTop: expect.any(Number), activity: '' });
+
+    driver.beginSessionRequest();
+    expect(await dock()).toEqual({ editorTop: idle.editorTop, activity: expect.stringMatching(/^[🌑🌒🌓🌔🌕🌖🌗🌘]/u) });
+    emit({ type: 'thinking.delta', delta: 'Plan the change.' });
+    expect(await dock()).toEqual({ editorTop: idle.editorTop, activity: expect.stringMatching(/^\S Working for \d+s/u) });
+    emit({ type: 'tool.call.started', toolCallId: 'call_read', name: 'Read', args: { path: 'a.ts' } });
+    expect(await dock()).toEqual({ editorTop: idle.editorTop, activity: expect.stringMatching(/^[🌑🌒🌓🌔🌕🌖🌗🌘]/u) });
+    emit({ type: 'tool.result', toolCallId: 'call_read', output: 'content' });
+    emit({ type: 'turn.ended', reason: 'completed' });
+    expect(await dock()).toEqual({
+      editorTop: idle.editorTop,
+      activity: expect.stringMatching(/^Worked for \d+s · done \d{1,2}:\d{2} [AP]M$/u),
+    });
+
+    driver.state.ui.stop();
   });
 
   it('jumps between prompts with Ctrl-Shift-Up/Down (OSC 133 zones survive the chain)', async () => {

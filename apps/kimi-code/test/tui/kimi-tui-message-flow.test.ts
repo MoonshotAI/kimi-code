@@ -14846,6 +14846,162 @@ describe('activity bar Ctrl+B hint', () => {
   });
 });
 
+describe('fullscreen activity bar', () => {
+  const MOON_PHASE = /[🌑🌒🌓🌔🌕🌖🌗🌘]/u;
+
+  async function makeActivityDriver(tuiMode: 'fullscreen' | 'regular', session = makeSession()) {
+    const base = makeStartupInput();
+    const { driver } = await makeDriver(session, {}, {
+      ...base,
+      tuiConfig: { ...base.tuiConfig, tuiMode },
+    });
+    await driver.setSession(session);
+    await driver.syncRuntimeState(session);
+    const emit = (event: Record<string, unknown>): void => {
+      driver.sessionEventHandler.handleEvent(
+        { agentId: 'main', sessionId: 'ses-1', turnId: 1, ...event } as Event,
+        vi.fn(),
+      );
+    };
+    const activityRows = (): string[] =>
+      driver.state.activityContainer.render(200).map((line) => stripSgr(line).trim());
+    return { driver, emit, activityRows, activity: () => activityRows().join('\n') };
+  }
+
+  async function withFixedClock(run: () => Promise<void>): Promise<void> {
+    vi.stubEnv('TZ', 'UTC');
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T04:31:32Z'));
+    try {
+      await run();
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllEnvs();
+    }
+  }
+
+  it('counts the turn while the model writes, keeps the moon otherwise, and sums up the finished turn', async () => {
+    await withFixedClock(async () => {
+      const { driver, emit, activity, activityRows } = await makeActivityDriver('fullscreen');
+      expect(activityRows()).toEqual(['', '']);
+
+      driver.handleUserInput('hello');
+      emit({ type: 'turn.started', origin: { kind: 'user' } });
+      vi.advanceTimersByTime(4_000);
+      expect(activity()).toMatch(MOON_PHASE);
+      expect(activity()).not.toContain('Working');
+
+      emit({ type: 'thinking.delta', delta: 'Plan the change.' });
+      expect(activity()).toContain('Working for 4s');
+      vi.advanceTimersByTime(8_000);
+      expect(activity()).toContain('Working for 12s');
+
+      emit({ type: 'tool.call.delta', toolCallId: 'call_read', name: 'Read', argumentsPart: '{"path":"a.ts"}' });
+      expect(activity()).toMatch(MOON_PHASE);
+      expect(activity()).not.toContain('Working');
+      emit({ type: 'tool.call.started', toolCallId: 'call_read', name: 'Read', args: { path: 'a.ts' } });
+      vi.advanceTimersByTime(6_000);
+      expect(activity()).toMatch(MOON_PHASE);
+      expect(activity()).not.toContain('Working');
+      emit({ type: 'tool.result', toolCallId: 'call_read', output: 'content' });
+      vi.advanceTimersByTime(2_000);
+      expect(activity()).toMatch(MOON_PHASE);
+      expect(activity()).not.toContain('Working');
+
+      emit({ type: 'assistant.delta', delta: 'Done.' });
+      expect(activity()).toContain('Working for 20s');
+      vi.advanceTimersByTime(8_000);
+      expect(activity()).toContain('Working for 28s');
+
+      emit({ type: 'turn.ended', reason: 'completed', durationMs: 27_000 });
+      expect(activityRows()).toEqual(['', 'Worked for 28s · done 4:32 AM']);
+    });
+  });
+
+  it.each(['cancelled', 'failed', 'blocked'] as const)(
+    'sums up no turn that ended %s, keeping the two rows',
+    async (reason) => {
+      await withFixedClock(async () => {
+        const { driver, emit, activityRows } = await makeActivityDriver('fullscreen');
+        driver.handleUserInput('hello');
+        emit({ type: 'turn.started', origin: { kind: 'user' } });
+        emit({ type: 'assistant.delta', delta: 'Partly' });
+        vi.advanceTimersByTime(5_000);
+
+        emit({ type: 'turn.ended', reason });
+
+        expect(activityRows()).toEqual(['', '']);
+      });
+    },
+  );
+
+  it('sums up no turn whose prompt failed to send', async () => {
+    const session = makeSession({
+      prompt: vi.fn(async () => {
+        throw new Error('session closed');
+      }),
+    });
+    const { driver, activityRows } = await makeActivityDriver('fullscreen', session);
+
+    driver.handleUserInput('hello');
+
+    await vi.waitFor(() => {
+      expect(driver.state.appState.streamingPhase).toBe('idle');
+    });
+    expect(activityRows()).toEqual(['', '']);
+  });
+
+  it('sums up a finished /init, which ends without a turn of its own', async () => {
+    const session = makeSession({ init: vi.fn(async () => {}) });
+    const { driver, activityRows } = await makeActivityDriver('fullscreen', session);
+
+    driver.handleUserInput('/init');
+
+    await vi.waitFor(() => {
+      expect(session.init).toHaveBeenCalledTimes(1);
+      expect(driver.state.appState.streamingPhase).toBe('idle');
+    });
+    expect(activityRows()[1]).toMatch(/^Worked for \d+s · done \d{1,2}:\d{2} [AP]M$/);
+  });
+
+  it('keeps Working… and the one-row idle placeholder outside fullscreen', async () => {
+    await withFixedClock(async () => {
+      const { driver, emit, activity, activityRows } = await makeActivityDriver('regular');
+      driver.handleUserInput('hello');
+      emit({ type: 'turn.started', origin: { kind: 'user' } });
+      vi.advanceTimersByTime(4_000);
+      emit({ type: 'thinking.delta', delta: 'Plan the change.' });
+      vi.advanceTimersByTime(8_000);
+      expect(activity()).toContain('Working…');
+      expect(activity()).not.toContain('Working for');
+
+      emit({ type: 'turn.ended', reason: 'completed' });
+      expect(activityRows()).toEqual(['']);
+    });
+  });
+
+  it.each(['clear', 'switch'] as const)('drops the finished turn summary when the transcript is reset (%s)', async (action) => {
+    await withFixedClock(async () => {
+      const nextSession = makeSession({ id: 'ses-next' });
+      const { driver, emit, activityRows } = await makeActivityDriver('fullscreen');
+      driver.handleUserInput('hello');
+      emit({ type: 'turn.started', origin: { kind: 'user' } });
+      vi.advanceTimersByTime(3_000);
+      emit({ type: 'turn.ended', reason: 'completed' });
+      expect(activityRows()).toEqual(['', 'Worked for 3s · done 4:31 AM']);
+
+      if (action === 'clear') driver.handleUserInput('/clear');
+      else await (
+        driver as unknown as { switchToSession(s: unknown, status: string): Promise<void> }
+      ).switchToSession(nextSession, 'Resumed session');
+      await vi.waitFor(() => {
+        expect(driver.streamingUI.timeline.turn()).toBeUndefined();
+      });
+      expect(activityRows()).toEqual(['', '']);
+    });
+  });
+});
+
 describe('KimiTUI session rating survey', () => {
   it.each(['startup', 'switch', 'reload'] as const)(
     'reports cumulative user turns after a %s mount',

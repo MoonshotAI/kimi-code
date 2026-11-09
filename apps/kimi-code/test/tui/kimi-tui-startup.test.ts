@@ -496,6 +496,7 @@ describe('KimiTUI startup', () => {
 
     // Dock = 6 chrome containers + footer wrap, below the transcript viewport.
     expect(driver.state.dockContainer?.children).toHaveLength(7);
+    expect(driver.state.activityContainer.render(80).map((line) => line.trim())).toEqual(['', '']);
   });
 
   it('shows a session-less notice on v2 startup', async () => {

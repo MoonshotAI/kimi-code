@@ -51,9 +51,22 @@ export interface ThinkingFacts {
   readonly marks: readonly [TextMark, ...TextMark[]];
 }
 
+export type TurnOutcome = 'completed' | 'stopped';
+
+/**
+ * `endedAtMs` is `Date.now()` read at `end`, for showing when the turn finished. It is read
+ * then because the monotonic clock can pause while the machine sleeps, so `end` cannot be
+ * turned into wall time later.
+ */
 export type TurnFacts =
   | { readonly kind: 'live'; readonly start: Instant }
-  | { readonly kind: 'ended'; readonly start: Instant; readonly end: Instant };
+  | {
+    readonly kind: 'ended';
+    readonly start: Instant;
+    readonly end: Instant;
+    readonly endedAtMs: number;
+    readonly outcome: TurnOutcome;
+  };
 
 export type CallPhase =
   | { readonly kind: 'history' }
@@ -195,11 +208,11 @@ export class TurnTimeline implements TimelineReader {
     this.turnCalls = [];
   }
 
-  turnEnded(): void {
+  turnEnded(outcome: TurnOutcome = 'stopped'): void {
     const at = this.clock();
     this.settleOutput(at, () => true);
     if (this.current?.kind !== 'live') return;
-    this.current = { kind: 'ended', start: this.current.start, end: at };
+    this.current = { kind: 'ended', start: this.current.start, end: at, endedAtMs: Date.now(), outcome };
   }
 
   thinkingDelta(delta: string): void {

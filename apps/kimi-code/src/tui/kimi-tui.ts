@@ -76,7 +76,7 @@ import { BannerComponent } from './components/chrome/banner';
 import { DeviceCodeBoxComponent } from './components/chrome/device-code-box';
 import type { FooterGitBinding } from './components/chrome/footer';
 import { GutterContainer } from './components/chrome/gutter-container';
-import { MoonLoader, type SpinnerStyle } from './components/chrome/moon-loader';
+import { MoonLoader, type SpinnerLabel, type SpinnerStyle } from './components/chrome/moon-loader';
 import { WelcomeComponent } from './components/chrome/welcome';
 import { pickRandomWorkingTip } from './components/chrome/working-tips';
 import {
@@ -119,6 +119,7 @@ import { UserMessageComponent } from './components/messages/user-message';
 import {
   ActivityPaneComponent,
   type ActivityPaneMode,
+  LastTurnSummary,
 } from './components/panes/activity-pane';
 import { removeLegacySurveySetting, transcriptGroupingActive, type TuiConfig } from './config';
 import {
@@ -180,6 +181,7 @@ import {
   type TUIStartupOptions,
   type TUIStartupState,
 } from './types';
+import { workingLabel } from './utils/activity-label';
 import { hasDispose } from './utils/component-capabilities';
 import { isDeadTerminalError } from './utils/dead-terminal';
 import { formatErrorMessage } from './utils/event-payload';
@@ -225,6 +227,7 @@ import {
 } from './utils/transcript-component-metadata';
 import { isTurnBoundaryComponent } from './utils/transcript-turns';
 import { nextTranscriptId } from './utils/transcript-id';
+import { instant } from './utils/turn-timeline';
 import {
   TRANSCRIPT_HYSTERESIS,
   TRANSCRIPT_KEEP_RECENT_ASSISTANT,
@@ -4640,6 +4643,11 @@ export class KimiTUI {
 
     this.lastActivityMode = activityModeKey;
     this.state.activityContainer.clear();
+    const fullscreen = this.state.ui instanceof TuiAltScreen;
+    const { timeline } = this.streamingUI;
+    const working: SpinnerLabel = fullscreen
+      ? (now) => workingLabel(timeline.turn(), instant(now))
+      : 'Working…';
 
     switch (effectiveMode) {
       case 'hidden':
@@ -4677,7 +4685,7 @@ export class KimiTUI {
         break;
       }
       case 'thinking': {
-        const spinner = this.ensureActivitySpinner('braille', 'Working…', (s) =>
+        const spinner = this.ensureActivitySpinner('braille', working, (s) =>
           currentTheme.fg('primary', s),
         );
         this.syncAgentSwarmActivitySpinner(undefined);
@@ -4691,7 +4699,7 @@ export class KimiTUI {
         break;
       }
       case 'composing': {
-        const spinner = this.ensureActivitySpinner('braille', 'Working…', (s) =>
+        const spinner = this.ensureActivitySpinner('braille', working, (s) =>
           currentTheme.fg('primary', s),
         );
         this.syncAgentSwarmActivitySpinner(undefined);
@@ -4721,10 +4729,8 @@ export class KimiTUI {
       case 'session': {
         this.stopActivitySpinner();
         this.syncAgentSwarmActivitySpinner(undefined);
-        // Working modes occupy two rows (a spacer above the loader); idle
-        // keeps a one-row placeholder so the dock only shifts once at turn
-        // boundaries instead of on every intra-turn mode flip.
         this.state.activityContainer.addChild(new Spacer(1));
+        if (fullscreen) this.state.activityContainer.addChild(new LastTurnSummary(timeline));
         break;
       }
     }
@@ -5002,7 +5008,7 @@ export class KimiTUI {
 
   private ensureActivitySpinner(
     style: SpinnerStyle,
-    label = '',
+    label: SpinnerLabel = '',
     colorFn?: (s: string) => string,
   ): MoonLoader {
     if (this.state.activitySpinner?.style !== style) {

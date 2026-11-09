@@ -424,7 +424,7 @@ export class SessionEventHandler {
   }
 
   private handleTurnEnd(event: TurnEndedEvent, sendQueued: (item: QueuedMessage) => void): void {
-    this.host.streamingUI.timeline.turnEnded();
+    this.host.streamingUI.timeline.turnEnded(event.reason === 'completed' ? 'completed' : 'stopped');
     this.host.handleTurnEnded?.(event);
     this.host.streamingUI.flushNow();
     this.clearStepRetry();

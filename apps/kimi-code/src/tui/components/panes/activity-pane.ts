@@ -1,8 +1,10 @@
-import { Container, Spacer, Text } from '@moonshot-ai/pi-tui';
+import { Container, Spacer, Text, TruncatedText, type Component } from '@moonshot-ai/pi-tui';
 
 import type { MoonLoader } from '#/tui/components/chrome/moon-loader';
 import { ACTIVITY_DETAIL_INDENT } from '#/tui/constant/rendering';
 import { currentTheme } from '#/tui/theme';
+import { workedSummary } from '#/tui/utils/activity-label';
+import type { TimelineReader } from '#/tui/utils/turn-timeline';
 
 export type ActivityPaneMode = 'hidden' | 'waiting' | 'thinking' | 'composing' | 'tool' | 'compacting';
 
@@ -48,4 +50,14 @@ export class ActivityPaneComponent extends Container {
     }
     return super.render(width);
   }
+}
+
+export class LastTurnSummary implements Component {
+  constructor(private readonly timeline: Pick<TimelineReader, 'turn'>) {}
+
+  render(width: number): string[] {
+    return new TruncatedText(currentTheme.fg('textDim', workedSummary(this.timeline.turn())), 1, 0).render(width);
+  }
+
+  invalidate(): void {}
 }

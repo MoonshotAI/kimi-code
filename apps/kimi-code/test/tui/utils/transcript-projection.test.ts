@@ -695,7 +695,7 @@ describe('turn timeline', () => {
     at(400).thinkingDelta('plan');
     at(1000).turnEnded();
     at(1200).turnEnded();
-    expect(timeline.turn()).toEqual({ kind: 'ended', start: 0, end: 1000 });
+    expect(timeline.turn()).toEqual({ kind: 'ended', start: 0, end: 1000, endedAtMs: expect.any(Number), outcome: 'stopped' });
     expect(timeline.latestThinking(instant(1200))).toMatchObject({ start: 400, end: 1000 });
     expect(turnLiveAt(timeline.turn(), instant(999))).toBe(true);
     expect(turnLiveAt(timeline.turn(), instant(1000))).toBe(false);
