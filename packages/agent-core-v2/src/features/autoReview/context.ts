@@ -11,13 +11,14 @@ const MAX_AUTHORIZATION_ENTRY_CHARS = 8000;
 const MAX_RECENT_ACTIONS = 20;
 const MAX_ACTION_ARGUMENT_CHARS = 8000;
 
-interface ReviewText {
+export interface ReviewText {
   readonly role: 'human-instruction' | 'direct-parent-instruction' | 'constraint' | 'fact';
   readonly content: readonly ContentPart[];
 }
 
 export function buildReviewMessages(
   messages: readonly ContextMessage[],
+  authorizationEntries: readonly ReviewText[],
   instructions: string | undefined,
   instructionPaths: readonly string[] | undefined,
   cwd: string,
@@ -25,7 +26,7 @@ export function buildReviewMessages(
 ): ReturnType<typeof createUserMessage>[] {
   const recentActions = messages.flatMap((message) => actionEntries(message, context.toolCall.id)).slice(-MAX_RECENT_ACTIONS);
   let authorizationChars = 0;
-  const authorization = messages.flatMap(authorizationEntry).toReversed().flatMap((entry) => {
+  const authorization = authorizationEntries.toReversed().flatMap((entry) => {
     if (authorizationChars >= MAX_AUTHORIZATION_TOTAL_CHARS) return [];
     const content = boundedContent(entry.content, MAX_AUTHORIZATION_TOTAL_CHARS - authorizationChars);
     authorizationChars += content.reduce((total, part) => total + (part.type === 'text' ? part.text.length : 0), 0);
@@ -55,8 +56,23 @@ function sectionJson(value: unknown): string {
   return JSON.stringify(value).replace(SECTION_TAG, '\\u003c$1');
 }
 
-export function authorizationEntries(messages: readonly ContextMessage[]): string[] {
-  return messages.flatMap(authorizationEntry).map((entry) => JSON.stringify(entry));
+export function extractAuthorization(messages: readonly ContextMessage[]): ReviewText[] {
+  return messages.flatMap(authorizationEntry);
+}
+
+export function sameAuthorization(
+  left: readonly ReviewText[],
+  right: readonly ReviewText[],
+): boolean {
+  return left.length === right.length && left.every((entry, index) => {
+    const other = right[index]!;
+    return entry.role === other.role
+      && entry.content.length === other.content.length
+      && entry.content.every((part, partIndex) => {
+        const otherPart = other.content[partIndex]!;
+        return part.type === 'text' && otherPart.type === 'text' && part.text === otherPart.text;
+      });
+  });
 }
 
 function authorizationEntry(message: ContextMessage): ReviewText[] {

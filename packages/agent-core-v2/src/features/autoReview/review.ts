@@ -1,5 +1,4 @@
 import { createDecorator } from '#/_base/di/instantiation';
-import type { PermissionPolicyEvaluation } from '#/agent/permissionPolicy/permissionPolicy';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 
 export type AutoReviewDecision =
@@ -16,18 +15,3 @@ export interface IAutoReviewService {
 }
 
 export const IAutoReviewService = createDecorator<IAutoReviewService>('autoReviewService');
-
-export interface IAutoReviewGate {
-  readonly _serviceBrand: undefined;
-  trigger(
-    context: ResolvedToolExecutionHookContext,
-    evaluation: PermissionPolicyEvaluation,
-  ): string | undefined;
-  resolve(
-    context: ResolvedToolExecutionHookContext,
-    evaluation: PermissionPolicyEvaluation,
-    trigger: string,
-  ): Promise<PermissionPolicyEvaluation>;
-}
-
-export const IAutoReviewGate = createDecorator<IAutoReviewGate>('autoReviewGate');

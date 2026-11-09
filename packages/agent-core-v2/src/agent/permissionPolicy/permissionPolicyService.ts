@@ -81,7 +81,7 @@ async function evaluatePolicies(
     if (options.skipDangerousCommand && policy.name === 'dangerous-command-ask') continue;
     const result = await policy.evaluate(context);
     if (result === undefined) continue;
-    const evaluation = { policyName: policy.name, result, modeApproval: policy.modeApproval };
+    const evaluation = { policyName: policy.name, result };
     if (options.reviewing && policy.modeApproval === true) {
       modeHit = evaluation;
       continue;

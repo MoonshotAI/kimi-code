@@ -1,9 +1,11 @@
 import { z } from 'zod';
 
 import { Service } from '#/_base/di/service';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { abortable, createDeadlineAbortSignal, type DeadlineAbortSignal } from '#/_base/utils/abort';
 import { IConfigService } from '#/app/config/config';
+import { LifecycleScope } from '#/app/scopes';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -18,7 +20,7 @@ import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceCo
 import { AutoReviewCompleted } from './autoReviewEvents';
 import REVIEW_POLICY from './auto-review-policy.md?raw';
 import { AUTO_REVIEW_SECTION, type AutoReviewConfig } from './configSection';
-import { authorizationEntries, buildReviewMessages } from './context';
+import { buildReviewMessages, extractAuthorization, sameAuthorization } from './context';
 import { IAutoReviewService, type AutoReviewResult } from './review';
 
 const AUTO_REVIEW_REQUEST_KIND = 'auto_review';
@@ -169,13 +171,14 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     deadline: DeadlineAbortSignal,
   ): Promise<AutoReviewResult | { readonly kind: 'appended' }> {
     const history = this.context.get();
-    const authorization = authorizationEntries(history);
+    const authorization = extractAuthorization(history);
     const cwd = this.workspace.workDir;
     const response = await abortable(this.loop.requester.request({
       modelAlias,
       systemPrompt: REVIEW_POLICY,
       messages: buildReviewMessages(
         history,
+        authorization,
         projectInstructions.agentsMd,
         projectInstructions.agentsMdPaths,
         cwd,
@@ -191,10 +194,10 @@ export class AutoReviewService extends Service implements IAutoReviewService {
       cacheKey: `${this.session.sessionId}:${AUTO_REVIEW_REQUEST_KIND}`,
       thinkingEffort: 'off',
     }, undefined, deadline.signal), deadline.signal);
-    const current = authorizationEntries(this.context.get());
+    const current = extractAuthorization(this.context.get());
     if (this.workspace.workDir !== cwd) return authorizationChanged();
-    if (!sameEntries(authorization, current)) {
-      return sameEntries(authorization, current.slice(0, authorization.length))
+    if (!sameAuthorization(authorization, current)) {
+      return sameAuthorization(authorization, current.slice(0, authorization.length))
         ? { kind: 'appended' }
         : authorizationChanged();
     }
@@ -212,6 +215,10 @@ function authorizationChanged(): AutoReviewResult {
   return { kind: 'failed', reason: 'Authorization changed during review.' };
 }
 
-function sameEntries(left: readonly string[], right: readonly string[]): boolean {
-  return left.length === right.length && left.every((entry, index) => entry === right[index]);
-}
+registerScopedService(
+  LifecycleScope.Agent,
+  IAutoReviewService,
+  AutoReviewService,
+  ScopeActivation.OnScopeCreated,
+  'autoReview',
+);

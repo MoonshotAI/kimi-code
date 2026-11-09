@@ -44,7 +44,7 @@ import type { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { ReadMediaFileTool } from '#/agent/tools/read-media-file/readMediaFileTool';
 import { SessionMediaStoreService } from '#/agent/media/sessionMediaStoreService';
 import { JsonAtomicDocumentStore, TomlAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
-import { makeSessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { GlobTool } from '#/agent/tools/os/glob/globTool';
 import { ReadInputSchema, type ReadInput } from '#/agent/tools/os/read/read';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
@@ -69,8 +69,7 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IFlagService } from '#/app/flag/flag';
 import { IGitService } from '#/app/git/git';
 import { IHostEnvironment as HostEnvironmentService } from '#/os/interface/hostEnvironment';
-import { AutoReviewGate } from '#/features/autoReview/autoReviewGate';
-import { IAutoReviewGate, IAutoReviewService } from '#/features/autoReview/review';
+import { IAutoReviewService } from '#/features/autoReview/review';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentPermissionPolicyService } from '#/agent/permissionPolicy/permissionPolicy';
 import { AgentPermissionPolicyService } from '#/agent/permissionPolicy/permissionPolicyService';
@@ -79,7 +78,6 @@ import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
 import { AgentPermissionGate } from '#/agent/permissionGate/permissionGateService';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { AgentToolApprovalService } from '#/agent/toolApproval/toolApprovalService';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { stubPermissionModeService } from '../permissionMode/stubs';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -202,16 +200,12 @@ function installAutoReview(result: import('#/features/autoReview/review').AutoRe
     permissions.get(IFlagService),
     permissions.get(IAgentPermissionModeService),
   ));
-  permissions.set(IAutoReviewGate, new AutoReviewGate(
-    permissions.get(IFlagService),
-    permissions.get(IAgentPermissionModeService),
-    permissions.get(IAutoReviewService),
-  ));
   permissions.set(IAgentPermissionGate, new AgentPermissionGate(
     permissions.get(IAgentPermissionModeService),
     permissions.get(IAgentPermissionRulesService),
     permissions.get(IAgentPermissionPolicyService),
-    permissions.get(IAutoReviewGate),
+    permissions.get(IFlagService),
+    permissions.get(IAutoReviewService),
     permissions.get(IAgentToolApprovalService),
     permissions.get(ITelemetryService),
     executor,

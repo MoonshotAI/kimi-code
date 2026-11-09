@@ -21,9 +21,8 @@ import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IFlagService } from '#/app/flag/flag';
-import { AutoReviewGate } from '#/features/autoReview/autoReviewGate';
+import { autoReviewTrigger, resolveAutoReview } from '#/features/autoReview/autoReviewGate';
 import {
-  IAutoReviewGate,
   IAutoReviewService,
   type AutoReviewResult,
 } from '#/features/autoReview/review';
@@ -106,7 +105,6 @@ describe('AgentPermissionGate', () => {
         );
         reg.definePartialInstance(IFlagService, { enabled: () => autoReviewEnabled });
         reg.defineInstance(IAutoReviewService, { _serviceBrand: undefined, review });
-        reg.define(IAutoReviewGate, AutoReviewGate);
         reg.defineInstance(IAgentToolApprovalService, toolApproval);
         reg.defineInstance(ITelemetryService, recordingTelemetry(records));
         reg.defineInstance(IAgentToolExecutorService, executorEvents.executor);
@@ -123,39 +121,6 @@ describe('AgentPermissionGate', () => {
     return ix.get(IAgentPermissionGate);
   }
 
-  it('returns undefined without consulting approvals when no policy evaluates', async () => {
-    const svc = make();
-
-    expect(await svc.authorize(makeContext('bash'))).toBeUndefined();
-    expect(resolvePermissionResolution).not.toHaveBeenCalled();
-    expect(records).toEqual([]);
-  });
-
-  it('forwards the policy resolution to the approval service and returns its result', async () => {
-    const resolution: PermissionPolicyResolution = { kind: 'deny', message: 'nope' };
-    policyResult = { policyName: 'user-configured-deny', result: resolution };
-    const blocked: BeforeExecuteDecision = { veto: { output: 'nope', isError: true } };
-    resolvePermissionResolution.mockResolvedValue(blocked);
-    const svc = make();
-    const ctx = makeContext('bash');
-
-    expect(await svc.authorize(ctx)).toBe(blocked);
-    expect(resolvePermissionResolution).toHaveBeenCalledWith(
-      resolution,
-      ctx,
-      'user-configured-deny',
-    );
-  });
-
-  it('passes an approve result with executionMetadata straight through', async () => {
-    const executionMetadata = { marker: true };
-    policyResult = { policyName: 'p', result: { kind: 'approve', executionMetadata } };
-    resolvePermissionResolution.mockResolvedValue({ executionMetadata });
-    const svc = make();
-
-    expect(await svc.authorize(makeContext('bash'))).toEqual({ executionMetadata });
-  });
-
   it('tracks the policy decision with the reason payload', async () => {
     policyResult = {
       policyName: 'user-configured-deny',
@@ -165,9 +130,9 @@ describe('AgentPermissionGate', () => {
         reason: { matched_rule: 'Bash', match_strategy: 'literal' },
       },
     };
-    const svc = make();
+    make();
 
-    await svc.authorize(makeContext('Bash'));
+    await executorEvents.fireBeforeExecute(makeContext('Bash'));
 
     expect(records).toContainEqual({
       event: 'permission_policy_decision',
@@ -186,15 +151,22 @@ describe('AgentPermissionGate', () => {
 
   it('vetoes with the resolved denial and ends adjudication on a deny resolution', async () => {
     const blocked: BeforeExecuteDecision = { veto: { output: 'nope', isError: true } };
-    policyResult = { policyName: 'p', result: { kind: 'deny', message: 'nope' } };
+    const resolution: PermissionPolicyResolution = { kind: 'deny', message: 'nope' };
+    policyResult = { policyName: 'p', result: resolution };
     resolvePermissionResolution.mockResolvedValue(blocked);
     make();
     const later = vi.fn();
     executorEvents.executor.onBeforeExecuteTool(later);
+    const ctx = makeContext('bash');
 
-    const decision = await executorEvents.fireBeforeExecute(makeContext('bash'));
+    const decision = await executorEvents.fireBeforeExecute(ctx);
 
     expect(decision).toEqual(blocked);
+    expect(resolvePermissionResolution).toHaveBeenCalledWith(
+      expect.objectContaining(resolution),
+      expect.objectContaining({ toolCall: ctx.toolCall }),
+      'p',
+    );
     expect(later).not.toHaveBeenCalled();
   });
 
@@ -225,6 +197,7 @@ describe('AgentPermissionGate', () => {
     expect(decision).toBeUndefined();
     expect(resolvePermissionResolution).not.toHaveBeenCalled();
     expect(requestToolApproval).not.toHaveBeenCalled();
+    expect(records).toEqual([]);
   });
 
   it('passes an approve resolution with its executionMetadata', async () => {
@@ -263,7 +236,6 @@ describe('AgentPermissionGate', () => {
   const modeApproval: PermissionPolicyEvaluation = {
     policyName: 'auto-mode-approve',
     result: { kind: 'approve' },
-    modeApproval: true,
     underlying: fallbackAsk,
   };
 
@@ -272,21 +244,18 @@ describe('AgentPermissionGate', () => {
     policyResult = modeApproval;
   }
 
-  it('reviews only mode approvals that Always Ask would ask about', async () => {
-    const gate = ix.get(IAutoReviewGate);
-
-    expect(gate.trigger(makeContext('Bash'), modeApproval)).toBeUndefined();
-    autoReviewEnabled = true;
-    expect(gate.trigger(makeContext('Bash'), modeApproval)).toBe('fallback-ask');
+  it('reviews only mode approvals that Always Ask would ask about', () => {
+    expect(autoReviewTrigger(false, mode, modeApproval)).toBeUndefined();
+    expect(autoReviewTrigger(true, mode, modeApproval)).toBe('fallback-ask');
     for (const evaluation of [
       { policyName: 'user-configured-allow', result: { kind: 'approve' } },
       { policyName: 'session-approval-history', result: { kind: 'approve' } },
       { policyName: 'user-configured-deny', result: { kind: 'deny' } },
     ] satisfies PermissionPolicyEvaluation[]) {
-      expect(gate.trigger(makeContext('Bash'), evaluation)).toBeUndefined();
+      expect(autoReviewTrigger(true, mode, evaluation)).toBeUndefined();
     }
     for (const policyName of ['default-tool-approve', 'git-cwd-write-approve', 'user-configured-allow']) {
-      expect(gate.trigger(makeContext('Write'), {
+      expect(autoReviewTrigger(true, mode, {
         ...modeApproval,
         underlying: { policyName, result: { kind: 'approve' } },
       })).toBeUndefined();
@@ -321,10 +290,22 @@ describe('AgentPermissionGate', () => {
     expect(review).toHaveBeenCalledTimes(1);
     expect(requestToolApproval).not.toHaveBeenCalled();
     expect(resolvePermissionResolution).toHaveBeenCalledWith(
-      { kind: 'approve', executionMetadata: undefined },
+      { kind: 'approve', reason: { review_risk: 'low' }, executionMetadata: undefined },
       expect.anything(),
       'auto-review',
     );
+    expect(records).toContainEqual({
+      event: 'permission_policy_decision',
+      properties: {
+        turn_id: 1,
+        tool_call_id: 'call-Bash',
+        policy_name: 'auto-review',
+        tool_name: 'Bash',
+        permission_mode: 'yolo',
+        decision: 'approve',
+        review_risk: 'low',
+      },
+    });
   });
 
   it('keeps static asks on the user path when review is disabled or the mode is Always Ask', async () => {
@@ -342,14 +323,10 @@ describe('AgentPermissionGate', () => {
     }
   });
 
-  it('reviews ordinary yolo approvals before the user fallback', async () => {
-    mode = 'yolo';
-    autoReviewEnabled = true;
-
-    expect(ix.get(IAutoReviewGate).trigger(makeContext('Bash'), {
+  it('reviews ordinary yolo approvals before the user fallback', () => {
+    expect(autoReviewTrigger(true, 'yolo', {
       policyName: 'yolo-mode-approve',
       result: { kind: 'approve' },
-      modeApproval: true,
       underlying: fallbackAsk,
     })).toBe('fallback-ask');
   });
@@ -383,17 +360,22 @@ describe('AgentPermissionGate', () => {
   it.each([
     { mode: 'yolo', expected: 'ask' },
     { mode: 'auto', expected: 'deny' },
-  ] as const)('maps reviewer denial and failure to $expected in $mode', async ({ mode: nextMode, expected }) => {
-    mode = nextMode;
-    const gate = ix.get(IAutoReviewGate);
-
-    autoReviewResult = { kind: 'decision', decision: { risk: 'high', decision: 'deny' } };
-    expect(await gate.resolve(makeContext('Bash'), modeApproval, 'fallback-ask')).toMatchObject({
+  ] as const)('maps reviewer denial and failure to $expected in $mode', ({ mode: nextMode, expected }) => {
+    expect(resolveAutoReview(
+      makeContext('Bash'),
+      modeApproval,
+      { kind: 'decision', decision: { risk: 'high', decision: 'deny' } },
+      nextMode,
+    )).toMatchObject({
       policyName: 'auto-review',
       result: { kind: expected },
     });
-    autoReviewResult = { kind: 'failed', reason: 'invalid JSON' };
-    expect(await gate.resolve(makeContext('Bash'), modeApproval, 'fallback-ask')).toMatchObject({
+    expect(resolveAutoReview(
+      makeContext('Bash'),
+      modeApproval,
+      { kind: 'failed', reason: 'invalid JSON' },
+      nextMode,
+    )).toMatchObject({
       policyName: 'auto-review',
       result: { kind: expected },
     });
@@ -404,16 +386,22 @@ describe('AgentPermissionGate', () => {
     { from: 'auto', to: 'yolo', expected: 'ask' },
     { from: 'yolo', to: 'auto', expected: 'deny' },
   ] as const)('uses $to when reviewer denial finishes after a mode switch', async ({ from, to, expected }) => {
+    reviewModeApprovals();
     mode = from;
     autoReviewResult = { kind: 'decision', decision: { risk: 'high', decision: 'deny' } };
     review.mockImplementation(async () => {
       mode = to;
       return autoReviewResult;
     });
+    make();
 
-    const resolved = await ix.get(IAutoReviewGate).resolve(makeContext('Bash'), modeApproval, 'fallback-ask');
+    await executorEvents.fireBeforeExecute(makeContext('Bash'));
 
-    expect(resolved.result.kind).toBe(expected);
+    expect(resolvePermissionResolution).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: expected }),
+      expect.anything(),
+      'auto-review',
+    );
   });
 
   it('asks when Never Ask changes to Always Ask after a reviewer allow', async () => {
@@ -436,8 +424,9 @@ describe('AgentPermissionGate', () => {
   it('does not consult the reviewer after a static denial', async () => {
     autoReviewEnabled = true;
     policyResult = { policyName: 'user-configured-deny', result: { kind: 'deny', message: 'nope' } };
+    make();
 
-    await make().authorize(makeContext('Bash'));
+    await executorEvents.fireBeforeExecute(makeContext('Bash'));
 
     expect(review).not.toHaveBeenCalled();
   });
@@ -458,25 +447,13 @@ describe('AgentPermissionGate', () => {
     );
   });
 
-  it('reviews through authorize with the same resolution', async () => {
-    reviewModeApprovals();
-    autoReviewResult = { kind: 'decision', decision: { risk: 'high', decision: 'deny' } };
-
-    await make().authorize(makeContext('Bash'));
-
-    expect(review).toHaveBeenCalledTimes(1);
-    expect(resolvePermissionResolution).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'deny' }),
-      expect.anything(),
-      'auto-review',
+  it('lets the user override a review denial in Ask When Needed and explains it without a user', () => {
+    const { result } = resolveAutoReview(
+      makeContext('Bash'),
+      modeApproval,
+      { kind: 'decision', decision: { risk: 'high', decision: 'deny', reason: 'Too broad.' } },
+      'yolo',
     );
-  });
-
-  it('lets the user override a review denial in Ask When Needed and explains it without a user', async () => {
-    mode = 'yolo';
-    autoReviewResult = { kind: 'decision', decision: { risk: 'high', decision: 'deny', reason: 'Too broad.' } };
-
-    const { result } = await ix.get(IAutoReviewGate).resolve(makeContext('Bash'), modeApproval, 'fallback-ask');
 
     expect(result.kind).toBe('ask');
     if (result.kind !== 'ask') return;

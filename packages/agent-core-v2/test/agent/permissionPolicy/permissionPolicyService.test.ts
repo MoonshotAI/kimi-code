@@ -497,7 +497,6 @@ describe('AgentPermissionPolicyService chain', () => {
       args: { command: 'reboot', timeout: 60 },
     })).resolves.toMatchObject({
       policyName: 'yolo-mode-approve',
-      modeApproval: true,
       result: { kind: 'approve' },
       underlying: { policyName: 'fallback-ask', result: { kind: 'ask' } },
     });
@@ -541,18 +540,15 @@ describe('AgentPermissionPolicyService chain', () => {
       autoReviewEnabled = true;
       await expect(evaluate(bash('curl -X POST https://example.test'))).resolves.toMatchObject({
         policyName: `${nextMode}-mode-approve`,
-        modeApproval: true,
         underlying: { policyName: 'fallback-ask', result: { kind: 'ask' } },
       });
       await expect(evaluate({ toolName: 'SetTodoList', args: {} })).resolves.toMatchObject({
         policyName: `${nextMode}-mode-approve`,
-        modeApproval: true,
         underlying: { policyName: 'default-tool-approve', result: { kind: 'approve' } },
       });
       if (nextMode === 'auto') {
         await expect(evaluate(bash('rm build/out'))).resolves.toMatchObject({
           policyName: 'auto-mode-approve',
-          modeApproval: true,
           underlying: { policyName: 'user-configured-allow', result: { kind: 'approve' } },
         });
       }

@@ -740,26 +740,13 @@ export class AgentLoopRequester implements LoopRequester {
     const baseParams = turnConfig?.params ?? this.profile.resolveRequestParams();
     const modelAlias = overrides.modelAlias ?? resolved.modelAlias;
     const model = this.modelCatalog.get(modelAlias);
-    const inheritedThinkingEffort = modelAlias === resolved.modelAlias
-      ? resolved.thinkingLevel
-      : resolveForcedThinkingEffort(
-          this.config.get<ThinkingConfig>(THINKING_SECTION)?.forcedEffort,
-          resolveThinkingEffortForModel(
-            undefined,
-            this.config.get<ThinkingConfig>(THINKING_SECTION),
-            model,
-            requiresStrictThinkingValidation(this.protocolRegistry, model.protocol, model.providerType),
-          ),
-          drivesThinkingThroughTraits(model.providerType),
-        ) ?? resolved.thinkingLevel;
-    const thinkingEffort = overrides.thinkingEffort === undefined
-      ? inheritedThinkingEffort
-      : resolveThinkingEffortForModel(
-          overrides.thinkingEffort,
-          undefined,
-          model,
-          requiresStrictThinkingValidation(this.protocolRegistry, model.protocol, model.providerType),
-        );
+    const thinkingEffort = this.resolveThinkingEffort(
+      model,
+      modelAlias,
+      resolved.modelAlias,
+      resolved.thinkingLevel,
+      overrides.thinkingEffort,
+    );
     const maxCompletionTokensCap =
       this.config.get<ModelOverrides>('modelOverrides')?.maxCompletionTokens;
     const usedContextTokens =
@@ -801,6 +788,32 @@ export class AgentLoopRequester implements LoopRequester {
       source: overrides.source,
       logFields: logFieldsForSource(overrides.source),
     };
+  }
+
+  private resolveThinkingEffort(
+    model: Model,
+    modelAlias: string,
+    baseModelAlias: string,
+    baseThinkingEffort: ThinkingEffort,
+    overrideThinkingEffort: ThinkingEffort | undefined,
+  ): ThinkingEffort {
+    const strict = requiresStrictThinkingValidation(
+      this.protocolRegistry,
+      model.protocol,
+      model.providerType,
+    );
+    if (overrideThinkingEffort !== undefined) {
+      return resolveThinkingEffortForModel(overrideThinkingEffort, undefined, model, strict);
+    }
+    if (modelAlias === baseModelAlias) return baseThinkingEffort;
+    const thinkingConfig = this.config.get<ThinkingConfig>(THINKING_SECTION);
+    return (
+      resolveForcedThinkingEffort(
+        thinkingConfig?.forcedEffort,
+        resolveThinkingEffortForModel(undefined, thinkingConfig, model, strict),
+        drivesThinkingThroughTraits(model.providerType),
+      ) ?? baseThinkingEffort
+    );
   }
 
   private resolveTurnConfig(source: AgentLLMRequestSource | undefined): TurnRequestConfig | undefined {

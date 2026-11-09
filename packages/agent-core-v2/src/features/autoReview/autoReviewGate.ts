@@ -1,52 +1,43 @@
-import { IFlagService } from '#/app/flag/flag';
-import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type { PermissionPolicyEvaluation } from '#/agent/permissionPolicy/permissionPolicy';
-import type { PermissionPolicyResult } from '#/agent/permissionPolicy/types';
+import type { PermissionMode, PermissionPolicyResult } from '#/agent/permissionPolicy/types';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 
-import { AUTO_REVIEW_FLAG_ID } from './flag';
-import { IAutoReviewGate, IAutoReviewService, type AutoReviewResult } from './review';
+import type { AutoReviewResult } from './review';
 
 const AUTO_REVIEW_ORIGIN = 'auto-review';
 
-export class AutoReviewGate implements IAutoReviewGate {
-  declare readonly _serviceBrand: undefined;
+export function autoReviewTrigger(
+  enabled: boolean,
+  mode: PermissionMode,
+  evaluation: PermissionPolicyEvaluation,
+): string | undefined {
+  if (!enabled || mode === 'manual') return undefined;
+  if (evaluation.result.kind === 'ask') return evaluation.policyName;
+  const underlying = evaluation.underlying;
+  return underlying?.result.kind === 'ask' ? underlying.policyName : undefined;
+}
 
-  constructor(
-    @IFlagService private readonly flags: IFlagService,
-    @IAgentPermissionModeService private readonly modes: IAgentPermissionModeService,
-    @IAutoReviewService private readonly reviewService: IAutoReviewService,
-  ) {}
-
-  trigger(
-    _context: ResolvedToolExecutionHookContext,
-    evaluation: PermissionPolicyEvaluation,
-  ): string | undefined {
-    if (!this.flags.enabled(AUTO_REVIEW_FLAG_ID) || this.modes.mode === 'manual') return undefined;
-    if (evaluation.result.kind === 'ask') return evaluation.policyName;
-    const underlying = evaluation.underlying;
-    return underlying?.result.kind === 'ask' ? underlying.policyName : undefined;
+export function resolveAutoReview(
+  context: ResolvedToolExecutionHookContext,
+  evaluation: PermissionPolicyEvaluation,
+  review: AutoReviewResult,
+  mode: PermissionMode,
+): PermissionPolicyEvaluation {
+  const allowed = review.kind === 'decision' && review.decision.decision === 'allow';
+  if (allowed && mode !== 'manual') {
+    return {
+      policyName: AUTO_REVIEW_ORIGIN,
+      result: {
+        kind: 'approve',
+        reason: { review_risk: review.decision.risk },
+        executionMetadata: evaluation.result.kind === 'approve' ? evaluation.result.executionMetadata : undefined,
+      },
+    };
   }
-
-  async resolve(
-    context: ResolvedToolExecutionHookContext,
-    evaluation: PermissionPolicyEvaluation,
-    trigger: string,
-  ): Promise<PermissionPolicyEvaluation> {
-    const review = await this.reviewService.review(context, trigger);
-    const mode = this.modes.mode;
-    const allowed = review.kind === 'decision' && review.decision.decision === 'allow';
-    if (allowed && mode !== 'manual') {
-      return {
-        policyName: AUTO_REVIEW_ORIGIN,
-        result: { kind: 'approve', executionMetadata: evaluation.result.kind === 'approve' ? evaluation.result.executionMetadata : undefined },
-      };
-    }
-    if (mode === 'auto') {
-      return { policyName: AUTO_REVIEW_ORIGIN, result: denial(context, review) };
-    }
-    return { policyName: AUTO_REVIEW_ORIGIN, result: fallbackAsk(context, review) };
+  if (mode === 'auto') {
+    return { policyName: AUTO_REVIEW_ORIGIN, result: denial(context, review) };
   }
+  return { policyName: AUTO_REVIEW_ORIGIN, result: fallbackAsk(context, review) };
 }
 
 function denial(
