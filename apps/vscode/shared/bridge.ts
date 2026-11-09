@@ -61,6 +61,7 @@ export const Methods = {
   ShowLogs: "showLogs",
   ReloadWebview: "reloadWebview",
   RespondQuestion: "respondQuestion",
+  CopyToClipboard: "copyToClipboard",
 } as const;
 
 export type RpcMethod = (typeof Methods)[keyof typeof Methods];
@@ -212,6 +213,8 @@ function validateParams(method: RpcMethod, params: unknown): boolean {
     case Methods.CheckFileExists:
     case Methods.GetImageDataUri:
       return hasString(params, "filePath");
+    case Methods.CopyToClipboard:
+      return hasString(params, "text");
     case Methods.CheckFilesExist:
     case Methods.TrackFiles:
       return hasStringArray(params, "paths");
