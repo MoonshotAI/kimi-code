@@ -1221,7 +1221,7 @@ export async function applyTranscriptConfigChoice(
 export function showTuiModePicker(host: SlashCommandHost): void {
   host.mountEditorReplacement(
     new TuiModeSelectorComponent({
-      currentValue: host.state.appState.tuiMode ?? 'regular',
+      currentValue: host.state.appState.tuiMode ?? host.state.ui.mode,
       onSelect: (value) => {
         host.restoreEditor();
         void applyTuiModeChoice(host, value);
@@ -1241,10 +1241,11 @@ type TuiModeHost = {
   setAppState(patch: Pick<SlashCommandHost['state']['appState'], 'tuiMode'>): void;
   showStatus(msg: string, color?: string): void;
   showNotice(msg: string): void;
+  track?: SlashCommandHost['track'];
 };
 
 export async function applyTuiModeChoice(host: TuiModeHost, tuiMode: TuiMode): Promise<void> {
-  if (tuiMode === (host.state.appState.tuiMode ?? 'regular')) {
+  if (tuiMode === (host.state.appState.tuiMode ?? host.state.ui.mode)) {
     host.showStatus(`TUI mode already ${tuiMode}.`);
     return;
   }
@@ -1260,6 +1261,7 @@ export async function applyTuiModeChoice(host: TuiModeHost, tuiMode: TuiMode): P
   }
 
   host.setAppState({ tuiMode });
+  host.track?.('tui_mode_switch', { tui_mode: tuiMode });
   host.showStatus(`TUI mode set to ${tuiMode}.`, 'success');
   if (tuiMode !== host.state.ui.mode) {
     host.showNotice(TUI_MODE_RESTART_NOTICE);

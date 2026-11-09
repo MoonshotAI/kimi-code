@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { applyTuiModeChoice } from '#/tui/commands/config';
+import { applyCopyOnSelectChoice, applyTuiModeChoice } from '#/tui/commands/config';
 
 const mocks = vi.hoisted(() => ({
   saveTuiConfig: vi.fn(),
@@ -17,7 +17,7 @@ vi.mock('../../../src/tui/config', async () => {
 });
 
 function makeHost(
-  tuiMode: 'regular' | 'fullscreen',
+  tuiMode: 'regular' | 'fullscreen' | undefined,
   runningMode: 'regular' | 'fullscreen' = 'regular',
 ) {
   return {
@@ -28,19 +28,21 @@ function makeHost(
         editorCommand: null,
         notifications: { enabled: true, condition: 'unfocused' as const },
         upgrade: { autoInstall: true },
+        transcript: { toolCallDensity: 'compact' as const, thinking: 'grouped' as const },
       },
       ui: { mode: runningMode },
     },
     setAppState: vi.fn(),
     showStatus: vi.fn(),
     showNotice: vi.fn(),
+    track: vi.fn(),
   };
 }
 
 describe('tui mode preference commands', () => {
-  it('saves fullscreen to tui.toml, mirrors appState, and notices the required restart', async () => {
+  it('saves fullscreen to tui.toml, mirrors appState, tracks switch, and notices the required restart', async () => {
     mocks.saveTuiConfig.mockClear();
-    const host = makeHost('regular');
+    const host = makeHost(undefined, 'regular');
 
     await applyTuiModeChoice(host, 'fullscreen');
 
@@ -48,7 +50,24 @@ describe('tui mode preference commands', () => {
       expect.objectContaining({ tuiMode: 'fullscreen' }),
     );
     expect(host.setAppState).toHaveBeenCalledWith({ tuiMode: 'fullscreen' });
+    expect(host.track).toHaveBeenCalledWith('tui_mode_switch', { tui_mode: 'fullscreen' });
     expect(host.showStatus).toHaveBeenCalledWith('TUI mode set to fullscreen.', 'success');
+    expect(host.showNotice).toHaveBeenCalledWith(
+      'TUI mode takes effect after restarting Kimi Code.',
+    );
+  });
+
+  it('persists regular when switching away from a default fullscreen session', async () => {
+    mocks.saveTuiConfig.mockClear();
+    const host = makeHost(undefined, 'fullscreen');
+
+    await applyTuiModeChoice(host, 'regular');
+
+    expect(mocks.saveTuiConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ tuiMode: 'regular' }),
+    );
+    expect(host.setAppState).toHaveBeenCalledWith({ tuiMode: 'regular' });
+    expect(host.track).toHaveBeenCalledWith('tui_mode_switch', { tui_mode: 'regular' });
     expect(host.showNotice).toHaveBeenCalledWith(
       'TUI mode takes effect after restarting Kimi Code.',
     );
@@ -67,25 +86,38 @@ describe('tui mode preference commands', () => {
     expect(host.showNotice).not.toHaveBeenCalled();
   });
 
-  it('does not rewrite the config when the value is unchanged', async () => {
+  it('does not persist tui_mode when the selected mode already matches the effective mode', async () => {
     mocks.saveTuiConfig.mockClear();
-    const host = makeHost('regular');
+    const host = makeHost(undefined, 'regular');
 
     await applyTuiModeChoice(host, 'regular');
 
     expect(mocks.saveTuiConfig).not.toHaveBeenCalled();
     expect(host.setAppState).not.toHaveBeenCalled();
+    expect(host.track).not.toHaveBeenCalled();
     expect(host.showNotice).not.toHaveBeenCalled();
     expect(host.showStatus).toHaveBeenCalledWith('TUI mode already regular.');
   });
 
+  it('keeps tuiMode undefined when saving unrelated TUI preferences', async () => {
+    mocks.saveTuiConfig.mockClear();
+    const host = makeHost(undefined, 'fullscreen');
+
+    await applyCopyOnSelectChoice(host as never, false);
+
+    expect(mocks.saveTuiConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ copyOnSelect: false, tuiMode: undefined }),
+    );
+  });
+
   it('reports a save failure without touching appState', async () => {
     mocks.saveTuiConfig.mockRejectedValueOnce(new Error('disk full'));
-    const host = makeHost('regular');
+    const host = makeHost(undefined, 'regular');
 
     await applyTuiModeChoice(host, 'fullscreen');
 
     expect(host.setAppState).not.toHaveBeenCalled();
+    expect(host.track).not.toHaveBeenCalled();
     expect(host.showNotice).not.toHaveBeenCalled();
     expect(host.showStatus).toHaveBeenCalledWith('Failed to save TUI mode: disk full', 'error');
   });
