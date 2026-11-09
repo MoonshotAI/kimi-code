@@ -314,7 +314,7 @@ describe('TUI config transcript', () => {
     const text = readFileSync(filePath, 'utf-8');
     expect(text).toContain('# [transcript]');
     expect(text).toContain('# Fullscreen transcript display preferences.');
-    expect(text).toContain('# tool_call_density = "compact" # "compact" | "balanced" | "detailed" | "ungrouped"');
+    expect(text.split('\n')).toContain('# tool_call_density = "compact" # "compact" | "balanced" | "detailed"');
     expect(text).toContain('# thinking = "grouped" # "grouped" | "ungrouped"');
     expect(text).not.toContain('\n[transcript]\n');
     expect(parseTuiConfig(text).transcript).toEqual(DEFAULT_TUI_CONFIG.transcript);

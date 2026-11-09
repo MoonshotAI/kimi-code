@@ -420,7 +420,7 @@ export function renderTuiConfig(config: TuiConfig): string {
 # mermaid = "final" # "final" | "off"
 `;
   const transcript = config.transcript;
-  const densityLine = `tool_call_density = "${transcript.toolCallDensity}" # "compact" | "balanced" | "detailed" | "ungrouped"`;
+  const densityLine = `tool_call_density = "${transcript.toolCallDensity}" # "compact" | "balanced" | "detailed"`;
   const thinkingLine = `thinking = "${transcript.thinking}" # "grouped" | "ungrouped"`;
   const transcriptSection =
     transcript.toolCallDensity === DEFAULT_TRANSCRIPT_CONFIG.toolCallDensity &&
