@@ -35,8 +35,12 @@ const DecisionSchema = z.union([
   z.object({
     risk: z.enum(['medium', 'high']),
     decision: z.literal('deny'),
-    reason: z.string().max(1000).nullable(),
-  }).strict().transform(({ risk, decision, reason }) => ({ risk, decision, reason: reason ?? undefined })),
+    reason: z.string().nullable(),
+  }).strict().transform(({ risk, decision, reason }) => ({
+    risk,
+    decision,
+    reason: reason === null ? undefined : reason.slice(0, 1000),
+  })),
 ]);
 
 const RESPONSE_FORMAT = {

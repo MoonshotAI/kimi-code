@@ -1,4 +1,5 @@
 import { createUserMessage, type ContentPart } from '#human/llm/message';
+import { isUserPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { renderPrompt } from '#/_base/utils/render-prompt';
@@ -29,6 +30,7 @@ export function buildReviewMessages(
   const authorization = authorizationEntries.toReversed().flatMap((entry) => {
     if (authorizationChars >= MAX_AUTHORIZATION_TOTAL_CHARS) return [];
     const content = boundedContent(entry.content, MAX_AUTHORIZATION_TOTAL_CHARS - authorizationChars);
+    if (content.length === 0) return [];
     authorizationChars += content.reduce((total, part) => total + (part.type === 'text' ? part.text.length : 0), 0);
     return [{ ...entry, content }];
   }).toReversed();
@@ -79,8 +81,10 @@ function authorizationEntry(message: ContextMessage): ReviewText[] {
   if (message.role !== 'user') return [];
   const role = authorizationRole(message);
   if (role === undefined) return [];
-  const content = boundedContent(message.content, MAX_AUTHORIZATION_ENTRY_CHARS);
-  return [{ role, content }];
+  const parts = message.content.filter((part) => !isUserPromptSubmitHookPart(part));
+  if (parts.length === 0) return [];
+  const content = boundedContent(parts, MAX_AUTHORIZATION_ENTRY_CHARS);
+  return content.length === 0 ? [] : [{ role, content }];
 }
 
 function authorizationRole(
@@ -124,8 +128,9 @@ function boundedContent(content: readonly ContentPart[], maxChars: number): read
       result.push({ type: 'text', text: `[${part.type} attachment omitted]` });
       continue;
     }
+    if (remaining <= 0) continue;
     const text = boundedText(part.text, remaining);
-    remaining -= text.length;
+    remaining = Math.max(0, remaining - text.length);
     result.push({ type: 'text', text });
   }
   return result;

@@ -280,7 +280,9 @@ function createService(
       if (options.modelAliases !== undefined && !options.modelAliases.includes(alias)) {
         throw new Error(`Unexpected model alias: ${alias}`);
       }
-      return options.reviewModel === undefined ? requester.model : options.reviewModel;
+      return options.reviewModel !== undefined && alias === 'reviewer'
+        ? options.reviewModel
+        : requester.model;
     },
     findByName: () => [],
   });
@@ -395,6 +397,35 @@ describe('AgentLoopRequester operation overrides', () => {
     });
 
     expect(params).toMatchObject({ cacheKey: 'session-1:auto_review', sampling: { temperature: 1 } });
+  });
+
+  it('attributes operation request failures to the overridden model', async () => {
+    const requester = createRequester({ value: 0 }, new APIStatusError(503, 'reviewer unavailable'));
+    const reviewModel = { ...requester.model, id: 'reviewer-id', name: 'reviewer-name', protocol: 'anthropic' as const };
+    const { service, telemetryRecords } = createService(requester, {
+      modelAliases: ['m', 'reviewer'],
+      reviewModel,
+    });
+
+    await expect(
+      service.request({
+        messages: [],
+        modelAlias: 'reviewer',
+        source: { type: 'operation', requestKind: 'auto_review' },
+      }),
+    ).rejects.toThrow('reviewer unavailable');
+
+    expect(telemetryRecords).toEqual([
+      expect.objectContaining({
+        event: 'api_error',
+        properties: expect.objectContaining({
+          model: 'reviewer-id',
+          alias: 'reviewer',
+          protocol: 'anthropic',
+          request_kind: 'auto_review',
+        }),
+      }),
+    ]);
   });
 });
 

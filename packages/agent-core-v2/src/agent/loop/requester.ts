@@ -295,7 +295,7 @@ export class AgentLoopRequester implements LoopRequester {
       );
     } catch (error) {
       this.logRequestFailure(error, overrides, signal);
-      this.trackApiError(error, startedAt, signal, overrides.source);
+      this.trackApiError(error, startedAt, signal, overrides.source, overrides.modelAlias);
       setRequestId(undefined);
       throw error;
     }
@@ -309,7 +309,7 @@ export class AgentLoopRequester implements LoopRequester {
     if (isAbortError(error) || signal?.aborted === true) return;
     const payload: LogContext = {
       ...logFieldsForSource(overrides.source),
-      model: this.profile.data().modelAlias ?? 'unknown',
+      model: overrides.modelAlias ?? this.profile.data().modelAlias ?? 'unknown',
       ...retryErrorFields(error),
       diagnostics: errorDiagnostics(error),
     };
@@ -321,10 +321,11 @@ export class AgentLoopRequester implements LoopRequester {
     startedAt: number,
     signal: AbortSignal | undefined,
     source?: AgentLLMRequestSource,
+    overrideModelAlias?: string,
   ): void {
     if (isAbortError(error) || signal?.aborted === true) return;
-    const modelAlias = this.profile.data().modelAlias;
-    const model = this.tryGetModel();
+    const modelAlias = overrideModelAlias ?? this.profile.data().modelAlias;
+    const model = this.tryGetModel(modelAlias);
     const classification = classifyApiError(unwrapErrorCause(error));
     const properties: ApiErrorEvent = {
       error_type: classification.kind,
@@ -348,8 +349,7 @@ export class AgentLoopRequester implements LoopRequester {
     this.telemetry.track2('api_error', properties);
   }
 
-  private tryGetModel(): Model | undefined {
-    const modelAlias = this.profile.data().modelAlias;
+  private tryGetModel(modelAlias = this.profile.data().modelAlias): Model | undefined {
     if (modelAlias === undefined) return undefined;
     try {
       return this.modelCatalog.get(modelAlias);

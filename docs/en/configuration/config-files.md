@@ -341,7 +341,7 @@ The reviewer receives the current working directory, the AGENTS.md snapshot froz
 
 ```toml
 [auto_review]
-model = "kimi-code/kimi-k2.8"
+model = "kimi-code/kimi-for-coding-highspeed"
 timeout_ms = 30000
 ```
 

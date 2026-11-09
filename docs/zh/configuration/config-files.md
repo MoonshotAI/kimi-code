@@ -340,7 +340,7 @@ k3-max = "同一模型的 max Thinking 档位。适合最难的子任务。"
 
 ```toml
 [auto_review]
-model = "kimi-code/kimi-k2.8"
+model = "kimi-code/kimi-for-coding-highspeed"
 timeout_ms = 30000
 ```
 

@@ -15,6 +15,7 @@ import {
 } from '#/tool/rule-match';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import { userPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
 import { AutoReviewService } from '#/features/autoReview/reviewService';
 import { AutoReviewCompleted } from '#/features/autoReview/autoReviewEvents';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -834,6 +835,36 @@ describe('AutoReviewService', () => {
 
     expect(sentContent()).toContain('You may force push my branch.');
     expect(sentContent()).not.toContain('old-0 ');
+  });
+
+  it('excludes UserPromptSubmit hook parts and clamps multi-part authorization budgets', async () => {
+    history = [{
+      role: 'user',
+      content: [
+        { type: 'text', text: 'a'.repeat(8100) },
+        { type: 'text', text: 'second-part-after-cap' },
+        userPromptSubmitHookPart('hook-injected-grant'),
+      ],
+      origin: { kind: 'user' },
+    }];
+
+    await review();
+
+    expect(sentContent()).toContain('[truncated 100 characters]');
+    expect(sentContent()).not.toContain('second-part-after-cap');
+    expect(sentContent()).not.toContain('hook-injected-grant');
+  });
+
+  it('truncates oversized denial reasons instead of failing the review', async () => {
+    response.message.content = [{
+      type: 'text',
+      text: JSON.stringify({ risk: 'high', decision: 'deny', reason: 'x'.repeat(1200) }),
+    }];
+
+    await expect(review()).resolves.toEqual({
+      kind: 'decision',
+      decision: { risk: 'high', decision: 'deny', reason: 'x'.repeat(1000) },
+    });
   });
 
   it('reuses the frozen project instructions across reviews', async () => {
