@@ -10,6 +10,7 @@ import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import { LifecycleScope } from '#/app/scopes';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { Error2, isError2 } from '#/errors';
+import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import type { TokenUsage } from '#human/llm-requester/usage';
 import type { AssistantMessage, Message } from '#human/llm/message';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
@@ -28,6 +29,7 @@ import {
   PROVIDER_CONNECTION_ERROR_CODE,
   PROVIDER_OVERLOADED_ERROR_CODE,
   PROVIDER_RATE_LIMIT_ERROR_CODE,
+  classifyApiError,
 } from '#/llm-adapter/contract/errors';
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -124,6 +126,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
+    @IAgentFullCompactionService private readonly compaction: IAgentFullCompactionService,
     @ISessionContext private readonly session: ISessionContext,
     @ISessionInstructionsProvider private readonly instructions: ISessionInstructionsProvider,
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
@@ -202,6 +205,10 @@ export class AutoReviewService extends Service implements IAutoReviewService {
           outcome = await this.reviewOnce(context, modelAlias, projectInstructions, deadline);
         } catch (error) {
           context.signal.throwIfAborted();
+          if (contextOverflow(error)) {
+            this.compaction.begin({ source: 'auto' });
+            return { kind: 'failed', reason: 'The review context exceeded the model window.' };
+          }
           outcome = deadline.signal.aborted
             ? { kind: 'failed', reason: 'Review timed out.' }
             : { kind: 'failed', reason: error instanceof Error ? error.message : String(error), error };
@@ -358,6 +365,10 @@ function parseReviewJson(text: string): unknown {
 function retryableReview(outcome: ReviewFailure): boolean {
   if (outcome.error !== undefined) return retryableRequestError(outcome.error);
   return outcome.reason === 'The reviewer returned an invalid decision.';
+}
+
+function contextOverflow(error: unknown): boolean {
+  return classifyApiError(error).kind === 'context_overflow';
 }
 
 function retryableRequestError(error: unknown): boolean {

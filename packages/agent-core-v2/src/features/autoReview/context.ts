@@ -7,10 +7,6 @@ import { renderPrompt } from '#/_base/utils/render-prompt';
 import REVIEW_REQUEST from './auto-review-request.md?raw';
 
 const SECTION_TAG = /<(\/?(?:environment|project_instructions|history|pending_action)\b)/gi;
-const MAX_AUTHORIZATION_TOTAL_CHARS = 48000;
-const MAX_AUTHORIZATION_ENTRY_CHARS = 8000;
-const MAX_RECENT_ACTIONS = 20;
-const MAX_ACTION_ARGUMENT_CHARS = 8000;
 
 export interface ReviewText {
   readonly role: 'human-instruction' | 'direct-parent-instruction' | 'constraint' | 'fact';
@@ -25,15 +21,7 @@ export function buildReviewMessages(
   cwd: string,
   context: ResolvedToolExecutionHookContext,
 ): ReturnType<typeof createUserMessage>[] {
-  const recentActions = messages.flatMap((message) => actionEntries(message, context.toolCall.id)).slice(-MAX_RECENT_ACTIONS);
-  let authorizationChars = 0;
-  const authorization = authorizationEntries.toReversed().flatMap((entry) => {
-    if (authorizationChars >= MAX_AUTHORIZATION_TOTAL_CHARS) return [];
-    const content = boundedContent(entry.content, MAX_AUTHORIZATION_TOTAL_CHARS - authorizationChars);
-    if (content.length === 0) return [];
-    authorizationChars += content.reduce((total, part) => total + (part.type === 'text' ? part.text.length : 0), 0);
-    return [{ ...entry, content }];
-  }).toReversed();
+  const actions = messages.flatMap((message) => actionEntries(message, context.toolCall.id));
   return [createUserMessage(renderPrompt(REVIEW_REQUEST, {
     environment: sectionJson({ cwd }),
     project_instructions: sectionJson({
@@ -41,7 +29,7 @@ export function buildReviewMessages(
       paths: instructionPaths ?? [],
       content: instructions ?? '',
     }),
-    history: sectionJson({ authorization, recentActions }),
+    history: sectionJson({ authorization: authorizationEntries, recentActions: actions }),
     pending_action: sectionJson({
       name: context.toolCall.name,
       arguments: context.args,
@@ -81,9 +69,7 @@ function authorizationEntry(message: ContextMessage): ReviewText[] {
   if (message.role !== 'user') return [];
   const role = authorizationRole(message);
   if (role === undefined) return [];
-  const parts = message.content.filter((part) => !isUserPromptSubmitHookPart(part));
-  if (parts.length === 0) return [];
-  const content = boundedContent(parts, MAX_AUTHORIZATION_ENTRY_CHARS);
+  const content = message.content.flatMap(reviewPart);
   return content.length === 0 ? [] : [{ role, content }];
 }
 
@@ -105,7 +91,7 @@ function actionEntries(message: ContextMessage, pendingCallId: string): unknown[
       role: 'fact',
       id: call.id,
       name: call.name,
-      arguments: boundedText(call.arguments ?? '', MAX_ACTION_ARGUMENT_CHARS),
+      arguments: call.arguments ?? '',
     }));
   }
   if (message.role === 'tool') {
@@ -120,23 +106,8 @@ function actionEntries(message: ContextMessage, pendingCallId: string): unknown[
   return [];
 }
 
-function boundedContent(content: readonly ContentPart[], maxChars: number): readonly ContentPart[] {
-  const result: ContentPart[] = [];
-  let remaining = maxChars;
-  for (const part of content) {
-    if (part.type !== 'text') {
-      result.push({ type: 'text', text: `[${part.type} attachment omitted]` });
-      continue;
-    }
-    if (remaining <= 0) continue;
-    const text = boundedText(part.text, remaining);
-    remaining = Math.max(0, remaining - text.length);
-    result.push({ type: 'text', text });
-  }
-  return result;
-}
-
-function boundedText(text: string, maxChars: number): string {
-  if (text.length <= maxChars) return text;
-  return `${text.slice(0, maxChars)}\n[truncated ${text.length - maxChars} characters]`;
+function reviewPart(part: ContentPart): ContentPart[] {
+  if (isUserPromptSubmitHookPart(part)) return [];
+  if (part.type === 'text') return [part];
+  return [{ type: 'text', text: `[${part.type} attachment omitted]` }];
 }

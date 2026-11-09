@@ -25,7 +25,8 @@ import REVIEW_POLICY from '../../../src/features/autoReview/auto-review-policy.m
 import type { AssistantMessage } from '#human/llm/message';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import type { ModelRequestInput, ModelRequestParams } from '#/llm-adapter/model/generate';
-import { APIStatusError } from '#/llm-adapter/contract/errors';
+import { APIContextOverflowError, APIStatusError } from '#/llm-adapter/contract/errors';
+import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -616,6 +617,7 @@ describe('AutoReviewService', () => {
   let reviewEvents: AutoReviewCompleted[];
   let reviewStarts: AutoReviewStarted[];
   let usage: Parameters<ISessionUsageService['record']>[];
+  let compactions: Array<{ readonly source: string }>;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -623,6 +625,7 @@ describe('AutoReviewService', () => {
     reviewEvents = [];
     reviewStarts = [];
     usage = [];
+    compactions = [];
     response = {
       message: { role: 'assistant', content: [{ type: 'text', text: '{"risk":"low","decision":"allow","reason":null}' }], toolCalls: [] },
       usage: emptyUsage(),
@@ -707,6 +710,12 @@ describe('AutoReviewService', () => {
         reg.defineInstance(ISessionWorkspaceContext, workspaceStub('/workspace').stub);
         reg.defineInstance(ITelemetryService, recordingTelemetry(telemetry));
         reg.defineInstance(ILogService, stubLog());
+        reg.definePartialInstance(IAgentFullCompactionService, {
+          begin: (input) => {
+            compactions.push(input);
+            return true;
+          },
+        });
       },
       strict: true,
     });
@@ -923,7 +932,7 @@ describe('AutoReviewService', () => {
     expect(sentContent()).toContain('Delete dist and rebuild.');
   });
 
-  it('keeps the newest instructions when authorization exceeds the budget', async () => {
+  it('sends every instruction and tool argument without a local cap', async () => {
     history = [
       ...Array.from({ length: 8 }, (_, index): ContextMessage => ({
         role: 'user',
@@ -931,20 +940,28 @@ describe('AutoReviewService', () => {
         origin: { kind: 'user' },
       })),
       { role: 'user', content: [{ type: 'text', text: 'You may force push my branch.' }], origin: { kind: 'user' } },
+      {
+        role: 'assistant',
+        content: [],
+        toolCalls: [toolCallFor('write', 'Write', { content: 'y'.repeat(9000) })],
+      },
     ];
 
     await review();
 
+    expect(sentContent()).toContain('old-0 ');
     expect(sentContent()).toContain('You may force push my branch.');
-    expect(sentContent()).not.toContain('old-0 ');
+    expect(sentContent()).toContain('y'.repeat(9000));
+    expect(sentContent()).not.toContain('[truncated');
   });
 
-  it('excludes UserPromptSubmit hook parts and clamps multi-part authorization budgets', async () => {
+  it('excludes UserPromptSubmit hook parts and omits non-text attachments', async () => {
     history = [{
       role: 'user',
       content: [
         { type: 'text', text: 'a'.repeat(8100) },
         { type: 'text', text: 'second-part-after-cap' },
+        { type: 'image_url', imageUrl: { url: 'data:image/png;base64,aaaa' } },
         userPromptSubmitHookPart('hook-injected-grant'),
       ],
       origin: { kind: 'user' },
@@ -952,9 +969,11 @@ describe('AutoReviewService', () => {
 
     await review();
 
-    expect(sentContent()).toContain('[truncated 100 characters]');
-    expect(sentContent()).not.toContain('second-part-after-cap');
+    expect(sentContent()).toContain('a'.repeat(8100));
+    expect(sentContent()).toContain('second-part-after-cap');
+    expect(sentContent()).toContain('[image_url attachment omitted]');
     expect(sentContent()).not.toContain('hook-injected-grant');
+    expect(sentContent()).not.toContain('base64');
   });
 
   it('truncates oversized denial reasons instead of failing the review', async () => {
@@ -1048,6 +1067,16 @@ describe('AutoReviewService', () => {
       return response;
     }));
     expect(rewritten).toMatchObject({ kind: 'failed', reason: expect.stringContaining('changed') });
+  });
+
+  it('fails a context overflow without retry and starts compaction', async () => {
+    const result = await review(service(async () => {
+      throw new APIContextOverflowError(400, 'prompt is too long');
+    }));
+
+    expect(result).toEqual({ kind: 'failed', reason: 'The review context exceeded the model window.' });
+    expect(requests).toHaveLength(1);
+    expect(compactions).toEqual([{ source: 'auto' }]);
   });
 
   it('does not start another attempt after the review deadline', async () => {
