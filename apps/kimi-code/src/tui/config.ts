@@ -5,6 +5,7 @@
  * kimi-code client preferences such as terminal UI and update behavior.
  */
 
+import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -14,6 +15,7 @@ import { z } from 'zod';
 
 import type { MermaidRenderMode } from '#/tui/utils/markdown-options';
 import { getDataDir } from '#/utils/paths';
+import { resolveCommandPath } from '#/utils/process/resolve-command';
 
 export const INVALID_TUI_CONFIG_MESSAGE =
   'Invalid TUI config in ~/.kimi-code/tui.toml; using defaults.';
@@ -35,21 +37,48 @@ export interface TuiModeResolution {
   readonly mode: TuiMode;
   readonly config: TuiMode | 'unset';
   readonly fallback?: TuiModeFallbackReason;
+  readonly overriddenByEnv?: boolean;
+}
+
+export type TmuxControlModeProbe = (env: Readonly<Record<string, string | undefined>>) => boolean;
+
+const TMUX_CONTROL_MODE_TIMEOUT_MS = 2_000;
+
+function queryTmuxControlMode(env: Readonly<Record<string, string | undefined>>): boolean {
+  if (process.platform === 'win32') return false;
+  const tmuxPath = resolveCommandPath('tmux');
+  if (tmuxPath === undefined) return false;
+  try {
+    const output = execFileSync(tmuxPath, ['display-message', '-p', '#{client_control_mode}'], {
+      encoding: 'utf8',
+      env: env as NodeJS.ProcessEnv,
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: TMUX_CONTROL_MODE_TIMEOUT_MS,
+    });
+    return output.trim() === '1';
+  } catch {
+    return false;
+  }
 }
 
 export function detectTuiModeFallback(
   env: Readonly<Record<string, string | undefined>> = process.env,
+  probeTmuxControlMode: TmuxControlModeProbe = queryTmuxControlMode,
 ): TuiModeFallbackReason | undefined {
   const term = (env['TERM'] ?? '').trim().toLowerCase();
   if (term === 'dumb') return 'dumb_term';
   if ((env['TERMUX_VERSION'] ?? '').trim().length > 0) return 'termux';
-  if (
-    (env['TMUX'] ?? '').trim().length > 0 &&
-    (env['TERM_PROGRAM'] === 'iTerm.app' || env['LC_TERMINAL'] === 'iTerm2') &&
-    !term.startsWith('screen') &&
-    !term.startsWith('tmux')
-  ) {
-    return 'tmux_cc';
+  if ((env['TMUX'] ?? '').trim().length > 0) {
+    if (
+      (env['TERM_PROGRAM'] === 'iTerm.app' || env['LC_TERMINAL'] === 'iTerm2') &&
+      !term.startsWith('screen') &&
+      !term.startsWith('tmux')
+    ) {
+      return 'tmux_cc';
+    }
+    if (probeTmuxControlMode(env)) {
+      return 'tmux_cc';
+    }
   }
   return undefined;
 }
@@ -57,17 +86,18 @@ export function detectTuiModeFallback(
 export function resolveTuiMode(
   configuredMode?: TuiMode,
   env: Readonly<Record<string, string | undefined>> = process.env,
+  probeTmuxControlMode: TmuxControlModeProbe = queryTmuxControlMode,
 ): TuiModeResolution {
   const config: TuiMode | 'unset' = configuredMode ?? 'unset';
   const envOverride = parseBooleanEnvValue(env['KIMI_CODE_TUI_FULL_SCREEN']);
   if (envOverride !== undefined) {
-    return { mode: envOverride ? 'fullscreen' : 'regular', config };
+    return { mode: envOverride ? 'fullscreen' : 'regular', config, overriddenByEnv: true };
   }
   const preferred: TuiMode =
     configuredMode ??
     (parseBooleanEnvValue(env['KIMI_CODE_EXPERIMENTAL_FLAG']) === true ? 'fullscreen' : 'regular');
   if (preferred === 'fullscreen') {
-    const fallback = detectTuiModeFallback(env);
+    const fallback = detectTuiModeFallback(env, probeTmuxControlMode);
     if (fallback !== undefined) {
       return { mode: 'regular', config, fallback };
     }

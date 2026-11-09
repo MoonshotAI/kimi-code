@@ -62,9 +62,9 @@ const mocks = vi.hoisted(() => {
     resolveKimiHome: vi.fn((homeDir?: string) => homeDir ?? '/tmp/kimi-code-test-home'),
     flushDiagnosticLogsSync: vi.fn(),
     harnessCreatesDeviceIdOnConstruction: false,
-    execFileSync: vi.fn(() => ''),
+    execFileSync: vi.fn<(_cmd: string) => string>(() => ''),
     spawnSync: vi.fn(),
-    resolveCommandPath: vi.fn(() => '/bin/stty' as string | undefined),
+    resolveCommandPath: vi.fn<(_cmd: string) => string | undefined>(() => '/bin/stty'),
     TuiConfigParseError,
   };
 });
@@ -194,6 +194,7 @@ describe('runShell', () => {
       (homeDir?: string) => homeDir ?? '/tmp/kimi-code-test-home',
     );
     mocks.resolveCommandPath.mockImplementation(() => '/bin/stty');
+    mocks.execFileSync.mockImplementation(() => '');
     mocks.harnessCreatesDeviceIdOnConstruction = false;
   });
 
@@ -1076,7 +1077,7 @@ describe('runShell', () => {
     );
   });
 
-  it('records tui_mode_fallback when fullscreen is downgraded by terminal environment', async () => {
+  it('records tui_mode_fallback when fullscreen is downgraded by tmux -CC control mode', async () => {
     mocks.loadTuiConfig.mockResolvedValue({
       theme: 'dark',
       tuiMode: 'fullscreen',
@@ -1084,12 +1085,16 @@ describe('runShell', () => {
       notifications: { enabled: true, condition: 'unfocused' },
     });
     mocks.tuiStart.mockResolvedValue(undefined);
+    mocks.resolveCommandPath.mockImplementation((cmd: string) =>
+      cmd === 'tmux' ? '/usr/bin/tmux' : '/bin/stty',
+    );
+    mocks.execFileSync.mockImplementation((cmd: string) => (cmd === '/usr/bin/tmux' ? '1\n' : ''));
 
     await withEnv(
       {
         TMUX: '/tmp/tmux-501/default,123,0',
-        TERM_PROGRAM: 'iTerm.app',
-        TERM: 'xterm-256color',
+        TERM_PROGRAM: 'tmux',
+        TERM: 'tmux-256color',
       },
       async () => {
         await runShell(minimalCliOptions, '1.2.3-test');

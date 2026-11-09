@@ -34,6 +34,7 @@ import { UpdatePreferenceSelectorComponent } from '../components/dialogs/update-
 import {
   DEFAULT_MARKDOWN_CONFIG,
   DEFAULT_TUI_CONFIG,
+  resolveTuiMode,
   saveTuiConfig,
   type MarkdownConfig,
   type TranscriptConfig,
@@ -1263,7 +1264,16 @@ export async function applyTuiModeChoice(host: TuiModeHost, tuiMode: TuiMode): P
   host.setAppState({ tuiMode });
   host.track?.('tui_mode_switch', { tui_mode: tuiMode });
   host.showStatus(`TUI mode set to ${tuiMode}.`, 'success');
-  if (tuiMode !== host.state.ui.mode) {
+  const resolved = resolveTuiMode(tuiMode);
+  if (resolved.mode !== tuiMode) {
+    host.showNotice(
+      resolved.overriddenByEnv
+        ? 'Saved to tui.toml; unset KIMI_CODE_TUI_FULL_SCREEN for it to take effect.'
+        : 'Saved to tui.toml; this terminal automatically falls back to regular mode unless KIMI_CODE_TUI_FULL_SCREEN=1 is set.',
+    );
+    return;
+  }
+  if (resolved.mode !== host.state.ui.mode) {
     host.showNotice(TUI_MODE_RESTART_NOTICE);
   }
 }

@@ -676,24 +676,33 @@ describe('resolveTuiMode', () => {
   });
 
   it('downgrades fullscreen to regular on iTerm2 tmux -CC, Termux, and dumb terminals', () => {
-    const tmuxCcEnv = {
+    const realTmuxCcEnv = {
       TMUX: '/tmp/tmux-501/default,123,0',
-      TERM_PROGRAM: 'iTerm.app',
-      TERM: 'xterm-256color',
+      TERM_PROGRAM: 'tmux',
+      TERM: 'tmux-256color',
     };
-    expect(detectTuiModeFallback(tmuxCcEnv)).toBe('tmux_cc');
-    expect(resolveTuiMode('fullscreen', tmuxCcEnv)).toEqual({
+    expect(detectTuiModeFallback(realTmuxCcEnv, () => true)).toBe('tmux_cc');
+    expect(resolveTuiMode('fullscreen', realTmuxCcEnv, () => true)).toEqual({
       mode: 'regular',
       config: 'fullscreen',
       fallback: 'tmux_cc',
     });
     expect(
-      resolveTuiMode(undefined, { ...tmuxCcEnv, KIMI_CODE_EXPERIMENTAL_FLAG: '1' }),
+      resolveTuiMode(undefined, { ...realTmuxCcEnv, KIMI_CODE_EXPERIMENTAL_FLAG: '1' }, () => true),
     ).toEqual({
       mode: 'regular',
       config: 'unset',
       fallback: 'tmux_cc',
     });
+
+    const fastPathTmuxCcEnv = {
+      TMUX: '/tmp/tmux-501/default,123,0',
+      TERM_PROGRAM: 'iTerm.app',
+      TERM: 'xterm-256color',
+    };
+    const neverProbe = vi.fn(() => false);
+    expect(detectTuiModeFallback(fastPathTmuxCcEnv, neverProbe)).toBe('tmux_cc');
+    expect(neverProbe).not.toHaveBeenCalled();
 
     const termuxEnv = { TERM: 'xterm-256color', TERMUX_VERSION: '0.118.0' };
     expect(detectTuiModeFallback(termuxEnv)).toBe('termux');
@@ -715,11 +724,12 @@ describe('resolveTuiMode', () => {
   it('does not downgrade standard tmux sessions or report fallback when already regular', () => {
     const standardTmux = {
       TMUX: '/tmp/tmux-501/default,123,0',
-      TERM_PROGRAM: 'iTerm.app',
+      TERM_PROGRAM: 'tmux',
+      LC_TERMINAL: 'iTerm2',
       TERM: 'tmux-256color',
     };
-    expect(detectTuiModeFallback(standardTmux)).toBeUndefined();
-    expect(resolveTuiMode('fullscreen', standardTmux)).toEqual({
+    expect(detectTuiModeFallback(standardTmux, () => false)).toBeUndefined();
+    expect(resolveTuiMode('fullscreen', standardTmux, () => false)).toEqual({
       mode: 'fullscreen',
       config: 'fullscreen',
     });
@@ -737,20 +747,22 @@ describe('resolveTuiMode', () => {
   it('treats KIMI_CODE_TUI_FULL_SCREEN as highest-priority override bypassing fallback', () => {
     const tmuxCcEnv = {
       TMUX: '/tmp/tmux-501/default,123,0',
-      LC_TERMINAL: 'iTerm2',
-      TERM: 'xterm-256color',
+      TERM_PROGRAM: 'tmux',
+      TERM: 'tmux-256color',
     };
     expect(
-      resolveTuiMode('regular', { ...tmuxCcEnv, KIMI_CODE_TUI_FULL_SCREEN: '1' }),
+      resolveTuiMode('regular', { ...tmuxCcEnv, KIMI_CODE_TUI_FULL_SCREEN: '1' }, () => true),
     ).toEqual({
       mode: 'fullscreen',
       config: 'regular',
+      overriddenByEnv: true,
     });
     expect(
       resolveTuiMode('fullscreen', { ...normalTermEnv, KIMI_CODE_TUI_FULL_SCREEN: '0' }),
     ).toEqual({
       mode: 'regular',
       config: 'fullscreen',
+      overriddenByEnv: true,
     });
   });
 });
