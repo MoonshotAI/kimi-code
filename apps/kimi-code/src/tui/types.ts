@@ -274,6 +274,7 @@ export interface TranscriptEntry {
   goalData?: GoalTranscriptData;
   imageAttachmentIds?: readonly number[];
   skillNames?: readonly string[];
+  inlineSkillActivations?: readonly InlineSkillActivation[];
   skillActivationId?: string;
   skillName?: string;
   skillArgs?: string;

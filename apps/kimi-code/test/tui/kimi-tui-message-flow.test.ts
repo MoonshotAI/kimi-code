@@ -865,6 +865,32 @@ describe('KimiTUI message flow', () => {
     });
   });
 
+  it('records selected variant metadata on live transcript entries', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const path = '/work/B/review/SKILL.md';
+    const { driver } = await makeDriver(session, {
+      listWorkspaceSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/work/A/review/SKILL.md', source: 'project', workspaceDir: '/work/A' },
+        { name: 'review', description: 'Review skill', path, source: 'project', workspaceDir: '/work/B' },
+      ]),
+      listPluginCommands: vi.fn(async () => []),
+    });
+    await (driver as unknown as { refreshSkillCommands(): Promise<void> }).refreshSkillCommands();
+    driver.restoreInputText('/skill:review', [{ skillName: 'review', path }]);
+
+    driver.handleUserInput('/skill:review');
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith('/skill:review', [
+        expect.objectContaining({ name: 'review', path }),
+      ]);
+    });
+    const entry = driver.state.transcriptEntries.find((item) => item.kind === 'user' && item.content === '/skill:review');
+    expect(entry?.inlineSkillActivations).toEqual([
+      expect.objectContaining({ skillName: 'review', path }),
+    ]);
+  });
+
   it('retains valid variant bindings across skill list refreshes', async () => {
     const session = makeSession({ id: 'ses-lazy' });
     const path = '/work/B/review/SKILL.md';

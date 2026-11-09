@@ -1954,6 +1954,7 @@ export class KimiTUI {
       renderMode: 'plain',
       content: text,
       skillNames: activations.map((activation) => activation.skillName),
+      inlineSkillActivations: activations.length === 0 ? undefined : activations,
       imageAttachmentIds:
         extraction.imageAttachmentIds.length > 0 ? extraction.imageAttachmentIds : undefined,
     };
