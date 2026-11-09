@@ -21,6 +21,7 @@ export type AgentLLMRequestSource =
       readonly turnId: number;
       readonly step?: number;
       readonly logFields?: AgentLLMRequestLogFields;
+      readonly cacheBreakBaseline?: false;
     }
   | {
       readonly type: 'operation';

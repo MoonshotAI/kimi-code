@@ -199,11 +199,12 @@ function installAutoReview(result: import('#/features/autoReview/review').AutoRe
   permissions.set(IAgentPermissionPolicyService, new AgentPermissionPolicyService(
     permissions,
     permissions.get(IBootstrapService),
+    permissions.get(IFlagService),
+    permissions.get(IAgentPermissionModeService),
   ));
   permissions.set(IAutoReviewGate, new AutoReviewGate(
     permissions.get(IFlagService),
     permissions.get(IAgentPermissionModeService),
-    permissions.get(IAgentPermissionPolicyService),
     permissions.get(IAutoReviewService),
   ));
   permissions.set(IAgentPermissionGate, new AgentPermissionGate(

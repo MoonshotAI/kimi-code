@@ -24,6 +24,15 @@ export class AutoReviewCompleted extends AgentEvent2<z.infer<typeof autoReviewCo
 }
 export interface AutoReviewCompleted {
   readonly agentId: string;
+  readonly turnId: number;
+  readonly toolCallId: string;
+  readonly toolName: string;
+  readonly triggerPolicy: string;
+  readonly model: string;
+  readonly decision: 'allow' | 'deny' | 'failed';
+  readonly risk?: 'low' | 'medium' | 'high';
+  readonly reason?: string;
+  readonly durationMs: number;
 }
 
 registerEvent2Class(AutoReviewCompleted);
