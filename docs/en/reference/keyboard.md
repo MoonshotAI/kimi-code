@@ -15,6 +15,7 @@ The following keys are always available in the input box:
 | `Ctrl-C` | Interrupt the current streaming output, or clear the input box |
 | `Ctrl-D` | Exit Kimi Code CLI when the input box is empty |
 | `Ctrl-N` | Focus the experimental `Updates` panel, including while an approval or question waits |
+| `Tab` / `→` | Insert the full experimental prompt prediction when a suggestion is shown in an empty input box |
 
 Pressing `Ctrl-C` **during streaming** cancels immediately — no second confirmation needed.
 
