@@ -315,9 +315,9 @@ describe('buildClipboardOSC52', () => {
     expect(buildClipboardOSC52('hi', false)).toBe(`\u001B]52;c;${base64('hi')}\u0007`);
   });
 
-  it('wraps the sequence in a tmux passthrough with doubled ESC bytes', () => {
+  it('sends both the bare sequence and the tmux passthrough form inside tmux', () => {
     expect(buildClipboardOSC52('hi', true)).toBe(
-      `\u001BPtmux;\u001B\u001B]52;c;${base64('hi')}\u0007\u001B\\`,
+      `\u001B]52;c;${base64('hi')}\u0007\u001BPtmux;\u001B\u001B]52;c;${base64('hi')}\u0007\u001B\\`,
     );
   });
 });
