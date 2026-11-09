@@ -451,6 +451,46 @@ describe('ToolManager SkillTool wire behavior', () => {
     expect(loaded).toHaveLength(4);
     expect(JSON.stringify(loaded.slice(0, 3))).not.toContain('nested-skill');
   });
+  it('clears the parent workspace after a cross-workspace root batch', async () => {
+    skills.register({ ...makeSkill('child'), path: '/work/A/child/SKILL.md', dir: '/work/A/child', content: 'child from A', workspaceDir: '/work/A' });
+    skills.registerVariants([
+      { ...makeSkill('parent'), path: '/work/A/parent/SKILL.md', dir: '/work/A/parent', content: 'parent from A', workspaceDir: '/work/A' },
+      { ...makeSkill('parent'), path: '/work/B/parent/SKILL.md', dir: '/work/B/parent', content: 'parent from B', workspaceDir: '/work/B' },
+      { ...makeSkill('child'), path: '/work/A/child/SKILL.md', dir: '/work/A/child', content: 'child from A', workspaceDir: '/work/A' },
+      { ...makeSkill('child'), path: '/work/B/child/SKILL.md', dir: '/work/B/child', content: 'child from B', workspaceDir: '/work/B' },
+    ], { replace: true });
+    const parentA: ToolCall = {
+      type: 'function',
+      id: 'call_parent_a',
+      name: 'Skill',
+      arguments: '{"skill":"parent","path":"/work/A/parent/SKILL.md"}',
+    };
+    const parentB: ToolCall = {
+      type: 'function',
+      id: 'call_parent_b',
+      name: 'Skill',
+      arguments: '{"skill":"parent","path":"/work/B/parent/SKILL.md"}',
+    };
+    const childCall: ToolCall = {
+      type: 'function',
+      id: 'call_child_after_batch',
+      name: 'Skill',
+      arguments: '{"skill":"child"}',
+    };
+    ctx.mockNextResponse({ type: 'text', text: 'Load both parents.' }, parentA, parentB);
+    ctx.mockNextResponse({ type: 'text', text: 'Load the child.' }, childCall);
+    ctx.mockNextResponse({ type: 'text', text: 'Done.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Use both parents' }] });
+    await ctx.untilTurnEnd();
+
+    const nested = persistence.records.filter((record) => recordContainsSkillLoaded(record, 'child'));
+    expect(nested).toHaveLength(1);
+    expect(JSON.stringify(nested[0])).toContain('child from A');
+    expect(JSON.stringify(nested[0])).toContain('/work/A/child/SKILL.md');
+    expect(JSON.stringify(nested[0])).toContain('model-tool');
+    expect(JSON.stringify(nested[0])).not.toContain('child from B');
+    expect(JSON.stringify(nested[0])).not.toContain('nested-skill');
+  });
 });
 
 describe('ToolManager SkillTool restore behavior', () => {

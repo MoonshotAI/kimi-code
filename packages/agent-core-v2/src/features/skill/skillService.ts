@@ -224,10 +224,13 @@ export class AgentSkillService implements IAgentSkillService {
   }
 
   private rememberModelToolParent(origin: SkillActivationOrigin, turnId: number): void {
-    const queryDepth = origin.trigger === 'nested-skill'
-      ? this.modelToolParent?.turnId === turnId ? this.modelToolParent.queryDepth + 1 : 1
-      : 1;
+    const parent = this.modelToolParent?.turnId === turnId ? this.modelToolParent : undefined;
     const workspaceDir = this.catalog.catalog.listSkills().find((skill) => skill.path === origin.skillPath)?.workspaceDir;
+    if (origin.trigger === 'model-tool' && parent !== undefined && parent.workspaceDir !== workspaceDir) {
+      this.modelToolParent = undefined;
+      return;
+    }
+    const queryDepth = origin.trigger === 'nested-skill' ? (parent?.queryDepth ?? 0) + 1 : 1;
     this.modelToolParent = { turnId, queryDepth, workspaceDir };
   }
 
