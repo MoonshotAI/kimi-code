@@ -11,6 +11,7 @@ import {
 import { TranscriptContainer } from '#/tui/components/messages/transcript-container';
 import { TranscriptView } from '#/tui/components/messages/transcript-view';
 import { clipboard } from '#/utils/clipboard/clipboard-native';
+import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
 import { openUrl } from '#/utils/open-url';
 
 import { DockSection } from './components/chrome/dock-section';
@@ -35,6 +36,7 @@ import {
   type TranscriptEntry,
   type TUIStartupState,
 } from './types';
+import { formatErrorMessage } from './utils/event-payload';
 import {
   setMarkdownAltScreenActive,
   setMarkdownMermaidMode,
@@ -144,6 +146,14 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
           // Clickable pill centered on the transcript's last row while it is
           // scrolled away from the end.
           scrollToEndIndicator: () => currentTheme.fg('primary', ' ↓ Jump to bottom '),
+          copySelection: async (text) => {
+            try {
+              const method = await copyTextToClipboard(text);
+              return method === 'native' ? true : 'Copied via terminal';
+            } catch (error) {
+              return formatErrorMessage(error);
+            }
+          },
         })
       : new TuiMainScreen(terminal);
 
