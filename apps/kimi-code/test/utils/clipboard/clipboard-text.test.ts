@@ -1,6 +1,9 @@
 import { type ChildProcess, spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, join } from 'node:path';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { clipboard } from '#/utils/clipboard/clipboard-native';
 import { buildClipboardOSC52 } from '#/utils/clipboard/clipboard-osc52';
@@ -32,6 +35,7 @@ const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'pla
 const CLEAN_ENV = [
   'DISPLAY',
   'WAYLAND_DISPLAY',
+  'XDG_SESSION_TYPE',
   'TERMUX_VERSION',
   'SSH_CONNECTION',
   'SSH_CLIENT',
@@ -54,9 +58,20 @@ function stubEnv(env: Record<string, string>): void {
   for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);
 }
 
+const CLIPBOARD_TOOLS = ['pbcopy', 'clip.exe', 'termux-clipboard-set', 'wl-copy', 'xclip', 'xsel'];
+
+function makeToolDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'kimi-clipboard-tools-'));
+  for (const tool of CLIPBOARD_TOOLS) writeFileSync(join(dir, tool), '', { mode: 0o755 });
+  return dir;
+}
+
+let toolDir = '';
+
 function stubInstalledClipboardCommands(exitCodeByCommand: Record<string, number>): { command: string; input: string }[] {
   const calls: { command: string; input: string }[] = [];
-  spawnMock.mockImplementation(((command: string) => {
+  spawnMock.mockImplementation(((executable: string) => {
+    const command = basename(executable);
     const child = new EventEmitter() as ChildProcess;
     const call = { command, input: '' };
     calls.push(call);
@@ -88,7 +103,12 @@ function base64(text: string): string {
   return Buffer.from(text, 'utf8').toString('base64');
 }
 
+beforeAll(() => {
+  toolDir = makeToolDir();
+});
+
 beforeEach(() => {
+  vi.stubEnv('PATH', toolDir);
   stubEnv({});
   stubStdoutTTY(true);
   clipboardMock.setText = vi.fn().mockResolvedValue(undefined);
@@ -136,6 +156,12 @@ describe('planClipboardWrite', () => {
       'linux',
       { WAYLAND_DISPLAY: 'wayland-0', DISPLAY: ':0' },
       { nativeModule: false, commands: [wlCopy, xclip, xsel], osc52: 'never', unavailableMessage: missingWayland },
+    ],
+    [
+      'Wayland session without WAYLAND_DISPLAY',
+      'linux',
+      { XDG_SESSION_TYPE: 'wayland' },
+      { nativeModule: false, commands: [wlCopy], osc52: 'never', unavailableMessage: missingWayland },
     ],
     [
       'Linux without a display',
@@ -298,6 +324,27 @@ describe('copyTextToClipboard', () => {
 
     await expect(copyTextToClipboard(text)).resolves.toBe('osc52');
     expect(stdout()).toContain(`]52;c;${base64(text)}`);
+  });
+
+  it('spawns clipboard tools by their resolved absolute path', async () => {
+    stubPlatform('darwin');
+    clipboardMock.setText = vi.fn().mockRejectedValue(new Error('native failed'));
+    stubInstalledClipboardCommands({ pbcopy: 0 });
+
+    await expect(copyTextToClipboard('hello')).resolves.toBe('native');
+    expect(spawnMock).toHaveBeenCalledWith(join(toolDir, 'pbcopy'), [], expect.anything());
+  });
+
+  it('never spawns a clipboard tool planted in the workspace', async () => {
+    stubPlatform('linux');
+    stubEnv({ DISPLAY: ':0' });
+    const workspace = makeToolDir();
+    vi.stubEnv('PATH', workspace);
+    vi.spyOn(process, 'cwd').mockReturnValue(workspace);
+    const calls = stubInstalledClipboardCommands({ xclip: 0, xsel: 0 });
+
+    await expect(copyTextToClipboard('hello')).rejects.toThrow('install `xclip` or `xsel`');
+    expect(calls).toEqual([]);
   });
 
   it('does not write escape sequences when stdout is not a terminal', async () => {

@@ -1,6 +1,8 @@
 import { spawn } from 'node:child_process';
 
-import { isWSL } from './clipboard-common';
+import { resolveCommandPath } from '#/utils/process/resolve-command';
+
+import { isWaylandSession, isWSL } from './clipboard-common';
 import { clipboard } from './clipboard-native';
 import { writeClipboardOSC52 } from './clipboard-osc52';
 
@@ -21,24 +23,24 @@ export interface ClipboardWritePlan {
 }
 
 interface UnixClipboardBackend {
-  readonly env: string;
+  readonly present: (env: NodeJS.ProcessEnv) => boolean;
   readonly commands: readonly ClipboardCommand[];
   readonly unavailableMessage: string;
 }
 
 const UNIX_CLIPBOARD_BACKENDS: readonly UnixClipboardBackend[] = [
   {
-    env: 'TERMUX_VERSION',
+    present: (env) => Boolean(env['TERMUX_VERSION']),
     commands: [{ command: 'termux-clipboard-set', args: [] }],
     unavailableMessage: 'Clipboard unavailable: install the Termux:API app and `termux-api` package',
   },
   {
-    env: 'WAYLAND_DISPLAY',
+    present: isWaylandSession,
     commands: [{ command: 'wl-copy', args: [] }],
     unavailableMessage: 'Clipboard unavailable: install `wl-clipboard` (`wl-copy`) or check Wayland access',
   },
   {
-    env: 'DISPLAY',
+    present: (env) => Boolean(env['DISPLAY']),
     commands: [
       { command: 'xclip', args: ['-selection', 'clipboard'] },
       { command: 'xsel', args: ['--clipboard', '--input'] },
@@ -63,7 +65,7 @@ export function planClipboardWrite(platform: NodeJS.Platform, env: NodeJS.Proces
       unavailableMessage: 'Clipboard unavailable',
     };
   }
-  const backends = UNIX_CLIPBOARD_BACKENDS.filter((backend) => Boolean(env[backend.env]));
+  const backends = UNIX_CLIPBOARD_BACKENDS.filter((backend) => backend.present(env));
   // Linux desktop terminals such as GNOME Terminal ignore OSC 52, so it only
   // backs up a missing tool where no display exists or the terminal (Windows
   // Terminal under WSL, Termux) is known to honor it.
@@ -80,11 +82,15 @@ export function planClipboardWrite(platform: NodeJS.Platform, env: NodeJS.Proces
 }
 
 function runClipboardCommand(command: string, args: readonly string[], input: string): Promise<boolean> {
+  // A fullscreen selection can be copied before the workspace trust prompt is
+  // answered, so a writer planted in the workspace must never run.
+  const executable = resolveCommandPath(command);
+  if (executable === undefined) return Promise.resolve(false);
   return new Promise((resolve) => {
     // Writers such as xclip fork a child that keeps owning the selection. Give
     // it no output pipes to hold open, and on POSIX a session of its own so
     // closing the terminal does not SIGHUP it and empty the clipboard.
-    const child = spawn(command, args, {
+    const child = spawn(executable, args, {
       stdio: ['pipe', 'ignore', 'ignore'],
       cwd: '/',
       detached: process.platform !== 'win32',
