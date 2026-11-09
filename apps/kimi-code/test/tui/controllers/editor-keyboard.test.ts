@@ -534,6 +534,7 @@ describe('EditorKeyboardController Ctrl-S steering', () => {
     skillCommandMap?: Map<string, string>;
     pluginCommandMap?: Map<string, string>;
     skillVariantPathForCommand?: (commandName: string, tokenStart: number) => string | undefined;
+    toBufferOffset?: (expandedOffset: number) => number;
     steering?: boolean;
   }) {
     const steerQueuedMessagesIntoRunningTurn = vi.fn();
@@ -543,6 +544,10 @@ describe('EditorKeyboardController Ctrl-S steering', () => {
       setHistoryFilter: vi.fn() as unknown as (...args: never[]) => unknown,
       setInputMode: vi.fn() as unknown as (...args: never[]) => unknown,
       getText: vi.fn(() => options.editorText) as unknown as (...args: never[]) => unknown,
+      getExpandedTextWithOffsets: vi.fn(() => ({
+        text: options.editorText,
+        toBufferOffset: options.toBufferOffset,
+      })) as unknown as (...args: never[]) => unknown,
       setText: setText as unknown as (...args: never[]) => unknown,
       inputMode: 'prompt' as unknown as (...args: never[]) => unknown,
     };
@@ -705,6 +710,26 @@ describe('EditorKeyboardController Ctrl-S steering', () => {
       {
         text: '/skill:review',
         inlineSkillActivations: [{ skillName: 'review', path: '/work/B/review/SKILL.md', start: 0, args: '' }],
+      },
+    ]);
+  });
+
+  it('maps expanded paste positions before resolving selected variants', () => {
+    const text = `${'x'.repeat(1200)} /skill:review`;
+    const { host, onCtrlS } = createCtrlSHarness({
+      editorText: text,
+      queued: [],
+      skillCommandMap: new Map([['skill:review', 'review']]),
+      toBufferOffset: (expandedOffset) => expandedOffset === 1201 ? 23 : expandedOffset,
+      skillVariantPathForCommand: (_commandName, start) => start === 23 ? '/work/B/review/SKILL.md' : undefined,
+    });
+
+    onCtrlS();
+
+    expect(host.state.queuedMessages).toEqual([
+      {
+        text,
+        inlineSkillActivations: [{ skillName: 'review', path: '/work/B/review/SKILL.md', start: 1201 }],
       },
     ]);
   });

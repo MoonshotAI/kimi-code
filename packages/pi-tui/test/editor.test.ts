@@ -114,7 +114,7 @@ describe("Editor component", () => {
 
 		it("keeps the single-argument callback shape without leading whitespace", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
-			let submitted: (string | number)[] = [];
+			let submitted: unknown[] = [];
 			editor.onSubmit = (...args) => {
 				submitted = args;
 			};
@@ -123,6 +123,31 @@ describe("Editor component", () => {
 			editor.handleInput("\r");
 
 			assert.deepStrictEqual(submitted, ["/skill:review"]);
+		});
+
+		it("maps expanded paste offsets back to their collapsed buffer positions after submit", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			const pastedText = `inside /skill:review ${"x".repeat(1200)}`;
+			editor.handleInput(`\x1b[200~${pastedText}\x1b[201~`);
+			editor.insertTextAtCursor(" /skill:review");
+			const collapsedStart = editor.getText().lastIndexOf("/skill:review");
+			const expanded = editor.getExpandedTextWithOffsets();
+			const expandedStart = expanded.text.lastIndexOf("/skill:review");
+			assert.notStrictEqual(expandedStart, collapsedStart);
+			assert.strictEqual(expanded.toBufferOffset?.(expandedStart), collapsedStart);
+
+			let submitted: { text: string; leadingWhitespace?: number; mappedStart?: number } | undefined;
+			editor.onSubmit = (text, leadingWhitespace, toBufferOffset) => {
+				submitted = {
+					text,
+					leadingWhitespace,
+					mappedStart: toBufferOffset?.(text.lastIndexOf("/skill:review") + (leadingWhitespace ?? 0)),
+				};
+			};
+			editor.handleInput("\r");
+
+			assert.strictEqual(submitted?.text, `${pastedText} /skill:review`);
+			assert.strictEqual(submitted?.mappedStart, collapsedStart);
 		});
 	});
 

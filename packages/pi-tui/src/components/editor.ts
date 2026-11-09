@@ -394,7 +394,7 @@ export class Editor implements Component, Focusable {
 	// Undo support
 	private undoStack = new UndoStack<EditorSnapshot>();
 
-	public onSubmit?: (text: string, leadingWhitespace?: number) => void;
+	public onSubmit?: (text: string, leadingWhitespace?: number, toBufferOffset?: (expandedOffset: number) => number) => void;
 	public onChange?: (text: string) => void;
 	/**
 	 * Called when a history entry is recalled, before it is put into the buffer.
@@ -1208,13 +1208,41 @@ export class Editor implements Component, Focusable {
 		return this.state.lines.join("\n");
 	}
 
-	private expandPasteMarkers(text: string): string {
+	private expandPasteMarkers(text: string, withOffsets = false) {
 		let result = text;
+		let offsets: number[] | undefined;
 		for (const [pasteId, pasteContent] of this.pastes) {
 			const markerRegex = new RegExp(`\\[paste #${pasteId}( (\\+\\d+ lines|\\d+ chars))?\\]`, "g");
-			result = result.replace(markerRegex, () => pasteContent);
+			if (!withOffsets) {
+				result = result.replace(markerRegex, () => pasteContent);
+				continue;
+			}
+			const matches = [...result.matchAll(markerRegex)];
+			if (matches.length === 0) continue;
+			offsets ??= Array.from({ length: result.length + 1 }, (_, index) => index);
+			for (const match of matches.toReversed()) {
+				const start = match.index;
+				const end = start + match[0].length;
+				const markerStart: number = offsets[start]!;
+				offsets = [
+					...offsets.slice(0, start),
+					...Array.from({ length: pasteContent.length }, (): number => markerStart),
+					...offsets.slice(end),
+				];
+				result = `${result.slice(0, start)}${pasteContent}${result.slice(end)}`;
+			}
 		}
-		return result;
+		const expandedOffsets = offsets;
+		return {
+			text: result,
+			toBufferOffset: expandedOffsets === undefined
+				? undefined
+				: (expandedOffset: number) => expandedOffsets[expandedOffset] ?? expandedOffset,
+		};
+	}
+
+	getExpandedTextWithOffsets() {
+		return this.expandPasteMarkers(this.state.lines.join("\n"), true);
 	}
 
 	/**
@@ -1222,7 +1250,7 @@ export class Editor implements Component, Focusable {
 	 * Use this when you need the full content (e.g., for external editor).
 	 */
 	getExpandedText(): string {
-		return this.expandPasteMarkers(this.state.lines.join("\n"));
+		return this.expandPasteMarkers(this.state.lines.join("\n")).text;
 	}
 
 	getLines(): string[] {
@@ -1495,9 +1523,9 @@ export class Editor implements Component, Focusable {
 
 	private submitValue(): void {
 		this.cancelAutocomplete();
-		const expandedText = this.expandPasteMarkers(this.state.lines.join("\n"));
-		const leadingWhitespace = expandedText.length - expandedText.trimStart().length;
-		const result = expandedText.trim();
+		const expanded = this.getExpandedTextWithOffsets();
+		const leadingWhitespace = expanded.text.length - expanded.text.trimStart().length;
+		const result = expanded.text.trim();
 
 		this.state = { lines: [""], cursorLine: 0, cursorCol: 0 };
 		this.pastes.clear();
@@ -1509,7 +1537,8 @@ export class Editor implements Component, Focusable {
 
 		if (this.onChange) this.onChange("");
 		if (this.onSubmit) {
-			if (leadingWhitespace === 0) this.onSubmit(result);
+			if (expanded.toBufferOffset !== undefined) this.onSubmit(result, leadingWhitespace, expanded.toBufferOffset);
+			else if (leadingWhitespace === 0) this.onSubmit(result);
 			else this.onSubmit(result, leadingWhitespace);
 		}
 	}

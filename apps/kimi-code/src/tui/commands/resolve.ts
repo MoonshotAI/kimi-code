@@ -50,6 +50,8 @@ export type SlashCommandIntent =
       readonly reason: SlashCommandInvalidReason;
     };
 
+export type ExpandedOffsetMapper = (expandedOffset: number) => number;
+
 export interface ResolveSlashCommandInput {
   readonly input: string;
   readonly skillCommandMap: ReadonlyMap<string, string>;
