@@ -102,6 +102,7 @@ interface Frame {
   readonly regions: readonly HitRegion[];
 }
 
+const MARKER = '●';
 const TITLE_INDENT = '  ';
 const TAIL_HEAD = `${TITLE_INDENT}└ `;
 const MIN_WRAPPED_SUBJECT_WIDTH = 8;
@@ -185,7 +186,7 @@ export class TranscriptGroupComponent implements Component {
       }
       if (showLess) {
         const start = lines.length;
-        lines.push(`${TITLE_INDENT}${chalk.hex(this.guideColor())('└ ')}${currentTheme.fg('textDim', 'Show less')}`);
+        lines.push(`${chalk.hex(this.guideColor())('└ ')}${currentTheme.fg('textDim', 'Show less')}`);
         regions.push({ start, end: lines.length, action: { kind: 'showLess', removedLines: lines.length - 2 } });
       }
     }
@@ -236,15 +237,16 @@ export class TranscriptGroupComponent implements Component {
   private renderTitle(view: GroupView, width: number, now: Instant): string[] {
     const paint = this.sweep.painter();
     const style = (text: string): string => paint(text, TITLE_INDENT.length);
+    const head = this.model.expanded ? `${paint(MARKER, 0)} ` : TITLE_INDENT;
     const suffix = titleSuffix(view, now);
     if (view.title.kind === 'item' && this.model.expanded) {
       const { verb, subject } = view.title.item.label;
       const full = subject === undefined ? verb : `${verb} ${subject}`;
       return wrapTextWithAnsi(`${style(full)}${suffix}`, Math.max(1, width - TITLE_INDENT.length))
-        .map((line) => `${TITLE_INDENT}${line}`);
+        .map((line, index) => `${index === 0 ? head : TITLE_INDENT}${line}`);
     }
     this.header.setText({
-      head: TITLE_INDENT,
+      head,
       flex: { text: titleText(view.title), style, keep: 'head' },
       tail: suffix,
     });
@@ -263,14 +265,13 @@ export class TranscriptGroupComponent implements Component {
     if (body.kind === 'none') return { members: [], showLess: false };
     const { timeline } = this.model;
     const inner = Math.max(1, width - 2);
-    const rowColumns = Math.max(1, inner - TITLE_INDENT.length);
     const draft = (item: LogicalTranscriptItem, form: RowForm, open: boolean, columns: number, index: number): MemberDraft =>
       memberDraft(item, rowStatusOf(item, timeline, now), form, open, columns, now, previous[index]);
     const drafts = body.kind === 'detail'
       ? [draft(body.item, body.withRow ? 'wrapped' : 'none', true, body.withRow ? inner : width, 0)]
       : this.model.members.map((item, index) => {
         const open = isExpandedComponent(item.display);
-        return draft(item, open ? 'wrapped' : 'line', open, rowColumns, index);
+        return draft(item, open ? 'wrapped' : 'line', open, inner, index);
       });
     const height = headerHeight + drafts.reduce((total, member) => total + member.row.length + (member.detail?.length ?? 0), 0);
     const showLess = viewportRows !== undefined && height > viewportRows;
@@ -486,8 +487,8 @@ function memberDraft(
 function prefixFor(branch: Branch, guide: (text: string) => string): (first: boolean) => string {
   if (branch === 'bare') return () => '';
   if (branch === 'indent') return () => TITLE_INDENT;
-  const first = `${TITLE_INDENT}${guide(branch === 'last' ? '└ ' : '├ ')}`;
-  const rest = `${TITLE_INDENT}${branch === 'last' ? '  ' : guide('│ ')}`;
+  const first = guide(branch === 'last' ? '└ ' : '├ ');
+  const rest = branch === 'last' ? '  ' : guide('│ ');
   return (isFirst) => isFirst ? first : rest;
 }
 
