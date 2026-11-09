@@ -1006,10 +1006,11 @@ describe('WorkspaceFsService.suggest', () => {
     };
   }
 
-  it('matches path segments in order and ranks the matched directory first', async () => {
+  it('matches path segments in order and scopes rg to the longest existing directory prefix', async () => {
+    const captured: string[][] = [];
     const fs = makeSession(
-      {},
-      rgLinesHandler(['apps/desktop/package.json', 'apps/mobile/app.ts', 'src/api/index.ts']),
+      { 'apps/desktop/package.json': '' },
+      rgMultiRootHandler({ '/repo/apps': ['desktop/package.json'] }, captured),
     );
     const result = await fs.suggest({
       query: 'apps/de',
@@ -1023,6 +1024,7 @@ describe('WorkspaceFsService.suggest', () => {
       kind: 'directory',
     });
     expect(result.items.map((i) => i.path)).toContain('apps/desktop/package.json');
+    expect(captured.find((args) => args.includes('--files'))).toContain('/repo/apps');
   });
 
   it('allows skipping segments when consuming the query', async () => {
@@ -1065,8 +1067,9 @@ describe('WorkspaceFsService.suggest', () => {
     expect(result.items[0]?.path).toBe('apps');
   });
 
-  it('returns an empty list when a path-form query has no match', async () => {
-    const fs = makeSession({}, rgLinesHandler(['apps/desktop/package.json']));
+  it('falls back to fuzzy search when a path prefix does not exist', async () => {
+    const captured: string[][] = [];
+    const fs = makeSession({}, rgLinesHandler(['apps/desktop/package.json'], captured));
     const result = await fs.suggest({
       query: 'zzz/qqq',
       limit: 50,
@@ -1075,6 +1078,7 @@ describe('WorkspaceFsService.suggest', () => {
     });
     expect(result.items).toEqual([]);
     expect(result.truncated).toBe(false);
+    expect(captured.filter((args) => args.includes('--files'))).toHaveLength(1);
   });
 
   it('matches basenames across the whole workspace in name mode', async () => {
@@ -1123,6 +1127,7 @@ describe('WorkspaceFsService.suggest', () => {
     expect(filesArgs).toContain('--no-require-git');
     expect(filesArgs).toContain('--hidden');
     expect(filesArgs).not.toContain('--no-ignore');
+    expect(filesArgs).not.toContain('--iglob');
     expect(filesArgs).toContain('!.git/**');
   });
 
@@ -1145,8 +1150,12 @@ describe('WorkspaceFsService.suggest', () => {
     expect(captured).toHaveLength(2);
     expect(captured[0]).toContain('--no-require-git');
     expect(captured[0]).not.toContain('--no-ignore');
+    expect(captured[0]).not.toContain('--iglob');
     expect(captured[1]).toContain('--no-ignore');
     expect(captured[1]).toContain('--no-require-git');
+    expect(captured[1]).toContain('--iglob');
+    expect(captured[1]).toContain('**/*t*s*');
+    expect(captured[1]).toContain('**/*t*s*/**');
 
     const dotFs = makeSession({}, (args) => {
       if (args[0] === 'rg' && args[1] === '--version') return { stdout: 'ripgrep 15.0.0', exitCode: 0 };
@@ -1164,6 +1173,15 @@ describe('WorkspaceFsService.suggest', () => {
     expect(captured).toHaveLength(4);
     expect(captured[2]).toContain('--hidden');
     expect(captured[3]).toContain('--hidden');
+
+    const scopedFs = makeSession(
+      { '.tmp/ignored.ts': '' },
+      rgMultiRootHandler({ '/repo/.tmp': ['ignored.ts'] }, captured),
+    );
+    const scoped = await scopedFs.suggest({ query: '.tmp/', limit: 50, follow_gitignore: false, show_hidden: false });
+    expect(scoped.items.map((item) => item.path)).toContain('.tmp/ignored.ts');
+    expect(captured.filter((args) => args.includes('--files'))).toHaveLength(6);
+    expect(captured.filter((args) => args.includes('--files')).at(-1)).toContain('/repo/.tmp');
   });
 
   it('hides dot-prefixed entries at any depth unless show_hidden is set', async () => {
@@ -1197,6 +1215,17 @@ describe('WorkspaceFsService.suggest', () => {
       show_hidden: true,
     });
     expect(result.items.map((i) => i.path)).toEqual(['ok.ts']);
+
+    let calls = 0;
+    const exactFs = makeSession({}, () => {
+      calls += 1;
+      return { stdout: '', exitCode: 0 };
+    });
+    const exact = await exactFs.suggest({ query: '.git', limit: 20, follow_gitignore: false, show_hidden: true });
+    expect(exact).toEqual({ items: [], truncated: false });
+    const searched = await exactFs.search({ query: '.git', limit: 20, follow_gitignore: false });
+    expect(searched).toEqual({ items: [], truncated: false });
+    expect(calls).toBe(0);
   });
 
   it('lists root entries for an empty query and never lists VCS dirs', async () => {
@@ -1493,6 +1522,7 @@ describe('WorkspaceFsService.suggest', () => {
   });
 
   it('merges rg candidates across roots with relative paths for the primary root only', async () => {
+    const captured: string[][] = [];
     const fs = makeSession(
       {
         'apps/desktop/package.json': '',
@@ -1500,9 +1530,9 @@ describe('WorkspaceFsService.suggest', () => {
         '/extra/README.md': '',
       },
       rgMultiRootHandler({
-        '/repo': ['apps/desktop/package.json'],
+        '/repo/apps': ['desktop/package.json'],
         '/extra': ['lib/util.ts', 'README.md'],
-      }),
+      }, captured),
       [],
       defaultGitStub(),
       [],
@@ -1517,6 +1547,7 @@ describe('WorkspaceFsService.suggest', () => {
       show_hidden: false,
     });
     expect(pathResult.items[0]?.path).toBe('apps/desktop');
+    expect(captured.find((args) => args.includes('--files'))).toContain('/repo/apps');
     const nameResult = await fs.suggest({
       query: 'util',
       limit: 50,

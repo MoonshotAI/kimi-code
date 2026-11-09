@@ -103,6 +103,32 @@ interface SuggestRoot {
   readonly dir: string;
   readonly real: string;
   readonly primary: boolean;
+  readonly baseDir?: string;
+  readonly scanBase?: string;
+  readonly scoped?: boolean;
+}
+
+function joinScanBase(root: SuggestRoot, rel: string): string {
+  return root.scanBase === undefined || root.scanBase === '' ? rel : `${root.scanBase}/${rel}`;
+}
+
+function suggestSubsequenceGlob(query: string): string {
+  const parts = Array.from(query, (char) => {
+    switch (char) {
+      case '*':
+      case '?':
+      case '[':
+      case ']':
+      case '{':
+      case '}':
+      case '!':
+      case '\\':
+        return `\\${char}`;
+      default:
+        return char;
+    }
+  });
+  return `**/*${parts.join('*')}*`;
 }
 
 const FS_READ_MAX_BYTES = 10 * 1024 * 1024;
@@ -649,7 +675,12 @@ export class WorkspaceFsService implements IWorkspaceFsService {
   }
 
   async search(req: FsSearchRequest): Promise<FsSearchResponse> {
-    const roots = await this.suggestRoots();
+    const queryLower = req.query.toLowerCase();
+    if (VCS_METADATA_DIRS.has(queryLower.replace(/\/+$/, ''))) {
+      return { items: [], truncated: false };
+    }
+    const roots = await this.scopeSuggestRoots(await this.suggestRoots(), req.query);
+    if (roots.length === 0) return { items: [], truncated: false };
     if (req.query === '') {
       return this.suggestTopLevel(
         {
@@ -666,7 +697,6 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     }
 
     const candidates: Array<FsSearchHit & { ignored: boolean; tier: number }> = [];
-    const queryLower = req.query.toLowerCase();
     const seenPaths = new Set<string>();
     const effectiveCap = Math.min(req.limit, SEARCH_HARD_CAP);
     let inventoryTruncated = false;
@@ -679,15 +709,16 @@ export class WorkspaceFsService implements IWorkspaceFsService {
           seenPaths.add(pathKey);
           const score = computeFuzzyScore(name, queryLower);
           if (score <= 0) return;
-          if (req.include_globs && !matchesAnyGlob(relPath, req.include_globs)) {
+          const originalRelPath = joinScanBase(root, relPath);
+          if (req.include_globs && !matchesAnyGlob(originalRelPath, req.include_globs)) {
             return;
           }
-          if (req.exclude_globs && matchesAnyGlob(relPath, req.exclude_globs)) {
+          if (req.exclude_globs && matchesAnyGlob(originalRelPath, req.exclude_globs)) {
             return;
           }
           const nameLower = name.toLowerCase();
           const tier = nameLower === queryLower ? 3 : nameLower.startsWith(queryLower) ? 2 : 1;
-          const path = this.suggestDisplayPath(root, relPath);
+          const path = this.suggestDisplayPath(root, originalRelPath);
           candidates.push({
             path,
             name,
@@ -721,18 +752,22 @@ export class WorkspaceFsService implements IWorkspaceFsService {
   }
 
   async suggest(req: FsSuggestRequest): Promise<FsSuggestResponse> {
-    const roots = await this.suggestRoots();
+    const queryLower = req.query.toLowerCase();
+    if (VCS_METADATA_DIRS.has(queryLower.replace(/\/+$/, ''))) {
+      return { items: [], truncated: false };
+    }
     if (req.query === '') {
-      return this.suggestTopLevel(req, roots);
+      return this.suggestTopLevel(req, await this.suggestRoots());
     }
 
-    const queryLower = req.query.toLowerCase();
     const pathSegments = queryLower.includes('/')
       ? queryLower.split('/').filter((seg) => seg.length > 0)
       : [];
     if (queryLower.includes('/') && pathSegments.length === 0) {
       return { items: [], truncated: false };
     }
+    const roots = await this.scopeSuggestRoots(await this.suggestRoots(), req.query);
+    if (roots.length === 0) return { items: [], truncated: false };
     const query: SuggestQuery = {
       nameQuery: queryLower,
       pathSegments,
@@ -781,6 +816,32 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     return roots;
   }
 
+  private async scopeSuggestRoots(roots: readonly SuggestRoot[], query: string): Promise<readonly SuggestRoot[]> {
+    const lastSlash = query.lastIndexOf('/');
+    if (lastSlash < 0) return roots;
+    const directory = query.slice(0, lastSlash);
+    if (directory === '') return roots;
+    const segments = directory.split('/').filter((segment) => segment.length > 0);
+    if (segments.length === 0 || segments.some((segment) => segment === '..')) return roots;
+    const scoped: SuggestRoot[] = [];
+    for (const root of roots) {
+      let matched = false;
+      for (let length = segments.length; length >= 1; length -= 1) {
+        const scanBase = segments.slice(0, length).join('/');
+        const candidate = this.path.resolve(root.dir, scanBase);
+        try {
+          if (!(await this.hostFs.stat(candidate)).isDirectory) continue;
+          scoped.push({ ...root, baseDir: root.dir, dir: candidate, scanBase, scoped: true });
+          matched = true;
+          break;
+        } catch {
+        }
+      }
+      if (!matched) scoped.push(root);
+    }
+    return scoped;
+  }
+
   private suggestRootDirSlashes(root: SuggestRoot): string {
     const sep = this.path.separator;
     return sep === '/' ? root.dir : root.dir.split(sep).join('/');
@@ -788,7 +849,9 @@ export class WorkspaceFsService implements IWorkspaceFsService {
 
   private suggestDisplayPath(root: SuggestRoot, rel: string): string {
     if (root.primary) return rel;
-    const dir = this.suggestRootDirSlashes(root);
+    const configuredDir = root.baseDir ?? root.dir;
+    const sep = this.path.separator;
+    const dir = sep === '/' ? configuredDir : configuredDir.split(sep).join('/');
     return dir.endsWith('/') ? `${dir}${rel}` : `${dir}/${rel}`;
   }
 
@@ -888,6 +951,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     roots: readonly SuggestRoot[],
   ): Promise<FsSuggestResponse> {
     const multi = roots.length > 1;
+    const requiresRootMatching = multi || roots.some((root) => root.scoped === true);
     const top = new SuggestTopHeap(cap);
     const seenDirs = new Set<string>();
     const seenPaths = new Set<string>();
@@ -907,7 +971,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
         }
       }
       if (best === undefined) return undefined;
-      return { root: best.root, rel: line.slice(best.prefix.length) };
+      return { root: best.root, rel: joinScanBase(best.root, line.slice(best.prefix.length)) };
     };
 
     const handleLine = (raw: string, ignored: boolean): void => {
@@ -918,7 +982,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       if (line.length === 0) return;
       let root = roots[0]!;
       let rel = line;
-      if (multi) {
+      if (requiresRootMatching) {
         const located = matchRoot(line);
         if (located === undefined) return;
         root = located.root;
@@ -952,8 +1016,12 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       const args = ['--files', '--no-require-git'];
       if (ignored) args.push('--no-ignore');
       if (query.showHidden) args.push('--hidden');
+      if (ignored && query.pathSegments.length === 0) {
+        const glob = suggestSubsequenceGlob(query.nameQuery);
+        args.push('--iglob', glob, '--iglob', `${glob}/**`);
+      }
       for (const dir of VCS_METADATA_DIRS) args.push('-g', `!${dir}`, '-g', `!${dir}/**`);
-      if (multi) {
+      if (requiresRootMatching) {
         for (const root of roots) args.push(root.dir);
       }
 
@@ -1047,7 +1115,8 @@ export class WorkspaceFsService implements IWorkspaceFsService {
           const pathKey = multi ? `${root.real}/${relPath}` : relPath;
           if (seenPaths.has(pathKey)) return;
           seenPaths.add(pathKey);
-          const candidate = evaluateSuggestCandidate(relPath, kind, query, ignored);
+          const originalRelPath = joinScanBase(root, relPath);
+          const candidate = evaluateSuggestCandidate(originalRelPath, kind, query, ignored);
           if (candidate === null) return;
           matched += 1;
           top.push(this.displayCandidate(root, candidate));
