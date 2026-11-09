@@ -7,7 +7,6 @@ export const connectionSchema = z.object({
   connected_at: isoDateTimeSchema,
   remote_address: z.string().nullable(),
   user_agent: z.string().nullable(),
-  has_client_hello: z.boolean(),
   subscriptions: z.array(z.string()),
 });
 

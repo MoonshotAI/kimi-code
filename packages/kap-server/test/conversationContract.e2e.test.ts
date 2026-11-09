@@ -347,7 +347,7 @@ async function subscribeConversation(
     });
     ws.once('error', reject);
   });
-  ws.send(JSON.stringify({ type: 'subscribe_v2', id: 'sub-1', payload: { session_id: sid, agent_ids: [agentId] } }));
+  ws.send(JSON.stringify({ type: 'subscribe', request_id: 'sub-1', session_id: sid, agent_ids: [agentId] }));
   await until('turns frame', () => conversation.some((frame) => frame.type === 'turns'), 15000);
   return {
     frames,

@@ -304,7 +304,7 @@ describe('fetchCustomRegistry', () => {
             id: 'unknown-type',
             name: 'Unknown Type',
             api: 'https://example.test/v1',
-            type: 'google-genai',
+            type: 'vertexai',
             models: { 'm-1': { id: 'm-1' } },
           },
           'registry_chat-completions': goodEntry,
@@ -331,6 +331,45 @@ describe('fetchCustomRegistry', () => {
     } finally {
       warnSpy.mockRestore();
     }
+  });
+
+  it('imports a google-genai provider whose api already includes the version path', async () => {
+    const fetchMock = vi.fn(async () =>
+      makeJsonResponse({
+        'registry_gemini-generate': {
+          id: 'registry_gemini-generate',
+          name: 'Sample Registry (Gemini)',
+          api: 'https://gateway.example.test/v1beta',
+          type: 'google-genai',
+          models: {
+            'gemini-4-argon': {
+              id: 'gemini-4-argon',
+              name: 'Gemini 4 Argon',
+              limit: { context: 1_000_000, output: 1_000_000 },
+              tool_call: true,
+              reasoning: true,
+              modalities: { input: ['text', 'image', 'video'], output: ['text'] },
+              support_efforts: ['low', 'medium', 'high'],
+              default_effort: 'high',
+            },
+          },
+        },
+      }),
+    );
+
+    const result = await fetchCustomRegistry(KOKUB_SOURCE, {
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+
+    expect(result['registry_gemini-generate']).toMatchObject({
+      type: 'google-genai',
+      api: 'https://gateway.example.test/v1beta',
+    });
+    expect(result['registry_gemini-generate']?.models['gemini-4-argon']).toMatchObject({
+      id: 'gemini-4-argon',
+      support_efforts: ['low', 'medium', 'high'],
+      default_effort: 'high',
+    });
   });
 });
 
