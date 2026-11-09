@@ -41,7 +41,7 @@ export async function runForcedUpgradePreflight(
 ): Promise<ForcedUpgradePreflightResult> {
   const isInteractive = options.isTTY ?? (process.stdin.isTTY && process.stdout.isTTY);
   if (!isInteractive) return 'continue';
-  const policy = await clientConfigs.fetch(CLIENT_UPGRADE_POLICY_CONFIG_NAME, clientUpgradePolicySchema);
+  const policy = await clientConfigs.fetch(CLIENT_UPGRADE_POLICY_CONFIG_NAME, clientUpgradePolicySchema, { timeoutMs: 2_000 });
   const minimumVersion = policy?.cliMinVersion ?? null;
   if (!isUpgradeRequired(currentVersion, minimumVersion) || minimumVersion === null) return 'continue';
 

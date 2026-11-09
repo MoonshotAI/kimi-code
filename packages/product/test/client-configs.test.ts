@@ -40,6 +40,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   client.reset();
   region = 'mainland-cn';
   baseUrlOverride = undefined;
@@ -493,5 +494,24 @@ describe('client upgrade policy', () => {
     expect(isUpgradeRequired('1.4.0-canary.1', '1.4.0')).toBe(true);
     expect(isUpgradeRequired('invalid', '0.6.0')).toBe(false);
     expect(isUpgradeRequired('0.5.0', null)).toBe(false);
+  });
+});
+
+
+describe('client config fetch timeout', () => {
+  it('honors a caller-provided timeout', async () => {
+    vi.useFakeTimers();
+    const fetchImpl = vi.fn(async (_input: unknown, init?: { signal?: AbortSignal }) => {
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => { reject(new Error('aborted')); });
+      });
+    });
+    const result = client.fetch('estimated_cache_duration', z.object({ version: z.number() }), {
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      timeoutMs: 2_000,
+    });
+
+    await vi.advanceTimersByTimeAsync(2_000);
+    await expect(result).resolves.toBeUndefined();
   });
 });

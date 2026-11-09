@@ -1517,6 +1517,11 @@ describe('runForcedUpgradePreflight', () => {
     const track = vi.fn();
     await expect(runForcedUpgradePreflight('0.5.0', { isTTY: true, track })).resolves.toBe('skip-passive');
 
+    expect(mocks.fetchClientConfig).toHaveBeenCalledWith(
+      'client_upgrade_policy',
+      expect.anything(),
+      { timeoutMs: 2_000 },
+    );
     expect(mocks.refreshUpdateCache).toHaveBeenCalledWith({ channel: 'stable', timeoutMs: 10_000 });
     expect(mocks.promptForForcedUpgradeChoice).toHaveBeenCalledWith(expect.objectContaining({
       currentVersion: '0.5.0',
