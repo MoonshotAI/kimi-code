@@ -24,6 +24,7 @@ import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
+import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
@@ -68,6 +69,14 @@ describe('Workspace MCP initialization', () => {
       additionalServices: (reg) => {
         reg.definePartialInstance(IBootstrapService, { homeDir });
         reg.definePartialInstance(IWorkspaceContext, { cwd, workspaceId: 'test-workspace' });
+        reg.definePartialInstance(IWorkspaceDirs, {
+          ready: Promise.resolve(),
+          primary: cwd,
+          additionalDirs: [],
+          sharedAdditionalDirs: [],
+          primaryByWorkspace: {},
+          onDidChange: Event.None as Event<void>,
+        });
         reg.definePartialInstance(IPluginService, {
           enabledMcpServers: async () => ({}),
           mcpServerEntries: async () => [],
