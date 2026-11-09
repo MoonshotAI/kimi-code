@@ -376,6 +376,7 @@ describe('FileSessionIndex (read model)', () => {
   let disposeHost: (() => void) | undefined;
   let queryStore: IQueryStore;
   let mirror: ISessionIndexMirror;
+  let activatePrimary: () => void = () => {};
 
   beforeEach(async () => {
     _clearScopedRegistryForTests();
@@ -415,7 +416,11 @@ describe('FileSessionIndex (read model)', () => {
 
   function build(
     fileStorage: FileStorageService = new FileStorageService(homeDir),
-    primary?: { service: IWorkspaceService; persistence: IWorkspacePersistence },
+    primary?: {
+      service: IWorkspaceService;
+      persistence: IWorkspacePersistence;
+      deferActivation?: boolean;
+    },
   ): FileSessionIndex {
     const host = createScopedTestHost([
       stubPair(IFileSystemStorageService, fileStorage),
@@ -424,7 +429,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(ILogService, stubLog()),
       stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
       stubPair(ITelemetryService, noopTelemetryService),
-      ...(primary === undefined ? [] : [
+      ...(primary === undefined || primary.deferActivation === true ? [] : [
         stubPair(IWorkspaceService, primary.service),
         stubPair(IWorkspacePersistence, primary.persistence),
       ]),
@@ -432,6 +437,12 @@ describe('FileSessionIndex (read model)', () => {
     disposeHost = () => {
       host.dispose();
     };
+    activatePrimary = primary?.deferActivation === true
+      ? () => {
+          host.app.instantiation.provide(IWorkspaceService, primary.service);
+          host.app.instantiation.provide(IWorkspacePersistence, primary.persistence);
+        }
+      : () => {};
     queryStore = host.app.accessor.get(IQueryStore);
     mirror = host.app.accessor.get(ISessionIndexMirror);
     return host.app.accessor.get(ISessionIndex) as FileSessionIndex;
@@ -514,6 +525,42 @@ describe('FileSessionIndex (read model)', () => {
     expect((await restarted.get('closed'))?.updatedAt).toBe(2);
     const persisted = await fsp.readFile(join(sessionsDir, workspaceId, 'closed', 'session-meta', 'state.json'), 'utf8');
     expect(JSON.parse(persisted).cwd).toBe('/old');
+  });
+
+  it('subscribes when workspace persistence activates after the index', async () => {
+    const changes = new Emitter<void>();
+    const workspace: Workspace = {
+      id: workspaceId,
+      root: '/old',
+      name: 'project',
+      kind: 'managed',
+      additionalDirs: [],
+      createdAt: 0,
+      lastOpenedAt: 0,
+    };
+    let primary = workspace.root;
+    const service = { list: async () => [{ ...workspace, root: primary }] } as unknown as IWorkspaceService;
+    const onDidChange = vi.fn(changes.event);
+    const persistence = { onDidChange } as unknown as IWorkspacePersistence;
+    await seedSession('closed', { cwd: '/old', createdAt: 1, updatedAt: 2 });
+    const store = build(new FileStorageService(homeDir), {
+      service,
+      persistence,
+      deferActivation: true,
+    });
+    await store.prepare();
+    expect((await store.get('closed'))?.cwd).toBe('/old');
+
+    activatePrimary();
+    expect(onDidChange).toHaveBeenCalledTimes(1);
+    primary = '/new';
+    changes.fire();
+    await vi.waitFor(
+      async () => {
+        expect((await store.get('closed'))?.cwd).toBe('/new');
+      },
+      { timeout: 5_000 },
+    );
   });
 
   class CountingStorage extends FileStorageService {

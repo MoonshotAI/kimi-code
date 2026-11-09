@@ -206,7 +206,7 @@ export class SessionMetadata extends Service implements ISessionMetadata {
     return run;
   }
 
-  private effectiveCwd(): string {
+  get effectiveCwd(): string {
     if (this.data.environmentId !== undefined && this.data.environmentId !== LOCAL_ENVIRONMENT_ID) {
       return this.ctx.cwd;
     }
@@ -223,7 +223,7 @@ export class SessionMetadata extends Service implements ISessionMetadata {
         buildSessionSummary({
           id: this.data.id,
           workspaceId: this.ctx.workspaceId,
-          cwd: this.effectiveCwd(),
+          cwd: this.effectiveCwd,
           environmentId: this.data.environmentId,
           environmentCwd: this.data.environmentCwd,
           title: this.data.title,

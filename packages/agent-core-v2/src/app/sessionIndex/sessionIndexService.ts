@@ -1,4 +1,4 @@
-import { Disposable } from '#/_base/di/lifecycle';
+import { Disposable, MutableDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { ref, type LiveRef } from '#/_base/di/instantiation';
 import { IWorkspaceService } from '#/app/workspace/workspace';
 import { IWorkspacePersistence } from '#/app/workspace/workspacePersistence';
@@ -95,6 +95,9 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
   private readonly projector: SessionIndexProjector;
   private primarySnapshot?: Readonly<Record<string, string>>;
   private primaryRefreshTail: Promise<void> = Promise.resolve();
+  private readonly workspacePersistenceSubscription = this._register(
+    new MutableDisposable<IDisposable>(),
+  );
 
   constructor(
     @IBootstrapService private readonly bootstrap: IBootstrapService,
@@ -117,20 +120,19 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
       sessionsScope: bootstrap.scope('sessions'),
       primaryByWorkspace: () => this.primaryByWorkspace(),
     });
-    const workspacePersistence = this.workspaceStore.current;
-    if (workspacePersistence !== undefined) {
-      this._register(
-        workspacePersistence.onDidChange(() => {
-          this.primaryRefreshTail = this.primaryRefreshTail.then(
-            () => this.refreshPrimaries(),
-            () => this.refreshPrimaries(),
-          );
-          void this.primaryRefreshTail.catch((error) => {
-            this.log.warn('session index primary refresh failed', { error: String(error) });
-          });
-        }),
-      );
-    }
+    const subscribe = (): void => {
+      this.workspacePersistenceSubscription.value = this.workspaceStore.current?.onDidChange(() => {
+        this.primaryRefreshTail = this.primaryRefreshTail.then(
+          () => this.refreshPrimaries(),
+          () => this.refreshPrimaries(),
+        );
+        void this.primaryRefreshTail.catch((error) => {
+          this.log.warn('session index primary refresh failed', { error: String(error) });
+        });
+      });
+    };
+    this._register(this.workspaceStore.onDidChange(subscribe));
+    subscribe();
   }
 
   private ensureReconcileTimer(): void {

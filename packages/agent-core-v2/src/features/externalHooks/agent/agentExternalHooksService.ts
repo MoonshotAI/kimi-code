@@ -129,7 +129,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
       void this.runner.fireAndForgetTrigger(event, {
         matcherValue,
         signal,
-        cwd: this.sessionContext.cwd,
+        cwd: this.sessionMetadata.effectiveCwd,
         sessionId: this.sessionContext.sessionId,
         inputData: this.withSessionFacts(inputData),
       });
@@ -330,7 +330,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     const block = await this.runner.triggerBlock('PreToolUse', {
       matcherValue: ctx.toolCall.name,
       signal: ctx.signal,
-      cwd: this.sessionContext.cwd,
+      cwd: this.sessionMetadata.effectiveCwd,
       sessionId: this.sessionContext.sessionId,
       inputData: this.withSessionFacts({
         toolName: ctx.toolCall.name,
@@ -370,7 +370,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     const results = await this.runner.trigger('UserPromptSubmit', {
       matcherValue: input,
       signal,
-      cwd: this.sessionContext.cwd,
+      cwd: this.sessionMetadata.effectiveCwd,
       sessionId: this.sessionContext.sessionId,
       inputData: this.withSessionFacts({
         prompt: input.map((part) => fromCorePart(part)),
@@ -443,7 +443,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
 
     const block = await this.runner.triggerBlock('Stop', {
       signal: ctx.signal,
-      cwd: this.sessionContext.cwd,
+      cwd: this.sessionMetadata.effectiveCwd,
       sessionId: this.sessionContext.sessionId,
       inputData: this.withSessionFacts({ stopHookActive: false }),
     });
@@ -457,7 +457,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     await this.runner.trigger('PreCompact', {
       matcherValue: ctx.trigger,
       signal,
-      cwd: this.sessionContext.cwd,
+      cwd: this.sessionMetadata.effectiveCwd,
       sessionId: this.sessionContext.sessionId,
       inputData: this.withSessionFacts({
         trigger: ctx.trigger,

@@ -110,7 +110,7 @@ export class SessionExternalHooksService
   private async triggerSessionStart(source: SessionStartHookSource): Promise<void> {
     await this.runner.trigger('SessionStart', {
       matcherValue: source,
-      cwd: this.context.cwd,
+      cwd: this.metadata.effectiveCwd,
       sessionId: this.context.sessionId,
       inputData: {
         source,
@@ -133,7 +133,7 @@ export class SessionExternalHooksService
   private async triggerSessionEnd(reason: SessionEndHookReason): Promise<void> {
     await this.runner.trigger('SessionEnd', {
       matcherValue: reason,
-      cwd: this.context.cwd,
+      cwd: this.metadata.effectiveCwd,
       sessionId: this.context.sessionId,
       inputData: { reason, sessionTitle: this.sessionTitle },
     });
@@ -143,7 +143,7 @@ export class SessionExternalHooksService
     try {
       if (!this.runner.hasHooksFor('SessionHeartbeat')) return;
       void this.runner.fireAndForgetTrigger('SessionHeartbeat', {
-        cwd: this.context.cwd,
+        cwd: this.metadata.effectiveCwd,
         sessionId: this.context.sessionId,
         inputData: {
           sessionTitle: this.sessionTitle,
@@ -158,7 +158,7 @@ export class SessionExternalHooksService
     await this.runner.trigger('SubagentStart', {
       matcherValue: ctx.agentName,
       signal: ctx.signal,
-      cwd: this.context.cwd,
+      cwd: this.metadata.effectiveCwd,
       sessionId: this.context.sessionId,
       inputData: {
         agentName: ctx.agentName,
@@ -172,7 +172,7 @@ export class SessionExternalHooksService
   private notifySubagentStop(ctx: AgentTaskStopHookContext): void {
     void this.runner.fireAndForgetTrigger('SubagentStop', {
       matcherValue: ctx.agentName,
-      cwd: this.context.cwd,
+      cwd: this.metadata.effectiveCwd,
       sessionId: this.context.sessionId,
       inputData: {
         agentName: ctx.agentName,
