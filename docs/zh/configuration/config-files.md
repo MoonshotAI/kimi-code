@@ -655,8 +655,8 @@ defaultCwd = "/workspace"
 | `[notifications].enabled` | `boolean` | `true` | 是否发送桌面通知 |
 | `[notifications].notification_condition` | `string` | `unfocused` | 何时通知：`unfocused`（仅终端失去焦点时）或 `always`（总是） |
 | `[upgrade].auto_install` | `boolean` | `true` | 是否自动安装新版本 |
-| `[transcript].tool_call_density` | `string` | `compact` | `fullscreen` 模式下工具调用怎么显示：`compact` 把所有工具调用折进摘要分组，`balanced` 折叠读取、搜索、网页搜索和网页抓取，`ls`、`git status` 这类只读命令紧跟在分组后面时也折进去，其余每个工具调用占一行，点一下展开，`detailed` 折叠同样的调用，其余每个工具调用保持独立卡片，`ungrouped` 让每个工具调用保持独立卡片；subagent 和向你提问、通知类工具始终是独立卡片；对应 `/settings` 里的 Tool call density，那里可以选除 `ungrouped` 以外的值；`regular` 模式下不生效 |
-| `[transcript].thinking` | `string` | `grouped` | `fullscreen` 模式下思考怎么显示：`grouped` 把思考折进摘要分组，思考进行中时在分组标题下显示最新一行，`ungrouped` 改为每段思考显示两行预览；对应 `/settings` 里的 Thinking folding；`regular` 模式下不生效 |
+| `[transcript].tool_call_density` | `string` | `compact` | `fullscreen` 模式下的工具调用密度：`compact`、`balanced`、`detailed` 或 `ungrouped` |
+| `[transcript].thinking` | `string` | `grouped` | `fullscreen` 模式下的思考折叠：`grouped` 或 `ungrouped` |
 | `[status_line].items` | `string[]` | `[]` | 底部状态栏第一行的内置槽位及顺序：`mode`、`goal`、`model`、`tasks`、`cwd`、`git`、`tips`，未知 id 跳过并告警 |
 | `[status_line].command` | `string` | `""` | 自定义状态栏命令：stdout 首行替换状态栏，stdin 收 JSON 快照；上限 300ms、每秒一次，失败回退内置布局 |
 
