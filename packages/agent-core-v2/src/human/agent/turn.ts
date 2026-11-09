@@ -107,7 +107,7 @@ export function toInputMessages(history: readonly HistoryMessage[]): Message[] {
 }
 
 export interface HistoryAccumulator {
-  push(part: StreamedMessagePart): number | undefined;
+  push(part: StreamedMessagePart): StreamedMessagePart;
   hasToolCall(): boolean;
   pushUsage(usage: Partial<TokenUsage>): void;
   pushHeaders(headers: Record<string, string>): void;
@@ -123,7 +123,10 @@ export function createHistoryAccumulator(meta?: AssistantMetaInput): HistoryAccu
   let finish: FinishInfo | undefined;
   let messageId: string | undefined;
   return {
-    push: (part) => inner.push(part),
+    push: (part) => {
+      inner.push(part);
+      return part;
+    },
     hasToolCall: () => inner.hasToolCall(),
     pushUsage: (value) => {
       usage = {
