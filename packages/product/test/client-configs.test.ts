@@ -8,6 +8,7 @@ import type { KimiRegion } from '@moonshot-ai/kimi-code-oauth';
 import { z } from 'zod';
 
 import { ClientConfigClient } from '#/client-configs/node/client-configs';
+import { clientUpgradePolicySchema, isUpgradeRequired } from '#/client-configs/node/upgrade-policy';
 
 let region: KimiRegion = 'mainland-cn';
 let baseUrlOverride: string | undefined;
@@ -472,5 +473,25 @@ describe('region awareness', () => {
       expect.stringContaining('https://env-api.example.com/client_configs'),
       expect.anything(),
     );
+  });
+});
+
+
+describe('client upgrade policy', () => {
+  it('parses each client minimum independently', () => {
+    expect(clientUpgradePolicySchema.parse({
+      cli_min_version: '0.6.0',
+      desktop_min_version: 'invalid',
+    })).toEqual({ cliMinVersion: '0.6.0', desktopMinVersion: null });
+    expect(clientUpgradePolicySchema.parse(null)).toEqual({ cliMinVersion: null, desktopMinVersion: null });
+  });
+
+  it('requires upgrade only below a valid minimum using semver ordering', () => {
+    expect(isUpgradeRequired('0.5.0', '0.6.0')).toBe(true);
+    expect(isUpgradeRequired('0.6.0', '0.6.0')).toBe(false);
+    expect(isUpgradeRequired('0.7.0', '0.6.0')).toBe(false);
+    expect(isUpgradeRequired('1.4.0-canary.1', '1.4.0')).toBe(true);
+    expect(isUpgradeRequired('invalid', '0.6.0')).toBe(false);
+    expect(isUpgradeRequired('0.5.0', null)).toBe(false);
   });
 });

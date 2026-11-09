@@ -1,6 +1,8 @@
 import { EventEmitter } from 'node:events';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { promptForForcedUpgradeChoice, remainingSkipSeconds } from '#/cli/update/forced-prompt';
 
 import {
   createInstallPromptChoices,
@@ -89,5 +91,64 @@ describe('promptForInstallChoice', () => {
     expect(rendered).toContain('stable -> canary');
     expect(rendered).toContain('2.3.3');
     expect(rendered).toContain('2.3.3-canary.20261028012345-0123456');
+  });
+});
+
+
+describe('promptForForcedUpgradeChoice', () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('enables skip only after the countdown', async () => {
+    vi.useFakeTimers();
+    let now = 0;
+    const input = Object.assign(new EventEmitter(), {
+      isRaw: false,
+      setRawMode: () => {},
+      resume: () => {},
+    }) as unknown as NodeJS.ReadStream;
+    const output = { write: () => true } as unknown as NodeJS.WriteStream;
+    const promise = promptForForcedUpgradeChoice({
+      currentVersion: '0.5.0',
+      minimumVersion: '0.6.0',
+      targetVersion: '0.6.0',
+      canInstall: true,
+      skipAvailableAt: 10_000,
+      input,
+      output,
+      now: () => now,
+    });
+    let settled = false;
+    void promise.then(() => { settled = true; });
+
+    input.emit('keypress', '', { name: 'down' });
+    input.emit('keypress', '', { name: 'enter' });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    expect(remainingSkipSeconds(now, 10_000)).toBe(10);
+
+    now = 10_000;
+    await vi.advanceTimersByTimeAsync(250);
+    input.emit('keypress', '', { name: 'enter' });
+    await expect(promise).resolves.toBe('skip');
+  });
+
+  it('does not treat Escape as an immediate skip', async () => {
+    const input = Object.assign(new EventEmitter(), {
+      isRaw: false,
+      setRawMode: () => {},
+      resume: () => {},
+    }) as unknown as NodeJS.ReadStream;
+    const output = { write: () => true } as unknown as NodeJS.WriteStream;
+    const promise = promptForForcedUpgradeChoice({
+      currentVersion: '0.5.0',
+      minimumVersion: '0.6.0',
+      canInstall: true,
+      skipAvailableAt: 0,
+      input,
+      output,
+    });
+    input.emit('keypress', '', { name: 'escape' });
+    input.emit('keypress', '', { name: 'c', ctrl: true });
+    await expect(promise).resolves.toBe('exit');
   });
 });
