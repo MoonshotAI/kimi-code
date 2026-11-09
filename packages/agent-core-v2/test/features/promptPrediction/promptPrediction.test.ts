@@ -130,6 +130,15 @@ describe('SessionPromptPredictionService', () => {
       requestKind: 'prompt_prediction',
     });
     expect(requests[0]?.overrides?.messages).toHaveLength(2);
+    expect(requests[0]?.overrides?.messages?.at(-1)).toEqual({
+      role: 'user',
+      content: [{
+        type: 'text',
+        text: expect.stringMatching(
+          /predict what THEY would type[\s\S]*NEVER SUGGEST[\s\S]*Stay silent if the next step[\s\S]*Format: 2-12 words, match the user's style and language\. Or nothing\./,
+        ),
+      }],
+    });
     expect(requests[0]?.overrides?.tools).toBeUndefined();
     expect(contextSnapshot).toBe(originalContext);
     expect(contextSnapshot).toHaveLength(1);
@@ -191,11 +200,27 @@ describe('SessionPromptPredictionService', () => {
     }));
 
     lastEnded = { turnId: 5, reason: 'completed' };
-    const disposed = service.predict({ predictionId: 'dispose', expectedTurnId: 5 });
-    await vi.waitFor(() => expect(requests).toHaveLength(6));
+    vi.useFakeTimers();
+    const timedOut = service.predict({ predictionId: 'timeout', expectedTurnId: 5 });
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(requests).toHaveLength(6);
+      await vi.advanceTimersByTimeAsync(20_000);
+      await expect(timedOut).resolves.toBeNull();
+      expect(requests[5]?.signal?.aborted).toBe(true);
+      expect(telemetry.track2).toHaveBeenCalledWith('prediction_generated', expect.objectContaining({
+        status: 'timeout',
+      }));
+    } finally {
+      vi.useRealTimers();
+    }
+
+    lastEnded = { turnId: 6, reason: 'completed' };
+    const disposed = service.predict({ predictionId: 'dispose', expectedTurnId: 6 });
+    await vi.waitFor(() => expect(requests).toHaveLength(7));
     service.dispose();
     await expect(disposed).resolves.toBeNull();
-    expect(requests[5]?.signal?.aborted).toBe(true);
+    expect(requests[6]?.signal?.aborted).toBe(true);
     expect(telemetry.track2).toHaveBeenCalledWith('prediction_generated', expect.objectContaining({
       status: 'cancelled',
       reason: 'disposed',

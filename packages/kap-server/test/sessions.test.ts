@@ -1636,6 +1636,12 @@ describe('server-v2 /api/v1/sessions', () => {
       return null;
     });
     const cancel = vi.spyOn(service, 'cancel');
+    const cancelledWithReason = await postJson<{ cancelled: boolean }>(`/api/v1/sessions/${id}:cancel-prompt-prediction`, {
+      prediction_id: 'visibility-check',
+      reason: 'visibility',
+    });
+    expect(cancelledWithReason.body.data).toEqual({ cancelled: false });
+    expect(cancel).toHaveBeenCalledWith('visibility-check', 'visibility');
     const abortController = new AbortController();
     const request = fetch(`${base}/api/v1/sessions/${id}:predict-prompt`, {
       method: 'POST',

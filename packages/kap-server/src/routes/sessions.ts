@@ -198,6 +198,7 @@ const sessionActionRequestSchema = z.preprocess(
      page_size: z.number().int().min(1).max(100).optional(),
     prediction_id: z.string().min(1).optional(),
     expected_turn_id: z.number().int().nonnegative().optional(),
+    reason: cancelPromptPredictionRequestSchema.shape.reason,
   }),
 );
 
