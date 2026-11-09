@@ -415,30 +415,51 @@ describe('prompt queue', () => {
     }
   });
 
-  it('returns a queued identity instead of waiting for an untracked active turn', async () => {
-    setup();
-    const hold = holdNextStep();
-    ctx.mockNextResponse({ type: 'text', text: 'continuation' });
+  it('steers into an untracked active turn and interrupts the current llm request', async () => {
+    let calls = 0;
+    const signals: AbortSignal[] = [];
+    const generate: LlmRequester = {
+      generate: (_config, _content, { signal, onEvent }) => {
+        calls += 1;
+        signals.push(signal);
+        if (calls === 1) {
+          onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'partial' } });
+          return new Promise<void>((resolve) => {
+            signal.addEventListener('abort', () => resolve());
+          });
+        }
+        onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'continued' } });
+        onEvent?.({
+          type: 'llm.streaming.finish',
+          finish: { finishReason: 'completed', rawFinishReason: 'stop' },
+        });
+        onEvent?.({ type: 'llm.done' });
+        return Promise.resolve();
+      },
+    };
+    setup({ generate });
+    const turnStarts: TurnStarted[] = [];
+    ctx.get(IEventBus).subscribe(TurnStarted, (event) => turnStarts.push(event));
     loop.submit({
       message: { role: 'user', content: message('continuation').content },
       meta: { origin: { kind: 'user' }, tracked: false },
     });
-    await hold.started;
+    await vi.waitFor(() => {
+      expect(calls).toBe(1);
+    });
 
-    const result = await ctx.rpc.steer({ input: [{ type: 'text', text: 'queued steer' }] });
+    const result = await ctx.rpc.steer({ input: [{ type: 'text', text: 'steer now' }] });
+    await loop.settled();
 
-    try {
-      expect(result).toMatchObject({
-        prompt_id: expect.any(String),
-        state: 'queued',
-        steered: false,
-      });
-      expect(result).not.toHaveProperty('turn_id');
-    } finally {
-      loop.cancel();
-      hold.release();
-      await loop.settled();
-    }
+    expect(result).toMatchObject({
+      prompt_id: expect.any(String),
+      state: 'running',
+      steered: true,
+      turn_id: 0,
+    });
+    expect(signals[0]?.aborted).toBe(true);
+    expect(calls).toBe(2);
+    expect(turnStarts).toHaveLength(1);
   });
 
   it('interrupts the current llm step on steer and consumes it in the same turn', async () => {
@@ -484,7 +505,7 @@ describe('prompt queue', () => {
 
     expect(signals[0]?.aborted).toBe(true);
     expect(steerEvents).toMatchObject([{ turnId: 0, promptIds: [stop.id] }]);
-    expect(stepInterruptions).toMatchObject([{ turnId: 0, step: 1, reason: 'aborted' }]);
+    expect(stepInterruptions).toMatchObject([{ turnId: 0, step: 1, reason: 'steered' }]);
     expect(turnStarts).toHaveLength(1);
     expect(turnEnds).toMatchObject([{ turnId: 0, reason: 'completed' }]);
     const materializedStops = ctx

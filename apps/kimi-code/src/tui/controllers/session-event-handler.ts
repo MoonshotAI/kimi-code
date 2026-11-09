@@ -583,7 +583,7 @@ export class SessionEventHandler {
     this.host.streamingUI.resetToolUi();
     this.host.streamingUI.finalizeLiveTextBuffers('idle');
     const reason = event.reason;
-    if (reason === 'error') return;
+    if (reason === 'error' || reason === 'steered') return;
     if (reason === 'aborted' || reason === undefined || reason === '') {
       this.markActiveAgentSwarmsCancelled();
       if (event.message === undefined || event.message === '') {

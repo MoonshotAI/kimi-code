@@ -107,7 +107,8 @@ export function toInputMessages(history: readonly HistoryMessage[]): Message[] {
 }
 
 export interface HistoryAccumulator {
-  push(part: StreamedMessagePart): StreamedMessagePart;
+  push(part: StreamedMessagePart): number | undefined;
+  hasToolCall(): boolean;
   pushUsage(usage: Partial<TokenUsage>): void;
   pushHeaders(headers: Record<string, string>): void;
   pushFinish(finish: FinishInfo): void;
@@ -122,10 +123,8 @@ export function createHistoryAccumulator(meta?: AssistantMetaInput): HistoryAccu
   let finish: FinishInfo | undefined;
   let messageId: string | undefined;
   return {
-    push: (part) => {
-      inner.push(part);
-      return part;
-    },
+    push: (part) => inner.push(part),
+    hasToolCall: () => inner.hasToolCall(),
     pushUsage: (value) => {
       usage = {
         inputOther: value.inputOther ?? usage?.inputOther ?? 0,
@@ -695,6 +694,7 @@ export function createTurnMachine(
             ],
           },
           'turn.steer': {
+            guard: ({ context }) => !context.accumulator.hasToolCall(),
             target: 'draining',
             actions: [
               ({ context }) => {

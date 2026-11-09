@@ -123,7 +123,7 @@ import {
   type PromptGateVerdict,
 } from './machine';
 
-export type LoopInterruptReason = 'aborted' | 'max_steps' | 'error';
+export type LoopInterruptReason = 'aborted' | 'max_steps' | 'error' | 'steered';
 
 export const loopLastRequestIdKey = defineState<string | undefined>(
   'loop.lastRequestId',
@@ -384,7 +384,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (
       options?.steerIfActive === true &&
       this.active !== undefined &&
-      this.active.prompt.tracked &&
       this.engine !== undefined
     ) {
       this.machineEngine().steer(id);
@@ -398,7 +397,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       throw new Error2(ErrorCodes.REQUEST_INVALID, 'prompt_ids must not be empty');
     }
     const active = this.active;
-    if (active === undefined || !active.prompt.tracked) {
+    if (active === undefined) {
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'no active prompt to steer into');
     }
     const engine = this.machineEngine();
@@ -1050,7 +1049,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         this.closeFailedMachineStep(turn, current, 'interrupted');
         turn.current = undefined;
         turn.interruptStep = undefined;
-        this.emitStepInterrupted(turn.id, current.number, 'aborted');
+        this.emitStepInterrupted(turn.id, current.number, 'steered');
       }
       turn.steerInterruptStep = undefined;
     }
