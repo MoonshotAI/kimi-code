@@ -19,6 +19,7 @@ import {
   LLM_NOT_SET_MESSAGE,
 } from '../constant/kimi-tui';
 import { isKeyRelease, Key, matchesKey, TuiAltScreen } from '@moonshot-ai/pi-tui';
+import { normalizeCapsLockedCtrl } from '../components/editor/custom-editor';
 import { MEDIA_STAGING_TTL_SECONDS } from '../constant/media';
 import { formatErrorMessage } from '../utils/event-payload';
 import type {
@@ -438,9 +439,11 @@ export class EditorKeyboardController {
   }
 
   private handleSelectionCopyKey(ui: TuiAltScreen, data: string): { consume: true } | undefined {
-    if (isKeyRelease(data) || !SELECTION_COPY_KEYS.some((key) => matchesKey(data, key))) return undefined;
+    const key = normalizeCapsLockedCtrl(data);
+    if (isKeyRelease(key) || !SELECTION_COPY_KEYS.some((copyKey) => matchesKey(key, copyKey))) return undefined;
     if (!ui.hasActiveSelection()) return undefined;
     this.clearPendingExit();
+    this.clearPendingUndoEsc();
     // The copy reads the selection before its first await, so clearing it
     // right away is safe and leaves the next Ctrl+C free to interrupt.
     void ui.copyActiveSelectionToClipboard();

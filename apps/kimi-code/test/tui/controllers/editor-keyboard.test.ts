@@ -755,6 +755,7 @@ describe('EditorKeyboardController fullscreen selection copy', () => {
   it.each([
     ['Ctrl+C', '\u0003'],
     ['Ctrl+C under the kitty protocol', '\u001B[99;5u'],
+    ['Ctrl+C with Caps Lock on', '\u001B[67;69u'],
     ['Ctrl+Shift+C', '\u001B[99;6u'],
     ['Cmd+C', '\u001B[99;9u'],
   ])('copies the selection on %s, clears it, and swallows the key', async (_name, key) => {
@@ -807,6 +808,17 @@ describe('EditorKeyboardController fullscreen selection copy', () => {
     onCtrlC();
 
     expect(harness.stop).not.toHaveBeenCalled();
+    ui.stop();
+  });
+
+  it('breaks a pending double-Esc so the next Esc does not open the undo selector', async () => {
+    const { harness, ui, vt } = await mountSelectedTranscript();
+
+    pressEscape(harness.editor);
+    vt.sendInput('\u0003');
+    pressEscape(harness.editor);
+
+    expect(harness.openUndoSelector).not.toHaveBeenCalled();
     ui.stop();
   });
 
