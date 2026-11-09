@@ -190,7 +190,7 @@ kimi
 | `KIMI_MODEL_THINKING_KEEP` | 保留思考透传；`kimi` 以 `thinking.keep` 发送，`anthropic` 以 `clear_thinking_20251015` 编辑发送；覆盖 `[thinking] keep` | API 接受的值，如 `all`；传入关值（`false`/`0`/`no`/`off`/`none`/`null`）可禁用 |
 | `KIMI_CODE_LLM_HEADERS_TIMEOUT_MS` | `openai` / `openai-responses` / `anthropic` 协议的 LLM 请求等待响应头（首字节）的最长时间（毫秒），替代 HTTP 客户端默认的 300 秒响应头超时——长时间非流式 thinking 可调大；未设置保持默认；SDK 自身的总请求超时（默认 10 分钟）仍对单次尝试生效；`google-genai` 不支持（其 SDK 没有 dispatcher 配置项）；SOCKS 代理下不生效（请求仍走代理） | 正整数，不超过 2147483647；非法值会使请求失败 |
 | `KIMI_CODE_NO_AUTO_UPDATE` | 完全禁用更新预检：不检查、不后台安装、不提示。同时兼容旧名 `KIMI_CLI_NO_AUTO_UPDATE` | 真值：`1`/`true`/`yes`/`on` |
-| `KIMI_CODE_CLIPBOARD_OSC52` | 复制时总会再通过 OSC 52 转义序列交给终端，SSH 和 mosh 会话中本来就是这样。适用于远程连接没有设置 SSH 环境变量的情况（比如重新 attach 的 tmux 会话），或者没装 `wl-copy`、`xclip` 或 `xsel`、但终端支持 OSC 52 的 Linux 桌面。在 tmux 里，需要在 `~/.tmux.conf` 中设置 `set -g set-clipboard on` 或 `set -g allow-passthrough on`，转义序列才能到达终端 | `1` 表示启用 |
+| `KIMI_CODE_CLIPBOARD_OSC52` | 复制时总是同时通过 OSC 52 交给终端，适用于远程会话中复制不生效的情况。在 tmux 中还需设置 `set -g set-clipboard on` | `1` 表示启用 |
 | `KIMI_DISABLE_CRON` | 禁用定时任务工具（`CronCreate` 拒绝新计划，已有任务不触发） | `1` 表示禁用 |
 
 `KIMI_CODE_INFINITE_RETRY`、`KIMI_CODE_IDENTITY_*` 和 `KIMI_CODE_BUILTIN_PRODUCT_SKILLS` 这几个变量由 `agent-core-v2` 引擎读取。
@@ -218,7 +218,6 @@ CLI 还会读取一些标准系统变量来检测运行环境，不会修改它�
 - `CI`：非空且非 `"0"` 时关闭主题检测，回退深色主题
 - `TERM_PROGRAM`、`TERM`、`TMUX`：检测终端特性和通知支持
 - `DISPLAY`、`WAYLAND_DISPLAY`、`XDG_SESSION_TYPE`：检测 Linux 图形会话（用于剪贴板和图片功能）
-- `SSH_CONNECTION`、`SSH_CLIENT`、`MOSH_CONNECTION`：检测远程会话，复制的文本会同时通过 OSC 52 交给终端
 - `WSL_DISTRO_NAME`、`WSLENV`：检测 WSL，用于剪贴板 PowerShell 桥接
 - `LOCALAPPDATA`：Windows 上探测 Git Bash 安装路径时作为 fallback 使用
 

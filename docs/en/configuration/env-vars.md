@@ -190,7 +190,7 @@ Switches that control the behavior of subsystems such as telemetry, background t
 | `KIMI_MODEL_THINKING_KEEP` | Preserved-thinking passthrough: `thinking.keep` on `kimi`, a `clear_thinking_20251015` edit on `anthropic`; overrides `[thinking] keep` | A value the API accepts, e.g. `all`; an off-value (`false`/`0`/`no`/`off`/`none`/`null`) disables it |
 | `KIMI_CODE_LLM_HEADERS_TIMEOUT_MS` | Max time (ms) an LLM request on the `openai` / `openai-responses` / `anthropic` protocols may wait for the response headers (first byte), replacing the HTTP client's default 300 s headers timeout — raise it for long non-streaming thinking; unset keeps the default; the SDK's own total request timeout (default 10 minutes) still caps each attempt; not supported for `google-genai` (its SDK exposes no dispatcher option) or behind a SOCKS proxy (requests still go through the proxy) | Positive integer no greater than 2147483647; invalid values fail the request |
 | `KIMI_CODE_NO_AUTO_UPDATE` | Fully disable the update preflight: no check, background install, or prompt. Legacy alias `KIMI_CLI_NO_AUTO_UPDATE` also honored | Truthy: `1`/`true`/`yes`/`on` |
-| `KIMI_CODE_CLIPBOARD_OSC52` | Always also copy through the terminal with the OSC 52 escape sequence, as Kimi Code already does in SSH and mosh sessions. Use it when a remote connection sets no SSH variables (for example a re-attached tmux session), or on a Linux desktop without `wl-copy`, `xclip`, or `xsel` whose terminal supports OSC 52. Inside tmux, the sequence reaches your terminal only with `set -g set-clipboard on` or `set -g allow-passthrough on` in `~/.tmux.conf` | `1` to enable |
+| `KIMI_CODE_CLIPBOARD_OSC52` | Always also copy through the terminal with OSC 52; use it when copying does not work in a remote session. Inside tmux, also set `set -g set-clipboard on` | `1` to enable |
 | `KIMI_DISABLE_CRON` | Disable the scheduled-task tool (`CronCreate` rejects new schedules; existing tasks do not fire) | `1` to disable |
 
 The `KIMI_CODE_INFINITE_RETRY`, `KIMI_CODE_IDENTITY_*`, and `KIMI_CODE_BUILTIN_PRODUCT_SKILLS` variables are read by the `agent-core-v2` engine.
@@ -218,7 +218,6 @@ The CLI also reads several standard system variables to detect the runtime envir
 - `CI`: when non-empty and not `"0"`, disables theme detection and falls back to the dark theme
 - `TERM_PROGRAM`, `TERM`, `TMUX`: detect terminal features and notification support
 - `DISPLAY`, `WAYLAND_DISPLAY`, `XDG_SESSION_TYPE`: detect Linux graphical sessions (for clipboard and image features)
-- `SSH_CONNECTION`, `SSH_CLIENT`, `MOSH_CONNECTION`: detect remote sessions, where copied text also goes to the terminal through OSC 52
 - `WSL_DISTRO_NAME`, `WSLENV`: detect WSL for the clipboard PowerShell bridge
 - `LOCALAPPDATA`: used on Windows as a fallback when probing for the Git Bash installation path
 
