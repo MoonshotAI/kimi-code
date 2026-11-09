@@ -25,11 +25,18 @@ export class AgentToolPolicyService extends Disposable implements IAgentToolPoli
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
   ) {
     super();
+    this.config.assertValid(TOOLS_SECTION);
     this.globalPolicy = this.config.get<ToolsConfig | undefined>(TOOLS_SECTION);
     this._register(
       this.config.onDidSectionChange((event) => {
         if (event.domain !== TOOLS_SECTION) return;
-        this.globalPolicy = this.config.get<ToolsConfig | undefined>(TOOLS_SECTION);
+        this.applyToolsSection(event.value, event.source);
+      }),
+    );
+    this._register(
+      this.config.onDidChangeConfiguration((event) => {
+        if (event.domain !== TOOLS_SECTION) return;
+        this.applyToolsSection(event.value, event.source);
       }),
     );
     this._register(
@@ -43,6 +50,21 @@ export class AgentToolPolicyService extends Disposable implements IAgentToolPoli
           : `Tool "${name}" is disabled by the active tool policy`;
       }),
     );
+  }
+
+  private applyToolsSection(fallback: unknown, source: string): void {
+    try {
+      this.config.assertValid(TOOLS_SECTION);
+      this.globalPolicy = this.config.get<ToolsConfig | undefined>(TOOLS_SECTION);
+    } catch {
+      if (source === 'set') {
+        this.globalPolicy = fallback as ToolsConfig | undefined;
+        return;
+      }
+      if (fallback !== undefined) {
+        this.globalPolicy = fallback as ToolsConfig;
+      }
+    }
   }
 
   isToolActive(name: string, source: ToolSource = 'builtin'): boolean {
