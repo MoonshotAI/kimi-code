@@ -317,6 +317,8 @@ export interface PreviewChoicePickerOptions extends ChoicePickerOptions {
   readonly layout?: DockLayout;
 }
 
+const PREVIEW_LABEL = [' Preview', ''] as const;
+
 export class PreviewChoicePickerComponent extends DockSection implements Focusable {
   private readonly picker: ChoicePickerComponent;
 
@@ -355,9 +357,12 @@ export class PreviewChoicePickerComponent extends DockSection implements Focusab
   protected renderPart(part: DockPart, width: number): string[] {
     switch (part) {
       case 'head':
-        return this.picker.renderHead(width, this.bodyOverflows(width) ? ' · shift+↑/↓ scroll' : '');
+        return [
+          ...this.picker.renderHead(width, this.bodyOverflows(width) ? ' · shift+↑/↓ scroll' : ''),
+          ...this.finishLines(PREVIEW_LABEL.map((line) => currentTheme.fg('textMuted', line)), width),
+        ];
       case 'body':
-        return this.renderPreview(width);
+        return this.finishLines(this.previewLines(width), width);
       case 'foot':
         return this.picker.renderFoot(width);
     }
@@ -365,6 +370,10 @@ export class PreviewChoicePickerComponent extends DockSection implements Focusab
 
   protected override handlePartMouse(part: DockPart, event: TuiMouseEvent): TuiMouseEventResult | undefined {
     if (event.type === 'wheel' && part === 'body') return undefined;
+    if (event.type === 'wheel' && part === 'head' && event.y >= event.height - PREVIEW_LABEL.length) {
+      this.scrollBody(event.wheelDelta ?? 0);
+      return { handled: true };
+    }
     if (event.type === 'wheel' || part === 'head') {
       return this.showingNewChoiceFromTop(() => this.picker.handleMouse(event));
     }
@@ -381,19 +390,17 @@ export class PreviewChoicePickerComponent extends DockSection implements Focusab
     return result;
   }
 
-  private renderPreview(width: number): string[] {
+  private previewLines(width: number): string[] {
     const { preview, options } = this.opts;
     const tallestRows = Math.max(0, ...options.map((option) => preview.render(option.value, width).length));
     const value = this.picker.selectedValue();
     const shown = value === undefined ? [] : preview.render(value, width);
-    const lines = [
-      currentTheme.fg('textMuted', ' Preview'),
-      '',
-      ...shown,
-      ...Array.from({ length: tallestRows - shown.length }, () => ''),
-      '',
-    ].map((line) => truncateToWidth(line, width));
-    return this.focused ? lines : lines.map((line) => currentTheme.fade(line));
+    return [...shown, ...Array.from({ length: tallestRows - shown.length }, () => ''), ''];
+  }
+
+  private finishLines(lines: readonly string[], width: number): string[] {
+    const finished = lines.map((line) => truncateToWidth(line, width));
+    return this.focused ? finished : finished.map((line) => currentTheme.fade(line));
   }
 }
 

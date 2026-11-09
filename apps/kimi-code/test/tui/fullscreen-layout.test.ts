@@ -1467,19 +1467,29 @@ describe('fullscreen layout', () => {
     expect(rows).toContain('↑↓ navigate · Enter select · Esc cancel · shift+↑/↓ scroll');
     const frame = borders();
     expect(frame).toHaveLength(2);
+    const bottom = frame[1] ?? rows.length;
     const label = rows.indexOf('Preview');
     expect(label).toBeGreaterThan(rows.indexOf('Detailed'));
-    expect(rows.slice(label + 1, label + 3)).toEqual(['', summary]);
+    const content = label + 2;
+    expect(rows.slice(label, content + 1)).toEqual(['Preview', '', summary]);
+    const top = rows.slice(content, bottom);
 
     vt.sendInput('\u001B[1;2B');
     await vt.waitForRender();
     rows = panel();
-    expect(rows).not.toContain('Preview');
-    expect(rows.slice(label, label + 2)).toEqual(['', summary]);
+    expect(rows.slice(label, content)).toEqual(['Preview', '']);
+    expect(rows.slice(content, bottom - 1)).toEqual(top.slice(1));
+    expect(rows).not.toContain(summary);
 
-    vt.sendInput(`\u001B[<65;5;${String(label + 2)}M`);
+    vt.sendInput('\u001B[1;2A');
     await vt.waitForRender();
-    expect(panel().indexOf(summary)).toBeLessThan(label + 1);
+    expect(panel().slice(label, content + 1)).toEqual(['Preview', '', summary]);
+
+    vt.sendInput(`\u001B[<65;5;${String(label + 1)}M`);
+    await vt.waitForRender();
+    rows = panel();
+    expect(rows.slice(label, content)).toEqual(['Preview', '']);
+    expect(rows).not.toContain(summary);
 
     const transcriptTop = (state.ui as TuiAltScreen).viewportTop;
     vt.sendInput(`\u001B[<64;5;${String(frame[1]! + 1)}M`);
@@ -1490,7 +1500,7 @@ describe('fullscreen layout', () => {
     await vt.waitForRender();
     rows = panel();
     expect(rows).toContain('❯ Balanced');
-    expect(rows[label]).toBe('Preview');
+    expect(rows.slice(label, content + 1)).toEqual(['Preview', '', 'Thought for 3s, read 1 file']);
     expect(borders()).toEqual(frame);
   });
 
