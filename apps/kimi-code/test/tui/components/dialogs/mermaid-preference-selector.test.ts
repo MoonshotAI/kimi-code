@@ -1,4 +1,5 @@
 import { visibleWidth } from '@moonshot-ai/pi-tui';
+import chalk from 'chalk';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { MermaidPreferenceSelectorComponent } from '#/tui/components/dialogs/mermaid-preference-selector';
@@ -8,6 +9,7 @@ import {
   ToolCallDensitySelectorComponent,
 } from '#/tui/components/dialogs/settings-selector';
 import { TranscriptContainer } from '#/tui/components/messages/transcript-container';
+import { currentTheme, darkColors, lightColors } from '#/tui/theme';
 
 const ANSI = /\[[0-9;]*m/g;
 const strip = (s: string): string => s.replaceAll(ANSI, '');
@@ -88,6 +90,29 @@ describe('transcript display selectors', () => {
     picker.handleInput('\u001B[B');
     picker.handleInput('\r');
     expect(onSelect).toHaveBeenCalledWith('detailed');
+  });
+
+  it('repaints an open preview when the palette changes', () => {
+    const level = chalk.level;
+    const palette = currentTheme.palette;
+    onTestFinished(() => {
+      chalk.level = level;
+      currentTheme.setPalette(palette);
+    });
+    chalk.level = 3;
+    const open = (): ToolCallDensitySelectorComponent => new ToolCallDensitySelectorComponent({
+      current: { toolCallDensity: 'compact', thinking: 'grouped' },
+      onSelect: () => {},
+      onCancel: () => {},
+    });
+    currentTheme.setPalette(darkColors);
+    const picker = open();
+    const dark = picker.render(100);
+
+    currentTheme.setPalette(lightColors);
+    const light = picker.render(100);
+    expect(light).not.toEqual(dark);
+    expect(light).toEqual(open().render(100));
   });
 
   it('marks no tool call row as current while the file holds ungrouped', () => {

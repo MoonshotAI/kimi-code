@@ -4,6 +4,7 @@ import { ThinkingComponent } from '#/tui/components/messages/thinking';
 import { ToolCallComponent } from '#/tui/components/messages/tool-call';
 import { TranscriptContainer } from '#/tui/components/messages/transcript-container';
 import type { TranscriptConfig } from '#/tui/config';
+import { currentTheme, type ColorPalette } from '#/tui/theme';
 import { hasDispose } from '#/tui/utils/component-capabilities';
 
 const SAMPLE_FILE = 'src/app.ts';
@@ -34,7 +35,7 @@ class SampleTranscript {
     requestAnimationFrame: () => 0,
     cancelAnimationFrame() {},
   });
-  private rendered: { readonly width: number; readonly lines: readonly string[] } | undefined;
+  private rendered: { readonly width: number; readonly palette: ColorPalette; readonly lines: readonly string[] } | undefined;
 
   constructor(transcript: TranscriptConfig) {
     this.container.setPresentationOptions({ ...transcript, fullscreen: true });
@@ -42,9 +43,11 @@ class SampleTranscript {
   }
 
   render(width: number): readonly string[] {
+    const { palette } = currentTheme;
+    if (this.rendered?.palette !== palette) this.invalidate();
     if (this.rendered?.width !== width) {
       const lines = this.container.render(width);
-      this.rendered = { width, lines: lines[0]?.trim() === '' ? lines.slice(1) : lines };
+      this.rendered = { width, palette, lines: lines[0]?.trim() === '' ? lines.slice(1) : lines };
     }
     return this.rendered.lines;
   }
