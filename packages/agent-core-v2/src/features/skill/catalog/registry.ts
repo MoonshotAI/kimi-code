@@ -116,6 +116,9 @@ export class InMemorySkillCatalog implements SkillCatalog {
     );
     if (listing.length > 0) {
       lines.push(listing);
+      if (this.roots.length > 0) {
+        lines.push('### Skill roots', ...this.roots.map((root) => `- \`${root}\``));
+      }
     }
     return lines.length === 1 ? '' : lines.join('\n');
   }

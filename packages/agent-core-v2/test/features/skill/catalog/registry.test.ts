@@ -130,6 +130,18 @@ describe('InMemorySkillCatalog model skill listing', () => {
     expect(rendered).not.toContain('sub-step');
   });
 
+  it('lists skill roots after the skills', () => {
+    const registry = makeRegistry([makeSkill('review', 'user')]);
+    registry.addRoots(['/tmp/project/.agents/skills', '/tmp/user/skills']);
+
+    const rendered = registry.getModelSkillListing();
+    const rootsIdx = rendered.indexOf('### Skill roots');
+
+    expect(rootsIdx).toBeGreaterThan(rendered.indexOf('- review: desc'));
+    expect(rendered.slice(rootsIdx)).toContain('- `/tmp/project/.agents/skills`');
+    expect(rendered.slice(rootsIdx)).toContain('- `/tmp/user/skills`');
+  });
+
   it('returns an empty string when no skills are model-invocable', () => {
     const registry = makeRegistry([
       makeSkill('private', 'user', 'Private', undefined, {
@@ -137,6 +149,7 @@ describe('InMemorySkillCatalog model skill listing', () => {
       }),
       makeSkill('flow-only', 'user', 'Flow', undefined, { type: 'flow' }),
     ]);
+    registry.addRoots(['/tmp/user/skills']);
 
     expect(registry.getModelSkillListing()).toBe('');
   });

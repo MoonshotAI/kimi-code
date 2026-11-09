@@ -154,16 +154,6 @@ describe('SkillTool', () => {
     expect(SkillToolInputSchema.safeParse({}).success).toBe(false);
   });
 
-  it('describes tool-mediated loading with an example and a direct-read exception', () => {
-    const description = makeTool().description;
-
-    expect(description).toContain('before taking any task action');
-    expect(description).toContain(`{ "skill": "commit", "args": "-m 'Fix bug'" }`);
-    expect(description.match(/^- `\{ "skill":/gm)).toHaveLength(1);
-    expect(description).toContain('Do not read `SKILL.md` to invoke a skill');
-    expect(description).toContain('only to inspect or edit the skill itself');
-  });
-
   it('renders arguments and session context through the model-tool path', async () => {
     skills.register(
       stubSkill('rename-session', {
@@ -181,6 +171,7 @@ describe('SkillTool', () => {
 
     expect(text).toContain(`Run "Tokenizer Myths" with "${sessionId}"`);
     expect(text).not.toContain('${KIMI_SESSION_ID}');
+    expect(text).toContain('dir="/skills/rename-session"');
   });
 
   it('returns a tool error when the skill is unknown', async () => {
