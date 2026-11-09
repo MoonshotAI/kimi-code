@@ -9,13 +9,35 @@ export const promptPredictionInputSchema = z.object({
 
 export const promptPredictionCancelInputSchema = z.string().min(1);
 
+export const promptPredictionCancelReasonSchema = z.enum([
+  'input',
+  'escape',
+  'new_turn',
+  'session',
+  'dialog',
+  'queue',
+  'submit',
+  'shutdown',
+  'disconnect',
+  'activity_turn_started',
+  'activity_turn_ended',
+  'activity_background',
+  'activity_interaction',
+  'activity_agent_lifecycle',
+  'agent_will_close',
+  'agent_replaced',
+  'agent_closed',
+  'disposed',
+  'unspecified',
+]);
+
 export const sessionPromptPredictionContract = {
   predict: {
     input: z.tuple([promptPredictionInputSchema]),
     output: z.string().nullable(),
   },
   cancel: {
-    input: z.tuple([promptPredictionCancelInputSchema]),
+    input: z.tuple([promptPredictionCancelInputSchema, promptPredictionCancelReasonSchema.optional()]),
     output: z.boolean(),
   },
 } satisfies ServiceContract;

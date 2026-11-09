@@ -1,5 +1,6 @@
 import { Disposable } from '#/_base/di/lifecycle';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
+import { ILogService } from '#/_base/log/log';
 import { abortable, abortError, createDeadlineAbortSignal, type DeadlineAbortSignal } from '#/_base/utils/abort';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
@@ -8,7 +9,6 @@ import type { AgentLLMRequestFinish } from '#/agent/loop/requesterContract';
 import { turnKey } from '#/agent/loop/turnOps';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IFlagService } from '#/app/flag/flag';
 import type { PredictionGeneratedEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -16,7 +16,11 @@ import { IAgentPlanService } from '#/features/plan/plan';
 import { createUserMessage } from '#human/llm/message';
 import type { TokenUsage } from '#human/llm-requester/usage';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
-import { ISessionActivityView, type SessionActivityState } from '#/session/sessionActivity/sessionActivity';
+import {
+  ISessionActivityView,
+  type SessionActivityCause,
+  type SessionActivityState,
+} from '#/session/sessionActivity/sessionActivity';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 
 import {
@@ -27,6 +31,7 @@ import {
   PROMPT_PREDICTION_MAX_OUTPUT_TOKENS,
   PROMPT_PREDICTION_MAX_UNCACHED_INPUT_TOKENS,
   PROMPT_PREDICTION_TIMEOUT_MS,
+  type PromptPredictionCancelReason,
   type PromptPredictionInput,
 } from './promptPrediction';
 
@@ -40,6 +45,14 @@ type PredictionOutcome =
   | 'stale'
   | 'error';
 
+const ACTIVITY_CANCEL_REASONS = {
+  turn_started: 'activity_turn_started',
+  turn_ended: 'activity_turn_ended',
+  background: 'activity_background',
+  interaction: 'activity_interaction',
+  agent_lifecycle: 'activity_agent_lifecycle',
+} as const satisfies Record<SessionActivityCause, PromptPredictionCancelReason>;
+
 interface ActivePrediction {
   readonly predictionId: string;
   readonly expectedTurnId: number;
@@ -51,6 +64,8 @@ interface ActivePrediction {
   predictionChars?: number;
   usage?: TokenUsage;
   requestId?: string;
+  timing?: AgentLLMRequestFinish['timing'];
+  cancelReason?: PromptPredictionCancelReason;
 }
 
 interface PredictionScope {
@@ -59,7 +74,6 @@ interface PredictionScope {
   readonly context: IAgentContextMemoryService;
   readonly states: IAgentStateService;
   readonly plan: IAgentPlanService;
-  readonly tools: IAgentToolRegistryService;
 }
 
 export class SessionPromptPredictionService extends Disposable implements ISessionPromptPredictionService {
@@ -73,20 +87,23 @@ export class SessionPromptPredictionService extends Disposable implements ISessi
     @ISessionActivityView private readonly activity: ISessionActivityView,
     @ISessionUsageService private readonly usage: ISessionUsageService,
     @IFlagService private readonly flags: IFlagService,
+    @ILogService private readonly log: ILogService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {
     super();
-    this._register(this.activity.onDidChange(() => {
-      this.abortActive();
+    this._register(this.activity.onDidChange((event) => {
+      this.abortActive(ACTIVITY_CANCEL_REASONS[event.cause]);
     }));
     this._register(this.agents.onWillClose((agent) => {
-      if (agent.agentId === MAIN_AGENT_ID) this.abortActive();
+      if (agent.agentId === MAIN_AGENT_ID) this.abortActive('agent_will_close');
     }));
     this._register(this.agents.onDidCreateScope(({ handle }) => {
-      if (handle.id === MAIN_AGENT_ID && handle !== this.activeHandle) this.abortActive();
+      if (handle.id === MAIN_AGENT_ID && handle !== this.activeHandle) {
+        this.abortActive('agent_replaced');
+      }
     }));
     this._register(this.agents.onDidClose((agent) => {
-      if (agent.agentId === MAIN_AGENT_ID) this.abortActive();
+      if (agent.agentId === MAIN_AGENT_ID) this.abortActive('agent_closed');
     }));
   }
 
@@ -137,12 +154,6 @@ export class SessionPromptPredictionService extends Disposable implements ISessi
       const task = scope.loop.requester.start(
         {
           messages: [...contextSnapshot, createUserMessage(PROMPT_PREDICTION_INSTRUCTION)],
-          tools: scope.tools.list().map((tool) => ({
-            name: tool.name,
-            description: tool.description,
-            parameters: tool.parameters ?? {},
-            deferred: tool.disclosure === 'deferred' ? true : undefined,
-          })),
           maxOutputSize: PROMPT_PREDICTION_MAX_OUTPUT_TOKENS,
           source: {
             type: 'operation',
@@ -156,6 +167,7 @@ export class SessionPromptPredictionService extends Disposable implements ISessi
       const finish = await abortable(task.result, active.deadline.signal);
       active.usage = finish.usage;
       active.requestId = finish.requestId ?? task.trace.requestId;
+      active.timing = finish.timing;
       const prediction = predictionText(finish);
       if (prediction === null) {
         active.outcome = finish.message.toolCalls.length > 0 ? 'tool_call' : 'invalid';
@@ -184,22 +196,39 @@ export class SessionPromptPredictionService extends Disposable implements ISessi
         if (active.outcome === 'error' && active.deadline.signal.aborted) {
           active.outcome = active.deadline.timedOut() ? 'timeout' : 'cancelled';
         }
+        const inputTokens = active.usage === undefined
+          ? undefined
+          : active.usage.inputOther +
+            (active.usage.inputCacheRead ?? 0) +
+            active.usage.inputCacheCreation;
+        const cacheReadPct = inputTokens === undefined || inputTokens === 0
+          ? undefined
+          : Math.round(((active.usage?.inputCacheRead ?? 0) / inputTokens) * 10_000) / 100;
         const properties: PredictionGeneratedEvent = {
           prediction_id: active.predictionId,
           turn_id: active.expectedTurnId,
           status: active.outcome,
+          reason: active.outcome === 'cancelled'
+            ? active.cancelReason ?? 'unspecified'
+            : undefined,
           duration_ms: Date.now() - active.startedAt,
           prediction_chars: active.predictionChars,
-          input_tokens: active.usage === undefined
-            ? undefined
-            : active.usage.inputOther +
-              (active.usage.inputCacheRead ?? 0) +
-              active.usage.inputCacheCreation,
+          input_tokens: inputTokens,
+          input_other: active.usage?.inputOther,
           output_tokens: active.usage?.output,
           input_cache_read: active.usage?.inputCacheRead,
           input_cache_creation: active.usage?.inputCacheCreation,
+          cache_read_pct: cacheReadPct,
+          ttft_ms: active.timing?.firstTokenLatencyMs,
+          stream_duration_ms: active.timing?.streamDurationMs,
+          request_build_ms: active.timing?.requestBuildMs,
+          server_first_token_ms: active.timing?.serverFirstTokenMs,
+          server_decode_ms: active.timing?.serverDecodeMs,
+          client_consume_ms: active.timing?.clientConsumeMs,
+          client_blocked_ms: active.timing?.clientBlockedMs,
           request_id: active.requestId,
         };
+        this.log.info('prompt prediction finished', properties);
         this.telemetry.track2('prediction_generated', properties);
       }
       active.deadline.clear();
@@ -210,7 +239,7 @@ export class SessionPromptPredictionService extends Disposable implements ISessi
     }
   }
 
-  cancel(predictionId: string): boolean {
+  cancel(predictionId: string, reason: PromptPredictionCancelReason = 'unspecified'): boolean {
     const active = this.active;
     if (
       active === undefined ||
@@ -220,20 +249,22 @@ export class SessionPromptPredictionService extends Disposable implements ISessi
       return false;
     }
     active.outcome = 'cancelled';
-    active.controller.abort(abortError('Prompt prediction cancelled'));
+    active.cancelReason = reason;
+    active.controller.abort(abortError(`Prompt prediction cancelled: ${reason}`));
     return true;
   }
 
   override dispose(): void {
-    this.abortActive();
+    this.abortActive('disposed');
     super.dispose();
   }
 
-  private abortActive(): void {
+  private abortActive(reason: PromptPredictionCancelReason): void {
     const active = this.active;
     if (active === undefined || active.controller.signal.aborted) return;
     if (active.outcome !== 'generated') active.outcome = 'cancelled';
-    active.controller.abort(abortError('Prompt prediction lifecycle changed'));
+    active.cancelReason = reason;
+    active.controller.abort(abortError(`Prompt prediction cancelled: ${reason}`));
   }
 
   private resolveScope(): PredictionScope | undefined {
@@ -246,7 +277,6 @@ export class SessionPromptPredictionService extends Disposable implements ISessi
         context: handle.accessor.get(IAgentContextMemoryService),
         states: handle.accessor.get(IAgentStateService),
         plan: handle.accessor.get(IAgentPlanService),
-        tools: handle.accessor.get(IAgentToolRegistryService),
       };
     } catch {
       return undefined;

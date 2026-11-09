@@ -249,6 +249,7 @@ import {
 } from '../src/contract/session/question.js';
 import {
   promptPredictionCancelInputSchema,
+  promptPredictionCancelReasonSchema,
   promptPredictionInputSchema,
   sessionPromptPredictionContract,
 } from '../src/contract/session/promptPrediction.js';
@@ -616,6 +617,10 @@ const _promptPredictionOutput: AssertWire<
 const _cancelPromptPredictionInput: AssertWire<
   typeof promptPredictionCancelInputSchema,
   Parameters<ISessionPromptPredictionService['cancel']>[0]
+> = true;
+const _cancelPromptPredictionReason: AssertWire<
+  typeof promptPredictionCancelReasonSchema,
+  NonNullable<Parameters<ISessionPromptPredictionService['cancel']>[1]>
 > = true;
 const _cancelPromptPredictionOutput: AssertWire<
   (typeof sessionPromptPredictionContract)['cancel']['output'],

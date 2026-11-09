@@ -72,7 +72,7 @@ describe('PromptPredictionController', () => {
       predictionId: string;
     };
     expect(controller.handlePreInput(String.fromCodePoint(0x1b))).toBe(true);
-    expect(session.cancelPromptPrediction).toHaveBeenCalledWith(cancelInput.predictionId);
+    expect(session.cancelPromptPrediction).toHaveBeenCalledWith(cancelInput.predictionId, 'escape');
     resolveCancelled('晚到的预测');
     await Promise.resolve();
     expect(editor.getPromptPrediction()).toBeUndefined();

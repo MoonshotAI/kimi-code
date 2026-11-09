@@ -239,7 +239,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
         predictionId: 'prediction-1',
         expectedTurnId: 0,
       })).resolves.toBeNull();
-      await expect(session.cancelPromptPrediction('prediction-1')).resolves.toBe(false);
+      await expect(session.cancelPromptPrediction('prediction-1', 'escape')).resolves.toBe(false);
     } finally {
       await harness.close();
     }

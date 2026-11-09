@@ -1,3 +1,4 @@
+import type { PromptPredictionCancelReason } from '@moonshot-ai/agent-core-v2/features/promptPrediction/promptPrediction';
 import type { SwarmModeTrigger } from '@moonshot-ai/agent-core-v2/features/swarm/agent/swarm';
 
 import type { AgentContextData } from '#/context';
@@ -271,9 +272,12 @@ export class Session {
     return this.rpc.predictNextPrompt({ sessionId: this.id, ...input });
   }
 
-  async cancelPromptPrediction(predictionId: string): Promise<boolean> {
+  async cancelPromptPrediction(
+    predictionId: string,
+    reason?: PromptPredictionCancelReason,
+  ): Promise<boolean> {
     this.ensureOpen();
-    return this.rpc.cancelPromptPrediction({ sessionId: this.id, predictionId });
+    return this.rpc.cancelPromptPrediction({ sessionId: this.id, predictionId, reason });
   }
 
   async cancel(): Promise<void> {

@@ -117,6 +117,27 @@ export type PredictPromptResponse = z.infer<typeof predictPromptResponseSchema>;
 
 export const cancelPromptPredictionRequestSchema = z.object({
   prediction_id: z.string().min(1),
+  reason: z.enum([
+    'input',
+    'escape',
+    'new_turn',
+    'session',
+    'dialog',
+    'queue',
+    'submit',
+    'shutdown',
+    'disconnect',
+    'activity_turn_started',
+    'activity_turn_ended',
+    'activity_background',
+    'activity_interaction',
+    'activity_agent_lifecycle',
+    'agent_will_close',
+    'agent_replaced',
+    'agent_closed',
+    'disposed',
+    'unspecified',
+  ]).optional(),
 });
 export type CancelPromptPredictionRequest = z.infer<typeof cancelPromptPredictionRequestSchema>;
 

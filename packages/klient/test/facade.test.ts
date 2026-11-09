@@ -100,7 +100,7 @@ describe('facade routing', () => {
       expectedTurnId: 4,
     })).resolves.toBe('next prompt');
     channel.results.set('sessionPromptPredictionService.cancel', true);
-    await expect(klient.session('s1').cancelPromptPrediction('prediction-1')).resolves.toBe(true);
+    await expect(klient.session('s1').cancelPromptPrediction('prediction-1', 'escape')).resolves.toBe(true);
     expect(channel.calls.slice(3)).toEqual([
       {
         scope: { sessionId: 's1' },
@@ -112,7 +112,7 @@ describe('facade routing', () => {
         scope: { sessionId: 's1' },
         service: 'sessionPromptPredictionService',
         method: 'cancel',
-        args: ['prediction-1'],
+        args: ['prediction-1', 'escape'],
       },
     ]);
   });

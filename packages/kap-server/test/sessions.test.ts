@@ -1645,7 +1645,7 @@ describe('server-v2 /api/v1/sessions', () => {
     } as never).catch(() => undefined);
     await vi.waitFor(() => expect(predict).toHaveBeenCalledOnce());
     abortController.abort();
-    await vi.waitFor(() => expect(cancel).toHaveBeenCalledWith('disconnect-me'));
+    await vi.waitFor(() => expect(cancel).toHaveBeenCalledWith('disconnect-me', 'disconnect'));
     releasePrediction();
     await request;
     await predictionSettled;

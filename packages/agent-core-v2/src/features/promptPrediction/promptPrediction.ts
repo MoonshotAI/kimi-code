@@ -24,6 +24,30 @@ export const promptPredictionFlag: FlagDefinitionInput = {
 
 registerFlagDefinition(promptPredictionFlag);
 
+export const PROMPT_PREDICTION_CANCEL_REASONS = [
+  'input',
+  'escape',
+  'new_turn',
+  'session',
+  'dialog',
+  'queue',
+  'submit',
+  'shutdown',
+  'disconnect',
+  'activity_turn_started',
+  'activity_turn_ended',
+  'activity_background',
+  'activity_interaction',
+  'activity_agent_lifecycle',
+  'agent_will_close',
+  'agent_replaced',
+  'agent_closed',
+  'disposed',
+  'unspecified',
+] as const;
+
+export type PromptPredictionCancelReason = typeof PROMPT_PREDICTION_CANCEL_REASONS[number];
+
 export interface PromptPredictionInput {
   readonly predictionId: string;
   readonly expectedTurnId: number;
@@ -34,7 +58,7 @@ export interface ISessionPromptPredictionService {
 
   predict(input: PromptPredictionInput): Promise<string | null>;
 
-  cancel(predictionId: string): boolean;
+  cancel(predictionId: string, reason?: PromptPredictionCancelReason): boolean;
 }
 
 export const ISessionPromptPredictionService: ServiceIdentifier<ISessionPromptPredictionService> =

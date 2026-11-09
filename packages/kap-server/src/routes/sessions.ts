@@ -1092,7 +1092,7 @@ async function predictPromptAction(
   const service = session.accessor.get(ISessionPromptPredictionService);
   const disconnected = (): boolean => req.raw?.aborted === true || reply.raw?.destroyed === true;
   const onAborted = (): void => {
-    service.cancel(body.prediction_id);
+    service.cancel(body.prediction_id, 'disconnect');
   };
   req.raw?.once('aborted', onAborted);
   reply.raw?.once('close', onAborted);
@@ -1121,7 +1121,7 @@ async function cancelPromptPredictionAction(
   }
   const cancelled = session.accessor
     .get(ISessionPromptPredictionService)
-    .cancel(body.prediction_id);
+    .cancel(body.prediction_id, body.reason);
   reply.send(okEnvelope(cancelPromptPredictionResponseSchema.parse({ cancelled }), req.id));
 }
 

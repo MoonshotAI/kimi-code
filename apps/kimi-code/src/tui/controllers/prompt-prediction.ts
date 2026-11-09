@@ -107,7 +107,7 @@ export class PromptPredictionController {
       this.suppressNextChange = false;
       return;
     }
-    if (this.active !== undefined) this.cancelActive();
+    if (this.active !== undefined) this.cancelActive('input');
     if (this.suggestion?.accepted === false) this.dismiss('input');
   }
 
@@ -127,7 +127,7 @@ export class PromptPredictionController {
         this.dismiss('submit');
       }
     }
-    if (this.active !== undefined) this.cancelActive();
+    if (this.active !== undefined) this.cancelActive('submit');
   }
 
   notifyDisplaced(): void {
@@ -201,7 +201,7 @@ export class PromptPredictionController {
   }
 
   private dismiss(reason: DismissReason): void {
-    if (this.active !== undefined) this.cancelActive();
+    if (this.active !== undefined) this.cancelActive(reason);
     const suggestion = this.suggestion;
     this.suggestion = undefined;
     this.host.state.editor.setPromptPrediction(undefined);
@@ -217,10 +217,10 @@ export class PromptPredictionController {
     });
   }
 
-  private cancelActive(): void {
+  private cancelActive(reason: DismissReason): void {
     const active = this.active;
     if (active === undefined) return;
     this.active = undefined;
-    void active.session.cancelPromptPrediction(active.predictionId).catch(() => {});
+    void active.session.cancelPromptPrediction(active.predictionId, reason).catch(() => {});
   }
 }
