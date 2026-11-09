@@ -28,6 +28,7 @@ import {
   IEventDispatcher,
   IEventService,
   IEnvironmentService,
+  ISessionActivityView,
   ISessionManager,
   ISessionMetadata,
   ISessionTitleService,
@@ -2433,6 +2434,27 @@ describe('server-v2 /api/v1/sessions', () => {
     const running = await getJson<PageWire>('/api/v1/sessions?busy=true');
     expect(running.body.code).toBe(0);
     expect(running.body.data.items.some((s) => s.id === id)).toBe(false);
+  });
+
+  it('finds a busy session behind newer idle ones when paging by the busy query', async () => {
+    const cwd = home as string;
+    const busy = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const session = getLiveSessionById((server as RunningServer).core.accessor, busy.body.data.id);
+    if (session === undefined) throw new Error('expected live session');
+    const activity = session.accessor.get(ISessionActivityView);
+    const state = vi
+      .spyOn(activity, 'state')
+      .mockReturnValue({ ...activity.state(), busy: true });
+
+    try {
+      const page = await getJson<PageWire>('/api/v1/sessions?busy=true&page_size=1&include_archive=true');
+      expect(page.body.code).toBe(0);
+      expect(page.body.data.items.map((s) => s.id)).toEqual([busy.body.data.id]);
+      expect(page.body.data.has_more).toBe(false);
+    } finally {
+      state.mockRestore();
+    }
   });
 
   it('filters child sessions by the busy query', async () => {
