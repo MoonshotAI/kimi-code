@@ -46,6 +46,9 @@ export type LoopRecordedEvent =
       readonly type: 'content.part';
       readonly stepUuid: string;
       readonly part: ContentPart;
+      readonly block?: number;
+      readonly startedAt?: number;
+      readonly durationMs?: number;
       readonly uuid?: string;
       readonly turnId?: string;
       readonly step?: number;

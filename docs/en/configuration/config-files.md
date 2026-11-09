@@ -219,7 +219,6 @@ Constraints between the fields:
 - `default_model`: required when a `models` table is configured, and must be one of its keys.
 - `models`: values may be Chinese or English; an empty string lists the alias with no hint.
 - `default_effort` is section-wide: every spawn binds it regardless of the chosen pool entry. For per-entry efforts, leave it unset and use model variants (see below).
-- `primary` is a reserved alias and cannot be a pool key.
 
 Pool aliases reference the current `[models]` table: if a provider is later deleted or logged out, or its refreshed model list no longer contains an alias, session startup fails with a configuration error naming the broken alias. Fix or remove the entry to recover. The `[secondary_model]` section itself is never rewritten automatically.
 
@@ -600,7 +599,7 @@ MCP server declarations are configured in `~/.kimi-code/mcp.json` or the project
 
 Each entry is keyed by its environment id: at most 64 characters, no leading or trailing whitespace, and `local` and `default` are reserved words. Within one entry, `type` and `command` are mutually exclusive.
 
-Remote working directories must be absolute POSIX paths or Windows drive paths; relative paths and `~` are not expanded. See [Windows targets](../guides/remote-environment.md#windows-targets) for the Git Bash and launcher requirements.
+Remote working directories must be absolute POSIX paths or Windows drive paths; relative paths and `~` are not expanded. See [Windows target environments](../guides/remote-environment.md#windows-target-environments) for the Git Bash and launcher requirements.
 
 The optional top-level `default` names the environment a session binds to when creation does not specify one. It must reference a configured entry, and that entry must set `defaultCwd` — a binding pairs an environment with a working directory, so a default without one would dangle. Without a `default`, those sessions start on the `local` environment. A TUI `/new` does not use this default: it keeps the current environment. See [Remote environments](../guides/remote-environment.md).
 
@@ -610,7 +609,7 @@ The optional top-level `default` names the environment a session binds to when c
 | --- | --- | --- | --- |
 | `type` | `string` | Yes | `"ssh"` |
 | `host` | `string` | Yes | SSH host; spawned through the system `ssh`, so `~/.ssh/config` (user, port, key, `ProxyJump`, `ControlMaster`) applies |
-| `remoteBin` | `string` | No | Executor path on the target; defaults to `~/.kimi-code/bin/kimi`. Windows targets require a bare executable name on the target's `PATH`, such as `kimi`, instead of an absolute Windows path |
+| `remoteBin` | `string` | No | Path to `kimi` on the target; defaults to `~/.kimi-code/bin/kimi` on POSIX and `~/.kimi-code/bin/kimi.exe` on Windows. Supports absolute paths with spaces, `~/` paths under the target account's home, or bare names on the target's `PATH`, such as `kimi` |
 | `defaultCwd` | `string` | No | Working-directory prefill when binding a session; not validated locally |
 
 ### Docker entries
@@ -620,7 +619,7 @@ The optional top-level `default` names the environment a session binds to when c
 | `type` | `string` | Yes | `"docker"` |
 | `container` | `string` | Yes | Running container name or id; attached with `docker exec` |
 | `context` | `string` | No | Docker context (for example `orbstack`) |
-| `remoteBin` | `string` | No | Executor path inside the container; defaults to `~/.kimi-code/bin/kimi` under the container user's home. The launcher runs through `docker exec … sh -c`, so a leading `~` is expanded by the container's shell |
+| `remoteBin` | `string` | No | Path to `kimi` inside the container; defaults to `~/.kimi-code/bin/kimi` under the container user's home. The launcher runs through `docker exec … sh -c`, so a leading `~` is expanded by the container's shell |
 | `defaultCwd` | `string` | No | Working-directory prefill when binding a session |
 
 ### Command entries
@@ -632,7 +631,7 @@ The generic launcher form, for any environment the built-in launchers do not cov
 | `command` | `string` | Yes | Launcher executable: a name resolved against `PATH`, or an absolute path. A resolution landing inside the working directory is refused, so a project cannot shadow the launcher with a same-named binary |
 | `args` | `array<string>` | No | Launcher arguments that reach the target. When an argument already invokes `exec-server` (for example `--command "~/.kimi-code/bin/kimi exec-server"`), nothing is appended and the arguments run as written |
 | `env` | `table<string, string>` | No | Environment for the launcher process on your machine; never propagated into commands running on the target |
-| `remoteBin` | `string` | No | Executor path on the target, appended after `args`; defaults to `~/.kimi-code/bin/kimi`. Use a plain path without spaces or shell metacharacters. `~` only expands when the launcher runs the arguments through a shell on the target, as ssh does; launchers that pass arguments straight through, such as `kubectl exec` and `docker exec`, need an absolute path |
+| `remoteBin` | `string` | No | Path to `kimi` on the target, appended after `args`; defaults to `~/.kimi-code/bin/kimi`. Use a plain path without spaces or shell metacharacters. `~` only expands when the launcher runs the arguments through a shell on the target, as ssh does; launchers that pass arguments straight through, such as `kubectl exec` and `docker exec`, need an absolute path |
 | `defaultCwd` | `string` | No | Working-directory prefill when binding a session |
 
 ```toml
@@ -677,6 +676,8 @@ Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a c
 | `[notifications].enabled` | `boolean` | `true` | Whether desktop notifications are sent |
 | `[notifications].notification_condition` | `string` | `unfocused` | When to notify: `unfocused` (only when the terminal is not focused) or `always` |
 | `[upgrade].auto_install` | `boolean` | `true` | Whether new versions are installed automatically |
+| `[transcript.group].tools` | `string` | `auto` | Which tool calls fold into summary groups in `fullscreen` mode: `auto` folds every tool call except subagents and tools that ask or notify you, `explore` folds only reads, searches, and read-only commands such as `ls` or `git status`, `off` keeps every tool call as its own card; same as Tool call folding in `/settings`; no effect in `regular` mode |
+| `[transcript.group].group_thinking` | `boolean` | `true` | Whether finished thinking folds into summary groups in `fullscreen` mode; `false` shows a two-line preview of each thinking block instead; same as Thinking folding in `/settings`; no effect in `regular` mode |
 | `[status_line].items` | `string[]` | `[]` | Built-in slots on the first footer line and their order: `mode`, `goal`, `model`, `tasks`, `cwd`, `git`, `tips`; unknown ids are skipped with a warning |
 | `[status_line].command` | `string` | `""` | Custom status line command: its first stdout line replaces the footer, and a JSON snapshot is passed on stdin; capped at 300ms, throttled to once per second, failures fall back to the built-in layout |
 
@@ -705,6 +706,10 @@ notification_condition = "unfocused" # "unfocused" | "always"
 
 [upgrade]
 auto_install = true
+
+[transcript.group] # fullscreen mode only
+tools = "auto" # "auto" | "explore" | "off"
+group_thinking = true # false shows each thinking block as a two-line preview
 
 # [status_line]
 # items = ["mode", "goal", "model", "tasks", "cwd", "git", "tips"]

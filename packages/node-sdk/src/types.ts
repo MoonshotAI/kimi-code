@@ -56,7 +56,7 @@ export interface SessionEnvironmentsInfo {
 
 export type { RemoteEnvironmentEntry };
 
-export type { CapabilityStatus } from '@moonshot-ai/agent-core-v2/app/capability/types';
+export type { CapabilityInstallOptions, CapabilityStatus } from '@moonshot-ai/agent-core-v2/app/capability/types';
 
 export type {
   AgentReplayRecord,
@@ -129,6 +129,7 @@ export type {
   MarketplaceLocation,
   MarketplaceUpdateStatus,
   PluginMarketplace,
+  PluginClient,
   PluginMarketplaceClassification,
   PluginMarketplaceDistribution,
   PluginMarketplaceEntry,
@@ -238,6 +239,28 @@ export interface SuggestFilesResult {
   readonly truncated: boolean;
 }
 
+/** Git query against a workspace root, or a live session's working directory. */
+export interface GitQueryInput {
+  /** Query this live session's working directory, on the environment the session runs on. */
+  readonly sessionId?: string;
+}
+
+/** Working-tree summary of the repository containing the queried directory. */
+export interface GitStatusSummary {
+  /** Current branch; empty on a detached HEAD. */
+  readonly branch: string;
+  readonly dirty: boolean;
+  readonly ahead: number;
+  readonly behind: number;
+  /** Uncommitted line additions against HEAD. */
+  readonly additions: number;
+  /** Uncommitted line deletions against HEAD. */
+  readonly deletions: number;
+}
+
+/** Pull request of the current branch, as reported by `gh`. */
+export type { FsPullRequest as GitPullRequest } from '@moonshot-ai/agent-core-v2/app/git/git';
+
 /** Metadata of one upload in the engine's daemon file store. */
 export type { FileMeta } from '@moonshot-ai/agent-core-v2/app/file/fileService';
 
@@ -265,6 +288,7 @@ export type PromptInput = readonly PromptPart[];
 
 export interface PromptSkillActivation {
   readonly name: string;
+  readonly path?: string;
   readonly args?: string;
 }
 

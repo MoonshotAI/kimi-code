@@ -18,6 +18,7 @@ export interface InstalledRecord {
   readonly source: PluginSource;
   readonly origin?: PluginOrigin;
   readonly catalogId?: string;
+  readonly marketplaceSource?: string;
   readonly enabled: boolean;
   readonly installedAt: string;
   readonly updatedAt?: string;

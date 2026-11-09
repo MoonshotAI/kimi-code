@@ -4,7 +4,7 @@ import { unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
-import { ErrorCodes, log } from '@moonshot-ai/kimi-code-sdk';
+import { ErrorCodes, isKimiError, log } from '@moonshot-ai/kimi-code-sdk';
 import type {
   ApprovalRequest,
   ApprovalResponse,
@@ -36,14 +36,13 @@ import {
   Spacer,
   TuiAltScreen,
   TuiMainScreen,
-  type TuiMouseEventResult,
 } from '@moonshot-ai/pi-tui';
 import { resolve } from 'pathe';
 
 import type { CLIOptions } from '#/cli/options';
 import { MigrationScreenComponent, type MigrationScreenResult } from '#/migration/index';
 import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
-import { appendInputHistory, loadInputHistory } from '#/utils/history/input-history';
+import { appendInputHistory, inputHistoryEntryEquals, loadInputHistory, type InputHistoryEntry } from '#/utils/history/input-history';
 import { openUrl } from '#/utils/open-url';
 import { getInputHistoryFile } from '#/utils/paths';
 import { refreshModelSwitchConfirmConfig } from '#/utils/model-switch-confirm-config';
@@ -69,11 +68,13 @@ import {
   type SkillListSession,
 } from './commands';
 import * as slashCommands from './commands/dispatch';
-import { runQueuedModelSwitch } from './commands/config';
+import { resolveUserInput, skillVariantPathsForInput } from './commands/resolve';
+import { applyTranscriptPresentation, runQueuedModelSwitch } from './commands/config';
 import { promptSshPassword } from './commands/prompts';
 import { CacheHintController } from './controllers/cache-hint-controller';
 import { BannerComponent } from './components/chrome/banner';
 import { DeviceCodeBoxComponent } from './components/chrome/device-code-box';
+import type { FooterGitBinding } from './components/chrome/footer';
 import { GutterContainer } from './components/chrome/gutter-container';
 import { MoonLoader, type SpinnerStyle } from './components/chrome/moon-loader';
 import { WelcomeComponent } from './components/chrome/welcome';
@@ -114,12 +115,12 @@ import {
 import { StepSummaryComponent } from './components/messages/step-summary';
 import { ThinkingComponent } from './components/messages/thinking';
 import { ToolCallComponent } from './components/messages/tool-call';
+import { UserMessageComponent } from './components/messages/user-message';
 import {
-  ReplayTurnBoundaryComponent,
-  UserMessageComponent,
-} from './components/messages/user-message';
-import { ActivityPaneComponent, type ActivityPaneMode } from './components/panes/activity-pane';
-import { removeLegacySurveySetting, type TuiConfig } from './config';
+  ActivityPaneComponent,
+  type ActivityPaneMode,
+} from './components/panes/activity-pane';
+import { removeLegacySurveySetting, transcriptGroupingActive, type TuiConfig } from './config';
 import {
   LLM_NOT_SET_MESSAGE,
   MAIN_AGENT_ID,
@@ -131,7 +132,7 @@ import {
   SHUTTING_DOWN_HINT,
 } from './constant/kimi-tui';
 import { MEDIA_INGESTION_SUBMIT_WAIT_MS } from './constant/media';
-import { CHROME_GUTTER, DOCK_APPROVAL_ROWS } from './constant/rendering';
+import { CHROME_GUTTER, DETACH_HINT_TEXT, DOCK_APPROVAL_ROWS } from './constant/rendering';
 import { MAX_TERMINAL_TITLE_LENGTH } from './constant/terminal';
 import { AuthFlowController } from './controllers/auth-flow';
 import { BtwPanelController } from './controllers/btw-panel';
@@ -179,16 +180,11 @@ import {
   type TUIStartupOptions,
   type TUIStartupState,
 } from './types';
-import {
-  countedByExpandHint,
-  hasDispose,
-  hasHiddenContent,
-  isExpandable,
-  isExpandedComponent,
-} from './utils/component-capabilities';
+import { hasDispose } from './utils/component-capabilities';
 import { isDeadTerminalError } from './utils/dead-terminal';
 import { formatErrorMessage } from './utils/event-payload';
 import { pickForegroundTasks } from './utils/foreground-task';
+import { findInlineSkillTokens, rebaseInlineSkillActivations } from './utils/inline-skill-tokens';
 import { ImageAttachmentStore, type ImageAttachment, type MediaAttachment } from './utils/image-attachment-store';
 import {
   extractMediaAttachments,
@@ -227,10 +223,9 @@ import {
   getTranscriptComponentEntry,
   markTranscriptComponent,
 } from './utils/transcript-component-metadata';
+import { isTurnBoundaryComponent } from './utils/transcript-turns';
 import { nextTranscriptId } from './utils/transcript-id';
 import {
-  expandCutoffIndex,
-  TRANSCRIPT_EXPAND_TURNS,
   TRANSCRIPT_HYSTERESIS,
   TRANSCRIPT_KEEP_RECENT_ASSISTANT,
   TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED,
@@ -330,6 +325,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     upgrade: input.tuiConfig.upgrade,
     statusLine: input.tuiConfig.statusLine,
     markdown: input.tuiConfig.markdown,
+    transcript: input.tuiConfig.transcript,
     availableModels: {},
     availableProviders: {},
     sessionTitle: null,
@@ -361,6 +357,13 @@ type EnqueueMessageOptions = SendMessageOptions & {
 /** How long the one-shot "moved to background" footer hint stays visible. */
 const DETACH_HINT_DISPLAY_MS = 4_000;
 
+function transcriptGroupingActiveIn(state: TUIState): boolean {
+  return transcriptGroupingActive({
+    ...state.appState.transcript,
+    fullscreen: state.ui instanceof TuiAltScreen,
+  });
+}
+
 export class KimiTUI {
   readonly harness: KimiHarness;
   readonly options: KimiTUIOptions;
@@ -385,6 +388,8 @@ export class KimiTUI {
   private surveySettingSubscription: Unsubscribe | undefined;
   private skillCommands: readonly KimiSlashCommand[] = [];
   readonly skillCommandMap = new Map<string, string>();
+  private readonly skillCommandDefaultPaths = new Map<string, string>();
+  private readonly skillVariantPaths = new Map<number, { commandName: string; path: string }>();
   private pluginCommands: readonly KimiSlashCommand[] = [];
   readonly pluginCommandMap = new Map<string, string>();
   private readonly imageStore = new ImageAttachmentStore();
@@ -416,7 +421,11 @@ export class KimiTUI {
   private lastActivityMode: string | undefined;
   private currentLoadingTip: { kind: LoadingTipKind; tip: string | undefined } | undefined =
     undefined;
-  private lastHistoryContent: string | undefined;
+  private activityHintTimer: ReturnType<typeof setTimeout> | undefined;
+  private lastHistoryEntry: InputHistoryEntry | undefined;
+  private inputHistoryEntries: InputHistoryEntry[] = [];
+  private inputHistoryRecallIndex = -1;
+  private inputHistoryDraftVariants: Map<number, { commandName: string; path: string }> | undefined;
   // Live `!` shell output entries, keyed by commandId so concurrent commands
   // each update their own card and stale events are dropped. Mutated in place
   // as `shell.output` events arrive; removed when the command completes.
@@ -523,9 +532,30 @@ export class KimiTUI {
     this.state = createTUIState(tuiOptions);
     this.programStatus = new ProgramStatusController(this.state, this.state.terminal);
     this.state.footer.setExpandHintProvider(() => this.toolOutputExpandHint());
-    this.state.transcriptContainer.setUnhandledClick((index) =>
-      this.toggleClickedFoldBlock(index),
-    );
+    this.state.footer.setGitBinding((state) => this.footerGitBinding(state));
+    this.state.transcriptContainer.setHost({
+      withScrollAnchor: (toggle) => {
+        if (this.state.transcriptView === undefined) {
+          toggle();
+          return;
+        }
+        this.state.transcriptView.withAnchoredScroll(toggle);
+      },
+      withBottomAnchor: (toggle, removedLines) => {
+        if (this.state.transcriptView === undefined) {
+          toggle();
+          return;
+        }
+        this.state.transcriptView.withBottomAnchor(toggle, removedLines);
+      },
+      viewportRows: () => this.state.transcriptView?.viewportRows,
+      track: (event, properties) => {
+        this.track(event, properties);
+      },
+      foldingChanged: () => {
+        this.updateActivityPane();
+      },
+    });
     this.uninstallRainbowDance = installRainbowDance(() => {
       this.state.ui.requestRender();
     });
@@ -584,6 +614,10 @@ export class KimiTUI {
         name: cmd.name,
         aliases: cmd.aliases,
         description: cmd.description,
+        skillPath: cmd.skillPath,
+        skillSource: cmd.skillSource,
+        isSkill: cmd.isSkill,
+        workspaceDir: cmd.workspaceDir,
         ...(cmd.argumentHint !== undefined ? { argumentHint: cmd.argumentHint } : {}),
         ...(completer !== undefined
           ? { getArgumentCompletions: (prefix: string) => completer(prefix) }
@@ -591,17 +625,8 @@ export class KimiTUI {
       };
     });
     const skillCommandNames = new Set(this.skillCommandMap.keys());
-    const environment = this.state.appState.environment;
-    const environmentBinding =
-      environment !== undefined
-        ? environment
-        : this.creationEnvironment ?? {
-            environmentId: this.options.startup.environment,
-            cwd: this.options.startup.environmentCwd,
-          };
-    const { environmentId } = environmentBinding;
     const remoteSuggest =
-      environmentId === undefined || environmentId === 'local'
+      this.environmentIdOf(this.state.appState.environment) === 'local'
         ? undefined
         : async (query: string) => {
             const session = this.session;
@@ -620,6 +645,12 @@ export class KimiTUI {
       () => this.state.appState.inputMode,
       skillCommandNames,
       remoteSuggest,
+      ({ commandName, path, start }) => {
+        this.skillVariantPaths.set(start, {
+          commandName: commandName.startsWith('skill:') ? commandName : `skill:${commandName}`,
+          path,
+        });
+      },
     );
     this.state.editor.setAutocompleteProvider(provider);
 
@@ -633,6 +664,36 @@ export class KimiTUI {
     }
     this.state.editor.setArgumentHints(argumentHints);
     this.state.editor.setSkillCommandNames(skillCommandNames);
+  }
+
+  /**
+   * The environment the current or next session runs on: the live binding,
+   * else the one a new session would be created with.
+   */
+  private environmentIdOf(environment: AppState['environment']): string {
+    return (environment ?? this.creationEnvironment)?.environmentId ?? this.options.startup.environment ?? 'local';
+  }
+
+  /**
+   * The footer reads git state through the engine: a live session's own
+   * environment, or the local work dir before the lazy session exists. A
+   * remote binding has nothing to read until its session does. The key
+   * ignores the connection status so a transient disconnect keeps the last
+   * badge; the footer re-reads when the environment turns ready.
+   */
+  private footerGitBinding(state: AppState): FooterGitBinding | null {
+    const local = this.environmentIdOf(state.environment) === 'local';
+    const sessionId = state.sessionId === '' ? undefined : state.sessionId;
+    if (sessionId === undefined && !local) return null;
+    const { workDir } = state;
+    return {
+      key: [sessionId ?? '', workDir, local ? 'local' : 'remote'].join('\0'),
+      source: {
+        status: () => this.harness.getGitStatus(workDir, { sessionId }),
+        pullRequest: () => this.harness.getGitPullRequest(workDir, { sessionId }),
+        localWorkDir: local ? workDir : undefined,
+      },
+    };
   }
 
   refreshSlashCommandAutocomplete(): void {
@@ -663,12 +724,55 @@ export class KimiTUI {
 
   private applySkillCommands(skills: readonly SkillSummary[]): void {
     const skillCommands = buildSkillSlashCommands(skills);
+    const pathsBySkillName = new Map<string, Set<string>>();
+    for (const command of skillCommands.commands) {
+      const skillName = skillCommands.commandMap.get(command.name);
+      if (skillName === undefined || command.skillPath === undefined) continue;
+      const paths = pathsBySkillName.get(skillName) ?? new Set<string>();
+      paths.add(command.skillPath);
+      pathsBySkillName.set(skillName, paths);
+    }
     this.skillCommands = skillCommands.commands;
     this.skillCommandMap.clear();
     for (const [commandName, skillName] of skillCommands.commandMap) {
       this.skillCommandMap.set(commandName, skillName);
     }
+    this.skillCommandDefaultPaths.clear();
+    for (const [commandName, path] of skillCommands.defaultPaths) {
+      this.skillCommandDefaultPaths.set(commandName, path);
+    }
+    for (const [start, selection] of this.skillVariantPaths) {
+      const skillName = this.skillCommandMap.get(selection.commandName) ??
+        this.skillCommandMap.get(selection.commandName.replace(/^skill:/, ''));
+      if (skillName === undefined || !pathsBySkillName.get(skillName)?.has(selection.path)) {
+        this.skillVariantPaths.delete(start);
+      }
+    }
     this.setupAutocomplete();
+  }
+
+  retainSkillVariantSelection(text: string): void {
+    if (this.skillVariantPaths.size === 0) return;
+    const tokens = findInlineSkillTokens(text, { isKnownSkill: () => true, includeLeading: true });
+    for (const [start, selection] of this.skillVariantPaths) {
+      const token = tokens.find((candidate) => candidate.start === start);
+      const commandName = token?.commandName;
+      if (commandName !== selection.commandName && `skill:${commandName}` !== selection.commandName) {
+        this.skillVariantPaths.delete(start);
+      }
+    }
+  }
+
+  skillVariantPathForCommand(commandName: string, tokenStart: number): string | undefined {
+    const selection = this.skillVariantPaths.get(tokenStart);
+    if (selection?.commandName !== commandName && selection?.commandName !== `skill:${commandName}`) return undefined;
+    return selection.path;
+  }
+
+  defaultSkillPathForCommand(commandName: string): string | undefined {
+    const normalized = commandName.toLowerCase();
+    return this.skillCommandDefaultPaths.get(commandName) ?? this.skillCommandDefaultPaths.get(normalized) ??
+      this.skillCommandDefaultPaths.get(`skill:${normalized}`);
   }
 
   async refreshPluginCommands(session?: Session): Promise<void> {
@@ -737,7 +841,7 @@ export class KimiTUI {
           const startupSpinner = this.showProgressSpinner(this.startupProgressLabel());
           const shouldReplayHistory = await this.initMainTui().then(
             (result) => {
-              startupSpinner.stop({ ok: true, label: 'Ready.' });
+              startupSpinner.dismiss();
               return result;
             },
             (error: unknown) => {
@@ -771,7 +875,7 @@ export class KimiTUI {
         }
         throw error;
       }
-      startupSpinner.stop({ ok: true, label: 'Ready.' });
+      startupSpinner.dismiss();
       startupTrace('initMainTui:end');
       // Debug-only input→render latency overlay (KIMI_TUI_INPUT_LATENCY=1).
       if (process.env['KIMI_TUI_INPUT_LATENCY']) installInputLatencyProbe(this.state.ui);
@@ -843,9 +947,9 @@ export class KimiTUI {
     );
     const banner = new BannerComponent(this.state.appState.banner);
     if (welcomeIndex >= 0) {
-      this.state.transcriptContainer.children.splice(welcomeIndex + 1, 0, banner);
+      this.state.transcriptContainer.insertChild(welcomeIndex + 1, banner);
     } else {
-      this.state.transcriptContainer.children.unshift(banner);
+      this.state.transcriptContainer.insertChild(0, banner);
     }
     this.state.transcriptContainer.invalidate();
   }
@@ -1088,7 +1192,15 @@ export class KimiTUI {
 
   private async init(): Promise<boolean> {
     setExperimentalFeatures(await this.harness.getExperimentalFeatures());
+    applyTranscriptPresentation(this);
     this.sessionEventHandler.notifications.setEnabled(isExperimentalFlagEnabled('notify_user'));
+    if (this.state.ui instanceof TuiAltScreen) {
+      this.track('transcript_display_settings', {
+        group_tools: this.state.appState.transcript.groupTools,
+        group_thinking: this.state.appState.transcript.groupThinking,
+        source: 'startup',
+      });
+    }
     await this.authFlow.refreshAvailableModels();
     this.backgroundRefreshPromise = this.refreshProviderModelsInBackground();
 
@@ -1504,10 +1616,12 @@ export class KimiTUI {
       renderMode: 'plain',
       content: '',
     };
-    const outputComponent = new ShellRunComponent(() => this.state.ui.requestRender());
+    const outputComponent = new ShellRunComponent(() => {
+      this.state.ui.requestRender();
+    });
     // Inherit the current ctrl+o state, same as freshly mounted tool calls —
     // the global toggle only reaches components that exist when it fires.
-    if (this.state.toolOutputExpanded) outputComponent.setExpanded(true);
+    if (this.state.transcriptContainer.toolOutputExpanded) outputComponent.setExpanded(true);
     this.shellOutputStreams.set(commandId, { entry: outputEntry, component: outputComponent });
     this.state.transcriptEntries.push(outputEntry);
     markTranscriptComponent(outputComponent, outputEntry);
@@ -1783,14 +1897,14 @@ export class KimiTUI {
     try {
       for (const activation of activations) {
         if (activation.args === undefined) {
-          prepared.skills.push({ name: activation.skillName });
+          prepared.skills.push({ name: activation.skillName, path: activation.path });
           continue;
         }
         const rewrite = rewriteMediaPlaceholders(
           activation.args, this.imageStore, 'plain', mediaSnapshots,
         );
         this.imageStore.retainFileIds(rewrite.videoAttachmentIds);
-        prepared.skills.push({ name: activation.skillName, args: rewrite.text });
+        prepared.skills.push({ name: activation.skillName, path: activation.path, args: rewrite.text });
         prepared.mediaAttachmentIds.push(
           ...new Set([...rewrite.imageAttachmentIds, ...rewrite.videoAttachmentIds]),
         );
@@ -1851,6 +1965,7 @@ export class KimiTUI {
       renderMode: 'plain',
       content: text,
       skillNames: activations.map((activation) => activation.skillName),
+      inlineSkillActivations: activations.length === 0 ? undefined : activations,
       imageAttachmentIds:
         extraction.imageAttachmentIds.length > 0 ? extraction.imageAttachmentIds : undefined,
     };
@@ -1866,13 +1981,15 @@ export class KimiTUI {
         error,
         entries: [entry],
         retried: occupiedRetry,
-        retry: () => this.runInlineSkillActivations(session, text, activations, extraction, true),
+        retry: () => {
+          this.runInlineSkillActivations(session, text, activations, extraction, true);
+        },
         restore: () => {
           this.staging.releaseRecalled([
             ...extraction.imageAttachmentIds,
             ...extraction.videoAttachmentIds,
           ]);
-          this.restoreInputText(text);
+          this.restoreInputText(text, activations);
         },
       });
       if (recovered) {
@@ -1935,7 +2052,10 @@ export class KimiTUI {
       for (const entry of entries) {
         this.state.editor.addToHistory(entry.content);
       }
-      this.lastHistoryContent = entries.at(-1)?.content;
+      this.inputHistoryEntries = entries.toReversed().filter((entry, index, all) =>
+        index === 0 || !inputHistoryEntryEquals(entry, all[index - 1])
+      ).slice(0, 100);
+      this.lastHistoryEntry = entries.at(-1);
     } catch {
       // best-effort
     }
@@ -1944,15 +2064,64 @@ export class KimiTUI {
   private async persistInputHistory(text: string): Promise<void> {
     const trimmed = text.trim();
     if (trimmed.length === 0) return;
-    if (trimmed === this.lastHistoryContent) return;
+    const activations = text.startsWith('!') ? [] : resolveUserInput({
+      input: trimmed,
+      skillCommandMap: this.skillCommandMap,
+      pluginCommandMap: this.pluginCommandMap,
+      isStreaming: this.state.appState.streamingPhase !== 'idle',
+      isCompacting: this.state.appState.isCompacting,
+      skillVariantPathForCommand: (commandName, start) =>
+        this.skillVariantPathForCommand(commandName, start),
+      defaultSkillPathForCommand: (commandName) => this.defaultSkillPathForCommand(commandName),
+    }).activations;
+    const entry: InputHistoryEntry = {
+      content: trimmed,
+      inlineSkillActivations: activations.length === 0 ? undefined : activations,
+    };
+    if (inputHistoryEntryEquals(entry, this.lastHistoryEntry)) return;
+    if (inputHistoryEntryEquals(entry, this.inputHistoryEntries[0])) this.inputHistoryEntries[0] = entry;
+    else this.inputHistoryEntries.unshift(entry);
+    this.inputHistoryEntries.length = Math.min(this.inputHistoryEntries.length, 100);
     this.state.editor.addToHistory(trimmed);
     try {
       const file = getInputHistoryFile(this.state.appState.workDir);
-      const written = await appendInputHistory(file, trimmed, this.lastHistoryContent);
-      if (written) this.lastHistoryContent = trimmed;
+      const written = await appendInputHistory(file, entry, this.lastHistoryEntry);
+      if (written) this.lastHistoryEntry = entry;
     } catch {
-      this.lastHistoryContent = trimmed;
+      this.lastHistoryEntry = entry;
     }
+  }
+
+  beginInputHistoryRecall(): void {
+    this.inputHistoryRecallIndex = -1;
+    this.inputHistoryDraftVariants = new Map(this.skillVariantPaths);
+  }
+
+  restoreInputHistoryEntry(direction: 1 | -1): void {
+    this.skillVariantPaths.clear();
+    if (this.inputHistoryEntries.length === 0) return;
+    this.inputHistoryRecallIndex = direction === -1
+      ? Math.min(this.inputHistoryRecallIndex + 1, this.inputHistoryEntries.length - 1)
+      : Math.max(this.inputHistoryRecallIndex - 1, 0);
+    const entry = this.inputHistoryEntries[this.inputHistoryRecallIndex];
+    if (entry === undefined) return;
+    for (const { commandName, path, start } of skillVariantPathsForInput(
+      entry.content,
+      entry.inlineSkillActivations ?? [],
+      this.skillCommandMap,
+    )) {
+      this.skillVariantPaths.set(start, { commandName, path });
+    }
+  }
+
+  restoreInputHistoryDraft(): void {
+    this.skillVariantPaths.clear();
+    if (this.inputHistoryDraftVariants !== undefined) {
+      for (const [start, selection] of this.inputHistoryDraftVariants) {
+        this.skillVariantPaths.set(start, selection);
+      }
+    }
+    this.inputHistoryDraftVariants = undefined;
   }
 
   recallLastQueued(): QueuedMessage | undefined {
@@ -1968,6 +2137,11 @@ export class KimiTUI {
         ? [...(last.imageAttachmentIds ?? []), ...(last.videoAttachmentIds ?? [])]
         : [],
     );
+    if (isPromptQueuedMessage(last)) {
+      for (const { commandName, path, start } of skillVariantPathsForInput(last.text, last.inlineSkillActivations ?? [], this.skillCommandMap)) {
+        this.skillVariantPaths.set(start, { commandName, path });
+      }
+    }
     return last;
   }
 
@@ -2485,7 +2659,9 @@ export class KimiTUI {
           session,
           error,
           retried: occupiedRetry,
-          retry: () => this.activatePluginCommand(session, pluginId, commandName, args, true),
+          retry: () => {
+            this.activatePluginCommand(session, pluginId, commandName, args, true);
+          },
           restore: () => {
             this.staging.releaseRecalled(rewrite.imageAttachmentIds);
             this.restoreInputText(`/${pluginId}:${commandName}${args.length > 0 ? ` ${args}` : ''}`);
@@ -2840,6 +3016,7 @@ export class KimiTUI {
       renderMode: 'plain',
       content: item.text,
       skillNames: item.inlineSkillActivations?.map((activation) => activation.skillName),
+      inlineSkillActivations: item.inlineSkillActivations,
       imageAttachmentIds:
         item.imageAttachmentIds !== undefined && item.imageAttachmentIds.length > 0
           ? item.imageAttachmentIds
@@ -2886,7 +3063,9 @@ export class KimiTUI {
     );
     if (onSettled !== undefined) {
       void request.then(
-        () => onSettled(true),
+        () => {
+          onSettled(true);
+        },
         () => {},
       );
     }
@@ -2901,10 +3080,21 @@ export class KimiTUI {
         error,
         entries: prepared === undefined && !manual ? steeredEntries : undefined,
         retried: occupiedRetry,
-        retry: () => this.steerMessage(session, input, onSettled, manual, true),
+        retry: () => {
+          this.steerMessage(session, input, onSettled, manual, true);
+        },
         restore: () => {
           this.staging.releaseRecalled(mediaAttachmentIds);
-          this.restoreInputText(input.map((item) => item.text).join('\n'));
+          const activations: InlineSkillActivation[] = [];
+          let offset = 0;
+          for (const item of input) {
+            activations.push(...rebaseInlineSkillActivations(item.inlineSkillActivations ?? [], offset));
+            offset += item.text.length + 1;
+          }
+          this.restoreInputText(
+            input.map((item) => item.text).join('\n'),
+            activations.length === 0 ? undefined : activations,
+          );
           onSettled?.(false);
         },
       });
@@ -3029,6 +3219,9 @@ export class KimiTUI {
       !sameStringArrays(this.state.appState.additionalDirs, patch.additionalDirs ?? []);
     const busyChanged = 'streamingPhase' in patch || 'isCompacting' in patch;
     Object.assign(this.state.appState, patch);
+    if ('streamingPhase' in patch) {
+      this.state.transcriptContainer.setTurnActive(this.state.appState.streamingPhase !== 'idle');
+    }
     if ('planMode' in patch) this.updateEditorBorderHighlight();
     this.state.footer.setState(this.state.appState);
     this.updateActivityPane();
@@ -3635,6 +3828,14 @@ export class KimiTUI {
         replayTurnLimit: REPLAY_FETCH_TURN_LIMIT,
       });
     } catch (error) {
+      log.error('failed to resume session', {
+        sessionId: targetSessionId,
+        error,
+        details:
+          isKimiError(error) && error.code === ErrorCodes.WIRE_VERSION_TOO_LOW
+            ? error.details
+            : undefined,
+      });
       const msg = formatErrorMessage(error);
       this.showError(`Failed to resume session ${targetSessionId}: ${msg}`);
       return false;
@@ -3812,7 +4013,7 @@ export class KimiTUI {
         block.markCanceled();
       } else {
         block.markDone(data.tokensBefore, data.tokensAfter, data.summary);
-        if (this.state.toolOutputExpanded) {
+        if (this.state.transcriptContainer.toolOutputExpanded) {
           block.setExpanded(true);
         }
       }
@@ -3854,7 +4055,7 @@ export class KimiTUI {
           return new GoalSetMessageComponent();
         }
         if (entry.goalData?.kind === 'lifecycle') {
-          return buildGoalMarker(entry.goalData.change, this.state.toolOutputExpanded);
+          return buildGoalMarker(entry.goalData.change, this.state.transcriptContainer.toolOutputExpanded);
         }
         return null;
       case 'assistant': {
@@ -3867,7 +4068,7 @@ export class KimiTUI {
       }
       case 'thinking': {
         const thinking = new ThinkingComponent(entry.content, true);
-        if (this.state.toolOutputExpanded) thinking.setExpanded(true);
+        if (this.state.transcriptContainer.toolOutputExpanded) thinking.setExpanded(true);
         return thinking;
       }
       case 'tool_call':
@@ -3878,7 +4079,7 @@ export class KimiTUI {
             this.state.ui,
             this.state.appState.workDir,
           );
-          if (this.state.toolOutputExpanded) tc.setExpanded(true);
+          if (this.state.transcriptContainer.toolOutputExpanded) tc.setExpanded(true);
           return tc;
         }
         if (entry.backgroundAgentStatus !== undefined) {
@@ -3929,14 +4130,10 @@ export class KimiTUI {
     if (entryIndex < 0) return false;
     entries.splice(entryIndex, 1);
     entries.push(entry);
-    const children = this.state.transcriptContainer.children;
-    const childIndex = children.findIndex(
+    const component = this.state.transcriptContainer.children.find(
       (child) => getTranscriptComponentEntry(child) === entry,
     );
-    if (childIndex >= 0) {
-      const [component] = children.splice(childIndex, 1);
-      children.push(component!);
-    }
+    if (component !== undefined) this.state.transcriptContainer.moveChildToEnd(component);
     this.state.ui.requestRender();
     return true;
   }
@@ -3983,9 +4180,9 @@ export class KimiTUI {
       return;
     }
     const welcome = new WelcomeComponent(this.state.appState);
-    // Startup progress rows (e.g. the "Ready." spinner) are added before
+    // Startup progress rows (e.g. the startup spinner) are added before
     // initMainTui() reaches this point; the welcome stays on top of them.
-    this.state.transcriptContainer.children.unshift(welcome);
+    this.state.transcriptContainer.insertChild(0, welcome);
     this.state.transcriptContainer.invalidate();
   }
 
@@ -4002,6 +4199,7 @@ export class KimiTUI {
     for (const child of this.state.transcriptContainer.children) {
       if (hasDispose(child)) child.dispose();
     }
+    this.state.transcriptContainer.dispose();
   }
 
   private clearTranscriptAndRedraw(): void {
@@ -4028,23 +4226,6 @@ export class KimiTUI {
     this.state.ui.requestRender();
   }
 
-  private isTurnBoundaryComponent(child: Component): boolean {
-    if (
-      !(child instanceof UserMessageComponent) &&
-      !(child instanceof SkillActivationComponent) &&
-      !(child instanceof PluginCommandComponent) &&
-      !(child instanceof ReplayTurnBoundaryComponent)
-    ) {
-      return false;
-    }
-    const entry = getTranscriptComponentEntry(child);
-    if (entry === undefined) return false;
-    // Live user messages / slash activations have an undefined turnId; replayed
-    // ones get a `replay:N` turnId. Both start a new turn. Steer messages carry
-    // a defined non-replay turnId and are not boundaries.
-    return entry.turnId === undefined || entry.turnId.startsWith('replay:');
-  }
-
   /**
    * Fold-segment boundary: everything {@link isTurnBoundaryComponent} counts,
    * plus the cron card and terminal background-task cards. Cron-fired and
@@ -4059,7 +4240,7 @@ export class KimiTUI {
    */
   private isFoldSegmentBoundaryComponent(child: Component): boolean {
     return (
-      this.isTurnBoundaryComponent(child) ||
+      isTurnBoundaryComponent(child) ||
       child instanceof CronMessageComponent ||
       (child instanceof BackgroundAgentStatusComponent && child.phase !== 'started')
     );
@@ -4078,7 +4259,7 @@ export class KimiTUI {
     // the rest of the turn would be left behind.
     const boundaries: number[] = [];
     for (let i = 0; i < children.length; i++) {
-      if (this.isTurnBoundaryComponent(children[i]!)) boundaries.push(i);
+      if (isTurnBoundaryComponent(children[i]!)) boundaries.push(i);
     }
 
     const turns = groupTurns(this.state.transcriptEntries);
@@ -4115,7 +4296,7 @@ export class KimiTUI {
     let boundariesSeen = 0;
     let cutoff = 0;
     for (let i = 0; i < children.length; i++) {
-      if (this.isTurnBoundaryComponent(children[i]!)) {
+      if (isTurnBoundaryComponent(children[i]!)) {
         if (boundariesSeen === boundariesToRemove) {
           cutoff = i;
           break;
@@ -4163,6 +4344,7 @@ export class KimiTUI {
   }
 
   private foldCurrentTurnContent(keepSteps: number, keepAssistants: number): boolean {
+    if (transcriptGroupingActiveIn(this.state)) return false;
     if (keepSteps <= 0 && keepAssistants <= 0) return false;
     const children = this.state.transcriptContainer.children;
 
@@ -4175,7 +4357,6 @@ export class KimiTUI {
       }
     }
     if (turnStart < 0) return false;
-
     // Locate an existing summary, the assistant messages, and the mergeable steps.
     let summaryIndex = -1;
     const stepIndices: number[] = [];
@@ -4196,7 +4377,9 @@ export class KimiTUI {
     // Fold the oldest steps / assistant messages beyond their respective caps;
     // the most recent ones stay mounted. Children are chronological, so the
     // oldest of each kind sit at the front of their index lists.
-    const stepMergeCount = keepSteps > 0 ? Math.max(0, stepIndices.length - keepSteps) : 0;
+    const stepMergeCount = keepSteps > 0
+      ? Math.max(0, stepIndices.length - keepSteps)
+      : 0;
     const assistantMergeCount =
       keepAssistants > 0 ? Math.max(0, assistantIndices.length - keepAssistants) : 0;
     if (stepMergeCount === 0 && assistantMergeCount === 0) return false;
@@ -4240,13 +4423,13 @@ export class KimiTUI {
       if (hasDispose(child)) child.dispose();
     }
 
-    children.splice(0, children.length, ...newChildren);
+    this.state.transcriptContainer.replaceChildren(newChildren);
     return true;
   }
 
   mergeAllTurnSteps(): void {
-    if (TRANSCRIPT_KEEP_RECENT_STEPS <= 0 && TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED <= 0)
-      return;
+    if (transcriptGroupingActiveIn(this.state)) return;
+    if (TRANSCRIPT_KEEP_RECENT_STEPS <= 0 && TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED <= 0) return;
     const children = this.state.transcriptContainer.children;
 
     const boundaries: number[] = [];
@@ -4320,7 +4503,7 @@ export class KimiTUI {
     for (const child of toDispose) {
       if (hasDispose(child)) child.dispose();
     }
-    children.splice(0, children.length, ...newChildren);
+    this.state.transcriptContainer.replaceChildren(newChildren);
   }
 
   showStatus(message: string, color?: ColorToken): void {
@@ -4341,13 +4524,21 @@ export class KimiTUI {
     return this.showProgressSpinner(label);
   }
 
-  showProgressSpinner(label: string): LoginProgressSpinnerHandle {
+  showProgressSpinner(label: string): LoginProgressSpinnerHandle & { dismiss(): void } {
     const tint = (s: string): string => currentTheme.fg('primary', s);
     const spinner = new MoonLoader(this.state.ui, 'braille', tint, label);
-    this.state.transcriptContainer.addChild(new Spacer(1));
+    const spacer = new Spacer(1);
+    this.state.transcriptContainer.addChild(spacer);
     this.state.transcriptContainer.addChild(spinner);
     this.state.ui.requestRender();
     return {
+      dismiss: () => {
+        spinner.stop();
+        this.state.transcriptContainer.removeChild(spacer);
+        this.state.transcriptContainer.removeChild(spinner);
+        this.state.transcriptContainer.invalidate();
+        this.state.ui.requestRender();
+      },
       stop: ({ ok, label: finalLabel }) => {
         spinner.stop();
         const tone = ok ? 'success' : 'error';
@@ -4395,6 +4586,10 @@ export class KimiTUI {
   // Panes / Presentation State
   // =========================================================================
 
+  updateActivityPaneForTranscriptGrouping(): void {
+    if (transcriptGroupingActiveIn(this.state)) this.updateActivityPane();
+  }
+
   updateActivityPane(): void {
     const effectiveMode = this.resolveActivityPaneMode();
     const tipKind = loadingTipKind(effectiveMode);
@@ -4422,7 +4617,9 @@ export class KimiTUI {
     const retry = effectiveMode === 'waiting' ? this.state.appState.stepRetry : null;
     const retryKey =
       retry === null ? '' : `${formatStepRetryLabel(retry)}|${formatStepRetryDetail(retry)}`;
-    const activityModeKey = `${effectiveMode}:${placeSpinnerInAgentSwarm ? 'swarm' : 'pane'}:${retryKey}`;
+    const hintAt = this.state.transcriptContainer.foldedBashHintAt();
+    const showBackgroundHint = hintAt !== undefined && Date.now() >= hintAt;
+    const activityModeKey = `${effectiveMode}:${placeSpinnerInAgentSwarm ? 'swarm' : 'pane'}:${retryKey}:${String(showBackgroundHint)}`;
 
     if (
       activityModeKey === this.lastActivityMode &&
@@ -4434,6 +4631,7 @@ export class KimiTUI {
       if (placeSpinnerInAgentSwarm) {
         this.syncAgentSwarmActivitySpinner(this.state.activitySpinner?.instance);
       }
+      this.syncActivityBackgroundHintTimer(hintAt);
       return;
     }
 
@@ -4527,6 +4725,12 @@ export class KimiTUI {
         break;
       }
     }
+    if (showBackgroundHint && !placeSpinnerInAgentSwarm) {
+      const spinner = this.state.activitySpinner?.instance;
+      if (spinner?.currentLabel === '') spinner.setLabel('Working…');
+      spinner?.setTip(` · ${DETACH_HINT_TEXT}`);
+    }
+    this.syncActivityBackgroundHintTimer(hintAt);
     this.state.ui.requestRender();
   }
 
@@ -4570,74 +4774,13 @@ export class KimiTUI {
     if (queueContainer.children.length === 0) queueContainer.addChild(queuePane);
   }
 
-  /**
-   * Index of the first transcript child ctrl+o may expand: a component is
-   * expandable only if it sits at or after the start of the
-   * (totalTurns - expandTurns)-th turn, i.e. it belongs to one of the most
-   * recent `expandTurns` turns. Position-based so it also covers streaming
-   * components that have no entry in the metadata map.
-   */
-  private expandCutoff(children: readonly Component[]): number {
-    const boundaries: number[] = [];
-    for (let i = 0; i < children.length; i++) {
-      if (this.isTurnBoundaryComponent(children[i]!)) boundaries.push(i);
-    }
-    return expandCutoffIndex(children.length, boundaries, TRANSCRIPT_EXPAND_TURNS);
-  }
-
-  /**
-   * What the footer's ctrl+o hint should offer: `expand` while a card in the
-   * expandable window keeps content out of its collapsed form, `collapse`
-   * once the toggle shows it, `null` when ctrl+o would change nothing.
-   */
   private toolOutputExpandHint(): 'expand' | 'collapse' | null {
-    const children = this.state.transcriptContainer.children;
-    if (this.state.toolOutputExpanded) {
-      // Toggling off collapses every expanded card, including one that slid
-      // out of the expansion window since it was expanded, so any expanded
-      // card with hidden content keeps the collapse hint on.
-      for (let i = children.length - 1; i >= 0; i--) {
-        const child = children[i];
-        if (isExpandedComponent(child) && countedByExpandHint(child)) return 'collapse';
-      }
-      return null;
-    }
-    const cutoff = this.expandCutoff(children);
-    for (let i = children.length - 1; i >= cutoff; i--) {
-      if (countedByExpandHint(children[i])) return 'expand';
-    }
-    return null;
-  }
-
-  private toggleClickedFoldBlock(index: number): TuiMouseEventResult | undefined {
-    const children = this.state.transcriptContainer.children;
-    const hit = children[index];
-    if (hit === undefined || !isExpandable(hit) || !hasHiddenContent(hit)) return undefined;
-    if (isExpandedComponent(hit)) {
-      hit.setExpanded(false);
-    } else if (index >= this.expandCutoff(children)) {
-      hit.setExpanded(true);
-    } else {
-      return undefined;
-    }
-    this.state.ui.requestRender();
-    return { handled: true };
+    if (transcriptGroupingActiveIn(this.state)) return null;
+    return this.state.transcriptContainer.toolOutputExpandHint();
   }
 
   toggleToolOutputExpansion(): void {
-    this.state.toolOutputExpanded = !this.state.toolOutputExpanded;
-    const children = this.state.transcriptContainer.children;
-    const expandCutoff = this.expandCutoff(children);
-
-    for (let i = 0; i < children.length; i++) {
-      const child = children[i]!;
-      if (!isExpandable(child)) continue;
-      child.setExpanded(this.state.toolOutputExpanded && i >= expandCutoff);
-    }
-    // Differential render only — no destructive full redraw on expand/collapse.
-    // (When the expanded region reaches above the viewport, the engine's own
-    // fallback may still do a full render; that path is not forced from here.)
-    this.state.ui.requestRender();
+    this.state.transcriptContainer.toggleToolOutputExpansion();
   }
 
   openTasksBrowser(): void {
@@ -4877,10 +5020,29 @@ export class KimiTUI {
   }
 
   private stopActivitySpinner(): void {
+    this.clearActivityHintTimer();
     if (this.state.activitySpinner !== null) {
       this.state.activitySpinner.instance.stop();
       this.state.activitySpinner = null;
     }
+  }
+
+  private syncActivityBackgroundHintTimer(hintAt: number | undefined): void {
+    this.clearActivityHintTimer();
+    if (hintAt === undefined) return;
+    const delay = hintAt - Date.now();
+    if (delay <= 0) return;
+    this.activityHintTimer = setTimeout(() => {
+      this.activityHintTimer = undefined;
+      this.updateActivityPane();
+    }, delay);
+    this.activityHintTimer.unref?.();
+  }
+
+  private clearActivityHintTimer(): void {
+    if (this.activityHintTimer === undefined) return;
+    clearTimeout(this.activityHintTimer);
+    this.activityHintTimer = undefined;
   }
 
   // =========================================================================
@@ -4942,8 +5104,12 @@ export class KimiTUI {
     if (panel !== undefined && hasDispose(panel)) panel.dispose();
   }
 
-  restoreInputText(text: string): void {
+  restoreInputText(text: string, inlineSkillActivations?: readonly InlineSkillActivation[]): void {
+    this.skillVariantPaths.clear();
     this.restoreEditor();
+    for (const { commandName, path, start } of skillVariantPathsForInput(text, inlineSkillActivations ?? [], this.skillCommandMap)) {
+      this.skillVariantPaths.set(start, { commandName, path });
+    }
     this.state.editor.setText(text);
     this.updateEditorBorderHighlight(text);
     this.state.ui.requestRender();

@@ -97,6 +97,63 @@ describe('Session skills', () => {
     }
   });
 
+  it('lists and activates same-name variants through an explicit path', async () => {
+    const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-skills-home-');
+    const workDir = await makeTempDir(tempDirs, 'kimi-sdk-skills-work-');
+    const additionalDir = await makeTempDir(tempDirs, 'kimi-sdk-skills-additional-');
+    await writeSkill(workDir, 'review', [
+      '---',
+      'name: review',
+      'description: Primary review',
+      '---',
+      '',
+      'Review with primary rules.',
+    ]);
+    await writeSkill(additionalDir, 'review', [
+      '---',
+      'name: review',
+      'description: Secondary review',
+      '---',
+      '',
+      'Review with secondary rules.',
+    ]);
+    await writeFile(
+      join(workDir, '.kimi-code', 'local.toml'),
+      `[workspace]\nadditional_dir = [${JSON.stringify(additionalDir)}]\n`,
+    );
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      const session = await harness.createSession({ id: 'ses_sdk_skill_variants', workDir });
+      const variants = (await session.listSkills()).filter((skill) => skill.name === 'review');
+      expect(variants).toHaveLength(2);
+      const secondary = variants.find((skill) => skill.path.includes(additionalDir))!;
+      expect(secondary.workspaceDir).toContain('kimi-sdk-skills-additional-');
+      const activated = waitForSDKEvent(session, (event) => event.type === 'skill.activated');
+
+      await session.activateSkill('review', undefined, { path: secondary.path });
+
+      await expect(activated).resolves.toMatchObject({
+        skillName: 'review',
+        skillPath: secondary.path,
+        skillSource: 'project',
+      });
+
+      const bundledSession = await harness.createSession({ id: 'ses_sdk_skill_variant_bundle', workDir });
+      const bundledActivation = waitForSDKEvent(bundledSession, (event) => event.type === 'skill.activated');
+      await bundledSession.promptWithSkills('/skill:review', [
+        { name: 'review', path: secondary.path },
+      ]);
+      await expect(bundledActivation).resolves.toMatchObject({
+        skillName: 'review',
+        skillPath: secondary.path,
+        skillSource: 'project',
+      });
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('does not merge skills from session-only additional dirs', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-skills-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-skills-work-');

@@ -17,11 +17,16 @@ export interface ToolReference {
   readonly source: ToolSource;
 }
 
+export interface ToolRegistration extends IDisposable {
+  readonly status?: 'active' | 'pending';
+}
+
 export interface IAgentToolRegistryService {
   readonly _serviceBrand: undefined;
 
-  register(tool: ExecutableTool, options?: ToolRegistrationOptions): IDisposable;
+  register(tool: ExecutableTool, options?: ToolRegistrationOptions): ToolRegistration;
   list(): readonly ToolInfo[];
+  listLive?(): readonly ToolInfo[];
   listReferences(): readonly ToolReference[];
   resolve(name: string): ExecutableTool | undefined;
 }

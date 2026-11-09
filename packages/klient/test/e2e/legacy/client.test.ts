@@ -8,8 +8,8 @@
  *
  * Coverage:
  *   1. HTTP envelope unwrap throws on `code !== 0`.
- *   2. WS handshake completes (server_hello + client_hello ack).
- *   3. Subscribe ack succeeds for a real session id.
+ *   2. WS connects without a handshake.
+ *   3. Subscribe succeeds for a real session id.
  *   4. `waitForFrame` times out cleanly (no zombie waiters).
  *   5. Created session is observable via `getSession`.
  */
@@ -83,15 +83,11 @@ describeLive('DaemonClient (live server required)', () => {
     expect(caughtError).toBeInstanceOf(EnvelopeError);
   });
 
-  it('completes handshake (server_hello + client_hello ack)', async () => {
-    const log = createCaseLogger('client: ws handshake');
+  it('opens the WebSocket without a handshake', async () => {
+    const log = createCaseLogger('client: ws connect');
     const client = new DaemonClient({ baseUrl: BASE_URL });
     log('connect request', { url: `${BASE_URL.replace(/^http/, 'ws')}/api/v1/ws` });
-    const hello = await client.connect();
-    log('server hello', hello);
-    // heartbeat_ms is optional — kap-server omits it (no server heartbeat).
-    expect(hello.heartbeat_ms === undefined || hello.heartbeat_ms > 0).toBe(true);
-    expect(typeof hello.ws_connection_id).toBe('string');
+    await expect(client.connect()).resolves.toBeUndefined();
     await client.close();
     log('closed');
   });
@@ -103,7 +99,7 @@ describeLive('DaemonClient (live server required)', () => {
     created.push({ client, sid: session.id });
     log('created session', session);
     await client.connect();
-    log('subscribe request', { type: 'subscribe_v2', session_id: session.id });
+    log('subscribe request', { type: 'subscribe', session_id: session.id });
     await expect(client.subscribe(session.id)).resolves.toBeUndefined();
     log('subscribe accepted', { session_id: session.id });
   });
@@ -315,13 +311,14 @@ describeLive('DaemonClient (live server required)', () => {
       log('messages before undo', beforeUndo);
       expect(textFromMessages(beforeUndo.items)).toContain('UNDO-ME');
 
-      const result = await client.undoSession(session.id, { count: 1, page_size: 100 });
+      const undoTurn = (await client.listTurns(session.id)).turns.at(-1)!;
+      const result = await client.undoSession(session.id, { turn_id: undoTurn.turn_id });
       log('undo response', result);
+      expect(result.removed_turn_ids).toEqual([undoTurn.turn_id]);
 
-      const afterText = textFromMessages(result.messages.items);
+      const afterText = textFromMessages((await client.listMessages(session.id, { page_size: 100 })).items);
       expect(afterText).toContain('KEEP');
       expect(afterText).not.toContain('UNDO-ME');
-      expect(result.messages.has_more).toBe(false);
     },
     PROMPT_TIMEOUT_MS * 2 + 30_000,
   );
@@ -397,19 +394,16 @@ describe('DaemonClient session action helpers', () => {
     });
   });
 
-  it('undoSession posts the action-suffix route and unwraps the messages', async () => {
+  it('undoSession posts the action-suffix route and unwraps the removed turns', async () => {
     const log = createCaseLogger('client helper: undoSession');
     const calls: FetchCall[] = [];
-    const message = testMessage({ id: 'msg_kept', session_id: 'sess_source' });
-    const undoResponse = {
-      messages: { items: [message], has_more: false },
-    };
+    const undoResponse = { removed_turn_ids: ['t_undone'] };
     const client = new DaemonClient({
       baseUrl: 'http://server.example.test',
       fetchImpl: recordingFetch(okEnvelope(undoResponse), calls),
     });
 
-    const result = await client.undoSession('sess_source', { count: 2, page_size: 25 });
+    const result = await client.undoSession('sess_source', { turn_id: 't_undone', agent_id: 'main' });
 
     log('fetch calls', calls);
     log('unwrapped result', result);
@@ -417,10 +411,7 @@ describe('DaemonClient session action helpers', () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]?.url).toBe('http://server.example.test/api/v1/sessions/sess_source:undo');
     expect(calls[0]?.init.method).toBe('POST');
-    expect(parseRecordedJsonBody(calls[0])).toEqual({
-      count: 2,
-      page_size: 25,
-    });
+    expect(parseRecordedJsonBody(calls[0])).toEqual({ turn_id: 't_undone', agent_id: 'main' });
   });
 
   it('model catalog helpers call the catalog and action-suffix routes', async () => {
@@ -602,7 +593,7 @@ function okEnvelope<T>(data: T): { code: 0; msg: string; data: T; request_id: st
 function frameForLog(frame: {
   type: string;
   session_id?: string;
-  id?: string;
+  request_id?: string;
   code?: number;
   msg?: string;
   payload?: unknown;
@@ -610,7 +601,7 @@ function frameForLog(frame: {
   return {
     type: frame.type,
     session_id: frame.session_id,
-    id: frame.id,
+    request_id: frame.request_id,
     code: frame.code,
     msg: frame.msg,
     payload: frame.payload,

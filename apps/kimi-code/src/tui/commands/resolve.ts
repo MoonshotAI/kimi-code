@@ -56,6 +56,8 @@ export interface ResolveSlashCommandInput {
   readonly pluginCommandMap: ReadonlyMap<string, string>;
   readonly isStreaming: boolean;
   readonly isCompacting: boolean;
+  readonly skillVariantPathForCommand?: (commandName: string, tokenStart: number) => string | undefined;
+  readonly defaultSkillPathForCommand?: (commandName: string) => string | undefined;
 }
 
 export function resolveSlashCommandInput(options: ResolveSlashCommandInput): SlashCommandIntent {
@@ -102,7 +104,7 @@ export function resolveSlashCommandInput(options: ResolveSlashCommandInput): Sla
   // them behind the running turn exactly like normal messages (see
   // sendSkillActivation), and Ctrl-S steers them as real activations, so
   // skill commands can be issued any time.
-  const exactSkillName = options.skillCommandMap.get(parsed.name);
+  const exactSkillName = options.skillCommandMap.get(parsed.name) ?? options.skillCommandMap.get(parsed.name.toLowerCase());
   if (exactSkillName !== undefined) {
     return skillCommandIntent(parsed, exactSkillName);
   }
@@ -131,7 +133,8 @@ export function resolveSlashCommandInput(options: ResolveSlashCommandInput): Sla
     };
   }
 
-  const shorthandSkillName = options.skillCommandMap.get(`skill:${parsed.name}`);
+  const shorthandSkillName = options.skillCommandMap.get(`skill:${parsed.name}`) ??
+    options.skillCommandMap.get(`skill:${parsed.name.toLowerCase()}`);
   if (shorthandSkillName !== undefined) {
     return skillCommandIntent(parsed, shorthandSkillName);
   }
@@ -147,34 +150,78 @@ export function resolveUserInput(options: ResolveSlashCommandInput): {
   readonly activations: readonly InlineSkillActivation[];
 } {
   const intent = resolveSlashCommandInput(options);
-  if (intent.kind !== 'skill' && intent.kind !== 'message' && intent.kind !== 'not-command') {
+  if (
+    intent.kind !== 'skill' &&
+    intent.kind !== 'message' &&
+    intent.kind !== 'not-command' &&
+    !(intent.kind === 'builtin' && intent.name === 'btw')
+  ) {
     return { intent, activations: [] };
   }
-  const text = options.input.trim();
-  const activations = extractInlineSkillActivations(text, options.skillCommandMap, {
+  const text = options.input;
+  const selectedActivations = extractInlineSkillActivations(text, options.skillCommandMap, {
+    includeLeading: true,
+    skillVariantPathForCommand: options.skillVariantPathForCommand,
+    defaultSkillPathForCommand: options.defaultSkillPathForCommand,
+  }).filter((activation) => intent.kind !== 'builtin' || activation.start !== 0);
+  const tokens = findInlineSkillTokens(text, {
+    isKnownSkill: (name) => resolveSkillCommand(options.skillCommandMap, name) !== undefined,
     includeLeading: true,
   });
-  if (activations.length === 1) {
-    const tokens = findInlineSkillTokens(text, {
-      isKnownSkill: (name) => resolveSkillCommand(options.skillCommandMap, name) !== undefined,
-      includeLeading: true,
-    });
-    if (tokens.length === 1 && tokens[0]?.start === 0) {
-      if (intent.kind !== 'skill') return { intent, activations: [] };
-      return {
-        intent,
-        activations: [{ skillName: activations[0]!.skillName, args: text.slice(tokens[0].end).trim() }],
-      };
-    }
+  const token = tokens[0];
+  if (selectedActivations.length === 1 && tokens.length === 1 && token?.start === 0) {
+    if (intent.kind !== 'skill') return { intent, activations: [] };
+    return {
+      intent,
+      activations: [{
+        skillName: selectedActivations[0]!.skillName,
+        path: selectedActivations[0]!.path,
+        start: selectedActivations[0]!.start,
+        args: text.slice(token.end).trim(),
+      }],
+    };
   }
-  return { intent, activations };
+  return { intent, activations: selectedActivations };
 }
 
 export function resolveSkillCommand(
   skillCommandMap: ReadonlyMap<string, string>,
   commandName: string,
 ): string | undefined {
-  return skillCommandMap.get(commandName) ?? skillCommandMap.get(`skill:${commandName}`);
+  const normalized = commandName.toLowerCase();
+  return skillCommandMap.get(commandName) ?? skillCommandMap.get(`skill:${commandName}`) ??
+    skillCommandMap.get(normalized) ?? skillCommandMap.get(`skill:${normalized}`);
+}
+
+export function skillVariantPathsForInput(
+  text: string,
+  activations: readonly InlineSkillActivation[],
+  skillCommandMap: ReadonlyMap<string, string>,
+): Array<{ commandName: string; path: string; start: number }> {
+  const tokens = findInlineSkillTokens(text, {
+    isKnownSkill: (commandName) => resolveSkillCommand(skillCommandMap, commandName) !== undefined,
+    includeLeading: true,
+  });
+  const claimed = new Set<number>();
+  const selected: Array<{ commandName: string; path: string; start: number }> = [];
+  for (const activation of activations) {
+    if (activation.path === undefined) continue;
+    const occurrences = activation.occurrences ?? [{ commandName: undefined, start: activation.start }];
+    for (const occurrence of occurrences) {
+      const token = tokens.find((candidate) =>
+        !claimed.has(candidate.start) &&
+        resolveSkillCommand(skillCommandMap, candidate.commandName) === activation.skillName &&
+        (occurrence.commandName === undefined || candidate.commandName === occurrence.commandName) &&
+        (occurrence.start === undefined || candidate.start === occurrence.start)
+      );
+      if (token !== undefined) {
+        claimed.add(token.start);
+        const commandName = token.commandName.startsWith('skill:') ? token.commandName : `skill:${token.commandName}`;
+        selected.push({ commandName, path: activation.path, start: token.start });
+      }
+    }
+  }
+  return selected;
 }
 
 function skillCommandIntent(parsed: ParsedSlashInput, skillName: string): SlashCommandIntent {

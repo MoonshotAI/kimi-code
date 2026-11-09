@@ -137,11 +137,24 @@ describe('facade routing', () => {
     channel.result = status;
     await expect(klient.global.capabilities.get('kimi-cu')).resolves.toEqual(status);
     await expect(klient.global.capabilities.install('kimi-cu')).resolves.toEqual(status);
+    const confirmation = {
+      ...status,
+      install: { running: false, confirmationRequired: 'stop-processes' },
+    };
+    channel.result = confirmation;
+    await expect(klient.global.capabilities.install('kimi-cu', { stopRunningProcesses: true }))
+      .resolves.toEqual(confirmation);
 
     expect(channel.calls).toEqual([
       { scope: {}, service: 'capabilityService', method: 'listCapabilities', args: [] },
       { scope: {}, service: 'capabilityService', method: 'getCapability', args: ['kimi-cu'] },
-      { scope: {}, service: 'capabilityService', method: 'installCapability', args: ['kimi-cu'] },
+      { scope: {}, service: 'capabilityService', method: 'installCapability', args: ['kimi-cu', undefined] },
+      {
+        scope: {},
+        service: 'capabilityService',
+        method: 'installCapability',
+        args: ['kimi-cu', { stopRunningProcesses: true }],
+      },
     ]);
   });
 
@@ -151,6 +164,9 @@ describe('facade routing', () => {
     channel.result = {
       id: 'demo',
       displayName: 'Demo',
+      description: 'Plugin description',
+      shortDescription: 'Short description',
+      longDescription: 'Long description',
       enabled: true,
       state: 'ok',
       skillCount: 0,
@@ -165,8 +181,18 @@ describe('facade routing', () => {
       installedAt: '2026-01-01T00:00:00.000Z',
     };
 
-    await klient.global.plugins.install('/tmp/demo');
-    await klient.global.plugins.install({ marketplaceId: 'demo', expectedVersion: '1.0.0' });
+    await expect(klient.global.plugins.install('/tmp/demo')).resolves.toMatchObject({
+      description: 'Plugin description',
+      shortDescription: 'Short description',
+      longDescription: 'Long description',
+    });
+    await expect(
+      klient.global.plugins.install({ marketplaceId: 'demo', expectedVersion: '1.0.0' }),
+    ).resolves.toMatchObject({
+      description: 'Plugin description',
+      shortDescription: 'Short description',
+      longDescription: 'Long description',
+    });
 
     expect(channel.calls).toEqual([
       {
@@ -296,7 +322,7 @@ describe('agent skill routing', () => {
       await expect(
         agent.promptWithSkills({
           input: [{ type: 'text', text: 'Review this change.' }],
-          skills: [{ name: 'review', args: 'src/app.ts' }],
+          skills: [{ name: 'review', path: '/work/B/review/SKILL.md', args: 'src/app.ts' }],
           steerIfActive,
         }),
       ).resolves.toEqual({
@@ -311,7 +337,7 @@ describe('agent skill routing', () => {
         args: [
           {
             input: [{ type: 'text', text: 'Review this change.' }],
-            skills: [{ name: 'review', args: 'src/app.ts' }],
+            skills: [{ name: 'review', path: '/work/B/review/SKILL.md', args: 'src/app.ts' }],
             steerIfActive,
           },
         ],
@@ -331,6 +357,7 @@ describe('session skills routing', () => {
         description: 'review changes',
         path: '/skills/review/SKILL.md',
         source: 'project',
+        workspaceDir: '/work/B',
       },
     ];
     channel.result = summaries;
@@ -366,14 +393,14 @@ describe('session skills routing', () => {
     const agent = klient.session('s1').agent('main');
 
     channel.result = { turn_id: 3 };
-    await expect(agent.activateSkill({ name: 'review', args: 'src/app.ts' })).resolves.toEqual({
+    await expect(agent.activateSkill({ name: 'review', path: '/work/B/review/SKILL.md', args: 'src/app.ts' })).resolves.toEqual({
       turn_id: 3,
     });
     expect(channel.calls[0]).toEqual({
       scope: { sessionId: 's1', agentId: 'main' },
       service: 'agentSkillService',
       method: 'activate',
-      args: [{ name: 'review', args: 'src/app.ts' }],
+      args: [{ name: 'review', path: '/work/B/review/SKILL.md', args: 'src/app.ts' }],
     });
   });
 

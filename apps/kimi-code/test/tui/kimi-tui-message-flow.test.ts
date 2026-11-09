@@ -40,6 +40,10 @@ import { EffortSelectorComponent } from '#/tui/components/dialogs/effort-selecto
 import { kimiCodePluginMarketplaceUrl } from '#/constant/app';
 import { MOON_SPINNER_FRAMES } from '#/tui/constant/rendering';
 import { promptApiKey, promptPlatformSelection } from '#/tui/commands/prompts';
+import { applyTranscriptConfigChoice } from '#/tui/commands/config';
+import type { SlashCommandHost } from '#/tui/commands/dispatch';
+import type { TranscriptConfig } from '#/tui/config';
+import { isReadonlyBash } from '#/utils/readonly-bash';
 import {
   AgentSwarmProgressComponent,
   agentSwarmGridHeightForTerminalRows,
@@ -83,7 +87,7 @@ import {
   runModelSelector,
   type FeedbackPromptResult,
 } from '#/tui/commands/prompts';
-import { isPromptQueuedMessage, type QueuedMessage, type TranscriptEntry } from '#/tui/types';
+import { isPromptQueuedMessage, type InlineSkillActivation, type QueuedMessage, type TranscriptEntry } from '#/tui/types';
 import type { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
 import {
   extractMediaAttachments,
@@ -178,6 +182,7 @@ interface MessageDriver {
   };
   init(): Promise<boolean>;
   handleUserInput(text: string): void;
+  restoreInputText(text: string, inlineSkillActivations?: readonly InlineSkillActivation[]): void;
   toggleToolOutputExpansion(): void;
   appendTranscriptEntry(entry: TranscriptEntry): void;
   persistInputHistory(text: string): Promise<void>;
@@ -187,6 +192,8 @@ interface MessageDriver {
   completedCompactionSerial: number;
   recallLastQueued(): QueuedMessage | undefined;
   recallStashedMedia(extraction: ExtractionResult | undefined): void;
+  retainSkillVariantSelection(text: string): void;
+  skillVariantPathForCommand(commandName: string, tokenStart: number): string | undefined;
   clearQueuedMessages(): void;
   closeSession(reason: string): Promise<void>;
   setSession(session: unknown): Promise<void>;
@@ -240,6 +247,7 @@ function makeStartupInput(): KimiTUIStartupInput {
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
+      transcript: { groupTools: 'auto', groupThinking: true },
       statusLine: { items: null, command: null },
     },
     version: '0.0.0-test',
@@ -479,6 +487,28 @@ function makeActiveGoalSnapshot(): GoalSnapshot {
 
 function renderTranscript(driver: MessageDriver): string {
   return driver.state.transcriptContainer.render(120).join('\n');
+}
+
+function clickTranscriptLine(driver: MessageDriver, needle: string): void {
+  const width = 120;
+  const lines = driver.state.transcriptContainer.render(width);
+  const y = lines.findIndex((line) => stripSgr(line).includes(needle));
+  expect(y).toBeGreaterThanOrEqual(0);
+  const event: TuiMouseEvent = {
+    type: 'click',
+    button: 'left',
+    x: 2,
+    y,
+    screenX: 2,
+    screenY: y,
+    width,
+    height: lines.length,
+    shift: false,
+    alt: false,
+    ctrl: false,
+    clickCount: 1,
+  };
+  driver.state.transcriptContainer.handleMouse(event);
 }
 
 function turnSwarmModeOn(driver: MessageDriver): void {
@@ -780,6 +810,360 @@ describe('KimiTUI message flow', () => {
     expect(session.activateSkill).not.toHaveBeenCalled();
   });
 
+  it('binds a manually typed command to the visible variant when the default is hidden', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const path = '/work/B/review/SKILL.md';
+    const { driver } = await makeDriver(session, {
+      listWorkspaceSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/work/A/review/SKILL.md', source: 'project', workspaceDir: '/work/A', scopes: ['web'] },
+        { name: 'review', description: 'Review skill', path, source: 'project', workspaceDir: '/work/B', scopes: ['tui'] },
+      ]),
+      listPluginCommands: vi.fn(async () => []),
+    });
+    await (driver as unknown as { refreshSkillCommands(): Promise<void> }).refreshSkillCommands();
+
+    driver.handleUserInput('/skill:review');
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith('/skill:review', [
+        expect.objectContaining({ name: 'review', path }),
+      ]);
+    });
+  });
+
+  it.each([
+    ['/skill:Review', '/work/A/review/SKILL.md'],
+    ['/skill:review', '/work/B/review/SKILL.md'],
+  ])('preserves the matching case variant for manually typed command %s', async (command, path) => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const { driver } = await makeDriver(session, {
+      listWorkspaceSkills: vi.fn(async () => [
+        { name: 'Review', description: 'Review skill', path: '/work/A/review/SKILL.md', source: 'project', workspaceDir: '/work/A' },
+        { name: 'review', description: 'Review skill', path: '/work/B/review/SKILL.md', source: 'project', workspaceDir: '/work/B' },
+      ]),
+      listPluginCommands: vi.fn(async () => []),
+    });
+    await (driver as unknown as { refreshSkillCommands(): Promise<void> }).refreshSkillCommands();
+
+    driver.handleUserInput(command);
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith(command, [
+        expect.objectContaining({ path }),
+      ]);
+    });
+  });
+
+  it('restores selected variant bindings when recalling a queued skill', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const { driver } = await makeDriver(session, {
+      listWorkspaceSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/work/A/review/SKILL.md', source: 'project', workspaceDir: '/work/A' },
+        { name: 'review', description: 'Review skill', path: '/work/B/review/SKILL.md', source: 'project', workspaceDir: '/work/B' },
+      ]),
+      listPluginCommands: vi.fn(async () => []),
+    });
+    await (driver as unknown as { refreshSkillCommands(): Promise<void> }).refreshSkillCommands();
+    const variants = driver as unknown as { skillVariantPaths: Map<number, { commandName: string; path: string }> };
+    const path = '/work/B/review/SKILL.md';
+    variants.skillVariantPaths.set(0, { commandName: 'skill:review', path });
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.handleUserInput('/skill:review');
+    await vi.waitFor(() => { expect(driver.state.queuedMessages).toHaveLength(1); });
+
+    driver.retainSkillVariantSelection('');
+    expect(variants.skillVariantPaths.size).toBe(0);
+    const recalled = driver.recallLastQueued();
+    expect(recalled).toBeDefined();
+    expect(driver.skillVariantPathForCommand('skill:review', 0)).toBe(path);
+
+    driver.handleUserInput(recalled!.text);
+    await vi.waitFor(() => { expect(driver.state.queuedMessages).toHaveLength(1); });
+    expect(driver.state.queuedMessages[0]).toMatchObject({
+      text: '/skill:review',
+      inlineSkillActivations: [{ skillName: 'review', path }],
+    });
+  });
+
+  it('restores variant bindings for returned skill drafts', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const { driver } = await makeDriver(session, {
+      listWorkspaceSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/work/A/review/SKILL.md', source: 'project', workspaceDir: '/work/A' },
+        { name: 'review', description: 'Review skill', path: '/work/B/review/SKILL.md', source: 'project', workspaceDir: '/work/B' },
+      ]),
+      listPluginCommands: vi.fn(async () => []),
+    });
+    await (driver as unknown as { refreshSkillCommands(): Promise<void> }).refreshSkillCommands();
+    const path = '/work/B/review/SKILL.md';
+
+    driver.restoreInputText('/skill:review', [{ skillName: 'review', path }]);
+    expect(driver.skillVariantPathForCommand('skill:review', 0)).toBe(path);
+
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.handleUserInput('/skill:review');
+    await vi.waitFor(() => { expect(driver.state.queuedMessages).toHaveLength(1); });
+    expect(driver.state.queuedMessages[0]).toMatchObject({
+      text: '/skill:review',
+      inlineSkillActivations: [{ skillName: 'review', path }],
+    });
+  });
+
+  it('records selected variant metadata on live transcript entries', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const path = '/work/B/review/SKILL.md';
+    const { driver } = await makeDriver(session, {
+      listWorkspaceSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/work/A/review/SKILL.md', source: 'project', workspaceDir: '/work/A' },
+        { name: 'review', description: 'Review skill', path, source: 'project', workspaceDir: '/work/B' },
+      ]),
+      listPluginCommands: vi.fn(async () => []),
+    });
+    await (driver as unknown as { refreshSkillCommands(): Promise<void> }).refreshSkillCommands();
+    driver.restoreInputText('/skill:review', [{ skillName: 'review', path }]);
+
+    driver.handleUserInput('/skill:review');
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith('/skill:review', [
+        expect.objectContaining({ name: 'review', path }),
+      ]);
+    });
+    const entry = driver.state.transcriptEntries.find((item) => item.kind === 'user' && item.content === '/skill:review');
+    expect(entry?.inlineSkillActivations).toEqual([
+      expect.objectContaining({ skillName: 'review', path }),
+    ]);
+  });
+
+  it('retains valid variant bindings across skill list refreshes', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const path = '/work/B/review/SKILL.md';
+    let skills = [
+      { name: 'review', description: 'Review skill', path: '/work/A/review/SKILL.md', source: 'project' as const, workspaceDir: '/work/A' },
+      { name: 'review', description: 'Review skill', path, source: 'project' as const, workspaceDir: '/work/B' },
+    ];
+    const { driver } = await makeDriver(session, {
+      listWorkspaceSkills: vi.fn(async () => skills),
+      listPluginCommands: vi.fn(async () => []),
+    });
+    await (driver as unknown as { refreshSkillCommands(): Promise<void> }).refreshSkillCommands();
+    driver.restoreInputText('/skill:review', [{ skillName: 'review', path }]);
+
+    await (driver as unknown as { refreshSkillCommands(): Promise<void> }).refreshSkillCommands();
+
+    expect(driver.state.editor.getText()).toBe('/skill:review');
+    expect(driver.skillVariantPathForCommand('skill:review', 0)).toBe(path);
+
+    skills = skills.filter((skill) => skill.path !== path);
+    await (driver as unknown as { refreshSkillCommands(): Promise<void> }).refreshSkillCommands();
+    expect(driver.skillVariantPathForCommand('skill:review', 0)).toBeUndefined();
+  });
+
+  it('clears stale variant bindings when restoring replacement text', async () => {
+    const selectedPath = '/work/B/review/SKILL.md';
+    const session = makeSession({
+      listSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/work/A/review/SKILL.md', source: 'project', workspaceDir: '/work/A' },
+        { name: 'review', description: 'Review skill', path: selectedPath, source: 'project', workspaceDir: '/work/B' },
+      ]),
+    });
+    const { driver } = await makeDriver(session);
+    await (
+      driver as unknown as { refreshSkillCommands(s: unknown): Promise<void> }
+    ).refreshSkillCommands(session);
+    driver.restoreInputText('/skill:review', [{ skillName: 'review', path: selectedPath }]);
+    expect(driver.skillVariantPathForCommand('skill:review', 0)).toBe(selectedPath);
+
+    driver.restoreInputText('/skill:review');
+
+    expect(driver.skillVariantPathForCommand('skill:review', 0)).toBeUndefined();
+
+    driver.restoreInputText('/skill:review', [{ skillName: 'review', path: selectedPath }]);
+    expect(driver.skillVariantPathForCommand('skill:review', 0)).toBe(selectedPath);
+  });
+
+  it('keeps identical command text with different variant paths through history reload', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const pathA = '/work/A/review/SKILL.md';
+    const pathB = '/work/B/review/SKILL.md';
+    const { driver } = await makeDriver(session, {
+      listWorkspaceSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: pathA, source: 'project', workspaceDir: '/work/A' },
+        { name: 'review', description: 'Review skill', path: pathB, source: 'project', workspaceDir: '/work/B' },
+      ]),
+      listPluginCommands: vi.fn(async () => []),
+    });
+    await (driver as unknown as { refreshSkillCommands(): Promise<void> }).refreshSkillCommands();
+    driver.persistInputHistory = Object.getPrototypeOf(driver).persistInputHistory;
+    const history = await import('#/utils/history/input-history');
+    const { getInputHistoryFile } = await import('#/utils/paths');
+    const { mkdtemp, rm } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('pathe');
+    const home = await mkdtemp(join(tmpdir(), 'kimi-skill-history-variants-'));
+    const previousHome = process.env['KIMI_CODE_HOME'];
+    process.env['KIMI_CODE_HOME'] = home;
+    const file = getInputHistoryFile(driver.state.appState.workDir);
+    const text = '/skill:review';
+    const entries = driver as unknown as {
+      inputHistoryEntries: { inlineSkillActivations?: { path?: string }[] }[];
+    };
+    const paths = () => entries.inputHistoryEntries.map((entry) => entry.inlineSkillActivations?.[0]?.path);
+    try {
+      driver.restoreInputText(text, [{ skillName: 'review', path: pathA, start: 0 }]);
+      await driver.persistInputHistory(text);
+      driver.restoreInputText(text, [{ skillName: 'review', path: pathB, start: 0 }]);
+      await driver.persistInputHistory(text);
+
+      expect(paths()).toEqual([pathB, pathA]);
+      const persisted = await history.loadInputHistory(file);
+      expect(persisted.map((entry) => entry.inlineSkillActivations?.[0]?.path)).toEqual([pathA, pathB]);
+
+      entries.inputHistoryEntries = [];
+      await (driver as unknown as { loadPersistedInputHistory(): Promise<void> }).loadPersistedInputHistory();
+      expect(paths()).toEqual([pathB, pathA]);
+    } finally {
+      if (previousHome === undefined) delete process.env['KIMI_CODE_HOME'];
+      else process.env['KIMI_CODE_HOME'] = previousHome;
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('restores skill variants from input history without losing duplicate bindings', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const { driver } = await makeDriver(session, {
+      listWorkspaceSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/work/A/review/SKILL.md', source: 'project', workspaceDir: '/work/A' },
+        { name: 'review', description: 'Review skill', path: '/work/B/review/SKILL.md', source: 'project', workspaceDir: '/work/B' },
+      ]),
+      listPluginCommands: vi.fn(async () => []),
+    });
+    await (driver as unknown as { refreshSkillCommands(): Promise<void> }).refreshSkillCommands();
+    driver.persistInputHistory = Object.getPrototypeOf(driver).persistInputHistory;
+    const history = await import('#/utils/history/input-history');
+    const { getInputHistoryFile } = await import('#/utils/paths');
+    const { mkdtemp, rm } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('pathe');
+    const home = await mkdtemp(join(tmpdir(), 'kimi-skill-input-history-'));
+    const previousHome = process.env['KIMI_CODE_HOME'];
+    process.env['KIMI_CODE_HOME'] = home;
+    const file = getInputHistoryFile(driver.state.appState.workDir);
+    const pathA = '/work/A/review/SKILL.md';
+    const pathB = '/work/B/review/SKILL.md';
+    const text = '/skill:review /skill:review';
+    const trimmed = text.trim();
+    const variant = (path: string, start: number): InlineSkillActivation => ({
+      skillName: 'review', path, start, occurrences: [{ commandName: 'skill:review', start }],
+    });
+    try {
+      driver.restoreInputText(text, [variant(pathB, 0), variant(pathB, 14)]);
+      await driver.persistInputHistory(text);
+      expect(await history.loadInputHistory(file)).toEqual([{
+        content: trimmed,
+        inlineSkillActivations: [{
+          skillName: 'review',
+          path: pathB,
+          start: 0,
+          occurrences: [
+            { commandName: 'skill:review', start: 0 },
+            { commandName: 'skill:review', start: 14 },
+          ],
+        }],
+      }]);
+      await driver.persistInputHistory('another prompt');
+      driver.restoreInputText(text, [variant(pathA, 0), variant(pathA, 14)]);
+      await driver.persistInputHistory(text);
+      const entries = await history.loadInputHistory(file);
+      expect(entries).toHaveLength(3);
+      expect(entries[0]?.inlineSkillActivations?.[0]?.path).toBe(pathB);
+      expect(entries[1]?.content).toBe('another prompt');
+      expect(entries[2]?.inlineSkillActivations?.[0]?.path).toBe(pathA);
+
+      driver.state.editor.onHistoryDraftSave?.();
+      driver.state.editor.onRecall?.(trimmed, -1);
+      expect(driver.skillVariantPathForCommand('skill:review', 0)).toBe(pathA);
+      expect(driver.skillVariantPathForCommand('skill:review', 14)).toBe(pathA);
+      driver.state.editor.onRecall?.('another prompt', -1);
+      expect(driver.skillVariantPathForCommand('skill:review', 0)).toBeUndefined();
+      expect(driver.skillVariantPathForCommand('skill:review', 14)).toBeUndefined();
+      driver.state.editor.onRecall?.(trimmed, -1);
+      expect(driver.skillVariantPathForCommand('skill:review', 0)).toBe(pathB);
+      expect(driver.skillVariantPathForCommand('skill:review', 14)).toBe(pathB);
+      driver.state.editor.onHistoryDraftRestore?.('prompt');
+      expect(driver.skillVariantPathForCommand('skill:review', 0)).toBe(pathA);
+      expect(driver.skillVariantPathForCommand('skill:review', 14)).toBe(pathA);
+
+      (driver as unknown as { inputHistoryEntries: unknown[] }).inputHistoryEntries = [];
+      driver.retainSkillVariantSelection('');
+      await (driver as unknown as { loadPersistedInputHistory(): Promise<void> }).loadPersistedInputHistory();
+      driver.state.editor.onHistoryDraftSave?.();
+      driver.state.editor.onRecall?.(trimmed, -1);
+      expect(driver.skillVariantPathForCommand('skill:review', 0)).toBe(pathA);
+      expect(driver.skillVariantPathForCommand('skill:review', 14)).toBe(pathA);
+      driver.state.editor.onRecall?.('another prompt', -1);
+      expect(driver.skillVariantPathForCommand('skill:review', 0)).toBeUndefined();
+      expect(driver.skillVariantPathForCommand('skill:review', 14)).toBeUndefined();
+      driver.state.editor.onRecall?.(trimmed, -1);
+      expect(driver.skillVariantPathForCommand('skill:review', 0)).toBe(pathB);
+      expect(driver.skillVariantPathForCommand('skill:review', 14)).toBe(pathB);
+    } finally {
+      if (previousHome === undefined) delete process.env['KIMI_CODE_HOME'];
+      else process.env['KIMI_CODE_HOME'] = previousHome;
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps both variants through queue recall and invalidates edited positions', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const { driver } = await makeDriver(session, {
+      listWorkspaceSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/work/A/review/SKILL.md', source: 'project', workspaceDir: '/work/A' },
+        { name: 'review', description: 'Review skill', path: '/work/B/review/SKILL.md', source: 'project', workspaceDir: '/work/B' },
+      ]),
+      listPluginCommands: vi.fn(async () => []),
+    });
+    await (driver as unknown as { refreshSkillCommands(): Promise<void> }).refreshSkillCommands();
+    const text = '/skill:review /skill:review';
+    const pathA = '/work/A/review/SKILL.md';
+    const pathB = '/work/B/review/SKILL.md';
+    driver.restoreInputText(text, [
+      { skillName: 'review', path: pathA, start: 0 },
+      { skillName: 'review', path: pathB, start: 14 },
+    ]);
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.handleUserInput(text);
+    await vi.waitFor(() => { expect(driver.state.queuedMessages).toHaveLength(1); });
+    expect(driver.state.queuedMessages[0]).toMatchObject({
+      inlineSkillActivations: [
+        { skillName: 'review', path: pathA, start: 0 },
+        { skillName: 'review', path: pathB, start: 14 },
+      ],
+    });
+
+    driver.retainSkillVariantSelection('');
+    const recalled = driver.recallLastQueued();
+    expect(recalled).toBeDefined();
+    expect(driver.skillVariantPathForCommand('skill:review', 0)).toBe(pathA);
+    expect(driver.skillVariantPathForCommand('skill:review', 14)).toBe(pathB);
+    driver.retainSkillVariantSelection(`note ${text}`);
+    expect(driver.skillVariantPathForCommand('skill:review', 0)).toBeUndefined();
+    expect(driver.skillVariantPathForCommand('skill:review', 14)).toBeUndefined();
+
+    driver.restoreInputText(
+      recalled!.text,
+      recalled !== undefined && 'inlineSkillActivations' in recalled ? recalled.inlineSkillActivations : undefined,
+    );
+    driver.handleUserInput(recalled!.text);
+    await vi.waitFor(() => { expect(driver.state.queuedMessages).toHaveLength(1); });
+    expect(driver.state.queuedMessages[0]).toMatchObject({
+      inlineSkillActivations: [
+        { skillName: 'review', path: pathA, start: 0 },
+        { skillName: 'review', path: pathB, start: 14 },
+      ],
+    });
+  });
+
   it('combines a leading skill command with later inline skills into one submission (v2 engine)', async () => {
     const session = makeSession({ id: 'ses-lazy' });
     const startupInput: KimiTUIStartupInput = {
@@ -1013,7 +1397,10 @@ describe('KimiTUI message flow', () => {
     expect(driver.state.queuedMessages).toEqual([
       expect.objectContaining({
         text: '/skill:review check this /skill:security',
-        inlineSkillActivations: [{ skillName: 'review' }, { skillName: 'security' }],
+        inlineSkillActivations: [
+          { skillName: 'review', start: 0 },
+          { skillName: 'security', start: 25 },
+        ],
       }),
     ]);
   });
@@ -1194,6 +1581,55 @@ describe('KimiTUI message flow', () => {
       expect(prompt).toHaveBeenCalledTimes(2);
       expect(takeOverLock).not.toHaveBeenCalled();
     }
+  });
+
+  it('restores rebased skill variants after a manual steer conflict is cancelled', async () => {
+    const occupied = new KimiError(ErrorCodes.SESSION_OCCUPIED, 'in use');
+    const selectedPath = '/work/B/review/SKILL.md';
+    const variants = [
+      { name: 'review', description: 'Review skill', path: '/work/A/review/SKILL.md', source: 'project', workspaceDir: '/work/A' },
+      { name: 'review', description: 'Review skill', path: selectedPath, source: 'project', workspaceDir: '/work/B' },
+    ];
+    const session = makeSession({
+      listSkills: vi.fn(async () => variants),
+      promptWithSkills: vi.fn(async () => {}).mockRejectedValueOnce(occupied).mockRejectedValueOnce(occupied),
+    });
+    const { driver } = await makeDriver(session);
+    await (
+      driver as unknown as { refreshSkillCommands(s: unknown): Promise<void> }
+    ).refreshSkillCommands(session);
+    type Picker = { handleInput(data: string): void; render(width: number): string[] };
+    const picker = (): Picker => driver.state.editorContainer.children[0] as Picker;
+
+    (
+      driver as unknown as {
+        steerMessage(
+          session: unknown,
+          input: ReadonlyArray<{
+            text: string;
+            inlineSkillActivations?: ReadonlyArray<{ skillName: string; path: string; start: number }>;
+          }>,
+          onSettled: undefined,
+          manual: boolean,
+        ): void;
+      }
+    ).steerMessage(session, [
+      { text: 'before' },
+      { text: '/skill:review', inlineSkillActivations: [{ skillName: 'review', path: selectedPath, start: 0 }] },
+    ], undefined, true);
+    await vi.waitFor(() => {
+      expect(stripSgr(picker().render(80).join(' '))).toContain('Session in use');
+    });
+    picker().handleInput('\r');
+    await vi.waitFor(() => {
+      expect(stripSgr(picker().render(80).join(' '))).toContain('Session still in use');
+    });
+    picker().handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editor.getText()).toBe('before\n/skill:review');
+    });
+    expect(driver.skillVariantPathForCommand('skill:review', 'before\n'.length)).toBe(selectedPath);
   });
 
   it('renders a bundled replay submission as a single turn', async () => {
@@ -4403,6 +4839,37 @@ command = "vim"
     expect(harness.deleteFile).toHaveBeenCalledTimes(1);
   });
 
+  it('stops transcript group timers during shutdown', async () => {
+    const { driver } = await makeDriver();
+    vi.useFakeTimers();
+    try {
+      driver.state.transcriptContainer.setPresentationOptions({
+        fullscreen: true,
+        groupTools: 'auto',
+        groupThinking: true,
+      });
+      driver.state.transcriptContainer.addChild(new ToolCallComponent(
+        { id: 'shutdown-live', name: 'Read', args: { path: '/work/a.ts' } },
+        undefined,
+        driver.state.ui,
+        '/work',
+      ));
+      driver.state.transcriptContainer.setTurnActive(true);
+      renderTranscript(driver);
+
+      const stopped = (driver as unknown as { stop(): Promise<void> }).stop();
+      await vi.advanceTimersByTimeAsync(1_500);
+      await stopped;
+      vi.mocked(driver.state.ui.requestRender).mockClear();
+      vi.advanceTimersByTime(200);
+
+      expect(driver.state.ui.requestRender).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      driver.state.transcriptContainer.clear();
+    }
+  });
+
   it('force-exits instead of waiting for shutdown hooks when Ctrl+C is pressed during stop', async () => {
     const { driver } = await makeDriver();
     const stopUiForExit = vi
@@ -4529,6 +4996,34 @@ command = "vim"
     expect(session.steer).not.toHaveBeenCalled();
     expect(driver.state.editor.getText()).toBe('');
     expect(driver.state.queuedMessages).toEqual([]);
+  });
+
+  it('records selected variant metadata on steered transcript entries', async () => {
+    const path = '/work/B/review/SKILL.md';
+    const session = makeSession({
+      listSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/work/A/review/SKILL.md', source: 'project', workspaceDir: '/work/A' },
+        { name: 'review', description: 'Review skill', path, source: 'project', workspaceDir: '/work/B' },
+      ]),
+    });
+    const { driver } = await makeDriver(session);
+    await (
+      driver as unknown as { refreshSkillCommands(s: unknown): Promise<void> }
+    ).refreshSkillCommands(session);
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.restoreInputText('/skill:review', [{ skillName: 'review', path }]);
+
+    driver.state.editor.onCtrlS?.();
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith('/skill:review', [
+        expect.objectContaining({ name: 'review', path }),
+      ], { steerIfActive: true });
+    });
+    const entry = driver.state.transcriptEntries.find((item) => item.kind === 'user' && item.content === '/skill:review');
+    expect(entry?.inlineSkillActivations).toEqual([
+      expect.objectContaining({ skillName: 'review', path }),
+    ]);
   });
 
   it.each(['/skill:review', 'check /skill:review'])(
@@ -5575,7 +6070,7 @@ command = "vim"
       {
         text: '/demo refactor auth and ui',
         agentId: 'main',
-        inlineSkillActivations: [{ skillName: 'demo', args: 'refactor auth and ui' }],
+        inlineSkillActivations: [{ skillName: 'demo', start: 0, args: 'refactor auth and ui' }],
       },
     ]);
     expect(harness.track).toHaveBeenCalledWith('input_queue', undefined);
@@ -5646,7 +6141,7 @@ command = "vim"
       {
         text: '/demo refactor auth and ui',
         agentId: 'main',
-        inlineSkillActivations: [{ skillName: 'demo', args: 'refactor auth and ui' }],
+        inlineSkillActivations: [{ skillName: 'demo', start: 0, args: 'refactor auth and ui' }],
       },
     ]);
     expect(driver.state.queueContainer.children.length).toBeGreaterThan(0);
@@ -8011,7 +8506,7 @@ capabilities = ["image_in", "video_in"]
     );
     const session = makeSession({ runShellCommand });
     const { driver } = await makeDriver(session);
-    driver.state.toolOutputExpanded = true;
+    driver.state.transcriptContainer.toggleToolOutputExpansion();
     driver.state.appState.inputMode = 'bash';
     driver.state.editor.inputMode = 'bash';
 
@@ -8723,7 +9218,7 @@ capabilities = ["image_in", "video_in"]
     driver.state.editor.onToggleToolExpand?.();
 
     const expanded = driver.state.transcriptContainer.render(120).map(stripSgr).join('\n');
-    expect(driver.state.toolOutputExpanded).toBe(true);
+    expect(driver.state.transcriptContainer.toolOutputExpanded).toBe(true);
     expect(expanded).toContain('Keep the src/tui compaction notes.');
   });
 
@@ -8732,7 +9227,7 @@ capabilities = ["image_in", "video_in"]
     const sendQueued = vi.fn();
 
     driver.state.editor.onToggleToolExpand?.();
-    expect(driver.state.toolOutputExpanded).toBe(true);
+    expect(driver.state.transcriptContainer.toolOutputExpanded).toBe(true);
 
     driver.sessionEventHandler.handleEvent(
       {
@@ -9034,11 +9529,13 @@ capabilities = ["image_in", "video_in"]
   });
 
   it('activates inline skills in the initial /btw prompt (v2 engine)', async () => {
+    const variants = [
+      { name: 'review', description: 'Review skill', path: '/work/A/review/SKILL.md', source: 'project', workspaceDir: '/work/A' },
+      { name: 'review', description: 'Review skill', path: '/work/B/review/SKILL.md', source: 'project', workspaceDir: '/work/B' },
+    ];
     const session = makeSession({
       id: 'ses-lazy',
-      listSkills: vi.fn(async () => [
-        { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
-      ]),
+      listSkills: vi.fn(async () => variants),
     });
     const startupInput: KimiTUIStartupInput = {
       ...makeStartupInput(),
@@ -9047,9 +9544,7 @@ capabilities = ["image_in", "video_in"]
     const { driver } = await makeDriver(
       session,
       {
-        listWorkspaceSkills: vi.fn(async () => [
-          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
-        ]),
+        listWorkspaceSkills: vi.fn(async () => variants),
         listPluginCommands: vi.fn(async () => []),
       },
       startupInput,
@@ -9057,15 +9552,65 @@ capabilities = ["image_in", "video_in"]
     await (
       driver as unknown as { refreshSkillCommands(): Promise<void> }
     ).refreshSkillCommands();
+    driver.restoreInputText('/btw check this /skill:review', [
+      { skillName: 'review', path: '/work/B/review/SKILL.md' },
+    ]);
 
     driver.handleUserInput('/btw check this /skill:review');
 
     await vi.waitFor(() => {
       expect(session.promptWithSkills).toHaveBeenCalledWith('check this /skill:review', [
-        { name: 'review' },
+        { name: 'review', path: '/work/B/review/SKILL.md' },
       ]);
     });
     expect(session.prompt).not.toHaveBeenCalled();
+  });
+
+  it('restores the selected variant after lazy session creation fails for /btw', async () => {
+    const input = '/btw check this /skill:review';
+    const selectedPath = '/work/B/review/SKILL.md';
+    const variants = [
+      { name: 'review', description: 'Review skill', path: '/work/A/review/SKILL.md', source: 'project', workspaceDir: '/work/A' },
+      { name: 'review', description: 'Review skill', path: selectedPath, source: 'project', workspaceDir: '/work/B' },
+    ];
+    const session = makeSession({
+      id: 'ses-lazy',
+      listSkills: vi.fn(async () => variants),
+    });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver, harness } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => variants),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+    driver.restoreInputText(input, [{ skillName: 'review', path: selectedPath }]);
+    harness.createSession.mockRejectedValueOnce(new Error('create failed'));
+
+    driver.state.editor.handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain('Failed to start a session: create failed');
+    });
+    expect(driver.state.editor.getText()).toBe(input);
+    expect(driver.skillVariantPathForCommand('skill:review', input.indexOf('/skill:review'))).toBe(selectedPath);
+
+    driver.state.editor.handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith('check this /skill:review', [
+        { name: 'review', path: selectedPath },
+      ]);
+    });
+    expect(harness.createSession).toHaveBeenCalledTimes(2);
   });
 
   it('cancels a BTW skill prompt during original registration and releases its media', async () => {
@@ -9488,7 +10033,7 @@ capabilities = ["image_in", "video_in"]
 
     requestRender.mockClear();
     driver.state.editor.onToggleToolExpand?.();
-    expect(driver.state.toolOutputExpanded).toBe(true);
+    expect(driver.state.transcriptContainer.toolOutputExpanded).toBe(true);
     expect(panel.render(80).map(stripSgr)).toEqual(tiny);
   });
 
@@ -9724,6 +10269,42 @@ capabilities = ["image_in", "video_in"]
     );
 
     resolveBtwPrompt?.();
+  });
+
+  it('keeps the selected variant when a busy /btw restores the draft', async () => {
+    const input = 'check /skill:review';
+    const selectedPath = '/work/B/review/SKILL.md';
+    const variants = [
+      { name: 'review', description: 'Review skill', path: '/work/A/review/SKILL.md', source: 'project', workspaceDir: '/work/A' },
+      { name: 'review', description: 'Review skill', path: selectedPath, source: 'project', workspaceDir: '/work/B' },
+    ];
+    const session = makeSession({
+      listSkills: vi.fn(async () => variants),
+      prompt: vi.fn(() => new Promise<void>(() => {})),
+    });
+    const { driver } = await makeDriver(session);
+    await (
+      driver as unknown as { refreshSkillCommands(s: unknown): Promise<void> }
+    ).refreshSkillCommands(session);
+    await openBtwPanel(driver, session);
+    driver.restoreInputText(input, [{ skillName: 'review', path: selectedPath }]);
+
+    driver.state.editor.handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editor.getText()).toBe(input);
+    });
+    await Promise.resolve();
+    expect(driver.skillVariantPathForCommand('skill:review', input.indexOf('/skill:review'))).toBe(selectedPath);
+
+    getMountedBtwPanel(driver).markDone();
+    driver.state.editor.handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith(input, [
+        { name: 'review', path: selectedPath },
+      ]);
+    });
   });
 
   it('replaces a running /btw panel when another /btw command is submitted', async () => {
@@ -11369,6 +11950,53 @@ capabilities = ["image_in", "video_in"]
       expect(output).toContain('Context window');
       expect(output).toContain('25%');
     });
+  });
+
+  it('renders /status with the remote session working directory', async () => {
+    const session = makeSession({
+      getEnvironmentState: vi.fn(async () => ({
+        environmentId: 'dev-box',
+        type: 'ssh',
+        status: 'ready',
+        cwd: '/remote/project',
+      })),
+    });
+    const { driver } = await makeDriver(session);
+
+    driver.handleUserInput('/status');
+
+    await vi.waitFor(() => {
+      const output = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
+      expect(output).toContain(' Status ');
+      expect(output).toContain('/remote/project');
+      expect(output).not.toContain('/tmp/proj-a');
+    });
+  });
+
+  it('exports Markdown metadata with the remote session working directory', async () => {
+    const session = makeSession({
+      getEnvironmentState: vi.fn(async () => ({
+        environmentId: 'dev-box',
+        type: 'ssh',
+        status: 'ready',
+        cwd: '/remote/project',
+      })),
+      getContext: vi.fn(async () => ({
+        history: [{ role: 'user', content: [{ type: 'text', text: 'hello' }], toolCalls: [] }],
+        tokenCount: 1,
+      })),
+    });
+    const { driver } = await makeDriver(session);
+    const outputDir = await mkdtemp(join(tmpdir(), 'kimi-code-remote-export-'));
+    tempDirs.push(outputDir);
+    const outputPath = join(outputDir, 'session.md');
+
+    driver.handleUserInput(`/export-md ${outputPath}`);
+
+    await vi.waitFor(() => expect(existsSync(outputPath)).toBe(true));
+    const markdown = await readFile(outputPath, 'utf8');
+    expect(markdown).toContain('work_dir: /remote/project');
+    expect(markdown).not.toContain('work_dir: /tmp/proj-a');
   });
 
   it('renders /mcp using a fresh MCP server snapshot', async () => {
@@ -13099,7 +13727,7 @@ capabilities = ["image_in", "video_in"]
 
   it('renders newly streamed thinking expanded when ctrl+o toggle was already active', async () => {
     const { driver } = await makeDriver();
-    driver.state.toolOutputExpanded = true;
+    driver.state.transcriptContainer.toggleToolOutputExpansion();
 
     const longThinking = ['t1', 't2', 't3', 't4', 't5', 't6', 't7'].join('\n');
     driver.sessionEventHandler.handleEvent(
@@ -13560,6 +14188,90 @@ describe('transcript step and assistant folding', () => {
     expect(assistantEntries).toHaveLength(cycles);
   });
 
+  async function makeGroupingDriver() {
+    const base = makeStartupInput();
+    const startup = {
+      ...base,
+      tuiConfig: { ...base.tuiConfig, tuiMode: 'fullscreen' as const },
+    };
+    const { driver, session } = await makeDriver(makeSession(), {}, startup);
+    await driver.setSession(session);
+    await driver.syncRuntimeState(session);
+    return { driver };
+  }
+
+  it('keeps all assistant replies when transcript grouping is active', async () => {
+    const { driver } = await makeGroupingDriver();
+    driver.handleUserInput('fold me');
+    const cycles = 10;
+    driveSteps(driver, cycles);
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        reason: 'completed',
+      } as Event,
+      vi.fn(),
+    );
+
+    const children = driver.state.transcriptContainer.children;
+    expect(children.filter((child) => child instanceof AssistantMessageComponent)).toHaveLength(cycles);
+    expect(children.filter((child) => child instanceof StepSummaryComponent)).toHaveLength(0);
+  });
+
+  it('does not destroy steps when transcript grouping is active', async () => {
+    const { driver } = await makeGroupingDriver();
+    expect(driver.state.ui.mode).toBe('fullscreen');
+    driver.handleUserInput('keep every step');
+    driveSteps(driver, 35);
+
+    const children = driver.state.transcriptContainer.children;
+    expect(children.filter((child) => child instanceof ToolCallComponent)).toHaveLength(35);
+    expect(children.filter((child) => child instanceof StepSummaryComponent)).toHaveLength(0);
+  });
+
+  it('keeps thirty-step merging in fullscreen when every grouping option is off', async () => {
+    const base = makeStartupInput();
+    const startup = {
+      ...base,
+      tuiConfig: {
+        ...base.tuiConfig,
+        tuiMode: 'fullscreen' as const,
+        transcript: { groupTools: 'off' as const, groupThinking: false },
+      },
+    };
+    const { driver, session } = await makeDriver(makeSession(), {}, startup);
+    await driver.setSession(session);
+    await driver.syncRuntimeState(session);
+    expect(driver.state.ui.mode).toBe('fullscreen');
+    driver.handleUserInput('merge old steps');
+    driveSteps(driver, 35);
+
+    const children = driver.state.transcriptContainer.children;
+    expect(children.filter((child) => child instanceof ToolCallComponent))
+      .toHaveLength(TRANSCRIPT_KEEP_RECENT_STEPS);
+    expect(children.filter((child) => child instanceof StepSummaryComponent)).toHaveLength(1);
+  });
+
+  it('reports transcript display settings at startup only in fullscreen', async () => {
+    const base = makeStartupInput();
+    const fullscreen = await makeDriver(makeSession(), {}, {
+      ...base,
+      tuiConfig: { ...base.tuiConfig, tuiMode: 'fullscreen' as const },
+    });
+    expect(fullscreen.harness.track).toHaveBeenCalledWith('transcript_display_settings', {
+      group_tools: 'auto',
+      group_thinking: true,
+      source: 'startup',
+    });
+
+    const regular = await makeDriver();
+    expect(regular.harness.track)
+      .not.toHaveBeenCalledWith('transcript_display_settings', expect.anything());
+  });
+
   it('does not fold a turn within the caps', async () => {
     const { driver } = await makeDriver();
     driver.handleUserInput('small turn');
@@ -13681,6 +14393,412 @@ describe('footer ctrl+o hint', () => {
 
     driver.toggleToolOutputExpansion();
     expect(renderFooterLine1(driver)).not.toContain('ctrl+o');
+  });
+
+  it('hides the hint while transcript grouping is active and keeps it when grouping is off', async () => {
+    async function fullscreenDriver(transcript: { groupTools: 'auto' | 'off'; groupThinking: boolean }) {
+      const base = makeStartupInput();
+      const { driver, session } = await makeDriver(makeSession(), {}, {
+        ...base,
+        tuiConfig: { ...base.tuiConfig, tuiMode: 'fullscreen' as const, transcript },
+      });
+      await driver.setSession(session);
+      await driver.syncRuntimeState(session);
+      emitBashResult(driver, 'call_bash', ['line1', 'line2', 'line3', 'line4', 'Tests 5 passed'].join('\n'));
+      return driver;
+    }
+
+    const grouped = await fullscreenDriver({ groupTools: 'auto', groupThinking: true });
+    expect(stripSgr(renderTranscript(grouped))).not.toContain('line1');
+    expect(renderFooterLine1(grouped)).not.toContain('ctrl+o');
+    grouped.toggleToolOutputExpansion();
+    expect(stripSgr(renderTranscript(grouped))).toContain('line1');
+    expect(renderFooterLine1(grouped)).not.toContain('ctrl+o');
+
+    const ungrouped = await fullscreenDriver({ groupTools: 'off', groupThinking: false });
+    expect(renderFooterLine1(ungrouped)).toContain('ctrl+o expand');
+  });
+});
+
+describe('activity bar Ctrl+B hint', () => {
+  it.each([false, true])('handles run_in_background=%s without changing the card hint contract', async (runInBackground) => {
+    const base = makeStartupInput();
+    const startup = {
+      ...base,
+      tuiConfig: { ...base.tuiConfig, tuiMode: 'fullscreen' as const },
+    };
+    const { driver, session } = await makeDriver(makeSession(), {}, startup);
+    await driver.setSession(session);
+    await driver.syncRuntimeState(session);
+    const activityLine = (): string => stripSgr(driver.state.activityContainer.render(200).join('\n'));
+
+    try {
+      vi.useFakeTimers();
+      driver.handleUserInput('run a slow command');
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'tool.call.started',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          toolCallId: 'call_slow',
+          name: 'Bash',
+          args: { command: 'sleep 30', run_in_background: runInBackground },
+        } as Event,
+        vi.fn(),
+      );
+      vi.advanceTimersByTime(9_999);
+      expect(activityLine()).not.toContain('Press Ctrl+B to run in background');
+
+      vi.advanceTimersByTime(1);
+      if (runInBackground) {
+        expect(activityLine()).not.toContain('Press Ctrl+B to run in background');
+      } else {
+        expect(activityLine()).toContain('Working… · Press Ctrl+B to run in background');
+        expect(activityLine()).not.toContain('Tip: Press Ctrl+B');
+        expect(stripSgr(driver.state.footer.render(200)[0] ?? ''))
+          .not.toContain('Press Ctrl+B to run in background');
+      }
+
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'tool.result',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          toolCallId: 'call_slow',
+          output: 'done',
+          isError: false,
+        } as Event,
+        vi.fn(),
+      );
+      expect(activityLine()).not.toContain('Press Ctrl+B to run in background');
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'turn.ended',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          reason: 'completed',
+        } as Event,
+        vi.fn(),
+      );
+    } finally {
+      vi.useRealTimers();
+      driver.state.transcriptContainer.clear();
+    }
+  });
+  it.each([
+    [
+      'step retry',
+      {
+        type: 'turn.step.retrying',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        step: 1,
+        failedAttempt: 1,
+        nextAttempt: 2,
+        maxAttempts: 6,
+        delayMs: 30_000,
+        errorName: 'RateLimitError',
+        errorMessage: 'too many requests',
+        statusCode: 429,
+      } as Event,
+      'Retrying (2/6) · RateLimitError',
+    ],
+    [
+      'compaction',
+      { type: 'compaction.started', agentId: 'main', sessionId: 'ses-1', trigger: 'auto' } as Event,
+      'Compacting…',
+    ],
+  ])('keeps the %s label beside the hint', async (_mode, event, label) => {
+    const base = makeStartupInput();
+    const startup = {
+      ...base,
+      tuiConfig: { ...base.tuiConfig, tuiMode: 'fullscreen' as const },
+    };
+    const { driver, session } = await makeDriver(makeSession(), {}, startup);
+    await driver.setSession(session);
+    await driver.syncRuntimeState(session);
+    const activityLine = (): string => stripSgr(driver.state.activityContainer.render(200).join('\n'));
+
+    try {
+      vi.useFakeTimers();
+      driver.handleUserInput('run a slow command');
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'tool.call.started',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          toolCallId: 'call_slow',
+          name: 'Bash',
+          args: { command: 'sleep 30' },
+        } as Event,
+        vi.fn(),
+      );
+      driver.sessionEventHandler.handleEvent(event, vi.fn());
+      vi.advanceTimersByTime(9_999);
+      expect(activityLine()).toContain(label);
+      expect(activityLine()).not.toContain('Press Ctrl+B to run in background');
+
+      vi.advanceTimersByTime(1);
+      const hinted = activityLine();
+      expect(hinted).toContain(label);
+      expect(hinted).toContain('Press Ctrl+B to run in background');
+      expect(hinted).not.toContain('Working…');
+    } finally {
+      vi.useRealTimers();
+      driver.state.transcriptContainer.clear();
+    }
+  });
+  it('keeps the random tip when every grouping option is off', async () => {
+    const base = makeStartupInput();
+    const startup = {
+      ...base,
+      tuiConfig: {
+        ...base.tuiConfig,
+        tuiMode: 'fullscreen' as const,
+        transcript: { groupTools: 'off' as const, groupThinking: false },
+      },
+    };
+    const session = makeSession();
+    const { driver } = await makeDriver(session, {}, startup);
+    await driver.setSession(session);
+    await driver.syncRuntimeState(session);
+    const activityLine = (): string => stripSgr(driver.state.activityContainer.render(200).join('\n'));
+
+    try {
+      vi.useFakeTimers();
+      driver.handleUserInput('run a slow command');
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'tool.call.started',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          toolCallId: 'call_without_grouping',
+          name: 'Bash',
+          args: { command: 'sleep 30' },
+        } as Event,
+        vi.fn(),
+      );
+      vi.advanceTimersByTime(9_999);
+      const randomTip = activityLine().split(' · Tip: ').at(-1);
+      expect(randomTip).toBeTruthy();
+
+      vi.advanceTimersByTime(1);
+      expect(activityLine()).toContain(` · Tip: ${randomTip ?? ''}`);
+      expect(activityLine()).not.toContain('Press Ctrl+B to run in background');
+
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'tool.result',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          toolCallId: 'call_without_grouping',
+          output: 'done',
+          isError: false,
+        } as Event,
+        vi.fn(),
+      );
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'turn.ended',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          reason: 'completed',
+        } as Event,
+        vi.fn(),
+      );
+    } finally {
+      vi.useRealTimers();
+      driver.state.transcriptContainer.clear();
+    }
+  });
+
+  const AUTO: TranscriptConfig = { groupTools: 'auto', groupThinking: true };
+
+  function hintCounts(driver: MessageDriver): { readonly transcript: number; readonly activity: number } {
+    const hint = 'Press Ctrl+B to run in background';
+    return {
+      transcript: countOccurrences(stripSgr(renderTranscript(driver)), hint),
+      activity: countOccurrences(stripSgr(driver.state.activityContainer.render(200).join('\n')), hint),
+    };
+  }
+
+  function emitSlowBash(driver: MessageDriver, event: Record<string, unknown>): void {
+    driver.sessionEventHandler.handleEvent(
+      { agentId: 'main', sessionId: 'ses-1', turnId: 1, toolCallId: 'call_slow', ...event } as Event,
+      vi.fn(),
+    );
+  }
+
+  async function withTenSecondBash(
+    transcript: TranscriptConfig,
+    command: string,
+    check: (driver: MessageDriver) => Promise<void> | void,
+    opening: 'started' | 'preview' = 'started',
+  ): Promise<void> {
+    process.env['KIMI_CODE_HOME'] = await makeTempHome();
+    const base = makeStartupInput();
+    const { driver, session } = await makeDriver(makeSession(), {}, {
+      ...base,
+      tuiConfig: { ...base.tuiConfig, tuiMode: 'fullscreen' as const, transcript },
+    });
+    await driver.setSession(session);
+    await driver.syncRuntimeState(session);
+    try {
+      vi.useFakeTimers();
+      driver.handleUserInput('run a slow command');
+      const events = opening === 'preview'
+        ? [{ type: 'tool.call.delta', name: 'Bash', argumentsPart: JSON.stringify({ command }) }]
+        : [
+            { type: 'tool.call.started', name: 'Bash', args: { command } },
+            { type: 'tool.progress', update: { kind: 'stdout', text: 'out-1\nout-2\nout-3\n' } },
+          ];
+      for (const event of events) emitSlowBash(driver, event);
+      vi.advanceTimersByTime(9_999);
+      expect(hintCounts(driver)).toEqual({ transcript: 0, activity: 0 });
+      vi.advanceTimersByTime(1);
+      await check(driver);
+    } finally {
+      vi.useRealTimers();
+      driver.state.transcriptContainer.clear();
+    }
+  }
+
+  it('shows the hint once, in the card, when only thinking folds', async () => {
+    await withTenSecondBash({ groupTools: 'off', groupThinking: true }, 'sleep 30', (driver) => {
+      expect(hintCounts(driver)).toEqual({ transcript: 1, activity: 0 });
+    });
+  });
+
+  it.each([
+    ['npm install', false, { transcript: 1, activity: 0 }],
+    ['ls -la', true, { transcript: 0, activity: 1 }],
+  ] as const)('shows the hint for `%s` once when only read-only tools fold', async (command, readonly, counts) => {
+    expect(isReadonlyBash(command)).toBe(readonly);
+    await withTenSecondBash({ groupTools: 'explore', groupThinking: true }, command, (driver) => {
+      expect(hintCounts(driver)).toEqual(counts);
+    });
+  });
+
+  it.each([
+    ['ctrl+o', (driver: MessageDriver) => {
+      driver.toggleToolOutputExpansion();
+    }],
+    ['a click on the group', (driver: MessageDriver) => {
+      clickTranscriptLine(driver, 'sleep 30');
+    }],
+  ])('keeps the hint only on the activity line after %s opens the group', async (_name, open) => {
+    await withTenSecondBash(AUTO, 'sleep 30', (driver) => {
+      expect(hintCounts(driver)).toEqual({ transcript: 0, activity: 1 });
+      expect(stripSgr(renderTranscript(driver))).not.toContain('out-1');
+
+      open(driver);
+      expect(stripSgr(renderTranscript(driver))).toContain('out-1');
+      expect(hintCounts(driver)).toEqual({ transcript: 0, activity: 1 });
+    });
+  });
+
+  it.each([
+    ['a click', (driver: MessageDriver) => {
+      clickTranscriptLine(driver, 'out-1');
+    }],
+    ['ctrl+o twice', (driver: MessageDriver) => {
+      driver.toggleToolOutputExpansion();
+      driver.toggleToolOutputExpansion();
+    }],
+  ])('moves the hint from an opened card to the activity line when %s folds the card', async (_name, close) => {
+    await withTenSecondBash({ groupTools: 'off', groupThinking: true }, 'sleep 30', async (driver) => {
+      expect(stripSgr(renderTranscript(driver))).not.toContain('out-1');
+      clickTranscriptLine(driver, 'out-3');
+      await applyTranscriptConfigChoice(driver as unknown as SlashCommandHost, AUTO);
+      expect(stripSgr(renderTranscript(driver))).toContain('out-1');
+      expect(hintCounts(driver)).toEqual({ transcript: 1, activity: 0 });
+
+      close(driver);
+      expect(stripSgr(renderTranscript(driver))).not.toContain('out-1');
+      expect(hintCounts(driver)).toEqual({ transcript: 0, activity: 1 });
+    });
+  });
+
+  it.each([
+    ['thinking still folds', { groupTools: 'off', groupThinking: true }],
+    ['nothing folds', { groupTools: 'off', groupThinking: false }],
+  ] as const)('moves the hint when /settings stops tool folding while %s, and back', async (_name, unfolded) => {
+    await withTenSecondBash(AUTO, 'sleep 30', async (driver) => {
+      const host = driver as unknown as SlashCommandHost;
+      expect(hintCounts(driver)).toEqual({ transcript: 0, activity: 1 });
+
+      await applyTranscriptConfigChoice(host, unfolded);
+      expect(hintCounts(driver)).toEqual({ transcript: 1, activity: 0 });
+
+      await applyTranscriptConfigChoice(host, AUTO);
+      expect(hintCounts(driver)).toEqual({ transcript: 0, activity: 1 });
+    });
+  });
+
+  it.each([
+    ['only read-only tools fold', { groupTools: 'explore', groupThinking: true }, { transcript: 1, activity: 0 }],
+    ['every tool folds', AUTO, { transcript: 0, activity: 1 }],
+  ] as const)('keeps one hint when a folded argument preview becomes `npm install` while %s', async (_name, transcript, counts) => {
+    await withTenSecondBash(transcript, 'npm install', (driver) => {
+      expect(hintCounts(driver)).toEqual({ transcript: 0, activity: 1 });
+
+      emitSlowBash(driver, { type: 'tool.call.started', name: 'Bash', args: { command: 'npm install' } });
+      expect(hintCounts(driver)).toEqual(counts);
+    }, 'preview');
+  });
+
+  it('keeps ctrl+o expansion to the last three turns when a session replays', async () => {
+    const turns = [1, 2, 3, 4, 5];
+    const replay = turns.flatMap((turn) => [
+      { role: 'user', content: [{ type: 'text', text: `question ${turn}` }], toolCalls: [], origin: { kind: 'user' } },
+      {
+        role: 'assistant',
+        content: [],
+        toolCalls: [{ type: 'function', id: `call_${turn}`, name: 'Bash', arguments: JSON.stringify({ command: `echo ${turn}` }) }],
+      },
+      { role: 'tool', toolCallId: `call_${turn}`, content: [{ type: 'text', text: `output of turn ${turn}` }], toolCalls: [] },
+      { role: 'assistant', content: [{ type: 'text', text: `answer ${turn}` }], toolCalls: [] },
+    ]).map((message, index) => ({ type: 'message', time: index + 1, message }));
+    const session = makeSession();
+    (session.getResumeState as ReturnType<typeof vi.fn>).mockReturnValue({
+      sessionMetadata: {},
+      agents: {
+        main: {
+          config: { modelCapabilities: { max_context_tokens: 100 }, modelAlias: 'k2' },
+          plan: null,
+          permission: { mode: 'manual' },
+          swarmMode: false,
+          context: { history: [], tokenCount: 0 },
+          background: [],
+          toolStore: {},
+          replay,
+        },
+      },
+    });
+    const base = makeStartupInput();
+    const { driver } = await makeDriver(session, {}, {
+      ...base,
+      tuiConfig: { ...base.tuiConfig, tuiMode: 'fullscreen' as const, transcript: AUTO },
+    });
+    try {
+      driver.toggleToolOutputExpansion();
+      await driver.switchToSession(session as unknown as Session, 'Resumed session.');
+
+      const transcript = stripSgr(renderTranscript(driver));
+      expect(turns.map((turn) => transcript.includes(`$ echo ${turn}`))).toEqual([true, true, true, true, true]);
+      expect(turns.map((turn) => transcript.includes(`output of turn ${turn}`)))
+        .toEqual([false, false, true, true, true]);
+    } finally {
+      driver.state.transcriptContainer.clear();
+    }
   });
 });
 
@@ -14265,8 +15383,6 @@ describe('KimiTUI editor replacement disposal', () => {
 });
 
 describe('transcript fold block clicks', () => {
-  const transcriptWidth = 120;
-
   function hiddenOutput(name: string): string {
     return [`${name}-body`, `${name}-mid`, `${name}-more`, `${name}-tail`].join('\n');
   }
@@ -14307,27 +15423,6 @@ describe('transcript fold block clicks', () => {
     return stripSgr(driver.state.footer.render(160)[0] ?? '');
   }
 
-  function clickTranscriptLine(driver: MessageDriver, needle: string): void {
-    const lines = driver.state.transcriptContainer.render(transcriptWidth);
-    const y = lines.findIndex((line) => stripSgr(line).includes(needle));
-    expect(y).toBeGreaterThanOrEqual(0);
-    const event: TuiMouseEvent = {
-      type: 'click',
-      button: 'left',
-      x: 2,
-      y,
-      screenX: 2,
-      screenY: y,
-      width: transcriptWidth,
-      height: lines.length,
-      shift: false,
-      alt: false,
-      ctrl: false,
-      clickCount: 1,
-    };
-    driver.state.transcriptContainer.handleMouse(event);
-  }
-
   it('opens only the clicked tool card while the footer still offers expand', async () => {
     const { driver } = await makeDriver();
     emitBash(driver, 'call_alpha', 'echo alpha', hiddenOutput('alpha'));
@@ -14344,7 +15439,7 @@ describe('transcript fold block clicks', () => {
     const opened = stripSgr(renderTranscript(driver));
     expect(opened).toContain('alpha-body');
     expect(opened).not.toContain('beta-body');
-    expect(driver.state.toolOutputExpanded).toBe(false);
+    expect(driver.state.transcriptContainer.toolOutputExpanded).toBe(false);
     expect(renderFooterLine1(driver)).toContain('ctrl+o expand');
 
     clickTranscriptLine(driver, 'alpha-body');
@@ -14352,7 +15447,7 @@ describe('transcript fold block clicks', () => {
     const closed = stripSgr(renderTranscript(driver));
     expect(closed).not.toContain('alpha-body');
     expect(closed).not.toContain('beta-body');
-    expect(driver.state.toolOutputExpanded).toBe(false);
+    expect(driver.state.transcriptContainer.toolOutputExpanded).toBe(false);
     expect(renderFooterLine1(driver)).toContain('ctrl+o expand');
   });
 
@@ -14367,7 +15462,7 @@ describe('transcript fold block clicks', () => {
     const expanded = stripSgr(renderTranscript(driver));
     expect(expanded).toContain('alpha-body');
     expect(expanded).toContain('beta-body');
-    expect(driver.state.toolOutputExpanded).toBe(true);
+    expect(driver.state.transcriptContainer.toolOutputExpanded).toBe(true);
     expect(renderFooterLine1(driver)).toContain('ctrl+o collapse');
 
     clickTranscriptLine(driver, 'alpha-body');
@@ -14375,7 +15470,7 @@ describe('transcript fold block clicks', () => {
     const oneClosed = stripSgr(renderTranscript(driver));
     expect(oneClosed).not.toContain('alpha-body');
     expect(oneClosed).toContain('beta-body');
-    expect(driver.state.toolOutputExpanded).toBe(true);
+    expect(driver.state.transcriptContainer.toolOutputExpanded).toBe(true);
     expect(renderFooterLine1(driver)).toContain('ctrl+o collapse');
 
     driver.toggleToolOutputExpansion();
@@ -14383,7 +15478,7 @@ describe('transcript fold block clicks', () => {
     const collapsed = stripSgr(renderTranscript(driver));
     expect(collapsed).not.toContain('alpha-body');
     expect(collapsed).not.toContain('beta-body');
-    expect(driver.state.toolOutputExpanded).toBe(false);
+    expect(driver.state.transcriptContainer.toolOutputExpanded).toBe(false);
     expect(renderFooterLine1(driver)).toContain('ctrl+o expand');
   });
 
@@ -14411,7 +15506,7 @@ describe('transcript fold block clicks', () => {
     const oldClosed = stripSgr(renderTranscript(driver));
     expect(oldClosed).not.toContain('old-body');
     expect(oldClosed).toContain('recent-body');
-    expect(driver.state.toolOutputExpanded).toBe(true);
+    expect(driver.state.transcriptContainer.toolOutputExpanded).toBe(true);
 
     clickTranscriptLine(driver, 'old-tail');
     expect(stripSgr(renderTranscript(driver))).not.toContain('old-body');
@@ -14420,7 +15515,7 @@ describe('transcript fold block clicks', () => {
     driver.toggleToolOutputExpansion();
     expect(stripSgr(renderTranscript(driver))).not.toContain('old-body');
     expect(stripSgr(renderTranscript(driver))).not.toContain('recent-body');
-    expect(driver.state.toolOutputExpanded).toBe(false);
+    expect(driver.state.transcriptContainer.toolOutputExpanded).toBe(false);
 
     driver.toggleToolOutputExpansion();
     const reopened = stripSgr(renderTranscript(driver));
@@ -14445,7 +15540,7 @@ describe('transcript fold block clicks', () => {
     expect(transcript).toContain('plain user sentence');
     expect(transcript).not.toContain('alpha-body');
     expect(transcript).toContain('alpha-tail');
-    expect(driver.state.toolOutputExpanded).toBe(false);
+    expect(driver.state.transcriptContainer.toolOutputExpanded).toBe(false);
     expect(renderFooterLine1(driver)).toContain('ctrl+o expand');
   });
 
@@ -14496,11 +15591,11 @@ describe('transcript fold block clicks', () => {
     driver.toggleToolOutputExpansion();
     expect(stripSgr(renderTranscript(driver))).toContain('think-four');
     expect(renderFooterLine1(driver)).not.toContain('ctrl+o');
-    expect(driver.state.toolOutputExpanded).toBe(true);
+    expect(driver.state.transcriptContainer.toolOutputExpanded).toBe(true);
 
     driver.toggleToolOutputExpansion();
     expect(stripSgr(renderTranscript(driver))).not.toContain('think-four');
-    expect(driver.state.toolOutputExpanded).toBe(false);
+    expect(driver.state.transcriptContainer.toolOutputExpanded).toBe(false);
     expect(renderFooterLine1(driver)).not.toContain('ctrl+o');
   });
 
@@ -14515,7 +15610,7 @@ describe('transcript fold block clicks', () => {
     const opened = stripSgr(renderTranscript(driver));
     expect(opened).toContain('alpha-body');
     expect(opened).toContain('beta-body');
-    expect(driver.state.toolOutputExpanded).toBe(false);
+    expect(driver.state.transcriptContainer.toolOutputExpanded).toBe(false);
     expect(renderFooterLine1(driver)).toContain('ctrl+o expand');
   });
 
@@ -14532,7 +15627,7 @@ describe('transcript fold block clicks', () => {
     const closed = stripSgr(renderTranscript(driver));
     expect(closed).not.toContain('alpha-body');
     expect(closed).not.toContain('beta-body');
-    expect(driver.state.toolOutputExpanded).toBe(true);
+    expect(driver.state.transcriptContainer.toolOutputExpanded).toBe(true);
     expect(renderFooterLine1(driver)).not.toContain('ctrl+o');
   });
 
@@ -14559,7 +15654,7 @@ describe('transcript fold block clicks', () => {
     const closed = stripSgr(renderTranscript(driver));
     expect(closed).not.toContain(marker);
     expect(closed).toContain('ctrl+o to expand');
-    expect(driver.state.toolOutputExpanded).toBe(false);
+    expect(driver.state.transcriptContainer.toolOutputExpanded).toBe(false);
   });
 
   it('closes a wide tool card that mounted while the transcript was expanded', async () => {
@@ -14575,6 +15670,6 @@ describe('transcript fold block clicks', () => {
     const closed = stripSgr(renderTranscript(driver));
     expect(closed).not.toContain('wide-tail');
     expect(closed).toContain('wide-head');
-    expect(driver.state.toolOutputExpanded).toBe(true);
+    expect(driver.state.transcriptContainer.toolOutputExpanded).toBe(true);
   });
 });

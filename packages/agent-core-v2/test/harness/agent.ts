@@ -132,6 +132,7 @@ import type { LlmRequester } from '#human/llm-requester/requester';
 import type { ILogger, LogContext, LogLevel } from '#/_base/log/log';
 import { ILogOptions } from '#/_base/log/logConfig';
 import {
+  WIRE_MIN_READER_VERSION,
   WIRE_PROTOCOL_VERSION,
   AgentTaskService,
   AgentExternalHooksService,
@@ -2867,6 +2868,7 @@ function withMetadata(events: readonly WireRecord[]): readonly WireRecord[] {
     {
       type: 'metadata',
       protocol_version: WIRE_PROTOCOL_VERSION,
+      min_protocol_version: WIRE_MIN_READER_VERSION,
       created_at: 1,
     },
     ...events,

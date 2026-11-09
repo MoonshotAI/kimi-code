@@ -231,6 +231,7 @@ export type KimiErrorCode =
   | 'wire.cycle'
   | 'wire.unknown_record'
   | 'wire.migration_missing'
+  | 'wire.version_too_low'
   | 'cron.expression_invalid'
   | 'web.invalid_url'
   | 'web.private_address'

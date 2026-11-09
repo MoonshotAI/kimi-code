@@ -22,6 +22,7 @@ export interface SkillDefinition {
   readonly content: string;
   readonly metadata: SkillMetadata;
   readonly source: SkillSource;
+  readonly workspaceDir?: string;
   readonly plugin?: SkillPluginContext;
   readonly mermaid?: string | undefined;
   readonly d2?: string;
@@ -35,6 +36,7 @@ export interface SkillSummary {
   readonly description: string;
   readonly path: string;
   readonly source: SkillSource;
+  readonly workspaceDir?: string;
   readonly type?: string | undefined;
   readonly disableModelInvocation?: boolean | undefined;
   readonly isSubSkill?: boolean | undefined;
@@ -44,6 +46,7 @@ export interface SkillSummary {
 export interface SkillRoot {
   readonly path: string;
   readonly source: SkillSource;
+  readonly workspaceDir?: string;
   readonly plugin?: SkillPluginContext;
   readonly scanMode?: 'directory' | 'root-skill-only';
 }
@@ -60,15 +63,17 @@ export interface SkippedSkill {
 }
 
 export interface SkillCatalog {
-  getSkill(name: string): SkillDefinition | undefined;
+  getSkill(name: string, path?: string): SkillDefinition | undefined;
   getPluginSkill(pluginId: string, name: string): SkillDefinition | undefined;
   renderSkillPrompt(
     skill: SkillDefinition,
     rawArgs: string,
     context?: { readonly sessionId?: string },
   ): string;
+  listDefaultSkills(): readonly SkillDefinition[];
   listSkills(): readonly SkillDefinition[];
   listInvocableSkills(): readonly SkillDefinition[];
+  registerVariants(skills: readonly SkillDefinition[], options?: { readonly replace?: boolean }): void;
   getSkillRoots(): readonly string[];
   getSkippedByPolicy(): readonly SkippedSkill[];
   getModelSkillListing(): string;
@@ -96,6 +101,7 @@ export function summarizeSkill(skill: SkillDefinition): SkillSummary {
     description: skill.description,
     path: skill.path,
     source: skill.source,
+    workspaceDir: skill.workspaceDir,
     type: skill.metadata.type,
     disableModelInvocation: skill.metadata.disableModelInvocation,
     isSubSkill: skill.metadata.isSubSkill,

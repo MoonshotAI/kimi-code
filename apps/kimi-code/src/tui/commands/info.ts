@@ -25,6 +25,7 @@ import {
 import { DEFAULT_OAUTH_PROVIDER_NAME, isManagedUsageProvider } from '../constant/kimi-tui';
 import { submitFeedbackWithAttachments } from '../../feedback/feedback-attachments';
 import { formatErrorMessage } from '../utils/event-payload';
+import { sessionWorkDir } from '../utils/session-work-dir';
 import { openUrl } from '#/utils/open-url';
 import { promptFeedbackAttachment, promptFeedbackInput } from './prompts';
 import type { SlashCommandHost } from './dispatch';
@@ -183,7 +184,7 @@ export async function showStatusReport(host: SlashCommandHost): Promise<void> {
   const reportArgs = {
     version: appState.version,
     model: appState.model,
-    workDir: appState.workDir,
+    workDir: sessionWorkDir(appState),
     sessionId: appState.sessionId,
     sessionTitle: appState.sessionTitle,
     thinkingEffort: appState.thinkingEffort,

@@ -1020,7 +1020,7 @@ describe('AutoReviewService', () => {
     let calls = 0;
     const result = await review(service(async () => {
       calls += 1;
-      if (calls < 3) throw new APIStatusError(429, 'Slow down', null, 1);
+      if (calls < 3) throw new APIStatusError(429, 'Slow down', true, null, 1);
       return response;
     }));
 
@@ -1030,7 +1030,7 @@ describe('AutoReviewService', () => {
 
   it('does not retry an authentication failure', async () => {
     await expect(review(service(async () => {
-      throw new APIStatusError(401, 'Unauthorized');
+      throw new APIStatusError(401, 'Unauthorized', false);
     }))).resolves.toMatchObject({ kind: 'failed' });
     expect(requests).toHaveLength(1);
   });
@@ -1084,7 +1084,7 @@ describe('AutoReviewService', () => {
       await new Promise((resolve) => {
         setTimeout(resolve, 1100);
       });
-      throw new APIStatusError(503, 'still unavailable');
+      throw new APIStatusError(503, 'still unavailable', true);
     }, undefined, true, undefined, 1000));
     expect(result).toMatchObject({ kind: 'failed', reason: 'Review timed out.' });
     expect(requests).toHaveLength(1);

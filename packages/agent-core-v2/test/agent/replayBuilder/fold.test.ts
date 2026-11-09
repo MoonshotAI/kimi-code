@@ -7,7 +7,12 @@ import type { WireRecord } from '#/wire/record';
 import { fromCoreMessage } from '#human/message';
 import { fromLlmMessage } from '#/llm-adapter/contract/message';
 
-const METADATA: WireRecord = { type: 'metadata', protocol_version: '1.5', created_at: 0 };
+const METADATA: WireRecord = {
+  type: 'metadata',
+  protocol_version: '1.5',
+  min_protocol_version: '1.0',
+  created_at: 0,
+};
 
 function fold(records: readonly WireRecord[]) {
   return foldWireRecords([METADATA, ...records]);
@@ -429,7 +434,7 @@ describe('foldWireRecords', () => {
     expect(messageRecords(ordered.replay).map((record) => record.type === 'message' ? record.turnId : undefined)).toEqual([undefined, 7]);
   });
 
-  it('migrates older protocol journals before folding', () => {
+  it('validates reader compatibility and migrates older protocol journals before folding', () => {
     const legacy: WireRecord[] = [
       { type: 'metadata', protocol_version: '1.0', created_at: 0 },
       {
@@ -464,6 +469,16 @@ describe('foldWireRecords', () => {
     expect(decoded[2]?.['message']).toMatchObject({
       toolCalls: [{ id: 'call_legacy', name: 'Bash', arguments: '{}' }],
     });
+    expect(() =>
+      foldWireRecords([
+        {
+          type: 'metadata',
+          protocol_version: '9.9',
+          min_protocol_version: '9.9',
+          created_at: 0,
+        },
+      ]),
+    ).toThrow('Upgrade Kimi Code');
   });
 
   it('clears replay-visible state on context.clear without touching earlier replay records', () => {

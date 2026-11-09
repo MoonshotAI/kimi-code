@@ -892,7 +892,10 @@ export async function buildWireManifest(): Promise<string> {
   for (const file of importFiles) {
     await import(relative(join(PKG, 'scripts'), file));
   }
-  const { WIRE_PROTOCOL_VERSION } = (await import('#/wire/migration/migration')) as {
+  const { WIRE_MIN_READER_VERSION, WIRE_PROTOCOL_VERSION } = (await import(
+    '#/wire/migration/migration'
+  )) as {
+    WIRE_MIN_READER_VERSION: string;
     WIRE_PROTOCOL_VERSION: string;
   };
 
@@ -944,6 +947,7 @@ export async function buildWireManifest(): Promise<string> {
     '// Regenerate with: pnpm --filter @moonshot-ai/agent-core-v2 gen:wire-manifest',
     '//',
     `// protocol_version: "${WIRE_PROTOCOL_VERSION}" (migrations: ${migrationChain})`,
+    `// min_protocol_version: "${WIRE_MIN_READER_VERSION}"`,
     '//',
     '// One declaration per durable record type — an Event2 subclass declaring',
     '// `static type` + `static durable = true` + `static schema` — drained from the',
@@ -954,7 +958,8 @@ export async function buildWireManifest(): Promise<string> {
     '// ContextMessage, …) refer to the real types in src/ — they are intentionally',
     '// not resolved here. On disk (wire.jsonl)',
     '// the journal opens with a metadata line {"type": "metadata",',
-    '// "protocol_version", "created_at"}; each record is {"type", ...payload,',
+    '// "protocol_version", "min_protocol_version", "created_at"}; each record is',
+    '// {"type", ...payload,',
     '// "time"} — object payloads spread at the top level.',
     '//',
     '// Every listed type is durable by construction — transient Event2 classes',

@@ -20,6 +20,7 @@ import { MAIN_AGENT_ID } from '../constant/kimi-tui';
 import type { AppState, InlineSkillActivation } from '../types';
 import type { TUIState } from '../tui-state';
 import { evaluateCacheHint } from '../utils/cache-hint';
+import { rebaseInlineSkillActivations } from '../utils/inline-skill-tokens';
 import { formatErrorMessage } from '../utils/event-payload';
 import {
   makeSessionExtractionResendable,
@@ -44,7 +45,7 @@ export interface CacheHintHost {
   setAppState(patch: Partial<AppState>): void;
   mountEditorReplacement(panel: Component & Focusable): void;
   restoreEditor(): void;
-  restoreInputText(text: string): void;
+  restoreInputText(text: string, inlineSkillActivations?: readonly InlineSkillActivation[]): void;
   /**
    * A stashed submission going back to the editor releases its extraction's
    * staged media with queue-recall semantics (consume retains, retire staged
@@ -82,6 +83,7 @@ export class CacheHintController {
   /** Inputs restored this cycle — chained restores append (newline-joined)
    *  instead of overwriting the editor. */
   private restoredTexts: string[] = [];
+  private restoredActivations: InlineSkillActivation[] = [];
   /** Resume scenario fires at most once per session per TUI instance. */
   private readonly resumedSessions = new Set<string>();
 
@@ -102,6 +104,7 @@ export class CacheHintController {
     this.triggerFetchAttempted = false;
     this.lastDialogRestored = false;
     this.restoredTexts = [];
+    this.restoredActivations = [];
   }
 
   /** Session switch / create: the new session has no in-process baseline. */
@@ -111,6 +114,7 @@ export class CacheHintController {
     this.triggerFetchAttempted = false;
     this.lastDialogRestored = false;
     this.restoredTexts = [];
+    this.restoredActivations = [];
   }
 
   /** Background warm-up on session creation; never blocks, never throws. */
@@ -333,8 +337,15 @@ export class CacheHintController {
    *  re-retains) and staged copies retire instead of leaking. */
   private restoreStashedInput(stash: StashedSubmit | undefined): void {
     if (stash === undefined) return;
+    const offset = this.restoredTexts.length === 0 ? 0 : this.restoredTexts.join('\n').length + 1;
+    if (stash.inlineSkillActivations !== undefined) {
+      this.restoredActivations.push(...rebaseInlineSkillActivations(stash.inlineSkillActivations, offset));
+    }
     this.restoredTexts.push(stash.text);
-    this.host.restoreInputText(this.restoredTexts.join('\n'));
+    this.host.restoreInputText(
+      this.restoredTexts.join('\n'),
+      this.restoredActivations.length === 0 ? undefined : this.restoredActivations,
+    );
     this.host.recallStashedMedia(stash.extraction);
   }
 

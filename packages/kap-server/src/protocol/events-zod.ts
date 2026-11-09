@@ -112,15 +112,8 @@ export const capabilityChangedEventSchema = z.object({
     percent: z.number().optional(),
     error: z.string().optional(),
     note: z.string().optional(),
+    confirmationRequired: z.literal('stop-processes').optional(),
   }),
-});
-
-export const diUnitChangedEventSchema = z.object({
-  type: z.literal('event.di.unit_changed'),
-  scope: z.string().min(1),
-  token: z.string().min(1),
-  state: z.enum(['Pending', 'Activating', 'Active', 'Unloading', 'Failed']),
-  error: z.string().optional(),
 });
 
 export const pushEventSchema = z.discriminatedUnion('type', [
@@ -135,7 +128,6 @@ export const pushEventSchema = z.discriminatedUnion('type', [
   configChangedEventSchema,
   configWarningEventSchema,
   modelCatalogChangedEventSchema,
-  diUnitChangedEventSchema,
   pluginChangedEventSchema,
   capabilityChangedEventSchema,
 ]).and(

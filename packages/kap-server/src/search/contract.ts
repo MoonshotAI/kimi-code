@@ -62,5 +62,4 @@ export interface GlobalSearchPage {
   readonly pageToken?: string;
   readonly incomplete?: GlobalSearchIncomplete;
   readonly indexState: GlobalSearchIndexState;
-  readonly source: GlobalSearchSource;
 }

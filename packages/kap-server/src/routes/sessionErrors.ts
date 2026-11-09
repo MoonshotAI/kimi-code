@@ -5,6 +5,7 @@ import { ErrorCode } from '../protocol/error-codes';
 import { mapError } from '../transport/errors';
 
 export const sessionConflictErrors = {
+  [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
   [ErrorCode.SESSION_OCCUPIED]: {},
   [ErrorCode.SESSION_STALE]: {},
 } as const;
