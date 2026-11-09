@@ -982,6 +982,53 @@ describe('KimiTUI message flow', () => {
     expect(driver.skillVariantPathForCommand('skill:review', 0)).toBe(selectedPath);
   });
 
+  it('keeps identical command text with different variant paths through history reload', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const pathA = '/work/A/review/SKILL.md';
+    const pathB = '/work/B/review/SKILL.md';
+    const { driver } = await makeDriver(session, {
+      listWorkspaceSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: pathA, source: 'project', workspaceDir: '/work/A' },
+        { name: 'review', description: 'Review skill', path: pathB, source: 'project', workspaceDir: '/work/B' },
+      ]),
+      listPluginCommands: vi.fn(async () => []),
+    });
+    await (driver as unknown as { refreshSkillCommands(): Promise<void> }).refreshSkillCommands();
+    driver.persistInputHistory = Object.getPrototypeOf(driver).persistInputHistory;
+    const history = await import('#/utils/history/input-history');
+    const { getInputHistoryFile } = await import('#/utils/paths');
+    const { mkdtemp, rm } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('pathe');
+    const home = await mkdtemp(join(tmpdir(), 'kimi-skill-history-variants-'));
+    const previousHome = process.env['KIMI_CODE_HOME'];
+    process.env['KIMI_CODE_HOME'] = home;
+    const file = getInputHistoryFile(driver.state.appState.workDir);
+    const text = '/skill:review';
+    const entries = driver as unknown as {
+      inputHistoryEntries: { inlineSkillActivations?: { path?: string }[] }[];
+    };
+    const paths = () => entries.inputHistoryEntries.map((entry) => entry.inlineSkillActivations?.[0]?.path);
+    try {
+      driver.restoreInputText(text, [{ skillName: 'review', path: pathA, start: 0 }]);
+      await driver.persistInputHistory(text);
+      driver.restoreInputText(text, [{ skillName: 'review', path: pathB, start: 0 }]);
+      await driver.persistInputHistory(text);
+
+      expect(paths()).toEqual([pathB, pathA]);
+      const persisted = await history.loadInputHistory(file);
+      expect(persisted.map((entry) => entry.inlineSkillActivations?.[0]?.path)).toEqual([pathA, pathB]);
+
+      entries.inputHistoryEntries = [];
+      await (driver as unknown as { loadPersistedInputHistory(): Promise<void> }).loadPersistedInputHistory();
+      expect(paths()).toEqual([pathB, pathA]);
+    } finally {
+      if (previousHome === undefined) delete process.env['KIMI_CODE_HOME'];
+      else process.env['KIMI_CODE_HOME'] = previousHome;
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it('restores skill variants from input history without losing duplicate bindings', async () => {
     const session = makeSession({ id: 'ses-lazy' });
     const { driver } = await makeDriver(session, {

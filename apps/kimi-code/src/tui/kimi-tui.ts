@@ -2053,7 +2053,7 @@ export class KimiTUI {
         this.state.editor.addToHistory(entry.content);
       }
       this.inputHistoryEntries = entries.toReversed().filter((entry, index, all) =>
-        index === 0 || entry.content !== all[index - 1]?.content
+        index === 0 || !inputHistoryEntryEquals(entry, all[index - 1])
       ).slice(0, 100);
       this.lastHistoryEntry = entries.at(-1);
     } catch {
@@ -2079,7 +2079,7 @@ export class KimiTUI {
       inlineSkillActivations: activations.length === 0 ? undefined : activations,
     };
     if (inputHistoryEntryEquals(entry, this.lastHistoryEntry)) return;
-    if (this.inputHistoryEntries[0]?.content === trimmed) this.inputHistoryEntries[0] = entry;
+    if (inputHistoryEntryEquals(entry, this.inputHistoryEntries[0])) this.inputHistoryEntries[0] = entry;
     else this.inputHistoryEntries.unshift(entry);
     this.inputHistoryEntries.length = Math.min(this.inputHistoryEntries.length, 100);
     this.state.editor.addToHistory(trimmed);
