@@ -159,6 +159,7 @@ export function endToolCall(
   item: ToolCallItem,
   output: string | readonly ContentPart[],
   outcome: 'completed' | 'failed' | 'interrupted',
+  note: string | undefined,
   time: number,
 ): void {
   const text = resultText(output);
@@ -168,6 +169,7 @@ export function endToolCall(
   item.outcome = outcome;
   item.output = completed ? text : undefined;
   item.error = completed ? undefined : text;
+  item.note = note;
   item.media = media.length === 0 ? undefined : media;
   item.ended_at = isoTime(time);
 }

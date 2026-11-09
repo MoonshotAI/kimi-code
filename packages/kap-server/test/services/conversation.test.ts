@@ -685,6 +685,34 @@ describe('conversation fold', () => {
     expect(state.turns[0]?.items[1]).toMatchObject({ item_id: 'Bash_0', outcome: 'failed' });
   });
 
+  it('keeps the note of a tool result beside its output', () => {
+    const note = 'Read image file. Mime type: image/png. Size: 1234 bytes. Original dimensions: 640x480 pixels.';
+    const state = fold([
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'look'),
+      stepBegin(0, 1, 's1'),
+      toolCall(0, 1, 's1', 'ReadMediaFile_0', 'ReadMediaFile', { path: '/tmp/a.png' }),
+      toolCall(0, 1, 's1', 'Read_1', 'Read', { path: 'a.ts' }),
+      loop({
+        type: 'tool.result',
+        toolCallId: 'ReadMediaFile_0',
+        result: {
+          output: [
+            { type: 'text', text: '<image path="/tmp/a.png">' },
+            { type: 'text', text: '</image>' },
+          ],
+          note,
+        },
+      }),
+      toolResult('Read_1', 'file body'),
+    ]);
+
+    const items = state.turns[0]?.items ?? [];
+    expect(items[1]).toMatchObject({ item_id: 'ReadMediaFile_0', outcome: 'completed', output: '<image path="/tmp/a.png"></image>', note });
+    expect(items[2]).toMatchObject({ item_id: 'Read_1', output: 'file body' });
+    expect(items[2]).not.toHaveProperty('note', expect.anything());
+  });
+
   it('keeps a running turn open while ownerless messages land beside it', () => {
     const state = fold([
       turnPrompt(0, 'p1'),

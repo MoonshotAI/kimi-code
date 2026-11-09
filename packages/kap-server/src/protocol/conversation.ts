@@ -201,6 +201,7 @@ export const toolCallItemSchema = z.object({
   output: z.string().optional(),
   media: z.array(mediaSchema).optional(),
   error: z.string().optional(),
+  note: z.string().optional(),
   progress: toolProgressSchema.optional(),
   interaction_id: z.string().optional(),
   agent_refs: z.array(agentRefSchema).optional(),
