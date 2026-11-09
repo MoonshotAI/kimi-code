@@ -3,6 +3,23 @@ import { z } from 'zod';
 
 import { AgentEvent2, registerEvent2Class } from '#/app/event/event2';
 
+export interface AutoReviewStartedPayload {
+  readonly agentId: string;
+  readonly turnId: number;
+  readonly toolCallId: string;
+  readonly toolName: string;
+}
+
+export class AutoReviewStarted extends AgentEvent2<AutoReviewStartedPayload> {
+  static override readonly type = 'auto_review.started';
+  static override readonly observable = true;
+}
+export interface AutoReviewStarted extends AutoReviewStartedPayload {}
+
+export interface AutoReviewStartedEvent extends Omit<AutoReviewStartedPayload, 'agentId'> {
+  readonly type: 'auto_review.started';
+}
+
 const autoReviewCompletedSchema = z.object({
   agentId: z.string(),
   turnId: z.number().int().nonnegative(),
@@ -35,4 +52,9 @@ export interface AutoReviewCompleted {
   readonly durationMs: number;
 }
 
+export interface AutoReviewCompletedEvent extends Omit<z.infer<typeof autoReviewCompletedSchema>, 'agentId'> {
+  readonly type: 'auto_review.decision';
+}
+
+registerEvent2Class(AutoReviewStarted);
 registerEvent2Class(AutoReviewCompleted);

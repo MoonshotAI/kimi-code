@@ -881,6 +881,7 @@ export class ToolCallComponent extends Container {
   private progressLines: string[] = [];
   private progressStatusRows = 0;
   private static readonly MAX_PROGRESS_LINES = 24;
+  private autoReviewing = false;
   private liveOutput = '';
 
   /**
@@ -1209,6 +1210,7 @@ export class ToolCallComponent extends Container {
     // show both the streamed status lines and the final output stacked.
     this.progressLines = [];
     this.progressStatusRows = 0;
+    this.autoReviewing = false;
     this.liveOutput = '';
     this.detachHintVisible = false;
     this.stopDetachHintTimer();
@@ -1265,6 +1267,13 @@ export class ToolCallComponent extends Container {
     this.ui?.requestRender();
   }
 
+  setAutoReviewing(reviewing: boolean): void {
+    if (this.autoReviewing === reviewing) return;
+    this.autoReviewing = reviewing;
+    this.rebuildBody();
+    this.ui?.requestRender();
+  }
+
   appendLiveOutput(text: string): void {
     if (this.result !== undefined || text.length === 0) return;
     this.liveOutput += text;
@@ -1283,6 +1292,9 @@ export class ToolCallComponent extends Container {
     this.stopStreamingProgressTimer();
     this.stopSubagentElapsedTimer();
     this.stopDetachHintTimer();
+    // A cancelled review ends without a decision or result, so the card would
+    // otherwise stay frozen on "in progress" in the transcript.
+    this.setAutoReviewing(false);
   }
 
   /**
@@ -2128,8 +2140,10 @@ export class ToolCallComponent extends Container {
    * styled individually so surrounding prose keeps its default dim tone.
    */
   private buildProgressBlock(): void {
-    if (this.progressLines.length === 0) return;
     if (this.result !== undefined) return;
+    if (this.autoReviewing) {
+      this.addChild(new Text(currentTheme.dim('Auto Review in progress…'), 2, 0));
+    }
     for (const raw of this.progressLines) {
       if (raw.length === 0) {
         this.addChild(new Text('', 2, 0));
