@@ -1287,11 +1287,17 @@ describe('WaitForTool (harness)', () => {
         { toolCallId: 'wait-any', content: [{ text: expect.stringContaining(`wait_status: ${anyWaitStatus}`) }] },
       ]);
       const inputCall = timing === 'before-request' ? ctx.llmCalls[0] : ctx.llmCalls[1];
-      const expectedInput = timing === 'before-request' ? `Wait for the background work.\n\n${input}` : input;
-      expect(inputCall?.history.at(-1)).toMatchObject({
-        role: 'user',
-        content: [{ text: expectedInput }],
-      });
+      if (timing === 'before-request') {
+        expect(inputCall?.history.filter((message) => message.role === 'user')).toMatchObject([
+          { content: [{ text: 'Wait for the background work.' }] },
+          { content: [{ text: input }] },
+        ]);
+      } else {
+        expect(inputCall?.history.at(-1)).toMatchObject({
+          role: 'user',
+          content: [{ text: input }],
+        });
+      }
       expect(tasks.getTask(taskId)?.status).toBe(timing === 'before-request' ? 'completed' : 'running');
       slow.resolveWait(0);
       await ctx.get(IAgentLoopService).settled();
