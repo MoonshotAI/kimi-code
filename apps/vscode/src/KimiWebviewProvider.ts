@@ -3,6 +3,7 @@ import type { KimiHarness } from "@moonshot-ai/kimi-code-sdk";
 import { Events, Methods } from "../shared/bridge";
 import type { PanelSessionTarget } from "../shared/types";
 import { BridgeHandler } from "./bridge-handler";
+import { BackgroundSessionNotificationTracker } from "./session-notifications";
 
 function getNonce(): string {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -22,6 +23,7 @@ export class KimiWebviewProvider implements vscode.WebviewViewProvider {
   private bridgeHandler: BridgeHandler;
   private activeWebviewId: string | undefined;
   private sidebarWebviewId: string | undefined;
+  private readonly notificationTracker = new BackgroundSessionNotificationTracker();
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -156,6 +158,7 @@ export class KimiWebviewProvider implements vscode.WebviewViewProvider {
   }
 
   private broadcastInternal(event: string, data: unknown, targetWebviewId?: string): void {
+    this.notifyForBackgroundSession(event, data);
     const msg = { event, data };
 
     if (targetWebviewId) {
@@ -165,6 +168,33 @@ export class KimiWebviewProvider implements vscode.WebviewViewProvider {
         void webview.postMessage(msg);
       });
     }
+  }
+
+  private notifyForBackgroundSession(event: string, data: unknown): void {
+    if (event !== Events.StreamEvent) return;
+
+    const activeViewState = this.activeWebviewId === undefined
+      ? undefined
+      : this.bridgeHandler.getViewState(this.activeWebviewId);
+    const activeSessionId = activeViewState?.view === "chat" && this.activeWebviewId !== undefined
+      ? this.bridgeHandler.runtime.getSessionForView(this.activeWebviewId)?.id
+      : undefined;
+    const notice = this.notificationTracker.next(data, activeSessionId);
+    if (notice === null) return;
+
+    const runtime = this.bridgeHandler.runtime.getSession(notice.sessionId);
+    if (runtime === undefined) return;
+    const summary = runtime.summary;
+    const title = summary?.title ?? summary?.lastPrompt ?? "Kimi conversation";
+    const message = `Kimi ${notice.message}: ${title}`;
+    const notification = notice.kind === "error"
+      ? vscode.window.showErrorMessage(message, "Open Conversation")
+      : vscode.window.showInformationMessage(message, "Open Conversation");
+    void Promise.resolve(notification).then((action) => {
+      if (action === "Open Conversation") {
+        this.createPanel({ sessionId: notice.sessionId, workDir: runtime.session.workDir });
+      }
+    }).catch(() => undefined);
   }
 
   private reloadWebview(webviewId: string): void {

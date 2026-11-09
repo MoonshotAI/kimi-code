@@ -40,6 +40,7 @@ import { computeMentionInsert } from "./utils";
 
 interface InputAreaProps {
   onAuthAction?: () => void;
+  active?: boolean;
 }
 
 const SWITCH_CACHE_NOTE =
@@ -51,7 +52,7 @@ function adjustHeight(textarea: HTMLTextAreaElement | null) {
   textarea.style.height = `${Math.min(textarea.scrollHeight, 140)}px`;
 }
 
-export function InputArea({ onAuthAction }: InputAreaProps) {
+export function InputArea({ onAuthAction, active = true }: InputAreaProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const [text, setText] = useState("");
@@ -250,6 +251,7 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
   }, [showFileMenu, resetFilePicker]);
 
   useEffect(() => {
+    if (!active) return;
     const unsub = bridge.on<{ mention: string }>(Events.InsertMention, ({ mention }) => {
       setText((prev) => prev + mention + " ");
 
@@ -260,7 +262,7 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
     });
 
     return unsub;
-  }, []);
+  }, [active]);
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.nativeEvent.isComposing) {

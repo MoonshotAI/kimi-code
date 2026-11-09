@@ -282,6 +282,7 @@ export class KimiRuntime {
       broadcast: this.broadcast,
       captureBaseline: this.captureBaseline,
       log: this.log,
+      activityChanged: () => this.broadcast(Events.SessionsChanged, {}),
     });
     this.sessions.set(session.id, runtime);
     return runtime;

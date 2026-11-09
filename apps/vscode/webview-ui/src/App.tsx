@@ -20,9 +20,13 @@ import "./styles/index.css";
 function MainContent({
   onAuthAction,
   onConversationOpened,
+  onInitialTargetResolved,
+  isChatVisible,
 }: {
   onAuthAction: () => void;
   onConversationOpened: () => void;
+  onInitialTargetResolved: () => void;
+  isChatVisible: boolean;
 }) {
   const { processEvent, loadSession, startNewConversation, sessionId } = useChatStore();
   const { setExtensionConfig, extensionConfig } = useSettingsStore();
@@ -36,9 +40,14 @@ function MainContent({
     void bridge
       .getPanelSessionTarget()
       .then(async (target) => {
-        if (target === null || cancelled) return;
+        if (cancelled) return;
+        if (target === null) {
+          onInitialTargetResolved();
+          return;
+        }
         if (useChatStore.getState().sessionId === target.sessionId) {
           onConversationOpened();
+          onInitialTargetResolved();
           return;
         }
         const settings = useSettingsStore.getState();
@@ -53,14 +62,17 @@ function MainContent({
         if (cancelled) return;
         await loadSession(target.sessionId, events);
         onConversationOpened();
+        onInitialTargetResolved();
       })
       .catch((error: unknown) => {
+        if (cancelled) return;
+        onInitialTargetResolved();
         toast.error(`Unable to open the conversation: ${error instanceof Error ? error.message : String(error)}`);
       });
     return () => {
       cancelled = true;
     };
-  }, [loadSession, onConversationOpened]);
+  }, [loadSession, onConversationOpened, onInitialTargetResolved]);
 
   useEffect(() => {
     return bridge.on(Events.StreamEvent, (event: UIStreamEvent) => {
@@ -85,8 +97,11 @@ function MainContent({
   useEffect(() => {
     const unsubs = [
       bridge.on(Events.MCPServersChanged, () => void queryClient.invalidateQueries({ queryKey: ["mcpServers"] })),
+      bridge.on(Events.SessionsChanged, () => void queryClient.invalidateQueries({ queryKey: KIMI_SESSIONS_KEY })),
       bridge.on(Events.ExtensionConfigChanged, ({ config }: { config: ExtensionConfig }) => setExtensionConfig(config)),
-      bridge.on(Events.FocusInput, () => document.querySelector<HTMLTextAreaElement>("textarea")?.focus()),
+      bridge.on(Events.FocusInput, () => {
+        if (isChatVisible) document.querySelector<HTMLTextAreaElement>("[data-kimi-input-rail] textarea")?.focus();
+      }),
       bridge.on(Events.NewConversation, () => {
         void startNewConversation()
           .then(onConversationOpened)
@@ -96,7 +111,7 @@ function MainContent({
       }),
     ];
     return () => unsubs.forEach((u) => u());
-  }, [onConversationOpened, queryClient, setExtensionConfig, startNewConversation]);
+  }, [isChatVisible, onConversationOpened, queryClient, setExtensionConfig, startNewConversation]);
 
   useEffect(() => {
     if (!extensionConfig.enableNewConversationShortcut) return;
@@ -120,7 +135,7 @@ function MainContent({
         <ChatArea />
       </div>
       <div className="shrink-0 max-h-[80vh] flex flex-col min-h-0">
-        <InputArea onAuthAction={onAuthAction} />
+        <InputArea onAuthAction={onAuthAction} active={isChatVisible} />
       </div>
       <MCPServersModal />
       <WorkDirModal />
@@ -132,7 +147,8 @@ export default function App() {
   const { status, errorMessage, modelsCount, refresh } = useAppInit();
   const [skippedLogin, setSkippedLogin] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
-  const [mainView, setMainView] = useState<"chat" | "sessions">("chat");
+  const [mainView, setMainView] = useState<"chat" | "sessions">("sessions");
+  const [initialTargetResolved, setInitialTargetResolved] = useState(false);
 
   const handleLoginSuccess = useCallback(() => {
     setShowLogin(false);
@@ -158,6 +174,12 @@ export default function App() {
 
   const showChat = useCallback(() => setMainView("chat"), []);
   const showSessions = useCallback(() => setMainView("sessions"), []);
+  const markInitialTargetResolved = useCallback(() => setInitialTargetResolved(true), []);
+
+  useEffect(() => {
+    if (!initialTargetResolved) return;
+    void bridge.setViewState({ view: mainView }).catch(() => undefined);
+  }, [initialTargetResolved, mainView]);
 
   const resolution = resolveAppView({ status, modelsCount, skippedLogin, showLogin });
 
@@ -200,6 +222,8 @@ export default function App() {
         <MainContent
           onAuthAction={handleAuthAction}
           onConversationOpened={showChat}
+          onInitialTargetResolved={markInitialTargetResolved}
+          isChatVisible={mainView === "chat"}
         />
       </div>
       {mainView === "sessions" && (

@@ -5,15 +5,19 @@ import type { SessionSummary } from "@moonshot-ai/kimi-code-sdk";
 import { Events, Methods } from "../../shared/bridge";
 import type { SessionInfo } from "../../shared/legacy-sdk";
 import type { BaselineSession } from "../managers/baseline.manager";
+import { sessionActivityFromSummary, type SessionRuntime } from "../runtime/session-runtime";
 import { replaySessionToWebviewEvents } from "../runtime/replay-adapter";
 import { areSameFsPath, isFsPathInsideOrEqual } from "../utils/fs-path";
 import {
   isWorkspacePathContained,
   workDirUriFromPath,
 } from "../utils/workspace-path";
-import type { Handler } from "./types";
+import type { Handler, HandlerContext } from "./types";
 
 const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const BRANCH_CACHE_MS = 30_000;
+const branchCache = new Map<string, { value: string | undefined; expiresAt: number }>();
+const branchRequests = new Map<string, Promise<string | undefined>>();
 
 interface LoadHistoryParams {
   kimiSessionId: string;
@@ -31,18 +35,14 @@ interface ForkSessionParams {
 export const sessionHandlers: Record<string, Handler<any, any>> = {
   [Methods.GetKimiSessions]: async (_, ctx): Promise<SessionInfo[]> => {
     if (!ctx.workDir) return [];
-    return (await ctx.harness.listSessions({ workDir: ctx.workDir })).map((session) =>
-      toSessionInfo(session, ctx.runtime.getSession(session.id)?.isBusy ?? false)
-    );
+    return toSessionInfos(await ctx.harness.listSessions({ workDir: ctx.workDir }), ctx);
   },
 
   [Methods.GetAllKimiSessions]: async (_, ctx): Promise<SessionInfo[]> => {
     if (!ctx.workspaceRoot) return [];
-    return (await ctx.harness.listSessions())
-      .filter((session) => isInsideOrEqual(ctx.workspaceRoot!, session.workDir))
-      .map((session) =>
-        toSessionInfo(session, ctx.runtime.getSession(session.id)?.isBusy ?? false)
-      );
+    const summaries = (await ctx.harness.listSessions())
+      .filter((session) => isInsideOrEqual(ctx.workspaceRoot!, session.workDir));
+    return toSessionInfos(summaries, ctx);
   },
 
   [Methods.GetRegisteredWorkDirs]: async (_, ctx): Promise<string[]> => {
@@ -255,13 +255,51 @@ export const sessionHandlers: Record<string, Handler<any, any>> = {
   },
 };
 
-function toSessionInfo(summary: SessionSummary, isRunning: boolean): SessionInfo {
+async function toSessionInfos(summaries: readonly SessionSummary[], ctx: HandlerContext): Promise<SessionInfo[]> {
+  const branches = new Map<string, string>();
+  await Promise.all(
+    [...new Set(summaries.map((summary) => summary.workDir))].map(async (workDir) => {
+      const branch = await getBranch(ctx, workDir);
+      if (branch !== undefined) branches.set(workDir, branch);
+    }),
+  );
+  return summaries.map((summary) =>
+    toSessionInfo(summary, ctx.runtime.getSession(summary.id), branches.get(summary.workDir))
+  );
+}
+
+async function getBranch(ctx: HandlerContext, workDir: string): Promise<string | undefined> {
+  if (typeof ctx.harness.getGitStatus !== "function") return undefined;
+  const cached = branchCache.get(workDir);
+  if (cached !== undefined && cached.expiresAt > Date.now()) return cached.value;
+  const existing = branchRequests.get(workDir);
+  if (existing !== undefined) return existing;
+
+  const request = ctx.harness.getGitStatus(workDir)
+    .then((status) => status?.branch || undefined)
+    .catch(() => undefined)
+    .then((branch) => {
+      branchCache.set(workDir, { value: branch, expiresAt: Date.now() + BRANCH_CACHE_MS });
+      return branch;
+    })
+    .finally(() => branchRequests.delete(workDir));
+  branchRequests.set(workDir, request);
+  return request;
+}
+
+function toSessionInfo(summary: SessionSummary, runtime: SessionRuntime | undefined, branch: string | undefined): SessionInfo {
+  const activity = runtime?.activitySnapshot ?? sessionActivityFromSummary(summary);
+  const status = activity.status;
   return {
     id: summary.id,
     workDir: summary.workDir,
     updatedAt: summary.updatedAt,
     brief: summary.title ?? summary.lastPrompt ?? "",
-    isRunning,
+    isRunning: status === "running" || status === "waiting",
+    status,
+    latestActivity: activity.latestActivity,
+    startedAt: activity.startedAt,
+    branch,
   };
 }
 

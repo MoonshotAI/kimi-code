@@ -55,7 +55,7 @@ interface FakeSessionBoundary {
 
 const DEFAULT_LEGACY_APPROVAL: LegacyApprovalFlags = { yolo: false, afk: false };
 
-function createFakeSession(): FakeSessionBoundary {
+function createFakeSession(lastTurnReason?: SessionSummary["lastTurnReason"]): FakeSessionBoundary {
   const listeners = new Set<(event: Event) => void>();
   const promptInputs: Array<string | PromptInput> = [];
   const steerInputs: Array<string | PromptInput> = [];
@@ -79,6 +79,7 @@ function createFakeSession(): FakeSessionBoundary {
     createdAt: 1,
     updatedAt: 2,
     metadata: { source: "vscode-test" },
+    lastTurnReason,
   };
 
   const session = {
@@ -173,8 +174,11 @@ function createFakeSession(): FakeSessionBoundary {
   };
 }
 
-function createRuntime(legacyApproval = DEFAULT_LEGACY_APPROVAL) {
-  const sdk = createFakeSession();
+function createRuntime(
+  legacyApproval = DEFAULT_LEGACY_APPROVAL,
+  lastTurnReason?: SessionSummary["lastTurnReason"],
+) {
+  const sdk = createFakeSession(lastTurnReason);
   const broadcasts: BroadcastRecord[] = [];
   const baselines: BaselineRecord[] = [];
   const runtime = new SessionRuntime({
@@ -219,6 +223,32 @@ function turnEnded(
 }
 
 describe("session runtime (adapts one SDK session for subscribed Webviews)", () => {
+  it("restores the latest persisted terminal outcome", () => {
+    expect(createRuntime(DEFAULT_LEGACY_APPROVAL, "failed").runtime.activitySnapshot).toEqual({
+      status: "failed",
+      latestActivity: "Failed",
+    });
+    expect(createRuntime(DEFAULT_LEGACY_APPROVAL, "cancelled").runtime.activitySnapshot).toEqual({
+      status: "completed",
+      latestActivity: "Stopped",
+    });
+  });
+
+  it("tracks dashboard activity through a completed turn", async () => {
+    const { runtime, sdk } = createRuntime();
+
+    const completion = runtime.prompt("hello");
+    expect(runtime.activitySnapshot.status).toBe("running");
+    expect(runtime.activitySnapshot.latestActivity).toBe("Starting response");
+    expect(runtime.activitySnapshot.startedAt).toEqual(expect.any(Number));
+
+    sdk.emit(turnStarted());
+    sdk.emit(turnEnded("completed"));
+
+    await expect(completion).resolves.toEqual({ status: "finished" });
+    expect(runtime.activitySnapshot).toMatchObject({ status: "completed", latestActivity: "Finished" });
+  });
+
   it("announces the current context usage to a subscribed Webview", async () => {
     const { runtime, broadcasts } = createRuntime();
 
@@ -660,6 +690,8 @@ describe("session runtime (adapts one SDK session for subscribed Webviews)", () 
         "type" in event &&
         event.type === "QuestionRequest",
     ) as { payload: { id: string } };
+
+    expect(runtime.activitySnapshot).toMatchObject({ status: "waiting", latestActivity: "Waiting for your answer" });
 
     expect(runtime.respondQuestion(request.payload.id, { "Continue?": "Yes" })).toBe(true);
     await expect(pending).resolves.toEqual({ answers: { "Continue?": "Yes" } });

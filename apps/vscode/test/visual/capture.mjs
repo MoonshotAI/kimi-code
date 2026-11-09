@@ -503,7 +503,7 @@ const browser = await chromium.launch({
   executablePath: process.env.KIMI_CHROMIUM_PATH,
 });
 const bundleHash = createHash("sha256").update(await readFile("./dist/webview.js")).digest("hex");
-const results = { origin, bundleHash, generatedAt: new Date().toISOString(), fixtures: [], popovers: {}, sessionHistory: [], panelSession: null, workDetails: [], workIsolation: [], nestedExpansion: [], stateManifest: {}, reducedHeight: [] };
+const results = { origin, bundleHash, generatedAt: new Date().toISOString(), fixtures: [], home: [], popovers: {}, sessionHistory: [], panelSession: null, workDetails: [], workIsolation: [], nestedExpansion: [], stateManifest: {}, reducedHeight: [] };
 
 for (const fixture of [
   { name: "normal-320", state: "normal", width: 320, height: 720 },
@@ -539,6 +539,65 @@ for (const fixture of [
     controls,
     alignment: Object.fromEntries(Object.entries(controls).map(([key, value]) => [key, controlAlignment(value)])),
   });
+  await page.close();
+}
+
+for (const fixture of [
+  { width: 320, height: 720, theme: "light" },
+  { width: 520, height: 720, theme: "dark" },
+]) {
+  const page = await browser.newPage({ viewport: { width: fixture.width, height: fixture.height } });
+  await openFixture(page, "home", fixture.theme);
+  await page.getByRole("textbox", { name: "New conversation message" }).waitFor();
+  const screenshot = `${outputDir}/home-${fixture.theme}-${fixture.width}.png`;
+  const geometry = await page.evaluate(() => ({
+    horizontalOverflow: document.documentElement.scrollWidth - innerWidth,
+    pageOverflow: document.documentElement.scrollHeight - innerHeight,
+  }));
+  const viewState = await page.evaluate(() => window.__visualRequests.findLast((request) => request.method === "setViewState"));
+  if (viewState?.params?.view !== "sessions") {
+    throw new Error(`Home did not report its visible state: ${JSON.stringify(viewState)}`);
+  }
+  if (geometry.horizontalOverflow !== 0 || geometry.pageOverflow !== 0) {
+    throw new Error(`Home overflow at ${fixture.width}px: ${JSON.stringify(geometry)}`);
+  }
+  await page.screenshot({ path: screenshot, fullPage: true });
+  results.home.push({
+    fixture,
+    screenshot,
+    geometry,
+    viewState,
+    header: await style(page.locator("header")),
+    composer: await style(page.getByRole("textbox", { name: "New conversation message" })),
+    running: await style(page.getByText("Running", { exact: true })),
+    waiting: await style(page.getByText("Waiting", { exact: true })),
+    failed: await style(page.getByText("Failed", { exact: true })),
+    branch: await style(page.getByText("feat/parallel-sessions", { exact: true })),
+  });
+  await page.close();
+}
+
+{
+  const page = await browser.newPage({ viewport: { width: 320, height: 720 } });
+  await openFixture(page, "home");
+  const homeInput = page.getByRole("textbox", { name: "New conversation message" });
+  await page.evaluate(() => window.__emitHostEvent("insertMention", { mention: "@src/example.ts" }));
+  if (await homeInput.inputValue() !== "@src/example.ts ") throw new Error("Editor mention did not reach the home composer");
+  await page.evaluate(() => window.__emitHostEvent("focusInput", {}));
+  if (!await homeInput.evaluate((element) => document.activeElement === element)) throw new Error("Focus input did not reach the home composer");
+  await homeInput.fill("Start a conversation from home");
+  await page.getByRole("button", { name: "Start conversation" }).click();
+  await page.getByText("Kimi Code", { exact: true }).waitFor();
+  const methods = await page.evaluate(() => window.__visualRequests
+    .filter((request) => ["resetSession", "clearTrackedFiles", "streamChat"].includes(request.method))
+    .map((request) => ({ method: request.method, params: request.params })));
+  if (methods.map((request) => request.method).join(",") !== "resetSession,clearTrackedFiles,streamChat") {
+    throw new Error(`Home composer request order is incorrect: ${JSON.stringify(methods)}`);
+  }
+  if (methods[2]?.params?.content !== "Start a conversation from home") {
+    throw new Error(`Home composer prompt is incorrect: ${JSON.stringify(methods[2])}`);
+  }
+  results.homeComposerRequest = methods;
   await page.close();
 }
 

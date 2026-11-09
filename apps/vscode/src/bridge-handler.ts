@@ -6,7 +6,7 @@ import {
   type RpcMethod,
   type RpcResult,
 } from "../shared/bridge";
-import type { PanelSessionTarget } from "../shared/types";
+import type { PanelSessionTarget, WebviewDisplayState } from "../shared/types";
 import { VSCodeSettings } from "./config/vscode-settings";
 import { handlers, type BroadcastFn, type HandlerContext, type ReloadWebviewFn, type ShowLogsFn } from "./handlers";
 import { BaselineManager, type BaselineSession } from "./managers/baseline.manager";
@@ -29,6 +29,7 @@ export class BridgeHandler {
 
   private readonly customWorkDirs = new Map<string, string>();
   private readonly panelSessionTargets = new Map<string, PanelSessionTarget>();
+  private readonly viewStates = new Map<string, WebviewDisplayState>();
   private readonly fileManager: FileManager;
 
   constructor(
@@ -156,13 +157,8 @@ export class BridgeHandler {
       runtime: this.runtime,
       harness: this.runtime.harness,
       reloadWebview: () => this.reloadWebview(webviewId),
-      getPanelSessionTarget: () => {
-        const runtime = this.runtime.getSessionForView(webviewId);
-        if (runtime !== undefined) {
-          return { sessionId: runtime.id, workDir: runtime.session.workDir };
-        }
-        return this.panelSessionTargets.get(webviewId) ?? null;
-      },
+      getPanelSessionTarget: () => this.panelSessionTargets.get(webviewId) ?? null,
+      setViewState: (state) => this.setViewState(webviewId, state),
       showLogs: this.showLogs,
       logError: (message, error) => this.logRuntimeError(message, error),
       getSession: () => this.runtime.getSessionForView(webviewId),
@@ -218,11 +214,21 @@ export class BridgeHandler {
     await this.runtime.detachView(webviewId);
     this.customWorkDirs.delete(webviewId);
     this.panelSessionTargets.delete(webviewId);
+    this.viewStates.delete(webviewId);
     this.fileManager.disposeView(webviewId);
   }
 
   setPanelSessionTarget(webviewId: string, target: PanelSessionTarget): void {
     this.panelSessionTargets.set(webviewId, target);
+  }
+
+  getViewState(webviewId: string): WebviewDisplayState | undefined {
+    return this.viewStates.get(webviewId);
+  }
+
+  private setViewState(webviewId: string, state: WebviewDisplayState): void {
+    this.viewStates.set(webviewId, state);
+    if (state.view === "sessions") this.panelSessionTargets.delete(webviewId);
   }
 
   async getEditorMention(

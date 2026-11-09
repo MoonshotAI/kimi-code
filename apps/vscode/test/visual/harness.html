@@ -74,6 +74,21 @@
           updatedAt: Date.now() - 2 * 60 * 1000,
           brief: "Add parallel Kimi conversations",
           isRunning: true,
+          status: "running",
+          latestActivity: "Running Shell",
+          startedAt: Date.now() - 4 * 60 * 1000,
+          branch: "feat/parallel-sessions",
+        },
+        {
+          id: "session-review",
+          workDir: "/workspace",
+          updatedAt: Date.now() - 30 * 60 * 1000,
+          brief: "Review the session changes",
+          isRunning: true,
+          status: "waiting",
+          latestActivity: "Waiting for approval",
+          startedAt: Date.now() - 10 * 60 * 1000,
+          branch: "feat/session-review",
         },
         {
           id: "session-tests",
@@ -81,6 +96,9 @@
           updatedAt: Date.now() - 75 * 60 * 1000,
           brief: "Fix the API integration tests",
           isRunning: false,
+          status: "completed",
+          latestActivity: "Finished",
+          branch: "main",
         },
         {
           id: "session-docs",
@@ -88,6 +106,9 @@
           updatedAt: Date.now() - 3 * 24 * 60 * 60 * 1000,
           brief: "Document the release workflow",
           isRunning: false,
+          status: "failed",
+          latestActivity: "Provider request failed",
+          branch: "docs/release",
         },
       ],
       getKimiSessions: [],
@@ -95,33 +116,41 @@
       getInputHistory: [],
       getMCPServers: [],
       openNewSessionTab: { ok: true },
-      getPanelSessionTarget: fixture === "panel"
-        ? { sessionId: "session-tests", workDir: "/workspace/packages/api" }
-        : null,
+      getPanelSessionTarget: fixture === "home"
+        ? null
+        : fixture === "panel"
+          ? { sessionId: "session-tests", workDir: "/workspace/packages/api" }
+          : { sessionId: "session-current", workDir: "/workspace" },
       setWorkDir: { ok: true, workDir: "/workspace/packages/api" },
-      loadKimiSessionHistory: [
-        {
-          type: "session_start",
-          sessionId: "session-tests",
-          _sessionId: "session-tests",
-        },
-        {
-          type: "TurnBegin",
-          payload: { user_input: "Fix the API integration tests" },
-          _sessionId: "session-tests",
-        },
-        { type: "StepBegin", payload: { n: 1 }, _sessionId: "session-tests" },
-        {
-          type: "ContentPart",
-          payload: { type: "text", text: "The saved API test conversation is open in this panel." },
-          _sessionId: "session-tests",
-        },
-        {
-          type: "stream_complete",
-          result: { status: "finished" },
-          _sessionId: "session-tests",
-        },
-      ],
+      loadKimiSessionHistory: fixture === "panel"
+        ? [
+            {
+              type: "session_start",
+              sessionId: "session-tests",
+              _sessionId: "session-tests",
+            },
+            {
+              type: "TurnBegin",
+              payload: { user_input: "Fix the API integration tests" },
+              _sessionId: "session-tests",
+            },
+            { type: "StepBegin", payload: { n: 1 }, _sessionId: "session-tests" },
+            {
+              type: "ContentPart",
+              payload: { type: "text", text: "The saved API test conversation is open in this panel." },
+              _sessionId: "session-tests",
+            },
+            {
+              type: "stream_complete",
+              result: { status: "finished" },
+              _sessionId: "session-tests",
+            },
+          ]
+        : [{ type: "session_start", sessionId: "session-current", _sessionId: "session-current" }],
+      resetSession: { ok: true },
+      clearTrackedFiles: { ok: true },
+      streamChat: { ok: true },
+      setViewState: { ok: true },
       markViewActive: { ok: true },
     };
     const requestCounts = {};

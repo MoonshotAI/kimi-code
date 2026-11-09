@@ -17,6 +17,7 @@ import type {
   LoginStatus,
   PlanUsageResult,
   PanelSessionTarget,
+  WebviewDisplayState,
   UIStreamEvent,
 } from "shared/types";
 
@@ -165,6 +166,10 @@ class Bridge {
 
   getPanelSessionTarget() {
     return this.call<PanelSessionTarget | null>(Methods.GetPanelSessionTarget);
+  }
+
+  setViewState(state: WebviewDisplayState) {
+    return this.call<{ ok: boolean }>(Methods.SetViewState, state);
   }
 
   markViewActive() {

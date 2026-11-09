@@ -13,7 +13,7 @@ import type {
   ModelConfig,
   SlashCommandInfo,
 } from "../../shared/legacy-sdk";
-import type { ExtensionConfig, PanelSessionTarget, SessionConfig } from "../../shared/types";
+import type { ExtensionConfig, PanelSessionTarget, SessionConfig, WebviewDisplayState } from "../../shared/types";
 import { VSCodeSettings } from "../config/vscode-settings";
 import { areSameFsPath, isFsPathInsideOrEqual } from "../utils/fs-path";
 import type { Handler } from "./types";
@@ -107,6 +107,11 @@ const getPanelSessionTarget: Handler<void, PanelSessionTarget | null> = async (_
   return ctx.getPanelSessionTarget();
 };
 
+const setViewState: Handler<WebviewDisplayState, { ok: boolean }> = async (params, ctx) => {
+  ctx.setViewState(params);
+  return { ok: true };
+};
+
 const markViewActive: Handler<void, { ok: boolean }> = async () => ({ ok: true });
 
 const getModels: Handler<void, WebviewKimiConfig> = async (_, ctx) => {
@@ -151,6 +156,7 @@ export const configHandlers = {
   [Methods.OpenSettings]: openSettings,
   [Methods.OpenNewSessionTab]: openNewSessionTab,
   [Methods.GetPanelSessionTarget]: getPanelSessionTarget,
+  [Methods.SetViewState]: setViewState,
   [Methods.MarkViewActive]: markViewActive,
   [Methods.GetModels]: getModels,
   [Methods.GetSlashCommands]: getSlashCommands,

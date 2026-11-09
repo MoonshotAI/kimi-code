@@ -64,6 +64,7 @@ export const Methods = {
   ReloadWebview: "reloadWebview",
   OpenNewSessionTab: "openNewSessionTab",
   GetPanelSessionTarget: "getPanelSessionTarget",
+  SetViewState: "setViewState",
   RespondQuestion: "respondQuestion",
 } as const;
 
@@ -101,6 +102,7 @@ export const Events = {
   FileChangesUpdated: "fileChangesUpdated",
   RollbackInput: "rollbackInput",
   LoginUrl: "loginUrl",
+  SessionsChanged: "sessionsChanged",
 } as const;
 
 const rpcMethods = new Set<string>(Object.values(Methods));
@@ -163,6 +165,10 @@ function validateParams(method: RpcMethod, params: unknown): boolean {
         && isNonEmptyString(params["sessionId"])
         && isNonEmptyString(params["workDir"])
       );
+
+    case Methods.SetViewState:
+      return isPlainObject(params)
+        && (params["view"] === "chat" || params["view"] === "sessions");
 
     case Methods.GetPlanUsage:
       return isPlainObject(params)

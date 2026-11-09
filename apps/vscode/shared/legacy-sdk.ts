@@ -211,7 +211,13 @@ export interface SessionInfo {
   updatedAt: number;
   brief: string;
   isRunning: boolean;
+  status?: SessionActivityStatus;
+  latestActivity?: string;
+  startedAt?: number;
+  branch?: string;
 }
+
+export type SessionActivityStatus = 'running' | 'waiting' | 'completed' | 'failed';
 
 export type ThinkingMode = 'none' | 'switch' | 'always' | 'effort';
 

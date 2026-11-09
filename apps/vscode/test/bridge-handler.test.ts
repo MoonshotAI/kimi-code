@@ -27,6 +27,7 @@ const host = vi.hoisted(() => {
     getConfig: vi.fn(),
     setConfig: vi.fn(async () => undefined),
     listSessions: vi.fn(async () => []),
+    getGitStatus: vi.fn(async () => null),
     resumeSession: vi.fn(),
     forkSession: vi.fn(),
     deleteSession: vi.fn(async () => undefined),
@@ -99,6 +100,8 @@ beforeEach(async () => {
   host.harness.resumeSession.mockReset();
   host.harness.getConfig.mockReset();
   host.harness.getConfig.mockResolvedValue({ models: {} });
+  host.harness.getGitStatus.mockReset();
+  host.harness.getGitStatus.mockResolvedValue(null);
   host.createKimiHarness.mockImplementation(() => host.harness);
   host.showWarningMessage.mockReset();
   host.showWarningMessage.mockResolvedValue(undefined);
@@ -195,6 +198,20 @@ describe("Webview RPC boundary (validates requests before host dispatch)", () =>
       id: "rpc-target",
       result: { sessionId: "session-1", workDir: root },
     });
+  });
+
+  it("clears an explicit panel target when the view returns home", async () => {
+    bridge.setPanelSessionTarget("view-2", { sessionId: "session-1", workDir: root });
+
+    expect(await bridge.handle(
+      { id: "rpc-state", method: Methods.SetViewState, params: { view: "sessions" } },
+      "view-2",
+    )).toEqual({ id: "rpc-state", result: { ok: true } });
+    expect(bridge.getViewState("view-2")).toEqual({ view: "sessions" });
+    expect(await bridge.handle(
+      { id: "rpc-target", method: Methods.GetPanelSessionTarget },
+      "view-2",
+    )).toEqual({ id: "rpc-target", result: null });
   });
 
   it("returns a readable error when the envelope is not a plain object", async () => {
@@ -379,6 +396,7 @@ describe("Webview RPC boundary (validates requests before host dispatch)", () =>
   });
 
   it("does not expose the session storage path when listing sessions", async () => {
+    host.harness.getGitStatus.mockResolvedValueOnce({ branch: "main" } as never);
     host.harness.listSessions.mockResolvedValueOnce([
       {
         id: "session-1",
@@ -396,8 +414,19 @@ describe("Webview RPC boundary (validates requests before host dispatch)", () =>
 
     expect(result).toEqual({
       id: "rpc-1",
-      result: [{ id: "session-1", workDir: root, updatedAt: 123, brief: "Visible title", isRunning: false }],
+      result: [{
+        id: "session-1",
+        workDir: root,
+        updatedAt: 123,
+        brief: "Visible title",
+        isRunning: false,
+        status: "completed",
+        latestActivity: "Finished",
+        startedAt: undefined,
+        branch: "main",
+      }],
     });
+    expect(host.harness.getGitStatus).toHaveBeenCalledWith(root);
     expect(JSON.stringify(result)).not.toContain("/private/kimi/sessions");
   });
 

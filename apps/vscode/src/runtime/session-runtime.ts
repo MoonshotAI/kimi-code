@@ -7,7 +7,11 @@ import {
   type SessionSummary,
 } from "@moonshot-ai/kimi-code-sdk";
 
-import type { ContentPart as LegacyContentPart, ApprovalResponse } from "../../shared/legacy-sdk";
+import type {
+  ContentPart as LegacyContentPart,
+  ApprovalResponse,
+  SessionActivityStatus,
+} from "../../shared/legacy-sdk";
 import { Events } from "../../shared/bridge";
 import { getUserMessage } from "../../shared/errors";
 import type { ErrorPhase, UIStreamEvent } from "../../shared/types";
@@ -36,6 +40,13 @@ export interface SessionRuntimeOptions {
     webviewIds: readonly string[],
   ) => void;
   readonly log: (message: string, error?: unknown) => void;
+  readonly activityChanged?: () => void;
+}
+
+export interface SessionActivitySnapshot {
+  readonly status: SessionActivityStatus;
+  readonly latestActivity: string;
+  readonly startedAt?: number;
 }
 
 interface ActivePrompt {
@@ -73,6 +84,7 @@ export class SessionRuntime {
   private readonly broadcast: RuntimeBroadcast;
   private readonly captureBaseline: SessionRuntimeOptions["captureBaseline"];
   private readonly log: SessionRuntimeOptions["log"];
+  private readonly activityChanged: () => void;
   private readonly webviewIds = new Set<string>();
   private readonly reverseRpc: ReverseRpcController;
   private readonly unsubscribe: () => void;
@@ -89,12 +101,15 @@ export class SessionRuntime {
   private suppressedError: SuppressedError | undefined;
   private legacyApproval: LegacyApprovalFlags;
   private closed = false;
+  private activity: SessionActivitySnapshot;
 
   constructor(options: SessionRuntimeOptions) {
     this.session = options.session;
+    this.activity = sessionActivityFromSummary(options.session.summary);
     this.broadcast = options.broadcast;
     this.captureBaseline = options.captureBaseline;
     this.log = options.log;
+    this.activityChanged = options.activityChanged ?? (() => undefined);
     this.legacyApproval = options.legacyApproval;
     this.reverseRpc = new ReverseRpcController((event) => this.emitStreamEvent(event));
 
@@ -121,6 +136,10 @@ export class SessionRuntime {
 
   get isBusy(): boolean {
     return this.hasActiveWork || this.exclusiveActionActive;
+  }
+
+  get activitySnapshot(): SessionActivitySnapshot {
+    return this.activity;
   }
 
   get legacyApprovalFlags(): LegacyApprovalFlags {
@@ -207,6 +226,7 @@ export class SessionRuntime {
       resolve: resolveCompletion,
     };
     this.activePrompt = active;
+    this.updateActivity("running", "Starting response", Date.now());
 
     try {
       await action();
@@ -231,6 +251,7 @@ export class SessionRuntime {
     const actionId = ++this.hostActionSequence;
     this.hostActionActive = true;
     this.activeHostActionId = actionId;
+    this.updateActivity("running", "Starting task", Date.now());
     this.emitStreamEvent({
       type: "TurnBegin",
       payload: { user_input: input, forkable },
@@ -281,6 +302,7 @@ export class SessionRuntime {
     if (!this.hostActionActive || actionId !== this.activeHostActionId) return;
     this.hostActionActive = false;
     this.activeHostActionId = undefined;
+    this.updateActivity("failed", "Task failed");
     this.notifyActiveWorkSettled();
   }
 
@@ -386,11 +408,15 @@ export class SessionRuntime {
   }
 
   respondApproval(id: string, response: ApprovalResponse): boolean {
-    return this.reverseRpc.respondApproval(id, response);
+    const responded = this.reverseRpc.respondApproval(id, response);
+    if (responded && this.hasActiveWork) this.updateActivity("running", "Continuing work");
+    return responded;
   }
 
   respondQuestion(id: string, answers: Record<string, string>): boolean {
-    return this.reverseRpc.respondQuestion(id, answers);
+    const responded = this.reverseRpc.respondQuestion(id, answers);
+    if (responded && this.hasActiveWork) this.updateActivity("running", "Continuing work");
+    return responded;
   }
 
   async close(): Promise<void> {
@@ -580,9 +606,63 @@ export class SessionRuntime {
   }
 
   private emitStreamEvent(event: UIStreamEvent | { type: string; payload: unknown }): void {
+    this.updateActivityFromEvent(event);
     for (const webviewId of this.webviewIds) {
       this.broadcast(Events.StreamEvent, event, webviewId);
     }
+  }
+
+  private updateActivityFromEvent(event: UIStreamEvent | { type: string; payload: unknown }): void {
+    const record = event as unknown as Record<string, unknown>;
+    switch (event.type) {
+      case "TurnBegin":
+      case "StepBegin":
+        this.updateActivity("running", "Working");
+        break;
+      case "ToolCall": {
+        const payload = isRecord(record["payload"]) ? record["payload"] : undefined;
+        const fn = payload !== undefined && isRecord(payload["function"]) ? payload["function"] : undefined;
+        const name = fn?.["name"];
+        this.updateActivity("running", typeof name === "string" ? `Running ${name}` : "Running a tool");
+        break;
+      }
+      case "ContentPart":
+        this.updateActivity("running", "Writing response");
+        break;
+      case "CompactionBegin":
+        this.updateActivity("running", "Compacting context");
+        break;
+      case "ApprovalRequest":
+        this.updateActivity("waiting", "Waiting for approval");
+        break;
+      case "QuestionRequest":
+        this.updateActivity("waiting", "Waiting for your answer");
+        break;
+      case "stream_complete":
+        this.updateActivity(
+          "completed",
+          isRecord(record["result"]) && record["result"]["status"] === "cancelled" ? "Stopped" : "Finished",
+        );
+        break;
+      case "error": {
+        const terminal = record["terminal"];
+        const message = record["message"];
+        if (terminal !== false) this.updateActivity("failed", typeof message === "string" && message.length > 0 ? message : "Failed");
+        break;
+      }
+    }
+  }
+
+  private updateActivity(status: SessionActivityStatus, latestActivity: string, startedAt = this.activity.startedAt): void {
+    if (
+      this.activity.status === status
+      && this.activity.latestActivity === latestActivity
+      && this.activity.startedAt === startedAt
+    ) {
+      return;
+    }
+    this.activity = { status, latestActivity, startedAt };
+    this.activityChanged();
   }
 
   private settlePrompt(result: PromptResult): void {
@@ -614,6 +694,18 @@ export class SessionRuntime {
   private ensureOpen(): void {
     if (this.closed) throw new Error("Session is closed.");
   }
+}
+
+export function sessionActivityFromSummary(
+  summary: Pick<SessionSummary, "lastTurnReason"> | undefined,
+): SessionActivitySnapshot {
+  if (summary?.lastTurnReason === "failed") {
+    return { status: "failed", latestActivity: "Failed" };
+  }
+  if (summary?.lastTurnReason === "cancelled") {
+    return { status: "completed", latestActivity: "Stopped" };
+  }
+  return { status: "completed", latestActivity: "Finished" };
 }
 
 export function toSdkPromptInput(input: string | LegacyContentPart[]): string | PromptInput {

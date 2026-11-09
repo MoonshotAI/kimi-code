@@ -1,10 +1,22 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { IconSearch, IconDots, IconTrash, IconCheck, IconLoader2, IconExternalLink } from "@tabler/icons-react";
+import {
+  IconSearch,
+  IconDots,
+  IconTrash,
+  IconCheck,
+  IconLoader2,
+  IconExternalLink,
+  IconSend,
+  IconGitBranch,
+  IconAlertCircle,
+  IconClock,
+} from "@tabler/icons-react";
 import { Input } from "@/components/ui/input";
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from "@/components/ui/input-group";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { StreamingConfirmDialog } from "./StreamingConfirmDialog";
-import { bridge } from "@/services";
+import { bridge, Events } from "@/services";
 import type { SessionInfo } from "shared/legacy-sdk";
 import { cn } from "@/lib/utils";
 import { useChatStore, useSettingsStore } from "@/stores";
@@ -30,6 +42,15 @@ function formatRelativeDate(timestamp: number): string {
   return new Date(timestamp).toLocaleDateString();
 }
 
+function formatElapsed(startedAt: number, now: number): string {
+  const seconds = Math.max(0, Math.floor((now - startedAt) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${minutes % 60}m`;
+}
+
 interface SessionItemProps {
   session: SessionInfo;
   isSelected: boolean;
@@ -37,7 +58,8 @@ interface SessionItemProps {
   onOpenInNewWindow: () => void;
   isOpeningInNewWindow: boolean;
   onDelete: () => void;
-  dirLabel: string | null; // null = current dir, string = relative path
+  dirLabel: string;
+  now: number;
 }
 
 function SessionItem({
@@ -48,8 +70,11 @@ function SessionItem({
   isOpeningInNewWindow,
   onDelete,
   dirLabel,
+  now,
 }: SessionItemProps) {
   const [isHovered, setIsHovered] = useState(false);
+  const status = session.status ?? (session.isRunning ? "running" : "completed");
+  const statusLabel = status === "waiting" ? "Waiting" : status[0].toUpperCase() + status.slice(1);
 
   return (
     <div
@@ -72,17 +97,37 @@ function SessionItem({
       aria-current={isSelected ? "page" : undefined}
     >
       <p className="text-xs font-medium leading-relaxed line-clamp-2 text-foreground">{cleanSystemTags(session.brief) || "Untitled"}</p>
-      <div className="flex items-center justify-between mt-1">
+      <div className="flex items-start justify-between mt-1 gap-2">
         <div className="flex items-center gap-1.5 min-w-0 flex-1">
           {isSelected && <IconCheck className="size-3 text-blue-500 shrink-0" />}
-          {session.isRunning && (
-            <span className="flex items-center gap-1 text-[10px] text-blue-500 shrink-0">
+          <span
+            className={cn(
+              "flex items-center gap-1 text-[10px] shrink-0",
+              status === "running" && "text-blue-500",
+              status === "waiting" && "text-amber-500",
+              status === "failed" && "text-destructive",
+              status === "completed" && "text-emerald-600 dark:text-emerald-400",
+            )}
+          >
+            {status === "running" && (
               <IconLoader2 className="size-3 animate-spin motion-reduce:animate-none" />
-              Running
-            </span>
+            )}
+            {status === "waiting" && <IconClock className="size-3" />}
+            {status === "failed" && <IconAlertCircle className="size-3" />}
+            {status === "completed" && <IconCheck className="size-3" />}
+            {statusLabel}
+          </span>
+          {session.startedAt !== undefined && session.isRunning && (
+            <span className="text-[10px] text-muted-foreground shrink-0">{formatElapsed(session.startedAt, now)}</span>
           )}
           <span className="text-[10px] text-muted-foreground shrink-0">{formatRelativeDate(session.updatedAt)}</span>
-          {dirLabel && <span className="text-[10px] text-muted-foreground/70 truncate" title={session.workDir}>· {dirLabel}</span>}
+          <span className="text-[10px] text-muted-foreground/70 truncate" title={session.workDir}>· {dirLabel}</span>
+          {session.branch && (
+            <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground/70 truncate" title={`Git branch: ${session.branch}`}>
+              <IconGitBranch className="size-3 shrink-0" />
+              <span className="truncate">{session.branch}</span>
+            </span>
+          )}
         </div>
         <div className={cn("transition-opacity group-focus-within:opacity-100", isHovered ? "opacity-100" : "opacity-0")}>
           <DropdownMenu>
@@ -125,6 +170,9 @@ function SessionItem({
           </DropdownMenu>
         </div>
       </div>
+      <p className="mt-1 text-[10px] text-muted-foreground truncate" title={session.latestActivity}>
+        {session.latestActivity ?? (session.isRunning ? "Working" : "Finished")}
+      </p>
     </div>
   );
 }
@@ -132,11 +180,17 @@ function SessionItem({
 export function SessionList({ onClose }: SessionListProps) {
   const { loadSession, sessionId, startNewConversation, isStreaming } = useChatStore();
   const { workspaceRoot, currentWorkDir, setCurrentWorkDir } = useSettingsStore();
+  const useCtrlEnterToSend = useSettingsStore((state) => state.extensionConfig.useCtrlEnterToSend);
   const [searchQuery, setSearchQuery] = useState("");
+  const [newChatPrompt, setNewChatPrompt] = useState("");
+  const [pendingNewPrompt, setPendingNewPrompt] = useState<string | null>(null);
+  const [isStartingConversation, setIsStartingConversation] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<SessionInfo | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [pendingSession, setPendingSession] = useState<SessionInfo | null>(null);
   const [openingSessionId, setOpeningSessionId] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const newChatInputRef = useRef<HTMLTextAreaElement>(null);
 
   const queryClient = useQueryClient();
   const { data: kimiSessions = NO_SESSIONS, isPending: loading } = useQuery({
@@ -144,11 +198,25 @@ export function SessionList({ onClose }: SessionListProps) {
     queryFn: () => bridge.getAllKimiSessions(),
   });
 
-  const getWorkDirLabel = (sessionWorkDir: string): string | null => {
-    const activeWorkDir = currentWorkDir || workspaceRoot;
-    if (sessionWorkDir === activeWorkDir) return null;
+  useEffect(() => {
+    if (!kimiSessions.some((session) => session.isRunning)) return;
+    const interval = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(interval);
+  }, [kimiSessions]);
+
+  useEffect(() => {
+    const unsubs = [
+      bridge.on(Events.FocusInput, () => newChatInputRef.current?.focus()),
+      bridge.on<{ mention: string }>(Events.InsertMention, ({ mention }) => {
+        setNewChatPrompt((prompt) => `${prompt}${mention} `);
+        setTimeout(() => newChatInputRef.current?.focus(), 0);
+      }),
+    ];
+    return () => unsubs.forEach((unsubscribe) => unsubscribe());
+  }, []);
+
+  const getWorkDirLabel = (sessionWorkDir: string): string => {
     if (!workspaceRoot) return sessionWorkDir;
-    // Show (root) for workspace root, relative path for subdirs
     if (sessionWorkDir === workspaceRoot) {
       return "/";
     }
@@ -223,6 +291,31 @@ export function SessionList({ onClose }: SessionListProps) {
     }
   };
 
+  const startConversationWithPrompt = async (prompt: string) => {
+    setIsStartingConversation(true);
+    try {
+      await startNewConversation();
+      useChatStore.getState().sendMessage(prompt);
+      setNewChatPrompt("");
+      setPendingNewPrompt(null);
+      onClose();
+    } catch (error) {
+      toast.error(`Unable to start the conversation: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setIsStartingConversation(false);
+    }
+  };
+
+  const handleNewChatSubmit = () => {
+    const prompt = newChatPrompt;
+    if (!prompt.trim() || isStartingConversation) return;
+    if (isStreaming) {
+      setPendingNewPrompt(prompt);
+      return;
+    }
+    void startConversationWithPrompt(prompt);
+  };
+
   const handleDelete = async () => {
     if (!deleteTarget) return;
 
@@ -274,11 +367,55 @@ export function SessionList({ onClose }: SessionListProps) {
                   isOpeningInNewWindow={openingSessionId === session.id}
                   onDelete={() => setDeleteTarget(session)}
                   dirLabel={getWorkDirLabel(session.workDir)}
+                  now={now}
                 />
               ))
             )}
           </div>
         </div>
+        <form
+          className="p-2 border-t border-border shrink-0"
+          onSubmit={(event) => {
+            event.preventDefault();
+            handleNewChatSubmit();
+          }}
+        >
+          <div className="px-1 pb-1.5 text-[10px] font-medium text-muted-foreground">Start a new conversation</div>
+          <InputGroup className="items-end">
+            <InputGroupTextarea
+              ref={newChatInputRef}
+              aria-label="New conversation message"
+              placeholder="Message Kimi…"
+              value={newChatPrompt}
+              disabled={isStartingConversation}
+              rows={2}
+              className="min-h-14 max-h-28 text-xs"
+              onChange={(event) => setNewChatPrompt(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.nativeEvent.isComposing || event.key !== "Enter" || event.shiftKey) return;
+                const shouldSend = useCtrlEnterToSend ? event.ctrlKey || event.metaKey : true;
+                if (!shouldSend) return;
+                event.preventDefault();
+                handleNewChatSubmit();
+              }}
+            />
+            <InputGroupAddon align="inline-end" className="pb-2">
+              <InputGroupButton
+                type="submit"
+                variant="default"
+                size="icon-xs"
+                aria-label="Start conversation"
+                disabled={!newChatPrompt.trim() || isStartingConversation}
+              >
+                {isStartingConversation ? (
+                  <IconLoader2 className="animate-spin motion-reduce:animate-none" />
+                ) : (
+                  <IconSend />
+                )}
+              </InputGroupButton>
+            </InputGroupAddon>
+          </InputGroup>
+        </form>
       </div>
 
       <StreamingConfirmDialog
@@ -304,6 +441,20 @@ export function SessionList({ onClose }: SessionListProps) {
         onConfirm={() => {
           void handleConfirmSwitch();
         }}
+      />
+
+      <StreamingConfirmDialog
+        open={pendingNewPrompt !== null}
+        onOpenChange={(open) => !open && setPendingNewPrompt(null)}
+        title="Start New Conversation?"
+        description="The current conversation is still generating a response. Starting a new one will truncate the output. Are you sure you want to continue?"
+        confirmLabel="Start Conversation"
+        onConfirm={() => {
+          if (pendingNewPrompt !== null) void startConversationWithPrompt(pendingNewPrompt);
+        }}
+        confirmDisabled={isStartingConversation}
+        cancelDisabled={isStartingConversation}
+        confirmLoading={isStartingConversation}
       />
     </>
   );

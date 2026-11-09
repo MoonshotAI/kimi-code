@@ -49,6 +49,10 @@ export interface PanelSessionTarget {
   workDir: string;
 }
 
+export interface WebviewDisplayState {
+  view: "chat" | "sessions";
+}
+
 export type ErrorPhase = "preflight" | "runtime";
 
 export interface StreamError {
