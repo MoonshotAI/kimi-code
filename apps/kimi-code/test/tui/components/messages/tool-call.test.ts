@@ -1,4 +1,12 @@
-import { resetCapabilitiesCache, setCapabilities, Text, visibleWidth, type TUI } from '@moonshot-ai/pi-tui';
+import {
+  ANIMATION_FRAME_INTERVAL_MS,
+  AnimationFrameScheduler,
+  resetCapabilitiesCache,
+  setCapabilities,
+  Text,
+  visibleWidth,
+  type TUI,
+} from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -3430,6 +3438,52 @@ describe('ToolCallComponent render cache', () => {
       expect(second).toEqual(first);
       component.dispose();
     });
+  });
+
+  it('sweeps the auto review status on animation frames and stops when cleared', () => {
+    const previousLevel = chalk.level;
+    chalk.level = 3;
+    vi.useFakeTimers();
+    try {
+      const frames = new AnimationFrameScheduler();
+      const requestRender = vi.fn();
+      const ui = {
+        terminal: { rows: 30 },
+        requestRender,
+        requestAnimationFrame: (callback: (time: number) => void) => frames.requestAnimationFrame(callback),
+        cancelAnimationFrame: (handle: number) => {
+          frames.cancelAnimationFrame(handle);
+        },
+      } as unknown as TUI;
+      const component = new ToolCallComponent(
+        { id: 'call_review', name: 'Read', args: { path: 'foo.ts' } },
+        undefined,
+        ui,
+      );
+      component.setAutoReviewing(true);
+      requestRender.mockClear();
+      const initial = component.render(80)[2];
+      expect(strip(initial ?? '').trimEnd()).toBe('  Auto Review in progress…');
+
+      vi.advanceTimersByTime(ANIMATION_FRAME_INTERVAL_MS / 2);
+      expect(component.render(80)[2]).toBe(initial);
+      expect(requestRender).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(ANIMATION_FRAME_INTERVAL_MS / 2);
+      expect(requestRender).toHaveBeenCalledTimes(1);
+      const swept = component.render(80)[2];
+      expect(swept).not.toBe(initial);
+      expect(strip(swept ?? '').trimEnd()).toBe('  Auto Review in progress…');
+
+      component.setAutoReviewing(false);
+      expect(vi.getTimerCount()).toBe(0);
+      requestRender.mockClear();
+      vi.advanceTimersByTime(ANIMATION_FRAME_INTERVAL_MS * 4);
+      expect(requestRender).not.toHaveBeenCalled();
+      component.dispose();
+    } finally {
+      chalk.level = previousLevel;
+    }
   });
 });
 

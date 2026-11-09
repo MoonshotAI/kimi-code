@@ -57,6 +57,7 @@ import { formatTokenCount } from '#/utils/usage/usage-format';
 
 import { agentSwarmResultSummaryFromOutput } from './agent-swarm-progress';
 import { PlanBoxComponent } from './plan-box';
+import { TitleSweep } from './running-title';
 import {
   TruncatedHeaderLine,
   type HeaderContent,
@@ -89,6 +90,7 @@ const APPROVED_PLAN_MARKER = '## Approved Plan:';
 const AUTO_APPROVED_PLAN_MARKER = '## Plan (auto-approved, not user-reviewed):';
 const STREAMING_PROGRESS_INTERVAL_MS = 1000;
 const PROGRESS_URL_RE = /https?:\/\/\S+/g;
+const AUTO_REVIEW_PROGRESS_TEXT = 'Auto Review in progress…';
 const ABORTED_MARK = '⊘';
 const MAX_LIVE_OUTPUT_CHARS = 50_000;
 const CARD_PREAMBLE_CHILDREN = 2;
@@ -895,6 +897,10 @@ export class ToolCallComponent extends Container {
   private progressStatusRows = 0;
   private static readonly MAX_PROGRESS_LINES = 24;
   private autoReviewing = false;
+  private autoReviewSweep = new TitleSweep();
+  private autoReviewFrameRequest: number | undefined;
+  private autoReviewShownAnimation: string | undefined;
+  private readonly autoReviewText = new Text('', 2, 0);
   private liveOutput = '';
 
   /**
@@ -1258,6 +1264,7 @@ export class ToolCallComponent extends Container {
     this.progressLines = [];
     this.progressStatusRows = 0;
     this.autoReviewing = false;
+    this.stopAutoReviewFrames();
     this.liveOutput = '';
     this.detachHintVisible = false;
     this.stopDetachHintTimer();
@@ -1318,6 +1325,13 @@ export class ToolCallComponent extends Container {
   setAutoReviewing(reviewing: boolean): void {
     if (this.autoReviewing === reviewing) return;
     this.autoReviewing = reviewing;
+    this.autoReviewSweep = new TitleSweep();
+    this.autoReviewShownAnimation = undefined;
+    if (reviewing) {
+      this.startAutoReviewFrames();
+    } else {
+      this.stopAutoReviewFrames();
+    }
     this.rebuildBody();
     this.ui?.requestRender();
   }
@@ -1608,6 +1622,36 @@ export class ToolCallComponent extends Container {
     if (this.detachHintTimer === undefined) return;
     clearTimeout(this.detachHintTimer);
     this.detachHintTimer = undefined;
+  }
+
+  private renderAutoReviewText(): string {
+    const paint = this.autoReviewSweep.painter();
+    return paint(AUTO_REVIEW_PROGRESS_TEXT, 0);
+  }
+
+  private startAutoReviewFrames(): void {
+    if (this.ui === undefined || this.autoReviewFrameRequest !== undefined) return;
+    this.autoReviewSweep.start(performance.now());
+    this.autoReviewFrameRequest = this.ui.requestAnimationFrame(this.onAutoReviewFrame);
+  }
+
+  private readonly onAutoReviewFrame = (time: number): void => {
+    this.autoReviewFrameRequest = undefined;
+    if (!this.autoReviewing) return;
+    this.autoReviewSweep.advance(time, visibleWidth(AUTO_REVIEW_PROGRESS_TEXT), true);
+    const shown = this.autoReviewSweep.frameKey;
+    if (shown !== this.autoReviewShownAnimation) {
+      this.autoReviewShownAnimation = shown;
+      this.autoReviewText.setText(this.renderAutoReviewText());
+      this.ui?.requestRender();
+    }
+    this.autoReviewFrameRequest = this.ui?.requestAnimationFrame(this.onAutoReviewFrame);
+  };
+
+  private stopAutoReviewFrames(): void {
+    if (this.autoReviewFrameRequest === undefined) return;
+    this.ui?.cancelAnimationFrame(this.autoReviewFrameRequest);
+    this.autoReviewFrameRequest = undefined;
   }
 
   private buildDetachHintBlock(): void {
@@ -2205,7 +2249,8 @@ export class ToolCallComponent extends Container {
   private buildProgressBlock(): void {
     if (this.result !== undefined) return;
     if (this.autoReviewing) {
-      this.addChild(new Text(currentTheme.dim('Auto Review in progress…'), 2, 0));
+      this.autoReviewText.setText(this.renderAutoReviewText());
+      this.addChild(this.autoReviewText);
     }
     for (const raw of this.progressLines) {
       if (raw.length === 0) {
