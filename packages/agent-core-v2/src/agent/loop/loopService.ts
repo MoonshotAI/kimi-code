@@ -1470,7 +1470,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
                 role: 'user',
                 content: [...entry.message.content],
                 id,
-                          origin: entry.meta?.origin as PromptOrigin | undefined,
+                origin: entry.meta?.origin as PromptOrigin | undefined,
               },
               userMessageId: entry.meta?.userMessageId ?? '',
               createdAt: entry.meta?.createdAt ?? '',
@@ -1506,7 +1506,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           contextMessage: {
             role: 'user',
             content: gatedContent,
-                  origin: markInTurnOrigin(merged.origin),
+            origin: markInTurnOrigin(merged.origin),
             id: messageId,
           },
           promptIds,

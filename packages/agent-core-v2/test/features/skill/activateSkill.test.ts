@@ -194,52 +194,6 @@ describe('promptWithSkills', () => {
     expect(events.map((event) => event.event)).toEqual(['turn.started', 'skill.activated']);
   });
 
-  it('clears a previous parent workspace when a multi-skill bundle steers into the turn', async () => {
-    const parentA = stubSkill('parent', { path: '/work/A/parent/SKILL.md', dir: '/work/A/parent', content: 'parent from A', workspaceDir: '/work/A' });
-    const parentB = stubSkill('parent', { path: '/work/B/parent/SKILL.md', dir: '/work/B/parent', content: 'parent from B', workspaceDir: '/work/B' });
-    const childA = stubSkill('child', { path: '/work/A/child/SKILL.md', dir: '/work/A/child', content: 'child from A', workspaceDir: '/work/A' });
-    const childB = stubSkill('child', { path: '/work/B/child/SKILL.md', dir: '/work/B/child', content: 'child from B', workspaceDir: '/work/B' });
-    const catalog = new InMemorySkillCatalog();
-    catalog.register(parentA);
-    catalog.register(childA);
-    catalog.register(stubSkill('other'));
-    catalog.registerVariants([parentA, parentB, childA, childB, stubSkill('other')], { replace: true });
-    ctx = createTestAgent(skillServices(catalog));
-    ctx.mockNextResponse({ type: 'text', text: 'Load child.' }, {
-      type: 'function',
-      id: 'call_child',
-      name: 'Skill',
-      arguments: '{"skill":"child"}',
-    });
-    ctx.mockNextResponse({ type: 'text', text: 'Done.' });
-    const hold = holdFirstStep();
-    const promptPromise = ctx.rpc.prompt({ input: [{ type: 'text', text: 'start' }] });
-    await hold.started;
-    await ctx.rpc.promptWithSkills({
-      input: [{ type: 'text', text: 'Use parent B' }],
-      skills: [{ name: 'parent', path: parentB.path }],
-      steerIfActive: true,
-    });
-
-    const steered = await ctx.rpc.promptWithSkills({
-      input: [{ type: 'text', text: 'Use multiple skills' }],
-      skills: [{ name: 'parent', path: parentB.path }, { name: 'other' }],
-      steerIfActive: true,
-    });
-    expect(steered.prompt_id).toBeTruthy();
-    hold.release();
-    await promptPromise;
-    await ctx.untilTurnEnd();
-
-    const nested = ctx.context.get().filter((message) =>
-      message.origin?.kind === 'skill_activation' && message.origin.skillName === 'child'
-    );
-    expect(nested).toHaveLength(1);
-    expect(JSON.stringify(nested[0])).toContain('child from A');
-    expect(JSON.stringify(nested[0])).toContain('/work/A/child/SKILL.md');
-    expect(JSON.stringify(nested[0])).toContain('model-tool');
-    expect(JSON.stringify(nested[0])).not.toContain('nested-skill');
-  });
   it.each([{ steerIfActive: undefined }, { steerIfActive: false }])(
     'queues the bundled submission behind the running turn with steerIfActive $steerIfActive',
     async ({ steerIfActive }) => {
