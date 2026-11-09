@@ -1,6 +1,7 @@
 import { createDecorator } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import type { BeforeToolExecuteEvent } from '#/agent/toolExecutor/toolHooks';
+import type { AgentTaskFields } from '#/agent/task/handler';
 import type {
   LegacyToolAgentContext,
   LegacyToolFields,
@@ -12,8 +13,12 @@ import type {
   ToolExecutorHook,
 } from '#/tool/executor';
 
+export interface AgentToolFields extends LegacyToolFields {
+  readonly task?: AgentTaskFields;
+}
+
 export type AgentToolHook = ToolExecutorHook<LegacyToolAgentContext, LegacyToolPreparation>;
-export type AgentToolExecutionHandler = ToolExecutionHandler<LegacyToolFields, LegacyToolPreparation>;
+export type AgentToolExecutionHandler = ToolExecutionHandler<AgentToolFields, LegacyToolPreparation>;
 export type AgentToolExecutor = ToolExecutor<LegacyToolAgentContext>;
 export type ToolCallDupType = 'cross_step';
 
@@ -22,6 +27,7 @@ export interface IAgentToolExecutorService {
   readonly executor: AgentToolExecutor;
   registerHook(hook: AgentToolHook): IDisposable;
   registerLegacyStarting(listener: (event: BeforeToolExecuteEvent) => void | Promise<void>): IDisposable;
+  handlers(): readonly AgentToolExecutionHandler[];
   handler(taskId: string): AgentToolExecutionHandler | undefined;
   handlerForCall(toolCallId: string): AgentToolExecutionHandler | undefined;
   release(taskId: string): void;

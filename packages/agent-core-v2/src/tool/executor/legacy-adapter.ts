@@ -23,18 +23,14 @@ import type {
 const LEGACY_ABORT_GRACE_MS = 2_000;
 
 export interface LegacyToolFields {
+  [key: string]: unknown;
   status?: string;
+  statusReplace?: boolean;
   progress?: {
     text?: string;
     percent?: number;
+    replace?: boolean;
   };
-  custom?: {
-    kind?: string;
-    text?: string;
-    data?: unknown;
-  };
-  outputKind?: 'stdout' | 'stderr';
-  result?: ExecutableToolResult;
 }
 
 export type LegacyToolAgentContext = Omit<
@@ -58,11 +54,12 @@ export type LegacyToolPreparation =
       cancellation?: {
         timer?: ReturnType<typeof setTimeout>;
       };
+      result?: ExecutableToolResult;
       onExecuted?: () => void;
     }
   | {
       readonly kind: 'synthetic';
-      readonly result: ExecutableToolResult;
+      result: ExecutableToolResult;
       readonly durationMs: 0;
     };
 
@@ -148,11 +145,15 @@ export class LegacyExecutableToolAdapter<Input = unknown>
       ...context.context,
       toolCallId: context.call.id,
       signal: context.signal,
-      detach: (text) => {
-        context.onDetach(() => ({ content: textToolContent(text) }));
+      detach: (text, brief) => {
+        context.onDetach(() => ({ content: textToolContent(text), brief }));
         context.detach(text);
       },
+      onDetach: (acknowledge) => context.onDetach(acknowledge),
       onUpdate: (update) => this.update(context, update),
+      taskId: context.taskId,
+      write: (text) => context.write(text),
+      set: (fields) => context.set(fields),
     };
     try {
       let result: unknown;
@@ -166,7 +167,7 @@ export class LegacyExecutableToolAdapter<Input = unknown>
         onExecuted?.();
       }
       const finalized = await this.finalize(context.call.id, coerceLegacyResult(result, this.name));
-      context.set({ result: finalized });
+      prepared.result = finalized;
       return legacyResult(finalized, this.name);
     } finally {
       prepared.durationMs ??= Math.max(0, this.now() - startedAt);
@@ -184,6 +185,10 @@ export class LegacyExecutableToolAdapter<Input = unknown>
       context.abandon();
       return;
     }
+    prepared.execution.stopping?.({
+      reason: context.reason,
+      abandon: (result) => context.abandon(result === undefined ? undefined : legacyResult(result, this.name)),
+    });
     const cancellation = prepared.cancellation ??= {};
     cancellation.timer = setTimeout(() => {
       cancellation.timer = undefined;
@@ -208,22 +213,22 @@ export class LegacyExecutableToolAdapter<Input = unknown>
     context: ToolExecuteContext<Input, LegacyToolAgentContext, LegacyToolFields, LegacyToolPreparation>,
     update: ToolUpdate,
   ): void {
+    if (update.fields !== undefined) context.set(update.fields);
     switch (update.kind) {
       case 'stdout':
       case 'stderr':
-        context.set({ outputKind: update.kind });
         context.write(update.text ?? '');
         return;
       case 'status':
-        context.set({ status: update.text });
+        context.set({ status: update.text, statusReplace: update.replace });
         return;
       case 'progress':
-        context.set({ progress: { text: update.text, percent: update.percent } });
+        context.set({
+          progress: { text: update.text, percent: update.percent, replace: update.replace },
+        });
         return;
       case 'custom':
-        context.set({
-          custom: { kind: update.customKind, text: update.text, data: update.customData },
-        });
+        return;
     }
   }
 }

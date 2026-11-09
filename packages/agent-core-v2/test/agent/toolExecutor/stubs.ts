@@ -51,6 +51,7 @@ export function stubToolExecutorEvents(): ToolExecutorEventStubs {
         if (index >= 0) hooks.splice(index, 1);
       });
     },
+    handlers: () => [],
     handler: () => undefined,
     handlerForCall: () => undefined,
     release: () => {},
@@ -106,7 +107,7 @@ function decisionContextOf(context: ResolvedToolExecutionHookContext): LegacyDec
 function afterContext(context: ToolDidExecuteContext): LegacyAfterContext {
   const result = context.result;
   const output = typeof result.output === 'string' ? textToolContent(result.output) : result.output;
-  const fields = { result };
+  const fields: Record<string, unknown> = {};
   const resolved = decisionContextOf({
     ...context,
     execution: {
@@ -115,6 +116,7 @@ function afterContext(context: ToolDidExecuteContext): LegacyAfterContext {
       execute: async () => context.result,
     },
   });
+  if (resolved.prepared.kind === 'execute') resolved.prepared.result = result;
   return {
     ...resolved,
     prepared: context.outcome === 'executed' || context.outcome === 'aborted'

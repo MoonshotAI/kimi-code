@@ -146,6 +146,7 @@ import {
 import { ContextClear } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
 import { IEventDispatcher } from '@moonshot-ai/agent-core-v2/state/eventDispatcher';
 import { historyEntryFromContext } from '@moonshot-ai/agent-core-v2/agent/loop/history';
+import { agentTaskInfo } from '@moonshot-ai/agent-core-v2/agent/task/handler';
 import { McpConnectionManager } from '@moonshot-ai/agent-core-v2/mcpCore/connection-manager';
 import { ITowerRateLimitService } from '@moonshot-ai/agent-core-v2/features/tower/towerRateLimit';
 import { readTowerStatusSummary } from '@moonshot-ai/agent-core-v2/features/tower/tools/status/statusReader';
@@ -184,6 +185,7 @@ import {
   IAgentSwarmService,
   IAgentTaskService,
   ISessionTokenCountingService,
+  IAgentToolExecutorService,
   IAgentToolPolicyService,
   IAgentToolRegistryService,
   type HostUiCapability,
@@ -2656,7 +2658,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       active: agent.accessor.get(IAgentTowerService).isActive,
       cwd: agent.accessor.get(ISessionContext).cwd,
       agentId: MAIN_AGENT_ID,
-      tasks: agent.accessor.get(IAgentTaskService),
+      toolExecutor: agent.accessor.get(IAgentToolExecutorService),
       concurrency: () => agent.accessor.get(ITowerRateLimitService).snapshot(),
     });
   }
@@ -2783,7 +2785,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     input: SessionIdRpcInput & { taskId: string; reason?: string },
   ): Promise<void> {
     const agent = await this.agentScope(input.sessionId);
-    await agent.accessor.get(IAgentTaskService).stop(input.taskId, input.reason);
+    const reason = input.reason?.trim();
+    await agent.accessor.get(IAgentToolExecutorService).handler(input.taskId)?.stop(
+      reason === '' ? undefined : reason,
+    );
   }
 
   /**
@@ -2796,9 +2801,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     input: SessionIdRpcInput & { taskId: string },
   ): Promise<BackgroundTaskInfo | undefined> {
     const agent = await this.agentScope(input.sessionId);
-    return agent.accessor.get(IAgentTaskService).detach(input.taskId) as
-      | BackgroundTaskInfo
-      | undefined;
+    const handler = agent.accessor.get(IAgentToolExecutorService).handler(input.taskId);
+    if (handler?.snapshot().fields.task === undefined) return undefined;
+    handler.detach();
+    return agentTaskInfo(handler) as BackgroundTaskInfo;
   }
 
   /**
@@ -2874,7 +2880,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const allWaiters: Promise<unknown>[] = [];
     while (Date.now() < deadline) {
       const batch: Promise<unknown>[] = [];
-      const suppressions: Promise<void>[] = [];
       let activeCount = 0;
       const agentLifecycle = session.accessor.get(IAgentLifecycleService);
       for (const agent of agentLifecycle.list()) {
@@ -2885,7 +2890,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
           activeCount++;
           if (seen.has(task.taskId)) continue;
           seen.add(task.taskId);
-          suppressions.push(tasks.suppressTerminalNotification(task.taskId));
           // A configured ceiling above the ~24.8-day timer ceiling overflows
           // a raw `setTimeout` into an immediate resolve — clamp here (the
           // engine's `wait` clamps too; this keeps the caller side correct
@@ -2897,7 +2901,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
           allWaiters.push(waiter);
         }
       }
-      if (suppressions.length > 0) await Promise.all(suppressions);
       if (activeCount === 0 || batch.length === 0) break;
       await Promise.all(batch);
     }

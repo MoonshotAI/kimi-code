@@ -156,10 +156,7 @@ export class AgentSkillService implements IAgentSkillService {
       void this.recordActivation(activation.origin);
     }
     const status = this.loop.snapshot();
-    const steerable =
-      input.steerIfActive === true &&
-      status.state === 'running' &&
-      status.activePromptId !== undefined;
+    const steerable = input.steerIfActive === true && status.state === 'running';
     const submission = {
       message: {
         role: 'user' as const,
@@ -173,7 +170,6 @@ export class AgentSkillService implements IAgentSkillService {
           clientMetadata: input.clientMetadata,
           attachments: input.attachments,
         } as PromptOrigin,
-        tracked: true,
       },
     };
     const { id } = steerable ? this.loop.notify(submission) : this.loop.submit(submission);
@@ -201,7 +197,7 @@ export class AgentSkillService implements IAgentSkillService {
       prompt_id: id,
       created_at: handle.createdAt,
       state: handle.state === 'blocked' ? 'blocked' : 'running',
-      steered: steerable && turn?.id === status.activeTurnId,
+      steered: steerable,
     };
   }
 
@@ -311,11 +307,9 @@ export class AgentSkillService implements IAgentSkillService {
     const running = status.state === 'running';
     const submission = {
       message: { role: 'user' as const, content: [...input] },
-      meta: { promptId, origin, tracked: !running },
+      meta: { promptId, origin },
     };
-    const { id } = running && status.activePromptId !== undefined
-      ? this.loop.notify(submission)
-      : this.loop.submit(submission);
+    const { id } = running ? this.loop.notify(submission) : this.loop.submit(submission);
     return this.loop.promptHandle(id)!.launched;
   }
 

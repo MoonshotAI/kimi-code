@@ -474,6 +474,7 @@ function resolveWith(
     readonly tools?: readonly Tool[];
     readonly capabilities?: ModelCapability;
     readonly inferredCapabilities?: ModelCapability;
+    readonly dynamic?: boolean;
   },
 ): Promise<LlmRequest> {
   const request: LlmRequest = {
@@ -488,7 +489,7 @@ function resolveWith(
     profile: { tools: input.tools },
     content: { messages: input.messages },
   };
-  return createToolSelectResolver(h.sut).resolve(request, {
+  return createToolSelectResolver(h.sut, input.dynamic).resolve(request, {
     signal: new AbortController().signal,
     appliedRecoveries: [],
     report: () => {},
@@ -674,6 +675,9 @@ describe('AgentToolSelectService S0 baseline (gate closed)', () => {
       .toEqual(old.parameters);
     expect(current.ix.get(IAgentStateService).get(toolSelectKey).current.find((tool) => tool.name === old.name)?.parameters)
       .toEqual(old.parameters);
+    const baseline = current.sut.initialTools();
+    expect(baseline.find((tool) => tool.name === old.name)?.parameters).toEqual(old.parameters);
+    expect(baseline.some((tool) => tool.name === 'LateTool')).toBe(false);
     activeToolNames = new Set(['Unchanged']);
     const filtered = await resolveWith(current, { messages: current.contextMemory.history(), capabilities });
     expect(filtered.profile?.tools?.map((tool) => tool.name)).toEqual(['Unchanged']);
@@ -685,6 +689,9 @@ describe('AgentToolSelectService S0 baseline (gate closed)', () => {
     registerMcp(h, new StubMcpTool(MCP_ALPHA));
     const entries = h.registry.list();
     expect(h.sut.shapeTools(entries)).toBe(entries);
+    const baseline = h.sut.initialTools();
+    expect(baseline.find((tool) => tool.name === MCP_ALPHA)?.deferred).toBe(true);
+    expect(baseline.find((tool) => tool.name === 'Echo')?.deferred).toBeUndefined();
   });
 
   it('shapeHistory returns the identical array when there is nothing to strip', () => {
@@ -899,30 +906,34 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
     expect(next?.content).toContain(`<tools_removed>\n${USER_INLINE}\n</tools_removed>`);
   });
 
-  it('keeps historical deferred MCP schemas pinned after same-name updates', async () => {
+  it('keeps old and new schemas in message order across same-name removal and replacement', async () => {
     const h = createHarness();
     const original = new StubMcpTool(MCP_ALPHA);
     const registration = registerMcp(h, original);
     await h.sut.prepareForRequest();
     h.contextMemory.messages.push(schemaMessage(MCP_ALPHA));
     registration.dispose();
-    registerMcp(h, new StubMcpTool(MCP_ALPHA, 'ok', REQUIRED_PAYLOAD_PARAMETERS));
+    const updated = new StubMcpTool(MCP_ALPHA, 'ok', REQUIRED_PAYLOAD_PARAMETERS);
+    registerMcp(h, updated);
     await h.sut.prepareForRequest();
-    expect(h.sut.shapeHistory(h.contextMemory.history())).toHaveLength(1);
-    const selection = h.ix.createInstance(SelectToolsTool).resolveExecution({ names: [MCP_ALPHA] });
-    if (selection.isError === true) throw new Error('expected a runnable selection');
-    const result = await selection.execute({
-      turnId: 1,
-      toolCallId: 'reload',
-      signal: new AbortController().signal,
-      remind: (message) => h.contextMemory.messages.push(message),
+    h.contextMemory.landAnnouncement(`<tools_removed>\n${MCP_ALPHA}\n</tools_removed>`);
+    expect(h.sut.shapeHistory(h.contextMemory.history())).toHaveLength(2);
+    h.contextMemory.messages.push({
+      role: 'system',
+      content: [],
+      tools: [{ name: MCP_ALPHA, description: updated.description, parameters: updated.parameters }],
+      origin: { kind: 'injection', variant: DYNAMIC_TOOL_SCHEMA_VARIANT },
     });
-    expect(result.output).toBe(`Already available: ${MCP_ALPHA}`);
-    const resolved = await resolveWith(h, { messages: h.contextMemory.history(), capabilities });
-    expect(resolved.profile?.tools?.find((tool) => tool.name === MCP_ALPHA)?.deferred).toBe(true);
+    const resolved = await resolveWith(h, {
+      messages: h.contextMemory.history(),
+      tools: [],
+      capabilities,
+      dynamic: true,
+    });
+    expect(resolved.profile?.tools).toEqual([]);
     expect(resolved.content.messages.flatMap((message) => toolsOf(message) ?? []).map((tool) => tool.parameters))
-      .toEqual([original.parameters]);
-    expect(h.contextMemory.history()).toHaveLength(1);
+      .toEqual([original.parameters, updated.parameters]);
+    expect(h.contextMemory.history()).toHaveLength(3);
   });
 
   it.each(['inline', 'deferred', 'empty'] as const)('uses actual explicit %s tools when shaping historical definitions', async (mode) => {
@@ -942,7 +953,7 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
     expect(h.contextMemory.history()).toHaveLength(1);
   });
 
-  it('resolver shapes defaults and history with protocol-inferred capabilities', async () => {
+  it('resolver freezes the turn baseline and projects history with protocol-inferred capabilities', async () => {
     capabilities = makeCapabilities({ tool_use: false, dynamically_loaded_tools: false });
     const h = createHarness();
     registerBuiltin(h, new EchoTool());
@@ -952,27 +963,35 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
     disposables.add(h.registry.register(selectTools, { source: 'builtin' }));
     h.contextMemory.messages.push(schemaMessage(MCP_ALPHA));
     const messages = h.contextMemory.history();
+    const baseline = h.sut.initialTools();
 
     const resolved = await resolveWith(h, {
       messages,
+      tools: baseline,
       inferredCapabilities: makeCapabilities({ tool_use: true, dynamically_loaded_tools: true }),
+      dynamic: true,
     });
 
     const shaped = resolved.profile?.tools ?? [];
-    expect(shaped.map((entry) => entry.name)).toEqual(['Echo', MCP_ALPHA, SELECT_TOOLS_TOOL_NAME]);
+    expect(shaped).toBe(baseline);
+    expect(shaped.map((entry) => entry.name)).toEqual(['Echo', MCP_ALPHA, MCP_BETA, SELECT_TOOLS_TOOL_NAME]);
     const byName = new Map(shaped.map((entry) => [entry.name, entry]));
     expect(byName.get(MCP_ALPHA)?.deferred).toBe(true);
+    expect(byName.get(MCP_BETA)?.deferred).toBe(true);
     expect(byName.get('Echo')?.deferred).toBeUndefined();
     expect(byName.get(SELECT_TOOLS_TOOL_NAME)?.deferred).toBeUndefined();
     expect(resolved.content.messages).toBe(messages);
 
     const frozen = shaped.filter((tool) => tool.name !== 'Echo' && tool.name !== MCP_ALPHA);
-    expect(h.sut.requestTools(undefined, true, true)).toEqual(shaped);
+    expect(h.sut.requestTools(undefined, true, true)).toEqual([]);
+    expect(h.sut.requestTools([], true, true)).toEqual([]);
     expect(h.sut.requestTools(frozen, true, false)).toBe(frozen);
-    expect(h.sut.requestTools(frozen, true, true).map((tool) => tool.name)).toEqual([
-      SELECT_TOOLS_TOOL_NAME,
-      MCP_ALPHA,
-    ]);
+    expect(h.sut.requestTools(frozen, true, true)).toBe(frozen);
+    const staticTools = h.sut.requestTools(shaped, false, true, messages);
+    expect(staticTools.map((tool) => tool.name)).toEqual(['Echo', MCP_ALPHA]);
+    expect(staticTools.find((tool) => tool.name === MCP_ALPHA)?.deferred).toBeUndefined();
+    expect(h.sut.requestTools(shaped, true, true, messages)).toBe(shaped);
+    expect(shaped.find((tool) => tool.name === SELECT_TOOLS_TOOL_NAME)).toBeDefined();
   });
 
   it('keeps inline-disclosed MCP tools visible and out of the loadable manifest', async () => {
@@ -1043,28 +1062,26 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
     expect(h.sut.shapeHistory(messages)).toBe(messages);
   });
 
-  it('shapeHistory removes loaded schemas when the profile disables them', () => {
+  it('shapeHistory keeps loaded schemas when the current policy changes without a history removal', () => {
     const h = createHarness();
     h.contextMemory.messages.push(schemaMessage(MCP_ALPHA, MCP_BETA), userMessage('keep'));
     activeToolNames = new Set([MCP_BETA]);
+    const messages = h.contextMemory.history();
 
-    const shaped = h.sut.shapeHistory(h.contextMemory.history());
+    const shaped = h.sut.shapeHistory(messages);
 
-    expect(shaped).toHaveLength(2);
-    expect(toolsOf(shaped[0])?.map((tool) => tool.name)).toEqual([MCP_BETA]);
-    expect(toolsOf(h.contextMemory.history()[0])?.map((tool) => tool.name)).toEqual([
-      MCP_ALPHA,
-      MCP_BETA,
-    ]);
+    expect(shaped).toBe(messages);
+    expect(toolsOf(shaped[0])?.map((tool) => tool.name)).toEqual([MCP_ALPHA, MCP_BETA]);
   });
 
-  it('shapeHistory removes a deferred user schema after unregister', () => {
+  it('shapeHistory preserves a deferred user schema after unregister while execution reports it stale', () => {
     const h = createHarness();
     const registration = registerUser(h, new EchoTool(USER_DEFERRED), 'deferred');
     h.contextMemory.messages.push(schemaMessage(USER_DEFERRED));
+    const messages = h.contextMemory.history();
     registration.dispose();
 
-    expect(h.sut.shapeHistory(h.contextMemory.history())).toEqual([]);
+    expect(h.sut.shapeHistory(messages)).toBe(messages);
     expect(h.sut.load([USER_DEFERRED])).toEqual({
       toLoad: [],
       alreadyAvailable: [],

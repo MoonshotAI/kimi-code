@@ -11,16 +11,15 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolRegistryService, type ToolRegistryChange } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
-import { ToolAccesses, type ExecutableTool, type ToolUpdate } from '#/tool/toolContract';
+import { IAgentTaskOutputService } from '#/agent/task/taskOutput';
+import { ToolAccesses, type ExecutableTool } from '#/tool/toolContract';
 import { BeforeToolExecuteEmitter } from './beforeToolExecuteEvent';
 import { legacyExecutionContext, legacyStartingDecision } from './legacyHooks';
 import {
   composeToolExecutorHooks,
   LegacyExecutableToolAdapter,
   legacyToolDurationMs,
-  memoryOutputStore,
   ToolExecutor,
-  type LegacyToolFields,
   type ToolExecutionEvent,
 } from '#/tool/executor';
 
@@ -31,7 +30,7 @@ import {
   type AgentToolHook,
   type ToolCallDupType,
 } from './toolExecutor';
-import { ToolCallStarted, ToolProgress, ToolResultEvent } from './toolExecutorEvents';
+import { ToolCallStarted, ToolUpdated, ToolResultEvent } from './toolExecutorEvents';
 import { ToolScheduler } from './toolScheduler';
 
 export const toolExecutorToolCallDupTypesKey = defineState<Map<string, ToolCallDupType>>(
@@ -63,7 +62,7 @@ export class AgentToolExecutorService extends Service implements IAgentToolExecu
   private readonly batches = new Map<string, SchedulerBatch>();
   private readonly batchByTask = new Map<string, string>();
   private readonly leases = new Map<string, () => void>();
-  private readonly handlers = new Map<string, AgentToolExecutionHandler>();
+  private readonly liveHandlers = new Map<string, AgentToolExecutionHandler>();
   private readonly taskIdsByCall = new Map<string, string[]>();
   private readonly announced = new WeakSet<object>();
   private readonly completed = new WeakSet<object>();
@@ -74,6 +73,7 @@ export class AgentToolExecutorService extends Service implements IAgentToolExecu
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    @IAgentTaskOutputService private readonly taskOutputs: IAgentTaskOutputService,
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
@@ -111,7 +111,7 @@ export class AgentToolExecutorService extends Service implements IAgentToolExecu
     };
     const hooks = this.hooks;
     this.executor = new ToolExecutor([], {
-      outputStore: memoryOutputStore(),
+      outputStore: this.taskOutputs,
       get hook() {
         return composeToolExecutorHooks([resetHook, legacyHook, ...hooks, internalHook]);
       },
@@ -148,20 +148,24 @@ export class AgentToolExecutorService extends Service implements IAgentToolExecu
     return this.legacyStarting.event(listener);
   }
 
+  handlers(): readonly AgentToolExecutionHandler[] {
+    return [...this.liveHandlers.values()];
+  }
+
   handler(taskId: string): AgentToolExecutionHandler | undefined {
-    return this.handlers.get(taskId);
+    return this.liveHandlers.get(taskId);
   }
 
   handlerForCall(toolCallId: string): AgentToolExecutionHandler | undefined {
     const ids = this.taskIdsByCall.get(toolCallId);
     const taskId = ids?.at(-1);
-    return taskId === undefined ? undefined : this.handlers.get(taskId);
+    return taskId === undefined ? undefined : this.liveHandlers.get(taskId);
   }
 
   release(taskId: string): void {
-    const handler = this.handlers.get(taskId);
+    const handler = this.liveHandlers.get(taskId);
     if (handler === undefined) return;
-    this.handlers.delete(taskId);
+    this.liveHandlers.delete(taskId);
     const callId = handler.snapshot().id;
     const ids = this.taskIdsByCall.get(callId);
     if (ids !== undefined) {
@@ -217,7 +221,7 @@ export class AgentToolExecutorService extends Service implements IAgentToolExecu
   private observe(event: ToolExecutionEvent<any, any, any>): void {
     const { handler } = event;
     if (event.type === 'created') {
-      this.handlers.set(handler.taskId, handler);
+      this.liveHandlers.set(handler.taskId, handler);
       const ids = this.taskIdsByCall.get(event.call.id) ?? [];
       ids.push(handler.taskId);
       this.taskIdsByCall.set(event.call.id, ids);
@@ -228,49 +232,34 @@ export class AgentToolExecutorService extends Service implements IAgentToolExecu
       return;
     }
     this.announce(event);
-    if (event.type === 'output') {
-      const fields = handler.fields() as LegacyToolFields;
-      this.progress(event, {
-        kind: fields.outputKind ?? 'stdout',
-        text: event.text,
-      });
-      return;
-    }
-    const fields = event.handler.snapshot().fields as LegacyToolFields;
-    const previous = event.previous.fields as LegacyToolFields;
-    if (fields.status !== previous.status && fields.status !== undefined) {
-      this.progress(event, { kind: 'status', text: fields.status });
-    }
-    if (fields.progress !== previous.progress && fields.progress !== undefined) {
-      this.progress(event, {
-        kind: 'progress',
-        text: fields.progress.text,
-        percent: fields.progress.percent,
-      });
-    }
-    if (fields.custom !== previous.custom && fields.custom !== undefined) {
-      this.progress(event, {
-        kind: 'custom',
-        customKind: fields.custom.kind,
-        text: fields.custom.text,
-        customData: fields.custom.data,
-      });
-    }
-    const status = event.handler.snapshot().status;
+    if (!this.announced.has(handler)) return;
+    const snapshot = handler.snapshot();
+    void this.dispatcher.dispatch(new ToolUpdated({
+      agentId: this.scopeContext.agentId,
+      turnId: event.context.turnId,
+      toolCallId: event.call.id,
+      taskId: handler.taskId,
+      status: snapshot.status,
+      detached: snapshot.detached,
+      fields: snapshot.fields,
+      output: event.type === 'output' ? { offset: event.offset, text: event.text } : undefined,
+    }));
+    if (event.type === 'output') return;
+    const status = snapshot.status;
     if (status !== 'success' && status !== 'failed' && status !== 'aborted') return;
     if (this.completed.has(handler)) return;
     this.completed.add(handler);
     this.leases.get(handler.taskId)?.();
     this.leases.delete(handler.taskId);
     const result = this.resultOf(event);
-    const outcome = event.handler.snapshot().error?.outcome ?? 'success';
+    const outcome = snapshot.error?.outcome ?? 'success';
     void this.dispatcher.dispatch(new ToolResultEvent({
       agentId: this.scopeContext.agentId,
       turnId: event.context.turnId,
       toolCallId: event.call.id,
       output: result?.output ?? this.finalContent(event),
       isError: outcome === 'success' ? undefined : true,
-      synthetic: event.handler.snapshot().prepared?.kind === 'synthetic' ? true : undefined,
+      synthetic: snapshot.prepared?.kind === 'synthetic' ? true : undefined,
     }));
     this.track(event, outcome);
   }
@@ -296,19 +285,9 @@ export class AgentToolExecutorService extends Service implements IAgentToolExecu
     }));
   }
 
-  private progress(event: ToolExecutionEvent<any, any, any>, update: ToolUpdate): void {
-    void this.dispatcher.dispatch(new ToolProgress({
-      agentId: this.scopeContext.agentId,
-      turnId: event.context.turnId,
-      toolCallId: event.call.id,
-      update,
-    }));
-  }
-
   private resultOf(event: ToolExecutionEvent<any, any, any>) {
-    const fields = event.handler.fields() as LegacyToolFields;
-    if (fields.result !== undefined) return fields.result;
     const prepared = event.handler.snapshot().prepared;
+    if (prepared?.kind === 'execute') return prepared.result;
     return prepared?.kind === 'synthetic' ? prepared.result : undefined;
   }
 

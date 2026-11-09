@@ -15,7 +15,7 @@ import { withAbort, type AbortScope } from '#human/utils/abort';
 import type { LoopInput } from './contract/command';
 import type { LoopAck, LoopEmitted } from './contract/emitted';
 import type { Inbox, MessageSource, QueuedItem, TurnTrigger } from './contract/inbox';
-import { CRASHED, type Cause, type StepOutcome, type ToolCallOutcome, type TurnOutcome } from './contract/outcome';
+import { CRASHED, type AsyncToolOutcome, type Cause, type StepOutcome, type ToolCallOutcome, type TurnOutcome } from './contract/outcome';
 import type { LoopProfile } from './contract/profile';
 import type { HookFailure } from './hook/failure';
 import { loopProjection, type LoopRecord, type LoopRecordState } from './record';
@@ -27,6 +27,7 @@ export interface LoopTurn {
   readonly id: number;
   readonly trigger: TurnTrigger;
   readonly step: number;
+  readonly bypassMaxSteps?: boolean;
 }
 
 export interface LoopToolCall {
@@ -38,12 +39,14 @@ export interface LoopToolCall {
 export interface LoopState {
   readonly status: 'idle' | 'running' | 'interrupted';
   readonly held: boolean;
+  readonly resetting: boolean;
   readonly inbox: Readonly<Inbox>;
   readonly profile: LoopProfile;
   readonly messages: readonly HistoryMessage[];
   readonly nextTurnId: number;
   readonly turn?: LoopTurn;
   readonly calls: readonly LoopToolCall[];
+  readonly completionPending: boolean;
 }
 
 export interface TurnCompletion {
@@ -74,6 +77,7 @@ export interface LiveTurn extends LoopTurn {
   readonly signal?: AbortSignal;
   onAbort?: () => void;
   abortGrace?: ReturnType<typeof setTimeout>;
+  continueAfterAbort?: boolean;
 }
 
 export interface StepCall {
@@ -102,6 +106,9 @@ export interface LiveTool {
   result?: ToolResult;
   completion?: ToolCompletionFactory;
   completionEntry?: Promise<UserEntry>;
+  completionEntryValue?: UserEntry;
+  completionOutcome?: AsyncToolOutcome;
+  completionPending?: boolean;
   readonly waiters: Set<() => void>;
 }
 
@@ -207,6 +214,7 @@ interface CreateTurnInput {
   readonly resumed?: true;
   readonly completion?: TurnCompletion;
   readonly signal?: AbortSignal;
+  readonly bypassMaxSteps?: boolean;
 }
 
 export function createTurn(root: AbortScope, input: CreateTurnInput): LiveTurn {
@@ -218,6 +226,7 @@ export function createTurn(root: AbortScope, input: CreateTurnInput): LiveTurn {
     scope: withAbort(root.signal),
     phase: 'starting',
     announced: false,
+    bypassMaxSteps: input.bypassMaxSteps === true,
     ...(input.promptOnly === true ? { promptOnly: true as const } : {}),
     ...(input.resumed === true ? { resumed: true as const } : {}),
     ...(input.completion === undefined ? {} : { completion: input.completion }),
@@ -388,16 +397,18 @@ export function initialState(input: LoopInput): AgentState {
 export function viewOf({ phase, held, inbox, durable, turn, tools }: AgentState): LoopState {
   const { profile, messages, nextTurnId, unfinished } = durable;
   const current =
-    turn ?? (unfinished === undefined ? undefined : { id: unfinished.turnId, trigger: unfinished.trigger, step: unfinished.step });
+    turn ?? (unfinished === undefined ? undefined : { id: unfinished.turnId, trigger: unfinished.trigger, step: unfinished.step, bypassMaxSteps: false });
   return {
     status: phase === 'running' ? 'running' : unfinished !== undefined ? 'interrupted' : 'idle',
     held,
+    resetting: false,
     inbox,
     profile,
     messages,
     nextTurnId,
-    ...(current === undefined ? {} : { turn: { id: current.id, trigger: current.trigger, step: current.step } }),
+    ...(current === undefined ? {} : { turn: { id: current.id, trigger: current.trigger, step: current.step, bypassMaxSteps: current.bypassMaxSteps } }),
     calls: Array.from(tools.values(), (slot) => ({ toolCall: slot.toolCall, turnId: slot.turnId, detached: slot.detached })),
+    completionPending: Array.from(tools.values()).some((slot) => slot.completionPending === true),
   };
 }
 

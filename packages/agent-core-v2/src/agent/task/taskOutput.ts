@@ -16,6 +16,7 @@ import { renderNotificationXml } from './notificationXml';
 import { formatTaskWallTime } from './wallTime';
 import type { AgentTaskInfo } from './types';
 import type { AgentTaskOutputSnapshot, AgentTaskOutputTail } from './task';
+import type { ToolOutput, ToolOutputStore } from '#/tool/executor/types';
 
 const QUESTION_ANSWER_INLINE_BYTES = 16_000;
 
@@ -32,7 +33,7 @@ export interface AgentTaskNotification extends Record<string, unknown> {
   readonly children?: readonly string[] | undefined;
 }
 
-export interface IAgentTaskOutputService {
+export interface IAgentTaskOutputService extends ToolOutputStore {
   readonly _serviceBrand: undefined;
   appendTaskOutput(taskId: string, chunk: string): Promise<void>;
   readTaskOutputSnapshot(taskId: string, maxPreviewBytes: number): ReturnType<AgentTaskPersistence['readTaskOutputSnapshot']>;
@@ -69,6 +70,10 @@ export class AgentTaskOutputService implements IAgentTaskOutputService {
     );
   }
 
+  open(taskId: string): ToolOutput {
+    return this.persistence.open(taskId);
+  }
+
   appendTaskOutput(taskId: string, chunk: string): Promise<void> {
     return this.persistence.appendTaskOutput(taskId, chunk);
   }
@@ -98,22 +103,7 @@ export class AgentTaskOutputService implements IAgentTaskOutputService {
         snapshot = emptyOutputSnapshot();
       }
     }
-    const notification = buildAgentTaskNotification(info, snapshot);
-    const origin: TaskOrigin = {
-      kind: 'task',
-      taskId: info.taskId,
-      status: info.status,
-      notificationId: taskNotificationId(info.taskId, info.status),
-    };
-    return createUserEntry({
-      role: 'user',
-      content: [{ type: 'text', text: renderNotificationXml(notification) }],
-    }, {
-      source: 'async-tool',
-      promptId: notification.id,
-      toolCallId,
-      origin,
-    });
+    return createTaskCompletionEntry(info, toolCallId, snapshot);
   }
 
   private async notificationOutputSnapshot(info: AgentTaskInfo): Promise<AgentTaskOutputSnapshot> {
@@ -125,6 +115,29 @@ export class AgentTaskOutputService implements IAgentTaskOutputService {
     if (persisted !== undefined) return { ...persisted, fullOutputAvailable: true };
     return emptyOutputSnapshot();
   }
+}
+
+export function createTaskCompletionEntry(
+  info: AgentTaskInfo,
+  toolCallId: string,
+  output: AgentTaskOutputSnapshot,
+): UserEntry {
+  const notification = buildAgentTaskNotification(info, output);
+  const origin: TaskOrigin = {
+    kind: 'task',
+    taskId: info.taskId,
+    status: info.status,
+    notificationId: taskNotificationId(info.taskId, info.status),
+  };
+  return createUserEntry({
+    role: 'user',
+    content: [{ type: 'text', text: renderNotificationXml(notification) }],
+  }, {
+    source: 'async-tool',
+    promptId: notification.id,
+    toolCallId,
+    origin,
+  });
 }
 
 export function emptyOutputSnapshot(): AgentTaskOutputSnapshot {

@@ -44,7 +44,6 @@ import {
   getLiveSessionById,
   HostProcessError,
   IAgentIdentity,
-  IAgentContextMemoryService,
   IAgentTodoService,
   IAgentLifecycleService,
   IAgentProfileService,
@@ -434,7 +433,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       const main = () => getLiveSessionById(client.engineAccessor, session.id)!.accessor
         .get(IAgentLifecycleService)
         .handleOf(MAIN_AGENT_ID)!;
-      const changeMessages = () => main().accessor.get(IAgentContextMemoryService).get()
+      const changeMessages = () => main().accessor.get(IAgentLoopService).history()
         .filter((message) => message.origin?.kind === 'injection' && message.origin.variant === 'agents_md_change')
         .map((message) => message.content.map((part) => part.type === 'text' ? part.text : '').join(''));
       const prompt = main().accessor.get(IAgentProfileService).getSystemPrompt();
@@ -2432,8 +2431,8 @@ key = "${titleOAuthRef.key}"
         getLiveSessionById(client.engineAccessor, 'ses_dirs_reload')!
           .accessor.get(IAgentLifecycleService)
           .handleOf('main')!
-          .accessor.get(IAgentContextMemoryService)
-          .get();
+          .accessor.get(IAgentLoopService)
+          .history();
       const dirsReminders = () =>
         context().filter(
           (message) =>

@@ -176,7 +176,7 @@ function opts(overrides: Record<string, unknown> = {}) {
   } as const;
 }
 
-function makeFakeHarness() {
+function makeFakeHarness(toolUpdates = false) {
   // Native event listeners registered on the main agent's IEventBus; the turn
   // emits a streaming assistant delta before completing.
   const eventListeners = new Set<(event: Event2<any>) => void>();
@@ -227,6 +227,19 @@ function makeFakeHarness() {
         submit: vi.fn(() => {
           // Emit a native assistant delta on the main agent bus, then complete.
           for (const listener of [...eventListeners]) {
+            if (toolUpdates) {
+              const base = {
+                type: 'tool.updated',
+                turnId: 1,
+                toolCallId: 'call-1',
+                taskId: 'task-1',
+                status: 'running',
+                detached: false,
+              };
+              listener({ ...base, fields: { status: 'working' } } as unknown as Event2<any>);
+              listener({ ...base, fields: { status: 'working' } } as unknown as Event2<any>);
+              listener({ ...base, fields: {}, output: { offset: 0, text: 'chunk' } } as unknown as Event2<any>);
+            }
             listener({ type: 'assistant.delta', turnId: 1, delta: 'hello world' } as unknown as Event2<any>);
           }
           return { id: 'p1' };
@@ -428,7 +441,7 @@ describe('runV2Print', () => {
   it('submits a prompt, renders native events, awaits completion, and drains', async () => {
     const stdout = writer();
     const stderr = writer();
-    const { app, agent, agentServices } = makeFakeHarness();
+    const { app, agent, agentServices } = makeFakeHarness(true);
 
     mocks.bootstrap.mockReturnValue({ app });
     mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
@@ -438,10 +451,12 @@ describe('runV2Print', () => {
     const promptService = agentServices.get(IAgentLoopService) as { submit: ReturnType<typeof vi.fn> };
     expect(promptService.submit).toHaveBeenCalledWith({
       message: { role: 'user', content: [{ type: 'text', text: 'say hello' }] },
-      meta: { origin: { kind: 'user' }, tracked: true },
+      meta: { origin: { kind: 'user' } },
     });
     // Version banner is first, then the rendered assistant output.
     expect(stderr.write).toHaveBeenNthCalledWith(1, 'kimi version 1.2.3-test\n');
+    expect(stderr.text().match(/working/g)).toHaveLength(1);
+    expect(stderr.text()).toContain('chunk\n');
     expect(stdout.text()).toContain('hello world');
     expect(app.dispose).toHaveBeenCalled();
   });

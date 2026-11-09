@@ -7,9 +7,11 @@ import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
 import { isUserCancellation } from '#/_base/utils/abort';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { IAgentInterruptionReminderService } from './interruptionReminder';
-import { INTERRUPTION_REMINDER_VARIANT, interruptionReminderKey } from './interruptionReminderOps';
+import { InterruptionCancellationRequested, InterruptionReminderRecorded, INTERRUPTION_REMINDER_VARIANT, interruptionReminderKey } from './interruptionReminderOps';
 
 const INTERRUPTION_REMINDER = [
   'The previous turn was interrupted by the user before completion;',
@@ -26,20 +28,34 @@ export class AgentInterruptionReminderService
   constructor(
     @IAgentLoopService private readonly context: IAgentLoopService,
     @IAgentReminderService private readonly reminder: IAgentReminderService,
-    @IAgentStateService agentState: IAgentStateService,
+    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
+    @IAgentStateService private readonly states: IAgentStateService,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
   ) {
     super();
-    agentState.contributeState(interruptionReminderKey);
+    states.contributeState(interruptionReminderKey);
+    this._register(this.reminder.register(INTERRUPTION_REMINDER_VARIANT, async () => {
+      const pending = this.states.get(interruptionReminderKey).pending;
+      if (pending === undefined) return undefined;
+      const origin = lastComparableMessage(this.context.history())?.origin;
+      await this.dispatcher.dispatch(new InterruptionReminderRecorded({
+        agentId: this.scopeContext.agentId,
+        turnId: pending.turnId,
+      }));
+      if (origin?.kind === 'injection' && origin.variant === INTERRUPTION_REMINDER_VARIANT) return undefined;
+      return { content: INTERRUPTION_REMINDER, ownerPromptId: pending.ownerPromptId };
+    }));
   }
 
   notifyUserCancellation(reason: unknown): void {
     if (!isUserCancellation(reason)) return;
-    const origin = lastComparableMessage(this.context.history())?.origin;
-    if (origin?.kind === 'injection' && origin.variant === INTERRUPTION_REMINDER_VARIANT) return;
-    this.reminder.notify(INTERRUPTION_REMINDER, {
-      variant: INTERRUPTION_REMINDER_VARIANT,
-      ownerPromptId: this.context.snapshot().activePromptId,
-    });
+    const snapshot = this.context.snapshot();
+    if (snapshot.activeTurnId === undefined) return;
+    void this.dispatcher.dispatch(new InterruptionCancellationRequested({
+      agentId: this.scopeContext.agentId,
+      turnId: snapshot.activeTurnId,
+      ownerPromptId: snapshot.activePromptId,
+    }));
   }
 }
 

@@ -10,13 +10,16 @@ import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
+import { IAgentTaskOutputService } from '#/agent/task/taskOutput';
 import { IEventBus } from '#/app/event/eventBus';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
+import { PromptCompleted, PromptStarted, PromptSubmitted } from '#/agent/prompt/promptEvents';
 import type { ExecutableTool } from '#/tool/toolContract';
-import type { ProcessTaskInfo } from '#/agent/tools/os/bash/process-task';
+import type { ProcessTaskInfo } from '#/agent/task/types';
 
 import {
   createTestAgent,
@@ -42,14 +45,20 @@ describe('core LoopService integration', () => {
     }
   });
 
-  it('runs a text-only turn through the real RPC path', async () => {
-    ctx.get(IAgentLoopService).update({ activeToolNames: [] });
+  it('runs text-only turns without rebinding initialized tools through the real RPC path', async () => {
+    const loop = ctx.get(IAgentLoopService);
+    const baseline = ctx.get(IAgentToolSelectService).initialTools();
+    loop.update({ activeToolNames: [] });
+    loop.update({ activeToolNames: ['Read'] });
     ctx.mockNextResponse({ type: 'think', think: 'reasoning' }, { type: 'text', text: 'answer' });
 
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
     await ctx.untilTurnEnd();
 
-    expect(JSON.stringify(ctx.lastLlmInput())).toContain('"Hello"');
+    const firstTools = ctx.llmCalls[0]!.tools;
+    expect(firstTools.map((tool) => tool.name)).toEqual(baseline.flatMap((tool) =>
+      tool.deferred === true || tool.name === 'select_tools' || tool.name === 'ReadMediaFile' ? [] : [tool.name]));
+    expect(JSON.stringify(ctx.llmCalls[0])).toContain('"Hello"');
     expect(ctx.allEvents).toContainEqual(
       expect.objectContaining({
         event: 'turn.step.completed',
@@ -59,6 +68,12 @@ describe('core LoopService integration', () => {
     expect(ctx.allEvents).toContainEqual(
       expect.objectContaining({ event: 'turn.ended', args: expect.objectContaining({ reason: 'completed' }) }),
     );
+
+    loop.update({ activeToolNames: [] });
+    ctx.mockNextResponse({ type: 'text', text: 'after updates' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello again' }] });
+    await ctx.untilTurnEnd();
+    expect(ctx.llmCalls[1]!.tools).toEqual(firstTools);
   });
 
   it('executes a tool batch and continues with a second core step', async () => {
@@ -94,7 +109,8 @@ describe('core LoopService integration', () => {
           ? { output: 'synthetic-result', isError: true }
           : {
               approvalRule: 'Lookup',
-              execute: async () => {
+              execute: async (toolCtx) => {
+                toolCtx.onUpdate?.({ kind: 'stdout', text: 'live-output\n' });
                 now.mockReturnValue(150);
                 return { output: 'lookup-result' };
               },
@@ -115,6 +131,15 @@ describe('core LoopService integration', () => {
       expect(ctx.allEvents).toContainEqual(
         expect.objectContaining({ event: 'turn.ended', args: expect.objectContaining({ reason: 'completed' }) }),
       );
+      const outputEvent = ctx.allEvents.find((entry) =>
+        entry.event === 'tool.updated' &&
+        (entry.args as { toolCallId?: string; output?: unknown }).toolCallId === 'call_lookup' &&
+        (entry.args as { output?: unknown }).output !== undefined,
+      );
+      const taskId = (outputEvent?.args as { taskId: string }).taskId;
+      const output = await ctx.get(IAgentTaskOutputService).readTaskOutputSnapshot(taskId, 100);
+      expect(output).toMatchObject({ outputSizeBytes: 12, preview: 'live-output\n' });
+      expect(output?.outputPath).toContain(`/agents/main/tasks/${taskId}/output.log`);
 
       const syntheticCall: ToolCall = {
         type: 'function',
@@ -144,6 +169,7 @@ describe('core LoopService integration', () => {
           result: { output: 'synthetic-result', durationMs: 0 },
         },
       });
+      expect(ctx.get(IAgentToolExecutorService).handlers()).toEqual([]);
     } finally {
       subscription.dispose();
       finalizer.mockRestore();
@@ -324,19 +350,19 @@ describe('core LoopService integration', () => {
 
     const blocked = loop.submit({
       message: { role: 'user', content: [{ type: 'text', text: 'block' }] },
-      meta: { promptId: 'blocked', tracked: true },
+      meta: { promptId: 'blocked' },
     });
     await expect(loop.promptHandle(blocked.id)!.completion).resolves.toMatchObject({ state: 'blocked' });
     const failed = loop.submit({
       message: { role: 'user', content: [{ type: 'text', text: 'fail' }] },
-      meta: { promptId: 'failed', tracked: true },
+      meta: { promptId: 'failed' },
     });
     await expect(loop.promptHandle(failed.id)!.completion).resolves.toMatchObject({ state: 'failed' });
 
     ctx.mockNextResponse({ type: 'text', text: 'allowed' });
     const allowed = loop.submit({
       message: { role: 'user', content: [{ type: 'text', text: 'allowed' }] },
-      meta: { promptId: 'allowed', tracked: true },
+      meta: { promptId: 'allowed' },
     });
     const allowedCompletion = await loop.promptHandle(allowed.id)!.completion;
     expect(allowedCompletion).toMatchObject({ state: 'completed' });
@@ -344,7 +370,7 @@ describe('core LoopService integration', () => {
     expect(JSON.stringify(ctx.lastLlmInput())).toContain('hook-prefix');
   });
 
-  it('rebuilds the core loop after undo with continuous turn ids', async () => {
+  it('resets the same core loop after undo with continuous turn ids and history revision', async () => {
     ctx.mockNextResponse({ type: 'text', text: 'first' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'first' }] });
     await ctx.untilTurnEnd();
@@ -352,7 +378,12 @@ describe('core LoopService integration', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'second' }] });
     await ctx.untilTurnEnd();
 
+    const loop = ctx.get(IAgentLoopService);
+    const core = (loop as unknown as { loop: { historyRevision: number } }).loop;
+    const previousRevision = core.historyRevision;
     await ctx.get(IAgentConversationUndoService).undo(1);
+    expect((loop as unknown as { loop: { historyRevision: number } }).loop).toBe(core);
+    expect(core.historyRevision).toBeGreaterThan(previousRevision);
     ctx.mockNextResponse({ type: 'text', text: 'third' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'third' }] });
     await ctx.untilTurnEnd();
@@ -403,12 +434,12 @@ describe('core LoopService integration', () => {
     });
     const first = loop.submit({
       message: { role: 'user', content: [{ type: 'text', text: 'first' }] },
-      meta: { promptId: 'first', tracked: true },
+      meta: { promptId: 'first' },
     });
     await started;
     const second = loop.submit({
       message: { role: 'user', content: [{ type: 'text', text: 'second' }] },
-      meta: { promptId: 'second', tracked: true },
+      meta: { promptId: 'second' },
     });
     await loop.steer([second.id]);
     ctx.mockNextResponse({ type: 'text', text: 'first answer' });
@@ -438,11 +469,11 @@ describe('core LoopService integration', () => {
     });
     const first = submitPromptTurn(loop, {
       message: { role: 'user', content: [{ type: 'text', text: 'first' }] },
-      meta: { promptId: 'first', tracked: true },
+      meta: { promptId: 'first' },
     }).turn;
     const second = submitPromptTurn(loop, {
       message: { role: 'user', content: [{ type: 'text', text: 'second' }] },
-      meta: { promptId: 'second', tracked: true },
+      meta: { promptId: 'second' },
     }).turn;
     await started;
 
@@ -459,7 +490,7 @@ describe('core LoopService integration', () => {
     expect(lease).toBeDefined();
     const held = submitPromptTurn(loop, {
       message: { role: 'user', content: [{ type: 'text', text: 'held' }] },
-      meta: { promptId: 'held', tracked: true },
+      meta: { promptId: 'held' },
     }).turn;
 
     expect(loop.snapshot().paused).toBe(true);
@@ -533,11 +564,11 @@ describe('core LoopService integration', () => {
       });
       const first = loop.submit({
         message: { role: 'user', content: [{ type: 'text', text: 'first' }] },
-        meta: { promptId: 'first', tracked: true },
+        meta: { promptId: 'first' },
       });
       const second = loop.submit({
         message: { role: 'user', content: [{ type: 'text', text: 'second' }] },
-        meta: { promptId: 'second', tracked: true },
+        meta: { promptId: 'second' },
       });
       const firstCompletion = loop.promptHandle(first.id)!.completion;
       const secondCompletion = loop.promptHandle(second.id)!.completion;
@@ -590,7 +621,7 @@ describe('core LoopService integration', () => {
       const lease = loop.tryAcquireQuiescence();
       const parked = loop.submit({
         message: { role: 'user', content: [{ type: 'text', text: 'parked' }] },
-        meta: { promptId: 'parked', tracked: true },
+        meta: { promptId: 'parked' },
       });
       const completion = loop.promptHandle(parked.id)!.completion;
 
@@ -612,6 +643,11 @@ describe('core LoopService integration', () => {
       const gate = createControlledPromise<void>();
       try {
         const loop = subject.get(IAgentLoopService);
+        const promptLifecycle: string[] = [];
+        const eventBus = subject.get(IEventBus);
+        eventBus.subscribe(PromptSubmitted, (event) => promptLifecycle.push(`submitted:${event.promptId}`));
+        eventBus.subscribe(PromptStarted, (event) => promptLifecycle.push(`started:${event.promptId}`));
+        eventBus.subscribe(PromptCompleted, (event) => promptLifecycle.push(`completed:${event.promptId}`));
         const detached = createControlledPromise<void>();
         let processInfo: ProcessTaskInfo & { stopCode?: string } = {
           taskId: 'task-process',
@@ -631,40 +667,39 @@ describe('core LoopService integration', () => {
           parameters: { type: 'object', properties: {}, additionalProperties: false },
           resolveExecution: () => ({
             approvalRule: 'Work',
+            stopping: ({ abandon }) => {
+              abandon();
+            },
             execute: async (toolCtx) => {
-              processInfo = { ...processInfo, detached: true };
-              loop.detachTool({
-                taskId: processInfo.taskId,
-                toolCallId: toolCtx.toolCallId,
-                info: () => processInfo,
-                completion: ({ outcome, result }) => {
-                  if (completionError !== undefined) throw completionError;
-                  const status = processInfo.status === 'running'
-                    ? outcome.type === 'aborted' ? 'killed' : outcome.type === 'failed' ? 'failed' : 'completed'
-                    : processInfo.status;
-                  processInfo = { ...processInfo, status, endedAt: processInfo.endedAt ?? 500 };
-                  const notificationId = `task:task-process:${status}`;
-                  const output = result?.content.map((part) => part.type === 'text' ? part.text : '').join('') ?? '';
-                  return {
-                    message: {
-                      role: 'user',
-                      content: [{
-                        type: 'text',
-                        text: `<notification id="${notificationId}" category="task" type="task.${status}" source_kind="background_task" source_id="task-process">\n${output}\n</notification>`,
-                      }],
-                    },
-                    meta: {
-                      source: 'async-tool',
-                      promptId: notificationId,
-                      toolCallId: toolCtx.toolCallId,
-                      origin: { kind: 'task', taskId: 'task-process', status, notificationId },
-                    },
-                  };
-                },
-              }, `background task_id=${processInfo.taskId}`);
+              const taskId = toolCtx.taskId ?? toolCtx.toolCallId;
+              processInfo = { ...processInfo, taskId, detached: true };
+              const fields = (): void => {
+                toolCtx.set?.({
+                  task: {
+                    kind: 'process',
+                    description: processInfo.description,
+                    command: processInfo.command,
+                    pid: processInfo.pid,
+                    exitCode: processInfo.exitCode,
+                    parentToolCallId: toolCtx.toolCallId,
+                    stopReason: processInfo.stopReason,
+                    stopCode: processInfo.stopCode,
+                    timedOut: processInfo.status === 'timed_out' || undefined,
+                  },
+                });
+              };
+              fields();
+              toolCtx.onDetach?.(() => ({
+                content: [{ type: 'text', text: `background task_id=${taskId}` }],
+              }));
+              toolCtx.detach?.(`background task_id=${taskId}`);
               detached.resolve();
               await gate;
-              return { output: 'background-result' };
+              fields();
+              return {
+                output: completionError?.message ?? 'background-result',
+                isError: completionError !== undefined || processInfo.status === 'timed_out' || undefined,
+              };
             },
           }),
         };
@@ -678,16 +713,18 @@ describe('core LoopService integration', () => {
         subject.mockNextResponse({ type: 'text', text: 'async finished' });
         const submitted = loop.submit({
           message: { role: 'user', content: [{ type: 'text', text: 'start work' }] },
-          meta: { promptId: 'work', tracked: true },
+          meta: { promptId: 'work' },
         });
         await subject.untilApproval(true);
         await detached;
         const toolExecutor = subject.get(IAgentToolExecutorService);
-        const taskId = toolExecutor.handlerForCall('process-call')?.taskId;
+        const handler = toolExecutor.handlerForCall('process-call')!;
+        const taskId = handler.taskId;
         expect(taskId).toBeDefined();
+        const stop = vi.spyOn(handler, 'stop');
         if (closeWhileRunning) {
-          if (completionError === undefined) await loop.close();
-          else await expect(loop.close()).rejects.toBe(completionError);
+          await loop.close();
+          expect(stop).toHaveBeenCalled();
         } else {
           if (completionError === undefined) {
             processInfo = {
@@ -700,8 +737,11 @@ describe('core LoopService integration', () => {
             };
           }
           await expect(loop.promptHandle(submitted.id)!.completion).resolves.toMatchObject({ state: 'completed' });
+          await subject.get(IAgentConversationUndoService).undo(1);
+          expect(stop).not.toHaveBeenCalled();
           gate.resolve();
           await vi.waitFor(() => expect(subject.llmCalls).toHaveLength(3));
+          expect(stop).not.toHaveBeenCalled();
           await loop.settled();
           await loop.close();
         }
@@ -719,23 +759,24 @@ describe('core LoopService integration', () => {
         const started = records.filter((record) => record.type === 'task.started').map((record) => record['info']);
         const terminated = records.filter((record) => record.type === 'task.terminated').map((record) => record['info']);
         expect(started).toEqual([
-          expect.objectContaining({ taskId: 'task-process', status: 'running', detached: true, startedAt: 100, endedAt: null, exitCode: null }),
+          expect.objectContaining({ taskId, status: 'running', detached: true, startedAt: expect.any(Number), endedAt: null, exitCode: null }),
         ]);
-        if (closeWhileRunning && completionError === undefined) {
+        if (closeWhileRunning) {
           expect(terminated).toEqual([
-            expect.objectContaining({ taskId: 'task-process', status: 'killed', startedAt: 100, endedAt: expect.any(Number) }),
+            expect.objectContaining({ taskId, status: 'killed', startedAt: expect.any(Number), endedAt: expect.any(Number) }),
           ]);
         } else if (completionError !== undefined) {
           expect(terminated).toEqual([
-            expect.objectContaining({ taskId: 'task-process', status: 'failed', startedAt: 100, endedAt: expect.any(Number) }),
+            expect.objectContaining({ taskId, status: 'failed', startedAt: expect.any(Number), endedAt: expect.any(Number) }),
           ]);
         } else {
           expect(terminated).toEqual([
-            expect.objectContaining({ taskId: 'task-process', status: 'timed_out', startedAt: 100, endedAt: 500, exitCode: 124, stopReason: 'deadline', stopCode: 'TASK_TIMEOUT' }),
+            expect.objectContaining({ taskId, status: 'timed_out', startedAt: expect.any(Number), endedAt: expect.any(Number), exitCode: 124, stopReason: 'deadline', stopCode: 'TASK_TIMEOUT' }),
           ]);
         }
         expect(toolExecutor.handlerForCall('process-call')).toBeUndefined();
         expect(toolExecutor.handler(taskId!)).toBeUndefined();
+        expect(toolExecutor.handlers()).toEqual([]);
         const bookkeeping = toolExecutor as unknown as {
           readonly taskIdsByCall: Map<string, string[]>;
           readonly batches: Map<string, { handlers: number }>;
@@ -743,22 +784,33 @@ describe('core LoopService integration', () => {
         expect(bookkeeping.taskIdsByCall.has('process-call')).toBe(false);
         expect(bookkeeping.batches.size).toBe(0);
         expect(subject.allEvents.filter((event) => event.type === '[rpc]' && event.event === 'task.started')).toHaveLength(1);
-        expect(records.every((record) => !record.type.startsWith('agent.'))).toBe(true);
-        expect(JSON.stringify(records)).not.toContain('[async tool completed]');
+        expect(records.every((record) =>
+          !record.type.startsWith('agent.') ||
+          (!closeWhileRunning && record.type === 'agent.switched' && record['reason'] === 'undo')
+        )).toBe(true);
         if (!closeWhileRunning) {
-          expect(JSON.stringify(records)).toContain('<notification');
+          const failed = completionError !== undefined || processInfo.status === 'timed_out';
+          const taskPrompt = records.find((record) =>
+            record.type === 'turn.prompt' && (record['origin'] as { kind?: string }).kind === 'task'
+          );
+          const taskPromptId = (taskPrompt?.['origin'] as { readonly notificationId?: string } | undefined)?.notificationId;
+          expect(taskPromptId).toEqual(expect.any(String));
+          expect(promptLifecycle.filter((entry) => entry.endsWith(`:${taskPromptId}`))).toEqual([
+            `submitted:${taskPromptId}`,
+            `started:${taskPromptId}`,
+            `completed:${taskPromptId}`,
+          ]);
+          expect(JSON.stringify(records)).toContain(failed ? '[async tool failed]' : '[async tool completed]');
           expect(records.some((record) => record.type === 'turn.prompt' && (record['origin'] as { kind?: string }).kind === 'task')).toBe(true);
-          expect(JSON.stringify(subject.llmInputs())).toContain('task_id=task-process');
+          expect(JSON.stringify(subject.llmInputs())).toContain(`task_id=${taskId}`);
           expect(JSON.stringify(records)).toContain('async finished');
           if (completionError !== undefined) {
-            expect(JSON.stringify(records)).toContain('task:task-process:failed');
+            expect(JSON.stringify(records)).toContain(`task:${taskId}:failed`);
             expect(records.some((record) => record.type === 'turn.prompt' && (record['origin'] as { status?: string }).status === 'failed')).toBe(true);
-            expect(JSON.stringify(records)).not.toContain('[async tool failed]');
           } else {
-            expect(JSON.stringify(records)).toContain('background-result');
+            expect(JSON.stringify(records)).toContain('deadline');
           }
         } else {
-          expect(JSON.stringify(records)).not.toContain('<notification');
           expect(records.some((record) => record.type === 'turn.prompt' && (record['origin'] as { kind?: string } | undefined)?.kind === 'task')).toBe(false);
         }
       } finally {

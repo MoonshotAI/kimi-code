@@ -7,7 +7,6 @@ import type { ToolDescription as Tool } from '#human/llm/message';
 import { AgentSpaceImpl } from '#/agent/agentContext/agentSpace';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
-import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { isMcpToolName, type ToolInfo } from '#/tool/toolContract';
@@ -20,6 +19,7 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 
 import {
+  collectCurrentDynamicTools,
   collectLoadedDynamicTools,
   foldAnnouncedToolNames,
   isDynamicToolSchemaMessage,
@@ -41,7 +41,6 @@ import {
   ToolSelectInitialized,
   ToolSelectToolsChanged,
   toolSelectKey,
-  toolSelectSchemaSignature,
   toolSelectVersionSignature,
   type ToolSelectModelState,
   type ToolSelectTool,
@@ -115,12 +114,33 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     return this.defaultToolsForDisclosure(disclosure);
   }
 
-  requestTools(base: readonly Tool[] | undefined, disclosure = this.enabled(), dynamic = false): readonly Tool[] {
-    const current = this.defaultToolsForDisclosure(disclosure);
-    if (base === undefined) return current;
-    if (!dynamic) return base;
-    const names = new Set(base.map((tool) => tool.name));
-    return [...base, ...current.filter((tool) => tool.deferred === true && !names.has(tool.name))];
+  initialTools(): readonly Tool[] {
+    return this.initialToolInfos().map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters ?? EMPTY_TOOL_PARAMETERS,
+      deferred: tool.disclosure === 'deferred' ? true : undefined,
+    }));
+  }
+
+  requestTools(
+    base: readonly Tool[] | undefined,
+    disclosure = this.enabled(),
+    dynamic = false,
+    messages: readonly ContextMessage[] = this.history(),
+  ): readonly Tool[] {
+    if (!dynamic) return base ?? this.defaultToolsForDisclosure(disclosure);
+    const baseline = base ?? [];
+    if (disclosure) return baseline;
+    const loaded = collectLoadedDynamicTools(messages);
+    const tools = baseline.filter((tool) => tool.name !== SELECT_TOOLS_TOOL_NAME && tool.deferred !== true);
+    const names = new Set(tools.map((tool) => tool.name));
+    for (const tool of loaded.values()) {
+      if (names.has(tool.name)) continue;
+      tools.push({ ...tool, deferred: undefined });
+      names.add(tool.name);
+    }
+    return tools.toSorted((left, right) => left.name.localeCompare(right.name));
   }
 
   shapeTools(
@@ -141,7 +161,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   load(names: readonly string[]): LoadToolsResult {
     const current = this.currentTools();
     const loadable = new Set(this.loadableToolNames());
-    const loaded = collectLoadedDynamicTools(this.history(), current);
+    const loaded = collectCurrentDynamicTools(this.history(), current);
     const historicallyLoaded = this.historicallyLoadedToolNames();
     this.resetFailuresIfToolsChanged(current);
     const toLoad: string[] = [];
@@ -306,7 +326,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     return this.activeTools('initial');
   }
 
-  private initialTools(): readonly ToolSelectTool[] {
+  private initialToolInfos(): readonly ToolSelectTool[] {
     return this.modelState().initial ?? this.activeTools('initial');
   }
 
@@ -384,7 +404,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   }
 
   private capableTools(includeRuntime: boolean): readonly ToolSelectTool[] {
-    const initial = this.initialTools();
+    const initial = this.initialToolInfos();
     const initialNames = new Set(initial.map((tool) => tool.name));
     const current = this.currentTools();
     const currentByName = new Map(current.map((tool) => [tool.name, tool]));
@@ -400,7 +420,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   ): readonly ShapedToolEntry[] {
     const activeEntries = this.activeEntries(entries, disclosure);
     if (!disclosure) return activeEntries;
-    const loaded = collectLoadedDynamicTools(this.history(), this.currentTools());
+    const loaded = collectCurrentDynamicTools(this.history(), this.currentTools());
     const shaped: ShapedToolEntry[] = [];
     for (const entry of activeEntries) {
       if (entry.name === SELECT_TOOLS_TOOL_NAME) {
@@ -483,14 +503,14 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     return (
       this.toolPolicy.isToolActive(name, info.source) &&
       (!this.isDynamicallyLoadable(info) ||
-        collectLoadedDynamicTools(this.history(), this.currentTools()).has(name))
+        collectCurrentDynamicTools(this.history(), this.currentTools()).has(name))
     );
   }
 
   private isDynamicallyLoadable(info: ToolInfo | ToolSelectTool): boolean {
     return info.disclosure === 'deferred' ||
       ('origin' in info && info.origin === 'runtime' &&
-        !this.initialTools().some(
+        !this.initialToolInfos().some(
           (tool) => tool.name === info.name && tool.disclosure !== 'deferred',
         ));
   }
@@ -534,24 +554,10 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     const tools = message.tools;
     if (tools === undefined || tools.length === 0) return message;
 
-    const current = this.currentTools();
-    const loaded = collectLoadedDynamicTools(this.history(), current);
     let kept: Tool[] | undefined;
     for (let i = 0; i < tools.length; i += 1) {
       const tool = tools[i]!;
-      const info = current.find((entry) => entry.name === tool.name);
-      const active = info === undefined
-        ? isMcpToolName(tool.name) && this.toolPolicy.isToolActive(tool.name, 'mcp')
-        : this.toolPolicy.isToolActive(info.name, info.source);
-      const loadedSchema = loaded.get(tool.name);
-      const keep = !inlineNames.has(tool.name) && (isMcpToolName(tool.name)
-        ? this.toolPolicy.isToolActive(tool.name, 'mcp') &&
-          (loadedSchema === undefined ||
-            toolSelectSchemaSignature(loadedSchema) === toolSelectSchemaSignature(tool))
-        : active &&
-          loadedSchema !== undefined &&
-          toolSelectSchemaSignature(loadedSchema) === toolSelectSchemaSignature(tool));
-      if (keep) {
+      if (!inlineNames.has(tool.name)) {
         if (kept !== undefined) kept.push(tool);
         continue;
       }

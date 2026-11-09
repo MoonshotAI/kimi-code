@@ -382,7 +382,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             meta: {
               promptId: attempt.id,
               origin: { kind: 'user', attachments: promptAttachments, clientMetadata } as PromptOrigin,
-              tracked: true,
             },
           });
           attempt.enqueued();
@@ -522,7 +521,6 @@ function projectPromptList(loop: IAgentLoopService) {
   return {
     active: active === undefined ? null : projectPromptSnapshot(active),
     queued: snapshot.queue
-      .filter((item) => item.meta?.tracked === true)
       .map((item) =>
         projectPromptSnapshot({
           id: item.meta?.promptId ?? '',

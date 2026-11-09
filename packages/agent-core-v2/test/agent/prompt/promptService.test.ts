@@ -71,7 +71,7 @@ async function enqueue(
   const status = loop.snapshot();
   const { id } = loop.submit({
     message: { role: 'user', content: [...input.message.content] },
-    meta: { promptId: input.id, origin: input.message.origin, tracked: true },
+    meta: { promptId: input.id, origin: input.message.origin },
   });
   const handle = loop.promptHandle(id)!;
   if (status.state === 'idle' && !status.paused && status.queue.length === 0) {
@@ -429,30 +429,46 @@ describe('prompt queue', () => {
     }
   });
 
-  it('returns a queued identity instead of waiting for an untracked active turn', async () => {
+  it('accepts new and queued steers during any active turn without overtaking normal FIFO', async () => {
     setup();
+    await ctx.restorePersisted();
     const hold = holdNextStep();
     ctx.mockNextResponse({ type: 'text', text: 'continuation' });
+    ctx.mockNextResponse({ type: 'text', text: 'direct steer' });
+    const prompts: TurnPrompt[] = [];
+    ctx.get(IEventBus).subscribe(TurnPrompt, (event) => prompts.push(event));
     loop.submit({
       message: { role: 'user', content: message('continuation').content },
-      meta: { origin: { kind: 'user' }, tracked: false },
+      meta: { promptId: 'continuation', origin: { kind: 'system_trigger', name: 'goal_continuation' } as PromptOrigin },
     });
     await hold.started;
+    expect(loop.snapshot()).toMatchObject({ activeTurnId: 0, activePromptId: 'continuation' });
 
-    const result = await ctx.rpc.steer({ input: [{ type: 'text', text: 'queued steer' }] });
+    const steered = await enqueue(loop, { id: 'steered', message: message('steered') });
+    const normal = await enqueue(loop, { id: 'normal', message: message('normal') });
+    await loop.steer([steered.id]);
+    const pending = ctx.rpc.steer({ input: [{ type: 'text', text: 'direct steer' }] });
+    hold.release();
+    const result = await pending;
+    await loop.settled();
 
-    try {
-      expect(result).toMatchObject({
-        prompt_id: expect.any(String),
-        state: 'queued',
-        steered: false,
-      });
-      expect(result).not.toHaveProperty('turn_id');
-    } finally {
-      loop.cancel();
-      hold.release();
-      await loop.settled();
-    }
+    expect(result).toMatchObject({
+      prompt_id: expect.any(String),
+      state: 'running',
+      steered: true,
+      turn_id: 3,
+    });
+    expect(prompts.slice(1).map((event) => [event.turnId, event.trigger, event.promptId])).toEqual([
+      [1, 'normal', normal.id],
+      [2, 'notify', steered.id],
+      [3, 'notify', result.prompt_id],
+    ]);
+    expect(ctx.allEvents).toContainEqual(expect.objectContaining({
+      event: 'turn.ended',
+      args: expect.objectContaining({ turnId: 0, reason: 'completed' }),
+    }));
+    expect(ctx.llmCalls).toHaveLength(2);
+    expect(JSON.stringify(ctx.llmCalls[1])).toContain('direct steer');
   });
 
   it('publishes turn.prompt when an unconsumed steer seeds the next turn after cancel', async () => {
@@ -510,7 +526,7 @@ describe('prompt queue', () => {
     await finishing;
     const { id } = loop.notify({
       message: { role: 'user', content: message('stop').content },
-      meta: { origin: { kind: 'user' }, tracked: true },
+      meta: { origin: { kind: 'user' } },
     });
     loop.cancel();
     releaseFinish();
@@ -557,7 +573,7 @@ describe('prompt queue', () => {
     });
     const turn = await loop.promptHandle(id)!.launched;
     expect(loop.snapshot().queue).toEqual([]);
-    expect(loop.snapshot().activePromptId).toBeUndefined();
+    expect(loop.snapshot().activePromptId).toBe(id);
     await turn?.result;
     await loop.settled();
   });
@@ -621,7 +637,7 @@ describe('prompt queue', () => {
     const bundled = bundledMessage('review', 'launching');
     const { id } = loop.submit({
       message: { role: 'user', content: bundled.content },
-      meta: { tracked: true, origin: bundled.origin as PromptOrigin },
+      meta: { origin: bundled.origin as PromptOrigin },
     });
     await entered;
     expect(pendingIds(loop)).toEqual([id]);
@@ -1015,7 +1031,7 @@ describe('prompt queue', () => {
     await hold.started;
     const { id } = loop.notify({
       message: { role: 'user', content: message('steer me').content },
-      meta: { tracked: true },
+      meta: {  },
     });
     const handle = loop.promptHandle(id)!;
 
@@ -1045,7 +1061,7 @@ describe('prompt queue', () => {
     await hold.started;
     const { id } = loop.submit({
       message: { role: 'user', content: message('meta').content },
-      meta: { promptId: 'meta-id', tracked: true },
+      meta: { promptId: 'meta-id' },
     });
 
     expect(loop.snapshot().queue).toEqual([
@@ -1053,7 +1069,6 @@ describe('prompt queue', () => {
         meta: expect.objectContaining({
           promptId: 'meta-id',
           origin: { kind: 'user' },
-          tracked: true,
           userMessageId: 'meta-id',
         }),
       }),

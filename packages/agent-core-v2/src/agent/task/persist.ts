@@ -1,9 +1,12 @@
+import { existsSync } from 'node:fs';
 import { join } from 'pathe';
 import type { EnvironmentPath } from '#/environment/environment';
 
 import { BugIndicatingError } from '#/errors';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IFileSystemStorageService } from '#/persistence/interface/storage';
+import { FileBody } from '#/tool/executor/output-store';
+import type { ToolOutput } from '#/tool/executor/types';
 
 const VALID_TASK_ID: RegExp = /^[a-z0-9]+(?:-[a-z0-9]+)*-[0-9a-z]{8}$/;
 
@@ -51,7 +54,8 @@ export function isTaskOutputFilePath(path: string, agentDir: string, pathApi: Pi
 
 export class AgentTaskPersistence {
   private readonly mirrors = new WeakMap<IHostFileSystem, Map<string, { readonly scope: string; readonly size: number }>>();
-  private readonly outputSizes = new Map<string, number>();
+  private readonly bodies = new Map<string, FileBody>();
+  private readonly outputs = new Map<string, ToolOutput>();
   private readonly outputTails = new Map<string, Promise<unknown>>();
 
   constructor(
@@ -77,6 +81,11 @@ export class AgentTaskPersistence {
   private taskOutputFileAt(taskId: string, root: AgentTaskPersistenceRoot): string {
     validateTaskId(taskId);
     return join(root.dir, TASKS_SCOPE, taskId, OUTPUT_LOG_KEY);
+  }
+
+  private taskOutputPhysicalFile(taskId: string): string {
+    return this.bytes.pathFor?.(this.taskOutputScope(taskId), OUTPUT_LOG_KEY) ??
+      this.taskOutputFileAt(taskId, this.primaryRoot());
   }
 
   private async outputPathFor(taskId: string, output: TaskOutputData): Promise<string> {
@@ -117,15 +126,26 @@ export class AgentTaskPersistence {
     return this.taskOutputFileAt(taskId, this.primaryRoot());
   }
 
+  open(taskId: string): ToolOutput {
+    const current = this.outputs.get(taskId);
+    if (current !== undefined && current.closed !== true) return current;
+    const body = this.bodies.get(taskId) ?? new FileBody(this.taskOutputPhysicalFile(taskId), 0o700);
+    this.bodies.set(taskId, body);
+    const output = body.open();
+    this.outputs.set(taskId, output);
+    return output;
+  }
+
   async appendTaskOutput(taskId: string, chunk: string): Promise<void> {
     if (chunk.length === 0) return;
     await this.serializeOutput(taskId, async () => {
-      const scope = this.taskOutputScope(taskId);
-      const previousSize = this.outputSizes.get(taskId) ?? (await this.bytes.read(scope, OUTPUT_LOG_KEY))?.byteLength ?? 0;
-      const data = textEncoder.encode(chunk);
-      await this.bytes.append(scope, OUTPUT_LOG_KEY, data);
-      const size = previousSize + data.byteLength;
-      this.outputSizes.set(taskId, size);
+      const previousSize = await this.taskOutputSizeBytes(taskId);
+      const output = this.open(taskId);
+      if (output.append(chunk) === undefined) {
+        throw new Error(output.error() ?? `Unable to append task output: ${taskId}`);
+      }
+      await output.flush();
+      const size = output.preview(0).totalBytes;
       const target = this.spillTarget?.();
       if (target === undefined) return;
       const path = (target.path?.join ?? join)(target.dir, `${taskId}.log`);
@@ -140,8 +160,8 @@ export class AgentTaskPersistence {
         }
         return;
       }
-      const output = await this.readTaskOutputData(taskId);
-      if (output !== undefined) await this.mirrorOutput(taskId, output, target);
+      const persisted = await this.readTaskOutputData(taskId);
+      if (persisted !== undefined) await this.mirrorOutput(taskId, persisted, target);
     });
   }
 
@@ -168,20 +188,26 @@ export class AgentTaskPersistence {
     taskId: string,
     maxBytes: number,
   ): Promise<{ readonly offset: number; readonly data: Uint8Array } | undefined> {
-    const roots = this.fallbackRoot === undefined ? [this.primaryRoot()] : [this.primaryRoot(), this.fallbackRoot];
-    for (const root of roots) {
-      const scope = this.taskOutputScope(taskId, root);
-      const size = await this.bytes.size(scope, OUTPUT_LOG_KEY);
-      if (size === undefined) continue;
-      const offset = Math.max(0, size - Math.max(0, Math.trunc(maxBytes)));
-      if (offset === size) return { offset, data: new Uint8Array() };
-      const parts: Uint8Array[] = [];
-      for await (const part of this.bytes.readStream(scope, OUTPUT_LOG_KEY, { start: offset, end: size - 1 })) {
-        parts.push(part);
-      }
-      return { offset, data: Buffer.concat(parts) };
+    await this.flushTaskOutput(taskId);
+    if (existsSync(this.taskOutputPhysicalFile(taskId))) {
+      const output = this.open(taskId);
+      const totalBytes = output.preview(0).totalBytes;
+      const offset = Math.max(0, totalBytes - Math.max(0, Math.trunc(maxBytes)));
+      if (offset === totalBytes) return { offset, data: new Uint8Array() };
+      return { offset, data: Buffer.from(await output.read(offset, totalBytes - offset)) };
     }
-    return undefined;
+    const root = this.fallbackRoot;
+    if (root === undefined) return undefined;
+    const scope = this.taskOutputScope(taskId, root);
+    const size = await this.bytes.size(scope, OUTPUT_LOG_KEY);
+    if (size === undefined) return undefined;
+    const offset = Math.max(0, size - Math.max(0, Math.trunc(maxBytes)));
+    if (offset === size) return { offset, data: new Uint8Array() };
+    const parts: Uint8Array[] = [];
+    for await (const part of this.bytes.readStream(scope, OUTPUT_LOG_KEY, { start: offset, end: size - 1 })) {
+      parts.push(part);
+    }
+    return { offset, data: Buffer.concat(parts) };
   }
 
   async readTaskOutputSnapshot(
@@ -204,10 +230,19 @@ export class AgentTaskPersistence {
     });
   }
 
+  private async flushTaskOutput(taskId: string): Promise<void> {
+    const output = this.outputs.get(taskId);
+    if (output !== undefined && output.error() !== 'Tool output is closed') await output.flush();
+  }
+
   private async readTaskOutputData(taskId: string): Promise<TaskOutputData | undefined> {
+    await this.flushTaskOutput(taskId);
     const primaryRoot = this.primaryRoot();
-    const primary = await this.bytes.read(this.taskOutputScope(taskId, primaryRoot), OUTPUT_LOG_KEY);
-    if (primary !== undefined) return { root: primaryRoot, data: primary };
+    if (existsSync(this.taskOutputPhysicalFile(taskId))) {
+      const output = this.open(taskId);
+      const totalBytes = output.preview(0).totalBytes;
+      return { root: primaryRoot, data: textEncoder.encode(await output.read(0, totalBytes)) };
+    }
     const fallbackRoot = this.fallbackRoot;
     if (fallbackRoot === undefined) return undefined;
     const fallback = await this.bytes.read(

@@ -109,8 +109,7 @@ export function legacyDidExecuteContext(context: LegacyAfterContext): ToolDidExe
 export function legacyResultOf(context: LegacyAfterContext): ExecutableToolResult {
   const prepared = context.prepared;
   if (prepared?.kind === 'synthetic') return prepared.result;
-  const fields = context.fields as { result?: ExecutableToolResult };
-  if (fields.result !== undefined) return fields.result;
+  if (prepared?.kind === 'execute' && prepared.result !== undefined) return prepared.result;
   const content = context.result.content;
   return {
     output: content.every((part) => part.type === 'text')

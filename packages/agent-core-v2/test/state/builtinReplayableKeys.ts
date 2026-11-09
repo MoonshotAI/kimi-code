@@ -15,7 +15,6 @@ import { pluginSessionStartSnapshotKey } from '#/agent/plugin/agentPluginOps';
 import { changeNotifierSnapshotKey } from '#/agent/changeNotifier/changeNotifierOps';
 import { environmentBindingKey } from '#/agent/environmentBinding/environmentBindingOps';
 import { taskKey } from '#/agent/task/taskOps';
-import { taskNotificationDeliveryKey } from '#/agent/task/taskRuntime';
 import { toolSelectKey } from '#/agent/toolSelect/toolSelectOps';
 import { userToolKey } from '#/agent/userTool/userToolOps';
 import { fileHistoryKey } from '#/features/fileHistory/fileHistoryOps';
@@ -38,7 +37,6 @@ export const BUILTIN_REPLAYABLE_STATE_KEYS: readonly ReplayableStateKey<any>[] =
   changeNotifierSnapshotKey,
   environmentBindingKey,
   taskKey,
-  taskNotificationDeliveryKey,
   toolSelectKey,
   userToolKey,
   fileHistoryKey,

@@ -5,6 +5,7 @@ import { parseToolCallArguments } from '#/tool/tool-args-parse';
 import { abortedToolOutput, isUserCancellation } from '#/_base/utils/abort';
 
 import { memoryOutputStore } from './output-store';
+import { ToolTimeoutError } from './types';
 import type {
   AfterExecuteHookContext,
   ExecutableTool,
@@ -115,8 +116,8 @@ export class ToolExecutor<TContext = unknown> {
         context,
         signal: control.signal,
       });
-      control.signal.throwIfAborted();
       control.setPrepared(preparation?.prepared);
+      control.signal.throwIfAborted();
       return preparation?.type === 'synthetic' ? preparation.result : undefined;
     };
 
@@ -183,6 +184,8 @@ export class ToolExecutor<TContext = unknown> {
         if (thrown instanceof ToolStop && thrown.result !== undefined) {
           return control.returned(thrown.result, thrown.error);
         }
+        const currentTool = this.tools.get(call.name);
+        if (control.wasStopped() && currentTool !== undefined) control.use(currentTool);
         const error = control.wasStopped()
           ? abortedError(control.call, control.phase, 'stopped', control.stopCause())
           : toToolError(control, thrown);
@@ -506,6 +509,7 @@ class CallControl<TContext> {
   }
 
   use(tool: AnyTool<TContext>): void {
+    const hadStopping = this.stopping !== undefined;
     if (typeof tool.stopping === 'function') {
       const stopping = tool.stopping.bind(tool);
       this.stopping = (reason) => stopping({
@@ -513,6 +517,12 @@ class CallControl<TContext> {
         reason,
         abandon: (result) => this.abandon(result),
       });
+    }
+    if (!hadStopping && this.stopped !== undefined && this.stopping !== undefined) {
+      try {
+        this.stopping(this.stopped.reason);
+      } catch {
+      }
     }
   }
 
@@ -628,6 +638,7 @@ class CallControl<TContext> {
       taskId: this.taskId,
       toolCallId: this.call.id,
       content: acknowledgement.content,
+      brief: acknowledgement.brief,
     };
     this.change(() => {
       this.detachedAck = detached;
@@ -651,10 +662,43 @@ class CallControl<TContext> {
       if (this.detachedAck !== undefined) resolve(this.detachedAck);
       settled.then(resolve, reject);
     });
+    const wait = (timeoutMs?: number, signal?: AbortSignal): Promise<ToolResult> => {
+      if (timeoutMs === undefined && signal === undefined) return settled;
+      if (this.outcome !== undefined) return settled;
+      if (signal?.aborted === true) return Promise.reject(signal.reason);
+      const delay = timeoutMs !== undefined && Number.isFinite(timeoutMs)
+        ? Math.min(Math.max(0, timeoutMs), 2_147_483_647)
+        : undefined;
+      return new Promise<ToolResult>((resolve, reject) => {
+        let done = false;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const abortSignal = signal;
+        const cleanup = (): void => {
+          if (timer !== undefined) clearTimeout(timer);
+          abortSignal?.removeEventListener('abort', onAbort);
+        };
+        const finish = (complete: () => void): void => {
+          if (done) return;
+          done = true;
+          cleanup();
+          complete();
+        };
+        const onAbort = (): void => finish(() => reject(abortSignal?.reason));
+        if (delay !== undefined) {
+          timer = setTimeout(() => finish(() => reject(new ToolTimeoutError(delay))), delay);
+          timer.unref?.();
+        }
+        abortSignal?.addEventListener('abort', onAbort, { once: true });
+        settled.then(
+          (result) => finish(() => resolve(result)),
+          (error: unknown) => finish(() => reject(error)),
+        );
+      });
+    };
     return {
       taskId: this.taskId,
       then: (onfulfilled, onrejected) => returned.then(onfulfilled, onrejected),
-      wait: () => settled,
+      wait,
       stop: (reason) => {
         if (this.outcome === undefined) this.requestStop(reason);
         return settled;

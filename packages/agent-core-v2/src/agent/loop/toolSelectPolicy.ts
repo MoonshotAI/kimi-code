@@ -11,7 +11,7 @@ export function createToolSelectResolver(toolSelect: IAgentToolSelectService, dy
       const capabilities =
         withProtocolCapabilities(request.model.spec, request.protocol.base).capability ?? {};
       const disclosure = toolSelect.enabled(capabilities);
-      const tools = toolSelect.requestTools(request.profile?.tools, disclosure, dynamic);
+      const tools = toolSelect.requestTools(request.profile?.tools, disclosure, dynamic, request.content.messages);
       return {
         ...request,
         profile: {

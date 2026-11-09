@@ -1,5 +1,5 @@
 import { closeSync, openSync, readSync, statSync } from 'node:fs';
-import { appendFile, mkdir, open as openFile } from 'node:fs/promises';
+import { appendFile, chmod, mkdir, open as openFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import type { ToolOutput, ToolOutputSnapshot, ToolOutputStore } from './types';
@@ -144,16 +144,21 @@ class OutputBody {
   }
 }
 
-class FileBody extends OutputBody {
+export class FileBody extends OutputBody {
   readonly path: string;
 
-  constructor(path: string) {
+  constructor(path: string, private readonly directoryMode?: number) {
     super(restoreFile(path));
     this.path = path;
   }
 
   protected override async persist(text: string): Promise<void> {
-    await mkdir(dirname(this.path), { recursive: true });
+    const directory = dirname(this.path);
+    await mkdir(directory, { recursive: true, mode: this.directoryMode });
+    if (this.directoryMode !== undefined) {
+      await chmod(directory, this.directoryMode);
+      await chmod(dirname(directory), this.directoryMode);
+    }
     await appendFile(this.path, text);
   }
 
@@ -186,6 +191,10 @@ class OutputHandle implements ToolOutput {
   constructor(body: OutputBody, writer: boolean) {
     this.body = body;
     this.writer = writer;
+  }
+
+  get closed(): boolean {
+    return this.closing !== undefined;
   }
 
   append(chunk: string): number | undefined {

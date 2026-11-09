@@ -58,9 +58,16 @@ export interface IAgentToolSelectService {
 
   prepareForRequest(signal?: AbortSignal): Promise<void>;
 
+  initialTools(): readonly Tool[];
+
   defaultTools(disclosure?: boolean): readonly Tool[];
 
-  requestTools(base: readonly Tool[] | undefined, disclosure?: boolean, dynamic?: boolean): readonly Tool[];
+  requestTools(
+    base: readonly Tool[] | undefined,
+    disclosure?: boolean,
+    dynamic?: boolean,
+    messages?: readonly ContextMessage[],
+  ): readonly Tool[];
 
   shapeTools(entries: readonly ToolInfo[], disclosure?: boolean): readonly ShapedToolEntry[];
 

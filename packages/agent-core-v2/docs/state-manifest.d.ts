@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 8 keys · Session: 9 keys · Agent: 66 keys)
+// Index (App: 0 keys · Workspace: 8 keys · Session: 9 keys · Agent: 62 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -71,7 +71,7 @@
 //     llmRequester.lastConfigLogSignature             src/agent/loop/requestObservation.ts
 //     llmRequester.lastMeasuredRequest                src/agent/loop/requestObservation.ts
 //     loop.disposing                                  src/agent/loop/loopService.ts
-//     loop.lastRequestId                              src/agent/loop/loopService.ts
+//     loop.lastRequestId                              src/agent/loop/turnProjection.ts
 //     mcp.discovery                                   src/agent/mcp/mcpDiscoveryOps.ts
 //     mcp.discoveryWritesReady                        src/agent/mcp/mcpService.ts
 //     mcp.failures                                    src/agent/mcp/mcpFailureOps.ts
@@ -94,10 +94,6 @@
 //     swarm                                           src/features/swarm/swarmOps.ts
 //     swarmReminderDelivered                          src/features/swarm/swarmOps.ts
 //     task                                            src/agent/task/taskOps.ts
-//     task.activeTaskReminderPending                  src/agent/task/taskRuntime.ts
-//     task.deliveredNotificationKeys                  src/agent/task/taskRuntime.ts
-//     task.notificationDelivery                       src/agent/task/taskRuntime.ts
-//     task.scheduledNotificationKeys                  src/agent/task/taskRuntime.ts
 //     toolDedupe.activeStep                           src/agent/toolDedupe/toolDedupeService.ts
 //     toolDedupe.activeTurnId                         src/agent/toolDedupe/toolDedupeService.ts
 //     toolDedupe.callKeyByCallId                      src/agent/toolDedupe/toolDedupeService.ts
@@ -946,8 +942,14 @@ export interface AgentStateSnapshot {
   'fullCompaction.lastCompactedTokenCount': number | null;
   'fullCompaction.observedMaxContextTokensByModel': Map<string, number>;
   // src/agent/interruptionReminder/interruptionReminderOps.ts
-  // replayable · durable — folds: InterruptionReminderRecorded
-  'interruptionReminder': null;
+  // replayable · durable · undoable — folds: InterruptionCancellationRequested, InterruptionReminderRecorded
+  'interruptionReminder': /* InterruptionReminderState — packages/agent-core-v2/src/agent/interruptionReminder/interruptionReminderOps.ts */ {
+    readonly pending: /* InterruptionReminderPending — packages/agent-core-v2/src/agent/interruptionReminder/interruptionReminderOps.ts */ {
+      readonly turnId: number;
+      readonly ownerPromptId?: string;
+    } | undefined;
+    readonly consumedTurnIds: readonly number[];
+  };
   // src/agent/loop/llmRequestOps.ts
   // replayable · durable — folds: LlmToolsSnapshot, LlmRequest
   'llm.requestTrace': /* LlmRequestTraceState — packages/agent-core-v2/src/agent/loop/llmRequestOps.ts */ {
@@ -955,7 +957,6 @@ export interface AgentStateSnapshot {
   };
   // src/agent/loop/loopService.ts
   'loop.disposing': boolean;
-  'loop.lastRequestId': string | undefined;
   // src/agent/loop/requestObservation.ts
   'contextProjector.lastRepairSignature': string | null;
   'llmRequester.emittedThinkingEffortWarnings': Set<string>;
@@ -995,6 +996,8 @@ export interface AgentStateSnapshot {
       readonly durationMs?: number;
     };
   };
+  // src/agent/loop/turnProjection.ts
+  'loop.lastRequestId': string | undefined;
   // src/agent/mcp/mcpDiscoveryOps.ts
   // replayable · durable — folds: McpToolsDiscovered
   'mcp.discovery': /* McpDiscoveryState — packages/agent-core-v2/src/agent/mcp/mcpDiscoveryOps.ts */ {
@@ -1088,7 +1091,7 @@ export interface AgentStateSnapshot {
   'shellCommand.tasks': Map<string, string>;
   // src/agent/task/taskOps.ts
   // replayable · durable — folds: TaskStarted, TaskTerminated
-  'task': /* TaskModelState — packages/agent-core-v2/src/agent/task/taskOps.ts */ Map<string, /* AgentTaskInfo — packages/agent-core-v2/src/agent/task/types.ts */ /* QuestionTaskInfo — packages/agent-core-v2/src/agent/tools/ask-user-question/question-background-task.ts */ {
+  'task': /* TaskModelState — packages/agent-core-v2/src/agent/task/taskOps.ts */ Map<string, /* AgentTaskInfo — packages/agent-core-v2/src/agent/task/types.ts */ /* QuestionTaskInfo — packages/agent-core-v2/src/agent/task/types.ts */ {
     readonly kind: 'question';
     readonly questionCount: number;
     readonly toolCallId?: string;
@@ -1102,7 +1105,24 @@ export interface AgentStateSnapshot {
     readonly terminalNotificationSuppressed?: boolean;
     readonly resumeReminded?: boolean;
     readonly timeoutMs?: number;
-  } | /* SubagentTaskInfo — packages/agent-core-v2/src/agent/tools/agent/subagent-task.ts */ {
+  } | /* ProcessTaskInfo — packages/agent-core-v2/src/agent/task/types.ts */ {
+    readonly kind: 'process';
+    readonly command: string;
+    readonly pid: number;
+    readonly exitCode: number | null;
+    readonly stopCode?: string;
+    readonly parentToolCallId?: string;
+    readonly taskId: string;
+    readonly description: string;
+    readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
+    readonly detached?: boolean;
+    readonly startedAt: number;
+    readonly endedAt: number | null;
+    readonly stopReason?: string;
+    readonly terminalNotificationSuppressed?: boolean;
+    readonly resumeReminded?: boolean;
+    readonly timeoutMs?: number;
+  } | /* SubagentTaskInfo — packages/agent-core-v2/src/agent/task/types.ts */ {
     readonly kind: 'agent';
     readonly agentId?: string;
     readonly subagentType?: string;
@@ -1123,29 +1143,7 @@ export interface AgentStateSnapshot {
     readonly terminalNotificationSuppressed?: boolean;
     readonly resumeReminded?: boolean;
     readonly timeoutMs?: number;
-  } | /* ProcessTaskInfo — packages/agent-core-v2/src/agent/tools/os/bash/process-task.ts */ {
-    readonly kind: 'process';
-    readonly command: string;
-    readonly pid: number;
-    readonly exitCode: number | null;
-    readonly parentToolCallId?: string;
-    readonly taskId: string;
-    readonly description: string;
-    readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
-    readonly detached?: boolean;
-    readonly startedAt: number;
-    readonly endedAt: number | null;
-    readonly stopReason?: string;
-    readonly terminalNotificationSuppressed?: boolean;
-    readonly resumeReminded?: boolean;
-    readonly timeoutMs?: number;
   }>;
-  // src/agent/task/taskRuntime.ts
-  'task.activeTaskReminderPending': boolean;
-  'task.deliveredNotificationKeys': Set<string>;
-  // replayable · durable · undoable — folds: ContextAppendMessage, TaskWaitDelivered
-  'task.notificationDelivery': readonly string[];
-  'task.scheduledNotificationKeys': Set<string>;
   // src/agent/toolDedupe/toolDedupeService.ts
   'toolDedupe.activeStep': number;
   'toolDedupe.activeTurnId': number | undefined;
@@ -1162,7 +1160,7 @@ export interface AgentStateSnapshot {
   'toolDedupe.turnRepeatCount': number;
   // src/agent/toolExecutor/toolExecutorService.ts
   'toolExecutor.dupTypeTurnId': number | undefined;
-  'toolExecutor.toolCallDupTypes': Map<string, /* ToolCallDupType — packages/agent-core-v2/src/agent/toolExecutor/toolExecutor.ts */ 'same_step' | 'cross_step'>;
+  'toolExecutor.toolCallDupTypes': Map<string, 'cross_step'>;
   // src/agent/toolSelect/toolSelectOps.ts
   // replayable · durable — folds: ToolSelectInitialized, ToolSelectToolsChanged
   'toolSelect': /* ToolSelectModelState — packages/agent-core-v2/src/agent/toolSelect/toolSelectOps.ts */ {

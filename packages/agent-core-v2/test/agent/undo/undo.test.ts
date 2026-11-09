@@ -15,14 +15,14 @@ import {
 import { ContextApplyCompaction, ContextClear } from '#/agent/contextMemory/contextEvents';
 import { isUndoAnchorTurnPrompt } from '#/agent/undo/turnUndo';
 import { userPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
-import type { ContextMessage, PromptOrigin, TaskOrigin } from '#/agent/contextMemory/types';
+import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { turnKey, type TurnPrompt } from '#/agent/loop/turnOps';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { planKey } from '#/features/plan/planOps';
-import { IAgentTaskService, type AgentTask } from '#/agent/task/task';
-import { taskNotificationDeliveryKey } from '#/agent/task/taskRuntime';
+import { IAgentTaskService } from '#/agent/task/task';
+import { installControlledTask, startControlledTaskInLoop } from '../task/stubs';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { ContextUndone } from '#/agent/undo/undoService';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
@@ -65,7 +65,7 @@ describe('AgentConversationUndoService', () => {
     }
   });
 
-  async function setup(options: TestAgentOptions = {}) {
+  async function setup(options: TestAgentOptions = {}, beforeStart?: (ctx: TestAgentContext) => void) {
     records = [];
     ctx = createTestAgent(
       options,
@@ -73,6 +73,7 @@ describe('AgentConversationUndoService', () => {
       execEnvServices({ hostFs: createFakeHostFs({ mkdir: async () => {} }) }),
     );
     ctx.get(IAgentLoopService);
+    beforeStart?.(ctx);
     await ctx.restorePersisted();
     return ctx;
   }
@@ -842,7 +843,6 @@ describe('AgentConversationUndoService', () => {
           meta: {
             promptId: 'queued',
             origin: { kind: 'user', clientMetadata: displayText === undefined ? undefined : [{ display_text: displayText }] } as PromptOrigin,
-            tracked: true,
             createdAt: new Date(0).toISOString(),
             userMessageId: 'queued',
           },
@@ -897,41 +897,44 @@ describe('AgentConversationUndoService', () => {
     }
   });
 
-  it('re-delivers wait-reported task notifications after conversation undo', async () => {
-    await setup();
+  it('re-delivers task notifications removed by conversation undo without wait suppression', async () => {
+    await setup({}, installControlledTask);
     const undo = ctx.get(IAgentConversationUndoService);
     const tasks = ctx.get(IAgentTaskService);
     ctx.appendTurnExchange('u1', 'a1');
 
-    const completingTask = (output: string): AgentTask => ({
-      idPrefix: 'test',
-      kind: 'process',
-      description: 'fake process task',
-      start: async (sink) => {
-        sink.appendOutput(output);
-        await sink.settle({ status: 'completed' });
-      },
-      toInfo: (base) => ({ ...base, kind: 'process', command: 'echo', pid: 0, exitCode: null }),
-    });
-
-    const taskA = tasks.registerTask(completingTask('a\n'));
-    const taskB = tasks.registerTask(completingTask('b\n'));
-    tasks.markTasksDeliveredViaWait([
-      { taskId: taskA, status: 'completed' },
-      { taskId: taskB, status: 'completed' },
-    ]);
+    const controlledA = await startControlledTaskInLoop(ctx, { description: 'task A' });
+    const controlledB = await startControlledTaskInLoop(ctx, { description: 'task B' });
+    const controlledC = await startControlledTaskInLoop(ctx, { description: 'task C' });
+    const taskA = controlledA.handler.taskId;
+    const taskB = controlledB.handler.taskId;
+    const taskC = controlledC.handler.taskId;
+    ctx.mockNextResponse({ type: 'text', text: 'completion ack' });
+    controlledA.resolve('a\n');
+    controlledB.resolve('b\n');
     await tasks.wait(taskA, 1000);
     await tasks.wait(taskB, 1000);
+    await vi.waitFor(() => {
+      const delivered = ctx.context.history().filter((message) => message.origin?.kind === 'task');
+      expect(delivered.map((message) => message.origin?.kind === 'task' ? message.origin.taskId : undefined).toSorted()).toEqual(
+        [taskA, taskB].toSorted(),
+      );
+    });
 
-    expect(ctx.context.history().some((message) => message.origin?.kind === 'task')).toBe(false);
-    expect(ctx.agentState.get(taskNotificationDeliveryKey)).toHaveLength(2);
+    const resetting = undo.undo(1);
+    controlledC.resolve('c\n');
+    await resetting;
+    await tasks.wait(taskC, 1000);
 
-    await undo.undo(1);
-
-    const redelivered = ctx.context.history().filter((message) => message.origin?.kind === 'task');
-    expect(redelivered.map((message) => (message.origin as TaskOrigin).taskId).toSorted()).toEqual(
-      [taskA, taskB].toSorted(),
-    );
+    await vi.waitFor(() => {
+      const redelivered = ctx.context.history().filter((message) => message.origin?.kind === 'task');
+      expect(redelivered.map((message) => message.origin?.kind === 'task' ? message.origin.taskId : undefined).toSorted()).toEqual(
+        [taskA, taskB, taskC].toSorted(),
+      );
+      for (const taskId of [taskA, taskB, taskC]) {
+        expect(redelivered.filter((message) => message.origin?.kind === 'task' && message.origin.taskId === taskId)).toHaveLength(1);
+      }
+    });
   });
 
   it('registers a participant that late-attaches inside the undo rerun window', async () => {

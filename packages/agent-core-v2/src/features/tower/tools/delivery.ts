@@ -1,6 +1,7 @@
 import type { PromptOrigin } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import type { IAgentTaskService } from '#/agent/task/task';
+import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { agentTaskInfo } from '#/agent/task/handler';
 import type { ISessionEventBus } from '#/app/event/eventBus';
 import { BROADCAST_NAME, TOWER_NAME } from '#/features/tower/protocol/index';
 import type { TowerSendResult, TowerState } from '#/features/tower/protocol/index';
@@ -11,7 +12,7 @@ const STEER_SUBJECT_PREVIEW_MAX = 120;
 
 export interface TowerDeliveryServices {
   readonly sessionBus: ISessionEventBus | undefined;
-  readonly tasks: IAgentTaskService | undefined;
+  readonly toolExecutor: IAgentToolExecutorService | undefined;
   readonly agentLifecycle: IAgentLifecycleService;
   readonly state: TowerState;
 }
@@ -45,10 +46,12 @@ export function deliverTowerMessage(
   const undelivered =
     item.from === TOWER_NAME &&
     entry !== undefined &&
-    services.tasks !== undefined &&
-    !services.tasks
-      .list(true)
-      .some((task) => task.kind === 'agent' && task.agentId === entry.agentId);
+    services.toolExecutor !== undefined &&
+    !services.toolExecutor.handlers().some((handler) => {
+      if (handler.snapshot().fields.task === undefined) return false;
+      const info = agentTaskInfo(handler);
+      return info.kind === 'agent' && info.agentId === entry.agentId;
+    });
   const note = undelivered
     ? `\nnote: ${item.to} has no running task in this session — the message sits in its inbox until you deliver it with Agent(resume="${entry.agentId}", run_in_background=true, prompt="...")`
     : '';
@@ -83,7 +86,6 @@ function steerIntoRunningAgent(
         ],
         origin: { kind: 'injection', variant: 'tower_inbox_steer' } as PromptOrigin,
       },
-      turnScoped: false,
     });
     return `\nnote: ${item.to} is mid-turn — the message was steered into its running turn; it sees the directive at its next step boundary.`;
   } catch {

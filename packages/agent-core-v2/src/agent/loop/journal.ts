@@ -4,6 +4,8 @@ import { toKimiErrorPayload } from '#/errors';
 import type { IWireService } from '#/wire/wire';
 import { normalizeLegacyTurnSteerRecords } from '#/wire/human';
 import type { PartsTransformer, WireRecord } from '#/wire/record';
+import type { IEventDispatcher } from '#/state/eventDispatcher';
+import { ContextAppendLoopEvent, ContextAppendMessage } from '#/agent/contextMemory/contextEvents';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import type { ProfileBindingSnapshot } from '#/agent/profile/profile';
 import {
@@ -296,6 +298,7 @@ export class LoopJournal {
   constructor(
     private readonly wire: IWireService,
     private readonly agentId: string,
+    private readonly dispatcher?: IEventDispatcher,
   ) {}
 
   recordStreamPart(turnId: number, step: number, block: number): void {
@@ -576,6 +579,20 @@ export class LoopJournal {
   }
 
   private write(record: WireRecord): void {
-    this.wire.append({ ...record, time: record['time'] ?? Date.now() }, dehydrateLoopJournalRecord);
+    const timed = { ...record, time: record['time'] ?? Date.now() };
+    if (timed.type === 'context.append_message' && this.dispatcher !== undefined) {
+      void this.dispatcher.dispatch(new ContextAppendMessage({
+        agentId: this.agentId,
+        message: record['message'] as ContextMessage,
+      }, timed.time));
+      return;
+    }
+    this.wire.append(timed, dehydrateLoopJournalRecord);
+    if (timed.type === 'context.append_loop_event' && this.dispatcher !== undefined) {
+      void this.dispatcher.dispatch(new ContextAppendLoopEvent({
+        agentId: this.agentId,
+        event: record['event'] as LoopRecordedEvent,
+      }, timed.time));
+    }
   }
 }

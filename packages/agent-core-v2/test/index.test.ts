@@ -90,6 +90,7 @@ const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
   'plan.revision',
   'file_history.tracked',
   'file_history.checkpoint',
+  'interruptionReminder.requested',
   'interruptionReminder.recorded',
   'plugin.session_start',
   'changeNotifier.snapshot',

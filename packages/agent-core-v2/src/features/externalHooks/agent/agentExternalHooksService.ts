@@ -5,7 +5,6 @@ import { defineState } from '#/state/state';
 import { isPlainRecord } from '#/_base/utils/canonical-args';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { IAgentTaskService, type AgentTaskInfo, type AgentTaskNotificationContext } from '#/agent/task/task';
 import { historyEntryFromContext } from '#/agent/loop/history';
 import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
 import {
@@ -17,7 +16,6 @@ import { IAgentLoopService, type AfterStepContext, type PromptSubmitContext } fr
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { PromptQueued } from '#/agent/prompt/promptEvents';
-import { TaskNotified, TaskStarted } from '#/agent/task/taskOps';
 import {
   PermissionApprovalRequested,
   PermissionApprovalResolved,
@@ -184,9 +182,6 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
       this.instantiation.invokeFunction((accessor) => accessor.get(IAgentFullCompactionService)),
     );
 
-    this.registerTaskHooks(
-      this.instantiation.invokeFunction((accessor) => accessor.get(IAgentTaskService)),
-    );
   }
 
   private registerToolHooks(toolExecutor: IAgentToolExecutorService): void {
@@ -299,33 +294,6 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
           .catch(() => undefined);
         await next();
       }),
-    );
-  }
-
-  private registerTaskHooks(_tasks: IAgentTaskService): void {
-    this._register(
-      this.eventBus.subscribe(TaskNotified, (e) => {
-        const { type: _type, time: _time, ...ctx } = e;
-        this.notifyTaskNotification(ctx);
-      }),
-    );
-    this._register(
-      this.eventBus.subscribe(TaskStarted, (e) => this.notifyTaskStarted(e.info)),
-    );
-  }
-
-  private notifyTaskStarted(info: AgentTaskInfo): void {
-    this.fireAndForget(
-      'TaskStarted',
-      {
-        taskId: info.taskId,
-        kind: info.kind,
-        description: info.description,
-        status: info.status,
-        detached: info.detached,
-        startedAt: info.startedAt,
-      },
-      info.kind,
     );
   }
 
@@ -483,15 +451,6 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     );
   }
 
-  private notifyTaskNotification(ctx: AgentTaskNotificationContext): void {
-    const signal = new AbortController().signal;
-    this.fireAndForget(
-      'Notification',
-      { sink: 'context', ...ctx },
-      ctx.notificationType,
-      signal,
-    );
-  }
 }
 
 function toolOutputText(output: ExecutableToolResult['output']): string {

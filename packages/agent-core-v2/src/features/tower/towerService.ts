@@ -14,11 +14,11 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
-import { IAgentTaskService } from '#/agent/task/task';
 import type { AgentTaskInfo } from '#/agent/task/types';
 import { TaskTerminatedNotice } from '#/agent/task/taskOps';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { agentTaskInfo } from '#/agent/task/handler';
 import { registerLegacyStarting } from '#/agent/toolExecutor/legacyHooks';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { IConfigService } from '#/app/config/config';
@@ -106,7 +106,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     @IAgentStateService private readonly agentState: IAgentStateService,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
-    @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
+    @IAgentToolExecutorService private readonly toolExecutor: IAgentToolExecutorService,
     @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
     @ISessionContext private readonly sessionCtx: ISessionContext,
     @IFlagService private readonly flags: IFlagService,
@@ -119,7 +119,6 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     @IEventBus eventBus: IEventBus,
     @ILogService private readonly log: ILogService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
-    @IAgentTaskService private readonly tasks: IAgentTaskService | undefined,
     @ISessionEventBus sessionBus: ISessionEventBus,
     @IBashParserService private readonly bashParser: IBashParserService,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext | undefined,
@@ -221,8 +220,9 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
         if (turnId === undefined) return;
         queueMicrotask(() => {
           if (this.wakeDisposed || !this.isActive || this.loop === undefined) return;
-          if (this.loop.cancel({ turnId }, userCancellationReason())) {
-            this.wakeAbortedForUserPrompt = true;
+          this.wakeAbortedForUserPrompt = true;
+          if (!this.loop.cancel({ turnId }, userCancellationReason())) {
+            this.wakeAbortedForUserPrompt = false;
           }
         });
       }),
@@ -799,7 +799,6 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
         content: [{ type: 'text', text }],
         origin: { kind: 'injection', variant: TOWER_INBOX_WAKE_VARIANT },
       },
-      turnScoped: false,
       onConsume: () => {
         this.inboxWakeHandle = undefined;
         this.inboxWakePending = false;
@@ -890,13 +889,12 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
   }
 
   private activeAgentIds(): ReadonlySet<string> | undefined {
-    if (this.tasks === undefined) return undefined;
     return new Set(
-      this.tasks
-        .list(true)
-        .flatMap((task) =>
-          task.kind === 'agent' && task.agentId !== undefined ? [task.agentId] : [],
-        ),
+      this.toolExecutor.handlers().flatMap((handler) => {
+        if (handler.snapshot().fields.task === undefined) return [];
+        const info = agentTaskInfo(handler);
+        return info.kind === 'agent' && info.agentId !== undefined ? [info.agentId] : [];
+      }),
     );
   }
 

@@ -123,12 +123,15 @@ export class AgentLoopRequestFactory {
         onTrace: input.onTrace,
         onOutcome: input.onOutcome,
       }),
-      prepare: async (signal) => ({
+      prepare: async () => ({
         ...input.profile,
         systemPrompt: config.systemPrompt,
-        tools: await this.prepareTools(signal, config.resolved.modelCapabilities),
       }),
     };
+  }
+
+  baselineTools(): readonly Tool[] {
+    return this.toolSelect.initialTools();
   }
 
   async prepareTools(
@@ -137,6 +140,13 @@ export class AgentLoopRequestFactory {
     base?: readonly Tool[],
   ): Promise<readonly Tool[]> {
     await this.toolSelect.prepareForRequest(signal);
+    return this.toolsForCapabilities(capabilities, base);
+  }
+
+  private toolsForCapabilities(
+    capabilities: ProfileModelContext['modelCapabilities'],
+    base?: readonly Tool[],
+  ): readonly Tool[] {
     const disclosure = this.toolSelect.enabled(capabilities);
     const tools = base ?? this.toolSelect.defaultTools(disclosure);
     if (capabilities.image_in || capabilities.video_in) return tools;

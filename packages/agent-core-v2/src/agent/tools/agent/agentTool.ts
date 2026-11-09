@@ -12,10 +12,8 @@ import { REPEAT_BREAKER_STOP_REASON } from '#/agent/toolDedupe/toolDedupe';
 import type { AgentTaskInfo } from '#/agent/task/types';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { matchesGlobRuleSubject } from '#/tool/rule-match';
-import {
-  IAgentTaskService,
-  type RegisterAgentTaskOptions,
-} from '#/agent/task/task';
+import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { resolveAgentTaskConfig } from '#/agent/task/configSection';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
 import type { ModelCapability } from '#/llm-adapter/contract/capability';
 import {
@@ -92,7 +90,28 @@ import {
   USER_INTERRUPTED_SUBAGENT_MESSAGE,
   type SubagentToolInput,
 } from './agent';
-import { NO_PARTIAL_OUTPUT, SubagentTask, type SubagentHandle } from './subagent-task';
+import type { TokenUsage } from '#human/llm-requester/usage';
+
+export const PARTIAL_OUTPUT_NOTICE =
+  '[partial output] The subagent did not finish this run. Below is the text it wrote before it ended; it is incomplete and unverified.';
+
+export const NO_PARTIAL_OUTPUT =
+  '[partial output] none — the subagent wrote no text in this run before it ended.';
+
+export type SubagentHandle = {
+  readonly agentId: string;
+  readonly profileName: string;
+  readonly parentToolCallId?: string;
+  readonly model?: string;
+  readonly modelSource?: SubagentModelSource;
+  readonly thinkingEffort?: string;
+  readonly completion: Promise<{
+    readonly result: string;
+    readonly usage?: TokenUsage;
+    readonly stopReason?: string;
+  }>;
+  readonly partialOutput?: () => string;
+};
 
 import AGENT_BACKGROUND_DISABLED_DESCRIPTION from './agent-background-disabled.md?raw';
 import AGENT_BACKGROUND_DESCRIPTION from './agent-background-enabled.md?raw';
@@ -133,7 +152,7 @@ export class SubagentTool implements ISubagentTool {
     @IAgentScopeContext scopeContext: IAgentScopeContext,
     @IInstantiationService private readonly instantiationService: IInstantiationService,
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
-    @IAgentTaskService private readonly tasks: IAgentTaskService,
+    @IAgentToolExecutorService private readonly toolExecutor: IAgentToolExecutorService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
@@ -282,6 +301,10 @@ export class SubagentTool implements ISubagentTool {
               ? (this.loop.data().profileName ?? DEFAULT_PROFILE_NAME)
               : DEFAULT_PROFILE_NAME));
     const prefix = args.run_in_background === true ? 'Launching background' : 'Launching';
+    let stop: ((context: {
+      readonly reason: unknown;
+      abandon(result?: ExecutableToolResult): void;
+    }) => void) | undefined;
     return {
       description: `${prefix} ${profileNameForDisplay} agent: ${args.description}`,
       accesses: ToolAccesses.none(),
@@ -293,7 +316,10 @@ export class SubagentTool implements ISubagentTool {
       },
       approvalRule: this.name,
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, profileNameForDisplay),
-      execute: (ctx) => this.execution(args, ctx),
+      stopping: (context) => stop?.(context),
+      execute: (ctx) => this.execution(args, ctx, (next) => {
+        stop = next;
+      }),
     };
   }
 
@@ -444,8 +470,13 @@ export class SubagentTool implements ISubagentTool {
 
   private async execution(
     args: SubagentToolInput,
-    { toolCallId, signal, detach }: ExecutableToolContext,
+    ctx: ExecutableToolContext,
+    setStop: (stop: (context: {
+      readonly reason: unknown;
+      abandon(result?: ExecutableToolResult): void;
+    }) => void) => void,
   ): Promise<ExecutableToolResult> {
+    const { toolCallId, signal, detach, onDetach, write, set, taskId = toolCallId } = ctx;
     try {
       signal.throwIfAborted();
       const runInBackground = args.run_in_background === true;
@@ -472,14 +503,11 @@ export class SubagentTool implements ISubagentTool {
         return { output: BACKGROUND_AGENT_UNAVAILABLE, isError: true };
       }
       const timeoutMs = resolveSubagentTimeoutMs(this.config);
-
       const controller = new AbortController();
       const abortBeforeRegister = (): void => {
         controller.abort(signal.reason);
       };
-      if (!runInBackground) {
-        signal.addEventListener('abort', abortBeforeRegister, { once: true });
-      }
+      signal.addEventListener('abort', abortBeforeRegister, { once: true });
 
       let handle: SubagentHandle;
       try {
@@ -497,39 +525,38 @@ export class SubagentTool implements ISubagentTool {
         throw error;
       }
 
-      let taskId: string;
-      try {
-        const registerOptions: RegisterAgentTaskOptions = {
-          detached: runInBackground,
-          timeoutMs,
-          signal: runInBackground ? undefined : signal,
-          coreDetachedTool: detach !== undefined,
-          detachText: () => formatBackgroundAgentResult(taskId, handle, args.description, allowBackground, true),
-        };
-        taskId = this.tasks.registerTask(
-          new SubagentTask(handle, args.description, controller),
-          registerOptions,
-        );
-        signal.removeEventListener('abort', abortBeforeRegister);
-      } catch (error) {
-        controller.abort();
-        void handle.completion.catch(() => {});
-        signal.removeEventListener('abort', abortBeforeRegister);
-        this.log?.warn('background agent task registration failed', {
-          toolCallId,
-          agentId: handle.agentId,
-          subagentType: handle.profileName,
-          error,
+      let stopCode: string | undefined;
+      let outputWritten = false;
+      const writeOutput = (text: string): void => {
+        if (outputWritten) return;
+        outputWritten = true;
+        if (text.length > 0) write?.(text);
+      };
+      const writePartialOutput = (): void => {
+        const text = handle.partialOutput?.().trim() ?? '';
+        writeOutput(text.length === 0 ? '' : `${PARTIAL_OUTPUT_NOTICE}\n\n${text}`);
+      };
+      let timedOut = false;
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+      let forceHandle: ReturnType<typeof setTimeout> | undefined;
+      const setFields = (status: 'running' | 'completed' | 'failed' | 'timed_out' | 'killed', stopReason?: string): void => {
+        set?.({
+          task: {
+            kind: 'agent',
+            description: args.description,
+            agentId: handle.agentId,
+            subagentType: handle.profileName,
+            parentToolCallId: toolCallId,
+            model: handle.model,
+            thinkingEffort: handle.thinkingEffort,
+            timeoutMs,
+            timedOut: status === 'timed_out' || undefined,
+            stopReason,
+            stopCode,
+          },
         });
-        const message = error instanceof Error ? error.message : String(error);
-        return {
-          output:
-            isError2(error) && error.code === ErrorCodes.TASK_LIMIT_EXCEEDED
-              ? 'Too many background tasks are already running.'
-              : message,
-          isError: true,
-        };
-      }
+      };
+      signal.removeEventListener('abort', abortBeforeRegister);
 
       const requester = this.agentLifecycle.handleOf(this.callerAgentId);
       if (requester !== undefined) {
@@ -548,84 +575,142 @@ export class SubagentTool implements ISubagentTool {
           ?.dispatch(new SubagentStarted({ subagentId: handle.agentId }));
       }
 
+      onDetach?.(() => {
+        signal.removeEventListener('abort', abortBeforeRegister);
+        return {
+          content: [{
+            type: 'text',
+            text: formatBackgroundAgentResult(taskId, handle, args.description, allowBackground, true),
+          }],
+        };
+      });
+      setFields('running');
       if (runInBackground) {
-        const output = formatBackgroundAgentResult(taskId, handle, args.description, allowBackground, false);
-        if (detach !== undefined) {
-          const task = this.tasks.prepareCoreDetach(taskId, toolCallId);
-          if (task !== undefined) this.loop.detachTool(task, output);
+        detach?.(formatBackgroundAgentResult(taskId, handle, args.description, allowBackground, false));
+      }
+      let rejectDeadline: (error: Error) => void = () => {};
+      const deadline = new Promise<never>((_resolve, reject) => {
+        rejectDeadline = reject;
+      });
+      timeoutHandle = setTimeout(() => {
+        timedOut = true;
+        controller.abort('Timed out');
+        const graceMs = resolveAgentTaskConfig(this.config)?.killGracePeriodMs ?? 5_000;
+        forceHandle = setTimeout(() => {
+          writePartialOutput();
+          rejectDeadline(new Error('Timed out'));
+        }, graceMs);
+        forceHandle.unref?.();
+      }, timeoutMs);
+      timeoutHandle.unref?.();
+      setStop(({ reason, abandon }) => {
+        controller.abort(reason);
+        const graceMs = resolveAgentTaskConfig(this.config)?.killGracePeriodMs ?? 5_000;
+        forceHandle = setTimeout(() => {
+          writePartialOutput();
+          setFields('killed', typeof reason === 'string' ? reason : undefined);
+          abandon();
+        }, graceMs);
+        forceHandle.unref?.();
+      });
+      let status: 'completed' | 'failed' | 'timed_out' | 'killed';
+      let stopReason: string | undefined;
+      const requestAbort = (): void => {
+        controller.abort(signal.reason);
+      };
+      if (signal.aborted) requestAbort();
+      else signal.addEventListener('abort', requestAbort, { once: true });
+      try {
+        const outcome = await Promise.race([handle.completion, deadline]);
+        write?.(outcome.result);
+        stopCode = outcome.stopReason;
+        status = 'completed';
+        stopReason = completedSettleReason(outcome.stopReason);
+      } catch (error) {
+        if (signal.aborted && (isAbortError(error) || error === signal.reason)) {
+          writePartialOutput();
+          status = 'killed';
+          const reason = signal.reason;
+          stopReason = typeof reason === 'string'
+            ? reason
+            : reason instanceof Error
+              ? reason.message
+              : String(reason);
         } else {
-          this.tasks.detach(taskId, output);
-          return { output };
+          stopCode = stopCodeOf(error);
+          writePartialOutput();
+          status = 'failed';
+          stopReason = error instanceof Error ? error.message : String(error);
         }
+      } finally {
+        signal.removeEventListener('abort', requestAbort);
+        if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+        if (forceHandle !== undefined) clearTimeout(forceHandle);
       }
-      if (detach === undefined) {
-        return await this.directForegroundResult(taskId, handle, args.description, allowBackground, timeoutMs);
-      }
-      await this.tasks.wait(taskId, Number.POSITIVE_INFINITY);
-      return await this.formatForegroundResult(taskId, handle, timeoutMs);
+      if (timedOut) status = 'timed_out';
+      setFields(status, stopReason);
+      return this.formatForegroundResult(taskId, handle, timeoutMs, {
+        kind: 'agent',
+        taskId,
+        description: args.description,
+        status,
+        stopReason,
+        startedAt: 0,
+        endedAt: null,
+        agentId: handle.agentId,
+        subagentType: handle.profileName,
+        parentToolCallId: toolCallId,
+        model: handle.model,
+        thinkingEffort: handle.thinkingEffort,
+        stopCode,
+      });
     } catch (error) {
       return { output: `subagent error: ${launchErrorMessage(error, signal)}`, isError: true };
     }
   }
 
-  private async directForegroundResult(
-    taskId: string,
-    handle: SubagentHandle,
-    description: string,
-    allowBackground: boolean,
-    timeoutMs: number,
-  ): Promise<ExecutableToolResult> {
-    let notifyDetached: (() => void) | undefined;
-    const detached = new Promise<void>((resolve) => {
-      notifyDetached = resolve;
-    });
-    const subscription = this.tasks.onDidChangeTask((info) => {
-      if (info.taskId === taskId && info.detached === true) notifyDetached?.();
-    });
-    try {
-      const current = this.tasks.getTask(taskId);
-      if (current?.status === 'running' && current.detached === true) {
-        return { output: formatBackgroundAgentResult(taskId, handle, description, allowBackground, true) };
-      }
-      const outcome = await Promise.race([
-        this.tasks.wait(taskId, Number.POSITIVE_INFINITY).then(() => 'terminal' as const),
-        detached.then(() => 'detached' as const),
-      ]);
-      if (outcome === 'detached') {
-        return { output: formatBackgroundAgentResult(taskId, handle, description, allowBackground, true) };
-      }
-      return await this.formatForegroundResult(taskId, handle, timeoutMs);
-    } finally {
-      subscription.dispose();
-    }
-  }
-
-  private async formatForegroundResult(
+  private formatForegroundResult(
     taskId: string,
     handle: SubagentHandle,
     timeoutMs: number,
-  ): Promise<ExecutableToolResult> {
-    const info = this.tasks.getTask(taskId);
-    const stopCode = info?.kind === 'agent' ? info.stopCode : undefined;
-    if (info?.status === 'completed') {
+    info: AgentTaskInfo,
+  ): ExecutableToolResult {
+    const output = this.toolExecutor.handler(taskId)?.output(Number.MAX_SAFE_INTEGER).preview ?? '';
+    const stopCode = info.kind === 'agent' ? info.stopCode : undefined;
+    if (info.status === 'completed') {
       return {
-        output: formatForegroundAgentSuccess(handle, await this.tasks.readOutput(taskId), stopCode),
+        output: formatForegroundAgentSuccess(handle, output, stopCode),
       };
     }
-    const timedOut = info?.status === 'timed_out';
-    const message = timedOut
+    const message = info.status === 'timed_out'
       ? `Agent timed out after ${formatSubagentTimeoutDescription(timeoutMs)}.`
-      : formatSubagentStoppedMessage(info?.stopReason);
+      : formatSubagentStoppedMessage(info.stopReason);
     return {
       output: formatForegroundAgentFailure(
         handle,
         message,
         failureStopReason(info, stopCode),
-        await this.tasks.readOutput(taskId),
+        output,
       ),
       isError: true,
     };
   }
+}
+
+const REPEAT_BREAKER_SETTLE_REASON =
+  'stopped by the repeat breaker after issuing the same tool call repeatedly; its output is a handoff, not a finished result';
+
+function stopCodeOf(error: unknown): string | undefined {
+  if (!isError2(error)) return undefined;
+  if (error.code === ErrorCodes.AGENT_NO_FINAL_MESSAGE) {
+    const stopReason = error.details?.['stopReason'];
+    if (typeof stopReason === 'string') return stopReason;
+  }
+  return error.code;
+}
+
+function completedSettleReason(stopReason: string | undefined): string | undefined {
+  return stopReason === REPEAT_BREAKER_STOP_REASON ? REPEAT_BREAKER_SETTLE_REASON : undefined;
 }
 
 type SubagentStopReason =

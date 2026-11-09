@@ -2873,7 +2873,7 @@ describe('AgentTowerService', () => {
         { cwd: repo } as unknown as ISessionContext,
         makeAgentScopeContext({ agentId, agentScope: testWireScope('wire', 'tower-test'), generation: 0 }),
         bus,
-        { list: () => [] } as unknown as IAgentTaskService,
+        { handlers: () => [] } as unknown as IAgentToolExecutorService,
         { handleOf: () => undefined } as unknown as IAgentLifecycleService,
       );
       const result = await executeTool(tool, { turnId: 0, toolCallId: 'call_send', args: input, signal });
@@ -2953,11 +2953,11 @@ describe('AgentTowerService', () => {
         makeAgentScopeContext({ agentId: 'agent-r1', agentScope: testWireScope('wire', 'tower-test'), generation: 0 }),
         bus,
         {
-          list: () => {
+          handlers: () => {
             lockStates.push(existsSync(join(repo, `${STATE_FILE}.lock`)));
             return [];
           },
-        } as unknown as IAgentTaskService,
+        } as unknown as IAgentToolExecutorService,
         {
           handleOf: (agentId: string) =>
             agentId === 'agent-w1'
@@ -3021,7 +3021,7 @@ describe('AgentTowerService', () => {
         { cwd: repo } as unknown as ISessionContext,
         makeAgentScopeContext({ agentId: 'agent-w1', agentScope: testWireScope('wire', 'tower-test'), generation: 0 }),
         bus,
-        { list: () => [] } as unknown as IAgentTaskService,
+        { handlers: () => [] } as unknown as IAgentToolExecutorService,
         { handleOf: () => undefined } as unknown as IAgentLifecycleService,
       );
 
@@ -3052,7 +3052,7 @@ describe('AgentTowerService', () => {
         { cwd: repo } as unknown as ISessionContext,
         makeAgentScopeContext({ agentId: 'agent-w1', agentScope: testWireScope('wire', 'tower-test'), generation: 0 }),
         bus,
-        { list: () => [] } as unknown as IAgentTaskService,
+        { handlers: () => [] } as unknown as IAgentToolExecutorService,
         { handleOf: () => undefined } as unknown as IAgentLifecycleService,
       );
       const publish = vi.spyOn(bus, 'publish').mockImplementationOnce(() => {
@@ -3440,36 +3440,65 @@ describe('AgentTowerService', () => {
       expect(loop.snapshot().hasPendingRequests).toBe(false);
     });
 
-    it('drops a queued wake when tower mode exits before it is consumed', async () => {
-      const tower = ix.get(IAgentTowerService);
-      await tower.enter();
+    it('does not deliver a pending wake when tower mode exits before rendering completes', async () => {
+      const realCtx = createTestAgent(appService(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID)));
+      await realCtx.restorePersisted();
+      const realLoop = realCtx.get(IAgentLoopService);
+      let release!: () => void;
+      const pending = new Promise<void>((resolve) => { release = resolve; });
+      const originalLoad = TowerStore.prototype.load;
+      const load = vi.spyOn(TowerStore.prototype, 'load');
+      try {
+        const realTower = realCtx.get(IAgentTowerService);
+        await realTower.enter();
+        load.mockImplementationOnce(async function (this: TowerStore) {
+          await pending;
+          return originalLoad.call(this);
+        });
+        realCtx.get(ISessionEventBus).publish(new TowerInboxSent({ from: 'w1', to: 'tower', subject: 'need wider scope' }));
+        await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(1));
 
-      publishInbox({ from: 'w1', to: 'tower', subject: 'need wider scope' });
-      await flushWake();
-      expect(loop.snapshot().hasPendingRequests).toBe(true);
+        await realTower.exit();
+        release();
+        await delay(0);
+        await realLoop.settled();
 
-      await tower.exit();
-
-      expect(loop.snapshot().hasPendingRequests).toBe(false);
-      expect(drainWakeMessages()).toEqual([]);
+        expect(realLoop.snapshot().hasPendingRequests).toBe(false);
+        expect(realLoop.history()).toEqual([]);
+        expect(realCtx.allEvents.filter((entry) => entry.type === '[rpc]' && entry.event === 'turn.started')).toEqual([]);
+      } finally {
+        release();
+        load.mockRestore();
+        await realCtx.dispose();
+      }
     });
 
-    it('drops a queued wake when the tower becomes unavailable at runtime', async () => {
-      const tower = ix.get(IAgentTowerService);
-      await tower.enter();
-
-      publishInbox({ from: 'w1', to: 'tower', subject: 'need wider scope' });
-      await flushWake();
-      expect(loop.snapshot().hasPendingRequests).toBe(true);
-
-      _setTowerFeatureAssembledForTests(false);
+    it('keeps a materialized wake when tower mode exits', async () => {
+      const realCtx = createTestAgent(appService(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID)));
+      await realCtx.restorePersisted();
+      const realLoop = realCtx.get(IAgentLoopService);
+      const wakeTurns = () => realCtx.allEvents.filter((entry) => entry.type === '[rpc]' && entry.event === 'turn.started');
       try {
-        fireUnitsChanged();
+        const realTower = realCtx.get(IAgentTowerService);
+        await realTower.enter();
+        realCtx.mockNextResponse({ type: 'text', text: 'wake done' });
+        realCtx.get(ISessionEventBus).publish(new TowerInboxSent({ from: 'w1', to: 'tower', subject: 'need wider scope' }));
+        await vi.waitFor(() => {
+          expect(realLoop.history().filter((message) =>
+            message.origin?.kind === 'injection' && message.origin.variant === TOWER_INBOX_WAKE_VARIANT
+          )).toHaveLength(1);
+        });
+        await realLoop.settled();
+        const materialized = [...realLoop.history()];
+        expect(wakeTurns()).toHaveLength(1);
 
-        expect(loop.snapshot().hasPendingRequests).toBe(false);
-        expect(drainWakeMessages()).toEqual([]);
+        await realTower.exit();
+        await realLoop.settled();
+
+        expect(realLoop.history()).toEqual(materialized);
+        expect(wakeTurns()).toHaveLength(1);
       } finally {
-        _setTowerFeatureAssembledForTests(true);
+        await realCtx.dispose();
       }
     });
 
@@ -3576,42 +3605,66 @@ describe('AgentTowerService', () => {
     });
 
     it('re-arms the inbox wake after the interrupting user turn ends', async () => {
-      const tower = ix.get(IAgentTowerService);
-      await tower.enter();
-
-      publishInbox({
-        from: 'w1',
-        to: 'tower',
-        subject: 'need review',
-        messageId: 'msg-rearm',
-        file: '.tower/comms/inbox/rearm.md',
+      const realCtx = createTestAgent(appService(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID)));
+      await realCtx.restorePersisted();
+      const realLoop = realCtx.get(IAgentLoopService);
+      const quiescence = realLoop.tryAcquireQuiescence();
+      let release!: () => void;
+      let markStarted!: () => void;
+      const started = new Promise<void>((resolve) => { markStarted = resolve; });
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      let armed = true;
+      realLoop.hooks.onWillBeginStep.register('test-hold-inbox-wake', async (_hookCtx, next) => {
+        if (armed) {
+          armed = false;
+          markStarted();
+          await gate;
+        }
+        await next();
       });
-      await flushWake();
-      expect(drainWakeMessages()).toHaveLength(1);
+      try {
+        const realTower = realCtx.get(IAgentTowerService);
+        await realTower.enter();
+        realCtx.get(ISessionEventBus).publish(new TowerInboxSent({
+          from: 'w1',
+          to: 'tower',
+          subject: 'need review',
+          messageId: 'msg-rearm',
+          file: '.tower/comms/inbox/rearm.md',
+        }));
+        await vi.waitFor(() => expect(realLoop.snapshot().hasPendingRequests).toBe(true));
+        realCtx.mockNextResponse({ type: 'text', text: 'user done' });
+        realCtx.mockNextResponse({ type: 'text', text: 'rearmed done' });
+        quiescence?.dispose();
+        await started;
+        const cancel = vi.spyOn(realLoop, 'cancel');
+        const user = realCtx.rpc.prompt({ input: [{ type: 'text', text: 'interrupt' }] });
+        await vi.waitFor(() => expect(cancel).toHaveBeenCalledTimes(1));
+        expect(cancel.mock.calls[0]?.[0]).toEqual({ turnId: 0 });
+        cancel.mockRestore();
+        release();
+        await user;
+        await vi.waitFor(() => {
+          const count = realLoop.history().filter((message) =>
+            message.origin?.kind === 'injection' && message.origin.variant === TOWER_INBOX_WAKE_VARIANT
+          ).length;
+          expect(count).toBeGreaterThanOrEqual(2);
+        });
+        await realLoop.settled();
 
-      const wakeTurn = loop.startTurn();
-      publishAsMain(
-        ix,
-        new TurnStarted({
-          agentId: 'main',
-          turnId: wakeTurn.id,
-          origin: { kind: 'injection', variant: TOWER_INBOX_WAKE_VARIANT },
-        }),
-      );
-      publishUserPrompt('p1');
-      await flushWake();
-      expect(loop.cancels).toHaveLength(1);
-
-      publishAsMain(ix, new TurnEnded({ agentId: 'main', turnId: wakeTurn.id, reason: 'cancelled' }));
-      publishAsMain(ix, new TurnEnded({ agentId: 'main', turnId: 99, reason: 'completed' }));
-      await flushWake();
-
-      const rearmed = drainWakeMessages();
-      expect(rearmed).toHaveLength(1);
-      expect(wakeText(rearmed[0]!)).toContain('1 new tower inbox message');
-      expect(wakeText(rearmed[0]!)).toContain('w1');
-      expect(wakeText(rearmed[0]!)).toContain('messageId=msg-rearm');
-      expect(wakeText(rearmed[0]!)).toContain('file=.tower/comms/inbox/rearm.md');
+        const rearmed = realLoop.history().filter((message) =>
+          message.origin?.kind === 'injection' && message.origin.variant === TOWER_INBOX_WAKE_VARIANT
+        );
+        expect(rearmed.length).toBeGreaterThanOrEqual(2);
+        expect(wakeText(rearmed.at(-1)!)).toContain('1 new tower inbox message');
+        expect(wakeText(rearmed.at(-1)!)).toContain('w1');
+        expect(wakeText(rearmed.at(-1)!)).toContain('messageId=msg-rearm');
+        expect(wakeText(rearmed.at(-1)!)).toContain('file=.tower/comms/inbox/rearm.md');
+      } finally {
+        release();
+        quiescence?.dispose();
+        await realCtx.dispose();
+      }
     });
   });
 

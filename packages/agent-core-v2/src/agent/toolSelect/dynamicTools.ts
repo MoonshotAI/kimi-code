@@ -101,7 +101,6 @@ export function shapeUnsupportedDynamicToolContext(
 
 export function collectLoadedDynamicTools(
   history: readonly ContextMessage[],
-  current: readonly ToolSelectTool[],
 ): ReadonlyMap<string, ToolDescription> {
   const loaded = new Map<string, ToolDescription>();
   for (const message of history) {
@@ -119,6 +118,14 @@ export function collectLoadedDynamicTools(
     if (!isDynamicToolSchemaMessage(message)) continue;
     for (const tool of message.tools ?? []) loaded.set(tool.name, tool);
   }
+  return loaded;
+}
+
+export function collectCurrentDynamicTools(
+  history: readonly ContextMessage[],
+  current: readonly ToolSelectTool[],
+): ReadonlyMap<string, ToolDescription> {
+  const loaded = new Map(collectLoadedDynamicTools(history));
   const currentByName = new Map(current.map((tool) => [tool.name, tool]));
   for (const [name, schema] of loaded) {
     const currentTool = currentByName.get(name);
@@ -135,9 +142,8 @@ export function collectLoadedDynamicTools(
 
 export function collectLoadedDynamicToolNames(
   history: readonly ContextMessage[],
-  current: readonly ToolSelectTool[],
 ): Set<string> {
-  return new Set(collectLoadedDynamicTools(history, current).keys());
+  return new Set(collectLoadedDynamicTools(history).keys());
 }
 
 const TOOLS_ADDED_BLOCK = /<tools_added>\n?([\s\S]*?)\n?<\/tools_added>/g;

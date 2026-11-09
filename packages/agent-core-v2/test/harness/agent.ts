@@ -133,7 +133,9 @@ import { ILogOptions } from '#/_base/log/logConfig';
 import {
   WIRE_MIN_READER_VERSION,
   WIRE_PROTOCOL_VERSION,
-  AgentTaskRuntime,
+  AgentTaskRequestService,
+  AgentTaskHistoryService,
+  IAgentTaskHistoryService,
   AgentTaskOutputService,
   IAgentTaskOutputService,
   AgentExternalHooksService,
@@ -757,7 +759,8 @@ export function permissionRulesServices(
 
 export function taskServices(): TestAgentServiceOverride {
   return [
-    agentService(IAgentTaskService, new SyncDescriptor(AgentTaskRuntime)),
+    agentService(IAgentTaskService, new SyncDescriptor(AgentTaskRequestService)),
+    agentService(IAgentTaskHistoryService, new SyncDescriptor(AgentTaskHistoryService)),
     agentService(IAgentTaskOutputService, new SyncDescriptor(AgentTaskOutputService)),
   ];
 }
@@ -1433,7 +1436,11 @@ export class AgentTestContext {
             );
             reg.defineDescriptor(
               IAgentTaskService,
-              new SyncDescriptor(AgentTaskRuntime),
+              new SyncDescriptor(AgentTaskRequestService),
+            );
+            reg.defineDescriptor(
+              IAgentTaskHistoryService,
+              new SyncDescriptor(AgentTaskHistoryService),
             );
             reg.defineDescriptor(
               IAgentTaskOutputService,
@@ -1509,6 +1516,10 @@ export class AgentTestContext {
 
   get context(): IAgentLoopService {
     return this.get(IAgentLoopService);
+  }
+
+  get loopStarted(): boolean {
+    return this.runtimeStarted;
   }
 
   get tokenCounting() {
@@ -1588,6 +1599,7 @@ export class AgentTestContext {
     const loop = this.context as IAgentLoopService & { resetLoop(): Promise<void> };
     this.persistedRestored = this.dispatcher.restore().then(() => loop.resetLoop());
     await this.persistedRestored;
+    this.runtimeStarted = true;
   }
 
   private async dispatchRecordsOnly(records: readonly WireRecord[]): Promise<void> {
@@ -2283,7 +2295,7 @@ export class AgentTestContext {
       promptWithSkills: (payload) => this.get(IAgentSkillService).promptWithSkills(payload),
       steer: (payload) => this.get(IAgentLoopService).notifyClient({
         message: { role: 'user', content: [...payload.input] },
-        meta: { origin: { kind: 'user' }, tracked: true },
+        meta: { origin: { kind: 'user' } },
       }),
       cancel: (payload) =>
         this.get(IAgentLoopService).cancel(

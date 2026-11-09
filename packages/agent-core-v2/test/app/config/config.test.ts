@@ -72,7 +72,6 @@ import { type ThinkingConfig } from '#/llm-adapter/model/thinking';
 import {
   BASH_TASK_TIMEOUT_S_ENV,
   KEEP_ALIVE_ON_EXIT_ENV,
-  MAX_RUNNING_TASKS_ENV,
   PRINT_BACKGROUND_MODE_ENV,
   PRINT_MAX_TURNS_ENV,
   PRINT_WAIT_CEILING_S_ENV,
@@ -1574,7 +1573,7 @@ describe('task config section', () => {
       '',
       'config.toml',
       new TextEncoder().encode(
-        '[background]\nmax_running_tasks = 3\nkill_grace_period_ms = 25\n',
+        '[background]\nbash_task_timeout_s = 3\nkill_grace_period_ms = 25\n',
       ),
     );
     ix.stub(ILogService, stubLog());
@@ -1587,7 +1586,7 @@ describe('task config section', () => {
     await config.ready;
 
     expect(resolveAgentTaskConfig(config)).toEqual({
-      maxRunningTasks: 3,
+      bashTaskTimeoutS: 3,
       killGracePeriodMs: 25,
       keepAliveOnExit: true,
     });
@@ -1595,35 +1594,35 @@ describe('task config section', () => {
     disposables.dispose();
   });
 
-  it('re-applies the maxRunningTasks env binding on every get() and ignores invalid env', async () => {
+  it('re-applies the bashTaskTimeoutS env binding on every get() and ignores invalid env', async () => {
     const env: Record<string, string> = {};
     const { config, disposables } = await createTaskConfig(env);
 
-    expect(config.get<AgentTaskConfig>('task')?.maxRunningTasks).toBeUndefined();
+    expect(config.get<AgentTaskConfig>('task')?.bashTaskTimeoutS).toBeUndefined();
 
-    env[MAX_RUNNING_TASKS_ENV] = 'abc';
-    expect(config.get<AgentTaskConfig>('task')?.maxRunningTasks).toBeUndefined();
-    env[MAX_RUNNING_TASKS_ENV] = '0';
-    expect(config.get<AgentTaskConfig>('task')?.maxRunningTasks).toBeUndefined();
+    env[BASH_TASK_TIMEOUT_S_ENV] = 'abc';
+    expect(config.get<AgentTaskConfig>('task')?.bashTaskTimeoutS).toBeUndefined();
+    env[BASH_TASK_TIMEOUT_S_ENV] = '0';
+    expect(config.get<AgentTaskConfig>('task')?.bashTaskTimeoutS).toBe(0);
 
-    env[MAX_RUNNING_TASKS_ENV] = '4';
-    expect(config.get<AgentTaskConfig>('task')?.maxRunningTasks).toBe(4);
-    expect(config.get<AgentTaskConfig>('background')?.maxRunningTasks).toBe(4);
+    env[BASH_TASK_TIMEOUT_S_ENV] = '4';
+    expect(config.get<AgentTaskConfig>('task')?.bashTaskTimeoutS).toBe(4);
+    expect(config.get<AgentTaskConfig>('background')?.bashTaskTimeoutS).toBe(4);
 
-    env[MAX_RUNNING_TASKS_ENV] = '2';
-    expect(config.get<AgentTaskConfig>('task')?.maxRunningTasks).toBe(2);
+    env[BASH_TASK_TIMEOUT_S_ENV] = '2';
+    expect(config.get<AgentTaskConfig>('task')?.bashTaskTimeoutS).toBe(2);
 
     disposables.dispose();
   });
 
-  it('lets the maxRunningTasks env binding override the config value', async () => {
-    const env: Record<string, string> = { [MAX_RUNNING_TASKS_ENV]: '8' };
+  it('lets the bashTaskTimeoutS env binding override the config value', async () => {
+    const env: Record<string, string> = { [BASH_TASK_TIMEOUT_S_ENV]: '8' };
     const { config, disposables } = await createTaskConfig(
       env,
-      '[background]\nmax_running_tasks = 3\n',
+      '[background]\nbash_task_timeout_s = 3\n',
     );
 
-    expect(resolveAgentTaskConfig(config)?.maxRunningTasks).toBe(8);
+    expect(resolveAgentTaskConfig(config)?.bashTaskTimeoutS).toBe(8);
 
     disposables.dispose();
   });
@@ -1631,26 +1630,26 @@ describe('task config section', () => {
   it('restores env-owned fields to the raw value on set() while the env var is set', async () => {
     const env: Record<string, string> = {
       [KEEP_ALIVE_ON_EXIT_ENV]: 'true',
-      [MAX_RUNNING_TASKS_ENV]: '8',
+      [BASH_TASK_TIMEOUT_S_ENV]: '8',
     };
     const { config, disposables } = await createTaskConfig(
       env,
-      '[background]\nmax_running_tasks = 3\n',
+      '[background]\nbash_task_timeout_s = 3\n',
     );
 
     await config.set('background', {
       keepAliveOnExit: true,
-      maxRunningTasks: 8,
+      bashTaskTimeoutS: 8,
       killGracePeriodMs: 25,
     });
 
     expect(config.get<AgentTaskConfig>('background')).toEqual({
       keepAliveOnExit: true,
-      maxRunningTasks: 8,
+      bashTaskTimeoutS: 8,
       killGracePeriodMs: 25,
     });
     expect(config.inspect<AgentTaskConfig>('background').userValue).toEqual({
-      maxRunningTasks: 3,
+      bashTaskTimeoutS: 3,
       killGracePeriodMs: 25,
     });
 

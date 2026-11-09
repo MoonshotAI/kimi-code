@@ -3,7 +3,6 @@ import type { TokenUsage } from '#human/llm-requester/usage';
 import { Error2, ErrorCodes } from '#/errors';
 import { linkAbortSignal } from '#/_base/utils/abort';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
-import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { Event2 } from '#/app/event/event2';
@@ -93,17 +92,18 @@ export class SessionSwarmService implements ISessionSwarmService {
     const unlinks: Array<() => void> = [];
     const memberControllers = new Map<SessionSwarmTask, AbortController>();
     const linkedTasks: SessionSwarmTask<T>[] = tasks.map((task) => {
-      if (task.signal !== undefined) unlinks.push(linkAbortSignal(task.signal, controller));
       const memberController = new AbortController();
+      if (task.signal !== undefined) unlinks.push(linkAbortSignal(task.signal, memberController));
       unlinks.push(linkAbortSignal(controller.signal, memberController));
       const linked = { ...task, signal: memberController.signal };
       memberControllers.set(linked, memberController);
       return linked;
     });
+    const caller = this.agentLifecycle.handleOf(callerAgentId);
     const members = new SwarmMemberTasks(
-      this.agentLifecycle.handleOf(callerAgentId)?.accessor.get(IAgentTaskService),
+      caller?.accessor.get(IEventDispatcher),
+      callerAgentId,
       linkedTasks,
-      (member, reason) => memberControllers.get(member)?.abort(reason),
     );
     const terminalized = new Set<string>();
     const terminalize: TerminalizeSubagent = (agentId, event) => {

@@ -311,6 +311,7 @@ export function stubToolExecutor(): IAgentToolExecutorService {
     executor: new ToolExecutor([]),
     registerHook: () => toDisposable(() => {}),
     registerLegacyStarting: () => toDisposable(() => {}),
+    handlers: () => [],
     handler: () => undefined,
     handlerForCall: () => undefined,
     release: () => {},

@@ -31,7 +31,7 @@ import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { defineState } from '#/state/state';
 import { summarizeProjectionRepairs, type ProjectionAnomaly } from './projection';
 import { hasStrictStructureRecovery } from './projectionPolicy';
-import { llmToolsSnapshotPayload } from './llmRequestOps';
+import { llmRequestTraceKey, LlmToolsSnapshot, llmToolsSnapshotPayload } from './llmRequestOps';
 import {
   agentLLMRequestLogFields,
   type AgentLLMRequestLogFields,
@@ -106,6 +106,7 @@ export class AgentLoopRequestObserver {
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
+    if (!this.states.has(llmRequestTraceKey)) this.states.contributeState(llmRequestTraceKey);
     this.states.contributeState(contextProjectorLastRepairSignatureKey);
     this.states.contributeState(llmRequesterLastConfigLogSignatureKey);
     this.states.contributeState(llmRequesterLastMeasuredRequestKey);
@@ -174,9 +175,17 @@ export class AgentLoopRequestObserver {
       messages: attemptInput.messages,
       fields,
     };
+    const toolsSnapshot = llmToolsSnapshotPayload(logInput.tools);
+    if (!this.states.get(llmRequestTraceKey).seenToolsHashes.includes(toolsSnapshot.hash)) {
+      void this.dispatcher.dispatch(new LlmToolsSnapshot({
+        agentId: this.scopeContext.agentId,
+        hash: toolsSnapshot.hash,
+        tools: toolsSnapshot.tools,
+      }));
+    }
     this.logRequest(request, logInput);
     observation.recorded = {
-      toolsHash: llmToolsSnapshotPayload(logInput.tools).hash,
+      toolsHash: toolsSnapshot.hash,
       systemPromptHash: fingerprint(logInput.systemPrompt),
       messageCount: logInput.messages.length,
       historyHash: fingerprint(JSON.stringify(logInput.messages)),

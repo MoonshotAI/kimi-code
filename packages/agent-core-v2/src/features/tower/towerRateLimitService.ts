@@ -101,11 +101,7 @@ export class TowerRateLimitService extends Disposable implements ITowerRateLimit
 
   budget(): number {
     this.governor.maybeRecover();
-    const maxRunningTasks = resolveAgentTaskConfig(this.config)?.maxRunningTasks;
-    return Math.max(
-      1,
-      Math.min(this.governor.getCapacity(), maxRunningTasks ?? TOWER_DEFAULT_MAX_RUNNING_AGENTS),
-    );
+    return Math.max(1, Math.min(this.governor.getCapacity(), TOWER_DEFAULT_MAX_RUNNING_AGENTS));
   }
 
   acquire(): { readonly ok: true } | { readonly ok: false; readonly reason: string } {

@@ -38,6 +38,7 @@ describe('loop.requester', () => {
   it('creates one execution per turn and fills live history and policies', async () => {
     const seen: LlmRequest[] = [];
     const profiles: LoopProfile[] = [];
+    const tools = [{ name: 'baseline', description: 'baseline tool', parameters: { type: 'object', properties: {} } }];
     const loop = createLoop({
       createTurnExecution: ({ profile }) => {
         profiles.push(profile);
@@ -50,7 +51,9 @@ describe('loop.requester', () => {
         };
       },
       executor: noopExecutor,
+      input: { profile: { tools } },
     });
+    expect('setTools' in loop).toBe(false);
     const resolver: LlmResolver = { id: 'probe', resolve: async (request) => request };
     const recovery: LlmRecovery = { propose: () => undefined };
     const retryable: LlmRetryable = () => true;
@@ -62,6 +65,7 @@ describe('loop.requester', () => {
     expect(profiles).toHaveLength(1);
     expect(seen).toHaveLength(1);
     expect(seen[0]?.model.spec).toEqual(spec);
+    expect(seen[0]?.profile?.tools).toEqual(tools);
     expect(seen[0]?.content.messages.map((message) => extractText(message))).toEqual(['hello']);
     expect(listOf(seen[0]?.policy?.resolvers)).toEqual([resolver]);
     expect(listOf(seen[0]?.policy?.recoveries)).toEqual([recovery]);
@@ -77,6 +81,8 @@ describe('loop.requester', () => {
     expect(seen[1]?.content.messages.map((message) => extractText(message))).toEqual(['hello', 'reply', 'again']);
     expect(listOf(seen[1]?.policy?.resolvers)).toEqual([]);
     expect(loop.turnExecution).toBeUndefined();
+    expect('setTools' in loop).toBe(false);
+    expect(loop.state.profile.tools).toEqual(tools);
     await loop.close();
   });
 

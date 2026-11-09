@@ -101,7 +101,7 @@ describe('Agent loop', () => {
       [wire] context.append_message      { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "toolCalls": [], "id": "<msg-1>", "origin": { "kind": "user" } }, "time": "<time>" }
       [wire] plugin.session_start        { "agentId": "main", "content": null, "time": "<time>" }
       [wire] tool_select.initialized     { "agentId": "main", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Read", "ReadMediaFile", "select_tools", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
-      [wire] llm.tools_snapshot          { "agentId": "main", "hash": "<tools-hash>", "tools": [], "time": "<time>" }
+      [wire] llm.tools_snapshot          { "agentId": "main", "hash": "<tools-hash>", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Read", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
       [emit] thinking.delta              { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "<think-1>", "block": 0 }
       [emit] assistant.delta             { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "<text-1>", "block": 1 }
       [emit] thinking.delta              { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "" }
@@ -116,7 +116,7 @@ describe('Agent loop', () => {
     `);
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
     system: <system-prompt>
-    tools: []
+    tools: Agent, AgentSwarm, AskUserQuestion, Bash, CreateGoal, CronCreate, CronDelete, CronList, Edit, ExitPlanMode, FetchURL, GetGoal, Glob, Grep, Read, SetGoalBudget, Skill, TaskList, TaskOutput, TaskStop, TodoList, UpdateGoal, WaitFor, Write
     messages:
       user: text "Hello"
   `);
@@ -509,7 +509,7 @@ describe('Agent loop', () => {
       [wire] context.append_message          { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ], "toolCalls": [], "id": "<msg-1>", "origin": { "kind": "user" } }, "time": "<time>" }
       [wire] plugin.session_start            { "agentId": "main", "content": null, "time": "<time>" }
       [wire] tool_select.initialized         { "agentId": "main", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Lookup", "Read", "ReadMediaFile", "select_tools", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
-      [wire] llm.tools_snapshot              { "agentId": "main", "hash": "<tools-hash>", "tools": [ "Lookup" ], "time": "<time>" }
+      [wire] llm.tools_snapshot              { "agentId": "main", "hash": "<tools-hash>", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Read", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
       [emit] assistant.delta                 { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "I will look it up.", "block": 0 }
       [emit] tool.call.delta                 { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "name": "Lookup", "argumentsPart": "{\\"query\\":\\"moon\\"}" }
       [emit] context.spliced                 { "time": "<time>", "agentId": "main", "start": 1, "deleteCount": 0, "messages": [ { "role": "assistant", "content": [ { "type": "text", "text": "I will look it up." } ], "toolCalls": [ { "type": "function", "id": "call_lookup", "name": "Lookup", "arguments": "{\\"query\\":\\"moon\\"}" } ], "providerMessageId": "mock-1", "usage": { "inputOther": 4, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 } } ] }
@@ -523,7 +523,7 @@ describe('Agent loop', () => {
     `);
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
     system: <system-prompt>
-    tools: Lookup
+    tools: Agent, AgentSwarm, AskUserQuestion, Bash, CreateGoal, CronCreate, CronDelete, CronList, Edit, ExitPlanMode, FetchURL, GetGoal, Glob, Grep, Read, SetGoalBudget, Skill, TaskList, TaskOutput, TaskStop, TodoList, UpdateGoal, WaitFor, Write
     messages:
       user: text "Look up moon"
   `);
@@ -1185,7 +1185,7 @@ describe('Agent loop', () => {
       }).turn;
       const explicit = submitPromptTurn(localLoop, {
         message: { role: 'user', content: [{ type: 'text', text: 'explicitly queued' }] },
-        meta: { origin: { kind: 'user' }, tracked: true },
+        meta: { origin: { kind: 'user' } },
       }).turn;
       await activeStarted;
 
@@ -1254,7 +1254,7 @@ describe('Agent loop', () => {
     );
   });
 
-  it('omits the turn.started prompt for system-triggered turns', async () => {
+  it('carries the turn.started prompt for system-triggered turns', async () => {
     const prompts: Array<string | undefined> = [];
     const subscription = ctx.get(IEventBus).subscribe(TurnStarted, (event) => {
       prompts.push(event.prompt);
@@ -1271,7 +1271,7 @@ describe('Agent loop', () => {
     await user.result;
     subscription.dispose();
 
-    expect(prompts).toEqual([undefined, 'hi']);
+    expect(prompts).toEqual(['continue the goal', 'hi']);
   });
 
   it('carries the turn.started prompt for subagent system triggers', async () => {
@@ -1945,7 +1945,7 @@ describe('interruption reminder', () => {
     ).length;
   }
 
-  it('preserves the partial stream and appends one reminder at the cancellation event point', async () => {
+  it('preserves the partial stream and appends one reminder at the next execution boundary', async () => {
     ctx.mockNextResponse({ type: 'text', text: 'partial answer' }, { type: 'text', text: ' more' });
     const subscription = cancelOnFirstDelta();
     const turn = submitTurn(loop, 'Hello').turn;
@@ -1961,7 +1961,7 @@ describe('interruption reminder', () => {
         partial: true,
       },
     ]);
-    expect(interruptionReminders()).toHaveLength(1);
+    expect(interruptionReminders()).toHaveLength(0);
 
     const cancelRecord = ctx.allEvents.find(
       (entry) => entry.type === '[wire]' && entry.event === 'turn.cancel',
@@ -1991,7 +1991,7 @@ describe('interruption reminder', () => {
         text: '<system-reminder>\nThe previous turn was interrupted by the user before completion; any partial output shown above is incomplete. The user\'s next message continues the conversation.\n</system-reminder>',
       },
     ]);
-    expect(ctx.contextData().history.indexOf(interruptionReminders()[0]!)).toBe(2);
+    expect(ctx.contextData().history.indexOf(interruptionReminders()[0]!)).toBe(3);
   });
 
   it('writes one active cancellation when cancel repeats before the turn settles', async () => {
@@ -2007,6 +2007,7 @@ describe('interruption reminder', () => {
     await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
     subscription.dispose();
     expect(results).toEqual([true, true]);
+    expect(interruptionReminders()).toHaveLength(0);
     expect(
       ctx.allEvents.filter(
         (entry) => entry.type === '[wire]' && entry.event === 'turn.cancel',
@@ -2051,7 +2052,7 @@ describe('interruption reminder', () => {
     const turn = submitTurn(loop, 'Hello').turn;
     await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
     subscription.dispose();
-    expect(interruptionReminders()).toHaveLength(1);
+    expect(interruptionReminders()).toHaveLength(0);
 
     ctx.get(IEventBus).publish(
       new TurnEnded({ agentId: 'main',
@@ -2095,7 +2096,7 @@ describe('interruption reminder', () => {
     loop.cancel({ turnId: active.id });
     await expect(active.result).resolves.toMatchObject({ type: 'cancelled' });
 
-    expect(interruptionReminders()).toHaveLength(1);
+    expect(interruptionReminders()).toHaveLength(0);
 
     ctx.mockNextResponse({ type: 'text', text: 'second answer' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Next' }] });
@@ -2119,18 +2120,18 @@ describe('interruption reminder', () => {
       messages:
         <last>
         assistant: text "partial answer"
-        user: text "<system-reminder>\\nThe previous turn was interrupted by the user before completion; any partial output shown above is incomplete. The user's next message continues the conversation.\\n</system-reminder>"
         user: text "Next"
+        user: text "<system-reminder>\\nThe previous turn was interrupted by the user before completion; any partial output shown above is incomplete. The user's next message continues the conversation.\\n</system-reminder>"
     `);
   });
 
-  it('undo removes the event-point interruption with its cancelled turn', async () => {
+  it('undo removes a pending interruption with its cancelled turn', async () => {
     ctx.mockNextResponse({ type: 'text', text: 'partial answer' });
     const subscription = cancelOnFirstDelta();
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
     await ctx.untilTurnEnd();
     subscription.dispose();
-    expect(interruptionReminders()).toHaveLength(1);
+    expect(interruptionReminders()).toHaveLength(0);
 
     await ctx.undoHistory(1);
 
@@ -2157,7 +2158,7 @@ describe('interruption reminder', () => {
 
     await ctx.undoHistory(1);
 
-    expect(ctx.contextData().history).toEqual(interruptedHistory);
+    expect(ctx.contextData().history).toEqual([...interruptedHistory, ...interruptionReminders()]);
     expect(interruptionReminders()).toHaveLength(1);
     await ctx.expectResumeMatches();
 
@@ -2195,7 +2196,7 @@ describe('interruption reminder', () => {
       .history.flatMap((message) => message.content)
       .filter((part) => part.type === 'think');
     expect(thinkParts).toEqual([]);
-    expect(interruptionReminders()).toHaveLength(1);
+    expect(interruptionReminders()).toHaveLength(0);
 
     ctx.mockNextResponse(
       { type: 'think', think: 'seg', encrypted: 'sig' },
@@ -2207,6 +2208,7 @@ describe('interruption reminder', () => {
     const secondTurn = submitTurn(loop, 'Again').turn;
     await expect(secondTurn.result).resolves.toMatchObject({ type: 'cancelled' });
     second.dispose();
+    expect(interruptionReminders()).toHaveLength(1);
 
     expect(ctx.contextData().history).toContainEqual({
       role: 'assistant',
@@ -2217,6 +2219,10 @@ describe('interruption reminder', () => {
       toolCalls: [],
       partial: true,
     });
+    ctx.mockNextResponse({ type: 'text', text: 'continued answer' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue' }] });
+    await ctx.untilTurnEnd();
+    expect(interruptionReminders()).toHaveLength(2);
   });
 
   it('records no partial content when the stream only produced whitespace', async () => {
@@ -2230,6 +2236,10 @@ describe('interruption reminder', () => {
     expect(ctx.contextData().history.slice(0, 1)).toEqual([
       expect.objectContaining({ role: 'user' }),
     ]);
+    expect(interruptionReminders()).toHaveLength(0);
+    ctx.mockNextResponse({ type: 'text', text: 'continued answer' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue' }] });
+    await ctx.untilTurnEnd();
     expect(interruptionReminders()).toHaveLength(1);
   });
 
@@ -2239,7 +2249,7 @@ describe('interruption reminder', () => {
     const firstTurn = submitTurn(loop, 'Hello').turn;
     await expect(firstTurn.result).resolves.toMatchObject({ type: 'cancelled' });
     subscription.dispose();
-    expect(interruptionReminders()).toHaveLength(1);
+    expect(interruptionReminders()).toHaveLength(0);
     const usersBefore = ctx.contextData().history.filter((message) => message.role === 'user');
 
     ctx.mockNextResponse({ type: 'text', text: 'retried answer' });
@@ -2247,7 +2257,10 @@ describe('interruption reminder', () => {
 
     expect(result).toMatchObject({ type: 'completed' });
     expect(interruptionReminders()).toHaveLength(1);
-    expect(ctx.contextData().history.filter((message) => message.role === 'user')).toEqual(usersBefore);
+    expect(ctx.contextData().history.filter((message) => message.role === 'user')).toEqual([
+      ...usersBefore,
+      ...interruptionReminders(),
+    ]);
     await ctx.expectResumeMatches();
   });
 
@@ -2268,6 +2281,7 @@ describe('interruption reminder', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'second prompt' }] });
     await ctx.untilTurnEnd();
     second.dispose();
+    expect(interruptionReminders()).toHaveLength(1);
 
     ctx.mockNextResponse({ type: 'text', text: 'final answer' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'final prompt' }] });
@@ -2297,7 +2311,7 @@ describe('interruption reminder', () => {
       await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
 
       expect(contentPartRecordsIn(local)).toBe(2);
-      expect(remindersIn(local)).toHaveLength(1);
+      expect(remindersIn(local)).toHaveLength(0);
 
       const loopEvents = local.allEvents
         .filter((entry) => entry.type === '[wire]' && entry.event === 'context.append_loop_event')
@@ -2334,8 +2348,8 @@ describe('interruption reminder', () => {
       const reminderIndex = history.indexOf(remindersIn(local)[0]!);
       expect(history.slice(0, reminderIndex).some((message) => message.role === 'tool')).toBe(true);
       expect(history[reminderIndex + 1]).toMatchObject({
-        role: 'user',
-        content: [{ type: 'text', text: 'again' }],
+        role: 'assistant',
+        content: [{ type: 'text', text: 'follow-up answer' }],
       });
 
       await local.expectResumeMatches();

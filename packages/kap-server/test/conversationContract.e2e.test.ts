@@ -8,14 +8,14 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket, type RawData } from 'ws';
 import {
   IAgentLifecycleService,
-  IAgentTaskService,
+  IAgentTaskOutputService,
+  IAgentToolExecutorService,
   IConfigService,
   closeSessionById,
   MAIN_AGENT_ID,
   getLiveSessionById,
   interactions,
   resumeSessionById,
-  type AgentTask,
   type ApprovalRequest,
 } from '@moonshot-ai/agent-core-v2';
 
@@ -737,17 +737,16 @@ describe('conversation contract e2e', () => {
     const sid = await createSession(server!, base);
     const agents = getLiveSessionById(server!.core.accessor, sid)!.accessor.get(IAgentLifecycleService);
     if (agents.handleOf(MAIN_AGENT_ID) === undefined) await agents.create({ agentId: MAIN_AGENT_ID });
-    let sink: Parameters<AgentTask['start']>[0] | undefined;
-    const taskId = agents.handleOf(MAIN_AGENT_ID)!.accessor.get(IAgentTaskService).registerTask({
-      idPrefix: 'bash',
-      kind: 'process',
-      description: 'npm run dev',
-      start: (s) => {
-        sink = s;
-        s.appendOutput('  VITE ready\n');
-      },
-      toInfo: (base) => ({ ...base, kind: 'process', command: 'npm run dev', pid: 0, exitCode: null }),
-    });
+    const main = agents.handleOf(MAIN_AGENT_ID)!;
+    const handler = main.accessor.get(IAgentToolExecutorService).executor.execute({
+      type: 'function',
+      id: 'call_s9_watch',
+      name: 'Bash',
+      arguments: JSON.stringify({ command: "printf '  VITE ready\\n'", description: 'npm run dev', run_in_background: true }),
+    }, { turnId: 0 });
+    await handler;
+    const taskId = handler.taskId;
+    const sink = main.accessor.get(IAgentTaskOutputService).open(taskId);
     const isOutput = (frame: any): boolean => frame.type === 'task.output';
 
     const first = await openFrameSocket(server!);
@@ -759,11 +758,11 @@ describe('conversation contract e2e', () => {
       offset: 0,
       text: '  VITE ready\n',
     });
-    sink!.appendOutput('  ➜  Local: http://localhost:5173/\n');
+    sink.append('  ➜  Local: http://localhost:5173/\n');
     expect(await first.next(isOutput)).toMatchObject({ offset: 13, text: '  ➜  Local: http://localhost:5173/\n' });
     await first.close();
 
-    sink!.appendOutput('4:42:10 PM [vite] hmr update /src/App.vue\n');
+    sink.append('4:42:10 PM [vite] hmr update /src/App.vue\n');
     const since = 13 + Buffer.byteLength('  ➜  Local: http://localhost:5173/\n', 'utf-8');
     const second = await openFrameSocket(server!);
     second.send({
@@ -783,15 +782,15 @@ describe('conversation contract e2e', () => {
     expect(await second.next((f) => f.type === 'response')).toMatchObject({ request_id: 'r3', code: 40406 });
 
     const child = await agents.create({ agentId: 'agent-s9-child' });
-    const childTaskId = agents.handleOf(child.agentId)!.accessor.get(IAgentTaskService).registerTask({
-      idPrefix: 'bash',
-      kind: 'process',
-      description: 'pnpm test --watch',
-      start: (s) => {
-        s.appendOutput(' RUN  v3.2.4\n');
-      },
-      toInfo: (base) => ({ ...base, kind: 'process', command: 'pnpm test --watch', pid: 0, exitCode: null }),
-    });
+    const childHandle = agents.handleOf(child.agentId)!;
+    const childHandler = childHandle.accessor.get(IAgentToolExecutorService).executor.execute({
+      type: 'function',
+      id: 'call_s9_child_watch',
+      name: 'Bash',
+      arguments: JSON.stringify({ command: "printf ' RUN  v3.2.4\\n'", description: 'pnpm test --watch', run_in_background: true }),
+    }, { turnId: 0 });
+    await childHandler;
+    const childTaskId = childHandler.taskId;
     second.send({ type: 'task.watch', request_id: 'r4', session_id: sid, agent_id: MAIN_AGENT_ID, task_id: childTaskId });
     expect(await second.next((f) => f.type === 'response')).toMatchObject({ request_id: 'r4', code: 40406 });
     second.send({ type: 'task.watch', request_id: 'r5', session_id: sid, agent_id: child.agentId, task_id: childTaskId });

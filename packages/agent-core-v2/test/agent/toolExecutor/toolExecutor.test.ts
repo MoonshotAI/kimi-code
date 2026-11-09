@@ -33,7 +33,7 @@ import type {
 } from '#/agent/toolExecutor/toolHooks';
 import {
   ToolCallStarted,
-  ToolProgress,
+  ToolUpdated,
   ToolResultEvent,
 } from '#/agent/toolExecutor/toolExecutorEvents';
 import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
@@ -53,12 +53,12 @@ import {
   textToolContent,
   toLegacyToolReturn,
   type ExecutableTool as HandlerExecutableTool,
-  type LegacyToolFields,
   type LegacyToolPreparation,
   type ToolResult as HandlerToolResult,
 } from '#/tool/executor';
 import { parseToolCallArguments } from '#/tool/tool-args-parse';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
+import { IAgentTaskOutputService } from '#/agent/task/taskOutput';
 import { ToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncationService';
 import { ReadTool } from '#/agent/tools/os/read/readTool';
 import type { IAgentLoopService } from '#/agent/loop/loop';
@@ -100,7 +100,7 @@ import { registerTestAgentWireServices } from '../../wire/stubs';
 type ToolExecutorEvent =
   | { readonly type: 'tool.result'; readonly toolCallId: string; readonly result: ToolResult };
 
-type ProtocolEvent = ToolCallStarted | ToolProgress | ToolResultEvent;
+type ProtocolEvent = ToolCallStarted | ToolUpdated | ToolResultEvent;
 
 let disposables: DisposableStore;
 let ix: TestInstantiationService;
@@ -126,6 +126,7 @@ beforeEach(() => {
       registerTestAgentWireServices(reg, 'wire/tool-executor');
       reg.define(IAgentToolRegistryService, AgentToolRegistryService);
       reg.define(IAgentToolExecutorService, AgentToolExecutorService);
+      reg.defineInstance(IAgentTaskOutputService, { open: memoryOutputStore().open } as unknown as IAgentTaskOutputService);
       reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
       reg.defineInstance(ITelemetryService, recordingTelemetry(telemetryEvents));
       reg.defineInstance(IAgentToolResultTruncationService, {
@@ -199,7 +200,14 @@ describe('AgentToolExecutorService', () => {
         }),
       ]);
       expect(eventTypes()).toEqual(['tool.result']);
-      expect(protocolEventTypes()).toEqual(['tool.call.started', 'tool.result']);
+      expect(protocolEventTypes()).toEqual([
+        'tool.call.started',
+        'tool.updated',
+        'tool.updated',
+        'tool.updated',
+        'tool.updated',
+        'tool.result',
+      ]);
       expect(telemetryEvents).toContainEqual({
         event: 'tool_call',
         properties: expect.objectContaining({
@@ -756,13 +764,15 @@ describe('AgentToolExecutorService', () => {
     });
   });
 
-  it('forwards onUpdate calls as tool.progress events', async () => {
+  it('publishes handler fields and output as tool.updated events', async () => {
     const updates: ToolUpdate[] = [
       { kind: 'stdout', text: 'working' },
-      { kind: 'progress', percent: 50 },
+      { kind: 'progress', text: 'half', percent: 50 },
     ];
+    let created: readonly unknown[] = [];
     const tool = new TestTool('progress', {
       execute: async (ctx) => {
+        created = executor.handlers();
         for (const update of updates) ctx.onUpdate?.(update);
         return { output: 'done' };
       },
@@ -771,20 +781,31 @@ describe('AgentToolExecutorService', () => {
 
     await execute([toolCall('call_progress', 'progress', {})]);
 
-    expect(protocolEvents.filter((event) => event.type === 'tool.progress')).toEqual([
-      expect.objectContaining({
-        type: 'tool.progress',
-        turnId: 0,
-        toolCallId: 'call_progress',
-        update: updates[0],
-      }),
-      expect.objectContaining({
-        type: 'tool.progress',
-        turnId: 0,
-        toolCallId: 'call_progress',
-        update: updates[1],
-      }),
-    ]);
+    expect(created).toHaveLength(1);
+    const events = protocolEvents.filter((event): event is ToolUpdated => event.type === 'tool.updated');
+    const output = events.find((event) => event.output !== undefined);
+    expect(output).toMatchObject({
+      type: 'tool.updated',
+      turnId: 0,
+      toolCallId: 'call_progress',
+      taskId: (created[0] as { taskId: string }).taskId,
+      status: 'running',
+      detached: false,
+      fields: {},
+      output: { offset: 0, text: 'working' },
+    });
+    expect(events.find((event) => event.fields['progress'] !== undefined)).toMatchObject({
+      fields: { progress: { text: 'half', percent: 50 } },
+      output: undefined,
+    });
+    expect(events.at(-1)).toMatchObject({
+      status: 'success',
+      detached: false,
+      output: undefined,
+    });
+    expect(events.at(-1)?.fields).not.toHaveProperty('result');
+    expect(events.at(-1)).not.toHaveProperty('args');
+    expect(events.at(-1)).not.toHaveProperty('prepared');
   });
 
   it('does not start a queued conflicting tool after abort', async () => {
@@ -1765,8 +1786,9 @@ async function execute(
       const final = await handler.wait();
       const snapshot = handler.snapshot();
       const prepared = snapshot.prepared;
-      const fields = handler.fields() as LegacyToolFields;
-      const legacy = fields.result ?? (prepared?.kind === 'synthetic' ? prepared.result : undefined);
+      const legacy = prepared?.kind === 'execute' || prepared?.kind === 'synthetic'
+        ? prepared.result
+        : undefined;
       const result: ToolResult = {
         ...legacy,
         output: final.outcome.type !== 'success'
@@ -2022,6 +2044,23 @@ describe('ToolExecutor handler kernel', () => {
       content: textToolContent('background: later'),
     });
     expect(await response).toEqual(ack);
+    await expect(Promise.race([
+      handler.wait(5),
+      new Promise((resolve) => setTimeout(() => resolve('still pending'), 25)),
+    ])).rejects.toMatchObject({ name: 'ToolTimeoutError' });
+    await expect(Promise.race([
+      handler.wait(5),
+      new Promise((resolve) => setTimeout(() => resolve('still pending'), 25)),
+    ])).rejects.toMatchObject({ name: 'ToolTimeoutError' });
+    const controller = new AbortController();
+    const reason = new Error('stop waiting only');
+    const aborted = Promise.race([
+      handler.wait(undefined, controller.signal),
+      new Promise((resolve) => setTimeout(() => resolve('still pending'), 25)),
+    ]);
+    controller.abort(reason);
+    await expect(aborted).rejects.toBe(reason);
+    expect(handler.snapshot()).toMatchObject({ status: 'running', detached: true });
     let completed = false;
     void handler.wait().then(() => {
       completed = true;
@@ -2030,7 +2069,7 @@ describe('ToolExecutor handler kernel', () => {
     expect(completed).toBe(false);
 
     release.resolve();
-    expect(await handler.wait()).toMatchObject({
+    expect(await handler.wait(1_000)).toMatchObject({
       content: textToolContent('finished'),
       outcome: { type: 'success' },
     });
@@ -2078,6 +2117,8 @@ describe('ToolExecutor handler kernel', () => {
     });
     expect(secondSignal?.aborted).toBe(false);
     expect(second.snapshot().status).toBe('running');
+    expect((await first.stop('already stopped')).outcome).toMatchObject({ type: 'aborted' });
+    expect(secondSignal?.aborted).toBe(false);
 
     secondRelease.resolve();
     expect((await second.wait()).outcome.type).toBe('success');
@@ -2389,8 +2430,7 @@ describe('ToolExecutor handler kernel', () => {
             context.onUpdate?.({ kind: 'progress', text: 'half', percent: 50 });
             context.onUpdate?.({
               kind: 'custom',
-              customKind: 'oauth',
-              customData: { url: 'https://example.com' },
+              fields: { oauth: { url: 'https://example.com' } },
             });
             context.detach?.('legacy background');
             started.resolve();
@@ -2465,7 +2505,7 @@ describe('ToolExecutor handler kernel', () => {
     expect(handler.fields()).toMatchObject({
       status: 'working',
       progress: { text: 'half', percent: 50 },
-      custom: { kind: 'oauth', data: { url: 'https://example.com' } },
+      oauth: { url: 'https://example.com' },
     });
     const ack = await handler;
     expect(isToolDetachAck(ack)).toBe(true);

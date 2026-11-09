@@ -147,15 +147,21 @@ describe('actor handler execution', () => {
     const completionRequested = new Promise<void>((resolve) => {
       requestCompletion = resolve;
     });
+    const closingExecutor = executorFrom(['Bash'], async () => {
+      await toolGate.promise;
+      return { content: [] };
+    });
+    const executeClose = closingExecutor.execute.bind(closingExecutor);
+    const closingHandlers: Array<ReturnType<typeof closingExecutor.execute>> = [];
+    vi.spyOn(closingExecutor, 'execute').mockImplementation((toolCall, context) => {
+      const handler = executeClose(toolCall, context);
+      closingHandlers.push(handler);
+      return handler;
+    });
+    const closingRequester = requester([done('', [call('close-bg')]), done('next')]);
     const closingLoop = createLoop({
-      createTurnExecution: ({ profile }) => ({
-        profile,
-        requester: requester([done('', [call('close-bg')]), done('next')]),
-      }),
-      executor: executorFrom(['Bash'], async () => {
-        await toolGate.promise;
-        return { content: [] };
-      }),
+      createTurnExecution: ({ profile }) => ({ profile, requester: closingRequester }),
+      executor: closingExecutor,
     });
     const asyncEntries: string[] = [];
     const notifications: string[] = [];
@@ -175,6 +181,7 @@ describe('actor handler execution', () => {
     expect((await active).type).toBe('done');
     toolGate.resolve();
     await completionRequested;
+    const closeStop = vi.spyOn(closingHandlers[0]!, 'stop');
     const closing = closingLoop.close();
     let closed = false;
     void closing.then(() => {
@@ -187,16 +194,15 @@ describe('actor handler execution', () => {
       toolCallId: 'close-bg',
     }));
     await closing;
+    expect(closeStop).toHaveBeenCalled();
     expect(asyncEntries).toEqual(['custom closed']);
     expect(notifications).toEqual([]);
 
     const rejectionGate = deferred<void>();
     const rejection = new Error('completion factory rejected');
+    const rejectedRequester = requester([done('', [call('reject-bg')]), done('next'), done('async failed')]);
     const rejectedLoop = createLoop({
-      createTurnExecution: ({ profile }) => ({
-        profile,
-        requester: requester([done('', [call('reject-bg')]), done('next'), done('async failed')]),
-      }),
+      createTurnExecution: ({ profile }) => ({ profile, requester: rejectedRequester }),
       executor: executorFrom(['Bash'], async () => {
         await rejectionGate.promise;
         return { content: [{ type: 'text', text: 'ignored successful result' }] };
@@ -222,6 +228,80 @@ describe('actor handler execution', () => {
     expect(rejectedLoop.state.calls).toEqual([]);
     await rejectedLoop.waitForIdle();
     await rejectedLoop.close();
+
+    for (const timing of ['before', 'during', 'after'] as const) {
+      const resetGate = deferred<void>();
+      const resetExecutor = executorFrom(['Bash'], async ({ detach }) => {
+        detach?.('reset background');
+        await resetGate.promise;
+        return { content: [{ type: 'text', text: 'reset finished' }] };
+      });
+      const execute = resetExecutor.execute.bind(resetExecutor);
+      const handlers: Array<ReturnType<typeof resetExecutor.execute>> = [];
+      vi.spyOn(resetExecutor, 'execute').mockImplementation((toolCall, context) => {
+        const handler = execute(toolCall, context);
+        handlers.push(handler);
+        return handler;
+      });
+      const resetRequester = requester([done('', [call(`reset-${timing}`)]), done('next'), done('async')]);
+      const resetLoop = createLoop({
+        createTurnExecution: ({ profile }) => ({ profile, requester: resetRequester }),
+        executor: resetExecutor,
+      });
+      const asyncEvents: string[] = [];
+      const appended: string[] = [];
+      resetLoop.subscribe((event) => {
+        if (event.type === 'tool.async_ended') asyncEvents.push(extractText(event.entry.message));
+        if (event.type === 'message.appended' && event.source === 'notify') appended.push(extractText(event.entry.message));
+      });
+      const detachedReset = resetLoop.wait('tool.ended', { match: (event) => event.detached });
+      expect((await resetLoop.runTurn(prompt())).type).toBe('done');
+      await detachedReset;
+      const stop = vi.spyOn(handlers[0]!, 'stop');
+      if (timing === 'before') {
+        resetGate.resolve();
+        await resetLoop.wait('tool.async_ended');
+        await resetLoop.waitForIdle();
+      }
+      const prepare = deferred<void>();
+      const resetting = resetLoop.reset(async () => {
+        if (timing === 'during') resetGate.resolve();
+        await prepare.promise;
+        return {
+          messages: resetLoop.state.messages,
+          inbox: { notify: resetLoop.state.inbox.notify },
+          nextTurnId: 0,
+          historyRevision: 0,
+        };
+      });
+      if (timing === 'during') {
+        resetLoop.notify(createUserEntry(createUserMessage('live before restored'), { promptId: 'live' }));
+        await resetLoop.wait('tool.async_ended');
+        expect(resetLoop.state.turn).toBeUndefined();
+        expect(resetLoop.state.resetting).toBe(true);
+      }
+      prepare.resolve();
+      await resetting;
+      if (timing === 'after') {
+        resetGate.resolve();
+        await resetLoop.wait('tool.async_ended');
+      }
+      resetLoop.start();
+      await resetLoop.waitForIdle();
+      expect(stop).not.toHaveBeenCalled();
+      expect(asyncEvents).toHaveLength(1);
+      expect(asyncEvents[0]).toContain('[async tool completed]');
+      expect(appended.filter((text) => text.includes('[async tool completed]'))).toHaveLength(1);
+      if (timing === 'during') expect(appended[0]).toBe('live before restored');
+      const usableMessages = resetLoop.state.messages;
+      await expect(resetLoop.reset(async () => {
+        throw new Error('reset prepare failed');
+      })).rejects.toThrow('reset prepare failed');
+      expect(resetLoop.state.messages).toBe(usableMessages);
+      resetLoop.start();
+      await resetLoop.waitForIdle();
+      await resetLoop.close();
+    }
   });
 
   it('settles late results only in their original StepCall when an id is reused', async () => {

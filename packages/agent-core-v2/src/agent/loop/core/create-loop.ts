@@ -1,5 +1,5 @@
 import type { HistoryMessage, UserEntry } from '#human/agent/turn';
-import type { SystemMessage, ToolCall, ToolDescription, UserMessage } from '#human/llm/message';
+import type { SystemMessage, ToolCall, UserMessage } from '#human/llm/message';
 import type { PolicyRegistry } from '#human/llm/policy/registry';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import type { ToolExecutionHandler } from '#/tool/executor';
@@ -37,6 +37,7 @@ export interface CreateLoopOptions {
   readonly hooks?: readonly HookRegistration[];
   readonly input?: LoopInput;
   readonly abortGraceMs?: number;
+  readonly completionEntry?: ToolCompletionFactory;
   readonly onListenerError?: (error: unknown, event: LoopEmitted) => void;
 }
 
@@ -57,14 +58,14 @@ export interface Loop {
   start(): void;
   resume(): void;
   continue(options?: { readonly force?: boolean }): void;
-  abort(reason?: unknown): void;
+  abort(reason?: unknown, options?: { readonly continue?: boolean }): void;
   abortTool(toolCallId: string, reason?: unknown): void;
   detachTool(toolCallId: string, text?: string, completion?: ToolCompletionFactory): void;
+  reset(prepare: () => Promise<LoopInput>): Promise<void>;
   setRequester(requester: LoopLlmRequester | undefined): void;
   operation<T>(create: (runtime: LoopRequestRuntime) => T): T;
   setContext(messages: HistoryMessage[], reason?: string): LoopAck<'context.settled' | 'context.rejected'> | undefined;
   setSystemPrompt(systemPrompt: string): LoopAck<'system_prompt.settled'> | undefined;
-  setTools(tools: readonly ToolDescription[]): LoopAck<'tools.settled'> | undefined;
   subscribe(listener: (event: LoopEmitted) => void): () => void;
   wait<T extends LoopEmitted['type']>(type: T, opts?: WaitOpts<LoopAck<T>>): Promise<LoopAck<T>>;
   runTurn(entry: UserEntry, opts?: { readonly signal?: AbortSignal }): Promise<TurnOutcome>;

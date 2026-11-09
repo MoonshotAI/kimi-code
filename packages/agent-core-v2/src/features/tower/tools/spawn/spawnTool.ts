@@ -5,8 +5,6 @@ import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import { IAgentTaskService } from '#/agent/task/task';
-import { isAgentTaskTerminal } from '#/agent/task/taskService';
 import {
   GitError,
   MISSIONS_DIR,
@@ -47,7 +45,7 @@ import {
 import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 
-import { SubagentTask, type SubagentHandle } from '#/agent/tools/agent/subagent-task';
+import type { SubagentHandle } from '#/agent/tools/agent/agentTool';
 
 import { newTowerStore, TOWER_MAIN_AGENT_ONLY, TOWER_MODE_USER_ENABLED_ONLY } from '../support';
 import { ITowerSpawnTool, TowerSpawnToolInputSchema, type TowerSpawnToolInput } from './spawn';
@@ -105,7 +103,6 @@ export class TowerSpawnTool implements ITowerSpawnTool {
     @IAgentScopeContext scopeContext: IAgentScopeContext,
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @ISessionSubagentService private readonly subagents: ISessionSubagentService,
-    @IAgentTaskService private readonly tasks: IAgentTaskService,
     @IAgentLoopService private readonly profile: IAgentLoopService,
     @IConfigService private readonly config: IConfigService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
@@ -120,10 +117,17 @@ export class TowerSpawnTool implements ITowerSpawnTool {
         output: TOWER_MAIN_AGENT_ONLY,
       };
     }
+    let stop: ((context: {
+      readonly reason: unknown;
+      abandon(result?: ExecutableToolResult): void;
+    }) => void) | undefined;
     return {
       description: `Spawning tower ${args.kind} "${args.name}"`,
       approvalRule: this.name,
-      execute: (ctx) => this.execution(args, ctx),
+      stopping: (context) => stop?.(context),
+      execute: (ctx) => this.execution(args, ctx, (next) => {
+        stop = next;
+      }),
     };
   }
 
@@ -133,8 +137,13 @@ export class TowerSpawnTool implements ITowerSpawnTool {
 
   private async execution(
     args: TowerSpawnToolInput,
-    { toolCallId }: ExecutableToolContext,
+    ctx: ExecutableToolContext,
+    setStop: (stop: (context: {
+      readonly reason: unknown;
+      abandon(result?: ExecutableToolResult): void;
+    }) => void) => void,
   ): Promise<ExecutableToolResult> {
+    const { toolCallId, signal, taskId = toolCallId, write, set, detach, onDetach } = ctx;
     let pendingSpawnAbort: AbortController | undefined;
     try {
       if (!this.tower.isActive) {
@@ -274,6 +283,11 @@ export class TowerSpawnTool implements ITowerSpawnTool {
         let slotHeld = true;
         try {
           const controller = new AbortController();
+          const abortBeforeStart = (): void => {
+            controller.abort(signal.reason);
+          };
+          if (signal.aborted) abortBeforeStart();
+          else signal.addEventListener('abort', abortBeforeStart, { once: true });
           let handle: SubagentHandle;
           try {
             handle = await this.launch(prompt, description, toolCallId, controller, binding);
@@ -282,29 +296,80 @@ export class TowerSpawnTool implements ITowerSpawnTool {
               output: `tower spawn failed: ${error instanceof Error ? error.message : String(error)}`,
               isError: true,
             };
-          }
-
-          let taskId: string;
-          try {
-            taskId = this.tasks.registerTask(new SubagentTask(handle, description, controller), {
-              detached: true,
-              timeoutMs: resolveSubagentTimeoutMs(this.config),
-              signal: undefined,
-            });
-          } catch (error) {
-            controller.abort();
-            void handle.completion.catch(() => {});
-            return {
-              output: error instanceof Error ? error.message : String(error),
-              isError: true,
-            };
+          } finally {
+            signal.removeEventListener('abort', abortBeforeStart);
           }
           pendingSpawnAbort = controller;
-          void handle.completion
-            .catch(() => {})
-            .finally(() => {
-              this.rateLimit.release();
+
+          const timeoutMs = resolveSubagentTimeoutMs(this.config);
+          let timedOut = false;
+          let stopReason: string | undefined;
+          let forceHandle: ReturnType<typeof setTimeout> | undefined;
+          const setFields = (): void => {
+            set?.({
+              task: {
+                kind: 'agent',
+                description,
+                agentId: handle.agentId,
+                subagentType: handle.profileName,
+                parentToolCallId: toolCallId,
+                model: handle.model,
+                thinkingEffort: handle.thinkingEffort,
+                timeoutMs,
+                timedOut: timedOut || undefined,
+                stopReason,
+              },
             });
+          };
+          setFields();
+          const timeoutHandle = setTimeout(() => {
+            timedOut = true;
+            stopReason = 'Timed out';
+            controller.abort(stopReason);
+          }, timeoutMs);
+          timeoutHandle.unref?.();
+          setStop(({ reason, abandon }) => {
+            stopReason = typeof reason === 'string' ? reason : reason instanceof Error ? reason.message : undefined;
+            controller.abort(reason);
+            forceHandle = setTimeout(() => {
+              setFields();
+              abandon({ output: stopReason ?? 'Tower agent stopped', isError: true });
+            }, 5_000);
+            forceHandle.unref?.();
+          });
+
+          let terminal: {
+            readonly status: 'completed' | 'failed' | 'timed_out' | 'killed';
+            readonly stopReason?: string;
+          } | undefined;
+          const requestAbort = (): void => {
+            controller.abort(signal.reason);
+          };
+          if (signal.aborted) requestAbort();
+          else signal.addEventListener('abort', requestAbort, { once: true });
+          const completion = handle.completion.then((outcome) => {
+            write?.(outcome.result);
+            return outcome;
+          }).finally(() => {
+            signal.removeEventListener('abort', requestAbort);
+          });
+          const settled = completion.then(
+            (outcome): ExecutableToolResult => {
+              terminal = { status: 'completed' };
+              setFields();
+              return { output: outcome.result };
+            },
+            (error: unknown): ExecutableToolResult => {
+              const status = timedOut ? 'timed_out' : signal.aborted ? 'killed' : 'failed';
+              stopReason ??= error instanceof Error ? error.message : String(error);
+              terminal = { status, stopReason };
+              setFields();
+              return { output: stopReason, isError: true };
+            },
+          );
+          void settled.finally(() => {
+            this.rateLimit.release();
+          });
           slotHeld = false;
 
           await store.registerSpawnedAgent(
@@ -322,16 +387,11 @@ export class TowerSpawnTool implements ITowerSpawnTool {
             },
             mission === undefined ? undefined : { id: mission.id, owner: args.name },
           );
-          const settled = this.tasks.getTask(taskId);
-          if (
-            settled !== undefined &&
-            isAgentTaskTerminal(settled.status) &&
-            settled.status !== 'completed'
-          ) {
+          if (terminal !== undefined && terminal.status !== 'completed') {
             await store.markAgentDied(
               handle.agentId,
-              settled.status,
-              settled.stopReason,
+              terminal.status,
+              terminal.stopReason,
               this.sessionContext.sessionId,
             );
           }
@@ -351,28 +411,34 @@ export class TowerSpawnTool implements ITowerSpawnTool {
               : undefined,
           );
 
-          return {
-            output: [
-              `name: ${args.name}`,
-              `kind: ${args.kind}`,
-              `agent_id: ${handle.agentId}`,
-              `task_id: ${taskId}`,
-              'status: running',
-              ...(binding !== undefined ? [`model: ${binding.model}`] : []),
-              ...(mission !== undefined
-                ? [
-                    `mission: ${mission.id} — ${mission.title}`,
-                    `branch: ${mission.branch}`,
-                    `worktree: ${store.abs(join(WORKTREES_DIR, mission.worktree))}`,
-                  ]
-                : [`review_target: ${reviewTarget ?? ''}`]),
-              ...notes,
-              '',
-              args.kind === 'worker'
-                ? `The worker runs detached in the background; its completion arrives as a notification. Use TowerInbox/TowerStatus only when a decision needs them. If it dies, diagnose first: check why it died (the died entry's status/reason, its task state) before reviving. Resume with Agent(resume="${handle.agentId}", run_in_background=true, prompt="...") (foreground only when background task tools are unavailable) or reassign its work only for a transient cause (lost contact, timeout, OOM); a systematic cause (code or environment defect) is fixed or escalated to the human before any revive. A user-stopped worker is never resumed, reassigned, or replaced.`
-                : 'The reviewer runs detached in the background; its completion arrives as a notification. If it dies, diagnose first: check the death status/reason and task state. A reviewer is one-shot — do not resume it or another roster agent; after diagnosis, spawn a fresh reviewer only if the mission still needs one. A user-stopped reviewer is never replaced.',
-            ].join('\n'),
-          };
+          const acknowledgement = [
+            `name: ${args.name}`,
+            `kind: ${args.kind}`,
+            `agent_id: ${handle.agentId}`,
+            `task_id: ${taskId}`,
+            'status: running',
+            ...(binding !== undefined ? [`model: ${binding.model}`] : []),
+            ...(mission !== undefined
+              ? [
+                  `mission: ${mission.id} — ${mission.title}`,
+                  `branch: ${mission.branch}`,
+                  `worktree: ${store.abs(join(WORKTREES_DIR, mission.worktree))}`,
+                ]
+              : [`review_target: ${reviewTarget ?? ''}`]),
+            ...notes,
+            '',
+            args.kind === 'worker'
+              ? `The worker runs detached in the background; its completion arrives as a notification. Use TowerInbox/TowerStatus only when a decision needs them. If it dies, diagnose first: check why it died (the died entry's status/reason, its task state) before reviving. Resume with Agent(resume="${handle.agentId}", run_in_background=true, prompt="...") (foreground only when background task tools are unavailable) or reassign its work only for a transient cause (lost contact, timeout, OOM); a systematic cause (code or environment defect) is fixed or escalated to the human before any revive. A user-stopped worker is never resumed, reassigned, or replaced.`
+              : 'The reviewer runs detached in the background; its completion arrives as a notification. If it dies, diagnose first: check the death status/reason and task state. A reviewer is one-shot — do not resume it or another roster agent; after diagnosis, spawn a fresh reviewer only if the mission still needs one. A user-stopped reviewer is never replaced.',
+          ].join('\n');
+          onDetach?.(() => ({ content: [{ type: 'text', text: acknowledgement }] }));
+          detach?.(acknowledgement);
+          try {
+            return await settled;
+          } finally {
+            clearTimeout(timeoutHandle);
+            if (forceHandle !== undefined) clearTimeout(forceHandle);
+          }
         } finally {
           if (slotHeld) this.rateLimit.release();
         }

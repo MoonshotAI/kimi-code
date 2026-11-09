@@ -2064,13 +2064,19 @@ describe('core requester', () => {
         modelAlias: () => modelAlias,
         systemPrompt: () => systemPrompt,
         requestParams: () => ({ sampling: { temperature } }),
-        toolSelect: { prepareForRequest },
+        toolSelect: { prepareForRequest, initialTools: () => baselineTools },
       },
     );
     const trace: { current?: { requestId?: string } } = {};
+    const baselineTools: readonly Tool[] = [{
+      name: 'frozen-tool',
+      description: 'frozen baseline tool',
+      parameters: { type: 'object', properties: {} },
+    }];
+    expect(service.baselineTools()).toBe(baselineTools);
     const execution = service.createTurnExecution({
       turnId: 7,
-      profile: {},
+      profile: { tools: baselineTools },
       step: () => 2,
       historyRevision: runtime.historyRevision,
       mediaRecovery: runtime.mediaRecovery,
@@ -2082,16 +2088,19 @@ describe('core requester', () => {
     modelAlias = 'other';
     systemPrompt = 'changed-system';
     temperature = 0.9;
+    const preparedProfile = await execution.prepare!(new AbortController().signal);
+    expect(preparedProfile.tools).toBe(baselineTools);
     const core = execution.requester.with({ policy: { resolvers: [extraResolver] } });
-    const prepared = core.request({ content: { messages: history, usedTokens: 17 }, profile: {} });
+    const prepared = core.request({ content: { messages: history, usedTokens: 17 }, profile: execution.profile });
     expect(prepared.profile?.systemPrompt).toBe('frozen-system');
+    expect(prepared.profile?.tools).toEqual(baselineTools);
     expect(prepared.model.sampling?.temperature).toBe(0.1);
     expect(prepared.content.usedTokens).toBe(17);
     expect(prepared.policy?.retry).toEqual({ maxAttemptsPerStep: 1, infiniteRetry: true });
 
     const retries: string[] = [];
     const outcome = await core.generate(
-      { content: { messages: history, usedTokens: 17 }, profile: {} },
+      { content: { messages: history, usedTokens: 17 }, profile: execution.profile },
       {
         signal: new AbortController().signal,
         onEvent: (event) => {
@@ -2106,6 +2115,7 @@ describe('core requester', () => {
     expect(prepareForRequest).toHaveBeenCalledTimes(2);
     expect(seen).toHaveLength(2);
     expect(seen.every((request) => request.profile?.systemPrompt === 'frozen-system')).toBe(true);
+    expect(seen.every((request) => request.profile?.tools?.[0]?.name === 'frozen-tool')).toBe(true);
     expect(seen.every((request) => request.model.sampling?.temperature === 0.1)).toBe(true);
     expect(trace.current?.requestId).toBe('trace-core');
     expect(measuredCalls).toHaveLength(1);

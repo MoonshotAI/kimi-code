@@ -21,7 +21,6 @@ import { DEFAULT_PERMISSION_MODE_SECTION } from '#/agent/permissionMode/configSe
 import { permissionModeConfiguredKey } from '#/agent/permissionMode/permissionModeOps';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { hasPinnedPermissionMode } from '#/features/tower/tower';
-import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkdir } from '#/session/workdir/workdir';
 import { ISessionMetadata, type AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
@@ -506,7 +505,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
   private async removeManaged(agent: AgentContext, managed: ManagedAgent): Promise<void> {
     this.onWillCloseEmitter.fire(agent);
     const handle = managed.handle;
-    await handle.accessor.get(IAgentTaskService).suppressAllTerminalNotifications();
     const loop = handle.accessor.get(IAgentLoopService);
     const compaction = handle.accessor.get(IAgentFullCompactionService).compacting;
     const compactionSettled = compaction?.promise.catch(() => undefined) ?? Promise.resolve();
@@ -559,7 +557,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     }
     let stopError: Error | undefined;
     try {
-      await handle.accessor.get(IAgentTaskService).stopAllOnExit('Session closed');
+      await loop.close();
     } catch (error) {
       stopError = error instanceof Error ? error : new Error(String(error));
     }

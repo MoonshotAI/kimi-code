@@ -76,7 +76,6 @@ export const steerEntrySchema = z.object({
   }),
   meta: z.object({
     origin: z.object({ kind: z.literal('user') }),
-    tracked: z.literal(true),
   }),
 });
 

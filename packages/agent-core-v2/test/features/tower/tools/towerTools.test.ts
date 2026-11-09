@@ -13,10 +13,13 @@ import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentTaskService, type AgentTaskInfo } from '#/agent/task/task';
+import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
+import { EventBusService } from '#/app/event/eventBusService';
 import type { AnyAgentTool } from '#/agent/toolRegistry/toolContribution';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { TOWER_TOOL_CONTRIBUTIONS } from '#/features/tower/towerFeature';
@@ -120,6 +123,9 @@ beforeEach(async () => {
   disposables = new DisposableStore();
   ix = createServices(disposables, {
     additionalServices: (reg) => {
+      const eventBus = disposables.add(new EventBusService());
+      reg.defineInstance(ISessionEventBus, eventBus);
+      reg.defineInstance(IEventBus, eventBus);
       reg.defineInstance(ISessionContext, {
         _serviceBrand: undefined,
         get sessionId() {
@@ -188,6 +194,7 @@ beforeEach(async () => {
             (agentId) => ({ kind: 'agent', agentId }) as unknown as AgentTaskInfo,
           ),
       });
+      reg.defineInstance(IAgentToolExecutorService, statusToolExecutor());
       reg.definePartialInstance(IAgentLifecycleService, {
         handleOf: ((agentId: string) => {
           const loop = agentLoops.get(agentId);
@@ -242,12 +249,33 @@ async function initViaTool() {
   return result;
 }
 
+function statusToolExecutor(): IAgentToolExecutorService {
+  return {
+    handlers: () => liveAgentTaskIds.map((agentId) => ({
+      snapshot: () => ({
+        taskId: `task-${agentId}`,
+        detached: true,
+        status: 'running',
+        stopReason: undefined,
+        timing: { execute: { startedAt: 0, endedAt: null }, total: { startedAt: 0, endedAt: null } },
+        fields: {
+          task: {
+            kind: 'agent',
+            agentId,
+            description: agentId,
+          },
+        },
+      }),
+    })),
+  } as unknown as IAgentToolExecutorService;
+}
+
 function readStatus() {
   return readTowerStatus({
     active: towerActive,
     cwd: repo,
     agentId: currentAgentId,
-    tasks: ix.get(IAgentTaskService),
+    toolExecutor: statusToolExecutor(),
     concurrency: () => ix.get(ITowerRateLimitService).snapshot(),
   });
 }
@@ -257,7 +285,7 @@ function readStatusSummary() {
     active: towerActive,
     cwd: repo,
     agentId: currentAgentId,
-    tasks: ix.get(IAgentTaskService),
+    toolExecutor: statusToolExecutor(),
     concurrency: () => ix.get(ITowerRateLimitService).snapshot(),
   });
 }

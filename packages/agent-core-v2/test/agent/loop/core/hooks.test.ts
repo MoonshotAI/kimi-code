@@ -59,6 +59,7 @@ describe('step.starting', () => {
     const loop = createLoop({
       createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
       executor: successfulExecutor(['lookup']),
+      input: { profile: { tools: [tool] } },
       hooks: [
         {
           point: 'step.starting',
@@ -69,7 +70,6 @@ describe('step.starting', () => {
       ],
     });
     loop.setSystemPrompt('sp');
-    loop.setTools([tool]);
     const entry = prompt('hello');
     expect((await loop.runTurn(entry)).type).toBe('done');
     expect(seen.map((event) => [event.turnId, event.step])).toEqual([
@@ -639,7 +639,7 @@ describe('hook failure policies', () => {
 describe('notify turn handoff', () => {
   it('ends the current turn after a tool step and consumes notify in a new turn', async () => {
     const events: LoopEmitted[] = [];
-    const scripted = requester([done('', [call('c1', 'alpha')]), done('notified')]);
+    const scripted = requester([done('', [call('c1', 'alpha')]), done('notified'), done('after reset')]);
     const loop = createLoop({
       createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
       executor: createExecutor([]),
@@ -667,6 +667,26 @@ describe('notify turn handoff', () => {
       turnId: 1,
       step: 0,
     });
+
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const resetting = loop.reset(async () => {
+      await gate;
+      return { messages: loop.state.messages, nextTurnId: 0, historyRevision: 0 };
+    });
+    loop.notify(prompt('after reset'));
+    expect(events.filter((event) => event.type === 'turn.started')).toHaveLength(2);
+    const afterReset = once(loop, (event) => event.type === 'turn.ended' && event.turnId === 2);
+    release();
+    await resetting;
+    loop.start();
+    await afterReset;
+    expect(loop.hooks.list()).toHaveLength(1);
+    expect(events.filter((event) => event.type === 'step.started').map((event) => [event.turnId, event.step])).toEqual([
+      [0, 1],
+      [1, 1],
+      [2, 1],
+    ]);
     await loop.close();
   });
 

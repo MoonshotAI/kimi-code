@@ -162,7 +162,7 @@ export function defineKlientConformance(
             role: 'user',
             content: [{ type: 'text', text: 'fork through this turn' }],
           },
-          meta: { origin: { kind: 'user' }, tracked: true },
+          meta: { origin: { kind: 'user' } },
         });
         await loop.settled();
         await mainHandle.accessor.get(IWireService).flush();

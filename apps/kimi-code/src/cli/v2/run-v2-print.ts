@@ -23,7 +23,6 @@ import {
   IAgentLoopService,
   IAgentPermissionModeService,
   IAgentPlanService,
-  IAgentProfileService,
   IAgentTaskService,
   IAuthSummaryService,
   IBootstrapService,
@@ -90,7 +89,7 @@ import type { TurnStepRetrying } from '@moonshot-ai/agent-core-v2/agent/loop/tur
 import type { HookResult } from '@moonshot-ai/agent-core-v2/features/externalHooks/agent/agentExternalHooksService';
 import type {
   ToolCallStarted,
-  ToolProgress,
+  ToolUpdated,
   ToolResultEvent,
 } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
 import { resolve } from 'pathe';
@@ -329,7 +328,7 @@ export async function runV2Print(
             stderr.write(`Session "${session.id}" was updated by another client; reloaded it.\n`);
             const agentContext = await ensureMainAgent(session);
             const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentContext.agentId)!;
-            if (opts.model !== undefined) await agent.accessor.get(IAgentProfileService).setModel(opts.model);
+            if (opts.model !== undefined) await agent.accessor.get(IAgentLoopService).setModel(opts.model);
             agent.accessor.get(IAgentPermissionModeService).setMode('auto');
             resolved = { ...resolved, session, agent };
           },
@@ -406,7 +405,7 @@ async function resolveNativeSession(
   // together with --session/--continue, so resume paths only apply an
   // explicitly requested model — the bound profile is restored by the engine.
   const applyModelOverride = async (
-    profile: IAgentProfileService,
+    profile: IAgentLoopService,
     model: string | undefined,
   ): Promise<void> => {
     if (model !== undefined) await profile.setModel(model);
@@ -454,7 +453,7 @@ async function resolveNativeSession(
     const agentContext = await ensureMainAgent(session);
     const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentContext.agentId)!;
     await notePlanMode(agent, opts.session);
-    const profile = agent.accessor.get(IAgentProfileService);
+    const profile = agent.accessor.get(IAgentLoopService);
     await applyModelOverride(profile, opts.model);
     const currentModel = profile.getModel();
     const previousPermissionMode = forceAuto(agent);
@@ -475,7 +474,7 @@ async function resolveNativeSession(
       const agentContext = await ensureMainAgent(session);
       const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentContext.agentId)!;
       await notePlanMode(agent, previous.id);
-      const profile = agent.accessor.get(IAgentProfileService);
+      const profile = agent.accessor.get(IAgentLoopService);
       await applyModelOverride(profile, opts.model);
       const currentModel = profile.getModel();
       const previousPermissionMode = forceAuto(agent);
@@ -591,8 +590,9 @@ async function runNativeTurn(
   await agent.accessor.get(IAuthSummaryService).ensureReady();
 
   const turnEndings = createPrintTurnEndings();
+  const toolStatuses = new Map<string, string>();
   const subscription = agent.accessor.get(IEventBus).subscribe((event: Event2<any>) => {
-    dispatchNativeEvent(writer, event, stderr);
+    dispatchNativeEvent(writer, event, stderr, toolStatuses);
     // Arm the turn-endings collector before `turn.result` settles so a
     // background-task completion that steers a new turn right after the main
     // turn ends cannot have its `turn.ended` slip past the policy loop.
@@ -602,7 +602,7 @@ async function runNativeTurn(
     const loop = agent.accessor.get(IAgentLoopService);
     const { id } = loop.submit({
       message: { role: 'user', content: [{ type: 'text', text: prompt }] },
-      meta: { origin: { kind: 'user' }, tracked: true },
+      meta: { origin: { kind: 'user' } },
     });
     const handle = loop.promptHandle(id)!;
     const turn = await handle.launched;
@@ -753,6 +753,7 @@ function dispatchNativeEvent(
   writer: PromptTurnWriter,
   event: Event2<any>,
   stderr: PromptOutput,
+  toolStatuses: Map<string, string>,
 ): void {
   switch (event.type) {
     case 'turn.step.started':
@@ -784,13 +785,25 @@ function dispatchNativeEvent(
     }
     case 'tool.result': {
       const result = event as unknown as ToolResultEvent;
+      toolStatuses.delete(result.toolCallId);
       writer.writeToolResult(result.toolCallId, result.output);
       return;
     }
-    case 'tool.progress': {
-      const progress = (event as unknown as ToolProgress).update;
-      if (progress.text !== undefined && progress.text.length > 0) {
-        stderr.write(progress.text.endsWith('\n') ? progress.text : `${progress.text}\n`);
+    case 'tool.updated': {
+      const updated = event as unknown as ToolUpdated;
+      if (updated.output !== undefined) {
+        const text = updated.output.text;
+        if (text.length > 0) stderr.write(text.endsWith('\n') ? text : `${text}\n`);
+        return;
+      }
+      const status = updated.fields['status'];
+      if (
+        typeof status === 'string' &&
+        status.length > 0 &&
+        toolStatuses.get(updated.toolCallId) !== status
+      ) {
+        toolStatuses.set(updated.toolCallId, status);
+        stderr.write(status.endsWith('\n') ? status : `${status}\n`);
       }
       return;
     }
@@ -1099,7 +1112,8 @@ async function quiesceSessionAgents(
   await Promise.allSettled(
     handles.flatMap((handle) => {
       try {
-        return [handle.accessor.get(IAgentTaskService).stopAllOnExit('Session closed')];
+        const tasks = handle.accessor.get(IAgentTaskService);
+        return tasks.list(true).map((task) => tasks.stop(task.taskId, 'Session closed'));
       } catch {
         return [];
       }
@@ -1177,7 +1191,6 @@ async function drainBackgroundTasks(
   const allWaiters: Promise<unknown>[] = [];
   while (Date.now() < deadline) {
     const batch: Promise<unknown>[] = [];
-    const suppressions: Promise<void>[] = [];
     let activeCount = 0;
     const agentManager = session.accessor.get(IAgentLifecycleService);
     for (const agent of agentManager.list()) {
@@ -1188,14 +1201,12 @@ async function drainBackgroundTasks(
         activeCount++;
         if (seen.has(task.taskId)) continue;
         seen.add(task.taskId);
-        suppressions.push(taskService.suppressTerminalNotification(task.taskId));
         const remaining = Math.max(1, deadline - Date.now());
         const waiter = taskService.wait(task.taskId, remaining);
         batch.push(waiter);
         allWaiters.push(waiter);
       }
     }
-    if (suppressions.length > 0) await Promise.all(suppressions);
     if (activeCount === 0 || batch.length === 0) break;
     await Promise.all(batch);
   }

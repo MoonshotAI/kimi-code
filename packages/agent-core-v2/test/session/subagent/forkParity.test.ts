@@ -49,7 +49,8 @@ import {
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
 import { FORK_CONTEXT_NOTICE } from '#/session/subagent/spawn';
-import { SUBAGENT_BACKGROUND_TASK_NOTICE } from '#/agent/task/taskRuntime';
+const SUBAGENT_BACKGROUND_TASK_NOTICE =
+  'You are running as a subagent: ending your turn is your final hand-off to the parent agent, and completion notifications that arrive after it reach no one. Do not end your turn while a background task whose result you need is still running. Keep waiting for it with WaitFor, calling it again after a timeout if needed, or run the command in the foreground with a suitable timeout instead. Still use the waiting time for other useful work on your task when you can.';
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 import { IWorkspaceInstanceManager, type WorkspaceInstanceChange } from '#/workspace/workspaceInstance/workspaceInstanceManager';
@@ -252,7 +253,7 @@ describe('subagent task reminders and fork request parity', () => {
     const loop = parent.accessor.get(IAgentLoopService);
     const { id } = loop.submit({
       message: { role: 'user', content: [{ type: 'text', text: 'start the parity probe' }] },
-      meta: { origin: { kind: 'user' }, tracked: true },
+      meta: { origin: { kind: 'user' } },
     });
     const completion = await loop.promptHandle(id)!.completion;
     expect(completion.state).toBe('completed');
@@ -353,7 +354,7 @@ describe('subagent task reminders and fork request parity', () => {
     const loop = agent.accessor.get(IAgentLoopService);
     const { id } = loop.submit({
       message: { role: 'user', content: [{ type: 'text', text: 'continue the task' }] },
-      meta: { origin: { kind: 'user' }, tracked: true },
+      meta: { origin: { kind: 'user' } },
     });
     expect((await loop.promptHandle(id)!.completion).state).toBe('completed');
   }
@@ -383,7 +384,7 @@ describe('subagent task reminders and fork request parity', () => {
     const loop = ctx.get(IAgentLoopService);
     const { id } = loop.submit({
       message: { role: 'user', content: [{ type: 'text', text: 'start the main fork probe' }] },
-      meta: { origin: { kind: 'user' }, tracked: true },
+      meta: { origin: { kind: 'user' } },
     });
     const completion = await loop.promptHandle(id)!.completion;
     expect(completion.state).toBe('completed');
@@ -730,7 +731,7 @@ describe('subagent task reminders and fork request parity', () => {
     const loop = ctx.get(IAgentLoopService);
     const { id } = loop.submit({
       message: { role: 'user', content: [{ type: 'text', text: 'investigate the parser loop in the background' }] },
-      meta: { origin: { kind: 'user' }, tracked: true },
+      meta: { origin: { kind: 'user' } },
     });
     expect((await loop.promptHandle(id)!.completion).state).toBe('completed');
 
@@ -788,7 +789,7 @@ describe('subagent task reminders and fork request parity', () => {
     const loop = ctx.get(IAgentLoopService);
     const { id } = loop.submit({
       message: { role: 'user', content: [{ type: 'text', text: 'investigate the parser loop' }] },
-      meta: { origin: { kind: 'user' }, tracked: true },
+      meta: { origin: { kind: 'user' } },
     });
     await childStreaming;
     loop.cancel(undefined, userCancellationReason());

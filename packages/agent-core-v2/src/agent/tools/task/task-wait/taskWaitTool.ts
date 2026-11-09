@@ -9,7 +9,10 @@ import {
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentTaskService } from '#/agent/task/task';
+import { IAgentToolExecutorService, type AgentToolExecutionHandler } from '#/agent/toolExecutor/toolExecutor';
+import { IAgentTaskHistoryService } from '#/agent/task/taskService';
+import { agentTaskInfo } from '#/agent/task/handler';
+import { ToolTimeoutError } from '#/tool/executor';
 import type { AgentTaskInfo } from '#/agent/task/task';
 import { TERMINAL_STATUSES } from '#/agent/task/types';
 import { formatPlainObject, formatTaskRecord } from '#/agent/task/tools/format';
@@ -53,6 +56,13 @@ export function waitForProgressUpdate(
       `Waiting ${formatWaitSeconds(elapsedS)} / ${formatWaitSeconds(args.timeout)} · ` +
       `${String(runningCount)} background task${runningCount === 1 ? '' : 's'} still running`,
     replace: true,
+    fields: {
+      wait: {
+        elapsedS,
+        timeoutS: args.timeout,
+        runningCount,
+      },
+    },
   };
 }
 
@@ -79,7 +89,7 @@ export interface WaitForProgressHandle {
 
 export function startWaitProgress(
   args: WaitForInput,
-  tasks: Pick<IAgentTaskService, 'list'>,
+  tasks: { list(activeOnly?: boolean): readonly AgentTaskInfo[] },
   onUpdate: ((update: ToolUpdate) => void) | undefined,
   startedAt: number,
 ): WaitForProgressHandle {
@@ -107,7 +117,8 @@ export class WaitForTool implements IWaitForTool {
   private tally: TurnWaitTally | undefined;
 
   constructor(
-    @IAgentTaskService private readonly tasks: IAgentTaskService,
+    @IAgentToolExecutorService private readonly toolExecutor: IAgentToolExecutorService,
+    @IAgentTaskHistoryService private readonly history: IAgentTaskHistoryService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IFlagService private readonly flags: IFlagService,
     @IAgentGoalService private readonly goals: IAgentGoalService,
@@ -141,7 +152,11 @@ export class WaitForTool implements IWaitForTool {
     const tally = this.countCall(ctx.turnId);
     const startedAt = Date.now();
     const timeoutMs = args.timeout * 1000;
-    const runningAtStart = this.tasks.list(true);
+    const runningAtStart = this.toolExecutor.handlers().filter((handler) => {
+      if (handler.snapshot().fields.task === undefined) return false;
+      const status = handler.snapshot().status;
+      return status === 'running' || status === 'stopping';
+    });
 
     if (args.task_id === undefined) {
       if (runningAtStart.length === 0) {
@@ -157,7 +172,7 @@ export class WaitForTool implements IWaitForTool {
           isError: false,
         };
       }
-    } else if (this.tasks.getTask(args.task_id) === undefined) {
+    } else if (this.getTask(args.task_id) === undefined) {
       this.track(args, startedAt, timeoutMs, 'task_not_found', 0);
       return { isError: true, output: this.withRepeatWarning(`Task not found: ${args.task_id}`, tally) };
     }
@@ -166,12 +181,12 @@ export class WaitForTool implements IWaitForTool {
     const signal = ctx.steerSignal === undefined
       ? ctx.signal
       : AbortSignal.any([ctx.signal, ctx.steerSignal]);
-    const progress = startWaitProgress(args, this.tasks, ctx.onUpdate, startedAt);
+    const progress = startWaitProgress(args, { list: () => this.listTasks() }, ctx.onUpdate, startedAt);
     try {
       waited =
         args.task_id === undefined
           ? await this.waitAny(runningAtStart, timeoutMs, signal)
-          : await this.tasks.wait(args.task_id, timeoutMs, signal);
+          : await this.waitTask(args.task_id, timeoutMs, signal);
     } catch (error) {
       if (
         !ctx.signal.aborted && ctx.steerSignal?.aborted &&
@@ -235,16 +250,44 @@ export class WaitForTool implements IWaitForTool {
     return 'Stop calling WaitFor. Repeated waiting wastes the user\'s time and is almost never the right move. Do not call it again in this turn unless the user explicitly asked you to wait. Do something useful now — another part of the task, or verifying earlier work — or end your turn with a progress update. Finished background tasks notify you automatically, so you will not miss the result.';
   }
 
+  private listTasks(): AgentTaskInfo[] {
+    return this.toolExecutor.handlers().flatMap((handler) => {
+      if (handler.snapshot().fields.task === undefined) return [];
+      const status = handler.snapshot().status;
+      return status === 'running' || status === 'stopping' ? [agentTaskInfo(handler)] : [];
+    });
+  }
+
+  private getTask(taskId: string): AgentTaskInfo | undefined {
+    const handler = this.toolExecutor.handler(taskId);
+    return handler === undefined ? this.history.getTask(taskId) : agentTaskInfo(handler);
+  }
+
+  private async waitTask(
+    taskId: string,
+    timeoutMs: number,
+    signal: AbortSignal,
+  ): Promise<AgentTaskInfo | undefined> {
+    const handler = this.toolExecutor.handler(taskId);
+    if (handler === undefined) return this.history.getTask(taskId);
+    try {
+      await handler.wait(timeoutMs, signal);
+    } catch (error) {
+      if (!(error instanceof ToolTimeoutError)) throw error;
+    }
+    return agentTaskInfo(handler);
+  }
+
   private async waitAny(
-    running: readonly AgentTaskInfo[],
+    running: readonly AgentToolExecutionHandler[],
     timeoutMs: number,
     signal: AbortSignal,
   ): Promise<AgentTaskInfo | undefined> {
     const controller = new AbortController();
     const unlink = linkAbortSignal(signal, controller);
     try {
-      const outcomes = running.map((task) =>
-        this.tasks.wait(task.taskId, timeoutMs, controller.signal).then(
+      const outcomes = running.map((handler) =>
+        this.waitTask(handler.taskId, timeoutMs, controller.signal).then(
           (info) => ({ info, error: undefined }),
           (error: unknown) => ({
             info: undefined,
@@ -262,13 +305,13 @@ export class WaitForTool implements IWaitForTool {
   }
 
   private collectExtras(
-    runningAtStart: readonly AgentTaskInfo[],
+    runningAtStart: readonly AgentToolExecutionHandler[],
     finishedTaskId: string,
   ): AgentTaskInfo[] {
     const extras: AgentTaskInfo[] = [];
-    for (const task of runningAtStart) {
-      if (task.taskId === finishedTaskId) continue;
-      const current = this.tasks.getTask(task.taskId);
+    for (const handler of runningAtStart) {
+      if (handler.taskId === finishedTaskId) continue;
+      const current = this.getTask(handler.taskId);
       if (current !== undefined && TERMINAL_STATUSES.has(current.status)) extras.push(current);
     }
     return extras;
@@ -286,7 +329,7 @@ export class WaitForTool implements IWaitForTool {
         ? 'The wait ended before the task finished — a timeout is not an error. If you need its result, call WaitFor again: ending your turn is your hand-off, and a completion notification after it reaches no one.'
         : 'The wait ended before the task finished — a timeout is not an error. Prefer continuing with other work over waiting again; completion arrives via automatic notification.',
     ];
-    const running = this.tasks.list(true);
+    const running = this.listTasks();
     if (running.length > 0) {
       lines.push('', '[still_running]', formatTaskList(running, true));
     }
@@ -304,7 +347,7 @@ export class WaitForTool implements IWaitForTool {
       }),
       'New input ended this wait early. Read the new input before deciding what to do next. Background tasks have not been stopped; completion still arrives via automatic notification.',
     ];
-    const running = this.tasks.list(true);
+    const running = this.listTasks();
     if (running.length > 0) {
       lines.push('', '[still_running]', formatTaskList(running, true));
     }
@@ -336,7 +379,7 @@ export class WaitForTool implements IWaitForTool {
         'Use TaskOutput with one of the task_id values above to read the full output.',
       );
     }
-    const running = this.tasks.list(true);
+    const running = this.listTasks();
     if (running.length > 0) {
       lines.push('', '[still_running]', formatTaskList(running, true));
     }

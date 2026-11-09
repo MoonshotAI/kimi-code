@@ -133,6 +133,7 @@ function appendResult(
     kind: 'injection' as const,
     variant: entry.variant,
     disclosure: result.disclosure,
+    ownerPromptId: result.ownerPromptId,
   };
   const resolved = result.content;
   if (typeof resolved === 'string') {

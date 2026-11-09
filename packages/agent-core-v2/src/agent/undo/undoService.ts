@@ -249,7 +249,7 @@ export class AgentConversationUndoService
 
   private async reconcileLastPrompt(): Promise<void> {
     if (this.agentCtx.agentId !== MAIN_AGENT_ID) return;
-    const pending = this.loop.snapshot().queue.filter((item) => item.meta?.tracked === true).at(-1);
+    const pending = this.loop.snapshot().queue.filter((item) => item.meta?.origin?.kind === 'user').at(-1);
     let lastPrompt = pending === undefined
       ? undefined
       : promptMetadataTextFromContentParts(pending.message.content.filter((part) => !isUserPromptSubmitHookPart(part)), (pending.meta?.origin as UserPromptOrigin | undefined)?.clientMetadata);

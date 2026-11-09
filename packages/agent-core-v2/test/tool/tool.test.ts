@@ -48,12 +48,11 @@ import { DEFAULT_SUBAGENT_TIMEOUT_MS, SECONDARY_MODEL_SECTION, SUBAGENT_SECTION 
 import { SUBAGENT_FORK_FLAG_ID } from '#/session/subagent/flag';
 import { Error2, ErrorCodes } from '#/errors';
 import { SUBAGENT_SCOPE_EVICT_TIMEOUT_ENV } from '#/session/subagent/subagentScopeCache';
-import type { AgentTaskSettlement } from '#/agent/task/types';
 import {
   NO_PARTIAL_OUTPUT,
   PARTIAL_OUTPUT_NOTICE,
-  SubagentTask,
-} from '#/agent/tools/agent/subagent-task';
+} from '#/agent/tools/agent/agentTool';
+import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { runAgentTurn } from '#/session/subagent/runAgentTurn';
 import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
@@ -484,17 +483,44 @@ function agentSwarmToolInSwarmMode(ctx: TestAgentContext): ExecutableTool<AgentS
   return agentSwarmTool(ctx);
 }
 
-function executeAgentTool(
+async function executeAgentTool(
   ctx: TestAgentContext,
   args: SubagentToolInput,
   inputSignal: AbortSignal = signal,
 ) {
-  return executeTool(agentTool(ctx), {
-    turnId: 0,
-    toolCallId: 'call_agent',
-    args,
-    signal: inputSignal,
-  });
+  const handler = agentHandler(ctx, args, inputSignal);
+  const onAbort = (): void => {
+    void handler.stop(inputSignal.reason);
+  };
+  if (inputSignal.aborted) onAbort();
+  else inputSignal.addEventListener('abort', onAbort, { once: true });
+  try {
+    const response = await handler;
+    return {
+      output: response.content.every((part) => part.type === 'text')
+        ? response.content.map((part) => part.type === 'text' ? part.text : '').join('')
+        : response.content,
+      isError: 'detached' in response
+        ? false
+        : response.outcome.type === 'success' ? undefined : true,
+    };
+  } finally {
+    inputSignal.removeEventListener('abort', onAbort);
+  }
+}
+
+function agentHandler(ctx: TestAgentContext, args: SubagentToolInput, inputSignal?: AbortSignal) {
+  const handler = ctx.get(IAgentToolExecutorService).executor.execute({
+    type: 'function',
+    id: 'call_agent_timeout',
+    name: 'Agent',
+    arguments: JSON.stringify(args),
+  }, { turnId: 0 });
+  if (inputSignal?.aborted === true) void handler.stop(inputSignal.reason);
+  else inputSignal?.addEventListener('abort', () => {
+    void handler.stop(inputSignal.reason);
+  }, { once: true });
+  return handler;
 }
 
 function currentAgentHandle(ctx: TestAgentContext, agentId: string): IAgentScopeHandle {
@@ -1692,75 +1718,48 @@ describe('Agent tool execution contract', () => {
   });
 
   it('settles a repeat-breaker completion with a stop code and a task reason', async () => {
-    const task = new SubagentTask(
-      {
-        agentId: 'agent-child',
-        profileName: 'coder',
-        completion: Promise.resolve({ result: 'handoff', stopReason: 'repeat_breaker' }),
-      },
-      'Find cause',
-      new AbortController(),
-    );
-    const settlements: AgentTaskSettlement[] = [];
-    const output: string[] = [];
-    await task.start({
-      signal: new AbortController().signal,
-      appendOutput: (chunk) => {
-        output.push(chunk);
-      },
-      settle: async (settlement) => {
-        settlements.push(settlement);
-        return true;
-      },
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: async () => ({ summary: 'handoff', stopReason: 'repeat_breaker' }),
     });
-
-    expect(output).toEqual(['handoff']);
-    expect(settlements).toEqual([
-      { status: 'completed', stopReason: expect.stringContaining('repeat breaker') },
-    ]);
-    const info = task.toInfo({
-      taskId: 'agent-1',
+    const context = createAgentToolContext(lifecycle);
+    const handler = agentHandler(context, {
+      prompt: 'Investigate',
       description: 'Find cause',
-      status: 'completed',
-      startedAt: 0,
-      endedAt: 1,
+      run_in_background: true,
     });
-    expect(info.stopCode).toBe('repeat_breaker');
+    await handler.wait();
+
+    expect(handler.output().preview).toBe('handoff');
+    expect(context.get(IAgentTaskService).getTask(handler.taskId)).toMatchObject({
+      status: 'completed',
+      stopReason: expect.stringContaining('repeat breaker'),
+      stopCode: 'repeat_breaker',
+    });
   });
 
   it('derives the stop code from the stop reason of a missing-handoff failure', async () => {
-    const task = new SubagentTask(
-      {
-        agentId: 'agent-child',
-        profileName: 'coder',
-        completion: Promise.reject(
-          new Error2(ErrorCodes.AGENT_NO_FINAL_MESSAGE, 'no handoff', {
-            details: { stopReason: 'repeat_breaker' },
-          }),
-        ),
-      },
-      'Find cause',
-      new AbortController(),
-    );
-    const settlements: AgentTaskSettlement[] = [];
-    await task.start({
-      signal: new AbortController().signal,
-      appendOutput: () => {},
-      settle: async (settlement) => {
-        settlements.push(settlement);
-        return true;
-      },
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: () => Promise.reject(
+        new Error2(ErrorCodes.AGENT_NO_FINAL_MESSAGE, 'no handoff', {
+          details: { stopReason: 'repeat_breaker' },
+        }),
+      ),
     });
-
-    expect(settlements).toEqual([{ status: 'failed', stopReason: 'no handoff' }]);
-    const info = task.toInfo({
-      taskId: 'agent-1',
+    const context = createAgentToolContext(lifecycle);
+    const handler = agentHandler(context, {
+      prompt: 'Investigate',
       description: 'Find cause',
-      status: 'failed',
-      startedAt: 0,
-      endedAt: 1,
+      run_in_background: true,
     });
-    expect(info.stopCode).toBe('repeat_breaker');
+    await handler.wait();
+
+    expect(context.get(IAgentTaskService).getTask(handler.taskId)).toMatchObject({
+      status: 'failed',
+      stopReason: 'no handoff',
+      stopCode: 'repeat_breaker',
+    });
   });
 
   it('reports a missing final message as a failure with stop_reason no_final_message', async () => {
@@ -3575,6 +3574,7 @@ describe('Agent tool execution contract', () => {
     });
     const context = createAgentToolContext(lifecycle);
 
+    const timeoutSpy = vi.spyOn(globalThis, 'setTimeout');
     const resultPromise = executeAgentTool(context, {
       prompt: 'Investigate',
       description: 'Find cause',
@@ -3582,8 +3582,11 @@ describe('Agent tool execution contract', () => {
     await vi.waitFor(() => {
       expect(context.get(IAgentTaskService).list(false)).toHaveLength(1);
     });
-    await vi.advanceTimersByTimeAsync(DEFAULT_SUBAGENT_TIMEOUT_MS);
+    const deadline = timeoutSpy.mock.calls.find(([, delay]) => delay === DEFAULT_SUBAGENT_TIMEOUT_MS)?.[0];
+    expect(deadline).toBeDefined();
+    (deadline as () => void)();
     const result = await resultPromise;
+    timeoutSpy.mockRestore();
 
     expect(result).toMatchObject({ isError: true });
     expect(result.output).toContain('agent_id: agent-child');
@@ -3627,6 +3630,179 @@ describe('Agent tool execution contract', () => {
 
     expect(result).toMatchObject({ isError: true });
     expect(result.output).toContain('subagent error: Agent timed out after 1 second.');
+  });
+  it('assigns an agent-prefixed id from the real AgentTool handler', async () => {
+    const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
+    const context = createAgentToolContext(lifecycle);
+    const handler = agentHandler(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+      run_in_background: true,
+    });
+    await handler;
+
+    expect(handler.taskId).toMatch(/^agent-[0-9a-z]{8}$/);
+    await handler.wait();
+  });
+
+  it('marks an external subagent deadline as timed_out', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: (_agentId, _request, options) =>
+        new Promise((_resolve, reject) => {
+          options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true });
+        }),
+    });
+    const context = createAgentToolContext(lifecycle, {
+      initialConfig: { subagent: { timeoutMs: 2_000 } },
+    });
+    const handler = agentHandler(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+      run_in_background: true,
+    });
+    await handler;
+    const terminal = handler.wait();
+    await vi.advanceTimersByTimeAsync(2_000);
+    await terminal;
+
+    expect(context.get(IAgentTaskService).getTask(handler.taskId)).toMatchObject({
+      status: 'timed_out',
+      timeoutMs: 2_000,
+    });
+  });
+
+  it('hands over partial output when a subagent ignores cancellation past the grace period', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    let finishLate!: (value: { summary: string }) => void;
+    const completion = new Promise<{ summary: string }>((resolve) => {
+      finishLate = resolve;
+    });
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: () => completion,
+      partialOutput: () => 'Found the loop at src/parser.ts:42.',
+    });
+    const context = createAgentToolContext(lifecycle, {
+      initialConfig: { subagent: { timeoutMs: 2_000 } },
+    });
+    const handler = agentHandler(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+      run_in_background: true,
+    });
+    await handler;
+    const terminal = handler.wait();
+    await vi.advanceTimersByTimeAsync(7_100);
+    await terminal;
+    finishLate({ summary: 'Late summary.' });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(context.get(IAgentTaskService).getTask(handler.taskId)?.status).toBe('timed_out');
+    expect(handler.output().preview).toBe(`${PARTIAL_OUTPUT_NOTICE}\n\nFound the loop at src/parser.ts:42.`);
+  });
+
+  it('lets a subagent finish with the default timeout metadata', async () => {
+    const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
+    const context = createAgentToolContext(lifecycle);
+    const handler = agentHandler(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+      run_in_background: true,
+    });
+    await handler.wait();
+
+    expect(context.get(IAgentTaskService).getTask(handler.taskId)).toMatchObject({
+      status: 'completed',
+      timeoutMs: DEFAULT_SUBAGENT_TIMEOUT_MS,
+      stopReason: undefined,
+    });
+  });
+
+  it('treats an internal TimeoutError as a generic failure with its reason', async () => {
+    const internalErr = new Error('aiohttp sock_read timeout');
+    internalErr.name = 'TimeoutError';
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: () => Promise.reject(internalErr),
+    });
+    const context = createAgentToolContext(lifecycle, {
+      initialConfig: { subagent: { timeoutMs: 900_000 } },
+    });
+    const handler = agentHandler(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+      run_in_background: true,
+    });
+    await handler.wait();
+
+    expect(context.get(IAgentTaskService).getTask(handler.taskId)).toMatchObject({
+      status: 'failed',
+      stopReason: 'aiohttp sock_read timeout',
+    });
+  });
+
+  it('persists an explicit subagent timeout on the task info', async () => {
+    const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
+    const context = createAgentToolContext(lifecycle, {
+      initialConfig: { subagent: { timeoutMs: 1_800_000 } },
+    });
+    const handler = agentHandler(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+      run_in_background: true,
+    });
+    await handler;
+
+    expect(context.get(IAgentTaskService).getTask(handler.taskId)?.timeoutMs).toBe(1_800_000);
+    await expect(handler.wait()).resolves.toBeDefined();
+    expect(context.get(IAgentTaskService).getTask(handler.taskId)?.status).toBe('completed');
+  });
+
+  it('uses the configured default subagent timeout when no override exists', async () => {
+    const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
+    const context = createAgentToolContext(lifecycle);
+    const handler = agentHandler(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+      run_in_background: true,
+    });
+    await handler;
+
+    expect(context.get(IAgentTaskService).getTask(handler.taskId)).toMatchObject({
+      detached: true,
+      timeoutMs: DEFAULT_SUBAGENT_TIMEOUT_MS,
+    });
+    await expect(handler.wait()).resolves.toBeDefined();
+    expect(context.get(IAgentTaskService).getTask(handler.taskId)?.status).toBe('completed');
+  });
+
+  it('treats timeoutMs=0 as an immediate deadline and preserves the metadata', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: (_agentId, _request, options) =>
+        new Promise((_resolve, reject) => {
+          options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true });
+        }),
+    });
+    const context = createAgentToolContext(lifecycle, {
+      initialConfig: { subagent: { timeoutMs: 0 } },
+    });
+    const handler = agentHandler(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+      run_in_background: true,
+    });
+    await handler;
+    await vi.advanceTimersByTimeAsync(0);
+    await handler.wait();
+
+    expect(context.get(IAgentTaskService).getTask(handler.taskId)).toMatchObject({
+      status: 'timed_out',
+      timeoutMs: 0,
+    });
   });
 });
 

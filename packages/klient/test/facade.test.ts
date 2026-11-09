@@ -442,7 +442,7 @@ describe('session skills routing', () => {
         args: [
           {
             message: { role: 'user', content: [{ type: 'text', text: 'steer' }] },
-            meta: { origin: { kind: 'user' }, tracked: true },
+            meta: { origin: { kind: 'user' } },
           },
         ],
       },
@@ -828,7 +828,7 @@ describe('event hub', () => {
     });
 
     agent.events.on('tool.call.delta', (event) => seen.delta.push(event));
-    agent.events.on('tool.progress', (event) => seen.progress.push(event));
+    agent.events.on('tool.updated', (event) => seen.progress.push(event));
     agent.events.on('compaction.started', (event) => seen.started.push(event));
     agent.events.on('compaction.blocked', (event) => seen.blocked.push(event));
     agent.events.on('compaction.cancelled', (event) => seen.cancelled.push(event));
@@ -842,10 +842,14 @@ describe('event hub', () => {
 
     const delta = { type: 'tool.call.delta', turnId: 1, toolCallId: 'tc1', name: 'Bash', argumentsPart: '{"command":' };
     const progress = {
-      type: 'tool.progress',
+      type: 'tool.updated',
       turnId: 1,
       toolCallId: 'tc1',
-      update: { kind: 'stdout', text: 'chunk' },
+      taskId: 'task-1',
+      status: 'running',
+      detached: false,
+      fields: { status: 'copying' },
+      output: { offset: 0, text: 'chunk' },
     };
     const started = { type: 'compaction.started', trigger: 'auto' };
     const blocked = { type: 'compaction.blocked', turnId: 2 };
@@ -860,7 +864,7 @@ describe('event hub', () => {
     channel.emit(0, blocked);
     channel.emit(0, cancelled);
     channel.emit(0, completed);
-    channel.emit(0, { type: 'tool.progress', turnId: 1, toolCallId: 'tc1' }); // missing update
+    channel.emit(0, { type: 'tool.updated', turnId: 1, toolCallId: 'tc1', taskId: 'task-1', status: 'running', detached: false }); // missing fields
     channel.emit(0, { type: 'unregistered.type', turnId: 1 });
     await tick();
 

@@ -65,10 +65,19 @@ describe('AgentTaskPersistence', () => {
   });
 
   it('appends subsequent writes without replacing earlier output', async () => {
-    await persistence.appendTaskOutput('bash-11111111', 'one');
-    await persistence.appendTaskOutput('bash-11111111', 'two');
+    const output = persistence.open('bash-11111111');
+    expect(output.append('one')).toBe(0);
+    expect(output.append('two')).toBe(3);
+    await output.flush();
 
+    expect(await output.read(0, 100)).toBe('onetwo');
     expect(await persistence.readTaskOutputBytes('bash-11111111', 0, 100)).toBe('onetwo');
+    await output.close();
+    await output.close();
+    expect(output.append('ignored')).toBeUndefined();
+    const restored = persistence.open('bash-11111111');
+    expect(await restored.read(0, 100)).toBe('onetwo');
+    await restored.close();
   });
 
   it('isolates output by task id', async () => {
@@ -110,12 +119,18 @@ describe('AgentTaskPersistence', () => {
     });
 
     it('readTaskOutputBytes returns the exact byte window for offset + maxBytes', async () => {
-      await persistence.appendTaskOutput('bash-page0000', 'abcdefghijklmnopqrstuvwxyz');
+      const output = persistence.open('bash-page0000');
+      output.append('abcdefghijklmnopqrstuvwxyz');
+      output.append('世界➜');
+      await output.flush();
 
       expect(await persistence.readTaskOutputBytes('bash-page0000', 5, 10)).toBe('fghijklmno');
       expect(await persistence.readTaskOutputBytes('bash-page0000', 0, 3)).toBe('abc');
-      expect(await persistence.readTaskOutputBytes('bash-page0000', 20, 100)).toBe('uvwxyz');
-      expect(await persistence.readTaskOutputBytes('bash-page0000', 26, 10)).toBe('');
+      expect(await persistence.readTaskOutputBytes('bash-page0000', 20, 100)).toBe('uvwxyz世界➜');
+      expect(await persistence.readTaskOutputBytes('bash-page0000', 35, 10)).toBe('');
+      expect(await output.read(26, 6)).toBe('世界');
+      expect(await output.read(32, 3)).toBe('➜');
+      await output.close();
     });
 
     it('readTaskOutputBytes returns empty string when output.log is absent', async () => {
@@ -296,5 +311,23 @@ describe('AgentTaskPersistence', () => {
       expect(result?.preview).toBe('ab');
       expect(files.get(result!.outputPath)).toBe('ab');
     });
+    it('rejects malformed task ids at the persistence path boundary', () => {
+    const rejected = [
+      '',
+      'x',
+      '-bash',
+      'BASH-12345678',
+      'bash_12345678',
+      '../escape',
+      'bash-1234567',
+      'bash-123456789',
+      'agent-ABCDEFGH',
+      'bg_12345678',
+      'a'.repeat(26),
+    ];
+    for (const bad of rejected) {
+      expect(() => persistence.taskOutputFile(bad)).toThrow(/Invalid task id/);
+    }
+  });
   });
 });

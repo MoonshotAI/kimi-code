@@ -1,5 +1,4 @@
 import type { HistoryMessage, UserEntry } from '#human/agent/turn';
-import type { ToolDescription } from '#human/llm/message';
 import type { RemindEntry, TurnTrigger } from './inbox';
 import type { LoopProfile } from './profile';
 
@@ -34,5 +33,4 @@ export type LoopCommand =
   | { type: 'input.abort_tool'; toolCallId: string }
   | { type: 'input.detach_tool'; toolCallId: string }
   | { type: 'input.set_context'; messages: HistoryMessage[] }
-  | { type: 'input.set_system_prompt'; systemPrompt: string }
-  | { type: 'input.set_tools'; tools: readonly ToolDescription[] };
+  | { type: 'input.set_system_prompt'; systemPrompt: string };

@@ -321,7 +321,7 @@ describe('LLMRequester service migration coverage', () => {
       const runChildTurn = async (text: string): Promise<void> => {
         const { id } = childLoop.submit({
           message: { role: 'user', content: [{ type: 'text', text }] },
-          meta: { origin: { kind: 'user' }, tracked: true },
+          meta: { origin: { kind: 'user' } },
         });
         expect((await childLoop.promptHandle(id)!.completion).state).toBe('completed');
       };

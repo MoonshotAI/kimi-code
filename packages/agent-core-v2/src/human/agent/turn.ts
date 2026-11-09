@@ -29,10 +29,10 @@ export type SystemMeta = EntryMeta;
 export interface UserMeta extends EntryMeta {
   promptId?: string;
   origin?: PromptOrigin;
-  tracked?: boolean;
   createdAt?: string;
   userMessageId?: string;
   toolCallId?: string;
+  bypassMaxSteps?: boolean;
 }
 
 export interface ToolMeta extends EntryMeta {

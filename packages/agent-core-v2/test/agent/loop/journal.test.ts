@@ -20,7 +20,7 @@ import { fromPersistentWireRecord, toPersistentWireRecord } from '#/wire/wireSer
 import { recordingWireLog, registerTestAgentWire, stubAgentWire } from '../../wire/stubs';
 
 function prompt(id: string, text = id): UserEntry {
-  return createUserEntry(createUserMessage(text), { source: 'input', promptId: id, tracked: true });
+  return createUserEntry(createUserMessage(text), { source: 'input', promptId: id });
 }
 
 function assistant(text: string, toolCalls: ToolCall[] = []) {

@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { IEventBus } from '#/app/event/eventBus';
+import type { PromptOrigin } from '#/agent/contextMemory/types';
+import { PromptCompleted, PromptStarted, PromptSubmitted } from '#/agent/prompt/promptEvents';
 import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
 
 import { stubSkill } from './catalog/stubs';
@@ -166,14 +169,28 @@ describe('promptWithSkills', () => {
     expect(ctx.context.history().find((message) => message.origin?.kind === 'user')?.id).toBe('msg_bundled');
   });
 
-  it('ends the active step and launches the bundled submission in a new turn', async () => {
+  it('hands off a goal-originated active step to a bundled submission in a new turn', async () => {
     ctx = agentWithSkills();
+    await ctx.restorePersisted();
     ctx.mockNextResponse({ type: 'text', text: 'first reply' });
     ctx.mockNextResponse({ type: 'text', text: 'second reply' });
+    const loop = ctx.get(IAgentLoopService);
+    const promptLifecycle: string[] = [];
+    const eventBus = ctx.get(IEventBus);
+    eventBus.subscribe(PromptSubmitted, (event) => promptLifecycle.push(`submitted:${event.promptId}`));
+    eventBus.subscribe(PromptStarted, (event) => promptLifecycle.push(`started:${event.promptId}`));
+    eventBus.subscribe(PromptCompleted, (event) => promptLifecycle.push(`completed:${event.promptId}`));
     const hold = holdFirstStep();
-
-    const promptPromise = ctx.rpc.prompt({ input: [{ type: 'text', text: 'start' }] });
+    const active = loop.submit({
+      message: { role: 'user', content: [{ type: 'text', text: 'goal continuation' }] },
+      meta: {
+        promptId: 'goal-continuation',
+        origin: { kind: 'system_trigger', name: 'goal_continuation' } as PromptOrigin,
+      },
+    });
+    const activeHandle = loop.promptHandle(active.id)!;
     await hold.started;
+    expect(loop.snapshot()).toMatchObject({ activeTurnId: 0, activePromptId: active.id });
 
     const steeredPromise = ctx.rpc.promptWithSkills({
       input: [{ type: 'text', text: '/review src/app.ts' }],
@@ -187,8 +204,8 @@ describe('promptWithSkills', () => {
     expect(steered.steered).toBe(true);
     expect(steered.prompt_id).toBeTruthy();
 
-    await promptPromise;
-    await ctx.get(IAgentLoopService).settled();
+    await expect(activeHandle.completion).resolves.toMatchObject({ state: 'completed' });
+    await loop.settled();
 
     expect(ctx.llmCalls).toHaveLength(2);
     const llmInput = JSON.stringify(ctx.llmInputs());
@@ -211,6 +228,11 @@ describe('promptWithSkills', () => {
       .map((part) => part.text);
     expect(texts?.[0]).toContain('# Review body');
     expect(texts?.[1]).toBe('/review src/app.ts');
+    expect(promptLifecycle.filter((entry) => entry.endsWith(`:${active.id}`))).toEqual([
+      `submitted:${active.id}`,
+      `started:${active.id}`,
+      `completed:${active.id}`,
+    ]);
 
     const events = ctx.allEvents.filter(
       (event) =>

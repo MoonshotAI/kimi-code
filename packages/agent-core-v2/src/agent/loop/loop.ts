@@ -226,7 +226,6 @@ export interface PromptSubmitContext {
 
 export interface LoopNotify {
   readonly message?: ContextMessage;
-  readonly turnScoped?: boolean;
   readonly bypassMaxSteps?: boolean;
   readonly onConsume?: () => void;
   readonly onDrop?: () => void;
@@ -289,6 +288,7 @@ export interface IAgentLoopService extends EffectiveProfileReader {
   cancel(target?: LoopCancelTarget, reason?: unknown): boolean;
 
   detachTool(task: LoopDetachedTask, text?: string): void;
+
 
   abortTool(toolCallId: string, reason?: unknown): void;
 

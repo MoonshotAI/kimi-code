@@ -201,7 +201,9 @@ export class AgentToolDedupeService extends Service implements IAgentToolDedupeS
           legacy.result,
           legacy.trace,
         );
-        context.set({ result: legacy.result });
+        if (context.prepared?.kind === 'execute' || context.prepared?.kind === 'synthetic') {
+          context.prepared.result = legacy.result;
+        }
         return legacyResultToToolResult(context, legacy.result);
       },
     });

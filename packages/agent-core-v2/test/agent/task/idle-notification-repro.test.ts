@@ -7,12 +7,17 @@ import { LifecycleScope } from '#/app/scopes';
 import { type IAgentScopeHandle } from '#/_base/di/scope';
 import type { LlmRequester } from '#human/llm-requester/requester';
 import { IAgentTaskService, type AgentTaskInfo } from '#/agent/task/task';
-import { SubagentTask } from '#/agent/tools/agent/subagent-task';
 import { runAgentTurn } from '#/session/subagent/runAgentTurn';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnPrompt } from '#/agent/loop/turnOps';
 import { IEventBus } from '#/app/event/eventBus';
+import {
+  ISessionSubagentService,
+  type AgentRunHandle,
+} from '#/session/subagent/subagent';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import {
   taskServices,
   createTestAgent,
@@ -22,22 +27,36 @@ import {
 import {
   createAgentTaskPersistence,
   restoreTaskHistory,
-  type TaskServiceTestManager,
+  startAgentTask,
 } from './stubs';
 
-function agentTask(
-  completion: Promise<{ result: string }>,
-  description: string,
-): SubagentTask {
-  return new SubagentTask(
-    { agentId: 'agent-child', profileName: 'coder', completion },
-    description,
-    new AbortController(),
-  );
+function notifiedCount(ctx: TestAgentContext): number {
+  return ctx.context.history().filter((message) => message.origin?.kind === 'task').length;
 }
 
-function notifiedCount(ctx: TestAgentContext): number {
-  return ctx.allEvents.filter((e) => e.event === 'task.notified').length;
+function mockSubagentRuns(
+  ctx: TestAgentContext,
+  completions: ReadonlyMap<string, Promise<{ readonly result: string }>>,
+): void {
+  vi.spyOn(ctx.get(ISessionSubagentService), 'run').mockImplementation(async (agent, request) => {
+    const prompt = request.kind === 'prompt' ? request.prompt : '';
+    const completion = completions.get(prompt);
+    if (completion === undefined) throw new Error(`Unexpected subagent prompt: ${prompt}`);
+    return {
+      agentId: agent.agentId,
+      turn: {} as AgentRunHandle['turn'],
+      completion: completion.then(({ result }) => ({ summary: result })),
+      partialOutput: () => '',
+    };
+  });
+}
+
+function startControlledAgent(ctx: TestAgentContext, description: string) {
+  return startAgentTask(ctx, {
+    description,
+    prompt: description,
+    run_in_background: true,
+  });
 }
 
 describe('task notification → main agent (real Agent instance)', () => {
@@ -45,14 +64,12 @@ describe('task notification → main agent (real Agent instance)', () => {
     let ctx: TestAgentContext;
     let background: IAgentTaskService;
     let loop: IAgentLoopService;
-    let profile: IAgentLoopService;
 
     beforeEach(() => {
       ctx = createTestAgent();
       background = ctx.get(IAgentTaskService);
       loop = ctx.get(IAgentLoopService);
-      profile = ctx.get(IAgentLoopService);
-      profile.update({ activeToolNames: [] });
+      loop.update({ activeToolNames: [] });
     });
 
     afterEach(async () => {
@@ -66,6 +83,9 @@ describe('task notification → main agent (real Agent instance)', () => {
     it('IDLE: completed bg agent notification auto-launches a turn that consumes it', async () => {
       expect(loop.snapshot().activeTurnId).toBeUndefined();
       expect(ctx.llmCalls.length).toBe(0);
+      mockSubagentRuns(ctx, new Map([
+        ['idle-state repro', Promise.resolve({ result: 'background agent finished its job' })],
+      ]));
 
       ctx.mockNextResponse({ type: 'text', text: 'ack from main agent' });
       const turnStarted: TurnStarted[] = [];
@@ -77,29 +97,20 @@ describe('task notification → main agent (real Agent instance)', () => {
         turnPrompts.push(event);
       });
       const turnEnd = ctx.untilTurnEnd();
-      const taskId = background.registerTask(agentTask(
-        Promise.resolve({ result: 'background agent finished its job' }),
-        'idle-state repro',
-      ));
+      const handler = startControlledAgent(ctx, 'idle-state repro');
+      const taskId = handler.taskId;
+      await handler;
       await background.wait(taskId);
 
-      await vi.waitFor(
-        () => {
-          expect(notifiedCount(ctx)).toBe(1);
-        },
-        { timeout: 2000 },
-      );
+      await vi.waitFor(() => expect(notifiedCount(ctx)).toBe(1), { timeout: 2000 });
       await turnEnd;
 
       expect(ctx.llmCalls.length).toBe(1);
-      const lastCall = ctx.llmCalls.at(-1)!;
-      const flatHistoryText = JSON.stringify(lastCall.history);
-      expect(flatHistoryText).toContain('<notification');
-      expect(flatHistoryText).toContain('task.completed');
+      const flatHistoryText = JSON.stringify(ctx.llmCalls.at(-1)!.history);
+      expect(flatHistoryText).toContain('[async tool completed]');
+      expect(flatHistoryText).toContain('status: completed');
       expect(flatHistoryText).toContain(taskId);
-      expect(flatHistoryText).toContain('idle-state repro completed.');
-      expect(flatHistoryText).toContain('<output-file');
-      expect(flatHistoryText).not.toContain('background agent finished its job');
+      expect(flatHistoryText).toContain('background agent finished its job');
       const notificationTurn = turnStarted.find((event) => event.origin?.kind === 'task');
       expect(notificationTurn?.prompt).toBeUndefined();
       expect(notificationTurn?.promptId).toBeUndefined();
@@ -108,15 +119,17 @@ describe('task notification → main agent (real Agent instance)', () => {
           (event) => event.origin.kind === 'task' && event.turnId === notificationTurn?.turnId,
         )?.input,
       );
-      expect(notificationPromptText).toContain('<notification');
+      expect(notificationPromptText).toContain('[async tool completed]');
       expect(notificationPromptText).toContain(taskId);
-      expect(notificationPromptText).toContain('<output-file');
-      expect(notificationPromptText).toContain('</notification>');
+      expect(notificationPromptText).toContain('background agent finished its job');
       subscription.dispose();
       promptSubscription.dispose();
     });
 
     it('BUSY: completed bg agent during an active turn is flushed into an LLM call', async () => {
+      mockSubagentRuns(ctx, new Map([
+        ['busy-state repro', Promise.resolve({ result: 'busy-state bg result' })],
+      ]));
       ctx.mockNextResponse({ type: 'text', text: 'first turn ack' });
       ctx.mockNextResponse({ type: 'text', text: 'notification ack' });
       ctx.mockNextResponse({ type: 'text', text: 'drain turn ack' });
@@ -124,125 +137,88 @@ describe('task notification → main agent (real Agent instance)', () => {
       const promptPromise = ctx.rpc.prompt({
         input: [{ type: 'text', text: 'kick off a turn' }],
       });
-
-      const taskId = background.registerTask(agentTask(
-        Promise.resolve({ result: 'busy-state bg result' }),
-        'busy-state repro',
-      ));
+      const handler = startControlledAgent(ctx, 'busy-state repro');
+      const taskId = handler.taskId;
+      await handler;
 
       await promptPromise;
       await ctx.untilTurnEnd();
-      await vi.waitFor(
-        () => {
-          expect(notifiedCount(ctx)).toBe(1);
-        },
-        { timeout: 2000 },
-      );
+      await vi.waitFor(() => expect(notifiedCount(ctx)).toBe(1), { timeout: 2000 });
 
-      await ctx.rpc.prompt({
-        input: [{ type: 'text', text: 'drain the queue' }],
-      });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'drain the queue' }] });
       await ctx.untilTurnEnd();
 
       const delivered = ctx.llmCalls.some((call) => {
         const flat = JSON.stringify(call.history);
-        return flat.includes('<notification') && flat.includes(taskId);
+        return flat.includes('[async tool completed]') && flat.includes(taskId);
       });
       expect(delivered).toBe(true);
 
-      const data = ctx.contextData();
-      const flatContext = JSON.stringify(data);
-      expect(flatContext).toContain('<notification');
-      expect(flatContext).toContain('task.completed');
+      const flatContext = JSON.stringify(ctx.contextData());
+      expect(flatContext).toContain('[async tool completed]');
+      expect(flatContext).toContain('status: completed');
       expect(flatContext).toContain(taskId);
-      expect(flatContext).toContain('busy-state repro completed.');
-      expect(flatContext).toContain('<output-file');
-      expect(flatContext).not.toContain('busy-state bg result');
+      expect(flatContext).toContain('busy-state bg result');
     });
 
     it('IDLE × N: a GROUP of bg agents completes — the first notification launches one turn, the rest fold in', async () => {
+      mockSubagentRuns(ctx, new Map([
+        ['group-1', Promise.resolve({ result: 'bg #1 result' })],
+        ['group-2', Promise.resolve({ result: 'bg #2 result' })],
+        ['group-3', Promise.resolve({ result: 'bg #3 result' })],
+      ]));
       ctx.mockNextResponse({ type: 'text', text: 'ack group 1' });
       ctx.mockNextResponse({ type: 'text', text: 'ack group 2' });
       ctx.mockNextResponse({ type: 'text', text: 'ack group 3' });
       const turnEnd = ctx.untilTurnEnd();
-      const taskIds = [
-        background.registerTask(agentTask(
-          Promise.resolve({ result: 'bg #1 result' }),
-          'group-1',
-        )),
-        background.registerTask(agentTask(
-          Promise.resolve({ result: 'bg #2 result' }),
-          'group-2',
-        )),
-        background.registerTask(agentTask(
-          Promise.resolve({ result: 'bg #3 result' }),
-          'group-3',
-        )),
+      const handlers = [
+        startControlledAgent(ctx, 'group-1'),
+        startControlledAgent(ctx, 'group-2'),
+        startControlledAgent(ctx, 'group-3'),
       ];
+      const taskIds = handlers.map((handler) => handler.taskId);
+      await Promise.all(handlers.map(async (handler) => handler));
 
-      for (const id of taskIds) {
-        await background.wait(id);
-      }
+      for (const id of taskIds) await background.wait(id);
 
-      await vi.waitFor(
-        () => {
-          expect(notifiedCount(ctx)).toBe(3);
-        },
-        { timeout: 2000 },
-      );
+      await vi.waitFor(() => expect(notifiedCount(ctx)).toBe(3), { timeout: 2000 });
       await turnEnd;
-      await vi.waitFor(
-        () => {
-          expect(loop.snapshot().state).toBe('idle');
-          expect(loop.snapshot().hasPendingRequests).toBe(false);
-        },
-        { timeout: 2000 },
-      );
+      await vi.waitFor(() => {
+        expect(loop.snapshot().state).toBe('idle');
+        expect(loop.snapshot().hasPendingRequests).toBe(false);
+      }, { timeout: 2000 });
 
       const flatHistoryText = JSON.stringify(ctx.llmCalls.map((call) => call.history));
-      for (const id of taskIds) {
-        expect(flatHistoryText).toContain(id);
-      }
-      expect(flatHistoryText).toContain('group-1 completed.');
-      expect(flatHistoryText).toContain('group-2 completed.');
-      expect(flatHistoryText).toContain('group-3 completed.');
-      expect(flatHistoryText).toContain('<output-file');
-      expect(flatHistoryText).not.toContain('bg #1 result');
-      expect(flatHistoryText).not.toContain('bg #2 result');
-      expect(flatHistoryText).not.toContain('bg #3 result');
+      for (const id of taskIds) expect(flatHistoryText).toContain(id);
+      expect(flatHistoryText).toContain('bg #1 result');
+      expect(flatHistoryText).toContain('bg #2 result');
+      expect(flatHistoryText).toContain('bg #3 result');
+      expect(flatHistoryText).toContain('[async tool completed]');
     });
 
     it('RACE: bg completion right after turn end launches its own turn', async () => {
+      mockSubagentRuns(ctx, new Map([
+        ['race-after-turn', Promise.resolve({ result: 'post-turn bg result' })],
+      ]));
       ctx.mockNextResponse({ type: 'text', text: 'first user-prompted ack' });
-      await ctx.rpc.prompt({
-        input: [{ type: 'text', text: 'hello main agent' }],
-      });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hello main agent' }] });
       await ctx.untilTurnEnd();
       expect(ctx.llmCalls.length).toBe(1);
 
       ctx.mockNextResponse({ type: 'text', text: 'ack from bg notification' });
       const turnEnd = ctx.untilTurnEnd();
-      const taskId = background.registerTask(agentTask(
-        Promise.resolve({ result: 'post-turn bg result' }),
-        'race-after-turn',
-      ));
+      const handler = startControlledAgent(ctx, 'race-after-turn');
+      const taskId = handler.taskId;
+      await handler;
       await background.wait(taskId);
-      await vi.waitFor(
-        () => {
-          expect(notifiedCount(ctx)).toBe(1);
-        },
-        { timeout: 2000 },
-      );
+      await vi.waitFor(() => expect(notifiedCount(ctx)).toBe(1), { timeout: 2000 });
       await turnEnd;
 
       expect(ctx.llmCalls.length).toBe(2);
-      const lastCall = ctx.llmCalls.at(-1)!;
-      const flatHistoryText = JSON.stringify(lastCall.history);
-      expect(flatHistoryText).toContain('<notification');
+      const flatHistoryText = JSON.stringify(ctx.llmCalls.at(-1)!.history);
+      expect(flatHistoryText).toContain('[async tool completed]');
       expect(flatHistoryText).toContain(taskId);
-      expect(flatHistoryText).toContain('race-after-turn completed.');
-      expect(flatHistoryText).toContain('<output-file');
-      expect(flatHistoryText).not.toContain('post-turn bg result');
+      expect(flatHistoryText).toContain('post-turn bg result');
     });
   });
 
@@ -269,15 +245,9 @@ describe('task notification → main agent (real Agent instance)', () => {
           signal.throwIfAborted();
           generateStarted();
           return new Promise<never>((_resolve, reject) => {
-            signal.addEventListener(
-              'abort',
-              () => {
-                setTimeout(() => {
-                  reject(signal.reason);
-                }, 200);
-              },
-              { once: true },
-            );
+            signal.addEventListener('abort', () => {
+              setTimeout(() => reject(signal.reason), 200);
+            }, { once: true });
           });
         },
       };
@@ -287,45 +257,44 @@ describe('task notification → main agent (real Agent instance)', () => {
       try {
         const childHandle = agentScopeHandle(child, 'agent-child');
         const childLoop = child.get(IAgentLoopService);
-
-        const controller = new AbortController();
-        const run = await runAgentTurn(
-          childHandle,
-          { kind: 'prompt', prompt: 'do background work' },
-          { signal: controller.signal },
+        const lifecycle = main.get(IAgentLifecycleService);
+        const originalHandleOf = lifecycle.handleOf.bind(lifecycle);
+        vi.spyOn(lifecycle, 'handleOf').mockImplementation((agentId) =>
+          agentId === 'agent-child' ? childHandle : originalHandleOf(agentId)
         );
-        const completion = run.completion.then((r) => ({ result: r.summary, usage: r.usage }));
-        void completion.catch(() => {});
-
-        await inFlight;
-        expect(childLoop.snapshot().state).toBe('running');
-
-        const background = main.get(IAgentTaskService);
-        const taskId = background.registerTask(
-          new SubagentTask(
-            { agentId: 'agent-child', profileName: 'coder', completion },
-            'kill-order repro',
-            controller,
-          ),
-          { detached: true, timeoutMs: 0 },
+        vi.spyOn(main.get(ISessionSubagentService), 'spawn').mockImplementation(async (options) => ({
+          agentId: 'agent-child',
+          profileName: options.plan.profileName ?? 'coder',
+          model: options.plan.model,
+          promptText: options.prompt,
+        }));
+        vi.spyOn(main.get(ISessionSubagentService), 'run').mockImplementation(async () =>
+          runAgentTurn(
+            childHandle,
+            { kind: 'prompt', prompt: 'do background work' },
+            { signal: new AbortController().signal },
+          )
         );
 
         main.mockNextResponse({ type: 'text', text: 'ack from main agent' });
         const notificationTurnEnd = main.untilTurnEnd();
+        const handler = startControlledAgent(main, 'kill-order repro');
+        const taskId = handler.taskId;
+        await handler;
+        await inFlight;
+        expect(childLoop.snapshot().state).toBe('running');
 
+        const background = main.get(IAgentTaskService);
         const info = await background.stop(taskId, 'User initiated stop');
         expect(info?.status).toBe('killed');
         expect(childLoop.snapshot().state).toBe('idle');
 
-        await vi.waitFor(
-          () => {
-            expect(main.llmCalls.length).toBeGreaterThanOrEqual(1);
-          },
-          { timeout: 2000 },
-        );
+        await vi.waitFor(() => {
+          expect(main.llmCalls.length).toBeGreaterThanOrEqual(1);
+        }, { timeout: 2000 });
         const notified = JSON.stringify(main.llmCalls.at(-1)!.history);
-        expect(notified).toContain('task.killed');
         expect(notified).toContain(taskId);
+        expect(notified).toContain('[async tool');
         expect(childLoop.snapshot().state).toBe('idle');
 
         await notificationTurnEnd;
@@ -339,7 +308,7 @@ describe('task notification → main agent (real Agent instance)', () => {
   describe('resumed notifications', () => {
     let sessionDir: string;
     let ctx: TestAgentContext;
-    let background: TaskServiceTestManager;
+    let background: IAgentTaskService;
     let loop: IAgentLoopService;
     let previousTasks: AgentTaskInfo[];
 
@@ -370,10 +339,9 @@ describe('task notification → main agent (real Agent instance)', () => {
       ];
 
       ctx = createTestAgent(homeDirServices(sessionDir), taskServices());
-      background = ctx.get(IAgentTaskService) as TaskServiceTestManager;
+      background = ctx.get(IAgentTaskService);
       loop = ctx.get(IAgentLoopService);
-      const profile = ctx.get(IAgentLoopService);
-      profile.update({ activeToolNames: [] });
+      loop.update({ activeToolNames: [] });
     });
 
     afterEach(async () => {
@@ -386,7 +354,6 @@ describe('task notification → main agent (real Agent instance)', () => {
     });
 
     it('RESUME: previous-session lost tasks surface as one unified reminder (no auto-turn)', async () => {
-
       const launches: number[] = [];
       const launchSubscription = ctx.get(IEventBus).subscribe(TurnStarted, (event) => {
         launches.push(event.turnId);

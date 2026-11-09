@@ -160,7 +160,7 @@ import type { TaskInfo } from '@moonshot-ai/agent-core-v2/agent/task/types';
 import type {
   ToolCallDeltaEvent,
   ToolCallStartedEvent,
-  ToolProgressEvent,
+  ToolUpdatedEvent,
 } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
 import type { WarningEvent } from '@moonshot-ai/agent-core-v2/errors';
 
@@ -207,7 +207,7 @@ import {
   thinkingDeltaEventSchema,
   toolCallDeltaEventSchema,
   toolCallStartedEventSchema,
-  toolProgressEventSchema,
+  toolUpdatedEventSchema,
   toolResultEventSchema,
   turnEndedEventSchema,
   turnStartedEventSchema,
@@ -710,7 +710,7 @@ const _toolCallStartedEvent: AssertEngineToWire<
   ToolCallStartedEvent
 > = true;
 const _toolCallDeltaEvent: AssertWire<typeof toolCallDeltaEventSchema, ToolCallDeltaEvent> = true;
-const _toolProgressEvent: AssertWire<typeof toolProgressEventSchema, ToolProgressEvent> = true;
+const _toolUpdatedEvent: AssertWire<typeof toolUpdatedEventSchema, ToolUpdatedEvent> = true;
 const _toolResultEvent: AssertWire<typeof toolResultEventSchema, ToolResultEvent> = true;
 const _promptCompletedEvent: AssertWire<typeof promptCompletedEventSchema, PromptCompletedEvent> =
   true;

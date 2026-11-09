@@ -57,6 +57,7 @@ export type ToolReturn =
 
 export interface ToolAcknowledgement {
   readonly content: ContentPart[];
+  readonly brief?: string;
 }
 
 export interface ToolDetachAck extends ToolAcknowledgement {
@@ -76,6 +77,7 @@ export interface ToolOutputSnapshot {
 }
 
 export interface ToolOutput {
+  readonly closed?: boolean;
   append(chunk: string): number | undefined;
   preview(maxBytes?: number): ToolOutputSnapshot;
   read(offset: number, maxBytes: number): Promise<string>;
@@ -170,10 +172,18 @@ export type ToolHandlerEvent<TFields extends object = object, TPrepared = unknow
     }
   | { readonly type: 'output'; readonly offset: number; readonly text: string };
 
+export class ToolTimeoutError extends Error {
+  override readonly name = 'ToolTimeoutError';
+
+  constructor(readonly timeoutMs: number) {
+    super(`Tool wait timed out after ${String(timeoutMs)}ms`);
+  }
+}
+
 export interface ToolExecutionHandler<TFields extends object = object, TPrepared = unknown>
   extends ToolView<TFields, TPrepared>, PromiseLike<ToolExecutionResponse> {
   readonly taskId: string;
-  wait(): Promise<ToolResult>;
+  wait(timeoutMs?: number, signal?: AbortSignal): Promise<ToolResult>;
   stop(reason?: unknown): Promise<ToolResult>;
   detach(reason?: unknown, acknowledgement?: ToolAcknowledgement): ToolDetachAck | undefined;
   observe(listener: (event: ToolHandlerEvent<TFields, TPrepared>) => void): () => void;

@@ -13,10 +13,10 @@ import { AgentGoalService, IAgentGoalService } from '#/features/goal/goalService
 import { IGoalDeadlineScheduler } from '#/features/goal/goalDeadlineScheduler';
 
 import { GoalUpdate, GoalUpdated } from '#/features/goal/goalOps';
+import { PromptCompleted, PromptStarted, PromptSteered, PromptSubmitted } from '#/agent/prompt/promptEvents';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IAgentTaskService } from '#/agent/task/task';
-import { ProcessTask } from '#/agent/tools/os/bash/process-task';
-import { SubagentTask } from '#/agent/tools/agent/subagent-task';
+import { installControlledTask, startControlledTaskInLoop } from '../../agent/task/stubs';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import { UpdateGoalToolInputSchema } from '#/features/goal/tools/update-goal/update-goal';
 import {
@@ -525,20 +525,14 @@ describe('AgentGoalService', () => {
       expect(resumed.terminalReason).toBeUndefined();
     });
 
-    it('continues a resumed blocked goal after its first completed turn', async () => {
+    it('accepts a steer during a real goal continuation with the same prompt lifecycle', async () => {
       await ctx.restorePersisted();
-      ctx.configure({ tools: ['UpdateGoal'] });
       ctx.mockNextResponse({ type: 'text', text: 'Made progress.' });
-      ctx.mockNextResponse({
-        type: 'function',
-        id: 'complete-after-resume',
-        name: 'UpdateGoal',
-        arguments: JSON.stringify({ status: 'complete' }),
-      });
-      ctx.mockNextResponse({ type: 'text', text: 'Goal completed.' });
+      ctx.mockNextResponse({ type: 'text', text: 'Steered response.' });
       const endedTurnIds: number[] = [];
       const endedTurnReasons: string[] = [];
       const continuationTurnIds: number[] = [];
+      const promptLifecycle: string[] = [];
       const eventBus = ctx.get(IEventBus);
       eventBus.subscribe(TurnEnded, (event) => {
         endedTurnIds.push(event.turnId);
@@ -552,6 +546,22 @@ describe('AgentGoalService', () => {
           continuationTurnIds.push(event.turnId);
         }
       });
+      eventBus.subscribe(PromptSubmitted, (event) => promptLifecycle.push(`submitted:${event.promptId}`));
+      eventBus.subscribe(PromptStarted, (event) => promptLifecycle.push(`started:${event.promptId}`));
+      eventBus.subscribe(PromptSteered, (event) => promptLifecycle.push(`steered:${event.activePromptId}`));
+      eventBus.subscribe(PromptCompleted, (event) => promptLifecycle.push(`completed:${event.promptId}`));
+      const loop = ctx.get(IAgentLoopService);
+      const continuationStarted = deferred();
+      const continuationRelease = deferred();
+      let armed = true;
+      loop.hooks.onWillBeginStep.register('test-hold-goal-continuation', async (_hookCtx, next) => {
+        if (armed) {
+          armed = false;
+          continuationStarted.resolve();
+          await continuationRelease.promise;
+        }
+        await next();
+      });
 
       await goals.createGoal({ objective: 'finish the task' });
       await goals.markBlocked({ reason: 'need credentials' });
@@ -559,16 +569,36 @@ describe('AgentGoalService', () => {
         goals.resumeGoal({ continueIfBlocked: true }),
         goals.resumeGoal({ continueIfBlocked: true }),
       ]);
-
       expect(resumed.status).toBe('active');
       expect(repeated.status).toBe('active');
-      await vi.waitFor(() => {
-        expect(endedTurnIds).toHaveLength(2);
-      });
-      expect(ctx.llmCalls).toHaveLength(3);
-      expect(continuationTurnIds).toEqual(endedTurnIds);
+      await continuationStarted.promise;
+      const activePromptId = loop.snapshot().activePromptId!;
+      expect(loop.snapshot()).toMatchObject({ activeTurnId: 0, activePromptId: expect.any(String) });
+
+      const steer = ctx.rpc.steer({ input: [{ type: 'text', text: 'steer during goal' }] });
+      await goals.markBlocked({ reason: 'stop after the steered response' });
+      continuationRelease.resolve();
+      const result = await steer;
+      await loop.settled();
+      await vi.waitFor(() => expect(promptLifecycle).toContain(`completed:${activePromptId}`));
+
+      expect(result).toMatchObject({ turn_id: 1, state: 'running', steered: true });
+      expect(ctx.llmCalls).toHaveLength(2);
+      expect(JSON.stringify(ctx.llmCalls[1])).toContain('steer during goal');
+      expect(continuationTurnIds).toEqual([0]);
+      expect(endedTurnIds).toEqual([0, 1]);
       expect(endedTurnReasons).toEqual(['completed', 'completed']);
-      expect(goals.getGoal().goal).toBeNull();
+      expect(promptLifecycle.filter((entry) => entry.endsWith(`:${activePromptId}`))).toEqual([
+        `submitted:${activePromptId}`,
+        `started:${activePromptId}`,
+        `steered:${activePromptId}`,
+        `completed:${activePromptId}`,
+      ]);
+      expect(loop.history().find((entry) => entry.origin?.kind === 'system_trigger')?.origin).toEqual({
+        kind: 'system_trigger',
+        name: 'goal_continuation',
+      });
+      expect(goals.getGoal().goal?.status).toBe('blocked');
     });
 
     it('pauseOnInterrupt parks active goals and no-ops for stopped goals', async () => {
@@ -2711,29 +2741,9 @@ describe('AgentGoalService WaitFor regression', () => {
     const ctx = createTestAgent();
     try {
       ctx.configure({ tools: ['WaitFor', 'UpdateGoal'] });
+      installControlledTask(ctx);
       await ctx.restorePersisted();
-      const tasks = ctx.get(IAgentTaskService);
-
-      const stdout = new PassThrough();
-      let resolveWait!: (code: number) => void;
-      const waitPromise = new Promise<number>((resolve) => {
-        resolveWait = resolve;
-      });
-      const proc = {
-        _serviceBrand: undefined,
-        stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
-        stdout,
-        stderr: Readable.from([]),
-        pid: 10098,
-        exitCode: null,
-        wait: vi.fn(() => waitPromise) as IHostProcess['wait'],
-        kill: vi.fn(async () => {
-          stdout.destroy();
-          resolveWait(143);
-        }) as IHostProcess['kill'],
-        dispose: vi.fn().mockResolvedValue(undefined) as IHostProcess['dispose'],
-      } as IHostProcess;
-      tasks.registerTask(new ProcessTask(proc, 'sleep 30', 'bg work'));
+      const controlled = await startControlledTaskInLoop(ctx, { description: 'bg work' });
       await ctx.rpc.createGoal({ objective: 'finish bounded work' });
 
       const continuationTurnIds: number[] = [];
@@ -2764,8 +2774,7 @@ describe('AgentGoalService WaitFor regression', () => {
 
       expect(continuationTurnIds).toEqual([]);
 
-      stdout.end();
-      resolveWait(0);
+      controlled.resolve('done');
 
       await vi.waitFor(() => expect(continuationTurnIds).toHaveLength(1));
       await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(4));
@@ -2890,23 +2899,15 @@ describe('AgentGoalService WaitFor background scenarios', () => {
     }
   });
 
-  it('waits for a dispatched background subagent and completes the goal in one turn', async () => {
+  it('waits for a dispatched controlled background task and completes the goal in one turn', async () => {
     const ctx = createTestAgent();
     try {
       ctx.configure();
+      installControlledTask(ctx);
       await ctx.restorePersisted();
-      const tasks = ctx.get(IAgentTaskService);
-      let settle!: (value: { result: string }) => void;
-      const completion = new Promise<{ result: string }>((resolve) => {
-        settle = resolve;
+      const controlled = await startControlledTaskInLoop(ctx, {
+        description: 'investigate flaky test',
       });
-      tasks.registerTask(
-        new SubagentTask(
-          { agentId: 'agent-child', profileName: 'coder', completion },
-          'investigate flaky test',
-          new AbortController(),
-        ),
-      );
       await ctx.rpc.createGoal({ objective: 'finish bounded work' });
       const { continuationTurnIds, endedReasons } = watchTurns(ctx);
 
@@ -2930,13 +2931,13 @@ describe('AgentGoalService WaitFor background scenarios', () => {
 
       expect(continuationTurnIds).toEqual([]);
 
-      settle({ result: 'SUBAGENT-FINDINGS: the test is order-dependent' });
+      controlled.resolve('SUBAGENT-FINDINGS: the test is order-dependent');
 
       await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(3));
       expect(continuationTurnIds).toEqual([]);
       const history = JSON.stringify(ctx.llmCalls[1]?.history);
       expect(history).toContain('wait_status: completed');
-      expect(history).toContain('kind: agent');
+      expect(history).toContain('kind: question');
       expect(history).toContain('SUBAGENT-FINDINGS');
       expect((await ctx.rpc.getGoal({})).goal).toBeNull();
       expect(endedReasons).toEqual(['completed']);

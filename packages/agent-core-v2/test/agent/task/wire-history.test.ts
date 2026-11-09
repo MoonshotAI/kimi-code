@@ -5,7 +5,6 @@ import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  type AgentTask,
   type AgentTaskInfo,
   IAgentTaskService,
 } from '#/agent/task/task';
@@ -22,7 +21,9 @@ import {
 } from '../../harness';
 import {
   createAgentTaskPersistence,
+  installControlledTask,
   restoreTaskHistory,
+  startControlledTaskInLoop,
   taskHistoryRecords,
 } from './stubs';
 
@@ -42,22 +43,6 @@ function processInfo(
     detached: true,
     parentToolCallId: 'tool-call-1',
     ...overrides,
-  };
-}
-
-function liveProcess(description: string): AgentTask {
-  return {
-    idPrefix: 'bash',
-    kind: 'process',
-    description,
-    start: () => {},
-    toInfo: (base) => ({
-      ...base,
-      kind: 'process',
-      command: 'sleep 60',
-      pid: 4321,
-      exitCode: null,
-    }),
   };
 }
 
@@ -170,7 +155,8 @@ describe('AgentTaskService Wire history', () => {
 
   it('prefers a live entry over journal history with the same task id', async () => {
     const tasks = ctx.get(IAgentTaskService);
-    const taskId = tasks.registerTask(liveProcess('live process'));
+    const controlled = await startControlledTaskInLoop(ctx, { description: 'live process' });
+    const taskId = controlled.handler.taskId;
     const historical = processInfo({
       taskId,
       description: 'historical process',
@@ -188,18 +174,24 @@ describe('AgentTaskService Wire history', () => {
       endedAt: null,
     });
     expect(tasks.list(false).filter((info) => info.taskId === taskId)).toHaveLength(1);
+    controlled.resolve('');
+    await controlled.handler.wait();
   });
 
   it('lists live tasks as active and includes lost tasks only in full history', async () => {
+    installControlledTask(ctx);
     await restoreTaskHistory(ctx, [processInfo()]);
     const tasks = ctx.get(IAgentTaskService);
-    const liveId = tasks.registerTask(liveProcess('live process'));
+    const controlled = await startControlledTaskInLoop(ctx, { description: 'live process' });
+    const liveId = controlled.handler.taskId;
 
     expect(tasks.list(true).map((info) => info.taskId)).toEqual([liveId]);
     expect(tasks.list(false).map((info) => info.taskId)).toEqual([
       liveId,
       'bash-00000001',
     ]);
+    controlled.resolve('');
+    await controlled.handler.wait();
   });
 
   it('ignores journal records owned by another agent', async () => {

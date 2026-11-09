@@ -5,14 +5,16 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   IAgentTaskService,
-  type AgentTask,
   type AgentTaskInfo,
   type AgentTaskOutputChunk,
   type AgentTaskOutputSnapshot,
-  type AgentTaskWaitDelivery,
-  type RegisterAgentTaskOptions,
 } from '#/agent/task/task';
-import { type AgentTaskStatus, TERMINAL_STATUSES } from '#/agent/task/types';
+import {
+  type AgentTaskStatus,
+  type ProcessTaskInfo,
+  type SubagentTaskInfo,
+  TERMINAL_STATUSES,
+} from '#/agent/task/types';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { TaskListInputSchema } from '#/agent/tools/task/task-list/task-list';
 import { TaskListTool } from '#/agent/tools/task/task-list/taskListTool';
@@ -26,21 +28,27 @@ import { abortError } from '#/_base/utils/abort';
 import { Event } from '#/_base/event';
 import type { IHostProcess } from '#/os/interface/hostProcess';
 import { compileToolArgsValidator, validateToolArgs } from '#/tool/args-validator';
-import { ProcessTask, type ProcessTaskInfo } from '#/agent/tools/os/bash/process-task';
-import { SubagentTask } from '#/agent/tools/agent/subagent-task';
-import type { SubagentTaskInfo } from '#/agent/tools/agent/subagent-task';
+import { LegacyExecutableToolAdapter, ToolExecutor as HandlerToolExecutor } from '#/tool/executor';
+import {
+  createTaskChannel,
+  installControlledTask,
+  startControlledTask,
+  startControlledTaskInLoop,
+} from '../stubs';
+import type { AgentTaskFields } from '#/agent/task/handler';
+import type { AgentToolExecutionHandler } from '#/agent/toolExecutor/toolExecutor';
+import type { ToolExecutionSnapshot, ToolResult, ToolDetachAck } from '#/tool/executor';
 import { IWaitForTool } from '#/agent/tools/task/task-wait/task-wait';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import { ToolProgress } from '#/agent/toolExecutor/toolExecutorEvents';
+import { ToolUpdated } from '#/agent/toolExecutor/toolExecutorEvents';
 import { IEventBus } from '#/app/event/eventBus';
 import { executeTool } from '../../../tools/fixtures/execute-tool';
 import { recordingTelemetry, type TelemetryRecord } from '../../../app/telemetry/stubs';
 import { stubFlag } from '../../../app/flag/stubs';
 import { stubGoal } from '../../../features/goal/stubs';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { agentService, createTestAgent, telemetryServices } from '../../../harness';
-import { stubLoopWithHooks } from '../../loop/stubs';
+import { createTestAgent, telemetryServices } from '../../../harness';
 
 const signal = new AbortController().signal;
 
@@ -59,6 +67,12 @@ function agentScope(agentId = 'main') {
 function outputString(result: { readonly output: string | readonly unknown[] }): string {
   expect(typeof result.output).toBe('string');
   return result.output as string;
+}
+
+function taskNotifications(ctx: ReturnType<typeof createTestAgent>, taskId: string) {
+  return ctx.context.history().filter((message) =>
+    message.origin?.kind === 'task' && message.origin.taskId === taskId,
+  );
 }
 
 function processTask(
@@ -114,6 +128,76 @@ function outputSnapshot(
 interface FakeTaskEntry {
   info: AgentTaskInfo;
   output: AgentTaskOutputSnapshot;
+  handler: AgentToolExecutionHandler;
+}
+
+function fakeTaskFields(info: AgentTaskInfo): AgentTaskFields {
+  const base = {
+    description: info.description,
+    timeoutMs: info.timeoutMs,
+    stopReason: info.stopReason,
+  };
+  switch (info.kind) {
+    case 'process':
+      return {
+        ...base,
+        kind: 'process',
+        command: info.command,
+        pid: info.pid,
+        exitCode: info.exitCode,
+        parentToolCallId: info.parentToolCallId,
+      };
+    case 'agent':
+      return {
+        ...base,
+        kind: 'agent',
+        agentId: info.agentId,
+        subagentType: info.subagentType,
+        parentToolCallId: info.parentToolCallId,
+        model: info.model,
+        thinkingEffort: info.thinkingEffort,
+        stopCode: info.stopCode,
+        swarmIndex: info.swarmIndex,
+        stateReason: info.stateReason,
+        resultSummary: info.resultSummary,
+      };
+    case 'question':
+      return {
+        ...base,
+        kind: 'question',
+        questionCount: info.questionCount,
+        toolCallId: info.toolCallId,
+      };
+  }
+}
+
+function fakeToolResult(info: AgentTaskInfo): ToolResult {
+  const failed = info.status === 'failed' || info.status === 'timed_out';
+  return {
+    toolCallId: info.kind === 'question' ? info.toolCallId ?? info.taskId : info.parentToolCallId ?? info.taskId,
+    content: [{ type: 'text', text: info.stopReason ?? '' }],
+    outcome: failed
+      ? {
+          type: 'failed',
+          error: {
+            outcome: 'failed',
+            type: 'unknown',
+            phase: 'execute',
+            reason: info.stopReason ?? info.status,
+          },
+        }
+      : info.status === 'killed'
+        ? {
+            type: 'aborted',
+            error: {
+              outcome: 'aborted',
+              type: 'stopped',
+              phase: 'execute',
+              reason: info.stopReason ?? info.status,
+            },
+          }
+        : { type: 'success' },
+  };
 }
 
 class FakeTaskService implements IAgentTaskService {
@@ -122,9 +206,7 @@ class FakeTaskService implements IAgentTaskService {
   readonly onDidChangeTask = Event.None as Event<AgentTaskInfo>;
 
   readonly stopCalls: Array<{ taskId: string; reason: string | undefined }> = [];
-  readonly suppressCalls: string[] = [];
   readonly waitCalls: Array<{ taskId: string; timeoutMs: number | undefined }> = [];
-  readonly waitDeliveries: Array<readonly AgentTaskWaitDelivery[]> = [];
   waitDelegate:
     | ((
         taskId: string,
@@ -139,9 +221,91 @@ class FakeTaskService implements IAgentTaskService {
     info: AgentTaskInfo,
     output: AgentTaskOutputSnapshot = outputSnapshot(),
   ): string {
-    this.entries.set(info.taskId, { info, output });
+    const entry = {} as FakeTaskEntry;
+    entry.info = info;
+    entry.output = output;
+    entry.handler = this.createHandler(entry);
+    this.entries.set(info.taskId, entry);
     return info.taskId;
   }
+
+  private createHandler(entry: FakeTaskEntry): AgentToolExecutionHandler {
+    const snapshot = (): ReturnType<AgentToolExecutionHandler['snapshot']> => {
+      const info = entry.info;
+      const status = info.status === 'running'
+        ? 'running'
+        : info.status === 'completed'
+          ? 'success'
+          : info.status === 'killed'
+            ? 'aborted'
+            : 'failed';
+      const endedAt = info.endedAt;
+      return {
+        id: info.kind === 'question' ? info.toolCallId ?? info.taskId : info.parentToolCallId ?? info.taskId,
+        taskId: info.taskId,
+        name: info.kind,
+        status,
+        phase: 'execute',
+        args: {},
+        timing: {
+          total: {
+            startedAt: info.startedAt,
+            endedAt,
+            elapsedMs: Math.max(0, (endedAt ?? Date.now()) - info.startedAt),
+          },
+          execute: null,
+        },
+        detached: info.detached ?? false,
+        fields: { task: fakeTaskFields(info) },
+        stopReason: info.stopReason,
+      };
+    };
+    return {
+      taskId: entry.info.taskId,
+      snapshot,
+      fields: () => ({ task: fakeTaskFields(entry.info) }),
+      output: () => ({
+        totalBytes: entry.output.outputSizeBytes,
+        preview: entry.output.preview,
+        truncated: entry.output.truncated,
+        path: entry.output.outputPath,
+      }),
+      wait: async (timeoutMs, waitSignal) => {
+        await this.wait(entry.info.taskId, timeoutMs, waitSignal);
+        return fakeToolResult(entry.info);
+      },
+      stop: async (reason) => {
+        await this.stop(entry.info.taskId, typeof reason === 'string' ? reason : undefined);
+        return fakeToolResult(entry.info);
+      },
+      detach: (_reason, acknowledgement) => {
+        this.detach(entry.info.taskId);
+        const ack: ToolDetachAck = {
+          detached: true,
+          taskId: entry.info.taskId,
+          toolCallId: snapshot().id,
+          content: acknowledgement?.content ?? [],
+        };
+        return ack;
+      },
+      observe: () => () => {},
+      then: (onfulfilled, onrejected) => Promise.resolve(fakeToolResult(entry.info)).then(onfulfilled, onrejected),
+    };
+  }
+
+  handlers(): readonly AgentToolExecutionHandler[] {
+    return Array.from(this.entries.values(), (entry) => entry.handler);
+  }
+
+  handler(taskId: string): AgentToolExecutionHandler | undefined {
+    return this.entries.get(taskId)?.handler;
+  }
+
+  handlerForCall(toolCallId: string): AgentToolExecutionHandler | undefined {
+    return this.handlers().find((handler) => handler.snapshot().id === toolCallId);
+  }
+
+  release(): void {}
 
   settle(taskId: string, status: AgentTaskStatus = 'completed'): void {
     const entry = this.entries.get(taskId);
@@ -153,15 +317,7 @@ class FakeTaskService implements IAgentTaskService {
     } as AgentTaskInfo;
   }
 
-  registerTask(_task: AgentTask, _options?: RegisterAgentTaskOptions): string {
-    throw new Error('registerTask is not implemented in FakeTaskService.');
-  }
-
   refresh(): void {}
-
-  prepareCoreDetach(): undefined {
-    return undefined;
-  }
 
   getTask(taskId: string): AgentTaskInfo | undefined {
     return this.entries.get(taskId)?.info;
@@ -199,25 +355,6 @@ class FakeTaskService implements IAgentTaskService {
 
   async readOutputTail(): Promise<never> {
     throw new Error('FakeTaskService.readOutputTail is not implemented');
-  }
-
-  async suppressTerminalNotification(taskId: string): Promise<void> {
-    this.suppressCalls.push(taskId);
-    const entry = this.entries.get(taskId);
-    if (entry === undefined) return;
-    entry.info = {
-      ...entry.info,
-      terminalNotificationSuppressed: true,
-    } as AgentTaskInfo;
-  }
-
-  async suppressAllTerminalNotifications(): Promise<void> {
-    const active = this.list(true).filter((info) => info.detached === true);
-    await Promise.all(active.map((info) => this.suppressTerminalNotification(info.taskId)));
-  }
-
-  markTasksDeliveredViaWait(tasks: readonly AgentTaskWaitDelivery[]): void {
-    this.waitDeliveries.push(tasks);
   }
 
   detach(taskId: string): AgentTaskInfo | undefined {
@@ -274,9 +411,31 @@ class FakeTaskService implements IAgentTaskService {
 
 }
 
+function taskListTool(tasks: FakeTaskService): TaskListTool {
+  return new TaskListTool(
+    tasks as unknown as ConstructorParameters<typeof TaskListTool>[0],
+    tasks as unknown as ConstructorParameters<typeof TaskListTool>[1],
+  );
+}
+
+function taskOutputTool(tasks: FakeTaskService): TaskOutputTool {
+  return new TaskOutputTool(
+    tasks as unknown as ConstructorParameters<typeof TaskOutputTool>[0],
+    tasks as unknown as ConstructorParameters<typeof TaskOutputTool>[1],
+    tasks as unknown as ConstructorParameters<typeof TaskOutputTool>[2],
+  );
+}
+
+function taskStopTool(tasks: FakeTaskService): TaskStopTool {
+  return new TaskStopTool(
+    tasks as unknown as ConstructorParameters<typeof TaskStopTool>[0],
+    tasks as unknown as ConstructorParameters<typeof TaskStopTool>[1],
+  );
+}
+
 describe('TaskListTool', () => {
   it('has name and accepts the current schema', () => {
-    const tool = new TaskListTool(new FakeTaskService());
+    const tool = taskListTool(new FakeTaskService());
 
     expect(tool.name).toBe('TaskList');
     expect(TaskListInputSchema.safeParse({}).success).toBe(true);
@@ -294,7 +453,7 @@ describe('TaskListTool', () => {
 
   it('returns the empty active-task message', async () => {
     const result = await executeTool(
-      new TaskListTool(new FakeTaskService()),
+      taskListTool(new FakeTaskService()),
       context('task_list_empty', { active_only: true }),
     );
 
@@ -315,7 +474,7 @@ describe('TaskListTool', () => {
     );
 
     const result = await executeTool(
-      new TaskListTool(tasks),
+      taskListTool(tasks),
       context('task_list_active', { active_only: true }),
     );
     const output = outputString(result);
@@ -345,7 +504,7 @@ describe('TaskListTool', () => {
       );
 
       const active = await executeTool(
-        new TaskListTool(tasks),
+        taskListTool(tasks),
         context('task_list_active_terminal', { active_only: true }),
       );
       expect(outputString(active)).toContain(
@@ -353,7 +512,7 @@ describe('TaskListTool', () => {
       );
 
       const all = await executeTool(
-        new TaskListTool(tasks),
+        taskListTool(tasks),
         context('task_list_all_terminal', { active_only: false }),
       );
       const output = outputString(all);
@@ -371,7 +530,7 @@ describe('TaskListTool', () => {
     tasks.add(processTask({ taskId: 'bash-second01', description: 'two' }));
 
     const result = await executeTool(
-      new TaskListTool(tasks),
+      taskListTool(tasks),
       context('task_list_limit', { active_only: true, limit: 1 }),
     );
     const output = outputString(result);
@@ -393,7 +552,7 @@ describe('TaskListTool', () => {
     );
 
     const result = await executeTool(
-      new TaskListTool(tasks),
+      taskListTool(tasks),
       context('task_list_stop_reason', { active_only: false }),
     );
 
@@ -406,7 +565,7 @@ describe('TaskListTool', () => {
     const wait = vi.spyOn(tasks, 'wait');
 
     const result = await executeTool(
-      new TaskListTool(tasks),
+      taskListTool(tasks),
       context('task_list_no_wait', { active_only: true }),
     );
 
@@ -417,7 +576,7 @@ describe('TaskListTool', () => {
 
 describe('TaskOutputTool', () => {
   it('has name and accepts the current schema', () => {
-    const tool = new TaskOutputTool(new FakeTaskService());
+    const tool = taskOutputTool(new FakeTaskService());
 
     expect(tool.name).toBe('TaskOutput');
     expect(TaskOutputInputSchema.safeParse({ task_id: 'bash-1' }).success).toBe(true);
@@ -435,7 +594,7 @@ describe('TaskOutputTool', () => {
 
   it('returns error for unknown task', async () => {
     const result = await executeTool(
-      new TaskOutputTool(new FakeTaskService()),
+      taskOutputTool(new FakeTaskService()),
       context('task_output_unknown', { task_id: 'bash-unknown0' }),
     );
 
@@ -457,7 +616,7 @@ describe('TaskOutputTool', () => {
     );
 
     const result = await executeTool(
-      new TaskOutputTool(tasks),
+      taskOutputTool(tasks),
       context('task_output_live', { task_id: taskId }),
     );
     const output = outputString(result);
@@ -486,7 +645,7 @@ describe('TaskOutputTool', () => {
     );
 
     const result = await executeTool(
-      new TaskOutputTool(tasks),
+      taskOutputTool(tasks),
       context('task_output_persisted', { task_id: taskId }),
     );
     const output = outputString(result);
@@ -504,7 +663,7 @@ describe('TaskOutputTool', () => {
     const taskId = tasks.add(agentTaskInfo(), outputSnapshot('SUBAGENT-FINAL-SUMMARY\n'));
 
     const result = await executeTool(
-      new TaskOutputTool(tasks),
+      taskOutputTool(tasks),
       context('task_output_agent', { task_id: taskId }),
     );
     const output = outputString(result);
@@ -527,7 +686,7 @@ describe('TaskOutputTool', () => {
     const taskId = tasks.add(processTask({ taskId: 'bash-running3' }));
 
     const result = await executeTool(
-      new TaskOutputTool(tasks),
+      taskOutputTool(tasks),
       context('task_output_not_ready', { task_id: taskId }),
     );
     const output = outputString(result);
@@ -539,7 +698,7 @@ describe('TaskOutputTool', () => {
   });
 
   it('rejects stale block/timeout args at the validator instead of waiting', () => {
-    const validator = compileToolArgsValidator(new TaskOutputTool(new FakeTaskService()).parameters);
+    const validator = compileToolArgsValidator(taskOutputTool(new FakeTaskService()).parameters);
 
     expect(validateToolArgs(validator, { task_id: 'bash-1' })).toBeNull();
     const stale = validateToolArgs(validator, { task_id: 'bash-1', block: true, timeout: 1 });
@@ -558,7 +717,7 @@ describe('TaskOutputTool', () => {
     );
 
     const result = await executeTool(
-      new TaskOutputTool(tasks),
+      taskOutputTool(tasks),
       context('task_output_timed_out', { task_id: taskId }),
     );
     const output = outputString(result);
@@ -580,7 +739,7 @@ describe('TaskOutputTool', () => {
     );
 
     const result = await executeTool(
-      new TaskOutputTool(tasks),
+      taskOutputTool(tasks),
       context('task_output_stopped', { task_id: taskId }),
     );
     const output = outputString(result);
@@ -602,7 +761,7 @@ describe('TaskOutputTool', () => {
     );
 
     const result = await executeTool(
-      new TaskOutputTool(tasks),
+      taskOutputTool(tasks),
       context('task_output_silent', { task_id: taskId }),
     );
     const output = outputString(result);
@@ -632,7 +791,7 @@ describe('TaskOutputTool', () => {
     );
 
     const result = await executeTool(
-      new TaskOutputTool(tasks),
+      taskOutputTool(tasks),
       context('task_output_truncated', { task_id: taskId }),
     );
     const output = outputString(result);
@@ -650,7 +809,7 @@ describe('TaskOutputTool', () => {
 
 describe('TaskStopTool', () => {
   it('has name and accepts the current schema', () => {
-    const tool = new TaskStopTool(new FakeTaskService());
+    const tool = taskStopTool(new FakeTaskService());
 
     expect(tool.name).toBe('TaskStop');
     expect(TaskStopInputSchema.safeParse({ task_id: 'bash-1' }).success).toBe(true);
@@ -669,7 +828,7 @@ describe('TaskStopTool', () => {
 
   it('returns error for unknown task', async () => {
     const result = await executeTool(
-      new TaskStopTool(new FakeTaskService()),
+      taskStopTool(new FakeTaskService()),
       context('task_stop_unknown', { task_id: 'bash-unknown0' }),
     );
 
@@ -682,7 +841,7 @@ describe('TaskStopTool', () => {
     const taskId = tasks.add(processTask({ taskId: 'bash-stop0001' }));
 
     const result = await executeTool(
-      new TaskStopTool(tasks),
+      taskStopTool(tasks),
       context('task_stop_running', { task_id: taskId, reason: 'custom stop reason' }),
     );
     const output = outputString(result);
@@ -693,7 +852,6 @@ describe('TaskStopTool', () => {
     expect(output).toContain('status: killed');
     expect(output).toContain('reason: custom stop reason');
     expect(tasks.stopCalls).toEqual([{ taskId, reason: 'custom stop reason' }]);
-    expect(tasks.suppressCalls).toEqual([]);
     expect(tasks.getTask(taskId)).toMatchObject({
       status: 'killed',
       stopReason: 'custom stop reason',
@@ -710,7 +868,7 @@ describe('TaskStopTool', () => {
     const taskId = tasks.add(processTask({ taskId: 'bash-default1' }));
 
     const result = await executeTool(
-      new TaskStopTool(tasks),
+      taskStopTool(tasks),
       context('task_stop_default_reason', { task_id: taskId, reason }),
     );
 
@@ -732,7 +890,7 @@ describe('TaskStopTool', () => {
     );
 
     const result = await executeTool(
-      new TaskStopTool(tasks),
+      taskStopTool(tasks),
       context('task_stop_terminal', { task_id: taskId }),
     );
 
@@ -743,7 +901,6 @@ describe('TaskStopTool', () => {
       'status: completed',
       'reason: Task already in terminal state',
     ]);
-    expect(tasks.suppressCalls).toEqual([]);
     expect(tasks.getTask(taskId)?.terminalNotificationSuppressed).not.toBe(true);
   });
 
@@ -759,7 +916,7 @@ describe('TaskStopTool', () => {
     );
 
     const result = await executeTool(
-      new TaskStopTool(tasks),
+      taskStopTool(tasks),
       context('task_stop_blank_stored_reason', { task_id: 'bash-blank001' }),
     );
 
@@ -769,6 +926,23 @@ describe('TaskStopTool', () => {
     );
   });
 });
+
+function waitForTool(
+  tasks: FakeTaskService,
+  telemetry: ConstructorParameters<typeof WaitForTool>[2],
+  flags: ConstructorParameters<typeof WaitForTool>[3],
+  goals: ConstructorParameters<typeof WaitForTool>[4],
+  scope: ConstructorParameters<typeof WaitForTool>[5],
+): WaitForTool {
+  return new WaitForTool(
+    tasks as unknown as ConstructorParameters<typeof WaitForTool>[0],
+    tasks as unknown as ConstructorParameters<typeof WaitForTool>[1],
+    telemetry,
+    flags,
+    goals,
+    scope,
+  );
+}
 
 describe('WaitForTool', () => {
   function waitTelemetry(): { records: TelemetryRecord[]; telemetry: ReturnType<typeof recordingTelemetry> } {
@@ -781,7 +955,7 @@ describe('WaitForTool', () => {
   }
 
   it('has name and accepts the current schema', () => {
-    const tool = new WaitForTool(new FakeTaskService(), recordingTelemetry([]), stubFlag(true), stubGoal(), agentScope());
+    const tool = waitForTool(new FakeTaskService(), recordingTelemetry([]), stubFlag(true), stubGoal(), agentScope());
 
     expect(tool.name).toBe('WaitFor');
     expect(WaitForInputSchema.safeParse({ timeout: 60 }).success).toBe(true);
@@ -806,7 +980,7 @@ describe('WaitForTool', () => {
   it('returns error and tracks task_not_found for an unknown task_id', async () => {
     const { records, telemetry } = waitTelemetry();
     const result = await executeTool(
-      new WaitForTool(new FakeTaskService(), telemetry, stubFlag(true), stubGoal(), agentScope()),
+      waitForTool(new FakeTaskService(), telemetry, stubFlag(true), stubGoal(), agentScope()),
       context('wait_unknown', { timeout: 10, task_id: 'bash-unknown0' }),
     );
 
@@ -823,7 +997,7 @@ describe('WaitForTool', () => {
   it('returns immediately without waiting when no background tasks are running', async () => {
     const tasks = new FakeTaskService();
     const result = await executeTool(
-      new WaitForTool(tasks, recordingTelemetry([]), stubFlag(true), stubGoal(), agentScope()),
+      waitForTool(tasks, recordingTelemetry([]), stubFlag(true), stubGoal(), agentScope()),
       context('wait_none', { timeout: 10 }),
     );
     const output = outputString(result);
@@ -831,7 +1005,7 @@ describe('WaitForTool', () => {
     expect(result.isError ?? false).toBe(false);
     expect(output).toContain('wait_status: no_tasks');
     expect(tasks.waitCalls).toEqual([]);
-    expect(tasks.waitDeliveries).toEqual([]);
+    expect(tasks.list(false).every((info) => info.terminalNotificationSuppressed !== true)).toBe(true);
   });
 
   it('returns a finished task immediately without reading output or marking it delivered', async () => {
@@ -848,7 +1022,7 @@ describe('WaitForTool', () => {
 
     const { records, telemetry } = waitTelemetry();
     const result = await executeTool(
-      new WaitForTool(tasks, telemetry, stubFlag(true), stubGoal(), agentScope()),
+      waitForTool(tasks, telemetry, stubFlag(true), stubGoal(), agentScope()),
       context('wait_done', { timeout: 10, task_id: taskId }),
     );
     const output = outputString(result);
@@ -858,7 +1032,7 @@ describe('WaitForTool', () => {
     expect(output).toContain('status: completed');
     expect(output).toContain('[finished]');
     expect(output).not.toContain('[output]\nDONE-OUTPUT');
-    expect(tasks.waitDeliveries).toEqual([]);
+    expect(tasks.list(false).every((info) => info.terminalNotificationSuppressed !== true)).toBe(true);
     expect(lastEvent(records)?.properties).toMatchObject({
       outcome: 'completed',
       has_task_id: true,
@@ -874,7 +1048,7 @@ describe('WaitForTool', () => {
     );
     const onUpdate = vi.fn();
 
-    await executeTool(new WaitForTool(tasks, recordingTelemetry([]), stubFlag(true), stubGoal(), agentScope()), {
+    await executeTool(waitForTool(tasks, recordingTelemetry([]), stubFlag(true), stubGoal(), agentScope()), {
       ...context('wait_done_at_once', { timeout: 10, task_id: taskId }),
       onUpdate,
     });
@@ -894,7 +1068,7 @@ describe('WaitForTool', () => {
 
     const { records, telemetry } = waitTelemetry();
     const result = await executeTool(
-      new WaitForTool(tasks, telemetry, stubFlag(true), stubGoal(), agentScope()),
+      waitForTool(tasks, telemetry, stubFlag(true), stubGoal(), agentScope()),
       context('wait_extras', { timeout: 10, task_id: 'bash-wait001' }),
     );
     const output = outputString(result);
@@ -904,7 +1078,7 @@ describe('WaitForTool', () => {
     expect(output).toContain('[completed_during_wait]');
     expect(output).toContain('task_id: bash-extra001');
     expect(output).toContain('status: failed');
-    expect(tasks.waitDeliveries).toEqual([]);
+    expect(tasks.list(false).every((info) => info.terminalNotificationSuppressed !== true)).toBe(true);
     expect(lastEvent(records)?.properties).toMatchObject({
       outcome: 'completed',
       extra_completed_count: 1,
@@ -922,7 +1096,7 @@ describe('WaitForTool', () => {
 
     const { records, telemetry } = waitTelemetry();
     const result = await executeTool(
-      new WaitForTool(tasks, telemetry, stubFlag(true), stubGoal(), agentScope()),
+      waitForTool(tasks, telemetry, stubFlag(true), stubGoal(), agentScope()),
       context('wait_any', { timeout: 10 }),
     );
     const output = outputString(result);
@@ -934,7 +1108,7 @@ describe('WaitForTool', () => {
     expect(output).toContain('[still_running]');
     expect(output).toContain('task_id: bash-b1');
     expect(tasks.waitCalls).toHaveLength(2);
-    expect(tasks.waitDeliveries).toEqual([]);
+    expect(tasks.list(false).every((info) => info.terminalNotificationSuppressed !== true)).toBe(true);
     expect(lastEvent(records)?.properties).toMatchObject({
       outcome: 'completed',
       has_task_id: false,
@@ -948,7 +1122,7 @@ describe('WaitForTool', () => {
 
     const { records, telemetry } = waitTelemetry();
     const result = await executeTool(
-      new WaitForTool(tasks, telemetry, stubFlag(true), stubGoal(), agentScope()),
+      waitForTool(tasks, telemetry, stubFlag(true), stubGoal(), agentScope()),
       context('wait_timeout', { timeout: 10, task_id: 'bash-running9' }),
     );
     const output = outputString(result);
@@ -957,7 +1131,7 @@ describe('WaitForTool', () => {
     expect(output).toContain('wait_status: timed_out');
     expect(output).toContain('[still_running]');
     expect(output).toContain('bash-running9');
-    expect(tasks.waitDeliveries).toEqual([]);
+    expect(tasks.list(false).every((info) => info.terminalNotificationSuppressed !== true)).toBe(true);
     expect(lastEvent(records)?.properties).toMatchObject({
       outcome: 'timed_out',
       timeout_ms: 10_000,
@@ -976,13 +1150,13 @@ describe('WaitForTool', () => {
     const { records, telemetry } = waitTelemetry();
     const controller = new AbortController();
     const pending = executeTool(
-      new WaitForTool(tasks, telemetry, stubFlag(true), stubGoal(), agentScope()),
+      waitForTool(tasks, telemetry, stubFlag(true), stubGoal(), agentScope()),
       context('wait_abort', { timeout: 90, task_id: 'bash-abort01' }, controller.signal),
     );
     controller.abort();
 
     await expect(pending).rejects.toThrow('Aborted');
-    expect(tasks.waitDeliveries).toEqual([]);
+    expect(tasks.list(false).every((info) => info.terminalNotificationSuppressed !== true)).toBe(true);
     expect(lastEvent(records)?.properties).toMatchObject({ outcome: 'aborted' });
   });
 
@@ -997,7 +1171,7 @@ describe('WaitForTool', () => {
 
     const controller = new AbortController();
     const pending = executeTool(
-      new WaitForTool(tasks, recordingTelemetry([]), stubFlag(true), stubGoal(), agentScope()),
+      waitForTool(tasks, recordingTelemetry([]), stubFlag(true), stubGoal(), agentScope()),
       context('wait_abort_any', { timeout: 90 }, controller.signal),
     );
     controller.abort();
@@ -1005,7 +1179,7 @@ describe('WaitForTool', () => {
     await expect(pending).rejects.toThrow('Aborted');
     expect(tasks.getTask('bash-abort02')?.status).toBe('running');
     expect(tasks.getTask('bash-abort03')?.status).toBe('running');
-    expect(tasks.waitDeliveries).toEqual([]);
+    expect(tasks.list(false).every((info) => info.terminalNotificationSuppressed !== true)).toBe(true);
   });
 
   it('does not read task output or mark the task delivered when a wait finishes', async () => {
@@ -1021,12 +1195,12 @@ describe('WaitForTool', () => {
     tasks.failSnapshotTaskIds.add(taskId);
 
     const result = await executeTool(
-      new WaitForTool(tasks, recordingTelemetry([]), stubFlag(true), stubGoal(), agentScope()),
+      waitForTool(tasks, recordingTelemetry([]), stubFlag(true), stubGoal(), agentScope()),
       context('wait_fmt_fail', { timeout: 10, task_id: taskId }),
     );
     expect(outputString(result)).toContain('wait_status: completed');
     expect(outputString(result)).not.toContain('[output]');
-    expect(tasks.waitDeliveries).toEqual([]);
+    expect(tasks.list(false).every((info) => info.terminalNotificationSuppressed !== true)).toBe(true);
   });
 
   it('aborts the losing waits once the race resolves', async () => {
@@ -1044,7 +1218,7 @@ describe('WaitForTool', () => {
     };
 
     const result = await executeTool(
-      new WaitForTool(tasks, recordingTelemetry([]), stubFlag(true), stubGoal(), agentScope()),
+      waitForTool(tasks, recordingTelemetry([]), stubFlag(true), stubGoal(), agentScope()),
       context('wait_losers', { timeout: 90 }),
     );
 
@@ -1057,7 +1231,7 @@ describe('WaitForTool', () => {
     tasks.add(processTask({ taskId: 'bash-flagoff1' }));
 
     const result = await executeTool(
-      new WaitForTool(tasks, recordingTelemetry([]), stubFlag(false), stubGoal(), agentScope()),
+      waitForTool(tasks, recordingTelemetry([]), stubFlag(false), stubGoal(), agentScope()),
       context('wait_flag_off', { timeout: 10, task_id: 'bash-flagoff1' }),
     );
 
@@ -1066,12 +1240,13 @@ describe('WaitForTool', () => {
     expect(tasks.waitCalls).toEqual([]);
   });
 
-  it('emits status progress updates while the wait is pending', async () => {
+  it('emits status and structured fields while the wait is pending', async () => {
     const update = waitForProgressUpdate({ timeout: 600 }, 2, 1_000, 31_000);
     expect(update).toMatchObject({
       kind: 'status',
       replace: true,
       text: 'Waiting 30s / 10m · 2 background tasks still running',
+      fields: { wait: { elapsedS: 30, timeoutS: 600, runningCount: 2 } },
     });
     expect(waitForProgressUpdate({ timeout: 600 }, 1, 1_000, 31_000).text).toContain(
       '1 background task still running',
@@ -1087,22 +1262,36 @@ describe('WaitForTool', () => {
     );
   });
 
-  it('routes the composed progress update through onUpdate on a manual tick', () => {
+  it('exposes the composed progress through handler fields on a manual tick', async () => {
     const tasks = new FakeTaskService();
     tasks.add(processTask({ taskId: 'bash-prog002' }));
-    const onUpdate = vi.fn();
-
-    const progress = startWaitProgress({ timeout: 600 }, tasks, onUpdate, Date.now() - 30_000);
-    progress.tick();
-    progress.stop();
-
-    expect(onUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        kind: 'status',
-        replace: true,
-        text: expect.stringMatching(/^Waiting 3\ds \/ 10m · 1 background task still running$/),
+    const handler = new HandlerToolExecutor([
+      new LegacyExecutableToolAdapter({
+        name: 'WaitFor',
+        description: 'WaitFor',
+        parameters: {},
+        resolveExecution: () => ({
+          approvalRule: 'WaitFor',
+          execute: async (ctx) => {
+            const progress = startWaitProgress({ timeout: 600 }, tasks, ctx.onUpdate, Date.now() - 30_000);
+            progress.tick();
+            progress.stop();
+            return { output: 'done' };
+          },
+        }),
       }),
+    ]).execute(
+      { type: 'function', id: 'wait-fields', name: 'WaitFor', arguments: '{}' },
+      { turnId: 0 },
     );
+
+    await handler.wait();
+
+    expect(handler.fields()).toMatchObject({
+      status: expect.stringMatching(/^Waiting 3\ds \/ 10m · 1 background task still running$/),
+      statusReplace: true,
+      wait: { elapsedS: expect.any(Number), timeoutS: 600, runningCount: 1 },
+    });
   });
 });
 
@@ -1121,42 +1310,6 @@ describe('WaitForTool (harness)', () => {
     };
   }
 
-  function controllableProcess(): {
-    proc: IHostProcess;
-    pushOutput: (text: string) => void;
-    resolveWait: (code: number) => void;
-  } {
-    const stdout = new PassThrough();
-    let resolveWait!: (code: number) => void;
-    const waitPromise = new Promise<number>((resolve) => {
-      resolveWait = resolve;
-    });
-    const proc = {
-      _serviceBrand: undefined,
-      stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
-      stdout,
-      stderr: Readable.from([]),
-      pid: 10099,
-      exitCode: null,
-      wait: vi.fn(() => waitPromise) as IHostProcess['wait'],
-      kill: vi.fn(async () => {
-        stdout.destroy();
-        resolveWait(143);
-      }) as IHostProcess['kill'],
-      dispose: vi.fn().mockResolvedValue(undefined) as IHostProcess['dispose'],
-    } as IHostProcess;
-    return {
-      proc,
-      pushOutput: (text) => {
-        stdout.write(text);
-      },
-      resolveWait: (code) => {
-        stdout.end();
-        resolveWait(code);
-      },
-    };
-  }
-
   async function waitForTerminal(tasks: IAgentTaskService, taskId: string): Promise<void> {
     const deadline = Date.now() + 30_000;
     while (Date.now() <= deadline) {
@@ -1169,19 +1322,23 @@ describe('WaitForTool (harness)', () => {
 
   it.each(['specific', 'any'] as const)('steers out of a running %s wait without losing tool history or stopping the background task', async (target) => {
     const ctx = createTestAgent();
-    const slow = controllableProcess();
     try {
-      await ctx.restorePersisted();
       ctx.get(IAgentLoopService).update({ activeToolNames: ['TaskList', 'WaitFor'] });
+      installControlledTask(ctx);
+      await ctx.restorePersisted();
       const tasks = ctx.get(IAgentTaskService);
-      const taskId = tasks.registerTask(new ProcessTask(slow.proc, 'sleep 60', 'background work'));
+      const controlled = await startControlledTaskInLoop(ctx, { description: 'background work' });
+      const taskId = controlled.handler.taskId;
       ctx.mockNextResponse(
         { type: 'function', id: 'list-before-wait', name: 'TaskList', arguments: '{}' },
         { type: 'function', id: 'wait-for-task', name: 'WaitFor', arguments: JSON.stringify({ timeout: 90, task_id: target === 'specific' ? taskId : undefined }) },
       );
       ctx.mockNextResponse({ type: 'text', text: 'Handling the new request.' });
 
-      const waiting = ctx.once('tool.progress');
+      const waiting = createControlledPromise<void>();
+      ctx.get(IEventBus).subscribe(ToolUpdated, (event) => {
+        if (event.fields['wait'] !== undefined) waiting.resolve();
+      });
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Wait for the background work.' }] });
       await waiting;
       await ctx.rpc.steer({ input: [{ type: 'text', text: 'Handle this new request first.' }] });
@@ -1203,30 +1360,32 @@ describe('WaitForTool (harness)', () => {
         args: expect.objectContaining({ toolCallId: 'wait-for-task', isError: true }),
       }));
       expect(tasks.getTask(taskId)?.status).toBe('running');
-      expect(slow.proc.kill).not.toHaveBeenCalled();
       await ctx.get(IAgentLoopService).settled();
       ctx.mockNextResponse({ type: 'text', text: 'The background work has finished.' });
-      const notified = ctx.once('task.notified');
-      slow.resolveWait(0);
+      const notified = vi.waitFor(() => expect(taskNotifications(ctx, taskId)).toHaveLength(1));
+      controlled.resolve('');
       await notified;
       await ctx.get(IAgentLoopService).settled();
       expect(tasks.getTask(taskId)?.status).toBe('completed');
-      expect(ctx.allEvents.filter((event) => event.event === 'task.notified')).toHaveLength(1);
+      expect(taskNotifications(ctx, taskId)).toHaveLength(1);
       await ctx.expectResumeMatches();
     } finally {
-      slow.resolveWait(0);
+      await Promise.all(
+        ctx.get(IAgentToolExecutorService).handlers().map((handler) => handler.stop('test cleanup')),
+      );
       await ctx.dispose();
     }
   });
 
   it.each(['before-request', 'before-tool'] as const)('interrupts every wait after %s steering and can wait again after consuming the new input', async (timing) => {
     const ctx = createTestAgent();
-    const slow = controllableProcess();
     try {
-      await ctx.restorePersisted();
       ctx.get(IAgentLoopService).update({ activeToolNames: ['WaitFor'] });
+      installControlledTask(ctx);
+      await ctx.restorePersisted();
       const tasks = ctx.get(IAgentTaskService);
-      const taskId = tasks.registerTask(new ProcessTask(slow.proc, 'sleep 60', 'background work'));
+      const controlled = await startControlledTaskInLoop(ctx, { description: 'background work' });
+      const taskId = controlled.handler.taskId;
       ctx.mockNextResponse(
         { type: 'function', id: 'wait-specific', name: 'WaitFor', arguments: JSON.stringify({ timeout: 90, task_id: taskId }) },
         { type: 'function', id: 'wait-any', name: 'WaitFor', arguments: '{"timeout":90}' },
@@ -1253,8 +1412,8 @@ describe('WaitForTool (harness)', () => {
         });
       }
       const waitingAgain = createControlledPromise<void>();
-      ctx.get(IEventBus).subscribe(ToolProgress, (event) => {
-        if (event.toolCallId === 'wait-again') waitingAgain.resolve();
+      ctx.get(IEventBus).subscribe(ToolUpdated, (event) => {
+        if (event.toolCallId === 'wait-again' && event.fields['wait'] !== undefined) waitingAgain.resolve();
       });
 
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Wait for the background work.' }] });
@@ -1269,42 +1428,48 @@ describe('WaitForTool (harness)', () => {
         content: [{ text: 'Check this message before waiting again.\n\nKeep the background task running.' }],
       });
       expect(tasks.getTask(taskId)?.status).toBe('running');
-      slow.resolveWait(0);
+      controlled.resolve('');
       await ctx.get(IAgentLoopService).settled();
       expect(ctx.llmCalls).toHaveLength(3);
       expect(ctx.llmCalls[2]?.history.find((message) => message.role === 'tool' && message.toolCallId === 'wait-again')).toMatchObject({
         content: [{ text: expect.stringContaining('wait_status: completed') }],
       });
-      expect(ctx.allEvents.filter((event) => event.event === 'task.notified')).toHaveLength(1);
+      expect(taskNotifications(ctx, taskId)).toHaveLength(1);
       await ctx.expectResumeMatches();
     } finally {
-      slow.resolveWait(0);
+      await Promise.all(
+        ctx.get(IAgentToolExecutorService).handlers().map((handler) => handler.stop('test cleanup')),
+      );
       await ctx.dispose();
     }
   });
 
   it.each(['steer-first', 'completion-first'] as const)('reports task completion through wait and notification when it races with steering (%s)', async (order) => {
     const ctx = createTestAgent();
-    const slow = controllableProcess();
     try {
-      await ctx.restorePersisted();
       ctx.get(IAgentLoopService).update({ activeToolNames: ['WaitFor'] });
+      installControlledTask(ctx);
+      await ctx.restorePersisted();
       const tasks = ctx.get(IAgentTaskService);
-      const taskId = tasks.registerTask(new ProcessTask(slow.proc, 'sleep 60', 'background work'));
+      const controlled = await startControlledTaskInLoop(ctx, { description: 'background work' });
+      const taskId = controlled.handler.taskId;
       ctx.mockNextResponse({
         type: 'function', id: 'racing-wait', name: 'WaitFor',
         arguments: JSON.stringify({ timeout: 90, task_id: taskId }),
       });
       ctx.mockNextResponse({ type: 'text', text: 'Handling the new request.' });
       ctx.mockNextResponse({ type: 'text', text: 'The background work has finished.' });
-      const waiting = ctx.once('tool.progress');
+      const waiting = createControlledPromise<void>();
+      ctx.get(IEventBus).subscribe(ToolUpdated, (event) => {
+        if (event.fields['wait'] !== undefined) waiting.resolve();
+      });
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Wait for the background work.' }] });
       await waiting;
 
-      slow.pushOutput('BACKGROUND-RESULT');
-      if (order === 'completion-first') slow.resolveWait(0);
+      controlled.write('BACKGROUND-RESULT');
+      if (order === 'completion-first') controlled.resolve('');
       const steered = ctx.rpc.steer({ input: [{ type: 'text', text: 'Handle the new request too.' }] });
-      if (order === 'steer-first') slow.resolveWait(0);
+      if (order === 'steer-first') controlled.resolve('');
       await steered;
       await waitForTerminal(tasks, taskId);
       await vi.waitFor(() => {
@@ -1316,26 +1481,27 @@ describe('WaitForTool (harness)', () => {
       await ctx.get(IAgentLoopService).settled();
 
       const history = ctx.context.history();
-      expect(ctx.allEvents.filter((event) => event.event === 'task.notified')).toHaveLength(1);
+      expect(taskNotifications(ctx, taskId)).toHaveLength(1);
       expect(await tasks.readOutput(taskId)).toBe('BACKGROUND-RESULT');
       expect(history.filter((message) => message.content.some((part) =>
         part.type === 'text' && part.text === 'Handle the new request too.',
       ))).toHaveLength(1);
       expect(tasks.getTask(taskId)?.status).toBe('completed');
-      expect(slow.proc.kill).not.toHaveBeenCalled();
       await ctx.expectResumeMatches();
     } finally {
-      slow.resolveWait(0);
+      await Promise.all(
+        ctx.get(IAgentToolExecutorService).handlers().map((handler) => handler.stop('test cleanup')),
+      );
       await ctx.dispose();
     }
   });
 
   it('still cancels a wait when execution is aborted together with steering', async () => {
     const ctx = createTestAgent();
-    const slow = controllableProcess();
     try {
       const tasks = ctx.get(IAgentTaskService);
-      const taskId = tasks.registerTask(new ProcessTask(slow.proc, 'sleep 60', 'background work'));
+      const controlled = await startControlledTaskInLoop(ctx, { description: 'background work' });
+      const taskId = controlled.handler.taskId;
       const cancelled = new AbortController();
       const steered = new AbortController();
       const pending = executeTool(ctx.get(IWaitForTool), {
@@ -1348,30 +1514,30 @@ describe('WaitForTool (harness)', () => {
       await expect(pending).rejects.toThrow('Aborted');
       expect(tasks.getTask(taskId)?.status).toBe('running');
     } finally {
-      slow.resolveWait(0);
+      await Promise.all(
+        ctx.get(IAgentToolExecutorService).handlers().map((handler) => handler.stop('test cleanup')),
+      );
       await ctx.dispose();
     }
   });
 
   it('waits for a real registered task end-to-end without suppressing its notification', async () => {
     const records: TelemetryRecord[] = [];
-    const loop = stubLoopWithHooks();
-    const ctx = createTestAgent(
-      telemetryServices(recordingTelemetry(records)),
-      agentService(IAgentLoopService, loop),
-    );
+    const ctx = createTestAgent(telemetryServices(recordingTelemetry(records)));
     try {
       const tasks = ctx.get(IAgentTaskService);
       const tool = ctx.get(IAgentToolRegistryService).resolve('WaitFor');
       expect(tool).toBeDefined();
 
-      const slow = controllableProcess();
-      const taskId = tasks.registerTask(new ProcessTask(slow.proc, 'echo done', 'wait target'));
+      const controlled = await startControlledTaskInLoop(ctx, { description: 'wait target' });
+      const taskId = controlled.handler.taskId;
       const pending = executeTool(tool!, context('wait_e2e', { timeout: 30, task_id: taskId }));
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      slow.pushOutput('DONE-OUTPUT\n');
-      slow.resolveWait(0);
+      const requestsBeforeCompletion = ctx.llmCalls.length;
+      ctx.mockNextResponse({ type: 'text', text: 'notification ack' });
+      controlled.write('DONE-OUTPUT\n');
+      controlled.resolve('');
       const result = await pending;
       const output = outputString(result);
 
@@ -1382,12 +1548,11 @@ describe('WaitForTool (harness)', () => {
       expect(output).not.toContain('[output]\nDONE-OUTPUT');
       expect(ctx.allEvents.some((event) => event.event === 'task.waitDelivered')).toBe(false);
 
-      await vi.waitFor(() => expect(loop.snapshot().hasPendingRequests).toBe(true));
-      loop.drainNextBatch(ctx.context);
-      expect(ctx.context.history().some((message) => message.origin?.kind === 'task')).toBe(true);
-      expect(ctx.allEvents.some((event) => event.event === 'task.notified')).toBe(true);
+      await vi.waitFor(() => expect(taskNotifications(ctx, taskId)).toHaveLength(1));
+      await ctx.get(IAgentLoopService).settled();
+      expect(taskNotifications(ctx, taskId)).toHaveLength(1);
       expect(await tasks.readOutput(taskId)).toBe('DONE-OUTPUT\n');
-      expect(ctx.llmCalls).toHaveLength(0);
+      expect(ctx.llmCalls).toHaveLength(requestsBeforeCompletion + 1);
       expect(
         records.findLast((record) => record.event === 'wait_for_completed')?.properties,
       ).toMatchObject({ outcome: 'completed', has_task_id: true, extra_completed_count: 0 });
@@ -1403,15 +1568,14 @@ describe('WaitForTool (harness)', () => {
       const tool = ctx.get(IAgentToolRegistryService).resolve('WaitFor');
       expect(tool).toBeDefined();
 
-      const slow = controllableProcess();
-      const taskA = tasks.registerTask(new ProcessTask(slow.proc, 'sleep 30', 'slow'));
+      const taskAControlled = await startControlledTaskInLoop(ctx, { description: 'slow' });
+      const taskA = taskAControlled.handler.taskId;
       const pending = executeTool(tool!, context('wait_race', { timeout: 30 }));
 
-      const late = controllableProcess();
-      const taskB = tasks.registerTask(new ProcessTask(late.proc, 'echo b', 'late comer'));
-      await tasks.suppressTerminalNotification(taskB);
-      late.pushOutput('B-OUT\n');
-      late.resolveWait(0);
+      const taskBControlled = await startControlledTaskInLoop(ctx, { description: 'late comer' });
+      const taskB = taskBControlled.handler.taskId;
+      taskBControlled.write('B-OUT\n');
+      taskBControlled.resolve('');
       await waitForTerminal(tasks, taskB);
 
       const race = await Promise.race([
@@ -1422,8 +1586,8 @@ describe('WaitForTool (harness)', () => {
       ]);
       expect(race).toBe('pending');
 
-      slow.pushOutput('A-OUT\n');
-      slow.resolveWait(0);
+      taskAControlled.write('A-OUT\n');
+      taskAControlled.resolve('');
       const result = await pending;
       const output = outputString(result);
 
@@ -1433,14 +1597,9 @@ describe('WaitForTool (harness)', () => {
       expect(output).not.toContain(taskB);
       expect(output).not.toContain('[completed_during_wait]');
       await ctx.persistedWireRecords();
-      const deliveries = ctx.allEvents.filter((event) => event.event === 'task.waitDelivered');
-      expect(deliveries).not.toHaveLength(0);
-      const deliveredKeys = deliveries.flatMap(
-        (event) => (event.args as { readonly keys: readonly string[] }).keys,
-      );
-      expect(new Set(deliveredKeys)).toEqual(
-        new Set([`${taskA}\0completed\0task:${taskA}:completed`]),
-      );
+      expect(ctx.allEvents.some((event) => event.event === 'task.waitDelivered')).toBe(false);
+      expect(taskNotifications(ctx, taskA)).toHaveLength(1);
+      expect(taskNotifications(ctx, taskB)).toHaveLength(1);
     } finally {
       await ctx.dispose();
     }
@@ -1451,17 +1610,8 @@ describe('WaitForTool (harness)', () => {
     try {
       const tasks = ctx.get(IAgentTaskService);
       const tool = ctx.get(IWaitForTool);
-      const taskId = tasks.registerTask(
-        new SubagentTask(
-          {
-            agentId: 'agent-hang',
-            profileName: 'coder',
-            completion: new Promise<{ result: string }>(() => {}),
-          },
-          'hung work',
-          new AbortController(),
-        ),
-      );
+      const controlled = await startControlledTaskInLoop(ctx, { description: 'hung work' });
+      const taskId = controlled.handler.taskId;
 
       const result = await executeTool(tool, context('wait_hang', { timeout: 1, task_id: taskId }));
       const output = outputString(result);

@@ -2,7 +2,7 @@ import type { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecuto
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import type { ToolCall } from '#human/llm/message';
 import type { ToolResult } from '#/tool/toolContract';
-import { isToolDetachAck, legacyToolDurationMs, type LegacyToolFields } from '#/tool/executor';
+import { isToolDetachAck, legacyToolDurationMs } from '#/tool/executor';
 
 export interface LegacyExecutionResult {
   readonly toolCallId: string;
@@ -42,8 +42,9 @@ export async function executeLegacyTool(
       const final = await handler.wait();
       const snapshot = handler.snapshot();
       const prepared = snapshot.prepared;
-      const fields = handler.fields() as LegacyToolFields;
-      const legacy = fields.result ?? (prepared?.kind === 'synthetic' ? prepared.result : undefined);
+      const legacy = prepared?.kind === 'execute' || prepared?.kind === 'synthetic'
+        ? prepared.result
+        : undefined;
       const content = (value: typeof final.content) => value.every((part) => part.type === 'text')
         ? value.map((part) => part.type === 'text' ? part.text : '').join('')
         : value;

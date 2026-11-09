@@ -92,7 +92,7 @@ export class AgentTitlePromptSourceService implements IAgentTitlePromptSource {
         : this.loop.promptHandle(snapshot.activePromptId);
     if (activeHandle !== undefined) all.push(activeHandle.message);
     for (const item of snapshot.queue) {
-      if (item.meta?.tracked !== true) continue;
+      if (item.meta?.origin?.kind !== 'user') continue;
       all.push({
         role: 'user',
         content: [...item.message.content],
