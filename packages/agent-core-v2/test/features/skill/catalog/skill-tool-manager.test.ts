@@ -360,6 +360,56 @@ describe('ToolManager SkillTool wire behavior', () => {
     expect(JSON.stringify(nested[0])).toContain('nested-skill');
     expect(JSON.stringify(nested[0])).not.toContain('child from A');
   });
+  it('uses the resolved depth for sibling nested calls', async () => {
+    const names = ['parent', 'first', 'second', 'third'];
+    for (const name of names) {
+      skills.register({ ...makeSkill(name), path: `/work/A/${name}/SKILL.md`, dir: `/work/A/${name}`, content: `${name} from A`, workspaceDir: '/work/A' });
+    }
+    skills.registerVariants(names.flatMap((name) => [
+      { ...makeSkill(name), path: `/work/A/${name}/SKILL.md`, dir: `/work/A/${name}`, content: `${name} from A`, workspaceDir: '/work/A' },
+      { ...makeSkill(name), path: `/work/B/${name}/SKILL.md`, dir: `/work/B/${name}`, content: `${name} from B`, workspaceDir: '/work/B' },
+    ]), { replace: true });
+    const parentCall: ToolCall = {
+      type: 'function',
+      id: 'call_depth_parent',
+      name: 'Skill',
+      arguments: '{"skill":"parent","path":"/work/B/parent/SKILL.md"}',
+    };
+    const firstCall: ToolCall = {
+      type: 'function',
+      id: 'call_depth_first',
+      name: 'Skill',
+      arguments: '{"skill":"first"}',
+    };
+    const secondCall: ToolCall = {
+      type: 'function',
+      id: 'call_depth_second',
+      name: 'Skill',
+      arguments: '{"skill":"second"}',
+    };
+    const thirdCall: ToolCall = {
+      type: 'function',
+      id: 'call_depth_third',
+      name: 'Skill',
+      arguments: '{"skill":"third"}',
+    };
+    ctx.mockNextResponse({ type: 'text', text: 'Load the parent.' }, parentCall);
+    ctx.mockNextResponse({ type: 'text', text: 'Load siblings.' }, firstCall, secondCall);
+    ctx.mockNextResponse({ type: 'text', text: 'Load the next child.' }, thirdCall);
+    ctx.mockNextResponse({ type: 'text', text: 'Done.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Use nested skills' }] });
+    await ctx.untilTurnEnd();
+
+    const nested = persistence.records.filter((record) =>
+      names.slice(1).some((name) => recordContainsSkillLoaded(record, name)),
+    );
+    expect(nested).toHaveLength(3);
+    for (const name of names.slice(1)) {
+      expect(JSON.stringify(nested)).toContain(`${name} from B`);
+      expect(JSON.stringify(nested)).toContain(`/work/B/${name}/SKILL.md`);
+      expect(JSON.stringify(nested)).toContain('nested-skill');
+    }
+  });
   it('keeps the bundled parent workspace for nested model-tool calls', async () => {
     skills.registerVariants([
       { ...makeSkill('parent'), path: '/work/A/parent/SKILL.md', dir: '/work/A/parent', content: 'parent from A', workspaceDir: '/work/A' },

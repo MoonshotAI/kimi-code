@@ -40,7 +40,7 @@ export interface IAgentSkillService {
   readonly _serviceBrand: undefined;
   activate(input: SkillActivationInput): Promise<PromptLaunchResult>;
   promptWithSkills(input: PromptWithSkillsInput): Promise<PromptWithSkillsResult>;
-  recordModelToolActivation(origin: SkillActivationOrigin): void;
+  recordModelToolActivation(origin: SkillActivationOrigin, queryDepth?: number): void;
   modelToolContext(): ModelToolSkillContext;
 }
 
@@ -207,9 +207,9 @@ export class AgentSkillService implements IAgentSkillService {
     };
   }
 
-  recordModelToolActivation(origin: SkillActivationOrigin): void {
+  recordModelToolActivation(origin: SkillActivationOrigin, queryDepth?: number): void {
     const turnId = this.loop.snapshot().activeTurnId;
-    if (turnId !== undefined) this.rememberModelToolParent(origin, turnId);
+    if (turnId !== undefined) this.rememberModelToolParent(origin, turnId, queryDepth);
     void this.recordActivation(origin);
   }
 
@@ -224,7 +224,7 @@ export class AgentSkillService implements IAgentSkillService {
     };
   }
 
-  private rememberModelToolParent(origin: SkillActivationOrigin, turnId: number): void {
+  private rememberModelToolParent(origin: SkillActivationOrigin, turnId: number, resolvedQueryDepth?: number): void {
     if (this.ambiguousModelToolTurnId === turnId) return;
     const parent = this.modelToolParent?.turnId === turnId ? this.modelToolParent : undefined;
     const workspaceDir = this.catalog.catalog.listSkills().find((skill) => skill.path === origin.skillPath)?.workspaceDir;
@@ -233,7 +233,7 @@ export class AgentSkillService implements IAgentSkillService {
       this.ambiguousModelToolTurnId = turnId;
       return;
     }
-    const queryDepth = origin.trigger === 'nested-skill' ? (parent?.queryDepth ?? 0) + 1 : 1;
+    const queryDepth = resolvedQueryDepth ?? (origin.trigger === 'nested-skill' ? (parent?.queryDepth ?? 0) + 1 : 1);
     this.modelToolParent = { turnId, queryDepth, workspaceDir };
   }
 

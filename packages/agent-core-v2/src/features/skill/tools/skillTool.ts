@@ -130,7 +130,7 @@ export async function executeModelSkill(
     toolCalls: [],
     origin,
   };
-  skillService.recordModelToolActivation(origin);
+  skillService.recordModelToolActivation(origin, currentDepth + 1);
   return {
     output: `Skill "${skill.name}" loaded inline. Follow its instructions.`,
     delivery: { kind: 'steer', message },
