@@ -116,6 +116,9 @@ export class InMemorySkillCatalog implements SkillCatalog {
     );
     if (listing.length > 0) {
       lines.push(listing);
+      if (this.roots.length > 0) {
+        lines.push('### Skill roots', ...this.roots.map((root) => `- \`${root}\``));
+      }
     }
     return lines.length === 1 ? '' : lines.join('\n');
   }
@@ -230,7 +233,6 @@ function formatModelSkill(skill: SkillDefinition): readonly string[] {
   if (typeof skill.metadata.whenToUse === 'string' && skill.metadata.whenToUse.length > 0) {
     lines.push(`  When to use: ${skill.metadata.whenToUse}`);
   }
-  lines.push(`  Path: ${skill.path}`);
   return lines;
 }
 
