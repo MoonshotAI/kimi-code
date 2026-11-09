@@ -12,7 +12,6 @@ import {
   computeWriteStats,
 } from '#/tui/components/messages/tool-renderers/chip';
 import type { TranscriptPresentationOptions } from '#/tui/config';
-import { TRANSCRIPT_TAIL_THINKING_TICK_MS } from '#/tui/constant/rendering';
 import type { ToolResultBlockData } from '#/tui/types';
 import {
   deriveGroupView,
@@ -35,6 +34,7 @@ import {
   phaseAt,
   preparingAt,
   settledAt,
+  shownThinkingAt,
   slowAt,
   slowSince,
   thinkingTextAt,
@@ -744,7 +744,7 @@ describe('turn timeline', () => {
     ]);
   });
 
-  it('changes the live thinking line only on the 240 ms grid', () => {
+  it('reads a thought up to its latest delta', () => {
     const { timeline, at } = scriptedTimeline();
     at(0).turnStarted();
     at(1000).thinkingDelta('He');
@@ -753,8 +753,7 @@ describe('turn timeline', () => {
     at(1500).thinkingDelta('ld');
     const thinking = latestThought(timeline, instant(1500));
 
-    expect(TRANSCRIPT_TAIL_THINKING_TICK_MS).toBe(240);
-    expect([1100, 1199, 1200, 1439, 1440, 1680].map((now) => thinkingTextAt(thinking, instant(now)))).toEqual([
+    expect([1000, 1099, 1100, 1299, 1300, 1500].map((now) => thinkingTextAt(thinking, instant(now)))).toEqual([
       'He',
       'He',
       'Hello',
@@ -762,6 +761,19 @@ describe('turn timeline', () => {
       'Hello wor',
       'Hello world',
     ]);
+  });
+
+  it('changes the shown thinking text once 150 ms have passed since it last changed', () => {
+    const held = { text: 'He', since: 1000 };
+    const shown = shownThinkingAt(undefined, 'He', instant(1000));
+    expect(shown).toEqual(held);
+    expect(shownThinkingAt(shown, 'Hello', instant(1149))).toEqual(held);
+    expect(shownThinkingAt(shown, 'Hello', instant(990))).toEqual(held);
+    expect(shownThinkingAt(shown, 'Hello', instant(1150))).toEqual({ text: 'Hello', since: 1150 });
+
+    const unchanged = shownThinkingAt(shown, 'He', instant(1400));
+    expect(unchanged).toEqual(held);
+    expect(shownThinkingAt(unchanged, 'Hello', instant(1401))).toEqual({ text: 'Hello', since: 1401 });
   });
 
   it('keeps one slow-call timer across chained calls and restarts it after a break', () => {
@@ -1091,7 +1103,7 @@ describe('group view', () => {
     at(600).thinkingDelta(' idea\ngrows');
 
     expect(titleText(groupView(group, timeline, 500, true).title)).toBe('Thinking');
-    expect([500, 720, 4000].map((now) => tailAt(groupView(group, timeline, now, true), now)))
+    expect([599, 600, 4000].map((now) => tailAt(groupView(group, timeline, now, true), now)))
       .toEqual(['Second', 'Second idea grows', 'Second idea grows']);
   });
 

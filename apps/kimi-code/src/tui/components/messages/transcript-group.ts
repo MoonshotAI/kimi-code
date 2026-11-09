@@ -23,7 +23,15 @@ import {
   type RowStatus,
 } from '#/tui/utils/group-view';
 import type { LogicalTranscriptItem } from '#/tui/utils/transcript-items';
-import { instant, monotonicNow, settledAt, type Instant, type TimelineReader } from '#/tui/utils/turn-timeline';
+import {
+  instant,
+  monotonicNow,
+  settledAt,
+  shownThinkingAt,
+  type Instant,
+  type ShownThinking,
+  type TimelineReader,
+} from '#/tui/utils/turn-timeline';
 import { TitleSweep } from './running-title';
 import { renderHeaderContent, TruncatedHeaderLine } from './truncated-header-line';
 
@@ -105,6 +113,7 @@ export class TranscriptGroupComponent implements Component {
   private frameRequest: number | undefined;
   private disposed = false;
   private readonly sweep = new TitleSweep();
+  private shownThinking: ShownThinking | undefined;
 
   constructor(
     model: TranscriptGroupModel,
@@ -133,7 +142,8 @@ export class TranscriptGroupComponent implements Component {
 
   render(width: number): string[] {
     const now = monotonicNow();
-    const view = deriveGroupView(this.model, now);
+    const { view, thinking } = this.paceTail(deriveGroupView(this.model, now), now);
+    this.shownThinking = thinking;
     if (view.live && this.frameRequest === undefined) this.syncFrames();
     const key = this.frameKey(view, width, now);
     const previous = this.frame;
@@ -308,7 +318,7 @@ export class TranscriptGroupComponent implements Component {
   private readonly onFrame = (time: number): void => {
     this.frameRequest = undefined;
     const now = instant(time);
-    const view = deriveGroupView(this.model, now);
+    const { view } = this.paceTail(deriveGroupView(this.model, now), now);
     this.sweep.advance(now, TITLE_INDENT.length + visibleWidth(titleText(view.title)), view.working);
     const frame = this.frame;
     if (frame === undefined || !sameFrameKey(frame.key, this.frameKey(view, frame.key.width, now))) {
@@ -321,6 +331,13 @@ export class TranscriptGroupComponent implements Component {
     if (this.frameRequest === undefined) return;
     this.interaction.cancelAnimationFrame(this.frameRequest);
     this.frameRequest = undefined;
+  }
+
+  private paceTail(view: GroupView, now: Instant): { readonly view: GroupView; readonly thinking?: ShownThinking } {
+    const { tail } = view;
+    if (tail?.kind !== 'thinking' && tail?.kind !== 'thought') return { view };
+    const thinking = shownThinkingAt(this.shownThinking, tail.text, now);
+    return { view: { ...view, tail: { ...tail, text: thinking.text } }, thinking };
   }
 }
 

@@ -2,7 +2,6 @@ import {
   TRANSCRIPT_GROUP_COUNT_DELAY_MS,
   TRANSCRIPT_TAIL_ENTER_MS,
   TRANSCRIPT_TAIL_THINKING_THROTTLE_MS,
-  TRANSCRIPT_TAIL_THINKING_TICK_MS,
   TRANSCRIPT_TAIL_THOUGHT_HOLD_MS,
 } from '#/tui/constant/rendering';
 
@@ -109,15 +108,20 @@ export function turnLiveAt(turn: TurnFacts | undefined, now: Instant): boolean {
 }
 
 export function thinkingTextAt(thinking: ThinkingFacts, now: Instant): string {
-  const tick = TRANSCRIPT_TAIL_THINKING_TICK_MS;
-  const firstChange = Math.ceil((thinking.start + TRANSCRIPT_TAIL_THINKING_THROTTLE_MS) / tick) * tick;
-  const sample = now < firstChange ? thinking.start : Math.floor(now / tick) * tick;
-  let shown = thinking.marks[0];
-  for (const mark of thinking.marks) {
-    if (mark.at > sample) break;
-    shown = mark;
+  const latest = thinking.marks.findLast((mark) => mark.at <= now) ?? thinking.marks[0];
+  return thinking.text.slice(0, latest.length);
+}
+
+export interface ShownThinking {
+  readonly text: string;
+  readonly since: Instant;
+}
+
+export function shownThinkingAt(shown: ShownThinking | undefined, latest: string, now: Instant): ShownThinking {
+  if (shown !== undefined && (now - shown.since < TRANSCRIPT_TAIL_THINKING_THROTTLE_MS || latest === shown.text)) {
+    return shown;
   }
-  return thinking.text.slice(0, shown.length);
+  return { text: latest, since: now };
 }
 
 interface Interval {

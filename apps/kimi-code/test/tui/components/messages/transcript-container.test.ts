@@ -66,9 +66,10 @@ function thought(ms = 3000): ThinkingComponent {
   return component;
 }
 
-function makeContainer(presentation = options()) {
+type FrameSource = Pick<AnimationFrameScheduler, 'requestAnimationFrame' | 'cancelAnimationFrame'>;
+
+function makeContainer(presentation = options(), frames: FrameSource = new AnimationFrameScheduler()) {
   const requestRender = vi.fn();
-  const frames = new AnimationFrameScheduler();
   const container = new TranscriptContainer(0, 0, {
     requestRender,
     requestAnimationFrame: (callback) => frames.requestAnimationFrame(callback),
@@ -78,6 +79,25 @@ function makeContainer(presentation = options()) {
   });
   container.setPresentationOptions(presentation);
   return { container, requestRender };
+}
+
+function manualFrames(): FrameSource & { run(time: number): void } {
+  const requests = new Map<number, (time: number) => void>();
+  let lastHandle = 0;
+  return {
+    requestAnimationFrame: (callback) => {
+      requests.set(++lastHandle, callback);
+      return lastHandle;
+    },
+    cancelAnimationFrame: (handle) => {
+      requests.delete(handle);
+    },
+    run: (time) => {
+      const due = [...requests.values()];
+      requests.clear();
+      for (const callback of due) callback(time);
+    },
+  };
 }
 
 function plain(lines: readonly string[]): string {
@@ -894,6 +914,89 @@ describe('TranscriptGroupComponent', () => {
     });
     vi.advanceTimersByTime(2_000);
     expect(onlyGroup(container, 100).tail).toBe('  └ Waiting for response · 2s');
+    container.clear();
+  });
+
+  it.each([
+    [120, 240],
+    [100, 200],
+    [50, 150],
+  ])('changes the thinking tail on %i ms frames every %i ms, at least 150 ms apart', (frameMs, gap) => {
+    vi.useFakeTimers();
+    const frames = manualFrames();
+    const { container, requestRender } = makeContainer(options(), frames);
+    container.addChild(tool('Read', { path: '/work/a.ts' }));
+    container.addChild(new ThinkingComponent('reasoning', true, 'live'));
+    const timeline = liveTurn(container);
+    timeline.thinkingDelta('Idea 0');
+    const changes = [{ at: 0, tail: onlyGroup(container, 100).tail }];
+
+    for (let elapsed = 10; elapsed <= 1_200; elapsed += 10) {
+      vi.advanceTimersByTime(10);
+      timeline.thinkingDelta(`\n\nIdea ${String(elapsed)}`);
+      if (elapsed % frameMs !== 0) continue;
+      requestRender.mockClear();
+      frames.run(performance.now());
+      if (requestRender.mock.calls.length === 0) continue;
+      const { tail } = onlyGroup(container, 100);
+      if (tail !== changes.at(-1)?.tail) changes.push({ at: elapsed, tail });
+    }
+
+    const gaps = changes.slice(1).map((change, index) => change.at - (changes[index]?.at ?? 0));
+    expect(Math.min(...gaps)).toBeGreaterThanOrEqual(150);
+    expect(changes).toEqual(Array.from({ length: Math.floor(1_200 / gap) + 1 }, (_, index) => ({
+      at: index * gap,
+      tail: `  └ Idea ${String(index * gap)}`,
+    })));
+    container.clear();
+  });
+
+  it.each([120, 100, 50])(
+    'keeps thinking tail changes 150 ms apart on %i ms frames when renders trail their frames or fall between them',
+    (frameMs) => {
+      const renderLagMs = 3;
+      const streamRenderMs = 70;
+      vi.useFakeTimers();
+      const frames = manualFrames();
+      const { container } = makeContainer(options(), frames);
+      container.addChild(tool('Read', { path: '/work/a.ts' }));
+      container.addChild(new ThinkingComponent('reasoning', true, 'live'));
+      const timeline = liveTurn(container);
+      const changes: number[] = [];
+      let shown: string | undefined;
+
+      for (let elapsed = 0; elapsed <= 3_000; elapsed++) {
+        if (elapsed > 0) vi.advanceTimersByTime(1);
+        if (elapsed % 10 === 0) timeline.thinkingDelta(`\n\nIdea ${String(elapsed)}`);
+        if (elapsed % frameMs === 0) frames.run(performance.now());
+        if (elapsed % frameMs !== renderLagMs && elapsed % streamRenderMs !== 0) continue;
+        const { tail } = onlyGroup(container, 100);
+        if (tail === shown) continue;
+        changes.push(elapsed);
+        shown = tail;
+      }
+
+      const gaps = changes.slice(1).map((at, index) => at - (changes[index] ?? 0));
+      expect(gaps.length).toBeGreaterThan(10);
+      expect(Math.min(...gaps)).toBeGreaterThanOrEqual(150);
+      container.clear();
+    },
+  );
+
+  it('cuts a held thinking tail to a new width at once', () => {
+    vi.useFakeTimers();
+    const { container } = makeContainer();
+    container.addChild(tool('Read', { path: '/work/a.ts' }));
+    container.addChild(new ThinkingComponent('reasoning', true, 'live'));
+    const timeline = liveTurn(container);
+    timeline.thinkingDelta('Check the layout of every group');
+    expect(onlyGroup(container, 100).tail).toBe('  └ Check the layout of every group');
+
+    vi.advanceTimersByTime(50);
+    timeline.thinkingDelta('\n\nThen the tail');
+    expect(onlyGroup(container, 24).tail).toBe('  └ Check the layout of…');
+    vi.advanceTimersByTime(100);
+    expect(onlyGroup(container, 24).tail).toBe('  └ Then the tail');
     container.clear();
   });
 
