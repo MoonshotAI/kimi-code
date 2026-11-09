@@ -97,7 +97,7 @@ const PROBE_MAX_DEPTH = 6;
 const PROBE_MAX_ENTRIES = 500;
 const GREP_TIMEOUT_MS = 30_000;
 const SUGGEST_TIMEOUT_MS = 10_000;
-const WALK_DEFAULT_IGNORE = ['.git'];
+const WALK_DEFAULT_IGNORE = [...VCS_METADATA_DIRS];
 
 interface SuggestRoot {
   readonly dir: string;
@@ -679,9 +679,6 @@ export class WorkspaceFsService implements IWorkspaceFsService {
 
   async search(req: FsSearchRequest): Promise<FsSearchResponse> {
     const queryLower = req.query.toLowerCase();
-    if (VCS_METADATA_DIRS.has(queryLower.replace(/\/+$/, ''))) {
-      return { items: [], truncated: false };
-    }
     const roots = await this.suggestRoots();
     if (roots.length === 0) return { items: [], truncated: false };
     if (req.query === '') {
@@ -779,9 +776,6 @@ export class WorkspaceFsService implements IWorkspaceFsService {
 
   async suggest(req: FsSuggestRequest): Promise<FsSuggestResponse> {
     const queryLower = req.query.toLowerCase();
-    if (VCS_METADATA_DIRS.has(queryLower.replace(/\/+$/, ''))) {
-      return { items: [], truncated: false };
-    }
     if (req.query === '') {
       return this.suggestTopLevel(req, await this.suggestRoots());
     }
@@ -1510,14 +1504,14 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     const cached = this.gitignoreCache.get(rootDir);
     if (cached !== undefined) return cached;
     const ig = ignore();
-    ig.add('.git/');
+    ig.add(WALK_DEFAULT_IGNORE.map((dir) => `${dir}/`));
     let contents = '';
     try {
       contents = await this.hostFs.readText(this.path.join(rootDir, '.gitignore'));
       ig.add(contents);
     } catch {
     }
-    const rules = [...contents.split(/\r?\n/), '.git'];
+    const rules = [...contents.split(/\r?\n/), ...WALK_DEFAULT_IGNORE];
     const result = { matcher: ig, walkRules: rules };
     this.gitignoreCache.set(rootDir, result);
     return result;

@@ -1221,7 +1221,7 @@ describe('WorkspaceFsService.suggest', () => {
     expect(on.items.map((i) => i.path)).toContain('sub/.secret/x.ts');
   });
 
-  it('never returns VCS metadata entries even with show_hidden', async () => {
+  it('keeps fuzzy VCS-like names while excluding actual metadata', async () => {
     const fs = makeSession({}, rgLinesHandler(['.git/x.ts', 'src/.jj/y.ts', 'ok.ts']));
     const result = await fs.suggest({
       query: 'ts',
@@ -1231,16 +1231,39 @@ describe('WorkspaceFsService.suggest', () => {
     });
     expect(result.items.map((i) => i.path)).toEqual(['ok.ts']);
 
-    let calls = 0;
-    const exactFs = makeSession({}, () => {
-      calls += 1;
-      return { stdout: '', exitCode: 0 };
-    });
-    const exact = await exactFs.suggest({ query: '.git', limit: 20, follow_gitignore: false, show_hidden: true });
-    expect(exact).toEqual({ items: [], truncated: false });
-    const searched = await exactFs.search({ query: '.git', limit: 20, follow_gitignore: false });
-    expect(searched).toEqual({ items: [], truncated: false });
-    expect(calls).toBe(0);
+    const files = {
+      '.git/config': '',
+      '.gitignore': '',
+      '.gitattributes': '',
+      '.github/workflows/ci.yml': '',
+      'src/.jj/y.ts': '',
+    };
+    const rgFs = makeSession(files, rgLinesHandler(Object.keys(files)));
+    const rgResult = await rgFs.suggest({ query: '.git', limit: 20, follow_gitignore: false, show_hidden: true });
+    expect(rgResult.items.map((item) => item.path)).toContain('.gitignore');
+    expect(rgResult.items.map((item) => item.path)).toContain('.gitattributes');
+    expect(rgResult.items.map((item) => item.path)).toContain('.github');
+    expect(rgResult.items.some((item) => item.path === '.git' || item.path.startsWith('.git/'))).toBe(false);
+
+    const backend = fakeFs(files);
+    const readdir = backend.readdir.bind(backend);
+    const reads: string[] = [];
+    backend.readdir = async (path) => {
+      reads.push(path);
+      return readdir(path);
+    };
+    const nodeFs = makeRemoteWalkSession(backend);
+    const searched = await nodeFs.search({ query: '.git', limit: 20, follow_gitignore: false });
+    const suggested = await nodeFs.suggest({ query: '.git', limit: 20, follow_gitignore: false, show_hidden: true });
+    for (const response of [searched, suggested]) {
+      expect(response.items.map((item) => item.path)).toContain('.gitignore');
+      expect(response.items.map((item) => item.path)).toContain('.gitattributes');
+      expect(response.items.map((item) => item.path)).toContain('.github');
+      expect(response.items.some((item) => item.path === '.git' || item.path.startsWith('.git/'))).toBe(false);
+      expect(response.items.some((item) => item.path.includes('/.jj/'))).toBe(false);
+    }
+    expect(reads).not.toContain('/repo/.git');
+    expect(reads).not.toContain('/repo/src/.jj');
   });
 
   it('lists root entries for an empty query and never lists VCS dirs', async () => {
@@ -1416,7 +1439,7 @@ describe('WorkspaceFsService.suggest', () => {
     });
 
     expect(walked).toEqual([WORK_DIR]);
-    expect(receivedIgnore).toEqual(['node_modules/', '', '.git']);
+    expect(receivedIgnore).toEqual(['node_modules/', '', '.git', '.jj', '.svn', '.hg', '.bzr']);
     expect(result).toEqual({ items: [], truncated: true });
   });
 
