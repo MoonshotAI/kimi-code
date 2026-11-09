@@ -113,6 +113,99 @@ describe('ChoicePickerComponent', () => {
     expect(lines[titleIdx + 2]).toBe('');
   });
 
+  it('draws the highlighted preview under the list at the tallest preview height', () => {
+    const previews: Record<string, readonly string[]> = {
+      a: ['alpha one'],
+      b: ['beta one', 'beta two', 'beta three'],
+      c: ['gamma one', 'gamma two'],
+    };
+    const picker = new ChoicePickerComponent({
+      title: 'Pick one',
+      options: [
+        { value: 'a', label: 'Alpha' },
+        { value: 'b', label: 'Beta' },
+        { value: 'c', label: 'Gamma' },
+      ],
+      preview: (value) => previews[value] ?? [],
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+    const border = '─'.repeat(60);
+    const frames = ['a', 'b', 'c'].map(() => {
+      const lines = picker.render(60).map(strip);
+      picker.handleInput('\u001B[B');
+      return lines;
+    });
+
+    expect(frames[1]!.slice(4, 7)).toEqual(['    Alpha', '  ❯ Beta', '    Gamma']);
+    expect(frames.map((lines) => lines.slice(7))).toEqual([
+      ['', ' Preview', 'alpha one', '', '', '', border],
+      ['', ' Preview', 'beta one', 'beta two', 'beta three', '', border],
+      ['', ' Preview', 'gamma one', 'gamma two', '', '', border],
+    ]);
+  });
+
+  it('leaves the whole preview out when the tallest one would not fit, whatever is highlighted', () => {
+    let availableRows = 14;
+    const picker = new ChoicePickerComponent({
+      title: 'Pick one',
+      options: [
+        { value: 'short', label: 'Short' },
+        { value: 'tall', label: 'Tall' },
+      ],
+      preview: (value) => (value === 'tall' ? ['one', 'two', 'three', 'four'] : ['one']),
+      getAvailableRows: () => availableRows,
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+    expect(picker.render(60).map(strip)).toHaveLength(14);
+    expect(picker.render(60).map(strip)).toContain(' Preview');
+
+    availableRows = 13;
+    for (const highlighted of ['Short', 'Tall']) {
+      expect(picker.render(60).map(strip)).toEqual([
+        '─'.repeat(60),
+        ' Pick one',
+        ' ↑↓ navigate · Enter select · Esc cancel',
+        '',
+        highlighted === 'Short' ? '  ❯ Short' : '    Short',
+        highlighted === 'Tall' ? '  ❯ Tall' : '    Tall',
+        '',
+        '─'.repeat(60),
+      ]);
+      picker.handleInput('\u001B[B');
+    }
+  });
+
+  it('renders the same lines as before when no preview is given', () => {
+    const options: ChoiceOption[] = [
+      { value: 'a', label: 'Alpha', description: 'First choice' },
+      { value: 'b', label: 'Beta' },
+    ];
+    const picker = (extra: { readonly getAvailableRows?: () => number } = {}) =>
+      new ChoicePickerComponent({
+        title: 'Pick one',
+        options,
+        currentValue: 'b',
+        onSelect: vi.fn(),
+        onCancel: vi.fn(),
+        ...extra,
+      });
+
+    expect(picker().render(40).map(strip)).toEqual([
+      '─'.repeat(40),
+      ' Pick one',
+      ' ↑↓ navigate · Enter select · Esc cancel',
+      '',
+      '    Alpha',
+      '    First choice',
+      '  ❯ Beta ← current',
+      '',
+      '─'.repeat(40),
+    ]);
+    expect(picker({ getAvailableRows: () => 1 }).render(40)).toEqual(picker().render(40));
+  });
+
   it('renders optional descriptions below choice labels', () => {
     const picker = new ChoicePickerComponent({
       title: 'Select permission mode',

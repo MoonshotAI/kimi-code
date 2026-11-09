@@ -34,10 +34,14 @@ import { createTUIState, KimiTUI, type KimiTUIOptions, type KimiTUIStartupInput 
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
 import { ChoicePickerComponent } from '#/tui/components/dialogs/choice-picker';
 import { GoalStartPermissionPromptComponent } from '#/tui/components/dialogs/goal-start-permission-prompt';
-import { SettingsSelectorComponent } from '#/tui/components/dialogs/settings-selector';
+import {
+  SettingsSelectorComponent,
+  ToolCallDensitySelectorComponent,
+} from '#/tui/components/dialogs/settings-selector';
 import { NotifyController } from '#/tui/controllers/notify';
 import {
   editorSlotComponent,
+  editorSlotRows,
   isBlockingPromptPending,
   mountFooter,
   setEditorSlot,
@@ -1426,6 +1430,36 @@ describe('fullscreen layout', () => {
     await vt.waitForRender();
     expect(picker.focused).toBe(false);
 
+    state.ui.stop();
+  });
+
+  it.each([
+    { rows: 40, preview: true },
+    { rows: 24, preview: false },
+  ])('fits the tool call preview into the dock only when $rows rows leave room for it', async ({ rows, preview }) => {
+    const { state, vt } = await mountFullscreen(rows);
+    const picker = new ToolCallDensitySelectorComponent({
+      current: { toolCallDensity: 'compact', thinking: 'grouped' },
+      getAvailableRows: () => editorSlotRows(state),
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+    setEditorSlot(state, picker);
+    state.ui.setFocus(picker);
+    const borders = (): number => screenRows(vt).filter((row) => /^ ─{20,}$/.test(row)).length;
+
+    for (const highlighted of ['Compact', 'Balanced', 'Detailed']) {
+      state.ui.requestRender();
+      await vt.waitForRender();
+      const screen = screenRows(vt).join('\n');
+      expect(screen).toContain(`❯ ${highlighted}`);
+      expect(screen.includes(' Preview')).toBe(preview);
+      expect(screen).toContain('Detailed');
+      expect(borders()).toBe(2);
+      picker.handleInput('\u001B[B');
+    }
+
+    picker.dispose();
     state.ui.stop();
   });
 

@@ -57,6 +57,8 @@ export interface ChoicePickerOptions {
   readonly spaceSelect?: boolean;
   /** Items per page. Lists longer than this paginate. */
   readonly pageSize?: number;
+  readonly preview?: (value: string, width: number) => readonly string[];
+  readonly getAvailableRows?: () => number;
   readonly onSelect: (value: string) => void;
   /** When provided, Alt+S invokes this with the selected value instead of
    * onSelect — used to apply the choice to the current session only. */
@@ -278,16 +280,34 @@ export class ChoicePickerComponent implements Component, Focusable {
     this.choiceRegions = choiceRegions;
 
     lines.push('');
+    const footer: string[] = [];
     if (view.page.pageCount > 1) {
-      lines.push(
+      footer.push(
         currentTheme.fg('textMuted',
           ` Page ${String(view.page.page + 1)}/${String(view.page.pageCount)}`,
         ),
       );
     }
-    lines.push(currentTheme.fg('primary', '─'.repeat(width)));
+    footer.push(currentTheme.fg('primary', '─'.repeat(width)));
+    lines.push(...this.renderPreview(width, lines.length + footer.length), ...footer);
     const rendered = lines.map((line) => truncateToWidth(line, width));
     return this.focused ? rendered : rendered.map((line) => currentTheme.fade(line));
+  }
+
+  private renderPreview(width: number, otherRows: number): readonly string[] {
+    const { preview, getAvailableRows } = this.opts;
+    if (preview === undefined) return [];
+    const height = Math.max(0, ...this.opts.options.map((option) => preview(option.value, width).length));
+    const selected = this.list.selected();
+    const shown = selected === undefined ? [] : preview(selected.value, width);
+    const block = [
+      currentTheme.fg('textMuted', ' Preview'),
+      ...shown,
+      ...Array.from({ length: height - shown.length }, () => ''),
+      '',
+    ];
+    if (getAvailableRows !== undefined && otherRows + block.length > getAvailableRows()) return [];
+    return block;
   }
 }
 

@@ -203,7 +203,7 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     editorSlot.addChild(editorContainer, EDITOR_SLOT_ENTRY);
     dockContainer.addChild(editorSlot, EDITOR_SLOT_ENTRY);
     const root = new VStack();
-    root.addChild(fullscreenView, { basis: 0, grow: 1, shrink: 1, minSize: 1 });
+    root.addChild(fullscreenView, TRANSCRIPT_VIEW_ENTRY);
     root.addChild(dockContainer, { basis: 'auto', grow: 0, shrink: 1, minSize: 1 });
     ui.setLayoutRoot(root);
     ui.addLayoutEffect(() => {
@@ -279,6 +279,8 @@ export function mountFooter(state: TUIState): void {
 // border), and neither does whatever stands in for it.
 const EDITOR_SLOT_ENTRY = { shrink: 1, minSize: 3 } as const;
 
+const TRANSCRIPT_VIEW_ENTRY = { basis: 0, grow: 1, shrink: 1, minSize: 1 } as const;
+
 /**
  * Show `component` where the editor sits. A docked section (fullscreen) joins
  * the layout directly so its body can scroll; anything else goes through
@@ -311,6 +313,16 @@ export function editorSlotComponent(
   return slotted === undefined || slotted === state.editorContainer
     ? state.editorContainer.children[0]
     : slotted;
+}
+
+export function editorSlotRows(state: Pick<TUIState, 'ui' | 'dockContainer' | 'editorSlot'>): number {
+  const { dockContainer, editorSlot } = state;
+  if (dockContainer === undefined) return Number.POSITIVE_INFINITY;
+  const { rows, columns } = state.ui.terminal;
+  const dockRows = dockContainer.children
+    .filter((child) => child !== editorSlot)
+    .reduce((sum, child) => sum + child.render(columns).length, 0);
+  return rows - TRANSCRIPT_VIEW_ENTRY.minSize - dockRows;
 }
 
 /** An approval, question, or local goal prompt has replaced the editor and waits for the user. */

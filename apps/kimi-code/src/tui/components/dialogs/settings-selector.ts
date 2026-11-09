@@ -1,5 +1,6 @@
-import type { ThinkingDisplay, ToolCallDensity } from '../../config';
-import { ChoicePickerComponent, type ChoiceOption } from './choice-picker';
+import type { ThinkingDisplay, ToolCallDensity, TranscriptConfig } from '../../config';
+import { ChoicePickerComponent, type ChoiceOption, type ChoicePickerOptions } from './choice-picker';
+import { TranscriptPreview } from './transcript-preview';
 
 export type SettingsSelection =
   | 'model'
@@ -118,6 +119,8 @@ export class SettingsSelectorComponent extends ChoicePickerComponent {
   }
 }
 
+type PickableToolCallDensity = Exclude<ToolCallDensity, 'ungrouped'>;
+
 const TOOL_CALL_DENSITY_OPTIONS = [
   {
     value: 'compact',
@@ -134,7 +137,7 @@ const TOOL_CALL_DENSITY_OPTIONS = [
     label: 'Detailed',
     description: 'Fold read-only calls. Edits and commands stay as full cards.',
   },
-] as const satisfies readonly (ChoiceOption & { readonly value: ToolCallDensity })[];
+] as const satisfies readonly (ChoiceOption & { readonly value: PickableToolCallDensity })[];
 
 const THINKING_OPTIONS = [
   {
@@ -149,45 +152,68 @@ const THINKING_OPTIONS = [
   },
 ] as const satisfies readonly (ChoiceOption & { readonly value: ThinkingDisplay })[];
 
-export interface ToolCallDensitySelectorOptions {
-  /** `ungrouped` is file-only: it has no row, so no row is marked current. */
-  readonly currentValue: ToolCallDensity;
-  readonly onSelect: (value: ToolCallDensity) => void;
+export interface TranscriptSettingSelectorOptions<V> {
+  readonly current: TranscriptConfig;
+  readonly getAvailableRows?: () => number;
+  readonly onSelect: (value: V) => void;
   readonly onCancel: () => void;
 }
 
-export class ToolCallDensitySelectorComponent extends ChoicePickerComponent {
-  constructor(opts: ToolCallDensitySelectorOptions) {
-    super({
-      title: 'Tool calls',
-      options: TOOL_CALL_DENSITY_OPTIONS,
-      currentValue: opts.currentValue,
-      onSelect: (value) => {
-        const option = TOOL_CALL_DENSITY_OPTIONS.find((candidate) => candidate.value === value);
-        if (option !== undefined) opts.onSelect(option.value);
-      },
-      onCancel: opts.onCancel,
-    });
+class TranscriptSettingPickerComponent extends ChoicePickerComponent {
+  constructor(
+    opts: Omit<ChoicePickerOptions, 'preview'>,
+    private readonly preview: TranscriptPreview,
+  ) {
+    super({ ...opts, preview: (value, width) => preview.render(value, width) });
+  }
+
+  override invalidate(): void {
+    this.preview.invalidate();
+  }
+
+  dispose(): void {
+    this.preview.dispose();
   }
 }
 
-export interface ThinkingDisplaySelectorOptions {
-  readonly currentValue: ThinkingDisplay;
-  readonly onSelect: (value: ThinkingDisplay) => void;
-  readonly onCancel: () => void;
+export class ToolCallDensitySelectorComponent extends TranscriptSettingPickerComponent {
+  constructor(opts: TranscriptSettingSelectorOptions<PickableToolCallDensity>) {
+    super(
+      {
+        title: 'Tool calls',
+        options: TOOL_CALL_DENSITY_OPTIONS,
+        currentValue: opts.current.toolCallDensity,
+        getAvailableRows: opts.getAvailableRows,
+        onSelect: (value) => {
+          const option = TOOL_CALL_DENSITY_OPTIONS.find((candidate) => candidate.value === value);
+          if (option !== undefined) opts.onSelect(option.value);
+        },
+        onCancel: opts.onCancel,
+      },
+      new TranscriptPreview(new Map(TOOL_CALL_DENSITY_OPTIONS.map(
+        (option) => [option.value, { ...opts.current, toolCallDensity: option.value }],
+      ))),
+    );
+  }
 }
 
-export class ThinkingDisplaySelectorComponent extends ChoicePickerComponent {
-  constructor(opts: ThinkingDisplaySelectorOptions) {
-    super({
-      title: 'Thinking',
-      options: THINKING_OPTIONS,
-      currentValue: opts.currentValue,
-      onSelect: (value) => {
-        const option = THINKING_OPTIONS.find((candidate) => candidate.value === value);
-        if (option !== undefined) opts.onSelect(option.value);
+export class ThinkingDisplaySelectorComponent extends TranscriptSettingPickerComponent {
+  constructor(opts: TranscriptSettingSelectorOptions<ThinkingDisplay>) {
+    super(
+      {
+        title: 'Thinking',
+        options: THINKING_OPTIONS,
+        currentValue: opts.current.thinking,
+        getAvailableRows: opts.getAvailableRows,
+        onSelect: (value) => {
+          const option = THINKING_OPTIONS.find((candidate) => candidate.value === value);
+          if (option !== undefined) opts.onSelect(option.value);
+        },
+        onCancel: opts.onCancel,
       },
-      onCancel: opts.onCancel,
-    });
+      new TranscriptPreview(new Map(THINKING_OPTIONS.map(
+        (option) => [option.value, { ...opts.current, thinking: option.value }],
+      ))),
+    );
   }
 }

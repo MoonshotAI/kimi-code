@@ -60,6 +60,7 @@ import {
 import { DEFAULT_OAUTH_PROVIDER_NAME } from '#/constant/app';
 import { MAIN_AGENT_ID, NO_ACTIVE_SESSION_MESSAGE, TUI_MODE_RESTART_NOTICE } from '../constant/kimi-tui';
 import type { QueuedModelSwitch } from '../types';
+import { editorSlotRows } from '../tui-state';
 import { formatErrorMessage } from '../utils/event-payload';
 import { setMarkdownMermaidMode, type MermaidRenderMode } from '../utils/markdown-options';
 import {
@@ -1108,7 +1109,8 @@ export async function applyMermaidPreferenceChoice(
 function showToolCallDensityPicker(host: SlashCommandHost): void {
   host.mountEditorReplacement(
     new ToolCallDensitySelectorComponent({
-      currentValue: host.state.appState.transcript.toolCallDensity,
+      current: host.state.appState.transcript,
+      getAvailableRows: () => editorSlotRows(host.state),
       onSelect: (toolCallDensity) => {
         host.restoreEditor();
         void applyTranscriptConfigChoice(host, {
@@ -1126,7 +1128,8 @@ function showToolCallDensityPicker(host: SlashCommandHost): void {
 function showThinkingDisplayPicker(host: SlashCommandHost): void {
   host.mountEditorReplacement(
     new ThinkingDisplaySelectorComponent({
-      currentValue: host.state.appState.transcript.thinking,
+      current: host.state.appState.transcript,
+      getAvailableRows: () => editorSlotRows(host.state),
       onSelect: (thinking) => {
         host.restoreEditor();
         void applyTranscriptConfigChoice(host, {

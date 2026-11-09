@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
+import { visibleWidth } from '@moonshot-ai/pi-tui';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { MermaidPreferenceSelectorComponent } from '#/tui/components/dialogs/mermaid-preference-selector';
 import {
@@ -6,6 +7,7 @@ import {
   ThinkingDisplaySelectorComponent,
   ToolCallDensitySelectorComponent,
 } from '#/tui/components/dialogs/settings-selector';
+import { TranscriptContainer } from '#/tui/components/messages/transcript-container';
 
 const ANSI = /\[[0-9;]*m/g;
 const strip = (s: string): string => s.replaceAll(ANSI, '');
@@ -71,7 +73,7 @@ describe('transcript display selectors', () => {
   it('offers compact, balanced, and detailed tool calls with the current marker', () => {
     const onSelect = vi.fn();
     const picker = new ToolCallDensitySelectorComponent({
-      currentValue: 'balanced',
+      current: { toolCallDensity: 'balanced', thinking: 'grouped' },
       onSelect,
       onCancel: () => {},
     });
@@ -92,7 +94,7 @@ describe('transcript display selectors', () => {
   it('marks no tool call row as current while the file holds ungrouped', () => {
     const onSelect = vi.fn();
     const picker = new ToolCallDensitySelectorComponent({
-      currentValue: 'ungrouped',
+      current: { toolCallDensity: 'ungrouped', thinking: 'grouped' },
       onSelect,
       onCancel: () => {},
     });
@@ -107,7 +109,7 @@ describe('transcript display selectors', () => {
   it('offers grouped and ungrouped thinking with the current marker', () => {
     const onSelect = vi.fn();
     const picker = new ThinkingDisplaySelectorComponent({
-      currentValue: 'grouped',
+      current: { toolCallDensity: 'compact', thinking: 'grouped' },
       onSelect,
       onCancel: () => {},
     });
@@ -120,6 +122,120 @@ describe('transcript display selectors', () => {
     picker.handleInput('\u001B[B');
     picker.handleInput('\r');
     expect(onSelect).toHaveBeenCalledWith('ungrouped');
+  });
+});
+
+describe('transcript display previews', () => {
+  const down = '\u001B[B';
+
+  function previewOf(lines: readonly string[]): string[] {
+    const start = lines.indexOf(' Preview');
+    expect(start).toBeGreaterThan(0);
+    return lines.slice(start + 1, -1).map((line) => line.trimEnd());
+  }
+
+  it('previews each tool call density with the real transcript at one steady height', () => {
+    const picker = new ToolCallDensitySelectorComponent({
+      current: { toolCallDensity: 'compact', thinking: 'grouped' },
+      onSelect: () => {},
+      onCancel: () => {},
+    });
+    const compact = picker.render(100).map(strip);
+    picker.handleInput(down);
+    const balanced = picker.render(100).map(strip);
+    picker.handleInput(down);
+    const detailed = picker.render(100).map(strip);
+
+    expect(previewOf(compact).filter(Boolean)).toEqual([
+      '   Thought for 3s, read 1 file, ran 1 command, edited 1 file +1 -1',
+    ]);
+    expect(previewOf(balanced).filter(Boolean)).toEqual([
+      '   Thought for 3s, read 1 file',
+      '   Edit src/app.ts · +1 -1',
+      '   Bash npm test',
+    ]);
+    expect(previewOf(detailed).filter(Boolean)).toEqual([
+      '   Thought for 3s, read 1 file',
+      ' ● Used Edit (src/app.ts) · +1 -1',
+      '   +1 -1 src/app.ts',
+      '      1 - start()',
+      '      1 + start(port = 3000)',
+      ' ● Ran a command · $ npm test',
+      '   12 tests passed',
+    ]);
+    expect(new Set([compact.length, balanced.length, detailed.length]).size).toBe(1);
+    expect(detailed.at(-2)).toBe('');
+    expect(detailed.at(-1)).toMatch(/^─+$/);
+    picker.dispose();
+  });
+
+  it('previews grouped and ungrouped thinking under the current tool call density', () => {
+    const picker = new ThinkingDisplaySelectorComponent({
+      current: { toolCallDensity: 'balanced', thinking: 'grouped' },
+      onSelect: () => {},
+      onCancel: () => {},
+    });
+    const grouped = picker.render(100).map(strip);
+    picker.handleInput(down);
+    const ungrouped = picker.render(100).map(strip);
+
+    expect(previewOf(grouped).filter(Boolean)).toEqual([
+      '   Thought for 3s, read 1 file',
+      '   Edit src/app.ts · +1 -1',
+      '   Bash npm test',
+    ]);
+    expect(previewOf(ungrouped).filter(Boolean)).toEqual([
+      ' ● Check how the app starts before changing it.',
+      '   Read src/app.ts',
+      '   Edit src/app.ts · +1 -1',
+      '   Bash npm test',
+    ]);
+    expect(ungrouped).toHaveLength(grouped.length);
+    picker.dispose();
+  });
+
+  it.each([120, 32])('keeps every preview line within a %i-column picker', (width) => {
+    const pickers = [
+      new ToolCallDensitySelectorComponent({
+        current: { toolCallDensity: 'compact', thinking: 'ungrouped' },
+        onSelect: () => {},
+        onCancel: () => {},
+      }),
+      new ThinkingDisplaySelectorComponent({
+        current: { toolCallDensity: 'detailed', thinking: 'grouped' },
+        onSelect: () => {},
+        onCancel: () => {},
+      }),
+    ];
+    for (const picker of pickers) {
+      for (let step = 0; step < 3; step++) {
+        const rendered = picker.render(width);
+        expect(rendered.map(strip)).toContain(' Preview');
+        expect(rendered.every((line) => visibleWidth(line) <= width)).toBe(true);
+        picker.handleInput(down);
+      }
+      picker.dispose();
+    }
+  });
+
+  it('draws the previews without timers and releases them when the picker closes', () => {
+    vi.useFakeTimers();
+    const dispose = vi.spyOn(TranscriptContainer.prototype, 'dispose');
+    onTestFinished(() => {
+      dispose.mockRestore();
+      vi.useRealTimers();
+    });
+    const picker = new ToolCallDensitySelectorComponent({
+      current: { toolCallDensity: 'compact', thinking: 'grouped' },
+      onSelect: () => {},
+      onCancel: () => {},
+    });
+    picker.render(100);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(dispose).not.toHaveBeenCalled();
+
+    picker.dispose();
+    expect(dispose).toHaveBeenCalledTimes(3);
   });
 });
 
