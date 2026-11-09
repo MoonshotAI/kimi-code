@@ -17,7 +17,7 @@ import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/tool
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { userPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
 import { AutoReviewService } from '#/features/autoReview/reviewService';
-import { AutoReviewCompleted } from '#/features/autoReview/autoReviewEvents';
+import { AutoReviewCompleted, AutoReviewStarted } from '#/features/autoReview/autoReviewEvents';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AUTO_REVIEW_SECTION } from '#/features/autoReview/configSection';
 import type { AutoReviewResult } from '#/features/autoReview/review';
@@ -25,6 +25,7 @@ import REVIEW_POLICY from '../../../src/features/autoReview/auto-review-policy.m
 import type { AssistantMessage } from '#human/llm/message';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import type { ModelRequestInput, ModelRequestParams } from '#/llm-adapter/model/generate';
+import { APIStatusError } from '#/llm-adapter/contract/errors';
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -613,12 +614,14 @@ describe('AutoReviewService', () => {
   let agentsMd: string;
   let telemetry: TelemetryRecord[];
   let reviewEvents: AutoReviewCompleted[];
+  let reviewStarts: AutoReviewStarted[];
   let usage: Parameters<ISessionUsageService['record']>[];
 
   beforeEach(() => {
     disposables = new DisposableStore();
     requests = [];
     reviewEvents = [];
+    reviewStarts = [];
     usage = [];
     response = {
       message: { role: 'assistant', content: [{ type: 'text', text: '{"risk":"low","decision":"allow","reason":null}' }], toolCalls: [] },
@@ -642,6 +645,7 @@ describe('AutoReviewService', () => {
     model?: string,
     configured = true,
     secondaryModel?: SecondaryModelConfig,
+    timeoutMs = 30000,
   ): AutoReviewService {
     const registry = new ProtocolAdapterRegistry();
     let selectedAlias = 'main-model';
@@ -649,7 +653,7 @@ describe('AutoReviewService', () => {
       additionalServices: (reg) => {
         reg.definePartialInstance(IConfigService, {
           get: ((section: string) => {
-            if (section === AUTO_REVIEW_SECTION && configured) return { model, timeoutMs: 1000 };
+            if (section === AUTO_REVIEW_SECTION && configured) return { model, timeoutMs };
             if (section === SECONDARY_MODEL_SECTION) return secondaryModel;
             return undefined;
           }) as IConfigService['get'],
@@ -691,6 +695,7 @@ describe('AutoReviewService', () => {
         reg.definePartialInstance(IEventDispatcher, {
           dispatch: async (event) => {
             if (event instanceof AutoReviewCompleted) reviewEvents.push(event);
+            if (event instanceof AutoReviewStarted) reviewStarts.push(event);
           },
         });
         reg.definePartialInstance(ISessionContext, { sessionId: 'session-1' });
@@ -878,6 +883,24 @@ describe('AutoReviewService', () => {
     })]);
   });
 
+  it('announces the review before the model request without persisting it', async () => {
+    let startsAtRequest = 0;
+
+    await review(service(async () => {
+      startsAtRequest = reviewStarts.length;
+      return response;
+    }));
+
+    expect(startsAtRequest).toBe(1);
+    expect(reviewStarts).toEqual([expect.objectContaining({
+      type: 'auto_review.started',
+      agentId: 'main',
+      toolName: 'Bash',
+      toolCallId: expect.any(String),
+    })]);
+    expect(AutoReviewStarted.durable).toBe(false);
+  });
+
   it('treats originless legacy user messages as human instructions', async () => {
     history = [{ role: 'user', content: [{ type: 'text', text: 'Remove only generated files.' }] }];
 
@@ -971,6 +994,26 @@ describe('AutoReviewService', () => {
   ])('fails invalid reviewer output: %s', async (text) => {
     response.message.content = [{ type: 'text', text }];
     await expect(review()).resolves.toMatchObject({ kind: 'failed' });
+    expect(requests).toHaveLength(3);
+  });
+
+  it('retries a rate limit and keeps the later decision', async () => {
+    let calls = 0;
+    const result = await review(service(async () => {
+      calls += 1;
+      if (calls < 3) throw new APIStatusError(429, 'Slow down', null, 1);
+      return response;
+    }));
+
+    expect(result).toMatchObject({ kind: 'decision', decision: { decision: 'allow' } });
+    expect(requests).toHaveLength(3);
+  });
+
+  it('does not retry an authentication failure', async () => {
+    await expect(review(service(async () => {
+      throw new APIStatusError(401, 'Unauthorized');
+    }))).resolves.toMatchObject({ kind: 'failed' });
+    expect(requests).toHaveLength(1);
   });
 
   it('rejects a reviewer tool call', async () => {
@@ -1007,13 +1050,15 @@ describe('AutoReviewService', () => {
     expect(rewritten).toMatchObject({ kind: 'failed', reason: expect.stringContaining('changed') });
   });
 
-  it('fails instead of allowing when review times out', async () => {
-    const result = await review(service((_request, reqSignal) => new Promise<ReviewResponse>((_resolve, reject) => {
-      reqSignal?.addEventListener('abort', () => {
-        reject(reqSignal.reason);
+  it('does not start another attempt after the review deadline', async () => {
+    const result = await review(service(async () => {
+      await new Promise((resolve) => {
+        setTimeout(resolve, 1100);
       });
-    })));
+      throw new APIStatusError(503, 'still unavailable');
+    }, undefined, true, undefined, 1000));
     expect(result).toMatchObject({ kind: 'failed', reason: 'Review timed out.' });
+    expect(requests).toHaveLength(1);
   });
 
   it('propagates user cancellation', async () => {
