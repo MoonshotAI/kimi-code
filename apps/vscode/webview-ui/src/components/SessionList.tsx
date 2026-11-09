@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { IconSearch, IconDots, IconTrash, IconCheck } from "@tabler/icons-react";
+import { IconSearch, IconDots, IconTrash, IconCheck, IconLoader2 } from "@tabler/icons-react";
 import { Input } from "@/components/ui/input";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { StreamingConfirmDialog } from "./StreamingConfirmDialog";
@@ -15,7 +15,7 @@ interface SessionListProps {
   onClose: () => void;
 }
 
-const KIMI_SESSIONS_KEY = ["kimiSessions"] as const;
+export const KIMI_SESSIONS_KEY = ["kimiSessions"] as const;
 const NO_SESSIONS: SessionInfo[] = [];
 
 function formatRelativeDate(timestamp: number): string {
@@ -43,22 +43,45 @@ function SessionItem({ session, isSelected, onSelect, onDelete, dirLabel }: Sess
 
   return (
     <div
-      className={cn("group relative px-2 py-1 rounded-md cursor-pointer transition-colors", isSelected ? "bg-accent" : "hover:bg-accent/50")}
+      className={cn(
+        "group relative px-3 py-2.5 rounded-lg cursor-pointer transition-colors",
+        isSelected ? "bg-accent" : "hover:bg-accent/50",
+      )}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       onClick={onSelect}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSelect();
+        }
+      }}
+      role="button"
+      tabIndex={0}
+      aria-current={isSelected ? "page" : undefined}
     >
-      <p className="text-xs leading-relaxed line-clamp-3 text-foreground">{cleanSystemTags(session.brief) || "Untitled"}</p>
-      <div className="flex items-center justify-between mt-0.5">
+      <p className="text-xs font-medium leading-relaxed line-clamp-2 text-foreground">{cleanSystemTags(session.brief) || "Untitled"}</p>
+      <div className="flex items-center justify-between mt-1">
         <div className="flex items-center gap-1.5 min-w-0 flex-1">
           {isSelected && <IconCheck className="size-3 text-blue-500 shrink-0" />}
+          {session.isRunning && (
+            <span className="flex items-center gap-1 text-[10px] text-blue-500 shrink-0">
+              <IconLoader2 className="size-3 animate-spin motion-reduce:animate-none" />
+              Running
+            </span>
+          )}
           <span className="text-[10px] text-muted-foreground shrink-0">{formatRelativeDate(session.updatedAt)}</span>
           {dirLabel && <span className="text-[10px] text-muted-foreground/70 truncate" title={session.workDir}>· {dirLabel}</span>}
         </div>
-        <div className={cn("transition-opacity", isHovered ? "opacity-100" : "opacity-0")}>
+        <div className={cn("transition-opacity group-focus-within:opacity-100", isHovered ? "opacity-100" : "opacity-0")}>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button className="p-1 -m-1 rounded hover:bg-muted transition-colors" onClick={(e) => e.stopPropagation()}>
+              <button
+                className="p-1 -m-1 rounded hover:bg-muted transition-colors"
+                onClick={(e) => e.stopPropagation()}
+                aria-label={`Conversation actions for ${cleanSystemTags(session.brief) || "Untitled"}`}
+              >
                 <IconDots className="size-3.5 text-muted-foreground" />
               </button>
             </DropdownMenuTrigger>
@@ -110,13 +133,19 @@ export function SessionList({ onClose }: SessionListProps) {
   };
 
   const filteredSessions = useMemo(() => {
-    if (!searchQuery.trim()) return kimiSessions;
+    const sorted = kimiSessions.toSorted((a, b) => b.updatedAt - a.updatedAt);
+    if (!searchQuery.trim()) return sorted;
     const q = searchQuery.toLowerCase();
-    return kimiSessions.filter((s) => s.brief.toLowerCase().includes(q));
+    return sorted.filter((s) => s.brief.toLowerCase().includes(q));
   }, [kimiSessions, searchQuery]);
 
   const handleSelect = async (session: SessionInfo) => {
     console.log("[SessionList] Loading session:", session.id);
+
+    if (sessionId === session.id) {
+      onClose();
+      return;
+    }
 
     // If streaming, show confirmation dialog
     if (isStreaming) {
@@ -176,15 +205,15 @@ export function SessionList({ onClose }: SessionListProps) {
 
   return (
     <>
-      <div className="flex flex-col max-h-[70vh]">
-        <div className="p-2 border-b border-border shrink-0">
+      <div className="flex flex-col h-full min-h-0">
+        <div className="p-3 border-b border-border shrink-0">
           <div className="relative">
             <IconSearch className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
             <Input placeholder="Search conversations…" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-8 h-8 text-xs" />
           </div>
         </div>
         <div className="overflow-y-auto flex-1 min-h-0">
-          <div className="p-1.5 space-y-1">
+          <div className="p-2 space-y-1">
             {loading ? (
               <div className="px-3 py-8 text-center text-xs text-muted-foreground">Loading…</div>
             ) : filteredSessions.length === 0 ? (

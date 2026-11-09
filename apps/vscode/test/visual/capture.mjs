@@ -498,9 +498,12 @@ async function popoverInventory(page, state) {
   return result;
 }
 
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({
+  headless: true,
+  executablePath: process.env.KIMI_CHROMIUM_PATH,
+});
 const bundleHash = createHash("sha256").update(await readFile("./dist/webview.js")).digest("hex");
-const results = { origin, bundleHash, generatedAt: new Date().toISOString(), fixtures: [], popovers: {}, workDetails: [], workIsolation: [], nestedExpansion: [], stateManifest: {}, reducedHeight: [] };
+const results = { origin, bundleHash, generatedAt: new Date().toISOString(), fixtures: [], popovers: {}, sessionHistory: [], workDetails: [], workIsolation: [], nestedExpansion: [], stateManifest: {}, reducedHeight: [] };
 
 for (const fixture of [
   { name: "normal-320", state: "normal", width: 320, height: 720 },
@@ -517,7 +520,7 @@ for (const fixture of [
   const page = await browser.newPage({ viewport: { width: fixture.width, height: fixture.height } });
   const fontReady = await openFixture(page, fixture.state, fixture.theme);
   const controls = {
-    history: await style(page.getByRole("button", { name: /History/ })),
+    history: await style(page.getByRole("button", { name: "Show conversations" })),
     newConversation: await style(page.getByRole("button", { name: "New conversation in this view" })),
     newSessionTab: await style(page.getByRole("button", { name: "Open new session tab" })),
     usage: await style(page.getByRole("button", { name: /Kimi plan usage/ })),
@@ -535,6 +538,45 @@ for (const fixture of [
     header: await style(page.locator("header")),
     controls,
     alignment: Object.fromEntries(Object.entries(controls).map(([key, value]) => [key, controlAlignment(value)])),
+  });
+  await page.close();
+}
+
+for (const fixture of [
+  { width: 320, height: 720, theme: "light" },
+  { width: 520, height: 720, theme: "dark" },
+]) {
+  const page = await browser.newPage({ viewport: { width: fixture.width, height: fixture.height } });
+  await openFixture(page, "normal", fixture.theme);
+  await page.evaluate(() => window.__emitStreamEvent({
+    type: "session_start",
+    sessionId: "session-current",
+    _sessionId: "session-current",
+  }));
+  await page.getByRole("button", { name: "Show conversations" }).click();
+  await page.getByText("Add parallel Kimi conversations", { exact: true }).waitFor();
+  const currentRow = page.getByText("Add parallel Kimi conversations", { exact: true }).locator('xpath=ancestor::*[@role="button"][1]');
+  const screenshot = `${outputDir}/session-history-${fixture.theme}-${fixture.width}.png`;
+  const geometry = await page.evaluate(() => ({
+    horizontalOverflow: document.documentElement.scrollWidth - innerWidth,
+    pageOverflow: document.documentElement.scrollHeight - innerHeight,
+  }));
+  if (geometry.horizontalOverflow !== 0 || geometry.pageOverflow !== 0) {
+    throw new Error(`Session history overflow at ${fixture.width}px: ${JSON.stringify(geometry)}`);
+  }
+  if (await currentRow.getAttribute("aria-current") !== "page") {
+    throw new Error("The active conversation is not identified in history");
+  }
+  await page.screenshot({ path: screenshot, fullPage: true });
+  results.sessionHistory.push({
+    fixture,
+    screenshot,
+    geometry,
+    header: await style(page.locator("header")),
+    search: await style(page.getByPlaceholder("Search conversations…")),
+    currentRow: await style(currentRow),
+    running: await style(page.getByText("Running", { exact: true })),
+    newConversation: await style(page.getByRole("button", { name: "New conversation in this view" })),
   });
   await page.close();
 }

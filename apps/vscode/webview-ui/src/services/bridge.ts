@@ -47,7 +47,7 @@ class Bridge {
 
   constructor() {
     const body = typeof document === "undefined" ? undefined : document.body;
-    this.webviewId = body?.dataset?.webviewid || body.dataset.webviewid || `unknown_${Date.now()}`;
+    this.webviewId = body?.dataset.webviewid ?? `unknown_${Date.now()}`;
 
     if (typeof acquireVsCodeApi === "function") {
       this.vscode = acquireVsCodeApi();

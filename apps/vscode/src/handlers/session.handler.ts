@@ -31,14 +31,18 @@ interface ForkSessionParams {
 export const sessionHandlers: Record<string, Handler<any, any>> = {
   [Methods.GetKimiSessions]: async (_, ctx): Promise<SessionInfo[]> => {
     if (!ctx.workDir) return [];
-    return (await ctx.harness.listSessions({ workDir: ctx.workDir })).map(toSessionInfo);
+    return (await ctx.harness.listSessions({ workDir: ctx.workDir })).map((session) =>
+      toSessionInfo(session, ctx.runtime.getSession(session.id)?.isBusy ?? false)
+    );
   },
 
   [Methods.GetAllKimiSessions]: async (_, ctx): Promise<SessionInfo[]> => {
     if (!ctx.workspaceRoot) return [];
     return (await ctx.harness.listSessions())
       .filter((session) => isInsideOrEqual(ctx.workspaceRoot!, session.workDir))
-      .map(toSessionInfo);
+      .map((session) =>
+        toSessionInfo(session, ctx.runtime.getSession(session.id)?.isBusy ?? false)
+      );
   },
 
   [Methods.GetRegisteredWorkDirs]: async (_, ctx): Promise<string[]> => {
@@ -251,12 +255,13 @@ export const sessionHandlers: Record<string, Handler<any, any>> = {
   },
 };
 
-function toSessionInfo(summary: SessionSummary): SessionInfo {
+function toSessionInfo(summary: SessionSummary, isRunning: boolean): SessionInfo {
   return {
     id: summary.id,
     workDir: summary.workDir,
     updatedAt: summary.updatedAt,
     brief: summary.title ?? summary.lastPrompt ?? "",
+    isRunning,
   };
 }
 

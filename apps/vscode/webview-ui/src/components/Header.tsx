@@ -1,25 +1,32 @@
 import { useState } from "react";
 import {
-  IconChevronDown,
+  IconArrowLeft,
   IconExternalLink,
   IconInfoCircle,
   IconLoader2,
   IconPlus,
 } from "@tabler/icons-react";
 import { Button } from "@/components/ui/button";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { StreamingConfirmDialog } from "./StreamingConfirmDialog";
 import { KimiLogo } from "./KimiLogo";
-import { SessionList } from "./SessionList";
 import { useChatStore } from "@/stores";
 import { ChatStatus, TokenInfo } from "./ChatStatus";
 import { UsageStatus } from "./UsageStatus";
 import { bridge } from "@/services";
 import { toast } from "./ui/sonner";
 
-export function Header() {
-  const [showSessionList, setShowSessionList] = useState(false);
+interface HeaderProps {
+  view?: "chat" | "sessions";
+  onShowSessions?: () => void;
+  onConversationOpened?: () => void;
+}
+
+export function Header({
+  view = "chat",
+  onShowSessions,
+  onConversationOpened = () => undefined,
+}: HeaderProps) {
   const [showSessionInfo, setShowSessionInfo] = useState(false);
   const [showConfirmNew, setShowConfirmNew] = useState(false);
   const [openingSessionTab, setOpeningSessionTab] = useState(false);
@@ -37,8 +44,8 @@ export function Header() {
 
   const doStartNewSession = async () => {
     await startNewConversation();
-    setShowSessionList(false);
     setShowConfirmNew(false);
+    onConversationOpened();
   };
 
   const openNewSessionTab = async () => {
@@ -54,12 +61,24 @@ export function Header() {
 
   return (
     <header className="flex flex-wrap items-center gap-x-1 gap-y-1 px-3 py-2 border-b border-border shrink-0 @container">
-      <div className="order-1 flex items-center gap-2 shrink-0">
+      <div className="order-1 flex items-center gap-1 shrink-0">
+        {view === "chat" && onShowSessions !== undefined && (
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            onClick={onShowSessions}
+            aria-label="Show conversations"
+          >
+            <IconArrowLeft className="size-3.5" />
+          </Button>
+        )}
         <KimiLogo className="size-5 shrink-0" />
-        <span className="text-sm font-semibold whitespace-nowrap">Kimi Code</span>
+        <span className="text-sm font-semibold whitespace-nowrap">
+          {view === "sessions" ? "Conversations" : "Kimi Code"}
+        </span>
       </div>
       <div className="order-2 flex items-center gap-1">
-        {sessionId && (
+        {view === "chat" && sessionId && (
           <Button
             variant="ghost"
             size="xs"
@@ -70,27 +89,17 @@ export function Header() {
             <IconInfoCircle className="size-3.5 hidden @max-[500px]:block" />
           </Button>
         )}
-        <ChatStatus />
-        <Popover open={showSessionList} onOpenChange={setShowSessionList}>
-          <PopoverTrigger asChild>
-            <Button variant="ghost" size="xs" className="gap-1 h-6">
-              <span className="text-xs @max-[280px]:hidden">History</span>
-              <IconChevronDown className="size-3.5" />
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent align="end" className="w-[20rem] max-w-[calc(100vw-1rem)] p-0">
-            <SessionList onClose={() => setShowSessionList(false)} />
-          </PopoverContent>
-        </Popover>
+        {view === "chat" && <ChatStatus />}
         <Button
           variant="ghost"
-          size="icon-xs"
+          size={view === "sessions" ? "xs" : "icon-xs"}
           onClick={() => {
             void handleNewSession();
           }}
           aria-label="New conversation in this view"
         >
           <IconPlus className="size-3.5" />
+          {view === "sessions" && <span>New</span>}
         </Button>
         <Button
           variant="ghost"

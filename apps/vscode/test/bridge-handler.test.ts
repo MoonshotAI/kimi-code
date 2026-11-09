@@ -338,7 +338,7 @@ describe("Webview RPC boundary (validates requests before host dispatch)", () =>
 
     expect(result).toEqual({
       id: "rpc-1",
-      result: [{ id: "session-1", workDir: root, updatedAt: 123, brief: "Visible title" }],
+      result: [{ id: "session-1", workDir: root, updatedAt: 123, brief: "Visible title", isRunning: false }],
     });
     expect(JSON.stringify(result)).not.toContain("/private/kimi/sessions");
   });

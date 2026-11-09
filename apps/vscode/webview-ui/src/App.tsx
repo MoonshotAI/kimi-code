@@ -3,6 +3,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Header } from "./components/Header";
 import { ChatArea } from "./components/ChatArea";
+import { KIMI_SESSIONS_KEY, SessionList } from "./components/SessionList";
 import { InputArea } from "./components/inputarea/InputArea";
 import { MCPServersModal } from "./components/MCPServersModal";
 import { WorkDirModal } from "./components/WorkDirModal";
@@ -16,7 +17,13 @@ import { isPreflightError } from "shared/errors";
 import type { UIStreamEvent, StreamError, ExtensionConfig } from "shared/types";
 import "./styles/index.css";
 
-function MainContent({ onAuthAction }: { onAuthAction: () => void }) {
+function MainContent({
+  onAuthAction,
+  onConversationOpened,
+}: {
+  onAuthAction: () => void;
+  onConversationOpened: () => void;
+}) {
   const { processEvent, startNewConversation, sessionId } = useChatStore();
   const { setExtensionConfig, extensionConfig } = useSettingsStore();
   const queryClient = useQueryClient();
@@ -29,6 +36,9 @@ function MainContent({ onAuthAction }: { onAuthAction: () => void }) {
         return;
       }
       processEvent(event);
+      if (event.type === "stream_complete" || event.type === "error") {
+        void queryClient.invalidateQueries({ queryKey: KIMI_SESSIONS_KEY });
+      }
       if (event.type === "error") {
         const streamError = event as StreamError;
         if (isPreflightError(streamError.code || "UNKNOWN")) {
@@ -36,7 +46,7 @@ function MainContent({ onAuthAction }: { onAuthAction: () => void }) {
         }
       }
     });
-  }, [processEvent, sessionId]);
+  }, [processEvent, queryClient, sessionId]);
 
   useEffect(() => {
     const unsubs = [
@@ -44,27 +54,31 @@ function MainContent({ onAuthAction }: { onAuthAction: () => void }) {
       bridge.on(Events.ExtensionConfigChanged, ({ config }: { config: ExtensionConfig }) => setExtensionConfig(config)),
       bridge.on(Events.FocusInput, () => document.querySelector<HTMLTextAreaElement>("textarea")?.focus()),
       bridge.on(Events.NewConversation, () => {
-        void startNewConversation().catch((error: unknown) => {
-          toast.error(error instanceof Error ? error.message : String(error));
-        });
+        void startNewConversation()
+          .then(onConversationOpened)
+          .catch((error: unknown) => {
+            toast.error(error instanceof Error ? error.message : String(error));
+          });
       }),
     ];
     return () => unsubs.forEach((u) => u());
-  }, [queryClient, setExtensionConfig, startNewConversation]);
+  }, [onConversationOpened, queryClient, setExtensionConfig, startNewConversation]);
 
   useEffect(() => {
     if (!extensionConfig.enableNewConversationShortcut) return;
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "n") {
         e.preventDefault();
-        void startNewConversation().catch((error: unknown) => {
-          toast.error(error instanceof Error ? error.message : String(error));
-        });
+        void startNewConversation()
+          .then(onConversationOpened)
+          .catch((error: unknown) => {
+            toast.error(error instanceof Error ? error.message : String(error));
+          });
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [extensionConfig.enableNewConversationShortcut, startNewConversation]);
+  }, [extensionConfig.enableNewConversationShortcut, onConversationOpened, startNewConversation]);
 
   return (
     <>
@@ -84,6 +98,7 @@ export default function App() {
   const { status, errorMessage, modelsCount, refresh } = useAppInit();
   const [skippedLogin, setSkippedLogin] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
+  const [mainView, setMainView] = useState<"chat" | "sessions">("chat");
 
   const handleLoginSuccess = useCallback(() => {
     setShowLogin(false);
@@ -106,6 +121,9 @@ export default function App() {
     setShowLogin(false);
     refresh();
   }, [refresh]);
+
+  const showChat = useCallback(() => setMainView("chat"), []);
+  const showSessions = useCallback(() => setMainView("sessions"), []);
 
   const resolution = resolveAppView({ status, modelsCount, skippedLogin, showLogin });
 
@@ -139,8 +157,22 @@ export default function App() {
   // 正常状态
   return (
     <div className="flex flex-col h-screen text-foreground overflow-hidden">
-      <Header />
-      <MainContent onAuthAction={handleAuthAction} />
+      <Header
+        view={mainView}
+        onShowSessions={showSessions}
+        onConversationOpened={showChat}
+      />
+      <div className={mainView === "chat" ? "contents" : "hidden"}>
+        <MainContent
+          onAuthAction={handleAuthAction}
+          onConversationOpened={showChat}
+        />
+      </div>
+      {mainView === "sessions" && (
+        <div className="flex-1 min-h-0">
+          <SessionList onClose={showChat} />
+        </div>
+      )}
       <Toaster position="top-center" />
     </div>
   );
