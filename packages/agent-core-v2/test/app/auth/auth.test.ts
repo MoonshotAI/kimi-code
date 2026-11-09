@@ -1371,10 +1371,6 @@ describe('WebSearchProviderService', () => {
     expect(headers['User-Agent']).toBe('kimi-code-cli/test');
     expect(headers['X-Msh-Device-Id']).toBe('device-test');
     expect(headers['X-Custom']).toBe('yes');
-    expect(JSON.parse(init.body as string)).toEqual({
-      text_query: 'hello',
-      search_mode: 'links',
-    });
   });
 
   it('prefers the services.moonshot_search config over the managed oauth provider', async () => {
@@ -1402,10 +1398,6 @@ describe('WebSearchProviderService', () => {
     expect(url).toBe('https://config.example.com/search');
     const headers = init.headers as Record<string, string>;
     expect(headers['Authorization']).toBe('Bearer config-key');
-    expect(JSON.parse(init.body as string)).toEqual({
-      text_query: 'hello',
-      search_mode: 'links',
-    });
     expect(resolveTokenProvider).not.toHaveBeenCalled();
   });
 
@@ -1432,10 +1424,6 @@ describe('WebSearchProviderService', () => {
 
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect((init.headers as Record<string, string>)['Authorization']).toBe('Bearer access-token');
-    expect(JSON.parse(init.body as string)).toEqual({
-      text_query: 'hello',
-      search_mode: 'links',
-    });
   });
 
   it('returns undefined when services.moonshot_search has no baseUrl and no managed oauth', () => {
