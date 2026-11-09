@@ -86,6 +86,9 @@ export async function handleMainCommand(
   startupTrace('preflight:begin');
   const updateOptions = validated.uiMode === 'print' ? { track, isTTY: false } : { track };
   const forcedResult = await runForcedUpgradePreflight(version, updateOptions);
+  if (forcedResult === 'interrupt') {
+    process.exit(130);
+  }
   if (forcedResult === 'exit') {
     process.exit(0);
   }

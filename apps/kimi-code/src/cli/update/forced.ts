@@ -21,7 +21,7 @@ import { decideUpdate, updateChannelForVersion } from './select';
 import { detectInstallSource } from './source';
 import type { UpgradePlan } from './types';
 
-export type ForcedUpgradePreflightResult = 'continue' | 'skip-passive' | 'exit';
+export type ForcedUpgradePreflightResult = 'continue' | 'skip-passive' | 'exit' | 'interrupt';
 
 export interface RunForcedUpgradePreflightOptions {
   readonly stdout?: { write(chunk: string): boolean };
@@ -134,7 +134,7 @@ export async function runForcedUpgradePreflight(
       canInstall,
       skipAvailableAt,
     });
-    if (action === 'exit') return 'exit';
+    if (action === 'exit') return 'interrupt';
     if (action === 'skip') {
       track('forced_upgrade_action', {
         action: 'skip',

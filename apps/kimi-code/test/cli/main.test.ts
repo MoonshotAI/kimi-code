@@ -425,6 +425,18 @@ describe('main entry command handling', () => {
     }
   });
 
+  it('exits with SIGINT status when the forced upgrade prompt is interrupted', async () => {
+    const opts = defaultOpts();
+    mocks.validateOptions.mockReturnValue({ options: opts, uiMode: 'shell' });
+    mocks.runForcedUpgradePreflight.mockResolvedValueOnce('interrupt');
+
+    const exitCode = await runHandleMainCommand(opts);
+
+    expect(exitCode).toBe(130);
+    expect(mocks.runUpdatePreflight).not.toHaveBeenCalled();
+    expect(mocks.runShell).not.toHaveBeenCalled();
+  });
+
   it('exits early when update preflight requests process exit', async () => {
     const opts = defaultOpts();
     mocks.validateOptions.mockReturnValue({ options: opts, uiMode: 'shell' });
