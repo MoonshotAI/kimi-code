@@ -343,6 +343,38 @@ export function createAgentMachine({
       forwardToParent: ({ self, event }) => {
         self._parent?.send(event);
       },
+      steer: enqueueActions(({ context, event, enqueue }) => {
+        if (event.type !== 'input.steer') return;
+        const ids = typeof event.id === 'string' ? [event.id] : event.id;
+        const steered = context.queue.filter(
+          (item) => item.meta?.promptId !== undefined && ids.includes(item.meta?.promptId),
+        );
+        if (steered.length === 0) return;
+        const merged = mergeSteerMessages(
+          steered.map((item) => ({ content: item.message.content, origin: item.meta?.origin })),
+        );
+        const promptId = steered.length === 1 ? steered[0]?.meta?.promptId : undefined;
+        enqueue.assign({
+          queue: context.queue.filter((item) => !steered.includes(item)),
+          notifications: [
+            ...context.notifications,
+            createUserEntry(
+              { role: 'user', content: merged.content },
+              {
+                source: 'input',
+                promptId,
+                userMessageId: promptId,
+                origin: { ...merged.origin, inTurn: true },
+              },
+            ),
+          ],
+        });
+        enqueue.emit({
+          type: 'prompt.steered' as const,
+          queueItemIds: steered.map((item) => item.meta?.promptId as string),
+          entries: steered,
+        });
+      }),
       commitPendingToHistory: enqueueActions(({ context, enqueue }) => {
         const head = context.queue[0];
         enqueue.sendTo('store', {
@@ -486,38 +518,7 @@ export function createAgentMachine({
         }),
       },
       'input.steer': {
-        actions: enqueueActions(({ context, event, enqueue }) => {
-          if (event.type !== 'input.steer') return;
-          const ids = typeof event.id === 'string' ? [event.id] : event.id;
-          const steered = context.queue.filter(
-            (item) => item.meta?.promptId !== undefined && ids.includes(item.meta?.promptId),
-          );
-          if (steered.length === 0) return;
-          const merged = mergeSteerMessages(
-            steered.map((item) => ({ content: item.message.content, origin: item.meta?.origin })),
-          );
-          const promptId = steered.length === 1 ? steered[0]?.meta?.promptId : undefined;
-          enqueue.assign({
-            queue: context.queue.filter((item) => !steered.includes(item)),
-            notifications: [
-              ...context.notifications,
-              createUserEntry(
-                { role: 'user', content: merged.content },
-                {
-                  source: 'input',
-                  promptId,
-                  userMessageId: promptId,
-                  origin: { ...merged.origin, inTurn: true },
-                },
-              ),
-            ],
-          });
-          enqueue.emit({
-            type: 'prompt.steered' as const,
-            queueItemIds: steered.map((item) => item.meta?.promptId as string),
-            entries: steered,
-          });
-        }),
+        actions: 'steer',
       },
       'input.cancel': {
         actions: assign(({ context, event }) => {
@@ -897,6 +898,16 @@ export function createAgentMachine({
             on: {
               'turn.spawn_tools': {
                 actions: 'spawnTurnTools',
+              },
+              'input.steer': {
+                guard: ({ context, event }) => {
+                  if (event.type !== 'input.steer') return false;
+                  const ids = typeof event.id === 'string' ? [event.id] : event.id;
+                  return context.queue.some(
+                    (item) => item.meta?.promptId !== undefined && ids.includes(item.meta.promptId),
+                  );
+                },
+                actions: ['steer', sendTo('turn', { type: 'turn.steer' as const })],
               },
               'input.abort': {
                 target: 'aborting',

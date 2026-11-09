@@ -180,6 +180,7 @@ export type TurnEvent =
   | { type: 'turn.pause' }
   | { type: 'turn.continue' }
   | { type: 'turn.abort'; reason?: unknown }
+  | { type: 'turn.steer' }
   | {
       type: 'turn.failure.evaluated';
       cause: Extract<LlmEvent, { type: 'llm.failed.remote' }>;
@@ -683,6 +684,15 @@ export function createTurnMachine(
               'salvageAborted',
             ],
           },
+          'turn.steer': {
+            target: 'aborted',
+            actions: [
+              ({ context }) => {
+                context.llmScope.abort();
+              },
+              'salvageAborted',
+            ],
+          },
         },
       },
       retrying: {
@@ -692,6 +702,10 @@ export function createTurnMachine(
         },
         on: {
           'turn.abort': {
+            target: 'aborted',
+            actions: assign({ outcome: 'aborted' as const }),
+          },
+          'turn.steer': {
             target: 'aborted',
             actions: assign({ outcome: 'aborted' as const }),
           },
