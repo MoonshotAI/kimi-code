@@ -28,7 +28,7 @@ import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import type { LoopControl } from '#/agent/loop/configSection';
-import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { acquireOrWhenReady, IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { ToolSource } from '#/tool/toolContract';
@@ -876,8 +876,8 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   ): Promise<SystemPromptContext> {
     await this.notify.ready;
     const preloadedAgentsMd = await this.workspaceInstructionsSnapshot();
-    const fsAvailable = this.environment.isAvailable(['fs']);
-    const lease = this.environment.acquire(fsAvailable ? ['fs'] : []);
+    const lease = await acquireOrWhenReady(this.environment);
+    const fsAvailable = lease.environment.capabilities.has('fs') && lease.environment.fs !== undefined;
     const view = new EnvironmentWorkspaceView(lease.environment, {
       workDir: this.workspace.workDir,
       additionalDirs: options?.additionalDirs ?? this.workspace.additionalDirs,

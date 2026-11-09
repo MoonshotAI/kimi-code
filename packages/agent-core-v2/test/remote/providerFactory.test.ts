@@ -510,4 +510,70 @@ describe('connection telemetry', () => {
     services.declarations.dispose();
     await registry.dispose();
   });
+
+  it('reconnects a dropped session with backoff and stops on terminal failures or exhausted attempts', async () => {
+    vi.useFakeTimers();
+    try {
+      const registry = new EnvironmentRegistry();
+      const produced: FakeSession[] = [];
+      let mode: 'ok' | 'transient' | 'auth' = 'ok';
+      const connect = vi.fn(async () => {
+        if (mode === 'transient') throw new HandshakeError('Connection refused', { failure: 'connection_refused' });
+        if (mode === 'auth') throw new HandshakeError('Permission denied (publickey)', { kind: 'authentication' });
+        const session = connectedSession();
+        produced.push(session);
+        return session;
+      });
+      const provider = await new RemoteEnvironmentProviderFactory({ connect }).attach(fakeHost(baseServices(registry), registry));
+      const target = registry.current('dev-box')!;
+
+      await target.connect!();
+      expect(target.status).toBe('ready');
+      expect(connect).toHaveBeenCalledTimes(1);
+
+      mode = 'transient';
+      produced[0]!.close({ reason: 'liveness ping timed out after 10000ms', kind: 'liveness' });
+      expect(target.status).toBe('disconnected');
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(connect).toHaveBeenCalledTimes(2);
+      expect(target.status).toBe('disconnected');
+
+      mode = 'ok';
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(connect).toHaveBeenCalledTimes(3);
+      expect(target.status).toBe('ready');
+
+      mode = 'auth';
+      produced[1]!.close({ reason: 'pipe ended', kind: 'eof' });
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(connect).toHaveBeenCalledTimes(4);
+      expect(target.status).toBe('disconnected');
+      expect(target.connectFailure).toBe('authentication_failed');
+
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(connect).toHaveBeenCalledTimes(4);
+
+      mode = 'ok';
+      await target.connect!();
+      expect(target.status).toBe('ready');
+      expect(connect).toHaveBeenCalledTimes(5);
+
+      mode = 'transient';
+      produced[2]!.close({ reason: 'pipe ended', kind: 'eof' });
+      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.advanceTimersByTimeAsync(3_000);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(connect).toHaveBeenCalledTimes(8);
+      expect(target.status).toBe('disconnected');
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(connect).toHaveBeenCalledTimes(8);
+
+      await provider.dispose();
+      await registry.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

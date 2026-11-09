@@ -27,6 +27,7 @@ import { ENVIRONMENT_PATHS, ENVIRONMENT_WORKSPACES } from '#/environment/environ
 import { REMOTE_SHELL_PATH_BRIDGE } from '#/_base/execEnv/shellPathBridge';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
+import type { ConnectionCloseInfo } from '#/remote/protocol/channel';
 import { classifyConnectFailure, classifyHandshakeFailure, connectWithGuidance } from './connectGuidance';
 import { HandshakeError } from './connection';
 import { declarationFingerprint, toLauncherSpec, type LauncherSpec } from './launchers';
@@ -34,6 +35,15 @@ import { RemoteSession, type RemoteSessionOptions } from './remoteSession';
 
 const EMPTY_CAPABILITIES: ReadonlySet<EnvironmentCapability> = new Set();
 const REMOTE_CAPABILITIES: ReadonlySet<EnvironmentCapability> = new Set(['fs', 'process']);
+const RECONNECT_DELAYS_MS = [1_000, 3_000, 10_000] as const;
+const TERMINAL_CONNECT_FAILURES: ReadonlySet<EnvironmentConnectFailure> = new Set([
+  'authentication_failed',
+  'host_key_changed',
+  'launcher_not_found',
+  'executor_not_found',
+  'executor_outdated',
+  'container_not_found',
+]);
 
 class DeclaredRemoteEnvironment implements Environment {
   private generation: string;
@@ -53,6 +63,8 @@ class DeclaredRemoteEnvironment implements Environment {
   readonly onDidChangeStatus = this.statusEmitter.event;
   private hasConnected = false;
   private connectedAt = 0;
+  private reconnectAttempt = 0;
+  private reconnectTimer: NodeJS.Timeout | undefined;
   readonly fs: IHostFileSystem = {
     _serviceBrand: undefined,
     readText: async (path, options) => this.connected().fs.readText(path, options),
@@ -94,6 +106,7 @@ class DeclaredRemoteEnvironment implements Environment {
     if (this.currentStatus === 'disposed') return Promise.resolve();
     this.epoch += 1;
     this.inflight = undefined;
+    this.clearReconnect();
     this.setStatus('disposed');
     this.statusEmitter.dispose();
     return this.dropSession();
@@ -152,6 +165,7 @@ class DeclaredRemoteEnvironment implements Environment {
     }
     if (this.currentStatus === 'ready') return Promise.resolve();
     if (this.inflight !== undefined) return this.inflight;
+    if (this.reconnectTimer !== undefined) this.clearReconnect();
     const epoch = this.epoch;
     const launcher = this.launcher;
     const started = performance.now();
@@ -196,6 +210,7 @@ class DeclaredRemoteEnvironment implements Environment {
     if (this.currentStatus === 'disposed' || this.currentStatus === 'pending') return;
     this.epoch += 1;
     this.inflight = undefined;
+    this.clearReconnect();
     void this.dropSession();
     this.setStatus('disconnected');
   }
@@ -223,6 +238,7 @@ class DeclaredRemoteEnvironment implements Environment {
 
   private install(session: RemoteSession): void {
     const previous = this.session;
+    this.clearReconnect();
     this.generation = `${this.environmentId}-${randomUUID()}`;
     this.session = session;
     session.connection.onDidClose((info) => {
@@ -237,8 +253,44 @@ class DeclaredRemoteEnvironment implements Environment {
       this.session = undefined;
       this.setStatus('disconnected');
       void session.dispose();
+      this.scheduleReconnect(info.kind);
     });
     if (previous !== undefined && previous !== session) void previous.dispose();
+  }
+
+  private clearReconnect(resetAttempts = true): void {
+    if (this.reconnectTimer !== undefined) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
+    if (resetAttempts) this.reconnectAttempt = 0;
+  }
+
+  private scheduleReconnect(closeKind?: ConnectionCloseInfo['kind']): void {
+    this.clearReconnect(false);
+    if (!this.enabled || this.currentStatus === 'disposed' || closeKind === 'protocol_error') {
+      this.reconnectAttempt = 0;
+      return;
+    }
+    if (this.lastConnectFailure !== undefined && TERMINAL_CONNECT_FAILURES.has(this.lastConnectFailure)) {
+      this.reconnectAttempt = 0;
+      return;
+    }
+    const delay = RECONNECT_DELAYS_MS[this.reconnectAttempt];
+    if (delay === undefined) {
+      this.reconnectAttempt = 0;
+      return;
+    }
+    this.reconnectAttempt += 1;
+    const epoch = this.epoch;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = undefined;
+      if (epoch !== this.epoch || !this.enabled || this.currentStatus !== 'disconnected') return;
+      void this.connect().catch(() => {
+        if (epoch === this.epoch && this.currentStatus === 'disconnected') this.scheduleReconnect();
+      });
+    }, delay);
+    this.reconnectTimer.unref?.();
   }
 
   private dropSession(): Promise<void> {
