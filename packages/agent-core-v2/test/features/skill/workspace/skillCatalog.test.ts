@@ -693,22 +693,23 @@ describe('WorkspaceSkillCatalogService', () => {
     host.dispose();
   });
 
-  it('refreshes the loaded catalog when a skill is added to a configured root', async () => {
-    const workDir = await realpath(await mkdtemp(join(tmpdir(), 'explicit-skill-watch-')));
+  it.each(['explicit', 'extra'] as const)('refreshes the loaded catalog when a skill is added to an %s root', async (source) => {
+    const workDir = await realpath(await mkdtemp(join(tmpdir(), 'configured-skill-watch-')));
     const skillRoot = join(workDir, 'managed', 'skills');
     const skillDir = join(skillRoot, 'new-skill');
     await mkdir(skillRoot, { recursive: true });
     watchMockState.useRealWatch = true;
-    const { host, workspace } = makeHost(
+    const { host, workspace, config } = makeHost(
       new FileSkillDiscovery(stubLog()),
       workspaceContextStub(workDir),
       [],
-      ['managed/skills'],
+      source === 'explicit' ? ['managed/skills'] : undefined,
     );
+    if (source === 'extra') config.setExtraSkillDirs([skillRoot]);
 
     try {
       const catalog = workspace.accessor.get(IWorkspaceSkillCatalog);
-      const watcherScan = waitForEvents(catalog.onDidChange, 1);
+      const watcherScan = waitForEvents(Event.filter(catalog.onDidChange, (id) => id === source), 1);
       await catalog.load();
       await watcherScan;
       const sessionData = catalog.sessionData();
