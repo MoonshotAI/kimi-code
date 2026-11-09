@@ -797,6 +797,24 @@ describe('EditorKeyboardController fullscreen selection copy', () => {
     ui.stop();
   });
 
+  it('swallows the auto-repeat of a held copy key until it is released', async () => {
+    const { ui, vt, copySelection, passedThrough } = await mountSelectedTranscript();
+
+    vt.sendInput('\u001B[99;5u');
+    vt.sendInput('\u001B[99;5:2u');
+    vt.sendInput('\u001B[99;5:2u');
+
+    expect(copySelection).toHaveBeenCalledOnce();
+    expect(passedThrough).not.toHaveBeenCalled();
+
+    vt.sendInput('\u001B[99;5:3u');
+    vt.sendInput('\u001B[99;5u');
+    vt.sendInput('\u001B[99;5:2u');
+
+    expect(passedThrough.mock.calls).toEqual([['\u001B[99;5:3u'], ['\u001B[99;5u'], ['\u001B[99;5:2u']]);
+    ui.stop();
+  });
+
   it('breaks a pending Ctrl+C exit so the next Ctrl+C does not quit', async () => {
     const { harness, ui, vt } = await mountSelectedTranscript();
     const onCtrlC = harness.editor['onCtrlC'] as unknown as () => void;
