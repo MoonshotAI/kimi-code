@@ -45,7 +45,7 @@ export interface EditorKeyboardHost {
    */
   harness?: KimiHarness | undefined;
 
-  handleUserInput(text: string, leadingWhitespace?: number): void;
+  handleUserInput(text: string): void;
   readonly btwPanelController: BtwPanelController;
   readonly surveyController: SurveyController;
   readonly modelMigration?: ModelMigrationController;
@@ -102,10 +102,9 @@ export class EditorKeyboardController {
     const { host } = this;
     const editor = host.state.editor;
 
-    editor.onSubmit = (text: string, leadingWhitespace = 0) => {
+    editor.onSubmit = (text: string) => {
       if (host.surveyController.handleSubmit(text)) return;
-      if (leadingWhitespace === 0) host.handleUserInput(text);
-      else host.handleUserInput(text, leadingWhitespace);
+      host.handleUserInput(text);
     };
 
     // After dispose (shutdown), consume every key here so no shortcut can fire
@@ -328,9 +327,7 @@ export class EditorKeyboardController {
         host.state.appState.isCompacting ||
         host.isSteeringQueuedMessages()
       ) return;
-      const expandedText = editor.getExpandedText?.() ?? editor.getText();
-      const text = expandedText.trim();
-      const leadingWhitespace = expandedText.length - expandedText.trimStart().length;
+      const text = (editor.getExpandedText?.() ?? editor.getText()).trim();
       const editorIsBash = editor.inputMode === 'bash';
       let extraction: ReturnType<typeof extractMediaAttachments> | undefined;
       if (!editorIsBash && text.length > 0) {
@@ -365,7 +362,7 @@ export class EditorKeyboardController {
           isCompacting: host.state.appState.isCompacting,
           skillVariantPathForCommand: host.skillVariantPathForCommand === undefined
             ? undefined
-            : (commandName, tokenStart) => host.skillVariantPathForCommand!(commandName, tokenStart + leadingWhitespace),
+            : (commandName, tokenStart) => host.skillVariantPathForCommand!(commandName, tokenStart),
         });
         host.state.queuedMessages.push({
           text,

@@ -691,23 +691,6 @@ describe('EditorKeyboardController Ctrl-S steering', () => {
     ]);
   });
 
-  it('preserves selected variant paths for indented skill drafts', () => {
-    const { host, onCtrlS } = createCtrlSHarness({
-      editorText: '  /skill:review',
-      queued: [],
-      skillCommandMap: new Map([['skill:review', 'review']]),
-      skillVariantPathForCommand: (_commandName, start) => start === 2 ? '/work/B/review/SKILL.md' : undefined,
-    });
-
-    onCtrlS();
-
-    expect(host.state.queuedMessages).toEqual([
-      {
-        text: '/skill:review',
-        inlineSkillActivations: [{ skillName: 'review', path: '/work/B/review/SKILL.md', start: 0, args: '' }],
-      },
-    ]);
-  });
 });
 
 describe('EditorKeyboardController survey wiring', () => {

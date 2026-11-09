@@ -1536,7 +1536,7 @@ export class KimiTUI {
     this.updateEditorBorderHighlight();
   }
 
-  handleUserInput(text: string, leadingWhitespace = text.length - text.trimStart().length): void {
+  handleUserInput(text: string): void {
     const wasBashMode = this.state.appState.inputMode === 'bash';
     if (wasBashMode) {
       // A submit always exits bash mode (the `!` is consumed by this command).
@@ -1552,8 +1552,7 @@ export class KimiTUI {
     // apart from prompts and restore bash mode (see CustomEditor's mode-aware
     // history navigation). The `!` is stripped again when the entry is recalled.
     const historyText = wasBashMode ? `!${text}` : text;
-    if (leadingWhitespace === 0) void this.persistInputHistory(historyText);
-    else void this.persistInputHistory(historyText, leadingWhitespace);
+    void this.persistInputHistory(historyText);
     if (wasBashMode) {
       // Only one foreground action at a time: queue the shell command while
       // another shell command is running or an agent turn is in progress.
@@ -1566,8 +1565,7 @@ export class KimiTUI {
       void this.runShellCommandFromInput(text);
       return;
     }
-    if (leadingWhitespace === 0) slashCommands.dispatchInput(this, text);
-    else slashCommands.dispatchInput(this, text, leadingWhitespace);
+    slashCommands.dispatchInput(this, text);
   }
 
   private async runShellCommandFromInput(command: string): Promise<void> {
@@ -2051,7 +2049,7 @@ export class KimiTUI {
     }
   }
 
-  private async persistInputHistory(text: string, leadingWhitespace = text.length - text.trimStart().length): Promise<void> {
+  private async persistInputHistory(text: string): Promise<void> {
     const trimmed = text.trim();
     if (trimmed.length === 0) return;
     const activations = text.startsWith('!') ? [] : resolveUserInput({
@@ -2061,7 +2059,7 @@ export class KimiTUI {
       isStreaming: this.state.appState.streamingPhase !== 'idle',
       isCompacting: this.state.appState.isCompacting,
       skillVariantPathForCommand: (commandName, start) =>
-        this.skillVariantPathForCommand(commandName, start + leadingWhitespace),
+        this.skillVariantPathForCommand(commandName, start),
     }).activations;
     const entry: InputHistoryEntry = {
       content: trimmed,

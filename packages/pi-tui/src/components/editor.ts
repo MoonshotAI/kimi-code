@@ -394,7 +394,7 @@ export class Editor implements Component, Focusable {
 	// Undo support
 	private undoStack = new UndoStack<EditorSnapshot>();
 
-	public onSubmit?: (text: string, leadingWhitespace?: number) => void;
+	public onSubmit?: (text: string) => void;
 	public onChange?: (text: string) => void;
 	/**
 	 * Called when a history entry is recalled, before it is put into the buffer.
@@ -1495,9 +1495,7 @@ export class Editor implements Component, Focusable {
 
 	private submitValue(): void {
 		this.cancelAutocomplete();
-		const expandedText = this.expandPasteMarkers(this.state.lines.join("\n"));
-		const leadingWhitespace = expandedText.length - expandedText.trimStart().length;
-		const result = expandedText.trim();
+		const result = this.expandPasteMarkers(this.state.lines.join("\n")).trim();
 
 		this.state = { lines: [""], cursorLine: 0, cursorCol: 0 };
 		this.pastes.clear();
@@ -1508,10 +1506,7 @@ export class Editor implements Component, Focusable {
 		this.lastAction = null;
 
 		if (this.onChange) this.onChange("");
-		if (this.onSubmit) {
-			if (leadingWhitespace === 0) this.onSubmit(result);
-			else this.onSubmit(result, leadingWhitespace);
-		}
+		if (this.onSubmit) this.onSubmit(result);
 	}
 
 	private handleBackspace(): void {
