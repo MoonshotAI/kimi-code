@@ -1,12 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { PromptOrigin } from '#/agent/contextMemory/types';
-import {
-  agentRoleOf,
-  requestMetadataHeader,
-  turnTriggerOf,
-  userInputIdOf,
-} from '#/agent/loop/requestMetadata';
+import { agentRoleOf, turnTriggerOf, userInputIdOf } from '#/agent/loop/requestMetadata';
 import type { AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
 
 describe('request metadata', () => {
@@ -15,7 +10,7 @@ describe('request metadata', () => {
     expect(agentRoleOf('child', meta({ labels: { btw: 'true' } }))).toBe('btw');
     expect(agentRoleOf('child', meta({ labels: { profileName: 'tower-worker' } }))).toBe('tower_worker');
     expect(agentRoleOf('child', meta({ labels: { swarmItem: '1' } }))).toBe('swarm_member');
-    expect(agentRoleOf('child', meta({ labels: { sessionInit: 'agents-md' } }))).toBe('subagent');
+    expect(agentRoleOf('child', meta({ type: 'sub', labels: { sessionInit: 'agents-md' } }))).toBe('subagent');
     expect(agentRoleOf('child', meta({ labels: { parentAgentId: 'main' } }))).toBe('subagent');
     expect(agentRoleOf('child', undefined)).toBe('other');
   });
@@ -43,12 +38,6 @@ describe('request metadata', () => {
     expect(userInputIdOf(skill('model-tool'), 'msg_4')).toBeUndefined();
     expect(userInputIdOf({ kind: 'system_trigger', name: 'subagent' }, 'msg_5')).toBeUndefined();
     expect(userInputIdOf({ kind: 'user' }, '')).toBeUndefined();
-  });
-
-  it('omits absent fields from the header', () => {
-    expect(JSON.parse(requestMetadataHeader({ agent_role: 'main' })['X-Msh-Internal-Metadata']!)).toEqual({
-      agent_role: 'main',
-    });
   });
 });
 

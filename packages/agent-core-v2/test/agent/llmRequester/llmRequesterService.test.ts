@@ -7,6 +7,7 @@ import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { AgentLoopRequester, KIMI_CODE_INFINITE_RETRY_ENV } from '#/agent/loop/requester';
+import type { AgentLLMRequestSource } from '#/agent/loop/requesterContract';
 import { createAgentMediaPolicy } from '#/agent/loop/mediaPolicy';
 import { createMachineRequester } from '#/agent/loop/machine/requester';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -67,7 +68,6 @@ import {
   type ModelRequestInput,
 } from '#/llm-adapter/model/generate';
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
-import { registerProviderDefinition } from '#/llm-adapter/provider/provider-definition';
 import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
 import {
   aRequesterFromModelEvents,
@@ -140,14 +140,7 @@ const history: Message[] = [
 
 function metadataHeader(
   service: AgentLoopRequester,
-  source: {
-    readonly type: 'turn';
-    readonly turnId: number;
-    readonly step: number;
-    readonly turnTrigger: 'user';
-    readonly stepReason: 'turn_start';
-    readonly userInputId: string;
-  },
+  source?: AgentLLMRequestSource,
 ): string | undefined {
   const resolved = service['resolveRequest']({ source });
   return resolved.request.request({ content: { messages: [] } }).endpoint?.headers?.[
@@ -385,13 +378,8 @@ describe('AgentLoopRequester request metadata', () => {
   };
 
   it('attaches the internal metadata header only when the provider declares it', () => {
-    registerProviderDefinition({
-      id: 'metadata-vendor',
-      baseProtocol: 'anthropic',
-      requestMetadata: true,
-    });
     const declared = createService(
-      createRequester({ value: 0 }, undefined, [], undefined, { providerType: 'metadata-vendor' }),
+      createRequester({ value: 0 }, undefined, [], undefined, { providerType: 'kimi' }),
       { metadata },
     );
     const other = createService(createRequester(), { metadata });
@@ -403,6 +391,15 @@ describe('AgentLoopRequester request metadata', () => {
       user_input_id: 'msg_user',
     });
     expect(metadataHeader(other.service, source)).toBeUndefined();
+  });
+
+  it('sends only the agent role when the request has no turn source', () => {
+    const { service } = createService(
+      createRequester({ value: 0 }, undefined, [], undefined, { providerType: 'kimi' }),
+      { metadata },
+    );
+
+    expect(JSON.parse(metadataHeader(service) ?? '{}')).toEqual({ agent_role: 'subagent' });
   });
 });
 

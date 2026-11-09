@@ -16,6 +16,13 @@ import { classifyKimiQuotaError } from '#human/llm/builtin/provider/kimi/errors'
 import type { Protocol } from '../protocol/protocol';
 import type { ModelSource } from './provider';
 
+export interface RequestMetadata {
+  readonly agentRole: string;
+  readonly turnTrigger?: string;
+  readonly stepReason?: string;
+  readonly userInputId?: string;
+}
+
 export interface ProviderDefinition<N extends Protocol = Protocol> {
   readonly id: string;
   readonly baseProtocol: N;
@@ -28,7 +35,7 @@ export interface ProviderDefinition<N extends Protocol = Protocol> {
   readonly endpoints?: readonly ProtocolEndpoint[];
   readonly defaultHeaders?: DefaultHeadersResolver;
   readonly hostHeaders?: 'full' | 'user-agent';
-  readonly requestMetadata?: boolean;
+  readonly requestMetadataHeaders?: (metadata: RequestMetadata) => Record<string, string>;
   readonly modelSource?: ModelSource;
 }
 
@@ -194,6 +201,17 @@ registerProviderDefinition({
   endpoints: [vertexEndpoint, geminiEndpoint],
 });
 
+function kimiRequestMetadataHeaders(metadata: RequestMetadata): Record<string, string> {
+  return {
+    'X-Msh-Internal-Metadata': JSON.stringify({
+      agent_role: metadata.agentRole,
+      turn_trigger: metadata.turnTrigger,
+      step_reason: metadata.stepReason,
+      user_input_id: metadata.userInputId,
+    }),
+  };
+}
+
 registerProviderDefinition({
   id: 'kimi',
   baseProtocol: 'openai',
@@ -203,7 +221,7 @@ registerProviderDefinition({
   classifyError: classifyKimiQuotaError,
   endpoint: kimiEndpoint,
   hostHeaders: 'full',
-  requestMetadata: true,
+  requestMetadataHeaders: kimiRequestMetadataHeaders,
   modelSource: 'oauth-catalog',
 });
 
@@ -215,7 +233,7 @@ registerProviderDefinition({
   classifyError: classifyKimiQuotaError,
   endpoint: kimiEndpoint,
   hostHeaders: 'full',
-  requestMetadata: true,
+  requestMetadataHeaders: kimiRequestMetadataHeaders,
   modelSource: 'oauth-catalog',
 });
 
@@ -227,6 +245,6 @@ registerProviderDefinition({
   classifyError: classifyKimiQuotaError,
   endpoint: kimiEndpoint,
   hostHeaders: 'full',
-  requestMetadata: true,
+  requestMetadataHeaders: kimiRequestMetadataHeaders,
   modelSource: 'oauth-catalog',
 });

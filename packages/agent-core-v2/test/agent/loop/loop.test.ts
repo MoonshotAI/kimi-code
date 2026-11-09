@@ -312,6 +312,10 @@ describe('Agent loop', () => {
         return undefined;
       },
     });
+    const start = vi.spyOn(
+      (ctx.get(IAgentLoopService) as unknown as { requester: LoopRequester }).requester,
+      'start',
+    );
 
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
     await ctx.untilTurnEnd();
@@ -319,6 +323,11 @@ describe('Agent loop', () => {
     expect(seenErrors).toEqual([
       { step: 1, message: 'Unexpected generate call #1' },
     ]);
+    expect(
+      start.mock.calls.map(([overrides]) =>
+        overrides?.source?.type === 'turn' ? overrides.source.stepReason : undefined,
+      ),
+    ).toEqual(['turn_start', 'recovery']);
     expect(ctx.allEvents).toContainEqual(
       expect.objectContaining({
         event: 'turn.ended',
@@ -763,6 +772,62 @@ describe('Agent loop', () => {
         origin: { kind: 'system_trigger', name: 'stop_hook' },
       }),
     );
+  });
+
+  it('stamps each request with why its step started', async () => {
+    const lookupTool: ExecutableTool<Record<string, never>> = {
+      name: 'Lookup',
+      description: 'Look up a short test value.',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
+      resolveExecution: () => ({
+        approvalRule: 'Lookup',
+        execute: async () => ({ output: 'lookup-result' }),
+      }),
+    };
+    profile.update({ activeToolNames: ['Lookup'] });
+    ctx.get(IAgentToolRegistryService).register(lookupTool);
+    let continued = false;
+    loop.hooks.onDidFinishStep.register('test-notify-once', async (hookCtx, next) => {
+      if (!continued && hookCtx.finishReason === 'completed') {
+        continued = true;
+        loop.notify({
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'continue' }],
+            origin: { kind: 'system_trigger', name: 'stop_hook' },
+          },
+        });
+        return;
+      }
+      await next();
+    });
+    const start = vi.spyOn(
+      (ctx.get(IAgentLoopService) as unknown as { requester: LoopRequester }).requester,
+      'start',
+    );
+
+    ctx.mockNextResponse({ type: 'function', id: 'call-lookup', name: 'Lookup', arguments: '{}' });
+    ctx.mockNextProviderResponse({ error: new APIProviderRateLimitError('slow down', null, 1) });
+    ctx.mockNextResponse({ type: 'text', text: 'Looked up.' });
+    ctx.mockNextResponse({ type: 'text', text: 'Done.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Look up moon' }] });
+    await ctx.untilApproval(true);
+    await ctx.untilTurnEnd();
+    ctx.mockNextResponse({ type: 'text', text: 'Acknowledged.' });
+    loop.notify({
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'background done' }],
+        origin: { kind: 'task', taskId: 't1', status: 'completed', notificationId: 'n1' },
+      },
+      turnScoped: false,
+    });
+    await ctx.untilTurnEnd();
+
+    const reasons = start.mock.calls.map(([overrides]) =>
+      overrides?.source?.type === 'turn' ? overrides.source.stepReason : undefined,
+    );
+    expect(reasons).toEqual(['turn_start', 'tool_results', 'retry', 'notify', 'turn_start']);
   });
 
   it('keeps the terminal real 503 after an earlier real 429', async () => {

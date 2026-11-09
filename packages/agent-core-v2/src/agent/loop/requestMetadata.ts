@@ -1,11 +1,13 @@
+import { BTW_AGENT_LABEL } from '#/features/btw/btw';
+import { TOWER_WORKER_PROFILE } from '#/features/tower/tower';
+import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import {
+  isSubagentMeta,
+  subagentProfileName,
+  subagentSwarmItem,
+} from '#/session/agentLifecycle/subagentMetadata';
 import type { AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
-
-export const REQUEST_METADATA_HEADER = 'X-Msh-Internal-Metadata';
-
-export const BTW_AGENT_LABEL = 'btw';
-export const TOWER_WORKER_PROFILE = 'tower-worker';
-export const SESSION_INIT_LABEL = 'sessionInit';
 
 export type AgentRole =
   | 'main'
@@ -30,25 +32,12 @@ export type TurnTrigger =
 
 export type StepReason = 'turn_start' | 'tool_results' | 'notify' | 'retry' | 'recovery';
 
-export interface RequestMetadata {
-  readonly agent_role: AgentRole;
-  readonly turn_trigger?: TurnTrigger;
-  readonly step_reason?: StepReason;
-  readonly user_input_id?: string;
-}
-
 export function agentRoleOf(agentId: string, meta: AgentMeta | undefined): AgentRole {
-  if (agentId === 'main') return 'main';
-  const labels = meta?.labels;
-  if (labels?.[BTW_AGENT_LABEL] === 'true') return 'btw';
-  if (labels?.['profileName'] === TOWER_WORKER_PROFILE) return 'tower_worker';
-  if (firstLabel(labels, 'swarmItem', meta?.swarmItem) !== undefined) return 'swarm_member';
-  if (labels?.[SESSION_INIT_LABEL] !== undefined) return 'subagent';
-  if (firstLabel(labels, 'parentAgentId', meta?.parentAgentId ?? undefined) !== undefined) {
-    return 'subagent';
-  }
-  if (meta?.type === 'sub') return 'subagent';
-  return 'other';
+  if (agentId === MAIN_AGENT_ID) return 'main';
+  if (meta?.labels?.[BTW_AGENT_LABEL] === 'true') return 'btw';
+  if (subagentProfileName(meta) === TOWER_WORKER_PROFILE) return 'tower_worker';
+  if (subagentSwarmItem(meta) !== undefined) return 'swarm_member';
+  return isSubagentMeta(meta) ? 'subagent' : 'other';
 }
 
 export function turnTriggerOf(origin: PromptOrigin | undefined): TurnTrigger {
@@ -90,21 +79,4 @@ export function userInputIdOf(
   if (origin.kind === 'skill_activation' && origin.trigger === 'user-slash') return promptId;
   if (origin.kind === 'plugin_command') return promptId;
   return undefined;
-}
-
-export function requestMetadataHeader(metadata: RequestMetadata): Record<string, string> {
-  const body: Record<string, string> = { agent_role: metadata.agent_role };
-  if (metadata.turn_trigger !== undefined) body['turn_trigger'] = metadata.turn_trigger;
-  if (metadata.step_reason !== undefined) body['step_reason'] = metadata.step_reason;
-  if (metadata.user_input_id !== undefined) body['user_input_id'] = metadata.user_input_id;
-  return { [REQUEST_METADATA_HEADER]: JSON.stringify(body) };
-}
-
-function firstLabel(
-  labels: Readonly<Record<string, string>> | undefined,
-  key: string,
-  fallback: string | undefined,
-): string | undefined {
-  const value = labels?.[key] ?? fallback;
-  return value !== undefined && value.length > 0 ? value : undefined;
 }

@@ -49,7 +49,7 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { contentsOf } from '#human/llm/requester';
 import { mergeHeaders } from '#human/llm/endpoint';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
-import { agentRoleOf, requestMetadataHeader } from './requestMetadata';
+import { agentRoleOf } from './requestMetadata';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { WarningIssued } from '#/agent/profile/profileOps';
 
@@ -780,15 +780,15 @@ export class AgentLoopRequester implements LoopRequester {
     source: AgentLLMRequestSource | undefined,
   ): InitializedLlmRequester {
     if (model.providerType === undefined) return request;
-    if (getProviderDefinition(model.providerType, model.protocol)?.requestMetadata !== true) {
-      return request;
-    }
+    const encode = getProviderDefinition(model.providerType, model.protocol)?.requestMetadataHeaders;
+    if (encode === undefined) return request;
     const metadata = this.sessionMetadata.current()?.agents?.[this.scopeContext.agentId];
-    const header = requestMetadataHeader({
-      agent_role: agentRoleOf(this.scopeContext.agentId, metadata),
-      turn_trigger: source?.type === 'turn' ? source.turnTrigger : undefined,
-      step_reason: source?.type === 'turn' ? source.stepReason : undefined,
-      user_input_id: source?.type === 'turn' ? source.userInputId : undefined,
+    const turn = source?.type === 'turn' ? source : undefined;
+    const header = encode({
+      agentRole: agentRoleOf(this.scopeContext.agentId, metadata),
+      turnTrigger: turn?.turnTrigger,
+      stepReason: turn?.stepReason,
+      userInputId: turn?.userInputId,
     });
     const endpoint = contentsOf(request).endpoint;
     return request.with({

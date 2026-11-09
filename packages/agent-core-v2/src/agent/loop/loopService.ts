@@ -249,7 +249,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           turnId: active.id,
           step: active.gatedSteps,
           turnTrigger: turnTriggerOf(active.prompt.origin),
-          stepReason: active.nextStepReason,
+          stepReason: active.stepReason,
           userInputId: userInputIdOf(active.prompt.origin, active.prompt.promptId),
         };
       },
@@ -1066,9 +1066,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       turn.maxStepsError = createMaxStepsExceededError(maxSteps);
       return { type: 'fail' };
     }
+    turn.stepReason =
+      turn.pendingFailureReason ??
+      (turn.steps === 0 ? 'turn_start' : consumed.live > 0 ? 'notify' : 'tool_results');
+    turn.pendingFailureReason = undefined;
     turn.steps = stepOrdinal;
     turn.gatedSteps = stepOrdinal;
-    turn.nextStepReason = this.stepReasonFor(turn, consumed.live);
     const step: MachineStepState = {
       number: stepOrdinal,
       uuid: randomUUID(),
@@ -1291,7 +1294,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       startedAt: Date.now(),
       steps: 0,
       gatedSteps: 0,
-      nextStepReason: 'turn_start',
+      stepReason: 'turn_start',
+      pendingFailureReason: undefined,
       nudgeCursor: this.nudgeCursor,
       current: undefined,
       interruptStep: undefined,
@@ -1745,7 +1749,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       case 'recovering': {
         const turn = this.active;
         if (turn === undefined) return;
-        turn.nextStepReason = 'recovery';
+        turn.pendingFailureReason = 'recovery';
         const step = turn.current;
         if (step !== undefined) {
           this.closeFailedMachineStep(turn, step, 'error');
@@ -1756,7 +1760,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       case 'retrying': {
         const turn = this.active;
         if (turn === undefined) return;
-        turn.nextStepReason = 'retry';
+        turn.pendingFailureReason = 'retry';
         const step = turn.current;
         if (step !== undefined) {
           this.closeFailedMachineStep(turn, step, 'error');
@@ -2124,15 +2128,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     await this.endTurn(turn, this.machineCompletedResult(turn));
   }
 
-  private stepReasonFor(turn: ActiveTurn, liveNudges: number): StepReason {
-    if (turn.nextStepReason === 'retry' || turn.nextStepReason === 'recovery') {
-      return turn.nextStepReason;
-    }
-    if (liveNudges > 0) return 'notify';
-    if (turn.steps > 0) return 'tool_results';
-    return 'turn_start';
-  }
-
   private hasLiveNudge(): boolean {
     return this.nudges.slice(this.nudgeCursor).some((nudge) => !nudge.dropped);
   }
@@ -2157,6 +2152,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           turn.interruptStep = undefined;
           if (turn.retryRequested) {
             turn.retryRequested = false;
+            turn.pendingFailureReason = 'recovery';
             await this.machineEngine().resetHistory(historyFromContext(this.context.get()));
             this.machineEngine().notify(createUserEntry(EMPTY_MACHINE_PROMPT));
           }
@@ -2462,7 +2458,8 @@ interface ActiveTurn {
   readonly startedAt: number;
   steps: number;
   gatedSteps: number;
-  nextStepReason: StepReason;
+  stepReason: StepReason;
+  pendingFailureReason: 'retry' | 'recovery' | undefined;
   nudgeCursor: number;
   current: MachineStepState | undefined;
   interruptStep: number | undefined;
