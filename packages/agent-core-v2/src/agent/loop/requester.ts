@@ -42,6 +42,7 @@ import { completionBudgetParams, resolveCompletionBudget } from '#/llm-adapter/m
 import { resolveThinkingKeep, type ThinkingConfig } from '#/llm-adapter/model/thinking';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import { IProtocolAdapterRegistry, type Protocol } from '#/llm-adapter/protocol/protocol';
+import { getProviderDefinition } from '#/llm-adapter/provider/provider-definition';
 import type { ApiErrorEvent, CacheBreakDetectedEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -778,7 +779,10 @@ export class AgentLoopRequester implements LoopRequester {
     model: Model,
     source: AgentLLMRequestSource | undefined,
   ): InitializedLlmRequester {
-    if (model.providerType !== 'kimi') return request;
+    if (model.providerType === undefined) return request;
+    if (getProviderDefinition(model.providerType, model.protocol)?.requestMetadata !== true) {
+      return request;
+    }
     const metadata = this.sessionMetadata.current()?.agents?.[this.scopeContext.agentId];
     const header = requestMetadataHeader({
       agent_role: agentRoleOf(this.scopeContext.agentId, metadata),

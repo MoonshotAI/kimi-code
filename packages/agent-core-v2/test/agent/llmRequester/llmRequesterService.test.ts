@@ -25,7 +25,11 @@ import { createActor, emit, setup } from '#human/xstate2';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
+import {
+  ISessionMetadata,
+  type SessionMeta,
+  type SessionMetadataChangedEvent,
+} from '#/session/sessionMetadata/sessionMetadata';
 import { Event } from '#/_base/event';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
@@ -63,6 +67,7 @@ import {
   type ModelRequestInput,
 } from '#/llm-adapter/model/generate';
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
+import { registerProviderDefinition } from '#/llm-adapter/provider/provider-definition';
 import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
 import {
   aRequesterFromModelEvents,
@@ -145,7 +150,9 @@ function metadataHeader(
   },
 ): string | undefined {
   const resolved = service['resolveRequest']({ source });
-  return resolved.request.request({}).endpoint?.headers?.['X-Msh-Internal-Metadata'];
+  return resolved.request.request({ content: { messages: [] } }).endpoint?.headers?.[
+    'X-Msh-Internal-Metadata'
+  ];
 }
 
 function emptySessionMeta(): SessionMeta {
@@ -326,9 +333,9 @@ function createService(
   });
   registerTestEventDispatcher(ix);
   ix.set(IAgentStateService, new AgentStateService());
-  ix.stub(ISessionMetadata, {
+  const metadataStub: Partial<ISessionMetadata> = {
     ready: Promise.resolve(),
-    onDidChangeMetadata: Event.None,
+    onDidChangeMetadata: Event.None as Event<SessionMetadataChangedEvent>,
     current: () => options.metadata,
     read: async () => options.metadata ?? emptySessionMeta(),
     update: async () => {},
@@ -337,7 +344,8 @@ function createService(
     setGeneratedTitleIfUncustomized: async () => false,
     setArchived: async () => {},
     registerAgent: async () => {},
-  });
+  };
+  ix.stub(ISessionMetadata, metadataStub);
   const service = ix.createInstance(AgentLoopRequester);
   service.registerMediaPolicy((model, request) =>
     createAgentMediaPolicy(mediaResolver, model, request),
@@ -376,14 +384,19 @@ describe('AgentLoopRequester request metadata', () => {
     userInputId: 'msg_user',
   };
 
-  it('attaches the internal metadata header only for the Kimi provider', () => {
-    const kimi = createService(
-      createRequester({ value: 0 }, undefined, [], undefined, { providerType: 'kimi' }),
+  it('attaches the internal metadata header only when the provider declares it', () => {
+    registerProviderDefinition({
+      id: 'metadata-vendor',
+      baseProtocol: 'anthropic',
+      requestMetadata: true,
+    });
+    const declared = createService(
+      createRequester({ value: 0 }, undefined, [], undefined, { providerType: 'metadata-vendor' }),
       { metadata },
     );
     const other = createService(createRequester(), { metadata });
 
-    expect(JSON.parse(metadataHeader(kimi.service, source) ?? '{}')).toEqual({
+    expect(JSON.parse(metadataHeader(declared.service, source) ?? '{}')).toEqual({
       agent_role: 'subagent',
       turn_trigger: 'user',
       step_reason: 'turn_start',
