@@ -16,7 +16,6 @@ export interface ToolUpdate {
 export interface ToolResult {
   content: ContentPart[];
   isError?: boolean;
-  stopTurn?: boolean;
   durationMs?: number;
   blocked?: Cause;
 }
@@ -75,7 +74,7 @@ export type ToolPermittingDecision =
   | { readonly toolCall: ToolCall }
   | { readonly blocked: Cause; readonly result?: ToolResult };
 
-export type ToolEndingDecision = { readonly result?: ToolResult; readonly stopTurn?: true };
+export type ToolEndingDecision = { readonly result?: ToolResult };
 
 type ToolHook<E, D> = (event: E, signal: AbortSignal) => Promise<void | D> | void | D;
 

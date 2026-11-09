@@ -106,11 +106,7 @@ function isToolStartingDecision(value: unknown): value is ToolStartingDecision {
 }
 
 function isToolEndingDecision(value: unknown): value is ToolEndingDecision {
-  return (
-    isObject(value) &&
-    (value['result'] === undefined || isToolResult(value['result'])) &&
-    (value['stopTurn'] === undefined || value['stopTurn'] === true)
-  );
+  return isObject(value) && (value['result'] === undefined || isToolResult(value['result']));
 }
 
 interface ItemRun<D> {
@@ -196,7 +192,6 @@ export function runToolPermitting(
 
 export interface ToolEndingRun {
   result: ToolResult;
-  stopTurn: boolean;
   blocked?: Cause;
   failures: ToolHookFailure[];
 }
@@ -208,13 +203,11 @@ export async function runToolEnding(
 ): Promise<ToolEndingRun> {
   const failures: ToolHookFailure[] = [];
   let result = event.result;
-  let stopTurn = false;
   for (const item of source.active('tool.ending')) {
     const run = await runItem(item, () => item.hook({ ...event, result }, signal), isToolEndingDecision);
     if (run.failure !== undefined) failures.push(run.failure);
-    if (run.blocked !== undefined) return { result, stopTurn, blocked: run.blocked, failures };
+    if (run.blocked !== undefined) return { result, blocked: run.blocked, failures };
     result = run.decision?.result ?? result;
-    stopTurn ||= run.decision?.stopTurn === true;
   }
-  return { result, stopTurn, failures };
+  return { result, failures };
 }

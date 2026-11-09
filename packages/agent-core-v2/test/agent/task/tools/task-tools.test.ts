@@ -1246,8 +1246,10 @@ describe('WaitForTool (harness)', () => {
           await next();
         });
       } else {
-        ctx.get(IAgentToolExecutorService).onWillExecuteTool((event) => {
-          if (event.toolCall.id === 'wait-specific') void steer();
+        ctx.get(IAgentToolExecutorService).registerHook({
+          beforeExecute: (event) => {
+            if (event.call.id === 'wait-specific') void steer();
+          },
         });
       }
       const waitingAgain = createControlledPromise<void>();

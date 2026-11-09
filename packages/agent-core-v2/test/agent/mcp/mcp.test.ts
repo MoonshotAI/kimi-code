@@ -570,7 +570,7 @@ describe('AgentMcpService', () => {
     expect(events.filter((event) => event.type === 'error')).toHaveLength(1);
   });
 
-  it('re-registering the same server applies additions and removals but holds same-name updates pending', async () => {
+  it('re-registering the same server applies additions, removals and same-name replacements', async () => {
     const manager = new FakeMcpManager();
     const firstClient = fakeMcpClient([
       { name: 'echo', description: 'first', inputSchema: { type: 'object', properties: {} } },
@@ -588,7 +588,7 @@ describe('AgentMcpService', () => {
 
     const tools = ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp');
     expect(tools.map((tool) => tool.name)).toEqual(['mcp__s__echo', 'mcp__s__only']);
-    expect(tools.find((tool) => tool.name === 'mcp__s__echo')?.description).toBe('first');
+    expect(tools.find((tool) => tool.name === 'mcp__s__echo')?.description).toBe('second');
   });
 
   it('executing a wrapped MCP tool dispatches to client.callTool', async () => {

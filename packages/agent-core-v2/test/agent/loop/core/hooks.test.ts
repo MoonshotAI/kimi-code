@@ -12,12 +12,12 @@ import type {
   ToolBatchStartingEvent,
 } from '#/agent/loop/core/index';
 import { createTestLoop as createLoop } from './factory';
-import {
-  createToolExecutor,
-  type ToolExecuteInput,
-  type ToolHookRegistration,
-  type ToolResult,
+import type {
+  ToolExecuteInput,
+  ToolHookRegistration,
+  ToolResult,
 } from '#human/tool/executor';
+import { executorFrom, successfulExecutor } from './executor';
 
 function requester(outcomes: (() => LlmOutcome)[], onGenerate?: () => void): LoopLlmRequester {
   const self: LoopLlmRequester = {
@@ -58,7 +58,7 @@ describe('step.starting', () => {
     const scripted = requester([done('', [call('c1', 'lookup')]), done('end')]);
     const loop = createLoop({
       createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
-      executor: { execute: async () => ({ content: [{ type: 'text' as const, text: 'ok' }] }) },
+      executor: successfulExecutor(['lookup']),
       hooks: [
         {
           point: 'step.starting',
@@ -88,7 +88,7 @@ describe('step.starting', () => {
     const scripted = requester([done('resumed')]);
     const loop = createLoop({
       createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
-      executor: { execute: async () => ({ content: [] }) },
+      executor: successfulExecutor(['lookup', 'alpha', 'beta', 'work'], ''),
       hooks: [
         {
           point: 'step.starting',
@@ -128,7 +128,7 @@ describe('step.starting', () => {
     const events: LoopEmitted[] = [];
     const loop = createLoop({
       createTurnExecution: ({ profile }) => ({ profile, requester: capturing }),
-      executor: { execute: async () => ({ content: [] }) },
+      executor: successfulExecutor(['lookup', 'alpha', 'beta', 'work'], ''),
       hooks: [
         {
           point: 'step.starting',
@@ -158,7 +158,7 @@ describe('step.starting', () => {
         return { type: 'done', message: createAssistantMessage([{ type: 'text', text: 'late answer' }]) };
       },
     };
-    const active = createLoop({ createTurnExecution: ({ profile }) => ({ profile, requester: pending }), executor: { execute: async () => ({ content: [] }) } });
+    const active = createLoop({ createTurnExecution: ({ profile }) => ({ profile, requester: pending }), executor: successfulExecutor(['lookup', 'alpha', 'beta', 'work'], '') });
     const running = active.runTurn(prompt('stale context'));
     await started;
     expect(active.setContext([], 'clear')?.type).toBe('context.settled');
@@ -177,7 +177,7 @@ describe('step.starting', () => {
     const events: LoopEmitted[] = [];
     const loop = createLoop({
       createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
-      executor: { execute: async () => ({ content: [] }) },
+      executor: successfulExecutor(['lookup', 'alpha', 'beta', 'work'], ''),
       hooks: [{ point: 'step.starting', id: 'guard', hook: () => ({ blocked: { reason: 'no' } }) }],
     });
     loop.subscribe((event) => events.push(event));
@@ -198,11 +198,7 @@ function createExecutor(
   registrations: readonly ToolHookRegistration[],
   execute: (input: ToolExecuteInput) => Promise<ToolResult> = async () => ({ content: [] }),
 ) {
-  const tools = createToolExecutor();
-  tools.register('alpha', { execute });
-  tools.register('beta', { execute });
-  for (const registration of registrations) tools.hooks.add(registration);
-  return tools;
+  return executorFrom(['alpha', 'beta'], execute, registrations);
 }
 
 describe('tool.batch-starting', () => {
@@ -236,7 +232,7 @@ describe('tool.batch-starting', () => {
           id: 'swarm',
           hook: () => ({
             blocked: { reason: 'denied' },
-            result: { content: [{ type: 'text' as const, text: 'nope' }], stopTurn: true },
+            result: { content: [{ type: 'text' as const, text: 'nope' }] },
           }),
         },
         {
@@ -332,7 +328,7 @@ describe('tool.batch-starting', () => {
 });
 
 describe('tool.permitting', () => {
-  it('runs permitting after starting, emits the rewritten call, and stops on the result', async () => {
+  it('runs permitting after starting and executes the rewritten call without native stopTurn', async () => {
     const order: string[] = [];
     const seen: ToolCall[] = [];
     const executed: ToolCall[] = [];
@@ -359,10 +355,10 @@ describe('tool.permitting', () => {
       ],
       async ({ toolCall }) => {
         executed.push(toolCall);
-        return { content: [{ type: 'text' as const, text: 'ok' }], stopTurn: true };
+        return { content: [{ type: 'text' as const, text: 'ok' }] };
       },
     );
-    const scripted = requester([done('', [call('c1', 'alpha')])]);
+    const scripted = requester([done('', [call('c1', 'alpha')]), done('final')]);
     const loop = createLoop({ createTurnExecution: ({ profile }) => ({ profile, requester: scripted }), executor: tools });
     loop.subscribe((event) => events.push(event));
     expect((await loop.runTurn(prompt('work'))).type).toBe('done');
@@ -370,14 +366,17 @@ describe('tool.permitting', () => {
     expect(seen).toEqual([rewritten]);
     expect(executed).toEqual([rewritten]);
     expect(events.filter((event) => event.type === 'tool.started')).toHaveLength(1);
-    expect(events.find((event) => event.type === 'tool.started')).toMatchObject({ toolCall: rewritten });
+    expect(events.find((event) => event.type === 'tool.started')).toMatchObject({
+      toolCall: { ...rewritten, arguments: '{}' },
+      args: { safe: true },
+    });
     expect(events.find((event) => event.type === 'tool.ended')).toMatchObject({
-      outcome: { type: 'succeeded', stopTurn: true },
+      outcome: { type: 'succeeded' },
     });
     await loop.close();
   });
 
-  it('skips permitting and execution on a starting block and honors blocked stopTurn', async () => {
+  it('skips permitting and execution on a starting block without stopping the next step', async () => {
     const permitting: string[] = [];
     const executed: string[] = [];
     const events: LoopEmitted[] = [];
@@ -388,7 +387,7 @@ describe('tool.permitting', () => {
           id: 'guard',
           hook: () => ({
             blocked: { reason: 'dirty' },
-            result: { content: [{ type: 'text' as const, text: 'nope' }], stopTurn: true },
+            result: { content: [{ type: 'text' as const, text: 'nope' }] },
           }),
         },
         {
@@ -403,7 +402,7 @@ describe('tool.permitting', () => {
         return { content: [] };
       },
     );
-    const scripted = requester([done('', [call('c1', 'alpha')])]);
+    const scripted = requester([done('', [call('c1', 'alpha')]), done('final')]);
     const loop = createLoop({ createTurnExecution: ({ profile }) => ({ profile, requester: scripted }), executor: tools });
     loop.subscribe((event) => events.push(event));
     expect((await loop.runTurn(prompt('work'))).type).toBe('done');
@@ -411,9 +410,8 @@ describe('tool.permitting', () => {
     expect(executed).toEqual([]);
     expect(events.find((event) => event.type === 'tool.ended')).toMatchObject({
       outcome: {
-        type: 'blocked',
-        cause: { by: 'guard', reason: 'dirty' },
-        entry: { meta: { stopTurn: true } },
+        type: 'failed',
+        entry: { meta: { isError: true } },
       },
     });
     await loop.close();
@@ -455,7 +453,7 @@ describe('tool.permitting', () => {
     await loop.close();
   });
 
-  it('settles a permitting block with attribution and lands the result in the history', async () => {
+  it('settles a permitting rejection as a failed result in the history', async () => {
     const executed: string[] = [];
     const events: LoopEmitted[] = [];
     const tools = createExecutor(
@@ -480,7 +478,7 @@ describe('tool.permitting', () => {
     expect((await loop.runTurn(prompt('work'))).type).toBe('done');
     expect(executed).toEqual([]);
     expect(events.find((event) => event.type === 'tool.ended')).toMatchObject({
-      outcome: { type: 'blocked', cause: { by: 'permission', reason: 'denied' } },
+      outcome: { type: 'failed' },
     });
     const entries = loop.state.messages.filter((entry): entry is ToolEntry => entry.message.role === 'tool');
     expect(entries).toHaveLength(1);
@@ -489,7 +487,7 @@ describe('tool.permitting', () => {
     await loop.close();
   });
 
-  it('reports hook failures and honors stopTurn on a failed outcome', async () => {
+  it('returns hook failures as failed results without native stopTurn', async () => {
     const events: LoopEmitted[] = [];
     const tools = createExecutor(
       [
@@ -507,27 +505,21 @@ describe('tool.permitting', () => {
     const loop = createLoop({ createTurnExecution: ({ profile }) => ({ profile, requester: scripted }), executor: tools });
     loop.subscribe((event) => events.push(event));
     expect((await loop.runTurn(prompt('work'))).type).toBe('done');
-    const failed = events.filter((event) => event.type === 'hook.failed');
-    expect(failed).toHaveLength(1);
-    expect(failed[0]).toMatchObject({ point: 'tool.permitting', hookId: 'flaky-permission', paused: true });
-    expect(tools.hooks.list().find((hook) => hook.id === 'flaky-permission')?.paused).toBe(true);
     const entry = loop.state.messages.find((item): item is ToolEntry => item.message.role === 'tool');
-    expect(extractText(entry!.message)).toContain('[hook failed] tool.permitting: oops');
+    expect(extractText(entry!.message)).toContain('permitting hook failed for "alpha": oops');
+    expect(entry?.meta?.stopTurn).toBeUndefined();
     await loop.close();
 
-    const failedTools = createExecutor(
-      [{ point: 'tool.ending', hook: () => ({ stopTurn: true }) }],
-      async () => {
-        throw new Error('boom');
-      },
-    );
-    const failedScript = requester([done('', [call('c1', 'alpha')])]);
+    const failedTools = createExecutor([], async () => {
+      throw new Error('boom');
+    });
+    const failedScript = requester([done('', [call('c1', 'alpha')]), done('final')]);
     const failedLoop = createLoop({ createTurnExecution: ({ profile }) => ({ profile, requester: failedScript }), executor: failedTools });
     const failedEvents: LoopEmitted[] = [];
     failedLoop.subscribe((event) => failedEvents.push(event));
     expect((await failedLoop.runTurn(prompt('work'))).type).toBe('done');
     expect(failedEvents.find((event) => event.type === 'tool.ended')).toMatchObject({
-      outcome: { type: 'failed', entry: { meta: { stopTurn: true } } },
+      outcome: { type: 'failed', entry: { meta: { isError: true } } },
     });
     await failedLoop.close();
   });
@@ -542,7 +534,7 @@ describe('hook failure policies', () => {
     const events: LoopEmitted[] = [];
     const loop = createLoop({
       createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
-      executor: { execute: async () => ({ content: [] }) },
+      executor: successfulExecutor(['lookup', 'alpha', 'beta', 'work'], ''),
       hooks: [
         {
           point: 'step.starting',
@@ -572,7 +564,7 @@ describe('hook failure policies', () => {
     const events: LoopEmitted[] = [];
     const loop = createLoop({
       createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
-      executor: { execute: async () => ({ content: [] }) },
+      executor: successfulExecutor(['lookup', 'alpha', 'beta', 'work'], ''),
       hooks: [
         {
           point: 'step.starting',
@@ -607,12 +599,10 @@ describe('hook failure policies', () => {
     const scripted = requester([done('', [call('c1', 'alpha'), call('c2', 'beta')]), done('final')]);
     const loop = createLoop({
       createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
-      executor: {
-        execute: async ({ toolCall }: ToolExecuteInput) => {
-          executed.push(toolCall.name);
-          return { content: [] };
-        },
-      },
+      executor: executorFrom(['alpha', 'beta'], async ({ toolCall }: ToolExecuteInput) => {
+        executed.push(toolCall.name);
+        return { content: [] };
+      }),
       hooks: [
         {
           point: 'tool.batch-starting',

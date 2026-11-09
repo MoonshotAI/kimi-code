@@ -7,6 +7,7 @@ import {
   restoreLoopJournal,
 } from '#/agent/loop/journal';
 import { createLoop } from '#/agent/loop/core/index';
+import { successfulExecutor } from './core/executor';
 import { usableOutputOf } from '#human/llm/policy/settle';
 import { contextFromHistoryEntry } from '#/agent/loop/history';
 import { createUserEntry, type UserEntry } from '#human/agent/turn';
@@ -74,7 +75,7 @@ describe('loop journal restore', () => {
     });
     expect(snapshot.input.nextTurnId).toBe(3);
     expect(snapshot.input.unfinished).toBeUndefined();
-    const loop = createLoop({ input: snapshot.input, executor: { execute: async () => ({ content: [] }) } });
+    const loop = createLoop({ input: snapshot.input, executor: successfulExecutor(['Bash'], '') });
     expect(loop.state.status).toBe('idle');
     expect(loop.state.nextTurnId).toBe(3);
     const partial = usableOutputOf({

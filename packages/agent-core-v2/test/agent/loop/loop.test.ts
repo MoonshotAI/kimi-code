@@ -314,7 +314,7 @@ describe('Agent loop', () => {
 
     profile.update({ activeToolNames: ['Work'] });
     const beforeExecuteError = new Error('beforeExecute blew up');
-    const subscription = ctx.get(IAgentToolExecutorService).onBeforeExecuteTool(() => {
+    const subscription = ctx.get(IAgentToolExecutorService).registerLegacyStarting(() => {
       throw beforeExecuteError;
     });
     ctx.mockNextResponse(
@@ -339,23 +339,36 @@ describe('Agent loop', () => {
         }),
       }),
     );
-    expect(ctx.allEvents).toContainEqual(
-      expect.objectContaining({
-        type: '[wire]',
-        event: 'context.append_loop_event',
-        args: expect.objectContaining({
-          event: expect.objectContaining({ type: 'step.end', finishReason: 'error' }),
+    await vi.waitFor(() => {
+      expect(ctx.allEvents).toContainEqual(
+        expect.objectContaining({
+          type: '[wire]',
+          event: 'context.append_loop_event',
+          args: expect.objectContaining({
+            event: expect.objectContaining({ type: 'step.end', finishReason: 'error' }),
+          }),
         }),
-      }),
-    );
+      );
+    });
     expect(
       ctx.allEvents.filter(
         (entry) =>
           entry.type === '[wire]' &&
           entry.event === 'context.append_loop_event' &&
-          (entry.args as { event?: { type?: string } }).event?.type === 'tool.result',
+          ['tool.call', 'tool.result'].includes(
+            (entry.args as { event?: { type?: string } }).event?.type ?? '',
+          ),
       ),
     ).toHaveLength(0);
+    expect(
+      ctx.allEvents.filter(
+        (entry) => entry.type === '[rpc]' && ['tool.call.started', 'tool.result'].includes(entry.event),
+      ),
+    ).toHaveLength(0);
+    expect(ctx.contextData().history.some((message) => message.role === 'tool')).toBe(false);
+    expect(
+      ctx.contextData().history.every((message) => message.role !== 'assistant' || message.toolCalls.length === 0),
+    ).toBe(true);
     expect(ctx.llmCalls).toHaveLength(2);
   });
 
@@ -1595,10 +1608,15 @@ describe('turn telemetry', () => {
 
       await local.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
       await local.untilTurnEnd();
+      await local.untilTurnEnd();
 
       expect(local.llmCalls).toHaveLength(1);
+      const ended = records.filter((record) => record.event === 'turn_ended');
+      expect(ended).toHaveLength(2);
+      expect(ended[0]?.properties).toMatchObject({ reason: 'completed', request_id: 'trace-step-1' });
+      expect(ended[1]?.properties).toMatchObject({ reason: 'failed' });
+      expect(ended[1]?.properties?.['request_id']).toBeUndefined();
       expect(records.find((record) => record.event === 'turn_interrupted')?.properties?.['request_id']).toBeUndefined();
-      expect(records.find((record) => record.event === 'turn_ended')?.properties?.['request_id']).toBeUndefined();
     } finally {
       await local.dispose();
     }
@@ -1800,7 +1818,7 @@ describe('turn telemetry', () => {
 
   it('emits turn_ended with error_type for an uncoded failure', async () => {
     const records: TelemetryRecord[] = [];
-    const local = createTestAgent({ telemetry: recordingTelemetry(records) });
+    const local = createTestAgent({ telemetry: recordingTelemetry(records) }, permissionModeServices('yolo'));
     try {
       const workTool: ExecutableTool = {
         name: 'Work',
@@ -1813,8 +1831,10 @@ describe('turn telemetry', () => {
       };
       local.get(IAgentToolRegistryService).register(workTool);
       local.get(IAgentLoopService).update({ activeToolNames: ['Work'] });
-      const subscription = local.get(IAgentToolExecutorService).onBeforeExecuteTool(() => {
-        throw new Error('beforeExecute blew up');
+      const subscription = local.get(IAgentToolExecutorService).registerHook({
+        beforeExecute: () => {
+          throw new Error('beforeExecute blew up');
+        },
       });
       local.mockNextResponse(
         { type: 'text', text: 'working' },
@@ -2146,24 +2166,19 @@ describe('interruption reminder', () => {
     expect(ctx.contextData().history).toEqual([]);
   });
 
-  it('undo removes a cancelled retry reminder with its preceding user prompt', async () => {
+  it('retry continues after an assistant response without appending a user message', async () => {
     ctx.mockNextResponse({ type: 'text', text: 'first answer' });
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
-    await ctx.untilTurnEnd();
+    const first = submitTurn(loop, 'Hello').turn;
+    await expect(first.result).resolves.toMatchObject({ type: 'completed' });
+    const usersBefore = ctx.contextData().history.filter((message) => message.role === 'user');
 
-    ctx.mockNextResponse({ type: 'text', text: 'partial retry' });
-    const subscription = cancelOnFirstDelta();
-    const retry = submitPromptTurn(loop, {
-      message: { role: 'user', content: [] },
-      meta: { origin: { kind: 'retry' } },
-    }).turn;
-    await expect(retry.result).resolves.toMatchObject({ type: 'cancelled' });
-    subscription.dispose();
-    expect(interruptionReminders()).toHaveLength(1);
+    ctx.mockNextResponse({ type: 'text', text: 'retried answer' });
+    const result = await loop.retry();
 
-    await ctx.undoHistory(1);
-
-    expect(ctx.contextData().history).toEqual([]);
+    expect(result).toMatchObject({ type: 'completed' });
+    expect(ctx.llmCalls).toHaveLength(2);
+    expect(ctx.contextData().history.filter((message) => message.role === 'user')).toEqual(usersBefore);
+    await ctx.expectResumeMatches();
   });
 
   it('drops unsigned thinking but keeps signed thinking on user cancel', async () => {
@@ -2218,30 +2233,22 @@ describe('interruption reminder', () => {
     expect(interruptionReminders()).toHaveLength(1);
   });
 
-  it('does not stack a second reminder around a vacuous retry turn', async () => {
+  it('retry after cancellation does not add another reminder or retry user message', async () => {
     ctx.mockNextResponse({ type: 'text', text: 'partial answer' });
-    const first = cancelOnFirstDelta();
+    const subscription = cancelOnFirstDelta();
     const firstTurn = submitTurn(loop, 'Hello').turn;
     await expect(firstTurn.result).resolves.toMatchObject({ type: 'cancelled' });
-    first.dispose();
+    subscription.dispose();
     expect(interruptionReminders()).toHaveLength(1);
+    const usersBefore = ctx.contextData().history.filter((message) => message.role === 'user');
 
     ctx.mockNextResponse({ type: 'text', text: 'retried answer' });
-    const onStepStarted = ctx.get(IEventBus).subscribe(TurnStepStarted, () => {
-      loop.cancel();
-    });
-    const retryTurn = submitPromptTurn(loop, {
-      message: { role: 'user', content: [] },
-      meta: { origin: { kind: 'retry' } },
-    }).turn;
-    await expect(retryTurn.result).resolves.toMatchObject({ type: 'cancelled' });
-    onStepStarted.dispose();
-    expect(interruptionReminders()).toHaveLength(1);
+    const result = await loop.retry();
 
-    ctx.mockNextResponse({ type: 'text', text: 'third answer' });
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Next' }] });
-    await ctx.untilTurnEnd();
+    expect(result).toMatchObject({ type: 'completed' });
     expect(interruptionReminders()).toHaveLength(1);
+    expect(ctx.contextData().history.filter((message) => message.role === 'user')).toEqual(usersBefore);
+    await ctx.expectResumeMatches();
   });
 
   it('renders a new interruption reminder after an intervening completed turn', async () => {
@@ -2271,6 +2278,7 @@ describe('interruption reminder', () => {
   it('does not duplicate recorded content when cancelled during tool execution', async () => {
     const local = createTestAgent(permissionModeServices('yolo'));
     const releaseSlowTool = deferred();
+    await local.restorePersisted();
     try {
       const slowToolStarted = registerAbortableWorkTool(local, releaseSlowTool.promise);
       const localLoop = local.get(IAgentLoopService);
@@ -2303,12 +2311,16 @@ describe('interruption reminder', () => {
           ),
         ).toBe(true);
       }
+      expect(toolResults.find((event) => event.toolCallId === 'call-work-1')?.result.durationMs).toEqual(
+        expect.any(Number),
+      );
       expect(toolResults.filter((event) => event.toolCallId === 'call-work-2')).toEqual([
         expect.objectContaining({
           result: {
             output:
               'The user manually interrupted "Work" (and anything else running at the same time). This was a deliberate user action, not a system error, timeout, or capacity limit. Do not retry automatically or guess at the cause — wait for the user\'s next instruction.',
             isError: true,
+            durationMs: expect.any(Number),
           },
         }),
       ]);

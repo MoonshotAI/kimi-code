@@ -190,9 +190,9 @@ export function createToolExecutor(options: CreateToolExecutorOptions = {}): Too
           input.signal,
         );
         report('tool.ending', ending.failures);
-        let final = ending.result;
-        if (ending.stopTurn) final = { ...final, stopTurn: true };
-        if (ending.blocked !== undefined) final = { ...final, isError: true, blocked: ending.blocked };
+        const final = ending.blocked === undefined
+          ? ending.result
+          : { ...ending.result, isError: true, blocked: ending.blocked };
         return settle(final);
       };
 

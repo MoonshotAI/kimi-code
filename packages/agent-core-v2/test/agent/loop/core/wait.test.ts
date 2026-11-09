@@ -6,6 +6,7 @@ import type { LlmRequest } from '#human/llm/request';
 import type { LlmOutcome } from '#human/llm/response';
 import type { LoopLlmRequester } from '#/agent/loop/core/index';
 import { createTestLoop as createLoop } from './factory';
+import { successfulExecutor } from './executor';
 
 function echoRequester(): LoopLlmRequester {
   const self: LoopLlmRequester = {
@@ -21,7 +22,7 @@ function echoRequester(): LoopLlmRequester {
 
 const prompt = (text: string) => createUserEntry(createUserMessage(text));
 
-const noopExecutor = { execute: async () => ({ content: [] }) };
+const noopExecutor = successfulExecutor(['noop']);
 
 describe('loop.wait', () => {
   it('resolves with the first emitted event of the type passing match', async () => {

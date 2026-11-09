@@ -246,11 +246,23 @@ describe('AgentUserToolService (wire-backed)', () => {
     expect(childProfile.active.has(toolA.name)).toBe(false);
   });
 
-  it('re-registering an equal tool is a no-op on the model (same reference)', () => {
+  it('re-registering an equal tool is a model no-op and duplicate registration requires explicit unregister', () => {
     svc.register(toolA);
     const before = modelOf(agentState);
     svc.register(toolA);
     expect(modelOf(agentState)).toBe(before);
+    expect(() => registry.register({
+      name: toolA.name,
+      description: toolA.description,
+      parameters: toolA.parameters,
+      resolveExecution: () => ({
+        approvalRule: toolA.name,
+        execute: async () => ({ output: 'duplicate' }),
+      }),
+    })).toThrow('Tool "Lookup" is already registered; unregister it before registering again');
+    expect(registry.unregister(toolA.name)).toBe(true);
+    expect(registry.resolve(toolA.name)).toBeUndefined();
+    expect(registry.unregister(toolA.name)).toBe(false);
   });
 
   it('execute parks under a minted interaction id and keeps the provider toolCallId on the payload', async () => {

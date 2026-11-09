@@ -2,6 +2,7 @@ import { createControlledPromise } from '@antfu/utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ToolCall } from '#human/llm/message';
+import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { LOOP_CONTROL_SECTION } from '#/agent/loop/configSection';
 import { IConfigService } from '#/app/config/config';
@@ -9,6 +10,8 @@ import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { IEventBus } from '#/app/event/eventBus';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
@@ -59,41 +62,93 @@ describe('core LoopService integration', () => {
   });
 
   it('executes a tool batch and continues with a second core step', async () => {
-    const lookupCall: ToolCall = {
-      type: 'function',
-      id: 'call_lookup',
-      name: 'Lookup',
-      arguments: '{"query":"moon"}',
-    };
-    const lookupTool: ExecutableTool<{ query: string }> = {
-      name: 'Lookup',
-      description: 'Look up a short test value.',
-      parameters: {
-        type: 'object',
-        properties: { query: { type: 'string' } },
-        required: ['query'],
-        additionalProperties: false,
+    const now = vi.spyOn(Date, 'now').mockReturnValue(0);
+    const subscription = ctx.get(IAgentToolExecutorService).registerHook({
+      beforeExecute: () => {
+        now.mockReturnValue(100);
       },
-      resolveExecution: () => ({
-        approvalRule: 'Lookup',
-        execute: async () => ({ output: 'lookup-result' }),
-      }),
-    };
-    await ctx.get(IConfigService).set(LOOP_CONTROL_SECTION, { maxStepsPerTurn: 0 });
-    ctx.get(IAgentLoopService).update({ activeToolNames: ['Lookup'] });
-    ctx.get(IAgentToolRegistryService).register(lookupTool);
-    ctx.mockNextResponse({ type: 'text', text: 'I will look it up.' }, lookupCall);
-    ctx.mockNextResponse({ type: 'text', text: 'The lookup result is lookup-result.' });
+    });
+    const truncation = ctx.get(IAgentToolResultTruncationService);
+    const truncate = truncation.truncateForModel.bind(truncation);
+    const finalizer = vi.spyOn(truncation, 'truncateForModel').mockImplementation(async (input) => {
+      now.mockReturnValue(250);
+      return truncate(input);
+    });
+    try {
+      const lookupCall: ToolCall = {
+        type: 'function',
+        id: 'call_lookup',
+        name: 'Lookup',
+        arguments: '{"query":"moon"}',
+      };
+      const lookupTool: ExecutableTool<{ query: string }> = {
+        name: 'Lookup',
+        description: 'Look up a short test value.',
+        parameters: {
+          type: 'object',
+          properties: { query: { type: 'string' } },
+          required: ['query'],
+          additionalProperties: false,
+        },
+        resolveExecution: ({ query }) => query === 'sun'
+          ? { output: 'synthetic-result', isError: true }
+          : {
+              approvalRule: 'Lookup',
+              execute: async () => {
+                now.mockReturnValue(150);
+                return { output: 'lookup-result' };
+              },
+            },
+      };
+      await ctx.get(IConfigService).set(LOOP_CONTROL_SECTION, { maxStepsPerTurn: 0 });
+      ctx.get(IAgentLoopService).update({ activeToolNames: ['Lookup'] });
+      ctx.get(IAgentToolRegistryService).register(lookupTool);
+      ctx.mockNextResponse({ type: 'text', text: 'I will look it up.' }, lookupCall);
+      ctx.mockNextResponse({ type: 'text', text: 'The lookup result is lookup-result.' });
 
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Look up moon' }] });
-    await ctx.untilApproval(true);
-    await ctx.untilTurnEnd();
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Look up moon' }] });
+      await ctx.untilApproval(true);
+      await ctx.untilTurnEnd();
 
-    expect(ctx.llmCalls).toHaveLength(2);
-    expect(JSON.stringify(ctx.llmInputs())).toContain('lookup-result');
-    expect(ctx.allEvents).toContainEqual(
-      expect.objectContaining({ event: 'turn.ended', args: expect.objectContaining({ reason: 'completed' }) }),
-    );
+      expect(ctx.llmCalls).toHaveLength(2);
+      expect(JSON.stringify(ctx.llmInputs())).toContain('lookup-result');
+      expect(ctx.allEvents).toContainEqual(
+        expect.objectContaining({ event: 'turn.ended', args: expect.objectContaining({ reason: 'completed' }) }),
+      );
+
+      const syntheticCall: ToolCall = {
+        type: 'function',
+        id: 'call_synthetic',
+        name: 'Lookup',
+        arguments: '{"query":"sun"}',
+      };
+      ctx.mockNextResponse({ type: 'text', text: 'I will use a synthetic result.' }, syntheticCall);
+      ctx.mockNextResponse({ type: 'text', text: 'The synthetic result is synthetic-result.' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Look up sun' }] });
+      await ctx.untilTurnEnd();
+      const records = await ctx.persistedWireRecords();
+      const resultFor = (toolCallId: string) => records.find((record) => {
+        if (record.type !== 'context.append_loop_event') return false;
+        const event = record['event'] as LoopRecordedEvent;
+        return event.type === 'tool.result' && event.toolCallId === toolCallId;
+      });
+      expect(resultFor('call_lookup')).toMatchObject({
+        event: {
+          type: 'tool.result',
+          result: { output: 'lookup-result', durationMs: 50 },
+        },
+      });
+      expect(resultFor('call_synthetic')).toMatchObject({
+        event: {
+          type: 'tool.result',
+          result: { output: 'synthetic-result', durationMs: 0 },
+        },
+      });
+    } finally {
+      subscription.dispose();
+      finalizer.mockRestore();
+      now.mockRestore();
+    }
   });
 
   it('serializes queued prompts in FIFO order with one active turn', async () => {
@@ -551,7 +606,7 @@ describe('core LoopService integration', () => {
   });
 
   it('publishes detached task lifecycle once with model acknowledgements and final metadata', async () => {
-    const run = async (closeWhileRunning: boolean): Promise<void> => {
+    const run = async (closeWhileRunning: boolean, completionError?: Error): Promise<void> => {
       const subject = createTestAgent();
       await subject.restorePersisted();
       const gate = createControlledPromise<void>();
@@ -583,6 +638,7 @@ describe('core LoopService integration', () => {
                 toolCallId: toolCtx.toolCallId,
                 info: () => processInfo,
                 completion: ({ outcome, result }) => {
+                  if (completionError !== undefined) throw completionError;
                   const status = processInfo.status === 'running'
                     ? outcome.type === 'aborted' ? 'killed' : outcome.type === 'failed' ? 'failed' : 'completed'
                     : processInfo.status;
@@ -626,19 +682,26 @@ describe('core LoopService integration', () => {
         });
         await subject.untilApproval(true);
         await detached;
+        const toolExecutor = subject.get(IAgentToolExecutorService);
+        const taskId = toolExecutor.handlerForCall('process-call')?.taskId;
+        expect(taskId).toBeDefined();
         if (closeWhileRunning) {
-          await loop.close();
+          if (completionError === undefined) await loop.close();
+          else await expect(loop.close()).rejects.toBe(completionError);
         } else {
-          processInfo = {
-            ...processInfo,
-            status: 'timed_out',
-            endedAt: 500,
-            exitCode: 124,
-            stopReason: 'deadline',
-            stopCode: 'TASK_TIMEOUT',
-          };
-          gate.resolve();
+          if (completionError === undefined) {
+            processInfo = {
+              ...processInfo,
+              status: 'timed_out',
+              endedAt: 500,
+              exitCode: 124,
+              stopReason: 'deadline',
+              stopCode: 'TASK_TIMEOUT',
+            };
+          }
           await expect(loop.promptHandle(submitted.id)!.completion).resolves.toMatchObject({ state: 'completed' });
+          gate.resolve();
+          await vi.waitFor(() => expect(subject.llmCalls).toHaveLength(3));
           await loop.settled();
           await loop.close();
         }
@@ -647,20 +710,38 @@ describe('core LoopService integration', () => {
         });
 
         const records = await subject.persistedWireRecords();
+        const toolResults = records
+          .filter((record) => record.type === 'context.append_loop_event')
+          .map((record) => record['event'] as LoopRecordedEvent)
+          .filter((event): event is Extract<LoopRecordedEvent, { type: 'tool.result' }> => event.type === 'tool.result');
+        expect(toolResults).toHaveLength(1);
+        expect(toolResults[0]?.result).not.toHaveProperty('durationMs');
         const started = records.filter((record) => record.type === 'task.started').map((record) => record['info']);
         const terminated = records.filter((record) => record.type === 'task.terminated').map((record) => record['info']);
         expect(started).toEqual([
           expect.objectContaining({ taskId: 'task-process', status: 'running', detached: true, startedAt: 100, endedAt: null, exitCode: null }),
         ]);
-        if (closeWhileRunning) {
+        if (closeWhileRunning && completionError === undefined) {
           expect(terminated).toEqual([
             expect.objectContaining({ taskId: 'task-process', status: 'killed', startedAt: 100, endedAt: expect.any(Number) }),
+          ]);
+        } else if (completionError !== undefined) {
+          expect(terminated).toEqual([
+            expect.objectContaining({ taskId: 'task-process', status: 'failed', startedAt: 100, endedAt: expect.any(Number) }),
           ]);
         } else {
           expect(terminated).toEqual([
             expect.objectContaining({ taskId: 'task-process', status: 'timed_out', startedAt: 100, endedAt: 500, exitCode: 124, stopReason: 'deadline', stopCode: 'TASK_TIMEOUT' }),
           ]);
         }
+        expect(toolExecutor.handlerForCall('process-call')).toBeUndefined();
+        expect(toolExecutor.handler(taskId!)).toBeUndefined();
+        const bookkeeping = toolExecutor as unknown as {
+          readonly taskIdsByCall: Map<string, string[]>;
+          readonly batches: Map<string, { handlers: number }>;
+        };
+        expect(bookkeeping.taskIdsByCall.has('process-call')).toBe(false);
+        expect(bookkeeping.batches.size).toBe(0);
         expect(subject.allEvents.filter((event) => event.type === '[rpc]' && event.event === 'task.started')).toHaveLength(1);
         expect(records.every((record) => !record.type.startsWith('agent.'))).toBe(true);
         expect(JSON.stringify(records)).not.toContain('[async tool completed]');
@@ -668,8 +749,17 @@ describe('core LoopService integration', () => {
           expect(JSON.stringify(records)).toContain('<notification');
           expect(records.some((record) => record.type === 'turn.prompt' && (record['origin'] as { kind?: string }).kind === 'task')).toBe(true);
           expect(JSON.stringify(subject.llmInputs())).toContain('task_id=task-process');
-          expect(JSON.stringify(records)).toContain('background-result');
           expect(JSON.stringify(records)).toContain('async finished');
+          if (completionError !== undefined) {
+            expect(JSON.stringify(records)).toContain('task:task-process:failed');
+            expect(records.some((record) => record.type === 'turn.prompt' && (record['origin'] as { status?: string }).status === 'failed')).toBe(true);
+            expect(JSON.stringify(records)).not.toContain('[async tool failed]');
+          } else {
+            expect(JSON.stringify(records)).toContain('background-result');
+          }
+        } else {
+          expect(JSON.stringify(records)).not.toContain('<notification');
+          expect(records.some((record) => record.type === 'turn.prompt' && (record['origin'] as { kind?: string } | undefined)?.kind === 'task')).toBe(false);
         }
       } finally {
         gate.resolve();
@@ -679,6 +769,8 @@ describe('core LoopService integration', () => {
 
     await run(false);
     await run(true);
+    await run(false, new Error('completion factory blew up'));
+    await run(true, new Error('completion factory blew up'));
   });
 
   it('waits for loop close before disposing an adopted agent scope', async () => {

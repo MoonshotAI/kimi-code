@@ -62,6 +62,7 @@ import { runWillBeginStepHooks, stubLoopWithHooks, type StubLoop } from '../loop
 import { appendContext, compactContext, stubContextMemory, type StubContextMemory } from '../contextMemory/stubs';
 import { stubLog } from '../../_base/log/stubs';
 import { stubAgentContext } from '../agentContext/stubs';
+import { executeLegacyTool } from '../toolExecutor/execute';
 
 let disposables: DisposableStore;
 let homeDir: string;
@@ -790,12 +791,11 @@ describe('agentsMdReminder duplicate calls', () => {
       { type: 'function', id: 'call-1', name: 'Read', arguments: JSON.stringify(args) },
       { type: 'function', id: 'call-2', name: 'Read', arguments: JSON.stringify(args) },
     ];
-    const results = [];
-    for await (const item of h.ix
-      .get(IAgentToolExecutorService)
-      .execute(calls, { turnId: 1, signal: new AbortController().signal })) {
-      results.push(item);
-    }
+    const results = await executeLegacyTool(
+      h.ix.get(IAgentToolExecutorService),
+      calls,
+      { turnId: 1, signal: new AbortController().signal },
+    );
 
     expect(results).toHaveLength(2);
     for (const item of results) {
@@ -1195,12 +1195,11 @@ describe('agentsMdReminder round-2 hardening', () => {
       name: 'Read',
       arguments: JSON.stringify({ path: join(workDir, 'packages', 'kap-server', 'big.ts') }),
     };
-    const results = [];
-    for await (const item of h.ix
-      .get(IAgentToolExecutorService)
-      .execute([toolCall], { turnId: 1, signal: new AbortController().signal })) {
-      results.push(item);
-    }
+    const results = await executeLegacyTool(
+      h.ix.get(IAgentToolExecutorService),
+      [toolCall],
+      { turnId: 1, signal: new AbortController().signal },
+    );
 
     expect(results).toHaveLength(1);
     const output = results[0]!.result.output;
@@ -1234,20 +1233,14 @@ describe('agentsMdReminder round-2 hardening', () => {
     }
     h.ix.get(IAgentToolRegistryService).register(new ResolvedReadTool());
 
-    const results = [];
-    for await (const item of h.ix.get(IAgentToolExecutorService).execute(
-      [
-        {
-          type: 'function',
-          id: 'call-resolved-read',
-          name: 'Read',
-          arguments: JSON.stringify({ path: '~/pkg/index.ts' }),
-        },
-      ],
-      { turnId: 1, signal: new AbortController().signal },
-    )) {
-      results.push(item);
-    }
+    const results = await executeLegacyTool(h.ix.get(IAgentToolExecutorService), [
+      {
+        type: 'function',
+        id: 'call-resolved-read',
+        name: 'Read',
+        arguments: JSON.stringify({ path: '~/pkg/index.ts' }),
+      },
+    ], { turnId: 1, signal: new AbortController().signal });
 
     expect(results).toHaveLength(1);
     expect(outputText(results[0]!.result)).toBe('home file contents');
@@ -1280,24 +1273,18 @@ describe('agentsMdReminder round-2 hardening', () => {
       }
     }
     h.ix.get(IAgentToolRegistryService).register(new ReadTool());
-    h.ix.get(IAgentToolExecutorService).onBeforeExecuteTool((event) => {
+    h.ix.get(IAgentToolExecutorService).registerLegacyStarting((event) => {
       event.veto({ output: 'permission denied', isError: true });
     });
 
-    const results = [];
-    for await (const item of h.ix.get(IAgentToolExecutorService).execute(
-      [
-        {
-          type: 'function',
-          id: 'call-denied-read',
-          name: 'Read',
-          arguments: JSON.stringify({ path: join(subDir, 'index.ts') }),
-        },
-      ],
-      { turnId: 1, signal: new AbortController().signal },
-    )) {
-      results.push(item);
-    }
+    const results = await executeLegacyTool(h.ix.get(IAgentToolExecutorService), [
+      {
+        type: 'function',
+        id: 'call-denied-read',
+        name: 'Read',
+        arguments: JSON.stringify({ path: join(subDir, 'index.ts') }),
+      },
+    ], { turnId: 1, signal: new AbortController().signal });
 
     expect(results).toHaveLength(1);
     expect(outputText(results[0]!.result)).toBe('permission denied');
@@ -1376,16 +1363,10 @@ describe('agentsMdReminder cancellation outcomes', () => {
         arguments: JSON.stringify({ path: join(subDir, 'index.ts') }),
       },
     ];
-    const pending = (async () => {
-      const results = [];
-      for await (const item of h.ix.get(IAgentToolExecutorService).execute(calls, {
-        turnId: 1,
-        signal: controller.signal,
-      })) {
-        results.push(item);
-      }
-      return results;
-    })();
+    const pending = executeLegacyTool(h.ix.get(IAgentToolExecutorService), calls, {
+      turnId: 1,
+      signal: controller.signal,
+    });
 
     await started;
     controller.abort();
@@ -1398,23 +1379,17 @@ describe('agentsMdReminder cancellation outcomes', () => {
       h.telemetryEvents.filter((event) => event.event === 'agents_md_reminder_shown'),
     ).toEqual([]);
 
-    const real = [];
-    for await (const item of h.ix.get(IAgentToolExecutorService).execute(
-      [
-        {
-          type: 'function',
-          id: 'call-real-read',
-          name: 'Read',
-          arguments: JSON.stringify({ path: join(subDir, 'index.ts') }),
-        },
-      ],
+    const real = await executeLegacyTool(h.ix.get(IAgentToolExecutorService), [
       {
-        turnId: 2,
-        signal: new AbortController().signal,
+        type: 'function',
+        id: 'call-real-read',
+        name: 'Read',
+        arguments: JSON.stringify({ path: join(subDir, 'index.ts') }),
       },
-    )) {
-      real.push(item);
-    }
+    ], {
+      turnId: 2,
+      signal: new AbortController().signal,
+    });
     expect(outputText(real[0]!.result)).toBe('read result');
     await h.step();
     expect(agentsMdMessages(h)).toHaveLength(1);

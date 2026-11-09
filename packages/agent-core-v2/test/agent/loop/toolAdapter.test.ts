@@ -1,31 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type {
-  IAgentToolExecutorService,
-  ToolExecutorExecuteOptions,
-  ToolExecutionResult,
-} from '#/agent/toolExecutor/toolExecutor';
-import { createCoreTools } from '#/agent/loop/toolAdapter';
 import type { LoopLlmRequester } from '#/agent/loop/core/index';
 import { createTestLoop as createLoop } from './core/factory';
 import { createUserEntry, type ToolEntry } from '#human/agent/turn';
 import { createAssistantMessage, createUserMessage, extractText, type ToolCall } from '#human/llm/message';
 import type { LlmRequest } from '#human/llm/request';
 import type { LlmOutcome } from '#human/llm/response';
-import type { ToolExecuteInput } from '#human/tool/executor';
-import type { ToolInfo } from '#/tool/toolContract';
-
-const toolInfos: ToolInfo[] = [
-  { name: 'Bash', description: 'run a command', source: 'builtin' },
-  { name: 'Read', description: 'read a file', source: 'builtin' },
-];
+import type { ToolResult } from '#human/tool/executor';
+import { executorFrom } from './core/executor';
 
 function call(id: string, name = 'Bash'): ToolCall {
   return { type: 'function', id, name, arguments: '{}' };
-}
-
-function input(toolCall: ToolCall, signal = new AbortController().signal): ToolExecuteInput {
-  return { toolCall, signal };
 }
 
 function requester(outcomes: (() => LlmOutcome)[]): LoopLlmRequester {
@@ -57,83 +42,91 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-describe('core tool adapter', () => {
-  it('collects expected calls into one service batch and maps adjudication, stopTurn and extras', async () => {
-    const batches: string[][] = [];
-    const executeOptions: ToolExecutorExecuteOptions[] = [];
-    const steerController = new AbortController();
-    const toolExecutor = {
-      execute: async function* (calls: ToolCall[], options: ToolExecutorExecuteOptions) {
-        batches.push(calls.map((toolCall) => toolCall.id));
-        executeOptions.push(options);
-        for (const toolCall of calls) {
-          options.onToolCall?.({ toolCallId: toolCall.id, name: toolCall.name, args: {} });
-          yield {
-            toolCallId: toolCall.id,
-            toolName: toolCall.name,
-            result:
-              toolCall.id === 't1'
-                ? { output: 'stop', stopTurn: true, stopBatchAfterThis: true, note: 'done' }
-                : { output: 'skipped', isError: true },
-            durationMs: 7,
-          } satisfies ToolExecutionResult;
-        }
-      },
-    } as unknown as IAgentToolExecutorService;
-    const onToolResult = vi.fn();
-    const tools = createCoreTools({
-      toolExecutor,
-      toolInfos: () => toolInfos,
-      turnId: () => 9,
-      steerSignal: () => steerController.signal,
-      onToolResult,
+describe('actor handler execution', () => {
+  it('executes every call in model order without stopBatch or native stopTurn', async () => {
+    const executed: string[] = [];
+    const executor = executorFrom(['Bash', 'Read'], async ({ toolCall }) => {
+      executed.push(toolCall.name);
+      return toolCall.id === 't1'
+        ? { content: [{ type: 'text', text: 'first' }] }
+        : { content: [{ type: 'text', text: 'second failed' }], isError: true };
     });
-    tools.sync();
+    const scripted = requester([done('', [call('t1'), call('t2', 'Read')]), done('final')]);
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: requester([done('', [call('t1'), call('t2', 'Read')])]) }),
-      executor: tools.executor,
-      hooks: [{ point: 'tool.batch-starting', hook: (event) => tools.beginBatch(event.toolCalls) }],
+      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
+      executor,
     });
     const started: string[] = [];
     loop.subscribe((event) => {
       if (event.type === 'tool.started') started.push(event.toolCall.id);
     });
 
-    const outcome = await loop.runTurn(prompt());
-
-    expect(outcome.type).toBe('done');
-    expect(batches).toEqual([['t1', 't2']]);
+    expect((await loop.runTurn(prompt())).type).toBe('done');
     expect(started).toEqual(['t1', 't2']);
-    expect(executeOptions[0]?.turnId).toBe(9);
-    expect(executeOptions[0]?.steerSignal).toBe(steerController.signal);
-    expect(onToolResult).toHaveBeenCalledWith('t1', expect.objectContaining({ stopTurn: true }), 7);
-    expect(tools.extras.get('t1')).toMatchObject({ stopTurn: true, stopBatchAfterThis: true, note: 'done' });
-    expect(loop.state.messages.filter((entry): entry is ToolEntry => entry.message.role === 'tool')[0]?.meta?.stopTurn).toBe(true);
+    expect(executed).toEqual(['Bash', 'Read']);
+    const entries = loop.state.messages.filter((entry): entry is ToolEntry => entry.message.role === 'tool');
+    expect(entries.map((entry) => extractText(entry.message))).toEqual(['first', 'second failed']);
+    expect(entries.every((entry) => entry.meta?.stopTurn === undefined)).toBe(true);
     await loop.close();
+
+    const beforeExecuteError = new Error('beforeExecute blew up');
+    const failedLoop = createLoop({
+      createTurnExecution: ({ profile }) => ({
+        profile,
+        requester: requester([done('', [call('failed')])]),
+      }),
+      executor: executorFrom(['Bash'], async () => ({ content: [] }), [{
+        point: 'tool.starting',
+        hook: () => {
+          throw beforeExecuteError;
+        },
+      }]),
+    });
+    const failedProjections: string[] = [];
+    failedLoop.subscribe((event) => {
+      if (
+        event.type === 'tool.started' ||
+        event.type === 'tool.ended' ||
+        (event.type === 'message.appended' && event.source === 'tool')
+      ) failedProjections.push(event.type);
+    });
+    expect(await failedLoop.runTurn(prompt())).toMatchObject({ type: 'failed', error: beforeExecuteError });
+    expect(failedProjections).toEqual([]);
+    expect(failedLoop.state.messages.some((entry) => entry.message.role === 'tool')).toBe(false);
+    await failedLoop.close();
+
+    const vetoedLoop = createLoop({
+      createTurnExecution: ({ profile }) => ({
+        profile,
+        requester: requester([done('', [call('vetoed')]), done('final')]),
+      }),
+      executor: executorFrom(['Bash'], async () => ({ content: [] }), [{
+        point: 'tool.starting',
+        hook: () => ({
+          blocked: { reason: 'denied' },
+          result: { content: [{ type: 'text' as const, text: 'synthetic veto' }], isError: true },
+        }),
+      }]),
+    });
+    expect((await vetoedLoop.runTurn(prompt())).type).toBe('done');
+    const vetoed = vetoedLoop.state.messages.find((entry): entry is ToolEntry => entry.message.role === 'tool');
+    expect(vetoed).toBeDefined();
+    expect(extractText(vetoed!.message)).toBe('synthetic veto');
+    expect(vetoed?.meta?.isError).toBe(true);
+    await vetoedLoop.close();
   });
 
-  it('uses the same core slot for detach, task waiting and late completion notification', async () => {
+  it('uses one handler for detach, waiting, late completion and close notification', async () => {
     const gate = deferred<void>();
-    const toolExecutor = {
-      execute: async function* (calls: ToolCall[], options: ToolExecutorExecuteOptions) {
-        options.onToolCall?.({ toolCallId: 'bg', name: 'Bash', args: {} });
-        options.detach?.('bg', 'background task_id=task-bg');
-        await gate.promise;
-        yield {
-          toolCallId: 'bg',
-          toolName: 'Bash',
-          result: { output: 'finished' },
-          durationMs: 3,
-        } satisfies ToolExecutionResult;
-      },
-    } as unknown as IAgentToolExecutorService;
-    const tools = createCoreTools({ toolExecutor, toolInfos: () => toolInfos, turnId: () => 1 });
-    tools.sync();
+    const executor = executorFrom(['Bash'], async ({ detach }) => {
+      detach?.('background task_id=task-bg');
+      await gate.promise;
+      return { content: [{ type: 'text', text: 'finished' }] };
+    });
     const scripted = requester([done('', [call('bg')]), done('next'), done('async')]);
     const loop = createLoop({
       createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
-      executor: tools.executor,
-      hooks: [{ point: 'tool.batch-starting', hook: (event) => tools.beginBatch(event.toolCalls) }],
+      executor,
     });
     const detached = loop.wait('tool.ended', { match: (event) => event.detached });
     const turn = loop.runTurn(prompt());
@@ -159,12 +152,10 @@ describe('core tool adapter', () => {
         profile,
         requester: requester([done('', [call('close-bg')]), done('next')]),
       }),
-      executor: {
-        execute: async () => {
-          await toolGate.promise;
-          return { content: [] };
-        },
-      },
+      executor: executorFrom(['Bash'], async () => {
+        await toolGate.promise;
+        return { content: [] };
+      }),
     });
     const asyncEntries: string[] = [];
     const notifications: string[] = [];
@@ -198,68 +189,128 @@ describe('core tool adapter', () => {
     await closing;
     expect(asyncEntries).toEqual(['custom closed']);
     expect(notifications).toEqual([]);
-  });
 
-  it('settles late results only in their original batch when an id is reused', async () => {
-    const gates: Array<ReturnType<typeof deferred<void>>> = [];
-    const batches: string[][] = [];
-    const toolExecutor = {
-      execute: async function* (calls: ToolCall[]) {
-        const index = batches.length;
-        const gate = deferred<void>();
-        gates.push(gate);
-        batches.push(calls.map((toolCall) => toolCall.id));
-        await gate.promise;
-        for (const toolCall of calls) {
-          yield {
-            toolCallId: toolCall.id,
-            toolName: toolCall.name,
-            result: { output: `${index}:${toolCall.id}` },
-            durationMs: 1,
-          } satisfies ToolExecutionResult;
-        }
-      },
-    } as unknown as IAgentToolExecutorService;
-    const tools = createCoreTools({ toolExecutor, toolInfos: () => toolInfos, turnId: () => 1 });
-    tools.sync();
-    const bash = tools.tools.find((tool) => tool.name === 'Bash');
-    if (bash === undefined) throw new Error('missing Bash');
-
-    tools.beginBatch([call('same')]);
-    const old = bash.execute(input(call('same')));
-    const current = bash.execute(input(call('same')));
-    gates[1]?.resolve();
-    expect((await current).content).toEqual([{ type: 'text', text: '1:same' }]);
-    gates[0]?.resolve();
-    expect((await old).content).toEqual([{ type: 'text', text: '0:same' }]);
-    expect(batches).toEqual([['same'], ['same']]);
-    expect(tools.extras.get('same')?.output).toBe('1:same');
-  });
-
-  it('settles pending aborts and reports unknown tools through adjudication', async () => {
-    const execute = vi.fn();
-    const tools = createCoreTools({
-      toolExecutor: { execute } as unknown as IAgentToolExecutorService,
-      toolInfos: () => toolInfos,
-      turnId: () => 1,
+    const rejectionGate = deferred<void>();
+    const rejection = new Error('completion factory rejected');
+    const rejectedLoop = createLoop({
+      createTurnExecution: ({ profile }) => ({
+        profile,
+        requester: requester([done('', [call('reject-bg')]), done('next'), done('async failed')]),
+      }),
+      executor: executorFrom(['Bash'], async () => {
+        await rejectionGate.promise;
+        return { content: [{ type: 'text', text: 'ignored successful result' }] };
+      }),
     });
-    tools.sync();
-    const bash = tools.tools.find((tool) => tool.name === 'Bash');
-    const read = tools.tools.find((tool) => tool.name === 'Read');
-    if (bash === undefined || read === undefined) throw new Error('missing tools');
-    const controller = new AbortController();
+    const asyncRejected = rejectedLoop.wait('tool.async_ended');
+    const notifiedRejection = rejectedLoop.wait('prompt.notified');
+    const rejectedStarted = rejectedLoop.wait('tool.started');
+    const rejectedTurn = rejectedLoop.runTurn(prompt());
+    await rejectedStarted;
+    rejectedLoop.detachTool('reject-bg', 'reject background', () => {
+      throw rejection;
+    });
+    expect((await rejectedTurn).type).toBe('done');
+    rejectionGate.resolve();
 
-    tools.beginBatch([call('a'), call('b', 'Read')]);
-    const first = bash.execute(input(call('a'), controller.signal));
-    controller.abort('stop');
-    const second = read.execute(input(call('b', 'Read')));
+    const rejectedEvent = await asyncRejected;
+    expect(rejectedEvent.outcome).toEqual({ type: 'failed', error: rejection });
+    expect(extractText(rejectedEvent.entry.message)).toContain('[async tool failed]');
+    expect(extractText(rejectedEvent.entry.message)).toContain('completion factory rejected');
+    expect(extractText(rejectedEvent.entry.message)).not.toContain('[async tool completed]');
+    expect(extractText((await notifiedRejection).entry.message)).toContain('[async tool failed]');
+    expect(rejectedLoop.state.calls).toEqual([]);
+    await rejectedLoop.waitForIdle();
+    await rejectedLoop.close();
+  });
 
-    expect((await first).isError).toBe(true);
-    expect((await second).isError).toBe(true);
-    expect(execute).not.toHaveBeenCalled();
-    const onAdjudicated = vi.fn();
-    const unknown = await tools.executor.execute({ ...input(call('x', 'Missing')), onAdjudicated });
-    expect(unknown).toMatchObject({ isError: true });
-    expect(onAdjudicated).toHaveBeenCalledWith(call('x', 'Missing'));
+  it('settles late results only in their original StepCall when an id is reused', async () => {
+    const gates: Array<ReturnType<typeof deferred<void>>> = [];
+    const executor = executorFrom(['Bash'], async ({ toolCall, detach }) => {
+      const index = gates.length;
+      const gate = deferred<void>();
+      gates.push(gate);
+      if (index === 0) detach?.('old background');
+      await gate.promise;
+      return { content: [{ type: 'text', text: `${index}:${toolCall.id}` }] };
+    });
+    const scripted = requester([
+      done('', [call('same')]),
+      done('first final'),
+      done('', [call('same')]),
+      done('second final'),
+    ]);
+    const loop = createLoop({
+      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
+      executor,
+    });
+    expect((await loop.runTurn(prompt())).type).toBe('done');
+    await vi.waitFor(() => expect(gates).toHaveLength(1));
+
+    let secondSettled = false;
+    const secondTurn = loop.runTurn(prompt());
+    void secondTurn.then(() => {
+      secondSettled = true;
+    });
+    await vi.waitFor(() => expect(gates).toHaveLength(2));
+    const oldCompleted = loop.wait('tool.async_ended');
+    gates[0]?.resolve();
+    await oldCompleted;
+    expect(secondSettled).toBe(false);
+    const pendingEntries = loop.state.messages.filter((entry): entry is ToolEntry => entry.message.role === 'tool');
+    expect(pendingEntries.map((entry) => extractText(entry.message))).toEqual(['old background']);
+
+    gates[1]?.resolve();
+    expect((await secondTurn).type).toBe('done');
+    await loop.waitForIdle();
+    const entries = loop.state.messages.filter((entry): entry is ToolEntry => entry.message.role === 'tool');
+    expect(entries.map((entry) => extractText(entry.message))).toEqual(['old background', '1:same']);
+    expect(loop.state.messages.some((entry) => extractText(entry.message).includes('0:same'))).toBe(true);
+    expect(gates).toHaveLength(2);
+    await loop.close();
+  });
+
+  it('stops one call without aborting its sibling and contains unknown tools', async () => {
+    const firstStarted = deferred<void>();
+    const secondStarted = deferred<void>();
+    const secondRelease = deferred<void>();
+    const executor = executorFrom(['Bash', 'Read'], async ({ toolCall, signal }) => {
+      if (toolCall.name === 'Read') {
+        secondStarted.resolve();
+        await secondRelease.promise;
+        return { content: [{ type: 'text', text: 'read ok' }] };
+      }
+      firstStarted.resolve();
+      return new Promise<ToolResult>((resolve) => {
+        signal.addEventListener('abort', () => {
+          resolve({ content: [{ type: 'text', text: 'first aborted' }], isError: true });
+        }, { once: true });
+      });
+    });
+    const scripted = requester([done('', [call('a'), call('b', 'Read')]), done('final')]);
+    const loop = createLoop({
+      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
+      executor,
+    });
+    const turn = loop.runTurn(prompt());
+    await Promise.all([firstStarted.promise, secondStarted.promise]);
+    loop.abortTool('a', 'stop');
+    secondRelease.resolve();
+    expect((await turn).type).toBe('done');
+    const entries = loop.state.messages.filter((entry): entry is ToolEntry => entry.message.role === 'tool');
+    expect(entries.map((entry) => entry.meta?.isError)).toEqual([true, undefined]);
+    await loop.close();
+
+    const unknownLoop = createLoop({
+      createTurnExecution: ({ profile }) => ({
+        profile,
+        requester: requester([done('', [call('x', 'Missing')]), done('final')]),
+      }),
+      executor,
+    });
+    expect((await unknownLoop.runTurn(prompt())).type).toBe('done');
+    const unknown = unknownLoop.state.messages.find((entry): entry is ToolEntry => entry.message.role === 'tool');
+    expect(unknown?.meta?.isError).toBe(true);
+    await unknownLoop.close();
   });
 });

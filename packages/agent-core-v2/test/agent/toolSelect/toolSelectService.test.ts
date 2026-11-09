@@ -37,7 +37,8 @@ import type {
   ToolDisclosure,
   ToolExecution,
 } from '#/tool/toolContract';
-import { IAgentToolExecutorService, type ToolExecutionResult } from '#/agent/toolExecutor/toolExecutor';
+import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { executeLegacyTool, type LegacyExecutionResult } from '../toolExecutor/execute';
 import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
@@ -275,6 +276,10 @@ class FakeLoopService extends StubEffectiveProfileReader implements IAgentLoopSe
 
   detachTool(): void {}
 
+  registerToolBatchStarting(): IDisposable {
+    return toDisposable(() => {});
+  }
+
   abortTool(): void {}
 
   snapshot(): LoopSnapshot {
@@ -316,6 +321,10 @@ class FakeLoopService extends StubEffectiveProfileReader implements IAgentLoopSe
   }
 
   async settled(): Promise<void> {}
+
+  async retry(): Promise<never> {
+    throw new Error('unused in this suite');
+  }
 
   async close(): Promise<void> {}
 
@@ -525,6 +534,7 @@ function registerMcp(
   tool: StubMcpTool,
   disclosure: ToolDisclosure = 'deferred',
 ): IDisposable {
+  h.registry.unregister(tool.name);
   const registration = h.registry.register(tool, { source: 'mcp', disclosure });
   disposables.add(registration);
   return registration;
@@ -539,6 +549,7 @@ function registerUser(
   tool: EchoTool,
   disclosure?: ToolDisclosure,
 ): IDisposable {
+  h.registry.unregister(tool.name);
   const registration = h.registry.register(tool, { source: 'user', disclosure });
   disposables.add(registration);
   return registration;
@@ -586,16 +597,12 @@ async function announceAfterCompaction(h: Harness): Promise<string | undefined> 
 async function execute(
   h: ExecutorHarness,
   call: ToolCall,
-): Promise<readonly ToolExecutionResult[]> {
-  const results: ToolExecutionResult[] = [];
-  for await (const result of h.executor.execute([call], {
+): Promise<readonly LegacyExecutionResult[]> {
+  const results = await executeLegacyTool(h.executor, [call], {
     signal: new AbortController().signal,
     turnId: 1,
-    remind: (message) => h.contextMemory.appended.push(message),
-  })) {
-    results.push(result);
-    h.contextMemory.landAppended();
-  }
+  });
+  h.contextMemory.landAppended();
   return results;
 }
 
@@ -1076,20 +1083,20 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
     ]);
   });
 
-  it('shapeHistory keeps a deferred schema after a same-name inline update', async () => {
+  it('shapeHistory keeps a deferred schema after an explicit same-name inline replacement', async () => {
     const h = createHarness();
     registerUser(h, new EchoTool(USER_DEFERRED), 'deferred');
     h.contextMemory.messages.push(schemaMessage(USER_DEFERRED));
+    await h.sut.prepareForRequest();
     registerUser(h, new EchoTool(USER_DEFERRED));
     await h.sut.prepareForRequest();
 
     expect(h.sut.shapeHistory(h.contextMemory.history())).toHaveLength(1);
-    const deferred = h.sut
+    const current = h.sut
       .shapeTools(h.registry.list())
       .find((entry) => entry.name === USER_DEFERRED);
-    expect(deferred).toEqual(
-      expect.objectContaining({ name: USER_DEFERRED, disclosure: 'deferred', deferred: true }),
-    );
+    expect(current).toMatchObject({ name: USER_DEFERRED, disclosure: undefined });
+    expect(current).not.toHaveProperty('deferred');
     expect(h.sut.load([USER_DEFERRED])).toEqual({
       toLoad: [],
       alreadyAvailable: [USER_DEFERRED],
@@ -1151,11 +1158,12 @@ describe('AgentToolSelectService.load', () => {
 
     const replacement = new StubMcpTool(MCP_ALPHA);
     replacement.description = `${MCP_ALPHA} updated desc`;
+    h.registry.unregister(MCP_ALPHA);
     h.registry.register(replacement, { source: 'mcp', disclosure: 'inline' });
     await h.sut.prepareForRequest();
-    expect(h.registry.resolve(MCP_ALPHA)).toBe(alpha);
+    expect(h.registry.resolve(MCP_ALPHA)).toBe(replacement);
     expect(h.registry.list().find((tool) => tool.name === MCP_ALPHA)?.description)
-      .toBe(`${MCP_ALPHA} desc`);
+      .toBe(`${MCP_ALPHA} updated desc`);
     expect(updateReminders()).toHaveLength(1);
   });
 
@@ -1550,7 +1558,7 @@ describe('AgentToolSelectService consecutive failures', () => {
     expect(next.escalated).toEqual({ [MCP_GONE]: 2 });
   });
 
-  it.each(['add', 'remove', 'policy', 'disclosure'] as const)('resets counters for active changes but not pending updates: %s', (change) => {
+  it.each(['add', 'remove', 'policy', 'disclosure'] as const)('resets counters for active registration changes: %s', (change) => {
     const h = createHarness();
     const registration = registerMcp(h, new StubMcpTool(MCP_ALPHA));
     h.sut.load([MCP_GONE]);
@@ -1560,8 +1568,8 @@ describe('AgentToolSelectService consecutive failures', () => {
     if (change === 'policy') deniedToolNames = new Set(['UnregisteredTool']);
     if (change === 'disclosure') registerMcp(h, new StubMcpTool(MCP_ALPHA), 'inline');
     const next = h.sut.load([MCP_GONE]);
-    expect(next.consecutiveFailures).toBe(change === 'disclosure' ? 3 : 1);
-    expect(next.escalated).toEqual(change === 'disclosure' ? { [MCP_GONE]: 3 } : {});
+    expect(next.consecutiveFailures).toBe(1);
+    expect(next.escalated).toEqual({});
   });
 
   it('observes changes at announcement boundaries even if tools later revert', async () => {
@@ -1646,7 +1654,6 @@ describe('AgentToolSelectService executor disclosure independence', () => {
     expect(results).toHaveLength(1);
     expect(results[0]!.result).toEqual(expect.objectContaining({
       isError: true,
-      stopTurn: false,
     }));
     expect(results[0]!.result.output).toContain(`Invalid args for tool "${MCP_ALPHA}"`);
     expect(results[0]!.result.output).toContain("must have required property 'payload'");
@@ -1675,12 +1682,11 @@ describe('AgentToolSelectService executor disclosure independence', () => {
     const results = await execute(h, toolCall('call-1', MCP_ALPHA));
 
     expect(results).toHaveLength(1);
-    expect(results[0]!.result).toEqual({
+    expect(results[0]!.result).toEqual(expect.objectContaining({
       output:
         `Tool "${MCP_ALPHA}" was loaded but is no longer active. Ask the user to enable it before calling it again.`,
       isError: true,
-      stopTurn: false,
-    });
+    }));
     expect(alpha.calls).toBe(0);
   });
 

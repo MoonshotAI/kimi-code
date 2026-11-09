@@ -4,6 +4,8 @@ import { PassThrough, Readable, type Writable } from 'node:stream';
 import { isUserCancellation } from '#/_base/utils/abort';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { TurnStarted } from '#/agent/loop/turnEvents';
+import { createToolEntry } from '#human/agent/turn';
+import { createToolMessage } from '#human/llm/message';
 
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
@@ -29,10 +31,7 @@ import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type { PermissionMode, PermissionPolicyResult } from '#/agent/permissionPolicy/types';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
-import {
-  IAgentToolExecutorService,
-  type ToolExecutionResult,
-} from '#/agent/toolExecutor/toolExecutor';
+import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import type { WireRecord } from '#/wire/record';
@@ -63,6 +62,7 @@ import { stubFlag } from '../../app/flag/stubs';
 import { IFlagService } from '#/app/flag/flag';
 import { stubLoopWithHooks, type StubLoop, type StubTurn } from '../../agent/loop/stubs';
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
+import { executeLegacyTool, type LegacyExecutionResult } from '../../agent/toolExecutor/execute';
 import { stubAgentSwarm } from './stubs';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
 
@@ -222,6 +222,7 @@ async function runGoalStep(loopService: StubLoop, turn: StubTurn): Promise<boole
     signal: turn.signal,
     usage: zeroUsage,
     finishReason: 'completed' as const,
+    tools: [],
     stopTurn: false,
   };
   await loopService.hooks.onWillBeginStep.run(step);
@@ -240,7 +241,7 @@ async function recordStepUsage(
 }
 
 async function runTerminalUpdateGoalResult(
-  toolExecutor: IAgentToolExecutorService,
+  loopService: StubLoop,
   turn: StubTurn,
   status: 'complete' | 'blocked',
   output: string,
@@ -251,14 +252,24 @@ async function runTerminalUpdateGoalResult(
     name: 'UpdateGoal',
     arguments: JSON.stringify({ status }),
   };
-  await toolExecutor.hooks.onDidExecuteTool.run({
+  await loopService.hooks.onDidFinishStep.run({
     turnId: turn.id,
+    step: 1,
+    firstStepOfTurn: true,
     signal: turn.signal,
-    toolCall,
-    toolCalls: [toolCall],
-    args: { status },
-    outcome: 'executed',
-    result: { output, stopTurn: true },
+    usage: zeroUsage,
+    finishReason: 'completed',
+    tools: [{
+      toolCall,
+      outcome: {
+        type: 'succeeded',
+        entry: createToolEntry(createToolMessage(toolCall.id, [{ type: 'text', text: output }]), {
+          source: 'tool',
+        }),
+      },
+      result: { output },
+    }],
+    stopTurn: false,
   });
 }
 
@@ -266,15 +277,11 @@ async function executeToolCall(
   toolExecutor: IAgentToolExecutorService,
   turn: StubTurn,
   toolCall: ToolCall,
-): Promise<ToolExecutionResult[]> {
-  const results: ToolExecutionResult[] = [];
-  for await (const result of toolExecutor.execute([toolCall], {
+): Promise<LegacyExecutionResult[]> {
+  return executeLegacyTool(toolExecutor, [toolCall], {
     turnId: turn.id,
     signal: turn.signal,
-  })) {
-    results.push(result);
-  }
-  return results;
+  });
 }
 
 function endTurn(
@@ -931,6 +938,17 @@ describe('AgentGoalService core workflow hooks', () => {
 
   beforeEach(async () => {
     loopService = stubLoopWithHooks();
+    const modelCapabilities = loopService.data().modelCapabilities;
+    loopService.resolveModelContext = () => ({
+      modelAlias: 'mock-model',
+      modelCapabilities,
+      maxOutputSize: undefined,
+      alwaysThinking: undefined,
+      thinkingLevel: 'off',
+      reservedContextSize: undefined,
+      compactionTriggerRatio: undefined,
+      compactionMaxAttempts: undefined,
+    });
     clock = new ManualGoalDeadlineScheduler();
     ctx = createTestAgent(
       appService(IGoalDeadlineScheduler, clock),
@@ -1128,7 +1146,7 @@ describe('AgentGoalService core workflow hooks', () => {
     const created = await goals.createGoal({ objective: 'old task' });
     const turn = makeTurn(74);
     eventBus.publish(new TurnStarted({ agentId: 'main', turnId: turn.id, origin: USER_PROMPT_ORIGIN }));
-    const listener = toolExecutor.onBeforeExecuteTool((event) => {
+    const listener = toolExecutor.registerLegacyStarting((event) => {
       event.waitUntil(async () => {
         await goals.editGoalObjective({ objective: 'new task' });
         return undefined;
@@ -1144,7 +1162,6 @@ describe('AgentGoalService core workflow hooks', () => {
     listener.dispose();
 
     expect(results[0]!.result.output).toContain('The goal objective was edited since this turn started');
-    expect(results[0]!.result.stopTurn).not.toBe(true);
     expect(goals.getGoal().goal).toMatchObject({
       goalId: created.goalId,
       objective: 'new task',
@@ -1269,6 +1286,7 @@ describe('AgentGoalService core workflow hooks', () => {
       turnsUsed: 0,
       tokensUsed: 0,
     });
+    expect(loopService.drainNextBatch()).toBeDefined();
     expect(loopService.snapshot().hasPendingRequests).toBe(false);
     expect(loopService.launches).toEqual([]);
   });
@@ -1279,7 +1297,7 @@ describe('AgentGoalService core workflow hooks', () => {
     eventBus.publish(new TurnStarted({ agentId: 'main', turnId: oldTurn.id, origin: USER_PROMPT_ORIGIN }));
     const replacement = await goals.createGoal({ objective: 'new task', replace: true });
 
-    await runTerminalUpdateGoalResult(toolExecutor, oldTurn, 'complete', 'old outcome');
+    await runTerminalUpdateGoalResult(loopService, oldTurn, 'complete', 'old outcome');
     await loopService.hooks.onDidFinishStep.run({
       turnId: oldTurn.id,
       step: 1,
@@ -1287,6 +1305,7 @@ describe('AgentGoalService core workflow hooks', () => {
       signal: oldTurn.signal,
       usage: zeroUsage,
       finishReason: 'completed',
+      tools: [],
       stopTurn: false,
     });
 
@@ -1550,6 +1569,7 @@ describe('AgentGoalService core workflow hooks', () => {
       signal: turn.signal,
       usage: zeroUsage,
       finishReason: 'completed',
+      tools: [],
       stopTurn: false,
     };
     await loopService.hooks.onDidFinishStep.run(afterStep);
@@ -1612,7 +1632,7 @@ describe('AgentGoalService core workflow hooks', () => {
       signal: turn.signal,
     });
     await goals.markBlocked({}, 'model');
-    await runTerminalUpdateGoalResult(toolExecutor, turn, 'blocked', 'outcome prompt');
+    await runTerminalUpdateGoalResult(loopService, turn, 'blocked', 'outcome prompt');
 
     const afterStep: AfterStepContext = {
       turnId: turn.id,
@@ -1621,6 +1641,7 @@ describe('AgentGoalService core workflow hooks', () => {
       signal: turn.signal,
       usage: zeroUsage,
       finishReason: 'completed',
+      tools: [],
       stopTurn: false,
     };
     await loopService.hooks.onDidFinishStep.run(afterStep);
@@ -1751,12 +1772,13 @@ describe('AgentGoalService core workflow hooks', () => {
       signal: turn.signal,
       usage: zeroUsage,
       finishReason: 'completed' as const,
+      tools: [],
       stopTurn: false,
     };
     await loopService.hooks.onWillBeginStep.run(step);
 
     await goals.markComplete({}, 'model');
-    await runTerminalUpdateGoalResult(toolExecutor, turn, 'complete', 'outcome prompt');
+    await runTerminalUpdateGoalResult(loopService, turn, 'complete', 'outcome prompt');
     await loopService.hooks.onDidFinishStep.run(afterStep);
 
     expect(loopService.snapshot().hasPendingRequests).toBe(true);
@@ -1773,6 +1795,7 @@ describe('AgentGoalService core workflow hooks', () => {
       signal: turn.signal,
       usage: zeroUsage,
       finishReason: 'completed' as const,
+      tools: [],
       stopTurn: false,
     };
     await loopService.hooks.onDidFinishStep.run(secondAfterStep);
@@ -2003,9 +2026,7 @@ describe('AgentGoalService agent eligibility', () => {
     ctx.mockNextResponse({ type: 'text', text: 'Handled as one normal subagent turn.' });
 
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue' }] });
-    await ctx.untilTurnEnd();
-    await Promise.resolve();
-    await Promise.resolve();
+    await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(1));
 
     expect(ctx.llmCalls).toHaveLength(1);
   });
@@ -2791,6 +2812,13 @@ describe('AgentGoalService WaitFor background scenarios', () => {
     };
   }
 
+  async function waitForToolExecution(ctx: TestAgentContext, toolCallId: string): Promise<void> {
+    await vi.waitFor(() => {
+      const handler = ctx.get(IAgentToolExecutorService).handlerForCall(toolCallId);
+      expect(handler?.snapshot().phase).toBe('execute');
+    });
+  }
+
   function watchTurns(ctx: TestAgentContext): {
     continuationTurnIds: number[];
     endedReasons: string[];
@@ -2843,7 +2871,7 @@ describe('AgentGoalService WaitFor background scenarios', () => {
 
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start work' }] });
       await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(2));
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await waitForToolExecution(ctx, 'wait_1');
 
       expect(continuationTurnIds).toEqual([]);
 
@@ -2898,7 +2926,7 @@ describe('AgentGoalService WaitFor background scenarios', () => {
 
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start work' }] });
       await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(1));
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await waitForToolExecution(ctx, 'wait_1');
 
       expect(continuationTurnIds).toEqual([]);
 
@@ -2957,6 +2985,7 @@ describe('AgentGoalService WaitFor background scenarios', () => {
 
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start work' }] });
       await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(3), { timeout: 5000 });
+      await waitForToolExecution(ctx, 'wait_2');
 
       expect(continuationTurnIds).toEqual([]);
       const timedOutHistory = JSON.stringify(ctx.llmCalls[2]?.history);
@@ -3016,6 +3045,7 @@ describe('AgentGoalService WaitFor background scenarios', () => {
 
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start work' }] });
       await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(3));
+      await waitForToolExecution(ctx, 'wait_1');
 
       sh.pushOutput('BG-OUTPUT\n');
       sh.finish(0);

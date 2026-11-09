@@ -10,6 +10,7 @@ import { contentsOf, createRequester, mergeFields, type LlmRequestPart } from '#
 import type { LlmOutcome } from '#human/llm/response';
 import type { LoopLlmRequester, LoopProfile } from '#/agent/loop/core/index';
 import { createTestLoop as createLoop } from './factory';
+import { executorFrom, successfulExecutor } from './executor';
 
 const spec: LlmModelSpec = { provider: 'fake', name: 'fake-model' };
 
@@ -27,7 +28,7 @@ function done(text: string): LlmOutcome {
   return { type: 'done', message: createAssistantMessage([{ type: 'text', text }]) };
 }
 
-const noopExecutor = { execute: async () => ({ content: [] }) };
+const noopExecutor = successfulExecutor(['work']);
 
 function listOf<T>(value: readonly T[] | (() => readonly T[]) | undefined): readonly T[] {
   return typeof value === 'function' ? value() : (value ?? []);
@@ -104,12 +105,10 @@ describe('loop.requester', () => {
       model: { spec: { provider: 'fake', name: 'other-model' } },
     });
     const loop = createLoop({
-      executor: {
-        execute: async () => {
-          loop.setRequester(second);
-          return { content: [] };
-        },
-      },
+      executor: executorFrom(['work'], async () => {
+        loop.setRequester(second);
+        return { content: [] };
+      }),
     });
     loop.setRequester(first);
     expect((await loop.runTurn(createUserEntry(createUserMessage('first')))).type).toBe('done');

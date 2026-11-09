@@ -1,6 +1,7 @@
 import { toDisposable } from '#/_base/di/lifecycle';
-import { Event } from '#/_base/event';
 import type { IAgentLoopService, LoopErrorHandler, LoopErrorHandlerRegistrationOptions, LoopNotify, LoopNotifyEntry, PromptHandle, PromptPayload, Turn, TurnResult } from '#/agent/loop/loop';
+import type { LoopHooks } from '#/agent/loop/core/contract/hook';
+import { ToolExecutor } from '#/tool/executor';
 import type { HistoryMessage, UserEntry } from '#human/agent/turn';
 import { contextFromHistoryEntry, historyFromContext } from '#/agent/loop/history';
 import { UNKNOWN_CAPABILITY } from '#/llm-adapter/contract/capability';
@@ -9,6 +10,7 @@ export function submitPromptTurn(
   loop: IAgentLoopService,
   input: UserEntry,
 ): { readonly turn: Turn } {
+  void loop.start();
   const { id } = loop.submit(input);
   const handle = loop.promptHandle(id);
   if (handle === undefined) throw new Error(`missing prompt handle for ${id}`);
@@ -64,6 +66,7 @@ export type StubLoop = IAgentLoopService & {
   readonly launches: readonly number[];
   readonly cancels: readonly { readonly turnId?: number; readonly reason?: unknown }[];
   readonly queue: { hasPendingRequests(): boolean };
+  readonly batchStartingHooks: Array<LoopHooks['tool.batch-starting']>;
   startTurn(): StubTurn;
   resetLoop(): Promise<void>;
   settleActive(result?: TurnResult): void;
@@ -116,6 +119,7 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
   const hooks = createHooks(['onWillBeginStep', 'onDidFinishStep', 'onBeforeSubmitPrompt']) as IAgentLoopService['hooks'];
   const errorHandlers = registry(); const launches: number[] = []; const cancels: { turnId?: number; reason?: unknown }[] = [];
   const pending: PendingEntry[] = [];
+  const batchStartingHooks: Array<LoopHooks['tool.batch-starting']> = [];
   const handles = new Map<string, PromptHandle>();
   let active: Turn | undefined; let nextId = typeof options.currentId === 'number' ? options.currentId : 0;
   let releaseActiveResult: ((result: TurnResult) => void) | undefined;
@@ -130,8 +134,15 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
   const hasPending = () => pending.length > 0;
   const messages: ContextMessage[] = [];
   const stub: StubLoop = {
-    _serviceBrand: undefined, hooks, launches, cancels, startTurn,
+    _serviceBrand: undefined, hooks, launches, cancels, startTurn, batchStartingHooks,
     requester: {} as IAgentLoopService['requester'],
+    registerToolBatchStarting(hook) {
+      batchStartingHooks.push(hook);
+      return toDisposable(() => {
+        const index = batchStartingHooks.indexOf(hook);
+        if (index >= 0) batchStartingHooks.splice(index, 1);
+      });
+    },
     start: async () => {},
     setProfile: async () => {},
     bindProfile: async () => {},
@@ -261,6 +272,7 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
     resetLoop: () => Promise.resolve(),
     registerLoopErrorHandler: errorHandlers.register,
     settled: () => Promise.resolve(),
+    retry: async () => { throw new Error('retry is not supported by this stub'); },
     close: () => Promise.resolve(),
     drainNextBatch(context) {
       const batch = pending.splice(0);
@@ -293,4 +305,15 @@ export async function runWillBeginStepHooks(
   else if ('drainNextBatch' in loop && typeof loop.drainNextBatch === 'function') loop.drainNextBatch(loop);
 }
 export function stubWire(): IWireService { return stubAgentWire(); }
-export function stubToolExecutor(): IAgentToolExecutorService { return { _serviceBrand: undefined, execute: async function* () {}, onBeforeExecuteTool: Event.None as Event<BeforeToolExecuteEvent>, onWillExecuteTool: Event.None as Event<WillExecuteToolEvent>, hooks: { onDidExecuteTool: new OrderedHookSlot<ToolDidExecuteContext>() }, recordDupType: () => {}, registerToolCallGuard: () => ({ dispose() {} }), registerUnavailableToolDescriber: () => ({ dispose() {} }), registerMissingToolDescriber: () => ({ dispose() {} }) }; }
+export function stubToolExecutor(): IAgentToolExecutorService {
+  return {
+    _serviceBrand: undefined,
+    executor: new ToolExecutor([]),
+    registerHook: () => toDisposable(() => {}),
+    registerLegacyStarting: () => toDisposable(() => {}),
+    handler: () => undefined,
+    handlerForCall: () => undefined,
+    release: () => {},
+    recordDupType: () => {},
+  };
+}

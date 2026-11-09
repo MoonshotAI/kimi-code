@@ -69,7 +69,7 @@ function retryPrompt(): ContextMessage {
   return {
     role: 'user',
     content: [],
-    origin: { kind: 'retry' },
+    origin: undefined,
   };
 }
 

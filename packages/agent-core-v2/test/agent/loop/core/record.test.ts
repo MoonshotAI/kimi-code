@@ -14,6 +14,7 @@ import {
 } from '#/agent/loop/core/index';
 import { createTestLoop as createLoop } from './factory';
 import type { ToolExecuteInput, ToolResult } from '#human/tool/executor';
+import { executorFrom, successfulExecutor } from './executor';
 
 function requester(outcomes: (() => LlmOutcome)[]): LoopLlmRequester {
   const self: LoopLlmRequester = {
@@ -69,7 +70,7 @@ describe('loop record', () => {
     const scripted = requester([done('hi')]);
     const loop = createLoop({
       createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
-      executor: { execute: async () => ({ content: [] }) },
+      executor: successfulExecutor(['lookup', 'bg', 'slow'], ''),
     });
     const records = record(loop);
     expect((await loop.runTurn(prompt('hello'))).type).toBe('done');
@@ -89,23 +90,25 @@ describe('loop record', () => {
     ]);
     const restored = createLoop({
       createTurnExecution: ({ profile }) => ({ profile, requester: requester([]) }),
-      executor: { execute: async () => ({ content: [] }) },
+      executor: successfulExecutor(['lookup', 'bg', 'slow'], ''),
       input: { messages: state.messages, nextTurnId: state.nextTurnId },
     });
     expect(restored.state.messages).toEqual(loop.state.messages);
 
     let settleBackground: ((result: ToolResult) => void) | undefined;
-    const executor = {
-      execute: ({ toolCall, detach }: ToolExecuteInput) => {
+    let settleSlow: ((result: ToolResult) => void) | undefined;
+    const executor = executorFrom(['bg', 'slow'], ({ toolCall, detach }: ToolExecuteInput) => {
         if (toolCall.name === 'bg') {
           detach?.('bg ack');
           return new Promise<ToolResult>((resolve) => {
             settleBackground = resolve;
           });
         }
-        return new Promise<ToolResult>(() => {});
+        return new Promise<ToolResult>((resolve) => {
+          settleSlow = resolve;
+        });
       },
-    };
+    );
     const acting = requester([done('', [call('call-slow', 'slow'), call('call-bg', 'bg')])]);
     const working = createLoop({
       createTurnExecution: ({ profile }) => ({ profile, requester: acting }),
@@ -130,6 +133,8 @@ describe('loop record', () => {
     working.remind(prompt('reentrant close'));
     const { first, second } = closes!;
     expect(second).toBe(first);
+    settleSlow?.({ content: [{ type: 'text', text: 'slow stopped' }] });
+    settleBackground?.({ content: [{ type: 'text', text: 'background stopped' }] });
     await first;
     const closed = fold([...records, ...live]);
     expect(closed.unfinished).toBeUndefined();

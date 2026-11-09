@@ -1080,7 +1080,6 @@ describe('McpOAuthService interactive flow serialization', () => {
     const cancelled = await result;
     expect(cancelled.isError).toBe(true);
     expect(cancelled.output).toMatch(/cancelled/);
-    expect(cancelled.stopTurn).toBeUndefined();
     expect(signal.aborted).toBe(false);
     expect(reconnect).not.toHaveBeenCalled();
 

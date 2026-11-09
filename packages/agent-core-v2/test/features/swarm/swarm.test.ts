@@ -75,7 +75,7 @@ import {
   restoreTestEventDispatcher,
   testWireScope,
 } from '../../wire/stubs';
-import { stubLoopWithHooks } from '../../agent/loop/stubs';
+import { stubLoopWithHooks, type StubLoop } from '../../agent/loop/stubs';
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
 import { createTestAgent } from '../../harness';
 
@@ -278,6 +278,7 @@ function realSubagents(
 describe('AgentSwarmService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
+  let loop: StubLoop;
   let executorEvents: ToolExecutorEventStubs;
   let permissionGateRan: boolean;
   let formatDenyMessage: Mock<(message: string) => string>;
@@ -296,7 +297,7 @@ describe('AgentSwarmService', () => {
     } as unknown as ISessionTokenCountingService);
     ix.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-    const loop = stubLoopWithHooks();
+    loop = stubLoopWithHooks();
     ix.stub(IAgentLoopService, loop);
     ix.set(IAgentStateService, new AgentStateService());
     ix.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
@@ -373,10 +374,25 @@ describe('AgentSwarmService', () => {
     ctx: ResolvedToolExecutionHookContext,
   ): Promise<BeforeExecuteDecision | undefined> {
     disposables.add(
-      executorEvents.executor.onBeforeExecuteTool(() => {
+      executorEvents.executor.registerLegacyStarting(() => {
         permissionGateRan = true;
       }),
     );
+    for (const hook of loop.batchStartingHooks) {
+      const decision = await hook({
+        turnId: ctx.turnId,
+        step: 0,
+        toolCalls: ctx.toolCalls,
+      }, ctx.signal);
+      if (decision?.blocked !== undefined) {
+        return {
+          veto: {
+            output: decision.blocked.message ?? decision.blocked.reason,
+            isError: true,
+          },
+        };
+      }
+    }
     return executorEvents.fireBeforeExecute(ctx);
   }
 

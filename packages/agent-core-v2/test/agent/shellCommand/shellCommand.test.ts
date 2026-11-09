@@ -117,6 +117,9 @@ describe('AgentShellCommandService', () => {
 
   it('carries the foreground task id on shell events for mid-attach consumers', async () => {
     const fakeBash = {
+      name: 'Bash',
+      description: 'run',
+      parameters: { type: 'object', properties: {} },
       resolveExecution: async () => ({
         isError: false as const,
         description: 'run',
@@ -135,7 +138,9 @@ describe('AgentShellCommandService', () => {
       _serviceBrand: undefined,
       register: () => ({ dispose: () => {} }),
       list: () => [fakeBash],
+      listReferences: () => [],
       resolve: () => fakeBash,
+      onDidChange: () => ({ dispose: () => {} }),
     } as unknown as IAgentToolRegistryService;
     ctx = createTestAgent(agentService(IAgentToolRegistryService, registry));
     const events: { type: string; commandId?: string; taskId?: string }[] = [];
@@ -170,9 +175,11 @@ describe('AgentShellCommandService', () => {
     const emptyRegistry: IAgentToolRegistryService = {
       _serviceBrand: undefined,
       register: () => ({ dispose: () => {} }),
+      unregister: () => false,
       list: () => [],
       listReferences: () => [],
       resolve: () => undefined,
+      onDidChange: () => ({ dispose: () => {} }),
     };
     ctx = createTestAgent(agentService(IAgentToolRegistryService, emptyRegistry));
     context = ctx.get(IAgentLoopService);

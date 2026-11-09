@@ -30,6 +30,7 @@ import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMd
 import { IAgentChangeNotifierService } from '#/agent/changeNotifier/changeNotifier';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { executeLegacyTool } from '../toolExecutor/execute';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
 import { IAtomicDocumentStore, type IAtomicDocumentStore as AtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -1266,8 +1267,6 @@ describe('AgentToolPolicyService executor enforcement', () => {
   it('does not reject select_tools, the policy-gated disclosure loading entry', async () => {
     ctx = createTestAgent(hostEnvironmentServices(homeDir));
     await ctx.get(IAgentLoopService).bindProfile({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
-    const probe = new PolicyProbeTool(SELECT_TOOLS_TOOL_NAME);
-    ctx.get(IAgentToolRegistryService).register(probe);
 
     const result = await executeDirectToolCall(ctx, SELECT_TOOLS_TOOL_NAME);
 
@@ -1302,6 +1301,7 @@ describe('AgentToolPolicyService executor enforcement', () => {
     if (disable !== undefined) {
       await ctx.get(IAgentToolPolicyService).setSessionDisabledTools(disable);
     }
+    ctx.get(IAgentToolRegistryService).unregister(SELECT_TOOLS_TOOL_NAME);
     const probe = new PolicyProbeTool(SELECT_TOOLS_TOOL_NAME);
     ctx.get(IAgentToolRegistryService).register(probe);
 
@@ -1420,13 +1420,12 @@ async function executeDirectToolCall(ctx: TestAgentContext, name: string): Promi
     name,
     arguments: '{}',
   };
-  for await (const result of ctx.get(IAgentToolExecutorService).execute([call], {
+  const [result] = await executeLegacyTool(ctx.get(IAgentToolExecutorService), [call], {
     signal: new AbortController().signal,
     turnId: 1,
-  })) {
-    return result.result;
-  }
-  throw new Error(`No result for tool ${name}`);
+  });
+  if (result === undefined) throw new Error(`No result for tool ${name}`);
+  return result.result;
 }
 
 class PolicyProbeTool implements ExecutableTool<Record<string, never>> {

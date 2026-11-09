@@ -44,7 +44,6 @@ export function truncateResult(result: ToolResult, maxChars: number | undefined)
   return {
     content,
     ...(result.isError === true ? { isError: true as const } : {}),
-    ...(result.stopTurn !== undefined ? { stopTurn: result.stopTurn } : {}),
     ...(result.blocked !== undefined ? { blocked: result.blocked } : {}),
   };
 }

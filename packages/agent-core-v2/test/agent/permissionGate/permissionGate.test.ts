@@ -174,7 +174,7 @@ describe('AgentPermissionGate', () => {
     resolvePermissionResolution.mockResolvedValue(blocked);
     make();
     const later = vi.fn();
-    executorEvents.executor.onBeforeExecuteTool(later);
+    executorEvents.executor.registerHook({ permitting: later });
 
     const decision = await executorEvents.fireBeforeExecute(makeContext('bash'));
 

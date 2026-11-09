@@ -271,7 +271,7 @@ describe('AgentTowerService', () => {
     ctx: ResolvedToolExecutionHookContext,
   ): Promise<BeforeExecuteDecision | undefined> {
     disposables.add(
-      executorEvents.executor.onBeforeExecuteTool(() => {
+      executorEvents.executor.registerLegacyStarting(() => {
         permissionGateRan = true;
       }),
     );
@@ -3114,8 +3114,9 @@ describe('AgentTowerService', () => {
     }
 
     function drainWakeMessages(): ContextMessage[] {
+      const start = loop.history().length;
       loop.drainNextBatch(loop);
-      return [...loop.history()];
+      return loop.history().slice(start);
     }
 
     function wakeText(message: ContextMessage): string {
