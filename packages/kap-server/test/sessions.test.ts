@@ -1544,6 +1544,30 @@ describe('server-v2 /api/v1/sessions', () => {
     }
   });
 
+  it('returns 40910 when :compact is requested while a compaction is already running', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+    });
+    const id = created.body.data.id;
+    const session = getLiveSessionById((server as RunningServer).core.accessor, id);
+    if (session === undefined) throw new Error('expected live session');
+    await session.accessor
+      .get(IAgentLifecycleService)
+      .create({ agentId: MAIN_AGENT_ID });
+    const agent = session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
+    const begin = vi
+      .spyOn(agent.accessor.get(IAgentFullCompactionService), 'begin')
+      .mockReturnValue(false);
+
+    try {
+      const response = await postJson<null>(`/api/v1/sessions/${id}:compact`, { instruction: 'keep the plan' });
+      expect(response.body.code).toBe(40910);
+      expect(begin).toHaveBeenCalledWith({ source: 'manual', instruction: 'keep the plan' });
+    } finally {
+      begin.mockRestore();
+    }
+  });
+
   it('creates a child session tagged with parent_session_id and child_session_kind', async () => {
     const cwd = home as string;
     const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });

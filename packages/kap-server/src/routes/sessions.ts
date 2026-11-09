@@ -985,9 +985,15 @@ async function compactSessionAction(
   const { core, req, reply, id, body } = ctx;
   await reloadOnStale(core.accessor, id, async () => {
     const agent = await resolveMainAgent(core, id);
-    agent.accessor
+    const started = agent.accessor
       .get(IAgentFullCompactionService)
       .begin({ source: 'manual', instruction: normalizeOptional(body.instruction) });
+    if (!started) {
+      throw new Error2(
+        ErrorCodes.COMPACTION_UNABLE,
+        'A compaction is already running. Wait for it to finish, then retry.',
+      );
+    }
   });
   requestLog(req)?.info({ session_id: id, action: 'compact' }, 'session action completed');
   reply.send(okEnvelope({}, req.id));
