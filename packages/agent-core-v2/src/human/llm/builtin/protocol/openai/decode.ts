@@ -392,12 +392,14 @@ export function createDecoder(
         if (chunkHasText) {
           emit({ type: 'text', text: delta.content as string });
         }
-        const survivor = discardedMarkers.at(-1);
-        const survivorKey = survivor?.reasoningKey;
-        let pendingSurvivor =
-          survivor !== undefined && survivorKey !== undefined && !emittedThinkKeys.has(survivorKey)
-            ? survivor
-            : undefined;
+        const survivorsByKey = new Map<string, ThinkPart>();
+        for (const marker of discardedMarkers) {
+          const key = marker.reasoningKey;
+          if (key !== undefined && !emittedThinkKeys.has(key)) {
+            survivorsByKey.set(key, marker);
+          }
+        }
+        let pendingSurvivors = [...survivorsByKey.values()];
         let survivorEmitted = false;
         let retainsReplay = false;
         for (const toolCall of delta.tool_calls ?? []) {
@@ -412,9 +414,11 @@ export function createDecoder(
             lastActiveIndex = streamIndex;
           }
           for (const part of convertStreamToolCall(toolCall)) {
-            if (pendingSurvivor !== undefined) {
-              emit(pendingSurvivor);
-              pendingSurvivor = undefined;
+            if (pendingSurvivors.length > 0) {
+              for (const survivor of pendingSurvivors) {
+                emit(survivor);
+              }
+              pendingSurvivors = [];
               survivorEmitted = true;
             }
             if (part.type !== 'tool_call_part' || part.index === undefined) {
@@ -423,8 +427,10 @@ export function createDecoder(
             emit(part);
           }
         }
-        if (retainsReplay && survivorEmitted && survivorKey !== undefined) {
-          emittedThinkKeys.add(survivorKey);
+        if (retainsReplay && survivorEmitted) {
+          for (const survivorKey of survivorsByKey.keys()) {
+            emittedThinkKeys.add(survivorKey);
+          }
         }
       }
       const finishReason = chunk.choices?.[0]?.finish_reason;

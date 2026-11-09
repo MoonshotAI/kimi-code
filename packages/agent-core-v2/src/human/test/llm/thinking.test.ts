@@ -23,6 +23,7 @@ import type { LlmClientContext, LlmRequestEvent } from '#/llm-requester/requeste
 import { lowerMessage } from '#/llm/builtin/protocol/openai/lower';
 import { createDecoder as createOpenAIDecoder } from '#/llm/builtin/protocol/openai/decode';
 import type { DecodeSink } from '#/llm/protocol/protocol';
+import { createMessageAccumulator as createLlmMessageAccumulator } from '#/llm/message';
 
 const model: LlmModel = {
   provider: 'test',
@@ -1314,6 +1315,56 @@ describe('openai requester thinking', () => {
       }),
     ]);
   });
+
+  it('keeps one empty reasoning marker per key when a delta with text and a tool header repeats both', async () => {
+    const client = stubOpenAIClient(
+      chatCompletionChunks([
+        { content: 'hello' },
+        {
+          content: ' world',
+          reasoning_content: '',
+          reasoning: '',
+          tool_calls: [
+            {
+              index: 0,
+              id: 'call_1',
+              type: 'function',
+              function: { name: 'lookup', arguments: '{}' },
+            },
+          ],
+        },
+      ]),
+    );
+    const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
+    const accumulator = createMessageAccumulator();
+    await requester.generate(
+      { model },
+      { messages },
+      {
+        signal: new AbortController().signal,
+        onEvent: (event) => {
+          if (event.type === 'llm.streaming.part') accumulator.push(event.part);
+        },
+      },
+    );
+    const message = accumulator.finish();
+    expect(message.content).toEqual([
+      { type: 'text', text: 'hello world' },
+      { type: 'think', think: '', reasoningKey: 'reasoning_content' },
+      { type: 'think', think: '', reasoningKey: 'reasoning' },
+    ]);
+    const [wire] = lowerMessage(message, {
+      reasoningKey: 'reasoning_content',
+      preserveThinking: false,
+      toolMessageConversion: undefined,
+    });
+    expect(wire).toMatchObject({
+      role: 'assistant',
+      content: 'hello world',
+      reasoning_content: '',
+      reasoning: '',
+    });
+  });
 });
 
 describe('openai decoder tool-call ordering', () => {
@@ -1388,5 +1439,41 @@ describe('openai decoder tool-call ordering', () => {
       'function:second:{}',
       'end:1',
     ]);
+  });
+
+  it('keeps both deferred empty reasoning keys in the llm accumulator', () => {
+    const accumulator = createLlmMessageAccumulator();
+    const decoder = createOpenAIDecoder({
+      onDelta: (part) => {
+        accumulator.push(part);
+      },
+      onFinish: () => {},
+      onMessageId: () => {},
+      onUsage: () => {},
+      onError: () => {},
+      onToolCallEnd: (index) => accumulator.toolCallEnd(index),
+    });
+    decoder.push({ choices: [{ index: 0, delta: { content: 'hello' }, finish_reason: null }] });
+    decoder.push({
+      choices: [
+        {
+          index: 0,
+          delta: {
+            content: ' world',
+            reasoning_content: '',
+            reasoning: '',
+            tool_calls: [{ index: 0, id: 'a', function: { name: 'lookup', arguments: '{}' } }],
+          },
+          finish_reason: 'tool_calls',
+        },
+      ],
+    });
+    const message = accumulator.finish();
+    expect(message.content).toEqual([
+      { type: 'text', text: 'hello world' },
+      { type: 'think', think: '', reasoningKey: 'reasoning_content' },
+      { type: 'think', think: '', reasoningKey: 'reasoning' },
+    ]);
+    expect(message.toolCalls).toEqual([expect.objectContaining({ name: 'lookup', arguments: '{}' })]);
   });
 });
