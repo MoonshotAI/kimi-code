@@ -20,6 +20,8 @@ Pressing `Ctrl-C` **during streaming** cancels immediately — no second confirm
 
 **Exiting the program** (pressing `Ctrl-C` with an empty input box, or pressing `Ctrl-D`) uses a double-press confirmation mechanism: after the first press, a prompt appears in the status bar; a second press of the same key actually exits. Pressing any other key in between clears the confirmation state.
 
+In fullscreen mode, when text is selected, `Ctrl-C` copies the selection and clears the highlight instead; press it again to interrupt or clear the input box. `Ctrl-Shift-C` and `Cmd-C` work the same way in terminals that pass them through to the app.
+
 ## Mode Switching
 
 | Shortcut | Function |
