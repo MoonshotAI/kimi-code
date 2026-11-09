@@ -193,6 +193,7 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
         state: active !== undefined ? 'running' : 'idle',
         activeTurnId: active?.id,
         activePromptId: undefined,
+        engineAttached: true,
         queue: [],
         notificationCount: 0,
         paused: false,

@@ -571,6 +571,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       activePromptId:
         this.active !== undefined && this.active.prompt.tracked ? this.active.prompt.id : undefined,
       queue,
+      engineAttached: engine !== undefined,
       startingPromptId: engineSnapshot?.starting,
       notificationCount: engineSnapshot?.notificationCount ?? 0,
       paused: engineSnapshot?.paused ?? false,

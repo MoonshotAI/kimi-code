@@ -38,6 +38,7 @@ export interface LoopSnapshot {
   readonly activeTurnId?: number;
   readonly activePromptId?: string;
   readonly queue: readonly UserEntry[];
+  readonly engineAttached: boolean;
   readonly startingPromptId?: string;
   readonly notificationCount: number;
   readonly paused: boolean;

@@ -172,6 +172,7 @@ function stubAttachStore(): AgentEventStore {
     ref: { tree: 'test', branch: 'main' },
     getState: () => ({
       history: [],
+      engineAttached: true,
       queue: [],
       notifications: [],
       reminders: [],
@@ -205,6 +206,7 @@ function stubAttachEngine(): MachineEngine {
       aborting: false,
       waitingForBackground: false,
       paused: false,
+      engineAttached: true,
       queue: [],
       queueLength: 0,
       queueIds: [],
@@ -480,6 +482,7 @@ describe('SessionSubagentScopeCacheService', () => {
       registerLoopErrorHandler: () => ({ dispose: () => {} }),
       snapshot: () => ({
         state: 'idle',
+        engineAttached: true,
         queue: [],
         notificationCount: 0,
         paused: false,
@@ -997,6 +1000,7 @@ describe('SessionSubagentScopeCacheService eviction guards', () => {
   function idleHandle(agentId: string): IAgentScopeHandle {
     return loopHandle(agentId, () => ({
       state: 'idle',
+      engineAttached: true,
       queue: [],
       notificationCount: 0,
       paused: false,
@@ -1011,6 +1015,7 @@ describe('SessionSubagentScopeCacheService eviction guards', () => {
       loopHandle('agent-1', () => ({
         state: 'running',
         activeTurnId: 1,
+        engineAttached: true,
         queue: [],
         notificationCount: 0,
         paused: false,
@@ -1041,6 +1046,7 @@ describe('SessionSubagentScopeCacheService eviction guards', () => {
     const runningSnapshot = {
       state: 'running',
       activeTurnId: 1,
+      engineAttached: true,
       queue: [],
       notificationCount: 0,
       paused: false,
@@ -1048,6 +1054,7 @@ describe('SessionSubagentScopeCacheService eviction guards', () => {
     } as const;
     const idleSnapshot = {
       state: 'idle',
+      engineAttached: true,
       queue: [],
       notificationCount: 0,
       paused: false,
@@ -1243,6 +1250,7 @@ describe('SessionSubagentScopeCacheService eviction guards', () => {
     });
     const idle = (): LoopSnapshot => ({
       state: 'idle',
+      engineAttached: true,
       queue: [],
       notificationCount: 0,
       paused: false,

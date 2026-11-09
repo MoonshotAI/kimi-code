@@ -200,7 +200,7 @@ class FakeAgentHandle {
   readonly accessor;
   readonly context: AgentContext;
   activity: AgentActivitySnapshot = {};
-  queue: { entries: LoopSnapshot['queue']; startingPromptId?: string } = { entries: [] };
+  queue: { entries: LoopSnapshot['queue']; startingPromptId?: string; engineAttached: boolean } = { entries: [], engineAttached: true };
   private readonly queueListeners = new Set<() => void>();
   private readonly services = new Map<unknown, unknown>();
   constructor(readonly id: string) {
@@ -221,6 +221,7 @@ class FakeAgentHandle {
         state: this.activity.turn === undefined ? 'idle' : 'running',
         turn: this.activity.turn,
         queue: this.queue.entries,
+        engineAttached: this.queue.engineAttached,
         startingPromptId: this.queue.startingPromptId,
       }),
       onDidChangeQueue: (listener: () => void) => {
@@ -235,8 +236,8 @@ class FakeAgentHandle {
   set(token: unknown, service: unknown): void {
     this.services.set(token, service);
   }
-  setQueue(entries: LoopSnapshot['queue'], startingPromptId?: string): void {
-    this.queue = { entries, startingPromptId };
+  setQueue(entries: LoopSnapshot['queue'], startingPromptId?: string, engineAttached = true): void {
+    this.queue = { entries, startingPromptId, engineAttached };
     for (const listener of this.queueListeners) listener();
   }
   dispose(): void {}
@@ -1973,7 +1974,7 @@ describe('SessionEventBroadcaster', () => {
       ]);
     });
 
-    it('sends the queued prompts of each subscribed agent without the starting or untracked ones', async () => {
+    it('sends the queued prompts of each subscribed agent without the starting, untracked or parked ones', async () => {
       const lc = new FakeLifecycle();
       const main = lc.addAgent('main');
       withAgentState(main);
@@ -2004,6 +2005,8 @@ describe('SessionEventBroadcaster', () => {
       main.setQueue([entry('b')]);
       await settle();
       main.setQueue([entry('b'), entry('cron', false)]);
+      await settle();
+      main.setQueue([entry('parked')], undefined, false);
       await settle();
       main.setQueue([]);
       await settle();

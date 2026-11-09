@@ -69,7 +69,7 @@ export function readTodoItems(handle: IAgentScopeHandle): TodoItemState[] {
 
 export function readQueuedInputs(handle: IAgentScopeHandle): QueuedInput[] {
   const snapshot = optionalService(handle, IAgentLoopService)?.snapshot();
-  if (snapshot === undefined) return [];
+  if (snapshot === undefined || !snapshot.engineAttached) return [];
   return snapshot.queue.flatMap((entry): QueuedInput[] => {
     const meta = entry.meta;
     if (meta?.tracked !== true || meta.promptId === undefined || meta.promptId === snapshot.startingPromptId) return [];

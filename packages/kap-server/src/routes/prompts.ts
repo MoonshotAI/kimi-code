@@ -39,6 +39,7 @@ import {
   type ISessionScopeHandle,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
+import { materializePromptDaemonRefs } from '@moonshot-ai/agent-core-v2/agent/media/promptMediaIntake';
 import { ErrorCode } from '../protocol/error-codes';
 import { projectPromptContentParts, projectUserContent } from '../services/messages/messageProjection';
 import {
@@ -337,6 +338,12 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             }
           }
           const parts = contentToCoreParts(resolvedContent);
+          if (req.body.delivery === 'steer') {
+            await materializePromptDaemonRefs(parts, {
+              files: core.accessor.get(IFileService),
+              mediaStore: session.accessor.get(ISessionMediaStore),
+            });
+          }
           const clientMetadata = req.body.metadata === undefined ? undefined : [structuredClone(req.body.metadata)];
           if (req.body.skills !== undefined) {
             if (req.body.agent_id !== undefined && req.body.agent_id !== MAIN_AGENT_ID) {

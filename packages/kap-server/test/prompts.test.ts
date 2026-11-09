@@ -4,6 +4,8 @@ import { chmod, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, s
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { deflateSync } from 'node:zlib';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 
 import {
   agentContextOf,
@@ -1950,6 +1952,50 @@ describe('server-v2 /api/v1 prompts', () => {
       `/api/v1/sessions/${id}/prompts/prompt_does_not_exist:abort`,
     );
     expect(body.code).toBe(40402);
+  });
+
+  it('stores the media of a steered prompt before the prepared upload is cleaned up', async () => {
+    const reply = [
+      { choices: [{ index: 0, delta: { role: 'assistant', content: 'ok' }, finish_reason: null }] },
+      { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+    ].map((chunk) => `data: ${JSON.stringify({ id: 'chatcmpl-mock', object: 'chat.completion.chunk', created: 1, model: 'stub', ...chunk })}\n\n`).join('') + 'data: [DONE]\n\n';
+    const llm = createServer((_req, res) => {
+      setTimeout(() => {
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        res.end(reply);
+      }, 1500);
+    });
+    await new Promise<void>((resolve) => llm.listen(0, '127.0.0.1', resolve));
+    const port = (llm.address() as AddressInfo).port;
+    try {
+      await writeConfigToml(home as string, PROMPT_TOML.replace('http://127.0.0.1:9999', `http://127.0.0.1:${port}`));
+      await (server as RunningServer).core.accessor.get(IConfigService).reload();
+      const id = await createSession(home as string);
+      await createMainAgent(id);
+      const first = await call<PromptItemWire & { accepted_as: string }>('POST', `/api/v1/sessions/${id}/prompts`, {
+        content: [{ type: 'text', text: 'start a turn' }],
+        model: 'stub',
+      });
+      expect(first.body.data.accepted_as).toBe('turn');
+
+      const uploaded = await uploadFile(solidPng(3600, 1800), 'image/png', 'big.png');
+      const steered = await call<PromptItemWire & { accepted_as: string }>('POST', `/api/v1/sessions/${id}/prompts`, {
+        content: [{ type: 'image', source: { kind: 'file', file_id: uploaded.id } }],
+        delivery: 'steer',
+      });
+      expect(steered.body.data.accepted_as).toBe('steer');
+      const image = (steered.body.data.content as Array<{ type: string; source?: { file_id: string } }>).find((part) => part.type === 'image');
+      const finalFileId = image!.source!.file_id;
+
+      const files = server!.core.accessor.get(IFileService);
+      await vi.waitFor(async () => {
+        const result = await files.get(finalFileId).catch((error: unknown) => error);
+        expect(result).toMatchObject({ code: 'file.not_found' });
+      });
+      expect(pngDimensions(await readFile(join(sessionMediaDir(server!, id), `${finalFileId}.png`)))).toEqual({ width: 2000, height: 1000 });
+    } finally {
+      await new Promise<void>((resolve) => llm.close(() => resolve()));
+    }
   });
 
   it('reports a prompt that starts a turn and refuses to move prompts outside the queue', async () => {

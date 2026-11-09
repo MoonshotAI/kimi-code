@@ -255,6 +255,7 @@ class FakeLoopService implements IAgentLoopService {
       state: 'idle',
       activeTurnId: undefined,
       activePromptId: undefined,
+      engineAttached: true,
       queue: [],
       notificationCount: 0,
       paused: false,
