@@ -527,6 +527,34 @@ describe('FileSessionIndex (read model)', () => {
     expect(JSON.parse(persisted).cwd).toBe('/old');
   });
 
+  it('publishes the primary snapshot used to build reconciliation summaries', async () => {
+    const changes = new Emitter<void>();
+    const workspace: Workspace = {
+      id: workspaceId,
+      root: '/old',
+      name: 'project',
+      kind: 'managed',
+      additionalDirs: [],
+      createdAt: 0,
+      lastOpenedAt: 0,
+    };
+    const list = vi.fn(async () => [{ ...workspace, root: '/old' }]);
+    const service = { list } as unknown as IWorkspaceService;
+    const persistence = { onDidChange: changes.event } as IWorkspacePersistence;
+    await seedSession('closed', { cwd: '/old', createdAt: 1, updatedAt: 2 });
+    const store = build(new FileStorageService(homeDir), { service, persistence });
+    await store.prepare();
+    store.stopReconcileLoop();
+
+    let reads = 0;
+    list.mockImplementation(async () => [{ ...workspace, root: reads++ === 0 ? '/old' : '/new' }]);
+    await store.reconcileNow();
+
+    const manifest = await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
+    expect(manifest?.workspacePrimaries).toEqual({ [workspaceId]: '/old' });
+    expect((await store.get('closed'))?.cwd).toBe('/old');
+  });
+
   it('subscribes when workspace persistence activates after the index', async () => {
     const changes = new Emitter<void>();
     const workspace: Workspace = {

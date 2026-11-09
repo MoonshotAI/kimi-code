@@ -30,6 +30,7 @@ import {
   type McpServersChange,
 } from '#/workspace/workspaceMcpConfig/workspaceMcpConfig';
 import { WorkspaceMcpConfigService } from '#/workspace/workspaceMcpConfig/workspaceMcpConfigService';
+import * as mcpConfigLoader from '#/app/mcpConfig/configLoader';
 import {
   IWorkspaceTrust,
   type WorkspaceTrustChange,
@@ -738,6 +739,53 @@ describe('WorkspaceMcpConfigService', () => {
         expect(service.servers()).toEqual({ second: stdioConfig('updated') });
       });
     } finally {
+      await Promise.all([
+        rm(first, { recursive: true, force: true }),
+        rm(next, { recursive: true, force: true }),
+      ]);
+      cwd = first;
+    }
+  });
+
+  it('serializes initial watcher setup with a primary change', async () => {
+    const first = cwd;
+    let releaseInitial!: () => void;
+    let markInitialStarted!: () => void;
+    const initialGate = new Promise<void>((resolve) => {
+      releaseInitial = resolve;
+    });
+    const initialStarted = new Promise<void>((resolve) => {
+      markInitialStarted = resolve;
+    });
+    const resolvePaths = mcpConfigLoader.resolveMcpJsonPaths;
+    const resolver = vi.spyOn(mcpConfigLoader, 'resolveMcpJsonPaths').mockImplementation(
+      async (input) => {
+        if (input.cwd === first) {
+          markInitialStarted();
+          await initialGate;
+        }
+        return resolvePaths(input);
+      },
+    );
+    const service = createService();
+    const next = mkdtempSync(join(tmpdir(), 'kimi-workspace-mcp-config-next-'));
+    try {
+      await initialStarted;
+      Object.defineProperty(primaryDirs, 'primary', { get: () => cwd });
+      cwd = next;
+      dirsChanges.fire();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(watchFires.has(next)).toBe(false);
+
+      releaseInitial();
+      await vi.waitFor(() => {
+        expect(watchFires.has(next)).toBe(true);
+      });
+      expect([...watchFires.keys()].at(-1)).toBe(next);
+      await service.ready;
+    } finally {
+      releaseInitial();
+      resolver.mockRestore();
       await Promise.all([
         rm(first, { recursive: true, force: true }),
         rm(next, { recursive: true, force: true }),

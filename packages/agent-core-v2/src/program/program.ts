@@ -301,7 +301,7 @@ export class Program {
       const extraAgentProfiles = own(new ExtraAgentProfileLoaderService(this.dependencies.config, this.context, root.dirs, this.dependencies.bootstrap, hostFs, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
       const trust = own(new WorkspaceTrustService(root.dirs, this.dependencies.trustStore, root.state, this.dependencies.config));
       const mcpConfig = own(new WorkspaceMcpConfigService(root.dirs, this.dependencies.bootstrap, this.dependencies.plugins, this.dependencies.log, this.dependencies.config, hostFs, trust, this.dependencies.configStore, this.dependencies.oauth));
-      const mcp = new WorkspaceMcpService(this.context, this.environments, mcpConfig, this.dependencies.oauth, this.dependencies.log, this.dependencies.telemetry, this.dependencies.identity, this.dependencies.sessionManager);
+      const mcp = new WorkspaceMcpService(this.context, root.dirs, this.environments, mcpConfig, this.dependencies.oauth, this.dependencies.log, this.dependencies.telemetry, this.dependencies.identity, this.dependencies.sessionManager);
       disposables.push({ dispose: () => mcp.disposeAsync() });
       const trustDisclosure = new WorkspaceTrustDisclosureService(this.context, hostFs, this.dependencies.bootstrap, this.dependencies.config, root.localConfig, root.dirs, trust, root.skills, root.agentProfiles, this.dependencies.agentProfiles, root.instructions, this.dependencies.log);
       own(workdirs);

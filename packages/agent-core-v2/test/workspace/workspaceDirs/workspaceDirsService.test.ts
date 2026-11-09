@@ -161,6 +161,43 @@ describe('WorkspaceDirsService (registry source)', () => {
     expect(dirs.additionalDirs).toEqual([dirC, dirB]);
   });
 
+  it('moves legacy local config and its watcher when the associated primary changes', async () => {
+    const project = await workspaces.createOrTouch(dirA);
+    await workspaces.update(project.id, { additionalDirs: [dirB] });
+    const dirD = mkdtempSync(join(tmpdir(), 'ws-dirs-d-'));
+    const writeLocalConfig = async (root: string, additionalDirs: readonly string[]) => {
+      await mkdir(join(root, '.kimi-code'), { recursive: true });
+      const entries = additionalDirs.map((dir) => `"${dir.replaceAll('\\', '\\\\')}"`).join(', ');
+      await writeFile(join(root, '.kimi-code', 'local.toml'), `[workspace]\nadditional_dir = [${entries}]\n`, 'utf8');
+    };
+    try {
+      await writeLocalConfig(dirA, [dirC]);
+      await writeLocalConfig(dirB, [dirD]);
+      const dirs = createDirs(dirA, encodeWorkDirKey(dirA), 'implicit');
+      await dirs.ready;
+      expect(dirs.additionalDirs).toEqual([dirC, dirB]);
+
+      await workspaces.setPrimary(project.id, dirB);
+      await vi.waitFor(
+        () => {
+          expect(dirs.primary).toBe(dirB);
+          expect(dirs.additionalDirs).toEqual([dirD, dirA]);
+        },
+        { timeout: 5_000 },
+      );
+
+      await writeLocalConfig(dirB, []);
+      await vi.waitFor(
+        () => {
+          expect(dirs.additionalDirs).toEqual([dirA]);
+        },
+        { timeout: 5_000 },
+      );
+    } finally {
+      await rm(dirD, { recursive: true, force: true });
+    }
+  });
+
   it('ignores local.toml entirely for managed workspaces', async () => {
     const project = await workspaces.create({ root: dirA, additionalDirs: [dirB], name: 'proj' });
     await mkdir(join(dirA, '.kimi-code'), { recursive: true });
@@ -335,14 +372,15 @@ describe('WorkspaceDirsService (registry source)', () => {
     expect(fired).toBe(1);
   });
 
-  it('pins explicit local roots without losing access to the managed primary', async () => {
+  it('pins explicit local roots without expanding directory access', async () => {
     const project = await workspaces.create({ root: dirA, additionalDirs: [dirB], name: 'proj' });
     const pinned = createDirs(dirC, project.id, 'managed', 'local', false);
     const following = createDirs(dirC, project.id, 'managed', 'local', true);
     await Promise.all([pinned.ready, following.ready]);
 
     expect(pinned.primary).toBe(dirC);
-    expect(pinned.additionalDirs).toEqual([dirA, dirB]);
+    expect(pinned.additionalDirs).toEqual([]);
+    expect(pinned.sessionInfo().primaryByWorkspace).toEqual({});
     expect(following.primary).toBe(dirA);
     expect(following.additionalDirs).toEqual([dirB]);
 
@@ -351,7 +389,8 @@ describe('WorkspaceDirsService (registry source)', () => {
       expect(following.primary).toBe(dirB);
     });
     expect(pinned.primary).toBe(dirC);
-    expect(pinned.additionalDirs).toEqual([dirB, dirA]);
+    expect(pinned.additionalDirs).toEqual([]);
+    expect(pinned.sessionInfo().primaryByWorkspace).toEqual({});
     expect(following.additionalDirs).toEqual([dirA]);
   });
 

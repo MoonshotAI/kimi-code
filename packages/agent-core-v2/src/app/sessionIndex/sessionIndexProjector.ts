@@ -287,7 +287,7 @@ export class SessionIndexProjector {
           sourceSessionCount: authoritative.size,
           schemaVersion: SESSION_INDEX_SCHEMA_VERSION,
           workspaceSignals: signalsComplete ? workspaceSignals : undefined,
-          workspacePrimaries: await this.deps.primaryByWorkspace(),
+          workspacePrimaries: primaryByWorkspace,
         },
         epoch,
       );

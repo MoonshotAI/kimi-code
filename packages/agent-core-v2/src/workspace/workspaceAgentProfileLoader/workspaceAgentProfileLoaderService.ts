@@ -48,6 +48,8 @@ export class WorkspaceAgentProfileLoaderService
   ) {
     super(log, registry);
     this._register({ dispose: () => this.watchers?.dispose() });
+    this.primaryReloadTail = this.refreshPrimary(false);
+    this.watchReady = this.primaryReloadTail;
     this._register(
       this.dirs.onDidChange(() => {
         this.primaryReloadTail = this.primaryReloadTail.then(
@@ -59,7 +61,6 @@ export class WorkspaceAgentProfileLoaderService
         });
       }),
     );
-    this.watchReady = this.watchEnabled ? this.refreshProjectAgentRoots() : Promise.resolve();
     this.start();
   }
 
@@ -78,12 +79,12 @@ export class WorkspaceAgentProfileLoaderService
     );
   }
 
-  private async refreshPrimary(): Promise<void> {
+  private async refreshPrimary(reload = true): Promise<void> {
     await this.dirs.ready;
     const primary = this.dirs.primary;
     if (this.watchedPrimary === primary) return;
     await this.refreshProjectAgentRoots();
-    await this.reload();
+    if (reload) await this.reload();
   }
 
   private async refreshProjectAgentRoots(): Promise<void> {

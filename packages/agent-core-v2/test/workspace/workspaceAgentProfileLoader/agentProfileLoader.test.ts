@@ -11,6 +11,7 @@ import { InstantiationService } from '#/_base/di/instantiationService';
 import { ServiceCollection } from '#/_base/di/serviceCollection';
 import { ILogService } from '#/_base/log/log';
 import { EXTRA_AGENT_DIRS_SECTION } from '#/workspace/workspaceAgentProfileLoader/configSection';
+import * as agentRoots from '#/workspace/workspaceAgentProfileLoader/internal/agentRoots';
 import { UserAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoaderService';
 import type { PluginAgentRoot, PluginReloadEvent } from '#/app/plugin/types';
 import {
@@ -856,6 +857,16 @@ describe('agent profile loaders + session catalog', () => {
 });
 
 describe('workspace primary changes', () => {
+  beforeEach(() => {
+    watchMockState.mode = 'inert';
+    _clearAgentProfileContributionsForTests();
+    registerAgentProfile(normalizeAgentProfile({
+      name: DEFAULT_AGENT_PROFILE_NAME,
+      description: 'builtin default',
+      systemPrompt: () => 'BUILTIN PROMPT',
+    }));
+  });
+
   it('reloads workspace profiles and moves the project watcher when primary changes', async () => {
     await withFixture(async (fixture) => {
       await mkdir(join(fixture.workDir, '.kimi-code', 'agents'), { recursive: true });
@@ -881,6 +892,46 @@ describe('workspace primary changes', () => {
         expect(watchMockState.calls.some((path) => path === next || path.startsWith(`${next}/`))).toBe(true);
       } finally {
         stack.dispose();
+      }
+    });
+  });
+
+  it('serializes initial watcher discovery with a primary change', async () => {
+    await withFixture(async (fixture) => {
+      let releaseInitial!: () => void;
+      let markInitialStarted!: () => void;
+      const initialGate = new Promise<void>((resolve) => {
+        releaseInitial = resolve;
+      });
+      const initialStarted = new Promise<void>((resolve) => {
+        markInitialStarted = resolve;
+      });
+      const candidates = vi.spyOn(agentRoots, 'projectAgentRootCandidates').mockImplementation(
+        async (_fs, primary) => {
+          if (primary === fixture.workDir) {
+            markInitialStarted();
+            await initialGate;
+          }
+          return { projectRoot: primary, candidates: [primary] };
+        },
+      );
+      const stack = makeStack(fixture);
+      try {
+        await initialStarted;
+        watchMockState.calls = [];
+        const next = join(fixture.workDir, 'next');
+        Object.defineProperty(stack.workspaceContext, 'cwd', { get: () => next });
+        stack.dirsChanges.fire();
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(watchMockState.calls).not.toContain(next);
+
+        releaseInitial();
+        await stack.ready();
+        expect(watchMockState.calls.at(-1)).toBe(next);
+      } finally {
+        releaseInitial();
+        stack.dispose();
+        candidates.mockRestore();
       }
     });
   });

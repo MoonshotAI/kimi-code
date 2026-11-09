@@ -1,4 +1,4 @@
-import { DisposableStore, type IDisposable } from '#/_base/di/lifecycle';
+import { DisposableStore, MutableDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/state/state';
@@ -50,6 +50,7 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
   private readonly onDidChangeEmitter = this._register(new Emitter<void>());
   readonly onDidChange: Event<void> = this.onDidChangeEmitter.event;
   private readonly watchDebounce = this._register(new TimeoutTimer());
+  private readonly localConfigWatcher = this._register(new MutableDisposable<IDisposable>());
   private mutationTail: Promise<void> = Promise.resolve();
   private changeBatchDepth = 0;
   private changePending = false;
@@ -71,21 +72,10 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
     this.projectRoot = workspace.cwd;
     this.configPath = '';
     this.legacyProjectConfig = workspace.meta.kind !== 'managed';
-    this.ready = this.enqueue(() =>
-      this.batchChanges(async () => {
-        if (this.legacyProjectConfig) await this.reloadFromDisk();
-        await this.reloadFromRegistry();
-      }),
-    );
-    if (this.legacyProjectConfig) {
-      void this.ready.then(
-        () => this.watchLocalToml(),
-        () => undefined,
-      );
-    }
+    this.ready = this.enqueue(() => this.reloadWorkspace(true));
     this._register(
       this.workspaceStore.onDidChange(() => {
-        void this.enqueue(() => this.reloadFromRegistry()).catch((error) => {
+        void this.enqueue(() => this.reloadWorkspace()).catch((error) => {
           this.log.warn(`workspace registry reload failed: ${String(error)}`);
         });
       }),
@@ -150,12 +140,22 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
   }
 
   reload(): Promise<void> {
-    return this.enqueue(() =>
-      this.batchChanges(async () => {
-        if (this.legacyProjectConfig) await this.reloadFromDisk();
-        await this.reloadFromRegistry();
-      }),
-    );
+    return this.enqueue(() => this.reloadWorkspace(true));
+  }
+
+  private async reloadWorkspace(reloadLocal = false): Promise<void> {
+    await this.batchChanges(async () => {
+      const previousPrimary = this.primary;
+      await this.reloadFromRegistry();
+      if (!this.legacyProjectConfig) return;
+      const primaryChanged = previousPrimary !== this.primary;
+      if (reloadLocal || primaryChanged || this.localConfigWatcher.value === undefined) {
+        await this.reloadFromDisk();
+      }
+      if (primaryChanged || this.localConfigWatcher.value === undefined) {
+        this.watchLocalToml();
+      }
+    });
   }
 
   sessionInfo(): ISessionWorkspaceInfo {
@@ -176,12 +176,12 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
 
   private async applyAddDir(input: WorkspaceAddDirInput): Promise<WorkspaceAdditionalDirsResult> {
     const persist = input.persist ?? true;
-    const onDisk = await this.localConfig.readAdditionalDirs(this.workspace.cwd);
+    const onDisk = await this.localConfig.readAdditionalDirs(this.primary);
     this.projectRoot = onDisk.projectRoot;
     this.configPath = onDisk.configPath;
 
     if (persist) {
-      const resolved = await this.localConfig.resolveAdditionalDirs(this.workspace.cwd, [
+      const resolved = await this.localConfig.resolveAdditionalDirs(this.primary, [
         input.path,
       ]);
       const dir = resolved[0];
@@ -198,7 +198,7 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
         await this.workspaces.update(target.id, {
           additionalDirs: [...target.additionalDirs, dir],
         });
-        await this.reloadFromRegistry();
+        await this.reloadWorkspace(true);
       }
       return {
         projectRoot: onDisk.projectRoot,
@@ -208,7 +208,7 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
       };
     }
 
-    const resolved = await this.localConfig.resolveAdditionalDirs(this.workspace.cwd, [
+    const resolved = await this.localConfig.resolveAdditionalDirs(this.primary, [
       input.path,
     ]);
     const changed = this.unionEphemeral(resolved);
@@ -222,7 +222,7 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
   }
 
   private async reloadFromDisk(): Promise<void> {
-    const onDisk = await this.localConfig.readAdditionalDirs(this.workspace.cwd);
+    const onDisk = await this.localConfig.readAdditionalDirs(this.primary);
     this.projectRoot = onDisk.projectRoot;
     this.configPath = onDisk.configPath;
     if (this.setFileDirs(onDisk.additionalDirs)) this.fireChange();
@@ -250,7 +250,10 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
     const primary: Record<string, string> = {};
     for (const entry of entries) {
       const set = [entry.root, ...entry.additionalDirs];
-      const currentEntry = this.environmentId === LOCAL_ENVIRONMENT_ID && entry.id === this.workspace.workspaceId;
+      const currentEntry =
+        this.followsPrimary &&
+        this.environmentId === LOCAL_ENVIRONMENT_ID &&
+        entry.id === this.workspace.workspaceId;
       if (!currentEntry && !set.some((dir) => workspaceRootKey(dir) === cwdKey)) continue;
       primary[entry.id] = entry.root;
       const primaryKey = workspaceRootKey(entry.root);
@@ -306,16 +309,17 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
       const handle = watchCandidates(this.projectRoot, [this.configPath], {
         ignored: subtreeWatchFilter(this.projectRoot, [this.configPath]),
       });
-      this._register(handle);
-      this._register(
-        handle.onDidChange(() => {
-          this.watchDebounce.cancelAndSet(() => {
-            void this.enqueue(() => this.reloadFromDisk()).catch((error) => {
-              this.log.warn(`local.toml reload failed: ${String(error)}`);
-            });
-          }, WATCH_DEBOUNCE_MS);
-        }),
-      );
+      const subscription = handle.onDidChange(() => {
+        this.watchDebounce.cancelAndSet(() => {
+          void this.enqueue(() => this.reloadFromDisk()).catch((error) => {
+            this.log.warn(`local.toml reload failed: ${String(error)}`);
+          });
+        }, WATCH_DEBOUNCE_MS);
+      });
+      const watchers = new DisposableStore();
+      watchers.add(handle);
+      watchers.add(subscription);
+      this.localConfigWatcher.value = watchers;
     } catch (error) {
       this.log.warn(`cannot watch project-local config ${this.configPath}: ${String(error)}`);
     }

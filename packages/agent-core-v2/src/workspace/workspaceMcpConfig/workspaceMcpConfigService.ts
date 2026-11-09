@@ -106,6 +106,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
       }),
     );
     this._register({ dispose: () => this.projectWatcher?.dispose() });
+    this.primaryReloadTail = this.watchConfigFiles();
     this._register(
       this.dirs.onDidChange(() => {
         this.primaryReloadTail = this.primaryReloadTail.then(
@@ -117,7 +118,6 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
         });
       }),
     );
-    void this.watchConfigFiles();
   }
 
   servers(): Readonly<Record<string, McpServerConfig>> {
