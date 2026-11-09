@@ -290,15 +290,16 @@ describe('transcript projection', () => {
     expect(projections[1]).toMatchObject({ kind: 'single', item: { display: bash } });
   });
 
-  it('keeps web tools as cards in detailed and folds them in compact', () => {
+  it.each(['compact', 'balanced', 'detailed'] as const)('folds web tools with the read-only calls in %s', (toolCallDensity) => {
     const components = [
       tool('WebSearch'),
       tool('Read', { path: '/work/a.ts' }),
       tool('FetchURL'),
     ];
+    const presentation = options({ toolCallDensity });
 
-    expect(project(components).map((item) => item.kind)).toEqual(['single', 'group', 'single']);
-    expect(summary(components, options({ toolCallDensity: 'compact' })).fragments).toEqual([
+    expect(project(components, presentation).map((item) => item.kind)).toEqual(['group']);
+    expect(summary(components, presentation).fragments).toEqual([
       'Read 1 file',
       'fetched 1 page',
       'ran 1 web search',
