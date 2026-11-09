@@ -1600,7 +1600,7 @@ describe('TranscriptRowComponent', () => {
     }
   });
 
-  it('marks a call cut off mid-arguments as failed on its row and leaves its ungrouped card as it was', () => {
+  it('draws the bullet of its ungrouped card on the row of a call cut off mid-arguments', () => {
     chalk.level = 3;
     const cutOff = (toolCallDensity: 'balanced' | 'ungrouped'): string | undefined => {
       const { container } = makeContainer(options({ toolCallDensity }));
@@ -1619,10 +1619,11 @@ describe('TranscriptRowComponent', () => {
       return container.render(80)[1];
     };
 
+    const cardBullet = currentTheme.fg('text', '● ');
     const row = cutOff('balanced') ?? '';
-    expect(row.startsWith(currentTheme.fg('error', '✗ '))).toBe(true);
-    expect(plain([row])).toBe('✗ Bash rm -rf ./dist · interrupted');
-    expect(cutOff('ungrouped')?.startsWith(currentTheme.fg('text', '● '))).toBe(true);
+    expect(plain([row])).toBe('● Bash rm -rf ./dist · interrupted');
+    expect(row.startsWith(cardBullet)).toBe(true);
+    expect(cutOff('ungrouped')?.startsWith(cardBullet)).toBe(true);
   });
 
   it('draws the card bullet on the row of a resumed call that never got a result', () => {

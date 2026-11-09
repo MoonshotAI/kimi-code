@@ -33,7 +33,6 @@ import {
   type TimelineReader,
 } from '#/tui/utils/turn-timeline';
 import { TitleSweep } from './running-title';
-import { failedStatusMarker } from './tool-call';
 import { renderHeaderContent, TruncatedHeaderLine } from './truncated-header-line';
 
 export interface TranscriptGroupModel extends GroupViewInput {
@@ -404,7 +403,7 @@ export class TranscriptRowComponent implements Component {
     ) {
       return previous.lines;
     }
-    const marker = rowMarker(this.item, status);
+    const marker = rowMarker(this.item);
     const indent = ' '.repeat(visibleWidth(marker));
     const columns = Math.max(1, width - indent.length);
     const row = open ? wrappedRow(this.item, status, columns, now) : [rowLine(this.item, status, columns, now)];
@@ -525,10 +524,9 @@ function rowHead(item: LogicalTranscriptItem, status: RowStatus): string {
   return currentTheme.boldFg(status.kind === 'failed' ? 'error' : 'textDim', item.label.rowVerb);
 }
 
-function rowMarker(item: LogicalTranscriptItem, status: RowStatus): string {
+function rowMarker(item: LogicalTranscriptItem): string {
   const { display } = item;
-  if (!hasStatusMarker(display)) return TITLE_INDENT;
-  return status.kind === 'interrupted' ? failedStatusMarker() : display.statusMarker();
+  return hasStatusMarker(display) ? display.statusMarker() : TITLE_INDENT;
 }
 
 function rowLine(item: LogicalTranscriptItem, status: RowStatus, width: number, now: Instant): string {

@@ -796,10 +796,6 @@ class StableSpacer extends Spacer {
   }
 }
 
-export function failedStatusMarker(): string {
-  return currentTheme.fg('error', FAILURE_MARK);
-}
-
 export class ToolCallComponent extends Container {
   private expanded = false;
   private toolCall: ToolCallBlockData;
@@ -1036,10 +1032,10 @@ export class ToolCallComponent extends Container {
   statusMarker(): string {
     const { toolCall, result } = this;
     if (result === undefined) {
-      if (toolCall.truncated === true) return failedStatusMarker();
+      if (toolCall.truncated === true) return currentTheme.fg('error', FAILURE_MARK);
       return currentTheme.fg('text', STATUS_BULLET);
     }
-    if (result.is_error === true) return failedStatusMarker();
+    if (result.is_error === true) return currentTheme.fg('error', FAILURE_MARK);
     if (isGoalToolName(toolCall.name)) return currentTheme.fg('primary', STATUS_BULLET);
     if (toolCall.name === 'WaitFor' && parseWaitForOutput(result.output)?.status === 'timed_out') {
       return currentTheme.fg('warning', STATUS_BULLET);
