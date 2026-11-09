@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { parse } from 'node:path';
 
@@ -69,6 +69,7 @@ const watchMockState = vi.hoisted(() => ({
 vi.mock('#human/utils/watch', async (importOriginal) => {
   const original = await importOriginal<typeof import('#human/utils/watch')>();
   const watch = (path: string, options?: WatchOptions) => {
+    if (watchMockState.useRealWatch) return original.watch(path, options);
     watchMockState.calls.push({ path, options });
     if (watchMockState.factory !== undefined) {
       return watchMockState.factory(path, options) as ReturnType<typeof original.watch>;
@@ -759,6 +760,59 @@ describe('WorkspaceSkillCatalogService', () => {
         host.dispose();
       }
     });
+  });
+
+  it.each([
+    { scenario: 'the root link is repointed', existing: true, subdir: '' },
+    { scenario: 'an ancestor link is repointed', existing: true, subdir: 'skills' },
+    { scenario: 'the root link is created', existing: false, subdir: '' },
+  ])('refreshes the configured catalog when $scenario', async ({ existing, subdir }) => {
+    const workDir = await realpath(await mkdtemp(join(tmpdir(), 'explicit-skill-link-')));
+    const configured = join(workDir, 'configured');
+    const oldTarget = join(workDir, 'original');
+    const newTarget = join(workDir, 'replacement');
+    const stagedLink = join(workDir, 'staged');
+    const writeSkill = async (target: string, name: string, description: string) => {
+      const dir = join(target, subdir, name);
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, 'SKILL.md'), `---\nname: ${name}\ndescription: ${description}\n---\n`);
+    };
+    if (existing) {
+      await writeSkill(oldTarget, 'seed', 'Original target');
+      await symlink(oldTarget, configured, 'junction');
+    }
+    await writeSkill(newTarget, 'seed', 'Replacement target');
+    await symlink(newTarget, stagedLink, 'junction');
+    watchMockState.useRealWatch = true;
+    const { host, workspace } = makeHost(
+      new FileSkillDiscovery(stubLog()),
+      workspaceContextStub(workDir),
+      [],
+      [join(configured, subdir)],
+    );
+
+    try {
+      const catalog = workspace.accessor.get(IWorkspaceSkillCatalog);
+      const watcherScan = existing ? waitForEvents(catalog.onDidChange, 1) : undefined;
+      await catalog.load();
+      await watcherScan;
+      const sessionData = catalog.sessionData();
+      expect(sessionData.catalog.getSkill('seed')?.description).toBe(existing ? 'Original target' : undefined);
+
+      if (existing) await rename(configured, join(workDir, 'retired'));
+      await rename(stagedLink, configured);
+      await expect.poll(() => sessionData.catalog.getSkill('seed')?.description, { timeout: 5000 }).toBe(
+        'Replacement target',
+      );
+
+      await writeSkill(newTarget, 'after-switch', 'Added after the target changed');
+      await expect.poll(() => sessionData.catalog.getSkill('after-switch')?.description, { timeout: 5000 }).toBe(
+        'Added after the target changed',
+      );
+    } finally {
+      host.dispose();
+      await rm(workDir, { recursive: true, force: true });
+    }
   });
 
   it('waits for config ready before loading extra skill dirs', async () => {

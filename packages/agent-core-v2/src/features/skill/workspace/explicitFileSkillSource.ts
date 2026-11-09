@@ -1,7 +1,8 @@
-import { parse } from 'node:path';
+import { realpath } from 'node:fs/promises';
+import { basename, dirname, join, parse, relative } from 'node:path';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import { Disposable } from '#/_base/di/lifecycle';
+import { Disposable, DisposableMap, DisposableStore } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
 import type { ILogService } from '#/_base/log/log';
 import { TimeoutTimer } from '#/_base/utils/timer';
@@ -17,7 +18,7 @@ import {
 } from '#/features/skill/catalog/skillSource';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
-import { isWatchEnabled, watchCandidates } from '#human/utils/watch';
+import { isWatchEnabled, watch, watchCandidates } from '#human/utils/watch';
 
 const WATCH_DEBOUNCE_MS = 200;
 
@@ -37,6 +38,8 @@ export class ExplicitFileSkillSource extends Disposable implements IExplicitFile
   readonly onDidChange: Event<void> = this.onDidChangeEmitter.event;
   private readonly watchDebounce = this._register(new TimeoutTimer());
   private readonly watchRegistered: Promise<void>;
+  private readonly watches = this._register(new DisposableMap<string, DisposableStore>());
+  private watchRevision = 0;
 
   constructor(
     @ISkillDiscovery private readonly discovery: ISkillDiscovery,
@@ -62,36 +65,100 @@ export class ExplicitFileSkillSource extends Disposable implements IExplicitFile
   }
 
   private async watchSkillRoots(dirs: readonly string[]): Promise<void> {
+    if (!isWatchEnabled()) return;
     const candidates = await configuredRootCandidates(dirs, this.workspace.cwd, this.bootstrap.osHomeDir, this.fs);
-    const paths = await Promise.all(candidates.map((path) => this.fs?.realpath(path).catch(() => path) ?? path));
-    if (this._store.isDisposed || !isWatchEnabled()) return;
-    const invalidate = () => {
-      if (this._store.isDisposed) return;
-      this.watchDebounce.cancelAndSet(() => {
-        this.onDidChangeEmitter.fire();
-      }, WATCH_DEBOUNCE_MS);
+    await this.updateWatches(candidates);
+  }
+
+  private async updateWatches(candidates: readonly string[]): Promise<void> {
+    if (this._store.isDisposed) return;
+    const revision = ++this.watchRevision;
+    const resolved = new Map<string, Promise<string | undefined>>();
+    const resolve = (path: string) => {
+      let pending = resolved.get(path);
+      if (pending === undefined) {
+        pending = (this.fs?.realpath(path) ?? realpath(path)).catch(() => undefined);
+        resolved.set(path, pending);
+      }
+      return pending;
     };
-    for (const path of new Set(paths)) {
-      const logFailure = (error: unknown) => {
-        if (this._store.isDisposed) return;
-        this.log?.warn(`explicit skill watcher failed for ${path}: ${String(error)}`);
-      };
-      try {
-        const root = parse(path).root;
-        const handle = this._register(watchCandidates(root, [path], {
-          ignored: subtreeWatchFilter(root, [path.replace(/[\\/]+$/, '')], {
-            maxDepth: MAX_SKILL_SCAN_DEPTH + 2,
-            skipEntry: isSkillScanExcludedEntry,
-            keepEntryFile: 'SKILL.md',
-          }),
-          signal: true,
-        }));
-        this._register(handle.onDidChange(invalidate));
-        void handle.ready.then(invalidate, logFailure);
-      } catch (error) {
-        logFailure(error);
+    const plan = new Map<string, { path: string; entry?: string }>();
+    for (const candidate of candidates) {
+      const target = await resolve(candidate);
+      if (target !== undefined) plan.set(`target:${target}`, { path: target });
+      for (let entry = candidate; dirname(entry) !== entry; entry = dirname(entry)) {
+        const parent = await resolve(dirname(entry));
+        if (parent === undefined) continue;
+        const entryPath = join(parent, basename(entry));
+        const resolvedEntry = await resolve(entry);
+        if (entry === candidate || resolvedEntry === undefined || relative(entryPath, resolvedEntry) !== '') {
+          plan.set(`entry:${entryPath}`, { path: parent, entry: entryPath });
+        }
       }
     }
+    if (this._store.isDisposed || revision !== this.watchRevision) return;
+    const refresh = () => this.updateWatches(candidates);
+    for (const [key, { path, entry }] of plan) {
+      if (this.watches.has(key)) continue;
+      const resources = this.addWatch(path, entry, refresh);
+      if (resources !== undefined) this.watches.set(key, resources);
+    }
+    for (const key of this.watches.keys()) {
+      if (plan.has(key)) continue;
+      this.watches.deleteAndDispose(key);
+      this.invalidate();
+    }
+  }
+
+  private addWatch(
+    path: string,
+    entry: string | undefined,
+    refresh: () => Promise<void>,
+  ): DisposableStore | undefined {
+    const logFailure = (error: unknown) => {
+      if (!this._store.isDisposed) {
+        this.log?.warn(`explicit skill watcher failed for ${entry ?? path}: ${String(error)}`);
+      }
+    };
+    const resources = new DisposableStore();
+    try {
+      const root = parse(path).root;
+      const handle = resources.add(entry === undefined
+        ? watchCandidates(root, [path], {
+            ignored: subtreeWatchFilter(root, [path.replace(/[\\/]+$/, '')], {
+              maxDepth: MAX_SKILL_SCAN_DEPTH + 2,
+              skipEntry: isSkillScanExcludedEntry,
+              keepEntryFile: 'SKILL.md',
+            }),
+            signal: true,
+          })
+        : watch(path, {
+            ignored: (changed) => relative(path, changed) !== '' && relative(entry, changed) !== '',
+            listing: false,
+            recursive: false,
+          }));
+      resources.add(handle.onDidChange(() => {
+        if (entry !== undefined) void refresh();
+        this.invalidate();
+      }));
+      void handle.ready.then(() => {
+        if (resources.isDisposed) return;
+        if (entry === undefined) this.invalidate();
+        else void refresh();
+      }, logFailure);
+      return resources;
+    } catch (error) {
+      resources.dispose();
+      logFailure(error);
+      return undefined;
+    }
+  }
+
+  private invalidate(): void {
+    if (this._store.isDisposed) return;
+    this.watchDebounce.cancelAndSet(() => {
+      this.onDidChangeEmitter.fire();
+    }, WATCH_DEBOUNCE_MS);
   }
 }
 
