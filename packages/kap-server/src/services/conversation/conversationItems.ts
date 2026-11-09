@@ -43,8 +43,7 @@ const CLIENT_SUBMITTED_ORIGINS: ReadonlySet<UserMessageOrigin['kind']> = new Set
 const EXIT_PLAN_MODE = 'ExitPlanMode';
 const PLAN_SAVED_TO_MARKER = 'Plan saved to: ';
 const PLAN_BODY_MARKERS = ['## Approved Plan:\n', '## Plan (auto-approved, not user-reviewed):\n'];
-const CRON_PROMPT_OPEN = '<prompt>\n';
-const CRON_PROMPT_CLOSE = '\n</prompt>';
+const CRON_FIRE_ENVELOPE = /^<cron-fire [^\n]*>\n<prompt>\n([\s\S]*)\n<\/prompt>\n<\/cron-fire>$/;
 const ATTACHED_FILE_NOTICE = /^Attached file "(.+)" \((.+), (\d+) bytes\): (.+) — open it with the Read tool$/s;
 const FILE_ID = String.raw`f_(?:[0-9A-Za-z]{26}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})`;
 const UPLOADED_FILE_PATH = new RegExp(String.raw`(?:^|[\\/])(${FILE_ID})-[^\\/]*$`);
@@ -326,10 +325,7 @@ export function mediaTypeOf(url: string): string | undefined {
 }
 
 function cronPromptOf(text: string): string {
-  const start = text.indexOf(CRON_PROMPT_OPEN);
-  const end = text.lastIndexOf(CRON_PROMPT_CLOSE);
-  if (start === -1 || end < start + CRON_PROMPT_OPEN.length) return text;
-  return text.slice(start + CRON_PROMPT_OPEN.length, end);
+  return CRON_FIRE_ENVELOPE.exec(text)?.[1] ?? text;
 }
 
 function originOf(origin: PromptOrigin | undefined): UserMessageOrigin {
