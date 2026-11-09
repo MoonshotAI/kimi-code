@@ -4323,6 +4323,9 @@ export class KimiTUI {
       this.state.transcriptContainer.removeChild(child);
       if (hasDispose(child)) child.dispose();
     }
+    this.streamingUI.timeline.forget(
+      componentsToRemove.flatMap((child) => (child instanceof ToolCallComponent ? [child.toolCallView.id] : [])),
+    );
 
     this.state.transcriptEntries = this.state.transcriptEntries.filter((e) => !toRemove.has(e));
     return true;

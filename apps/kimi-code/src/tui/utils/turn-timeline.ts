@@ -280,6 +280,10 @@ export class TurnTimeline implements TimelineReader {
     this.settleOutput(this.clock(), (call) => call.exec === undefined);
   }
 
+  forget(ids: Iterable<string>): void {
+    for (const id of ids) if (isToolCallId(id)) this.calls.delete(id);
+  }
+
   reset(): void {
     this.calls.clear();
     this.turnCalls = [];

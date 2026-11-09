@@ -89,6 +89,7 @@ import {
 } from '#/tui/commands/prompts';
 import { isPromptQueuedMessage, type InlineSkillActivation, type QueuedMessage, type TranscriptEntry } from '#/tui/types';
 import type { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
+import { TRANSCRIPT_HYSTERESIS, TRANSCRIPT_MAX_TURNS } from '#/tui/utils/transcript-window';
 import { isToolCallId, monotonicNow, phaseAt, TurnTimeline } from '#/tui/utils/turn-timeline';
 import {
   extractMediaAttachments,
@@ -4042,6 +4043,27 @@ command = "vim"
 
     emit({ type: 'turn.ended', reason: 'completed' });
     expect(timeline.turn()).toMatchObject({ kind: 'ended', start: sent?.start });
+  });
+
+  it('forgets the calls of turns the transcript window drops', async () => {
+    const { driver } = await makeDriver();
+    const emit = (event: Record<string, unknown>): void => {
+      driver.sessionEventHandler.handleEvent({ agentId: 'main', sessionId: 'ses-1', ...event } as Event, () => {});
+    };
+    const facts = (id: string) => (isToolCallId(id) ? driver.streamingUI.timeline.call(id) : undefined);
+    const turns = TRANSCRIPT_MAX_TURNS + TRANSCRIPT_HYSTERESIS + 1;
+    for (let turnId = 1; turnId <= turns; turnId++) {
+      driver.appendTranscriptEntry({ id: `user-${turnId}`, kind: 'user', renderMode: 'plain', content: `question ${turnId}` });
+      emit({ type: 'turn.started', turnId, origin: { kind: 'user' } });
+      emit({ type: 'tool.call.started', turnId, toolCallId: `call_${turnId}`, name: 'Bash', args: { command: 'echo ok' } });
+      emit({ type: 'tool.result', turnId, toolCallId: `call_${turnId}`, output: 'ok' });
+      driver.appendTranscriptEntry({ id: `answer-${turnId}`, kind: 'assistant', turnId: String(turnId), renderMode: 'markdown', content: `answer ${turnId}` });
+      emit({ type: 'turn.ended', turnId, reason: 'completed' });
+    }
+
+    expect(driver.state.transcriptEntries.some((entry) => entry.content === 'question 1')).toBe(false);
+    expect(facts('call_1')).toBeUndefined();
+    expect(facts(`call_${turns}`)?.settle?.kind).toBe('result');
   });
 
   it.each(['new', 'switch'] as const)('forgets recorded turns when the session changes (%s)', async (action) => {
