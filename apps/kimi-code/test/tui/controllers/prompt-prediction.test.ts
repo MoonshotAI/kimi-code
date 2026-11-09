@@ -103,6 +103,19 @@ describe('PromptPredictionController', () => {
     expect(editor.getPromptPrediction()).toBeUndefined();
     expect(track).toHaveBeenCalledWith('prediction_dismissed', expect.objectContaining({ reason: 'plan' }));
 
+    state.appState.planMode = false;
+    nextPrediction = () => Promise.resolve('clear this accepted suggestion');
+    controller.handleTurnEnded(turnEnded(12));
+    await vi.waitFor(() => expect(editor.getPromptPrediction()).toBeDefined());
+    expect(controller.handlePreInput('\t')).toBe(true);
+    editor.setText('');
+    editor.handleInput('\r');
+    expect(track.mock.calls.filter(([event]) => event === 'prediction_submitted')).toHaveLength(2);
+    expect(track).toHaveBeenCalledWith('prediction_dismissed', expect.objectContaining({
+      reason: 'submit',
+      accepted: true,
+    }));
+
     for (const [, properties] of track.mock.calls) {
       expect(properties).not.toHaveProperty('text');
       expect(properties).not.toHaveProperty('prediction');

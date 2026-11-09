@@ -119,7 +119,7 @@ export class PromptPredictionController {
   handleSubmit(text: string): void {
     const suggestion = this.suggestion;
     if (suggestion !== undefined) {
-      if (suggestion.accepted) {
+      if (suggestion.accepted && text.trim().length > 0) {
         this.host.track('prediction_submitted', {
           prediction_id: suggestion.predictionId,
           turn_id: suggestion.turnId,
