@@ -421,6 +421,23 @@ describe('AgentPermissionGate', () => {
     );
   });
 
+  it('asks when Auto Review is disabled while a review is pending', async () => {
+    reviewModeApprovals();
+    review.mockImplementation(async () => {
+      autoReviewEnabled = false;
+      return autoReviewResult;
+    });
+    make();
+
+    await executorEvents.fireBeforeExecute(makeContext('Bash'));
+
+    expect(resolvePermissionResolution).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'ask' }),
+      expect.anything(),
+      'auto-review',
+    );
+  });
+
   it('does not consult the reviewer after a static denial', async () => {
     autoReviewEnabled = true;
     policyResult = { policyName: 'user-configured-deny', result: { kind: 'deny', message: 'nope' } };

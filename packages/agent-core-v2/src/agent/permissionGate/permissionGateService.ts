@@ -57,7 +57,7 @@ export class AgentPermissionGate extends Service implements IAgentPermissionGate
           event,
           evaluation,
           review,
-          this.modeService.mode,
+          this.flags.enabled(AUTO_REVIEW_FLAG_ID) ? this.modeService.mode : 'manual',
         );
         this.trackPolicyDecision(event, resolved);
         return this.toolApproval.resolvePermissionResolution(

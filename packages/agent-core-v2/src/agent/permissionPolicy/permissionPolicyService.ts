@@ -60,14 +60,24 @@ export class AgentPermissionPolicyService
     ];
   }
 
-  evaluate(
+  async evaluate(
     context: ResolvedToolExecutionHookContext,
   ): Promise<PermissionPolicyEvaluation | undefined> {
-    const reviewing = this.flags.enabled(AUTO_REVIEW_FLAG_ID) && this.modes.mode !== 'manual';
-    return evaluatePolicies(this.policies, context, {
-      reviewing,
-      skipDangerousCommand: reviewing && this.modes.mode === 'yolo',
-    });
+    for (;;) {
+      const mode = this.modes.mode;
+      const reviewing = this.flags.enabled(AUTO_REVIEW_FLAG_ID) && mode !== 'manual';
+      const evaluation = await evaluatePolicies(this.policies, context, {
+        reviewing,
+        skipDangerousCommand: reviewing && mode === 'yolo',
+      });
+      const currentMode = this.modes.mode;
+      if (
+        currentMode === mode &&
+        (this.flags.enabled(AUTO_REVIEW_FLAG_ID) && currentMode !== 'manual') === reviewing
+      ) {
+        return evaluation;
+      }
+    }
   }
 }
 
