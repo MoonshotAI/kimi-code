@@ -62,6 +62,7 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
     @ILogService private readonly log: ILogService,
     @IWorkspaceStateService private readonly states: IWorkspaceStateService,
     private readonly environmentId = LOCAL_ENVIRONMENT_ID,
+    private readonly followsPrimary = environmentId === LOCAL_ENVIRONMENT_ID,
   ) {
     this.states.contributeState(workspaceDirsFileDirsKey);
     this.states.contributeState(workspaceDirsEphemeralDirsKey);
@@ -124,7 +125,7 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
   }
 
   get primary(): string {
-    if (this.environmentId !== LOCAL_ENVIRONMENT_ID) return this.workspace.cwd;
+    if (this.environmentId !== LOCAL_ENVIRONMENT_ID || !this.followsPrimary) return this.workspace.cwd;
     return this.primaryByWorkspace[this.workspace.workspaceId] ?? this.workspace.meta.root;
   }
 
@@ -249,13 +250,15 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
     const primary: Record<string, string> = {};
     for (const entry of entries) {
       const set = [entry.root, ...entry.additionalDirs];
-      const current = this.environmentId === LOCAL_ENVIRONMENT_ID && entry.id === this.workspace.workspaceId;
-      if (!current && !set.some((dir) => workspaceRootKey(dir) === cwdKey)) continue;
+      const currentEntry = this.environmentId === LOCAL_ENVIRONMENT_ID && entry.id === this.workspace.workspaceId;
+      if (!currentEntry && !set.some((dir) => workspaceRootKey(dir) === cwdKey)) continue;
       primary[entry.id] = entry.root;
       const primaryKey = workspaceRootKey(entry.root);
       for (const dir of set) {
-        if (workspaceRootKey(dir) === primaryKey) continue;
-        if (dirs.some((kept) => workspaceRootKey(kept) === workspaceRootKey(dir))) continue;
+        const key = workspaceRootKey(dir);
+        if (this.followsPrimary && currentEntry && key === primaryKey) continue;
+        if ((!this.followsPrimary || !currentEntry) && key === cwdKey) continue;
+        if (dirs.some((kept) => workspaceRootKey(kept) === key)) continue;
         dirs.push(dir);
       }
     }

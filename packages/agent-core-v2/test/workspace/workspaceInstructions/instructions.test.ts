@@ -11,6 +11,7 @@ import { Emitter } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
+import { loadAgentsMdForRoots } from '#/agent/profile/context';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
@@ -42,6 +43,11 @@ vi.mock('#human/utils/watch', () => {
   };
 });
 
+vi.mock('#/agent/profile/context', async (importOriginal) => {
+  const original = await importOriginal<typeof import('#/agent/profile/context')>();
+  return { ...original, loadAgentsMdForRoots: vi.fn(original.loadAgentsMdForRoots) };
+});
+
 describe('WorkspaceInstructionsService', () => {
   let workDir: string;
   let osHomeDir: string;
@@ -53,6 +59,7 @@ describe('WorkspaceInstructionsService', () => {
     osHomeDir = mkdtempSync(join(tmpdir(), 'kimi-instructions-os-'));
     brandHomeDir = mkdtempSync(join(tmpdir(), 'kimi-instructions-brand-'));
     disposables = new DisposableStore();
+    vi.mocked(loadAgentsMdForRoots).mockClear();
     watchFires.clear();
   });
 
@@ -248,6 +255,39 @@ describe('WorkspaceInstructionsService', () => {
       expect(service.snapshot.agentsMd).not.toContain('old primary');
       expect([...watchFires.keys()].some((root) => root === otherDir || root.startsWith(`${otherDir}/`))).toBe(true);
     } finally {
+      await rm(otherDir, { recursive: true, force: true });
+    }
+  });
+
+  it('queues another reload when primary changes during an in-flight load', async () => {
+    const otherDir = mkdtempSync(join(tmpdir(), 'kimi-instructions-other-'));
+    const actualLoad = vi.mocked(loadAgentsMdForRoots).getMockImplementation()!;
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const roots: string[] = [];
+    vi.mocked(loadAgentsMdForRoots).mockImplementation(async (...args) => {
+      roots.push(args[2][0]!);
+      if (roots.length === 1) await gate;
+      return actualLoad(...args);
+    });
+    try {
+      await writeFile(join(workDir, 'AGENTS.md'), 'old primary', 'utf8');
+      await writeFile(join(otherDir, 'AGENTS.md'), 'new primary', 'utf8');
+      const { service, dirs, dirsChange } = createService();
+      await vi.waitFor(() => {
+        expect(roots).toHaveLength(1);
+      });
+
+      dirs.primary = otherDir;
+      dirsChange.fire();
+      release();
+      await vi.waitFor(() => {
+        expect(service.snapshot.agentsMd).toContain('new primary');
+      });
+      expect(service.snapshot.agentsMd).not.toContain('old primary');
+      expect(roots).toEqual([workDir, otherDir]);
+    } finally {
+      release();
       await rm(otherDir, { recursive: true, force: true });
     }
   });

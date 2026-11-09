@@ -34,7 +34,7 @@ export interface ProgramSessionControllerInput {
   readonly userAgentProfiles: IUserAgentProfileLoader;
   readonly pluginAgentProfiles: IPluginAgentProfileLoader;
   readonly mcp: IWorkspaceMcpService;
-  readonly acquireWorkdir: (environmentId: string, cwd: string) => Promise<ProgramWorkdir>;
+  readonly acquireWorkdir: (environmentId: string, cwd: string, followsPrimary?: boolean) => Promise<ProgramWorkdir>;
   readonly onDispose: () => void;
 }
 

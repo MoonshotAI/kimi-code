@@ -206,7 +206,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @IModelService private readonly models: IModelService,
     @IProviderService private readonly providers: IProviderService,
     private readonly environments: IEnvironmentService,
-    private readonly acquireWorkdir: (environmentId: string, cwd: string) => Promise<ProgramWorkdir>,
+    private readonly acquireWorkdir: (environmentId: string, cwd: string, followsPrimary?: boolean) => Promise<ProgramWorkdir>,
     onDispose?: () => void,
   ) {
     super();
@@ -383,10 +383,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 
   private sessionWorkDir(fallbackCwd: string, environment: EnvironmentBinding | undefined): string {
+    if (environment !== undefined && environment.environmentId !== LOCAL_ENVIRONMENT_ID) return fallbackCwd;
     const primary = this.workspaceContext.meta.root;
     return resolveEffectiveWorkspaceRoots(
       { workspaceId: this.workspaceId, cwd: fallbackCwd },
-      environment?.environmentId === LOCAL_ENVIRONMENT_ID ? environment : undefined,
+      environment,
       { primaryByWorkspace: { [this.workspaceId]: primary }, additionalDirs: [] },
     ).workDir;
   }
@@ -395,7 +396,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     environment: (EnvironmentBinding & { readonly cwd: string }) | undefined,
     workDir: string,
   ): Promise<ProgramWorkdir> {
-    if (environment === undefined) return this.acquireWorkdir(LOCAL_ENVIRONMENT_ID, workDir);
+    if (environment === undefined) return this.acquireWorkdir(LOCAL_ENVIRONMENT_ID, workDir, true);
     const { environmentId, cwd } = environment;
     let lease: EnvironmentLease;
     try {
@@ -421,7 +422,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     } finally {
       lease.dispose();
     }
-    return this.acquireWorkdir(environmentId, cwd);
+    return this.acquireWorkdir(environmentId, cwd, false);
   }
 
   private async appendSessionIndexEntry(sessionId: string, workDir: string): Promise<void> {

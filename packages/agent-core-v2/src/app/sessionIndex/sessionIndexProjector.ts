@@ -61,6 +61,7 @@ export interface AuthoritativeScan {
   readonly counts: Map<string, { active: number; archived: number }>;
   readonly sourceSessionCount: number;
   readonly workspaceSignals?: Record<string, number>;
+  readonly primaryByWorkspace: Readonly<Record<string, string>>;
 }
 
 interface ScanSlot {
@@ -127,7 +128,7 @@ export class SessionIndexProjector {
       field: `custom.${PARENT_SESSION_ID_KEY}`,
     });
 
-    const { summaries, counts, sourceSessionCount, workspaceSignals } = await scan;
+    const { summaries, counts, sourceSessionCount, workspaceSignals, primaryByWorkspace } = await scan;
     await this.batchChunks(
       summaries.map((summary) => ({
         kind: 'put' as const,
@@ -145,6 +146,7 @@ export class SessionIndexProjector {
         sourceSessionCount,
         schemaVersion: SESSION_INDEX_SCHEMA_VERSION,
         workspaceSignals,
+        workspacePrimaries: primaryByWorkspace,
       },
       epoch,
     );
@@ -285,6 +287,7 @@ export class SessionIndexProjector {
           sourceSessionCount: authoritative.size,
           schemaVersion: SESSION_INDEX_SCHEMA_VERSION,
           workspaceSignals: signalsComplete ? workspaceSignals : undefined,
+          workspacePrimaries: await this.deps.primaryByWorkspace(),
         },
         epoch,
       );
@@ -372,6 +375,7 @@ export class SessionIndexProjector {
       counts,
       sourceSessionCount,
       workspaceSignals: signalsComplete ? workspaceSignals : undefined,
+      primaryByWorkspace,
     };
   }
 

@@ -79,6 +79,7 @@ describe('WorkspaceDirsService (registry source)', () => {
     workspaceId: string,
     kind: 'managed' | 'implicit' = 'implicit',
     environmentId = 'local',
+    followsPrimary = environmentId === 'local',
   ): WorkspaceDirsService {
     const bootstrap = stubBootstrap(homeDir);
     const hostFs = new HostFileSystem();
@@ -99,11 +100,12 @@ describe('WorkspaceDirsService (registry source)', () => {
         noopLog,
         new WorkspaceStateService(),
         environmentId,
+        followsPrimary,
       ),
     );
   }
 
-  it('injects the registry dir set minus primary for both primary and member scopes', async () => {
+  it('keeps the current primary for managed scopes and the associated primary for member scopes', async () => {
     const project = await workspaces.create({ root: dirA, additionalDirs: [dirB], name: 'proj' });
 
     const primary = createDirs(dirA, project.id, 'managed');
@@ -113,7 +115,7 @@ describe('WorkspaceDirsService (registry source)', () => {
 
     const member = createDirs(dirB, 'wd_other_000000000000');
     await member.ready;
-    expect(member.additionalDirs).toEqual([dirB]);
+    expect(member.additionalDirs).toEqual([dirA]);
     expect(member.sessionInfo().primaryByWorkspace).toEqual({ [project.id]: dirA });
 
     const outsider = createDirs(dirC, 'wd_else_000000000000');
@@ -311,8 +313,10 @@ describe('WorkspaceDirsService (registry source)', () => {
       name: 'proj',
     });
     const dirs = createDirs(dirB, 'wd_member_000000000000');
-    await dirs.ready;
-    expect(dirs.additionalDirs).toEqual([dirB]);
+    const oldPrimaryMember = createDirs(dirA, 'wd_old_member_000000000');
+    await Promise.all([dirs.ready, oldPrimaryMember.ready]);
+    expect(dirs.additionalDirs).toEqual([dirA]);
+    expect(oldPrimaryMember.additionalDirs).toEqual([dirB]);
     expect(dirs.sessionInfo().primaryByWorkspace).toEqual({ [project.id]: dirA });
     let fired = 0;
     dirs.onDidChange(() => {
@@ -325,9 +329,30 @@ describe('WorkspaceDirsService (registry source)', () => {
     });
 
     expect(dirs.additionalDirs).toEqual([dirA]);
+    expect(oldPrimaryMember.additionalDirs).toEqual([dirB]);
     expect(fired).toBe(1);
     await dirs.reload();
     expect(fired).toBe(1);
+  });
+
+  it('pins explicit local roots without losing access to the managed primary', async () => {
+    const project = await workspaces.create({ root: dirA, additionalDirs: [dirB], name: 'proj' });
+    const pinned = createDirs(dirC, project.id, 'managed', 'local', false);
+    const following = createDirs(dirC, project.id, 'managed', 'local', true);
+    await Promise.all([pinned.ready, following.ready]);
+
+    expect(pinned.primary).toBe(dirC);
+    expect(pinned.additionalDirs).toEqual([dirA, dirB]);
+    expect(following.primary).toBe(dirA);
+    expect(following.additionalDirs).toEqual([dirB]);
+
+    await workspaces.setPrimary(project.id, dirB);
+    await vi.waitFor(() => {
+      expect(following.primary).toBe(dirB);
+    });
+    expect(pinned.primary).toBe(dirC);
+    expect(pinned.additionalDirs).toEqual([dirB, dirA]);
+    expect(following.additionalDirs).toEqual([dirA]);
   });
 
   it('keeps the complete directory set when the primary changes from the original cwd', async () => {

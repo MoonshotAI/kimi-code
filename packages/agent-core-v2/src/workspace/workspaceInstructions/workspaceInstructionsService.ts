@@ -38,6 +38,7 @@ export class WorkspaceInstructionsService
   private readonly dirsReloadDebounce = this._register(new TimeoutTimer());
   private reloadTail: Promise<void> = Promise.resolve();
   private reloading: Promise<void> | undefined;
+  private reloadRequested = false;
   private loaded = false;
   private readonly pendingChanges = new Map<string, WatchChange>();
   private watchers: DisposableStore | undefined;
@@ -80,31 +81,15 @@ export class WorkspaceInstructionsService
   }
 
   reload(): Promise<void> {
-    if (this.reloading !== undefined) return this.reloading;
+    if (this.reloading !== undefined) {
+      this.reloadRequested = true;
+      return this.reloading;
+    }
     const tail = this.reloadTail.catch(() => undefined).then(async () => {
-      const result = await loadAgentsMdForRoots(
-        { fs: this.fs, homeDir: this.env.homeDir },
-        this.bootstrap.homeDir,
-        [this.dirs.primary],
-        this.personalFs,
-      );
-      const next: WorkspaceInstructionsSnapshot = {
-        agentsMd: result.content,
-        agentsMdWarning: result.warning,
-        agentsMdPaths: result.paths,
-      };
-      const changed =
-        next.agentsMd !== this.current.agentsMd ||
-        next.agentsMdWarning !== this.current.agentsMdWarning;
-      this.current = next;
-      await this.refreshWatchers();
-      const changes = [...this.pendingChanges.values()];
-      this.pendingChanges.clear();
-      const loaded = this.loaded;
-      this.loaded = true;
-      if (changed && loaded) {
-        this.onDidChangeEmitter.fire(changes);
-      }
+      do {
+        this.reloadRequested = false;
+        await this.reloadNow();
+      } while (this.reloadRequested);
     });
     this.reloading = tail;
     this.reloadTail = tail;
@@ -117,6 +102,32 @@ export class WorkspaceInstructionsService
       },
     );
     return tail;
+  }
+
+  private async reloadNow(): Promise<void> {
+    const result = await loadAgentsMdForRoots(
+      { fs: this.fs, homeDir: this.env.homeDir },
+      this.bootstrap.homeDir,
+      [this.dirs.primary],
+      this.personalFs,
+    );
+    const next: WorkspaceInstructionsSnapshot = {
+      agentsMd: result.content,
+      agentsMdWarning: result.warning,
+      agentsMdPaths: result.paths,
+    };
+    const changed =
+      next.agentsMd !== this.current.agentsMd ||
+      next.agentsMdWarning !== this.current.agentsMdWarning;
+    this.current = next;
+    await this.refreshWatchers();
+    const changes = [...this.pendingChanges.values()];
+    this.pendingChanges.clear();
+    const loaded = this.loaded;
+    this.loaded = true;
+    if (changed && loaded) {
+      this.onDidChangeEmitter.fire(changes);
+    }
   }
 
   sessionProvider(): ISessionInstructionsProvider {

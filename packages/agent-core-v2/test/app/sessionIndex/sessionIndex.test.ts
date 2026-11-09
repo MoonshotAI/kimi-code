@@ -2,8 +2,9 @@ import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { Emitter } from '#/_base/event';
 import { LifecycleScope } from '#/app/scopes';
 import {
   ScopeActivation,
@@ -17,6 +18,8 @@ import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
+import { IWorkspaceService, type Workspace } from '#/app/workspace/workspace';
+import { IWorkspacePersistence } from '#/app/workspace/workspacePersistence';
 import {
   ISessionIndex,
   ISessionIndexMirror,
@@ -412,6 +415,7 @@ describe('FileSessionIndex (read model)', () => {
 
   function build(
     fileStorage: FileStorageService = new FileStorageService(homeDir),
+    primary?: { service: IWorkspaceService; persistence: IWorkspacePersistence },
   ): FileSessionIndex {
     const host = createScopedTestHost([
       stubPair(IFileSystemStorageService, fileStorage),
@@ -420,6 +424,10 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(ILogService, stubLog()),
       stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
       stubPair(ITelemetryService, noopTelemetryService),
+      ...(primary === undefined ? [] : [
+        stubPair(IWorkspaceService, primary.service),
+        stubPair(IWorkspacePersistence, primary.persistence),
+      ]),
     ]);
     disposeHost = () => {
       host.dispose();
@@ -464,6 +472,46 @@ describe('FileSessionIndex (read model)', () => {
     } while (cursor !== undefined);
     return ids;
   }
+
+  it('reprojects closed sessions on primary changes and detects stale primaries after restart', async () => {
+    const changes = new Emitter<void>();
+    const workspace: Workspace = {
+      id: workspaceId,
+      root: '/old',
+      name: 'project',
+      kind: 'managed',
+      additionalDirs: [],
+      createdAt: 0,
+      lastOpenedAt: 0,
+    };
+    let primary = workspace.root;
+    const service = { list: async () => [{ ...workspace, root: primary }] } as unknown as IWorkspaceService;
+    const persistence = { onDidChange: changes.event } as IWorkspacePersistence;
+    const storage = new FileStorageService(homeDir);
+    await seedSession('closed', { cwd: '/old', createdAt: 1, updatedAt: 2 });
+    const store = build(storage, { service, persistence });
+    await store.prepare();
+    expect((await store.get('closed'))?.cwd).toBe('/old');
+
+    primary = '/new';
+    changes.fire();
+    await vi.waitFor(async () => {
+      expect((await store.get('closed'))?.cwd).toBe('/new');
+    });
+    expect((await store.get('closed'))?.updatedAt).toBe(2);
+
+    disposeHost?.();
+    disposeHost = undefined;
+    await drainSessionIndexMirror();
+    await drainQueryStoreDisposals();
+    primary = '/after-restart';
+    const restarted = build(storage, { service, persistence });
+    await restarted.prepare();
+    expect((await restarted.get('closed'))?.cwd).toBe('/after-restart');
+    expect((await restarted.get('closed'))?.updatedAt).toBe(2);
+    const persisted = await fsp.readFile(join(sessionsDir, workspaceId, 'closed', 'session-meta', 'state.json'), 'utf8');
+    expect(JSON.parse(persisted).cwd).toBe('/old');
+  });
 
   class CountingStorage extends FileStorageService {
     listCalls = 0;
