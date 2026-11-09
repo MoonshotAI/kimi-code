@@ -15,8 +15,12 @@ import type {
   ExtensionConfig,
   WorkspaceStatus,
   LoginStatus,
+  PlanUsageResult,
+  PanelSessionTarget,
   UIStreamEvent,
 } from "shared/types";
+
+export type { PlanUsageResult } from "shared/types";
 
 interface PendingRequest {
   resolve: (value: unknown) => void;
@@ -43,7 +47,8 @@ class Bridge {
   private webviewId: string;
 
   constructor() {
-    this.webviewId = document.body.getAttribute("data-webviewid") || `unknown_${Date.now()}`;
+    const body = typeof document === "undefined" ? undefined : document.body;
+    this.webviewId = body?.dataset.webviewid ?? `unknown_${Date.now()}`;
 
     if (typeof acquireVsCodeApi === "function") {
       this.vscode = acquireVsCodeApi();
@@ -126,6 +131,10 @@ class Bridge {
     return this.call<LoginStatus>(Methods.CheckLoginStatus);
   }
 
+  getPlanUsage(provider: "managed:kimi-code", force = false) {
+    return this.call<PlanUsageResult>(Methods.GetPlanUsage, { provider, force });
+  }
+
   login() {
     return this.call<LoginResult>(Methods.Login, undefined, OAUTH_REQUEST_TIMEOUT_MS);
   }
@@ -148,6 +157,18 @@ class Bridge {
 
   openFolder() {
     return this.call<{ ok: boolean }>(Methods.OpenFolder);
+  }
+
+  openNewSessionTab(target?: PanelSessionTarget) {
+    return this.call<{ ok: boolean }>(Methods.OpenNewSessionTab, target);
+  }
+
+  getPanelSessionTarget() {
+    return this.call<PanelSessionTarget | null>(Methods.GetPanelSessionTarget);
+  }
+
+  markViewActive() {
+    return this.call<{ ok: boolean }>(Methods.MarkViewActive);
   }
 
   getModels() {

@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 
 import { Events } from "../shared/bridge";
+import type { PanelSessionTarget } from "../shared/types";
 import { KimiWebviewProvider } from "./KimiWebviewProvider";
 import { onSettingsChange, VSCodeSettings } from "./config/vscode-settings";
 import {
@@ -88,22 +89,26 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     return migrationInFlight;
   };
 
-  const commands: Record<string, () => void | Promise<void>> = {
+  const commands: Record<string, (target?: PanelSessionTarget) => void | Promise<void>> = {
     "kimi.clearAllState": async () => {
       await context.globalState.update("kimi.config", undefined);
       await context.globalState.update("kimi.mcpServers", undefined);
       await context.workspaceState.update("kimi.mcpEnabled", undefined);
       await vscode.window.showInformationMessage("Kimi: Extension UI state cleared.");
     },
-    "kimi.openInTab": () => {
-      provider?.createPanel();
+    "kimi.openInTab": (target?: PanelSessionTarget) => {
+      provider?.createPanel(target);
     },
     "kimi.openInSideBar": async () => {
       await vscode.commands.executeCommand("kimi.webview.focus");
+      provider?.activateSidebar();
     },
     "kimi.focusInput": async () => {
-      await vscode.commands.executeCommand("kimi.webview.focus");
-      provider?.broadcast(Events.FocusInput, {});
+      if (!provider?.broadcastToActive(Events.FocusInput, {})) {
+        await vscode.commands.executeCommand("kimi.webview.focus");
+        provider?.activateSidebar();
+        provider?.broadcastToActive(Events.FocusInput, {});
+      }
     },
     "kimi.insertMention": async () => {
       const editor = vscode.window.activeTextEditor;
@@ -111,14 +116,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         await vscode.window.showWarningMessage("No active editor");
         return;
       }
-      await vscode.commands.executeCommand("kimi.webview.focus");
       if (!(await provider?.insertEditorMention(editor.document.uri, editor.selection))) {
         await vscode.window.showWarningMessage("The active file is outside the selected working directory.");
       }
     },
     "kimi.newConversation": async () => {
-      await vscode.commands.executeCommand("kimi.webview.focus");
-      provider?.broadcast(Events.NewConversation, {});
+      if (!provider?.broadcastToActive(Events.NewConversation, {})) {
+        await vscode.commands.executeCommand("kimi.webview.focus");
+        provider?.activateSidebar();
+        provider?.broadcastToActive(Events.NewConversation, {});
+      }
     },
     "kimi.showLogs": () => outputChannel?.show(),
     "kimi.resetKimi": () => provider?.resetAllWebviews(),

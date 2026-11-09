@@ -6,6 +6,7 @@ import {
   type RpcMethod,
   type RpcResult,
 } from "../shared/bridge";
+import type { PanelSessionTarget } from "../shared/types";
 import { VSCodeSettings } from "./config/vscode-settings";
 import { handlers, type BroadcastFn, type HandlerContext, type ReloadWebviewFn, type ShowLogsFn } from "./handlers";
 import { BaselineManager, type BaselineSession } from "./managers/baseline.manager";
@@ -27,6 +28,7 @@ export class BridgeHandler {
   readonly runtime: KimiRuntime;
 
   private readonly customWorkDirs = new Map<string, string>();
+  private readonly panelSessionTargets = new Map<string, PanelSessionTarget>();
   private readonly fileManager: FileManager;
 
   constructor(
@@ -154,6 +156,13 @@ export class BridgeHandler {
       runtime: this.runtime,
       harness: this.runtime.harness,
       reloadWebview: () => this.reloadWebview(webviewId),
+      getPanelSessionTarget: () => {
+        const runtime = this.runtime.getSessionForView(webviewId);
+        if (runtime !== undefined) {
+          return { sessionId: runtime.id, workDir: runtime.session.workDir };
+        }
+        return this.panelSessionTargets.get(webviewId) ?? null;
+      },
       showLogs: this.showLogs,
       logError: (message, error) => this.logRuntimeError(message, error),
       getSession: () => this.runtime.getSessionForView(webviewId),
@@ -208,7 +217,12 @@ export class BridgeHandler {
   async disposeView(webviewId: string): Promise<void> {
     await this.runtime.detachView(webviewId);
     this.customWorkDirs.delete(webviewId);
+    this.panelSessionTargets.delete(webviewId);
     this.fileManager.disposeView(webviewId);
+  }
+
+  setPanelSessionTarget(webviewId: string, target: PanelSessionTarget): void {
+    this.panelSessionTargets.set(webviewId, target);
   }
 
   async getEditorMention(

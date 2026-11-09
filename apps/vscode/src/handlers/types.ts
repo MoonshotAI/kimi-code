@@ -4,6 +4,7 @@ import type { BaselineManager } from "../managers/baseline.manager";
 import type { KimiHarness } from "@moonshot-ai/kimi-code-sdk";
 import type { KimiRuntime } from "../runtime/kimi-runtime";
 import type { SessionRuntime } from "../runtime/session-runtime";
+import type { PanelSessionTarget } from "../../shared/types";
 
 export type BroadcastFn = (event: string, data: unknown, webviewId?: string) => void;
 
@@ -26,6 +27,7 @@ export interface HandlerContext {
   runtime: KimiRuntime;
   harness: KimiHarness;
   reloadWebview: () => void;
+  getPanelSessionTarget: () => PanelSessionTarget | null;
   showLogs: () => void;
   logError: (message: string, error: unknown) => void;
 

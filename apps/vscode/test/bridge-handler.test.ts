@@ -33,6 +33,7 @@ const host = vi.hoisted(() => {
     deleteSession: vi.fn(async () => undefined),
   };
   const showWarningMessage = vi.fn(async () => undefined as string | undefined);
+  const executeCommand = vi.fn(async () => undefined);
 
   class Uri {
     readonly scheme = "file";
@@ -58,12 +59,14 @@ const host = vi.hoisted(() => {
     harness,
     createKimiHarness: vi.fn(() => harness),
     showWarningMessage,
+    executeCommand,
     workspaceFolders: [] as Array<{ uri: Uri }>,
   };
 });
 
 vi.mock("vscode", () => ({
   Uri: host.Uri,
+  commands: { executeCommand: host.executeCommand },
   workspace: {
     get workspaceFolders() {
       return host.workspaceFolders;
@@ -100,6 +103,8 @@ beforeEach(async () => {
   host.createKimiHarness.mockImplementation(() => host.harness);
   host.showWarningMessage.mockReset();
   host.showWarningMessage.mockResolvedValue(undefined);
+  host.executeCommand.mockReset();
+  host.executeCommand.mockResolvedValue(undefined);
   workspaceState = { get: vi.fn((_key, fallback) => fallback), update: vi.fn() };
   bridge = new BridgeHandler(
     vi.fn(),
@@ -140,6 +145,59 @@ describe("Engine startup", () => {
 });
 
 describe("Webview RPC boundary (validates requests before host dispatch)", () => {
+  it("opens a validated saved conversation in a new main panel", async () => {
+    host.harness.listSessions.mockResolvedValueOnce([
+      { id: "session-1", workDir: root, updatedAt: 123 },
+    ] as never);
+
+    const result = await bridge.handle(
+      {
+        id: "rpc-panel",
+        method: Methods.OpenNewSessionTab,
+        params: { sessionId: "session-1", workDir: root },
+      },
+      "view-1",
+    );
+
+    expect(result).toEqual({ id: "rpc-panel", result: { ok: true } });
+    expect(host.executeCommand).toHaveBeenCalledWith("kimi.openInTab", {
+      sessionId: "session-1",
+      workDir: root,
+    });
+  });
+
+  it("rejects a panel target whose working directory does not match its session", async () => {
+    host.harness.listSessions.mockResolvedValueOnce([
+      { id: "session-1", workDir: root, updatedAt: 123 },
+    ] as never);
+
+    const result = await bridge.handle(
+      {
+        id: "rpc-panel",
+        method: Methods.OpenNewSessionTab,
+        params: { sessionId: "session-1", workDir: join(root, "other") },
+      },
+      "view-1",
+    );
+
+    expect(result).toEqual({ id: "rpc-panel", result: { ok: false } });
+    expect(host.executeCommand).not.toHaveBeenCalled();
+  });
+
+  it("returns the session target assigned to a new panel", async () => {
+    bridge.setPanelSessionTarget("view-2", { sessionId: "session-1", workDir: root });
+
+    const result = await bridge.handle(
+      { id: "rpc-target", method: Methods.GetPanelSessionTarget },
+      "view-2",
+    );
+
+    expect(result).toEqual({
+      id: "rpc-target",
+      result: { sessionId: "session-1", workDir: root },
+    });
+  });
+
   it("returns a readable error when the envelope is not a plain object", async () => {
     const result = await bridge.handle([], "view-1");
 
@@ -355,7 +413,7 @@ describe("Webview RPC boundary (validates requests before host dispatch)", () =>
 
     expect(result).toEqual({
       id: "rpc-1",
-      result: [{ id: "session-1", workDir: root, updatedAt: 123, brief: "Visible title" }],
+      result: [{ id: "session-1", workDir: root, updatedAt: 123, brief: "Visible title", isRunning: false }],
     });
     expect(JSON.stringify(result)).not.toContain("/private/kimi/sessions");
   });

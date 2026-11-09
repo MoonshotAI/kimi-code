@@ -13,8 +13,9 @@ import type {
   ModelConfig,
   SlashCommandInfo,
 } from "../../shared/legacy-sdk";
-import type { ExtensionConfig, SessionConfig } from "../../shared/types";
+import type { ExtensionConfig, PanelSessionTarget, SessionConfig } from "../../shared/types";
 import { VSCodeSettings } from "../config/vscode-settings";
+import { areSameFsPath, isFsPathInsideOrEqual } from "../utils/fs-path";
 import type { Handler } from "./types";
 
 const SLASH_COMMANDS: SlashCommandInfo[] = [
@@ -84,6 +85,30 @@ const openSettings: Handler<void, { ok: boolean }> = async () => {
   return { ok: true };
 };
 
+const openNewSessionTab: Handler<PanelSessionTarget | undefined, { ok: boolean }> = async (params, ctx) => {
+  let target: PanelSessionTarget | undefined;
+  if (params !== undefined) {
+    if (ctx.workspaceRoot === null) return { ok: false };
+    const summary = (await ctx.harness.listSessions({ sessionId: params.sessionId }))[0];
+    if (
+      summary === undefined
+      || !areSameFsPath(summary.workDir, params.workDir)
+      || !isFsPathInsideOrEqual(ctx.workspaceRoot, summary.workDir)
+    ) {
+      return { ok: false };
+    }
+    target = { sessionId: summary.id, workDir: summary.workDir };
+  }
+  await vscode.commands.executeCommand("kimi.openInTab", target);
+  return { ok: true };
+};
+
+const getPanelSessionTarget: Handler<void, PanelSessionTarget | null> = async (_, ctx) => {
+  return ctx.getPanelSessionTarget();
+};
+
+const markViewActive: Handler<void, { ok: boolean }> = async () => ({ ok: true });
+
 const getModels: Handler<void, WebviewKimiConfig> = async (_, ctx) => {
   const config = await ctx.harness.getConfig({ reload: true });
   return toWebviewConfig(config);
@@ -131,6 +156,9 @@ export const configHandlers = {
   [Methods.SaveConfig]: saveConfig,
   [Methods.GetExtensionConfig]: getExtensionConfig,
   [Methods.OpenSettings]: openSettings,
+  [Methods.OpenNewSessionTab]: openNewSessionTab,
+  [Methods.GetPanelSessionTarget]: getPanelSessionTarget,
+  [Methods.MarkViewActive]: markViewActive,
   [Methods.GetModels]: getModels,
   [Methods.GetSlashCommands]: getSlashCommands,
   [Methods.ShowLogs]: showLogs,

@@ -210,6 +210,7 @@ export interface SessionInfo {
   workDir: string;
   updatedAt: number;
   brief: string;
+  isRunning: boolean;
 }
 
 export type ThinkingMode = 'none' | 'switch' | 'always' | 'effort';
