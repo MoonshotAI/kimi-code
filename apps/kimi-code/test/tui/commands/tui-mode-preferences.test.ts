@@ -86,9 +86,24 @@ describe('tui mode preference commands', () => {
     expect(host.showNotice).not.toHaveBeenCalled();
   });
 
-  it('does not persist tui_mode when the selected mode already matches the effective mode', async () => {
+  it('persists an explicit selection that matches the active runtime mode when tui_mode was unset', async () => {
     mocks.saveTuiConfig.mockClear();
-    const host = makeHost(undefined, 'regular');
+    const host = makeHost(undefined, 'fullscreen');
+
+    await applyTuiModeChoice(host, 'fullscreen');
+
+    expect(mocks.saveTuiConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ tuiMode: 'fullscreen' }),
+    );
+    expect(host.setAppState).toHaveBeenCalledWith({ tuiMode: 'fullscreen' });
+    expect(host.track).toHaveBeenCalledWith('tui_mode_switch', { tui_mode: 'fullscreen' });
+    expect(host.showStatus).toHaveBeenCalledWith('TUI mode set to fullscreen.', 'success');
+    expect(host.showNotice).not.toHaveBeenCalled();
+  });
+
+  it('does not rewrite the config when the selected mode already matches explicit appState.tuiMode', async () => {
+    mocks.saveTuiConfig.mockClear();
+    const host = makeHost('regular', 'regular');
 
     await applyTuiModeChoice(host, 'regular');
 

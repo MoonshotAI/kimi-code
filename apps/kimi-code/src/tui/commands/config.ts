@@ -1245,7 +1245,7 @@ type TuiModeHost = {
 };
 
 export async function applyTuiModeChoice(host: TuiModeHost, tuiMode: TuiMode): Promise<void> {
-  if (tuiMode === (host.state.appState.tuiMode ?? host.state.ui.mode)) {
+  if (tuiMode === host.state.appState.tuiMode) {
     host.showStatus(`TUI mode already ${tuiMode}.`);
     return;
   }
