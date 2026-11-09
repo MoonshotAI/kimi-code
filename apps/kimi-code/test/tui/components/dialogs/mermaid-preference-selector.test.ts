@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { MermaidPreferenceSelectorComponent } from '#/tui/components/dialogs/mermaid-preference-selector';
 import {
+  CopyOnSelectSelectorComponent,
   SettingsSelectorComponent,
   TranscriptGroupThinkingSelectorComponent,
   TranscriptGroupToolsSelectorComponent,
@@ -58,12 +59,14 @@ describe('transcript display selectors', () => {
     expect(regular).toContain('Usage');
     expect(regular).not.toContain('Tool call folding');
     expect(regular).not.toContain('Thinking folding');
+    expect(regular).not.toContain('Copy on select');
 
     const fullscreen = settingsText(true);
     expect(fullscreen).toContain('Tool call folding');
     expect(fullscreen).toContain('Choose which tool calls to fold into summary groups.');
     expect(fullscreen).toContain('Thinking folding');
     expect(fullscreen).toContain('Choose whether to fold finished thinking.');
+    expect(fullscreen).toContain('Copy on select');
   });
 
   it('selects tool call folding and thinking folding values with current markers', () => {
@@ -88,6 +91,25 @@ describe('transcript display selectors', () => {
     expect(text).toContain('Fold finished thinking into summary groups.');
     thinking.handleInput('\r');
     expect(onThinking).toHaveBeenCalledWith(true);
+  });
+});
+
+describe('CopyOnSelectSelectorComponent', () => {
+  it('marks the current choice and maps the options back to the boolean', () => {
+    const onSelect = vi.fn();
+    const picker = new CopyOnSelectSelectorComponent({
+      currentValue: false,
+      onSelect,
+      onCancel: () => {},
+    });
+    const text = strip(picker.render(100).join('\n'));
+    expect(text).toContain('Keep the selection ← current');
+    expect(text).toContain('press Ctrl-C to copy it');
+
+    picker.handleInput('\r');
+    picker.handleInput('\u001B[A');
+    picker.handleInput('\r');
+    expect(onSelect.mock.calls).toEqual([[false], [true]]);
   });
 });
 

@@ -1,4 +1,5 @@
 import type { KimiConfig } from '@moonshot-ai/kimi-code-sdk';
+import { TuiAltScreen } from '@moonshot-ai/pi-tui';
 
 import { currentTheme, lightColors } from '#/tui/theme';
 import { DEFAULT_MARKDOWN_CONFIG, loadTuiConfig, type TuiConfig } from '../config';
@@ -75,6 +76,7 @@ export async function applyReloadedTuiConfig(
     editorCommand: config.editorCommand,
     tuiMode: config.tuiMode,
     disablePasteBurst: config.disablePasteBurst,
+    copyOnSelect: config.copyOnSelect,
     renderLatex: config.renderLatex,
     cacheExpiryHint: config.cacheExpiryHint,
     autoSessionTitle: config.autoSessionTitle,
@@ -86,6 +88,9 @@ export async function applyReloadedTuiConfig(
   });
   applyTranscriptPresentation(host);
   host.state.editor.setDisablePasteBurst(config.disablePasteBurst);
+  if (host.state.ui instanceof TuiAltScreen) {
+    host.state.ui.setCopyOnSelect(config.copyOnSelect !== false);
+  }
   if ((config.tuiMode ?? 'regular') !== host.state.ui.mode) {
     host.showNotice(TUI_MODE_RESTART_NOTICE);
   }

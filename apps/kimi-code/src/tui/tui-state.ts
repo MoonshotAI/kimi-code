@@ -128,6 +128,8 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
           // route OSC 8 clicks through our own opener.
           openUrl,
           refocusMouseGuardMs: CLICK_GUARD_MS,
+          copyOnSelect:
+            initialAppState.copyOnSelect ?? DEFAULT_TUI_CONFIG.copyOnSelect,
           // Likewise, on Windows the terminal's native right-click paste is
           // intercepted; feed the clipboard to the focused component as a
           // bracketed paste instead (renderer only calls this on win32).

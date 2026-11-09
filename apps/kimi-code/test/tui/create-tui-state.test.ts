@@ -108,6 +108,19 @@ describe('createTUIState', () => {
     expect(state.dockContainer).toBeUndefined();
   });
 
+  it('starts the fullscreen renderer with the saved copy-on-select choice', () => {
+    const startWith = (copyOnSelect: boolean | undefined): boolean => {
+      const state = createTUIState({
+        initialAppState: { ...fakeInitialAppState(), tuiMode: 'fullscreen', copyOnSelect },
+        startup: { continueLast: false, yolo: false, auto: false, plan: false },
+      });
+      return (state.ui as TuiAltScreen).getCopyOnSelect();
+    };
+
+    expect(startWith(undefined)).toBe(true);
+    expect(startWith(false)).toBe(false);
+  });
+
   it('builds an alternate-screen renderer with a docked layout in fullscreen mode', () => {
     const state = createTUIState({
       initialAppState: { ...fakeInitialAppState(), tuiMode: 'fullscreen' },

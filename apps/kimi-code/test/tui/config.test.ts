@@ -9,6 +9,7 @@ import {
   INVALID_TUI_CONFIG_MESSAGE,
   loadTuiConfig,
   parseTuiConfig,
+  renderTuiConfig,
   removeLegacySurveySetting,
   saveTuiConfig,
   TuiConfigParseError,
@@ -66,6 +67,7 @@ auto_install = false
     expect(config).toEqual({
       theme: 'light',
       tuiMode: 'regular',
+      copyOnSelect: true,
       renderLatex: true,
       disablePasteBurst: false,
       cacheExpiryHint: true,
@@ -127,6 +129,18 @@ auto_session_title = false
     expect(config.autoSessionTitle).toBe(false);
   });
 
+  it('defaults copy_on_select to true and round-trips false through tui.toml', () => {
+    expect(parseTuiConfig('').copyOnSelect).toBe(true);
+    expect(renderTuiConfig(DEFAULT_TUI_CONFIG)).toContain('copy_on_select = true');
+
+    const config = parseTuiConfig(`
+copy_on_select = false
+`);
+
+    expect(config.copyOnSelect).toBe(false);
+    expect(parseTuiConfig(renderTuiConfig(config)).copyOnSelect).toBe(false);
+  });
+
   it('normalizes an empty editor command to auto-detect', () => {
     const config = parseTuiConfig(`
 [editor]
@@ -136,6 +150,7 @@ command = "   "
     expect(config).toEqual({
       theme: 'auto',
       tuiMode: 'regular',
+      copyOnSelect: true,
       renderLatex: true,
       disablePasteBurst: false,
       cacheExpiryHint: true,
@@ -188,6 +203,7 @@ command = "   "
     expect(await loadTuiConfig(filePath)).toEqual({
       theme: 'light',
       tuiMode: 'regular',
+      copyOnSelect: true,
       renderLatex: true,
       disablePasteBurst: false,
       cacheExpiryHint: true,
