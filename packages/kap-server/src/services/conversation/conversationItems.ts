@@ -155,13 +155,19 @@ export function isPlanTool(name: string): boolean {
   return name === EXIT_PLAN_MODE;
 }
 
-export function endToolCall(item: ToolCallItem, output: string | readonly ContentPart[], isError: boolean, time: number): void {
+export function endToolCall(
+  item: ToolCallItem,
+  output: string | readonly ContentPart[],
+  outcome: 'completed' | 'failed' | 'interrupted',
+  time: number,
+): void {
   const text = resultText(output);
-  const media = isError || typeof output === 'string' ? [] : output.filter(isMediaPart).map(mediaOf);
+  const completed = outcome === 'completed';
+  const media = !completed || typeof output === 'string' ? [] : output.filter(isMediaPart).map(mediaOf);
   item.status = 'ended';
-  item.outcome = isError ? 'failed' : 'completed';
-  item.output = isError ? undefined : text;
-  item.error = isError ? text : undefined;
+  item.outcome = outcome;
+  item.output = completed ? text : undefined;
+  item.error = completed ? undefined : text;
   item.media = media.length === 0 ? undefined : media;
   item.ended_at = isoTime(time);
 }
