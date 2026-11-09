@@ -4907,6 +4907,34 @@ command = "vim"
     expect(driver.state.queuedMessages).toEqual([]);
   });
 
+  it('records selected variant metadata on steered transcript entries', async () => {
+    const path = '/work/B/review/SKILL.md';
+    const session = makeSession({
+      listSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/work/A/review/SKILL.md', source: 'project', workspaceDir: '/work/A' },
+        { name: 'review', description: 'Review skill', path, source: 'project', workspaceDir: '/work/B' },
+      ]),
+    });
+    const { driver } = await makeDriver(session);
+    await (
+      driver as unknown as { refreshSkillCommands(s: unknown): Promise<void> }
+    ).refreshSkillCommands(session);
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.restoreInputText('/skill:review', [{ skillName: 'review', path }]);
+
+    driver.state.editor.onCtrlS?.();
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith('/skill:review', [
+        expect.objectContaining({ name: 'review', path }),
+      ], { steerIfActive: true });
+    });
+    const entry = driver.state.transcriptEntries.find((item) => item.kind === 'user' && item.content === '/skill:review');
+    expect(entry?.inlineSkillActivations).toEqual([
+      expect.objectContaining({ skillName: 'review', path }),
+    ]);
+  });
+
   it.each(['/skill:review', 'check /skill:review'])(
     'retries a failed skill video from input history (%s)',
     async (prefix) => {

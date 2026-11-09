@@ -3004,6 +3004,7 @@ export class KimiTUI {
       renderMode: 'plain',
       content: item.text,
       skillNames: item.inlineSkillActivations?.map((activation) => activation.skillName),
+      inlineSkillActivations: item.inlineSkillActivations,
       imageAttachmentIds:
         item.imageAttachmentIds !== undefined && item.imageAttachmentIds.length > 0
           ? item.imageAttachmentIds
