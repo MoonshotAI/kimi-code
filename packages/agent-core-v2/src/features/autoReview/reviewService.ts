@@ -15,6 +15,7 @@ import { IAgentProfileService } from '#/agent/profile/profile';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
+import { resolveSubagentModelPool } from '#/session/subagent/configSection';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
 import { AutoReviewCompleted } from './autoReviewEvents';
@@ -105,7 +106,10 @@ export class AutoReviewService extends Service implements IAutoReviewService {
   async review(context: ResolvedToolExecutionHookContext, trigger: string): Promise<AutoReviewResult> {
     const startedAt = Date.now();
     const config = this.configService.get<AutoReviewConfig>(AUTO_REVIEW_SECTION);
-    const modelAlias = config?.model ?? this.profile.resolveModelContext().modelAlias;
+    const modelAlias =
+      config?.model ??
+      resolveSubagentModelPool(this.configService)?.defaultModel ??
+      this.profile.resolveModelContext().modelAlias;
     const result = await this.reviewWithDeadline(context, modelAlias, config?.timeoutMs ?? 30000);
     void this.dispatcher.dispatch(new AutoReviewCompleted({
       agentId: this.scopeContext.agentId,

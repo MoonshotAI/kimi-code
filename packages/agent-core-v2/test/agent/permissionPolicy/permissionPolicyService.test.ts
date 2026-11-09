@@ -26,6 +26,7 @@ import type { AgentLLMRequestFinish, AgentLLMRequestOverrides } from '#/agent/lo
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { ILogService } from '#/_base/log/log';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { SECONDARY_MODEL_SECTION, type SecondaryModelConfig } from '#/session/subagent/configSection';
 import { stubLog } from '../../_base/log/stubs';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
@@ -600,11 +601,16 @@ describe('AutoReviewService', () => {
     request: (request: AgentLLMRequestOverrides, signal: AbortSignal | undefined) => Promise<AgentLLMRequestFinish> = async () => response,
     model?: string,
     configured = true,
+    secondaryModel?: SecondaryModelConfig,
   ): AutoReviewService {
     const ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.definePartialInstance(IConfigService, {
-          get: ((section: string) => section === AUTO_REVIEW_SECTION && configured ? { model, timeoutMs: 1000 } : undefined) as IConfigService['get'],
+          get: ((section: string) => {
+            if (section === AUTO_REVIEW_SECTION && configured) return { model, timeoutMs: 1000 };
+            if (section === SECONDARY_MODEL_SECTION) return secondaryModel;
+            return undefined;
+          }) as IConfigService['get'],
         });
         reg.definePartialInstance(IAgentLoopService, {
           requester: {
@@ -731,7 +737,7 @@ describe('AutoReviewService', () => {
   });
 
   it('records reviewer usage and the asking policy for an explicitly selected model', async () => {
-    await review(service(undefined, 'review-model'));
+    await review(service(undefined, 'review-model', true, { defaultModel: 'secondary-model' }));
 
     expect(requests[0]).toMatchObject({
       modelAlias: 'review-model',
@@ -741,6 +747,16 @@ describe('AutoReviewService', () => {
       event: 'auto_review_decision',
       properties: expect.objectContaining({ trigger_policy: 'fallback-ask', model: 'review-model', decision: 'allow' }),
     })]);
+  });
+
+  it('defaults to the configured secondary model before falling back to the main model', async () => {
+    await review(service(undefined, undefined, false, { defaultModel: 'secondary-model' }));
+
+    expect(requests[0]).toMatchObject({
+      modelAlias: 'secondary-model',
+      source: { type: 'operation', turnId: 0, requestKind: 'auto_review', cacheBreakBaseline: false },
+    });
+    expect(reviewEvents).toEqual([expect.objectContaining({ model: 'secondary-model' })]);
   });
 
   it('persists the reviewer reason for a denied action', async () => {

@@ -325,7 +325,7 @@ describe('AgentLoopRequester operation overrides', () => {
   it('resolves the selected model, cache key and response format through the normal request pipeline', async () => {
     const inputs: ModelRequestInput[] = [];
     const requester = createRequester({ value: 0 }, null, [], inputs);
-    const reviewModel = { ...requester.model, protocol: 'anthropic' as const };
+    const reviewModel = { ...requester.model, protocol: 'anthropic' as const, maxOutputSize: 4096 };
     let params: ModelRequestParams | undefined;
     const base = requester.request.bind(requester);
     requester.request = (input, signal, options) => {
@@ -354,6 +354,7 @@ describe('AgentLoopRequester operation overrides', () => {
     })]);
     expect(params?.cacheKey).toBe('session-1:auto_review');
     expect(params?.thinkingEffort).toBe('off');
+    expect(params?.maxCompletionTokens).toBe(4096);
   });
 
   it('does not inherit the main model thinking effort for an operation request', async () => {

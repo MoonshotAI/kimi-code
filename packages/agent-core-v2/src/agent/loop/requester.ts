@@ -756,10 +756,13 @@ export class AgentLoopRequester implements LoopRequester {
         : undefined);
     const budgetParams = completionBudgetParams({
       budget: resolveCompletionBudget({
-        maxOutputSize: overrides.maxOutputSize ?? resolved.maxOutputSize,
+        maxOutputSize:
+          overrides.maxOutputSize ??
+          (modelAlias === resolved.modelAlias ? resolved.maxOutputSize : model.maxOutputSize),
         maxCompletionTokensCap,
       }),
-      capability: resolved.modelCapabilities,
+      capability:
+        modelAlias === resolved.modelAlias ? resolved.modelCapabilities : model.capabilities,
       usedContextTokens,
     });
     const optedOut = maxCompletionTokensCap !== undefined && maxCompletionTokensCap <= 0;
