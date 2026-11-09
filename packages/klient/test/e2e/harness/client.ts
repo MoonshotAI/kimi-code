@@ -265,7 +265,7 @@ export class DaemonClient {
     return this.http.submitPrompt(sid, fillPromptDefaults(input));
   }
   /**
-   * Stateful-session submit — sends `body` to `POST /sessions/{sid}/prompts`
+   * Stateful-session submit — sends `body` to `PUT /sessions/{sid}/prompts/{prompt_id}`
    * verbatim, with NO default controls injected. Pair with
    * `updateSession(sid, {agent_config: {...}})` (or `submitPrompt` with the
    * legacy default-filled path) to first establish session state, then

@@ -1,4 +1,5 @@
 
+import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -269,8 +270,8 @@ async function createSession(server: RunningServer, base: string): Promise<strin
 }
 
 function submitPrompt(server: RunningServer, base: string, sid: string, text: string, permissionMode: 'manual' | 'yolo' | 'auto' = 'yolo'): Promise<{ prompt_id: string }> {
-  return rest<{ prompt_id: string }>(server, base, `/api/v1/sessions/${encodeURIComponent(sid)}/prompts`, {
-    method: 'POST',
+  return rest<{ prompt_id: string }>(server, base, `/api/v1/sessions/${encodeURIComponent(sid)}/prompts/${randomUUID()}`, {
+    method: 'PUT',
     body: { content: [{ type: 'text', text }], model: 'stub', permission_mode: permissionMode },
   });
 }
@@ -740,9 +741,9 @@ describe('conversation contract e2e', () => {
     const queueFrames = () => channel.frames.filter((frame) => frame.type === 'queue' && frame.agent_id === MAIN_AGENT_ID);
     const queued = () => (queueFrames().at(-1)?.inputs ?? []).map((input: any) => input.prompt_id);
     const submit = (promptId: string, delivery?: 'queue' | 'steer') =>
-      rest<{ prompt_id: string; accepted_as: string }>(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}/prompts`, {
-        method: 'POST',
-        body: { content: [{ type: 'text', text: `prompt ${promptId}` }], prompt_id: promptId, delivery, model: 'stub', permission_mode: 'yolo' },
+      rest<{ prompt_id: string; accepted_as: string }>(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}/prompts/${promptId}`, {
+        method: 'PUT',
+        body: { content: [{ type: 'text', text: `prompt ${promptId}` }], delivery, model: 'stub', permission_mode: 'yolo' },
       });
 
     await until('initial queue frame', () => queueFrames().length > 0);

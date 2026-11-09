@@ -458,10 +458,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
-      "/api/v1/sessions/{session_id}/prompts",
-    ],
-    [
-      "POST",
       "/api/v1/sessions/{session_id}/prompts:steer",
     ],
     [
@@ -551,6 +547,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "PUT",
       "/api/v1/providers/{provider_id}",
+    ],
+    [
+      "PUT",
+      "/api/v1/sessions/{session_id}/prompts/{prompt_id}",
     ],
     [
       "PUT",

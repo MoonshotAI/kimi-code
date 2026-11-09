@@ -172,10 +172,11 @@ describe('server-v2 /api/v1/sessions', () => {
   async function postJson<T>(
     path: string,
     body?: unknown,
+    method: 'POST' | 'PUT' = 'POST',
   ): Promise<{ status: number; body: Envelope<T> }> {
     const hasBody = body !== undefined;
     const res = await fetch(`${base}${path}`, {
-      method: 'POST',
+      method,
       headers: authHeaders(
         server as RunningServer,
         hasBody ? { 'content-type': 'application/json' } : {},
@@ -775,10 +776,11 @@ describe('server-v2 /api/v1/sessions', () => {
       metadata: { cwd: home as string },
     });
     const id = created.body.data.id;
-    for (const text of ['first REST prompt', 'second REST prompt', 'third REST prompt']) {
+    for (const [index, text] of ['first REST prompt', 'second REST prompt', 'third REST prompt'].entries()) {
       const submitted = await postJson<{ prompt_id: string }>(
-        `/api/v1/sessions/${id}/prompts`,
+        `/api/v1/sessions/${id}/prompts/rest-${String(index)}`,
         { content: [{ type: 'text', text }] },
+        'PUT',
       );
       expect(submitted.body.code).toBe(0);
     }
@@ -2691,8 +2693,9 @@ describe('server-v2 /api/v1/sessions', () => {
       .subscribe((event) => events.push(event as unknown as { type: string; payload: unknown }));
 
     const submitted = await postJson<{ prompt_id: string; status: string }>(
-      `/api/v1/sessions/${id}/prompts`,
+      `/api/v1/sessions/${id}/prompts/web-title`,
       { content: [{ type: 'text', text: 'hello web title' }] },
+      'PUT',
     );
     expect(submitted.body.code).toBe(0);
     sub.dispose();
@@ -3066,9 +3069,9 @@ describe('server-v2 /api/v1/sessions:btw', () => {
     }
   });
 
-  async function postJson<T>(path: string, body: unknown): Promise<Envelope<T>> {
+  async function postJson<T>(path: string, body: unknown, method: 'POST' | 'PUT' = 'POST'): Promise<Envelope<T>> {
     const res = await fetch(`${base}${path}`, {
-      method: 'POST',
+      method,
       headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
       body: JSON.stringify(body),
     } as never);
@@ -3102,10 +3105,10 @@ describe('server-v2 /api/v1/sessions:btw', () => {
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home } });
     const sessionId = created.data.id;
     await agentTurns(sessionId, 'main');
-    await postJson(`/api/v1/sessions/${sessionId}/prompts`, {
+    await postJson(`/api/v1/sessions/${sessionId}/prompts/main-question`, {
       content: [{ type: 'text', text: 'main question' }],
       model: 'fake',
-    });
+    }, 'PUT');
     await vi.waitFor(
       async () => {
         expect((await agentTurns(sessionId, 'main')).map(endOf)).toEqual(['completed']);
@@ -3118,11 +3121,11 @@ describe('server-v2 /api/v1/sessions:btw', () => {
     });
     const btw = await postJson<{ agent_id: string }>(`/api/v1/sessions/${sessionId}:btw`, {});
     const agentId = btw.data.agent_id;
-    await postJson(`/api/v1/sessions/${sessionId}/prompts`, {
+    await postJson(`/api/v1/sessions/${sessionId}/prompts/side-question`, {
       content: [{ type: 'text', text: 'side question' }],
       agent_id: agentId,
       model: 'fake',
-    });
+    }, 'PUT');
     await agentTurns(sessionId, agentId);
     releaseSideAnswer();
 

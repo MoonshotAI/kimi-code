@@ -2,6 +2,8 @@
  * HTTP layer for `DaemonClient` — typed wrappers around fetch + envelope
  * unwrap. All paths concatenate `baseUrl + apiPrefix + route`.
  */
+import { randomUUID } from 'node:crypto';
+
 import type {
   FsBrowseResponse,
   FsHomeResponse,
@@ -340,7 +342,7 @@ export class HttpClient {
     return this.request('GET', `/sessions/${encodeURIComponent(sid)}/prompts`, undefined);
   }
   submitPrompt(sid: string, body: PromptSubmission): Promise<PromptSubmitResult> {
-    return this.request('POST', `/sessions/${encodeURIComponent(sid)}/prompts`, body);
+    return this.request('PUT', `/sessions/${encodeURIComponent(sid)}/prompts/${randomUUID()}`, body);
   }
   steerPrompt(sid: string, pid: string): Promise<PromptSteerResult> {
     return this.request(
