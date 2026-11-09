@@ -243,7 +243,9 @@ function makeHost({
       upgrade: { autoInstall: true },
       availableModels: {},
       availableProviders: {},
+      transcript: { toolCallDensity: 'compact', thinking: 'grouped' },
     },
+    transcriptContainer: { setPresentationOptions: vi.fn() },
     editor: {
       setDisablePasteBurst: vi.fn(),
     },

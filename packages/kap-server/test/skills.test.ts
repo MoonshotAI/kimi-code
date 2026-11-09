@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -114,12 +114,12 @@ describe('server-v2 /api/v1 skills', () => {
     return dir;
   }
 
-  async function seedProjectSkill(root: string, name: string): Promise<void> {
+  async function seedProjectSkill(root: string, name: string, type?: string): Promise<void> {
     const dir = join(root, '.kimi-code', 'skills', name);
     await mkdir(dir, { recursive: true });
     await writeFile(
       join(dir, 'SKILL.md'),
-      `---\nname: ${name}\ndescription: e2e test skill ${name}\n---\n\nSay hello to $ARGUMENTS.\n`,
+      `---\nname: ${name}${type === undefined ? '' : `\ntype: ${type}`}\ndescription: e2e test skill ${name}\n---\n\nSay hello to $ARGUMENTS.\n`,
     );
   }
 
@@ -226,10 +226,32 @@ describe('server-v2 /api/v1 skills', () => {
       expect(input?.metadata?.origin?.clientMetadata).toEqual([metadata]);
       expect(JSON.stringify(input?.content)).not.toContain('client-only literal');
       await closeSessionById(server!.core.accessor, id);
-      const transcript = await getJson<{ items: { kind: string; origin?: { payload?: { clientMetadata?: unknown } } }[] }>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
-      expect(transcript.body.data.items.find((item) => item.kind === 'turn')?.origin?.payload?.clientMetadata).toEqual([metadata]);
+      const page = await getJson<{ turns: { items: { type: string; metadata?: unknown }[] }[] }>(`/api/v1/sessions/${id}/agents/main/turns`);
+      expect(page.body.data.turns[0]?.items[0]).toMatchObject({
+        type: 'user_message',
+        origin: { kind: 'skill', name: 'update-config', args: 'Example argument' },
+        metadata,
+      });
       const session = await getJson<{ title: string }>(`/api/v1/sessions/${id}`);
       expect(session.body.data.title).toBe(metadata.display_text);
+    });
+
+    it('pairs the activation with a client-chosen prompt_id', async () => {
+      const id = await createSession();
+      await createMainAgent(id);
+
+      const activated = await postJson(`/api/v1/sessions/${id}/skills/update-config:activate`, {
+        args: '--help',
+        prompt_id: 'activation-1',
+      });
+      expect(activated.body.code).toBe(0);
+      const page = await getJson<{ turns: { items: { type: string; prompt_ids?: string[] }[] }[] }>(`/api/v1/sessions/${id}/agents/main/turns`);
+      expect(page.body.data.turns[0]?.items[0]).toMatchObject({ type: 'user_message', prompt_ids: ['activation-1'] });
+
+      const duplicate = await postJson<null>(`/api/v1/sessions/${id}/skills/update-config:activate`, {
+        prompt_id: 'activation-1',
+      });
+      expect(duplicate.body.code).toBe(40927);
     });
 
     it('keeps ordered text parts among activation attachments', async () => {
@@ -430,26 +452,15 @@ describe('server-v2 /api/v1 skills', () => {
         text: `Attached file "note.txt" (application/octet-stream, ${noteBytes.length} bytes): ${sourcePath} — open it with the Read tool`,
       });
 
-      const transcript = await getJson<{
-        items: Array<{ kind: string; attachmentIds?: string[] }>;
-        attachments: Array<{
-          attachmentId: string;
-          mediaType: string;
-          name?: string;
-          size?: number;
-          source?: unknown;
-        }>;
-      }>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
-      const transcriptAttachments = transcript.body.data.attachments;
-      expect(transcriptAttachments).toHaveLength(1);
-      expect(transcriptAttachments[0]).toMatchObject({
-        mediaType: 'application/octet-stream',
-        name: 'note.txt',
-        size: noteBytes.length,
-      });
-      expect(transcriptAttachments[0]).not.toHaveProperty('source');
-      const turn = transcript.body.data.items.find((item) => item.kind === 'turn');
-      expect(turn?.attachmentIds).toEqual([transcriptAttachments[0]!.attachmentId]);
+      const page = await getJson<{
+        turns: Array<{ items: Array<{ type: string; text?: string; attachments?: unknown[] }> }>;
+      }>(`/api/v1/sessions/${id}/agents/main/turns`);
+      const opener = page.body.data.turns[0]?.items[0];
+      expect(opener?.type).toBe('user_message');
+      expect(opener?.text).not.toContain(sourcePath);
+      expect(opener?.attachments).toEqual([
+        { kind: 'file', name: 'note.txt', media_type: 'application/octet-stream', size: noteBytes.length, ordinal: 1 },
+      ]);
     });
 
     it('rejects a relative attachment path on skill activation (40001)', async () => {
@@ -539,7 +550,7 @@ describe('server-v2 /api/v1 skills', () => {
       expect(names(wsSkills)).toEqual(names(sessSkills));
     });
 
-    it('lists and activates additional-dir skills with primary winning collisions', async () => {
+    it('lists same-name variants and activates an explicit additional-dir path', async () => {
       const primary = await makeWorkspaceDir();
       const secondary = await makeWorkspaceDir();
       await seedProjectSkill(primary, 'e2e-primary');
@@ -556,6 +567,13 @@ describe('server-v2 /api/v1 skills', () => {
       expect(workspaceSkills.some((skill) => skill.name === 'e2e-primary')).toBe(true);
       expect(workspaceSkills.some((skill) => skill.name === 'e2e-secondary')).toBe(true);
       expect(workspaceSkills.find((skill) => skill.name === 'e2e-shared')?.path).toContain(primary);
+      const sharedVariants = workspaceSkills.filter((skill) => skill.name === 'e2e-shared');
+      expect(sharedVariants).toHaveLength(2);
+      expect(sharedVariants.map((skill) => skill.workspace_dir)).toEqual([
+        await realpath(primary),
+        await realpath(secondary),
+      ]);
+      const secondaryShared = sharedVariants.find((skill) => skill.path.includes(secondary))!;
 
       const created = await postJson<{ id: string }>('/api/v1/sessions', { workspace_id: wid });
       expect(created.body.code).toBe(0);
@@ -574,16 +592,44 @@ describe('server-v2 /api/v1 skills', () => {
         { args: 'additional args' },
       );
       expect(activated.body.code).toBe(0);
+      const sharedActivation = await postJson<{ activated: boolean; skill_name: string }>(
+        `/api/v1/sessions/${sid}/skills/e2e-shared:activate`,
+        { path: secondaryShared.path, args: 'shared-secondary' },
+      );
+      expect(sharedActivation.body.code).toBe(0);
       const messages = await getJson<{
         items: { role: string; content: { type: string; text?: string }[] }[];
       }>(`/api/v1/sessions/${sid}/messages`);
-      const input = messages.body.data.items.find(
-        (message) =>
-          message.role === 'user' &&
-          message.content.some((part) => part.text?.includes('User activated the skill')),
-      );
-      const modelText = input?.content.map((part) => part.text ?? '').join('\n') ?? '';
-      expect(modelText).toContain('Say hello to additional args.');
+      const sharedText = messages.body.data.items
+        .filter((message) => message.role === 'user')
+        .flatMap((message) => message.content)
+        .map((part) => part.text ?? '')
+        .join('\n');
+      expect(sharedText).toContain('Say hello to additional args.');
+      expect(sharedText).toContain('Say hello to shared-secondary.');
+      expect(sharedText).toContain(`dir="${secondaryShared.path.replace(/\/SKILL\.md$/, '')}"`);
+    });
+
+    it('validates bundled activation against the selected variant path', async () => {
+      const primary = await makeWorkspaceDir();
+      const secondary = await makeWorkspaceDir();
+      await seedProjectSkill(primary, 'e2e-preflight', 'reference');
+      await seedProjectSkill(secondary, 'e2e-preflight', 'prompt');
+      const wid = await registerWorkspace(primary, [secondary]);
+      const created = await postJson<{ id: string }>('/api/v1/sessions', { workspace_id: wid });
+      const sid = created.body.data.id;
+      await createMainAgent(sid);
+      const listed = await getJson<{ skills: SkillWire[] }>(`/api/v1/sessions/${sid}/skills`);
+      const variants = listSkillsResponseSchema.parse(listed.body.data).skills;
+      const selected = variants.find((skill) => skill.name === 'e2e-preflight' && skill.path.includes(secondary))!;
+
+      const submitted = await postJson<{ prompt_id: string }>(`/api/v1/sessions/${sid}/prompts`, {
+        content: [{ type: 'text', text: 'Use the secondary variant.' }],
+        skills: [{ name: 'e2e-preflight', path: selected.path, args: 'secondary' }],
+      });
+
+      expect(submitted.body.code).toBe(0);
+      expect(submitted.body.data.prompt_id).toMatch(/^msg_/);
     });
 
     it('honors explicit skill dirs in workspace preview', async () => {

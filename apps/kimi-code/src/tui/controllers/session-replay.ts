@@ -352,7 +352,7 @@ export class SessionReplayRenderer {
         output.finish(stdout, stderr, message.origin.isError);
         // Inherit the current ctrl+o state, same as the live card — the global
         // toggle only reaches components that exist when it fires.
-        if (this.host.state.toolOutputExpanded) output.setExpanded(true);
+        if (this.host.state.transcriptContainer.toolOutputExpanded) output.setExpanded(true);
         markTranscriptComponent(
           output,
           replayEntry(
@@ -457,6 +457,10 @@ export class SessionReplayRenderer {
         'plain',
       ),
       skillNames: bundledSkillsFromOrigin(message.origin).map((skill) => skill.skillName),
+      inlineSkillActivations: bundledSkillsFromOrigin(message.origin).map((skill) => ({
+        skillName: skill.skillName,
+        path: skill.skillPath,
+      })),
     });
   }
 
@@ -566,6 +570,7 @@ export class SessionReplayRenderer {
     this.host.appendTranscriptEntry({
       ...replayEntry(context, 'user', userSlashSkillPromptText(message, skill), 'plain'),
       skillNames: [skill.skillName],
+      inlineSkillActivations: [{ skillName: skill.skillName, path: skill.skillPath }],
       skillActivationId: skill.activationId,
       skillName: skill.skillName,
       skillArgs: skill.skillArgs,
@@ -824,7 +829,8 @@ export class SessionReplayRenderer {
     if (childIndex >= 0) {
       // Structural removal only: the container's ref-checked render cache
       // detects the child-list change; no tree-wide invalidate needed.
-      children.splice(childIndex, 1);
+      const component = children[childIndex];
+      if (component !== undefined) this.host.state.transcriptContainer.removeChild(component);
     }
   }
 

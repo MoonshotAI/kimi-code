@@ -4,6 +4,7 @@ import { createControlledPromise } from '@antfu/utils';
 import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
 import { summarizeSkill } from '#/features/skill/catalog/types';
 import { IAgentSkillService } from '#/features/skill/skillService';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { LlmRequester } from '#human/llm-requester/requester';
 import {
   ISkillTool,
@@ -151,6 +152,26 @@ describe('SkillTool', () => {
     expect(SkillToolInputSchema.safeParse({ skill: 'commit' }).success).toBe(true);
     expect(SkillToolInputSchema.safeParse({ skill: 'commit', args: '-m fix' }).success).toBe(true);
     expect(SkillToolInputSchema.safeParse({}).success).toBe(false);
+  });
+
+  it('renders arguments and session context through the model-tool path', async () => {
+    skills.register(
+      stubSkill('rename-session', {
+        content: 'Run "$ARGUMENTS" with "${KIMI_SESSION_ID}"',
+      }),
+    );
+
+    const result = await executeTool(
+      makeTool(),
+      toolContext({ skill: 'rename-session', args: 'Tokenizer Myths' }),
+    );
+    const part = result.delivery?.message.content[0];
+    const text = part?.type === 'text' ? part.text : '';
+    const sessionId = ctx.get(ISessionContext).sessionId;
+
+    expect(text).toContain(`Run "Tokenizer Myths" with "${sessionId}"`);
+    expect(text).not.toContain('${KIMI_SESSION_ID}');
+    expect(text).toContain('dir="/skills/rename-session"');
   });
 
   it('returns a tool error when the skill is unknown', async () => {
@@ -328,5 +349,37 @@ describe('AgentSkillService busy delivery (harness)', () => {
     expect(types.filter((type) => type === 'turn.steer')).toHaveLength(1);
     const steer = persistence.records.find((record) => record.type === 'turn.steer');
     expect(steer).toMatchObject({ origin: { kind: 'skill_activation', skillArgs: 'mission-1' } });
+  });
+
+  it('resets nesting depth for each user activation in the same running turn', async () => {
+    const catalog = new InMemorySkillCatalog();
+    catalog.register(stubSkill('tower'));
+    const gate = createControlledPromise<void>();
+    let generateCalls = 0;
+    const generate: GenerateFn = {
+      generate: async (_config, _content, control) => {
+        generateCalls += 1;
+        control.onEvent?.({ type: 'llm.sent' });
+        await gate;
+        control.signal.throwIfAborted();
+        control.onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'done' } });
+        control.onEvent?.({ type: 'llm.streaming.finish', finish: { finishReason: 'completed', rawFinishReason: 'stop' } });
+        control.onEvent?.({ type: 'llm.streaming.message_id', messageId: 'mock-depth-reset' });
+        control.onEvent?.({ type: 'llm.done' });
+      },
+    };
+    ctx = createTestAgent(skillServices(catalog), { generate });
+    const promptPromise = ctx.rpc.prompt({ input: [{ type: 'text', text: 'start' }] });
+    await vi.waitFor(() => { expect(generateCalls).toBe(1); });
+    const service = ctx.get(IAgentSkillService);
+
+    await service.activate({ name: 'tower', args: 'one' });
+    await service.activate({ name: 'tower', args: 'two' });
+    await service.activate({ name: 'tower', args: 'three' });
+
+    expect(service.modelToolContext()).toEqual({ queryDepth: 1, workspaceDir: undefined });
+    gate.resolve();
+    await promptPromise;
+    await ctx.untilTurnEnd();
   });
 });

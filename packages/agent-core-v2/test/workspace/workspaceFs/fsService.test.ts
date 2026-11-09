@@ -26,6 +26,7 @@ import { ITelemetryService, type TelemetryProperties } from '#/app/telemetry/tel
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
+import { WorkspaceGitService } from '#/workspace/workspaceGit/workspaceGitService';
 
 const WORK_DIR = '/repo';
 const WALK_GREP_REQUEST = {
@@ -54,6 +55,7 @@ function stubWorkspaceDirs(additionalDirs: readonly string[] = []): IWorkspaceDi
   return {
     _serviceBrand: undefined,
     ready: Promise.resolve(),
+    primary: WORK_DIR,
     additionalDirs: [...additionalDirs],
     sharedAdditionalDirs: [...additionalDirs],
     primaryByWorkspace: {},
@@ -488,6 +490,35 @@ function makeRemoteSession(
 function makeRemoteWalkSession(backend: IHostFileSystem): IWorkspaceFsService {
   return makeRemoteSession({}, () => ({ stdout: '', exitCode: 127 }), [], 'ssh-dev', '/home/target', backend);
 }
+
+describe('WorkspaceGitService', () => {
+  it('uses the latest primary for status and diff', async () => {
+    const cwds: string[] = [];
+    const git = {
+      status: async (cwd: string) => {
+        cwds.push(cwd);
+        return {};
+      },
+      diff: async (cwd: string) => {
+        cwds.push(cwd);
+        return {};
+      },
+    } as unknown as IGitService;
+    const dirs = { primary: WORK_DIR };
+    const service = new WorkspaceGitService(dirs, {
+      current: git,
+      onDidChange: () => ({ dispose: () => {} }),
+    });
+
+    await service.status();
+    await service.diff('a.txt', join(WORK_DIR, 'a.txt'));
+    dirs.primary = '/other';
+    await service.status();
+    await service.diff('b.txt', '/other/b.txt');
+
+    expect(cwds).toEqual([WORK_DIR, WORK_DIR, '/other', '/other']);
+  });
+});
 
 describe('WorkspaceFsService.gitStatus', () => {
   it('delegates to IWorkspaceGitService with the handler root and a confined filter', async () => {
@@ -2583,6 +2614,26 @@ describe('WorkspaceFsService.list', () => {
 });
 
 describe('WorkspaceFsService.read', () => {
+  it('resolves relative paths against the latest primary', async () => {
+    const dirs = { primary: WORK_DIR, additionalDirs: [] as readonly string[] };
+    const environment = new FakeEnvironment(
+      { environmentId: 'local', generation: 'test' },
+      { capabilities: ['fs', 'process'] },
+    );
+    const fs = new WorkspaceFsService(
+      stubWorkspaceContext(),
+      dirs,
+      fakeFs({ 'a.txt': 'old primary', '/other/b.txt': 'new primary' }),
+      resolverFor(environment),
+      telemetryStub([]),
+      workspaceGitStub(defaultGitStub()),
+    );
+    expect((await fs.read({ path: 'a.txt', offset: 0, length: 100, encoding: 'utf-8' })).content).toBe('old primary');
+
+    dirs.primary = '/other';
+    expect((await fs.read({ path: 'b.txt', offset: 0, length: 100, encoding: 'utf-8' })).content).toBe('new primary');
+  });
+
   it('reads utf-8 content with metadata', async () => {
     const fs = makeSession({ 'src/a.ts': 'hello\nworld\n' }, emptyHandler);
     const result = await fs.read({

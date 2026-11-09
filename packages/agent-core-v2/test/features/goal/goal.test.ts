@@ -2039,7 +2039,7 @@ describe('goal pause classification on provider errors', () => {
 
   it('pauses the goal on provider rate limits', async () => {
     const goal = await goalAfterFailedTurn(requesterFromGenerateFn(async () => {
-      throw new APIStatusError(429, 'Rate limited', 'req-429');
+      throw new APIStatusError(429, 'Rate limited', true, 'req-429');
     }));
 
     expect(goal).toMatchObject({
@@ -2061,7 +2061,7 @@ describe('goal pause classification on provider errors', () => {
 
   it('pauses the goal on provider authentication errors', async () => {
     const goal = await goalAfterFailedTurn(requesterFromGenerateFn(async () => {
-      throw new APIStatusError(401, 'Unauthorized', 'req-401');
+      throw new APIStatusError(401, 'Unauthorized', false, 'req-401');
     }));
 
     expect(goal).toMatchObject({

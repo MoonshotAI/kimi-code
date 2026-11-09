@@ -1,13 +1,13 @@
 import {
   ErrorCodes,
   isKimiError,
-  PRIMARY_SUBAGENT_MODEL_CHOICE,
   type ExperimentalFeatureState,
   type ModelAlias,
   type PermissionMode,
   type Session,
   type ThinkingEffort,
 } from '@moonshot-ai/kimi-code-sdk';
+import { TuiAltScreen } from '@moonshot-ai/pi-tui';
 
 import { EditorSelectorComponent } from '../components/dialogs/editor-selector';
 import { EffortSelectorComponent } from '../components/dialogs/effort-selector';
@@ -20,12 +20,26 @@ import { modelDisplayName, segmentsFor } from '../components/dialogs/model-selec
 import { ModelSwitchConfirmDialogComponent } from '../components/dialogs/model-switch-confirm-dialog';
 import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model-selector';
 import { PermissionSelectorComponent } from '../components/dialogs/permission-selector';
-import { SettingsSelectorComponent, type SettingsSelection } from '../components/dialogs/settings-selector';
+import {
+  CopyOnSelectSelectorComponent,
+  SettingsSelectorComponent,
+  ThinkingDisplaySelectorComponent,
+  ToolCallDensitySelectorComponent,
+  type SettingsSelection,
+} from '../components/dialogs/settings-selector';
 import { SurveyPreferenceSelectorComponent } from '../components/dialogs/survey-preference-selector';
 import { ThemeSelectorComponent } from '../components/dialogs/theme-selector';
 import { TuiModeSelectorComponent } from '../components/dialogs/tui-mode-selector';
 import { UpdatePreferenceSelectorComponent } from '../components/dialogs/update-preference-selector';
-import { DEFAULT_MARKDOWN_CONFIG, DEFAULT_TUI_CONFIG, saveTuiConfig, type MarkdownConfig, type TuiConfig, type TuiMode } from '../config';
+import {
+  DEFAULT_MARKDOWN_CONFIG,
+  DEFAULT_TUI_CONFIG,
+  saveTuiConfig,
+  type MarkdownConfig,
+  type TranscriptConfig,
+  type TuiConfig,
+  type TuiMode,
+} from '../config';
 import type { ThemeName } from '#/tui/theme';
 import { currentTheme, isBuiltInTheme, lightColors, loadCustomThemeMerged } from '#/tui/theme';
 import {
@@ -47,6 +61,7 @@ import {
 } from '#/utils/effort-switch-config';
 import { DEFAULT_OAUTH_PROVIDER_NAME } from '#/constant/app';
 import { MAIN_AGENT_ID, NO_ACTIVE_SESSION_MESSAGE, TUI_MODE_RESTART_NOTICE } from '../constant/kimi-tui';
+import { DOCK_PREVIEW_ROWS } from '../constant/rendering';
 import type { QueuedModelSwitch } from '../types';
 import { formatErrorMessage } from '../utils/event-payload';
 import { setMarkdownMermaidMode, type MermaidRenderMode } from '../utils/markdown-options';
@@ -79,6 +94,8 @@ export function currentTuiConfig(host: Pick<SlashCommandHost, 'state'>): TuiConf
     tuiMode: host.state.appState.tuiMode,
     editorCommand: host.state.appState.editorCommand,
     disablePasteBurst: host.state.appState.disablePasteBurst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
+    copyOnSelect:
+      host.state.appState.copyOnSelect ?? DEFAULT_TUI_CONFIG.copyOnSelect,
     renderLatex: host.state.appState.renderLatex ?? DEFAULT_TUI_CONFIG.renderLatex ?? true,
     cacheExpiryHint: host.state.appState.cacheExpiryHint ?? DEFAULT_TUI_CONFIG.cacheExpiryHint,
     autoSessionTitle: host.state.appState.autoSessionTitle ?? DEFAULT_TUI_CONFIG.autoSessionTitle,
@@ -86,7 +103,15 @@ export function currentTuiConfig(host: Pick<SlashCommandHost, 'state'>): TuiConf
     upgrade: host.state.appState.upgrade,
     statusLine: host.state.appState.statusLine ?? DEFAULT_TUI_CONFIG.statusLine,
     markdown: host.state.appState.markdown ?? DEFAULT_MARKDOWN_CONFIG,
+    transcript: host.state.appState.transcript,
   };
+}
+
+export function applyTranscriptPresentation(host: SlashCommandHost): void {
+  host.state.transcriptContainer.setPresentationOptions({
+    ...host.state.appState.transcript,
+    fullscreen: host.state.ui.mode === 'fullscreen',
+  });
 }
 
 export async function handlePlanCommand(host: SlashCommandHost, args: string): Promise<void> {
@@ -200,15 +225,6 @@ export async function handleSecondaryModelCommand(host: SlashCommandHost, args: 
   const alias = args.trim();
   await refreshModelsForPicker(host);
   const models = pickerModelsForHost(host);
-  // The pool reserves `primary` for Tower spawn's symbolic "tower's own model"
-  // choice — a user alias with that name can never be the subagent default.
-  delete models[PRIMARY_SUBAGENT_MODEL_CHOICE];
-  if (alias === PRIMARY_SUBAGENT_MODEL_CHOICE) {
-    host.showError(
-      `"${PRIMARY_SUBAGENT_MODEL_CHOICE}" is reserved by the subagent model pool — rename the [models] alias to use it here.`,
-    );
-    return;
-  }
   if (Object.keys(models).length === 0) {
     host.showNotice(
       'No models configured',
@@ -1094,6 +1110,114 @@ export async function applyMermaidPreferenceChoice(
   host.showStatus(`Mermaid diagrams ${enabled ? 'enabled' : 'disabled'}.`);
 }
 
+function showCopyOnSelectPicker(host: SlashCommandHost): void {
+  host.mountEditorReplacement(
+    new CopyOnSelectSelectorComponent({
+      currentValue: host.state.appState.copyOnSelect !== false,
+      onSelect: (enabled) => {
+        host.restoreEditor();
+        void applyCopyOnSelectChoice(host, enabled);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+export async function applyCopyOnSelectChoice(
+  host: Pick<SlashCommandHost, 'state' | 'setAppState' | 'showStatus'>,
+  enabled: boolean,
+): Promise<void> {
+  if (enabled === (host.state.appState.copyOnSelect !== false)) {
+    host.showStatus(`Copy on select already ${enabled ? 'enabled' : 'disabled'}.`);
+    return;
+  }
+
+  try {
+    await saveTuiConfig({ ...currentTuiConfig(host), copyOnSelect: enabled });
+  } catch (error) {
+    host.showStatus(`Failed to save copy on select setting: ${formatErrorMessage(error)}`, 'error');
+    return;
+  }
+
+  host.setAppState({ copyOnSelect: enabled });
+  if (host.state.ui instanceof TuiAltScreen) host.state.ui.setCopyOnSelect(enabled);
+  host.showStatus(`Copy on select ${enabled ? 'enabled' : 'disabled'}.`);
+}
+
+function showToolCallDensityPicker(host: SlashCommandHost): void {
+  host.mountEditorReplacement(
+    new ToolCallDensitySelectorComponent({
+      current: host.state.appState.transcript,
+      layout: host.state.dockContainer === undefined ? undefined : { maxBodyRows: DOCK_PREVIEW_ROWS },
+      onSelect: (toolCallDensity) => {
+        host.restoreEditor();
+        void applyTranscriptConfigChoice(host, {
+          ...host.state.appState.transcript,
+          toolCallDensity,
+        });
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+function showThinkingDisplayPicker(host: SlashCommandHost): void {
+  host.mountEditorReplacement(
+    new ThinkingDisplaySelectorComponent({
+      current: host.state.appState.transcript,
+      layout: host.state.dockContainer === undefined ? undefined : { maxBodyRows: DOCK_PREVIEW_ROWS },
+      onSelect: (thinking) => {
+        host.restoreEditor();
+        void applyTranscriptConfigChoice(host, {
+          ...host.state.appState.transcript,
+          thinking,
+        });
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+export async function applyTranscriptConfigChoice(
+  host: SlashCommandHost,
+  transcript: TranscriptConfig,
+): Promise<void> {
+  const current = host.state.appState.transcript;
+  if (
+    transcript.toolCallDensity === current.toolCallDensity &&
+    transcript.thinking === current.thinking
+  ) {
+    host.showStatus('Transcript display settings unchanged.');
+    return;
+  }
+  try {
+    await saveTuiConfig({
+      ...currentTuiConfig(host),
+      transcript,
+    });
+  } catch (error) {
+    host.showStatus(
+      `Failed to save transcript display settings: ${formatErrorMessage(error)}`,
+      'error',
+    );
+    return;
+  }
+  host.setAppState({ transcript });
+  applyTranscriptPresentation(host);
+  host.track('transcript_display_settings', {
+    tool_call_density: transcript.toolCallDensity,
+    thinking: transcript.thinking,
+    source: 'settings',
+  });
+  host.showStatus('Transcript display settings updated.', 'success');
+}
+
 export function showTuiModePicker(host: SlashCommandHost): void {
   host.mountEditorReplacement(
     new TuiModeSelectorComponent({
@@ -1145,6 +1269,7 @@ export async function applyTuiModeChoice(host: TuiModeHost, tuiMode: TuiMode): P
 export function showSettingsSelector(host: SlashCommandHost): void {
   host.mountEditorReplacement(
     new SettingsSelectorComponent({
+      fullscreen: host.state.ui.mode === 'fullscreen',
       onSelect: (value) => {
         handleSettingsSelection(host, value);
       },
@@ -1162,6 +1287,9 @@ function handleSettingsSelection(host: SlashCommandHost, value: SettingsSelectio
     case 'permission': showPermissionPicker(host); return;
     case 'theme': showThemePicker(host); return;
     case 'tuiMode': showTuiModePicker(host); return;
+    case 'toolCallDensity': showToolCallDensityPicker(host); return;
+    case 'thinking': showThinkingDisplayPicker(host); return;
+    case 'copyOnSelect': showCopyOnSelectPicker(host); return;
     case 'mermaid': showMermaidPreferencePicker(host); return;
     case 'editor': showEditorPicker(host); return;
     case 'survey': showSurveyPreferencePicker(host); return;

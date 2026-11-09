@@ -85,7 +85,7 @@ import {
   shutdownServerTelemetry,
 } from './services/telemetry';
 import { createServerSessionRating } from './services/sessionRating';
-import { TranscriptService } from './services/transcript/transcriptService';
+import { ConversationService } from './services/conversation/conversationService';
 import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
 import { SessionIdleReaper, resolveSessionIdleReclaimMs } from './services/sessionIdleReaper';
 import { startConfigChangedPublisher } from './services/config/configChangedPublisher';
@@ -362,6 +362,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     configChangedPublisher.close();
     await remoteControlManager.close();
     await app.close();
+    conversations.dispose();
     sessionRating.dispose();
     configWarningSubscription.dispose();
     pluginChangeSubscription.dispose();
@@ -402,13 +403,13 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   };
 
   const connectionRegistry = new ConnectionRegistry();
-  const transcriptService = new TranscriptService({ homeDir, core, logger });
+  const conversations = new ConversationService(core);
   const sessionRating = createServerSessionRating(core, { debugEndpoints, logger });
-  core.accessor.get(IGlobalSearchService).setLiveTranscriptSource(transcriptService);
+  core.accessor.get(IGlobalSearchService);
   const broadcaster = new SessionEventBroadcaster({
     core,
     logger,
-    transcriptService,
+    conversations,
   });
 
   const configService = core.accessor.get(IConfigService);
@@ -466,7 +467,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
           { name: 'workspaces', description: 'Workspace registry + folder picker' },
           { name: 'messages', description: 'Message history' },
           { name: 'search', description: 'Global message search' },
-          { name: 'transcript', description: 'Turn-granular session transcript' },
           { name: 'prompts', description: 'Prompt submission & abort' },
           { name: 'interactions', description: 'Approval and question responses' },
           { name: 'tools', description: 'Tool & MCP server management' },
@@ -508,7 +508,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       void close().catch((error: unknown) => logger.error({ err: error }, 'server close failed'));
     },
     connectionRegistry,
-    transcriptService,
+    conversations,
     sessionRating,
     dangerousBypassAuth: opts.disableAuth === true,
     webTitle: opts.webTitle,
@@ -517,7 +517,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   await registerApiV2Routes(app, core);
 
   const wssV1 = registerWsV1(core, {
-    validateCredential,
     registry: connectionRegistry,
     broadcaster,
   });

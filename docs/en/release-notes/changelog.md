@@ -6,6 +6,46 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 2.5.2 (2026-11-06)
+
+### Bug Fixes
+
+- Fix duplicate tool declaration errors in select_tools when MCP tool definitions change.
+- web: Fix steered messages being incorrectly queued while a session is running.
+- web: Fix project creation when accessing the Web UI over HTTP.
+
+## 2.5.1 (2026-11-05)
+
+### Bug Fixes
+
+- Fix repeated HTTP 400 errors in sessions caused by empty system messages for dynamic tool schemas.
+- Fix missing image and video previews in live and reloaded tool results.
+- Hide sessions belonging to deleted workspaces from session lists.
+- web: Fix session titles not being generated automatically after the first turn of a new session.
+- web: Fix local images not displaying when their paths contain spaces.
+- web: Fix the session info panel automatically floating over and covering chat messages in narrow layouts.
+- web: Hide stale empty implicit workspaces from the workspace list.
+- web: Fix tool call summaries repeatedly expanding and collapsing while a response is in progress.
+
+## 2.5.0 (2026-11-04)
+
+### Features
+
+- Use `/model` and `/effort` while the agent is working; changes apply from the next turn.
+- Merge project-level Skills from the primary and remembered additional directories; the primary wins name conflicts.
+- Create remote sessions in SSH, Docker, or custom-command environments.
+- `[workspace] require_trust = false` treats every workspace as trusted and skips trust prompts after `/reload`; use it only when every workspace is trusted.
+
+### Polish
+
+- Web cross-session full-text search is off by default; set `[database] global_search = true` to enable it.
+- With only `default_model` configured, newly spawned Agent and AgentSwarm subagents use that model; the legacy `force` key is ignored with a warning.
+- Agent and AgentSwarm remove the implicit `primary`; list the main model explicitly in the pool to use it. Without `[secondary_model]`, subagents still inherit the caller's model.
+
+### Bug Fixes
+
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
 ## 2.4.1 (2026-10-30)
 
 ### Polish

@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-web: Improved interactions and fixed known bugs.
+web: Show skill sources and preserve the selected workspace when activating same-name skills.

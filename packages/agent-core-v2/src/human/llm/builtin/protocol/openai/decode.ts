@@ -8,6 +8,7 @@ import {
 import { headersToRecord, parseRetryAfterMs } from '#/llm/protocol/kit/http';
 import { isAbortError, toLlmErrorMessage } from '#/llm/protocol/errors';
 import {
+  isTransientHttpStatus,
   toLlmStatusErrorMessage,
   toLlmStreamErrorMessage,
   toLlmTransportErrorMessage,
@@ -503,16 +504,31 @@ export function decodeError(error: unknown, source?: 'stream'): LlmRemoteErrorMe
       return { kind: 'context_overflow', message, statusCode, retryable: false, ...statusInfo };
     }
     if (statusCode !== undefined) {
-      return toLlmStatusErrorMessage({ statusCode, message, ...statusInfo });
+      return toLlmStatusErrorMessage({
+        statusCode,
+        message,
+        retryable: isTransientHttpStatus(statusCode),
+        ...statusInfo,
+      });
     }
     if (error.error !== undefined) {
       if (isOpenAIRateLimitErrorCode(code) || isOpenAIRateLimitErrorCode(type)) {
         return { kind: 'rate_limit', message, retryable: true, ...statusInfo };
       }
-      return toLlmStreamErrorMessage({ businessCode: error.status, message, ...statusInfo });
+      return toLlmStreamErrorMessage({
+        businessCode: error.status,
+        message,
+        retryable: error.status === undefined || isTransientHttpStatus(error.status),
+        ...statusInfo,
+      });
     }
     if (source === 'stream') {
-      return toLlmStreamErrorMessage({ businessCode: error.status, message: '', ...statusInfo });
+      return toLlmStreamErrorMessage({
+        businessCode: error.status,
+        message: '',
+        retryable: error.status === undefined || isTransientHttpStatus(error.status),
+        ...statusInfo,
+      });
     }
   }
   if (

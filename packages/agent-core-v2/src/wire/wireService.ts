@@ -51,7 +51,9 @@ import {
   type WireTree,
 } from './tree';
 import {
+  WIRE_MIN_READER_VERSION,
   WIRE_PROTOCOL_VERSION,
+  assertWireReaderVersion,
   isNewerWireVersion,
   migrateV1_4ToV1_5,
   migrateWireRecord,
@@ -377,12 +379,15 @@ export class WireService extends Service implements IWireService, IAgentJournal 
             'Agent wire metadata is malformed',
             { details: { scope: this.wireScope, key: AGENT_WIRE_RECORD_KEY } },
           );
-        } else if (isNewerWireVersion(sourceRecord.protocol_version)) {
-          newerWireVersion = true;
         } else {
-          migrations = resolveWireMigrations(sourceRecord.protocol_version);
-          if (sourceRecord.protocol_version !== WIRE_PROTOCOL_VERSION) {
-            rewrittenRecords = [];
+          assertWireReaderVersion(sourceRecord.min_protocol_version);
+          if (isNewerWireVersion(sourceRecord.protocol_version)) {
+            newerWireVersion = true;
+          } else {
+            migrations = resolveWireMigrations(sourceRecord.protocol_version);
+            if (sourceRecord.protocol_version !== WIRE_PROTOCOL_VERSION) {
+              rewrittenRecords = [];
+            }
           }
         }
       }
@@ -408,13 +413,17 @@ export class WireService extends Service implements IWireService, IAgentJournal 
         if (record.type === 'plan.revision') recordIndex++;
         continue;
       }
-      rewrittenRecords?.push(normalized);
-      const runtimeRecord = fromPersistentWireRecord(normalized);
+      const outputRecord =
+        rewrittenRecords !== undefined && normalized.type === 'metadata'
+          ? { ...normalized, min_protocol_version: WIRE_MIN_READER_VERSION }
+          : normalized;
+      rewrittenRecords?.push(outputRecord);
+      const runtimeRecord = fromPersistentWireRecord(outputRecord);
       if (isHumanRecordType(runtimeRecord.type)) {
         modeTwoEntries.push({ record: runtimeRecord, line: lineCount });
       }
-      yield { record: decodePersistent ? runtimeRecord : normalized, line: lineCount };
-      if (normalized.type !== 'metadata') {
+      yield { record: decodePersistent ? runtimeRecord : outputRecord, line: lineCount };
+      if (outputRecord.type !== 'metadata') {
         recordIndex++;
       }
     }
@@ -585,7 +594,11 @@ export class WireService extends Service implements IWireService, IAgentJournal 
       const migratedRecord = migrateWireRecord(candidate, migrations);
       const record =
         !newerWireVersion && migratedRecord.type === 'metadata'
-          ? { ...migratedRecord, protocol_version: WIRE_PROTOCOL_VERSION }
+          ? {
+              ...migratedRecord,
+              protocol_version: WIRE_PROTOCOL_VERSION,
+              min_protocol_version: WIRE_MIN_READER_VERSION,
+            }
           : migratedRecord;
       const normalized = newerWireVersion
         ? record

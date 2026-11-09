@@ -16,6 +16,7 @@ import type {
   AgentCommandInfo,
   AgentEnvironmentBinding,
   BackgroundTaskInfo,
+  CapabilityInstallOptions,
   CapabilityStatus,
   CompactOptions,
   CreateGoalInput,
@@ -72,7 +73,7 @@ export interface SessionOptions {
 interface CapabilityRpcSurface {
   listCapabilities(): Promise<readonly CapabilityStatus[]>;
   getCapability(id: string): Promise<CapabilityStatus>;
-  installCapability(id: string): Promise<CapabilityStatus>;
+  installCapability(id: string, options?: CapabilityInstallOptions): Promise<CapabilityStatus>;
 }
 
 export function capabilityRpc(rpc: SDKRpcClientBase): CapabilityRpcSurface {
@@ -712,9 +713,9 @@ export class Session {
    * Start an idempotent capability install (binary runtime + wiring) in the
    * background; poll `getCapability` for progress.
    */
-  async installCapability(id: string): Promise<CapabilityStatus> {
+  async installCapability(id: string, options?: CapabilityInstallOptions): Promise<CapabilityStatus> {
     this.ensureOpen();
-    return capabilityRpc(this.rpc).installCapability(id);
+    return capabilityRpc(this.rpc).installCapability(id, options);
   }
 
   async setPluginMcpServerEnabled(
@@ -741,7 +742,11 @@ export class Session {
     return this.rpc.getPluginInfo(id);
   }
 
-  async activateSkill(name: string, args?: string | undefined): Promise<void> {
+  async activateSkill(
+    name: string,
+    args?: string | undefined,
+    options?: { readonly path?: string },
+  ): Promise<void> {
     this.ensureOpen();
     const skillName = normalizeRequiredString(
       name,
@@ -752,6 +757,7 @@ export class Session {
     await this.rpc.activateSkill({
       sessionId: this.id,
       name: skillName,
+      path: options?.path,
       ...(skillArgs !== undefined ? { args: skillArgs } : {}),
     });
   }

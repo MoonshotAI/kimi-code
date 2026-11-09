@@ -438,7 +438,7 @@ describe('AgentConversationUndoService', () => {
             mode === 'stripped' &&
             images.some((part) => part.imageUrl.url.endsWith('/1-0.png'))
           ) {
-            throw new APIStatusError(400, 'unsupported image format');
+            throw new APIStatusError(400, 'unsupported image format', false);
           }
           return {
             id: 'media-response',

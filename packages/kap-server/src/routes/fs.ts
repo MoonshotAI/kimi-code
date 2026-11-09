@@ -162,8 +162,8 @@ function acquireLocalRootedFs(
   try {
     const hostFs = lease.environment.fs!;
     const context = { workspaceId, cwd: roots.workDir };
-    const git = new WorkspaceGitService(context, { current: core.accessor.get(IGitService), onDidChange: Event.None as Event<void> });
-    const fs = new WorkspaceFsService(context, { additionalDirs: roots.additionalDirs }, hostFs, environments, core.accessor.get(ITelemetryService), git);
+    const git = new WorkspaceGitService({ primary: roots.workDir }, { current: core.accessor.get(IGitService), onDidChange: Event.None as Event<void> });
+    const fs = new WorkspaceFsService(context, { primary: roots.workDir, additionalDirs: roots.additionalDirs }, hostFs, environments, core.accessor.get(ITelemetryService), git);
     return { fs, hostFs, lease, environmentId: LOCAL_ENVIRONMENT_ID };
   } catch (error) {
     lease.dispose();
@@ -198,6 +198,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       errors: {
         [ErrorCode.VALIDATION_FAILED]: {},
         [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
         [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
         [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
@@ -543,6 +544,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       errors: {
         [ErrorCode.VALIDATION_FAILED]: {},
         [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
         [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
         [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
@@ -909,6 +911,17 @@ function sendMappedError(reply: Reply, req: { id: string }, err: unknown): void 
         return;
       case ErrorCodes.SESSION_NOT_FOUND:
         reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId, err.stack));
+        return;
+      case ErrorCodes.WIRE_VERSION_TOO_LOW:
+        reply.send(
+          errEnvelope(
+            ErrorCode.WIRE_VERSION_TOO_LOW,
+            err.message,
+            requestId,
+            err.stack,
+            err.details,
+          ),
+        );
         return;
       case ErrorCodes.OS_FS_NOT_FOUND:
       case ErrorCodes.OS_FS_NOT_DIRECTORY:

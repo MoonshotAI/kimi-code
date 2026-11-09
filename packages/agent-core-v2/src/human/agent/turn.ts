@@ -107,7 +107,7 @@ export function toInputMessages(history: readonly HistoryMessage[]): Message[] {
 }
 
 export interface HistoryAccumulator {
-  push(part: StreamedMessagePart): StreamedMessagePart;
+  push(part: StreamedMessagePart): number | undefined;
   pushUsage(usage: Partial<TokenUsage>): void;
   pushHeaders(headers: Record<string, string>): void;
   pushFinish(finish: FinishInfo): void;
@@ -122,10 +122,7 @@ export function createHistoryAccumulator(meta?: AssistantMetaInput): HistoryAccu
   let finish: FinishInfo | undefined;
   let messageId: string | undefined;
   return {
-    push: (part) => {
-      inner.push(part);
-      return part;
-    },
+    push: (part) => inner.push(part),
     pushUsage: (value) => {
       usage = {
         inputOther: value.inputOther ?? usage?.inputOther ?? 0,
@@ -187,11 +184,13 @@ export type TurnEvent =
     };
 
 export type TurnLlmEvent =
-  | Exclude<LlmEvent, { type: 'llm.done' }>
+  | Exclude<LlmEvent, { type: 'llm.done' } | { type: 'llm.streaming.part' }>
+  | { type: 'llm.streaming.part'; part: StreamedMessagePart; block?: number }
   | { type: 'llm.done'; entry: AssistantEntry };
 
 export type TurnSignal =
   | { type: 'step.started'; step: number }
+  | { type: 'step.stream_reset' }
   | { type: 'turn.spawn_tools'; toolCalls: ToolCall[] }
   | { type: 'turn.drain' }
   | { type: 'turn.reminders_consumed'; reminders: HistoryMessage[] };
@@ -502,7 +501,10 @@ export function createTurnMachine(
             ],
           },
           'llm.request.retrying': {
-            actions: ['discardAttemptStream'],
+            actions: [
+              'discardAttemptStream',
+              { type: 'signalParent', params: () => ({ type: 'step.stream_reset' as const }) },
+            ],
           },
           'llm.streaming.headers': {
             actions: [
@@ -515,8 +517,8 @@ export function createTurnMachine(
           'llm.streaming.part': {
             actions: [
               ({ context, event, self }) => {
-                const part = context.accumulator.push(event.part);
-                self._parent?.send({ ...event, part });
+                const block = context.accumulator.push(event.part);
+                self._parent?.send({ ...event, block });
               },
             ],
           },

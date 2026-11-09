@@ -284,7 +284,7 @@ export function salvageInterruptedMessage(message: AssistantMessage): AssistantM
 }
 
 export interface MessageAccumulator {
-  push(part: StreamedMessagePart): void;
+  push(part: StreamedMessagePart): number | undefined;
   toolCallEnd(index?: number | string): ToolCall | undefined;
   finish(): AssistantMessage;
 }
@@ -293,7 +293,13 @@ export function createMessageAccumulator(): MessageAccumulator {
   const message: AssistantMessage = { role: 'assistant', content: [], toolCalls: [] };
   const toolCallIndexMap = new Map<number | string, number>();
   let pending: StreamedMessagePart | null = null;
+  let pendingBlock: number | undefined;
   const deferredThinks: ThinkPart[] = [];
+  const open = (part: StreamedMessagePart): number | undefined => {
+    pending = structuredClone(part);
+    pendingBlock = isContentPart(pending) ? message.content.length : undefined;
+    return pendingBlock;
+  };
   const flush = () => {
     if (pending !== null) {
       if (isContentPart(pending)) {
@@ -332,24 +338,22 @@ export function createMessageAccumulator(): MessageAccumulator {
                 ? part.argumentsPart
                 : target.arguments + part.argumentsPart;
           }
-          return;
+          return undefined;
         }
       }
       if (part.type === 'text') deferredThinks.length = 0;
-      if (pending === null) {
-        pending = structuredClone(part);
-        return;
-      }
+      if (pending === null) return open(part);
       if (pending.type === 'text' && part.type === 'think' && isVacuousContentPart(part)) {
         const sameKey = deferredThinks.findIndex((think) => think.reasoningKey === part.reasoningKey);
         if (sameKey === -1) deferredThinks.push(structuredClone(part));
         else deferredThinks[sameKey] = structuredClone(part);
-        return;
+        return undefined;
       }
       if (!mergeInPlace(pending, part)) {
         flush();
-        pending = structuredClone(part);
+        return open(part);
       }
+      return pendingBlock;
     },
     toolCallEnd(index) {
       if (

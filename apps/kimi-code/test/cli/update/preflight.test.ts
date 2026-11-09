@@ -192,6 +192,7 @@ function tuiConfig(overrides: Partial<TuiConfig> = {}): TuiConfig {
     editorCommand: null,
     notifications: { enabled: true, condition: 'unfocused' },
     upgrade: { autoInstall: true },
+    transcript: { toolCallDensity: 'compact', thinking: 'grouped' },
     ...overrides,
   };
 }

@@ -39,6 +39,12 @@ class OverflowScrollView extends ScrollView {
     return this.canScroll;
   }
 
+  override updateLayout(contentHeight: number, viewportHeight: number, requestRender: () => void): void {
+    const overflowed = this.canScroll;
+    super.updateLayout(contentHeight, viewportHeight, requestRender);
+    if (this.canScroll !== overflowed) requestRender();
+  }
+
   override handleMouse(event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
     // Consume the wheel here so the renderer's fallback cannot hand overscroll to the transcript.
     if (event.type !== 'wheel') return undefined;

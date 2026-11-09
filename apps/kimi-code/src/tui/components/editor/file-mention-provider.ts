@@ -10,8 +10,10 @@ import {
   type AutocompleteSuggestions,
   type SlashCommand,
 } from '@moonshot-ai/pi-tui';
+import type { SkillSummary } from '@moonshot-ai/kimi-code-sdk';
 
 import { findInlineSkillTokens } from '../../utils/inline-skill-tokens';
+import { skillSourceLabel } from '../../commands/skills';
 
 const PATH_DELIMITERS = new Set([' ', '\t', '"', "'", '=']);
 const MAX_FALLBACK_SCAN = 2000;
@@ -19,6 +21,10 @@ const MAX_FALLBACK_SUGGESTIONS = 50;
 
 export interface SlashAutocompleteCommand extends SlashCommand {
   readonly aliases?: readonly string[];
+  readonly skillPath?: string;
+  readonly skillSource?: SkillSummary['source'];
+  readonly isSkill?: boolean;
+  readonly workspaceDir?: string;
 }
 
 interface FsMentionCandidate {
@@ -50,6 +56,7 @@ export type RemoteMentionSuggest = (
 export class FileMentionProvider implements AutocompleteProvider {
   private readonly inner: CombinedAutocompleteProvider;
   private readonly additionalDirs: readonly string[];
+  private readonly workspaceLabels: ReadonlyMap<string, string>;
 
   constructor(
     private readonly slashCommands: SlashAutocompleteCommand[],
@@ -59,7 +66,9 @@ export class FileMentionProvider implements AutocompleteProvider {
     private readonly getInputMode: () => 'prompt' | 'bash' = () => 'prompt',
     private readonly skillCommandNames?: ReadonlySet<string>,
     private readonly remoteSuggest?: RemoteMentionSuggest,
+    private readonly onSkillVariantSelected?: (selection: { commandName: string; path: string; start: number }) => void,
   ) {
+    this.workspaceLabels = workspaceLabelsForCommands(slashCommands);
     this.additionalDirs = additionalDirs.map((dir) => resolveMentionDirectory(workDir, dir));
     // Build an expanded list that includes alias entries so that
     // inner's argument completion can find commands by alias too.
@@ -201,7 +210,11 @@ export class FileMentionProvider implements AutocompleteProvider {
         }
 
         // Primary-name matches outrank alias matches on score ties.
-        matches.sort((a, b) => a.score - b.score || Number(a.viaAlias) - Number(b.viaAlias));
+        matches.sort((a, b) =>
+          Number(a.cmd.isSkill === true) - Number(b.cmd.isSkill === true) ||
+          a.score - b.score ||
+          Number(a.viaAlias) - Number(b.viaAlias),
+        );
 
         if (matches.length === 0) return null;
         return {
@@ -209,6 +222,13 @@ export class FileMentionProvider implements AutocompleteProvider {
             value: m.cmd.name,
             label: m.label,
             description: formatSlashCommandDescription(m.cmd),
+            data: {
+              group: m.cmd.isSkill === true ? 'skill' : undefined,
+              skillPath: m.cmd.skillPath,
+              workspaceLabel: m.cmd.workspaceDir === undefined
+                ? skillSourceLabel(m.cmd.skillSource)
+                : this.workspaceLabels.get(m.cmd.workspaceDir) ?? m.cmd.workspaceDir,
+            },
           })),
           prefix: textBeforeCursor,
         };
@@ -279,7 +299,14 @@ export class FileMentionProvider implements AutocompleteProvider {
         value: m.cmd.name,
         label: m.cmd.name,
         description: formatSlashCommandDescription(m.cmd),
-        data: { inlineSkill: true },
+        data: {
+          group: m.cmd.isSkill === true ? 'skill' : undefined,
+          inlineSkill: true,
+          skillPath: m.cmd.skillPath,
+          workspaceLabel: m.cmd.workspaceDir === undefined
+            ? skillSourceLabel(m.cmd.skillSource)
+            : this.workspaceLabels.get(m.cmd.workspaceDir) ?? m.cmd.workspaceDir,
+        },
       })),
       prefix,
     };
@@ -292,6 +319,15 @@ export class FileMentionProvider implements AutocompleteProvider {
     item: AutocompleteItem,
     prefix: string,
   ): { lines: string[]; cursorLine: number; cursorCol: number } {
+    const skillPath = item.data?.['skillPath'];
+    if (typeof skillPath === 'string' && skillPath.length > 0) {
+      const lineStart = lines.slice(0, cursorLine).reduce((start, line) => start + line.length + 1, 0);
+      this.onSkillVariantSelected?.({
+        commandName: item.value,
+        path: skillPath,
+        start: lineStart + cursorCol - prefix.length,
+      });
+    }
     // Inline skill selection mid-input: pi-tui's default applyCompletion
     // treats mid-line slash prefixes as file paths and drops the `/`. Preserve
     // the slash and add a trailing space so the completed token stays a valid
@@ -422,6 +458,27 @@ function isExecutableFd(fdPath: string): boolean {
  * starts with `.` (see registry.ts). pi-tui's path completer sets `label` to
  * the entry basename, with a trailing `/` for directories.
  */
+function workspaceLabelsForCommands(
+  commands: readonly SlashAutocompleteCommand[],
+): ReadonlyMap<string, string> {
+  const counts = new Map<string, number>();
+  const dirs = new Set<string>();
+  for (const command of commands) {
+    if (command.workspaceDir !== undefined) dirs.add(command.workspaceDir);
+  }
+  for (const dir of dirs) {
+    const label = basename(dir) || dir;
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  const labels = new Map<string, string>();
+  for (const command of commands) {
+    if (command.workspaceDir === undefined) continue;
+    const label = basename(command.workspaceDir) || command.workspaceDir;
+    labels.set(command.workspaceDir, counts.get(label)! > 1 ? command.workspaceDir : label);
+  }
+  return labels;
+}
+
 function isDotPrefixedEntry(item: AutocompleteItem): boolean {
   const name = item.label.endsWith('/') ? item.label.slice(0, -1) : item.label;
   return name.startsWith('.');

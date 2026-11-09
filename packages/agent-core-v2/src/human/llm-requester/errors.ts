@@ -219,10 +219,8 @@ export interface LlmStatusErrorInput {
   readonly requestId?: string | null;
   readonly retryAfterMs?: number | null;
   readonly headers?: Record<string, string> | null;
-  readonly retryable?: boolean;
+  readonly retryable: boolean;
 }
-
-const RETRYABLE_HTTP_STATUS_CODES = new Set([408, 409, 429, 500, 502, 503, 504, 529]);
 
 export function toLlmStatusErrorMessage(input: LlmStatusErrorInput): LlmRemoteErrorMessage {
   const info: LlmStatusErrorInfo = {
@@ -230,9 +228,7 @@ export function toLlmStatusErrorMessage(input: LlmStatusErrorInput): LlmRemoteEr
     requestId: input.requestId ?? null,
     retryAfterMs: input.retryAfterMs ?? null,
     headers: input.headers ?? null,
-    retryable:
-      input.retryable ??
-      (input.statusCode !== undefined && RETRYABLE_HTTP_STATUS_CODES.has(input.statusCode)),
+    retryable: input.retryable,
   };
   if (input.statusCode === 429) {
     return { kind: 'rate_limit', message: input.message, ...info };
