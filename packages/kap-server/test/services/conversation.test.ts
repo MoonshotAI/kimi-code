@@ -12,7 +12,7 @@ import {
 import type { CollectionView } from '@moonshot-ai/agent-core-v2/_base/di/collection';
 import { ContextAppendLoopEvent, ContextAppendMessage, ContextClear } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
 import type { LoopRecordedEvent } from '@moonshot-ai/agent-core-v2/agent/contextMemory/loopEventFold';
-import { AssistantDelta, ToolCallDelta } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
+import { AssistantDelta, ThinkingDelta, ToolCallDelta } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import { TurnEnded, TurnPrompt } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import { AgentStateService } from '@moonshot-ai/agent-core-v2/agent/state/agentStateService';
 import { ToolProgress } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
@@ -980,6 +980,25 @@ describe('conversation feed', () => {
       'item.delta',
     ]);
     expect(h.events[3]).toMatchObject({ type: 'item.delta', item_id: 's1:0', field: 'text', delta: ' there' });
+    h.dispatcher.dispose();
+  });
+
+  it('ends a streamed item once, from the recorded step, with the duration the engine measured', async () => {
+    const h = feedHarness([]);
+    await runningTurn(h);
+
+    await h.dispatcher.dispatch(new ThinkingDelta({ agentId: 'main', turnId: 0, block: 0, delta: 'plan' }));
+    await h.dispatcher.dispatch(new AssistantDelta({ agentId: 'main', turnId: 0, block: 1, delta: 'answer' }));
+    await flushed();
+    expect(h.events.map((event) => event.type)).toEqual(['item.started', 'item.started']);
+
+    await h.dispatcher.dispatch(loopEvent({ type: 'content.part', turnId: '0', step: 1, stepUuid: 's1', block: 0, part: { type: 'think', think: 'plan' }, startedAt: 1_000, durationMs: 1_500 }));
+    await h.dispatcher.dispatch(loopEvent({ type: 'content.part', turnId: '0', step: 1, stepUuid: 's1', block: 1, part: { type: 'text', text: 'answer' } }));
+    await flushed();
+
+    const ended = h.events.flatMap((event) => (event.type === 'item.ended' && 'item' in event ? [event.item] : []));
+    expect(ended.map((item) => item.item_id)).toEqual(['s1:0', 's1:1']);
+    expect(ended[0]).toMatchObject({ type: 'reasoning', duration_ms: 1_500 });
     h.dispatcher.dispose();
   });
 

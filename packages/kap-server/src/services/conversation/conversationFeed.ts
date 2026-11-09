@@ -76,7 +76,6 @@ export type ConversationListener = (event: ConversationEvent) => void;
 interface LiveItem {
   readonly turnId: string;
   readonly stepId: string;
-  readonly startedAt: number;
   item: AssistantMessageItem | ReasoningItem | ToolCallItem;
 }
 
@@ -391,13 +390,12 @@ export class ConversationFeed implements IDisposable {
       return;
     }
     if (target.turn.items.some((item) => item.item_id === itemId)) return;
-    this.endLiveBlocks(target.stepId);
     const now = Date.now();
     const base = { item_id: itemId, step_index: target.stepIndex, status: 'running', created_at: isoTime(now), text: delta } as const;
     const item: AssistantMessageItem | ReasoningItem = type === 'reasoning'
       ? { type, ...base, started_at: isoTime(now) }
       : { type, ...base };
-    this.live.set(itemId, { turnId: target.turn.turn_id, stepId: target.stepId, startedAt: now, item });
+    this.live.set(itemId, { turnId: target.turn.turn_id, stepId: target.stepId, item });
     this.emit({ type: 'item.started', turn_id: target.turn.turn_id, item });
   }
 
@@ -419,7 +417,6 @@ export class ConversationFeed implements IDisposable {
     if (name === undefined || entry !== undefined) return;
     const target = this.liveTarget(turnNumber);
     if (target === undefined || target.turn.items.some((item) => item.item_id === toolCallId)) return;
-    this.endLiveBlocks(target.stepId);
     const now = Date.now();
     const item: ToolCallItem = {
       type: 'tool_call',
@@ -432,7 +429,7 @@ export class ConversationFeed implements IDisposable {
       input_text: argumentsPart ?? '',
       started_at: isoTime(now),
     };
-    this.live.set(toolCallId, { turnId: target.turn.turn_id, stepId: target.stepId, startedAt: now, item });
+    this.live.set(toolCallId, { turnId: target.turn.turn_id, stepId: target.stepId, item });
     this.emit({ type: 'item.started', turn_id: target.turn.turn_id, item });
   }
 
@@ -460,18 +457,6 @@ export class ConversationFeed implements IDisposable {
   private notify(notice: Notice): void {
     this.flushPending();
     this.emit({ type: 'notice', ...notice });
-  }
-
-  private endLiveBlocks(stepId: string): void {
-    const now = Date.now();
-    for (const entry of this.live.values()) {
-      const item = entry.item;
-      if (entry.stepId !== stepId || item.status !== 'running' || item.type === 'tool_call') continue;
-      entry.item = item.type === 'reasoning'
-        ? { ...item, status: 'ended', outcome: 'completed', duration_ms: now - entry.startedAt }
-        : { ...item, status: 'ended', outcome: 'completed' };
-      this.emit({ type: 'item.ended', turn_id: entry.turnId, item: entry.item });
-    }
   }
 
   private liveTarget(turnNumber: number): { turn: ConversationTurn; stepId: string; stepIndex: number } | undefined {

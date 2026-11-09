@@ -6,6 +6,14 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 2.5.2 (2026-11-06)
+
+### Bug Fixes
+
+- Fix duplicate tool declaration errors in select_tools when MCP tool definitions change.
+- web: Fix steered messages being incorrectly queued while a session is running.
+- web: Fix project creation when accessing the Web UI over HTTP.
+
 ## 2.5.1 (2026-11-05)
 
 ### Bug Fixes
