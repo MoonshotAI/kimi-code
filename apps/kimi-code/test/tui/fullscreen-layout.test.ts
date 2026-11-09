@@ -134,6 +134,7 @@ function editorReplacementHost(state: ReturnType<typeof createTUIState>): SlashC
   const host = {
     state,
     surveyController: { notifyDisplaced: () => {} },
+    promptPredictionController: { notifyDisplaced() {} },
     disposeEditorReplacement() {},
     modelMigration: { retry: () => {} },
     mountEditorReplacement(panel: Component & Focusable) {
