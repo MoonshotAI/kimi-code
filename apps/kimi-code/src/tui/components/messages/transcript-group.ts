@@ -10,7 +10,7 @@ import chalk from 'chalk';
 import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
 import { mixColors } from '#/tui/theme/color-mix';
-import { hasRowDetail, isExpandedComponent } from '#/tui/utils/component-capabilities';
+import { hasRowDetail, hasStatusMarker, isExpandedComponent } from '#/tui/utils/component-capabilities';
 import {
   deriveGroupView,
   elapsedText,
@@ -33,6 +33,7 @@ import {
   type TimelineReader,
 } from '#/tui/utils/turn-timeline';
 import { TitleSweep } from './running-title';
+import { failedStatusMarker } from './tool-call';
 import { renderHeaderContent, TruncatedHeaderLine } from './truncated-header-line';
 
 export interface TranscriptGroupModel extends GroupViewInput {
@@ -351,6 +352,8 @@ interface RowFrame {
   readonly width: number;
   readonly palette: ColorPalette;
   readonly status: string;
+  readonly open: boolean;
+  readonly detail: readonly string[] | undefined;
   readonly lines: string[];
 }
 
@@ -384,21 +387,29 @@ export class TranscriptRowComponent implements Component {
   }
 
   render(width: number): string[] {
-    if (isExpandedComponent(this.item.display)) return this.item.display.render(width);
     const now = monotonicNow();
     const status = rowStatusOf(this.item, this.timeline, now);
     const key = statusKey(status, now);
+    const { display } = this.item;
+    const open = isExpandedComponent(display);
+    const detail = open && hasRowDetail(display) ? display.renderRowDetail(width) : undefined;
     const previous = this.frame;
     if (
       previous?.item === this.item &&
       previous.width === width &&
       previous.palette === currentTheme.palette &&
-      previous.status === key
+      previous.status === key &&
+      previous.open === open &&
+      previous.detail === detail
     ) {
       return previous.lines;
     }
-    const lines = ['', `${TITLE_INDENT}${rowLine(this.item, status, Math.max(1, width - TITLE_INDENT.length), now)}`];
-    this.frame = { item: this.item, width, palette: currentTheme.palette, status: key, lines };
+    const marker = rowMarker(this.item, status);
+    const indent = ' '.repeat(visibleWidth(marker));
+    const columns = Math.max(1, width - indent.length);
+    const row = open ? wrappedRow(this.item, status, columns, now) : [rowLine(this.item, status, columns, now)];
+    const lines = ['', ...row.map((line, index) => `${index === 0 ? marker : indent}${line}`), ...(detail ?? [])];
+    this.frame = { item: this.item, width, palette: currentTheme.palette, status: key, open, detail, lines };
     return lines;
   }
 
@@ -512,6 +523,12 @@ function diffText(added: number, removed: number): string {
 
 function rowHead(item: LogicalTranscriptItem, status: RowStatus): string {
   return currentTheme.boldFg(status.kind === 'failed' ? 'error' : 'textDim', item.label.rowVerb);
+}
+
+function rowMarker(item: LogicalTranscriptItem, status: RowStatus): string {
+  const { display } = item;
+  if (!hasStatusMarker(display)) return TITLE_INDENT;
+  return status.kind === 'interrupted' ? failedStatusMarker() : display.statusMarker();
 }
 
 function rowLine(item: LogicalTranscriptItem, status: RowStatus, width: number, now: Instant): string {

@@ -19,6 +19,7 @@ import { TranscriptContainer } from '#/tui/components/messages/transcript-contai
 import { TranscriptGroupComponent } from '#/tui/components/messages/transcript-group';
 import { UserMessageComponent } from '#/tui/components/messages/user-message';
 import type { TranscriptPresentationOptions } from '#/tui/config';
+import { DETACH_HINT_TEXT, FOREGROUND_BASH_HINT_DELAY_MS } from '#/tui/constant/rendering';
 import { currentTheme, darkColors, lightColors } from '#/tui/theme';
 import { mixColors } from '#/tui/theme/color-mix';
 import type { ToolCallBlockData, ToolResultBlockData, TranscriptEntry } from '#/tui/types';
@@ -1472,48 +1473,209 @@ describe('TranscriptGroupComponent layout', () => {
 });
 
 describe('TranscriptRowComponent', () => {
-  it('draws a balanced call as one row and opens it into its full card in place', () => {
+  it('draws a balanced call as one row and keeps that row above the card body when it opens', () => {
     chalk.level = 3;
     const { container } = makeContainer(options({ toolCallDensity: 'balanced' }));
     const edit = tool('Edit', { path: '/work/a.ts', old_string: 'one', new_string: 'two' });
     container.addChild(thought());
     container.addChild(tool('Read', { path: '/work/a.ts' }));
     container.addChild(edit);
-    const rows = (): string[] => plain(container.render(80)).split('\n').map((line) => line.trimEnd());
-    const closed = rows();
+    const closed = container.render(80);
 
-    expect(closed).toEqual(['', '  Thought for 3s, read 1 file', '', '  Edit a.ts · +1 -1']);
-    expect(container.render(80).join('\n')).toContain(`  ${currentTheme.boldFg('textDim', 'Edit')} `);
+    expect(plain(closed).split('\n')).toEqual(['', '  Thought for 3s, read 1 file', '', '● Edit a.ts · +1 -1']);
+    expect(closed[3]).toContain(`${currentTheme.fg('success', '● ')}${currentTheme.boldFg('textDim', 'Edit')} `);
 
     click(container, 3);
     expect(edit.isExpanded()).toBe(true);
-    expect(rows().slice(2)).toEqual(plain(edit.render(80)).split('\n').map((line) => line.trimEnd()));
-    expect(rows().length).toBeGreaterThan(closed.length);
+    const opened = container.render(80);
+    const body = opened.slice(closed.length);
+    expect(opened.slice(0, closed.length)).toEqual(closed);
+    expect(body).toEqual(edit.renderRowDetail(80));
+    expect(plain(body)).toContain('two');
+    expect(edit.render(80).slice(2)).toEqual(expect.arrayContaining(body));
 
     click(container, 3);
     expect(edit.isExpanded()).toBe(false);
-    expect(rows()).toEqual(closed);
+    expect(container.render(80)).toEqual(closed);
 
     container.toggleToolOutputExpansion();
-    expect(edit.isExpanded()).toBe(true);
+    const expanded = container.render(80);
+    const row = expanded.indexOf(closed[3] ?? 'the row');
+    expect(row).toBeGreaterThan(3);
+    expect(expanded.slice(row + 1)).toEqual(edit.renderRowDetail(80));
     container.toggleToolOutputExpansion();
-    expect(rows()).toEqual(closed);
+    expect(container.render(80)).toEqual(closed);
   });
 
-  it('counts a running row and hides its Bash hint from the transcript until it is opened', () => {
+  it('opens a command that fits onto the exact row it showed closed', () => {
+    chalk.level = 3;
+    const { container } = makeContainer(options({ toolCallDensity: 'balanced' }));
+    const bash = tool('Bash', { command: 'npm test' });
+    container.addChild(bash);
+    const closed = container.render(80);
+
+    click(container, 1);
+    const opened = container.render(80);
+
+    expect(plain(closed).split('\n')).toEqual(['', '● Bash npm test']);
+    expect(opened.slice(0, closed.length)).toEqual(closed);
+    expect(opened.slice(closed.length)).toEqual(bash.renderRowDetail(80));
+  });
+
+  it.each([
+    [
+      'wider than the terminal',
+      'pnpm --filter kimi-code exec vitest run test/tui --reporter verbose --coverage',
+      40,
+      '● Bash pnpm --filter kimi-code exec vit…',
+      ['● Bash pnpm --filter kimi-code exec', '       vitest run test/tui --reporter', '       verbose --coverage'],
+    ],
+    [
+      'written over several lines',
+      "cat <<'EOF' > notes.txt\nfirst note\nsecond note\nEOF",
+      80,
+      "● Bash cat <<'EOF' > notes.txt…",
+      ["● Bash cat <<'EOF' > notes.txt", '       first note', '       second note', '       EOF'],
+    ],
+  ] as const)('opens a command %s into all of its lines under the row and closes it back to one row', (_shape, command, width, row, wrapped) => {
+    const { container } = makeContainer(options({ toolCallDensity: 'balanced' }));
+    const bash = tool('Bash', { command });
+    container.addChild(bash);
+    const closed = container.render(width);
+    expect(plain(closed).split('\n')).toEqual(['', row]);
+
+    click(container, 1, 0, width);
+    const opened = container.render(width);
+    expect(plain(opened.slice(1, 1 + wrapped.length)).split('\n')).toEqual(wrapped);
+    expect(opened.slice(1 + wrapped.length)).toEqual(bash.renderRowDetail(width));
+
+    click(container, 1, 0, width);
+    expect(container.render(width)).toEqual(closed);
+  });
+
+  it('leaves the member rows of an expanded balanced group on their tree guides', () => {
+    const { container } = makeContainer(options({ toolCallDensity: 'balanced' }));
+    container.addChild(thought());
+    container.addChild(tool('Read', { path: '/work/a.ts' }));
+    container.addChild(tool('Edit', { path: '/work/a.ts', old_string: 'one', new_string: 'two' }));
+
+    click(container, 1);
+
+    const [group] = groupViews(container);
+    expect(group?.rows).toEqual(['├ Thought for 3s', '└ Read a.ts']);
+    expect(plain(container.render(80)).split('\n').at(-1)).toBe('● Edit a.ts · +1 -1');
+  });
+
+  const interrupted: ToolResultBlockData = { tool_call_id: 'call-interrupted', output: 'Interrupted by user', is_error: true };
+  const failed: ToolResultBlockData = { tool_call_id: 'call-failed', output: 'exit code 1', is_error: true };
+  const timedOut: ToolResultBlockData = {
+    tool_call_id: 'call-timed-out',
+    output: 'wait_status: timed_out\ntask_id: task-1\nwaited_ms: 1000\ntimeout_ms: 1000',
+    is_error: false,
+  };
+  const goalUpdated: ToolResultBlockData = { tool_call_id: 'call-goal', output: 'Goal marked complete.', is_error: false };
+  const truncated = (): ToolCallComponent => {
+    const call = runningTool('Bash', { command: 'rm -rf ./dist' });
+    call.updateToolCall({ ...call.toolCallView, truncated: true });
+    return call;
+  };
+
+  it.each([
+    ['running', () => runningTool('Bash', { command: 'npm install' }), 'text', '● '],
+    ['finished', () => tool('Bash', { command: 'npm test' }), 'success', '● '],
+    ['failed', () => tool('Bash', { command: 'npm test' }, failed), 'error', '✗ '],
+    ['interrupted', () => tool('Bash', { command: 'npm test' }, interrupted), 'error', '✗ '],
+    ['truncated', truncated, 'error', '✗ '],
+    ['timed-out wait', () => tool('WaitFor', { task_id: 'task-1' }, timedOut), 'warning', '● '],
+    ['goal report', () => tool('UpdateGoal', { status: 'complete' }, goalUpdated), 'primary', '● '],
+  ] as const)('marks a %s row with the bullet its ungrouped and detailed cards draw', (_state, make, token, glyph) => {
+    chalk.level = 3;
+    const marker = currentTheme.fg(token, glyph);
+    for (const toolCallDensity of ['ungrouped', 'detailed', 'balanced'] as const) {
+      const { container } = makeContainer(options({ toolCallDensity }));
+      container.addChild(make());
+      liveTurn(container);
+      expect(container.render(80)[1]?.startsWith(marker), toolCallDensity).toBe(true);
+      container.clear();
+    }
+  });
+
+  it('marks a call cut off mid-arguments as failed on its row and leaves its ungrouped card as it was', () => {
+    chalk.level = 3;
+    const cutOff = (toolCallDensity: 'balanced' | 'ungrouped'): string | undefined => {
+      const { container } = makeContainer(options({ toolCallDensity }));
+      const timeline = liveTurn(container);
+      const bash = runningTool('Bash');
+      const callId = bash.toolCallView.id;
+      if (!isToolCallId(callId)) throw new Error('a tool call id is never empty');
+      bash.updateToolCall({
+        ...bash.toolCallView,
+        args: { command: 'rm -rf ./dist' },
+        streamingArguments: '{"command":"rm -rf ./dist',
+      });
+      container.addChild(bash);
+      timeline.callDelta(callId, 'Bash');
+      timeline.abandonUnstarted();
+      return container.render(80)[1];
+    };
+
+    const row = cutOff('balanced') ?? '';
+    expect(row.startsWith(currentTheme.fg('error', '✗ '))).toBe(true);
+    expect(plain([row])).toBe('✗ Bash rm -rf ./dist · interrupted');
+    expect(cutOff('ungrouped')?.startsWith(currentTheme.fg('text', '● '))).toBe(true);
+  });
+
+  it('draws the card bullet on the row of a resumed call that never got a result', () => {
+    chalk.level = 3;
+    const { container } = makeContainer(options({ toolCallDensity: 'balanced' }));
+    container.setTimeline(new TurnTimeline());
+    const bash = runningTool('Bash', { command: 'npm test' });
+    container.addChild(bash);
+
+    const row = container.render(80)[1] ?? '';
+
+    expect(plain([row])).toBe('● Bash npm test');
+    expect(row.startsWith(bash.statusMarker())).toBe(true);
+    expect(row.startsWith(currentTheme.fg('text', '● '))).toBe(true);
+  });
+
+  it('updates an opened running row while its command streams output', () => {
     vi.useFakeTimers();
     const { container } = makeContainer(options({ toolCallDensity: 'balanced' }));
     const bash = runningTool('Bash', { command: 'npm install' });
     container.addChild(bash);
     liveTurn(container);
+    click(container, 1);
+    const row = container.render(80)[1];
 
-    expect(plain(container.render(80)).split('\n')).toEqual(['', '  Bash npm install']);
+    bash.appendLiveOutput('added 1 package\n');
+    expect(plain(container.render(80))).toContain('added 1 package');
+    bash.appendLiveOutput('added 2 packages\n');
+
+    const lines = container.render(80);
+    expect(lines[1]).toBe(row);
+    expect(plain(lines)).toContain('added 2 packages');
+    container.clear();
+  });
+
+  it('counts a running row and keeps its Bash hint in the activity bar even when the row is open', () => {
+    vi.useFakeTimers();
+    const { container } = makeContainer(options({ toolCallDensity: 'balanced' }));
+    const ui = { requestRender: vi.fn() };
+    const bash = new ToolCallComponent({ id: `call-${++id}`, name: 'Bash', args: { command: 'npm install' } }, undefined, ui as never, '/work');
+    container.addChild(bash);
+    liveTurn(container);
+
+    expect(plain(container.render(80)).split('\n')).toEqual(['', '● Bash npm install']);
     vi.advanceTimersByTime(2_000);
-    expect(plain(container.render(80)).split('\n')).toEqual(['', '  Bash npm install · 2s']);
+    expect(plain(container.render(80)).split('\n')).toEqual(['', '● Bash npm install · 2s']);
     expect(container.foldedBashHintAt()).toBeDefined();
 
     click(container, 1);
-    expect(container.foldedBashHintAt()).toBeUndefined();
+    vi.advanceTimersByTime(FOREGROUND_BASH_HINT_DELAY_MS);
+    expect(plain(bash.render(80))).toContain(DETACH_HINT_TEXT);
+    expect(plain(container.render(80))).not.toContain(DETACH_HINT_TEXT);
+    expect(container.foldedBashHintAt()).toBeDefined();
     container.clear();
   });
 });

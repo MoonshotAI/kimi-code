@@ -252,7 +252,7 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
     for (const projection of this.project()) {
       if (projection.kind === 'group') {
         for (const item of projectionItems(projection)) hidden.add(item.display);
-      } else if (projection.kind === 'row' && !isExpandedComponent(projection.item.display)) {
+      } else if (projection.kind === 'row') {
         hidden.add(projection.item.display);
       }
     }

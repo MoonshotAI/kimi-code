@@ -152,8 +152,8 @@ describe('transcript display previews', () => {
     ]);
     expect(previewOf(balanced).filter(Boolean)).toEqual([
       '   Thought for 3s, read 1 file',
-      '   Edit src/app.ts · +1 -1',
-      '   Bash npm test',
+      ' ● Edit src/app.ts · +1 -1',
+      ' ● Bash npm test',
     ]);
     expect(previewOf(detailed).filter(Boolean)).toEqual([
       '   Thought for 3s, read 1 file',
@@ -182,16 +182,16 @@ describe('transcript display previews', () => {
 
     expect(previewOf(grouped).filter(Boolean)).toEqual([
       '   Thought for 3s, read 1 file',
-      '   Edit src/app.ts · +1 -1',
-      '   Bash npm test',
+      ' ● Edit src/app.ts · +1 -1',
+      ' ● Bash npm test',
     ]);
     expect(previewOf(ungrouped).filter(Boolean)).toEqual([
       ' ● Check how the app starts before changing it.',
       '   start() in src/app.ts takes no arguments, so the port is fixed.',
       '   … (2 more lines, ctrl+o to expand)',
       '   Read src/app.ts',
-      '   Edit src/app.ts · +1 -1',
-      '   Bash npm test',
+      ' ● Edit src/app.ts · +1 -1',
+      ' ● Bash npm test',
     ]);
     expect(ungrouped).toHaveLength(grouped.length);
     picker.dispose();
