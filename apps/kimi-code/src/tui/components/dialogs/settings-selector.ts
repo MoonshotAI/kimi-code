@@ -9,6 +9,7 @@ export type SettingsSelection =
   | 'tuiMode'
   | 'toolCallDensity'
   | 'thinking'
+  | 'copyOnSelect'
   | 'mermaid'
   | 'editor'
   | 'permission'
@@ -49,6 +50,11 @@ const SETTINGS_OPTIONS: readonly ChoiceOption[] = [
     description: 'Choose whether to fold finished thinking.',
   },
   {
+    value: 'copyOnSelect',
+    label: 'Copy on select',
+    description: 'Choose whether selecting text in fullscreen mode copies it.',
+  },
+  {
     value: 'mermaid',
     label: 'Mermaid diagrams',
     description: 'Draw mermaid code blocks as diagrams, or keep them as source.',
@@ -87,6 +93,7 @@ function isSettingsSelection(value: string): value is SettingsSelection {
     value === 'tuiMode' ||
     value === 'toolCallDensity' ||
     value === 'thinking' ||
+    value === 'copyOnSelect' ||
     value === 'mermaid' ||
     value === 'editor' ||
     value === 'permission' ||
@@ -110,7 +117,9 @@ export class SettingsSelectorComponent extends ChoicePickerComponent {
       options: SETTINGS_OPTIONS.filter(
         (option) =>
           opts.fullscreen === true ||
-          (option.value !== 'toolCallDensity' && option.value !== 'thinking'),
+          (option.value !== 'toolCallDensity' &&
+            option.value !== 'thinking' &&
+            option.value !== 'copyOnSelect'),
       ),
       onSelect: (value) => {
         if (isSettingsSelection(value)) opts.onSelect(value);
@@ -194,6 +203,39 @@ export class ThinkingDisplaySelectorComponent extends PreviewChoicePickerCompone
         (option) => [option.value, { ...opts.current, thinking: option.value }],
       ))),
       layout: opts.layout,
+    });
+  }
+}
+
+const COPY_ON_SELECT_OPTIONS: readonly ChoiceOption[] = [
+  {
+    value: 'on',
+    label: 'On',
+    description: 'Copy text as soon as you select it.',
+  },
+  {
+    value: 'off',
+    label: 'Off',
+    description: 'Press Ctrl-C to copy selected text.',
+  },
+];
+
+export interface CopyOnSelectSelectorOptions {
+  readonly currentValue: boolean;
+  readonly onSelect: (value: boolean) => void;
+  readonly onCancel: () => void;
+}
+
+export class CopyOnSelectSelectorComponent extends ChoicePickerComponent {
+  constructor(opts: CopyOnSelectSelectorOptions) {
+    super({
+      title: 'Copy on select',
+      options: COPY_ON_SELECT_OPTIONS,
+      currentValue: opts.currentValue ? 'on' : 'off',
+      onSelect: (value) => {
+        if (value === 'on' || value === 'off') opts.onSelect(value === 'on');
+      },
+      onCancel: opts.onCancel,
     });
   }
 }

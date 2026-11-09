@@ -18,7 +18,8 @@ import {
   EXIT_CONFIRM_WINDOW_MS,
   LLM_NOT_SET_MESSAGE,
 } from '../constant/kimi-tui';
-import { Key, matchesKey } from '@moonshot-ai/pi-tui';
+import { isKeyRelease, isKeyRepeat, Key, matchesKey, TuiAltScreen } from '@moonshot-ai/pi-tui';
+import { normalizeCapsLockedCtrl } from '../components/editor/custom-editor';
 import { MEDIA_STAGING_TTL_SECONDS } from '../constant/media';
 import { formatErrorMessage } from '../utils/event-payload';
 import type {
@@ -89,7 +90,11 @@ export interface EditorKeyboardHost {
   updateActivityPane(): void;
 }
 
+const SELECTION_COPY_KEYS = [Key.ctrl('c'), Key.ctrlShift('c'), Key.super('c')];
+
 export class EditorKeyboardController {
+  private disposeSelectionCopy: (() => void) | undefined;
+  private copyKeyHeld = false;
   private pendingExit: PendingExit | null = null;
   private pendingUndoEsc: { readonly timer: ReturnType<typeof setTimeout> } | null = null;
   private disposed = false;
@@ -396,6 +401,12 @@ export class EditorKeyboardController {
       return true;
     };
 
+    const { ui } = host.state;
+    if (ui instanceof TuiAltScreen) {
+      // A UI-level listener sees the key before any focused dialog does.
+      this.disposeSelectionCopy = ui.addInputListener((data) => this.handleSelectionCopyKey(ui, data));
+    }
+
     editor.onUndo = () => {
       host.track('undo');
     };
@@ -440,8 +451,31 @@ export class EditorKeyboardController {
 
   dispose(): void {
     this.disposed = true;
+    this.disposeSelectionCopy?.();
     this.clearPendingExit();
     this.clearPendingUndoEsc();
+  }
+
+  private handleSelectionCopyKey(ui: TuiAltScreen, data: string): { consume: true } | undefined {
+    const key = normalizeCapsLockedCtrl(data);
+    if (!SELECTION_COPY_KEYS.some((copyKey) => matchesKey(key, copyKey))) return undefined;
+    if (isKeyRelease(key)) {
+      this.copyKeyHeld = false;
+      return undefined;
+    }
+    // Holding the key that copied must not turn its auto-repeat into an interrupt.
+    if (isKeyRepeat(key)) return this.copyKeyHeld ? { consume: true } : undefined;
+    this.copyKeyHeld = false;
+    if (!ui.hasActiveSelection()) return undefined;
+    this.clearPendingExit();
+    this.clearPendingUndoEsc();
+    // The copy reads the selection before its first await, so clearing it
+    // right away is safe and leaves the next Ctrl+C free to interrupt.
+    void ui.copyActiveSelectionToClipboard();
+    ui.resetTextSelection();
+    ui.requestRender();
+    this.copyKeyHeld = true;
+    return { consume: true };
   }
 
   private armPendingUndoEsc(): void {

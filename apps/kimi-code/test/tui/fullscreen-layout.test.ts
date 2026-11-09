@@ -55,6 +55,11 @@ import { markTranscriptComponent } from '#/tui/utils/transcript-component-metada
 
 import { VirtualTerminal } from '../../../../packages/pi-tui/test/virtual-terminal';
 
+const clipboardText = vi.hoisted(() => ({
+  copyTextToClipboard: vi.fn<(text: string) => Promise<'native' | 'osc52'>>(async () => 'native'),
+}));
+vi.mock('#/utils/clipboard/clipboard-text', () => clipboardText);
+
 const WIDTH = 120;
 const HEIGHT = 30;
 
@@ -262,6 +267,34 @@ async function clickRow(vt: VirtualTerminal, row: number): Promise<void> {
 }
 
 describe('fullscreen layout', () => {
+  it.each([
+    ['a native copy', () => Promise.resolve('native' as const), 'Copied!'],
+    ['an unverified OSC 52 copy', () => Promise.resolve('osc52' as const), 'Copied via terminal'],
+    [
+      'a failed copy',
+      () => Promise.reject(new Error('Clipboard unavailable: install `xclip` or `xsel`, or check X11 access')),
+      'Clipboard unavailable: install `xclip` or `xsel`',
+    ],
+  ])('copies a dragged selection through the app clipboard and flashes %s', async (_name, copy, flash) => {
+    clipboardText.copyTextToClipboard.mockImplementationOnce(copy);
+    const { state, vt } = await mountFullscreen();
+    state.transcriptContainer.addChild(new Text('hello world', 0, 0));
+    (state.ui as TuiAltScreen).renderNow();
+    await vt.flush();
+    const row = screenRows(vt).findIndex((line) => line.includes('hello world'));
+    const col = screenRows(vt)[row]!.indexOf('hello world');
+
+    vt.sendInput(`\u001B[<0;${col + 1};${row + 1}M`);
+    vt.sendInput(`\u001B[<32;${col + 11};${row + 1}M`);
+    vt.sendInput(`\u001B[<0;${col + 11};${row + 1}m`);
+
+    expect(clipboardText.copyTextToClipboard).toHaveBeenLastCalledWith('hello world');
+    await vi.waitFor(() => {
+      expect(screenRows(vt).join('\n')).toContain(flash);
+    });
+    state.ui.stop();
+  });
+
   it('summarizes only the current message, jumps to its start, and searches the original text', async () => {
     const { state, vt } = await mountFullscreen();
     for (const [index, content] of ['one', 'two', 'three', 'four\nfive\nsix'].entries()) {
@@ -352,22 +385,22 @@ describe('fullscreen layout', () => {
     vt.sendInput(`\u001B[<32;${CHROME_GUTTER + 5};3M`);
     vt.sendInput(`\u001B[<0;${CHROME_GUTTER + 5};3m`);
     await vt.waitForRender();
-    const write = vi.spyOn(vt, 'write');
-    const copiedAlpha = `\u001B]52;c;${Buffer.from('alpha').toString('base64')}\u0007`;
+    const copy = clipboardText.copyTextToClipboard;
+    copy.mockClear();
     await alt.copyActiveSelectionToClipboard();
-    expect(write).toHaveBeenCalledWith(copiedAlpha);
-    write.mockClear();
+    expect(copy).toHaveBeenCalledWith('alpha');
+    copy.mockClear();
     alt.scrollBy(1);
     await vt.waitForRender();
     expect(pillLines(state)).toHaveLength(1);
     await alt.copyActiveSelectionToClipboard();
-    expect(write).toHaveBeenCalledWith(copiedAlpha);
-    write.mockClear();
+    expect(copy).toHaveBeenCalledWith('alpha');
+    copy.mockClear();
     alt.scrollBy(-1);
     await vt.waitForRender();
     expect(pillLines(state)).toEqual([]);
     await alt.copyActiveSelectionToClipboard();
-    expect(write).toHaveBeenCalledWith(copiedAlpha);
+    expect(copy).toHaveBeenCalledWith('alpha');
     alt.stop();
   });
 
@@ -1436,7 +1469,7 @@ describe('fullscreen layout', () => {
     await vt.waitForRender();
     rows = screenRows(vt);
     expect(rows.join('\n')).toContain('Page 2/2');
-    expect(rows.join('\n')).toContain('❯ Experiments');
+    expect(rows.join('\n')).toContain('❯ Feedback survey');
 
     state.ui.setFocus(state.notifyPanel);
     state.ui.requestRender();

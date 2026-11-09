@@ -7,6 +7,7 @@ import {
   type Session,
   type ThinkingEffort,
 } from '@moonshot-ai/kimi-code-sdk';
+import { TuiAltScreen } from '@moonshot-ai/pi-tui';
 
 import { EditorSelectorComponent } from '../components/dialogs/editor-selector';
 import { EffortSelectorComponent } from '../components/dialogs/effort-selector';
@@ -20,6 +21,7 @@ import { ModelSwitchConfirmDialogComponent } from '../components/dialogs/model-s
 import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model-selector';
 import { PermissionSelectorComponent } from '../components/dialogs/permission-selector';
 import {
+  CopyOnSelectSelectorComponent,
   SettingsSelectorComponent,
   ThinkingDisplaySelectorComponent,
   ToolCallDensitySelectorComponent,
@@ -92,6 +94,8 @@ export function currentTuiConfig(host: Pick<SlashCommandHost, 'state'>): TuiConf
     tuiMode: host.state.appState.tuiMode,
     editorCommand: host.state.appState.editorCommand,
     disablePasteBurst: host.state.appState.disablePasteBurst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
+    copyOnSelect:
+      host.state.appState.copyOnSelect ?? DEFAULT_TUI_CONFIG.copyOnSelect,
     renderLatex: host.state.appState.renderLatex ?? DEFAULT_TUI_CONFIG.renderLatex ?? true,
     cacheExpiryHint: host.state.appState.cacheExpiryHint ?? DEFAULT_TUI_CONFIG.cacheExpiryHint,
     autoSessionTitle: host.state.appState.autoSessionTitle ?? DEFAULT_TUI_CONFIG.autoSessionTitle,
@@ -1106,6 +1110,42 @@ export async function applyMermaidPreferenceChoice(
   host.showStatus(`Mermaid diagrams ${enabled ? 'enabled' : 'disabled'}.`);
 }
 
+function showCopyOnSelectPicker(host: SlashCommandHost): void {
+  host.mountEditorReplacement(
+    new CopyOnSelectSelectorComponent({
+      currentValue: host.state.appState.copyOnSelect !== false,
+      onSelect: (enabled) => {
+        host.restoreEditor();
+        void applyCopyOnSelectChoice(host, enabled);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+export async function applyCopyOnSelectChoice(
+  host: Pick<SlashCommandHost, 'state' | 'setAppState' | 'showStatus'>,
+  enabled: boolean,
+): Promise<void> {
+  if (enabled === (host.state.appState.copyOnSelect !== false)) {
+    host.showStatus(`Copy on select already ${enabled ? 'enabled' : 'disabled'}.`);
+    return;
+  }
+
+  try {
+    await saveTuiConfig({ ...currentTuiConfig(host), copyOnSelect: enabled });
+  } catch (error) {
+    host.showStatus(`Failed to save copy on select setting: ${formatErrorMessage(error)}`, 'error');
+    return;
+  }
+
+  host.setAppState({ copyOnSelect: enabled });
+  if (host.state.ui instanceof TuiAltScreen) host.state.ui.setCopyOnSelect(enabled);
+  host.showStatus(`Copy on select ${enabled ? 'enabled' : 'disabled'}.`);
+}
+
 function showToolCallDensityPicker(host: SlashCommandHost): void {
   host.mountEditorReplacement(
     new ToolCallDensitySelectorComponent({
@@ -1249,6 +1289,7 @@ function handleSettingsSelection(host: SlashCommandHost, value: SettingsSelectio
     case 'tuiMode': showTuiModePicker(host); return;
     case 'toolCallDensity': showToolCallDensityPicker(host); return;
     case 'thinking': showThinkingDisplayPicker(host); return;
+    case 'copyOnSelect': showCopyOnSelectPicker(host); return;
     case 'mermaid': showMermaidPreferencePicker(host); return;
     case 'editor': showEditorPicker(host); return;
     case 'survey': showSurveyPreferencePicker(host); return;
