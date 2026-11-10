@@ -1997,7 +1997,7 @@ describe('SessionEventBroadcaster', () => {
       const queueFrames = () =>
         view.envelopes.filter((frame) => frame.type === 'queue') as unknown as { inputs: unknown[] }[];
       expect(queueFrames()).toEqual([
-        expect.objectContaining({ type: 'queue', session_id: 's1', agent_id: 'main', paused: false, inputs: [] }),
+        expect.objectContaining({ type: 'queue', session_id: 's1', agent_id: 'main', inputs: [] }),
       ]);
 
       main.setQueue([entry('a'), entry('b')], 'a');

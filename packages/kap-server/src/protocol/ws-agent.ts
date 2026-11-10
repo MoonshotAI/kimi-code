@@ -85,7 +85,6 @@ export type QueuedInput = z.infer<typeof queuedInputSchema>;
 export const queueEventMessageSchema = z.object({
   type: z.literal('queue'),
   ...agentFrameFields,
-  paused: z.boolean(),
   inputs: z.array(queuedInputSchema),
 });
 export type QueueEventMessage = z.infer<typeof queueEventMessageSchema>;

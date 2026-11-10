@@ -256,7 +256,7 @@ class AgentWatch implements IDisposable {
   }
 
   private queueMessage(): QueueEventMessage {
-    return { type: 'queue', ...this.frameFields(), paused: false, inputs: readQueuedInputs(this.handle) };
+    return { type: 'queue', ...this.frameFields(), inputs: readQueuedInputs(this.handle) };
   }
 
   private frameFields(): { session_id: string; agent_id: string; event_created_at: string } {
@@ -281,7 +281,7 @@ function todoKey(message: TodoEventMessage): string {
 }
 
 function queueKey(message: QueueEventMessage): string {
-  return JSON.stringify({ paused: message.paused, inputs: message.inputs });
+  return JSON.stringify(message.inputs);
 }
 
 function loopRunning(handle: IAgentScopeHandle): boolean {

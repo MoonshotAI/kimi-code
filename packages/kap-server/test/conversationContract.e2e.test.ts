@@ -747,7 +747,7 @@ describe('conversation contract e2e', () => {
       });
 
     await until('initial queue frame', () => queueFrames().length > 0);
-    expect(queueFrames()[0]).toMatchObject({ type: 'queue', session_id: sid, paused: false, inputs: [] });
+    expect(queueFrames()[0]).toMatchObject({ type: 'queue', session_id: sid, inputs: [] });
 
     expect((await submit('first')).accepted_as).toBe('turn');
     expect((await submit('second')).accepted_as).toBe('queue');

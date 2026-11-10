@@ -2415,7 +2415,7 @@ Agent 自身的状态由另外五种平铺帧同步，每帧都携带完整的�
 - `usage`：`{ context_tokens, max_context_tokens? }`。只有最新值有意义，因此上下文增长期间服务端每秒最多发送几次。
 - `goal`：`{ goal? }`，会话没有目标时省略 `goal`，否则为 `{ objective, status: "active" | "paused" | "blocked" | "complete", completion_criterion?, turns_used, tokens_used, wall_clock_ms }`。
 - `todo`：`{ items: [{ title, status: "pending" | "in_progress" | "done" }] }`，取自 agent 的待办存储，因此会跟随撤销回退，重启后也能恢复。
-- `queue`：`{ paused, inputs }`，等待该 agent 处理的提示词和压缩，按将要执行的顺序排列：插话在前，排队的提示词和压缩在后。每条输入为 `{ prompt_id, user_message_id, kind, delivery, content, skills?, client_metadata?, instruction?, created_at }`。`kind` 为 `input` 表示提示词，为 `compact` 表示排队的压缩；`delivery` 为 `steer` 表示等待进入下一个用户轮次的插话，其余为 `queue`。对提示词，`content` 是提交的内容，不含打包的 Skill 指令；`skills` 以 `{ name, args? }` 列出打包激活的 Skill；`client_metadata` 原样回显提交时的 `metadata`。压缩的 `content` 为空数组，`user_message_id` 与 `prompt_id` 相同，`instruction` 为请求时的说明。提示词的轮次开始或被插入正在运行的轮次后，它就离开列表，之后携带它的 `user_message` 会在 `prompt_ids` 中列出它的 `prompt_id`；压缩开始时离开列表。`paused` 目前总是 `false`。
+- `queue`：`{ inputs }`，等待该 agent 处理的提示词和压缩，按将要执行的顺序排列：插话在前，排队的提示词和压缩在后。每条输入为 `{ prompt_id, user_message_id, kind, delivery, content, skills?, client_metadata?, instruction?, created_at }`。`kind` 为 `input` 表示提示词，为 `compact` 表示排队的压缩；`delivery` 为 `steer` 表示等待进入下一个用户轮次的插话，其余为 `queue`。对提示词，`content` 是提交的内容，不含打包的 Skill 指令；`skills` 以 `{ name, args? }` 列出打包激活的 Skill；`client_metadata` 原样回显提交时的 `metadata`。压缩的 `content` 为空数组，`user_message_id` 与 `prompt_id` 相同，`instruction` 为请求时的说明。提示词的轮次开始或被插入正在运行的轮次后，它就离开列表，之后携带它的 `user_message` 会在 `prompt_ids` 中列出它的 `prompt_id`；压缩开始时离开列表。
 
 ### 断线恢复
 
