@@ -77,8 +77,8 @@ export class StdioMcpClient implements MCPClient {
         buildRequestOptions(this.startupTimeoutMs, undefined),
       );
     } catch (error) {
-      const transportError = this.lastTransportError;
       await this.closeStartedClient();
+      const transportError = (await this.transport.exitError()) ?? this.lastTransportError;
       throw classifyStdioStartupError(error, transportError);
     }
     if (this.closed) {
@@ -172,6 +172,7 @@ class EnvironmentStdioTransport implements Transport {
   private tracked: { dispose(): void | Promise<void> } | undefined;
   private started = false;
   private closed = false;
+  private exitErrorPromise: Promise<Error | undefined> | undefined;
 
   constructor(
     private readonly config: McpServerStdioConfig,
@@ -228,13 +229,14 @@ class EnvironmentStdioTransport implements Transport {
         this.stderr.push(typeof chunk === 'string' ? chunk : chunk.toString('utf8'));
       });
       process.stderr.on('error', (error: Error) => this.onerror?.(error));
-      void process.wait().then(
-        () => this.finish(),
-        (error: unknown) => {
-          this.onerror?.(error instanceof Error ? error : new Error(String(error)));
-          this.finish();
-        },
+      this.exitErrorPromise = process.wait().then(
+        () => undefined,
+        (error: unknown) => (error instanceof Error ? error : new Error(String(error))),
       );
+      void this.exitErrorPromise.then((error) => {
+        if (error !== undefined) this.onerror?.(error);
+        this.finish();
+      });
     } catch (error) {
       this.lease = undefined;
       lease.dispose();
@@ -253,6 +255,10 @@ class EnvironmentStdioTransport implements Transport {
         else resolve();
       });
     });
+  }
+
+  async exitError(): Promise<Error | undefined> {
+    return this.exitErrorPromise;
   }
 
   dispose(): Promise<void> {
