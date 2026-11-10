@@ -58,29 +58,41 @@ const KIMI_TO_PROTOCOL: Record<string, ErrorCode> = {
   [ErrorCodes.STORAGE_IO_FAILED]: ErrorCode.PERSISTENCE_FAILURE,
   [ErrorCodes.STORAGE_LOCKED]: ErrorCode.PERSISTENCE_FAILURE,
   [ErrorCodes.WIRE_VERSION_TOO_LOW]: ErrorCode.WIRE_VERSION_TOO_LOW,
+  [ErrorCodes.SESSION_TOWER_MODE_INVALID]: ErrorCode.TOWER_MODE_INVALID,
+  [ErrorCodes.AUTH_PROVISIONING_REQUIRED]: ErrorCode.AUTH_PROVISIONING_REQUIRED,
+  [ErrorCodes.AUTH_TOKEN_MISSING]: ErrorCode.AUTH_TOKEN_MISSING,
+  [ErrorCodes.AUTH_MODEL_NOT_RESOLVED]: ErrorCode.AUTH_MODEL_NOT_RESOLVED,
 };
 
 const PUBLIC_DETAIL_CODES: ReadonlySet<string> = new Set([
   ErrorCodes.SESSION_OCCUPIED,
   ErrorCodes.SESSION_STALE,
   ErrorCodes.WIRE_VERSION_TOO_LOW,
+  ErrorCodes.AUTH_TOKEN_MISSING,
+  ErrorCodes.AUTH_MODEL_NOT_RESOLVED,
 ]);
 
 export function mapError(err: unknown, requestId: string): ReturnType<typeof errEnvelope> {
   if (err instanceof Error2) {
     const code = KIMI_TO_PROTOCOL[err.code] ?? ErrorCode.INTERNAL_ERROR;
     const details = PUBLIC_DETAIL_CODES.has(err.code) ? err.details : undefined;
-    return errEnvelope(code, err.message, requestId, err.stack, details);
+    return errEnvelope(code, err.message, requestId, details);
   }
   if (err instanceof TimeoutError) {
-    return errEnvelope(ErrorCode.INTERNAL_ERROR, err.message, requestId, err.stack);
+    return errEnvelope(ErrorCode.INTERNAL_ERROR, err.message, requestId);
   }
   return errEnvelope(
     ErrorCode.INTERNAL_ERROR,
     err instanceof Error ? err.message : String(err),
     requestId,
-    err instanceof Error ? err.stack : undefined,
   );
+}
+
+export function mapDebugError(
+  err: unknown,
+  requestId: string,
+): ReturnType<typeof errEnvelope> & { stack?: string } {
+  return { ...mapError(err, requestId), stack: err instanceof Error ? err.stack : undefined };
 }
 
 export function validationEnvelope(

@@ -979,34 +979,34 @@ export function sendMappedError(reply: Reply, req: { id: string }, err: unknown,
   if (isError2(err)) {
     switch (err.code) {
       case ErrorCodes.FS_PATH_ESCAPES:
-        reply.send(errEnvelope(ErrorCode.FS_PATH_ESCAPES_SESSION, err.message, requestId, err.stack));
+        reply.send(errEnvelope(ErrorCode.FS_PATH_ESCAPES_SESSION, err.message, requestId));
         return;
       case ErrorCodes.FS_PATH_NOT_FOUND:
-        reply.send(errEnvelope(ErrorCode.FS_PATH_NOT_FOUND, err.message, requestId, err.stack));
+        reply.send(errEnvelope(ErrorCode.FS_PATH_NOT_FOUND, err.message, requestId));
         return;
       case ErrorCodes.FS_IS_DIRECTORY:
-        reply.send(errEnvelope(ErrorCode.FS_IS_DIRECTORY, err.message, requestId, err.stack));
+        reply.send(errEnvelope(ErrorCode.FS_IS_DIRECTORY, err.message, requestId));
         return;
       case ErrorCodes.FS_ALREADY_EXISTS:
-        reply.send(errEnvelope(ErrorCode.FS_ALREADY_EXISTS, err.message, requestId, err.stack));
+        reply.send(errEnvelope(ErrorCode.FS_ALREADY_EXISTS, err.message, requestId));
         return;
       case ErrorCodes.FS_IS_BINARY:
-        reply.send(errEnvelope(ErrorCode.FS_IS_BINARY, err.message, requestId, err.stack));
+        reply.send(errEnvelope(ErrorCode.FS_IS_BINARY, err.message, requestId));
         return;
       case ErrorCodes.FS_TOO_LARGE:
-        reply.send(errEnvelope(ErrorCode.FS_TOO_LARGE, err.message, requestId, err.stack));
+        reply.send(errEnvelope(ErrorCode.FS_TOO_LARGE, err.message, requestId));
         return;
       case ErrorCodes.FS_TOO_MANY_RESULTS:
-        reply.send(errEnvelope(ErrorCode.FS_TOO_MANY_RESULTS, err.message, requestId, err.stack));
+        reply.send(errEnvelope(ErrorCode.FS_TOO_MANY_RESULTS, err.message, requestId));
         return;
       case ErrorCodes.FS_GREP_TIMEOUT:
-        reply.send(errEnvelope(ErrorCode.FS_GREP_TIMEOUT, err.message, requestId, err.stack));
+        reply.send(errEnvelope(ErrorCode.FS_GREP_TIMEOUT, err.message, requestId));
         return;
       case ErrorCodes.FS_GIT_UNAVAILABLE:
-        reply.send(errEnvelope(ErrorCode.FS_GIT_UNAVAILABLE, err.message, requestId, err.stack));
+        reply.send(errEnvelope(ErrorCode.FS_GIT_UNAVAILABLE, err.message, requestId));
         return;
       case ErrorCodes.SESSION_NOT_FOUND:
-        reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId, err.stack));
+        reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId));
         return;
       case ErrorCodes.CONFIG_INVALID:
         reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, err.message, requestId, err.stack));
@@ -1017,23 +1017,22 @@ export function sendMappedError(reply: Reply, req: { id: string }, err: unknown,
             ErrorCode.WIRE_VERSION_TOO_LOW,
             err.message,
             requestId,
-            err.stack,
             err.details,
           ),
         );
         return;
       case ErrorCodes.OS_FS_NOT_FOUND:
       case ErrorCodes.OS_FS_NOT_DIRECTORY:
-        reply.send(errEnvelope(ErrorCode.FS_PATH_NOT_FOUND, err.message, requestId, err.stack));
+        reply.send(errEnvelope(ErrorCode.FS_PATH_NOT_FOUND, err.message, requestId));
         return;
       case ErrorCodes.OS_FS_IS_DIRECTORY:
-        reply.send(errEnvelope(ErrorCode.FS_IS_DIRECTORY, err.message, requestId, err.stack));
+        reply.send(errEnvelope(ErrorCode.FS_IS_DIRECTORY, err.message, requestId));
         return;
       case ErrorCodes.OS_FS_ALREADY_EXISTS:
-        reply.send(errEnvelope(ErrorCode.FS_ALREADY_EXISTS, err.message, requestId, err.stack));
+        reply.send(errEnvelope(ErrorCode.FS_ALREADY_EXISTS, err.message, requestId));
         return;
       case ErrorCodes.OS_FS_PERMISSION_DENIED:
-        reply.send(errEnvelope(ErrorCode.FS_PERMISSION_DENIED, err.message, requestId, err.stack));
+        reply.send(errEnvelope(ErrorCode.FS_PERMISSION_DENIED, err.message, requestId));
         return;
     }
   }
@@ -1043,7 +1042,6 @@ export function sendMappedError(reply: Reply, req: { id: string }, err: unknown,
       ErrorCode.INTERNAL_ERROR,
       err instanceof Error ? err.message : String(err),
       requestId,
-      err instanceof Error ? err.stack : undefined,
     ),
   );
 }
