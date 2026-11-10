@@ -855,7 +855,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         promptId: input.promptId,
         content: stripBundledSkillBlocks(input.message),
         clientMetadata: input.origin.clientMetadata,
-        queueLength: (this.engine?.snapshot().queue.length ?? 0) + 1,
+        queueLength: this.snapshot().queue.length + 1,
       }),
     );
   }
@@ -925,12 +925,15 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, `prompt ${promptId} not found`);
     }
     this.engine?.cancelQueueItem(promptId);
+    if (this.removeParked(promptId)) this.maybeSettle();
+    return true;
+  }
+
+  private removeParked(promptId: string): boolean {
     const parked = this.pendingSubmissions.findIndex((entry) => entry.meta?.promptId === promptId);
-    if (parked !== -1) {
-      this.pendingSubmissions.splice(parked, 1);
-      this.signalQueueChange();
-      this.maybeSettle();
-    }
+    if (parked === -1) return false;
+    this.pendingSubmissions.splice(parked, 1);
+    this.signalQueueChange();
     return true;
   }
 
@@ -941,6 +944,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     }
     const tracked = this.promptProjection(waiter.id)?.tracked === true;
     this.engine?.cancelQueueItem(waiter.id);
+    this.removeParked(waiter.id);
     this.settleWaiterCancelled(waiter);
     if (tracked) {
       this.publishPromptAborted(waiter.id);

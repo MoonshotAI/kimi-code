@@ -15,6 +15,7 @@ import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
 import { IAgentGoalService } from '#/features/goal/goalService';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
+import { PromptQueued } from '#/agent/prompt/promptEvents';
 import { ErrorCodes } from '#/errors';
 import { createActor } from '#human/xstate2';
 import { createAgentMachine } from '#human/agent/machine';
@@ -2477,9 +2478,15 @@ describe('prompt queue', () => {
           { steer },
         ).acceptedAs;
       const parkedIds = () => parkedLoop.snapshot().queue.map((entry) => entry.meta?.promptId);
+      const queueLengths: number[] = [];
+      const queuedEvents = parked.get(IEventBus).subscribe(PromptQueued, (event) => queueLengths.push(event.queueLength));
 
       expect(submitParked('a')).toBe('turn');
       expect(submitParked('b')).toBe('queue');
+      expect(submitParked('c')).toBe('queue');
+      expect(parkedLoop.cancel({ promptId: 'c' })).toBe(true);
+      await vi.waitFor(() => expect(queueLengths).toEqual([2, 3]));
+      queuedEvents.dispose();
       expect(submitParked('s', true)).toBe('steer');
       const compact = parkedLoop.enqueueCompaction();
       expect(parkedIds()).toEqual(['a', 's', 'b', compact]);
