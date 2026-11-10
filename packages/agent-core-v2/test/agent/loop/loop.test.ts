@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { Event } from '#/_base/event';
-import { IAgentProfileService } from '#/index';
+import { IAgentProfileService, IAgentToolPolicyService } from '#/index';
 import type { LoopRequester } from '#/agent/loop/requesterContract';
 import type { ModelRequestTiming } from '#/llm-adapter/model/generate';
 import { APIProviderRateLimitError, APIStatusError } from '#/llm-adapter/contract/errors';
@@ -2326,6 +2326,10 @@ describe('aborted step tool execution', () => {
     await ctx.restorePersisted();
     try {
       const slowToolStarted = registerAbortableWorkTool(ctx);
+      ctx.get(IAgentProfileService).update({ activeToolNames: ['Work', 'UpdateGoal'] });
+      await vi.waitFor(() => {
+        expect(ctx.get(IAgentToolPolicyService).isToolActive('UpdateGoal')).toBe(true);
+      });
       const goals = ctx.get(IAgentGoalService);
       await goals.createGoal({ objective: 'finish the task' });
       await goals.setBudgetLimits({ budgetLimits: { tokenBudget: 60 } });
