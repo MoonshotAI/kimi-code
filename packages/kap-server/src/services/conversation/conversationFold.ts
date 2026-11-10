@@ -9,16 +9,18 @@ import { isUserPromptSubmitHookPart } from '@moonshot-ai/agent-core-v2/agent/con
 import type { LoopRecordedEvent } from '@moonshot-ai/agent-core-v2/agent/contextMemory/loopEventFold';
 import { LOOP_MAX_STEPS_EXCEEDED_ERROR_CODE } from '@moonshot-ai/agent-core-v2/human/agent/errors';
 import { stripBundledSkillBlocks } from '@moonshot-ai/agent-core-v2/human/agent/origin';
-import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
+import { isVacuousContentPart, type ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
 import type { WireRecord } from '@moonshot-ai/agent-core-v2/wire/record';
 
 import type {
+  AssistantMessageItem,
   CompactionItem,
   ConversationItem,
   ConversationOutcome,
   ConversationTurn,
   ErrorInfo,
   NotificationItem,
+  ReasoningItem,
   ToolCallItem,
   TurnEndReason,
   UserMessageItem,
@@ -105,6 +107,7 @@ export interface ConversationState {
   provisionalEnds: Record<string, TurnEnd>;
   recordsTurnEnds: boolean;
   stepParts: Record<string, number>;
+  legacyMerge?: { stepUuid: string; item: AssistantMessageItem | ReasoningItem };
   compaction?: CompactionDetails;
 }
 
@@ -362,8 +365,17 @@ function applyLegacyAssistant(
   const ownerless = open === undefined && state.pendingPrompt === undefined;
   const turn = open ?? (ownerless ? addTurn(state, time) : startTurn(state, time));
   for (const part of message.content) {
+    if (isVacuousContentPart(part)) continue;
     const item = contentItem(part, nextItemId(turn), undefined, time);
-    if (item !== undefined) turn.items.push(item);
+    if (item === undefined) continue;
+    const last = turn.items.at(-1);
+    if (last === undefined || last.type !== item.type) {
+      turn.items.push(item);
+      continue;
+    }
+    if (last.type === 'assistant_message' || last.type === 'reasoning') {
+      turn.items[turn.items.length - 1] = { ...last, text: last.text + item.text };
+    }
   }
   for (const call of message.toolCalls ?? []) {
     upsertToolCall(
@@ -417,17 +429,26 @@ function applyLoopEvent(state: ConversationState, event: LoopRecordedEvent | und
       const position = state.stepParts[event.stepUuid] ?? 0;
       state.stepParts[event.stepUuid] = position + 1;
       const startedAt = event.startedAt ?? findStep(state, event.stepUuid)?.step.startedAt ?? time;
+      const block = numberField(event.block);
       const item = contentItem(
         event.part,
-        `${event.stepUuid}:${event.block ?? position}`,
+        `${event.stepUuid}:${block ?? position}`,
         event.step,
         startedAt,
         event.durationMs,
       );
-      if (item !== undefined) upsertItem(turn, item);
+      if (item === undefined) return;
+      if (block === undefined) {
+        if (isVacuousContentPart(event.part)) return;
+        foldLegacyPart(state, turn, event.stepUuid, item);
+        return;
+      }
+      state.legacyMerge = undefined;
+      upsertItem(turn, item);
       return;
     }
     case 'tool.call': {
+      state.legacyMerge = undefined;
       const turn = turnForNumber(state, numberField(event.turnId), time);
       upsertToolCall(state, turn, toolCallItem(event.toolCallId, event.name, event.step, time, event.args, event.display));
       return;
@@ -842,6 +863,23 @@ function upsertItem(turn: ConversationTurn, item: ConversationItem): void {
   const index = turn.items.findIndex((candidate) => candidate.item_id === item.item_id);
   if (index === -1) turn.items.push(item);
   else turn.items[index] = item;
+}
+
+function foldLegacyPart(
+  state: ConversationState,
+  turn: ConversationTurn,
+  stepUuid: string,
+  item: AssistantMessageItem | ReasoningItem,
+): void {
+  const last = state.legacyMerge;
+  if (last !== undefined && last.stepUuid === stepUuid && last.item.type === item.type) {
+    const merged = { ...last.item, text: last.item.text + item.text };
+    state.legacyMerge = { stepUuid, item: merged };
+    upsertItem(turn, merged);
+    return;
+  }
+  state.legacyMerge = { stepUuid, item };
+  upsertItem(turn, item);
 }
 
 function nextItemId(turn: ConversationTurn): string {

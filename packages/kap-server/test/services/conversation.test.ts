@@ -174,6 +174,101 @@ describe('conversation fold', () => {
     expect(turn?.items[3]).toMatchObject({ name: 'Bash', input: { command: 'ls' }, output: 'a\nb', outcome: 'completed', step_index: 1 });
   });
 
+  it('coalesces legacy per-delta content parts without a block into one item per kind', () => {
+    const state = fold([
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'hello'),
+      stepBegin(0, 1, 's1'),
+      contentPart(0, 1, 's1', { type: 'think', think: 'plan the work' }),
+      contentPart(0, 1, 's1', { type: 'text', text: 'par' }),
+      contentPart(0, 1, 's1', { type: 'think', think: '' }),
+      contentPart(0, 1, 's1', { type: 'text', text: 't one' }),
+      contentPart(0, 1, 's1', { type: 'think', think: '' }),
+      contentPart(0, 1, 's1', { type: 'text', text: ' and two' }),
+      stepEnd(0, 1, 's1', { finishReason: 'end_turn', usage: { inputOther: 1, output: 1 } }),
+      turnEnded(0, 'completed'),
+    ]);
+
+    const [turn] = state.turns;
+    expect(shape(turn)).toEqual(['opener:hello', 'reasoning:plan the work', 'assistant_message:part one and two']);
+    expect(turn?.items.map((item) => item.item_id)).toEqual(['p1', 's1:0', 's1:1']);
+  });
+
+  it('keeps legacy fragments of different steps as separate items', () => {
+    const state = fold([
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'hello'),
+      stepBegin(0, 1, 's1'),
+      contentPart(0, 1, 's1', { type: 'text', text: 'first ' }),
+      contentPart(0, 1, 's1', { type: 'text', text: 'step' }),
+      stepEnd(0, 1, 's1', { finishReason: 'tool_use', usage: { inputOther: 1, output: 1 } }),
+      stepBegin(0, 2, 's2'),
+      contentPart(0, 2, 's2', { type: 'text', text: 'second ' }),
+      contentPart(0, 2, 's2', { type: 'text', text: 'step' }),
+      stepEnd(0, 2, 's2', { finishReason: 'end_turn', usage: { inputOther: 1, output: 1 } }),
+      turnEnded(0, 'completed'),
+    ]);
+
+    const [turn] = state.turns;
+    expect(shape(turn)).toEqual(['opener:hello', 'assistant_message:first step', 'assistant_message:second step']);
+  });
+
+  it('does not merge legacy fragments across an intervening tool call', () => {
+    const state = fold([
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'hello'),
+      stepBegin(0, 1, 's1'),
+      contentPart(0, 1, 's1', { type: 'text', text: 'before' }),
+      toolCall(0, 1, 's1', 'call-1', 'Bash', { command: 'ls' }),
+      toolResult('call-1', 'a\nb'),
+      contentPart(0, 1, 's1', { type: 'text', text: 'after' }),
+      stepEnd(0, 1, 's1', { finishReason: 'tool_use', usage: { inputOther: 1, output: 1 } }),
+      turnEnded(0, 'completed'),
+    ]);
+
+    const [turn] = state.turns;
+    expect(shape(turn)).toEqual(['opener:hello', 'assistant_message:before', 'tool:call-1:ended', 'assistant_message:after']);
+  });
+
+  it('keeps block-keyed content parts as separate items per block', () => {
+    const state = fold([
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'hello'),
+      stepBegin(0, 1, 's1'),
+      contentPart(0, 1, 's1', { type: 'text', text: 'one' }, 0),
+      contentPart(0, 1, 's1', { type: 'text', text: 'two' }, 1),
+      stepEnd(0, 1, 's1', { finishReason: 'end_turn', usage: { inputOther: 1, output: 1 } }),
+      turnEnded(0, 'completed'),
+    ]);
+
+    const [turn] = state.turns;
+    expect(shape(turn)).toEqual(['opener:hello', 'assistant_message:one', 'assistant_message:two']);
+    expect(turn?.items.map((item) => item.item_id)).toEqual(['p1', 's1:0', 's1:1']);
+  });
+
+  it('coalesces fragmented content of a legacy assistant message', () => {
+    const state = fold([
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'hello'),
+      record('context.append_message', {
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'think', think: 'why' },
+            { type: 'text', text: 'hel' },
+            { type: 'think', think: '' },
+            { type: 'text', text: 'lo' },
+          ],
+          toolCalls: [],
+        },
+      }),
+      turnEnded(0, 'completed'),
+    ]);
+
+    const [turn] = state.turns;
+    expect(shape(turn)).toEqual(['opener:hello', 'reasoning:why', 'assistant_message:hello']);
+  });
+
   it('attaches the request debug to the last item of each step only when debugging', () => {
     const records = [
       turnPrompt(0, 'p1'),
