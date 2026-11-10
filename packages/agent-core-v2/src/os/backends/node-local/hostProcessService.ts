@@ -12,6 +12,8 @@ import {
   type IHostProcess,
 } from '#/os/interface/hostProcess';
 
+import { prepareWindowsSpawnTarget } from './windowsCommand';
+
 const isWindows: boolean = process.platform === 'win32';
 const TASKKILL_TIMEOUT_MS = 5_000;
 
@@ -53,6 +55,23 @@ function waitForSpawn(child: ChildProcess): Promise<void> {
     child.once('spawn', onSpawn);
     child.once('error', onError);
   });
+}
+
+function spawnFailedError(
+  command: string,
+  args: readonly string[],
+  cwd: string | undefined,
+  error: unknown,
+): HostProcessError {
+  const err = error as NodeJS.ErrnoException;
+  return new HostProcessError(
+    HostProcessErrorCode.SpawnFailed,
+    `Failed to spawn "${command}": ${err.message}`,
+    {
+      details: { command, args: [...args], cwd, errno: err.code },
+      cause: error,
+    },
+  );
 }
 
 class HostProcess implements IHostProcess {
@@ -199,19 +218,19 @@ export class HostProcessService implements IHostProcessService {
       }
     }
     const spawnOptions = buildSpawnOptions(options);
-    const child = spawn(command, args as string[], spawnOptions);
+    const target =
+      isWindows && options.shell === undefined
+        ? prepareWindowsSpawnTarget(command, args, options.env)
+        : undefined;
+    if (target !== undefined) {
+      spawnOptions.windowsVerbatimArguments = target.windowsVerbatimArguments;
+    }
+    let child: ChildProcess;
     try {
+      child = spawn(target?.command ?? command, [...(target?.args ?? args)], spawnOptions);
       await waitForSpawn(child);
     } catch (error) {
-      const err = error as NodeJS.ErrnoException;
-      throw new HostProcessError(
-        HostProcessErrorCode.SpawnFailed,
-        `Failed to spawn "${command}": ${err.message}`,
-        {
-          details: { command, args: [...args], cwd: options.cwd, errno: err.code },
-          cause: error,
-        },
-      );
+      throw spawnFailedError(command, args, options.cwd, error);
     }
     return new HostProcess(child, options.mergeStderr ?? false);
   }

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { join as nativeJoin } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
 import { join } from 'pathe';
 
@@ -90,6 +91,20 @@ describe('HostProcessService', () => {
     const code = await proc.wait();
     expect(code).not.toBe(0);
   });
+
+  it.skipIf(process.platform !== 'win32')('executes a batch script resolved from PATH', async () => {
+    const svc = ix.get(IHostProcessService);
+    const dir = await mkdtemp(nativeJoin(tmpdir(), 'kimi-spawn-cmd-'));
+    try {
+      await writeFile(nativeJoin(dir, 'echo-args.cmd'), '@echo %*\r\n');
+      const proc = await svc.spawn('echo-args', ['hello', 'a b'], { env: { PATH: dir } });
+      const out = await collect(proc.stdout);
+      expect(out.trim()).toBe('hello "a b"');
+      expect(await proc.wait()).toBe(0);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('HostProcessService on Windows', () => {
@@ -148,5 +163,98 @@ describe('HostProcessService on Windows', () => {
     expect(taskkills[0]?.kill).toHaveBeenCalled();
     expect(taskkills[0]?.unref).toHaveBeenCalled();
     await kill;
+  });
+
+  it('wraps a bare batch script command into cmd.exe', async () => {
+    const dir = await mkdtemp(nativeJoin(tmpdir(), 'kimi-spawn-cmd-'));
+    try {
+      await writeFile(nativeJoin(dir, 'fake-tool.cmd'), '@echo off\r\n');
+      const { HostProcessService: WindowsHostProcessService } = await import(
+        '#/os/backends/node-local/hostProcessService'
+      );
+      await new WindowsHostProcessService().spawn('fake-tool', ['-y', 'some value'], {
+        env: { PATH: dir, ComSpec: 'cmd.exe' },
+      });
+      const binPath = nativeJoin(dir, 'fake-tool.cmd');
+      expect(spawnedCommands).toEqual([`cmd.exe /d /s /c "${binPath} -y "some value""`]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('wraps a batch script command that carries its extension', async () => {
+    const dir = await mkdtemp(nativeJoin(tmpdir(), 'kimi-spawn-cmd-'));
+    try {
+      const binPath = nativeJoin(dir, 'fake-tool.cmd');
+      await writeFile(binPath, '@echo off\r\n');
+      const { HostProcessService: WindowsHostProcessService } = await import(
+        '#/os/backends/node-local/hostProcessService'
+      );
+      await new WindowsHostProcessService().spawn('fake-tool.cmd', ['--flag'], {
+        env: { PATH: dir, ComSpec: 'cmd.exe' },
+      });
+      expect(spawnedCommands).toEqual([`cmd.exe /d /s /c "${binPath} --flag"`]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('wraps a batch script addressed by path', async () => {
+    const dir = await mkdtemp(nativeJoin(tmpdir(), 'kimi-spawn-cmd-'));
+    try {
+      const binPath = nativeJoin(dir, 'fake-tool.cmd');
+      await writeFile(binPath, '@echo off\r\n');
+      const { HostProcessService: WindowsHostProcessService } = await import(
+        '#/os/backends/node-local/hostProcessService'
+      );
+      await new WindowsHostProcessService().spawn(binPath, [], { env: { ComSpec: 'cmd.exe' } });
+      expect(spawnedCommands).toEqual([`cmd.exe /d /s /c "${binPath}"`]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('leaves an executable winner of PATHEXT resolution untouched', async () => {
+    const dir = await mkdtemp(nativeJoin(tmpdir(), 'kimi-spawn-cmd-'));
+    try {
+      await writeFile(nativeJoin(dir, 'dual-tool.exe'), '');
+      await writeFile(nativeJoin(dir, 'dual-tool.cmd'), '@echo off\r\n');
+      const { HostProcessService: WindowsHostProcessService } = await import(
+        '#/os/backends/node-local/hostProcessService'
+      );
+      await new WindowsHostProcessService().spawn('dual-tool', [], {
+        env: { PATH: dir, ComSpec: 'cmd.exe' },
+      });
+      expect(spawnedCommands).toEqual(['dual-tool']);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('leaves an unknown command untouched', async () => {
+    const { HostProcessService: WindowsHostProcessService } = await import(
+      '#/os/backends/node-local/hostProcessService'
+    );
+    await new WindowsHostProcessService().spawn('definitely-missing-xyz', [], {
+      env: { ComSpec: 'cmd.exe' },
+    });
+    expect(spawnedCommands).toEqual(['definitely-missing-xyz']);
+  });
+
+  it('leaves a command with an explicit shell option untouched', async () => {
+    const dir = await mkdtemp(nativeJoin(tmpdir(), 'kimi-spawn-cmd-'));
+    try {
+      await writeFile(nativeJoin(dir, 'fake-tool.cmd'), '@echo off\r\n');
+      const { HostProcessService: WindowsHostProcessService } = await import(
+        '#/os/backends/node-local/hostProcessService'
+      );
+      await new WindowsHostProcessService().spawn('fake-tool', [], {
+        shell: true,
+        env: { PATH: dir, ComSpec: 'cmd.exe' },
+      });
+      expect(spawnedCommands).toEqual(['fake-tool']);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
