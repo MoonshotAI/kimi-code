@@ -91,28 +91,14 @@ const RESPONSE_FORMAT = {
     name: 'auto_review_decision',
     strict: true,
     schema: {
-      anyOf: [
-        {
-          type: 'object',
-          properties: {
-            risk: { type: 'string', enum: ['low', 'medium'] },
-            decision: { type: 'string', enum: ['allow'] },
-            reason: { type: 'null' },
-          },
-          required: ['risk', 'decision', 'reason'],
-          additionalProperties: false,
-        },
-        {
-          type: 'object',
-          properties: {
-            risk: { type: 'string', enum: ['medium', 'high'] },
-            decision: { type: 'string', enum: ['deny'] },
-            reason: { type: ['string', 'null'] },
-          },
-          required: ['risk', 'decision', 'reason'],
-          additionalProperties: false,
-        },
-      ],
+      type: 'object',
+      properties: {
+        risk: { type: 'string', enum: ['low', 'medium', 'high'] },
+        decision: { type: 'string', enum: ['allow', 'deny'] },
+        reason: { type: ['string', 'null'] },
+      },
+      required: ['risk', 'decision', 'reason'],
+      additionalProperties: false,
     },
   },
 } as const;

@@ -1,4 +1,4 @@
-import { createUserMessage, type ContentPart } from '#human/llm/message';
+import { createUserMessage, type ContentPart, type ToolCall } from '#human/llm/message';
 import { isUserPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
@@ -21,7 +21,10 @@ export function buildReviewMessages(
   cwd: string,
   context: ResolvedToolExecutionHookContext,
 ): ReturnType<typeof createUserMessage>[] {
-  const actions = messages.flatMap((message) => actionEntries(message, context.toolCall.id));
+  const currentMessage = messages.findLastIndex((message) =>
+    message.role === 'assistant' && message.toolCalls.some((call) => call.id === context.toolCall.id));
+  const actions = messages.flatMap((message, index) =>
+    actionEntries(message, context.toolCall.id, context.toolCalls, index - currentMessage));
   return [createUserMessage(renderPrompt(REVIEW_REQUEST, {
     environment: sectionJson({ cwd }),
     project_instructions: sectionJson({
@@ -77,16 +80,29 @@ function authorizationRole(
   message: ContextMessage,
 ): 'human-instruction' | 'direct-parent-instruction' | undefined {
   const { origin } = message;
-  if (origin === undefined) return 'human-instruction';
+  if (origin === undefined) {
+    const imported = message.content.some((part) =>
+      part.type === 'text' && part.text.includes('<imported_conversation>'));
+    return imported ? undefined : 'human-instruction';
+  }
   if (origin.kind === 'user' || origin.kind === 'plugin_command') return 'human-instruction';
   if (origin.kind === 'skill_activation' && origin.trigger === 'user-slash') return 'human-instruction';
   if (origin.kind === 'system_trigger' && origin.name === 'subagent') return 'direct-parent-instruction';
   return undefined;
 }
 
-function actionEntries(message: ContextMessage, pendingCallId: string): unknown[] {
+function actionEntries(
+  message: ContextMessage,
+  pendingCallId: string,
+  batch: readonly ToolCall[],
+  relativePosition: number,
+): unknown[] {
   if (message.role === 'assistant') {
-    return message.toolCalls.filter((call) => call.id !== pendingCallId).map((call) => ({
+    const pendingIndex = batch.findIndex((call) => call.id === pendingCallId);
+    const calls = relativePosition === 0
+      ? message.toolCalls.slice(0, pendingIndex < 0 ? undefined : pendingIndex)
+      : relativePosition < 0 ? message.toolCalls : [];
+    return calls.map((call) => ({
       kind: 'tool-call',
       role: 'fact',
       id: call.id,
