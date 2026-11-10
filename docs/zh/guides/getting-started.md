@@ -168,6 +168,63 @@ npm install -g @moonshot-ai/kimi-code@latest
 npm uninstall -g @moonshot-ai/kimi-code
 ```
 
+## 常见问题
+
+常见问题与解决方法：登录失败、配额与会员、粘贴图片、首次启动缓慢以及升级。
+
+::: details `/login` 时模型列表为空
+如果所选平台返回的可用模型为空，会看到 "No models available for this platform." 错误，通常是该平台没有符合前缀规则的模型。先确认账号和平台是否匹配，再检查该平台是否有可用模型。
+
+如果看到 "Failed to verify API key"，则按 API 密钥或网络问题处理：
+
+- **API 密钥无效或过期**：检查你输入的 API 密钥是否正确，以及是否仍有效。
+- **网络连接问题**：确认能正常访问你所用平台的 API 服务地址（`api.kimi.com`、`api.moonshot.cn` 或 `api.moonshot.ai`）。
+
+**注意区分平台**
+
+Kimi Code 会员权益与 Kimi 开放平台有不同的 Base URL，配置时请注意 Base URL 与 API 密钥的匹配是否正确。
+
+| 平台 | Base URL | 计费方式 | API 密钥创建入口 |
+|------|---------|---------|-------------|
+| **Kimi Code** | Anthropic 兼容：`https://api.kimi.com/coding/` | Kimi 会员订阅（含额度） | [Kimi Code 控制台](https://www.kimi.com/code/console) |
+| **Kimi 开放平台** | `https://api.moonshot.cn/v1`（中国大陆）、`https://api.moonshot.ai/v1`（海外） | 按量付费 | [platform.kimi.com](https://platform.kimi.com)（中国大陆）、[platform.kimi.ai](https://platform.kimi.ai)（海外） |
+:::
+
+::: details API 密钥无效
+API 密钥无效可能的原因：
+
+- **密钥输入错误**：检查是否有多余的空格或遗漏的字符。
+- **密钥已过期或被撤销**：在平台控制台确认密钥状态。
+:::
+
+::: details 会员过期或配额用尽
+可以通过 `/usage` 命令查看当前配额和加油包余额；会员状态请在账号或会员页面查看。如果配额用尽或会员过期，需要在 [Kimi Code](https://kimi.com/code) 续费或升级。
+:::
+
+::: details 粘贴图片失败
+macOS / Linux 使用 `Ctrl-V`，Windows 使用 `Alt-V` 粘贴图片。如果提示 "Current model does not support image input"，说明当前模型不支持图片输入。
+
+解决方法：
+
+- **切换到支持图片的模型**：使用支持 `image_in` 能力的模型。
+- **检查剪贴板内容**：确保剪贴板中确实有图片数据，而非图片文件的路径。
+:::
+
+::: details macOS 首次运行缓慢
+macOS 的 Gatekeeper 安全机制会在首次运行新程序时进行检查，导致启动变慢。解决方法：
+
+- **等待检查完成**：首次运行时耐心等待，后续启动会恢复正常。
+- **添加到开发者工具**：在「系统设置 → 隐私与安全性 → 开发者工具」中添加你的终端应用。
+:::
+
+::: details 如何升级 Kimi Code CLI
+退出 TUI 后在终端运行 `kimi upgrade`，会自动检查最新版本并引导升级。也可以直接用包管理器：
+
+```sh
+npm install -g @moonshot-ai/kimi-code@latest
+```
+:::
+
 ## 下一步
 
 - [交互与输入](./interaction.md) — 输入框操作、审批流程、Plan 模式和 "Ask When Needed" 模式详解
