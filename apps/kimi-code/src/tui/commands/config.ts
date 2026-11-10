@@ -1246,25 +1246,24 @@ type TuiModeHost = {
 };
 
 export async function applyTuiModeChoice(host: TuiModeHost, tuiMode: TuiMode): Promise<void> {
+  const resolved = resolveTuiMode(tuiMode);
   if (tuiMode === host.state.appState.tuiMode) {
     host.showStatus(`TUI mode already ${tuiMode}.`);
-    return;
-  }
+  } else {
+    try {
+      await saveTuiConfig({
+        ...currentTuiConfig(host as unknown as SlashCommandHost),
+        tuiMode,
+      });
+    } catch (error) {
+      host.showStatus(`Failed to save TUI mode: ${formatErrorMessage(error)}`, 'error');
+      return;
+    }
 
-  try {
-    await saveTuiConfig({
-      ...currentTuiConfig(host as unknown as SlashCommandHost),
-      tuiMode,
-    });
-  } catch (error) {
-    host.showStatus(`Failed to save TUI mode: ${formatErrorMessage(error)}`, 'error');
-    return;
+    host.setAppState({ tuiMode });
+    host.track?.('tui_mode_switch', { tui_mode: tuiMode });
+    host.showStatus(`TUI mode set to ${tuiMode}.`, 'success');
   }
-
-  host.setAppState({ tuiMode });
-  host.track?.('tui_mode_switch', { tui_mode: tuiMode });
-  host.showStatus(`TUI mode set to ${tuiMode}.`, 'success');
-  const resolved = resolveTuiMode(tuiMode);
   if (resolved.mode !== tuiMode) {
     host.showNotice(
       resolved.overriddenByEnv

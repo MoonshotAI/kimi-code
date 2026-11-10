@@ -126,6 +126,20 @@ describe('tui mode preference commands', () => {
     expect(host.showStatus).toHaveBeenCalledWith('TUI mode already regular.');
   });
 
+  it('explains an active env override when reselecting an explicitly saved mode', async () => {
+    vi.stubEnv('KIMI_CODE_TUI_FULL_SCREEN', '1');
+    mocks.saveTuiConfig.mockClear();
+    const host = makeHost('regular', 'fullscreen');
+
+    await applyTuiModeChoice(host, 'regular');
+
+    expect(mocks.saveTuiConfig).not.toHaveBeenCalled();
+    expect(host.showStatus).toHaveBeenCalledWith('TUI mode already regular.');
+    expect(host.showNotice).toHaveBeenCalledWith(
+      'Saved to tui.toml; unset KIMI_CODE_TUI_FULL_SCREEN for it to take effect.',
+    );
+  });
+
   it('keeps tuiMode undefined when saving unrelated TUI preferences', async () => {
     mocks.saveTuiConfig.mockClear();
     const host = makeHost(undefined, 'fullscreen');
