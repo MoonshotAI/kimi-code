@@ -59,7 +59,7 @@ importers:
         version: 1.11.1
       tsdown:
         specifier: 0.23.1
-        version: 0.23.1(@arethetypeswrong/core@0.18.2)(@volar/typescript@2.4.28)(@vue/language-core@3.2.9)(publint@0.3.18)(tsx@4.21.0)(typescript@7.0.2)(unrun@0.2.34(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0))(vue-tsc@3.2.9(typescript@7.0.2))
+        version: 0.23.1(@arethetypeswrong/core@0.18.2)(@volar/typescript@2.4.28)(@vue/language-core@3.2.9)(publint@0.3.18)(tsx@4.21.0)(typescript@7.0.2)(unrun@0.2.34(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2))(vue-tsc@3.2.9(typescript@7.0.2))
       tsx:
         specifier: ^4.21.0
         version: 4.21.0
@@ -501,6 +501,9 @@ importers:
       chokidar:
         specifier: ^4.0.3
         version: 4.0.3
+      cross-spawn:
+        specifier: ^7.0.6
+        version: 7.0.6
       ignore:
         specifier: ^5.3.2
         version: 5.3.2
@@ -565,6 +568,9 @@ importers:
         specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
+      '@types/cross-spawn':
+        specifier: ^6.0.6
+        version: 6.0.6
       '@types/js-yaml':
         specifier: ^4.0.9
         version: 4.0.9
@@ -4153,6 +4159,9 @@ packages:
 
   '@types/chai@5.2.3':
     resolution: {integrity: sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==}
+
+  '@types/cross-spawn@6.0.6':
+    resolution: {integrity: sha512-fXRhhUkG4H3TQk5dBhQ7m/JDdSNHKwR2BBia62lhwEIq9xGiQKLxd6LymNhn47SjXhsUEPmxi+PKw2OkW4LLjA==}
 
   '@types/d3-array@3.2.2':
     resolution: {integrity: sha512-hOLWVbm7uRza0BYXpIIW5pxfrKe0W+D5lrFiAEYR+pb6w3N2SwSMaJbXdUfSEv+dT4MfHBLtn5js0LAWaO6otw==}
@@ -11214,13 +11223,6 @@ snapshots:
       '@tybys/wasm-util': 0.10.1
     optional: true
 
-  '@napi-rs/wasm-runtime@1.1.4(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)':
-    dependencies:
-      '@emnapi/core': 1.10.0
-      '@emnapi/runtime': 1.10.0
-      '@tybys/wasm-util': 0.10.1
-    optional: true
-
   '@napi-rs/wasm-runtime@1.1.4(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)':
     dependencies:
       '@emnapi/core': 1.9.2
@@ -12287,9 +12289,9 @@ snapshots:
   '@rolldown/binding-openharmony-arm64@1.2.15':
     optional: true
 
-  '@rolldown/binding-wasm32-wasi@1.0.0-rc.12(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)':
+  '@rolldown/binding-wasm32-wasi@1.0.0-rc.12(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)':
     dependencies:
-      '@napi-rs/wasm-runtime': 1.1.4(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)
+      '@napi-rs/wasm-runtime': 1.1.4(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)
     transitivePeerDependencies:
       - '@emnapi/core'
       - '@emnapi/runtime'
@@ -12851,6 +12853,10 @@ snapshots:
     dependencies:
       '@types/deep-eql': 4.0.2
       assertion-error: 2.0.1
+
+  '@types/cross-spawn@6.0.6':
+    dependencies:
+      '@types/node': 22.19.17
 
   '@types/d3-array@3.2.2': {}
 
@@ -17364,7 +17370,7 @@ snapshots:
     transitivePeerDependencies:
       - oxc-resolver
 
-  rolldown@1.0.0-rc.12(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0):
+  rolldown@1.0.0-rc.12(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2):
     dependencies:
       '@oxc-project/types': 0.122.0
       '@rolldown/pluginutils': 1.0.0-rc.12
@@ -17381,7 +17387,7 @@ snapshots:
       '@rolldown/binding-linux-x64-gnu': 1.0.0-rc.12
       '@rolldown/binding-linux-x64-musl': 1.0.0-rc.12
       '@rolldown/binding-openharmony-arm64': 1.0.0-rc.12
-      '@rolldown/binding-wasm32-wasi': 1.0.0-rc.12(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)
+      '@rolldown/binding-wasm32-wasi': 1.0.0-rc.12(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)
       '@rolldown/binding-win32-arm64-msvc': 1.0.0-rc.12
       '@rolldown/binding-win32-x64-msvc': 1.0.0-rc.12
     transitivePeerDependencies:
@@ -18104,7 +18110,7 @@ snapshots:
       minimist: 1.2.8
       strip-bom: 3.0.0
 
-  tsdown@0.23.1(@arethetypeswrong/core@0.18.2)(@volar/typescript@2.4.28)(@vue/language-core@3.2.9)(publint@0.3.18)(tsx@4.21.0)(typescript@7.0.2)(unrun@0.2.34(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0))(vue-tsc@3.2.9(typescript@7.0.2)):
+  tsdown@0.23.1(@arethetypeswrong/core@0.18.2)(@volar/typescript@2.4.28)(@vue/language-core@3.2.9)(publint@0.3.18)(tsx@4.21.0)(typescript@7.0.2)(unrun@0.2.34(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2))(vue-tsc@3.2.9(typescript@7.0.2)):
     dependencies:
       cac: 7.1.0
       defu: 6.1.7
@@ -18125,7 +18131,7 @@ snapshots:
       publint: 0.3.18
       tsx: 4.21.0
       typescript: 7.0.2
-      unrun: 0.2.34(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)
+      unrun: 0.2.34(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)
     transitivePeerDependencies:
       - '@typescript/native-preview'
       - '@volar/typescript'
@@ -18284,9 +18290,9 @@ snapshots:
 
   unpipe@1.0.0: {}
 
-  unrun@0.2.34(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0):
+  unrun@0.2.34(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2):
     dependencies:
-      rolldown: 1.0.0-rc.12(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)
+      rolldown: 1.0.0-rc.12(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)
     transitivePeerDependencies:
       - '@emnapi/core'
       - '@emnapi/runtime'
