@@ -1,4 +1,4 @@
-import { createUserMessage, type ContentPart, type ToolCall } from '#human/llm/message';
+import { createUserMessage, type ContentPart } from '#human/llm/message';
 import { isUserPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
@@ -20,11 +20,16 @@ export function buildReviewMessages(
   instructionPaths: readonly string[] | undefined,
   cwd: string,
   context: ResolvedToolExecutionHookContext,
+  approvedToolCallIds?: ReadonlySet<string>,
 ): ReturnType<typeof createUserMessage>[] {
-  const currentMessage = messages.findLastIndex((message) =>
-    message.role === 'assistant' && message.toolCalls.some((call) => call.id === context.toolCall.id));
-  const actions = messages.flatMap((message, index) =>
-    actionEntries(message, context.toolCall.id, context.toolCalls, index - currentMessage));
+  const pendingIndex = context.toolCalls.findIndex((call) => call.id === context.toolCall.id);
+  const pendingIds = new Set(
+    pendingIndex < 0
+      ? [context.toolCall.id]
+      : context.toolCalls.slice(pendingIndex).map((call) => call.id),
+  );
+  const actions = messages.flatMap((message) =>
+    actionEntries(message, pendingIds, approvedToolCallIds));
   return [createUserMessage(renderPrompt(REVIEW_REQUEST, {
     environment: sectionJson({ cwd }),
     project_instructions: sectionJson({
@@ -36,11 +41,6 @@ export function buildReviewMessages(
     pending_action: sectionJson({
       name: context.toolCall.name,
       arguments: context.args,
-      toolMetadata: {
-        role: 'untrusted-metadata',
-        description: context.tool?.description ?? '',
-        parameters: context.tool?.parameters ?? {},
-      },
     }),
   }))];
 }
@@ -93,33 +93,20 @@ function authorizationRole(
 
 function actionEntries(
   message: ContextMessage,
-  pendingCallId: string,
-  batch: readonly ToolCall[],
-  relativePosition: number,
+  pendingIds: ReadonlySet<string>,
+  approvedToolCallIds: ReadonlySet<string> | undefined,
 ): unknown[] {
-  if (message.role === 'assistant') {
-    const pendingIndex = batch.findIndex((call) => call.id === pendingCallId);
-    const calls = relativePosition === 0
-      ? message.toolCalls.slice(0, pendingIndex < 0 ? undefined : pendingIndex)
-      : relativePosition < 0 ? message.toolCalls : [];
-    return calls.map((call) => ({
+  if (message.role !== 'assistant') return [];
+  return message.toolCalls
+    .filter((call) => !pendingIds.has(call.id))
+    .map((call) => ({
       kind: 'tool-call',
       role: 'fact',
       id: call.id,
       name: call.name,
       arguments: call.arguments ?? '',
+      approved: approvedToolCallIds?.has(call.id) ? true : undefined,
     }));
-  }
-  if (message.role === 'tool') {
-    if (message.toolCallId === pendingCallId) return [];
-    return [{
-      kind: 'tool-result',
-      role: 'fact',
-      toolCallId: message.toolCallId,
-      isError: message.isError === true,
-    }];
-  }
-  return [];
 }
 
 function reviewPart(part: ContentPart): ContentPart[] {

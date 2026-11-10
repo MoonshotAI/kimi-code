@@ -113,6 +113,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
   private projectInstructions: Promise<ProjectInstructions> | undefined;
   private activeReviews = 0;
   private readonly reviewSlots: Array<() => void> = [];
+  private readonly approvedToolCallIds = new Set<string>();
 
   constructor(
     @IConfigService private readonly configService: IConfigService,
@@ -141,7 +142,9 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     if (typeof permissionGate.registerReviewer === 'function') {
       this._register(
         permissionGate.registerReviewer(
-          createAutoReviewReviewer(this.flags, this.modeService, () => this),
+          createAutoReviewReviewer(this.flags, this.modeService, () => this, (toolCallId) => {
+            this.approvedToolCallIds.add(toolCallId);
+          }),
         ),
       );
     }
@@ -320,6 +323,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
         projectInstructions.agentsMdPaths,
         cwd,
         context,
+        this.approvedToolCallIds,
       ),
       context.turnId,
       deadline.signal,

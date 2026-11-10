@@ -14,6 +14,7 @@ export function createAutoReviewReviewer(
   flags: IFlagService,
   modes: IAgentPermissionModeService,
   reviewService: () => IAutoReviewService,
+  onApproved?: (toolCallId: string) => void,
 ): PermissionGateReviewer {
   return {
     evaluateOptions: () => {
@@ -42,6 +43,7 @@ export function createAutoReviewReviewer(
           evaluation,
           review,
           flags.enabled(AUTO_REVIEW_FLAG_ID) ? modes.mode : 'manual',
+          onApproved,
         );
       };
     },
@@ -64,6 +66,7 @@ export function resolveAutoReview(
   evaluation: PermissionPolicyEvaluation,
   review: AutoReviewResult,
   mode: PermissionMode,
+  onApproved?: (toolCallId: string) => void,
 ): PermissionPolicyEvaluation {
   const allowed = review.kind === 'decision' && review.decision.decision === 'allow';
   if (allowed && mode !== 'manual') {
@@ -79,7 +82,7 @@ export function resolveAutoReview(
   if (mode === 'auto') {
     return { policyName: AUTO_REVIEW_ORIGIN, result: denial(context, review) };
   }
-  return { policyName: AUTO_REVIEW_ORIGIN, result: fallbackAsk(context, review) };
+  return { policyName: AUTO_REVIEW_ORIGIN, result: fallbackAsk(context, review, onApproved) };
 }
 
 function denial(
@@ -103,13 +106,19 @@ function denial(
 function fallbackAsk(
   context: ResolvedToolExecutionHookContext,
   review: AutoReviewResult,
+  onApproved?: (toolCallId: string) => void,
 ): PermissionPolicyResult {
+  const approve = (): undefined => {
+    onApproved?.(context.toolCall.id);
+    return undefined;
+  };
   if (review.kind === 'failed') {
     return {
       kind: 'ask',
       reason: { review_error: true },
       approvalDetail: { title: 'Auto Review failed', detail: review.reason },
       resolveNonInteractive: () => denial(context, review),
+      resolveApproval: (response) => (response.decision === 'approved' ? approve() : undefined),
       resolveError: () => ({
         kind: 'deny',
         message: 'Auto Review and the fallback approval both failed; the tool was not executed.',
@@ -119,7 +128,11 @@ function fallbackAsk(
   }
   const { decision } = review;
   if (decision.decision === 'allow') {
-    return { kind: 'ask', reason: { review_risk: decision.risk, review_mode_changed: true } };
+    return {
+      kind: 'ask',
+      reason: { review_risk: decision.risk, review_mode_changed: true },
+      resolveApproval: (response) => (response.decision === 'approved' ? approve() : undefined),
+    };
   }
   return {
     kind: 'ask',
@@ -130,7 +143,7 @@ function fallbackAsk(
     },
     resolveNonInteractive: () => denial(context, review),
     resolveApproval: (response) => response.decision === 'approved'
-      ? undefined
+      ? approve()
       : {
           kind: 'deny',
           message: `Tool "${context.toolCall.name}" was not run after Auto Review denial.${reasonSuffix(review)}${feedbackSuffix(response.feedback)}`,

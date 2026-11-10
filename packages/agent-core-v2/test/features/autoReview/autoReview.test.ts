@@ -7,7 +7,7 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import { userPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
-import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
+import { IAgentPermissionGate, type PermissionGateReviewer } from '#/agent/permissionGate/permissionGate';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -95,6 +95,7 @@ describe('AutoReviewService', () => {
   let reviewStarts: AutoReviewStarted[];
   let usage: Parameters<ISessionUsageService['record']>[];
   let compactions: Array<{ readonly source: string }>;
+  let registeredReviewer: PermissionGateReviewer | undefined;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -103,6 +104,7 @@ describe('AutoReviewService', () => {
     reviewStarts = [];
     usage = [];
     compactions = [];
+    registeredReviewer = undefined;
     mainHistory = undefined;
     agentId = 'main';
     response = {
@@ -141,9 +143,12 @@ describe('AutoReviewService', () => {
           }) as IConfigService['get'],
         });
         reg.defineInstance(IFlagService, stubFlag(true));
-        reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => 'auto'));
+        reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => 'yolo'));
         reg.definePartialInstance(IAgentPermissionGate, {
-          registerReviewer: () => ({ dispose: () => {} }),
+          registerReviewer: (reviewer) => {
+            registeredReviewer = reviewer;
+            return { dispose: () => {} };
+          },
         });
         reg.definePartialInstance(IModelCatalog, {
           get: (alias) => {
@@ -285,11 +290,42 @@ describe('AutoReviewService', () => {
     expect(sentContent()).toContain('rm generated/file');
   });
 
-  it('labels the executing tool metadata as untrusted', async () => {
-    await review();
+  it('omits tool metadata and results while marking user-approved calls', async () => {
+    const reviewer = service();
+    response.message.content = [{
+      type: 'text',
+      text: '{"risk":"medium","decision":"deny","reason":"Needs confirmation."}',
+    }];
+    const firstContext = {
+      ...reviewContext({ id: 'mkdir', toolName: 'Bash', args: { command: 'mkdir generated' }, tool: bashTool }),
+      veto: () => {},
+      allow: () => {},
+      pass: () => {},
+      waitUntil: () => {},
+      deferReview: () => {},
+      cancelReview: () => {},
+      reviewSignal: defaultSignal,
+    };
+    const pendingReview = registeredReviewer?.review(firstContext, {
+      policyName: 'fallback-ask',
+      result: { kind: 'ask' },
+    });
+    const resolved = await pendingReview?.();
+    if (resolved?.result.kind === 'ask') {
+      resolved.result.resolveApproval?.({ decision: 'approved' });
+    }
 
-    expect(sentContent()).toContain('untrusted-metadata');
-    expect(sentContent()).toContain('Execute a shell command.');
+    response.message.content = [{
+      type: 'text',
+      text: '{"risk":"low","decision":"allow","reason":null}',
+    }];
+    await review(reviewer);
+
+    expect(sentContent()).not.toContain('toolMetadata');
+    expect(sentContent()).not.toContain('Execute a shell command.');
+    expect(sentContent()).not.toContain('tool-result');
+    expect(sentContent()).not.toContain('untrusted tool output');
+    expect(sentContent()).toContain('\\"id\\":\\"mkdir\\",\\"name\\":\\"Bash\\",\\"arguments\\":\\"{\\\\\\"command\\\\\\":\\\\\\"mkdir generated\\\\\\"}\\",\\"approved\\":true');
   });
 
   it('escapes section tags inside reviewed data', async () => {
@@ -454,14 +490,15 @@ describe('AutoReviewService', () => {
     await service().review(context, 'fallback-ask');
 
     expect(sentContent()).toContain('\\"id\\":\\"completed\\"');
+    expect(sentContent()).not.toContain('\\"id\\":\\"pending\\"');
     expect(sentContent()).not.toContain('\\"id\\":\\"sibling\\"');
-    expect(sentContent()).toContain('\\"toolCallId\\":\\"completed\\"');
+    expect(sentContent()).not.toContain('tool-result');
 
     history = [...history, { role: 'tool', toolCallId: 'pending', content: [{ type: 'text', text: 'done' }] }];
     await service().review({ ...context, toolCall: sibling, args: { command: 'mkdir generated' } }, 'fallback-ask');
 
     expect(sentContent()).toContain('\\"id\\":\\"pending\\"');
-    expect(sentContent()).toContain('\\"toolCallId\\":\\"pending\\"');
+    expect(sentContent()).not.toContain('\\"id\\":\\"sibling\\"');
   });
 
   it('sends every instruction and tool argument without a local cap', async () => {
@@ -484,7 +521,7 @@ describe('AutoReviewService', () => {
     expect(sentContent()).toContain('old-0 ');
     expect(sentContent()).toContain('You may force push my branch.');
     expect(sentContent()).toContain('\\"command\\":\\"rm generated/file\\"');
-    expect(sentContent()).not.toContain('y'.repeat(9000));
+    expect(sentContent()).toContain('y'.repeat(9000));
     expect(sentContent()).not.toContain('[truncated');
   });
 
