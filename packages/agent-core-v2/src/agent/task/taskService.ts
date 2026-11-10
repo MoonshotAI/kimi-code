@@ -249,7 +249,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @IFlagService flags: IFlagService,
     @IAgentToolRegistryService tools: IAgentToolRegistryService,
-    @IAgentToolPolicyService private readonly policy: IAgentToolPolicyService,
+    @IAgentToolPolicyService policy: IAgentToolPolicyService,
   ) {
     super();
     this.states.contributeState(taskKey);
@@ -348,11 +348,6 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     this.activeTaskReminderPending = false;
     const tasks = this.list(true);
     if (tasks.length === 0) return undefined;
-    const taskToolsActive =
-      this.policy.isToolActive('TaskList') &&
-      this.policy.isToolActive('TaskOutput') &&
-      this.policy.isToolActive('TaskStop');
-    if (!taskToolsActive) return formatTaskList(tasks, true);
     return `${ACTIVE_BACKGROUND_TASK_GUIDANCE}\n\n${formatTaskList(tasks, true)}`;
   }
 

@@ -103,7 +103,6 @@ describe('AgentTaskService', () => {
   let ix: TestInstantiationService;
   let eventBus: EventBusService;
   let injectionProviders: Map<string, ContextInjectionProvider>;
-  let taskToolsActive: boolean;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -141,10 +140,7 @@ describe('AgentTaskService', () => {
       resolve: () => undefined,
     });
     ix.stub(IFlagService, stubFlag());
-    taskToolsActive = true;
-    ix.stub(IAgentToolPolicyService, {
-      isToolActive: (name: string) => name === 'WaitFor' ? false : taskToolsActive,
-    });
+    ix.stub(IAgentToolPolicyService, { isToolActive: () => false });
     ix.stub(IAgentLoopService, stubLoopWithHooks());
     ix.stub(IConfigRegistry, { registerSection: () => {} });
     ix.stub(IConfigService, {
@@ -1028,21 +1024,6 @@ describe('AgentTaskService', () => {
     expect(reminder).toContain('TaskList');
     expect(reminder).toContain('TaskStop');
     expect(await backgroundTaskReminder()).toBeUndefined();
-
-    await svc.stop(taskId);
-  });
-
-  it('omits unavailable task tool guidance from the post-compaction reminder', async () => {
-    taskToolsActive = false;
-    const svc = ix.get(IAgentTaskService);
-    const taskId = svc.registerTask(fakeProcessTask());
-    publishCompactionSplice();
-
-    const reminder = await backgroundTaskReminder();
-    expect(reminder).toContain(taskId);
-    expect(reminder).not.toContain('TaskList');
-    expect(reminder).not.toContain('TaskOutput');
-    expect(reminder).not.toContain('TaskStop');
 
     await svc.stop(taskId);
   });

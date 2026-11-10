@@ -10,7 +10,6 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IFlagService } from '#/app/flag/flag';
 import type { NotifyUserNudgeShownEvent } from '#/app/telemetry/events';
@@ -47,10 +46,7 @@ const notifyUserNudgeReminders = fromCallback(({
     NOTIFY_USER_NUDGE_VARIANT,
     ({ lastInjectedAt }): string | undefined => {
       if (!available()) return undefined;
-      if (
-        runtime.get(IAgentToolRegistryService).resolve(NOTIFY_USER_TOOL_NAME) === undefined ||
-        !runtime.get(IAgentToolPolicyService).isToolActive(NOTIFY_USER_TOOL_NAME)
-      ) {
+      if (runtime.get(IAgentToolRegistryService).resolve(NOTIFY_USER_TOOL_NAME) === undefined) {
         return undefined;
       }
       const history = runtime.get(IAgentContextMemoryService).get();

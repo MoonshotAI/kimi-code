@@ -1,11 +1,9 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { type HostUiCapability, IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IFlagService } from '#/app/flag/flag';
 import { FlagService } from '#/app/flag/flagService';
@@ -104,23 +102,6 @@ describe('AgentNotifyUserNudgeService', () => {
     appendSilentRounds(8);
     await runWillBeginStepHooks(loop);
     expect(nudgeInjections()).toHaveLength(2);
-  });
-
-  it('stops injecting nudges while NotifyUser is disabled by tool policy', async () => {
-    await start([NOTIFY_USER_UI_CAPABILITY]);
-    const profile = ctx.get(IAgentProfileService);
-    profile.update({ activeToolNames: [] });
-    appendSilentRounds(8);
-    await runWillBeginStepHooks(loop);
-    expect(nudgeInjections()).toHaveLength(0);
-
-    profile.update({ activeToolNames: [NOTIFY_USER_TOOL_NAME] });
-    await vi.waitFor(() => {
-      expect(ctx.get(IAgentToolPolicyService).isToolActive(NOTIFY_USER_TOOL_NAME)).toBe(true);
-    });
-    appendSilentRounds(8);
-    await runWillBeginStepHooks(loop);
-    expect(nudgeInjections()).toHaveLength(1);
   });
 
   it('tracks each injected nudge with its position in the silent stretch', async () => {
