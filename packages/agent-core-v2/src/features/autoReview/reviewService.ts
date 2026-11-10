@@ -33,8 +33,10 @@ import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
+import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { resolveSubagentModelPool } from '#/session/subagent/configSection';
@@ -45,7 +47,12 @@ import { AutoReviewCompleted, AutoReviewStarted } from './autoReviewEvents';
 import { createAutoReviewReviewer } from './autoReviewGate';
 import REVIEW_POLICY from './auto-review-policy.md?raw';
 import { AUTO_REVIEW_SECTION, type AutoReviewConfig } from './configSection';
-import { buildReviewMessages, extractAuthorization, sameAuthorization } from './context';
+import {
+  buildReviewMessages,
+  extractAuthorization,
+  sameAuthorization,
+  type ReviewText,
+} from './context';
 import { AUTO_REVIEW_FLAG_ID } from './flag';
 import { IAutoReviewService, type AutoReviewResult } from './review';
 
@@ -136,6 +143,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @ILogService private readonly log: ILogService,
+    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
   ) {
     super();
     if (this.flags.enabled(AUTO_REVIEW_FLAG_ID)) {
@@ -268,7 +276,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     deadline: DeadlineAbortSignal,
   ): Promise<ReviewAttempt> {
     const history = this.context.get();
-    const authorization = extractAuthorization(history);
+    const authorization = this.currentAuthorization(history);
     const cwd = this.workspace.workDir;
     const message = await this.requestModel(
       modelAlias,
@@ -283,7 +291,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
       context.turnId,
       deadline.signal,
     );
-    const current = extractAuthorization(this.context.get());
+    const current = this.currentAuthorization();
     if (this.workspace.workDir !== cwd) return authorizationChanged();
     if (!sameAuthorization(authorization, current)) {
       return sameAuthorization(authorization, current.slice(0, authorization.length))
@@ -297,6 +305,22 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     const parsed = DecisionSchema.safeParse(parseReviewJson(text));
     if (!parsed.success) return { kind: 'failed', reason: 'The reviewer returned an invalid decision.' };
     return { kind: 'decision', decision: parsed.data };
+  }
+
+  private currentAuthorization(history: readonly ContextMessage[] = this.context.get()): ReviewText[] {
+    const local = extractAuthorization(history);
+    if (
+      this.scopeContext.agentId === MAIN_AGENT_ID ||
+      local.some((entry) => entry.role === 'human-instruction')
+    ) {
+      return local;
+    }
+    const main = this.agentLifecycle.handleOf(MAIN_AGENT_ID);
+    if (main === undefined) return local;
+    const inherited = extractAuthorization(
+      main.accessor.get(IAgentContextMemoryService).get(),
+    ).filter((entry) => entry.role === 'human-instruction');
+    return inherited.length === 0 ? local : [...inherited, ...local];
   }
 
   private async requestModel(

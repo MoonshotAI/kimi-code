@@ -32,6 +32,7 @@ import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import type { ModelRequestInput, ModelRequestParams } from '#/llm-adapter/model/generate';
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { SECONDARY_MODEL_SECTION, type SecondaryModelConfig } from '#/session/subagent/configSection';
@@ -86,6 +87,8 @@ describe('AutoReviewService', () => {
   let requests: ReviewCall[];
   let response: ReviewResponse;
   let history: ContextMessage[];
+  let mainHistory: ContextMessage[] | undefined;
+  let agentId: string;
   let agentsMd: string;
   let telemetry: TelemetryRecord[];
   let reviewEvents: AutoReviewCompleted[];
@@ -100,6 +103,8 @@ describe('AutoReviewService', () => {
     reviewStarts = [];
     usage = [];
     compactions = [];
+    mainHistory = undefined;
+    agentId = 'main';
     response = {
       message: { role: 'assistant', content: [{ type: 'text', text: '{"risk":"low","decision":"allow","reason":null}' }], toolCalls: [] },
       usage: emptyUsage(),
@@ -173,7 +178,20 @@ describe('AutoReviewService', () => {
           resolveModelContext: () => ({ modelAlias: 'main-model' }) as ReturnType<IAgentProfileService['resolveModelContext']>,
         });
         reg.definePartialInstance(IAgentContextMemoryService, { get: () => history });
-        reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
+        reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId, agentScope: '' }));
+        reg.definePartialInstance(IAgentLifecycleService, {
+          handleOf: (id) =>
+            id === 'main' && mainHistory !== undefined
+              ? ({
+                  id: 'main',
+                  kind: 'agent',
+                  accessor: {
+                    get: () => ({ get: () => mainHistory ?? [] }),
+                  },
+                  dispose: () => {},
+                } as unknown as ReturnType<IAgentLifecycleService['handleOf']>)
+              : undefined,
+        });
         reg.definePartialInstance(IEventDispatcher, {
           dispatch: async (event) => {
             if (event instanceof AutoReviewCompleted) reviewEvents.push(event);
@@ -398,7 +416,13 @@ describe('AutoReviewService', () => {
     expect(sentContent()).toContain('Remove only generated files.');
   });
 
-  it('retains the subagent prompt as a direct parent instruction', async () => {
+  it('retains the subagent prompt as a direct parent instruction and inherits main human instructions', async () => {
+    agentId = 'child-1';
+    mainHistory = [{
+      role: 'user',
+      content: [{ type: 'text', text: 'Clean and rebuild the project.' }],
+      origin: { kind: 'user' },
+    }];
     history = [{
       role: 'user',
       content: [{ type: 'text', text: 'Delete dist and rebuild.' }],
@@ -407,6 +431,8 @@ describe('AutoReviewService', () => {
 
     await review();
 
+    expect(sentContent()).toContain('human-instruction');
+    expect(sentContent()).toContain('Clean and rebuild the project.');
     expect(sentContent()).toContain('direct-parent-instruction');
     expect(sentContent()).toContain('Delete dist and rebuild.');
   });
