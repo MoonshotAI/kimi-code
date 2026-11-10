@@ -676,7 +676,7 @@ Model, cwd, git branch, permission mode, plan mode, context usage, session id, v
 ```toml
 # ~/.kimi-code/tui.toml
 theme = "auto" # "auto" | "dark" | "light" | custom theme name
-tui_mode = "regular" # "regular" | "fullscreen" ("fullscreen" is experimental)
+# tui_mode = "regular" # "regular" | "fullscreen" ("fullscreen" is experimental)
 copy_on_select = true # fullscreen only: false copies only when you press Ctrl-C
 render_latex = true # false keeps LaTeX math in messages as raw source
 disable_paste_burst = false # true disables non-bracketed paste-burst fallback

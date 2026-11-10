@@ -121,7 +121,7 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
   const terminal = new ProcessTerminal();
   setMarkdownRenderLatex(initialAppState.renderLatex ?? DEFAULT_TUI_CONFIG.renderLatex ?? true);
   setMarkdownMermaidMode(initialAppState.markdown?.mermaid ?? DEFAULT_MARKDOWN_CONFIG.mermaid);
-  const fullscreen = initialAppState.tuiMode === 'fullscreen';
+  const fullscreen = (options.resolvedTuiMode ?? initialAppState.tuiMode) === 'fullscreen';
   const ui = fullscreen
       ? new TuiAltScreen(terminal, undefined, undefined, {
           // Mouse capture takes over the terminal's native link activation, so
