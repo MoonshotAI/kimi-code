@@ -401,6 +401,28 @@ describe('AgentLoopRequester request metadata', () => {
 
     expect(JSON.parse(metadataHeader(service) ?? '{}')).toEqual({ agent_role: 'subagent' });
   });
+
+  it('escapes non-ASCII user input ids so the header is a valid HTTP ByteString', () => {
+    const { service } = createService(
+      createRequester({ value: 0 }, undefined, [], undefined, { providerType: 'kimi' }),
+      { metadata },
+    );
+    const header = metadataHeader(service, {
+      ...source,
+      userInputId: '任务-1🚀',
+    });
+
+    expect(header).toBeDefined();
+    expect(new Headers({ 'X-Msh-Client-Metadata': header! }).get('X-Msh-Client-Metadata')).toBe(
+      header,
+    );
+    expect(JSON.parse(header!)).toEqual({
+      agent_role: 'subagent',
+      turn_trigger: 'user',
+      step_reason: 'turn_start',
+      user_input_id: '任务-1🚀',
+    });
+  });
 });
 
 describe('AgentLoopRequester measured anchors', () => {

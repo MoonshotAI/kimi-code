@@ -208,7 +208,10 @@ function kimiRequestMetadataHeaders(metadata: RequestMetadata): Record<string, s
       turn_trigger: metadata.turnTrigger,
       step_reason: metadata.stepReason,
       user_input_id: metadata.userInputId,
-    }),
+    }).replaceAll(
+      /[\u007F-\uFFFF]/g,
+      (ch) => `\\u${ch.codePointAt(0)!.toString(16).padStart(4, '0')}`,
+    ),
   };
 }
 
