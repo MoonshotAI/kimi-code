@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
 import { ILogService } from '#/_base/log/log';
@@ -14,6 +15,7 @@ import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
+import { IGitService, type FsGitStatusResponse, type GitStatusOptions } from '#/app/git/git';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import REVIEW_POLICY from '../../../src/features/autoReview/auto-review-policy.md?raw';
 import { AutoReviewCompleted, AutoReviewStarted } from '#/features/autoReview/autoReviewEvents';
@@ -96,6 +98,7 @@ describe('AutoReviewService', () => {
   let usage: Parameters<ISessionUsageService['record']>[];
   let compactions: Array<{ readonly source: string }>;
   let registeredReviewer: PermissionGateReviewer | undefined;
+  let gitStatusImpl: ((cwd: string, options?: GitStatusOptions) => Promise<FsGitStatusResponse>) | undefined;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -105,6 +108,7 @@ describe('AutoReviewService', () => {
     usage = [];
     compactions = [];
     registeredReviewer = undefined;
+    gitStatusImpl = undefined;
     mainHistory = undefined;
     agentId = 'main';
     response = {
@@ -218,10 +222,15 @@ describe('AutoReviewService', () => {
             return true;
           },
         });
+        if (gitStatusImpl !== undefined) {
+          reg.definePartialInstance(IGitService, {
+            status: (cwd, options) => gitStatusImpl!(cwd, options),
+          });
+        }
       },
       strict: true,
     });
-    return ix.createInstance(AutoReviewService);
+    return ix.createInstance(new SyncDescriptor(AutoReviewService));
   }
 
   const bashTool: ExecutableTool = {
@@ -326,6 +335,37 @@ describe('AutoReviewService', () => {
     expect(sentContent()).not.toContain('tool-result');
     expect(sentContent()).not.toContain('untrusted tool output');
     expect(sentContent()).toContain('\\"id\\":\\"mkdir\\",\\"name\\":\\"Bash\\",\\"arguments\\":\\"{\\\\\\"command\\\\\\":\\\\\\"mkdir generated\\\\\\"}\\",\\"approved\\":true');
+  });
+
+  it('includes the target directory git working-tree status in pending_action', async () => {
+    const seen: Array<{ readonly cwd: string; readonly options: GitStatusOptions | undefined }> = [];
+    gitStatusImpl = async (cwd, options) => {
+      seen.push({ cwd, options });
+      const entries: FsGitStatusResponse['entries'] = cwd.endsWith('/worktree')
+        ? { 'src/a.ts': 'modified' }
+        : {};
+      return {
+        branch: 'feat/test',
+        ahead: 0,
+        behind: 0,
+        entries,
+        additions: 0,
+        deletions: 0,
+        pullRequest: null,
+      };
+    };
+    const reviewer = service();
+
+    await reviewer.review(
+      reviewContext({ toolName: 'Bash', args: { command: 'git reset --hard', cwd: '../worktree' }, tool: bashTool }),
+      'fallback-ask',
+    );
+
+    expect(seen).toEqual([{
+      cwd: '/worktree',
+      options: { includePullRequest: false, includeStats: false },
+    }]);
+    expect(sentContent()).toContain('\\"gitStatus\\":{\\"branch\\":\\"feat/test\\",\\"clean\\":false,\\"entries\\":{\\"src/a.ts\\":\\"modified\\"}}');
   });
 
   it('escapes section tags inside reviewed data', async () => {

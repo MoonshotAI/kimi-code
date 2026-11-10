@@ -13,6 +13,12 @@ export interface ReviewText {
   readonly content: readonly ContentPart[];
 }
 
+export interface ReviewGitStatus {
+  readonly branch: string;
+  readonly clean: boolean;
+  readonly entries?: Readonly<Record<string, string>>;
+}
+
 export function buildReviewMessages(
   messages: readonly ContextMessage[],
   authorizationEntries: readonly ReviewText[],
@@ -21,6 +27,7 @@ export function buildReviewMessages(
   cwd: string,
   context: ResolvedToolExecutionHookContext,
   approvedToolCallIds?: ReadonlySet<string>,
+  gitStatus?: ReviewGitStatus,
 ): ReturnType<typeof createUserMessage>[] {
   const pendingIndex = context.toolCalls.findIndex((call) => call.id === context.toolCall.id);
   const pendingIds = new Set(
@@ -41,6 +48,7 @@ export function buildReviewMessages(
     pending_action: sectionJson({
       name: context.toolCall.name,
       arguments: context.args,
+      gitStatus,
     }),
   }))];
 }

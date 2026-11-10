@@ -1,11 +1,15 @@
+import { resolve } from 'node:path';
+
 import { z } from 'zod';
 
+import { ref, type LiveRef } from '#/_base/di/instantiation';
 import { Service } from '#/_base/di/service';
 import { ILogService } from '#/_base/log/log';
 import { createDeadlineAbortSignal, type DeadlineAbortSignal } from '#/_base/utils/abort';
 import { readRetryAfterMs, retryBackoffDelay, sleepForRetry } from '#/_base/utils/retry';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
+import { IGitService } from '#/app/git/git';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { Error2 } from '#/errors';
@@ -51,6 +55,7 @@ import {
   buildReviewMessages,
   extractAuthorization,
   sameAuthorization,
+  type ReviewGitStatus,
   type ReviewText,
 } from './context';
 import { AUTO_REVIEW_FLAG_ID } from './flag';
@@ -59,6 +64,7 @@ import { IAutoReviewService, type AutoReviewResult } from './review';
 const AUTO_REVIEW_REQUEST_KIND = 'auto_review';
 const MAX_REVIEW_ATTEMPTS = 3;
 const MAX_CONCURRENT_REVIEWS = 4;
+const MAX_GIT_STATUS_ENTRIES = 50;
 
 type ReviewAttempt = AutoReviewResult | { readonly kind: 'appended' } | ReviewFailure;
 
@@ -134,6 +140,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @ILogService private readonly log: ILogService,
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
+    @ref(IGitService) private readonly git: LiveRef<IGitService>,
   ) {
     super();
     if (this.flags.enabled(AUTO_REVIEW_FLAG_ID)) {
@@ -314,6 +321,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     const history = this.context.get();
     const authorization = this.currentAuthorization(history);
     const cwd = this.workspace.workDir;
+    const gitStatus = await this.readGitStatus(cwd, context);
     const message = await this.requestModel(
       modelAlias,
       buildReviewMessages(
@@ -324,6 +332,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
         cwd,
         context,
         this.approvedToolCallIds,
+        gitStatus,
       ),
       context.turnId,
       deadline.signal,
@@ -358,6 +367,32 @@ export class AutoReviewService extends Service implements IAutoReviewService {
       main.accessor.get(IAgentContextMemoryService).get(),
     ).filter((entry) => entry.role === 'human-instruction');
     return inherited.length === 0 ? local : [...inherited, ...local];
+  }
+
+  private async readGitStatus(
+    cwd: string,
+    context: ResolvedToolExecutionHookContext,
+  ): Promise<ReviewGitStatus | undefined> {
+    const git = this.git?.current;
+    if (git === undefined) return undefined;
+    const argCwd = isRecord(context.args) && typeof context.args['cwd'] === 'string' && context.args['cwd'].length > 0
+      ? context.args['cwd']
+      : undefined;
+    const targetCwd = argCwd === undefined ? cwd : resolve(cwd, argCwd);
+    try {
+      const status = await git.status(targetCwd, {
+        includePullRequest: false,
+        includeStats: false,
+      });
+      const keys = Object.keys(status.entries);
+      if (keys.length === 0) return { branch: status.branch, clean: true };
+      const entries = Object.fromEntries(
+        keys.slice(0, MAX_GIT_STATUS_ENTRIES).map((key) => [key, status.entries[key]!]),
+      );
+      return { branch: status.branch, clean: false, entries };
+    } catch {
+      return undefined;
+    }
   }
 
   private async requestModel(
@@ -449,4 +484,8 @@ function contextOverflow(error: unknown): boolean {
 
 function authorizationChanged(): AutoReviewResult {
   return { kind: 'failed', reason: 'Authorization changed during review.' };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
