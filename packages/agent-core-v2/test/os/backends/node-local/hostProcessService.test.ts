@@ -214,6 +214,15 @@ describe('HostProcessService on Windows', () => {
     }
   });
 
+  it('uses native spawn for commands with an explicit shell option', async () => {
+    const { HostProcessService: WindowsHostProcessService } = await import(
+      '#/os/backends/node-local/hostProcessService'
+    );
+    await new WindowsHostProcessService().spawn('fake-tool', [], { shell: true });
+    expect(crossSpawnCalls).toEqual([]);
+    expect(spawnedCommands).toEqual(['fake-tool']);
+  });
+
   it('normalizes a synchronous spawn failure into HostProcessError', async () => {
     crossSpawnError = Object.assign(new Error('The operation is not permitted'), { code: 'EINVAL' });
     const { HostProcessService: WindowsHostProcessService } = await import(

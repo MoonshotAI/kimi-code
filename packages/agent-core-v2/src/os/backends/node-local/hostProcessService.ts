@@ -218,9 +218,10 @@ export class HostProcessService implements IHostProcessService {
       }
     }
     const spawnOptions = buildSpawnOptions(options);
+    const spawnImpl = isWindows && options.shell === undefined ? spawn : nodeSpawn;
     let child: ChildProcess;
     try {
-      child = spawn(command, [...args], spawnOptions);
+      child = spawnImpl(command, [...args], spawnOptions);
       await waitForSpawn(child);
     } catch (error) {
       throw spawnFailedError(command, args, options.cwd, error);
