@@ -111,12 +111,10 @@ function createLoopEventFoldWithState(
   let openStepUuid: string | null | undefined = initial === undefined ? undefined : null;
   let openHasToolCalls = initial?.openHasToolCalls ?? false;
   let openVacuous = initial?.openVacuous ?? true;
-  let openInterrupted = false;
   const pending = new Map<string, string>(
     initial?.pendingToolCalls.map((call) => [call.id, call.name]),
   );
   let deferred: { message: ContextMessage; time: number | undefined }[] = [];
-  let pendingSealMeta: AssistantSealMeta | undefined;
 
   const flushDeferred = (): void => {
     if (pending.size > 0 || deferred.length === 0) return;
@@ -134,7 +132,7 @@ function createLoopEventFoldWithState(
     pending.clear();
     flushDeferred();
   };
-  const settleOpen = (time: number | undefined, meta = pendingSealMeta): void => {
+  const settleOpen = (time: number | undefined, meta?: AssistantSealMeta): void => {
     if (openStepUuid === undefined) return;
     closePending(time);
     if (!openHasToolCalls && openVacuous) {
@@ -143,7 +141,6 @@ function createLoopEventFoldWithState(
       sink.sealOpenAssistant(meta);
     }
     openStepUuid = undefined;
-    pendingSealMeta = undefined;
   };
   const acceptsOpenStep = (stepUuid: string): boolean => {
     if (openStepUuid === undefined) return false;
@@ -165,26 +162,14 @@ function createLoopEventFoldWithState(
     loopEvent(event, time) {
       switch (event.type) {
         case 'step.begin': {
-          if (openInterrupted && !openHasToolCalls && pendingSealMeta === undefined) {
-            closePending(time);
-            openStepUuid = undefined;
-            pendingSealMeta = undefined;
-          } else {
-            settleOpen(time);
-          }
+          settleOpen(time);
           sink.openAssistant(time);
           openStepUuid = event.uuid;
           openHasToolCalls = false;
           openVacuous = true;
-          openInterrupted = false;
           return;
         }
         case 'step.end': {
-          if (event.finishReason === 'interrupted' || event.finishReason === 'error') {
-            openInterrupted = true;
-            pendingSealMeta = stepEndSealMeta(event);
-            return;
-          }
           settleOpen(time, stepEndSealMeta(event));
           flushDeferred();
           return;
@@ -232,18 +217,15 @@ function createLoopEventFoldWithState(
       }
     },
     settle(time) {
-      if (openInterrupted && !openHasToolCalls && pendingSealMeta === undefined) closePending(time);
-      else settleOpen(time);
+      settleOpen(time);
       flushDeferred();
     },
     reset() {
       openStepUuid = undefined;
       openHasToolCalls = false;
       openVacuous = true;
-      openInterrupted = false;
       pending.clear();
       deferred = [];
-      pendingSealMeta = undefined;
     },
   };
 }

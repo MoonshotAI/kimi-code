@@ -58,6 +58,8 @@ export interface IAgentToolSelectService {
 
   prepareForRequest(signal?: AbortSignal): Promise<void>;
 
+  prepareCatalog(signal?: AbortSignal): Promise<void>;
+
   initialTools(): readonly Tool[];
 
   defaultTools(disclosure?: boolean): readonly Tool[];

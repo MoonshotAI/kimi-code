@@ -456,7 +456,6 @@ describe('prompt queue', () => {
     expect(loop.history()).toContainEqual(expect.objectContaining({
       role: 'assistant',
       content: [{ type: 'text', text: 'partial answer' }],
-      partial: true,
     }));
     expect(histories[1]?.slice(-3)).toMatchObject([
       { role: 'user', content: [{ type: 'text', text: 'active' }] },

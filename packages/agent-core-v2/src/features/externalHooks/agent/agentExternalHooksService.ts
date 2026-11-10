@@ -16,6 +16,8 @@ import { IAgentLoopService, type AfterStepContext, type PromptSubmitContext } fr
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { PromptQueued } from '#/agent/prompt/promptEvents';
+import type { AgentTaskInfo } from '#/agent/task/task';
+import { TaskStarted } from '#/agent/task/taskOps';
 import {
   PermissionApprovalRequested,
   PermissionApprovalResolved,
@@ -182,6 +184,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
       this.instantiation.invokeFunction((accessor) => accessor.get(IAgentFullCompactionService)),
     );
 
+    this.registerTaskHooks();
   }
 
   private registerToolHooks(toolExecutor: IAgentToolExecutorService): void {
@@ -294,6 +297,27 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
           .catch(() => undefined);
         await next();
       }),
+    );
+  }
+
+  private registerTaskHooks(): void {
+    this._register(
+      this.eventBus.subscribe(TaskStarted, (e) => this.notifyTaskStarted(e.info)),
+    );
+  }
+
+  private notifyTaskStarted(info: AgentTaskInfo): void {
+    this.fireAndForget(
+      'TaskStarted',
+      {
+        taskId: info.taskId,
+        kind: info.kind,
+        description: info.description,
+        status: info.status,
+        detached: info.detached,
+        startedAt: info.startedAt,
+      },
+      info.kind,
     );
   }
 

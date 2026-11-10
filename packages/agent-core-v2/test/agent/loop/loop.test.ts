@@ -407,7 +407,7 @@ describe('Agent loop', () => {
       role: 'assistant',
       content: [{ type: 'text', text: 'final attempt partial' }],
       toolCalls: [],
-      partial: true,
+      usage: { inputOther: 0, output: 0, inputCacheCreation: 0 },
     });
     expect(ctx.contextData().history).not.toContainEqual(
       expect.objectContaining({
@@ -1961,7 +1961,7 @@ describe('interruption reminder', () => {
         role: 'assistant',
         content: [{ type: 'text', text: 'partial answer' }],
         toolCalls: [],
-        partial: true,
+        usage: { inputOther: 0, output: 0, inputCacheCreation: 0 },
       },
     ]);
     expect(interruptionReminders()).toHaveLength(0);
@@ -2035,7 +2035,7 @@ describe('interruption reminder', () => {
       role: 'assistant',
       content: [{ type: 'text', text: 'partial answer' }],
       toolCalls: [],
-      partial: true,
+      usage: { inputOther: 0, output: 0, inputCacheCreation: 0 },
     });
     expect(interruptionReminders()).toHaveLength(0);
 
@@ -2220,7 +2220,7 @@ describe('interruption reminder', () => {
         { type: 'text', text: 'partial answer' },
       ],
       toolCalls: [],
-      partial: true,
+      usage: { inputOther: 0, output: 0, inputCacheCreation: 0 },
     });
     ctx.mockNextResponse({ type: 'text', text: 'continued answer' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue' }] });

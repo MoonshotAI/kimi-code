@@ -171,7 +171,7 @@ describe('context-projector', () => {
   });
 
   it.each(['interrupted', 'error'] as const)(
-    'keeps a %s step open until the next attempt settles it',
+    'seals a %s step immediately and keeps it beside the next attempt',
     (finishReason) => {
       const entries: Array<{ lineNo: number; data: Record<string, unknown>; raw: object }> = [
         { lineNo: 1, data: { type: 'context.append_loop_event' as const,
@@ -185,7 +185,7 @@ describe('context-projector', () => {
 
       const interrupted = projectContext(entries as any);
       expect(interrupted.messages).toHaveLength(1);
-      expect(interrupted.messages[0]!.message.partial).toBe(true);
+      expect(interrupted.messages[0]!.message.partial).toBeUndefined();
 
       entries.push(
         { lineNo: 4, data: { type: 'context.append_loop_event' as const,

@@ -8,6 +8,7 @@ import {
 import { annotateBundledSkillParts, type UserPromptOrigin } from '#human/agent/origin';
 import { type ToolCall } from '#human/llm/message';
 import { usableOutputOf } from '#human/llm/policy/settle';
+import { emptyUsage } from '#human/llm-requester/usage';
 import type { LlmModelSpec } from '#human/llm/request';
 import type { LlmOutcome } from '#human/llm/response';
 import type { ToolExecutionHandler, ToolResult } from '#/tool/executor';
@@ -434,9 +435,8 @@ export function assistantEntryOf(outcome: LlmOutcome, model?: LlmModelSpec): Ass
   if (message === null) return undefined;
   return createAssistantEntry(message, {
     source: outcome.type === 'done' ? 'llm' : 'salvaged',
-    ...(outcome.type === 'done' ? {} : { partial: true }),
     ...(model === undefined ? {} : { model: { provider: model.provider, model: model.name } }),
-    usage: outcome.usage,
+    usage: outcome.type === 'done' ? outcome.usage : outcome.usage ?? emptyUsage(),
     headers: outcome.headers,
     finish: outcome.finish,
     messageId: outcome.messageId,

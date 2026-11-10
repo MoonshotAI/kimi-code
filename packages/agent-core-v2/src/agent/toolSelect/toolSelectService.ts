@@ -57,7 +57,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
 
   private reconcileTail: Promise<void> = Promise.resolve();
   private readonly notifiedUpdates = new Set<string>();
-  private baseline: readonly ToolSelectTool[] | undefined;
+  private pendingInitialization: readonly ToolSelectTool[] | undefined;
 
   constructor(
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
@@ -105,8 +105,19 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   }
 
   async prepareForRequest(signal?: AbortSignal): Promise<void> {
+    await this.reconcileForRequest(signal, true);
+  }
+
+  async prepareCatalog(signal?: AbortSignal): Promise<void> {
+    await this.reconcileForRequest(signal, false);
+  }
+
+  private async reconcileForRequest(signal: AbortSignal | undefined, publishInitialization: boolean): Promise<void> {
     await (signal === undefined ? this.mcpHandle.ready : abortable(this.mcpHandle.ready, signal));
-    const work = this.reconcileTail.then(() => this.reconcile(signal));
+    const work = this.reconcileTail.then(async () => {
+      if (publishInitialization) await this.publishDeferredInitialization();
+      await this.reconcile(signal, publishInitialization);
+    });
     this.reconcileTail = work.catch(() => {});
     await (signal === undefined ? work : abortable(work, signal));
   }
@@ -117,7 +128,6 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
 
   initialTools(): readonly Tool[] {
     const tools = this.initialToolInfos();
-    this.baseline ??= tools;
     return this.activeEntries(tools, this.featureEnabled()).map((tool) => ({
       name: tool.name,
       description: tool.description,
@@ -351,24 +361,32 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
       .toSorted((left, right) => left.name.localeCompare(right.name));
   }
 
-  private async reconcile(signal?: AbortSignal): Promise<void> {
+  private async publishDeferredInitialization(): Promise<void> {
+    const tools = this.pendingInitialization;
+    if (tools === undefined) return;
+    this.pendingInitialization = undefined;
+    await this.dispatcher.dispatch(
+      new ToolSelectInitialized({ agentId: this.scopeContext.agentId, tools }),
+    );
+  }
+
+  private async reconcile(signal: AbortSignal | undefined, publishInitialization: boolean): Promise<void> {
     signal?.throwIfAborted();
     const state = this.modelState();
     const live = this.liveTools('initial');
     if (state.initial === undefined) {
-      await this.dispatcher.dispatch(
-        new ToolSelectInitialized({ agentId: this.scopeContext.agentId, tools: this.activeTools('initial') }),
-      );
-      if (this.baseline !== undefined) {
-        const baselineNames = new Set(this.baseline.map((tool) => tool.name));
-        const added = live.filter((tool) => !baselineNames.has(tool.name));
-        if (added.length > 0) {
-          await this.dispatcher.dispatch(new ToolSelectToolsChanged({
-            agentId: this.scopeContext.agentId,
-            added: added.map((tool) => ({ ...tool, origin: 'runtime' as const })),
-            removed: [],
-          }));
-        }
+      const tools = this.activeTools('initial');
+      if (publishInitialization) {
+        await this.dispatcher.dispatch(
+          new ToolSelectInitialized({ agentId: this.scopeContext.agentId, tools }),
+        );
+      } else {
+        this.pendingInitialization = tools;
+        this.states.set(toolSelectKey, {
+          initial: tools.map((tool) => ({ ...tool })),
+          current: tools.map((tool) => ({ ...tool })),
+          changes: [],
+        });
       }
       this.notifyUpdatedTools(live, signal);
       return;

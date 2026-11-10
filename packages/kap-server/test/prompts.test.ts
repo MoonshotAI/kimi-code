@@ -298,9 +298,11 @@ describe('server-v2 /api/v1 prompts', () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
 
+    console.error('BEFORE_POST');
     const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
       content: [{ type: 'text', text: 'hello' }],
     });
+    console.error('AFTER_POST', submitted.body.code, submitted.body.data?.status);
     expect(submitted.body.code).toBe(0);
     expect(submitted.body.data.prompt_id).toMatch(/^msg_/);
     expect(submitted.body.data.status).toBe('running');
@@ -308,8 +310,11 @@ describe('server-v2 /api/v1 prompts', () => {
     const session = getLiveSessionById(server!.core.accessor, id)!;
     const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
     const loop = agent.accessor.get(IAgentLoopService);
+    console.error('BEFORE_SETTLED', loop.snapshot().state);
     await loop.settled();
+    console.error('AFTER_SETTLED', loop.snapshot().state);
     const quiescence = loop.tryAcquireQuiescence();
+    console.error('QUIESCENCE', quiescence !== undefined);
     expect(quiescence).toBeDefined();
     loop.submit({
       message: { role: 'user', content: [{ type: 'text', text: 'goal continuation' }] },
@@ -318,11 +323,13 @@ describe('server-v2 /api/v1 prompts', () => {
         origin: { kind: 'system_trigger', name: 'goal_continuation' } as PromptOrigin,
       },
     });
+    console.error('BEFORE_LIST');
 
     const list = await call<{ active: PromptItemWire | null; queued: PromptItemWire[] }>(
       'GET',
       `/api/v1/sessions/${id}/prompts`,
     );
+    console.error('AFTER_LIST', list.body.code);
     expect(list.body.code).toBe(0);
     if (list.body.data.active !== null) {
       expect(list.body.data.active.prompt_id).toBe(submitted.body.data.prompt_id);
@@ -1986,14 +1993,23 @@ describe('server-v2 /api/v1 prompts', () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
 
+    agent.accessor.get(IEventBus).subscribe((event) => {
+      if (event.type === 'turn.ended' || event.type === 'prompt.completed' || event.type === 'prompt.aborted' || event.type === 'error') {
+        console.error('EV', event.type, JSON.stringify(event).slice(0, 300));
+      }
+    });
+    console.error('ABORT_BEFORE_POST');
     const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
       content: [{ type: 'text', text: 'hello' }],
     });
+    console.error('ABORT_AFTER_POST', submitted.body.code);
     const promptId = submitted.body.data.prompt_id;
     const session = getLiveSessionById(server!.core.accessor, id)!;
     const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
     const loop = agent.accessor.get(IAgentLoopService);
+    console.error('ABORT_BEFORE_COMPLETION', Date.now(), loop.promptHandle(promptId)?.state, loop.snapshot().state);
     await loop.promptHandle(promptId)!.completion;
+    console.error('ABORT_AFTER_COMPLETION', Date.now(), loop.promptHandle(promptId)?.state, loop.snapshot().state);
 
     const aborted = await call<{ aborted: boolean }>(
       'POST',

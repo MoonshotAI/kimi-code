@@ -78,8 +78,8 @@ const ZERO: TokenUsage = { inputOther: 0, output: 0, inputCacheRead: 0, inputCac
  *    user / tool messages and any explicit assistant injections).
  *  - `step.begin` settles a preceding attempt and opens a fresh assistant;
  *    later `content.part` and `tool.call` events on the same step grow that
- *    message. A normal `step.end` seals it (or drops it when vacuous), while
- *    interrupted/error steps stay partial until the next attempt.
+ *    message. A `step.end` seals it (or drops it when vacuous), including
+ *    interrupted and error endings.
  *  - pending tool calls defer appended messages; matching `tool.result`
  *    events close them, and an attempt that settles first gets synthetic
  *    interrupted results, exactly like engine replay.

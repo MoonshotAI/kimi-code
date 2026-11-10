@@ -162,7 +162,9 @@ describe('progressive tool disclosure end-to-end', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'use the server tool' }] });
     await waiting;
     expect(ctx.get(IAgentLoopService).cancel()).toBe(true);
-    await ctx.untilTurnEnd();
+    if (!ctx.allEvents.some((entry) => entry.type === '[rpc]' && entry.event === 'turn.ended')) {
+      await ctx.untilTurnEnd();
+    }
 
     const turnEnded = ctx.allEvents.find(
       (entry) => entry.type === '[rpc]' && entry.event === 'turn.ended',

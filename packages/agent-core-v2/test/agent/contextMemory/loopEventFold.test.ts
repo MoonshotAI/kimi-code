@@ -242,7 +242,7 @@ describe('loop-event fold parity', () => {
     expect(folded).toEqual([]);
   });
 
-  it('keeps the open assistant untouched when step.end reports an interruption', () => {
+  it('seals an interrupted step that already has text', () => {
     const folded = foldAll([], [
       { type: 'step.begin', uuid: 's1' },
       {
@@ -260,7 +260,7 @@ describe('loop-event fold parity', () => {
         toolCalls: [],
         toolCallId: undefined,
         isError: undefined,
-        partial: true,
+        partial: undefined,
       },
     ]);
   });
