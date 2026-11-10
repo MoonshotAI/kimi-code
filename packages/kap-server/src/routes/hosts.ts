@@ -74,6 +74,13 @@ function toResponse(info: HostInfo): z.infer<typeof hostResponseSchema> {
 export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: HostBridgeManager): void {
   const config = core.accessor.get(IConfigService);
   const bootstrap = core.accessor.get(IBootstrapService);
+  let hostsWrite: Promise<unknown> = Promise.resolve();
+
+  const mutateHosts = <T>(fn: () => Promise<T>): Promise<T> => {
+    const next = hostsWrite.catch(() => undefined).then(fn);
+    hostsWrite = next;
+    return next;
+  };
 
   const enabled = async (req: RouteRequest, reply: RouteReply): Promise<boolean> => {
     await config.ready;
@@ -217,7 +224,7 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
       }
       try {
         const entry = toEntry(req.body as z.infer<typeof wireEntrySchema>);
-        await config.replace(HOSTS_SECTION, { ...manager.section(), [id]: entry });
+        await mutateHosts(() => config.replace(HOSTS_SECTION, { ...manager.section(), [id]: entry }));
         reply.send(okEnvelope({ ok: true as const }, req.id));
       } catch (error) {
         reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, error instanceof Error ? error.message : String(error), req.id));
@@ -238,8 +245,10 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
     async (req: RouteRequest, reply: RouteReply) => {
       if (!(await enabled(req, reply))) return;
       const { id } = req.params as z.infer<typeof hostParamsSchema>;
-      const { [id]: _removed, ...rest } = manager.section();
-      await config.replace(HOSTS_SECTION, rest);
+      await mutateHosts(async () => {
+        const { [id]: _removed, ...rest } = manager.section();
+        await config.replace(HOSTS_SECTION, rest);
+      });
       reply.send(okEnvelope({ ok: true as const }, req.id));
     },
   );

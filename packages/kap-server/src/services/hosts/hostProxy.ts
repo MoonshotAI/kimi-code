@@ -77,7 +77,11 @@ async function proxyHttp(
     return;
   }
   try {
-    const body = Buffer.isBuffer(req.body) && req.body.length > 0 ? req.body : undefined;
+    const chunks: Buffer[] = [];
+    for await (const chunk of req.raw) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    const body = chunks.length > 0 ? Buffer.concat(chunks) : undefined;
     const response = await session.request({
       method: req.method,
       path: target.path,
@@ -104,7 +108,7 @@ export function registerHostProxyRoutes(
 ): void {
   void app.register(async (scope) => {
     scope.removeAllContentTypeParsers();
-    scope.addContentTypeParser('*', { parseAs: 'buffer' }, (_req, payload, done) => done(null, payload));
+    scope.addContentTypeParser('*', (_req, payload, done) => done(null, payload));
     for (const url of ['/api/v1/hosts/:id/proxy', '/api/v1/hosts/:id/proxy/*']) {
       scope.route({
         method: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'],
