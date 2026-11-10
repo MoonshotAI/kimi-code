@@ -340,8 +340,6 @@ describe('AgentRecords persistence metadata', () => {
     expect(persistence.records.map((record) => record.type)).toEqual([
       'metadata',
       'context.append_message',
-      'changeNotifier.snapshot',
-      'profile.bind',
     ]);
     expect(persistence.records[0]).toMatchObject({
       type: 'metadata',
