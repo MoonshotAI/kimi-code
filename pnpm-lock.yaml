@@ -785,9 +785,16 @@ importers:
       '@moonshot-ai/kimi-code-oauth':
         specifier: workspace:^
         version: link:../oauth
+      semver:
+        specifier: ^7.7.4
+        version: 7.7.4
       zod:
         specifier: 'catalog:'
         version: 4.3.6
+    devDependencies:
+      '@types/semver':
+        specifier: ^7.7.0
+        version: 7.7.1
 
   packages/remote-control:
     dependencies:
