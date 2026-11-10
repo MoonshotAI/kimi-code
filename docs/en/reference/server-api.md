@@ -51,7 +51,7 @@ The HTTP status is almost always 200; the business outcome lives in `code`. Exce
 | Provider created, provider catalog imported | 201 |
 | Provider deleted | 204 |
 | Binary/streaming endpoints | 206 (Range) / 304 (ETag unchanged) where supported — capabilities differ per endpoint, see [Binary and streaming endpoints](#binary-and-streaming-endpoints) |
-| `GET /api/v1/files/{file_id}` download errors | real 404 / 500 (still carrying an envelope body) |
+| `GET /api/v1/files/{file_id}`, `/api/v1/fs:content`, and session `:download` errors | real 4xx / 500 (still carrying an envelope body) |
 
 The 201 responses still carry the standard envelope (`code` 0) — only the status line follows the REST convention for resource creation. A 204 response has no body by definition, so a successful delete is reported by the status code itself.
 
@@ -65,7 +65,7 @@ Error codes are grouped by band:
 | `400xx` | Bad request | `40001` validation failed (`details` lists each field), `40003` provider is OAuth-managed, `40006` duplicate workspace source folder |
 | `401xx` | Auth and readiness | `40101` unauthorized, `40110` no provider configured, `40113` model not resolved |
 | `404xx` | Not found | `40401` session, `40408` MCP server, `40409` file path |
-| `409xx` | State conflict | `40901` session busy, `40902` approval already resolved, `40922` page conditions mismatch `page_token`, `40931` session occupied by another client, `40932` session updated by another client |
+| `409xx` | State conflict | `40901` session busy, `40902` approval already resolved, `40922` page conditions mismatch `page_token`, `40931` session occupied by another client, `40932` session updated by another client, `40935` Tower mode cannot be entered |
 | `410xx` | Expired | `41001` approval timed out, `41002` question timed out, `41003` temporary file expired |
 | `413xx` | Size or boundary exceeded | `41302` file read over 10 MB, `41304` path escapes the session directory |
 | `429xx` | Rate limited | `42901` auth-failure ban, `42902` too many fs watches |
@@ -656,7 +656,7 @@ Every endpoint that returns a session uses this wire shape. The live facts (`bus
 | `last_turn_reason` | string | Main agent's latest turn outcome: `completed` / `cancelled` / `failed` |
 | `last_prompt` | string | Most recent user prompt text, when present |
 | `metadata` | object | Custom metadata; always carries `cwd` (the session's working directory) |
-| `agent_config` | object | Projected as `{ model }`; `model` is `""` in most responses and only filled with the live model by `GET /api/v1/sessions/{session_id}/snapshot` |
+| `agent_config` | object | Projected as `{ model }`; `model` is `""` in most responses and filled with the live model by `GET /api/v1/sessions/{session_id}/snapshot`, and by the creation response and `event.session.created` when the creation request set a model |
 | `usage` | object | Token rollup `{ input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, context_tokens, context_limit?, total_cost_usd?, turn_count? }`; all zeros outside the snapshot endpoint |
 | `permission_rules` | array | Session permission rules; currently always `[]` |
 | `message_count` | integer | Message count; currently always `0` |
@@ -669,15 +669,16 @@ Creates a session and returns it. The target directory comes from `workspace_id`
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `workspace_id` | body | string | **Required** when `metadata.cwd` is absent. Registered workspace id; the session is created at that workspace's root |
-| `metadata` | body | object | Custom metadata. `metadata.cwd` is the working directory and is **required** when `workspace_id` is absent; with both given, it must equal the workspace root |
+| `metadata` | body | object | Custom metadata. `metadata.cwd` is the working directory and is **required** when `workspace_id` is absent; with both given, it must equal the workspace root. Other keys are kept as the session's custom metadata, except the reserved keys `goal`, `parent_session_id`, and `child_session_kind`, which are dropped |
 | `title` | body | string | Initial title (at least 1 character); the session is untitled otherwise |
-| `agent_config` | body | object | Accepted by the schema but currently not applied — set the model and modes through `POST /api/v1/sessions/{session_id}/profile` |
+| `agent_config` | body | object | Partial main-agent config, with the same fields as `POST /api/v1/sessions/{session_id}/profile`, applied before the session is returned. When it cannot be applied, the session is not created and the error is returned. `tower_mode: true` is rejected (`40001`): entering Tower mode changes the repository and cannot be undone if creation fails, so enable it through `POST /api/v1/sessions/{session_id}/profile` once the session exists |
 
 On success, `data` is [the session object](#the-session-object) of the new session.
 
-- `40001`: neither `workspace_id` nor `metadata.cwd` given, or `metadata.cwd` does not match the workspace root (`details` lists the field)
+- `40001`: neither `workspace_id` nor `metadata.cwd` given, `metadata.cwd` does not match the workspace root, or `agent_config` sets `tower_mode: true` (`details` lists the field); also when `agent_config.model` is not configured or the model does not support `agent_config.thinking`
 - `40409`: the working directory does not exist or is not a directory
 - `40410`: no registered workspace with that `workspace_id`
+- `40913`–`40918`, `40920`: `agent_config` could not be applied because of a goal error
 
 #### `GET /api/v1/sessions`
 
@@ -745,8 +746,6 @@ Each `agent_config` field is applied immediately to the main agent:
 | `swarm_mode` | boolean | Enter or exit swarm mode |
 | `goal_objective` | string | Create a goal with this objective |
 | `goal_control` | string | `pause` / `resume` / `cancel` the current goal |
-
-The schema also accepts `system_prompt`, `tools`, `mcp_servers` inside `agent_config`, and a top-level `permission_rules` array, but the update route currently does not apply them.
 
 On success, `data` is the updated [session object](#the-session-object).
 
@@ -833,7 +832,7 @@ On success, `data` is `{ archived: true }`.
 
 #### `POST /api/v1/sessions/{session_id}:restore`
 
-Un-archives the session and resumes it.
+Un-archives the session and resumes it. When the session was archived, the server broadcasts the global `event.session.restored` event.
 
 On success, `data` is [the session object](#the-session-object) with `archived: false`.
 
@@ -1755,9 +1754,9 @@ Fuzzy-searches file and directory names across the session workspace. An empty `
 | `limit` | body | integer | Maximum hits, 1–200. Default `50` |
 | `include_globs` | body | string[] | Only paths matching one of these globs |
 | `exclude_globs` | body | string[] | Skip paths matching these globs |
-| `follow_gitignore` | body | boolean | Skip gitignored paths. Default `true` |
+| `follow_gitignore` | body | boolean | Skip gitignored paths when `true`. Default `false` |
 
-On success, `data` is `{ items, truncated }` where each item is `{ path, name, kind, score, match_positions }` — `kind` is `file` / `directory` / `symlink`, `score` is the fuzzy-match score between 0 and 1, and `match_positions` lists the matched character offsets. Hits sort by score (ties by path), and `truncated` reports that hits beyond `limit` were dropped.
+On success, `data` is `{ items, truncated }` where each item is `{ path, name, kind, score, match_positions }` — `kind` is `file` / `directory` / `symlink`, `score` is the fuzzy-match score between 0 and 1, and `match_positions` lists the matched character offsets. Hits prioritize match quality and place ignored hits after non-ignored hits of equal quality. Including ignored hits may require a supplemental scan; `truncated` reports that hits beyond `limit` were dropped.
 
 - `40001`: body validation failure
 - `40401`: neither a session nor a resolvable workspace with that reference
@@ -1969,7 +1968,7 @@ The session-less form of `fs:search`: the workspace travels in the body instead 
 | `limit` | body | integer | Maximum hits, 1–200. Default `50` |
 | `include_globs` | body | string[] | Only paths matching one of these globs |
 | `exclude_globs` | body | string[] | Skip paths matching these globs |
-| `follow_gitignore` | body | boolean | Skip gitignored paths. Default `true` |
+| `follow_gitignore` | body | boolean | Skip gitignored paths when `true`. Default `false` |
 
 On success, `data` is `{ items, truncated }` with the same hit shape and ordering as `fs:search`.
 
@@ -1984,13 +1983,16 @@ Suggests file and directory completion candidates in a workspace without a sessi
 | --- | --- | --- | --- |
 | `workspace` | body | string | **Required.** Registered workspace id or absolute root (registered on the spot) |
 | `query` | body | string | **Required.** Partial path text to complete |
-| `limit` | body | integer | Maximum candidates, 1–200. Default `50` |
-| `follow_gitignore` | body | boolean | Skip gitignored paths. Default `true` |
-| `show_hidden` | body | boolean | Include dotfiles. Default `false` |
+| `limit` | body | integer | Maximum candidates, 1–200. Default `50`; fd-backed searches return at most `20` |
+| `follow_gitignore` | body | boolean | Skip gitignored paths when `true`. Default `false` |
+| `show_hidden` | body | boolean | Include dotfiles. Default `false`; fd-backed searches always include them |
+| `stream` | body | boolean | Return NDJSON preview/final events when `true`. Default `false` |
 | `include_globs` | body | string[] | Only paths matching one of these globs |
 | `exclude_globs` | body | string[] | Skip paths matching these globs |
 
-On success, `data` is `{ items, truncated }` where each item is `{ path, name, kind, score, match_positions }`, the same hit shape as `fs:search`.
+On success, `data` is `{ items, truncated }` where each item is `{ path, name, kind, score, match_positions }`, the same hit shape as `fs:search`. Candidates prioritize match quality and place ignored candidates after non-ignored candidates of equal quality. When fd is available, searches use the local `@`-completion strategy: hidden paths are always included, each root scans at most 100 entries per pass, and at most 20 items are returned. Matches beyond the scan cap may be omitted. Including ignored candidates may require a supplemental `--no-ignore-vcs` scan; the ripgrep/Node fallback applies when fd is unavailable.
+
+With `stream:true`, the response is NDJSON instead of a single JSON object. Each envelope's `data` includes `phase` (`preview`, `final`, or `error`) and the same result fields. A preview contains ordinary fd candidates with `truncated:true`; the final result replaces it after the ignored scan. Closing the connection cancels the search.
 
 - `40001`: body validation failure
 - `40410`: workspace not found and not a usable absolute path
@@ -2381,10 +2383,10 @@ On success, `task.watch`, `task.stop`, and `task.background` carry the task's cu
 
 Global events are envelopes `{ "type", "session_id"?, "timestamp", "payload" }`, where `type` is the event type itself; session frames are flat `{ "type", "session_id", "agent_id", ... }`. Two delivery scopes:
 
-- **Global events**: sent to every established connection, no subscription needed — `session.meta.updated`, `event.session.created`, `event.session.archived`, `event.session.work_changed`, `event.session.status_changed`, `event.workspace.*`, `event.config.*`, `event.model_catalog.*`.
+- **Global events**: sent to every established connection, no subscription needed — `session.meta.updated`, `event.session.created`, `event.session.archived`, `event.session.restored`, `event.session.work_changed`, `event.session.status_changed`, `event.workspace.*`, `event.config.*`, `event.model_catalog.*`.
 - **Session frames**: sent only to connections subscribed to that session with `subscribe`, and only for the agents they receive — `turns`, `turns.removed`, `turns.failed`, `turn.*`, `item.*`, and `notice` (see [Conversation protocol](#conversation-protocol)), `task.list`, `task`, `agent`, `usage`, `goal`, `todo`; `interaction` frames go to every subscriber of the session. `task.output` goes only to connections watching that task with `task.watch`.
 
-Three global lifecycle events keep a cross-workspace overview fresh without polling per workspace. `event.session.archived` fires on both the live and the cold archive path; its envelope `session_id` is the global watermark `__global__` and the real session id rides in the payload: `{ "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." }` (payload keys `workspace_id` / `sessionId`). `event.workspace.created` / `updated` carry the full workspace object (`{ id, root, name, created_at, last_opened_at, session_count }` — an `updated` also fires when a session creation touches the workspace), and `event.workspace.deleted` carries `{ "workspace_id", "root" }`. These events only cover changes made inside this server process; changes from other processes (for example a CLI writing to the same home) surface through the index reconciliation (about a minute), so overview clients should keep a low-frequency fallback poll. There is no session-deleted event.
+Several global lifecycle events keep a cross-workspace overview fresh without polling per workspace. `event.session.archived` fires on both the live and the cold archive path; its envelope `session_id` is the global watermark `__global__` and the real session id rides in the payload: `{ "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." }` (payload keys `workspace_id` / `sessionId`). `event.session.restored` fires when an archived session is restored, on the same paths and with the same envelope and payload keys. `event.workspace.created` / `updated` carry the full workspace object (`{ id, root, name, created_at, last_opened_at, session_count }` — an `updated` also fires when a session creation touches the workspace), and `event.workspace.deleted` carries `{ "workspace_id", "root" }`. These events only cover changes made inside this server process; changes from other processes (for example a CLI writing to the same home) surface through the index reconciliation (about a minute), so overview clients should keep a low-frequency fallback poll. There is no session-deleted event.
 
 Each agent's running tasks — shell commands in the foreground and background, subagents (swarm members included), and other asynchronous work — are synced by two flat frames, `task.list` and `task`, never replayed like `interaction`. When a connection starts receiving an agent's tasks (an agent listed in `subscribe`'s `agent_ids` that it was not receiving yet), it first gets `{ type: "task.list", session_id, agent_id, tasks }`, where `tasks` is every task the agent is running right now and replaces the client's list; after that it gets `{ type: "task", session_id, agent_id, event_created_at, ...task state }` on every change. An agent listed before it joins the session starts directly with `task` frames. The task state is `{ task_id, kind: "shell" | "subagent" | "other", status: "running" | "ended", outcome?, phase?, detached, description?, child_agent_id?, parent_tool_call_id?, swarm_index?, command?, started_at?, ended_at?, result_summary?, error?, state_reason?, model?, thinking? }`, and every frame carries the full state. `detached` means the tool call that started the task no longer waits for it, so it runs in the background; `outcome` (ended tasks only) is `completed` / `failed` / `timed_out` / `killed` / `lost`; `phase` (running subagents only) is `working` / `suspended`, with the reason in `state_reason`; `child_agent_id` is a subagent task's agent id; `swarm_index` is a swarm member's position in its swarm; `command` is a shell task's command. When a task ends, its last `task` frame (`status: "ended"`) is sent and it no longer appears in `task.list`: the outcome of an ended task lives in the session history (tool results and task notifications), and `task.watch` on it replies with its exact final state. Tasks are independent of turns: undoing turns does not touch tasks. Task output streams separately as `{ type: "task.output", session_id, agent_id, task_id, offset, text }`, where `offset` is the UTF-8 byte offset of `text` in the task's output.
 
@@ -2416,7 +2418,7 @@ Every item has `{ item_id, type, step_index?, status, outcome?, created_at, debu
 - `user_message`: `{ prompt_ids, placement: "opener" | "steer", origin, text, attachments, skills, metadata? }`. `prompt_ids` lists the prompt ids the input carries — including the `prompt_id` of a bundled skill submission or a skill activation — so a client can retire its optimistic bubble; it is empty for inputs the system triggered. `origin` is `{ kind: "user" }`, `{ kind: "skill", name, path?, args? }`, `{ kind: "plugin_command", plugin_id, command, args? }`, `{ kind: "cron", job_id, schedule, recurring, coalesced_count, stale }`, `{ kind: "hook", hook_event }`, `{ kind: "goal" }` for a goal continuation, `{ kind: "retry" }`, or `{ kind: "system" }`. `text` joins the visible text parts with newlines, without bundled skill instructions, prompt hook output, the notices that point the model at attached files, or image compression notes; it is empty for retries and internal triggers. `attachments` lists the files and media of the input in order as `{ kind: "image" | "video" | "audio" | "file", file_id?, url?, name?, media_type?, size?, ordinal }`: uploaded files carry `file_id`, inline and remote media carry `url`, media the server stored is sent as a `data:` URL in pages, and a file attached by a server-local path carries only its `name`, `media_type` and `size`. `skills` lists the skills activated with the input as `{ name, path?, args? }`, and `metadata` echoes the `metadata` sent with the prompt. A CLI shell command (`!`) and its output arrive as raw text in a `user_message` with `origin: { kind: "system" }`, each in its own ended turn.
 - `assistant_message`: `{ text }`.
 - `reasoning`: `{ text, started_at, duration_ms? }`; `duration_ms` is how long the reasoning streamed, present once the item has ended. Hidden reasoning is never sent.
-- `tool_call`: `{ item_id: tool call id, name, stage?, input?, input_text?, display?, output?, media?, error?, progress?, interaction_id?, agent_refs?, started_at, ended_at? }`. While the call runs, `stage` is `input` while the model streams the arguments (`input_text` holds them as text), `awaiting_approval` while its approval is pending, and `executing` otherwise; `output` streams the tool's live output and `progress` is `{ percent?, status?, custom_kind?, custom_data? }`. Once ended, `output` is the text of the result and `media` lists its images, videos, and audio as `{ kind, file_id?, url?, media_type? }`; the `outcome` is `failed`, with `error` instead of `output`, when the result is an error, and `interrupted` when the turn ended before a result. `interaction_id` links the approval or question raised for the call, whose content comes with the `interaction` frames, and `agent_refs` lists the subagents the call started as `{ agent_id, role: "child" | "member", swarm_index?, task_id? }`. `ExitPlanMode` calls carry the `display` `{ kind: "plan_review", plan, path?, options: [{ label, description }], review: { state: "pending" | "approved" | "rejected" | "cancelled", selected_option?, feedback? } }`.
+- `tool_call`: `{ item_id: tool call id, name, stage?, input?, input_text?, display?, output?, media?, error?, note?, progress?, task_id?, interaction_id?, agent_refs?, started_at, ended_at? }`. While the call runs, `stage` is `input` while the model streams the arguments (`input_text` holds them as text), `awaiting_approval` while its approval is pending, and `executing` otherwise; `output` streams the tool's live output and `progress` is `{ percent?, status?, custom_kind?, custom_data? }`. Once ended, `output` is the text of the result and `media` lists its images, videos, and audio as `{ kind, file_id?, url?, media_type? }`; the `outcome` is `failed`, with `error` instead of `output`, when the result is an error, and `interrupted` when the turn ended before a result. `note` is the extra text the tool attached to its result for the model, such as the size and dimensions of an image read by `ReadMediaFile`. `task_id` appears once the call's work runs as a background task, whether it started in the background or was moved there later; it keeps working with `task.watch` and `task.stop` after the task has left `task.list`. While a foreground call runs, find its task through the task's `parent_tool_call_id`. `interaction_id` links the approval or question raised for the call, whose content comes with the `interaction` frames, and `agent_refs` lists the subagents the call started as `{ agent_id, role: "child" | "member", swarm_index?, task_id? }`. `ExitPlanMode` calls carry the `display` `{ kind: "plan_review", plan, path?, options: [{ label, description }], review: { state: "pending" | "approved" | "rejected" | "cancelled", selected_option?, feedback? } }`.
 - `notification`: `{ notification_id, title, body, severity: "info" | "warning" | "error", notification_type, source: { kind, id }, task_id?, agent_id?, output?: { file?, preview?, bytes?, truncated? }, answer?: { answers, note? } }`, a background task notification delivered into the conversation. `answer` is the user's reply to a background question: `answers` maps each question to its answer, and `note` is an optional note.
 - `system`: `{ kind: "compaction", trigger: "manual" | "auto", instruction?, tokens_before?, tokens_after?, compacted_count?, summary? }` for a completed context compaction, placed inside the running turn when it ran mid-turn; or `{ kind: "fork_boundary", source: "btw" | "fork", forked_from: { agent_id } }`, which opens the conversation of an agent forked from another one, such as a side chat, without showing the conversation it inherited. A compaction that is cancelled or fails leaves nothing in the conversation.
 
@@ -2445,7 +2447,7 @@ The following endpoints stream binary bodies instead of a JSON payload. Their HT
 | `GET /api/v1/fs:content` | Raw bytes of any host file (gated only by the token — be careful when exposing the port) | Yes | Yes |
 | `POST /api/v1/sessions/{session_id}/export` | Export the session with diagnostics (zip stream) | No | No |
 
-Error semantics differ as well: `GET /api/v1/files/{file_id}` answers lookup and storage failures with real 404 / 500 statuses (parameter validation still uses the HTTP 200 envelope), while the other three report every failure through the standard [response envelope](#response-envelope) — clients must keep checking the envelope `code` on those endpoints.
+Error semantics differ as well: `GET /api/v1/files/{file_id}`, `GET /api/v1/fs:content`, and session `:download` answer failures with real 4xx / 500 statuses and the same [response envelope](#response-envelope). Session export reports errors with an HTTP 200 envelope. Ordinary JSON RPC endpoints keep the almost-always-200 convention, so clients must check the envelope `code` on those endpoints.
 
 ## Next steps
 

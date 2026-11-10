@@ -43,6 +43,7 @@ const CLIENT_SUBMITTED_ORIGINS: ReadonlySet<UserMessageOrigin['kind']> = new Set
 const EXIT_PLAN_MODE = 'ExitPlanMode';
 const PLAN_SAVED_TO_MARKER = 'Plan saved to: ';
 const PLAN_BODY_MARKERS = ['## Approved Plan:\n', '## Plan (auto-approved, not user-reviewed):\n'];
+const CRON_FIRE_ENVELOPE = /^<cron-fire [^\n]*>\n<prompt>\n([\s\S]*)\n<\/prompt>\n<\/cron-fire>$/;
 const ATTACHED_FILE_NOTICE = /^Attached file "(.+)" \((.+), (\d+) bytes\): (.+) — open it with the Read tool$/s;
 const FILE_ID = String.raw`f_(?:[0-9A-Za-z]{26}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})`;
 const UPLOADED_FILE_PATH = new RegExp(String.raw`(?:^|[\\/])(${FILE_ID})-[^\\/]*$`);
@@ -101,7 +102,7 @@ export function userMessageItem(
     prompt_ids: promptIdsOf(presented, promptId === undefined ? [] : [promptId]),
     placement,
     origin: presented,
-    text: text.join('\n'),
+    text: presented.kind === 'cron' ? cronPromptOf(text.join('\n')) : text.join('\n'),
     attachments,
     skills: origin?.kind === 'user'
       ? (origin.skillActivations ?? []).map(({ skillName, skillPath, skillArgs }) => ({ name: skillName, path: skillPath, args: skillArgs }))
@@ -155,13 +156,21 @@ export function isPlanTool(name: string): boolean {
   return name === EXIT_PLAN_MODE;
 }
 
-export function endToolCall(item: ToolCallItem, output: string | readonly ContentPart[], isError: boolean, time: number): void {
+export function endToolCall(
+  item: ToolCallItem,
+  output: string | readonly ContentPart[],
+  outcome: 'completed' | 'failed' | 'interrupted',
+  note: string | undefined,
+  time: number,
+): void {
   const text = resultText(output);
-  const media = isError || typeof output === 'string' ? [] : output.filter(isMediaPart).map(mediaOf);
+  const completed = outcome === 'completed';
+  const media = !completed || typeof output === 'string' ? [] : output.filter(isMediaPart).map(mediaOf);
   item.status = 'ended';
-  item.outcome = isError ? 'failed' : 'completed';
-  item.output = isError ? undefined : text;
-  item.error = isError ? text : undefined;
+  item.outcome = outcome;
+  item.output = completed ? text : undefined;
+  item.error = completed ? undefined : text;
+  item.note = note;
   item.media = media.length === 0 ? undefined : media;
   item.ended_at = isoTime(time);
 }
@@ -321,6 +330,10 @@ export function mediaUrlOf(part: MediaPart): string | undefined {
 
 export function mediaTypeOf(url: string): string | undefined {
   return /^data:([^;,]+)[;,]/.exec(url)?.[1];
+}
+
+function cronPromptOf(text: string): string {
+  return CRON_FIRE_ENVELOPE.exec(text)?.[1] ?? text;
 }
 
 function originOf(origin: PromptOrigin | undefined): UserMessageOrigin {

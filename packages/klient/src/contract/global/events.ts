@@ -22,6 +22,11 @@ export interface SessionArchivedPayload {
   readonly sessionId: string;
 }
 
+/** Payload of `event.session.restored` on the global bus. */
+export interface SessionRestoredPayload {
+  readonly sessionId: string;
+}
+
 /** Payload of `session.meta.updated` on the global bus (`session/sessionMetadata/promptMetadata.ts`). */
 export interface SessionMetaUpdatedPayload {
   readonly agentId: string;
@@ -47,6 +52,7 @@ export interface KlientEventPayloads {
   'kosong.models.changed': ModelsChangedEvent;
   'plugins.reloaded': ReloadSummary;
   'session.archived': SessionArchivedPayload;
+  'session.restored': SessionRestoredPayload;
   'session.metaUpdated': SessionMetaUpdatedPayload;
   'kosong.changed': CatalogChangedPayload;
 }
@@ -132,6 +138,11 @@ export const globalEvents = {
   'session.archived': {
     kind: 'bus',
     type: 'event.session.archived',
+    schema: z.object({ sessionId: z.string() }),
+  },
+  'session.restored': {
+    kind: 'bus',
+    type: 'event.session.restored',
     schema: z.object({ sessionId: z.string() }),
   },
   'session.metaUpdated': {

@@ -105,7 +105,7 @@ import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
 import { PLUGIN_SKILL_SOURCE_ID } from '#/features/skill/catalog/skillSource';
 
 import { agentScopeOf, sessionDirOf, sessionScopeOf } from './internal/addressing';
-import { SessionArchived, SessionDeleted } from './sessionLifecycleEvents';
+import { SessionArchived, SessionDeleted, SessionRestored } from './sessionLifecycleEvents';
 import {
   assertForkTurnIndex,
   sliceMainRecordsForRunningFork,
@@ -267,6 +267,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         }
         await planHandle.accessor.get(IAgentPlanService).enter();
       }
+      await opts.prepare?.(handle);
       await this.appendSessionIndexEntry(sessionId, workDir);
     } catch (error) {
       const sessionDir = handle.accessor.get(ISessionContext).sessionDir;
@@ -274,6 +275,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       await this.drainAgents(handle).catch(() => {});
       void handle.dispose();
       await this.hostFs.remove(sessionDir).catch(() => {});
+      await this.index.remove(sessionId).catch(() => {});
       throw error;
     }
     await this.announceCreated({ sessionId, handle, source: 'startup' });
@@ -582,7 +584,16 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   ): Promise<ISessionScopeHandle | undefined> {
     const handle = await this.resume(sessionId, opts);
     if (handle === undefined) return undefined;
-    await handle.accessor.get(ISessionMetadata).setArchived(false);
+    const metadata = handle.accessor.get(ISessionMetadata);
+    const wasArchived = (await metadata.read()).archived;
+    await metadata.setArchived(false);
+    if (wasArchived) {
+      this.event.publish(
+        new SessionRestored({
+          payload: { sessionId, workspaceId: this.workspaceContext.workspaceId },
+        }),
+      );
+    }
     return handle;
   }
 
