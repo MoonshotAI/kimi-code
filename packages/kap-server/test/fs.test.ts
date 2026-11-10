@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { IEnvironmentService, IModelCatalog, ISessionManager, IWorkspaceInstanceManager, WorkspaceFsService } from '@moonshot-ai/agent-core-v2';
+import { Error2, ErrorCodes, IEnvironmentService, IModelCatalog, ISessionManager, IWorkspaceInstanceManager, WorkspaceFsService } from '@moonshot-ai/agent-core-v2';
 import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
@@ -8,6 +8,7 @@ import { HostProcessService } from '@moonshot-ai/agent-core-v2/os/backends/node-
 import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
 import type { EnvironmentCapability } from '@moonshot-ai/agent-core-v2/environment/environment';
 import { ErrorCode } from '../src/protocol/error-codes';
+import { sendMappedError } from '../src/routes/fs';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -240,6 +241,52 @@ describe('server-v2 /api/v1 fs routes', () => {
     expect(disposition).not.toContain('\r');
     expect(disposition).not.toContain('\n');
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
+  });
+
+  it('returns HTTP errors instead of file content for failed downloads', async () => {
+    const id = await createSession();
+    const missing = await fetch(`${base}/api/v1/sessions/${id}/fs/missing.png:download`, {
+      headers: authHeaders(server as RunningServer),
+    } as never);
+    const missingBody = (await missing.json()) as Envelope<null>;
+    expect(missing.status).toBe(404);
+    expect(missing.headers.get('content-type')).toContain('application/json');
+    expect(missingBody.code).toBe(ErrorCode.FS_PATH_NOT_FOUND);
+
+    const directory = await fetch(`${base}/api/v1/sessions/${id}/fs/:download`, {
+      headers: authHeaders(server as RunningServer),
+    } as never);
+    const directoryBody = (await directory.json()) as Envelope<null>;
+    expect(directory.status).toBe(400);
+    expect(directoryBody.code).toBe(ErrorCode.VALIDATION_FAILED);
+
+    const invalidQuery = await fetch(`${base}/api/v1/sessions/${id}/fs/missing.png:download?allow_external_symlinks=invalid`, {
+      headers: authHeaders(server as RunningServer),
+    } as never);
+    const invalidQueryBody = (await invalidQuery.json()) as Envelope<null>;
+    expect(invalidQuery.status).toBe(400);
+    expect(invalidQueryBody.code).toBe(ErrorCode.VALIDATION_FAILED);
+
+    const missingSession = await fetch(`${base}/api/v1/sessions/s_missing/fs/missing.png:download`, {
+      headers: authHeaders(server as RunningServer),
+    } as never);
+    const missingSessionBody = (await missingSession.json()) as Envelope<null>;
+    expect(missingSession.status).toBe(404);
+    expect(missingSessionBody.code).toBe(ErrorCode.SESSION_NOT_FOUND);
+
+    let status = 0;
+    let body: Envelope<null> | undefined;
+    sendMappedError({
+      code(value: number) {
+        status = value;
+        return this;
+      },
+      send(payload: unknown) {
+        body = payload as Envelope<null>;
+      },
+    } as never, { id: 'req_config' }, new Error2(ErrorCodes.CONFIG_INVALID, 'invalid workspace config'), true);
+    expect(status).toBe(400);
+    expect(body?.code).toBe(ErrorCode.VALIDATION_FAILED);
   });
 
   it('serves fs actions and downloads from the environment the session was created on', async () => {

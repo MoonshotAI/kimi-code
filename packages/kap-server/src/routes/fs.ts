@@ -51,7 +51,9 @@ import {
   openInAppCommandFor,
   revealFileCommandFor,
 } from '../lib/fileLaunch';
+import { buildContentDisposition } from '../lib/contentDisposition';
 import { parseRangeHeader, pickHeader } from '../lib/httpRange';
+import { sendRawError } from '../lib/rawError';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
@@ -622,6 +624,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       rawResponse: {
         200: { type: 'string', format: 'binary' },
       },
+      rawErrorStatus: true,
       errors: {
         [ErrorCode.VALIDATION_FAILED]: {},
         [ErrorCode.SESSION_NOT_FOUND]: {},
@@ -641,20 +644,28 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
 
       const DOWNLOAD_SUFFIX = ':download';
       if (!wildcard.endsWith(DOWNLOAD_SUFFIX)) {
-        reply.send(
+        sendRawError(
+          reply as FsDownloadReply,
           errEnvelope(ErrorCode.VALIDATION_FAILED, `unsupported action: ${wildcard}`, req.id),
         );
         return;
       }
       const relPath = wildcard.slice(0, -DOWNLOAD_SUFFIX.length);
       if (relPath.length === 0) {
-        reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, 'path is empty', req.id));
+        sendRawError(reply as FsDownloadReply, errEnvelope(ErrorCode.VALIDATION_FAILED, 'path is empty', req.id));
         return;
       }
 
-      const session = await resumeSessionById(core.accessor, session_id);
+      let session: Awaited<ReturnType<typeof resumeSessionById>>;
+      try {
+        session = await resumeSessionById(core.accessor, session_id);
+      } catch (error) {
+        sendMappedError(reply, req, error, true);
+        return;
+      }
       if (session === undefined) {
-        reply.send(
+        sendRawError(
+          reply as FsDownloadReply,
           errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${session_id} does not exist`, req.id),
         );
         return;
@@ -670,7 +681,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
         );
       } catch (error) {
         environmentFs?.lease.dispose();
-        sendMappedError(reply, req, error);
+        sendMappedError(reply, req, error, true);
         return;
       }
 
@@ -687,10 +698,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       r.header('etag', resolved.etag);
       r.header('last-modified', resolved.modifiedAt.toUTCString());
       const base = resolved.relative.split('/').at(-1) ?? resolved.relative;
-      const fallback = base.replace(/[^\x20-\x7e]/g, '_').replaceAll('\\', '\\\\').replaceAll('"', '\\"');
-      const encoded = encodeURIComponent(base).replace(/['()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
-      const filenameStar = fallback === base ? '' : `; filename*=UTF-8''${encoded}`;
-      r.header('content-disposition', `attachment; filename="${fallback}"${filenameStar}`);
+      r.header('content-disposition', buildContentDisposition(base, resolved.mime, 'attachment'));
       r.type(resolved.mime);
 
       const rangeHeader = pickHeader(headers, 'range');
@@ -958,7 +966,13 @@ async function handleOpenIn(fs: IWorkspaceFsService, sessionId: string, req: Req
   reply.send(okEnvelope({ opened: true as const }, req.id));
 }
 
-function sendMappedError(reply: Reply, req: { id: string }, err: unknown): void {
+export function sendMappedError(reply: Reply, req: { id: string }, err: unknown, rawResponse = false): void {
+  if (rawResponse) {
+    const rawReply = reply as FsDownloadReply;
+    reply = {
+      send: (payload) => sendRawError(rawReply, payload as { code: ErrorCode }),
+    };
+  }
   const requestId = req.id;
   const log = requestLog(req);
   if (sendEnvironmentError(reply, requestId, err)) return;
@@ -993,6 +1007,9 @@ function sendMappedError(reply: Reply, req: { id: string }, err: unknown): void 
         return;
       case ErrorCodes.SESSION_NOT_FOUND:
         reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId, err.stack));
+        return;
+      case ErrorCodes.CONFIG_INVALID:
+        reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, err.message, requestId, err.stack));
         return;
       case ErrorCodes.WIRE_VERSION_TOO_LOW:
         reply.send(
