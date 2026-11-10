@@ -332,7 +332,7 @@ function TaskTool({ call, result, subagentSteps }: ToolRendererProps) {
     if (!hasSubagentSteps) {
       return result ? formatOutput(result.output) : "";
     }
-    const lastStep = subagentSteps.at(-1);
+    const lastStep = subagentSteps[subagentSteps.length - 1];
     const textItems = lastStep.items.filter((i) => i.type === "text");
     if (textItems.length > 0) {
       return textItems.map((i) => (i as { type: "text"; content: string }).content).join("\n");

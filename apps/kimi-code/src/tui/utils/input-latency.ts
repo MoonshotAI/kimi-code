@@ -45,7 +45,7 @@ export class LatencyStats {
     if (latency > 1000) this.over1000++;
     this.samples.push(latency);
     if (this.samples.length > MAX_SAMPLES) this.samples.shift();
-    const smallestKept = this.worst.at(-1)?.latency ?? -1;
+    const smallestKept = this.worst[this.worst.length - 1]?.latency ?? -1;
     if (this.worst.length < 5 || latency >= smallestKept) {
       this.worst.push({ latency, at });
       this.worst.sort((a, b) => b.latency - a.latency);
@@ -55,7 +55,7 @@ export class LatencyStats {
 
   percentile(p: number): number {
     if (this.samples.length === 0) return 0;
-    const sorted = [...this.samples].toSorted((a, b) => a - b);
+    const sorted = [...this.samples].sort((a, b) => a - b);
     return sorted[Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1)]!;
   }
 

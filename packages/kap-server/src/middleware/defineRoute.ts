@@ -4,7 +4,7 @@ import { jsonSchema, openApiDocumentJsonSchema } from './schema';
 import { validateBody, validateParams, validateQuery } from './validate';
 
 function toFastifyPath(openApiPath: string): string {
-  return openApiPath.replaceAll(/\{([^}]+)\}/g, ':$1');
+  return openApiPath.replace(/\{([^}]+)\}/g, ':$1');
 }
 
 function buildErrorEnvelopeSchema(
@@ -46,7 +46,7 @@ function buildUnifiedResponseSchema(
 ): Record<string, unknown> {
   const errorEntries = Object.entries(errors)
     .map(([code, cfg]) => [Number(code), cfg] as const)
-    .toSorted((a, b) => a[0] - b[0]);
+    .sort((a, b) => a[0] - b[0]);
 
   if (errorEntries.length === 0) {
     return openApiDocumentJsonSchema(

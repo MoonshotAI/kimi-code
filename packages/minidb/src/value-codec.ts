@@ -69,15 +69,15 @@ export function normDt(dt?: Record<string, number | string> | null): Record<stri
     const ms = typeof v === 'number' ? v : Date.parse(v);
     if (Number.isFinite(ms)) out[k] = ms;
   }
-  return Object.keys(out).length > 0 ? out : null;
+  return Object.keys(out).length ? out : null;
 }
 
 export async function fileSize(file: string): Promise<number> {
   try {
     return (await fs.stat(file)).size;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 0;
-    throw error;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return 0;
+    throw e;
   }
 }
 

@@ -45,7 +45,7 @@ import { tmpDir, rmrf, waitFor, deferred } from './helpers.js';
 
 const cleanups: (() => Promise<void> | void)[] = [];
 afterEach(async () => {
-  while (cleanups.length > 0) await cleanups.pop()!();
+  while (cleanups.length) await cleanups.pop()!();
 });
 
 async function openTmp(name: string): Promise<string> {
@@ -336,11 +336,11 @@ describe('sliced open-path variants', () => {
     await verifyFileIntegrityAsync(p, good);
     expect(() => verifyFileIntegritySync(p, good)).not.toThrow();
 
-    const sizeErr = await verifyFileIntegrityAsync(p, { bytes: good.bytes + 1, crc32: good.crc32 }).catch((error) => error);
+    const sizeErr = await verifyFileIntegrityAsync(p, { bytes: good.bytes + 1, crc32: good.crc32 }).catch((e) => e);
     expect(sizeErr).toBeInstanceOf(GenerationCorruptError);
     expect((sizeErr as Error).message).toBe('file size does not match manifest record');
 
-    const crcErr = await verifyFileIntegrityAsync(p, { bytes: good.bytes, crc32: (good.crc32 ^ 1) >>> 0 }).catch((error) => error);
+    const crcErr = await verifyFileIntegrityAsync(p, { bytes: good.bytes, crc32: (good.crc32 ^ 1) >>> 0 }).catch((e) => e);
     expect(crcErr).toBeInstanceOf(GenerationCorruptError);
     expect((crcErr as Error).message).toBe('file crc does not match manifest record');
     expect(() => verifyFileIntegritySync(p, { bytes: good.bytes, crc32: (good.crc32 ^ 1) >>> 0 })).toThrow(
@@ -481,7 +481,7 @@ describe('sliced open-path variants', () => {
     secDst.create('byKind', { field: 'kind' });
     secDst.create('byScore', { field: 'score', type: 'range' });
     for (const image of secSrc.exportImage()) await secDst.loadImageAsync(image, { sliceEvery: 1 });
-    expect(secDst.findEq('byKind', 't3').toSorted()).toEqual(secSrc.findEq('byKind', 't3').toSorted());
+    expect(secDst.findEq('byKind', 't3').sort()).toEqual(secSrc.findEq('byKind', 't3').sort());
     expect(secDst.findRange('byScore', { min: 10, max: 42 })).toEqual(secSrc.findRange('byScore', { min: 10, max: 42 }));
 
     const cmpDst = new CompoundIndexManager();
@@ -816,7 +816,7 @@ describe('generation fault matrix', () => {
       if (g.tmp) continue;
       const p = path.join(dir, 'generations', g.id, 'store');
       const buf = await fs.readFile(p);
-      buf[buf.length - 5] = buf.at(-5)! ^ 0xff; // last payload byte before the crc
+      buf[buf.length - 5] = buf[buf.length - 5]! ^ 0xff; // last payload byte before the crc
       await fs.writeFile(p, buf);
     }
 
@@ -1155,7 +1155,7 @@ describe('stage 6: maintenance shutdown semantics', () => {
     // that point the build is inside its publishing critical section.
     const { barrier } = await import('./helpers.js');
     const gate = barrier(fs, 'rename', 1);
-    const buildP = db.rebuildGeneration().catch((error) => error);
+    const buildP = db.rebuildGeneration().catch((e) => e);
     await gate.entered; // provably inside publishGeneration's first rename
 
     let closed = false;
@@ -1190,7 +1190,7 @@ describe('stage 6: maintenance shutdown semantics', () => {
     const first = db.rebuildGeneration().catch(() => {});
     const second = db.rebuildGeneration().then(
       () => 'completed',
-      (error) => error,
+      (e) => e,
     );
     await db.close();
     await first;
@@ -1389,7 +1389,7 @@ describe('open lifecycle status (phase timings + state machine)', () => {
     const building = db.lifecycleStatus();
     expect(building.state).toBe('degraded');
     expect(building.path).toEqual(['no-generation', 'full-rebuild', 'degraded']);
-    expect(building.pendingTextIndexes.toSorted()).toEqual(['ft', 'tri']);
+    expect(building.pendingTextIndexes.sort()).toEqual(['ft', 'tri']);
     expect(building.textIndexes).toEqual({ ft: 'deferred', tri: 'deferred' });
     expect(db.textIndexBuilding('ft')).toBe(true);
     expect(() => db.search('ft', 'hello')).toThrowError(/still building/);

@@ -128,7 +128,7 @@ export class RowTopK {
   }
 
   sorted(): MatchedRow[] {
-    return this.a.toSorted((x, y) => compareRows(this.q, x, y));
+    return this.a.sort((x, y) => compareRows(this.q, x, y));
   }
 }
 

@@ -70,7 +70,7 @@ test('resync: multiple corrupt frames are each skipped', async () => {
     const db = await MiniDb.open({ dir, valueCodec: 'string' });
     assert.equal(db.recoveryInfo.corruptRanges.length, 2);
     assert.deepEqual(
-      [...new Set(['k0', 'k1', 'k2', 'k3', 'k4'].filter((k) => db.get(k) !== undefined))].toSorted(),
+      [...new Set(['k0', 'k1', 'k2', 'k3', 'k4'].filter((k) => db.get(k) !== undefined))].sort(),
       ['k0', 'k2', 'k4'],
     );
     await db.close();
@@ -170,11 +170,11 @@ for (const valueMode of ['memory', 'disk'] as const) {
       assert.equal(reader.size, ref.size);
       assert.deepEqual(reader.scan(), ref.scan());
       assert.deepEqual(reader.dtColumns(), ref.dtColumns());
-      assert.deepEqual(reader.findEq('c', 'c3').toSorted(sortByKey), ref.findEq('c', 'c3').toSorted(sortByKey));
+      assert.deepEqual(reader.findEq('c', 'c3').sort(sortByKey), ref.findEq('c', 'c3').sort(sortByKey));
       assert.deepEqual(reader.findEq('u', 'u1700'), ref.findEq('u', 'u1700'));
       assert.deepEqual(
-        reader.findRange('n', { min: 100, max: 500 }).toSorted(sortByKey),
-        ref.findRange('n', { min: 100, max: 500 }).toSorted(sortByKey),
+        reader.findRange('n', { min: 100, max: 500 }).sort(sortByKey),
+        ref.findRange('n', { min: 100, max: 500 }).sort(sortByKey),
       );
       assert.deepEqual(reader.dtRange('created', { gte: 1700000009000, limit: 20 }), ref.dtRange('created', { gte: 1700000009000, limit: 20 }));
       assert.deepEqual(reader.compoundRange('cg', 'c2', { limit: 25 }), ref.compoundRange('cg', 'c2', { limit: 25 }));

@@ -144,13 +144,13 @@ async function copyBackupAtomic(deps: BackupDeps, destDir: string): Promise<void
       try {
         await fs.rename(destDir, aside);
         asideUsed = true;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
       }
       await fs.rename(tmp, destDir);
-    } catch (error) {
+    } catch (err) {
       if (asideUsed) await fs.rename(aside, destDir).catch(() => {});
-      throw error;
+      throw err;
     }
     await fs.rm(aside, { recursive: true, force: true });
     await fsyncDir(parent, { strict: true, stats: deps.stats });
@@ -176,8 +176,8 @@ async function copyIfExists(dir: string, name: string, destDir: string): Promise
     if (st.isDirectory()) await fs.cp(src, path.join(destDir, name), { recursive: true });
     else await fs.copyFile(src, path.join(destDir, name));
     return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
-    throw error;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw e;
   }
 }

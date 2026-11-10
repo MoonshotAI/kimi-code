@@ -274,8 +274,8 @@ export class WAL {
             }
           }
         }
-      } catch (error) {
-        failure = error;
+      } catch (err) {
+        failure = err;
         if (this.stats) this.stats.walWriteErrors++;
       }
       if (!failure && this.policy === 'always') {
@@ -284,8 +284,8 @@ export class WAL {
         // like a write failure.
         try {
           await this.sync();
-        } catch (error) {
-          failure = error;
+        } catch (err) {
+          failure = err;
         }
       }
       if (failure) {
@@ -411,12 +411,12 @@ export class WAL {
     const gen = this.writeGen;
     try {
       await this.fh.sync();
-    } catch (error) {
+    } catch (err) {
       if (this.stats) {
         this.stats.walFsyncErrors++;
-        this.stats.lastWalFsyncError = error;
+        this.stats.lastWalFsyncError = err;
       }
-      throw error;
+      throw err;
     }
     if (this.stats) this.stats.walFsyncs++;
     // Only generations issued BEFORE this fsync may be marked synced: a flush
@@ -469,8 +469,8 @@ export class WAL {
       if (!this.poisoned) {
         try {
           await this.flush();
-        } catch (error) {
-          if (!this.poisoned) throw error;
+        } catch (err) {
+          if (!this.poisoned) throw err;
         }
         if (this.fh) await this.sync();
       }

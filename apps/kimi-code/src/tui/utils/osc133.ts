@@ -12,7 +12,7 @@ import {
 } from '#/tui/constant/rendering';
 
 // One or more consecutive A/B/C zone markers anchored at the line start.
-const OSC133_ZONE_PREFIX = /^(?:\x1B\]133;[ABC](?:\x07|\x1B\\))+/;
+const OSC133_ZONE_PREFIX = /^(?:\x1b\]133;[ABC](?:\x07|\x1b\\))+/;
 
 /**
  * Mark a message's rendered lines as a semantic zone: A on the first line,
@@ -23,7 +23,7 @@ const OSC133_ZONE_PREFIX = /^(?:\x1B\]133;[ABC](?:\x07|\x1B\\))+/;
 export function markOsc133Zone(lines: string[]): string[] {
   if (lines.length === 0) return lines;
   lines[0] = OSC133_ZONE_START + lines[0]!;
-  lines[lines.length - 1] = OSC133_ZONE_END + OSC133_ZONE_FINAL + lines.at(-1)!;
+  lines[lines.length - 1] = OSC133_ZONE_END + OSC133_ZONE_FINAL + lines[lines.length - 1]!;
   return lines;
 }
 

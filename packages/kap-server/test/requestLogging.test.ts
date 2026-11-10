@@ -65,7 +65,7 @@ describe('requestLogging', () => {
 
     const completed = parseEntries(lines).filter((entry) => entry['msg'] === 'request completed');
     expect(completed.length).toBeGreaterThanOrEqual(1);
-    const entry = completed.at(-1);
+    const entry = completed[completed.length - 1];
     assert(entry !== undefined);
 
     expect(entry['code']).toBe(0);

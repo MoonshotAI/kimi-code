@@ -189,7 +189,7 @@ function applyFrame(f: FrameRef, file: 'snapshot' | 'wal', fd: number, live: Map
  *  writeSync (worker thread) over thread-pool writes (inline fallback) —
  *  see TextBuildCoreSpec.syncIo. */
 async function flushSegment(segPath: string, agg: Map<string, Map<number, number>>, syncIo: boolean): Promise<void> {
-  const terms = [...agg.keys()].toSorted();
+  const terms = [...agg.keys()].sort();
   const fh = await fsp.open(segPath, 'w');
   let batch: Buffer[] = [];
   let batchBytes = 0;
@@ -385,9 +385,9 @@ async function writeBaseDocsImage(
       });
     }
     return await w.finish();
-  } catch (error) {
+  } catch (e) {
     await w.abort();
-    throw error;
+    throw e;
   }
 }
 
@@ -525,7 +525,7 @@ export async function buildTextArtifacts(spec: TextBuildCoreSpec): Promise<TextB
   // merge (segment seq ascends with docID). Only indexable documents (JSON
   // objects, the MiniDb rule) get a docID, exactly like the main-thread
   // staged build.
-  const ordered = [...live.entries()].toSorted((a, b) =>
+  const ordered = [...live.entries()].sort((a, b) =>
     a[1].file < b[1].file ? -1 : a[1].file > b[1].file ? 1 : a[1].off - b[1].off,
   );
   const states = spec.indexes.map((indexSpec) => ({
@@ -656,7 +656,7 @@ export async function buildTextArtifacts(spec: TextBuildCoreSpec): Promise<TextB
       let postingsInfo: { bytes: number; crc32: number };
       try {
         if (st.segments.length === 0) {
-          const terms = [...st.agg.keys()].toSorted();
+          const terms = [...st.agg.keys()].sort();
           for (const term of terms) {
             const entries = st.agg.get(term)!;
             const rec = encodeRecord(term, entries.size, encodePostingList(entries));
@@ -667,9 +667,9 @@ export async function buildTextArtifacts(spec: TextBuildCoreSpec): Promise<TextB
           await mergeSegments(st.segments, writer, dict);
         }
         postingsInfo = await writer.finish();
-      } catch (error) {
+      } catch (e) {
         await writer.abort();
-        throw error;
+        throw e;
       } finally {
         for (const segPath of st.segments) await fsp.rm(segPath, { force: true }).catch(() => {});
       }

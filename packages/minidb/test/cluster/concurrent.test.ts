@@ -147,12 +147,12 @@ async function assertSameAsFreshOpen(db: ClusterDb<Doc>, dir: string, hot: numbe
   const ref = await MiniDb.open<Doc>({ dir: path.join(dir, shardDirName(hot, db.shardCount)), readOnly: true, valueCodec: 'json' });
   try {
     assert.deepEqual(await db.scan(), ref.scan(), 'scan equality with a fresh full open');
-    assert.deepEqual((await db.findEq('c', 'c3')).toSorted(sortByKey), ref.findEq('c', 'c3').toSorted(sortByKey), 'findEq equality');
+    assert.deepEqual((await db.findEq('c', 'c3')).sort(sortByKey), ref.findEq('c', 'c3').sort(sortByKey), 'findEq equality');
     const [crange, rrange] = [await db.findRange('n', { min: 100, max: 900 }), ref.findRange('n', { min: 100, max: 900 })];
-    assert.deepEqual(crange.toSorted(sortByKey), rrange.toSorted(sortByKey), 'findRange equality');
+    assert.deepEqual(crange.sort(sortByKey), rrange.sort(sortByKey), 'findRange equality');
     assert.deepEqual(await db.findEq('u', 'pre-u42'), ref.findEq('u', 'pre-u42'), 'unique-index equality');
     const [cs, rs] = [await db.search('t', 'alpha'), ref.search('t', 'alpha')];
-    assert.deepEqual(cs.toSorted(sortByKey), rs.toSorted(sortByKey), 'text search equality');
+    assert.deepEqual(cs.sort(sortByKey), rs.sort(sortByKey), 'text search equality');
   } finally {
     await ref.close();
   }

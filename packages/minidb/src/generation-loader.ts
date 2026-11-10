@@ -125,9 +125,9 @@ export class GenerationLoader<V> {
     const cp = manifest.checkpoint;
     // WAL anchor: the checkpoint offset only has meaning on the exact inode
     // the build measured, and the file must still reach it.
-    const walSt = await fs.stat(this.deps.walPath()).catch((error: NodeJS.ErrnoException) => {
-      if (error.code === 'ENOENT') return null;
-      throw error;
+    const walSt = await fs.stat(this.deps.walPath()).catch((e: NodeJS.ErrnoException) => {
+      if (e.code === 'ENOENT') return null;
+      throw e;
     });
     if (!walSt || walSt.dev !== cp.walDev || walSt.ino !== cp.walIno || walSt.size < cp.walOffset) {
       throw new GenerationCorruptError('WAL anchor mismatch (rotated or truncated since the build)');
@@ -136,9 +136,9 @@ export class GenerationLoader<V> {
     // live db.snapshot still aliases (hard link) — verify the identity.
     if (this.deps.valueMode() === 'disk' && cp.snapshotIno !== 0) {
       if (!cp.snapshotLinked) throw new GenerationCorruptError('snapshot not hard-linked; disk refs unservable');
-      const snapSt = await fs.stat(path.join(this.deps.dir(), SNAPSHOT_FILE)).catch((error: NodeJS.ErrnoException) => {
-        if (error.code === 'ENOENT') return null;
-        throw error;
+      const snapSt = await fs.stat(path.join(this.deps.dir(), SNAPSHOT_FILE)).catch((e: NodeJS.ErrnoException) => {
+        if (e.code === 'ENOENT') return null;
+        throw e;
       });
       if (!snapSt || snapSt.dev !== cp.snapshotDev || snapSt.ino !== cp.snapshotIno) {
         throw new GenerationCorruptError('snapshot anchor mismatch (rotated since the build)');
@@ -152,9 +152,9 @@ export class GenerationLoader<V> {
       let ids: ReturnType<ValueReader['open']>;
       try {
         ids = reader.open();
-      } catch (error) {
+      } catch (e) {
         reader.close();
-        throw error;
+        throw e;
       }
       const walOk = ids.wal !== null && ids.wal.dev === cp.walDev && ids.wal.ino === cp.walIno;
       const snapOk =
@@ -226,9 +226,9 @@ export class GenerationLoader<V> {
     // A rotation racing the load invalidates the coordinate system the
     // recoveryInfo below is anchored to (and, in disk mode, the value reader
     // attached above) — reject the candidate.
-    const walAfter = await fs.stat(this.deps.walPath()).catch((error: NodeJS.ErrnoException) => {
-      if (error.code === 'ENOENT') return null;
-      throw error;
+    const walAfter = await fs.stat(this.deps.walPath()).catch((e: NodeJS.ErrnoException) => {
+      if (e.code === 'ENOENT') return null;
+      throw e;
     });
     if (!walAfter || walAfter.dev !== cp.walDev || walAfter.ino !== cp.walIno) {
       throw new GenerationCorruptError('WAL rotated during generation load');
@@ -285,9 +285,9 @@ export class GenerationLoader<V> {
         for (const g of await listGenerations(this.deps.dir())) {
           if (!g.tmp && g.id !== current && candidates.length < 3) candidates.push(g.id);
         }
-      } catch (error) {
+      } catch (e) {
         this.deps.stats.generationLoadFallbacks++;
-        this.deps.stats.lastGenerationFallback = `list: ${(error as Error).message}`;
+        this.deps.stats.lastGenerationFallback = `list: ${(e as Error).message}`;
         return false;
       }
       for (const id of candidates) {
@@ -297,10 +297,10 @@ export class GenerationLoader<V> {
           this.deps.stats.generationLoads++;
           this.deps.stats.generationLoadDurationMs += performance.now() - t0;
           return true;
-        } catch (error) {
-          if (!(error instanceof GenerationCorruptError) && (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        } catch (e) {
+          if (!(e instanceof GenerationCorruptError) && (e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
           this.deps.stats.generationLoadFallbacks++;
-          this.deps.stats.lastGenerationFallback = `${id}: ${(error as Error).message}`;
+          this.deps.stats.lastGenerationFallback = `${id}: ${(e as Error).message}`;
           this.resetAfterFailedGenerationLoad();
         }
       }
@@ -319,8 +319,8 @@ export class GenerationLoader<V> {
         const payload = await readGenerationFileCheckedAsync(path.join(genDir, DT_INDEX_FILE), 'MDGD', 1, info);
         this.deps.dt.loadImage(readDtIndexImage(payload));
         return;
-      } catch (error) {
-        if (!(error instanceof GenerationCorruptError)) throw error;
+      } catch (e) {
+        if (!(e instanceof GenerationCorruptError)) throw e;
       }
     }
     this.deps.stats.generationIndexRebuilds++;
@@ -345,8 +345,8 @@ export class GenerationLoader<V> {
       try {
         const payload = await readGenerationFileCheckedAsync(path.join(genDir, SECONDARY_INDEX_FILE), 'MDSI', 1, info);
         images = new Map((await readSecondaryIndexImageAsync(payload)).map((i) => [i.name, i]));
-      } catch (error) {
-        if (!(error instanceof GenerationCorruptError)) throw error;
+      } catch (e) {
+        if (!(e instanceof GenerationCorruptError)) throw e;
       }
     }
     for (const def of live) {
@@ -384,8 +384,8 @@ export class GenerationLoader<V> {
       try {
         const payload = await readGenerationFileCheckedAsync(path.join(genDir, COMPOUND_INDEX_FILE), 'MDCI', 1, info);
         images = new Map((await readCompoundIndexImageAsync(payload)).map((i) => [i.name, i]));
-      } catch (error) {
-        if (!(error instanceof GenerationCorruptError)) throw error;
+      } catch (e) {
+        if (!(e instanceof GenerationCorruptError)) throw e;
       }
     }
     for (const def of live) {
@@ -451,8 +451,8 @@ export class GenerationLoader<V> {
           this.deps.lifecycle.time('textImageLoadMs', performance.now() - tImage);
           this.deps.lifecycle.noteTextIndexSource(def.name, 'image');
           attached = true;
-        } catch (error) {
-          if (!(error instanceof GenerationCorruptError) && (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        } catch (e) {
+          if (!(e instanceof GenerationCorruptError) && (e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
         }
       }
       if (!attached) {
@@ -514,7 +514,7 @@ export class GenerationLoader<V> {
       }
       this.deps.lifecycle.time('walApplyMs', performance.now() - tApply);
       let truncatedWal = false;
-      const last = r.corruptRanges.at(-1);
+      const last = r.corruptRanges[r.corruptRanges.length - 1];
       if (last && last[1] === st.size && !this.deps.readOnly()) {
         await fs.truncate(this.deps.walPath(), last[0]);
         truncatedWal = true;

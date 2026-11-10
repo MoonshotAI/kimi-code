@@ -205,7 +205,7 @@ test('close() still releases the lock when the WAL close fails; a retry finishes
         throw new Error('injected close failure');
       }
     };
-    const err = await db.close().catch((error: unknown) => error);
+    const err = await db.close().catch((e: unknown) => e);
     assert.ok(err instanceof AggregateError, 'close failure is aggregated');
     assert.equal(err.errors.length, 1);
     assert.match(String(err.errors[0]), /injected close failure/);
@@ -254,7 +254,7 @@ test('close() aggregates every cleanup error instead of stopping at the first', 
       }
       return originalRelease();
     };
-    const err = await db.close().catch((error: unknown) => error);
+    const err = await db.close().catch((e: unknown) => e);
     assert.ok(err instanceof AggregateError, 'close failure is aggregated');
     assert.deepEqual(
       err.errors.map((e) => (e instanceof Error ? e.message : String(e))),

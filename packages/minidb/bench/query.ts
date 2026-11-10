@@ -31,7 +31,7 @@ async function bench(label, fn, iters = 1) {
 // ---------------------------------------------------------------------------
 
 function percentile(sorted, p) {
-  if (sorted.length === 0) return NaN;
+  if (!sorted.length) return NaN;
   const idx = Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1);
   return sorted[Math.max(0, idx)];
 }
@@ -151,7 +151,7 @@ async function deltaOverwriteScenario() {
     lat.sort((a, b) => a - b);
     console.log(
       `    overwrite 1 doc x100`.padEnd(24),
-      `p50 ${percentile(lat, 50).toFixed(2)} ms   p95 ${percentile(lat, 95).toFixed(2)} ms   max ${lat.at(-1).toFixed(2)} ms`,
+      `p50 ${percentile(lat, 50).toFixed(2)} ms   p95 ${percentile(lat, 95).toFixed(2)} ms   max ${lat[lat.length - 1].toFixed(2)} ms`,
     );
     await db.close();
   } finally {
@@ -187,7 +187,7 @@ async function uniqueBatchScenario() {
       lat.sort((a, b) => a - b);
       console.log(
         `    batch size=${String(size).padEnd(5)}`.padEnd(24),
-        `p50 ${percentile(lat, 50).toFixed(2)} ms   p95 ${percentile(lat, 95).toFixed(2)} ms   max ${lat.at(-1).toFixed(2)} ms`,
+        `p50 ${percentile(lat, 50).toFixed(2)} ms   p95 ${percentile(lat, 95).toFixed(2)} ms   max ${lat[lat.length - 1].toFixed(2)} ms`,
       );
     }
     await db.close();
@@ -228,7 +228,7 @@ async function ttlWritePauseScenario() {
     lat.sort((a, b) => a - b);
     console.log(
       `    plain writes`.padEnd(24),
-      `p50 ${percentile(lat, 50).toFixed(2)} ms   p95 ${percentile(lat, 95).toFixed(2)} ms   max ${lat.at(-1).toFixed(2)} ms`,
+      `p50 ${percentile(lat, 50).toFixed(2)} ms   p95 ${percentile(lat, 95).toFixed(2)} ms   max ${lat[lat.length - 1].toFixed(2)} ms`,
     );
     await db.close();
   } finally {
@@ -313,7 +313,7 @@ async function main() {
   console.log('\ndone.\n');
 }
 
-main().catch((error) => {
-  console.error(error);
+main().catch((e) => {
+  console.error(e);
   process.exit(1);
 });

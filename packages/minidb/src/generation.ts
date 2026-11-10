@@ -107,7 +107,7 @@ export function textDocsFile(name: string): string {
 /** Index names land in file names; keep the same sanitization the legacy
  *  root postings path used so both locations agree. */
 export function sanitizeIndexName(name: string): string {
-  return name.replaceAll(/[^a-zA-Z0-9_.-]/g, '_');
+  return name.replace(/[^a-zA-Z0-9_.-]/g, '_');
 }
 
 /** Generation directory id: monotonically increasing, zero-padded so
@@ -206,7 +206,7 @@ export function indexDefHash(def: unknown): string {
 function stableJson(v: unknown): string {
   if (v === null || typeof v !== 'object') return JSON.stringify(v) ?? 'null';
   if (Array.isArray(v)) return `[${v.map(stableJson).join(',')}]`;
-  const keys = Object.keys(v as Record<string, unknown>).toSorted();
+  const keys = Object.keys(v as Record<string, unknown>).sort();
   return `{${keys.map((k) => `${JSON.stringify(k)}:${stableJson((v as Record<string, unknown>)[k])}`).join(',')}}`;
 }
 

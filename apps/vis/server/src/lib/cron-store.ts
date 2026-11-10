@@ -41,7 +41,7 @@ export async function listCronTasks(agentDir: string): Promise<CronTask[]> {
     byId.set(task.id, task);
   }
   await foldCronWireInto(agentDir, byId);
-  return [...byId.values()].toSorted((a, b) => a.createdAt - b.createdAt);
+  return [...byId.values()].sort((a, b) => a.createdAt - b.createdAt);
 }
 
 /** Legacy v1 layout: one JSON file per task under `<agentDir>/cron/`. */

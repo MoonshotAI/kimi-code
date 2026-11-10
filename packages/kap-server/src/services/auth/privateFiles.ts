@@ -43,12 +43,12 @@ export async function writePrivateFile(
     await handle.close();
     handle = undefined;
     await rename(tmp, filePath);
-  } catch (error) {
+  } catch (err) {
     if (handle) {
       await handle.close().catch(() => {});
     }
     await rm(tmp, { force: true }).catch(() => {});
-    throw error;
+    throw err;
   }
 }
 

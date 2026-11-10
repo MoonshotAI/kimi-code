@@ -70,13 +70,13 @@ function percentileOf(sorted, p) {
 
 function latencySummary(samples) {
   if (!samples || samples.length === 0) return undefined;
-  const sorted = [...samples].toSorted((a, b) => a - b);
+  const sorted = [...samples].sort((a, b) => a - b);
   return {
     count: sorted.length,
     p50: percentileOf(sorted, 50),
     p95: percentileOf(sorted, 95),
     p99: percentileOf(sorted, 99),
-    max: sorted.at(-1),
+    max: sorted[sorted.length - 1],
   };
 }
 
@@ -432,7 +432,7 @@ async function main() {
   console.log('\ndone.\n');
 }
 
-main().catch((error) => {
-  console.error(error);
+main().catch((e) => {
+  console.error(e);
   process.exit(1);
 });

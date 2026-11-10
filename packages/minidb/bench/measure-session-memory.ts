@@ -224,7 +224,7 @@ async function main(): Promise<void> {
   await fs.rm(dir, { recursive: true, force: true });
 }
 
-main().catch((error) => {
-  console.error(error);
+main().catch((e) => {
+  console.error(e);
   process.exit(1);
 });

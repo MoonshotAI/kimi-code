@@ -16,7 +16,7 @@ observer.observe(document.body, {
   attributeFilter: ["class"],
 });
 
-const container = document.querySelector("#root");
+const container = document.getElementById("root");
 
 const queryClient = new QueryClient();
 

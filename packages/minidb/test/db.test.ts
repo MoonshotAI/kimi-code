@@ -162,7 +162,7 @@ test('backup + restore preserves data, indexes, and text search', async () => {
     const restored = await MiniDb.restore(backupDir, restoreDir, { valueCodec: 'json' });
     assert.deepEqual(restored.get('a'), { city: 'Paris', body: 'hello world' });
     assert.deepEqual(restored.findEq('byCity', 'London').map((r) => r.key), ['b']);
-    assert.deepEqual(restored.search('body', 'hello').map((r) => r.key).toSorted(), ['a', 'b']);
+    assert.deepEqual(restored.search('body', 'hello').map((r) => r.key).sort(), ['a', 'b']);
     await restored.close();
   } finally {
     await fs.rm(dir, { recursive: true, force: true });

@@ -219,7 +219,7 @@ export class FrameParser {
   private offset = 0; // absolute offset of the next byte to be consumed
 
   *feed(chunk: Buffer): Generator<Frame> {
-    let buf: Buffer = this.pending.length > 0 ? Buffer.concat([this.pending, chunk]) : chunk;
+    let buf: Buffer = this.pending.length ? Buffer.concat([this.pending, chunk]) : chunk;
     let pos = 0;
 
     while (true) {

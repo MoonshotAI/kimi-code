@@ -79,7 +79,7 @@ class MinHeap {
     const a = this.a;
     const top = a[0];
     const last = a.pop();
-    if (a.length > 0 && last !== undefined) {
+    if (a.length && last !== undefined) {
       a[0] = last;
       let i = 0;
       while (true) {
@@ -349,7 +349,7 @@ export class Store {
   /** Prefix scan over keys. */
   *prefix(p: string, limit = Infinity): Generator<StoreEntry> {
     const pk = toKStr(p);
-    yield* this.scan({ gte: pk, lt: pk + '\uFFFF', count: limit });
+    yield* this.scan({ gte: pk, lt: pk + '\uffff', count: limit });
   }
 
   /** Ordered scan yielding canonical keys only, without materializing values
@@ -448,7 +448,7 @@ export class Store {
     const deadline = now + (this.expireAggressive ? Math.max(this.expireTimeBudgetMs, 10) : this.expireTimeBudgetMs);
     let n = 0;
     let reaped = 0;
-    while (this.heap.size > 0 && this.heap.peek()!.t <= now) {
+    while (this.heap.size && this.heap.peek()!.t <= now) {
       // Once the guaranteed per-tick quota is reaped, keep draining within the
       // time budget: a fixed ~1000/s rate let a large simultaneous-expiry storm
       // (e.g. 100k keys) linger in memory for minutes. The budget bounds the
@@ -487,7 +487,7 @@ export class Store {
   reapExpiredDue(): number {
     const now = Date.now();
     let n = 0;
-    while (this.heap.size > 0 && this.heap.peek()!.t <= now) {
+    while (this.heap.size && this.heap.peek()!.t <= now) {
       const e = this.heap.pop()!;
       const r = this.map.get(e.k);
       if (r && r.seq === e.seq && r.expireAt && r.expireAt <= now) {

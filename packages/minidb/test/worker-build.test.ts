@@ -28,7 +28,7 @@ import { tmpDir, rmrf, waitFor } from './helpers.js';
 const cleanups: (() => Promise<void> | void)[] = [];
 afterEach(async () => {
   resetTextBuildWorkerRuntime();
-  while (cleanups.length > 0) await cleanups.pop()!();
+  while (cleanups.length) await cleanups.pop()!();
 });
 
 async function openTmp(name: string): Promise<string> {
@@ -519,7 +519,7 @@ describe('MiniDb worker build integration', () => {
     expect(db.stats.generationIndexRebuilds).toBe(0);
     expect(db.size).toBe(5000 + ops);
     expect(db.search('ft', 'hello').length).toBeGreaterThan(0);
-    expect(db.search('ft', 'concurrent').length).toBe(Math.min(50, ops));
+    expect(db.search('ft', 'concurrent').length).toBe(ops > 50 ? 50 : ops);
     expect(db.search('tri', 'hello world').length).toBeGreaterThan(0);
     await db.close();
   }, 60000);
@@ -647,7 +647,7 @@ describe('MiniDb worker build integration', () => {
     // into the writer's directory.
     const writer = await MiniDb.open<Record<string, unknown>>({ dir, valueCodec: 'json', indexGenerations: false });
     await seedTextDb(writer, 5000);
-    const filesBefore = (await fs.readdir(dir)).toSorted();
+    const filesBefore = (await fs.readdir(dir)).sort();
 
     const reader = await MiniDb.open<Record<string, unknown>>({ dir, valueCodec: 'json', onLockFail: 'readonly' });
     expect(reader.readOnly).toBe(true);
@@ -668,7 +668,7 @@ describe('MiniDb worker build integration', () => {
     expect(reader.search('ft', '中途').map((h) => h.key)).toEqual(['mid']);
     // The writer's directory is untouched: the reader's base postings live in
     // its private scratch dir NEXT TO the db dir.
-    expect((await fs.readdir(dir)).toSorted()).toEqual(filesBefore);
+    expect((await fs.readdir(dir)).sort()).toEqual(filesBefore);
     const scratchRoot = `${dir}.ro-scratch`;
     const scratchEntries = await fs.readdir(scratchRoot);
     expect(scratchEntries.length).toBe(1);
@@ -938,7 +938,7 @@ describe('worker slot queue (TUI-safe slot pressure policy)', () => {
     const held: (() => void)[] = [];
     for (let i = 0; i < defaultWorkerSlots.total; i++) {
       const r = defaultWorkerSlots.tryAcquire();
-      assert.ok(r !== null);
+      assert(r !== null);
       held.push(r);
     }
     db.textBuildSlotWaitMs = 60_000; // the grant, not the timeout, must end the wait
@@ -948,9 +948,9 @@ describe('worker slot queue (TUI-safe slot pressure policy)', () => {
       .then(() => {
         settled = true;
       })
-      .catch((error) => {
+      .catch((e) => {
         settled = true;
-        throw error;
+        throw e;
       });
     // startInline records its fallback synchronously, so after a settle-free
     // window with no fallback stat the build provably did NOT go inline.
@@ -979,7 +979,7 @@ describe('worker slot queue (TUI-safe slot pressure policy)', () => {
     const held: (() => void)[] = [];
     for (let i = 0; i < defaultWorkerSlots.total; i++) {
       const r = defaultWorkerSlots.tryAcquire();
-      assert.ok(r !== null);
+      assert(r !== null);
       held.push(r);
     }
     try {

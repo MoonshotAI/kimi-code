@@ -28,8 +28,8 @@ async function withRetry<T>(fn: () => Promise<T>, stats: { retries: number }, de
   for (;;) {
     try {
       return await fn();
-    } catch (error) {
-      if (!isLockError(error) || Date.now() > deadline) throw error;
+    } catch (e) {
+      if (!isLockError(e) || Date.now() > deadline) throw e;
       stats.retries++;
       await sleep(20 + Math.floor(Math.random() * 60));
     }
@@ -241,7 +241,7 @@ async function main(): Promise<void> {
   process.exit(1);
 }
 
-main().catch((error) => {
-  out({ ok: 0, mode, error: String(error && (error as Error).stack ? (error as Error).stack : error) });
+main().catch((e) => {
+  out({ ok: 0, mode, error: String(e && (e as Error).stack ? (e as Error).stack : e) });
   process.exit(1);
 });

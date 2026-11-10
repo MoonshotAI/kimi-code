@@ -226,8 +226,8 @@ export class MaintenanceScheduler {
     task.startedAt = Date.now();
     try {
       await this.preflight(task.kind);
-    } catch (error) {
-      this.finish(task, error);
+    } catch (e) {
+      this.finish(task, e);
       void this.pump();
       return;
     }
@@ -240,8 +240,8 @@ export class MaintenanceScheduler {
     try {
       await this.als.run(task, () => task.run(ctx));
       this.finish(task, null);
-    } catch (error) {
-      this.finish(task, error);
+    } catch (e) {
+      this.finish(task, e);
     }
     void this.pump();
   }

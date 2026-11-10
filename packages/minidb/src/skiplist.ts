@@ -87,7 +87,7 @@ export class SkipList<K = number, V = string> {
     for (let i = 0; i < n; i++) {
       const e = entries[i]!;
       if (nodes.length > 0) {
-        const prev = nodes.at(-1)!;
+        const prev = nodes[nodes.length - 1]!;
         if (list.cmpK(prev.key, e.key) === 0 && list.cmpV(prev.val, e.val) === 0) continue;
       }
       // Balanced tower: index i (0-based) reaches level 1 + v4(i+1), capped.
@@ -143,7 +143,7 @@ export class SkipList<K = number, V = string> {
       if (i > 0 && i % sliceEvery === 0) await yieldToLoop();
       const e = entries[i]!;
       if (nodes.length > 0) {
-        const prev = nodes.at(-1)!;
+        const prev = nodes[nodes.length - 1]!;
         if (list.cmpK(prev.key, e.key) === 0 && list.cmpV(prev.val, e.val) === 0) continue;
       }
       // Balanced tower: index i (0-based) reaches level 1 + v4(i+1), capped.

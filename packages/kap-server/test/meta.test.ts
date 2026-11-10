@@ -210,8 +210,8 @@ describe('/api/v1/meta features', () => {
     const features = await getMetaFeatures(base);
     const expected = getFeatureRecipes()
       .map((recipe) => recipe.name)
-      .toSorted();
-    expect(features.map((feature) => feature.name).toSorted()).toEqual(expected);
+      .sort();
+    expect(features.map((feature) => feature.name).sort()).toEqual(expected);
     for (const feature of features) {
       expect(feature.state).toBe('Active');
       expect(feature.meta).toEqual({});

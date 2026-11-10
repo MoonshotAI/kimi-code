@@ -131,6 +131,6 @@ export class TopK {
 
   /** The kept hits in final rank order: score descending, key ascending. */
   sorted(): SearchHit[] {
-    return this.a.toSorted((x, y) => y.score - x.score || (x.key < y.key ? -1 : x.key > y.key ? 1 : 0));
+    return this.a.sort((x, y) => y.score - x.score || (x.key < y.key ? -1 : x.key > y.key ? 1 : 0));
   }
 }

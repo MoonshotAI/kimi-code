@@ -147,8 +147,8 @@ export class TextRegistry<V> {
           }),
         );
       }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
     }
   }
 
@@ -183,14 +183,14 @@ export class TextRegistry<V> {
         const hosted = await this.deps.boundedTextBuild(name, ti, def, null);
         if (hosted === null) await ti.build(this.deps.textRecords());
         await this.deps.persistTextIndexDefinitions([...this.textDefs, def]);
-      } catch (error) {
+      } catch (e) {
         // Discard the staged index so the in-memory state and the definition
         // sidecar (which does not name this index) do not diverge; drop the
         // derived postings file with it, exactly like dropTextIndex would.
         this.text.delete(name);
         ti.close();
         await fs.rm(this.textPostingsPath(name), { force: true }).catch(() => {});
-        throw error;
+        throw e;
       }
       this.textDefs.push(def);
     });

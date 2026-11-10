@@ -81,7 +81,7 @@ describe('FetchURLTool abort signal', () => {
 
     expect(result.isError).toBe(true);
     if (typeof result.output !== 'string') {
-      throw new TypeError('expected string error output');
+      throw new Error('expected string error output');
     }
     expect(result.output).toContain('boom');
   });

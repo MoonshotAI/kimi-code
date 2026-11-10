@@ -75,7 +75,7 @@ describe('detectMigration', () => {
     const plan = await detectMigration({ sourcePath: src });
     expect(plan.totalSessions).toBe(2);
     expect(plan.sessionScanFailures).toEqual([]);
-    expect(plan.workdirs[0]?.sessions.map((s) => s.uuid).toSorted()).toEqual(['flat-1', 'titled']);
+    expect(plan.workdirs[0]?.sessions.map((s) => s.uuid).sort()).toEqual(['flat-1', 'titled']);
   });
 
   it('detects a skills-only source', async () => {

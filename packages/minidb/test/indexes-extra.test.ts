@@ -184,10 +184,10 @@ function stubPersist(
 /** Sidecar definition names, or [] when the file does not exist yet. */
 async function sidecarNames(dir: string, file: string): Promise<string[]> {
   try {
-    return (JSON.parse(await fs.readFile(path.join(dir, file), 'utf8')) as { name: string }[]).map((d) => d.name).toSorted();
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
-    throw error;
+    return (JSON.parse(await fs.readFile(path.join(dir, file), 'utf8')) as { name: string }[]).map((d) => d.name).sort();
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw e;
   }
 }
 
@@ -206,12 +206,12 @@ test('100 concurrent createIndex pairs: zero failures; memory == sidecar == reop
         `round ${i}`,
       );
     }
-    const memory = db.listIndexes().map((x) => x.name).toSorted();
+    const memory = db.listIndexes().map((x) => x.name).sort();
     assert.equal(memory.length, 200);
     assert.deepEqual(await sidecarNames(dir, 'db.indexes.json'), memory);
     await db.close();
     db = await MiniDb.open({ dir, valueCodec: 'json', fsyncPolicy: 'no', autoCompact: false });
-    assert.deepEqual(db.listIndexes().map((x) => x.name).toSorted(), memory);
+    assert.deepEqual(db.listIndexes().map((x) => x.name).sort(), memory);
     await db.close();
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
@@ -332,8 +332,8 @@ test('mixed create/drop across the three sidecar types: every op lands serialize
     const expectSec = ['secA', 'secB'];
     const expectCmp = ['cmpA'];
     const expectTxt = ['txtA'];
-    assert.deepEqual(db.listIndexes().map((x) => x.name).toSorted(), expectSec);
-    assert.deepEqual(db.listCompoundIndexes().map((x) => x.name).toSorted(), expectCmp);
+    assert.deepEqual(db.listIndexes().map((x) => x.name).sort(), expectSec);
+    assert.deepEqual(db.listCompoundIndexes().map((x) => x.name).sort(), expectCmp);
     assert.deepEqual(db.search('txtA', 'hello').map((r) => r.key), ['d1']);
     assert.throws(() => db.search('txtOld', 'hello'), /no such text index/);
     // The staged rebuild also caught the pre-existing document.
@@ -346,8 +346,8 @@ test('mixed create/drop across the three sidecar types: every op lands serialize
 
     await db.close();
     db = await MiniDb.open({ dir, valueCodec: 'json', fsyncPolicy: 'no', autoCompact: false });
-    assert.deepEqual(db.listIndexes().map((x) => x.name).toSorted(), expectSec);
-    assert.deepEqual(db.listCompoundIndexes().map((x) => x.name).toSorted(), expectCmp);
+    assert.deepEqual(db.listIndexes().map((x) => x.name).sort(), expectSec);
+    assert.deepEqual(db.listCompoundIndexes().map((x) => x.name).sort(), expectCmp);
     assert.deepEqual(db.search('txtA', 'hello').map((r) => r.key), ['d1']);
     assert.throws(() => db.search('txtOld', 'hello'), /no such text index/);
     await db.close();

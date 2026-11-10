@@ -232,12 +232,12 @@ test('bulkLoadRefsAsync pauses active expiry: a TTL expiring mid-load cannot div
     assert.equal(scanned.length, new Set(scanned).size, 'ordered scan must not contain duplicates');
     assert.equal(scanned.length, 20001);
     // The ordered index and the map agree exactly (no stale, no missing).
-    assert.deepEqual([...s.rawKeys()], [...s.map.keys()].toSorted());
+    assert.deepEqual([...s.rawKeys()], [...s.map.keys()].sort());
     // And the next tick after the load reaps normally (expiry only deferred).
     s.set(short, B('v2'), Date.now() - 1); // already expired
     await sleep(20);
     assert.equal(s.map.has(short), false);
-    assert.deepEqual([...s.rawKeys()], [...s.map.keys()].toSorted());
+    assert.deepEqual([...s.rawKeys()], [...s.map.keys()].sort());
   } finally {
     s.close();
   }

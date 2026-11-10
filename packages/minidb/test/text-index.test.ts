@@ -145,7 +145,7 @@ test('TextIndex: add + search (AND/OR) disk-backed', async () => {
 
     assert.deepEqual(ti.search('hello').map((h) => h.key), ['a']);
     assert.deepEqual(ti.search('北京').map((h) => h.key), ['b']);
-    assert.deepEqual(ti.search('北京 上海', { op: 'OR' }).map((h) => h.key).toSorted(), ['b', 'c']);
+    assert.deepEqual(ti.search('北京 上海', { op: 'OR' }).map((h) => h.key).sort(), ['b', 'c']);
     // AND across two terms only present together in 'b'
     assert.deepEqual(ti.search('北京 编程').map((h) => h.key), ['b']);
     ti.close();
@@ -200,7 +200,7 @@ test('TextIndex: build persists to disk + merges delta after build', async () =>
 
     // new writes after build go to the in-memory delta and are still found
     ti.add('c', { bio: 'hello from c' });
-    assert.deepEqual(ti.search('hello').map((h) => h.key).toSorted(), ['a', 'c']);
+    assert.deepEqual(ti.search('hello').map((h) => h.key).sort(), ['a', 'c']);
     ti.close();
 
     // a fresh TextIndex over the same file sees the base but not the lost delta
@@ -464,7 +464,7 @@ test('trigram: index vs query tokenizer shapes', () => {
   assert.deepEqual(ix('AB'), [ngramTerm('ab')]);
   // length >= 3: query side only 3-grams; index side 3-grams + 2-grams
   assert.deepEqual(q('abcd'), [ngramTerm('abc'), ngramTerm('bcd')]);
-  assert.deepEqual(ix('abcd').toSorted(), [ngramTerm('ab'), ngramTerm('abc'), ngramTerm('bc'), ngramTerm('bcd'), ngramTerm('cd')].toSorted());
+  assert.deepEqual(ix('abcd').sort(), [ngramTerm('ab'), ngramTerm('abc'), ngramTerm('bc'), ngramTerm('bcd'), ngramTerm('cd')].sort());
   // emoji are single code points: '🙂a' has length 2 -> one 2-gram, not a
   // 3-gram over split UTF-16 surrogates
   assert.deepEqual(q('🙂a'), [ngramTerm('🙂a')]);
@@ -485,8 +485,8 @@ test('trigram: query of exactly 3 code points emits its single 3-gram', () => {
   assert.deepEqual(q('已通过'), [ngramTerm('已通过')]);
   // the index side of a 3-char text still emits both widths
   assert.deepEqual(
-    createNgramTokenizer()('abc').toSorted(),
-    [ngramTerm('abc'), ngramTerm('ab'), ngramTerm('bc')].toSorted(),
+    createNgramTokenizer()('abc').sort(),
+    [ngramTerm('abc'), ngramTerm('ab'), ngramTerm('bc')].sort(),
   );
 });
 
@@ -535,7 +535,7 @@ test('TextIndex: n-gram tokenizer delta add/remove/overwrite', async () => {
 
     // writes after build land in the delta and stay searchable
     ti.add('b', { text: 'C++ cookbook' });
-    assert.deepEqual(ti.search('c++').map((h) => h.key).toSorted(), ['a', 'b']);
+    assert.deepEqual(ti.search('c++').map((h) => h.key).sort(), ['a', 'b']);
 
     ti.remove('a');
     assert.deepEqual(ti.search('c++').map((h) => h.key), ['b']);
@@ -621,11 +621,11 @@ test('MiniDb: n-gram text index persists tokenizer, survives reopen', async () =
     // n-gram index restored as n-gram: 'C++' matches only the real substring
     assert.deepEqual(db.search('tri', 'C++').map((r) => r.key), ['a']);
     // default index restored as default: 'C++' still tokenizes to the word 'c'
-    assert.deepEqual(db.search('body', 'C++').map((r) => r.key).toSorted(), ['a', 'b']);
+    assert.deepEqual(db.search('body', 'C++').map((r) => r.key).sort(), ['a', 'b']);
 
     // delta writes after reopen use the restored tokenizer too
     await db.set('c', { text: 'another C++ note' });
-    assert.deepEqual(db.search('tri', 'c++').map((r) => r.key).toSorted(), ['a', 'c']);
+    assert.deepEqual(db.search('tri', 'c++').map((r) => r.key).sort(), ['a', 'c']);
     await db.close();
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
@@ -860,10 +860,10 @@ async function textSidecarNames(dir: string): Promise<string[]> {
   try {
     return (JSON.parse(await fs.readFile(path.join(dir, 'db.textindexes.json'), 'utf8')) as { name: string }[])
       .map((d) => d.name)
-      .toSorted();
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
-    throw error;
+      .sort();
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw e;
   }
 }
 
@@ -1184,9 +1184,9 @@ test('decoded postings cache honors the byte budget, not just the term count', a
     // Results stay correct after eviction.
     assert.equal(ti.search('alpha', { limit: 300 }).length, 200);
     await fs.rm(dir, { recursive: true, force: true });
-  } catch (error) {
+  } catch (e) {
     await fs.rm(dir, { recursive: true, force: true });
-    throw error;
+    throw e;
   }
 });
 
@@ -1203,9 +1203,9 @@ test('searchBoundedAsync matches searchBounded on a disk-backed index', async ()
     assert.deepEqual(await ti.searchBoundedAsync('hello', { maxVisits: 10 }), ti.searchBounded('hello', { maxVisits: 10 }));
     ti.close();
     await fs.rm(dir, { recursive: true, force: true });
-  } catch (error) {
+  } catch (e) {
     await fs.rm(dir, { recursive: true, force: true });
-    throw error;
+    throw e;
   }
 });
 
@@ -1248,9 +1248,9 @@ test('commitRebase swaps in an externally built base and replays the capture', a
     assert.deepEqual(ti.search('delta').map((h) => h.key), ['d']);
     ti.close();
     await fs.rm(dir, { recursive: true, force: true });
-  } catch (error) {
+  } catch (e) {
     await fs.rm(dir, { recursive: true, force: true });
-    throw error;
+    throw e;
   }
 });
 
@@ -1268,9 +1268,9 @@ test('abortRebase discards the capture and keeps the previous base', async () =>
     assert.equal(ti.search('beta').length, 1);
     ti.close();
     await fs.rm(dir, { recursive: true, force: true });
-  } catch (error) {
+  } catch (e) {
     await fs.rm(dir, { recursive: true, force: true });
-    throw error;
+    throw e;
   }
 });
 
@@ -1309,9 +1309,9 @@ test('commitRebase adopts a disk base over a memory-base index (read-only scratc
     assert.deepEqual(ti.search('delta').map((h) => h.key), ['new']);
     ti.close();
     await fs.rm(dir, { recursive: true, force: true });
-  } catch (error) {
+  } catch (e) {
     await fs.rm(dir, { recursive: true, force: true });
-    throw error;
+    throw e;
   }
 });
 
@@ -1358,9 +1358,9 @@ test('an async base read straddling a base commit re-reads the fresh base instea
     assert.equal(ti.searchBounded('beta').hits.length, 1);
     ti.close();
     await fs.rm(dir, { recursive: true, force: true });
-  } catch (error) {
+  } catch (e) {
     await fs.rm(dir, { recursive: true, force: true });
-    throw error;
+    throw e;
   }
 });
 

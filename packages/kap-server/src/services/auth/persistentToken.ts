@@ -21,11 +21,11 @@ export async function readServerToken(homeDir: string): Promise<string | undefin
   try {
     const buf = await readPrivateFile(serverTokenPath(homeDir));
     return buf.toString('utf8').trim();
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
       return undefined;
     }
-    throw error;
+    throw err;
   }
 }
 

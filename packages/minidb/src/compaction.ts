@@ -147,8 +147,8 @@ export async function fsyncDir(
   try {
     fh = await fs.open(dir, 'r');
     await fh.sync();
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
     // Some platforms cannot fsync a directory at all. That is a permanent
     // environment property, not a rotation fault: mark the degraded durability
     // state and continue without directory fsync in both modes.
@@ -158,7 +158,7 @@ export async function fsyncDir(
     }
     // Strict mode (the rotation path): a failed directory fsync breaks the
     // rename-durability invariant, so the caller must abort — never swallow.
-    if (opts.strict) throw error;
+    if (opts.strict) throw e;
     /* best-effort otherwise */
   } finally {
     if (fh) await fh.close().catch(() => {});
@@ -222,10 +222,10 @@ export async function compact(db: CompactionTarget): Promise<void> {
       db.stats.compactions++;
       db.stats.compactionDurationMs = (db.stats.compactionDurationMs ?? 0) + (performance.now() - t0);
       db.lastCompactError = null;
-    } catch (error) {
+    } catch (err) {
       db.stats.compactErrors = (db.stats.compactErrors ?? 0) + 1;
-      db.lastCompactError = error;
-      throw error;
+      db.lastCompactError = err;
+      throw err;
     } finally {
       db.compacting = false;
       // A failed rotation must not leave writers parked forever.
@@ -371,7 +371,7 @@ async function runCompaction(db: CompactionTarget): Promise<void> {
     // observe a new pointer against an old fd or vice versa.
     remap();
     db.valueReader?.reopenBoth();
-  } catch (error) {
+  } catch (err) {
     try {
       // Swap the sealed/closed WAL for a fresh handle on db.walPath. The swap
       // comes first: it both restores appendability and stops late in-flight
@@ -387,7 +387,7 @@ async function runCompaction(db: CompactionTarget): Promise<void> {
     } catch {
       // Best-effort recovery only — on-disk state is consistent regardless.
     }
-    throw error;
+    throw err;
   } finally {
     releaseRotation();
     db._rotateLock = null;

@@ -218,7 +218,7 @@ export class GenFileWriter {
     version: number,
   ) {
     const w = new ByteWriter(8);
-    for (let i = 0; i < 4; i++) w.u8(magic.codePointAt(i));
+    for (let i = 0; i < 4; i++) w.u8(magic.charCodeAt(i));
     w.u32(version);
     const head = w.buf.subarray(0, w.off);
     this.chunks.push(Buffer.from(head));
@@ -230,9 +230,9 @@ export class GenFileWriter {
     const fh = await fs.open(path, 'w');
     try {
       return new GenFileWriter(fh, magic, version);
-    } catch (error) {
+    } catch (e) {
       await fh.close().catch(() => {});
-      throw error;
+      throw e;
     }
   }
 
@@ -249,7 +249,7 @@ export class GenFileWriter {
 
   private async flush(): Promise<void> {
     if (this.chunks.length === 0) return;
-    const bufs = this.chunks.splice(0);
+    const bufs = this.chunks.splice(0, this.chunks.length);
     this.queued = 0;
     for (const b of bufs) this.crc = crc32(b, this.crc);
     // Index-based consumption walk: a flush can carry tens of thousands of
@@ -321,8 +321,8 @@ export async function readGenerationFile(path: string, magic: string, version: n
   let buf: Buffer;
   try {
     buf = await fs.readFile(path);
-  } catch (error) {
-    throw new GenerationCorruptError(`generation file unreadable: ${(error as NodeJS.ErrnoException).code ?? String(error)}`);
+  } catch (e) {
+    throw new GenerationCorruptError(`generation file unreadable: ${(e as NodeJS.ErrnoException).code ?? String(e)}`);
   }
   return parseGenerationBuffer(buf, magic, version);
 }
@@ -331,7 +331,7 @@ export async function readGenerationFile(path: string, magic: string, version: n
 export function parseGenerationBuffer(buf: Buffer, magic: string, version: number): VerifiedGenerationFile {
   if (buf.length < 8 + 4) throw new GenerationCorruptError('generation file too short');
   for (let i = 0; i < 4; i++) {
-    if (buf.readUInt8(i) !== magic.codePointAt(i)) throw new GenerationCorruptError(`bad magic (want ${magic})`);
+    if (buf.readUInt8(i) !== magic.charCodeAt(i)) throw new GenerationCorruptError(`bad magic (want ${magic})`);
   }
   if (buf.readUInt32LE(4) !== version) throw new GenerationCorruptError(`unsupported file version (want ${version})`);
   const stored = buf.readUInt32LE(buf.length - 4);
@@ -370,12 +370,12 @@ export async function readGenerationFileCheckedAsync(
   let buf: Buffer;
   try {
     buf = await fs.readFile(path);
-  } catch (error) {
-    throw new GenerationCorruptError(`generation file unreadable: ${(error as NodeJS.ErrnoException).code ?? String(error)}`);
+  } catch (e) {
+    throw new GenerationCorruptError(`generation file unreadable: ${(e as NodeJS.ErrnoException).code ?? String(e)}`);
   }
   if (buf.length < 8 + 4) throw new GenerationCorruptError('generation file too short');
   for (let i = 0; i < 4; i++) {
-    if (buf.readUInt8(i) !== magic.codePointAt(i)) throw new GenerationCorruptError(`bad magic (want ${magic})`);
+    if (buf.readUInt8(i) !== magic.charCodeAt(i)) throw new GenerationCorruptError(`bad magic (want ${magic})`);
   }
   if (buf.readUInt32LE(4) !== version) throw new GenerationCorruptError(`unsupported file version (want ${version})`);
   const stored = buf.readUInt32LE(buf.length - 4);
@@ -522,9 +522,9 @@ export async function writeStoreImage(
     }
     const info = await w.finish();
     return { ...info, count };
-  } catch (error) {
+  } catch (e) {
     await w.abort();
-    throw error;
+    throw e;
   }
 }
 
@@ -590,9 +590,9 @@ export async function writeDtIndexImage(path: string, cols: DtImageColumn[]): Pr
       }
     }
     return await w.finish();
-  } catch (error) {
+  } catch (e) {
     await w.abort();
-    throw error;
+    throw e;
   }
 }
 
@@ -663,9 +663,9 @@ export async function writeSecondaryIndexImage(
       }
     }
     return await w.finish();
-  } catch (error) {
+  } catch (e) {
     await w.abort();
-    throw error;
+    throw e;
   }
 }
 
@@ -825,9 +825,9 @@ export async function writeCompoundIndexImage(
       }
     }
     return await w.finish();
-  } catch (error) {
+  } catch (e) {
     await w.abort();
-    throw error;
+    throw e;
   }
 }
 
@@ -923,9 +923,9 @@ export async function writeTextDictionaryImage(
       });
     }
     return await w.finish();
-  } catch (error) {
+  } catch (e) {
     await w.abort();
-    throw error;
+    throw e;
   }
 }
 
@@ -997,9 +997,9 @@ export async function writeTextDocsImage(path: string, image: TextDocsImage): Pr
       }
     }
     return await w.finish();
-  } catch (error) {
+  } catch (e) {
     await w.abort();
-    throw error;
+    throw e;
   }
 }
 

@@ -10,7 +10,7 @@
 import { getPath } from '../query.ts';
 
 const LATIN = /[a-z0-9]+/g;
-const CJK = /[\u3400-\u9FFF\u3040-\u30FF\uFF00-\uFFEF]+/g;
+const CJK = /[\u3400-\u9fff\u3040-\u30ff\uff00-\uffef]+/g;
 // Postings records store the term length in a uint16. A single document with a
 // longer token previously made every postings rebuild throw after the index had
 // already been cleared, permanently poisoning the index (and compaction). Such
@@ -59,7 +59,7 @@ function stringLeaves(obj: unknown, acc: string[] = []): string[] {
  *  build's worker: fields mode joins the configured paths, otherwise every
  *  string leaf). Internal to the package. */
 export function extractText(fields: readonly string[] | null, doc: unknown): string {
-  if (fields && fields.length > 0) {
+  if (fields && fields.length) {
     return fields
       .map((f) => getPath(doc, f))
       .filter((v): v is string => typeof v === 'string')

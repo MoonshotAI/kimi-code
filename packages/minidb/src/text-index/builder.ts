@@ -80,11 +80,11 @@ export class StagedBuild implements TextIndexBuild {
         docLens: this.newDocLen,
         n: this.n,
       });
-    } catch (error) {
+    } catch (e) {
       // Staging never touched the live view, so the previous index is
       // intact; the queued ops were already applied to it — just disarm.
       this.hooks.disarm();
-      throw error;
+      throw e;
     }
   }
 
@@ -117,9 +117,9 @@ export async function feedBuild(
         await yieldToLoop();
       }
     }
-  } catch (error) {
+  } catch (e) {
     b.abort();
-    throw error;
+    throw e;
   }
   await b.commit();
 }

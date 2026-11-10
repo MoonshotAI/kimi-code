@@ -57,7 +57,7 @@ export class DtIndex {
       c.byKey.set(key, ms);
     }
 
-    if (Object.keys(next).length > 0) this.byKey.set(key, { ...next });
+    if (Object.keys(next).length) this.byKey.set(key, { ...next });
     else this.byKey.delete(key);
   }
 
@@ -158,7 +158,7 @@ export class DtIndex {
           c.byKey.set(key, ms);
           rec[name] = ms;
         }
-        if (Object.keys(rec).length > 0) byKey.set(key, rec);
+        if (Object.keys(rec).length) byKey.set(key, rec);
       },
       commit: () => {
         this.cols = cols;

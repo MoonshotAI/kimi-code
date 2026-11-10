@@ -62,7 +62,7 @@ function getField(doc: unknown, path: string): unknown {
 function stableStringify(v: unknown): string {
   if (v === null || typeof v !== 'object') return JSON.stringify(v);
   if (Array.isArray(v)) return `[${v.map(stableStringify).join(',')}]`;
-  const keys = Object.keys(v as Record<string, unknown>).toSorted();
+  const keys = Object.keys(v as Record<string, unknown>).sort();
   return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify((v as Record<string, unknown>)[k])}`).join(',')}}`;
 }
 
@@ -160,7 +160,7 @@ function checkUniqueOnIndex(idx: AnyIndex, pk: string, doc: unknown): void {
     if (idx.type === 'range') {
       if (typeof v !== 'number' || !Number.isFinite(v)) continue;
       const hit = idx.list.range({ gte: v, lte: v, count: 1 });
-      if (hit.length > 0 && hit[0]!.val !== pk) throw new UniqueViolationError(idx.name, v);
+      if (hit.length && hit[0]!.val !== pk) throw new UniqueViolationError(idx.name, v);
     } else {
       const set = idx.map.get(scalarKey(v));
       if (set && (set.size > 1 || (set.size === 1 && !set.has(pk)))) {
@@ -193,7 +193,7 @@ function checkUniqueBatchOnIndex(idx: AnyIndex, lastOp: ReadonlyMap<string, { op
         // Current holder in the live index, if any: a conflict unless it
         // is the claimant itself or a key the batch vacates.
         const hit = idx.list.range({ gte: v, lte: v, count: 1 });
-        if (hit.length > 0) assertVacated(idx, hit[0]!.val, pk, v, lastOp);
+        if (hit.length) assertVacated(idx, hit[0]!.val, pk, v, lastOp);
       } else {
         const sk = scalarKey(v);
         const prev = claimed.get(sk);

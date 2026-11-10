@@ -16,7 +16,7 @@ import {
 } from '#/app/event/event2';
 import { foldEventStateContributions } from '#/state/stateContribution';
 
-const __dirname = import.meta.dirname;
+const __dirname = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = join(__dirname, '..', '..');
 const SRC_ROOT = join(PKG_ROOT, 'src');
 const FIXTURE_ROOT = join(__dirname, 'fixtures');

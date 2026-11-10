@@ -429,7 +429,7 @@ test('WAL poison: a failed writev is truncated away — the rejected key never r
     () => {
       throw new Error('expected the set to reject');
     },
-    (error) => error as Error,
+    (e) => e as Error,
   );
   assert.match(String(err), /injected WAL failure/);
   assert.equal((err as { ambiguous?: boolean }).ambiguous, true, 'a failure past the commit point is marked ambiguous');
@@ -498,7 +498,7 @@ test("WAL poison: an fsync failure (fsyncPolicy 'always') revokes the rejected w
     () => {
       throw new Error('expected the set to reject');
     },
-    (error) => error as Error,
+    (e) => e as Error,
   );
   assert.match(String(err), /injected fsync failure/);
   assert.equal((err as { ambiguous?: boolean }).ambiguous, true);
@@ -569,7 +569,7 @@ test('WAL poison: an applyOp contract violation poisons the WAL and rolls the gr
     () => {
       throw new Error('expected the set to reject');
     },
-    (error) => error as Error,
+    (e) => e as Error,
   );
   assert.match(String(err), /injected apply failure/);
   assert.equal((err as { ambiguous?: boolean }).ambiguous, true);
@@ -719,7 +719,7 @@ test('WAL poison: an applyOp violation on a never-enqueued frame (sealed WAL) do
     () => {
       throw new Error('expected the set to reject');
     },
-    (error) => error as Error,
+    (e) => e as Error,
   );
   assert.match(String(err), /injected apply failure/);
   assert.equal(db.wal.poison, null, 'a never-enqueued frame poisons nothing');
@@ -984,7 +984,7 @@ test('a mid-batch applyOp violation rolls the whole batch back — memory and re
       () => {
         throw new Error('expected the batch to reject');
       },
-      (error) => error as Error,
+      (e) => e as Error,
     );
   assert.match(String(err), /injected mid-batch apply failure/);
   assert.equal((err as { ambiguous?: boolean }).ambiguous, true);

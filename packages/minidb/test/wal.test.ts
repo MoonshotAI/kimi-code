@@ -129,8 +129,8 @@ test('recovery truncates a torn/corrupt tail at the error offset', async () => {
     try {
       for (const f of parser.feed(buf)) frames.push(f);
       parser.finish();
-    } catch (error) {
-      err = error;
+    } catch (e) {
+      err = e;
     }
     assert.ok(err instanceof CorruptFrameError, 'expected a corrupt-frame error');
     assert.equal(err.offset, validSize, 'error offset should equal end of valid data');
@@ -382,8 +382,8 @@ test('a failed flush poisons the WAL: WAL_POISONED rejections until truncate + r
 
     const order: string[] = [];
     await Promise.all([
-      batchFrame.catch((error) => { order.push('batch'); throw error; }),
-      queuedFrame.catch((error) => { order.push('queued'); throw error; }),
+      batchFrame.catch((e) => { order.push('batch'); throw e; }),
+      queuedFrame.catch((e) => { order.push('queued'); throw e; }),
     ]).then(
       () => { throw new Error('expected both frames to reject'); },
       () => {},

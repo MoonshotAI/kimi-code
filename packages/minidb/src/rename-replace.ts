@@ -27,8 +27,8 @@ export async function retryEperm<T>(op: () => Promise<T>, opts: RenameReplaceOpt
   for (let attempt = 0; ; attempt++) {
     try {
       return await op();
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EPERM' || attempt >= retries) throw error;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'EPERM' || attempt >= retries) throw e;
       await sleep(base + Math.floor(Math.random() * (base + 10)));
     }
   }
