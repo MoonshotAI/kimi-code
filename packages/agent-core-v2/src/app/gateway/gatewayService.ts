@@ -63,7 +63,6 @@ export class RestGateway implements IRestGateway {
     content: string,
   ): Promise<{ readonly turn_id: number } | undefined> {
     const service = this.agent(sessionId, agentId).accessor.get(IAgentLoopService);
-    const status = service.snapshot();
     const { id } = service.submit(
       {
         message: { role: 'user', content: [{ type: 'text', text: content }] },
@@ -71,7 +70,6 @@ export class RestGateway implements IRestGateway {
       },
       { steerIfActive: true },
     );
-    if (status.state === 'running' && status.activePromptId === undefined) return undefined;
     const turn = await service.promptHandle(id)?.launched;
     if (turn === undefined) return undefined;
     await turn.ready.catch(() => undefined);

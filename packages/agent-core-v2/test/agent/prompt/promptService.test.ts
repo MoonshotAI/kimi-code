@@ -7,8 +7,8 @@ import { IFileService } from '#/app/file/fileService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { IAgentLoopService, type PromptHandle } from '#/agent/loop/loop';
-import { TurnStarted } from '#/agent/loop/turnEvents';
-import { TurnSteer } from '#/agent/loop/turnOps';
+import { TurnStarted, TurnStepInterrupted } from '#/agent/loop/turnEvents';
+import { TurnEnded, TurnSteer } from '#/agent/loop/turnOps';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import {
@@ -19,6 +19,7 @@ import {
   PromptSteered,
   PromptSubmitted,
 } from '#/agent/prompt/promptEvents';
+import type { LlmRequester } from '#human/llm-requester/requester';
 import type { ContentPart } from '#human/llm/message';
 
 import {
@@ -264,7 +265,7 @@ describe('prompt queue', () => {
     const two = await enqueue(loop, { message: message('two') });
 
     await loop.steer([two.id, one.id]);
-    expect(events).toHaveLength(0);
+    expect(events).toHaveLength(1);
     expect(steered[0]?.messageId).toEqual(expect.any(String));
     expect(steered[0]?.promptIds).toEqual([one.id, two.id]);
 
@@ -299,13 +300,13 @@ describe('prompt queue', () => {
     const two = await enqueue(loop, { message: { ...message('two'), origin: { kind: 'user', clientMetadata: [second] } } });
     await loop.steer([two.id, one.id]);
     await Promise.resolve();
-    expect(events).toHaveLength(0);
+    expect(events).toHaveLength(1);
     expect(submitted.find((event) => event.promptId === one.id)?.clientMetadata).toEqual([first]);
     expect(queued.find((event) => event.promptId === two.id)?.clientMetadata).toEqual([second]);
     expect(PromptSteered.schema.parse(steered[0]).promptIds).toEqual([one.id, two.id]);
     hold.release();
     await loop.settled();
-    expect(events).toHaveLength(0);
+    expect(events).toHaveLength(1);
     const merged = ctx
       .get(IAgentContextMemoryService)
       .get()
@@ -337,10 +338,10 @@ describe('prompt queue', () => {
     const three = await enqueue(loop, { message: message('last instruction') });
     await loop.steer([three.id, two.id, one.id]);
     await Promise.resolve();
-    expect(events).toHaveLength(0);
+    expect(events).toHaveLength(1);
     hold.release();
     await loop.settled();
-    expect(events).toHaveLength(0);
+    expect(events).toHaveLength(1);
     const merged = ctx
       .get(IAgentContextMemoryService)
       .get()
@@ -374,7 +375,7 @@ describe('prompt queue', () => {
       { type: 'prompt.steered', activePromptId: active.id, promptIds: [one.id, two.id] },
       { type: 'prompt.steered', activePromptId: active.id, promptIds: [three.id] },
     ]);
-    expect(events.filter((event) => event.type === 'turn.steer')).toHaveLength(0);
+    expect(events.filter((event) => event.type === 'turn.steer')).toHaveLength(2);
 
     hold.release();
     await loop.settled();
@@ -391,71 +392,137 @@ describe('prompt queue', () => {
     expect(materialized[1]?.promptIds).toEqual([three.id]);
   });
 
-  it('returns the prompt identity and delivery state for an accepted steer', async () => {
+  it('returns the prompt identity and continues after a stale gate failure', async () => {
     setup();
-    const hold = holdNextStep();
-    ctx.mockNextResponse({ type: 'text', text: 'active' });
-    ctx.mockNextResponse({ type: 'text', text: 'merged' });
+    const gateStarts: number[] = [];
+    let rejectFirst!: (error: Error) => void;
+    let markFirst!: () => void;
+    let markSecond!: () => void;
+    const first = new Promise<void>((resolve) => { markFirst = resolve; });
+    const second = new Promise<void>((resolve) => { markSecond = resolve; });
+    loop.hooks.onWillBeginStep.register('test-stale-gate', async (hookCtx, next) => {
+      gateStarts.push(hookCtx.step);
+      if (hookCtx.step === 1) {
+        markFirst();
+        await new Promise<void>((_resolve, reject) => { rejectFirst = reject; });
+      }
+      if (hookCtx.step === 2) markSecond();
+      await next();
+    });
+    ctx.mockNextResponse({ type: 'text', text: 'continued' });
+    const turnEnds: TurnEnded[] = [];
+    ctx.get(IEventBus).subscribe(TurnEnded, (event) => turnEnds.push(event));
     await enqueue(loop, { message: message('active') });
-    await hold.started;
+    await first;
 
     const result = await ctx.rpc.steer({ input: [{ type: 'text', text: 'steer' }] });
+    await second;
 
-    try {
-      expect(result).toMatchObject({
-        prompt_id: expect.any(String),
-        state: 'running',
-        steered: true,
-        turn_id: 0,
-      });
-    } finally {
-      hold.release();
-      await loop.settled();
-    }
+    expect(result).toMatchObject({
+      prompt_id: expect.any(String),
+      state: 'running',
+      steered: true,
+      turn_id: 0,
+    });
+    rejectFirst(new Error('stale gate'));
+    await loop.settled();
+    expect(gateStarts).toEqual([1, 2]);
+    expect(turnEnds).toMatchObject([{ turnId: 0, reason: 'completed' }]);
   });
 
-  it('returns a queued identity instead of waiting for an untracked active turn', async () => {
-    setup();
-    const hold = holdNextStep();
-    ctx.mockNextResponse({ type: 'text', text: 'continuation' });
+  it('steers into an untracked active turn and interrupts the current llm request', async () => {
+    let calls = 0;
+    const signals: AbortSignal[] = [];
+    const generate: LlmRequester = {
+      generate: (_config, _content, { signal, onEvent }) => {
+        calls += 1;
+        signals.push(signal);
+        if (calls === 1) {
+          onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'partial' } });
+          return new Promise<void>((resolve) => {
+            signal.addEventListener('abort', () => resolve());
+          });
+        }
+        onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'continued' } });
+        onEvent?.({
+          type: 'llm.streaming.finish',
+          finish: { finishReason: 'completed', rawFinishReason: 'stop' },
+        });
+        onEvent?.({ type: 'llm.done' });
+        return Promise.resolve();
+      },
+    };
+    setup({ generate });
+    const turnStarts: TurnStarted[] = [];
+    ctx.get(IEventBus).subscribe(TurnStarted, (event) => turnStarts.push(event));
     loop.submit({
       message: { role: 'user', content: message('continuation').content },
       meta: { origin: { kind: 'user' }, tracked: false },
     });
-    await hold.started;
+    await vi.waitFor(() => {
+      expect(calls).toBe(1);
+    });
 
-    const result = await ctx.rpc.steer({ input: [{ type: 'text', text: 'queued steer' }] });
-
-    try {
-      expect(result).toMatchObject({
-        prompt_id: expect.any(String),
-        state: 'queued',
-        steered: false,
-      });
-      expect(result).not.toHaveProperty('turn_id');
-    } finally {
-      loop.cancel();
-      hold.release();
-      await loop.settled();
-    }
-  });
-
-  it('does not publish turn.steer when an unconsumed steer seeds the next turn after cancel', async () => {
-    setup();
-    const hold = holdNextStep();
-    ctx.mockNextResponse({ type: 'text', text: 'seeded turn' });
-    const steerEvents: TurnSteer[] = [];
-    ctx.get(IEventBus).subscribe(TurnSteer, (event) => steerEvents.push(event));
-
-    await enqueue(loop, { message: message('active') });
-    await hold.started;
-    const stop = await enqueue(loop, { message: message('stop') });
-    await loop.steer([stop.id]);
-    loop.cancel();
-    hold.release();
+    const result = await ctx.rpc.steer({ input: [{ type: 'text', text: 'steer now' }] });
     await loop.settled();
 
-    expect(steerEvents).toHaveLength(0);
+    expect(result).toMatchObject({
+      prompt_id: expect.any(String),
+      state: 'running',
+      steered: true,
+      turn_id: 0,
+    });
+    expect(signals[0]?.aborted).toBe(true);
+    expect(calls).toBe(2);
+    expect(turnStarts).toHaveLength(1);
+  });
+
+  it('interrupts the current llm step on steer and consumes it in the same turn', async () => {
+    let calls = 0;
+    const signals: AbortSignal[] = [];
+    const generate: LlmRequester = {
+      generate: (_config, _content, { signal, onEvent }) => {
+        calls += 1;
+        signals.push(signal);
+        if (calls === 1) {
+          onEvent?.({ type: 'llm.streaming.part', part: { type: 'think', think: 'partial thought' } });
+          onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'partial text' } });
+          return new Promise<void>((resolve) => {
+            signal.addEventListener('abort', () => resolve());
+          });
+        }
+        onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'seeded turn' } });
+        onEvent?.({
+          type: 'llm.streaming.finish',
+          finish: { finishReason: 'completed', rawFinishReason: 'stop' },
+        });
+        onEvent?.({ type: 'llm.done' });
+        return Promise.resolve();
+      },
+    };
+    setup({ generate });
+    const steerEvents: TurnSteer[] = [];
+    const stepInterruptions: TurnStepInterrupted[] = [];
+    const turnStarts: TurnStarted[] = [];
+    const turnEnds: TurnEnded[] = [];
+    ctx.get(IEventBus).subscribe(TurnSteer, (event) => steerEvents.push(event));
+    ctx.get(IEventBus).subscribe(TurnStepInterrupted, (event) => stepInterruptions.push(event));
+    ctx.get(IEventBus).subscribe(TurnStarted, (event) => turnStarts.push(event));
+    ctx.get(IEventBus).subscribe(TurnEnded, (event) => turnEnds.push(event));
+
+    await enqueue(loop, { message: message('active') });
+    await vi.waitFor(() => {
+      expect(calls).toBe(1);
+    });
+    const stop = await enqueue(loop, { message: message('stop') });
+    await loop.steer([stop.id]);
+    await loop.settled();
+
+    expect(signals[0]?.aborted).toBe(true);
+    expect(steerEvents).toMatchObject([{ turnId: 0, promptIds: [stop.id] }]);
+    expect(stepInterruptions).toMatchObject([{ turnId: 0, step: 1, reason: 'steered' }]);
+    expect(turnStarts).toHaveLength(1);
+    expect(turnEnds).toMatchObject([{ turnId: 0, reason: 'completed' }]);
     const materializedStops = ctx
       .get(IAgentContextMemoryService)
       .get()
@@ -465,6 +532,7 @@ describe('prompt queue', () => {
           entry.content.some((part) => part.type === 'text' && part.text === 'stop'),
       );
     expect(materializedStops).toHaveLength(1);
+    expect(materializedStops[0]?.origin).toMatchObject({ inTurn: true });
   });
 
   it('mirrors a drained steer when cancellation wins before the next gate', async () => {

@@ -399,7 +399,7 @@ function isBlankText(part: ContentPart): boolean {
 }
 
 function canMergeUserMessage(message: ContextMessage): boolean {
-  return message.role === 'user' && message.origin?.kind === 'user';
+  return message.role === 'user' && message.origin?.kind === 'user' && message.origin.inTurn !== true;
 }
 
 function hasDeclaredTools(message: ContextMessage): boolean {

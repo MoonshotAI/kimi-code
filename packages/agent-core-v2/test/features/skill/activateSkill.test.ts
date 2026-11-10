@@ -189,7 +189,7 @@ describe('promptWithSkills', () => {
     await promptPromise;
     await ctx.untilTurnEnd();
 
-    expect(ctx.llmCalls).toHaveLength(2);
+    expect(ctx.llmCalls).toHaveLength(1);
     const llmInput = JSON.stringify(ctx.llmInputs());
     expect(llmInput).toContain('# Review body');
     expect(llmInput).toContain('ARGUMENTS: src/app.ts');
@@ -231,7 +231,6 @@ describe('promptWithSkills', () => {
     catalog.register(stubSkill('other'));
     catalog.registerVariants([parentA, parentB, childA, childB, stubSkill('other')], { replace: true });
     ctx = createTestAgent(skillServices(catalog));
-    ctx.mockNextResponse({ type: 'text', text: 'first reply' });
     ctx.mockNextResponse({ type: 'text', text: 'Load child.' }, {
       type: 'function',
       id: 'call_child',
@@ -258,6 +257,17 @@ describe('promptWithSkills', () => {
     await promptPromise;
     await ctx.untilTurnEnd();
 
+    expect(ctx.llmCalls).toHaveLength(2);
+    const interruptions = ctx.allEvents.filter(
+      (event) => event.type === '[rpc]' && event.event === 'turn.step.interrupted',
+    );
+    expect(interruptions.map((event) => {
+      const args = event.args as { readonly step: number; readonly reason: string };
+      return { step: args.step, reason: args.reason };
+    })).toEqual([
+      { step: 1, reason: 'steered' },
+      { step: 2, reason: 'steered' },
+    ]);
     const nested = ctx.context.get().filter((message) =>
       message.origin?.kind === 'skill_activation' && message.origin.skillName === 'child'
     );
