@@ -645,6 +645,46 @@ describe('conversation fold', () => {
     expect(shape(state.turns[1])).toEqual(['opener:second', 'steer:more']);
   });
 
+  it('ends the tool calls a stop cuts short as interrupted and keeps earlier results as they were', () => {
+    const state = fold([
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'run them'),
+      stepBegin(0, 1, 's1'),
+      toolCall(0, 1, 's1', 'Read_0', 'Read', { path: 'a.ts' }),
+      toolCall(0, 1, 's1', 'Read_1', 'Read', { path: 'missing.ts' }),
+      toolCall(0, 1, 's1', 'Bash_2', 'Bash', { command: 'sleep 60' }),
+      toolCall(0, 1, 's1', 'Bash_3', 'Bash', { command: 'make' }),
+      toolResult('Read_0', 'file body'),
+      toolResult('Read_1', 'file not found', true),
+      record('turn.cancel', { turnId: 0, target: 'active', reason: 'user' }),
+      toolResult('Bash_2', 'Interrupted by user', true),
+      toolResult('Bash_3', 'The user manually interrupted "Bash".', true),
+      turnEnded(0, 'cancelled'),
+    ]);
+
+    const items = state.turns[0]?.items ?? [];
+    expect(state.turns[0]).toMatchObject({ outcome: 'interrupted' });
+    expect(items[1]).toMatchObject({ item_id: 'Read_0', outcome: 'completed', output: 'file body' });
+    expect(items[2]).toMatchObject({ item_id: 'Read_1', outcome: 'failed', error: 'file not found' });
+    expect(items[3]).toMatchObject({ item_id: 'Bash_2', outcome: 'interrupted', error: 'Interrupted by user' });
+    expect(items[4]).toMatchObject({ item_id: 'Bash_3', outcome: 'interrupted' });
+    expect(items[3]).not.toHaveProperty('output', expect.anything());
+  });
+
+  it('keeps tool errors failed when the step failed instead of being stopped', () => {
+    const state = fold([
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'run it'),
+      stepBegin(0, 1, 's1'),
+      toolCall(0, 1, 's1', 'Bash_0', 'Bash', { command: 'make' }),
+      record('turn.step.interrupted', { turnId: 0, step: 1, stepId: 's1', reason: 'error' }),
+      toolResult('Bash_0', 'Tool "Bash" was aborted', true),
+      turnEnded(0, 'failed', { error: { name: 'ProviderError', message: 'boom' } }),
+    ]);
+
+    expect(state.turns[0]?.items[1]).toMatchObject({ item_id: 'Bash_0', outcome: 'failed' });
+  });
+
   it('keeps a running turn open while ownerless messages land beside it', () => {
     const state = fold([
       turnPrompt(0, 'p1'),
