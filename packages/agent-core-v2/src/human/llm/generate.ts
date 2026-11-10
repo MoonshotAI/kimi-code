@@ -1,4 +1,4 @@
-import { resolveEndpoint } from '#/llm/endpoint';
+import { resolveEndpoint, withOpencodeSessionHeader, type ResolvedEndpoint } from '#/llm/endpoint';
 import { isAbortError, toLlmErrorMessage, toLlmSyntaxErrorMessage } from '#/llm/protocol/errors';
 import type { DecodeSink, LlmModule, ProtocolReply } from '#/llm/protocol/protocol';
 import { withProtocolCapabilities } from '#/llm/protocol/rules/model';
@@ -87,7 +87,15 @@ export async function generate(request: LlmRequest, control: LlmAttemptControl):
   }
   let streamStarted = false;
   try {
-    const endpoint = await resolveEndpoint(request.endpoint);
+    const resolved = await resolveEndpoint(request.endpoint);
+    const endpoint: ResolvedEndpoint = {
+      ...resolved,
+      headers: withOpencodeSessionHeader(
+        resolved.baseUrl,
+        resolved.headers,
+        request.model.cacheKey,
+      ),
+    };
     const clientFactory = request.endpoint?.clientFactory;
     const client =
       clientFactory === undefined

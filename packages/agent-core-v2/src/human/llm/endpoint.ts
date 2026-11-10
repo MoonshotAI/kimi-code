@@ -35,3 +35,35 @@ export async function resolveEndpoint(endpoint: LlmEndpoint | undefined): Promis
     fetch: endpoint?.fetch,
   };
 }
+
+export const OPENCODE_SESSION_HEADER = 'x-opencode-session';
+
+export function isOpenCodeEndpoint(baseUrl: string | undefined): boolean {
+  if (typeof baseUrl !== 'string' || baseUrl.length === 0) return false;
+  try {
+    const { hostname } = new URL(baseUrl);
+    return hostname === 'opencode.ai' || hostname.endsWith('.opencode.ai');
+  } catch {
+    return false;
+  }
+}
+
+export function withOpencodeSessionHeader(
+  baseUrl: string | undefined,
+  headers: Record<string, string> | undefined,
+  sessionId: string | undefined,
+): Record<string, string> | undefined {
+  if (typeof sessionId !== 'string' || sessionId.length === 0) {
+    return headers;
+  }
+  if (!isOpenCodeEndpoint(baseUrl)) {
+    return headers;
+  }
+  if (
+    headers !== undefined &&
+    Object.keys(headers).some((key) => key.toLowerCase() === OPENCODE_SESSION_HEADER)
+  ) {
+    return headers;
+  }
+  return { ...headers, [OPENCODE_SESSION_HEADER]: sessionId };
+}
