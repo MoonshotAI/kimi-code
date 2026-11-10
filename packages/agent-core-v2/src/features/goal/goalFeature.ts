@@ -27,18 +27,22 @@ export class GoalFeature extends Feature {
     this.contributeTool(ICreateGoalTool, CreateGoalTool, {
       name: 'CreateGoal',
       domain: 'goal',
+      userConfigurable: true,
     });
     this.contributeTool(IGetGoalTool, GetGoalTool, {
       name: 'GetGoal',
       domain: 'goal',
+      userConfigurable: true,
     });
     this.contributeTool(ISetGoalBudgetTool, SetGoalBudgetTool, {
       name: 'SetGoalBudget',
       domain: 'goal',
+      userConfigurable: true,
     });
     this.contributeTool(IUpdateGoalTool, UpdateGoalTool, {
       name: 'UpdateGoal',
       domain: 'goal',
+      userConfigurable: true,
     });
   }
 }

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { mcpServerSchema, toolDescriptorSchema } from './tool';
+import { mcpServerSchema, toolCatalogEntrySchema, toolDescriptorSchema } from './tool';
 
 export const listToolsQuerySchema = z.object({
   session_id: z.string().min(1).optional(),
@@ -11,6 +11,11 @@ export const listToolsResponseSchema = z.object({
   tools: z.array(toolDescriptorSchema),
 });
 export type ListToolsResponse = z.infer<typeof listToolsResponseSchema>;
+
+export const listToolCatalogResponseSchema = z.object({
+  tools: z.array(toolCatalogEntrySchema),
+});
+export type ListToolCatalogResponse = z.infer<typeof listToolCatalogResponseSchema>;
 
 export const listMcpServersResponseSchema = z.object({
   servers: z.array(mcpServerSchema),

@@ -133,6 +133,16 @@ describe('server-v2 /api/v1/config', () => {
     expect(after.disable_feedback_survey).toBe(true);
   });
 
+  it('POST { tools } merges enabled and disabled independently and GET echoes both', async () => {
+    await boot('[tools]\nenabled = ["Read"]\ndisabled = ["mcp__example__*"]\n');
+    const disabled = await patchConfig({ tools: { disabled: ['Bash'] } });
+    expect(disabled.tools).toEqual({ enabled: ['Read'], disabled: ['Bash'] });
+
+    const enabled = await patchConfig({ tools: { enabled: ['Read', 'Bash'] } });
+    expect(enabled.tools).toEqual({ enabled: ['Read', 'Bash'], disabled: ['Bash'] });
+    expect((await getConfig()).tools).toEqual({ enabled: ['Read', 'Bash'], disabled: ['Bash'] });
+  });
+
   it('POST { secondary_model } persists the subagent model pool and GET echoes it', async () => {
     await boot();
     const cfg = await patchConfig({

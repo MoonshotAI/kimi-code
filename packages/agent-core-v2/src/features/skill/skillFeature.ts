@@ -14,7 +14,7 @@ export class SkillFeature extends Feature {
     this.contributeAgentService(IAgentSkillService, AgentSkillService, {
       activation: ScopeActivation.OnDemand,
     });
-    this.contributeTool(ISkillTool, SkillTool, { name: 'Skill', domain: 'skill' });
+    this.contributeTool(ISkillTool, SkillTool, { name: 'Skill', domain: 'skill', userConfigurable: true });
   }
 }
 

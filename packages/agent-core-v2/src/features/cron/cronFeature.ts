@@ -14,9 +14,9 @@ export class CronFeature extends Feature {
   constructor() {
     super();
     this.contributeAgentService(IAgentCronService, AgentCronService);
-    this.contributeTool(ICronCreateTool, CronCreateTool, { name: 'CronCreate', domain: 'cron' });
-    this.contributeTool(ICronListTool, CronListTool, { name: 'CronList', domain: 'cron' });
-    this.contributeTool(ICronDeleteTool, CronDeleteTool, { name: 'CronDelete', domain: 'cron' });
+    this.contributeTool(ICronCreateTool, CronCreateTool, { name: 'CronCreate', domain: 'cron', userConfigurable: true });
+    this.contributeTool(ICronListTool, CronListTool, { name: 'CronList', domain: 'cron', userConfigurable: true });
+    this.contributeTool(ICronDeleteTool, CronDeleteTool, { name: 'CronDelete', domain: 'cron', userConfigurable: true });
   }
 }
 

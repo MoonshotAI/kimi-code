@@ -233,7 +233,7 @@ export interface PlanResolvedEvent {
 
 export interface TowerModeEnterEvent {
   outcome: 'entered' | 'rejected';
-  reason?: 'not-main-agent' | 'experiment-off' | 'feature-not-assembled' | 'owned-by-live-session';
+  reason?: 'not-main-agent' | 'experiment-off' | 'feature-not-assembled' | 'tools-disabled' | 'owned-by-live-session';
 }
 
 export interface TowerModeExitEvent {
