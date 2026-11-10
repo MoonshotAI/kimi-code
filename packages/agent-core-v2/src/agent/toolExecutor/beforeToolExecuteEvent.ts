@@ -16,14 +16,7 @@ import type {
 
 type PendingVetoFactory = () => Promise<BeforeExecuteDecision | undefined>;
 
-export type BegunBeforeExecute =
-  | { readonly status: 'absent' }
-  | { readonly status: 'decided'; readonly decision: BeforeExecuteDecision | undefined }
-  | {
-      readonly status: 'pending';
-      settle(): Promise<BeforeExecuteDecision | undefined>;
-      cancel(): void;
-    };
+export type BegunBeforeExecute = BeforeToolExecuteEventImpl | undefined;
 
 export function denyToolExecution(reason: string): ExecutableToolResult {
   return { output: reason, isError: true };
@@ -125,44 +118,42 @@ export class BeforeToolExecuteEventImpl implements BeforeToolExecuteEvent {
 
 export class BeforeToolExecuteEmitter extends Emitter<BeforeToolExecuteEvent> {
   async fireBeforeExecute(
-    context: ResolvedToolExecutionHookContext,
+    context: ResolvedToolExecutionHookContext | {
+      readonly context: ResolvedToolExecutionHookContext;
+      readonly event: Promise<BeforeToolExecuteEventImpl | undefined>;
+    },
   ): Promise<BeforeExecuteDecision | undefined> {
-    const begun = await this.beginBeforeExecute(context);
-    if (begun.status === 'absent') return undefined;
-    if (begun.status === 'decided') return begun.decision;
-    return begun.settle();
+    const event = 'event' in context
+      ? await context.event
+      : await this.beginBeforeExecute(context);
+    if (event === undefined || event.finalAllowed) return undefined;
+    if (event.vetoResult !== undefined) return { veto: event.vetoResult };
+    return this.settleBeforeExecute(event);
   }
 
   async beginBeforeExecute(
     context: ResolvedToolExecutionHookContext,
   ): Promise<BegunBeforeExecute> {
     if (this.isDisposed || this._listeners === undefined || this._listeners.size === 0) {
-      return { status: 'absent' };
+      return undefined;
     }
 
     const event = new BeforeToolExecuteEventImpl(context);
     for (const entry of Array.from(this._listeners)) {
       await entry.listener.call(entry.thisArg, event);
-      if (event.finalAllowed) {
-        event.cancelReview();
-        event.closeRegistration();
-        return { status: 'decided', decision: undefined };
-      }
-      if (event.vetoResult !== undefined) {
-        event.cancelReview();
-        event.closeRegistration();
-        return { status: 'decided', decision: { veto: event.vetoResult } };
-      }
+      if (event.finalAllowed || event.vetoResult !== undefined) break;
     }
     event.closeRegistration();
+    if (event.finalAllowed || event.vetoResult !== undefined) {
+      event.cancelReview();
+      return event;
+    }
     event.startDeferredReviews();
-    return {
-      status: 'pending',
-      settle: () => this.settleBeforeExecute(event),
-      cancel: () => {
-        event.cancelReview();
-      },
-    };
+    return event;
+  }
+
+  cancelReview(event: BeforeToolExecuteEventImpl | undefined): void {
+    event?.cancelReview();
   }
 
   private async settleBeforeExecute(

@@ -41,7 +41,7 @@ import type { ToolCallEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { OrderedHookSlot } from '#/hooks';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
-import { BeforeToolExecuteEmitter } from './beforeToolExecuteEvent';
+import { BeforeToolExecuteEmitter, BeforeToolExecuteEventImpl } from './beforeToolExecuteEvent';
 import {
   IAgentToolExecutorService,
   type MissingToolDescriber,
@@ -75,10 +75,8 @@ interface PreparedToolCall {
 }
 
 interface OpenedToolCall {
-  readonly stopBatchAfterThis?: boolean;
-  settled: boolean;
-  finish(): Promise<PreparedToolCall>;
-  cancel(): void;
+  readonly execution: Promise<ToolExecution>;
+  readonly event: Promise<BeforeToolExecuteEventImpl | undefined>;
 }
 
 export interface ToolExecutionRunResult {
@@ -208,17 +206,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
         this.log,
       ),
     );
-    const opened: Array<OpenedToolCall | undefined> = [];
-    let stopOpening = false;
-    for (const call of preflighted) {
-      if (stopOpening) {
-        opened.push(undefined);
-        continue;
-      }
-      const opening = await this.openToolCall(call, calls, options);
-      opened.push(opening);
-      if (opening.stopBatchAfterThis === true) stopOpening = true;
-    }
+    const opened = preflighted.map((call) => this.openToolCall(call, calls, options));
 
     const preparedTasks: Array<{
       task: ToolExecutionTask;
@@ -230,17 +218,17 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     try {
       for (let index = 0; index < preflighted.length; index += 1) {
         const call = preflighted[index]!;
-        const opening = opened[index];
-        if (opening === undefined || stopBatch) {
-          if (opening !== undefined) {
-            opening.cancel();
-            opening.settled = true;
-          }
+        if (stopBatch) {
+          void opened[index]!.event.then(
+            (event) => {
+              this.beforeExecuteEmitter.cancelReview(event);
+            },
+            () => undefined,
+          );
           preparedTasks.push({ ...this.prepareSkippedToolCall(call, options), call });
           continue;
         }
-        const prepared = await opening.finish();
-        opening.settled = true;
+        const prepared = await this.prepareToolCall(call, calls, options, opened[index]);
         preparedTasks.push({
           task: prepared.task,
           call,
@@ -251,7 +239,14 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       }
     } finally {
       for (const opening of opened) {
-        if (opening !== undefined && !opening.settled) opening.cancel();
+        if (opening !== undefined) {
+          void opening.event.then(
+            (event) => {
+              this.beforeExecuteEmitter.cancelReview(event);
+            },
+            () => undefined,
+          );
+        }
       }
     }
 
@@ -368,11 +363,28 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     this.telemetry.track2('tool_call', properties);
   }
 
-  private async openToolCall(
+  private openToolCall(
     call: PreflightedToolCall,
     allCalls: readonly ToolCall[],
     options: ToolExecutorExecuteOptions,
-  ): Promise<OpenedToolCall> {
+  ): OpenedToolCall | undefined {
+    if (call.kind === 'rejected') return undefined;
+    const execution = Promise.resolve(call.tool.resolveExecution(call.args));
+    const event = execution.then((resolved) => {
+      if (options.signal.aborted || resolved.isError === true) return undefined;
+      return this.beforeExecuteEmitter.beginBeforeExecute(
+        buildBeforeExecuteContext(call, resolved, allCalls, options),
+      );
+    });
+    return { execution, event };
+  }
+
+  private async prepareToolCall(
+    call: PreflightedToolCall,
+    allCalls: readonly ToolCall[],
+    options: ToolExecutorExecuteOptions,
+    opened?: OpenedToolCall,
+  ): Promise<PreparedToolCall> {
     const settleError = (
       args: unknown,
       output: string,
@@ -408,108 +420,65 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       };
     };
 
-    const syntheticStopsBatch = (result: ExecutableToolResult): boolean | undefined => {
-      const toolResult = this.normalizeAndMergeResult(result, call.toolName, undefined);
-      return toolResult.stopBatchAfterThis ?? toolResult.stopTurn;
-    };
-
-    const deferred = (
-      finish: () => PreparedToolCall,
-      stopBatchAfterThis?: boolean,
-    ): OpenedToolCall => ({
-      stopBatchAfterThis,
-      settled: false,
-      finish: async () => finish(),
-      cancel: () => {},
-    });
-
     if (call.kind === 'rejected') {
-      return deferred(() => settleError(call.args, call.output, 'preflight-rejected'));
+      return settleError(call.args, call.output, 'preflight-rejected');
     }
 
     let execution: ToolExecution;
     try {
-      execution = await call.tool.resolveExecution(call.args);
+      execution = opened === undefined
+        ? await call.tool.resolveExecution(call.args)
+        : await opened.execution;
     } catch (error) {
       const output =
         error instanceof PathSecurityError
           ? error.message
           : `Tool "${call.toolName}" failed to resolve execution: ${errorMessage(error)}`;
-      return deferred(() => settleError(call.args, output, 'resolution-failed'));
+      return settleError(call.args, output, 'resolution-failed');
     }
 
     const displayFields = toolCallDisplayFieldsFromExecution(execution);
 
     if (options.signal.aborted) {
-      return deferred(() => settleError(
+      return settleError(
         call.args,
         abortedToolOutput(call.toolName, options.signal.reason),
         'aborted',
         displayFields,
-      ));
+      );
     }
 
     if (execution.isError === true) {
-      return deferred(
-        () => settleSynthetic(call.args, execution, 'synthetic', displayFields),
-        syntheticStopsBatch(execution),
-      );
+      return settleSynthetic(call.args, execution, 'synthetic', displayFields);
     }
 
     const beforeContext = buildBeforeExecuteContext(call, execution, allCalls, options);
-    const begun = await this.beforeExecuteEmitter.beginBeforeExecute(beforeContext);
-    if (begun.status === 'decided' && begun.decision?.veto !== undefined) {
-      const veto = begun.decision.veto;
-      return deferred(
-        () => settleSynthetic(call.args, veto, 'vetoed', displayFields),
-        syntheticStopsBatch(veto),
-      );
+    const decision = await this.beforeExecuteEmitter.fireBeforeExecute(
+      opened === undefined ? beforeContext : { context: beforeContext, event: opened.event },
+    );
+    if (decision?.veto !== undefined) {
+      return settleSynthetic(call.args, decision.veto, 'vetoed', displayFields);
     }
 
-    const commit = async (executionMetadata: unknown): Promise<PreparedToolCall> => {
-      await this.willExecuteEmitter.fireAsync(
-        {
-          turnId: options.turnId,
-          toolCall: call.toolCall,
-          execution,
-          args: call.args,
-        },
-        options.signal,
-      );
-      this.dispatchToolCall(call, call.args, options, displayFields);
-      return {
-        task: {
-          accesses: execution.accesses ?? ToolAccesses.all(),
-          execute: async (taskSignal) =>
-            this.runSingleExecution(call, execution, executionMetadata, options, taskSignal),
-        },
-        resolvedAccesses: execution.accesses,
-        stopBatchAfterThis: execution.stopBatchAfterThis,
-      };
-    };
-
-    if (begun.status !== 'pending') {
-      return {
-        stopBatchAfterThis: execution.stopBatchAfterThis,
-        settled: false,
-        finish: () => commit(begun.status === 'decided' ? begun.decision?.executionMetadata : undefined),
-        cancel: () => {},
-      };
-    }
-
+    const executionMetadata = decision?.executionMetadata;
+    await this.willExecuteEmitter.fireAsync(
+      {
+        turnId: options.turnId,
+        toolCall: call.toolCall,
+        execution,
+        args: call.args,
+      },
+      options.signal,
+    );
+    this.dispatchToolCall(call, call.args, options, displayFields);
     return {
+      task: {
+        accesses: execution.accesses ?? ToolAccesses.all(),
+        execute: async (taskSignal) =>
+          this.runSingleExecution(call, execution, executionMetadata, options, taskSignal),
+      },
+      resolvedAccesses: execution.accesses,
       stopBatchAfterThis: execution.stopBatchAfterThis,
-      settled: false,
-      cancel: () => {
-        begun.cancel();
-      },
-      finish: async () => {
-        const decision = await begun.settle();
-        if (decision?.veto !== undefined) {
-          return settleSynthetic(call.args, decision.veto, 'vetoed', displayFields);
-        }
-        return commit(decision?.executionMetadata);
-      },
     };
   }
 

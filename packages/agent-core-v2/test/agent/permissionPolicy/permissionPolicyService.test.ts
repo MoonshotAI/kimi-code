@@ -29,6 +29,7 @@ import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { EnvironmentError } from '#/environment/environmentRegistry';
 import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
 import { stubFlag } from '../../app/flag/stubs';
 import { PERMISSION_SECTION } from '#/agent/permissionRules/configSection';
 import { IBashParserService } from '#/app/bashParser/bashParser';
@@ -71,6 +72,7 @@ describe('AgentPermissionPolicyService chain', () => {
     ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));
+        reg.defineInstance(IFlagService, stubFlag(() => autoReviewEnabled));
         reg.definePartialInstance(IBootstrapService, {
           get args() {
             return hostArgs;
@@ -578,6 +580,7 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
     ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));
+        reg.defineInstance(IFlagService, stubFlag());
         reg.definePartialInstance(IBootstrapService, {
           args: { requestHeaders: {}, nonInteractive: false },
         });

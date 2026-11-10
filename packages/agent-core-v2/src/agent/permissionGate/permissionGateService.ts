@@ -75,6 +75,10 @@ export class AgentPermissionGate extends Service implements IAgentPermissionGate
       event.pass(result.executionMetadata);
       return;
     }
+    if (policyName === 'user-configured-deny') {
+      event.waitUntil(() => this.toolApproval.resolvePermissionResolution(result, event, policyName));
+      return;
+    }
     const resolved = await this.toolApproval.resolvePermissionResolution(result, event, policyName);
     if (resolved?.veto !== undefined) {
       event.veto(resolved.veto);

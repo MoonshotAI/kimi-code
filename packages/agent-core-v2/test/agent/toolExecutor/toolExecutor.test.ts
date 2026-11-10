@@ -26,6 +26,7 @@ import { createMcpTool } from '#/agent/mcp/tools/mcp';
 import type { MCPClient } from '#/mcpCore/types';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type {
+  BeforeExecuteDecision,
   BeforeToolExecuteEvent,
   ToolExecutionOutcome,
 } from '#/agent/toolExecutor/toolHooks';
@@ -234,6 +235,8 @@ function installAutoReview(
   permissions.set(IAgentPermissionPolicyService, new AgentPermissionPolicyService(
     permissions,
     permissions.get(IBootstrapService),
+    permissions.get(IFlagService),
+    permissions.get(IAgentPermissionModeService),
   ));
   const gate = new AgentPermissionGate(
     permissions.get(IAgentPermissionModeService),
@@ -651,6 +654,23 @@ describe('AgentToolExecutorService', () => {
       }),
     ]);
     expect(tool.calls).toEqual([]);
+    expect(protocolEventTypes()).toEqual(['tool.call.started', 'tool.result']);
+  });
+
+  it('resolves a pending veto before reporting the tool call', async () => {
+    const decision = deferred<BeforeExecuteDecision>();
+    executor.onBeforeExecuteTool((event) => {
+      event.waitUntil(() => decision.promise);
+    });
+    registry.register(new TestTool('echo'));
+
+    const pending = execute([toolCall('call_echo', 'echo', { text: 'hi' })]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(protocolEventTypes()).toEqual([]);
+
+    decision.resolve({ veto: { output: 'forbidden', isError: true } });
+    await pending;
+    expect(protocolEventTypes()).toEqual(['tool.call.started', 'tool.result']);
   });
 
   it('onBeforeExecuteTool veto with a plain result bypasses execute', async () => {
