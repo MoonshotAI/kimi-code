@@ -8,6 +8,7 @@ import {
   createUserMessage,
   extractText,
   type AssistantMessage,
+  type Message,
   type StreamedMessagePart,
   type ToolCall,
 } from '#/message';
@@ -1319,6 +1320,251 @@ describe('agent machine input.steer', () => {
       'user:steer me',
       'user:SKILLBLOCK\np2 body\nthird',
       'assistant:done',
+    ]);
+  });
+
+  it('interrupts a streaming step without retrying and consumes consecutive steers in FIFO order', async () => {
+    const requests: (readonly Message[])[] = [];
+    let firstSignal: AbortSignal | undefined;
+    let call = 0;
+    let toolExecutions = 0;
+    const requester: LlmRequester = {
+      generate: (_config, content, { onEvent, signal }) => {
+        requests.push([...content.messages]);
+        call += 1;
+        if (call === 1) {
+          firstSignal = signal;
+          onEvent?.({ type: 'llm.streaming.part', part: { type: 'think', think: 'reasoning' } });
+          onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'partial' } });
+          onEvent?.({ type: 'llm.streaming.part', part: toolCall('call-partial-1', 'side_effect', '{"unfinished"') });
+          onEvent?.({ type: 'llm.streaming.part', part: toolCall('call-partial-2', 'side_effect', '{"also_unfinished"') });
+          return new Promise<void>((resolve) => {
+            signal.addEventListener('abort', () => resolve(), { once: true });
+          });
+        }
+        streamMessage(createAssistantMessage([{ type: 'text', text: 'done' }]), onEvent);
+        return Promise.resolve();
+      },
+    };
+    const tools = stubTools(() => {
+      toolExecutions += 1;
+      return Promise.resolve({ content: [{ type: 'text', text: 'unexpected' }] });
+    }, 'side_effect');
+    const store = await testStore();
+    const actor = createTestAgent(store, requester, tools);
+    let turnStarts = 0;
+    actor.on('turn.started', () => {
+      turnStarts += 1;
+    });
+    actor.start();
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('hi') } });
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
+
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('same'), meta: { promptId: 'p1' } } });
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('same'), meta: { promptId: 'p2' } } });
+    actor.send({ type: 'input.steer', id: 'p1' });
+    actor.send({ type: 'input.steer', id: 'p2' });
+    actor.send({ type: 'input.interrupt', promptIds: ['p1', 'p2'] });
+    actor.send({ type: 'input.interrupt', promptIds: ['p1', 'p2'] });
+
+    await waitFor(actor, (s) => s.matches('idle') && store.getState().history.length === 5, {
+      timeout: 5000,
+    });
+
+    expect(firstSignal?.aborted).toBe(true);
+    expect(toolExecutions).toBe(0);
+    expect(turnStarts).toBe(1);
+    expect(requests).toHaveLength(2);
+    expect(requests[1]?.map((message) => `${message.role}:${extractText(message, '\n')}`)).toEqual([
+      'user:hi',
+      'assistant:partial',
+      'user:same',
+      'user:same',
+    ]);
+    expect(requests[1]?.[1]).toMatchObject({
+      role: 'assistant',
+      toolCalls: [],
+      content: [
+        { type: 'think', think: 'reasoning' },
+        { type: 'text', text: 'partial' },
+      ],
+    });
+    expect(rolesAndTexts(store.getState().history)).toEqual([
+      'user:hi',
+      'assistant:partial',
+      'user:same',
+      'user:same',
+      'assistant:done',
+    ]);
+  });
+
+  it('interrupts retry backoff and consumes the accepted steer without another failed attempt', async () => {
+    const requests: (readonly Message[])[] = [];
+    let call = 0;
+    let markRetrying!: () => void;
+    const retrying = new Promise<void>((resolve) => {
+      markRetrying = resolve;
+    });
+    const requester: LlmRequester = {
+      generate: (_config, content, { onEvent }) => {
+        requests.push([...content.messages]);
+        call += 1;
+        onEvent?.({ type: 'llm.sent' });
+        if (call === 1) {
+          onEvent?.({
+            type: 'llm.failed.remote',
+            error: {
+              kind: 'status',
+              statusCode: 500,
+              message: 'server error',
+              requestId: null,
+              retryAfterMs: 60_000,
+              headers: null,
+            },
+          });
+          markRetrying();
+          return Promise.resolve();
+        }
+        streamMessage(createAssistantMessage([{ type: 'text', text: 'recovered' }]), onEvent);
+        return Promise.resolve();
+      },
+    };
+    const store = await testStore();
+    const actor = createTestAgent(store, requester, [], { retry: { maxAttemptsPerStep: 3 } });
+    actor.start();
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('hi') } });
+    await retrying;
+
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('steer'), meta: { promptId: 'p1' } } });
+    actor.send({ type: 'input.steer', id: 'p1' });
+    actor.send({ type: 'input.interrupt', promptIds: ['p1'] });
+
+    await waitFor(actor, (s) => s.matches('idle') && store.getState().history.length === 3, {
+      timeout: 5000,
+    });
+    expect(call).toBe(2);
+    expect(requests[1]?.map((message) => `${message.role}:${extractText(message, '\n')}`)).toEqual([
+      'user:hi',
+      'user:steer',
+    ]);
+    expect(rolesAndTexts(store.getState().history)).toEqual([
+      'user:hi',
+      'user:steer',
+      'assistant:recovered',
+    ]);
+  });
+
+  it('ignores a late interrupt after the steer was already injected', async () => {
+    const requests: (readonly Message[])[] = [];
+    const signals: AbortSignal[] = [];
+    let call = 0;
+    let releaseFirst!: () => void;
+    let releaseSecond!: () => void;
+    const requester: LlmRequester = {
+      generate: (_config, content, { onEvent, signal }) => {
+        requests.push([...content.messages]);
+        signals.push(signal);
+        call += 1;
+        if (call === 1) {
+          return new Promise<void>((resolve) => {
+            releaseFirst = () => {
+              streamMessage(createAssistantMessage([], [toolCall('call-1', 'noop')]), onEvent);
+              resolve();
+            };
+          });
+        }
+        if (call === 2) {
+          onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'done' } });
+          return new Promise<void>((resolve) => {
+            releaseSecond = () => {
+              onEvent?.({
+                type: 'llm.streaming.finish',
+                finish: { finishReason: 'completed', rawFinishReason: 'stop' },
+              });
+              onEvent?.({ type: 'llm.done' });
+              resolve();
+            };
+          });
+        }
+        streamMessage(createAssistantMessage([{ type: 'text', text: 'duplicate' }]), onEvent);
+        return Promise.resolve();
+      },
+    };
+    const tools = stubTools(() => Promise.resolve({ content: [{ type: 'text', text: 'old tool' }] }), 'noop');
+    const store = await testStore();
+    const actor = createTestAgent(store, requester, tools);
+    actor.start();
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('hi') } });
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
+
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('steer'), meta: { promptId: 'p1' } } });
+    actor.send({ type: 'input.steer', id: 'p1' });
+    releaseFirst();
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+    actor.send({ type: 'input.interrupt', promptIds: ['p1'] });
+    await Promise.resolve();
+
+    expect(signals[1]?.aborted).toBe(false);
+    releaseSecond();
+    await waitFor(actor, (s) => s.matches('idle') && store.getState().history.length === 5, {
+      timeout: 5000,
+    });
+    expect(call).toBe(2);
+    expect(rolesAndTexts(store.getState().history)).toEqual([
+      'user:hi',
+      'assistant:',
+      'tool:old tool',
+      'user:steer',
+      'assistant:done',
+    ]);
+  });
+
+  it('does not abort a running tool when interruption is requested', async () => {
+    const requests: (readonly Message[])[] = [];
+    let call = 0;
+    const requester: LlmRequester = {
+      generate: (_config, content, { onEvent }) => {
+        requests.push([...content.messages]);
+        call += 1;
+        streamMessage(
+          call === 1
+            ? createAssistantMessage([], [toolCall('call-1', 'slow_tool')])
+            : createAssistantMessage([{ type: 'text', text: 'done' }]),
+          onEvent,
+        );
+        return Promise.resolve();
+      },
+    };
+    let toolSignal: AbortSignal | undefined;
+    let resolveTool: ((result: ToolResult) => void) | undefined;
+    const tools = stubTools(({ signal }) => {
+      toolSignal = signal;
+      return new Promise((resolve) => {
+        resolveTool = resolve;
+      });
+    }, 'slow_tool');
+    const store = await testStore();
+    const actor = createTestAgent(store, requester, tools);
+    actor.start();
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('hi') } });
+    await vi.waitFor(() => expect(resolveTool).toBeDefined());
+
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('steer'), meta: { promptId: 'p1' } } });
+    actor.send({ type: 'input.steer', id: 'p1' });
+    actor.send({ type: 'input.interrupt', promptIds: ['p1'] });
+    await Promise.resolve();
+
+    expect(toolSignal?.aborted).toBe(false);
+    expect(requests).toHaveLength(1);
+    resolveTool?.({ content: [{ type: 'text', text: 'slow' }] });
+    await waitFor(actor, (s) => s.matches('idle') && store.getState().history.length === 5, {
+      timeout: 5000,
+    });
+    expect(requests[1]?.map((message) => `${message.role}:${extractText(message, '\n')}`)).toEqual([
+      'user:hi',
+      'assistant:',
+      'tool:slow',
+      'user:steer',
     ]);
   });
 });
