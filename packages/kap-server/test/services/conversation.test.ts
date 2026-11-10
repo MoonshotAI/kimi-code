@@ -1,4 +1,6 @@
 import {
+  AutoReviewCompleted,
+  AutoReviewStarted,
   IAgentBlobService,
   IAgentLoopService,
   IEventBus,
@@ -1009,6 +1011,19 @@ describe('conversation feed', () => {
     const display = { kind: 'command', command: 'ls' } as const;
     await h.dispatcher.dispatch(new ToolCallDelta({ agentId: 'main', turnId: 0, toolCallId: 'call-1', name: 'Bash', argumentsPart: '{"command":' }));
     await h.dispatcher.dispatch(new ToolCallDelta({ agentId: 'main', turnId: 0, toolCallId: 'call-1', argumentsPart: '"ls"}' }));
+    await h.dispatcher.dispatch(new AutoReviewStarted({ agentId: 'main', turnId: 0, toolCallId: 'call-1', toolName: 'Bash' }));
+    await h.dispatcher.dispatch(new AutoReviewCompleted({
+      agentId: 'main',
+      turnId: 0,
+      toolCallId: 'call-1',
+      toolName: 'Bash',
+      triggerPolicy: 'fallback-ask',
+      model: 'k2',
+      decision: 'deny',
+      risk: 'medium',
+      reason: 'Needs confirmation.',
+      durationMs: 12,
+    }));
     await h.dispatcher.dispatch(new InteractionRequestEvent({
       agentId: 'main',
       id: 'i1',
@@ -1035,6 +1050,8 @@ describe('conversation feed', () => {
     expect(h.events).toMatchObject([
       { type: 'item.started', item: { item_id: 'call-1', type: 'tool_call', status: 'running', stage: 'input', name: 'Bash', input_text: '{"command":' } },
       { type: 'item.delta', ...tool, field: 'input_text', delta: '"ls"}' },
+      { type: 'item.updated', ...tool, set: { stage: 'auto_review' } },
+      { type: 'item.updated', ...tool, set: { stage: 'input' } },
       { type: 'item.updated', ...tool, set: { stage: 'awaiting_approval', interaction_id: 'i1', display } },
       { type: 'item.updated', ...tool, set: { stage: 'executing' } },
       { type: 'item.updated', ...tool, set: { input: { command: 'ls' } } },
@@ -1046,8 +1063,8 @@ describe('conversation feed', () => {
       { type: 'item.updated', ...tool, set: { progress: { percent: 40, status: 'verifying', custom_kind: 'example.kind', custom_data: { url: 'https://example.com/auth' } } } },
       { type: 'item.ended', turn_id: expect.any(String), item: { item_id: 'call-1', status: 'ended', outcome: 'completed', output: 'done', interaction_id: 'i1' } },
     ]);
-    expect(Object.keys((h.events[3] as { set: object }).set)).toEqual(['stage']);
-    expect(Object.keys((h.events[4] as { set: object }).set)).toEqual(['input']);
+    expect(Object.keys((h.events[5] as { set: object }).set)).toEqual(['stage']);
+    expect(Object.keys((h.events[6] as { set: object }).set)).toEqual(['input']);
     expect(midway).toMatchObject({ stage: 'executing', output: 'fresh', progress: { status: 'verifying', custom_kind: 'example.kind' } });
     const ended = (h.events.at(-1) as { item: ConversationItem }).item;
     expect(ended).not.toHaveProperty('stage', expect.anything());

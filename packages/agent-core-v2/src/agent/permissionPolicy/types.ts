@@ -12,6 +12,10 @@ export interface ApprovalRequest {
   toolName: string;
   action: string;
   display: ToolInputDisplay;
+  approvalDetail?: {
+    title: string;
+    detail: string;
+  };
 }
 
 export interface ApprovalResponse {

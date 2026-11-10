@@ -803,6 +803,7 @@ function interactionMessage(
         tool_name: request.toolName,
         action: request.action,
         tool_input_display: request.display,
+        approval_detail: request.approvalDetail,
         expires_at: approvalExpiresAt(interaction),
       },
       response:

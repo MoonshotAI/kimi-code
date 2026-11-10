@@ -30,6 +30,7 @@ export function toWireApproval(interaction: Interaction, sessionId: string): {
   tool_name: string;
   action: string;
   tool_input_display: unknown;
+  approval_detail?: { title: string; detail: string };
   created_at: string;
   expires_at: string;
 } {
@@ -44,6 +45,7 @@ export function toWireApproval(interaction: Interaction, sessionId: string): {
     tool_name: p.toolName,
     action: p.action,
     tool_input_display: p.display,
+    approval_detail: p.approvalDetail,
     created_at: new Date(interaction.createdAt).toISOString(),
     expires_at: approvalExpiresAt(interaction),
   };
