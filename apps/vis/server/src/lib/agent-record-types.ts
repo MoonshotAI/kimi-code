@@ -46,6 +46,7 @@ import type {
   GoalUpdate,
   InteractionRequestEvent,
   InteractionResolvedEvent,
+  InterruptionCancellationRequested,
   InterruptionReminderRecorded,
   LlmRequest,
   LlmToolsSnapshot,
@@ -198,6 +199,7 @@ export type AgentRecord =
   | WireRecordOf<'interaction.request', InteractionRequestEvent>
   | WireRecordOf<'interaction.resolved', InteractionResolvedEvent>
   | WireRecordOf<'interruptionReminder.recorded', InterruptionReminderRecorded>
+  | WireRecordOf<'interruptionReminder.requested', InterruptionCancellationRequested>
   | WireRecordOf<'llm.request', LlmRequest>
   | WireRecordOf<'llm.tools_snapshot', LlmToolsSnapshot>
   | WireRecordOf<'mcp.server_failed', McpServerFailed>
