@@ -3,6 +3,7 @@ import type { ModelCapability as HumanModelCapability } from '#human/llm-request
 import type { DefaultHeadersResolver, ProtocolEndpoint } from '#human/llm-requester/connection';
 import {
   anthropicEndpoint,
+  bedrockEndpoint,
   geminiEndpoint,
   kimiEndpoint,
   openAIEndpoint,
@@ -96,8 +97,9 @@ export interface ExplainedProviderEndpoint {
 export function explainProviderEndpoint(
   providerType: string,
   env: Readonly<Record<string, string | undefined>> = process.env,
+  protocol?: Protocol,
 ): ExplainedProviderEndpoint {
-  const definition = getProviderDefinition(providerType);
+  const definition = getProviderDefinition(providerType, protocol);
   if (definition === undefined) return {};
   const endpoint =
     normalizeEndpointDeclaration(definition.endpoint) ?? aggregateEndpoints(definition.endpoints);
@@ -186,6 +188,24 @@ registerProviderDefinition({
   id: 'openai_responses',
   baseProtocol: 'openai_responses',
   endpoint: openAIEndpoint,
+});
+
+registerProviderDefinition({
+  id: 'bedrock',
+  baseProtocol: 'anthropic',
+  endpoint: bedrockEndpoint,
+});
+
+registerProviderDefinition({
+  id: 'bedrock',
+  baseProtocol: 'openai',
+  endpoint: bedrockEndpoint,
+});
+
+registerProviderDefinition({
+  id: 'bedrock',
+  baseProtocol: 'openai_responses',
+  endpoint: bedrockEndpoint,
 });
 
 registerProviderDefinition({

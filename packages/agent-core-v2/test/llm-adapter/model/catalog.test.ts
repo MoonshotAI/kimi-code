@@ -557,6 +557,137 @@ describe('Model assembly (pure data)', () => {
       host.dispose();
     }
   });
+
+  describe('bedrock providers', () => {
+    const bedrockSections: Record<string, unknown> = {
+      providers: {
+        bedrock: { type: 'bedrock', env: { AWS_REGION: 'us-east-1', AWS_PROFILE: 'dev' } },
+      },
+      models: {
+        sonnet: { provider: 'bedrock', model: 'global.anthropic.claude-sonnet-4-6', maxContextSize: 200000 },
+        gpt: { provider: 'bedrock', model: 'openai.gpt-oss-120b-1:0', maxContextSize: 128000 },
+      },
+    };
+
+    it('assembles an anthropic-wired bedrock model with region-derived base url and profile', () => {
+      const { host, catalog } = createHost(bedrockSections);
+      try {
+        const model = catalog.get('sonnet');
+        expect(model.protocol).toBe('anthropic');
+        expect(model.providerType).toBe('bedrock');
+        expect(model.baseUrl).toBe('https://bedrock-runtime.us-east-1.amazonaws.com/anthropic');
+        expect(model.supportEfforts).toEqual(['low', 'medium', 'high', 'max']);
+        expect(model.capabilities.thinking).toBe(true);
+      } finally {
+        host.dispose();
+      }
+    });
+
+    it('assembles an openai-wired bedrock model with the openai base url suffix', () => {
+      const { host, catalog } = createHost(bedrockSections);
+      try {
+        const model = catalog.get('gpt');
+        expect(model.protocol).toBe('openai');
+        expect(model.baseUrl).toBe('https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1');
+      } finally {
+        host.dispose();
+      }
+    });
+
+    it('assembles a responses-wired bedrock model for openai gpt ids', () => {
+      const { host, catalog } = createHost({
+        providers: { bedrock: { type: 'bedrock', env: { AWS_REGION: 'us-east-1' } } },
+        models: {
+          gpt6: { provider: 'bedrock', model: 'global.openai.gpt-6-astra', maxContextSize: 1000000 },
+        },
+      });
+      try {
+        const model = catalog.get('gpt6');
+        expect(model.protocol).toBe('openai_responses');
+        expect(model.baseUrl).toBe('https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1');
+      } finally {
+        host.dispose();
+      }
+    });
+
+    it('lets an explicit model protocol win over bedrock prefix inference', () => {
+      const { host, catalog } = createHost({
+        providers: { bedrock: { type: 'bedrock', env: { AWS_REGION: 'us-east-1' } } },
+        models: {
+          responses: {
+            provider: 'bedrock',
+            protocol: 'openai_responses',
+            model: 'openai.gpt-5.4',
+            maxContextSize: 128000,
+          },
+        },
+      });
+      try {
+        const model = catalog.get('responses');
+        expect(model.protocol).toBe('openai_responses');
+        expect(model.baseUrl).toBe('https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1');
+      } finally {
+        host.dispose();
+      }
+    });
+
+    it('prefers a static credential over ambient AWS auth and skips the token provider', async () => {
+      const { host, catalog } = createHost({
+        providers: { bedrock: { type: 'bedrock', apiKey: 'static-bedrock-key' } },
+        models: {
+          sonnet: { provider: 'bedrock', model: 'anthropic.claude-sonnet-4-6', maxContextSize: 200000 },
+        },
+      });
+      try {
+        const model = catalog.get('sonnet');
+        expect(await model.credentialProvider?.resolve()).toEqual({
+          apiKey: 'static-bedrock-key',
+        });
+        expect(model.credentialProvider?.canRecover).toBeUndefined();
+      } finally {
+        host.dispose();
+      }
+    });
+
+    it('reads AWS_BEARER_TOKEN_BEDROCK from the env bag as a static credential', async () => {
+      const { host, catalog } = createHost({
+        providers: {
+          bedrock: { type: 'bedrock', env: { AWS_BEARER_TOKEN_BEDROCK: 'env-bearer-token' } },
+        },
+        models: {
+          sonnet: { provider: 'bedrock', model: 'anthropic.claude-sonnet-4-6', maxContextSize: 200000 },
+        },
+      });
+      try {
+        expect(await catalog.get('sonnet').credentialProvider?.resolve()).toEqual({
+          apiKey: 'env-bearer-token',
+        });
+      } finally {
+        host.dispose();
+      }
+    });
+
+    it('builds a recoverable ambient credential provider when no key is configured', async () => {
+      const { host, catalog } = createHost({
+        providers: {
+          bedrock: {
+            type: 'bedrock',
+            baseUrl: 'https://bedrock-runtime.us-east-1.amazonaws.com/anthropic',
+          },
+        },
+        models: {
+          sonnet: { provider: 'bedrock', model: 'anthropic.claude-sonnet-4-6', maxContextSize: 200000 },
+        },
+      });
+      try {
+        const provider = catalog.get('sonnet').credentialProvider;
+        expect(provider?.canRecover?.(Object.assign(new Error('x'), { status: 401 }))).toBe(true);
+        await expect(provider?.resolve()).resolves.toBeUndefined();
+      } finally {
+        host.dispose();
+      }
+    });
+  });
 });
 
 describe('ModelCatalog caching and config-event invalidation', () => {

@@ -12,6 +12,7 @@ Kimi Code CLI 支持同时接入多家模型供应商服务，模型在供应商
 | [`anthropic`](#anthropic) | Anthropic Messages | Claude 系列模型 |
 | [`openai`](#openai) | OpenAI Chat Completions | OpenAI 及兼容服务、DeepSeek、Qwen 等 |
 | [`openai_responses`](#openai_responses) | OpenAI Responses API | OpenAI 较新的 Responses 接口 |
+| [`bedrock`](#bedrock) | Anthropic Messages / OpenAI 兼容（按模型区分） | Amazon Bedrock |
 | [`google-genai`](#google-genai) | Google GenAI | Gemini API |
 | [`vertexai`](#vertexai) | Google GenAI on Vertex | Google Cloud Vertex AI |
 
@@ -148,6 +149,73 @@ api_key = "xxxxx"
 type = "google-genai"
 api_key = "xxxxx"
 base_url = "https://your-gateway.example"
+```
+
+## `bedrock`
+
+用于接入 Amazon Bedrock。一个 `bedrock` 供应商可以承载 Anthropic Messages API 或 OpenAI 兼容 API 的模型——CLI 会按 Bedrock 模型 ID 逐个推断线路协议，因此 Claude、GPT 和 Kimi 模型可以共用同一个供应商条目。
+
+该供应商类型的核心特点是认证方式：无需长期 API 密钥，它可以基于你的 AWS 环境凭证（标准 [AWS CLI 凭证链](https://docs.aws.amazon.com/zh_cn/cli/latest/userguide/cli-chap-configure.html)——环境变量、共享配置、SSO、实例角色等）生成短期持有者令牌（bearer token）。令牌会被缓存，在过期前自动重新生成，并在收到 401 时刷新。
+
+### AWS 环境凭证认证
+
+将 `type` 设为 `"bedrock"`，并在 `[providers.bedrock.env]` 子表中写入 AWS 区域（可选地再写一个 AWS 命名 profile）。在未配置 `api_key` / `api_key_env` 时，CLI 会自动通过 AWS 凭证链生成令牌：
+
+```toml
+[providers.bedrock]
+type = "bedrock"
+
+[providers.bedrock.env]
+AWS_REGION = "us-east-1"
+# AWS_PROFILE = "my-profile"   # 可选的 AWS CLI 命名 profile
+```
+
+如果不写 `AWS_REGION`，区域会按标准 AWS SDK 链解析（`AWS_REGION` / `AWS_DEFAULT_REGION` 环境变量，然后是所选 profile 的 `~/.aws/config`）。base URL 默认取区域化的 `bedrock-runtime.<region>.amazonaws.com` 端点——只有当你需要自定义端点（如 `bedrock-mantle`、代理或 FIPS/双栈主机名）时才设置 `base_url`（或 `AWS_BEDROCK_BASE_URL` 环境键）。
+
+### 模型与线路协议
+
+Bedrock 模型 ID 形如 `<vendor>.<model>`，并可带有跨区域推理 profile 前缀（`global.`、`us.`、`eu.` 等）。CLI 会在去掉该前缀后按模型 ID 推断线路协议，选择各模型系列在 `bedrock-runtime` 上实际提供的 API：
+
+- `anthropic.*` → Anthropic Messages API
+- `openai.gpt-oss*` → OpenAI Chat Completions API（这些开放权重模型在 `bedrock-runtime` 上仅提供此 API）
+- 其他 `openai.*` → OpenAI Responses API（GPT-6 / GPT-5.6 系列仅提供此 API，也是 OpenAI 推荐的方向）
+- `moonshotai.*` / `moonshot.*` → OpenAI Chat Completions API（Kimi 模型卡片推荐）
+
+其他前缀，或要为同时提供多种 API 的模型另行选择时，请在模型别名上显式设置 `protocol`：
+
+```toml
+[models."sonnet"]
+provider = "bedrock"
+model = "global.anthropic.claude-sonnet-4-6"
+max_context_size = 200000
+
+[models."gpt-6"]
+provider = "bedrock"
+model = "global.openai.gpt-6-astra"   # 推断为 OpenAI Responses API
+max_context_size = 1050000
+
+[models."gpt-oss"]
+provider = "bedrock"
+model = "openai.gpt-oss-120b-1:0"     # 推断为 OpenAI Chat Completions API
+max_context_size = 128000
+
+[models."kimi-k3-responses"]
+provider = "bedrock"
+model = "global.moonshotai.kimi-k3"
+protocol = "openai_responses"         # 显式覆盖：Kimi K3 同时提供 Responses API
+max_context_size = 1000000
+```
+
+当前大多数 Bedrock 模型要求使用推理 profile ID（即 `global.` / `us.` 等前缀），而不是基础模型 ID；请以 Bedrock 控制台中的模型卡片为准。
+
+### 长期 Bedrock API 密钥
+
+如果你更想用静态的 [Amazon Bedrock API 密钥](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html)而不是 AWS 环境凭证，可以像其他供应商一样配置——通过 `api_key`、`api_key_env`，或 `[providers.bedrock.env]` 子表里的 `AWS_BEARER_TOKEN_BEDROCK` 键。已配置的密钥始终优先于环境凭证链：
+
+```toml
+[providers.bedrock]
+type = "bedrock"
+api_key_env = "AWS_BEARER_TOKEN_BEDROCK"   # 每次请求都从该 shell 变量读取密钥
 ```
 
 ## `vertexai`

@@ -14,6 +14,7 @@ import {
   createOAuthCredentialProvider,
   createStaticCredentialProvider,
 } from '#human/credentials/credentials';
+import { createBedrockTokenProvider } from '#human/llm/builtin/provider/bedrock/credentials';
 import type { LlmCredentialProvider } from '#human/llm-requester/requester';
 import type { ModelCapability } from '../contract/capability';
 import { CONFIG_INVALID_ERROR_CODE } from '../contract/errors';
@@ -400,6 +401,12 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       return createOAuthCredentialProvider((options) =>
         tokens.getAccessToken(providerKey, oauthRef, { force: options?.force === true }),
       );
+    }
+    if (auth.aws !== undefined) {
+      return createBedrockTokenProvider({
+        region: auth.aws.region,
+        profile: auth.aws.profile,
+      });
     }
     return createStaticCredentialProvider(undefined);
   }

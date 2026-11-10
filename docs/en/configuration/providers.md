@@ -12,6 +12,7 @@ The `type` field in the `providers` table determines which protocol implementati
 | [`anthropic`](#anthropic) | Anthropic Messages | Claude model family |
 | [`openai`](#openai) | OpenAI Chat Completions | OpenAI and compatible services, DeepSeek, Qwen, etc. |
 | [`openai_responses`](#openai_responses) | OpenAI Responses API | OpenAI's newer Responses interface |
+| [`bedrock`](#bedrock) | Anthropic Messages / OpenAI-compatible (per model) | Amazon Bedrock |
 | [`google-genai`](#google-genai) | Google GenAI | Gemini API |
 | [`vertexai`](#vertexai) | Google GenAI on Vertex | Google Cloud Vertex AI |
 
@@ -148,6 +149,73 @@ A trailing `/v1beta` is stripped before the request. The SDK then appends the AP
 type = "google-genai"
 api_key = "xxxxx"
 base_url = "https://your-gateway.example"
+```
+
+## `bedrock`
+
+For connecting to Amazon Bedrock. One `bedrock` provider can serve models over the Anthropic Messages API or the OpenAI-compatible APIs — the wire protocol is inferred per model from the Bedrock model ID, so Claude, GPT, and Kimi models can share a single provider entry.
+
+The distinguishing feature of this provider type is authentication: instead of a long-lived API key, it can generate short-lived bearer tokens from your ambient AWS credentials (the standard [AWS CLI credential chain](https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-configure.html) — environment variables, shared config, SSO, instance roles, and so on). Tokens are cached and regenerated automatically before expiry, and refreshed on a 401.
+
+### Ambient AWS authentication
+
+Set `type = "bedrock"` and put the AWS region (and optionally a named AWS profile) in the `[providers.bedrock.env]` sub-table. When no `api_key` / `api_key_env` is configured, the CLI generates tokens from the AWS credential chain automatically:
+
+```toml
+[providers.bedrock]
+type = "bedrock"
+
+[providers.bedrock.env]
+AWS_REGION = "us-east-1"
+# AWS_PROFILE = "my-profile"   # optional named AWS CLI profile
+```
+
+If you omit `AWS_REGION`, the region is resolved through the standard AWS SDK chain (`AWS_REGION` / `AWS_DEFAULT_REGION` environment variables, then `~/.aws/config` for the selected profile). The base URL defaults to the regional `bedrock-runtime.<region>.amazonaws.com` endpoint — set `base_url` (or the `AWS_BEDROCK_BASE_URL` env key) only when you need a custom endpoint such as `bedrock-mantle`, a proxy, or a FIPS/dual-stack hostname.
+
+### Models and wire protocol
+
+Bedrock model IDs use the form `<vendor>.<model>`, optionally with a cross-region inference profile prefix (`global.`, `us.`, `eu.`, …). The CLI infers the wire protocol from the model ID after stripping that prefix, choosing the API each model family actually serves on `bedrock-runtime`:
+
+- `anthropic.*` → Anthropic Messages API
+- `openai.gpt-oss*` → OpenAI Chat Completions API (the only OpenAI API these open-weight models serve on `bedrock-runtime`)
+- other `openai.*` → OpenAI Responses API (the only API GPT-6 / GPT-5.6 models serve; OpenAI's preferred direction)
+- `moonshotai.*` / `moonshot.*` → OpenAI Chat Completions API (recommended on the Kimi model cards)
+
+For any other prefix, or to pick a different API for a model that serves more than one, set `protocol` on the model alias explicitly:
+
+```toml
+[models."sonnet"]
+provider = "bedrock"
+model = "global.anthropic.claude-sonnet-4-6"
+max_context_size = 200000
+
+[models."gpt-6"]
+provider = "bedrock"
+model = "global.openai.gpt-6-astra"   # infers the OpenAI Responses API
+max_context_size = 1050000
+
+[models."gpt-oss"]
+provider = "bedrock"
+model = "openai.gpt-oss-120b-1:0"     # infers the OpenAI Chat Completions API
+max_context_size = 128000
+
+[models."kimi-k3-responses"]
+provider = "bedrock"
+model = "global.moonshotai.kimi-k3"
+protocol = "openai_responses"         # explicit override: Kimi K3 also serves the Responses API
+max_context_size = 1000000
+```
+
+Most current Bedrock models require an inference profile ID (the `global.` / `us.` / … prefix) rather than the base model ID; check the model card in the Bedrock console.
+
+### Long-lived Bedrock API keys
+
+If you prefer a static [Amazon Bedrock API key](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html) instead of ambient AWS credentials, configure it like any other provider — via `api_key`, `api_key_env`, or the `AWS_BEARER_TOKEN_BEDROCK` key in the `[providers.bedrock.env]` sub-table. A configured key always takes precedence over the ambient credential chain:
+
+```toml
+[providers.bedrock]
+type = "bedrock"
+api_key_env = "AWS_BEARER_TOKEN_BEDROCK"   # read the key from this shell variable on every request
 ```
 
 ## `vertexai`

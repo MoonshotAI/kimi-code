@@ -76,6 +76,8 @@ Key names per provider:
 | `ANTHROPIC_BASE_URL` | Anthropic | Follows Anthropic SDK default |
 | `OPENAI_API_KEY` | OpenAI (`openai` and `openai_responses`) | None |
 | `OPENAI_BASE_URL` | OpenAI (`openai` and `openai_responses`) | `https://api.openai.com/v1` |
+| `AWS_BEARER_TOKEN_BEDROCK` | Amazon Bedrock | None |
+| `AWS_BEDROCK_BASE_URL` | Amazon Bedrock | Derived from the region as `bedrock-runtime.<region>.amazonaws.com` |
 | `GOOGLE_API_KEY` | Google GenAI, Vertex AI | None |
 | `VERTEXAI_API_KEY` | Vertex AI | None |
 | `GOOGLE_CLOUD_PROJECT` | Vertex AI | None |

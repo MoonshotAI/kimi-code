@@ -26,6 +26,7 @@ export const providerWireTypeSchema = z.enum([
   'openai',
   'openai_responses',
   'anthropic',
+  'bedrock',
   'google-genai',
   'vertexai',
 ]);
