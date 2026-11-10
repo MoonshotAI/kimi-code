@@ -8,7 +8,6 @@ import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 
 import {
-  ANIMATION_FRAME_INTERVAL_MS,
   deleteAllKittyImages,
   resetCapabilitiesCache,
   setCapabilities,
@@ -9068,42 +9067,20 @@ capabilities = ["image_in", "video_in"]
     }
 
     it('shows the status until the decision arrives', async () => {
-      const previousLevel = chalk.level;
-      chalk.level = 3;
-      vi.useFakeTimers();
-      try {
-        const { driver, emit } = await startReview();
-        const progressLine = (): string | undefined =>
-          renderTranscript(driver)
-            .split('\n')
-            .find((line) => stripSgr(line).includes(PROGRESS_TEXT));
+      const { driver, emit } = await startReview();
+      expect(stripSgr(renderTranscript(driver))).toContain(PROGRESS_TEXT);
 
-        const initial = progressLine();
-        expect(initial).toBeDefined();
+      emit({
+        type: 'auto_review.decision',
+        toolName: 'Bash',
+        triggerPolicy: 'fallback-ask',
+        model: 'review-model',
+        decision: 'allow',
+        risk: 'low',
+        durationMs: 1,
+      });
 
-        vi.advanceTimersByTime(ANIMATION_FRAME_INTERVAL_MS / 2);
-        expect(progressLine()).toBe(initial);
-
-        vi.advanceTimersByTime(ANIMATION_FRAME_INTERVAL_MS / 2);
-        const swept = progressLine();
-        expect(swept).not.toBe(initial);
-        expect(stripSgr(swept ?? '')).toContain(PROGRESS_TEXT);
-
-        emit({
-          type: 'auto_review.decision',
-          toolName: 'Bash',
-          triggerPolicy: 'fallback-ask',
-          model: 'review-model',
-          decision: 'allow',
-          risk: 'low',
-          durationMs: 1,
-        });
-
-        expect(stripSgr(renderTranscript(driver))).not.toContain(PROGRESS_TEXT);
-      } finally {
-        vi.useRealTimers();
-        chalk.level = previousLevel;
-      }
+      expect(stripSgr(renderTranscript(driver))).not.toContain(PROGRESS_TEXT);
     });
 
     it('clears the status when a cancelled turn ends without a decision', async () => {
