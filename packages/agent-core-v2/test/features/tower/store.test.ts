@@ -3605,18 +3605,19 @@ describe('concurrent state writes', () => {
       await secondGate;
     });
 
+    const published = /pid=\d+ since=\S+ token=[0-9a-f-]+/;
+    const deadline = Date.now() + 5_000;
     let heldContent = '';
     for (;;) {
       try {
         heldContent = await readFile(lockPath, 'utf8');
-        break;
       } catch {
-        await new Promise<void>((resolve) => {
-          setTimeout(resolve, 10);
-        });
+        heldContent = '';
       }
+      if (published.test(heldContent) || Date.now() >= deadline) break;
+      await delay(10);
     }
-    expect(heldContent).toMatch(/pid=\d+ since=\S+ token=[0-9a-f-]+/);
+    expect(heldContent).toMatch(published);
 
     openGate();
     await firstRun;
