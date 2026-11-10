@@ -40,7 +40,7 @@
 ```
 
 - `code`：业务结果，`0` 表示成功；错误码分段见下文。
-- `data`：成功时的业务数据。注意部分「错误」信封也携带非空 `data`——例如重复解决审批返回 `40902` 且 `data.resolved` 为 `false`——客户端应先判 `code` 再看 `data`。
+- `data`：成功时的业务数据。注意部分「错误」信封也携带非空 `data`——例如无法执行的撤销返回 `40911`，`data` 为 `{ reason, requestedCount, undoableCount }`——客户端应先判 `code` 再看 `data`。
 - `request_id`：本次请求的 ULID；客户端可用 `X-Request-Id` 请求头指定，非法值会被服务端重新生成。
 
 HTTP 状态码几乎总是 200，业务结果以 `code` 为准。例外情况：
@@ -65,8 +65,7 @@ HTTP 状态码几乎总是 200，业务结果以 `code` 为准。例外情况：
 | `400xx` | 请求参数错误 | `40001` 校验失败（`details` 逐字段说明）、`40003` 供应商由 OAuth 托管、`40006` 工作区源文件夹重复 |
 | `401xx` | 鉴权与就绪状态 | `40101` 未授权、`40110` 未配置供应商、`40113` 模型未解析 |
 | `404xx` | 资源不存在 | `40401` 会话、`40408` MCP 服务、`40409` 文件路径 |
-| `409xx` | 状态冲突 | `40901` 会话忙、`40902` 审批已解决、`40922` 分页条件与 `page_token` 不符、`40931` 会话正被其他客户端使用、`40932` 会话已被其他客户端更新、`40935` 无法进入 Tower 模式 |
-| `410xx` | 资源已过期 | `41001` 审批超时、`41002` 提问超时、`41003` 临时文件过期 |
+| `409xx` | 状态冲突 | `40901` 会话忙、`40902` 交互已结束、`40922` 分页条件与 `page_token` 不符、`40931` 会话正被其他客户端使用、`40932` 会话已被其他客户端更新、`40935` 无法进入 Tower 模式 |
 | `413xx` | 体积或边界超限 | `41302` 读取文件超 10 MB、`41304` 路径越出会话目录 |
 | `429xx` | 限流 | `42901` 鉴权失败封禁、`42902` 文件监听数超限 |
 | `500xx` | 服务端内部错误 | `50001` 未捕获异常、`50003` 持久化失败 |
@@ -279,6 +278,15 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 这组端点管理机器级的远程控制隧道（见 [远程控制指南](../guides/remote-control.md)）和账号的设备注册表。隧道状态按机器区分；设备注册表按账号区分、保存在云端，因此设备端点需要 Kimi 登录，并由服务端持会话代理到 relay——OAuth 凭据不会暴露给调用方。
 
+| 方法与路径 | 说明 |
+| --- | --- |
+| `GET /api/v1/remote-control` | 读取隧道状态 |
+| `POST /api/v1/remote-control` | 开启或关闭隧道 |
+| `GET /api/v1/remote-control/devices` | 列出账号下的设备 |
+| `PATCH /api/v1/remote-control/devices/{id}` | 重命名设备 |
+| `POST /api/v1/remote-control/devices/{id}/deactivate` | 让设备下线 |
+| `DELETE /api/v1/remote-control/devices/{id}` | 从注册表中删除设备 |
+
 #### `GET /api/v1/remote-control`
 
 返回当前隧道状态。当隧道处于关闭状态、但本机另一个存活进程持有单实例锁时，`data.conflict` 携带该持有者信息；每次读取都会重新检查锁，持有者进程退出后 `conflict` 与已存的 `error` 会一并清除。
@@ -338,6 +346,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | --- | --- |
 | `GET /api/v1/config` | 读取全局配置（密钥字段脱敏） |
 | `POST /api/v1/config` | 合并式更新配置，并广播 `event.config.changed` |
+| `POST /api/v1/client_configs` | 读取由 Kimi Code 服务远程控制的指定客户端配置 |
 
 #### `GET /api/v1/config`
 
@@ -405,6 +414,16 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `disable_feedback_survey` | body | boolean | 是否关闭会话评分提示 |
 
 成功时 `data` 为完整的更新后配置，形态与 `GET /api/v1/config` 相同。
+
+#### `POST /api/v1/client_configs`
+
+读取由 Kimi Code 服务远程控制的指定客户端配置——哪些模型或思考强度的切换需要用户确认，以及客户端的升级策略。服务端从账号所在区域的 Kimi Code 服务读取（设置了 `KIMI_CODE_BASE_URL` 时改用该地址），并规范化成该名称预期的结构。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `name` | body | string | **必填。** `model_switch_confirm`、`effort_switch_confirm` 或 `client_upgrade_policy` |
+
+成功时，`data` 为 `{ name, config }`。名称不在上述范围内或读取失败时，`config` 为 `null`，客户端回退到内置行为。读到的值不会变成 `null`：缺失或格式不对的字段取关闭状态的默认值，例如格式不对的 `model_switch_confirm` 会返回 `{ enable: false, rules: [] }`。
 
 ### 模型与供应商
 
@@ -635,8 +654,10 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `GET /api/v1/sessions/{session_id}/environment` | 读取 main agent 的环境绑定 |
 | `GET /api/v1/sessions/{session_id}/environments` | 列出会话工作区已注册的环境 |
 | `POST /api/v1/sessions/{session_id}/export` | 导出会话与诊断信息（zip 流，不走信封） |
-| `GET /api/v1/sessions/{session_id}/snapshot` | 客户端重建用全量快照（含 `as_of_seq` 与 `epoch`） |
 | `GET /api/v1/sessions/{session_id}/media/{file_id}` | 按文件 id 下载提示词媒体（二进制） |
+| `GET /api/v1/sessions/{session_id}/file-history/changes` | 列出一轮改动过的文件 |
+| `GET /api/v1/sessions/{session_id}/file-history/content` | 读取文件在一轮开始或结束时的内容 |
+| `POST /api/v1/sessions/{session_id}/rating` | 询问是否显示满意度问卷，并上报问卷的显示和回答 |
 
 #### session 对象
 
@@ -656,11 +677,10 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `last_turn_reason` | string | main agent 最近一次轮次的结果：`completed` / `cancelled` / `failed` |
 | `last_prompt` | string | 最近一条用户提示词文本（如有） |
 | `metadata` | object | 自定义元数据；始终携带 `cwd`（会话的工作目录） |
-| `agent_config` | object | 投影为 `{ model }`；`model` 在大多数响应中为 `""`，由 `GET /api/v1/sessions/{session_id}/snapshot` 填入实时模型；创建请求设置了模型时，创建响应和 `event.session.created` 里也会带上 |
-| `usage` | object | token 汇总 `{ input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, context_tokens, context_limit?, total_cost_usd?, turn_count? }`；在 snapshot 端点之外全为零 |
+| `agent_config` | object | 投影为 `{ model }`；会话已加载到当前服务端进程、且 main agent 有模型时，`model` 为 main agent 当前的模型（例如创建请求设置了模型时的创建响应），否则为 `""` |
+| `usage` | object | token 汇总 `{ input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, context_tokens, context_limit?, total_cost_usd?, turn_count? }`；当前始终为零。实时的上下文大小随每个 Agent 的 `usage` 帧通过 WebSocket 下发（见 [事件](#事件)） |
 | `permission_rules` | array | 会话权限规则；当前始终为 `[]` |
 | `message_count` | integer | 消息数；当前始终为 `0` |
-| `last_seq` | integer | 最后的事件序列号；当前始终为 `0` |
 
 #### `POST /api/v1/sessions`
 
@@ -957,18 +977,6 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `web_log` | body | string | 要包含在归档中的客户端日志文本，最多 256 KB UTF-8 |
 | `desktop` | body | boolean | 同时包含桌面宿主的日志。默认 `false` |
 
-#### `GET /api/v1/sessions/{session_id}/snapshot`
-
-为重新同步后重建客户端组装一份原子快照：会话、最近的消息、进行中的轮次、存活的 subagent 以及待处理交互，全部盖上 `as_of_seq` 水位与用于重新订阅的 `epoch`——见 [断线恢复](#断线恢复)。与普通的会话端点不同，内嵌的会话携带实时的 `agent_config.model` 与真实的 `usage` 总计。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **必填。** 会话 id |
-
-成功时，`data` 为 `{ as_of_seq, epoch, session, messages, in_flight_turn, subagents?, pending_approvals, pending_questions }`：`session` 为 [session 对象](#session-对象)，`messages` 为最新 100 条消息的 `{ items, has_more }`，`in_flight_turn` 为已部分流式输出的轮次（空闲时为 `null`，已知时带 `current_prompt_id`），`subagents` 列出存活的 subagent 任务，`pending_approvals` / `pending_questions` 承载未答复的交互。
-
-- `40401`：会话不存在
-
 #### `GET /api/v1/sessions/{session_id}/media/{file_id}`
 
 按文件 id 下载提示词媒体文件（会话提示词引用的图片或其他附件）；尚未提交到会话的 id 会回退到暂存的上传中查找。响应为二进制并支持 `Range`（范围请求返回 206）——共享约定见 [二进制与流式端点](#二进制与流式端点)；与那里走信封的端点不同，会话或文件不存在时会返回真正的 404 状态码并携带信封体。
@@ -977,6 +985,52 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
 | `file_id` | path | string | **必填。** 媒体文件 id |
+
+#### `GET /api/v1/sessions/{session_id}/file-history/changes`
+
+从轮次级文件历史中列出 main agent 某一轮改动过的文件：把这一轮开始时记录的内容，与结束时记录的内容比较；轮次仍在进行时，与磁盘上的当前文件比较。没有变化的文件不列出。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **必填。** 会话 id |
+| `turn_number` | query | integer | **必填。** 轮次的 `turn_number`（见 [对话协议](#对话协议)）；仍接受已弃用的别名 `turn_id` |
+
+成功时，`data` 为 `{ changes, recorded }`。每项变更为 `{ path, status, additions, deletions, binary?, oversize? }`：`status` 为 `added` / `modified` / `deleted`，`additions` / `deletions` 是变更的行数。`binary` 表示文件不是文本或内容已不再保存，`oversize` 表示文件过大没有记录，两者的行数都为 `0`。轮次的文件历史不完整时——从未记录，或部分已记录的内容后来被清理——`recorded` 为 `false`，此时 `changes` 可能为空或不全。
+
+- `40001`：`turn_number` 缺失或无效
+- `40401`：会话不存在
+
+#### `GET /api/v1/sessions/{session_id}/file-history/content`
+
+读取 main agent 的文件历史在某一轮开始或结束时记录的文件内容，例如用来展示这一轮的 diff。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **必填。** 会话 id |
+| `turn_number` | query | integer | **必填。** 轮次的 `turn_number`；仍接受已弃用的别名 `turn_id` |
+| `path` | query | string | **必填。** 文件路径，与 `file-history/changes` 列出的一致 |
+| `phase` | query | string | `start`（默认）取这一轮之前的内容，`end` 取这一轮之后的内容 |
+
+成功时，`data` 为 `{ content }`。`content` 为 `{ version, content?, binary? }`，`version` 是文件在历史中的版本号：文本放在 `content` 中，文件不是文本时 `binary` 为 `true`，两者都没有表示文件在这个时间点不存在。`phase=end` 时，这一轮没有改动的文件按开始时的内容返回。这一轮没有该阶段的记录，或文件没有被记录、过大、已保存的内容已不存在时，`content` 为 `null`。
+
+- `40001`：`turn_number` 或 `path` 缺失或无效
+- `40401`：会话不存在
+
+#### `POST /api/v1/sessions/{session_id}/rating`
+
+驱动客户端在一轮结束后可能显示的满意度问卷：一轮完成后，客户端先询问要不要显示，再上报问卷何时显示、用户如何回答。是否给出问卷取决于 Kimi Code 服务设定的抽样规则和本地冷却时间，因此多数询问不会给出问卷。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **必填。** 会话 id |
+| `op` | body | string | **必填。** `evaluate` / `shown` / `respond` / `abandon` |
+| `turn_id` | body | string | `evaluate` 时**必填**：刚完成的轮次的 `turn_id` |
+| `appearance_id` | body | string | `shown` / `respond` / `abandon` 时**必填**：`evaluate` 返回的 `id` |
+| `response` | body | string | `respond` 时**必填**：`bad` / `fine` / `good` / `dismissed` |
+
+`evaluate` 时，`data` 为 `{ appearance }`：客户端此时应显示问卷时为 `{ id, survey }`，`survey` 为 `session` 或 `long_context`；否则为 `null`——包括该轮不是 main agent 最近完成的轮次、开启了 `disable_feedback_survey`，或关闭了遥测。问卷显示后上报 `shown`，用户作答后上报 `respond`（用户关掉问卷时为 `dismissed`），问卷没有得到回答就消失时上报 `abandon`，例如用户转去了别处；这三种操作返回 `data: null`。
+
+- `40001`：校验失败
 
 ### 消息与轮次
 
@@ -990,7 +1044,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 #### `GET /api/v1/sessions/{session_id}/messages`
 
-分页返回 main agent 的消息历史——与会话快照共享的扁平化上下文转录——最新在前。游标分页遵循 [分页](#分页)；读取历史会在会话为冷态时将其恢复。
+分页返回 main agent 的消息历史——扁平化的上下文转录——最新在前。游标分页遵循 [分页](#分页)；读取历史会在会话为冷态时将其恢复。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -1145,75 +1199,38 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 ### 审批与提问
 
-审批与提问是会话的两类待处理交互：审批是为工具调用请求许可，提问是请求带标签选项的结构化输入。这些端点用于列出和答复它们；新的请求通过 WebSocket 以 `event.approval.requested` 与 `event.question.requested` 到达。
+审批与提问是会话的两类交互：审批是为工具调用请求许可，提问是请求带标签选项的结构化输入。待处理的交互通过 WebSocket 以 `interaction` 帧下发（见 [事件](#事件)），用这个端点答复。
 
 | 方法与路径 | 说明 |
 | --- | --- |
-| `GET /api/v1/sessions/{session_id}/approvals` | 列出待处理的审批请求（必须 `status=pending`） |
-| `POST /api/v1/sessions/{session_id}/approvals/{approval_id}` | 答复审批 |
-| `GET /api/v1/sessions/{session_id}/questions` | 列出待处理的提问（必须 `status=pending`） |
-| `POST /api/v1/sessions/{session_id}/questions/{question_id}` | 回答提问 |
-| `POST /api/v1/sessions/{session_id}/questions/{question_id}:dismiss` | 忽略提问 |
+| `POST /api/v1/sessions/{session_id}/interactions/{interaction_id}` | 答复待处理的审批或提问 |
 
-#### `GET /api/v1/sessions/{session_id}/approvals`
+#### `POST /api/v1/sessions/{session_id}/interactions/{interaction_id}`
 
-列出会话待处理的审批请求——即工具调用发起的权限提示。读取列表会在会话为冷态时将其恢复。
+答复一个待处理的交互，让等待中的工具调用继续。请求体的 `kind` 必须与交互的类型一致。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
-| `status` | query | string | **必填。** 必须为 `pending` |
+| `interaction_id` | path | string | **必填。** `interaction` 帧中的 `interaction_id` |
+| `kind` | body | string | **必填。** `approval` 或 `question` |
 
-成功时，`data` 为 `{ items }`，每个元素为 `{ approval_id, session_id, agent_id, turn_id?, tool_call_id, tool_name, action, tool_input_display, created_at, expires_at }`：`agent_id` 是发起审批的 agent id（主 agent 为 `main`）；`tool_name` / `action` / `tool_input_display` 描述等待许可的调用，`expires_at` 为 `created_at` 之后 24 小时。
-
-- `40001`：`status` 缺失或不是 `pending`
-- `40401`：会话不存在
-
-#### `POST /api/v1/sessions/{session_id}/approvals/{approval_id}`
-
-答复一个待处理的审批请求，让等待中的工具调用继续执行（或不执行）。
+答复审批时使用这些字段：
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
-| `session_id` | path | string | **必填。** 会话 id |
-| `approval_id` | path | string | **必填。** 审批请求 id |
 | `decision` | body | string | **必填。** `approved` / `rejected` / `cancelled` |
 | `scope` | body | string | 配合 `approved` 使用，`session`（唯一取值）还会让该审批规则在会话的剩余时间内被记住 |
 | `feedback` | body | string | 回传给 Agent 的自由文本反馈 |
 | `selected_label` | body | string | 当请求提供了带标签的选项时（例如计划审阅），所选选项的标签 |
 
-成功时，`data` 为 `{ resolved: true, resolved_at }`。
-
-- `40001`：校验失败
-- `40401`：会话不存在
-- `40404`：没有该 id 的待处理审批
-- `40902`：审批已被答复；`data` 携带 `{ resolved: false }`
-
-#### `GET /api/v1/sessions/{session_id}/questions`
-
-列出会话待处理的提问。
+答复提问时，`answers` 和 `dismissed` 二选一：
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
-| `session_id` | path | string | **必填。** 会话 id |
-| `status` | query | string | **必填。** 必须为 `pending` |
-
-成功时，`data` 为 `{ items }`，每个元素为 `{ question_id, session_id, agent_id?, turn_id?, tool_call_id?, questions, created_at }`。`agent_id?` 是发起提问的 agent id（已知时；主 agent 为 `main`）。`questions` 包含 1–4 个 `{ id, question, header?, body?, options, multi_select?, allow_other?, other_label?, other_description? }` 条目，每个条目带 2–4 个 `{ id, label, description? }` 形式的 `options`；`multi_select` 允许选择多个选项，`allow_other` 允许自由文本回答。
-
-- `40001`：`status` 缺失或不是 `pending`
-- `40401`：会话不存在
-
-#### `POST /api/v1/sessions/{session_id}/questions/{question_id}`
-
-回答一个待处理的提问。两个提问端点通过同一条路由 `POST /api/v1/sessions/{session_id}/questions/{tail}` 分发：单独的提问 id 表示回答问题，`{question_id}:dismiss` 尾部表示忽略问题，其他情况返回 `40001`。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **必填。** 会话 id |
-| `question_id` | path | string | **必填。** 提问 id |
-| `answers` | body | object | **必填。** 提问条目 id（`q_0`……）到答案对象的映射；变体见下 |
+| `answers` | body | object | 提问条目 `id`（来自帧中的 `request.questions`）到答案对象的映射；变体见下 |
+| `dismissed` | body | boolean | 为 `true` 时忽略该提问，不作回答 |
 | `method` | body | string | 答案的产生方式：`enter` / `space` / `number_key` / `click` |
-| `note` | body | string | 附在回答上的自由文本备注 |
 
 每个答案是按 `kind` 区分的对象：
 
@@ -1225,27 +1242,12 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `multi_with_other` | `option_ids`、`other_text` | 选项加自由文本 |
 | `skipped` | — | 跳过了该条目 |
 
-成功时，`data` 为 `{ resolved: true, resolved_at }`。
+成功时，`data` 为 `{ outcome, ended_at }`：审批的 `outcome` 为 `approved` / `rejected` / `cancelled`，提问的为 `answered` / `dismissed`。订阅者同时会收到这个交互的最后一帧 `interaction`。
 
-- `40001`：校验失败（`details` 列出每个字段）
+- `40001`：校验失败（`details` 列出每个字段），或 `kind` 与交互的类型不一致
 - `40401`：会话不存在
-- `40405`：没有该 id 的待处理提问
-- `40902`：提问已被答复；`data` 携带 `{ resolved: false }`
-
-#### `POST /api/v1/sessions/{session_id}/questions/{question_id}:dismiss`
-
-忽略一个待处理的提问，不作回答。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **必填。** 会话 id |
-| `question_id` | path | string | **必填。** 提问 id |
-
-成功时信封的 `code` 是 `40909`（`question dismissed`）而不是 `0`，`data` 为 `{ dismissed: true, dismissed_at }`——客户端必须特殊处理该端点的成功码。
-
-- `40401`：会话不存在
-- `40405`：没有该 id 的待处理提问
-- `40902`：提问已被答复；`data` 携带 `{ resolved: false }`
+- `40404`：会话中没有该 id 的交互
+- `40902`：交互已经结束
 
 ### 技能、工具与 MCP
 
@@ -1630,6 +1632,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `POST /api/v1/workspace/fs:list` | 无会话的工作区目录列举 |
 | `POST /api/v1/workspace/fs:search` | 无会话的工作区搜索（body 携带工作区引用） |
 | `POST /api/v1/workspace/fs:suggest` | 无会话的文件补全候选（用于 `@` 文件提及） |
+| `POST /api/v1/fs:suggest` | 跨一个或多个绝对路径根目录的文件补全候选，不需要会话或工作区 |
 | `GET /api/v1/sessions/{session_id}/fs/{path}:download` | 下载会话文件（二进制，见下文） |
 | `GET /api/v1/fs:browse` | 列出本机目录（文件夹选择器用） |
 | `GET /api/v1/fs:home` | 用户主目录与最近工作区 |
@@ -1997,6 +2000,21 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 - `40001`：请求体校验失败
 - `40410`：工作区不存在，且不是可用的绝对路径
+
+#### `POST /api/v1/fs:suggest`
+
+在一个或多个绝对路径根目录中给出文件与目录补全候选，不需要会话或工作区，也不会登记任何东西。第一个根目录是主根：它下面的候选以相对路径返回，其他根目录下的候选以绝对路径返回。互相重叠的根目录只搜索一次。
+
+请求体用 `roots` 代替 `workspace`，其余 `query`、`limit`、`follow_gitignore`、`show_hidden`、`stream`、`include_globs`、`exclude_globs` 字段与 `POST /api/v1/workspace/fs:suggest` 相同：
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `roots` | body | string[] | **必填。** 1–32 个绝对目录路径；第一个是主根 |
+
+响应（包括 `stream: true` 时的 NDJSON 形式）与 `POST /api/v1/workspace/fs:suggest` 相同。
+
+- `40001`：请求体校验失败，包括根目录不是绝对路径
+- `40409`：根目录不存在或不是目录（`msg` 中写明是哪一个）
 
 #### `GET /api/v1/fs:browse`
 
@@ -2397,6 +2415,8 @@ Agent 自身的状态由另外四种平铺帧同步，每帧都携带完整的�
 - `usage`：`{ context_tokens, max_context_tokens? }`。只有最新值有意义，因此上下文增长期间服务端每秒最多发送几次。
 - `goal`：`{ goal? }`，会话没有目标时省略 `goal`，否则为 `{ objective, status: "active" | "paused" | "blocked" | "complete", completion_criterion?, turns_used, tokens_used, wall_clock_ms }`。
 - `todo`：`{ items: [{ title, status: "pending" | "in_progress" | "done" }] }`，取自 agent 的待办存储，因此会跟随撤销回退，重启后也能恢复。
+
+审批与提问以 `interaction` 帧下发，发给会话的所有订阅者：`{ type: "interaction", session_id, agent_id, event_created_at, interaction_id, kind: "approval" | "question", status: "pending" | "ended", request, response?, outcome?, ended_at?, tool_call_id? }`。`agent_id` 是发起交互的 Agent，`tool_call_id` 是等待中的工具调用，它的 `tool_call` 条目带有相同的 `interaction_id`。审批的 `request` 为 `{ tool_name, action, tool_input_display?, expires_at }`，`expires_at` 为发起后 24 小时；提问的 `request` 为 `{ questions }`，包含 1–4 个 `{ id, question, header?, body?, options, multi_select?, allow_other?, other_label?, other_description? }` 条目，每个条目带 2–4 个 `{ id, label, description? }` 形式的 `options`——`multi_select` 允许选择多个选项，`allow_other` 允许自由文本回答。用 [`POST /api/v1/sessions/{session_id}/interactions/{interaction_id}`](#post-apiv1sessionssession_idinteractionsinteraction_id) 答复交互。交互结束时——被答复，或因所在的轮次结束而取消——最后一帧带上 `status: "ended"`、`ended_at`、`outcome`（`approved` / `rejected` / `cancelled` / `answered` / `dismissed`）和 `response`：审批为 `{ decision, scope?, feedback?, selected_label? }`，已回答的提问为 `{ answers, method? }`，其中 `answers` 把每个问题的文本映射到对应的回答。
 
 ### 断线恢复
 
