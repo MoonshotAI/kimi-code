@@ -46,6 +46,8 @@ export interface ParsedServerOptions {
   allowedHosts: readonly string[];
   /** Custom browser tab title for this web UI instance (`--web-title`). */
   webTitle?: string;
+  /** Internal Unix domain socket path for a background server (`--socket`). */
+  socketPath?: string;
   /** Internal owner tag for a background server; enables idle exit. */
   managedBy?: string;
 }
@@ -65,6 +67,8 @@ export interface ServerCliOptions {
   allowedHost?: string[];
   /** Custom browser tab title for this web UI instance (`--web-title`). */
   webTitle?: string;
+  /** Internal Unix domain socket path for a background server (`--socket`). */
+  socket?: string;
   /** Internal owner tag for a background server (`--managed-by`). */
   managedBy?: string;
 }
@@ -80,6 +84,7 @@ export function parseServerOptions(opts: ServerCliOptions): ParsedServerOptions 
     dangerousBypassAuth: opts.dangerousBypassAuth === true,
     allowedHosts: parseAllowedHostArgs(opts.allowedHost),
     webTitle: opts.webTitle,
+    socketPath: opts.socket,
     managedBy: opts.managedBy,
   };
 }

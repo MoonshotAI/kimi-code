@@ -1,7 +1,9 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { createServer } from 'node:net';
+import type { IncomingHttpHeaders, OutgoingHttpHeaders } from 'node:http';
+import { createInterface } from 'node:readline';
 import { setTimeout as sleep } from 'node:timers/promises';
 
+import type { RpcFrame } from '../../transport/stdioRpc';
 import { HOST_PROTOCOL_VERSION } from './hostProtocol';
 import type { HostEntry } from './hostsConfig';
 
@@ -21,18 +23,38 @@ export type HostConnectFailure =
   | 'remote_start_failed'
   | 'unknown';
 
-export interface HostEndpoint {
-  readonly origin: string;
-  readonly port: number;
-  readonly token: string;
+export interface HostHttpRequest {
+  readonly method: string;
+  readonly path: string;
+  readonly headers: IncomingHttpHeaders;
+  readonly body?: Buffer;
+}
+
+export interface HostHttpResponse {
+  readonly status: number;
+  readonly headers: OutgoingHttpHeaders;
+  readonly body: Buffer;
+}
+
+export interface HostWsHandlers {
+  onMessage(data: string): void;
+  onClose(code?: number, reason?: string): void;
+}
+
+export interface HostWsSession {
+  send(data: string): void;
+  close(code?: number, reason?: string): void;
+}
+
+export interface HostSession {
   readonly version: string;
+  request(req: HostHttpRequest): Promise<HostHttpResponse>;
+  openWebSocket(path: string, handlers: HostWsHandlers): HostWsSession;
 }
 
 export interface BootstrapResult {
-  readonly port: number;
-  readonly token: string;
   readonly version: string;
-  readonly agentSocket?: string;
+  readonly pid?: number;
 }
 
 export interface RemoteProbe {
@@ -73,11 +95,7 @@ const SSH_OPTIONS = [
 ];
 const BOOTSTRAP_TIMEOUT_MS = 60_000;
 const VERSION_TIMEOUT_MS = 20_000;
-const TUNNEL_READY_ATTEMPTS = 75;
-const TUNNEL_POLL_MS = 200;
 const MAX_RECONNECT_DELAY_MS = 30_000;
-const LOCAL_BIND_ATTEMPTS = 3;
-const LOCAL_BIND_FAILURE = /Address already in use|cannot listen to port/i;
 const RETRYABLE: ReadonlySet<HostConnectFailure> = new Set([
   'connection_refused',
   'host_unreachable',
@@ -90,7 +108,6 @@ const ENSURE_DAEMON_FAILURES: Readonly<Record<string, HostConnectFailure>> = {
   version_mismatch_busy: 'remote_busy',
   lock_timeout: 'remote_start_failed',
   start_timeout: 'remote_start_failed',
-  token_unavailable: 'remote_start_failed',
 };
 
 function shQuote(value: string): string {
@@ -112,13 +129,12 @@ export function classifySshFailure(stderr: string, exitCode: number | null): Hos
   if (/Could not resolve hostname|Name or service not known|nodename nor servname/i.test(stderr)) return 'host_not_found';
   if (/Host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED/i.test(stderr)) return 'host_key_changed';
   if (/Permission denied|Too many authentication failures/i.test(stderr)) return 'authentication_failed';
-  if (LOCAL_BIND_FAILURE.test(stderr)) return 'unknown';
   if (/forwarding failed|administratively prohibited/i.test(stderr)) return 'port_forwarding_denied';
   if (/Connection refused/i.test(stderr)) return 'connection_refused';
   if (/No route to host|Network is unreachable/i.test(stderr)) return 'host_unreachable';
   if (/timed out/i.test(stderr)) return 'connect_timeout';
   if (exitCode === 126 || exitCode === 127) return 'executor_not_found';
-  if (/unknown command|unknown option|too many arguments|excess arguments/i.test(stderr)) return 'executor_outdated';
+  if (/unknown command|unknown option|too many arguments|excess arguments|has been deprecated/i.test(stderr)) return 'executor_outdated';
   return 'unknown';
 }
 
@@ -131,7 +147,12 @@ function readVersionLine(stdout: string): string | undefined {
 
 function readMarker(stdout: string): Record<string, unknown> | undefined {
   const line = stdout.split('\n').find((candidate) => candidate.startsWith(BOOTSTRAP_MARKER));
-  return line === undefined ? undefined : (JSON.parse(line.slice(BOOTSTRAP_MARKER.length)) as Record<string, unknown>);
+  if (line === undefined) return undefined;
+  try {
+    return JSON.parse(line.slice(BOOTSTRAP_MARKER.length)) as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
 }
 
 function outdatedError(version: string | undefined): HostConnectError {
@@ -160,12 +181,9 @@ export function parseBootstrapOutput(stdout: string): BootstrapResult | undefine
   const checked = checkedMarker(stdout);
   if (checked === undefined) return undefined;
   const { marker, version } = checked;
-  if (typeof marker['port'] !== 'number' || typeof marker['token'] !== 'string') return undefined;
   return {
-    port: marker['port'],
-    token: marker['token'],
     version: version ?? 'unknown',
-    agentSocket: typeof marker['agentSocket'] === 'string' ? marker['agentSocket'] : undefined,
+    pid: typeof marker['pid'] === 'number' ? marker['pid'] : undefined,
   };
 }
 
@@ -195,6 +213,107 @@ function identityArgs(entry: HostEntry): string[] {
     : ['-i', entry.identityFile, '-o', 'IdentitiesOnly=yes'];
 }
 
+class ActiveHostSession implements HostSession {
+  private nextId = 0;
+  private closed = false;
+  private readonly pendingHttp = new Map<
+    string,
+    { resolve(res: HostHttpResponse): void; reject(err: Error): void }
+  >();
+  private readonly wsChannels = new Map<string, HostWsHandlers>();
+
+  constructor(
+    readonly version: string,
+    private readonly child: ChildProcess,
+  ) {}
+
+  request(req: HostHttpRequest): Promise<HostHttpResponse> {
+    if (this.closed) {
+      return Promise.reject(new HostConnectError('connection_refused', 'host session is closed'));
+    }
+    const id = String(++this.nextId);
+    const body = req.body !== undefined && req.body.length > 0 ? req.body.toString('base64') : undefined;
+    return new Promise<HostHttpResponse>((resolve, reject) => {
+      this.pendingHttp.set(id, { resolve, reject });
+      this.write({
+        type: 'http.req',
+        id,
+        method: req.method,
+        path: req.path,
+        headers: req.headers,
+        body,
+      });
+    });
+  }
+
+  openWebSocket(path: string, handlers: HostWsHandlers): HostWsSession {
+    const id = String(++this.nextId);
+    if (this.closed) {
+      queueMicrotask(() => handlers.onClose(1001, 'host session is closed'));
+      return { send() {}, close() {} };
+    }
+    this.wsChannels.set(id, handlers);
+    this.write({ type: 'ws.open', id, path });
+    return {
+      send: (data) => {
+        if (!this.closed && this.wsChannels.has(id)) {
+          this.write({ type: 'ws.msg', id, data });
+        }
+      },
+      close: (code, reason) => {
+        if (this.wsChannels.delete(id) && !this.closed) {
+          this.write({ type: 'ws.close', id, code, reason });
+        }
+      },
+    };
+  }
+
+  onFrame(frame: RpcFrame): void {
+    if (frame.type === 'http.res') {
+      const pending = this.pendingHttp.get(frame.id);
+      if (pending === undefined) return;
+      this.pendingHttp.delete(frame.id);
+      pending.resolve({
+        status: frame.status,
+        headers: frame.headers,
+        body: frame.body === undefined ? Buffer.alloc(0) : Buffer.from(frame.body, 'base64'),
+      });
+      return;
+    }
+    if (frame.type === 'ws.msg') {
+      this.wsChannels.get(frame.id)?.onMessage(frame.data);
+      return;
+    }
+    if (frame.type === 'ws.close') {
+      const handlers = this.wsChannels.get(frame.id);
+      this.wsChannels.delete(frame.id);
+      handlers?.onClose(frame.code, frame.reason);
+    }
+  }
+
+  failAll(): boolean {
+    this.closed = true;
+    const hadActive = this.pendingHttp.size > 0 || this.wsChannels.size > 0;
+    const error = new HostConnectError('connection_refused', 'host connection closed');
+    for (const pending of this.pendingHttp.values()) pending.reject(error);
+    this.pendingHttp.clear();
+    for (const handlers of this.wsChannels.values()) handlers.onClose(1001, 'host connection closed');
+    this.wsChannels.clear();
+    return hadActive;
+  }
+
+  kill(): void {
+    this.failAll();
+    this.child.kill();
+  }
+
+  private write(frame: RpcFrame): void {
+    if (!this.closed && this.child.stdin !== null && !this.child.stdin.destroyed) {
+      this.child.stdin.write(`${JSON.stringify(frame)}\n`);
+    }
+  }
+}
+
 export interface SshKapBridgeOptions {
   readonly sshProgram?: string;
   readonly env?: NodeJS.ProcessEnv;
@@ -207,14 +326,12 @@ export class SshKapBridge {
   private failureValue: HostConnectFailure | undefined;
   private errorValue: string | undefined;
   private remoteVersionValue: string | undefined;
-  private endpointValue: HostEndpoint | undefined;
-  private connecting: Promise<HostEndpoint> | undefined;
-  private tunnel: ChildProcess | undefined;
+  private sessionValue: ActiveHostSession | undefined;
+  private connecting: Promise<HostSession> | undefined;
   private readonly children = new Set<ChildProcess>();
   private disposed = false;
   private reconnecting = false;
   private reconnectGeneration = 0;
-  private agentForwardBlocked = false;
   private readonly sshProgram: string;
   private readonly env: NodeJS.ProcessEnv;
 
@@ -242,13 +359,13 @@ export class SshKapBridge {
     return this.remoteVersionValue;
   }
 
-  get endpoint(): HostEndpoint | undefined {
-    return this.endpointValue;
+  get session(): HostSession | undefined {
+    return this.sessionValue;
   }
 
-  connect(): Promise<HostEndpoint> {
-    if (this.statusValue === 'ready' && this.endpointValue !== undefined) {
-      return Promise.resolve(this.endpointValue);
+  connect(): Promise<HostSession> {
+    if (this.sessionValue !== undefined) {
+      return Promise.resolve(this.sessionValue);
     }
     this.connecting ??= this.establish().finally(() => {
       this.connecting = undefined;
@@ -259,15 +376,20 @@ export class SshKapBridge {
   dispose(): void {
     this.disposed = true;
     this.reconnectGeneration += 1;
-    this.endpointValue = undefined;
-    this.tunnel?.kill();
-    this.tunnel = undefined;
+    this.sessionValue?.kill();
+    this.sessionValue = undefined;
     for (const child of this.children) child.kill();
   }
 
   async probe(): Promise<RemoteProbe> {
-    const result = await this.runSsh(
-      [remoteKimiCommand(this.entry.remoteBin, 'web ensure-daemon --probe')],
+    const result = await this.collect(
+      [
+        '-T',
+        ...SSH_OPTIONS,
+        ...identityArgs(this.entry),
+        this.entry.host,
+        remoteKimiCommand(this.entry.remoteBin, 'server ensure-daemon --probe'),
+      ],
       VERSION_TIMEOUT_MS,
     );
     const parsed = parseProbeOutput(result.stdout);
@@ -282,24 +404,22 @@ export class SshKapBridge {
     this.options.onChange?.();
   }
 
-  private async establish(): Promise<HostEndpoint> {
-    this.update('connecting');
+  private async establish(): Promise<HostSession> {
+    if (this.statusValue !== 'ready') this.update('connecting');
     try {
-      const bootstrap = await this.bootstrap();
-      if (this.disposed) throw new HostConnectError('unknown', 'host bridge disposed');
-      this.remoteVersionValue = bootstrap.version;
-      const endpoint = await this.openTunnel(bootstrap);
+      const session = await this.openSession();
       if (this.disposed) {
-        this.tunnel?.kill();
+        session.kill();
         throw new HostConnectError('unknown', 'host bridge disposed');
       }
-      this.endpointValue = endpoint;
+      this.remoteVersionValue = session.version;
+      this.sessionValue = session;
       this.update('ready');
-      return endpoint;
+      return session;
     } catch (error) {
       const failure = error instanceof HostConnectError ? error.failure : 'unknown';
       const message = error instanceof Error ? error.message : String(error);
-      this.endpointValue = undefined;
+      this.sessionValue = undefined;
       if (this.disposed) throw error instanceof HostConnectError ? error : new HostConnectError(failure, message);
       if (error instanceof HostConnectError && error.remoteVersion !== undefined) {
         this.remoteVersionValue = error.remoteVersion;
@@ -309,102 +429,100 @@ export class SshKapBridge {
     }
   }
 
-  private async bootstrap(): Promise<BootstrapResult> {
-    const result = await this.runSsh(
-      [remoteKimiCommand(this.entry.remoteBin, 'web ensure-daemon')],
-      BOOTSTRAP_TIMEOUT_MS,
-    );
-    const parsed = parseBootstrapOutput(result.stdout);
-    if (parsed !== undefined) return parsed;
-    throw sshFailure(result);
-  }
+  private openSession(): Promise<ActiveHostSession> {
+    if (this.disposed) {
+      return Promise.reject(new HostConnectError('unknown', 'host bridge disposed'));
+    }
+    return new Promise<ActiveHostSession>((resolve, reject) => {
+      const args = [
+        '-T',
+        ...SSH_OPTIONS,
+        ...identityArgs(this.entry),
+        this.entry.host,
+        remoteKimiCommand(this.entry.remoteBin, 'server ensure-daemon'),
+      ];
+      const child = spawn(this.sshProgram, args, { stdio: ['pipe', 'pipe', 'pipe'], env: this.env });
+      this.track(child);
+      if (this.disposed) {
+        child.kill();
+        reject(new HostConnectError('unknown', 'host bridge disposed'));
+        return;
+      }
 
-  private async allocatePort(): Promise<number> {
-    return new Promise((resolve, reject) => {
-      const server = createServer();
-      server.once('error', reject);
-      server.listen(0, '127.0.0.1', () => {
-        const address = server.address();
-        const port = typeof address === 'object' && address !== null ? address.port : 0;
-        server.close(() => resolve(port));
+      let preMarkerStdout = '';
+      let stderr = '';
+      let settled = false;
+      let activeSession: ActiveHostSession | undefined;
+
+      const timer = setTimeout(() => {
+        stderr += '\nssh timed out';
+        child.kill();
+      }, BOOTSTRAP_TIMEOUT_MS);
+
+      const finishReject = (error: HostConnectError): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        child.kill();
+        reject(error);
+      };
+
+      const lines = createInterface({ input: child.stdout!, crlfDelay: Infinity });
+      lines.on('line', (line) => {
+        if (activeSession !== undefined) {
+          const trimmed = line.trim();
+          if (trimmed.length === 0) return;
+          try {
+            activeSession.onFrame(JSON.parse(trimmed) as RpcFrame);
+          } catch {
+          }
+          return;
+        }
+        preMarkerStdout += `${line}\n`;
+        if (!line.startsWith(BOOTSTRAP_MARKER)) return;
+        try {
+          const parsed = parseBootstrapOutput(preMarkerStdout);
+          if (parsed === undefined) return;
+          settled = true;
+          clearTimeout(timer);
+          activeSession = new ActiveHostSession(parsed.version, child);
+          resolve(activeSession);
+        } catch (error) {
+          finishReject(
+            error instanceof HostConnectError
+              ? error
+              : new HostConnectError('unknown', error instanceof Error ? error.message : String(error)),
+          );
+        }
+      });
+
+      child.stderr?.setEncoding('utf8').on('data', (chunk: string) => {
+        stderr += chunk;
+      });
+      child.on('error', (error) => {
+        stderr += error.message;
+      });
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        lines.close();
+        if (!settled) {
+          settled = true;
+          reject(sshFailure({ code, stdout: preMarkerStdout, stderr }));
+          return;
+        }
+        if (activeSession !== undefined) {
+          this.onSessionClosed(activeSession, code);
+        }
       });
     });
   }
 
-  private async agentForwardArgs(bootstrap: BootstrapResult): Promise<string[]> {
-    const localSocket = this.env['SSH_AUTH_SOCK'];
-    if (this.agentForwardBlocked || bootstrap.agentSocket === undefined || !localSocket) return [];
-    const resolved = await this.collect(['-G', ...identityArgs(this.entry), this.entry.host], VERSION_TIMEOUT_MS);
-    if (!/^forwardagent yes$/im.test(resolved.stdout)) return [];
-    return ['-R', `${bootstrap.agentSocket}:${localSocket}`];
-  }
-
-  private async openTunnel(bootstrap: BootstrapResult, bindAttempt = 0): Promise<HostEndpoint> {
-    if (this.disposed) throw new HostConnectError('unknown', 'host bridge disposed');
-    const localPort = await this.allocatePort();
-    if (this.disposed) throw new HostConnectError('unknown', 'host bridge disposed');
-    const agentArgs = await this.agentForwardArgs(bootstrap);
-    if (this.disposed) throw new HostConnectError('unknown', 'host bridge disposed');
-    const args = [
-      '-N',
-      '-T',
-      ...SSH_OPTIONS,
-      '-o',
-      'ExitOnForwardFailure=yes',
-      ...identityArgs(this.entry),
-      '-L',
-      `127.0.0.1:${localPort}:127.0.0.1:${bootstrap.port}`,
-      ...agentArgs,
-      this.entry.host,
-    ];
-    const child = spawn(this.sshProgram, args, { stdio: ['ignore', 'ignore', 'pipe'], env: this.env });
-    this.track(child);
-    if (this.disposed) {
-      child.kill();
-      throw new HostConnectError('unknown', 'host bridge disposed');
-    }
-    let stderr = '';
-    let exited = false;
-    let exitCode: number | null = null;
-    child.stderr?.setEncoding('utf8').on('data', (chunk: string) => {
-      stderr += chunk;
-    });
-    child.on('error', (error) => {
-      stderr += error.message;
-    });
-    child.on('close', (code) => {
-      exited = true;
-      exitCode = code;
-      this.onTunnelClosed(child);
-    });
-    this.tunnel = child;
-    const origin = `http://127.0.0.1:${localPort}`;
-    for (let attempt = 0; attempt < TUNNEL_READY_ATTEMPTS && !exited; attempt += 1) {
-      if (await this.isHealthy(origin)) {
-        return { origin, port: localPort, token: bootstrap.token, version: bootstrap.version };
-      }
-      await sleep(TUNNEL_POLL_MS);
-    }
-    child.kill();
-    if (exited && LOCAL_BIND_FAILURE.test(stderr) && bindAttempt + 1 < LOCAL_BIND_ATTEMPTS) {
-      return this.openTunnel(bootstrap, bindAttempt + 1);
-    }
-    if (exited && agentArgs.length > 0 && /forwarding failed/i.test(stderr) && !LOCAL_BIND_FAILURE.test(stderr)) {
-      this.agentForwardBlocked = true;
-      this.options.logger?.warn({ host: this.entry.host }, 'ssh agent forwarding rejected; continuing without it');
-      return this.openTunnel(bootstrap);
-    }
-    throw new HostConnectError(
-      exited ? classifySshFailure(stderr, exitCode) : 'connect_timeout',
-      stderr.trim() || 'ssh tunnel did not become ready',
-    );
-  }
-
-  private onTunnelClosed(child: ChildProcess): void {
-    if (this.tunnel !== child) return;
-    this.tunnel = undefined;
+  private onSessionClosed(session: ActiveHostSession, code: number | null): void {
+    const hadActive = session.failAll();
+    if (this.sessionValue !== session) return;
+    this.sessionValue = undefined;
     if (this.disposed || this.statusValue !== 'ready') return;
-    this.endpointValue = undefined;
+    if (code === 0 && !hadActive) return;
     this.update('connecting');
     void this.reconnect();
   }
@@ -431,22 +549,6 @@ export class SshKapBridge {
     } finally {
       if (generation === this.reconnectGeneration) this.reconnecting = false;
     }
-  }
-
-  private async isHealthy(origin: string): Promise<boolean> {
-    try {
-      const response = await fetch(`${origin}/api/v1/healthz`, { signal: AbortSignal.timeout(1000) });
-      return response.ok;
-    } catch {
-      return false;
-    }
-  }
-
-  private runSsh(remoteCommand: readonly string[], timeoutMs: number): Promise<SshResult> {
-    return this.collect(
-      ['-T', ...SSH_OPTIONS, ...identityArgs(this.entry), this.entry.host, ...remoteCommand],
-      timeoutMs,
-    );
   }
 
   private track(child: ChildProcess): void {

@@ -18,7 +18,6 @@ export interface ServerInstanceInfo {
   readonly startedAt: number;
   readonly heartbeatAt: number;
   readonly serverVersion?: string;
-  readonly managedBy?: string;
 }
 
 interface ServerInstanceDisk {
@@ -29,7 +28,6 @@ interface ServerInstanceDisk {
   started_at: number;
   heartbeat_at: number;
   host_version?: string;
-  managed_by?: string;
 }
 
 export interface InstanceRegistration {
@@ -76,7 +74,6 @@ function encode(info: ServerInstanceInfo): string {
     started_at: info.startedAt,
     heartbeat_at: info.heartbeatAt,
     ...(info.serverVersion !== undefined ? { host_version: info.serverVersion } : {}),
-    ...(info.managedBy !== undefined ? { managed_by: info.managedBy } : {}),
   };
   return JSON.stringify(disk);
 }
@@ -100,7 +97,6 @@ function decode(raw: string): ServerInstanceInfo | undefined {
         startedAt: parsed.started_at,
         heartbeatAt: parsed.heartbeat_at,
         ...(parsed.host_version !== undefined ? { serverVersion: parsed.host_version } : {}),
-        ...(parsed.managed_by !== undefined ? { managedBy: parsed.managed_by } : {}),
       };
     }
     return undefined;
@@ -220,7 +216,6 @@ export function createInstanceRegistry(options: InstanceRegistryOptions = {}): I
             startedAt: info.startedAt,
             heartbeatAt: now(),
             ...(info.serverVersion !== undefined ? { serverVersion: info.serverVersion } : {}),
-            ...(info.managedBy !== undefined ? { managedBy: info.managedBy } : {}),
           };
           await writeFileAtomic(filePath, encode(full));
         } finally {

@@ -1,14 +1,14 @@
-import { request, type IncomingHttpHeaders, type IncomingMessage } from 'node:http';
+import type { IncomingHttpHeaders, IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { WebSocketServer, type RawData } from 'ws';
 
 import { errEnvelope } from '../../envelope';
 import { ErrorCode } from '../../protocol/error-codes';
-import { selectWsBearerProtocol, WS_BEARER_PROTOCOL_PREFIX } from '../../transport/ws/bearerProtocol';
+import { selectWsBearerProtocol } from '../../transport/ws/bearerProtocol';
 import type { HostBridgeManager } from './hostBridgeManager';
-import type { HostEndpoint } from './sshKapBridge';
+import type { HostSession } from './sshKapBridge';
 
 const PROXY_PATH = /^\/api\/v1\/hosts\/([^/?]+)\/proxy(\/[^?]*)?(\?.*)?$/;
 const HOP_BY_HOP = new Set([
@@ -40,27 +40,21 @@ export function matchHostProxyPath(url: string): HostProxyTarget | undefined {
   return { hostId, path: `${match[2] ?? '/'}${match[3] ?? ''}` };
 }
 
-export function upstreamHeaders(headers: IncomingHttpHeaders, endpoint: HostEndpoint): IncomingHttpHeaders {
+export function upstreamHeaders(headers: IncomingHttpHeaders): IncomingHttpHeaders {
   const forwarded: IncomingHttpHeaders = {};
   for (const [name, value] of Object.entries(headers)) {
-    if (!HOP_BY_HOP.has(name) && !STRIPPED_REQUEST_HEADERS.has(name)) forwarded[name] = value;
+    const lower = name.toLowerCase();
+    if (!HOP_BY_HOP.has(lower) && !STRIPPED_REQUEST_HEADERS.has(lower)) forwarded[name] = value;
   }
-  forwarded['host'] = `127.0.0.1:${endpoint.port}`;
-  forwarded['authorization'] = `Bearer ${endpoint.token}`;
+  forwarded['host'] = '127.0.0.1';
   return forwarded;
 }
 
-function responseHeaders(upstream: IncomingMessage): IncomingHttpHeaders {
-  return Object.fromEntries(
-    Object.entries(upstream.headers).filter(([name]) => !HOP_BY_HOP.has(name)),
-  );
-}
-
-async function resolveEndpoint(
+async function resolveSession(
   manager: HostBridgeManager,
   hostId: string,
-): Promise<HostEndpoint> {
-  return manager.endpoint(hostId) ?? manager.connect(hostId);
+): Promise<HostSession> {
+  return manager.session(hostId) ?? manager.connect(hostId);
 }
 
 async function proxyHttp(
@@ -73,47 +67,34 @@ async function proxyHttp(
     await reply.code(404).send(errEnvelope(ErrorCode.ENVIRONMENT_NOT_FOUND, 'unknown host route', req.id));
     return;
   }
-  let endpoint: HostEndpoint;
+  let session: HostSession;
   try {
-    endpoint = await resolveEndpoint(manager, target.hostId);
+    session = await resolveSession(manager, target.hostId);
   } catch (error) {
     await reply.code(502).send(
       errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, error instanceof Error ? error.message : String(error), req.id),
     );
     return;
   }
-  const localHeaders = reply.getHeaders();
-  reply.hijack();
-  const upstream = request(
-    {
-      host: '127.0.0.1',
-      port: endpoint.port,
-      method: req.raw.method,
+  try {
+    const body = Buffer.isBuffer(req.body) && req.body.length > 0 ? req.body : undefined;
+    const response = await session.request({
+      method: req.method,
       path: target.path,
-      headers: upstreamHeaders(req.raw.headers, endpoint),
-    },
-    (response) => {
-      reply.raw.writeHead(response.statusCode ?? 502, {
-        ...localHeaders,
-        ...responseHeaders(response),
-      } as IncomingHttpHeaders);
-      void pipeline(response, reply.raw).catch((error: unknown) => {
-        reply.raw.destroy(error instanceof Error ? error : new Error(String(error)));
-      });
-    },
-  );
-  upstream.on('error', (error) => {
-    if (!reply.raw.headersSent) {
-      reply.raw.writeHead(502, { 'content-type': 'application/json' });
-      reply.raw.end(JSON.stringify(errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, error.message, req.id)));
-      return;
+      headers: upstreamHeaders(req.headers),
+      body,
+    });
+    for (const [name, value] of Object.entries(response.headers)) {
+      if (value !== undefined && !HOP_BY_HOP.has(name.toLowerCase())) {
+        reply.header(name, value);
+      }
     }
-    reply.raw.destroy(error);
-  });
-  reply.raw.on('close', () => {
-    if (!reply.raw.writableFinished) upstream.destroy();
-  });
-  req.raw.pipe(upstream);
+    await reply.code(response.status).send(response.body);
+  } catch (error) {
+    await reply.code(502).send(
+      errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, error instanceof Error ? error.message : String(error), req.id),
+    );
+  }
 }
 
 export function registerHostProxyRoutes(
@@ -123,7 +104,7 @@ export function registerHostProxyRoutes(
 ): void {
   void app.register(async (scope) => {
     scope.removeAllContentTypeParsers();
-    scope.addContentTypeParser('*', (_req, payload, done) => done(null, payload));
+    scope.addContentTypeParser('*', { parseAs: 'buffer' }, (_req, payload, done) => done(null, payload));
     for (const url of ['/api/v1/hosts/:id/proxy', '/api/v1/hosts/:id/proxy/*']) {
       scope.route({
         method: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'],
@@ -140,6 +121,15 @@ export function registerHostProxyRoutes(
   });
 }
 
+function rawDataToString(data: RawData): string {
+  if (typeof data === 'string') return data;
+  if (Buffer.isBuffer(data)) return data.toString('utf8');
+  if (Array.isArray(data)) return Buffer.concat(data).toString('utf8');
+  return Buffer.from(data as ArrayBuffer).toString('utf8');
+}
+
+const proxyWss = new WebSocketServer({ noServer: true, handleProtocols: selectWsBearerProtocol });
+
 export async function proxyHostWebSocket(
   manager: HostBridgeManager,
   target: HostProxyTarget,
@@ -147,55 +137,42 @@ export async function proxyHostWebSocket(
   socket: Duplex,
   head: Buffer,
 ): Promise<void> {
-  let endpoint: HostEndpoint;
+  let session: HostSession;
   try {
-    endpoint = await resolveEndpoint(manager, target.hostId);
+    session = await resolveSession(manager, target.hostId);
   } catch {
     socket.write('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n');
     socket.destroy();
     return;
   }
-  const clientProtocol = selectWsBearerProtocol(
-    (req.headers['sec-websocket-protocol'] ?? '').split(',').map((entry) => entry.trim()),
-  );
-  const upstream = request({
-    host: '127.0.0.1',
-    port: endpoint.port,
-    method: 'GET',
-    path: target.path,
-    headers: {
-      ...upstreamHeaders(req.headers, endpoint),
-      connection: 'Upgrade',
-      upgrade: 'websocket',
-      'sec-websocket-protocol': `${WS_BEARER_PROTOCOL_PREFIX}${endpoint.token}`,
-    },
+  proxyWss.handleUpgrade(req, socket, head, (ws) => {
+    let closed = false;
+    const upstream = session.openWebSocket(target.path, {
+      onMessage: (data) => {
+        if (!closed && ws.readyState === ws.OPEN) ws.send(data);
+      },
+      onClose: (code, reason) => {
+        if (closed) return;
+        closed = true;
+        try {
+          ws.close(code ?? 1000, reason);
+        } catch {
+          ws.terminate();
+        }
+      },
+    });
+    ws.on('message', (data: RawData) => {
+      upstream.send(rawDataToString(data));
+    });
+    ws.on('close', (code, reason) => {
+      if (closed) return;
+      closed = true;
+      upstream.close(code, reason.toString('utf8'));
+    });
+    ws.on('error', () => {
+      if (closed) return;
+      closed = true;
+      upstream.close(1011, 'client error');
+    });
   });
-  upstream.on('upgrade', (response, upstreamSocket, upstreamHead) => {
-    const lines = ['HTTP/1.1 101 Switching Protocols'];
-    for (let index = 0; index < response.rawHeaders.length; index += 2) {
-      const name = response.rawHeaders[index]!;
-      if (name.toLowerCase() === 'sec-websocket-protocol') continue;
-      lines.push(`${name}: ${response.rawHeaders[index + 1]!}`);
-    }
-    if (clientProtocol !== false) lines.push(`Sec-WebSocket-Protocol: ${clientProtocol}`);
-    socket.write(`${lines.join('\r\n')}\r\n\r\n`);
-    if (upstreamHead.length > 0) socket.write(upstreamHead);
-    if (head.length > 0) upstreamSocket.write(head);
-    upstreamSocket.pipe(socket);
-    socket.pipe(upstreamSocket);
-    upstreamSocket.on('error', () => socket.destroy());
-    socket.on('error', () => upstreamSocket.destroy());
-    upstreamSocket.on('close', () => socket.destroy());
-    socket.on('close', () => upstreamSocket.destroy());
-  });
-  upstream.on('response', (response) => {
-    socket.write(`HTTP/1.1 ${response.statusCode ?? 502} Upstream Rejected\r\nConnection: close\r\n\r\n`);
-    socket.destroy();
-    response.resume();
-  });
-  upstream.on('error', () => {
-    socket.write('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n');
-    socket.destroy();
-  });
-  upstream.end();
 }

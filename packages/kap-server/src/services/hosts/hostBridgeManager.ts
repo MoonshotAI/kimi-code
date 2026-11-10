@@ -5,7 +5,7 @@ import {
   HostConnectError,
   SshKapBridge,
   type BridgeLogger,
-  type HostEndpoint,
+  type HostSession,
   type HostStatus,
 } from './sshKapBridge';
 
@@ -78,7 +78,7 @@ export class HostBridgeManager {
     }));
   }
 
-  async connect(id: string): Promise<HostEndpoint> {
+  async connect(id: string): Promise<HostSession> {
     await this.config.ready;
     const entry = this.section()[id];
     if (entry === undefined) throw new HostConnectError('unknown', `host "${id}" is not configured`);
@@ -86,8 +86,8 @@ export class HostBridgeManager {
     return this.record(id, entry).bridge.connect();
   }
 
-  endpoint(id: string): HostEndpoint | undefined {
-    return this.records.get(id)?.bridge.endpoint;
+  session(id: string): HostSession | undefined {
+    return this.records.get(id)?.bridge.session;
   }
 
   close(): void {
