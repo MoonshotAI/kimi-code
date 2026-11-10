@@ -20,6 +20,9 @@ export function prepareWindowsSpawnTarget(
 ): WindowsSpawnTarget | undefined {
   const resolved = resolveBatchScript(command, env, cwd);
   if (resolved === undefined) return undefined;
+  if (/[\r\n]/.test(resolved) || args.some((arg) => /[\r\n]/.test(arg))) {
+    throw new Error('Cannot spawn a Windows batch script with line breaks in the command or arguments');
+  }
   const doubleEscape = CMD_SHIM.test(resolved);
   const line = [escapeCommand(resolved), ...args.map((arg) => escapeArgument(arg, doubleEscape))].join(' ');
   return {
@@ -37,11 +40,9 @@ function resolveBatchScript(command: string, env?: Record<string, string>, cwd?:
     return isFile(resolved) ? resolved : undefined;
   }
   if (/\.(exe|com)$/i.test(command)) return undefined;
-  const dirs = (envValue(env, 'PATH') ?? '')
-    .split(delimiter)
-    .filter((dir) => dir.length > 0);
+  const roots = searchRoots(env, baseCwd);
   if (!command.includes('.')) {
-    for (const dir of [baseCwd, ...dirs]) {
+    for (const dir of roots) {
       if (isFile(join(dir, command + '.exe')) || isFile(join(dir, command + '.com'))) return undefined;
     }
   }
@@ -49,7 +50,7 @@ function resolveBatchScript(command: string, env?: Record<string, string>, cwd?:
     BATCH_SCRIPT_EXTENSIONS.includes(ext.toLowerCase()),
   );
   const names = command.includes('.') ? [command] : batchExts.map((ext) => command + ext.toLowerCase());
-  for (const dir of dirs) {
+  for (const dir of roots) {
     for (const name of names) {
       const candidate = join(dir, name);
       if (!isFile(candidate)) continue;
@@ -57,6 +58,15 @@ function resolveBatchScript(command: string, env?: Record<string, string>, cwd?:
     }
   }
   return undefined;
+}
+
+function searchRoots(env: Record<string, string> | undefined, baseCwd: string): string[] {
+  const dirs = (envValue(env, 'PATH') ?? '')
+    .split(delimiter)
+    .map((dir) => dir.replace(/^"(.*)"$/, '$1'))
+    .filter((dir) => dir.length > 0)
+    .map((dir) => (isAbsolute(dir) ? dir : resolve(baseCwd, dir)));
+  return [baseCwd, ...dirs];
 }
 
 function pathExtensions(env?: Record<string, string>): string[] {
@@ -70,15 +80,19 @@ function pathExtensions(env?: Record<string, string>): string[] {
 
 function envValue(overrides: Record<string, string> | undefined, name: string): string | undefined {
   const upper = name.toUpperCase();
-  if (overrides !== undefined) {
-    for (const [key, value] of Object.entries(overrides)) {
-      if (key.toUpperCase() === upper) return value;
+  let winnerKey: string | undefined;
+  let winnerValue: string | undefined;
+  for (const source of [overrides, process.env]) {
+    if (source === undefined) continue;
+    for (const [key, value] of Object.entries(source)) {
+      if (value === undefined || key.toUpperCase() !== upper) continue;
+      if (winnerKey === undefined || key < winnerKey) {
+        winnerKey = key;
+        winnerValue = value;
+      }
     }
   }
-  for (const [key, value] of Object.entries(process.env)) {
-    if (key.toUpperCase() === upper && value !== undefined) return value;
-  }
-  return undefined;
+  return winnerValue;
 }
 
 function isBatchScript(path: string): boolean {
