@@ -51,7 +51,7 @@ The HTTP status is almost always 200; the business outcome lives in `code`. Exce
 | Provider created, provider catalog imported | 201 |
 | Provider deleted | 204 |
 | Binary/streaming endpoints | 206 (Range) / 304 (ETag unchanged) where supported — capabilities differ per endpoint, see [Binary and streaming endpoints](#binary-and-streaming-endpoints) |
-| `GET /api/v1/files/{file_id}` download errors | real 404 / 500 (still carrying an envelope body) |
+| `GET /api/v1/files/{file_id}`, `/api/v1/fs:content`, and session `:download` errors | real 4xx / 500 (still carrying an envelope body) |
 
 The 201 responses still carry the standard envelope (`code` 0) — only the status line follows the REST convention for resource creation. A 204 response has no body by definition, so a successful delete is reported by the status code itself.
 
@@ -2448,7 +2448,7 @@ The following endpoints stream binary bodies instead of a JSON payload. Their HT
 | `GET /api/v1/fs:content` | Raw bytes of any host file (gated only by the token — be careful when exposing the port) | Yes | Yes |
 | `POST /api/v1/sessions/{session_id}/export` | Export the session with diagnostics (zip stream) | No | No |
 
-Error semantics differ as well: `GET /api/v1/files/{file_id}` answers lookup and storage failures with real 404 / 500 statuses (parameter validation still uses the HTTP 200 envelope), while the other three report every failure through the standard [response envelope](#response-envelope) — clients must keep checking the envelope `code` on those endpoints.
+Error semantics differ as well: `GET /api/v1/files/{file_id}`, `GET /api/v1/fs:content`, and session `:download` answer failures with real 4xx / 500 statuses and the same [response envelope](#response-envelope). Session export reports errors with an HTTP 200 envelope. Ordinary JSON RPC endpoints keep the almost-always-200 convention, so clients must check the envelope `code` on those endpoints.
 
 ## Next steps
 

@@ -86,6 +86,20 @@ describe('server-v2 OpenAPI', () => {
     expect(headers['cache-control']).toBeDefined();
   });
 
+  it('documents raw download failures with HTTP error statuses', async () => {
+    const doc = await fetchOpenApi();
+    for (const [path, method] of [
+      ['/api/v1/sessions/{session_id}/fs/{*}', 'get'],
+      ['/api/v1/fs:content', 'get'],
+    ] as const) {
+      const responses = asRecord(operation(doc, path, method)['responses']);
+      for (const status of ['400', '403', '404', '409', '413', '500']) {
+        const content = asRecord(asRecord(responses[status])['content']);
+        expect(asRecord(content['application/json'])).toBeDefined();
+      }
+    }
+  });
+
   it('represents the fs-action dispatcher as a oneOf union', async () => {
     const doc = await fetchOpenApi();
     const fsActionOp = operation(doc, '/api/v1/sessions/{session_id}/{tail}', 'post');
