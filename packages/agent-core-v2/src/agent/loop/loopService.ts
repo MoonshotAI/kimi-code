@@ -929,6 +929,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (parked !== -1) {
       this.pendingSubmissions.splice(parked, 1);
       this.signalQueueChange();
+      this.maybeSettle();
     }
     return true;
   }
@@ -1557,6 +1558,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     switch (event.type) {
       case 'queueChanged': {
         this.signalQueueChange();
+        this.maybeSettle();
         return;
       }
       case 'turnStarted': {

@@ -616,8 +616,12 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     const promptIdleDeadline = Date.now() + REMOVE_PROMPT_QUIESCE_TIMEOUT_MS;
     let releaseQuiescence: (() => void) | undefined;
     for (;;) {
-      for (const queueId of loop.snapshot().queue.map((item) => item.meta?.promptId)) {
-        if (queueId !== undefined) loop.cancel({ promptId: queueId }, reason);
+      const snapshot = loop.snapshot();
+      for (const item of snapshot.queue) {
+        const queueId = item.meta?.promptId;
+        if (queueId === undefined) continue;
+        if (item.meta?.kind === 'compact' && queueId === snapshot.startingPromptId) continue;
+        loop.cancel({ promptId: queueId }, reason);
       }
       loop.cancel(undefined, reason);
       let deadlineTimer: ReturnType<typeof setTimeout> | undefined;

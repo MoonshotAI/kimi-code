@@ -2692,6 +2692,25 @@ describe('prompt queue', () => {
     }
   });
 
+  it('settles once the last queued compaction is dropped', async () => {
+    const compaction = ctx.get(IAgentFullCompactionService);
+    submit('a');
+    await untilModelRequest();
+    loop.enqueueCompaction();
+    let settled = false;
+    void loop.settled().then(() => {
+      settled = true;
+    });
+
+    heldRequests.shift()?.();
+    await vi.waitFor(() => expect(compaction.compacting).not.toBeNull());
+    await untilModelRequest();
+    expect(settled).toBe(false);
+    heldRequests.shift()?.();
+    await vi.waitFor(() => expect(settled).toBe(true));
+    expect(queueIds()).toEqual([]);
+  });
+
   it('withdraws a queued compaction and moves on when a started one is cancelled', async () => {
     const compaction = ctx.get(IAgentFullCompactionService);
     submit('a');
