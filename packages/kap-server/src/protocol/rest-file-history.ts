@@ -3,7 +3,7 @@ import { z } from 'zod';
 const turnNumberParam = z.coerce.number().int().nonnegative();
 
 const turnSelectorShape = {
-  turn_number: turnNumberParam.optional(),
+  turn_number: turnNumberParam.optional().describe('Turn number; required unless the deprecated turn_id is given'),
   turn_id: turnNumberParam.optional().describe('Deprecated alias of turn_number'),
 };
 
