@@ -100,7 +100,7 @@ describe('server-v2 /api/v1 agent-profiles', () => {
       method: 'POST',
       body: JSON.stringify({ name: 'coder', description: 'Conflict', prompt: 'Conflict.' }),
     });
-    expect(builtin.body.code).toBe(40935);
+    expect(builtin.body.code).toBe(40936);
 
     const created = await api<any>('/agent-profiles', {
       method: 'POST',
@@ -115,7 +115,7 @@ describe('server-v2 /api/v1 agent-profiles', () => {
       method: 'PUT',
       body: JSON.stringify({ description: 'Two', prompt: 'Two.', etag: created.body.data.agent.etag }),
     });
-    expect(repeated.body.code).toBe(40936);
+    expect(repeated.body.code).toBe(40937);
 
     const missing = await api<any>('/agent-profiles/missing');
     expect(missing.body.code).toBe(40422);

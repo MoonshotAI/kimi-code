@@ -195,14 +195,14 @@ function sendMappedError(
   if (isError2(err)) {
     switch (err.code) {
       case ErrorCodes.MCP_SERVER_NOT_FOUND:
-        reply.send(errEnvelope(ErrorCode.MCP_SERVER_NOT_FOUND, err.message, requestId, err.stack));
+        reply.send(errEnvelope(ErrorCode.MCP_SERVER_NOT_FOUND, err.message, requestId));
         return;
       case ErrorCodes.REQUEST_INVALID:
       case ErrorCodes.CONFIG_INVALID:
-        reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, err.message, requestId, err.stack));
+        reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, err.message, requestId));
         return;
       case ErrorCodes.MCP_OAUTH_FAILED:
-        reply.send(errEnvelope(ErrorCode.MCP_OAUTH_FAILED, err.message, requestId, err.stack));
+        reply.send(errEnvelope(ErrorCode.MCP_OAUTH_FAILED, err.message, requestId));
         return;
     }
   }
@@ -227,8 +227,8 @@ export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
       try {
         const servers = await management().listServers({ cwd: req.query.cwd });
         reply.send(okEnvelope(servers, req.id));
-      } catch (err) {
-        sendMappedError(reply, req.id, err);
+      } catch (error) {
+        sendMappedError(reply, req.id, error);
       }
     },
   );
@@ -253,8 +253,8 @@ export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
       try {
         const server = await management().getServer(req.params.name, { cwd: req.query.cwd });
         reply.send(okEnvelope(server, req.id));
-      } catch (err) {
-        sendMappedError(reply, req.id, err);
+      } catch (error) {
+        sendMappedError(reply, req.id, error);
       }
     },
   );
@@ -280,8 +280,8 @@ export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
       try {
         const servers = await management().addServer(req.body, { cwd: req.query.cwd });
         reply.send(okEnvelope(servers, req.id));
-      } catch (err) {
-        sendMappedError(reply, req.id, err);
+      } catch (error) {
+        sendMappedError(reply, req.id, error);
       }
     },
   );
@@ -311,8 +311,8 @@ export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
           { cwd: req.query.cwd },
         );
         reply.send(okEnvelope(servers, req.id));
-      } catch (err) {
-        sendMappedError(reply, req.id, err);
+      } catch (error) {
+        sendMappedError(reply, req.id, error);
       }
     },
   );
@@ -338,8 +338,8 @@ export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
       try {
         const servers = await management().removeServer(req.params.name, { cwd: req.query.cwd });
         reply.send(okEnvelope(servers, req.id));
-      } catch (err) {
-        sendMappedError(reply, req.id, err);
+      } catch (error) {
+        sendMappedError(reply, req.id, error);
       }
     },
   );
@@ -364,8 +364,8 @@ export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
       try {
         const result = await management().testServer(req.body);
         reply.send(okEnvelope(result, req.id));
-      } catch (err) {
-        sendMappedError(reply, req.id, err);
+      } catch (error) {
+        sendMappedError(reply, req.id, error);
       }
     },
   );
@@ -392,8 +392,8 @@ export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
           cwd: req.body.cwd,
         });
         reply.send(okEnvelope(inspections, req.id));
-      } catch (err) {
-        sendMappedError(reply, req.id, err);
+      } catch (error) {
+        sendMappedError(reply, req.id, error);
       }
     },
   );
@@ -421,8 +421,8 @@ export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
           verify: req.query.verify === undefined ? undefined : req.query.verify === 'true',
         });
         reply.send(okEnvelope(statuses, req.id));
-      } catch (err) {
-        sendMappedError(reply, req.id, err);
+      } catch (error) {
+        sendMappedError(reply, req.id, error);
       }
     },
   );
@@ -448,8 +448,8 @@ export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
       try {
         const result = await management().beginServerAuth(req.body, { cwd: req.query.cwd });
         reply.send(okEnvelope(result, req.id));
-      } catch (err) {
-        sendMappedError(reply, req.id, err);
+      } catch (error) {
+        sendMappedError(reply, req.id, error);
       }
     },
   );
@@ -481,8 +481,8 @@ export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
       try {
         await management().completeServerAuth(req.body, { signal: disconnect.signal });
         reply.send(okEnvelope(null, req.id));
-      } catch (err) {
-        sendMappedError(reply, req.id, err);
+      } catch (error) {
+        sendMappedError(reply, req.id, error);
       } finally {
         raw.off('close', onClose);
       }
@@ -508,8 +508,8 @@ export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
       try {
         await management().cancelServerAuth(req.body);
         reply.send(okEnvelope(null, req.id));
-      } catch (err) {
-        sendMappedError(reply, req.id, err);
+      } catch (error) {
+        sendMappedError(reply, req.id, error);
       }
     },
   );
@@ -535,8 +535,8 @@ export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
       try {
         await management().resetServerAuth(req.body, { cwd: req.query.cwd });
         reply.send(okEnvelope(null, req.id));
-      } catch (err) {
-        sendMappedError(reply, req.id, err);
+      } catch (error) {
+        sendMappedError(reply, req.id, error);
       }
     },
   );

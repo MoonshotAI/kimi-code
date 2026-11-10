@@ -171,7 +171,7 @@ Like the body of a regular agent file, SYSTEM.md is rendered as a template each 
 
 | Variable | Content |
 | --- | --- |
-| `${skills}` | The merged Agent Skills injection; empty when the `Skill` tool is unavailable |
+| `${skills}` | The merged Agent Skills catalog, including available skill names, descriptions, and paths; disabling the `Skill` tool only blocks tool invocation and does not hide the catalog |
 | `${agents_md}` | Content of the workspace instruction files (such as `AGENTS.md`) |
 | `${cwd}` | Current working directory |
 | `${cwd_listing}` | Listing of the working directory |
