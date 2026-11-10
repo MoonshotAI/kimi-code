@@ -2468,14 +2468,28 @@ describe('prompt queue', () => {
     const parked = createTestAgent(sessionService(IAgentLifecycleService, parkedLifecycleStub()));
     try {
       const parkedLoop = parked.get(IAgentLoopService);
-      const submitParked = (id: string) =>
-        parkedLoop.submit({
-          message: { role: 'user', content: [{ type: 'text', text: id }] },
-          meta: { promptId: id, origin: { kind: 'user' }, tracked: true },
-        }).acceptedAs;
+      const submitParked = (id: string, steer?: boolean) =>
+        parkedLoop.submit(
+          {
+            message: { role: 'user', content: [{ type: 'text', text: id }] },
+            meta: { promptId: id, origin: { kind: 'user' }, tracked: true },
+          },
+          { steer },
+        ).acceptedAs;
+      const parkedIds = () => parkedLoop.snapshot().queue.map((entry) => entry.meta?.promptId);
 
       expect(submitParked('a')).toBe('turn');
       expect(submitParked('b')).toBe('queue');
+      expect(submitParked('s', true)).toBe('steer');
+      const compact = parkedLoop.enqueueCompaction();
+      expect(parkedIds()).toEqual(['a', 's', 'b', compact]);
+
+      const parkedRef = attachParkedEngine(parkedLoop);
+      try {
+        expect(parkedIds()).toEqual(['a', 's', 'b', compact]);
+      } finally {
+        parkedRef.stop();
+      }
     } finally {
       await parked.dispose();
     }
@@ -2566,6 +2580,55 @@ describe('prompt queue', () => {
 
     expect(started).toEqual(['s1', 'q2']);
     expect(userTexts()).toEqual(['system', 's1', 's2q1', 'q2']);
+  });
+
+  it('keeps an already slotted steer in place when it is steered again', async () => {
+    loop.notify({
+      message: { role: 'user', content: [{ type: 'text', text: 'system' }], origin: { kind: 'system_trigger', name: 'test' } },
+    });
+    await untilModelRequest();
+    submit('q1');
+    submit('s1', { steer: true });
+    submit('s2', { steer: true });
+    await loop.steer(['s1']);
+    expect(queueIds()).toEqual(['s1', 's2', 'q1']);
+  });
+
+  it('steers a prompt that arrives while the turn finishes into that same turn', async () => {
+    const finishing = deferred();
+    const finishGate = deferred();
+    let armed = true;
+    loop.hooks.onDidFinishStep.register('test-hold-finish', async (_hookCtx, next) => {
+      if (armed) {
+        armed = false;
+        finishing.resolve();
+        await finishGate.promise;
+      }
+      await next();
+    });
+    const started: (string | undefined)[] = [];
+    const turnStarts = ctx.get(IEventBus).subscribe(TurnStarted, (event) => started.push(event.prompt));
+
+    submit('a');
+    await untilModelRequest();
+    heldRequests.shift()?.();
+    await finishing.promise;
+    expect(submit('s', { steer: true })).toBe('steer');
+    const steered = loop.promptHandle('s')!;
+    let steeredDone = false;
+    void steered.completion.then(() => {
+      steeredDone = true;
+    });
+    finishGate.resolve();
+    await untilModelRequest();
+    expect(steeredDone).toBe(false);
+    heldRequests.shift()?.();
+    await loop.settled();
+    turnStarts.dispose();
+
+    expect(started).toEqual(['a']);
+    expect(userTexts()).toEqual(['a', 's']);
+    await expect(steered.completion).resolves.toMatchObject({ promptId: 's', state: 'completed' });
   });
 
   it('places a steer behind the head whose submit hooks are running and steers it into that turn', async () => {

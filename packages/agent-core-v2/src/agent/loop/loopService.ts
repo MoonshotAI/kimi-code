@@ -400,7 +400,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         return { id, acceptedAs };
       }
     } else if (slotted) {
-      const index = this.pendingSubmissions.findIndex((item) => item.meta?.delivery !== 'steer');
+      const index = this.pendingSubmissions.findIndex((item, at) => at > 0 && item.meta?.delivery !== 'steer');
       this.pendingSubmissions.splice(index === -1 ? this.pendingSubmissions.length : index, 0, entry);
     } else {
       this.pendingSubmissions.push(entry);
@@ -482,6 +482,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       const queue = engine.snapshot().queue;
       const starting = this.snapshot().startingPromptId;
       const index = queue.findIndex((item) => item.meta?.promptId === id);
+      if (queue[index]?.meta?.delivery === 'steer') continue;
       const before =
         id === starting
           ? queue[index + 1]?.meta?.promptId
@@ -998,7 +999,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const queued = new Set(this.engine.snapshot().queue.map((item) => item.meta?.promptId));
     for (const entry of this.pendingSubmissions.splice(0)) {
       const id = entry.meta?.promptId;
-      if (id === undefined || queued.has(id) || !this.promptWaiters.has(id)) continue;
+      if (id === undefined || queued.has(id)) continue;
+      if (!this.promptWaiters.has(id) && entry.meta?.kind !== 'compact') continue;
       this.machineEngine().submit(entry);
     }
     if (this.quiescenceDepth > 0) return;
