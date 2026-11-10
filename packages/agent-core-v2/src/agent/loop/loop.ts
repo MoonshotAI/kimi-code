@@ -207,6 +207,7 @@ export interface PromptSubmitContext {
 
 export interface QueuedCompactionContext {
   readonly instruction?: string;
+  readonly signal: AbortSignal;
 }
 
 export interface LoopNotify {

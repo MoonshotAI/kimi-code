@@ -2480,8 +2480,11 @@ describe('prompt queue', () => {
       const parkedIds = () => parkedLoop.snapshot().queue.map((entry) => entry.meta?.promptId);
       const queueLengths: number[] = [];
       const queuedEvents = parked.get(IEventBus).subscribe(PromptQueued, (event) => queueLengths.push(event.queueLength));
+      const signalled: (string | undefined)[][] = [];
+      const queueChanges = parkedLoop.onDidChangeQueue(() => signalled.push(parkedIds()));
 
       expect(submitParked('a')).toBe('turn');
+      expect(signalled).toEqual([['a']]);
       expect(submitParked('b')).toBe('queue');
       expect(submitParked('c')).toBe('queue');
       expect(parkedLoop.cancel({ promptId: 'c' })).toBe(true);
@@ -2490,6 +2493,8 @@ describe('prompt queue', () => {
       expect(submitParked('s', true)).toBe('steer');
       const compact = parkedLoop.enqueueCompaction();
       expect(parkedIds()).toEqual(['a', 's', 'b', compact]);
+      expect(signalled.at(-1)).toEqual(['a', 's', 'b', compact]);
+      queueChanges.dispose();
 
       const parkedRef = attachParkedEngine(parkedLoop);
       try {
@@ -2716,6 +2721,25 @@ describe('prompt queue', () => {
     heldRequests.shift()?.();
     await vi.waitFor(() => expect(settled).toBe(true));
     expect(queueIds()).toEqual([]);
+  });
+
+  it('stops a running queued compaction when the loop is cancelled', async () => {
+    const compaction = ctx.get(IAgentFullCompactionService);
+    submit('a');
+    await untilModelRequest();
+    loop.enqueueCompaction();
+    submit('b');
+
+    heldRequests.shift()?.();
+    await vi.waitFor(() => expect(compaction.compacting).not.toBeNull());
+    loop.cancel();
+    await vi.waitFor(() => expect(userTexts()).toEqual(['a', 'b']));
+    expect(compaction.compacting).toBeNull();
+    for (let round = 0; round < 20 && heldRequests.length > 0; round += 1) {
+      heldRequests.shift()?.();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    await loop.settled();
   });
 
   it('withdraws a queued compaction and moves on when a started one is cancelled', async () => {

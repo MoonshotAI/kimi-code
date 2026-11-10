@@ -815,7 +815,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 
 #### `POST /api/v1/sessions/{session_id}:abort`
 
-取消 main agent 正在运行的轮次——等同于用户在 TUI 中中止轮次的程序化版本。
+取消 main agent 正在运行的轮次——等同于用户在 TUI 中中止轮次的程序化版本。已经在队首开始执行的排队压缩也会一并取消。
 
 成功时，`data` 为 `{ aborted: true }`。
 

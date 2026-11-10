@@ -194,7 +194,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     );
     this._register(
       this.loopService.hooks.onRunQueuedCompaction.register('full-compaction', async (ctx, next) => {
-        await this.runQueued(ctx.instruction);
+        await this.runQueued(ctx.instruction, ctx.signal);
         await next();
       }),
     );
@@ -338,8 +338,9 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     return { acceptedAs: 'queue', promptId: this.loopService.enqueueCompaction(instruction) };
   }
 
-  private async runQueued(instruction: string | undefined): Promise<void> {
+  private async runQueued(instruction: string | undefined, signal: AbortSignal): Promise<void> {
     await this._compacting?.promise.catch(() => undefined);
+    signal.throwIfAborted();
     try {
       if (!this.start({ source: 'manual', instruction }, false)) return;
     } catch (error) {
@@ -348,7 +349,15 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
       );
       throw error;
     }
-    await this._compacting?.promise;
+    const task = this._compacting;
+    if (task === null) return;
+    const abort = (): void => task.abortController.abort(signal.reason);
+    signal.addEventListener('abort', abort, { once: true });
+    try {
+      await task.promise;
+    } finally {
+      signal.removeEventListener('abort', abort);
+    }
   }
 
   private start(input: FullCompactionInput, quiesce: boolean): boolean {

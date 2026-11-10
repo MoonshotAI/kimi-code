@@ -146,6 +146,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private readonly queueChange = this._register(new Emitter<void>());
   readonly onDidChangeQueue = this.queueChange.event;
   private gatingPromptId: string | undefined;
+  private queuedCompaction: AbortController | undefined;
   private queueKey = '';
   private loopChange = createControlledPromise<void>();
 
@@ -322,6 +323,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (this.disposing) return;
     this.disposing = true;
     const reason = abortError('Agent loop disposed');
+    this.queuedCompaction?.abort(reason);
     for (const waiter of this.promptWaiters.values()) {
       this.settleWaiterCancelled(waiter);
       this.terminalStates.set(waiter.id, 'cancelled');
@@ -402,8 +404,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     } else if (slotted) {
       const index = this.pendingSubmissions.findIndex((item, at) => at > 0 && item.meta?.delivery !== 'steer');
       this.pendingSubmissions.splice(index === -1 ? this.pendingSubmissions.length : index, 0, entry);
+      this.signalQueueChange();
     } else {
       this.pendingSubmissions.push(entry);
+      this.signalQueueChange();
     }
     if (steersActive) {
       this.machineEngine().steer(id);
@@ -428,8 +432,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         instruction,
       },
     };
-    if (this.engine !== undefined) this.machineEngine().submit(entry);
-    else this.pendingSubmissions.push(entry);
+    if (this.engine !== undefined) {
+      this.machineEngine().submit(entry);
+    } else {
+      this.pendingSubmissions.push(entry);
+      this.signalQueueChange();
+    }
     return id;
   }
 
@@ -742,14 +750,18 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (head?.meta?.kind === 'compact') {
       this.gatingPromptId = queueItemId;
       this.signalQueueChange();
+      const controller = new AbortController();
+      this.queuedCompaction = controller;
       try {
-        await this.hooks.onRunQueuedCompaction.run({ instruction: head.meta.instruction });
+        await this.hooks.onRunQueuedCompaction.run({ instruction: head.meta.instruction, signal: controller.signal });
       } catch (error) {
         this.logger.warn('queued compaction did not complete', {
           agentId: this.scopeContext.agentId,
           promptId: queueItemId,
           error,
         });
+      } finally {
+        if (this.queuedCompaction === controller) this.queuedCompaction = undefined;
       }
       return { drop: true };
     }
@@ -915,6 +927,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       if (waiter === undefined) return this.withdrawQueuedCompaction(target.promptId);
       return this.cancelWaiter(waiter, cancellation);
     }
+    if (target?.turnId === undefined) this.queuedCompaction?.abort(cancellation);
     return this.cancelActiveTurn(target?.turnId, cancellation);
   }
 

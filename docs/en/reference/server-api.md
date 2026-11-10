@@ -815,7 +815,7 @@ On success, `data` is `{ removed_turn_ids }`: the removed turns in ordinal order
 
 #### `POST /api/v1/sessions/{session_id}:abort`
 
-Cancels the main agent's running turn — the programmatic equivalent of the user aborting the turn in the TUI.
+Cancels the main agent's running turn — the programmatic equivalent of the user aborting the turn in the TUI. A queued compaction that has already started at the head of the queue is cancelled too.
 
 On success, `data` is `{ aborted: true }`.
 
