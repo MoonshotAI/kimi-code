@@ -168,6 +168,7 @@ export function buildWebCommand(
       '--web-title <title>',
       'Set a custom browser tab title for this web UI instance (default: "<workspace dir> | Kimi Code").',
     );
+  withServerOptions.addOption(new Option('--managed-by <owner>').hideHelp());
   if (!forceRemoteControl) {
     withServerOptions.addOption(
       new Option(
@@ -395,6 +396,7 @@ async function runServerInProcess(
     allowedHosts: options.allowedHosts,
     disableAuth: options.dangerousBypassAuth,
     webTitle: options.webTitle,
+    managedBy: options.managedBy,
     // Attach the engine's cloud telemetry appender (still gated by the config
     // `telemetry` toggle). Complements the v1 client registered above, which
     // only covers host-level events.

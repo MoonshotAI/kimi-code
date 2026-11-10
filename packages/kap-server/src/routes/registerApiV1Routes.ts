@@ -35,6 +35,8 @@ import { registerSessionMediaRoutes } from './sessionMedia';
 import { registerSessionRatingRoutes } from './sessionRating';
 import { registerSessionExportRoute } from './sessionExport';
 import { registerSessionsRoutes } from './sessions';
+import type { HostBridgeManager } from '../services/hosts/hostBridgeManager';
+import { registerHostsRoutes } from './hosts';
 import { registerShutdownRoutes } from './shutdown';
 import { registerSkillsRoutes } from './skills';
 import { registerToolsRoutes } from './tools';
@@ -64,6 +66,8 @@ export interface RegisterApiV1RoutesOptions {
   readonly enableShutdown?: boolean;
   readonly guiStore: IGuiStoreService;
   readonly onShutdown: () => void;
+  readonly drainIdleSessions: () => Promise<boolean>;
+  readonly hostBridges: HostBridgeManager;
   readonly connectionRegistry: IConnectionRegistry;
   readonly conversations: ConversationService;
   readonly sessionRating: SessionRatingHost;
@@ -129,6 +133,7 @@ export async function registerApiV1Routes(
         opts.conversations,
       );
       registerEnvironmentRoutes(apiV1 as unknown as Parameters<typeof registerEnvironmentRoutes>[0], core);
+      registerHostsRoutes(apiV1 as unknown as Parameters<typeof registerHostsRoutes>[0], core, opts.hostBridges);
       registerSessionRatingRoutes(
         apiV1 as unknown as Parameters<typeof registerSessionRatingRoutes>[0],
         opts.sessionRating,
@@ -193,6 +198,7 @@ export async function registerApiV1Routes(
       if (opts.enableShutdown !== false) {
         registerShutdownRoutes(apiV1 as unknown as Parameters<typeof registerShutdownRoutes>[0], {
           onShutdown: opts.onShutdown,
+          drainIdleSessions: opts.drainIdleSessions,
         });
       }
     },

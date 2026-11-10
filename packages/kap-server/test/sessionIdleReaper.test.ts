@@ -7,6 +7,7 @@ import {
   SessionIdleReaper,
   resolveSessionIdleReclaimMs,
 } from '../src/services/sessionIdleReaper';
+import { ManagedIdleExit } from '../src/services/managedIdleExit';
 import type { ServerLogger } from '../src/services/pinoLoggerService';
 
 function fakeSessions(ids: readonly string[]) {
@@ -81,5 +82,49 @@ describe('SessionIdleReaper', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('ManagedIdleExit', () => {
+  function setup(state: { sessions: number; connections: number }) {
+    let now = 0;
+    const onIdle = vi.fn();
+    const exit = new ManagedIdleExit(
+      { list: () => Array.from({ length: state.sessions }, () => ({}) as ISessionScopeHandle) },
+      { size: () => state.connections },
+      1000,
+      onIdle,
+      () => now,
+    );
+    return { exit, onIdle, advance: (ms: number) => (now += ms) };
+  }
+
+  it('fires once after the idle window with no sessions and no connections', () => {
+    const { exit, onIdle, advance } = setup({ sessions: 0, connections: 0 });
+    advance(999);
+    exit.sweep();
+    expect(onIdle).not.toHaveBeenCalled();
+    advance(1);
+    exit.sweep();
+    exit.sweep();
+    expect(onIdle).toHaveBeenCalledTimes(1);
+  });
+
+  it('restarts the idle window while a session or connection is live', () => {
+    const state = { sessions: 1, connections: 0 };
+    const { exit, onIdle, advance } = setup(state);
+    advance(5000);
+    exit.sweep();
+    state.sessions = 0;
+    state.connections = 1;
+    advance(5000);
+    exit.sweep();
+    state.connections = 0;
+    advance(999);
+    exit.sweep();
+    expect(onIdle).not.toHaveBeenCalled();
+    advance(1);
+    exit.sweep();
+    expect(onIdle).toHaveBeenCalledTimes(1);
   });
 });

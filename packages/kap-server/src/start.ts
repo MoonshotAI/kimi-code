@@ -8,6 +8,7 @@ import {
   CapabilityChanged,
   IAppendLogStore,
   IConfigService,
+  IFlagService,
   IEventService,
   IMcpOAuthService,
   IProviderDiscoveryService,
@@ -87,6 +88,10 @@ import {
 import { createServerSessionRating } from './services/sessionRating';
 import { ConversationService } from './services/conversation/conversationService';
 import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
+import { HostBridgeManager } from './services/hosts/hostBridgeManager';
+import { matchHostProxyPath, proxyHostWebSocket, registerHostProxyRoutes } from './services/hosts/hostProxy';
+import { SSH_FULL_REMOTE_FLAG_ID } from './services/hosts/hostsConfig';
+import { DEFAULT_MANAGED_IDLE_EXIT_MS, ManagedIdleExit } from './services/managedIdleExit';
 import { SessionIdleReaper, resolveSessionIdleReclaimMs } from './services/sessionIdleReaper';
 import { startConfigChangedPublisher } from './services/config/configChangedPublisher';
 import { createAuthFailureLimiter } from './middleware/rateLimit';
@@ -134,6 +139,8 @@ export interface ServerStartOptions {
   readonly webAssetsDir?: string;
   readonly serverVersion?: string;
   readonly telemetry?: boolean;
+  readonly managedBy?: string;
+  readonly managedIdleExitMs?: number;
 }
 
 export interface RunningServer {
@@ -164,6 +171,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     port,
     startedAt: Date.now(),
     serverVersion,
+    managedBy: opts.managedBy,
   });
   const exposureClass = classify(host, { bindClass: opts.bindClass });
   if (exposureClass !== 'loopback' && opts.insecureNoTls !== true) {
@@ -369,6 +377,8 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     capabilityInstallSubscription.dispose();
     authFailureLimiter?.dispose();
     modelCatalogRefreshScheduler.dispose();
+    managedIdleExit?.close();
+    hostBridges.close();
     await sessionIdleReaper.close();
     try {
       await shutdownServerTelemetry(telemetry);
@@ -403,6 +413,26 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   };
 
   const connectionRegistry = new ConnectionRegistry();
+  const hostBridges = new HostBridgeManager(core.accessor.get(IConfigService), logger);
+  const hostProxyEnabled = (): boolean => core.accessor.get(IFlagService).enabled(SSH_FULL_REMOTE_FLAG_ID);
+  const requestClose = (): void => {
+    void close().catch((error: unknown) => logger.error({ err: error }, 'server close failed'));
+  };
+  const sessionManager = core.accessor.get(ISessionManager);
+  const drainIdleSessions = async (): Promise<boolean> => {
+    if (connectionRegistry.size() > 0) return false;
+    for (const handle of sessionManager.list()) await sessionManager.closeIfIdle(handle.id, 0);
+    return sessionManager.list().length === 0;
+  };
+  const managedIdleExit =
+    opts.managedBy === undefined
+      ? undefined
+      : new ManagedIdleExit(
+          sessionManager,
+          connectionRegistry,
+          opts.managedIdleExitMs ?? DEFAULT_MANAGED_IDLE_EXIT_MS,
+          requestClose,
+        );
   const conversations = new ConversationService(core);
   const sessionRating = createServerSessionRating(core, { debugEndpoints, logger });
   core.accessor.get(IGlobalSearchService);
@@ -504,9 +534,9 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
             ? 'Remote Control cannot be combined with --dangerous-bypass-auth.'
             : undefined,
     },
-    onShutdown: () => {
-      void close().catch((error: unknown) => logger.error({ err: error }, 'server close failed'));
-    },
+    onShutdown: requestClose,
+    drainIdleSessions,
+    hostBridges,
     connectionRegistry,
     conversations,
     sessionRating,
@@ -531,7 +561,8 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     const isV1 = url === WS_PATH_V1 || url.startsWith(`${WS_PATH_V1}?`);
     const isDebug = url === WS_DEBUG_PATH || url.startsWith(`${WS_DEBUG_PATH}?`);
     const wss = isV1 ? wssV1 : isDebug ? wssDebug : undefined;
-    if (wss === undefined) {
+    const hostProxyTarget = hostProxyEnabled() ? matchHostProxyPath(url) : undefined;
+    if (wss === undefined && hostProxyTarget === undefined) {
       socket.destroy();
       return;
     }
@@ -593,6 +624,10 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     }
 
     (socket as Socket).setNoDelay(true);
+    if (wss === undefined) {
+      await proxyHostWebSocket(hostBridges, hostProxyTarget!, req, socket, head);
+      return;
+    }
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
   };
   app.server.on('upgrade', (req, socket, head) => {
@@ -607,6 +642,8 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     wssDebug?.close();
     await broadcaster.close();
   });
+
+  registerHostProxyRoutes(app, hostBridges, hostProxyEnabled);
 
   app.get('/asyncapi.json', async (_req, reply) => {
     return reply
@@ -649,6 +686,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     );
   });
   sessionIdleReaper.start();
+  managedIdleExit?.start();
 
   process.on('unhandledRejection', onUnhandledRejection);
   process.on('uncaughtException', onUncaughtException);

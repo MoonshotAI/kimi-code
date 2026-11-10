@@ -13,6 +13,7 @@
 import type { Command } from 'commander';
 
 import { registerDeprecatedServerCommand } from './deprecated-server';
+import { registerEnsureDaemonCommand } from './ensure-daemon';
 import { registerRotateTokenCommand } from './rotate-token';
 import { buildWebCommand } from './run';
 
@@ -23,6 +24,7 @@ export function registerWebCommand(program: Command): void {
       .description('Run the local Kimi server and open the web UI.'),
   );
   registerRotateTokenCommand(web);
+  registerEnsureDaemonCommand(web);
   registerDeprecatedServerCommand(program);
   buildWebCommand(
     program
