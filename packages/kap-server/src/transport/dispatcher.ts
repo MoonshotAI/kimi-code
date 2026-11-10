@@ -1,6 +1,6 @@
 import {
   ErrorCodes,
-  IAgentLifecycleService,
+  getOrRestoreAgent,
   Error2,
   getLiveSessionById,
   type IScopeHandle,
@@ -39,7 +39,7 @@ export async function resolveScope(
         throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} not found`);
       }
       if (agentId === MAIN_AGENT_ID) return ensureMainAgent(session);
-      const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentId);
+      const agent = await getOrRestoreAgent(session, agentId);
       if (agent === undefined) {
         throw new Error2(
           ErrorCodes.AGENT_NOT_FOUND,

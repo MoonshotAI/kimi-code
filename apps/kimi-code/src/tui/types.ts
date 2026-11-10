@@ -5,24 +5,35 @@ import type {
   PermissionMode,
   ProviderConfig,
   PromptPart,
+  SessionEnvironmentStatus,
+  SessionEnvironmentType,
   ThinkingEffort,
   TokenUsage,
   ToolInputDisplay,
 } from '@moonshot-ai/kimi-code-sdk';
 
-import type { NotificationsConfig, StatusLineConfig, UpgradePreferences } from './config';
+import type { MarkdownConfig, NotificationsConfig, StatusLineConfig, TranscriptConfig, TuiMode, UpgradePreferences } from './config';
 import type { PendingApproval, PendingQuestion } from './reverse-rpc/types';
 import type { ColorToken, ThemeName } from './theme';
+import type { MediaAttachment, VideoAttachment } from './utils/image-attachment-store';
 
 export type BannerDisplay = 'always' | 'once' | 'cooldown';
 
 export interface BannerState {
   key: string;
   tag: string | null;
-  mainText: string;
+  mainText: string | null;
   subText: string | null;
   display: BannerDisplay;
   ttlHours?: number;
+}
+
+export interface EnvironmentSlotState {
+  readonly environmentId: string;
+  readonly type: SessionEnvironmentType;
+  readonly status: SessionEnvironmentStatus;
+  readonly cwd?: string;
+  readonly connectError?: string;
 }
 
 export interface AppState {
@@ -70,19 +81,25 @@ export interface AppState {
   /** Pending step retry backoff (fed by `turn.step.retrying`); null when no retry is in flight. */
   stepRetry: StepRetryState | null;
   theme: ThemeName;
+  tuiMode?: TuiMode;
   version: string;
   editorCommand: string | null;
   /** Mirrors the TUI config toggle; defaults to false when absent from older fixtures. */
   disablePasteBurst?: boolean;
+  copyOnSelect?: boolean;
   /** LaTeX math rendering in Markdown; defaults to true when absent from older fixtures. */
   renderLatex?: boolean;
   /** Mirrors the TUI config toggle; defaults to true when absent from older fixtures. */
   cacheExpiryHint?: boolean;
   disableFeedbackSurvey?: boolean;
+  /** Mirrors the TUI config toggle; defaults to true when absent from older fixtures. */
+  autoSessionTitle?: boolean;
   notifications: NotificationsConfig;
   upgrade: UpgradePreferences;
   /** Footer status line customization from tui.toml; absent means the default layout. */
   statusLine?: StatusLineConfig;
+  markdown?: MarkdownConfig;
+  transcript: TranscriptConfig;
   availableModels: Record<string, ModelAlias>;
   availableProviders: Record<string, ProviderConfig>;
   sessionTitle: string | null;
@@ -91,9 +108,15 @@ export interface AppState {
   mcpServersSummary: string | null;
   /** Optional banner shown below the welcome panel; null means no banner to render. */
   banner?: BannerState | null;
+  /**
+   * Current session's environment binding + connection status. Undefined while
+   * unsynced — every consumer must treat that as the plain local session.
+   */
+  environment?: EnvironmentSlotState;
 }
 
-export function sumTokenUsage(total: TokenUsage): number {
+export function sumTokenUsage(total: TokenUsage): number | undefined {
+  if (total.inputCacheRead === undefined) return undefined;
   return total.inputOther + total.output + total.inputCacheRead + total.inputCacheCreation;
 }
 
@@ -114,6 +137,10 @@ export interface StepRetryState {
    */
   phase: 'backoff' | 'attempt';
 }
+
+export type Elapsed =
+  | { readonly known: false }
+  | { readonly known: true; readonly ms: number };
 
 export interface ToolCallBlockData {
   id: string;
@@ -160,18 +187,25 @@ export interface BackgroundAgentMetadata {
   readonly parentToolCallId: string;
   readonly agentName?: string;
   readonly description?: string;
+  /** Background task id carried on the spawn event (Agent tool only); lets the
+   *  terminal card register before `background.task.started` syncs. */
+  readonly taskId?: string;
   /** Display name of the model the agent is bound to (resolved at spawn). */
   readonly model?: string;
   /** Thinking effort, set only for concrete levels (boolean on/off hidden). */
   readonly effort?: string;
 }
 
-export type BackgroundAgentStatusPhase = 'started' | 'completed' | 'failed';
+export type BackgroundAgentStatusPhase = 'started' | 'completed' | 'failed' | 'killed';
 
 export interface BackgroundAgentStatusData {
   readonly phase: BackgroundAgentStatusPhase;
   readonly headline: string;
   readonly detail?: string;
+  /** Subagent behind a background-agent card; lets the task-notification
+   *  anchor reuse a terminal card that was mounted before its task id was
+   *  known (e.g. a tower worker that finished before `registerTask`). */
+  readonly agentId?: string;
 }
 
 export interface CompactionTranscriptData {
@@ -232,7 +266,7 @@ export interface TranscriptEntry {
   modelText?: boolean;
   color?: ColorToken;
   detail?: string;
-  /** Optional override for the leading bullet of a 'user' message entry. An empty string suppresses the bullet entirely (used by shell-command echoes so `$` replaces the sparkles marker). */
+  /** Optional override for the leading bullet of a 'user' message entry. An empty string suppresses the bullet entirely (used by shell-command echoes so `$` takes the bullet's place). */
   bullet?: string;
   toolCallData?: ToolCallBlockData;
   backgroundAgentStatus?: BackgroundAgentStatusData;
@@ -240,6 +274,8 @@ export interface TranscriptEntry {
   cronData?: CronTranscriptData;
   goalData?: GoalTranscriptData;
   imageAttachmentIds?: readonly number[];
+  skillNames?: readonly string[];
+  inlineSkillActivations?: readonly InlineSkillActivation[];
   skillActivationId?: string;
   skillName?: string;
   skillArgs?: string;
@@ -249,6 +285,8 @@ export interface TranscriptEntry {
   /** Entry renders a UserPromptSubmit hook result (sits inside its prompt's group window). */
   hookResult?: boolean;
   pluginCommandData?: PluginCommandTranscriptData;
+  /** Live steer not yet acknowledged by `turn.steer`. Absent after delivery, failure, or replay. */
+  steerPending?: true;
 }
 
 export type LivePaneMode =
@@ -264,32 +302,74 @@ export interface LivePaneState {
   pendingQuestion: PendingQuestion | null;
 }
 
-export interface InlineSkillActivation {
-  readonly skillName: string;
-  /**
-   * Skill arguments. Only set for a leading `/skill:<name> args` command that
-   * is combined with further inline skills; inline tokens carry no args.
-   */
-  readonly args?: string;
+export interface PreparedSkillActivations {
+  skills: Array<{ name: string; path?: string; args?: string }>;
+  mediaAttachmentIds: number[];
+  stagingPaths: string[];
+  cachedVideos: VideoAttachment[];
 }
 
-export interface QueuedMessage {
+export interface InlineSkillActivation {
+  readonly skillName: string;
+  readonly path?: string;
+  readonly args?: string;
+  readonly start?: number;
+  readonly occurrences?: readonly { commandName: string; start: number }[];
+}
+
+export type ModelSwitchPersistence = 'session' | 'model' | 'model-and-effort';
+
+interface QueuedEntryBase {
   readonly text: string;
+}
+
+export interface QueuedPromptMessage extends QueuedEntryBase {
+  readonly mode?: 'prompt';
   readonly agentId?: string;
   readonly parts?: readonly PromptPart[];
   readonly imageAttachmentIds?: readonly number[];
   readonly videoAttachmentIds?: readonly number[];
-  /** `bash` for a `!` shell command queued while another command is running;
-   *  `skill` for a slash-skill activation queued while the session is busy;
-   *  undefined (=`prompt`) for a normal message. */
-  readonly mode?: 'prompt' | 'bash' | 'skill';
-  /** Set when mode === 'skill': the skill to activate when the item drains.
-   *  `text` then holds the display/recall string (`/name args`). */
-  readonly skillName?: string;
-  /** Set when mode === 'skill': the raw (media-rewritten) args to activate with. */
-  readonly skillArgs?: string;
+  readonly mediaSnapshots?: readonly MediaAttachment[];
   /** Skills to activate together with this queued message's prompt. */
   readonly inlineSkillActivations?: readonly InlineSkillActivation[];
+  /** Resent after the user chose Retry on a session-in-use prompt. */
+  readonly occupiedRetry?: boolean;
+}
+
+export interface QueuedBashCommand extends QueuedEntryBase {
+  readonly mode: 'bash';
+  readonly agentId?: string;
+}
+
+export interface QueuedCompactCommand extends QueuedEntryBase {
+  readonly mode: 'compact';
+  readonly agentId?: string;
+  readonly compactInstruction?: string;
+  readonly compactRetries?: number;
+  /** Auto-compaction serial at enqueue time; a mismatch at dequeue skips the fire. */
+  readonly queuedAfterAutoSerial?: number;
+}
+
+export interface QueuedModelSwitch extends QueuedEntryBase {
+  readonly mode: 'model-switch';
+  readonly alias: string;
+  readonly thinking: ThinkingEffort;
+  readonly persist: ModelSwitchPersistence;
+  readonly queuedAfterCompactionSerial: number;
+}
+
+export type QueuedMessage =
+  | QueuedPromptMessage
+  | QueuedBashCommand
+  | QueuedCompactCommand
+  | QueuedModelSwitch;
+
+export function isPromptQueuedMessage(message: QueuedMessage): message is QueuedPromptMessage {
+  return message.mode === undefined || message.mode === 'prompt';
+}
+
+export function isQueuedCompactionBarrier(message: QueuedMessage): boolean {
+  return message.mode === 'compact' || message.mode === 'model-switch';
 }
 
 /**
@@ -303,6 +383,8 @@ export interface SteerInputItem {
   readonly parts?: readonly PromptPart[];
   readonly imageAttachmentIds?: readonly number[];
   readonly videoAttachmentIds?: readonly number[];
+  readonly mediaSnapshots?: readonly MediaAttachment[];
+  readonly inlineSkillActivations?: readonly InlineSkillActivation[];
 }
 
 export const INITIAL_LIVE_PANE: LivePaneState = {
@@ -322,10 +404,15 @@ export interface TUIStartupOptions {
   readonly auto: boolean;
   readonly plan: boolean;
   readonly model?: string;
+  readonly additionalDirs?: readonly string[];
   /** Resolved profile name from --agent/--agent-file; bound to the startup session only. */
   readonly agentProfile?: string;
   /** Raw --agent-file paths, passed to session creation alongside `agentProfile`. */
   readonly agentFiles?: readonly string[];
+  /** --environment <id> one-shot binding. The first session consumes it; a later /new keeps the live binding. */
+  readonly environment?: string;
+  /** --environment-cwd <path> override for the startup binding. */
+  readonly environmentCwd?: string;
   readonly startupNotice?: string;
 }
 
@@ -334,6 +421,7 @@ export type TUIStartupState = 'pending' | 'ready' | 'picker';
 export interface KimiTUIOptions {
   initialAppState: AppState;
   startup: TUIStartupOptions;
+  resolvedTuiMode?: TuiMode;
 }
 
 export interface PendingExit {

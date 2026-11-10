@@ -7,6 +7,7 @@ import {
   type AgentActorRestoreEvent,
 } from '#/agent/actorService/agentActorService';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import type {
@@ -38,15 +39,27 @@ interface DateChangeDiscloseEvent {
   readonly seed: DateDisclosure;
 }
 
+let cachedLocalDateFormat: { readonly timeZone: string; readonly format: Intl.DateTimeFormat } | undefined;
+
+function localDateFormat(timeZone: string): Intl.DateTimeFormat {
+  if (cachedLocalDateFormat?.timeZone !== timeZone) {
+    cachedLocalDateFormat = {
+      timeZone,
+      format: new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }),
+    };
+  }
+  return cachedLocalDateFormat.format;
+}
+
 function currentDateDisclosure(clock: IHostClock): Omit<DateDisclosure, 'renderGeneration'> {
   const date = clock.now();
   const timeZone = clock.timeZone();
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(date);
+  const parts = localDateFormat(timeZone).formatToParts(date);
   const part = (type: Intl.DateTimeFormatPartTypes): string =>
     parts.find((candidate) => candidate.type === type)?.value ?? '';
   return {
@@ -67,12 +80,19 @@ const dateChangeInjection = fromCallback(({
   const profile = runtime.get(IAgentProfileService);
   const clock = runtime.get(IHostClock);
   const sessionContext = runtime.get(ISessionContext);
+  const bindingCwd = (): string | undefined => {
+    try {
+      return runtime.get(IAgentEnvironmentBindingService).current.cwd;
+    } catch {
+      return undefined;
+    }
+  };
   const belongsToCurrentCwd = (): boolean => {
     const environment = profile.data().environmentDisclosure;
     return !(
       environment !== undefined &&
       environment.cwd !== '' &&
-      environment.cwd !== sessionContext.cwd
+      environment.cwd !== (bindingCwd() ?? sessionContext.cwd)
     );
   };
   const registration = reminder.register<DateInjectionDisclosure>(
@@ -88,7 +108,7 @@ const dateChangeInjection = fromCallback(({
       const baseline = pickDisclosureBaseline<DateDisclosure>(lastDisclosure, seed);
       if (baseline !== undefined && baseline.localDate !== current.localDate) {
         return {
-          content: `The date has changed. Today's date is now ${current.localDate}. Rely on this reminder over any earlier date statement for the current date. DO NOT mention this to the user explicitly.`,
+          content: `The date has changed. Today's date is now ${current.localDate}, in the local client machine's timezone (${current.timeZone}). Rely on this reminder over any earlier date statement for the current date. DO NOT mention this to the user explicitly.`,
           disclosure: {
             kind: 'date',
             renderGeneration,
@@ -105,7 +125,7 @@ const dateChangeInjection = fromCallback(({
         });
       }
       return {
-        content: `Today's date is ${current.localDate}. The current date is restated in a reminder whenever it changes; rely on the latest such reminder for the current date. DO NOT mention this to the user explicitly.`,
+        content: `Today's date is ${current.localDate}, in the local client machine's timezone (${current.timeZone}). The current date is restated in a reminder whenever it changes; rely on the latest such reminder for the current date. DO NOT mention this to the user explicitly.`,
         disclosure: {
           kind: 'date',
           renderGeneration,

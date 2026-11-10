@@ -26,13 +26,22 @@ const KIMI_TO_PROTOCOL: Record<string, ErrorCode> = {
   [ErrorCodes.SESSION_NOT_FOUND]: ErrorCode.SESSION_NOT_FOUND,
   [ErrorCodes.AGENT_NOT_FOUND]: ErrorCode.SESSION_NOT_FOUND,
   [ErrorCodes.SESSION_UNDO_UNAVAILABLE]: ErrorCode.SESSION_UNDO_UNAVAILABLE,
+  [ErrorCodes.TURN_NOT_FOUND]: ErrorCode.TURN_NOT_FOUND,
   [ErrorCodes.REQUEST_INVALID]: ErrorCode.VALIDATION_FAILED,
   [ErrorCodes.CONFIG_INVALID]: ErrorCode.VALIDATION_FAILED,
   [ErrorCodes.NOT_IMPLEMENTED]: ErrorCode.INTERNAL_ERROR,
   [ErrorCodes.PROMPT_NOT_FOUND]: ErrorCode.PROMPT_NOT_FOUND,
   [ErrorCodes.FS_PATH_NOT_FOUND]: ErrorCode.FS_PATH_NOT_FOUND,
   [ErrorCodes.SESSION_BUSY]: ErrorCode.SESSION_BUSY,
-  [ErrorCodes.PROMPT_ALREADY_COMPLETED]: ErrorCode.PROMPT_ALREADY_COMPLETED,
+  [ErrorCodes.SESSION_FORK_ACTIVE_TURN]: ErrorCode.SESSION_BUSY,
+  [ErrorCodes.SESSION_OCCUPIED]: ErrorCode.SESSION_OCCUPIED,
+  [ErrorCodes.SESSION_STALE]: ErrorCode.SESSION_STALE,
+  [ErrorCodes.COMPACTION_UNABLE]: ErrorCode.COMPACTION_UNABLE,
+  [ErrorCodes.FILE_NOT_FOUND]: ErrorCode.FILE_NOT_FOUND,
+  [ErrorCodes.SKILL_NOT_FOUND]: ErrorCode.SKILL_NOT_FOUND,
+  [ErrorCodes.SKILL_NAME_EMPTY]: ErrorCode.SKILL_NOT_FOUND,
+  [ErrorCodes.SKILL_TYPE_UNSUPPORTED]: ErrorCode.SKILL_NOT_ACTIVATABLE,
+  [ErrorCodes.VALIDATION_FAILED]: ErrorCode.VALIDATION_FAILED,
   [ErrorCodes.PROMPT_ID_CONFLICT]: ErrorCode.PROMPT_ID_CONFLICT,
   [ErrorCodes.GOAL_ALREADY_EXISTS]: ErrorCode.GOAL_ALREADY_EXISTS,
   [ErrorCodes.GOAL_NOT_FOUND]: ErrorCode.GOAL_NOT_FOUND,
@@ -48,12 +57,20 @@ const KIMI_TO_PROTOCOL: Record<string, ErrorCode> = {
   [ErrorCodes.OS_FS_PERMISSION_DENIED]: ErrorCode.FS_PERMISSION_DENIED,
   [ErrorCodes.STORAGE_IO_FAILED]: ErrorCode.PERSISTENCE_FAILURE,
   [ErrorCodes.STORAGE_LOCKED]: ErrorCode.PERSISTENCE_FAILURE,
+  [ErrorCodes.WIRE_VERSION_TOO_LOW]: ErrorCode.WIRE_VERSION_TOO_LOW,
 };
+
+const PUBLIC_DETAIL_CODES: ReadonlySet<string> = new Set([
+  ErrorCodes.SESSION_OCCUPIED,
+  ErrorCodes.SESSION_STALE,
+  ErrorCodes.WIRE_VERSION_TOO_LOW,
+]);
 
 export function mapError(err: unknown, requestId: string): ReturnType<typeof errEnvelope> {
   if (err instanceof Error2) {
     const code = KIMI_TO_PROTOCOL[err.code] ?? ErrorCode.INTERNAL_ERROR;
-    return errEnvelope(code, err.message, requestId, err.stack);
+    const details = PUBLIC_DETAIL_CODES.has(err.code) ? err.details : undefined;
+    return errEnvelope(code, err.message, requestId, err.stack, details);
   }
   if (err instanceof TimeoutError) {
     return errEnvelope(ErrorCode.INTERNAL_ERROR, err.message, requestId, err.stack);

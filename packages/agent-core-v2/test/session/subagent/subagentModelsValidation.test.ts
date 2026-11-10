@@ -19,11 +19,13 @@ describe('SessionSubagentModelsValidationService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
   let modelIds: Set<string>;
+  let modelMeta: Map<string, Record<string, unknown>>;
 
   beforeEach(() => {
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
     modelIds = new Set();
+    modelMeta = new Map();
   });
   afterEach(() => {
     disposables.dispose();
@@ -41,7 +43,7 @@ describe('SessionSubagentModelsValidationService', () => {
             { details: { model: id } },
           );
         }
-        return { id } as Model;
+        return { id, ...modelMeta.get(id) } as Model;
       },
     } as unknown as IModelCatalog);
     ix.set(
@@ -89,12 +91,6 @@ describe('SessionSubagentModelsValidationService', () => {
     expect((error as Error2).message).toContain(
       '[secondary_model.models] entry "provider/typo" could not be resolved',
     );
-  });
-
-  it('constructs fine when force pins the legacy model fallback', () => {
-    modelIds.add('provider/fast');
-    setup({ [SECONDARY_MODEL_SECTION]: { model: 'provider/fast', force: true } });
-    expect(resolve()).toBeUndefined();
   });
 
   it('fails session creation when a pool table relies on the legacy model key for its default', () => {
@@ -162,20 +158,15 @@ describe('SessionSubagentModelsValidationService', () => {
     );
   });
 
-  it('fails session creation when a pool key uses the reserved "primary" alias', () => {
+  it('accepts "primary" as an ordinary pool alias', () => {
     modelIds.add('primary').add('provider/fast');
     setup({
       [SECONDARY_MODEL_SECTION]: {
-        defaultModel: 'provider/fast',
-        models: { primary: 'looks like a model', 'provider/fast': 'fast and cheap' },
+        defaultModel: 'primary',
+        models: { primary: 'ordinary alias', 'provider/fast': 'fast and cheap' },
       },
     });
-    const error = resolve();
-    expect(isError2(error)).toBe(true);
-    expect((error as Error2).code).toBe(ErrorCodes.CONFIG_INVALID);
-    expect((error as Error2).message).toContain(
-      '[secondary_model.models] key "primary" is reserved',
-    );
+    expect(resolve()).toBeUndefined();
   });
 
   it('fails session creation when a pool key does not resolve, naming the key', () => {
@@ -196,44 +187,162 @@ describe('SessionSubagentModelsValidationService', () => {
     expect(isError2((error as Error2).cause)).toBe(true);
   });
 
-  it('constructs fine when force pins a resolvable default_model', () => {
-    modelIds.add('provider/fast');
-    setup({ [SECONDARY_MODEL_SECTION]: { defaultModel: 'provider/fast', force: true } });
+  it('ignores the removed force key instead of failing session creation', () => {
+    setup({ [SECONDARY_MODEL_SECTION]: { force: true } });
+    expect(resolve()).toBeUndefined();
+
+    modelIds.add('provider/fast').add('provider/smart');
+    setup({
+      [SECONDARY_MODEL_SECTION]: {
+        defaultModel: 'provider/fast',
+        models: { 'provider/fast': 'fast and cheap', 'provider/smart': '' },
+        force: true,
+      },
+    });
     expect(resolve()).toBeUndefined();
   });
 
-  it('fails session creation when force is set without default_model', () => {
-    setup({ [SECONDARY_MODEL_SECTION]: { force: true } });
+  it('fails session creation when default_effort is not supported by a pool model', () => {
+    modelIds.add('provider/fast').add('provider/smart');
+    modelMeta.set('provider/fast', {
+      capabilities: { thinking: true },
+      supportEfforts: ['low', 'high', 'max'],
+    });
+    modelMeta.set('provider/smart', {
+      capabilities: { thinking: true },
+      supportEfforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+    });
+    setup({
+      [SECONDARY_MODEL_SECTION]: {
+        defaultModel: 'provider/smart',
+        models: { 'provider/fast': 'fast and cheap', 'provider/smart': 'hard tasks' },
+        defaultEffort: 'xhigh',
+      },
+    });
     const error = resolve();
     expect(isError2(error)).toBe(true);
     expect((error as Error2).code).toBe(ErrorCodes.CONFIG_INVALID);
-    expect((error as Error2).message).toContain(
-      '[secondary_model].default_model is required when [secondary_model].force is set',
-    );
+    expect((error as Error2).message).toContain('[secondary_model].default_effort "xhigh"');
+    expect((error as Error2).message).toContain('"provider/fast"');
+    expect((error as Error2).message).toContain('low, high, max');
   });
 
-  it('fails session creation when force is combined with a models table', () => {
+  it('constructs fine when every pool model supports default_effort', () => {
+    modelIds.add('provider/fast').add('provider/smart');
+    modelMeta.set('provider/fast', {
+      capabilities: { thinking: true },
+      supportEfforts: ['low', 'high', 'xhigh', 'max'],
+    });
+    modelMeta.set('provider/smart', {
+      capabilities: { thinking: true },
+      supportEfforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+    });
+    setup({
+      [SECONDARY_MODEL_SECTION]: {
+        defaultModel: 'provider/fast',
+        models: { 'provider/fast': 'fast and cheap', 'provider/smart': 'hard tasks' },
+        defaultEffort: 'xhigh',
+      },
+    });
+    expect(resolve()).toBeUndefined();
+  });
+
+  it('fails session creation when a lone default_model does not support default_effort', () => {
     modelIds.add('provider/fast');
+    modelMeta.set('provider/fast', {
+      capabilities: { thinking: true },
+      supportEfforts: ['low', 'high', 'max'],
+    });
+    setup({
+      [SECONDARY_MODEL_SECTION]: {
+        defaultModel: 'provider/fast',
+        defaultEffort: 'xhigh',
+      },
+    });
+    const error = resolve();
+    expect(isError2(error)).toBe(true);
+    expect((error as Error2).code).toBe(ErrorCodes.CONFIG_INVALID);
+    expect((error as Error2).message).toContain('not supported by model "provider/fast"');
+  });
+
+  it('constructs fine when a pool model declares no effort list', () => {
+    modelIds.add('provider/fast');
+    modelMeta.set('provider/fast', { capabilities: { thinking: true } });
     setup({
       [SECONDARY_MODEL_SECTION]: {
         defaultModel: 'provider/fast',
         models: { 'provider/fast': 'fast and cheap' },
-        force: true,
+        defaultEffort: 'xhigh',
+      },
+    });
+    expect(resolve()).toBeUndefined();
+  });
+
+  it('constructs fine for an adaptive-thinking pool model without the thinking capability', () => {
+    modelIds.add('provider/adaptive');
+    modelMeta.set('provider/adaptive', {
+      capabilities: { thinking: false },
+      adaptiveThinking: true,
+    });
+    setup({
+      [SECONDARY_MODEL_SECTION]: {
+        defaultModel: 'provider/adaptive',
+        models: { 'provider/adaptive': 'adaptive thinking' },
+        defaultEffort: 'high',
+      },
+    });
+    expect(resolve()).toBeUndefined();
+  });
+
+  it('fails session creation when a pool model does not support thinking', () => {
+    modelIds.add('provider/plain');
+    modelMeta.set('provider/plain', { capabilities: { thinking: false } });
+    setup({
+      [SECONDARY_MODEL_SECTION]: {
+        defaultModel: 'provider/plain',
+        models: { 'provider/plain': 'no thinking' },
+        defaultEffort: 'xhigh',
       },
     });
     const error = resolve();
     expect(isError2(error)).toBe(true);
     expect((error as Error2).code).toBe(ErrorCodes.CONFIG_INVALID);
     expect((error as Error2).message).toContain(
-      '[secondary_model].force cannot be combined with [secondary_model.models]',
+      'model "provider/plain" does not support thinking',
     );
   });
 
-  it('fails session creation when the forced default_model does not resolve', () => {
-    setup({ [SECONDARY_MODEL_SECTION]: { defaultModel: 'provider/typo', force: true } });
+  it('constructs fine when default_effort is off even for a non-thinking pool model', () => {
+    modelIds.add('provider/plain');
+    modelMeta.set('provider/plain', { capabilities: { thinking: false } });
+    setup({
+      [SECONDARY_MODEL_SECTION]: {
+        defaultModel: 'provider/plain',
+        models: { 'provider/plain': 'no thinking' },
+        defaultEffort: 'off',
+      },
+    });
+    expect(resolve()).toBeUndefined();
+  });
+
+  it('fails session creation when default_effort is off but a pool model always thinks', () => {
+    modelIds.add('provider/always');
+    modelMeta.set('provider/always', {
+      capabilities: { thinking: true },
+      alwaysThinking: true,
+      supportEfforts: ['low', 'high', 'max'],
+    });
+    setup({
+      [SECONDARY_MODEL_SECTION]: {
+        defaultModel: 'provider/always',
+        models: { 'provider/always': 'always reasoning' },
+        defaultEffort: 'off',
+      },
+    });
     const error = resolve();
     expect(isError2(error)).toBe(true);
     expect((error as Error2).code).toBe(ErrorCodes.CONFIG_INVALID);
-    expect((error as Error2).message).toContain('"provider/typo"');
+    expect((error as Error2).message).toContain('[secondary_model].default_effort "off"');
+    expect((error as Error2).message).toContain('"provider/always"');
   });
 });

@@ -1,7 +1,5 @@
 import { createHash } from 'node:crypto';
 import type { ContentPart } from '#human/llm/message';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 import {
@@ -160,10 +158,3 @@ function asMediaContainer(value: unknown): { url: unknown } | undefined {
   return 'url' in obj ? (obj as { url: unknown }) : undefined;
 }
 
-registerScopedService(
-  LifecycleScope.Agent,
-  IAgentBlobService,
-  AgentBlobServiceImpl,
-  ScopeActivation.OnScopeCreated,
-  'agentBlob',
-);

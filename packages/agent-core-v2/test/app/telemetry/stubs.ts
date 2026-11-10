@@ -16,6 +16,13 @@ export function recordingTelemetry(
   let enabled = true;
   const service: ITelemetryService = {
     _serviceBrand: undefined,
+    track: (event, properties) => {
+      if (!enabled) return;
+      records.push({
+        event,
+        properties: composeTelemetryProperties(currentContext, properties),
+      });
+    },
     track2: (event, properties) => {
       if (!enabled) return;
       records.push({

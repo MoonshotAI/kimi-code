@@ -31,6 +31,8 @@ import type {
 } from '@agentclientprotocol/sdk';
 import { RequestError } from '@agentclientprotocol/sdk';
 import type { ContextMessage } from '@moonshot-ai/agent-core-v2';
+import { toCoreMessage } from '@moonshot-ai/agent-core-v2/human/message';
+import { toLlmMessage } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/message';
 import type {
   AgentEventPayloads,
   AgentHandle,
@@ -102,6 +104,8 @@ function leadingText(blocks: readonly ContentBlock[]): string | undefined {
  * only reaches us from `agent.activateSkill`, which rejects instead.
  */
 const TURN_AGENT_BUSY_CODE = 'turn.agent_busy';
+const SESSION_OCCUPIED_CODE = 'session.occupied';
+const SESSION_STALE_CODE = 'session.stale';
 
 /**
  * Map a prompt-launch rejection (from `agent.prompt` / `agent.activateSkill`)
@@ -111,6 +115,10 @@ const TURN_AGENT_BUSY_CODE = 'turn.agent_busy';
  *    re-auth flow (same mapping as the `turn.ended` auth path).
  *  - `turn.agent_busy` maps to `invalidRequest` (-32600), matching the legacy
  *    adapter's busy-prompt semantics.
+ *  - `session.occupied` / `session.stale` map to `invalidRequest` too:
+ *    occupied passes the engine message through (it is user-facing already),
+ *    stale swaps in a client-action message because the engine's names the
+ *    internal session id.
  *  - Everything else becomes a fixed-message `internalError` (-32603): the
  *    raw engine message and stack are logged server-side but NEVER cross the
  *    wire, so internal details cannot leak into the JSON-RPC channel.
@@ -128,6 +136,17 @@ export function mapPromptLaunchError(error: unknown, sessionId: string): Request
   if (code === TURN_AGENT_BUSY_CODE) {
     log.warn('acp: prompt rejected because another turn is active', { sessionId });
     return RequestError.invalidRequest({ code }, message);
+  }
+  if (code === SESSION_OCCUPIED_CODE) {
+    log.warn('acp: prompt rejected because another client holds the session', { sessionId });
+    return RequestError.invalidRequest({ code }, message);
+  }
+  if (code === SESSION_STALE_CODE) {
+    log.warn('acp: prompt rejected because the session was updated elsewhere', { sessionId });
+    return RequestError.invalidRequest(
+      { code },
+      'Session was updated by another client. Close and reopen the session, then retry.',
+    );
   }
   log.error('acp: prompt launch failed', {
     sessionId,
@@ -404,9 +423,20 @@ export class AcpSession {
   async replayHistory(): Promise<void> {
     let messages: readonly ContextMessage[];
     try {
-      // `history` items cross the wire as JSON-cloned `ContextMessage`s (the
-      // facade types them via the engine RPC signature).
-      messages = (await this.agent.getContext()).history;
+      messages = (await this.agent.getContext()).history.map((message) => ({
+        ...toCoreMessage(toLlmMessage(message)),
+        id: message.id,
+        providerMessageId: message.providerMessageId,
+        name: message.name,
+        origin: message.origin,
+        isError: message.isError,
+        partial: message.partial,
+        toolCallDisplays: message.toolCallDisplays,
+        note: message.note,
+        usage: message.usage,
+        llmTiming: message.llmTiming,
+        durationMs: message.durationMs,
+      }));
     } catch (error) {
       log.warn('acp: replayHistory could not read context memory', {
         sessionId: this.sessionId,

@@ -6,10 +6,12 @@ import type { ToolDescription as KosongTool } from '#human/llm/message';
 
 import { type IDisposable } from "#/_base/di/lifecycle";
 import { Service } from "#/_base/di/service";
+import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { ErrorCodes, makeErrorPayload } from "#/errors";
 import { abortable } from '#/_base/utils/abort';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { environmentTempTarget, IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -29,6 +31,12 @@ import {
   McpToolsDiscovered,
   type McpToolCollision,
 } from './mcpDiscoveryOps';
+import {
+  mcpFailureKey,
+  McpServerFailed,
+  McpServerFailureResolved,
+  type McpServerFailureResolution,
+} from './mcpFailureOps';
 import { AgentErrorEvent, McpServerStatus, ToolListUpdated } from './mcpEvents';
 
 interface McpToolRegistration {
@@ -48,7 +56,10 @@ export const mcpDiscoveryWritesReadyKey = defineState<boolean>(
 export class AgentMcpService extends Service implements IAgentMcpService {
   declare readonly _serviceBrand: undefined;
   private readonly mcpTools = new Map<string, McpToolRegistration>();
-  private readonly pendingDiscoveries: Array<() => void> = [];
+  private readonly pendingMcpTools = new Map<string, McpToolRegistration>();
+  private readonly pendingDiscoveries: Array<() => Promise<void> | void> = [];
+  private readonly failedServerEpisodes = new Set<string>();
+  private failureWriteTail: Promise<void> = Promise.resolve();
 
   constructor(
     @ISessionMcpHandle private readonly mcpHandle: ISessionMcpHandle,
@@ -61,9 +72,11 @@ export class AgentMcpService extends Service implements IAgentMcpService {
     @IAgentStateService private readonly states: IAgentStateService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @ISessionMediaStore private readonly attachmentStore: ISessionMediaStore,
+    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
   ) {
     super();
     this.states.contributeState(mcpDiscoveryKey);
+    this.states.contributeState(mcpFailureKey);
     this.states.contributeState(mcpMcpToolsByServerKey);
     this.states.contributeState(mcpDiscoveryWritesReadyKey);
     this.attachMcpTools();
@@ -78,7 +91,7 @@ export class AgentMcpService extends Service implements IAgentMcpService {
     );
     this._register(
       this.dispatcher.hooks.onDidRestore.register('mcp', async (_ctx, next) => {
-        this.flushPendingDiscoveries();
+        await this.flushPendingDiscoveries();
         await next();
       }),
     );
@@ -176,21 +189,33 @@ export class AgentMcpService extends Service implements IAgentMcpService {
           status: entry.status,
           toolCount: entry.toolCount,
           error: entry.error,
+          nextRetryAt: entry.nextRetryAt,
         },
       }),
     );
     if (entry.status === 'connected') {
+      this.resolveServerFailure(entry, 'recovered');
       this.registerConnectedMcpServer(entry);
       return;
     }
     if (entry.status === 'needs-auth') {
+      this.resolveServerFailure(entry, 'needs-auth');
       this.registerNeedsAuthMcpServer(entry);
       return;
     }
-    if (entry.status === 'failed' || entry.status === 'pending' || entry.status === 'removed') {
+    if (entry.status === 'failed') {
+      this.recordServerFailure(entry);
+      return;
+    }
+    if (entry.status === 'pending') {
+      return;
+    }
+    if (entry.status === 'removed') {
+      this.resolveServerFailure(entry, 'removed');
       return;
     }
     if (entry.status === 'disabled') {
+      this.resolveServerFailure(entry, 'disabled');
       const removed = this.unregisterMcpServer(entry.name);
       if (removed) {
         void this.dispatcher.dispatch(
@@ -204,6 +229,54 @@ export class AgentMcpService extends Service implements IAgentMcpService {
     }
   }
 
+  private recordServerFailure(entry: McpServerEntry): void {
+    if (this.failedServerEpisodes.has(entry.name)) return;
+    this.failedServerEpisodes.add(entry.name);
+    this.enqueueFailureWrite(async () => {
+      if (this.states.get(mcpFailureKey).open.includes(entry.name)) return;
+      await this.dispatcher.dispatch(
+        new McpServerFailed({
+          agentId: this.scopeContext.agentId,
+          serverName: entry.name,
+          transport: entry.transport,
+          error: entry.error,
+        }),
+      );
+    });
+  }
+
+  private resolveServerFailure(
+    entry: McpServerEntry,
+    resolution: McpServerFailureResolution,
+  ): void {
+    this.failedServerEpisodes.delete(entry.name);
+    this.enqueueFailureWrite(async () => {
+      if (!this.states.get(mcpFailureKey).open.includes(entry.name)) return;
+      await this.dispatcher.dispatch(
+        new McpServerFailureResolved({
+          agentId: this.scopeContext.agentId,
+          serverName: entry.name,
+          transport: entry.transport,
+          resolution,
+        }),
+      );
+    });
+  }
+
+  private enqueueFailureWrite(work: () => Promise<void>): void {
+    const run = async (): Promise<void> => {
+      if (!this.discoveryWritesReady) {
+        this.pendingDiscoveries.push(work);
+        return;
+      }
+      await work();
+    };
+    this.failureWriteTail = this.failureWriteTail.then(run, run);
+    void this.failureWriteTail.catch((error) => {
+      onUnexpectedError(error);
+    });
+  }
+
   private registerConnectedMcpServer(entry: McpServerEntry): void {
     const resolved = this.resolved(entry.name);
     if (resolved === undefined) return;
@@ -212,6 +285,7 @@ export class AgentMcpService extends Service implements IAgentMcpService {
       resolved.client,
       resolved.tools,
       resolved.enabledNames,
+      resolved.deferred,
     );
     this.emitMcpToolCollisions(entry.name, result.collisions);
     this.recordDiscovery(entry.name, resolved.rawTools, resolved.enabledNames, result.collisions);
@@ -235,7 +309,13 @@ export class AgentMcpService extends Service implements IAgentMcpService {
       oauthService,
       reconnect: (signal) => this.reconnect(entry.name, signal),
     });
-    const disposable = this._register(this.registry.register(tool, { source: 'mcp' }));
+    const deferred = this.mcpHandle.connectionManager.deferredOf(entry.name);
+    const disposable = this._register(
+      this.registry.register(tool, {
+        source: 'mcp',
+        disclosure: deferred ? 'deferred' : 'inline',
+      }),
+    );
     this.mcpTools.set(tool.name, { disposable, serverName: entry.name });
     this.mcpToolsByServer.set(entry.name, [tool.name]);
     void this.dispatcher.dispatch(
@@ -252,11 +332,11 @@ export class AgentMcpService extends Service implements IAgentMcpService {
     client: MCPClient,
     tools: readonly KosongTool[],
     enabledTools: ReadonlySet<string>,
+    deferred: boolean,
   ): {
     readonly registered: readonly string[];
     readonly collisions: readonly McpToolCollision[];
   } {
-    this.unregisterMcpServer(serverName);
     const qualifiedNames: string[] = [];
     const collisions: McpToolCollision[] = [];
     const seenInThisCall = new Map<string, string>();
@@ -273,30 +353,54 @@ export class AgentMcpService extends Service implements IAgentMcpService {
         continue;
       }
       const existingEntry = this.mcpTools.get(qualified);
-      if (existingEntry !== undefined) {
+      const pendingEntry = this.pendingMcpTools.get(qualified);
+      const collision = existingEntry ?? pendingEntry;
+      if (collision !== undefined && collision.serverName !== serverName) {
         collisions.push({
           qualified,
           toolName: tool.name,
-          collidesWith: { kind: 'other_server', serverName: existingEntry.serverName },
+          collidesWith: { kind: 'other_server', serverName: collision.serverName },
         });
         continue;
       }
       seenInThisCall.set(qualified, tool.name);
-      const disposable = this._register(
+      const registration = this._register(
         this.registry.register(
           createMcpTool(qualified, tool, client, {
+            serverName,
             attachmentStore: this.attachmentStore,
+            originals: () => environmentTempTarget(this.environment, 'original-images'),
             telemetry: this.telemetry,
             providerType: () => this.profile.getModelProviderType(),
             reconnect: (signal) => this.reconnectForToolCall(serverName, client, signal),
             isRemoved: () =>
               this.mcpHandle.connectionManager.get(serverName)?.status === 'removed',
+            onUnauthorized: (error, failedClient) =>
+              this.mcpHandle.connectionManager.markNeedsAuth(serverName, error, failedClient),
           }),
-          { source: 'mcp' },
+          { source: 'mcp', disclosure: deferred ? 'deferred' : 'inline' },
         ),
       );
-      this.mcpTools.set(qualified, { disposable, serverName });
+      if (registration.status !== 'pending') {
+        existingEntry?.disposable.dispose();
+        pendingEntry?.disposable.dispose();
+        this.mcpTools.set(qualified, { disposable: registration, serverName });
+        this.pendingMcpTools.delete(qualified);
+      } else {
+        pendingEntry?.disposable.dispose();
+        this.pendingMcpTools.set(qualified, { disposable: registration, serverName });
+      }
       qualifiedNames.push(qualified);
+    }
+    for (const [name, entry] of this.mcpTools) {
+      if (entry.serverName !== serverName || seenInThisCall.has(name)) continue;
+      entry.disposable.dispose();
+      this.mcpTools.delete(name);
+    }
+    for (const [name, entry] of this.pendingMcpTools) {
+      if (entry.serverName !== serverName || seenInThisCall.has(name)) continue;
+      entry.disposable.dispose();
+      this.pendingMcpTools.delete(name);
     }
     this.mcpToolsByServer.set(serverName, qualifiedNames);
     return { registered: qualifiedNames, collisions };
@@ -306,9 +410,10 @@ export class AgentMcpService extends Service implements IAgentMcpService {
     const names = this.mcpToolsByServer.get(serverName);
     if (names === undefined) return false;
     for (const name of names) {
-      const entry = this.mcpTools.get(name);
-      entry?.disposable.dispose();
+      this.mcpTools.get(name)?.disposable.dispose();
+      this.pendingMcpTools.get(name)?.disposable.dispose();
       this.mcpTools.delete(name);
+      this.pendingMcpTools.delete(name);
     }
     this.mcpToolsByServer.delete(serverName);
     return true;
@@ -345,12 +450,19 @@ export class AgentMcpService extends Service implements IAgentMcpService {
     work();
   }
 
-  private flushPendingDiscoveries(): void {
+  private flushPendingDiscoveries(): Promise<void> {
     this.discoveryWritesReady = true;
     const pending = this.pendingDiscoveries.splice(0);
-    for (const work of pending) {
-      work();
-    }
+    const flush = async (): Promise<void> => {
+      for (const work of pending) {
+        await work();
+      }
+    };
+    this.failureWriteTail = this.failureWriteTail.then(flush, flush);
+    void this.failureWriteTail.catch((error) => {
+      onUnexpectedError(error);
+    });
+    return this.failureWriteTail;
   }
 
   private emitMcpToolCollisions(

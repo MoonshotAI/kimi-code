@@ -1,6 +1,8 @@
 import { estimateTokens, estimateTokensForMessage, estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
+import { isSkillActivationPart } from '#human/agent/origin';
 import type { ContentPart } from '#human/llm/message';
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
+import { isUserPromptSubmitHookPart } from './hookParts';
 import summaryPrefixTemplate from './compaction-summary-prefix.md?raw';
 import type { ContextMessage, PromptOrigin } from './types';
 
@@ -132,7 +134,6 @@ export function createCompactionSummaryMessage(text: string): ContextMessage {
   return {
     role: 'user',
     content: [{ type: 'text', text }],
-    toolCalls: [],
     origin: { kind: 'compaction_summary' },
   };
 }
@@ -141,7 +142,6 @@ export function createCompactionElisionMessage(omittedTokens: number): ContextMe
   return {
     role: 'user',
     content: [{ type: 'text', text: buildCompactionElisionText(omittedTokens) }],
-    toolCalls: [],
     origin: { kind: 'injection', variant: COMPACTION_ELISION_VARIANT },
   };
 }
@@ -156,7 +156,6 @@ export function createCompactionContinuationMessage(): ContextMessage {
   return {
     role: 'user',
     content: [{ type: 'text', text: buildCompactionContinuationText() }],
-    toolCalls: [],
     origin: { kind: 'injection', variant: COMPACTION_CONTINUATION_VARIANT },
   };
 }
@@ -334,8 +333,10 @@ function truncateTextToTokensFromEnd(text: string, maxTokens: number): string {
   let start = text.length;
   for (let i = text.length - 1; i >= 0; i--) {
     let isAscii = false;
+    // oxlint-disable-next-line unicorn/prefer-code-point
     const code = text.charCodeAt(i);
     if (code >= 0xdc00 && code <= 0xdfff && i > 0) {
+      // oxlint-disable-next-line unicorn/prefer-code-point
       const high = text.charCodeAt(i - 1);
       if (high >= 0xd800 && high <= 0xdbff) {
         i--;
@@ -357,8 +358,12 @@ function truncateTextToTokensFromEnd(text: string, maxTokens: number): string {
 function replaceMessageText<T extends MessageLike>(message: T, text: string): T {
   return {
     ...message,
-    content: [{ type: 'text', text }],
-    toolCalls: [],
+    content: [
+      ...message.content.filter(
+        (part) => isUserPromptSubmitHookPart(part) || isSkillActivationPart(part),
+      ),
+      { type: 'text', text },
+    ],
   } as unknown as T;
 }
 

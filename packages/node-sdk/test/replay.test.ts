@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { limitAgentReplayByTurns, type AgentReplayRecord } from '#/replay';
+import { v2MetaToSessionMeta } from '#/v2/session-mapper';
 
 function userTurn(text: string, time: number): AgentReplayRecord {
   return {
@@ -83,6 +84,29 @@ describe('limitAgentReplayByTurns', () => {
     expect(JSON.stringify(limited)).not.toContain('prompt 14');
   });
 
+  it('counts a steered skill input using the existing replay turn rule', () => {
+    const origin = {
+      kind: 'user' as const,
+      inTurn: true as const,
+      skillActivations: [{ activationId: 'activation-review', skillName: 'review' }],
+    };
+    const currentTurn = userTurn('current prompt', 2);
+    const steered: AgentReplayRecord = {
+      type: 'message',
+      time: 3,
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: '/skill:review src/app.ts' }],
+        toolCalls: [],
+        origin,
+      },
+    };
+    const answer = assistant('review result', 4);
+    const records = [userTurn('old prompt', 0), assistant('old answer', 1), currentTurn, steered, answer];
+
+    expect(limitAgentReplayByTurns(records, 1)).toEqual([steered, answer]);
+  });
+
   it('bounds replay volume when cron turns dominate the history', () => {
     const records: AgentReplayRecord[] = [];
     let time = 0;
@@ -124,5 +148,82 @@ describe('limitAgentReplayByTurns', () => {
     const limited = limitAgentReplayByTurns(records, 5);
     expect(JSON.stringify(limited)).toContain('prompt 3');
     expect(JSON.stringify(limited)).not.toContain('prompt 2');
+  });
+});
+
+describe('v2MetaToSessionMeta', () => {
+  it('surfaces the swarm member marker persisted in v2 agent labels', () => {
+    const meta = v2MetaToSessionMeta({
+      id: 'ses_1',
+      createdAt: 1000,
+      updatedAt: 2000,
+      archived: false,
+      agents: {
+        main: { type: 'main' },
+        'agent-swarm': {
+          type: 'sub',
+          parentAgentId: 'main',
+          labels: { parentAgentId: 'main', swarmItem: 'task one' },
+        },
+        'agent-plain': {
+          type: 'sub',
+          parentAgentId: 'main',
+          labels: { parentAgentId: 'main' },
+        },
+        'agent-top-level': { type: 'sub', parentAgentId: 'main', swarmItem: 'top level' },
+      },
+    });
+
+    expect(meta.agents['agent-swarm']?.swarmItem).toBe('task one');
+    expect(meta.agents['agent-plain']?.swarmItem).toBeUndefined();
+    expect(meta.agents['agent-top-level']?.swarmItem).toBe('top level');
+  });
+
+  it('surfaces the spawn profile persisted in v2 agent labels', () => {
+    const meta = v2MetaToSessionMeta({
+      id: 'ses_1',
+      createdAt: 1000,
+      updatedAt: 2000,
+      archived: false,
+      agents: {
+        'agent-tower': {
+          type: 'sub',
+          parentAgentId: 'main',
+          labels: { parentAgentId: 'main', profileName: 'tower-worker' },
+        },
+        'agent-coder': {
+          type: 'sub',
+          parentAgentId: 'main',
+          labels: { parentAgentId: 'main', profileName: 'coder' },
+        },
+      },
+    });
+
+    expect(meta.agents['agent-tower']?.profileName).toBe('tower-worker');
+    expect(meta.agents['agent-coder']?.profileName).toBe('coder');
+  });
+
+  it('surfaces the session-init marker persisted in v2 agent labels', () => {
+    const meta = v2MetaToSessionMeta({
+      id: 'ses_1',
+      createdAt: 1000,
+      updatedAt: 2000,
+      archived: false,
+      agents: {
+        'agent-init': {
+          type: 'sub',
+          parentAgentId: 'main',
+          labels: { profileName: 'coder', sessionInit: 'agents-md' },
+        },
+        'agent-plain': {
+          type: 'sub',
+          parentAgentId: 'main',
+          labels: { profileName: 'coder' },
+        },
+      },
+    });
+
+    expect(meta.agents['agent-init']?.sessionInit).toBe('agents-md');
+    expect(meta.agents['agent-plain']?.sessionInit).toBeUndefined();
   });
 });

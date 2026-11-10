@@ -47,12 +47,14 @@ export const promptPayloadSchema = z.object({
 /** Same shape as `PromptSkillActivation` in the engine. */
 export const promptSkillActivationSchema = z.object({
   name: z.string(),
+  path: z.string().optional(),
   args: z.string().optional(),
 });
 
 /** Same shape as `PromptWithSkillsInput` in the engine. */
 export const promptWithSkillsPayloadSchema = promptPayloadSchema.extend({
   skills: z.array(promptSkillActivationSchema).min(1),
+  steerIfActive: z.boolean().optional(),
 });
 
 /** Same shape as `PromptWithSkillsResult` in the engine. */
@@ -61,7 +63,10 @@ export const promptWithSkillsResultSchema = z.object({
   prompt_id: z.string(),
   created_at: z.string(),
   state: z.enum(['running', 'queued', 'blocked']),
+  steered: z.boolean().optional(),
 });
+
+export const steerResultSchema = promptWithSkillsResultSchema;
 
 /** Same shape as `SteerPayload` in the engine. */
 export const steerPayloadSchema = z.object({
@@ -71,6 +76,7 @@ export const steerPayloadSchema = z.object({
 /** Same shape as `SkillActivationInput`'s wire subset in the engine. */
 export const activateSkillPayloadSchema = z.object({
   name: z.string(),
+  path: z.string().optional(),
   args: z.string().optional(),
 });
 
@@ -107,9 +113,9 @@ export const setModelResultSchema = z.object({
   providerName: z.string().optional(),
 });
 
-export const runtimeBindingSchema = z.object({
-  workspaceId: z.string(),
-  runtimeId: z.string(),
+export const environmentBindingSchema = z.object({
+  environmentId: z.string(),
+  cwd: z.string().optional(),
 });
 
 export const permissionModeSchema = z.enum(['manual', 'yolo', 'auto']);
@@ -121,7 +127,7 @@ export const setPermissionPayloadSchema = z.object({
 export const tokenUsageSchema = z.object({
   inputOther: z.number(),
   output: z.number(),
-  inputCacheRead: z.number(),
+  inputCacheRead: z.number().optional(),
   inputCacheCreation: z.number(),
 });
 
@@ -159,7 +165,7 @@ export const planDataSchema = z.union([
   z.object({
     id: z.string(),
     content: z.string(),
-    path: z.string(),
+    path: z.string().nullable(),
   }),
 ]);
 

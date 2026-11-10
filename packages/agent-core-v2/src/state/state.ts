@@ -1,4 +1,4 @@
-import { enableMapSet, enablePatches, type Draft, type Patch } from 'immer';
+import { enableMapSet, type Draft } from 'immer';
 import type { z } from 'zod';
 
 import { BugIndicatingError } from '#/_base/errors/errors';
@@ -9,7 +9,6 @@ import type { PartsTransformer, RecordDehydrator } from '#/wire/record';
 import { StateError, StateErrors } from './errors';
 
 enableMapSet();
-enablePatches();
 
 export type { StateKey } from '#/_base/state/stateRegistry';
 export type { PartsTransformer } from '#/wire/record';
@@ -33,17 +32,11 @@ export type StateFold<S, E extends Event2<any> = Event2<any>> = (
   ctx: FoldContext,
 ) => S | void;
 
-export interface PatchEntry {
-  readonly id: number;
-  readonly eventType: string;
-  readonly patches: readonly Patch[];
-  readonly inversePatches: readonly Patch[];
-}
-
 export interface ReplayableOptions<S> {
   readonly schema: z.ZodType<S>;
   readonly durable?: boolean;
   readonly blobs?: StateBlobCodec<S>;
+  readonly mutableReplay?: boolean;
 }
 
 export interface UndoableOptions<S> {
@@ -54,6 +47,7 @@ export interface ReplayableStateMeta<S> {
   readonly schema: z.ZodType<S>;
   readonly durable: boolean;
   readonly blobs?: StateBlobCodec<S>;
+  readonly mutableReplay: boolean;
   readonly undoable?: UndoableOptions<S>;
   readonly folds: ReadonlyMap<Event2Class<any, any>, StateFold<S, any>>;
 }
@@ -76,6 +70,7 @@ class ReplayableStateKeyImpl<S> implements ReplayableStateKey<S> {
     readonly schema: z.ZodType<S>;
     readonly durable: boolean;
     readonly blobs?: StateBlobCodec<S>;
+    readonly mutableReplay: boolean;
     undoable?: UndoableOptions<S>;
     readonly folds: Map<Event2Class<any, any>, StateFold<S, any>>;
   };
@@ -90,6 +85,7 @@ class ReplayableStateKeyImpl<S> implements ReplayableStateKey<S> {
       schema: opts.schema,
       durable: opts.durable ?? true,
       blobs: opts.blobs,
+      mutableReplay: opts.mutableReplay === true,
       folds: new Map(),
     };
   }
@@ -168,17 +164,13 @@ export function registerUndoableProtocol(protocol: UndoableProtocol): void {
   }
 }
 
-export function keepsUndoCheckpoints(
-  key: ReplayableStateKey<any>,
-): boolean {
-  const undoable = key.replayable.undoable;
-  return undoable !== undefined && undoable.onUndo === undefined;
-}
-
 export function expandedStateFolds(
   key: ReplayableStateKey<any>,
 ): ReadonlyMap<Event2Class<any, any>, StateFold<any, any>> {
   const meta = key.replayable;
+  if (meta.mutableReplay && meta.undoable?.onUndo === undefined) {
+    throw new BugIndicatingError(`State key '${key.name}' requires custom onUndo for mutable replay`);
+  }
   if (meta.undoable === undefined) return meta.folds;
   if (undoableProtocol === undefined) {
     throw new BugIndicatingError(
@@ -274,6 +266,7 @@ export function expandedRuntimeFolds(
   owner: string,
   undoable: boolean,
   folds: ReadonlyMap<Event2Class<any, any>, StateFold<any, any>>,
+  onUndo?: (state: any, count: number) => any,
 ): ReadonlyMap<Event2Class<any, any>, StateFold<any, any>> {
   if (!undoable) return folds;
   if (undoableProtocol === undefined) {
@@ -288,10 +281,11 @@ export function expandedRuntimeFolds(
       `Undoable agent runtime '${owner}' must not fold the undo event itself`,
     );
   }
+  const custom = onUndo !== undefined;
   const expanded = new Map(folds);
   const domainAppend = expanded.get(protocol.events.appendMessage);
   expanded.set(protocol.events.appendMessage, (state, event, ctx) => {
-    if (protocol.isUndoAnchor(event.message)) {
+    if (!custom && protocol.isUndoAnchor(event.message)) {
       ctx.checkpoint();
       return;
     }
@@ -304,8 +298,10 @@ export function expandedRuntimeFolds(
       return domain?.(state, event, ctx);
     });
   }
-  expanded.set(protocol.events.undo, (_state, event, ctx) => {
-    if (protocol.isValidUndoCount(event.count)) ctx.undoToCheckpoint(event.count);
+  expanded.set(protocol.events.undo, (state, event, ctx) => {
+    if (!protocol.isValidUndoCount(event.count)) return;
+    if (onUndo !== undefined) return onUndo(state, event.count);
+    ctx.undoToCheckpoint(event.count);
   });
   return expanded;
 }

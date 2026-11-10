@@ -75,12 +75,16 @@ Pass a custom marketplace JSON path or URL to `/plugins marketplace <source>`, o
 }
 ```
 
+Marketplace entries can also declare `clients` (`desktop`, `cli`, or both) and `platforms` (`macos`, `windows`, `linux`, or `cloud`). `clients` selects the product host, while `platforms` selects the server operating system; both constraints must match. If `clients` is omitted, the entry is available to both hosts. Web and Remote Control follow the host of the connected server, not the browser's operating system.
+
+Installations remain shared under `$KIMI_CODE_HOME`. An entry hidden on one host is also excluded from that host's installed list and runtime capabilities. The last successful availability configuration is cached in `$KIMI_CODE_HOME/plugins/availability.json`; after the catalog changes, a successful refresh hides or restores the existing installation without reinstalling or deleting its files.
+
 ## Official Plugins
 
 Official plugins are plugins and built-in product capabilities maintained by Kimi. There are currently three:
 
 - **[Kimi Datasource](#kimi-datasource)**: Query financial market data, financial news, macroeconomic indicators, corporate registration records, academic literature, Chinese laws and regulations, and official data from intergovernmental organizations in natural language
-- **[Kimi WebBridge](#kimi-webbridge)**: Let AI drive your own browser to get web tasks done
+- **[Kimi Browser Extension](#kimi-browser-extension)**: Let AI drive your own browser to get web tasks done
 - **[Kimi Computer Use](#kimi-computer-use)**: Let AI operate your desktop apps (macOS and Windows)
 
 ### Installation and Upgrade
@@ -92,7 +96,7 @@ All official plugins share the same installation and upgrade flow:
 3. After installation completes, run `/reload` or `/new` to activate it
 
 ::: info Note
-Kimi WebBridge installs in two parts: after the steps above, you also need to [install the browser extension](#install-the-browser-extension) before it works.
+Kimi Browser Extension installs in two parts: after the steps above, you also need to [install the browser extension](#install-the-browser-extension) before it works.
 :::
 
 Official plugins do not update automatically. When an update is available, you'll be prompted the next time you use the old version. To upgrade, repeat the installation steps above.
@@ -108,7 +112,7 @@ You must first complete OAuth login with a Kimi Code account via `/login`; data 
 #### How to use
 
 1. Describe your need in natural language, and Kimi Code will automatically invoke the data capabilities
-2. Explicitly trigger the data query skill with `/skill:kimi-datasource`
+2. Explicitly trigger the data query skill with `/skill:kimi-datasource:kimi-datasource`
 
 #### What you can do
 
@@ -164,13 +168,15 @@ Look up national (GB), industry, local, and association standards by number or t
 - Technical indicators and real-time prices are only available during active trading hours
 - AI-generated output is for reference only and does not constitute investment or business advice
 
-### Kimi WebBridge <Badge type="tip" text="v1.11.3" />
+<a id="kimi-webbridge"></a>
 
-Kimi WebBridge lets AI drive your browser directly: not an emulator, not a crawler, but the browser you use every day, with your login sessions and cookies. AI can open pages, read content, click buttons, fill in forms, and take screenshots just like you do, taking repetitive web operations off your hands. See the [Kimi WebBridge site](https://www.kimi.com/features/webbridge) for a product overview.
+### Kimi Browser Extension <Badge type="tip" text="v2.0.11" />
+
+Kimi Browser Extension lets AI drive your browser directly: not an emulator, not a crawler, but the browser you use every day, with your login sessions and cookies. AI can open pages, read content, click buttons, fill in forms, and take screenshots just like you do, taking repetitive web operations off your hands. See the [Kimi Browser Extension site](https://www.kimi.com/en/products/kimi-browser-extension) for a product overview.
 
 #### Install the browser extension
 
-After installing via `/plugins`, you also need the Kimi WebBridge extension in your browser before AI can drive it. There are two ways to install it:
+After installing via `/plugins`, you also need the Kimi Browser Extension in your browser before AI can drive it. There are two ways to install it:
 
 **Option 1: Install from a store (recommended)**
 
@@ -189,9 +195,9 @@ Use this when you can't reach the stores:
 
    ![Load the unpacked extension](../../media/webbridge-load-unpacked.jpeg)
 
-4. Once installed, the Kimi WebBridge icon appears in the browser toolbar. Seeing the icon means the installation succeeded, and AI can start working on web pages for you.
+4. Once installed, the Kimi Browser Extension icon appears in the browser toolbar. Seeing the icon means the installation succeeded, and AI can start working on web pages for you.
 
-   ![The Kimi WebBridge icon in the browser toolbar](../../media/webbridge-install-success.jpeg)
+   ![The Kimi Browser Extension icon in the browser toolbar](../../media/webbridge-install-success.jpeg)
 
 #### What you can do
 
@@ -273,9 +279,9 @@ Supported fields:
 
 | Field | Description |
 | --- | --- |
-| `name` | Required; serves as the plugin id. Must match `[a-z0-9][a-z0-9_-]{0,63}` |
+| `name` | Required; serves as the plugin id. Must match `[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*(@[A-Za-z0-9_-]+)?` |
 | `version`, `description`, `keywords`, `author`, `homepage`, `license` | Display metadata |
-| `interface` | Shown in `/plugins`: `displayName`, `shortDescription`, `longDescription`, `developerName`, `websiteURL` |
+| `interface` | Shown in `/plugins`: `displayName`, `shortDescription`, `longDescription`, `developerName`, `websiteURL`; see capability display overrides below |
 | `skills` | One or more `./` paths within the plugin root; if omitted, root `SKILL.md` is the single Skill root |
 | `agents` | One or more `./` paths within the plugin root, pointing to [agent files](./agents.md#custom-agents); if omitted, `agents/` is auto-discovered |
 | `sessionStart.skill` | Loads the specified plugin Skill into the main Agent when a new or resumed session starts |
@@ -285,6 +291,12 @@ Supported fields:
 | `mcpServers` | MCP server declarations; enabled by default, can be disabled from `/plugins` |
 | `hooks` | Hook rules run on lifecycle events while enabled; see [Hooks in Plugins](#hooks-in-plugins) |
 | `commands` | One or more `./` paths to a directory or `.md` file; registers the Markdown files inside as slash commands. See [Plugin Slash Commands](#plugin-slash-commands) |
+
+`interface.mcpOverrides` is keyed by MCP server names from `mcpServers` and can provide display-only `displayName`, `description`, and `iconUrl` fields. These fields do not change MCP server names or runtime configuration.
+
+`interface.skillOverrides` is keyed by Skill directory names and can provide display-only `displayName` and `description` fields. These fields affect plugin information display only; they do not change Skill invocation names or `SKILL.md` content.
+
+`interface.defaultLocale` declares the language of the default `interface` text. `interface.locales` can point to a translation directory inside the plugin root, such as `./locales/`. Each `<locale>.json` file, such as `en-US.json`, can provide the display fields above and both kinds of overrides. Plugin detail and preview requests can specify a `locale`; matching translations are used for capability display, while fields without a translation fall back to the default `interface`.
 
 Unsupported runtime fields such as `tools`, `apps`, `inject`, and `configFile` appear as diagnostics and are ignored.
 
@@ -398,7 +410,9 @@ my-plugin/
       SKILL.md
 ```
 
-`sessionStart.skill` loads a plugin Skill into the main Agent at session start, making it suitable for initialization instructions, workflow rules, or mapping terminology from other tools to Kimi Code CLI. It only injects text; it does not execute code.
+`sessionStart.skill` loads a plugin Skill into the main Agent at session start, making it suitable for initialization instructions, workflow rules, or mapping terminology from other tools to Kimi Code CLI. It only injects text; it does not execute code. The value is the Skill's frontmatter name as declared inside the plugin, without the `<plugin-id>:` prefix.
+
+Plugin Skills are listed and invoked under the qualified name `<plugin-id>:<skill-name>` — for example `/skill:my-plugin:using-my-plugin` — mirroring [plugin slash commands](#plugin-slash-commands). This keeps same-named Skills from different plugins distinct, and a bare skill name never resolves to a plugin Skill. If a plugin command and a plugin Skill share the same name, `/plugin-id:name` runs the command; invoke the Skill with the explicit `/skill:plugin-id:name` form.
 
 Regardless of how a Skill is loaded (`sessionStart.skill`, `/skill:<name>`, or automatic model invocation), `skillInstructions` appears alongside that plugin's Skill.
 
@@ -485,7 +499,7 @@ Installing a plugin never runs its hooks by itself. They only fire when their ma
 
 Plugins have a limited loading scope. The following operations do not occur during installation or session startup:
 
-- Command-type plugin tools and legacy tool runtimes are not executed
+- Command-type plugin tools and legacy tool environments are not executed
 - All paths must remain within the plugin root directory after symbolic link resolution
 - MCP servers of enabled plugins start after `/reload` or in new sessions and can be disabled at any time from `/plugins`
 - Broken manifests or unsafe paths appear in `/plugins info <id>` diagnostics and do not affect other sessions

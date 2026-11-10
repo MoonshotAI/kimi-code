@@ -80,7 +80,7 @@ class FakeAgentHandle {
         if (token === IEventBus) return this.bus;
         if (token === IEventDispatcher) return { hooks: { onDidRestore: this.restoreSlot } };
         if (token === IAgentLoopService) {
-          return { status: () => ({ state: this.loopState }) };
+          return { snapshot: () => ({ state: this.loopState }) };
         }
         if (token === IAgentTaskService) {
           return { list: () => this.activeTasks.map((taskId) => ({ taskId })) };

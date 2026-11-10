@@ -1,4 +1,7 @@
-import { Disposable } from '#/_base/di/lifecycle';
+import { Disposable, MutableDisposable, type IDisposable } from '#/_base/di/lifecycle';
+import { ref, type LiveRef } from '#/_base/di/instantiation';
+import { IWorkspaceService } from '#/app/workspace/workspace';
+import { IWorkspacePersistence } from '#/app/workspace/workspacePersistence';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
@@ -7,6 +10,11 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { SessionIndexDegradedEvent } from '#/app/telemetry/events';
+import {
+  SESSION_INDEX_KEY,
+  SESSION_INDEX_SCOPE,
+  readSessionIndexEntries,
+} from '#/app/workspace/workspaceAlias';
 import { isError2 } from '#/errors';
 import { databaseBaseEnabled } from '#/persistence/configSection';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -31,7 +39,7 @@ import {
   type SessionListQuery,
   type SessionSummary,
 } from './sessionIndex';
-import { markSessionDirty } from './sessionIndexDirtyJournal';
+import { markSessionDirty, listDirtyMarks } from './sessionIndexDirtyJournal';
 import {
   PARENT_INDEX_NAME,
   SESSION_INDEX_MANIFEST,
@@ -47,7 +55,6 @@ import {
   listSessionIds,
   listWorkspaceIds,
   readSessionSummary,
-  scanSessionsFreshness,
   summaryMatchesChildOf,
 } from './sessionIndexSource';
 
@@ -86,6 +93,11 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
   private projectFlight: Promise<void> | undefined;
   private readonly reconcileTimer = this._register(new IntervalTimer({ unref: true }));
   private readonly projector: SessionIndexProjector;
+  private primarySnapshot?: Readonly<Record<string, string>>;
+  private primaryRefreshTail: Promise<void> = Promise.resolve();
+  private readonly workspacePersistenceSubscription = this._register(
+    new MutableDisposable<IDisposable>(),
+  );
 
   constructor(
     @IBootstrapService private readonly bootstrap: IBootstrapService,
@@ -96,6 +108,8 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     @ISessionIndexMirror private readonly mirror: ISessionIndexMirror,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ILogService private readonly log: ILogService,
+    @ref(IWorkspaceService) private readonly workspaces: LiveRef<IWorkspaceService>,
+    @ref(IWorkspacePersistence) private readonly workspaceStore: LiveRef<IWorkspacePersistence>,
   ) {
     super();
     this.projector = new SessionIndexProjector({
@@ -104,7 +118,21 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
       queryStore,
       log,
       sessionsScope: bootstrap.scope('sessions'),
+      primaryByWorkspace: () => this.primaryByWorkspace(),
     });
+    const subscribe = (): void => {
+      this.workspacePersistenceSubscription.value = this.workspaceStore.current?.onDidChange(() => {
+        this.primaryRefreshTail = this.primaryRefreshTail.then(
+          () => this.refreshPrimaries(),
+          () => this.refreshPrimaries(),
+        );
+        void this.primaryRefreshTail.catch((error) => {
+          this.log.warn('session index primary refresh failed', { error: String(error) });
+        });
+      });
+    };
+    this._register(this.workspaceStore.onDidChange(subscribe));
+    subscribe();
   }
 
   private ensureReconcileTimer(): void {
@@ -134,6 +162,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     if (this.state === 'ready') return this.status();
     this.state = 'preparing';
     try {
+      this.primarySnapshot ??= await this.primaryByWorkspace();
       const manifest = await this.queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
       if (manifest === undefined || manifest.schemaVersion !== SESSION_INDEX_SCHEMA_VERSION) {
         const projection = this.ensureProjection();
@@ -150,7 +179,19 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
       } else {
         this.generation = manifest.seq;
         await this.ensureSchema(manifest.seq);
-        if (!(await this.manifestFresh(manifest))) {
+        if (!(await this.manifestPrimariesFresh(manifest))) {
+          const projection = this.ensureProjection();
+          if (deadlineMs === undefined) {
+            await projection;
+          } else {
+            await Promise.race([
+              projection,
+              new Promise((resolve) => {
+                setTimeout(resolve, deadlineMs);
+              }),
+            ]);
+          }
+        } else if (!(await this.manifestFresh(manifest))) {
           try {
             const reconciliation = this.projector.reconcile(manifest.seq);
             if (deadlineMs === undefined) {
@@ -185,11 +226,29 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     return this.status();
   }
 
+  private async manifestPrimariesFresh(manifest: Checkpoint): Promise<boolean> {
+    return samePrimaryByWorkspace(manifest.workspacePrimaries, await this.primaryByWorkspace());
+  }
+
   private async manifestFresh(manifest: Checkpoint): Promise<boolean> {
-    if (manifest.sourceSessionCount === undefined) return false;
+    const signals = manifest.workspaceSignals;
+    if (signals === undefined) return false;
     try {
-      const scan = await scanSessionsFreshness(this.storage, this.sessionsScope);
-      return scan.dirtyMarkCount === 0 && scan.sessionCount === manifest.sourceSessionCount;
+      const [marks, workspaceIds, primaries] = await Promise.all([
+        listDirtyMarks(this.storage, this.sessionsScope),
+        listWorkspaceIds(this.storage, this.sessionsScope),
+        this.primaryByWorkspace(),
+      ]);
+      if (!samePrimaryByWorkspace(manifest.workspacePrimaries, primaries)) return false;
+      if (marks.length > 0) return false;
+      if (workspaceIds.length !== Object.keys(signals).length) return false;
+      for (const workspaceId of workspaceIds) {
+        const recorded = signals[workspaceId];
+        if (recorded === undefined) return false;
+        const current = await this.storage.mtime(this.sessionsScope, workspaceId);
+        if (current !== recorded) return false;
+      }
+      return true;
     } catch (error) {
       this.log.warn('session index freshness check failed; treating the index as stale', {
         error: String(error),
@@ -268,7 +327,11 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
       }
       this.generation = manifest.seq;
       if (await this.manifestFresh(manifest)) return;
-      await this.projector.reconcile(manifest.seq);
+      if (!(await this.manifestPrimariesFresh(manifest))) {
+        await this.ensureProjection();
+      } else {
+        await this.projector.reconcile(manifest.seq);
+      }
     } catch (error) {
       this.log.warn('session index reconciliation failed', { error: String(error) });
     }
@@ -422,43 +485,60 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
 
     const cursor = await this.resolveCursor(generation, query);
     if (cursor === undefined) return { items: [] };
+    const queued = this.mirror.pending();
+    const queuedIds = new Set(queued.map((summary) => summary.id));
     const limit = query.limit ?? UNBOUNDED;
     const filter = { ...this.baseFilter(query), ...cursor.filter };
     const column = recencyColumn(generation);
-    const strip = (records: SessionSummary[]): SessionSummary[] =>
-      records.map((record) => stripRecencyField(generation, record));
+    const notQueued = (record: SessionSummary): boolean => !queuedIds.has(record.id);
+    const strip = (record: SessionSummary): SessionSummary => stripRecencyField(generation, record);
+    const fetchVisible = async (
+      fetch: (fetchLimit: number) => Promise<SessionSummary[]>,
+      fetchLimit: number,
+    ): Promise<SessionSummary[]> => {
+      const rows = await fetch(fetchLimit);
+      const visible = rows.filter(notQueued);
+      if (visible.length === rows.length || rows.length < fetchLimit) return visible.map(strip);
+      const widened = await fetch(fetchLimit + queuedIds.size);
+      return widened.filter(notQueued).slice(0, fetchLimit).map(strip);
+    };
 
     const page =
       query.childOf !== undefined
         ? await this.windowedPage(
-            (bounds, fetchLimit) => {
-              const base = this.queryStore
-                .query<SessionSummary>(collection)
-                .where(filter)
-                .orderBy('updatedAt', 'desc')
-                .limit(fetchLimit);
-              const q =
-                Object.keys(bounds).length > 0 ? base.whereColumn(column, bounds) : base;
-              return q.execute().then((p) => strip([...p.items]));
-            },
+            (bounds, fetchLimit) =>
+              fetchVisible((rowLimit) => {
+                const base = this.queryStore
+                  .query<SessionSummary>(collection)
+                  .where(filter)
+                  .orderBy('updatedAt', 'desc')
+                  .limit(rowLimit);
+                const q =
+                  Object.keys(bounds).length > 0 ? base.whereColumn(column, bounds) : base;
+                return q.execute().then((p) => [...p.items]);
+              }, fetchLimit),
             cursor.bounds,
             limit,
           )
         : await this.windowedPage(
             (bounds, fetchLimit) =>
-              this.queryStore
-                .pageByColumn<SessionSummary>(collection, {
-                  column,
-                  dir: 'desc',
-                  filter,
-                  bounds,
-                  limit: fetchLimit,
-                })
-                .then((p) => strip([...p.items])),
+              fetchVisible(
+                (rowLimit) =>
+                  this.queryStore
+                    .pageByColumn<SessionSummary>(collection, {
+                      column,
+                      dir: 'desc',
+                      filter,
+                      bounds,
+                      limit: rowLimit,
+                    })
+                    .then((p) => [...p.items]),
+                fetchLimit,
+              ),
             cursor.bounds,
             limit,
           );
-    return this.mergePending(page, query, cursor.position);
+    return this.mergePending(page, query, queued, cursor.position);
   }
 
   private async countFromReadModel(
@@ -513,22 +593,21 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
   private mergePending(
     page: Page<SessionSummary>,
     query: SessionListQuery,
+    queued: readonly SessionSummary[],
     position?: { u: number; id: string; before: boolean },
   ): Page<SessionSummary> {
-    const pending = this.mirror
-      .pending()
-      .filter(
-        (summary) =>
-          (query.workspaceIds === undefined || query.workspaceIds.includes(summary.workspaceId)) &&
-          (query.includeArchived === true || !summary.archived) &&
-          summaryMatchesChildOf(summary, query.childOf) &&
-          (position === undefined ||
-            (position.before
-              ? summary.updatedAt < position.u ||
-                (summary.updatedAt === position.u && summary.id < position.id)
-              : summary.updatedAt > position.u ||
-                (summary.updatedAt === position.u && summary.id > position.id))),
-      );
+    const pending = queued.filter(
+      (summary) =>
+        (query.workspaceIds === undefined || query.workspaceIds.includes(summary.workspaceId)) &&
+        (query.includeArchived === true || !summary.archived) &&
+        summaryMatchesChildOf(summary, query.childOf) &&
+        (position === undefined ||
+          (position.before
+            ? summary.updatedAt < position.u ||
+              (summary.updatedAt === position.u && summary.id < position.id)
+            : summary.updatedAt > position.u ||
+              (summary.updatedAt === position.u && summary.id > position.id))),
+    );
     if (pending.length === 0) return page;
     const merged = new Map<string, SessionSummary>();
     for (const summary of pending) merged.set(summary.id, summary);
@@ -635,14 +714,87 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     };
   }
 
+  private async refreshPrimaries(): Promise<void> {
+    const next = await this.primaryByWorkspace();
+    const previous = this.primarySnapshot;
+    this.primarySnapshot = next;
+    if (previous !== undefined && samePrimaryByWorkspace(previous, next)) return;
+    if (!this.readModelEnabled() || this.state === 'uninitialized' || this.state === 'preparing') return;
+    await this.ensureProjection();
+  }
+
+  private async primaryByWorkspace(): Promise<Readonly<Record<string, string>>> {
+    const workspaces = this.workspaces.current;
+    if (workspaces === undefined) return {};
+    return Object.fromEntries((await workspaces.list()).map((workspace) => [workspace.id, workspace.root]));
+  }
+
   private async getLegacy(id: string): Promise<SessionSummary | undefined> {
+    const primaryByWorkspace = await this.primaryByWorkspace();
+    const hinted = await this.workspaceHintFor(id);
+    if (hinted !== undefined) {
+      const summary = await readSessionSummary(
+        this.docs,
+        this.sessionsScope,
+        hinted,
+        id,
+        primaryByWorkspace[hinted],
+      );
+      if (summary !== undefined) return summary;
+    }
     for (const workspaceId of await listWorkspaceIds(this.storage, this.sessionsScope)) {
-      const sessionIds = await listSessionIds(this.storage, this.sessionsScope, workspaceId);
-      if (!sessionIds.includes(id)) continue;
-      const summary = await readSessionSummary(this.docs, this.sessionsScope, workspaceId, id);
+      if (workspaceId === hinted) continue;
+      const summary = await readSessionSummary(
+        this.docs,
+        this.sessionsScope,
+        workspaceId,
+        id,
+        primaryByWorkspace[workspaceId],
+      );
       if (summary !== undefined) return summary;
     }
     return undefined;
+  }
+
+  private sessionIndexHint:
+    | { readonly mtimeMs: number | undefined; readonly byId: ReadonlyMap<string, string> }
+    | undefined;
+
+  private async workspaceHintFor(id: string): Promise<string | undefined> {
+    let mtimeMs: number | undefined;
+    try {
+      mtimeMs = await this.storage.mtime(SESSION_INDEX_SCOPE, SESSION_INDEX_KEY);
+    } catch {
+      return undefined;
+    }
+    const cached = this.sessionIndexHint;
+    if (cached !== undefined && cached.mtimeMs === mtimeMs) return cached.byId.get(id);
+    const byId = new Map<string, string>();
+    if (mtimeMs !== undefined) {
+      let entries;
+      try {
+        entries = await readSessionIndexEntries(this.storage);
+      } catch {
+        return undefined;
+      }
+      for (const entry of entries) {
+        const workspaceId = this.workspaceIdFromSessionDir(entry.sessionDir);
+        if (workspaceId !== undefined) byId.set(entry.sessionId, workspaceId);
+      }
+    }
+    this.sessionIndexHint = { mtimeMs, byId };
+    return byId.get(id);
+  }
+
+  private workspaceIdFromSessionDir(sessionDir: string): string | undefined {
+    const root = this.storage.pathFor(this.sessionsScope, '');
+    if (root === undefined) return undefined;
+    const prefix = root.endsWith('/') ? root : `${root}/`;
+    if (!sessionDir.startsWith(prefix)) return undefined;
+    const rest = sessionDir.slice(prefix.length);
+    const slash = rest.indexOf('/');
+    if (slash <= 0) return undefined;
+    return rest.slice(0, slash);
   }
 
   private async countLegacy(query: SessionCountQuery): Promise<number> {
@@ -656,6 +808,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
   private async collectAuthoritative(
     workspaceIds: readonly string[] | undefined,
   ): Promise<SessionSummary[]> {
+    const primaryByWorkspace = await this.primaryByWorkspace();
     let collected: SessionSummary[];
     if (
       this.readModelEnabled() &&
@@ -671,7 +824,13 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
       collected = [];
       for (const workspaceId of ids) {
         for (const sessionId of await listSessionIds(this.storage, this.sessionsScope, workspaceId)) {
-          const summary = await readSessionSummary(this.docs, this.sessionsScope, workspaceId, sessionId);
+          const summary = await readSessionSummary(
+            this.docs,
+            this.sessionsScope,
+            workspaceId,
+            sessionId,
+            primaryByWorkspace[workspaceId],
+          );
           if (summary !== undefined) collected.push(summary);
         }
       }
@@ -689,6 +848,16 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
   private readModelEnabled(): boolean {
     return databaseBaseEnabled(this.config);
   }
+}
+
+function samePrimaryByWorkspace(
+  left: Readonly<Record<string, string>> | undefined,
+  right: Readonly<Record<string, string>>,
+): boolean {
+  if (left === undefined) return false;
+  const leftIds = Object.keys(left);
+  const rightIds = Object.keys(right);
+  return leftIds.length === rightIds.length && leftIds.every((id) => left[id] === right[id]);
 }
 
 registerScopedService(

@@ -8,13 +8,14 @@ import { IConfigService } from '#/app/config/config';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import { SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
-import type { ToolSource } from '#/tool/toolContract';
+import { isMcpToolName, type ToolSource } from '#/tool/toolContract';
 
-import { isToolActiveComposed, type ToolActivationPolicy } from './evaluate';
+import { isToolActive, isToolActiveComposed, type ToolActivationPolicy } from './evaluate';
 import { IAgentToolPolicyService } from './toolPolicy';
 
 export class AgentToolPolicyService extends Disposable implements IAgentToolPolicyService {
   declare readonly _serviceBrand: undefined;
+  private globalPolicy: ToolsConfig | undefined;
 
   constructor(
     @IAgentProfileService private readonly profile: IAgentProfileService,
@@ -24,6 +25,13 @@ export class AgentToolPolicyService extends Disposable implements IAgentToolPoli
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
   ) {
     super();
+    this.globalPolicy = this.config.get<ToolsConfig | undefined>(TOOLS_SECTION);
+    this._register(
+      this.config.onDidSectionChange((event) => {
+        if (event.domain !== TOOLS_SECTION) return;
+        this.globalPolicy = this.config.get<ToolsConfig | undefined>(TOOLS_SECTION);
+      }),
+    );
     this._register(
       toolExecutor.registerToolCallGuard(({ name, source }) => {
         const active =
@@ -49,13 +57,36 @@ export class AgentToolPolicyService extends Disposable implements IAgentToolPoli
     );
   }
 
+  isToolDenied(name: string, source: ToolSource = isMcpToolName(name) ? 'mcp' : 'builtin'): boolean {
+    const deniedBy = (list: readonly string[] | undefined): boolean =>
+      list !== undefined && !isToolActive({ disallowedTools: list }, name, source);
+    return (
+      deniedBy(this.toolPolicyGate.disabledTools) ||
+      deniedBy(this.profile.data().disallowedTools) ||
+      deniedBy(this.globalPolicy?.disabled) ||
+      deniedBy(this.sessionToolPolicy.disabledTools())
+    );
+  }
+
+  getPolicyFingerprint(): string {
+    const profile = this.profile.data();
+    return JSON.stringify([
+      this.toolPolicyGate.disabledTools,
+      profile.activeToolNames,
+      profile.disallowedTools,
+      this.globalPolicy?.enabled,
+      this.globalPolicy?.disabled,
+      this.sessionToolPolicy.disabledTools(),
+    ].map((names) => names === undefined ? null : [...new Set(names)].toSorted()));
+  }
+
   isToolActiveForDisclosure(name: string, source: ToolSource = 'builtin'): boolean {
     const profile = this.profile.data();
     return isToolActiveComposed(
       {
         workspaceDisabledTools: this.toolPolicyGate.disabledTools,
         profile: { disallowedTools: profile.disallowedTools },
-        global: this.config.get<ToolsConfig>(TOOLS_SECTION),
+        global: this.globalPolicy,
         sessionDisabledTools: this.sessionToolPolicy.disabledTools(),
       },
       name,
@@ -72,7 +103,7 @@ export class AgentToolPolicyService extends Disposable implements IAgentToolPoli
       {
         workspaceDisabledTools: this.toolPolicyGate.disabledTools,
         profile,
-        global: this.config.get<ToolsConfig>(TOOLS_SECTION),
+        global: this.globalPolicy,
         sessionDisabledTools: this.sessionToolPolicy.disabledTools(),
       },
       name,

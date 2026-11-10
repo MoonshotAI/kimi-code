@@ -56,6 +56,7 @@ export class WorkspaceSkillCatalogService extends Disposable implements IWorkspa
         );
     }
     this.ready = this.loadAll();
+    void this.ready.catch(() => undefined);
   }
 
   private get contributions(): Map<
@@ -140,6 +141,7 @@ export class WorkspaceSkillCatalogService extends Disposable implements IWorkspa
     const ordered = [...this.contributions.values()].toSorted((a, b) => a.priority - b.priority);
     for (const { c } of ordered) {
       for (const skill of c.skills) m.register(skill, { replace: true });
+      m.registerVariants(c.variants ?? c.skills, { replace: true });
       m.addRoots(c.scannedRoots ?? []);
       m.recordSkipped(c.skipped ?? []);
     }

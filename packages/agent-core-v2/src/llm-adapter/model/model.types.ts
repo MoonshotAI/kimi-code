@@ -8,11 +8,6 @@ export interface ModelOverrides {
   readonly maxCompletionTokens?: number;
 }
 
-export interface CompletionBudgetConfig {
-  readonly hardCap?: number;
-  readonly fallback?: number;
-}
-
 export interface CompletionBudgetParams {
   readonly maxCompletionTokens: number;
   readonly usedContextTokens?: number;
@@ -21,6 +16,7 @@ export interface CompletionBudgetParams {
 
 export interface ResolvedModelAuthMaterial {
   readonly apiKey?: string;
+  readonly apiKeyEnv?: string;
   readonly oauth?: OAuthRef;
   readonly oauthProviderKey?: string;
 }

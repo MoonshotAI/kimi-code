@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 
+import { Jimp } from 'jimp';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
@@ -13,23 +14,39 @@ import {
 } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
 import { createScopedTestHost, createServices, stubPair } from '#/_base/di/test';
+import type { Event2 } from '#/app/event/event2';
+import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
+import { createAgentMediaPolicy } from '#/agent/loop/mediaPolicy';
 import { buildKimiFileUrl } from '#/agent/media/kimiFileUrl';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
+import { mcpResultToExecutableOutput } from '#/agent/mcp/output';
+import type { ImageUploader, VideoUploader } from '#/llm-adapter/model/media';
+import type { Model } from '#/llm-adapter/model/catalog';
+import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
+import type { LlmFiles } from '#human/llm/request';
+import { generateModel, type InitializedLlmRequester, type LlmRequestInitialization } from '#/llm-adapter/model/generate';
+import { contentsOf, createRequester } from '#human/llm/requester';
 import { AgentMediaResolverService } from '#/agent/media/mediaResolverService';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
+import { SessionMediaStoreService } from '#/agent/media/sessionMediaStoreService';
+import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import { type GetResult, IFileService } from '#/app/file/fileService';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ModelCapability } from '#/llm-adapter/contract/capability';
-import type { Message } from '#/llm-adapter/contract/message';
-import type { ContentPart, VideoURLPart } from '#human/llm/message';
-import type { LlmCredentialProvider } from '#human/llm/requester/requester';
-import type { ModelRequester } from '#/llm-adapter/model/model-requester';
+import type { ContentPart, ImageURLPart, Message, VideoURLPart } from '#human/llm/message';
+import type { LlmCredentialProvider } from '#human/llm-requester/requester';
 import type { Protocol } from '#/llm-adapter/protocol/protocol';
+import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
+import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { IBlobStore } from '#/persistence/interface/blobStore';
+import { makeSessionContext } from '#/session/sessionContext/sessionContext';
 
 import { registerStateServices } from '../../state/stubs';
+import { createStaticCredentialProvider } from '#human/credentials/credentials';
+import { ImageUploadUnsupportedError } from '#/llm-adapter/contract/errors';
 
 const FILE_ID = 'file_abc';
 const VIDEO_BYTES = Buffer.from('tiny fake mp4 bytes');
@@ -43,17 +60,20 @@ const IMAGE_UNAVAILABLE_TEXT = '[image omitted: the uploaded file is no longer a
 const VIDEO_UNAVAILABLE_TEXT = '[video omitted: the uploaded file is no longer available]';
 const VIDEO_TAG = '<video path="/cache/file_abc.mp4"></video>';
 const IMAGE_TAG = '<image path="/cache/file_abc.png"></image>';
+const IMAGE_CAPABILITY_HINT =
+  '[image omitted: the current model does not support image input; use a model with image input capability or convert the file to text]';
+const VIDEO_CAPABILITY_HINT =
+  '[video omitted: the current model does not support video input; use a model with video input capability or convert the file to text]';
 const PNG_DATA_URL = `data:image/png;base64,${PNG_BYTES.toString('base64')}`;
 
 function videoMessage(url: string): Message {
-  return { role: 'user', content: [{ type: 'video_url', videoUrl: { url } }], toolCalls: [] };
+  return { role: 'user', content: [{ type: 'video_url', videoUrl: { url } }] };
 }
 
 function imageMessage(url: string, ...before: ContentPart[]): Message {
   return {
     role: 'user',
     content: [...before, { type: 'image_url', imageUrl: { url } }],
-    toolCalls: [],
   };
 }
 
@@ -129,9 +149,20 @@ function blobStore(): IBlobStore {
 
 const telemetry = { track2: () => {} } as unknown as ITelemetryService;
 
+const stubDispatcher = {
+  _serviceBrand: undefined,
+  dispatch: async () => {},
+} as unknown as IEventDispatcher;
+
+const stubScopeContext = makeAgentScopeContext({ agentId: 'main', agentScope: '' });
+
 function stubMediaStore(sessionDir = '/nonexistent-session'): ISessionMediaStore {
   return {
     _serviceBrand: undefined,
+    put: async () => {
+      throw new Error('unused');
+    },
+    get: async () => undefined,
     pathFor: (fileId, ext) => join(sessionDir, 'media', `${fileId}${ext}`),
     resolveDisplayPath: async (fileId) => {
       const dir = join(sessionDir, 'media');
@@ -156,40 +187,103 @@ async function plantCanonical(fileId: string, ext: string, bytes: Buffer): Promi
   return canonical;
 }
 
+interface TestMediaResolution {
+  readonly model: Model;
+  readonly requester: InitializedLlmRequester;
+}
+
 function requester(opts: {
   videoIn?: boolean;
   imageIn?: boolean;
   protocol?: Protocol;
   providerType?: string;
-  uploadVideo?: ModelRequester['uploadVideo'];
-  credentials?: LlmCredentialProvider;
-}): ModelRequester {
+  baseUrl?: string;
+  headers?: Record<string, string>;
+  uploadVideo?: VideoUploader;
+  uploadImage?: ImageUploader;
+  credentialProvider?: LlmCredentialProvider;
+}): TestMediaResolution {
+  const model: TestMediaResolution['model'] = {
+    id: 'm',
+    name: 'stub',
+    aliases: [],
+    protocol: opts.protocol ?? 'openai',
+    baseUrl: opts.baseUrl,
+    headers: opts.headers ?? {},
+    capabilities: {
+      video_in: opts.videoIn ?? true,
+      image_in: opts.imageIn ?? true,
+    } as unknown as ModelCapability,
+    maxContextSize: 1000,
+    alwaysThinking: false,
+    providerName: 'p',
+    providerType: opts.providerType ?? 'kimi',
+    credentialProvider: opts.credentialProvider,
+  };
+  const files: LlmFiles | undefined =
+    opts.uploadVideo === undefined && opts.uploadImage === undefined
+      ? undefined
+      : {
+          kinds: new Set([
+            ...(opts.uploadVideo === undefined ? [] : ['video' as const]),
+            ...(opts.uploadImage === undefined ? [] : ['image' as const]),
+          ]),
+          upload: async (file, { signal }) => {
+            if (file.kind === 'video') {
+              const part = await opts.uploadVideo!(
+                { data: file.data, mimeType: file.mimeType, filename: file.filename },
+                { signal },
+              );
+              return part.videoUrl;
+            }
+            if (file.kind === 'image') {
+              const part = await opts.uploadImage!(
+                { data: file.data, mimeType: file.mimeType, filename: file.filename },
+                { signal },
+              );
+              return part.imageUrl;
+            }
+            throw new Error('unused audio upload');
+          },
+        };
+  const initial = new ProtocolAdapterRegistry().request(model);
   return {
-    model: {
-      id: 'm',
-      name: 'stub',
-      aliases: [],
-      protocol: opts.protocol ?? 'openai',
-      headers: {},
-      capabilities: {
-        video_in: opts.videoIn ?? true,
-        image_in: opts.imageIn ?? true,
-      } as unknown as ModelCapability,
-      maxContextSize: 1000,
-      alwaysThinking: false,
-      providerName: 'p',
-      providerType: opts.providerType ?? 'kimi',
-      credentials: opts.credentials,
-    },
-    request: () => {
-      throw new Error('unused');
-    },
-    uploadVideo: opts.uploadVideo,
+    model,
+    requester: createRequester().with({
+      protocol: contentsOf(initial).protocol as LlmRequestInitialization['protocol'],
+      model: contentsOf(initial).model as LlmRequestInitialization['model'],
+      endpoint: { ...contentsOf(initial).endpoint, files },
+    }),
   };
 }
 
+function resolveMedia(
+  service: IAgentMediaResolverService,
+  messages: readonly Message[],
+  resolution: TestMediaResolution,
+  signal?: AbortSignal,
+): Promise<readonly Message[]> {
+  return service.resolve(messages, resolution.model, resolution.requester, signal);
+}
+
 function msPart(id: string): VideoURLPart {
-  return { type: 'video_url', videoUrl: { url: `ms://${id}`, id } };
+  return {
+    type: 'video_url',
+    videoUrl: { url: `ms://${id}`, id },
+  };
+}
+
+function msImagePart(id: string): ImageURLPart {
+  return {
+    type: 'image_url',
+    imageUrl: { url: `ms://${id}`, id },
+  };
+}
+
+function fakeJwt(claims: Record<string, unknown>): string {
+  const encode = (value: Record<string, unknown>): string =>
+    Buffer.from(JSON.stringify(value)).toString('base64url');
+  return `${encode({ alg: 'none', typ: 'JWT' })}.${encode(claims)}.${Buffer.from('sig').toString('base64url')}`;
 }
 
 let disposables: DisposableStore;
@@ -208,6 +302,7 @@ function resolver(
   files: Map<string, { name: string; bytes: Buffer }>,
   sessionDir?: string,
   mediaStore: ISessionMediaStore = stubMediaStore(sessionDir),
+  events: Event2[] = [],
 ): IAgentMediaResolverService {
   const ix = createServices(disposables, {
     base: [registerStateServices],
@@ -216,6 +311,16 @@ function resolver(
       reg.defineInstance(IBlobStore, blobStore());
       reg.defineInstance(ITelemetryService, telemetry);
       reg.defineInstance(ISessionMediaStore, mediaStore);
+      reg.defineInstance(IEventDispatcher, {
+        _serviceBrand: undefined,
+        dispatch: async (event: Event2) => {
+          events.push(event);
+        },
+      } as unknown as IEventDispatcher);
+      reg.defineInstance(
+        IAgentScopeContext,
+        makeAgentScopeContext({ agentId: 'main', agentScope: '' }),
+      );
       reg.define(IAgentMediaResolverService, AgentMediaResolverService);
     },
   });
@@ -229,33 +334,33 @@ describe('AgentMediaResolverService video strategy', () => {
     const req = requester({ uploadVideo: upload });
     const message = videoMessage(buildKimiFileUrl(FILE_ID));
 
-    const first = await res.resolve([message], req);
-    const second = await res.resolve([message], req);
+    const first = await resolveMedia(res, [message], req);
+    const second = await resolveMedia(res, [message], req);
 
     expect(firstPart(first)).toEqual(msPart('prov-1'));
     expect(firstPart(second)).toEqual(msPart('prov-1'));
     expect(upload).toHaveBeenCalledTimes(1);
 
     const plain = [videoMessage('ms://already-uploaded')];
-    expect(await res.resolve(plain, req)).toBe(plain);
+    expect(await resolveMedia(res, plain, req)).toBe(plain);
   });
 
-  it('degrades to the path tag when the current model cannot accept video, ignoring a memoized upload', async () => {
+  it('degrades to a capability hint when the current model cannot accept video, ignoring a memoized upload', async () => {
     const upload = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-1'));
     const canonical = await plantCanonical(FILE_ID, '.mp4', VIDEO_BYTES);
     const res = resolver(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]), sessionDir);
     const message = videoMessage(buildKimiFileUrl(FILE_ID));
 
-    const capable = await res.resolve([message], requester({ uploadVideo: upload }));
+    const capable = await resolveMedia(res, [message], requester({ uploadVideo: upload }));
     expect(firstPart(capable)).toEqual(msPart('prov-1'));
 
-    const incapable = await res.resolve(
+    const incapable = await resolveMedia(res, 
       [message],
       requester({ videoIn: false, uploadVideo: upload }),
     );
     expect(firstPart(incapable)).toEqual({
       type: 'text',
-      text: `<video path="${canonical}"></video>`,
+      text: `${VIDEO_CAPABILITY_HINT}\n<video path="${canonical}"></video>`,
     });
     expect(upload).toHaveBeenCalledTimes(1);
   });
@@ -266,13 +371,13 @@ describe('AgentMediaResolverService video strategy', () => {
     const message = videoMessage(buildKimiFileUrl(FILE_ID));
 
     const upload1 = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-1'));
-    await new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore()).resolve(
+    await resolveMedia(new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore(), stubDispatcher, stubScopeContext),
       [message],
       requester({ uploadVideo: upload1 }),
     );
 
     const upload2 = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-2'));
-    const out = await new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore()).resolve(
+    const out = await resolveMedia(new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore(), stubDispatcher, stubScopeContext),
       [message],
       requester({ uploadVideo: upload2 }),
     );
@@ -286,7 +391,8 @@ describe('AgentMediaResolverService video strategy', () => {
     name: string;
     files: Map<string, { name: string; bytes: Buffer }>;
     fileId: string;
-    req: (upload: ModelRequester['uploadVideo']) => ModelRequester;
+    modelUnsupported?: boolean;
+    req: (upload: VideoUploader | undefined) => TestMediaResolution;
   };
 
   it.each<TagCase>([
@@ -294,6 +400,7 @@ describe('AgentMediaResolverService video strategy', () => {
       name: 'the model cannot ingest video',
       files: new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]),
       fileId: FILE_ID,
+      modelUnsupported: true,
       req: (upload) => requester({ videoIn: false, uploadVideo: upload }),
     },
     {
@@ -314,18 +421,23 @@ describe('AgentMediaResolverService video strategy', () => {
       fileId: 'missing',
       req: (upload) => requester({ uploadVideo: upload }),
     },
-  ])('degrades when $name', async ({ files, fileId, req }) => {
+  ])('degrades when $name', async ({ files, fileId, modelUnsupported, req }) => {
     const upload = vi.fn();
     const canonical =
       fileId === FILE_ID ? await plantCanonical(FILE_ID, '.mp4', VIDEO_BYTES) : undefined;
-    const out = await resolver(files, sessionDir).resolve(
+    const out = await resolveMedia(resolver(files, sessionDir), 
       [videoMessage(buildKimiFileUrl(fileId))],
       req(upload),
     );
 
     expect(firstPart(out)).toEqual({
       type: 'text',
-      text: canonical === undefined ? VIDEO_UNAVAILABLE_TEXT : `<video path="${canonical}"></video>`,
+      text:
+        canonical === undefined
+          ? VIDEO_UNAVAILABLE_TEXT
+          : modelUnsupported === true
+            ? `${VIDEO_CAPABILITY_HINT}\n<video path="${canonical}"></video>`
+            : `<video path="${canonical}"></video>`,
     });
     expect(upload).not.toHaveBeenCalled();
   });
@@ -337,13 +449,13 @@ describe('AgentMediaResolverService video strategy', () => {
     const res = resolver(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]));
 
     await expect(
-      res.resolve([videoMessage(buildKimiFileUrl(FILE_ID))], requester({ uploadVideo: upload })),
+      resolveMedia(res, [videoMessage(buildKimiFileUrl(FILE_ID))], requester({ uploadVideo: upload })),
     ).rejects.toThrow('unauthorized');
   });
 
   it('invalidates recoverable credentials and retries the upload once on a 401', async () => {
     let invalidations = 0;
-    const credentials: LlmCredentialProvider = {
+    const credentialProvider: LlmCredentialProvider = {
       resolve: () => ({ apiKey: 'tok' }),
       canRecover: (error) => (error as { statusCode?: number }).statusCode === 401,
       invalidate: () => {
@@ -354,9 +466,9 @@ describe('AgentMediaResolverService video strategy', () => {
     upload.mockRejectedValueOnce(Object.assign(new Error('unauthorized'), { statusCode: 401 }));
     const res = resolver(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]));
 
-    const out = await res.resolve(
+    const out = await resolveMedia(res, 
       [videoMessage(buildKimiFileUrl(FILE_ID))],
-      requester({ uploadVideo: upload, credentials }),
+      requester({ uploadVideo: upload, credentialProvider }),
     );
 
     expect(firstPart(out)).toEqual(msPart('prov-9'));
@@ -374,11 +486,11 @@ describe('AgentMediaResolverService video strategy', () => {
     const message = videoMessage(buildKimiFileUrl(FILE_ID));
 
     await expect(
-      res.resolve([message], requester({ uploadVideo: interrupted }), controller.signal),
+      resolveMedia(res, [message], requester({ uploadVideo: interrupted }), controller.signal),
     ).rejects.toThrow('socket closed');
 
     const retry = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-1'));
-    const out = await res.resolve([message], requester({ uploadVideo: retry }));
+    const out = await resolveMedia(res, [message], requester({ uploadVideo: retry }));
     expect(firstPart(out)).toEqual(msPart('prov-1'));
     expect(retry).toHaveBeenCalledTimes(1);
   });
@@ -395,19 +507,19 @@ describe('AgentMediaResolverService video strategy', () => {
     const message = videoMessage(buildKimiFileUrl(FILE_ID));
     const req = requester({ uploadVideo: upload });
 
-    const failed = await res.resolve([message], req);
+    const failed = await resolveMedia(res, [message], req);
     expect(firstPart(failed)).toEqual({
       type: 'text',
       text: `<video path="${canonical}"></video>`,
     });
 
-    const retried = await res.resolve([message], req);
+    const retried = await resolveMedia(res, [message], req);
     expect(firstPart(retried)).toEqual(msPart('prov-1'));
     expect(upload).toHaveBeenCalledTimes(2);
   });
 
   it('emits an unavailable placeholder when a stale reference has no canonical copy', async () => {
-    const out = await resolver(new Map()).resolve(
+    const out = await resolveMedia(resolver(new Map()), 
       [videoMessage(buildKimiFileUrl('missing'))],
       requester({ uploadVideo: vi.fn() }),
     );
@@ -416,6 +528,71 @@ describe('AgentMediaResolverService video strategy', () => {
       type: 'text',
       text: VIDEO_UNAVAILABLE_TEXT,
     });
+  });
+
+  it('re-uploads when the resolved account changes, reusing the upload while it stays the same', async () => {
+    const upload = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-1'));
+    const res = resolver(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]));
+    const message = videoMessage(buildKimiFileUrl(FILE_ID));
+    const accountA = requester({ uploadVideo: upload, credentialProvider: createStaticCredentialProvider('key-a') });
+
+    await resolveMedia(res, [message], accountA);
+    await resolveMedia(res, [message], accountA);
+    expect(upload).toHaveBeenCalledTimes(1);
+
+    const accountB = requester({ uploadVideo: upload, credentialProvider: createStaticCredentialProvider('key-b') });
+    const out = await resolveMedia(res, [message], accountB);
+
+    expect(firstPart(out)).toEqual(msPart('prov-1'));
+    expect(upload).toHaveBeenCalledTimes(2);
+  });
+
+  it('reuses the cached upload across access-token rotation when the JWT subject is stable', async () => {
+    const upload = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-1'));
+    const res = resolver(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]));
+    const message = videoMessage(buildKimiFileUrl(FILE_ID));
+    const base = {
+      client_id: 'client-1',
+      device_id: 'device-1',
+      scope: 'kimi-code',
+      iss: 'kimi-auth',
+      type: 'access',
+    };
+    const tokenA = fakeJwt({ ...base, sub: 'user-1', token_id: 'tok-1', iat: 100, exp: 200 });
+    const tokenB = fakeJwt({ ...base, sub: 'user-1', token_id: 'tok-2', iat: 300, exp: 400 });
+    const tokenC = fakeJwt({ ...base, sub: 'user-2', token_id: 'tok-3', iat: 500, exp: 600 });
+
+    await resolveMedia(res, [message], requester({ uploadVideo: upload, credentialProvider: createStaticCredentialProvider(tokenA) }));
+    await resolveMedia(res, [message], requester({ uploadVideo: upload, credentialProvider: createStaticCredentialProvider(tokenB) }));
+    expect(upload).toHaveBeenCalledTimes(1);
+
+    await resolveMedia(res, [message], requester({ uploadVideo: upload, credentialProvider: createStaticCredentialProvider(tokenC) }));
+    expect(upload).toHaveBeenCalledTimes(2);
+  });
+
+  it('re-uploads when the endpoint changes for the same account', async () => {
+    const upload = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-1'));
+    const res = resolver(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]));
+    const message = videoMessage(buildKimiFileUrl(FILE_ID));
+    const endpointA = requester({
+      uploadVideo: upload,
+      credentialProvider: createStaticCredentialProvider('key-a'),
+      baseUrl: 'https://a.example.test/v1',
+    });
+
+    await resolveMedia(res, [message], endpointA);
+    await resolveMedia(res, [message], endpointA);
+    expect(upload).toHaveBeenCalledTimes(1);
+
+    const endpointB = requester({
+      uploadVideo: upload,
+      credentialProvider: createStaticCredentialProvider('key-a'),
+      baseUrl: 'https://b.example.test/v1',
+    });
+    const out = await resolveMedia(res, [message], endpointB);
+
+    expect(firstPart(out)).toEqual(msPart('prov-1'));
+    expect(upload).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -445,7 +622,7 @@ describe('AgentMediaResolverService canonical session bytes', () => {
       const res = resolver(new Map(), undefined, mediaStore);
       const upload = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-1'));
 
-      const out = await res.resolve([message], requester({ uploadVideo: upload }));
+      const out = await resolveMedia(res, [message], requester({ uploadVideo: upload }));
 
       expect(upload).toHaveBeenCalledTimes(uploads);
       expect(firstPart(out)).toEqual(expected);
@@ -463,7 +640,7 @@ describe('AgentMediaResolverService image strategy', () => {
     };
     const message = imageMessage(buildKimiFileUrl(FILE_ID), tagPart, remotePart);
 
-    const out = await res.resolve([message], requester({}));
+    const out = await resolveMedia(res, [message], requester({}));
 
     expect(out[0]!.content).toEqual([
       tagPart,
@@ -504,10 +681,12 @@ describe('AgentMediaResolverService image strategy', () => {
       telemetry,
       new AgentStateService(),
       stubMediaStore(),
+      stubDispatcher,
+      stubScopeContext,
     );
 
     await expect(
-      res.resolve(
+      resolveMedia(res, 
         [imageMessage(buildKimiFileUrl(FILE_ID))],
         requester({}),
         controller.signal,
@@ -545,13 +724,17 @@ describe('AgentMediaResolverService image strategy', () => {
       fileId === FILE_ID ? await plantCanonical(FILE_ID, '.png', PNG_BYTES) : undefined;
     const message = imageMessage(buildKimiFileUrl(fileId));
 
-    const out = await resolver(files, sessionDir).resolve([message], requester({ imageIn }));
+    const out = await resolveMedia(resolver(files, sessionDir), [message], requester({ imageIn }));
 
     expect(out[0]!.content).toEqual([
       {
         type: 'text',
         text:
-          canonical === undefined ? IMAGE_UNAVAILABLE_TEXT : `<image path="${canonical}"></image>`,
+          canonical === undefined
+            ? IMAGE_UNAVAILABLE_TEXT
+            : imageIn
+              ? `<image path="${canonical}"></image>`
+              : `${IMAGE_CAPABILITY_HINT}\n<image path="${canonical}"></image>`,
       },
     ]);
   });
@@ -561,8 +744,8 @@ describe('AgentMediaResolverService image strategy', () => {
     const canonical = await plantCanonical(FILE_ID, '.bmp', BMP_BYTES);
     const message = imageMessage(buildKimiFileUrl(FILE_ID));
 
-    const kimi = await resolver(files, sessionDir).resolve([message], requester({}));
-    const other = await resolver(files, sessionDir).resolve(
+    const kimi = await resolveMedia(resolver(files, sessionDir), [message], requester({}));
+    const other = await resolveMedia(resolver(files, sessionDir), 
       [message],
       requester({ providerType: 'anthropic', protocol: 'anthropic' }),
     );
@@ -584,13 +767,13 @@ describe('AgentMediaResolverService image strategy', () => {
       imageUrl: { url: `data:image/bmp;base64,${BMP_BYTES.toString('base64')}` },
     };
 
-    expect(firstPart(await res.resolve([message], requester({})))).toEqual(inline);
+    expect(firstPart(await resolveMedia(res, [message], requester({})))).toEqual(inline);
     const other = requester({ providerType: 'anthropic', protocol: 'anthropic' });
-    expect(firstPart(await res.resolve([message], other))).toEqual({
+    expect(firstPart(await resolveMedia(res, [message], other))).toEqual({
       type: 'text',
       text: `<image path="${canonical}"></image>`,
     });
-    expect(firstPart(await res.resolve([message], requester({})))).toEqual(inline);
+    expect(firstPart(await resolveMedia(res, [message], requester({})))).toEqual(inline);
   });
 
   it.each([
@@ -599,7 +782,7 @@ describe('AgentMediaResolverService image strategy', () => {
       files: new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]),
       url: buildKimiFileUrl(FILE_ID),
       imageIn: false,
-      expected: IMAGE_UNAVAILABLE_TEXT,
+      expected: IMAGE_CAPABILITY_HINT,
     },
     {
       name: 'a bare stale reference has no canonical copy',
@@ -609,7 +792,7 @@ describe('AgentMediaResolverService image strategy', () => {
       expected: IMAGE_UNAVAILABLE_TEXT,
     },
   ])('emits the fallback text part when $name', async ({ files, url, imageIn, expected }) => {
-    const out = await resolver(files).resolve([imageMessage(url)], requester({ imageIn }));
+    const out = await resolveMedia(resolver(files), [imageMessage(url)], requester({ imageIn }));
 
     expect(out[0]!.content).toEqual([{ type: 'text', text: expected }]);
   });
@@ -623,13 +806,15 @@ describe('AgentMediaResolverService image strategy', () => {
       telemetry,
       new AgentStateService(),
       stubMediaStore(),
+      stubDispatcher,
+      stubScopeContext,
     );
     const message = imageMessage(buildKimiFileUrl(FILE_ID));
     const expected = { type: 'image_url', imageUrl: { url: PNG_DATA_URL } };
 
-    const first = await res.resolve([message], requester({}));
+    const first = await resolveMedia(res, [message], requester({}));
     files.delete(FILE_ID);
-    const second = await res.resolve(
+    const second = await resolveMedia(res, 
       [message],
       requester({ providerType: 'other', protocol: 'anthropic' }),
     );
@@ -649,11 +834,13 @@ describe('AgentMediaResolverService image strategy', () => {
       telemetry,
       new AgentStateService(),
       stubMediaStore(),
+      stubDispatcher,
+      stubScopeContext,
     );
     const message = imageMessage(buildKimiFileUrl(FILE_ID));
 
-    const first = await res.resolve([message], requester({}));
-    const second = await res.resolve([message], requester({}));
+    const first = await resolveMedia(res, [message], requester({}));
+    const second = await resolveMedia(res, [message], requester({}));
 
     expect(firstPart(first)).toEqual(firstPart(second));
     expect(counting.gets).toBe(2);
@@ -671,19 +858,21 @@ describe('AgentMediaResolverService image strategy', () => {
       telemetry,
       new AgentStateService(),
       stubMediaStore(),
+      stubDispatcher,
+      stubScopeContext,
     );
     const req = requester({});
 
     for (const id of ids.slice(0, 8)) {
-      await res.resolve([imageMessage(buildKimiFileUrl(id))], req);
+      await resolveMedia(res, [imageMessage(buildKimiFileUrl(id))], req);
     }
-    await res.resolve([imageMessage(buildKimiFileUrl('file_0'))], req);
-    await res.resolve([imageMessage(buildKimiFileUrl('file_8'))], req);
+    await resolveMedia(res, [imageMessage(buildKimiFileUrl('file_0'))], req);
+    await resolveMedia(res, [imageMessage(buildKimiFileUrl('file_8'))], req);
     expect(counting.gets).toBe(9);
 
-    await res.resolve([imageMessage(buildKimiFileUrl('file_0'))], req);
+    await resolveMedia(res, [imageMessage(buildKimiFileUrl('file_0'))], req);
     expect(counting.gets).toBe(9);
-    await res.resolve([imageMessage(buildKimiFileUrl('file_1'))], req);
+    await resolveMedia(res, [imageMessage(buildKimiFileUrl('file_1'))], req);
     expect(counting.gets).toBe(10);
   });
 
@@ -713,16 +902,20 @@ describe('AgentMediaResolverService image strategy', () => {
         telemetry,
         new AgentStateService(),
         stubMediaStore(sessionDir),
+        stubDispatcher,
+        stubScopeContext,
       );
       const message = imageMessage(buildKimiFileUrl(FILE_ID));
 
-      const degraded = await res.resolve([message], requester({ imageIn }));
+      const degraded = await resolveMedia(res, [message], requester({ imageIn }));
       if (!present) files.set(FILE_ID, { name: 'pic.png', bytes: PNG_BYTES });
-      const out = await res.resolve([message], requester({}));
+      const out = await resolveMedia(res, [message], requester({}));
 
       expect(firstPart(degraded)).toEqual({
         type: 'text',
-        text: `<image path="${canonical}"></image>`,
+        text: imageIn
+          ? `<image path="${canonical}"></image>`
+          : `${IMAGE_CAPABILITY_HINT}\n<image path="${canonical}"></image>`,
       });
       expect(firstPart(out)).toEqual({ type: 'image_url', imageUrl: { url: PNG_DATA_URL } });
       expect(counting.gets).toBe(reads);
@@ -730,90 +923,527 @@ describe('AgentMediaResolverService image strategy', () => {
   );
 });
 
+describe('AgentMediaResolverService image upload', () => {
+  it('uploads an MCP screenshot once and sends its ms reference in both Kimi requests', async () => {
+    const storage = new InMemoryStorageService();
+    const mediaStore = new SessionMediaStoreService(
+      makeSessionContext({ sessionId: 's1', workspaceId: 'w1', sessionDir, sessionScope: 's1', cwd: sessionDir }),
+      storage,
+      new JsonAtomicDocumentStore(storage),
+    );
+    const screenshot = await new Jimp({ width: 1600, height: 900, color: 0x3366ccff }).getBuffer('image/png');
+    const toolName = 'mcp__example__screenshot';
+    const result = await mcpResultToExecutableOutput({
+      isError: false,
+      content: [{ type: 'image', mimeType: 'image/png', data: screenshot.toString('base64') }],
+    }, toolName, { attachmentStore: mediaStore, providerType: 'kimi' });
+    const messages: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'Take a screenshot.' }] },
+      { role: 'assistant', content: [], toolCalls: [{ type: 'function', id: 'call_1', name: toolName, arguments: '{}' }] },
+      { role: 'tool', toolCallId: 'call_1', content: renderToolResultForModel(result) },
+    ];
+    const urls: string[] = [];
+    const bodies: string[] = [];
+    const mockFetch: typeof fetch = async (input, init) => {
+      const httpRequest = new Request(input, init);
+      const path = new URL(httpRequest.url).pathname;
+      expect(httpRequest.method).toBe('POST');
+      urls.push(path);
+      if (path === '/v1/files') {
+        const form = await httpRequest.formData();
+        const image = form.get('file');
+        expect(form.get('purpose')).toBe('image');
+        expect(image).toBeInstanceOf(File);
+        if (!(image instanceof File)) throw new Error('Expected a multipart image file');
+        expect(image.type).toBe('image/png');
+        expect(Buffer.from(await image.arrayBuffer())).toEqual(screenshot);
+        return Response.json({ id: 'uploaded-screenshot' });
+      }
+      expect(path).toBe('/v1/chat/completions');
+      bodies.push(await httpRequest.text());
+      return Response.json({
+        id: 'completion_1',
+        model: 'stub',
+        object: 'chat.completion',
+        choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: 'Done.' } }],
+      });
+    };
+    const { model } = requester({
+      providerType: 'kimi',
+      baseUrl: 'https://example.test/v1',
+      credentialProvider: createStaticCredentialProvider('YOUR_API_KEY'),
+    });
+    const routed = new ProtocolAdapterRegistry().request(model, { stream: false }).with({ endpoint: { fetch: mockFetch } });
+    const media = createAgentMediaPolicy(resolver(new Map(), sessionDir, mediaStore), model, routed);
+    for (const history of [
+      messages,
+      [...messages, { role: 'assistant', content: [{ type: 'text', text: 'Done.' }], toolCalls: [] }] satisfies Message[],
+    ]) {
+      const events = generateModel(routed, { systemPrompt: '', messages: history }, undefined, undefined, {
+        recoveries: [media.recovery],
+        resolvers: [media.toolResolver, media.resolver],
+      });
+      const eventTypes: string[] = [];
+      for await (const event of events) eventTypes.push(event.type);
+      expect(eventTypes).toContain('finish');
+    }
+    expect(urls).toEqual(['/v1/files', '/v1/chat/completions', '/v1/chat/completions']);
+    for (const body of bodies) {
+      const { messages: wireMessages } = JSON.parse(body) as { messages: unknown[] };
+      expect(wireMessages).toContainEqual(expect.objectContaining({
+        role: 'tool',
+        tool_call_id: 'call_1',
+        content: expect.arrayContaining([{
+          type: 'image_url',
+          image_url: { url: 'ms://uploaded-screenshot', id: 'uploaded-screenshot' },
+        }]),
+      }));
+      expect(body).not.toContain('data:image/');
+      expect(body).not.toContain(screenshot.toString('base64'));
+    }
+  });
+
+  it('uploads an image once and serves later resolves from the cached reference', async () => {
+    const upload = vi.fn(async (): Promise<ImageURLPart> => msImagePart('img-1'));
+    const res = resolver(new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]));
+    const req = requester({ uploadImage: upload });
+    const message = imageMessage(buildKimiFileUrl(FILE_ID));
+
+    const first = await resolveMedia(res, [message], req);
+    const second = await resolveMedia(res, [message], req);
+
+    expect(firstPart(first)).toEqual(msImagePart('img-1'));
+    expect(firstPart(second)).toEqual(msImagePart('img-1'));
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(upload).toHaveBeenCalledWith(
+      { data: PNG_BYTES, mimeType: 'image/png', filename: 'pic.png' },
+      expect.anything(),
+    );
+  });
+
+  it('reuses a persisted image upload across resolver instances without re-uploading', async () => {
+    const files = new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]);
+    const blobs = blobStore();
+    const message = imageMessage(buildKimiFileUrl(FILE_ID));
+
+    const upload1 = vi.fn(async (): Promise<ImageURLPart> => msImagePart('img-1'));
+    await resolveMedia(new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore(), stubDispatcher, stubScopeContext),
+      [message],
+      requester({ uploadImage: upload1 }),
+    );
+
+    const upload2 = vi.fn(async (): Promise<ImageURLPart> => msImagePart('img-2'));
+    const out = await resolveMedia(new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore(), stubDispatcher, stubScopeContext),
+      [message],
+      requester({ uploadImage: upload2 }),
+    );
+
+    expect(firstPart(out)).toEqual(msImagePart('img-1'));
+    expect(upload1).toHaveBeenCalledTimes(1);
+    expect(upload2).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the inline base64 part when the upload fails for a non-auth reason', async () => {
+    const upload = vi.fn(async (): Promise<ImageURLPart> => {
+      throw new Error('files endpoint unavailable');
+    });
+    const res = resolver(new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]));
+
+    const out = await resolveMedia(res, 
+      [imageMessage(buildKimiFileUrl(FILE_ID))],
+      requester({ uploadImage: upload }),
+    );
+
+    expect(firstPart(out)).toEqual({ type: 'image_url', imageUrl: { url: PNG_DATA_URL } });
+    expect(upload).toHaveBeenCalledTimes(1);
+  });
+
+  it('rethrows an auth failure so it can drive credential refresh', async () => {
+    const upload = vi.fn(async () => {
+      throw Object.assign(new Error('unauthorized'), { statusCode: 401 });
+    });
+    const res = resolver(new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]));
+
+    await expect(
+      resolveMedia(res, [imageMessage(buildKimiFileUrl(FILE_ID))], requester({ uploadImage: upload })),
+    ).rejects.toThrow('unauthorized');
+  });
+
+  it('rethrows an auth failure exposed through the SDK status field', async () => {
+    const upload = vi.fn(async () => {
+      throw Object.assign(new Error('unauthorized'), { status: 401 });
+    });
+    const res = resolver(new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]));
+
+    await expect(
+      resolveMedia(res, [imageMessage(buildKimiFileUrl(FILE_ID))], requester({ uploadImage: upload })),
+    ).rejects.toThrow('unauthorized');
+  });
+
+  it('keeps the inline base64 part when the requester has no image uploader', async () => {
+    const res = resolver(new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]));
+
+    const out = await resolveMedia(res, 
+      [imageMessage(buildKimiFileUrl(FILE_ID))],
+      requester({ uploadImage: undefined }),
+    );
+
+    expect(firstPart(out)).toEqual({ type: 'image_url', imageUrl: { url: PNG_DATA_URL } });
+  });
+
+  it('re-uploads when the resolved account changes, reusing the upload while it stays the same', async () => {
+    const upload = vi.fn(async (): Promise<ImageURLPart> => msImagePart('img-1'));
+    const res = resolver(new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]));
+    const message = imageMessage(buildKimiFileUrl(FILE_ID));
+    const accountA = requester({ uploadImage: upload, credentialProvider: createStaticCredentialProvider('key-a') });
+
+    await resolveMedia(res, [message], accountA);
+    await resolveMedia(res, [message], accountA);
+    expect(upload).toHaveBeenCalledTimes(1);
+
+    const accountB = requester({ uploadImage: upload, credentialProvider: createStaticCredentialProvider('key-b') });
+    const out = await resolveMedia(res, [message], accountB);
+
+    expect(firstPart(out)).toEqual(msImagePart('img-1'));
+    expect(upload).toHaveBeenCalledTimes(2);
+  });
+
+  it('re-uploads when the endpoint changes for the same account', async () => {
+    const upload = vi.fn(async (): Promise<ImageURLPart> => msImagePart('img-1'));
+    const res = resolver(new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]));
+    const message = imageMessage(buildKimiFileUrl(FILE_ID));
+    const endpointA = requester({
+      uploadImage: upload,
+      credentialProvider: createStaticCredentialProvider('key-a'),
+      baseUrl: 'https://a.example.test/v1',
+    });
+
+    await resolveMedia(res, [message], endpointA);
+    await resolveMedia(res, [message], endpointA);
+    expect(upload).toHaveBeenCalledTimes(1);
+
+    const endpointB = requester({
+      uploadImage: upload,
+      credentialProvider: createStaticCredentialProvider('key-a'),
+      baseUrl: 'https://b.example.test/v1',
+    });
+    const out = await resolveMedia(res, [message], endpointB);
+
+    expect(firstPart(out)).toEqual(msImagePart('img-1'));
+    expect(upload).toHaveBeenCalledTimes(2);
+  });
+
+  it('re-uploads when the protocol changes the effective files endpoint', async () => {
+    const ids = ['openai-image', 'anthropic-image'];
+    let nextId = 0;
+    const upload = vi.fn(async (): Promise<ImageURLPart> => msImagePart(ids[nextId++]!));
+    const res = resolver(new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]));
+    const message = imageMessage(buildKimiFileUrl(FILE_ID));
+    const openai = requester({
+      uploadImage: upload,
+      credentialProvider: createStaticCredentialProvider('key-a'),
+      protocol: 'openai',
+      baseUrl: 'https://api.example.test',
+    });
+    const anthropic = requester({
+      uploadImage: upload,
+      credentialProvider: createStaticCredentialProvider('key-a'),
+      protocol: 'anthropic',
+      baseUrl: 'https://api.example.test',
+    });
+
+    await resolveMedia(res, [message], openai);
+    const out = await resolveMedia(res, [message], anthropic);
+
+    expect(firstPart(out)).toEqual(msImagePart('anthropic-image'));
+    expect(upload).toHaveBeenCalledTimes(2);
+  });
+
+  it('re-uploads when the effective authorization changes', async () => {
+    const ids = ['account-a-image', 'account-b-image'];
+    let nextId = 0;
+    const upload = vi.fn(async (): Promise<ImageURLPart> => msImagePart(ids[nextId++]!));
+    const res = resolver(new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]));
+    const message = imageMessage(buildKimiFileUrl(FILE_ID));
+    const accountA = requester({
+      uploadImage: upload,
+      credentialProvider: createStaticCredentialProvider('catalog-key'),
+      baseUrl: 'https://api.example.test/v1',
+      headers: { Authorization: 'Bearer account-a' },
+    });
+    const accountB = requester({
+      uploadImage: upload,
+      credentialProvider: createStaticCredentialProvider('catalog-key'),
+      baseUrl: 'https://api.example.test/v1',
+      headers: { Authorization: 'Bearer account-b' },
+    });
+
+    await resolveMedia(res, [message], accountA);
+    const out = await resolveMedia(res, [message], accountB);
+
+    expect(firstPart(out)).toEqual(msImagePart('account-b-image'));
+    expect(upload).toHaveBeenCalledTimes(2);
+  });
+
+  it('stops probing the upload endpoint after the requester declares image upload unsupported', async () => {
+    const upload = vi.fn(async (): Promise<ImageURLPart> => {
+      throw new ImageUploadUnsupportedError('no image upload');
+    });
+    const res = resolver(new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]));
+    const req = requester({ uploadImage: upload });
+    const message = imageMessage(buildKimiFileUrl(FILE_ID));
+
+    const first = await resolveMedia(res, [message], req);
+    const second = await resolveMedia(res, [message], req);
+
+    expect(firstPart(first)).toEqual({ type: 'image_url', imageUrl: { url: PNG_DATA_URL } });
+    expect(firstPart(second)).toEqual({ type: 'image_url', imageUrl: { url: PNG_DATA_URL } });
+    expect(upload).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('AgentMediaResolverService session-canonical display path', () => {
   it.each([
     {
-      name: 'synthesizes the degrade tag from the canonical path when it exists',
+      name: 'synthesizes the capability hint and canonical path when it exists',
       canonical: true,
     },
     {
-      name: 'emits the unavailable placeholder when no canonical copy exists',
+      name: 'emits only the capability hint when no canonical copy exists',
       canonical: false,
     },
   ])('$name', async ({ canonical: plant }) => {
     const canonical = plant ? await plantCanonical(FILE_ID, '.png', PNG_BYTES) : undefined;
     const message = imageMessage(buildKimiFileUrl(FILE_ID));
 
-    const out = await resolver(new Map(), sessionDir).resolve([message], requester({ imageIn: false }));
+    const out = await resolveMedia(resolver(new Map(), sessionDir), [message], requester({ imageIn: false }));
 
     expect(out[0]!.content).toEqual([
       {
         type: 'text',
         text:
-          canonical === undefined ? IMAGE_UNAVAILABLE_TEXT : `<image path="${canonical}"></image>`,
+          canonical === undefined
+            ? IMAGE_CAPABILITY_HINT
+            : `${IMAGE_CAPABILITY_HINT}\n<image path="${canonical}"></image>`,
       },
     ]);
   });
 
-  it('refreshes the degrade form when the canonical copy appears', async () => {
+  it('refreshes the capability hint when the canonical copy appears', async () => {
     const res = resolver(new Map(), sessionDir);
     const message = videoMessage(buildKimiFileUrl(FILE_ID));
     const req = requester({ videoIn: false });
 
-    const first = await res.resolve([message], req);
-    expect(firstPart(first)).toEqual({ type: 'text', text: VIDEO_UNAVAILABLE_TEXT });
+    const first = await resolveMedia(res, [message], req);
+    expect(firstPart(first)).toEqual({ type: 'text', text: VIDEO_CAPABILITY_HINT });
 
     const canonical = await plantCanonical(FILE_ID, '.mp4', VIDEO_BYTES);
-    const second = await res.resolve([message], req);
-    expect(firstPart(second)).toEqual({ type: 'text', text: `<video path="${canonical}"></video>` });
+    const second = await resolveMedia(res, [message], req);
+    expect(firstPart(second)).toEqual({
+      type: 'text',
+      text: `${VIDEO_CAPABILITY_HINT}\n<video path="${canonical}"></video>`,
+    });
   });
 
-  it('keeps a legacy persisted tag as text and degrades the reference with a synthesized tag', async () => {
+  it('keeps a legacy persisted tag as text and degrades the reference with a capability hint', async () => {
     const canonical = await plantCanonical(FILE_ID, '.mp4', VIDEO_BYTES);
     const message: Message = {
       role: 'user',
-      toolCalls: [],
       content: [
         { type: 'text', text: VIDEO_TAG },
         { type: 'video_url', videoUrl: { url: buildKimiFileUrl(FILE_ID) } },
       ],
     };
-    const out = await resolver(new Map(), sessionDir).resolve(
+    const out = await resolveMedia(resolver(new Map(), sessionDir), 
       [message],
       requester({ videoIn: false }),
     );
     expect(out[0]!.content).toEqual([
       { type: 'text', text: VIDEO_TAG },
-      { type: 'text', text: `<video path="${canonical}"></video>` },
+      { type: 'text', text: `${VIDEO_CAPABILITY_HINT}\n<video path="${canonical}"></video>` },
     ]);
   });
 
-  it('keeps a legacy persisted tag as text when the reference degrades to the placeholder', async () => {
+  it('keeps a legacy persisted tag as text when the reference degrades to the capability hint', async () => {
     const res = resolver(new Map(), sessionDir);
     const req = requester({ videoIn: false });
     const bare: Message = {
       role: 'user',
-      toolCalls: [],
       content: [
         { type: 'video_url', videoUrl: { url: buildKimiFileUrl(FILE_ID) } },
       ],
     };
-    const first = await res.resolve([bare], req);
-    expect(firstPart(first)).toEqual({ type: 'text', text: VIDEO_UNAVAILABLE_TEXT });
+    const first = await resolveMedia(res, [bare], req);
+    expect(firstPart(first)).toEqual({ type: 'text', text: VIDEO_CAPABILITY_HINT });
 
     const withLegacyTag: Message = {
       role: 'user',
-      toolCalls: [],
       content: [
         { type: 'text', text: VIDEO_TAG },
         { type: 'video_url', videoUrl: { url: buildKimiFileUrl(FILE_ID) } },
       ],
     };
-    const second = await res.resolve([withLegacyTag], req);
+    const second = await resolveMedia(res, [withLegacyTag], req);
     expect(second[0]!.content).toEqual([
       { type: 'text', text: VIDEO_TAG },
-      { type: 'text', text: VIDEO_UNAVAILABLE_TEXT },
+      { type: 'text', text: VIDEO_CAPABILITY_HINT },
     ]);
+  });
+});
+
+describe('AgentMediaResolverService request media budget', () => {
+  const EIGHT_MIB = 8 * 1024 * 1024;
+  const SIX_MIB = 6 * 1024 * 1024;
+  const ONE_MIB = 1024 * 1024;
+
+  function bigPng(size: number): Buffer {
+    return Buffer.concat([PNG_BYTES, Buffer.alloc(size - PNG_BYTES.length)]);
+  }
+
+  function imageFiles(entries: Array<[string, number]>): Map<string, { name: string; bytes: Buffer }> {
+    return new Map(entries.map(([id, size]) => [id, { name: `${id}.png`, bytes: bigPng(size) }]));
+  }
+
+  function imageMessages(ids: readonly string[]): Message[] {
+    return ids.map((id) => imageMessage(buildKimiFileUrl(id)));
+  }
+
+  function inlineImageMessages(ids: readonly string[]): Message[] {
+    return ids.map((id) => imageMessage(`data:image/png;base64,${id}${'A'.repeat(EIGHT_MIB)}`));
+  }
+
+  function partTypes(messages: readonly Message[]): string[] {
+    return messages.map((message) => message.content[0]!.type);
+  }
+
+  function warnings(events: readonly Event2[]): Event2[] {
+    return events.filter((event) => event.type === 'warning');
+  }
+
+  it('omits the oldest inline media without daemon file references', async () => {
+    const events: Event2[] = [];
+    const res = resolver(new Map(), sessionDir, undefined, events);
+    const messages = inlineImageMessages(['first', 'second', 'third']);
+
+    const out = await resolveMedia(res, messages, requester({}));
+
+    expect(partTypes(out)).toEqual(['text', 'text', 'image_url']);
+    expect(out[2]!.content[0]).toBe(messages[2]!.content[0]);
+    expect(warnings(events)).toEqual([
+      expect.objectContaining({ type: 'warning', code: 'media-budget-exceeded' }),
+    ]);
+  });
+
+  it('omits the oldest images in one batch when inline media exceed the budget', async () => {
+    const files = imageFiles([
+      ['f1', SIX_MIB],
+      ['f2', SIX_MIB],
+      ['f3', SIX_MIB],
+    ]);
+    const p1 = await plantCanonical('f1', '.png', files.get('f1')!.bytes);
+    const p2 = await plantCanonical('f2', '.png', files.get('f2')!.bytes);
+    const events: Event2[] = [];
+    const res = resolver(files, sessionDir, undefined, events);
+
+    const out = await resolveMedia(res, imageMessages(['f1', 'f2', 'f3']), requester({}));
+
+    expect(out[0]!.content).toEqual([{ type: 'text', text: `<image path="${p1}"></image>` }]);
+    expect(out[1]!.content).toEqual([{ type: 'text', text: `<image path="${p2}"></image>` }]);
+    expect(out[2]!.content[0]).toEqual({
+      type: 'image_url',
+      imageUrl: { url: `data:image/png;base64,${files.get('f3')!.bytes.toString('base64')}` },
+    });
+    expect(warnings(events)).toEqual([
+      expect.objectContaining({ type: 'warning', code: 'media-budget-exceeded' }),
+    ]);
+  });
+
+  it('omits every occurrence when the same image appears multiple times', async () => {
+    const files = imageFiles([
+      ['big', 12 * 1024 * 1024],
+      ['small', SIX_MIB],
+    ]);
+    const events: Event2[] = [];
+    const res = resolver(files, sessionDir, undefined, events);
+
+    const out = await resolveMedia(res, imageMessages(['big', 'big', 'small']), requester({}));
+
+    expect(partTypes(out)).toEqual(['text', 'text', 'image_url']);
+  });
+
+  it('keeps the drop set stable while later requests stay under the high watermark', async () => {
+    const files = imageFiles([
+      ['f1', SIX_MIB],
+      ['f2', SIX_MIB],
+      ['f3', SIX_MIB],
+      ['f4', ONE_MIB],
+    ]);
+    await plantCanonical('f1', '.png', files.get('f1')!.bytes);
+    await plantCanonical('f2', '.png', files.get('f2')!.bytes);
+    const events: Event2[] = [];
+    const res = resolver(files, sessionDir, undefined, events);
+    const first3 = imageMessages(['f1', 'f2', 'f3']);
+
+    const first = await resolveMedia(res, first3, requester({}));
+    const second = await resolveMedia(res, 
+      [...first3, ...imageMessages(['f4'])],
+      requester({}),
+    );
+
+    expect(second.slice(0, 3)).toEqual(first);
+    expect(second[3]!.content[0]).toEqual({
+      type: 'image_url',
+      imageUrl: { url: `data:image/png;base64,${files.get('f4')!.bytes.toString('base64')}` },
+    });
+    expect(warnings(events)).toHaveLength(1);
+  });
+
+  it('evicts the next batch only after the budget is exceeded again', async () => {
+    const files = imageFiles([
+      ['f1', SIX_MIB],
+      ['f2', SIX_MIB],
+      ['f3', SIX_MIB],
+      ['f5', SIX_MIB],
+      ['f6', SIX_MIB],
+      ['f7', SIX_MIB],
+    ]);
+    const events: Event2[] = [];
+    const res = resolver(files, sessionDir, undefined, events);
+
+    await resolveMedia(res, imageMessages(['f1', 'f2', 'f3']), requester({}));
+    const messages = imageMessages(['f1', 'f2', 'f3', 'f5', 'f6', 'f7']);
+    const out = await resolveMedia(res, messages, requester({}));
+
+    expect(partTypes(out)).toEqual(['text', 'text', 'text', 'text', 'text', 'image_url']);
+    expect(warnings(events)).toHaveLength(2);
+
+    const again = await resolveMedia(res, messages, requester({}));
+    expect(again).toEqual(out);
+    expect(warnings(events)).toHaveLength(2);
+  });
+
+  it('does not count uploaded references toward the budget', async () => {
+    const upload = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-1'));
+    const files = imageFiles([
+      ['f1', SIX_MIB],
+      ['f2', SIX_MIB],
+      ['f3', SIX_MIB],
+    ]);
+    files.set('v1', { name: 'clip.mp4', bytes: VIDEO_BYTES });
+    const events: Event2[] = [];
+    const res = resolver(files, sessionDir, undefined, events);
+    const req = requester({ uploadVideo: upload });
+
+    const out = await resolveMedia(res, 
+      [videoMessage(buildKimiFileUrl('v1')), ...imageMessages(['f1', 'f2', 'f3'])],
+      req,
+    );
+
+    expect(out[0]!.content[0]).toEqual(msPart('prov-1'));
+    expect(partTypes(out)).toEqual(['video_url', 'text', 'text', 'image_url']);
+
+    const again = await resolveMedia(res, [videoMessage(buildKimiFileUrl('v1'))], req);
+    expect(again[0]!.content[0]).toEqual(msPart('prov-1'));
   });
 });
 
@@ -844,6 +1474,11 @@ describe('AgentMediaResolverService scoped registration', () => {
     return host.child(LifecycleScope.Agent, 'main', [
       stubPair(IAgentStateService, new AgentStateService()),
       stubPair(ISessionMediaStore, stubMediaStore()),
+      stubPair(IEventDispatcher, {
+        _serviceBrand: undefined,
+        dispatch: async () => {},
+      } as unknown as IEventDispatcher),
+      stubPair(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' })),
     ]);
   }
 
@@ -851,11 +1486,39 @@ describe('AgentMediaResolverService scoped registration', () => {
     const agent = agentScope(new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]));
 
     const svc = agent.accessor.get(IAgentMediaResolverService);
-    const out = await svc.resolve(
+    const out = await resolveMedia(svc, 
       [imageMessage(buildKimiFileUrl(FILE_ID))],
       requester({}),
     );
 
     expect(firstPart(out)).toEqual({ type: 'image_url', imageUrl: { url: PNG_DATA_URL } });
+  });
+});
+
+describe('AgentMediaResolverService displayPaths', () => {
+  it('maps daemon file ref urls to their display paths', async () => {
+    await plantCanonical('f_img', '.png', PNG_BYTES);
+    const service = resolver(new Map(), sessionDir);
+
+    const paths = await service.displayPaths([
+      imageMessage(buildKimiFileUrl('f_img')),
+      imageMessage('data:image/png;base64,AAAA'),
+      { role: 'user', content: [{ type: 'text', text: 'hi' }] },
+    ]);
+
+    expect(paths.get(buildKimiFileUrl('f_img'))).toBe(join(sessionDir, 'media', 'f_img.png'));
+    expect(paths.size).toBe(1);
+  });
+
+  it('omits refs without a display path and dedupes repeated urls', async () => {
+    const service = resolver(new Map(), sessionDir);
+
+    const paths = await service.displayPaths([
+      imageMessage(buildKimiFileUrl('f_missing')),
+      imageMessage(buildKimiFileUrl('f_missing')),
+      videoMessage(buildKimiFileUrl('f_missing')),
+    ]);
+
+    expect(paths.size).toBe(0);
   });
 });

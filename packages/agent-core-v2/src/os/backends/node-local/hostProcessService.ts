@@ -1,9 +1,8 @@
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
+import { stat } from 'node:fs/promises';
 import type { Readable, Writable } from 'node:stream';
 
 import { BufferedReadable } from '#/_base/execEnv/bufferedReadable';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import {
   HostProcessError,
@@ -14,6 +13,7 @@ import {
 } from '#/os/interface/hostProcess';
 
 const isWindows: boolean = process.platform === 'win32';
+const TASKKILL_TIMEOUT_MS = 5_000;
 
 function buildSpawnOptions(options: HostProcessOptions): SpawnOptions {
   const detached = options.detached ?? !isWindows;
@@ -23,6 +23,7 @@ function buildSpawnOptions(options: HostProcessOptions): SpawnOptions {
     stdio: options.mergeStderr ? ['pipe', 'pipe', 'pipe'] : ['pipe', 'pipe', 'pipe'],
     detached,
     windowsHide: options.windowsHide ?? true,
+    timeout: options.timeout,
   };
 
   if (options.shell !== undefined) {
@@ -115,17 +116,32 @@ class HostProcess implements IHostProcess {
 
     if (isWindows) {
       const taskkillArgs = ['/T', '/F', '/PID', String(this.pid)];
-      return new Promise<void>((resolve) => {
-        const killer = spawn('taskkill', taskkillArgs, {
-          stdio: 'ignore',
-          windowsHide: true,
-        });
-        const done = (): void => {
-          resolve();
-        };
-        killer.once('error', done);
-        killer.once('close', done);
+      const killer = spawn('taskkill', taskkillArgs, {
+        stdio: 'ignore',
+        windowsHide: true,
       });
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      const exited = await Promise.race([
+        new Promise<true>((resolve) => {
+          const done = (): void => {
+            resolve(true);
+          };
+          killer.once('error', done);
+          killer.once('close', done);
+        }),
+        new Promise<false>((resolve) => {
+          timeout = setTimeout(() => {
+            resolve(false);
+          }, TASKKILL_TIMEOUT_MS);
+          timeout.unref?.();
+        }),
+      ]);
+      clearTimeout(timeout);
+      if (!exited) {
+        killer.unref();
+        killer.kill();
+      }
+      return;
     }
 
     try {
@@ -170,6 +186,18 @@ export class HostProcessService implements IHostProcessService {
     args: readonly string[] = [],
     options: HostProcessOptions = {},
   ): Promise<IHostProcess> {
+    if (options.cwd !== undefined) {
+      const cwdStat = await stat(options.cwd).catch(() => undefined);
+      if (cwdStat === undefined || !cwdStat.isDirectory()) {
+        throw new HostProcessError(
+          HostProcessErrorCode.SpawnFailed,
+          `Failed to spawn "${command}": cwd ${options.cwd} does not exist or is not a directory`,
+          {
+            details: { command, args: [...args], cwd: options.cwd },
+          },
+        );
+      }
+    }
     const spawnOptions = buildSpawnOptions(options);
     const child = spawn(command, args as string[], spawnOptions);
     try {
@@ -188,11 +216,3 @@ export class HostProcessService implements IHostProcessService {
     return new HostProcess(child, options.mergeStderr ?? false);
   }
 }
-
-registerScopedService(
-  LifecycleScope.App,
-  IHostProcessService,
-  HostProcessService,
-  ScopeActivation.OnScopeCreated,
-  'hostProcess',
-);

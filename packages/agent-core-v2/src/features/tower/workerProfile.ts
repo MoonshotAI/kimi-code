@@ -12,8 +12,8 @@ import { TOWER_WORKER_PROFILE } from './tower';
 import TOWER_WORKER_ROLE_OVERLAY from './tower-worker-overlay.md?raw';
 
 const TOWER_WORKER_TOOLS = [
-  'Agent',
   'Bash',
+  'TowerComplete',
   'TowerFinding',
   'TowerInbox',
   'TowerMission',
@@ -24,8 +24,6 @@ const TOWER_WORKER_TOOLS = [
   'CronDelete',
   'CronList',
   'Edit',
-  'EnterPlanMode',
-  'ExitPlanMode',
   'Glob',
   'Grep',
   'Read',
@@ -45,7 +43,7 @@ const TOWER_WORKER_TOOLS = [
 
 const CODER_ROLE =
   `${TASK_AGENT_ROLE_PREFIX}\n\n` +
-  'Your final message is the entire handoff — the parent sees nothing else from your run. ' +
+  'Your final message is the entire handoff. ' +
   'Make it technically complete: what you changed and why, the path of every file you touched, ' +
   'how you verified the change (tests or commands run, with results), and anything left undone ' +
   'or worth follow-up. If you are stopped before finishing, the parent receives only what ' +
@@ -60,7 +58,6 @@ export const TOWER_WORKER_PROFILE_DEF: AgentProfile = normalizeAgentProfile({
   whenToUse:
     'Use this agent for non-trivial software engineering work that may require reading files, editing code, running commands, and returning a compact but technically complete summary to the parent agent.',
   tools: TOWER_WORKER_TOOLS,
-  subagents: ['explore', 'plan'],
   renderSystemPrompt: (context) =>
     renderSystemPromptResult(TOWER_WORKER_ROLE, context, {
       skillActive: skillActiveFor(TOWER_WORKER_TOOLS),

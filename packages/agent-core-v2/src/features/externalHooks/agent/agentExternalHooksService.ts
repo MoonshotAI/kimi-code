@@ -16,11 +16,8 @@ import type { CompactionResult } from '#/agent/fullCompaction/types';
 import { IAgentLoopService, type AfterStepContext } from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
-import {
-  IAgentPromptService,
-  type PromptSubmitContext,
-} from '#/agent/prompt/prompt';
-import { PromptQueued } from '#/agent/prompt/promptService';
+import { type PromptSubmitContext } from '#/agent/loop/loop';
+import { PromptQueued } from '#/agent/prompt/promptEvents';
 import { TaskNotified, TaskStarted } from '#/agent/task/taskOps';
 import {
   PermissionApprovalRequested,
@@ -33,12 +30,14 @@ import type { ResolvedToolExecutionHookContext, ToolDidExecuteContext } from '#/
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { toKimiErrorPayload } from '#/errors';
+import { fromCorePart } from '#human/message';
+import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { IAgentExternalHooksService } from './agentExternalHooks';
-import { IExternalHooksRunnerService } from '../app/externalHooksRunner';
+import { IExternalHooksRunnerService, type HookExecutionError } from '../app/externalHooksRunner';
 import type { HookMatcherValue } from '../internal/types';
 import {
   renderUserPromptHookBlockResult,
@@ -106,6 +105,8 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
 
   private sessionTitle: string | undefined;
 
+  private hookFailureWarned = false;
+
   private withSessionFacts(inputData: Record<string, unknown>): Record<string, unknown> {
     return { sessionTitle: this.sessionTitle, ...inputData };
   }
@@ -118,6 +119,11 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     this.states.set(externalHooksStopHookContinuationUsedKey, value);
   }
 
+  private async hookCwd(): Promise<string> {
+    await this.sessionMetadata.ready;
+    return this.sessionMetadata.effectiveCwd;
+  }
+
   private fireAndForget(
     event: string,
     inputData: Record<string, unknown>,
@@ -125,16 +131,39 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     signal?: AbortSignal,
   ): void {
     try {
-      void this.runner.fireAndForgetTrigger(event, {
-        matcherValue,
-        signal,
-        sessionId: this.sessionContext.sessionId,
-        inputData: this.withSessionFacts(inputData),
-      });
+      void this.hookCwd()
+        .then((cwd) =>
+          this.runner.fireAndForgetTrigger(event, {
+            matcherValue,
+            signal,
+            cwd,
+            sessionId: this.sessionContext.sessionId,
+            inputData: this.withSessionFacts(inputData),
+          }),
+        )
+        .catch(() => undefined);
     } catch {}
   }
 
+  private warnHookFailure(failure: HookExecutionError): void {
+    if (this.scopeContext.agentId !== MAIN_AGENT_ID) return;
+    if (failure.sessionId !== undefined && failure.sessionId !== this.sessionContext.sessionId) {
+      return;
+    }
+    if (this.hookFailureWarned) return;
+    this.hookFailureWarned = true;
+    void this.dispatcher.dispatch(
+      new HookResult({
+        agentId: this.scopeContext.agentId,
+        hookEvent: failure.event,
+        content: `A ${failure.event} hook failed to execute: ${failure.message}. Hooks always run on this local machine; check that the hook command works locally. Later hook failures in this session are logged without another warning.`,
+      }),
+    );
+  }
+
   private registerListeners(): void {
+    this._register(this.runner.onDidHookError((failure) => this.warnHookFailure(failure)));
+
     this.registerPermissionHooks();
 
     this.registerToolHooks(
@@ -142,7 +171,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     );
 
     this.registerPromptHooks(
-      this.instantiation.invokeFunction((accessor) => accessor.get(IAgentPromptService)),
+      this.instantiation.invokeFunction((accessor) => accessor.get(IAgentLoopService)),
     );
 
     this.registerTurnHooks();
@@ -192,9 +221,9 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     );
   }
 
-  private registerPromptHooks(prompt: IAgentPromptService): void {
+  private registerPromptHooks(loop: IAgentLoopService): void {
     this._register(
-      prompt.hooks.onBeforeSubmitPrompt.register('externalHooks', async (ctx, next) => {
+      loop.hooks.onBeforeSubmitPrompt.register('externalHooks', async (ctx, next) => {
         if (await this.runPromptSubmitHook(ctx)) {
           ctx.block = true;
           return;
@@ -206,7 +235,11 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
       this.eventBus.subscribe(PromptQueued, (e) => {
         this.fireAndForget(
           'UserPromptQueued',
-          { promptId: e.promptId, prompt: e.content, queueLength: e.queueLength },
+          {
+            promptId: e.promptId,
+            prompt: e.content.map((part) => fromCorePart(part)),
+            queueLength: e.queueLength,
+          },
           e.content,
         );
       }),
@@ -242,7 +275,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
         if (
           ctx.finishReason === 'tool_calls' ||
           ctx.finishReason === 'filtered' ||
-          loop.hasPendingRequests()
+          loop.snapshot().hasPendingRequests
         ) {
           return;
         }
@@ -252,7 +285,6 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
           this.context.append({
             role: 'user',
             content: [{ type: 'text', text: reason }],
-            toolCalls: [],
             origin: { kind: 'system_trigger', name: 'stop_hook' },
           });
           loop.notify();
@@ -307,6 +339,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     const block = await this.runner.triggerBlock('PreToolUse', {
       matcherValue: ctx.toolCall.name,
       signal: ctx.signal,
+      cwd: await this.hookCwd(),
       sessionId: this.sessionContext.sessionId,
       inputData: this.withSessionFacts({
         toolName: ctx.toolCall.name,
@@ -346,8 +379,12 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     const results = await this.runner.trigger('UserPromptSubmit', {
       matcherValue: input,
       signal,
+      cwd: await this.hookCwd(),
       sessionId: this.sessionContext.sessionId,
-      inputData: this.withSessionFacts({ prompt: input, isSteer: ctx.isSteer }),
+      inputData: this.withSessionFacts({
+        prompt: input.map((part) => fromCorePart(part)),
+        isSteer: ctx.isSteer,
+      }),
     });
     signal.throwIfAborted();
 
@@ -372,19 +409,16 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
 
     const append = renderUserPromptHookResult(results);
     if (append !== undefined) {
-      this.context.append({
-        role: 'user',
-        content: [{ type: 'text', text: append.text }],
-        toolCalls: [],
-        origin: { kind: 'hook_result', event: append.event },
-      });
-      void this.dispatcher.dispatch(
-        new HookResult({
-          agentId: this.scopeContext.agentId,
-          hookEvent: append.event,
-          content: append.message,
-        }),
-      );
+      ctx.hookParts.push(...append.parts);
+      for (const message of append.messages) {
+        void this.dispatcher.dispatch(
+          new HookResult({
+            agentId: this.scopeContext.agentId,
+            hookEvent: append.event,
+            content: message,
+          }),
+        );
+      }
     }
     return false;
   }
@@ -418,6 +452,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
 
     const block = await this.runner.triggerBlock('Stop', {
       signal: ctx.signal,
+      cwd: await this.hookCwd(),
       sessionId: this.sessionContext.sessionId,
       inputData: this.withSessionFacts({ stopHookActive: false }),
     });
@@ -431,6 +466,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     await this.runner.trigger('PreCompact', {
       matcherValue: ctx.trigger,
       signal,
+      cwd: await this.hookCwd(),
       sessionId: this.sessionContext.sessionId,
       inputData: this.withSessionFacts({
         trigger: ctx.trigger,

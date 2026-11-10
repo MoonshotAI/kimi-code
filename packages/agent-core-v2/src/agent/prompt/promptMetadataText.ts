@@ -11,13 +11,26 @@ export function titleFromPromptMetadataText(text: string): string {
 
 export function promptMetadataTextFromContentParts(
   parts: readonly ContentPart[],
+  clientMetadata?: unknown,
 ): string | undefined {
+  if (Array.isArray(clientMetadata) && clientMetadata.length > 0) {
+    const displayTexts = clientMetadata.map((entry: unknown) => {
+      if (typeof entry !== 'object' || entry === null) return undefined;
+      const text = (entry as { display_text?: unknown }).display_text;
+      return typeof text === 'string' ? text : undefined;
+    });
+    if (displayTexts.every((text) => text !== undefined)) return promptMetadataTextFromText(displayTexts.join('\n'));
+  }
+  return promptMetadataTextFromText(promptDisplayTextFromContentParts(parts));
+}
+
+export function promptDisplayTextFromContentParts(parts: readonly ContentPart[]): string {
   const texts: string[] = [];
   for (const part of parts) {
     const text = promptPartText(part);
     if (text !== undefined) texts.push(text);
   }
-  return promptMetadataTextFromText(texts.join('\n'));
+  return texts.join('\n');
 }
 
 export function promptMetadataTextFromText(text: string): string | undefined {

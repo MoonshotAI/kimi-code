@@ -4,7 +4,7 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
+import { IAgentLoopService, type PromptHandle } from '#/agent/loop/loop';
 import type { ContentPart } from '#human/llm/message';
 import { IAgentTitlePromptSource } from '#/session/sessionTitle/agentTitlePromptSource';
 import { AgentTitlePromptSourceService } from '#/session/sessionTitle/agentTitlePromptSourceService';
@@ -20,7 +20,6 @@ function userMessage(
     id,
     role: 'user',
     content: [{ type: 'text', text }],
-    toolCalls: [],
     origin,
   };
 }
@@ -30,23 +29,55 @@ function assistantMessage(id: string, parts: ContentPart[]): ContextMessage {
 }
 
 function toolMessage(id: string, text: string): ContextMessage {
-  return { id, role: 'tool', content: [{ type: 'text', text }], toolCalls: [] };
+  return { id, role: 'tool', content: [{ type: 'text', text }], toolCallId: id };
+}
+
+interface MockQueueState {
+  active?: PromptHandle;
+  pending: {
+    id: string;
+    message: ContextMessage;
+    tracked: true;
+    createdAt: string;
+    userMessageId: string;
+  }[];
 }
 
 describe('AgentTitlePromptSource', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
   let liveMessages: readonly ContextMessage[];
-  let queue: ReturnType<IAgentPromptService['list']>;
+  let queue: MockQueueState;
 
   beforeEach(() => {
     liveMessages = [];
-    queue = { active: undefined, pending: [], launching: false };
+    queue = { active: undefined, pending: [] };
     disposables = new DisposableStore();
     ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.definePartialInstance(IAgentContextMemoryService, { get: () => liveMessages });
-        reg.definePartialInstance(IAgentPromptService, { list: () => queue });
+        reg.definePartialInstance(IAgentLoopService, {
+          snapshot: () => ({
+            state: 'idle' as const,
+            activeTurnId: undefined,
+            activePromptId: queue.active?.id,
+            queue: queue.pending.map((item) => ({
+              message: { role: 'user' as const, content: [...item.message.content] },
+              meta: {
+                promptId: item.id,
+                tracked: item.tracked,
+                createdAt: item.createdAt,
+                userMessageId: item.userMessageId,
+              },
+            })),
+            notificationCount: 0,
+            paused: false,
+            hasPendingRequests: queue.pending.length > 0,
+            turn: undefined,
+            activeTraceId: undefined,
+          }),
+          promptHandle: (id: string) => (queue.active?.id === id ? queue.active : undefined),
+        });
         reg.define(IAgentTitlePromptSource, AgentTitlePromptSourceService);
       },
     });
@@ -56,24 +87,31 @@ describe('AgentTitlePromptSource', () => {
     disposables.dispose();
   });
 
+  it('uses client display text consistently for titles, first turns and digests', async () => {
+    liveMessages = [userMessage('annotated', '<browser_ref id="internal">Save</browser_ref>', { kind: 'user', clientMetadata: [{ display_text: 'Save button · Rename to Save changes' }] }), assistantMessage('reply', [{ type: 'text', text: 'Done' }])];
+    const source = ix.get(IAgentTitlePromptSource);
+    await expect(source.firstUserPrompts(3)).resolves.toEqual(['Save button · Rename to Save changes']);
+    await expect(source.firstTurnExcerpt()).resolves.toEqual({ user: 'Save button · Rename to Save changes', assistant: 'Done' });
+    await expect(source.digestExcerpt()).resolves.toEqual({ turns: [{ user: 'Save button · Rename to Save changes', assistant: 'Done' }] });
+  });
+
   it('returns the first three prompts from the live context and queue in order', async () => {
     liveMessages = [userMessage('one', '第一条')];
     queue = {
       active: undefined,
-      launching: false,
       pending: [
         {
           id: 'two',
           userMessageId: 'two',
           createdAt: '2026-01-01T00:00:00.000Z',
-          state: 'pending',
+          tracked: true,
           message: userMessage('two', '第二条'),
         },
         {
           id: 'three',
           userMessageId: 'three',
           createdAt: '2026-01-01T00:00:01.000Z',
-          state: 'pending',
+          tracked: true,
           message: userMessage('three', '第三条'),
         },
       ],
@@ -123,13 +161,14 @@ describe('AgentTitlePromptSource', () => {
   it('counts a queued prompt already appended to the context only once', async () => {
     liveMessages = [userMessage('one', '同一条')];
     queue = {
-      launching: false,
       active: {
         id: 'one',
         userMessageId: 'one',
         createdAt: '2026-01-01T00:00:00.000Z',
         state: 'running',
         message: userMessage('one', '同一条'),
+        launched: Promise.resolve(undefined),
+        completion: new Promise(() => {}),
       },
       pending: [],
     };
@@ -173,13 +212,14 @@ describe('AgentTitlePromptSource', () => {
       userMessage('two', '进行中的问题'),
     ];
     queue = {
-      launching: false,
       active: {
         id: 'two',
         userMessageId: 'two',
         createdAt: '2026-01-01T00:00:01.000Z',
         state: 'running',
         message: userMessage('two', '进行中的问题'),
+        launched: Promise.resolve(undefined),
+        completion: new Promise(() => {}),
       },
       pending: [],
     };

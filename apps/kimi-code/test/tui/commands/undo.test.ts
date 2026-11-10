@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { handleUndoCommand } from '#/tui/commands/undo';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
 import type { TranscriptEntry } from '#/tui/types';
+import type { UndoSelectorOptions } from '#/tui/components/dialogs/undo-selector';
 
 function entry(partial: Partial<TranscriptEntry> & Pick<TranscriptEntry, 'kind' | 'content'>): TranscriptEntry {
   return {
@@ -99,64 +100,34 @@ describe('/undo with bundled prompts', () => {
     expect(host.session?.undoHistory).toHaveBeenCalledWith(2);
     expect(entries).toHaveLength(0);
   });
-});
 
-describe('/undo todo panel refresh', () => {
-  function hostWithTodos(
-    entries: TranscriptEntry[],
-    session: Record<string, unknown>,
-  ): { host: SlashCommandHost; setTodoList: ReturnType<typeof vi.fn> } {
-    const host = hostWith(entries);
-    const setTodoList = vi.fn();
-    (host as { streamingUI?: unknown }).streamingUI = { setTodoList };
-    (host as { session?: unknown }).session = session;
-    return { host, setTodoList };
-  }
-
-  it('re-pulls the engine todo state after a successful undo', async () => {
-    const entries: TranscriptEntry[] = [
-      entry({ kind: 'user', content: 'question' }),
-      entry({ kind: 'assistant', content: 'answer' }),
-    ];
-    const { host, setTodoList } = hostWithTodos(entries, {
-      undoHistory: vi.fn(async () => {}),
-      getTodos: vi.fn(async () => [{ title: 'kept', status: 'pending' }]),
-    });
-
-    await handleUndoCommand(host, '1');
-
-    expect(setTodoList).toHaveBeenCalledWith([{ title: 'kept', status: 'pending' }]);
-  });
-
-  it('keeps the panel as-is when the engine has no todo read surface', async () => {
-    const entries: TranscriptEntry[] = [
-      entry({ kind: 'user', content: 'question' }),
-      entry({ kind: 'assistant', content: 'answer' }),
-    ];
-    const { host, setTodoList } = hostWithTodos(entries, {
-      undoHistory: vi.fn(async () => {}),
-      getTodos: vi.fn(async () => {
-        throw new Error('getTodos is only available on the agent-core-v2 engine.');
+  it('restores the selected skill activation metadata with the undone prompt', async () => {
+    const activations = [{ skillName: 'review', path: '/work/B/review/SKILL.md' }];
+    const entries = [
+      entry({ kind: 'assistant', content: 'earlier answer' }),
+      entry({
+        kind: 'user',
+        content: '/skill:review',
+        skillNames: ['review'],
+        inlineSkillActivations: activations,
       }),
-    });
-
-    await handleUndoCommand(host, '1');
-
-    expect(setTodoList).not.toHaveBeenCalled();
-  });
-
-  it('hides the panel when the restored todos are all done', async () => {
-    const entries: TranscriptEntry[] = [
-      entry({ kind: 'user', content: 'question' }),
-      entry({ kind: 'assistant', content: 'answer' }),
     ];
-    const { host, setTodoList } = hostWithTodos(entries, {
-      undoHistory: vi.fn(async () => {}),
-      getTodos: vi.fn(async () => [{ title: 'finished', status: 'done' }]),
+    const host = hostWith(entries);
+    const restoreInputText = vi.fn();
+    let options: UndoSelectorOptions | undefined;
+    host.restoreInputText = restoreInputText;
+    host.mountEditorReplacement = vi.fn((component) => {
+      options = (component as unknown as { opts: UndoSelectorOptions }).opts;
     });
 
-    await handleUndoCommand(host, '1');
+    await handleUndoCommand(host);
 
-    expect(setTodoList).toHaveBeenCalledWith([]);
+    expect(options?.choices).toHaveLength(1);
+    const selector = options as UndoSelectorOptions;
+    selector.onSelect(selector.choices[0]!);
+    await vi.waitFor(() => {
+      expect(restoreInputText).toHaveBeenCalledWith('/skill:review', activations);
+    });
   });
 });
+

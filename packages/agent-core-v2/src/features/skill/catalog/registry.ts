@@ -4,6 +4,7 @@ import type {
   SkillCatalog,
   SkillDefinition,
   SkillMetadata,
+  SkillPluginContext,
   SkillSource,
   SkippedSkill,
 } from './types';
@@ -23,6 +24,7 @@ export class SkillNotFoundError extends Error {
 
 export class InMemorySkillCatalog implements SkillCatalog {
   private readonly byName = new Map<string, SkillDefinition>();
+  private readonly variantsByName = new Map<string, SkillDefinition[]>();
   private readonly byPluginAndName = new Map<string, SkillDefinition>();
   private readonly roots: string[] = [];
   private readonly skipped: SkippedSkill[] = [];
@@ -32,11 +34,34 @@ export class InMemorySkillCatalog implements SkillCatalog {
   }
 
   register(skill: SkillDefinition, options: { readonly replace?: boolean } = {}): void {
+    const plugin = skill.plugin;
+    if (plugin !== undefined) {
+      this.registerPluginSkill(skill, plugin, options);
+      return;
+    }
     const key = normalizeSkillName(skill.name);
     if (options.replace === true || !this.byName.has(key)) {
       this.byName.set(key, skill);
+      this.variantsByName.set(key, [skill]);
     }
-    this.indexPluginSkill(skill, options);
+  }
+
+  registerVariants(
+    skills: readonly SkillDefinition[],
+    options: { readonly replace?: boolean } = {},
+  ): void {
+    const grouped = new Map<string, SkillDefinition[]>();
+    for (const input of skills) {
+      const { key, skill } = catalogVariant(input);
+      const variants = grouped.get(key) ?? [];
+      if (!variants.some((variant) => variant.path === skill.path)) variants.push(skill);
+      grouped.set(key, variants);
+    }
+    for (const [key, variants] of grouped) {
+      if (options.replace === true || !this.variantsByName.has(key)) {
+        this.variantsByName.set(key, variants);
+      }
+    }
   }
 
   recordSkipped(skills: readonly SkippedSkill[]): void {
@@ -49,8 +74,10 @@ export class InMemorySkillCatalog implements SkillCatalog {
     }
   }
 
-  getSkill(name: string): SkillDefinition | undefined {
-    return this.byName.get(normalizeSkillName(name));
+  getSkill(name: string, path?: string): SkillDefinition | undefined {
+    const key = normalizeSkillName(name);
+    if (path === undefined) return this.byName.get(key);
+    return this.variantsByName.get(key)?.find((skill) => skill.path === path);
   }
 
   getPluginSkill(pluginId: string, name: string): SkillDefinition | undefined {
@@ -79,8 +106,12 @@ export class InMemorySkillCatalog implements SkillCatalog {
     );
   }
 
-  listSkills(): readonly SkillDefinition[] {
+  listDefaultSkills(): readonly SkillDefinition[] {
     return [...this.byName.values()].toSorted((a, b) => a.name.localeCompare(b.name));
+  }
+
+  listSkills(): readonly SkillDefinition[] {
+    return [...this.variantsByName.values()].flat().toSorted((a, b) => a.name.localeCompare(b.name));
   }
 
   listInvocableSkills(): readonly SkillDefinition[] {
@@ -111,20 +142,44 @@ export class InMemorySkillCatalog implements SkillCatalog {
     );
     if (listing.length > 0) {
       lines.push(listing);
+      if (this.roots.length > 0) {
+        lines.push('### Skill roots', ...this.roots.map((root) => `- \`${root}\``));
+      }
     }
     return lines.length === 1 ? '' : lines.join('\n');
   }
 
-  private indexPluginSkill(
+  private registerPluginSkill(
     skill: SkillDefinition,
-    options: { readonly replace?: boolean } = {},
+    plugin: SkillPluginContext,
+    options: { readonly replace?: boolean },
   ): void {
-    if (skill.plugin === undefined) return;
-    const key = pluginSkillKey(skill.plugin.id, skill.name);
-    if (options.replace === true || !this.byPluginAndName.has(key)) {
-      this.byPluginAndName.set(key, skill);
+    const prefix = `${plugin.id}:`;
+    const bareName = skill.name.startsWith(prefix) ? skill.name.slice(prefix.length) : skill.name;
+    const pluginKey = pluginSkillKey(plugin.id, bareName);
+    if (options.replace === true || !this.byPluginAndName.has(pluginKey)) {
+      this.byPluginAndName.set(pluginKey, { ...skill, name: bareName });
+    }
+    const qualifiedName = `${prefix}${bareName}`;
+    const qualifiedKey = normalizeSkillName(qualifiedName);
+    if (options.replace === true || !this.byName.has(qualifiedKey)) {
+      const qualified = { ...skill, name: qualifiedName };
+      this.byName.set(qualifiedKey, qualified);
+      this.variantsByName.set(qualifiedKey, [qualified]);
     }
   }
+}
+
+function catalogVariant(skill: SkillDefinition): { key: string; skill: SkillDefinition } {
+  const plugin = skill.plugin;
+  if (plugin === undefined) return { key: normalizeSkillName(skill.name), skill };
+  const prefix = `${plugin.id}:`;
+  const bareName = skill.name.startsWith(prefix) ? skill.name.slice(prefix.length) : skill.name;
+  const qualifiedName = `${prefix}${bareName}`;
+  return {
+    key: normalizeSkillName(qualifiedName),
+    skill: { ...skill, name: qualifiedName },
+  };
 }
 
 interface SkillExpandContext {
@@ -218,7 +273,7 @@ function formatModelSkill(skill: SkillDefinition): readonly string[] {
   if (typeof skill.metadata.whenToUse === 'string' && skill.metadata.whenToUse.length > 0) {
     lines.push(`  When to use: ${skill.metadata.whenToUse}`);
   }
-  lines.push(`  Path: ${skill.path}`);
+  if (skill.workspaceDir !== undefined) lines.push(`  Workspace: ${skill.workspaceDir}`);
   return lines;
 }
 
@@ -274,5 +329,5 @@ function tokenizeArgs(raw: string): string[] {
 }
 
 function escapeRegExp(value: string): string {
-  return value.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
+  return value.replaceAll(/[\\^$.*+?()[\]{}|]/g, '\\$&');
 }

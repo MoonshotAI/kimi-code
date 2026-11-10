@@ -10,8 +10,10 @@ import {
   setUnexpectedErrorHandler,
 } from '#/_base/errors/unexpectedError';
 import { BugIndicatingError } from '#/_base/errors/errors';
+import { ILogService } from '#/_base/log/log';
 import { AgentSpaceImpl } from '#/agent/agentContext/agentSpace';
 import '#/agent/contextMemory/conversationTime';
+import { ContextAppendMessage, ContextUndo } from '#/agent/contextMemory/contextEvents';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -21,6 +23,7 @@ import { EventBusService } from '#/app/event/eventBusService';
 import { Event2, event2FromRecord } from '#/app/event/event2';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { CycleError, EventDispatcherService } from '#/state/eventDispatcherService';
+import { SubagentSpawned, SubagentStarted, SubagentCompleted, SubagentFailed, SubagentCancelled } from '#/session/subagent/mirrorAgentRun';
 import { defineState } from '#/state/state';
 import { IWireService } from '#/wire/wire';
 import type { WireRecord } from '#/wire/record';
@@ -39,13 +42,35 @@ function stubWireJournal(journal: WireRecord[]): IWireService {
     appendRecord: (record) => {
       journal.push(record as WireRecord);
     },
+    append: (record) => {
+      journal.push(record as WireRecord);
+    },
     readJournal: async function* () {
       for (const record of journal) yield record;
     },
+    readRestorable: async function* () {
+      for (const record of journal) yield record;
+    },
+    readRestoreChains: async () => ({ restorable: [...journal], journal: [...journal] }),
+    readHumanChain: () => [],
+    read: async function* () {
+      for (const record of journal) yield record;
+    },
+    readRaw: async function* () {
+      for (const record of journal) yield record;
+    },
+    journalRef: { tree: 'stub', branch: 'main' },
+    switchBranch: async () => {
+      throw new Error('stubWireJournal.switchBranch is not implemented');
+    },
+    branches: () => ['main'],
+    nextSeq: () => journal.length + 1,
+    settled: async () => {},
     flush: async () => {}, drainPersisted: async () => {},
     lineCount: () => journal.length,
     lastContextClearLine: () => undefined,
     journalPath: () => undefined,
+    externallyModified: () => false,
   };
 }
 
@@ -77,6 +102,8 @@ interface CounterSet extends z.infer<typeof CounterSet.schema> {}
 
 class FailingEvent extends Event2<Record<string, never>> {
   static override readonly type = 'state.test.failing';
+  static override readonly durable = true;
+  static override readonly schema = z.object({});
 }
 
 class PingEvent extends Event2<Record<string, never>> {
@@ -132,6 +159,13 @@ class UndoEvent extends Event2<{ count: number }> {
 }
 interface UndoEvent extends z.infer<typeof UndoEvent.schema> {}
 
+class ClearEvent extends Event2<Record<string, never>> {
+  static override readonly type = 'state.test.clear';
+  static override readonly durable = true;
+  static override readonly schema = z.object({});
+}
+interface ClearEvent extends z.infer<typeof ClearEvent.schema> {}
+
 const checkpointedKey = defineState(
   'state.test.checkpointed',
   (): CheckpointedState => ({ items: [] }),
@@ -144,6 +178,23 @@ const checkpointedKey = defineState(
   })
   .on(UndoEvent, (s, e, ctx) => {
     ctx.undoToCheckpoint(e.count);
+  })
+  .on(ClearEvent, (s, e, ctx) => {
+    ctx.clearCheckpoints();
+  });
+
+const mutableKey = defineState('state.test.mutable', (): CheckpointedState => ({ items: [] }))
+  .replayable({ schema: z.object({ items: z.array(z.string()) }), mutableReplay: true })
+  .undoable({
+    onUndo: (s, count) => {
+      s.items = s.items.slice(0, Math.max(0, s.items.length - count));
+    },
+  })
+  .on(ItemAdd, (s, e) => {
+    s.items.push(e.item);
+  })
+  .on(FailingEvent, (s) => {
+    s.items.push('mutable-before-failure');
   });
 
 let disposables: DisposableStore;
@@ -166,6 +217,7 @@ beforeEach(() => {
   dispatcher = ix.get(IEventDispatcher);
   agentState = ix.get(IAgentStateService);
   agentState.contributeState(counterKey);
+  agentState.contributeState(mutableKey);
   agentState.contributeState(otherKey);
   agentState.contributeState(checkpointedKey);
 });
@@ -173,6 +225,24 @@ beforeEach(() => {
 afterEach(() => disposables.dispose());
 
 describe('EventDispatcherService', () => {
+  it('persists subagent lifecycle facts and replays them without publishing or rerunning work', async () => {
+    const seen: string[] = [];
+    disposables.add(bus.subscribe((event) => seen.push(event.type)));
+    const events = [
+      new SubagentSpawned({ subagentId: 'child', subagentName: 'explore', parentAgentId: 'main', callerAgentId: 'main', parentToolCallId: 'swarm-a', swarmIndex: 2, runInBackground: false }, 1000),
+      new SubagentStarted({ subagentId: 'child' }, 1100),
+      new SubagentCompleted({ subagentId: 'child', resultSummary: 'done' }, 1200),
+      new SubagentFailed({ subagentId: 'other', error: 'failed' }, 1300),
+      new SubagentCancelled({ subagentId: 'cancelled' }, 1400),
+    ];
+    for (const event of events) await dispatcher.dispatch(event);
+    expect(journal).toEqual(events.map((event) => event.serialize()));
+    expect(seen).toEqual(events.map((event) => event.type));
+    await dispatcher.restore();
+    expect(seen).toHaveLength(events.length);
+    expect(journal).toHaveLength(events.length);
+  });
+
   it('folds a durable event into state and appends the serialized record', async () => {
     await dispatcher.dispatch(new CounterAdd({ by: 3 }));
 
@@ -288,45 +358,60 @@ describe('EventDispatcherService', () => {
     });
   });
 
-  it('records patch history and rolls back with undo(patchId)', async () => {
-    await dispatcher.dispatch(new CounterAdd({ by: 1 }));
-    await dispatcher.dispatch(new CounterAdd({ by: 2 }));
-    await dispatcher.dispatch(new CounterAdd({ by: 4 }));
-
-    const history = dispatcher.history(counterKey);
-    expect(history).toHaveLength(3);
-    expect(history.map((entry) => entry.eventType)).toEqual([
-      'state.test.counter.add',
-      'state.test.counter.add',
-      'state.test.counter.add',
-    ]);
-    expect(history[1]!.patches).toEqual([{ op: 'replace', path: ['value'], value: 3 }]);
-
-    dispatcher.undo(counterKey, history[1]!.id);
-    expect(agentState.get(counterKey).value).toBe(1);
-    expect(dispatcher.history(counterKey)).toHaveLength(1);
-  });
-
-  it('drives the checkpoint protocol: checkpoint markers, depth, undoToCheckpoint', async () => {
+  it('rolls back to replay-time snapshot checkpoints on unpaired undo records and gates live undo', async () => {
     await dispatcher.dispatch(new ItemAdd({ item: 'a' }));
     await dispatcher.dispatch(new AnchorEvent({}));
     await dispatcher.dispatch(new ItemAdd({ item: 'b' }));
     await dispatcher.dispatch(new AnchorEvent({}));
     await dispatcher.dispatch(new ItemAdd({ item: 'c' }));
-
     expect(agentState.get(checkpointedKey).items).toEqual(['a', 'b', 'c']);
-    expect(dispatcher.checkpointDepth(checkpointedKey)).toBe(2);
 
     await dispatcher.dispatch(new UndoEvent({ count: 1 }));
-    expect(agentState.get(checkpointedKey).items).toEqual(['a', 'b']);
-    expect(dispatcher.checkpointDepth(checkpointedKey)).toBe(1);
+    expect(agentState.get(checkpointedKey).items).toEqual(['a', 'b', 'c']);
 
-    await dispatcher.dispatch(new UndoEvent({ count: 1 }));
-    expect(agentState.get(checkpointedKey).items).toEqual(['a']);
-    expect(dispatcher.checkpointDepth(checkpointedKey)).toBe(0);
+    journal.push(new UndoEvent({ count: 1 }).serialize());
+    journal.push(new UndoEvent({ count: 1 }).serialize());
 
-    await dispatcher.dispatch(new UndoEvent({ count: 1 }));
-    expect(agentState.get(checkpointedKey).items).toEqual(['a']);
+    const ix2 = disposables.add(new TestInstantiationService());
+    ix2.set(IEventBus, new SyncDescriptor(EventBusService));
+    ix2.set(IAgentBlobService, noopBlob);
+    ix2.set(IWireService, stubWireJournal([...journal]));
+    ix2.set(IAgentStateService, new AgentStateService());
+    ix2.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
+    const replayed = ix2.get(IEventDispatcher);
+    const replayedState = ix2.get(IAgentStateService);
+    replayedState.contributeState(checkpointedKey);
+
+    await replayed.restore();
+
+    expect(replayedState.get(checkpointedKey).items).toEqual(['a']);
+  });
+
+  it('bounds replay-time checkpoint stacks at clear records and ignores undos beyond the stack', async () => {
+    journal.push(
+      new ItemAdd({ item: 'a' }).serialize(),
+      new AnchorEvent({}).serialize(),
+      new ClearEvent({}).serialize(),
+      new ItemAdd({ item: 'b' }).serialize(),
+      new AnchorEvent({}).serialize(),
+      new ItemAdd({ item: 'c' }).serialize(),
+      new UndoEvent({ count: 1 }).serialize(),
+      new UndoEvent({ count: 1 }).serialize(),
+    );
+
+    const ix2 = disposables.add(new TestInstantiationService());
+    ix2.set(IEventBus, new SyncDescriptor(EventBusService));
+    ix2.set(IAgentBlobService, noopBlob);
+    ix2.set(IWireService, stubWireJournal([...journal]));
+    ix2.set(IAgentStateService, new AgentStateService());
+    ix2.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
+    const replayed = ix2.get(IEventDispatcher);
+    const replayedState = ix2.get(IAgentStateService);
+    replayedState.contributeState(checkpointedKey);
+
+    await replayed.restore();
+
+    expect(replayedState.get(checkpointedKey).items).toEqual(['a', 'b']);
   });
 
   it('restores silently from the journal: folds run, nothing published or appended', async () => {
@@ -352,12 +437,95 @@ describe('EventDispatcherService', () => {
     await replayed.restore();
 
     expect(replayedState.get(checkpointedKey).items).toEqual(['x', 'y']);
-    expect(replayed.checkpointDepth(checkpointedKey)).toBe(1);
     expect(seen).toEqual([]);
     expect(replayJournal).toEqual(records);
+  });
 
-    await replayed.dispatch(new UndoEvent({ count: 1 }));
-    expect(replayedState.get(checkpointedKey).items).toEqual(['x']);
+  it('keeps live dispatch immediate and includes it in mutable replay', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const replay = new ItemAdd({ item: 'replay' }).serialize();
+    const wire = stubWireJournal(journal);
+    wire.readRestoreChains = async () => {
+      await gate;
+      return { restorable: [replay], journal: [replay] };
+    };
+    const ix2 = disposables.add(new TestInstantiationService());
+    ix2.set(IEventBus, new SyncDescriptor(EventBusService));
+    ix2.set(IAgentBlobService, noopBlob);
+    ix2.set(IWireService, wire);
+    ix2.set(IAgentStateService, new AgentStateService());
+    ix2.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
+    const restoringDispatcher = ix2.get(IEventDispatcher);
+    const restoringState = ix2.get(IAgentStateService);
+    restoringState.contributeState(counterKey);
+    restoringState.contributeState(mutableKey);
+    restoringState.contributeState(otherKey);
+    restoringState.contributeState(checkpointedKey);
+    const restoring = restoringDispatcher.restore();
+    const live = restoringDispatcher.dispatch(new ItemAdd({ item: 'live' }));
+    let settled = false;
+    void live.then(() => {
+      settled = true;
+    });
+    await live;
+    expect(settled).toBe(true);
+    expect(restoringState.get(mutableKey).items).toEqual(['live']);
+
+    release();
+    await restoring;
+    expect(restoringState.get(mutableKey).items).toEqual(['live', 'replay']);
+  });
+
+  it('discards mutable replay state when a later fold fails and can restore again', async () => {
+    const initial = agentState.get(mutableKey);
+    journal.push(new ItemAdd({ item: 'a' }).serialize(), new FailingEvent({}).serialize());
+
+    await expect(dispatcher.restore()).rejects.toThrow('fold failure');
+    expect(agentState.get(mutableKey)).toBe(initial);
+    expect(agentState.get(mutableKey).items).toEqual([]);
+
+    journal.length = 0;
+    journal.push(new ItemAdd({ item: 'b' }).serialize());
+    await dispatcher.restore();
+    expect(agentState.get(mutableKey).items).toEqual(['b']);
+    expect(Object.isFrozen(agentState.get(mutableKey))).toBe(true);
+  });
+
+  it('freezes replayed and undo-restored state after restore while leaving untouched keys unfrozen', async () => {
+    journal.push(
+      new ItemAdd({ item: 'a' }).serialize(),
+      new AnchorEvent({}).serialize(),
+      new ItemAdd({ item: 'b' }).serialize(),
+      new AnchorEvent({}).serialize(),
+      new ItemAdd({ item: 'c' }).serialize(),
+      new UndoEvent({ count: 1 }).serialize(),
+      new UndoEvent({ count: 1 }).serialize(),
+    );
+
+    const ix2 = disposables.add(new TestInstantiationService());
+    ix2.set(IEventBus, new SyncDescriptor(EventBusService));
+    ix2.set(IAgentBlobService, noopBlob);
+    ix2.set(IWireService, stubWireJournal([...journal]));
+    ix2.set(IAgentStateService, new AgentStateService());
+    ix2.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
+    const replayed = ix2.get(IEventDispatcher);
+    const replayedState = ix2.get(IAgentStateService);
+    replayedState.contributeState(counterKey);
+    replayedState.contributeState(otherKey);
+    replayedState.contributeState(checkpointedKey);
+
+    await replayed.restore();
+
+    const state = replayedState.get(checkpointedKey);
+    expect(state.items).toEqual(['a']);
+    expect(Object.isFrozen(state)).toBe(true);
+    expect(Object.isFrozen(state.items)).toBe(true);
+    const other = replayedState.get(otherKey);
+    expect(Object.isFrozen(other)).toBe(true);
+    expect(Object.isFrozen(other.seen)).toBe(false);
   });
 
   it('skips unknown and malformed records during restore and reports them', async () => {
@@ -378,6 +546,19 @@ describe('EventDispatcherService', () => {
         ]),
       );
       ix2.set(IAgentStateService, new AgentStateService());
+      const restoreLog: { level: string; message: string; payload?: unknown }[] = [];
+      const capturingLogger: ILogService = {
+        _serviceBrand: undefined,
+        level: 'debug',
+        error: () => {},
+        warn: (message, payload) => restoreLog.push({ level: 'warn', message, payload }),
+        info: () => {},
+        debug: () => {},
+        child: () => capturingLogger,
+        setLevel: () => {},
+        flush: async () => {},
+      };
+      ix2.stub(ILogService, capturingLogger);
       ix2.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
       const replayed = ix2.get(IEventDispatcher);
       const replayedState = ix2.get(IAgentStateService);
@@ -386,7 +567,15 @@ describe('EventDispatcherService', () => {
       await replayed.restore();
 
       expect(replayedState.get(checkpointedKey).items).toEqual(['ok']);
-      expect(errors).toHaveLength(2);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toMatchObject({ code: 'wire.unknown_record' });
+      expect(restoreLog.map((entry) => entry.message)).toEqual([
+        "Unknown wire record type 'state.test.unknown' skipped during restore",
+      ]);
+      expect(restoreLog[0]?.payload).toMatchObject({
+        code: 'wire.unknown_record',
+        type: 'state.test.unknown',
+      });
     } finally {
       resetUnexpectedErrorHandler();
     }
@@ -465,7 +654,15 @@ describe('EventDispatcherService', () => {
     expect(() => dispatcher.attach({ ...participant })).not.toThrow();
   });
 
-  it('runs runtime attachments through the shared checkpoint and undo pipeline', async () => {
+  it('runs runtime attachments through the shared replay checkpoint pipeline', async () => {
+    journal.push(
+      new ItemAdd({ item: 'a' }).serialize(),
+      new AnchorEvent({}).serialize(),
+      new ItemAdd({ item: 'b' }).serialize(),
+      new AnchorEvent({}).serialize(),
+      new ItemAdd({ item: 'c' }).serialize(),
+      new UndoEvent({ count: 2 }).serialize(),
+    );
     let state: CheckpointedState = { items: [] };
     dispatcher.attach({
       id: 'runtime.test.checkpointed',
@@ -480,23 +677,89 @@ describe('EventDispatcherService', () => {
       commit: (next) => { state = next; },
     });
 
-    await dispatcher.dispatch(new ItemAdd({ item: 'a' }));
-    await dispatcher.dispatch(new AnchorEvent({}));
-    await dispatcher.dispatch(new ItemAdd({ item: 'b' }));
-
-    expect(state.items).toEqual(['a', 'b']);
-    expect(dispatcher.modelCheckpointDepths()).toContainEqual({
-      id: 'runtime.test.checkpointed',
-      depth: 1,
-    });
-
-    await dispatcher.dispatch(new UndoEvent({ count: 1 }));
+    await dispatcher.restore();
 
     expect(state.items).toEqual(['a']);
-    expect(dispatcher.modelCheckpointDepths()).toContainEqual({
-      id: 'runtime.test.checkpointed',
-      depth: 0,
+
+    await dispatcher.dispatch(new UndoEvent({ count: 1 }));
+    expect(state.items).toEqual(['a']);
+  });
+
+  it('hands undo anchors and legacy undo records to a participant with a custom onUndo', async () => {
+    const isolated = new TestInstantiationService();
+    const records: WireRecord[] = [];
+    isolated.set(IEventBus, new SyncDescriptor(EventBusService));
+    isolated.set(IAgentBlobService, noopBlob);
+    isolated.set(IWireService, stubWireJournal(records));
+    isolated.set(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' }));
+    isolated.set(IAgentStateService, new AgentStateService());
+    isolated.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
+    const scoped = isolated.get(IEventDispatcher);
+    const prompt = (text: string): ContextAppendMessage =>
+      new ContextAppendMessage({
+        agentId: 'main',
+        message: { role: 'user', content: [{ type: 'text', text }] },
+      });
+    records.push(
+      prompt('a').serialize(),
+      prompt('b').serialize(),
+      new ContextUndo({ agentId: 'main', count: 1 }).serialize(),
+      prompt('c').serialize(),
+    );
+    let state: CheckpointedState = { items: [] };
+    scoped.attach({
+      id: 'runtime.test.custom-undo',
+      events: [ContextAppendMessage],
+      undoable: true,
+      transition: (draft, event) => {
+        const part = (event as ContextAppendMessage).message.content[0];
+        if (part?.type === 'text') draft.items.push(part.text);
+      },
+      onUndo: (current, count) => ({ items: current.items.slice(0, -count) }),
+      getState: () => state,
+      commit: (next) => { state = next; },
     });
+
+    await scoped.restore();
+
+    expect(state.items).toEqual(['a', 'c']);
+    isolated.dispose();
+  });
+
+  it('brackets every restore pass with the replay hooks of runtime participants, failed passes included', async () => {
+    journal.push(new ItemAdd({ item: 'a' }).serialize());
+    const calls: string[] = [];
+    let state: CheckpointedState = { items: [] };
+    dispatcher.attach({
+      id: 'runtime.test.replay-hooks',
+      events: [ItemAdd],
+      undoable: true,
+      transition: (draft, event) => {
+        if (event instanceof ItemAdd) draft.items.push(event.item);
+      },
+      onWillReplay: () => {
+        calls.push(`will:${state.items.join(',')}`);
+      },
+      onDidReplay: (replayed, { ok }) => {
+        calls.push(`did:${ok}:${replayed.items.join(',')}`);
+        state = ok ? { items: [...replayed.items, 'settled'] } : replayed;
+      },
+      getState: () => state,
+      commit: (next) => { state = next; },
+    });
+
+    await dispatcher.restore();
+    expect(calls).toEqual(['did:true:a']);
+    expect(state.items).toEqual(['a', 'settled']);
+
+    journal.push(new ItemAdd({ item: 'b' }).serialize());
+    await dispatcher.restore();
+    expect(calls).toEqual(['did:true:a', 'will:a,settled', 'did:true:a,b']);
+    expect(state.items).toEqual(['a', 'b', 'settled']);
+
+    journal.push(new FailingEvent({}).serialize());
+    await expect(dispatcher.restore()).rejects.toThrow('fold failure');
+    expect(calls.slice(3)).toEqual(['will:a,b,settled', 'did:false:a,b']);
   });
 
   it('replays journal history into a late-attached participant and folds live events after', async () => {
@@ -520,16 +783,12 @@ describe('EventDispatcherService', () => {
     });
 
     expect(state.items).toEqual(['a', 'b']);
-    expect(dispatcher.modelCheckpointDepths()).toContainEqual({
-      id: 'runtime.test.late',
-      depth: 1,
-    });
 
     await dispatcher.dispatch(new ItemAdd({ item: 'c' }));
     expect(state.items).toEqual(['a', 'b', 'c']);
 
     await dispatcher.dispatch(new UndoEvent({ count: 1 }));
-    expect(state.items).toEqual(['a']);
+    expect(state.items).toEqual(['a', 'b', 'c']);
   });
 
   it('queues live dispatch during a late attach and drains it after the catch-up', async () => {
@@ -555,7 +814,7 @@ describe('EventDispatcherService', () => {
     expect(state.items).toEqual(['history', 'live']);
   });
 
-  it('rejects late attach before restore and keeps sync attach rejected after restore', async () => {
+  it('rejects late attach before restore, attaches after restore, and rejects a pending late attach on dispose', async () => {
     const participant = {
       id: 'runtime.test.late-phase',
       events: [] as const,
@@ -575,6 +834,28 @@ describe('EventDispatcherService', () => {
       /must attach before restore/,
     );
     await expect(dispatcher.attachLate({ ...participant })).resolves.toBeDefined();
+
+    const wire = ix.get(IWireService);
+    let releaseRead!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    wire.readRestorable = async function* () {
+      await gate;
+      yield* [];
+    };
+    wire.readJournal = async function* () {
+      await gate;
+      yield* [];
+    };
+    const rerun = dispatcher.restore();
+    const pending = dispatcher.attachLate({ ...participant, id: 'runtime.test.late-dispose' });
+    (dispatcher as EventDispatcherService).dispose();
+
+    await expect(pending).rejects.toThrow(/disposed while a late attach was pending/);
+
+    releaseRead();
+    await rerun;
   });
 
   it('does not own AgentSpace teardown', () => {
@@ -595,7 +876,7 @@ describe('EventDispatcherService', () => {
     expect(kill).not.toHaveBeenCalled();
   });
 
-  it('withdraws a disposed replayable contribution from dispatcher folds and history', async () => {
+  it('withdraws a disposed replayable contribution from dispatcher folds', async () => {
     const removableKey = defineState('state.test.removable', () => 0)
       .replayable({ schema: z.number() })
       .on(CounterAdd, (state, event) => state + event.by);
@@ -604,13 +885,11 @@ describe('EventDispatcherService', () => {
 
     await dispatcher.dispatch(new CounterAdd({ by: 2 }));
     expect(agentState.get(removableKey)).toBe(2);
-    expect(dispatcher.history(removableKey)).toHaveLength(1);
 
     contribution.dispose();
 
     expect(agentState.has(removableKey)).toBe(false);
     expect(agentState.replayableKeys()).not.toContain(removableKey);
-    expect(dispatcher.history(removableKey)).toEqual([]);
     await expect(dispatcher.dispatch(new CounterAdd({ by: 3 }))).resolves.toBeUndefined();
     expect(agentState.get(counterKey).value).toBe(5);
   });

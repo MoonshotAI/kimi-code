@@ -24,6 +24,7 @@ export class NestedSkillTooDeepError extends Error2 {
 
 export interface SkillToolInput {
   skill: string;
+  path?: string;
   args?: string;
 }
 
@@ -31,8 +32,12 @@ export const SkillToolInputSchema: z.ZodType<SkillToolInput> = z.object({
   skill: z
     .string()
     .describe(
-      'The exact name of the skill to invoke, spelled as it appears in the current skill listing (e.g. "commit", "pdf").',
+      'The exact name of the skill to invoke, copied verbatim from the current skill listing.',
     ),
+  path: z
+    .string()
+    .optional()
+    .describe('Optional exact Path from the current skill listing, used to select a same-name variant.'),
   args: z
     .string()
     .optional()

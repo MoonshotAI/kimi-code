@@ -7,6 +7,7 @@ import { getLiveSessionById } from '#/app/sessionManager/sessionLookup';
 import { ISessionIndex, ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { buildSessionSummary } from '#/app/sessionIndex/sessionIndexSource';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { normalizeSessionMeta, encodeSessionMeta } from '#/session/sessionMetadata/sessionMetadataService';
 
@@ -22,47 +23,54 @@ export async function setColdSessionArchived(
 ): Promise<ColdSessionArchiveOutcome> {
   const summary = await accessor.get(ISessionIndex).get(sessionId);
   if (summary === undefined) return 'not_found';
-  const docs = accessor.get(IAtomicDocumentStore);
-  const metaScope = sessionScopeOf(
-    workspacePersistenceScope(
-      accessor.get(IBootstrapService).scope('sessions'),
-      summary.workspaceId,
-    ),
-    sessionId,
-  );
-  let raw = await docs.get<SessionMeta>(metaScope, 'state.json');
-  let legacyMetaScope: string | undefined;
-  if (raw === undefined) {
-    legacyMetaScope = legacySessionMetaScopeOf(metaScope);
-    raw = await docs.get<SessionMeta>(legacyMetaScope, 'state.json');
+  const lease = accessor.get(ISessionLockService).lease(sessionId);
+  try {
+    const docs = accessor.get(IAtomicDocumentStore);
+    const metaScope = sessionScopeOf(
+      workspacePersistenceScope(
+        accessor.get(IBootstrapService).scope('sessions'),
+        summary.workspaceId,
+      ),
+      sessionId,
+    );
+    let raw = await docs.get<SessionMeta>(metaScope, 'state.json');
+    let legacyMetaScope: string | undefined;
+    if (raw === undefined) {
+      legacyMetaScope = legacySessionMetaScopeOf(metaScope);
+      raw = await docs.get<SessionMeta>(legacyMetaScope, 'state.json');
+    }
+    if (raw === undefined) return 'not_found';
+    const persisted = normalizeSessionMeta(raw, sessionId);
+    const archivedAt = archived ? Date.now() : undefined;
+    const nextMeta: SessionMeta = { ...persisted, archived, archivedAt };
+    await docs.set(metaScope, 'state.json', encodeSessionMeta(nextMeta));
+    if (legacyMetaScope !== undefined) await docs.delete(legacyMetaScope, 'state.json');
+    accessor.get(ISessionIndexMirror).record(
+      buildSessionSummary({
+        id: sessionId,
+        workspaceId: summary.workspaceId,
+        cwd: nextMeta.cwd ?? summary.cwd,
+        environmentId: nextMeta.environmentId,
+        environmentCwd: nextMeta.environmentCwd,
+        title: nextMeta.title,
+        lastPrompt: nextMeta.lastPrompt,
+        createdAt: nextMeta.createdAt,
+        updatedAt: nextMeta.updatedAt,
+        archived,
+        archivedAt,
+        custom: nextMeta.custom,
+        lastTurnReason: nextMeta.lastTurnReason,
+      }),
+    );
+    if (archived) {
+      accessor
+        .get(IEventService)
+        .publish(new SessionArchived({ payload: { sessionId, workspaceId: summary.workspaceId } }));
+    }
+    return 'updated';
+  } finally {
+    lease.release();
   }
-  if (raw === undefined) return 'not_found';
-  const persisted = normalizeSessionMeta(raw, sessionId);
-  const archivedAt = archived ? Date.now() : undefined;
-  const nextMeta: SessionMeta = { ...persisted, archived, archivedAt };
-  await docs.set(metaScope, 'state.json', encodeSessionMeta(nextMeta));
-  if (legacyMetaScope !== undefined) await docs.delete(legacyMetaScope, 'state.json');
-  accessor.get(ISessionIndexMirror).record(
-    buildSessionSummary({
-      id: sessionId,
-      workspaceId: summary.workspaceId,
-      cwd: nextMeta.cwd ?? summary.cwd,
-      title: nextMeta.title,
-      lastPrompt: nextMeta.lastPrompt,
-      createdAt: nextMeta.createdAt,
-      updatedAt: nextMeta.updatedAt,
-      archived,
-      archivedAt,
-      custom: nextMeta.custom,
-      lastTurnReason: nextMeta.lastTurnReason,
-    }),
-  );
-  if (archived) {
-    accessor
-      .get(IEventService)
-      .publish(new SessionArchived({ payload: { sessionId, workspaceId: summary.workspaceId } }));
-  }
-  return 'updated';
 }
 
 export async function setSessionArchived(
@@ -71,8 +79,8 @@ export async function setSessionArchived(
   archived: boolean,
 ): Promise<ColdSessionArchiveOutcome> {
   const manager = accessor.get(ISessionManager);
+  await manager.whenResumeSettled(sessionId).catch(() => undefined);
   return manager.withLifecycleSerialization(sessionId, async (unguarded) => {
-    await manager.whenResumeSettled(sessionId).catch(() => undefined);
     const live = getLiveSessionById(accessor, sessionId);
     if (live !== undefined) {
       if (archived) await unguarded.archive();

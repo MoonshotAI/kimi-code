@@ -20,7 +20,8 @@ import {
 import { IExternalHooksRunnerService } from '../app/externalHooksRunner';
 import { ISessionExternalHooksService } from './sessionExternalHooks';
 
-type SessionStartHookSource = Exclude<SessionCreateSource, 'fork'>;
+type SessionStartHookSource = Exclude<SessionCreateSource, 'fork' | 'reclaimed'>;
+type SessionEndHookReason = Exclude<SessionCloseReason, 'reclaim'>;
 
 const HEARTBEAT_INTERVAL_MS = 60_000;
 
@@ -65,7 +66,7 @@ export class SessionExternalHooksService
       this._register(
         onDidCreate((event) => {
           if (event.sessionId !== this.context.sessionId) return;
-          if (event.source !== 'fork') {
+          if (event.source !== 'fork' && event.source !== 'reclaimed') {
             event.waitUntil(this.triggerSessionStart(event.source));
           }
         }),
@@ -75,7 +76,7 @@ export class SessionExternalHooksService
     if (onWillClose !== undefined) {
       this._register(
         onWillClose((event) => {
-          if (event.sessionId !== this.context.sessionId) return;
+          if (event.sessionId !== this.context.sessionId || event.reason === 'reclaim') return;
           event.waitUntil(this.triggerSessionEnd(event.reason));
         }),
       );
@@ -106,10 +107,15 @@ export class SessionExternalHooksService
     } catch {}
   }
 
+  private async hookCwd(): Promise<string> {
+    await this.metadata.ready;
+    return this.metadata.effectiveCwd;
+  }
+
   private async triggerSessionStart(source: SessionStartHookSource): Promise<void> {
     await this.runner.trigger('SessionStart', {
       matcherValue: source,
-      cwd: this.context.cwd,
+      cwd: await this.hookCwd(),
       sessionId: this.context.sessionId,
       inputData: {
         source,
@@ -129,10 +135,10 @@ export class SessionExternalHooksService
     }
   }
 
-  private async triggerSessionEnd(reason: SessionCloseReason): Promise<void> {
+  private async triggerSessionEnd(reason: SessionEndHookReason): Promise<void> {
     await this.runner.trigger('SessionEnd', {
       matcherValue: reason,
-      cwd: this.context.cwd,
+      cwd: await this.hookCwd(),
       sessionId: this.context.sessionId,
       inputData: { reason, sessionTitle: this.sessionTitle },
     });
@@ -141,14 +147,18 @@ export class SessionExternalHooksService
   private tickHeartbeat(): void {
     try {
       if (!this.runner.hasHooksFor('SessionHeartbeat')) return;
-      void this.runner.fireAndForgetTrigger('SessionHeartbeat', {
-        cwd: this.context.cwd,
-        sessionId: this.context.sessionId,
-        inputData: {
-          sessionTitle: this.sessionTitle,
-          uptimeMs: Date.now() - this.createdAt,
-        },
-      });
+      void this.hookCwd()
+        .then((cwd) =>
+          this.runner.fireAndForgetTrigger('SessionHeartbeat', {
+            cwd,
+            sessionId: this.context.sessionId,
+            inputData: {
+              sessionTitle: this.sessionTitle,
+              uptimeMs: Date.now() - this.createdAt,
+            },
+          }),
+        )
+        .catch(() => undefined);
     } catch {}
   }
 
@@ -157,7 +167,7 @@ export class SessionExternalHooksService
     await this.runner.trigger('SubagentStart', {
       matcherValue: ctx.agentName,
       signal: ctx.signal,
-      cwd: this.context.cwd,
+      cwd: await this.hookCwd(),
       sessionId: this.context.sessionId,
       inputData: {
         agentName: ctx.agentName,
@@ -169,15 +179,19 @@ export class SessionExternalHooksService
   }
 
   private notifySubagentStop(ctx: AgentTaskStopHookContext): void {
-    void this.runner.fireAndForgetTrigger('SubagentStop', {
-      matcherValue: ctx.agentName,
-      cwd: this.context.cwd,
-      sessionId: this.context.sessionId,
-      inputData: {
-        agentName: ctx.agentName,
-        response: ctx.response,
-        sessionTitle: this.sessionTitle,
-      },
-    });
+    void this.hookCwd()
+      .then((cwd) =>
+        this.runner.fireAndForgetTrigger('SubagentStop', {
+          matcherValue: ctx.agentName,
+          cwd,
+          sessionId: this.context.sessionId,
+          inputData: {
+            agentName: ctx.agentName,
+            response: ctx.response,
+            sessionTitle: this.sessionTitle,
+          },
+        }),
+      )
+      .catch(() => undefined);
   }
 }

@@ -1,22 +1,22 @@
 /**
- * Probe the ModelRequester problem boundary, in two parts.
+ * Probe the Requester problem boundary, in two parts.
  *
  * Part 1 — real config: bootstraps the agent-core-v2 App scope on the REAL
  * Kimi home (`KIMI_CODE_HOME` or `~/.kimi-code`), resolves `IModelCatalog`
  * with the providers/auth from `config.toml`, lists every provider/model, and
- * pings every configured model through its `ModelRequester` (one tiny live
+ * pings every configured model through its `Requester` (one tiny live
  * request per model, real credentials). This is the "does the assembled
  * pipeline actually reach each provider" smoke.
  *
  * Part 2 — deterministic boundary probes: points hand-built Models at a local
  * stub HTTP server (OpenAI Chat Completions wire) and drives failure modes
- * through `ModelRequesterImpl`, recording for each one WHO owned it:
+ * through `RequesterImpl`, recording for each one WHO owned it:
  *
  *   - wrapped by ChatProvider  — the wire adapter converted the SDK/transport
  *     failure into the typed `ChatProviderError` family (APIStatusError /
  *     APIConnectionError / APIEmptyResponseError / ...), so the requester could
  *     translate it into a coded `Error2` (`provider.*` / `context.overflow`).
- *   - owned by ModelRequester  — behavior the ChatProvider layer CANNOT
+ *   - owned by Requester  — behavior the ChatProvider layer CANNOT
  *     provide: per-request credential injection (credentials.resolve per
  *     attempt), plus the final `translateProviderError` safety net that
  *     turns even unwrapped raw errors into `Error2` (`internal`).
@@ -60,22 +60,41 @@ import {
   isToolExchangeAdjacencyError,
 } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/errors';
 import {
-  oauthCredentials,
-  staticCredentials,
+  createOAuthCredentialProvider,
+  createStaticCredentialProvider,
 } from '@moonshot-ai/agent-core-v2/human/credentials/credentials';
 import type {
   ToolCall,
   ToolDescription as Tool,
 } from '@moonshot-ai/agent-core-v2/human/llm/message';
-import type { LlmCredentialProvider } from '@moonshot-ai/agent-core-v2/human/llm/requester/requester';
+import type { LlmCredentialProvider } from '@moonshot-ai/agent-core-v2/human/llm-requester/requester';
 import type { Model } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
-import type {
-  ModelRequestInput,
-  ModelRequester,
-} from '@moonshot-ai/agent-core-v2/llm-adapter/model/model-requester';
-import { ModelRequesterImpl } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model-requester-impl';
+import {
+  generateModel,
+  type ModelRequestEvent,
+  type ModelRequestInput,
+  type ModelRequestParams,
+} from '@moonshot-ai/agent-core-v2/llm-adapter/model/generate';
+import { IProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocol';
 import { ProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocolAdapterRegistry';
+
+interface Requester {
+  readonly model: Model;
+  request(
+    input: ModelRequestInput,
+    signal?: AbortSignal,
+    params?: ModelRequestParams,
+  ): AsyncIterable<ModelRequestEvent>;
+}
+
+function createRequester(model: Model, registry: IProtocolAdapterRegistry): Requester {
+  return {
+    model,
+    request: (input, signal, params) =>
+      generateModel(registry.request(model, params), input, signal, params),
+  };
+}
 
 function assert(cond: boolean, message: string): asserts cond {
   if (!cond) throw new Error(`assertion failed: ${message}`);
@@ -100,6 +119,7 @@ async function probeRealConfig(): Promise<void> {
     // Config (and every section on top of it) loads asynchronously.
     await app.accessor.get(IConfigService).ready;
     const catalog = app.accessor.get(IModelCatalog);
+    const registry = app.accessor.get(IProtocolAdapterRegistry);
 
     const providers = await catalog.listProviders();
     for (const p of providers) {
@@ -117,7 +137,7 @@ async function probeRealConfig(): Promise<void> {
     for (const m of targets) {
       const startedAt = Date.now();
       const result = await Promise.race([
-        catalog.ping(m.model),
+        pingModel(createRequester(catalog.get(m.model), registry)),
         tick(45_000).then(() => ({ ok: false as const, durationMs: 45_000, error: 'ping timed out after 45s' })),
       ]);
       if (result.ok) {
@@ -143,7 +163,7 @@ async function probeRealConfig(): Promise<void> {
 const PING_INPUT: ModelRequestInput = {
   systemPrompt: 'You are a connectivity probe. Answer with the single word "pong".',
   tools: [],
-  messages: [{ role: 'user', content: [{ type: 'text', text: 'ping' }], toolCalls: [] }],
+  messages: [{ role: 'user', content: [{ type: 'text', text: 'ping' }] }],
 };
 
 const WEATHER_TOOL: Tool = {
@@ -163,7 +183,7 @@ const TOOL_HISTORY_INPUT: ModelRequestInput = {
   systemPrompt: PING_INPUT.systemPrompt,
   tools: [WEATHER_TOOL],
   messages: [
-    { role: 'user', content: [{ type: 'text', text: 'weather?' }], toolCalls: [] },
+    { role: 'user', content: [{ type: 'text', text: 'weather?' }] },
     {
       role: 'assistant',
       content: [],
@@ -180,7 +200,6 @@ const TOOL_HISTORY_INPUT: ModelRequestInput = {
       role: 'tool',
       toolCallId: 'call_1',
       content: [{ type: 'text', text: 'sunny' }],
-      toolCalls: [],
     },
   ],
 };
@@ -194,7 +213,7 @@ interface Collected {
 }
 
 async function collect(
-  requester: ModelRequester,
+  requester: Requester,
   signal?: AbortSignal,
   input: ModelRequestInput = PING_INPUT,
 ): Promise<Collected> {
@@ -215,13 +234,33 @@ async function collect(
   return { events, text, toolCalls, usage, finishReason };
 }
 
-async function collectWithRecovery(requester: ModelRequester): Promise<Collected> {
-  const credentials = requester.model.credentials;
+async function pingModel(requester: Requester) {
+  const startedAt = Date.now();
+  try {
+    const result = await collect(requester);
+    return {
+      ok: true as const,
+      durationMs: Date.now() - startedAt,
+      text: result.text,
+      finishReason: result.finishReason,
+      usage: result.usage,
+    };
+  } catch (error) {
+    return {
+      ok: false as const,
+      durationMs: Date.now() - startedAt,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function collectWithRecovery(requester: Requester): Promise<Collected> {
+  const credentialProvider = requester.model.credentialProvider;
   try {
     return await collect(requester);
   } catch (error) {
-    if (credentials?.canRecover?.(error) !== true) throw error;
-    credentials?.invalidate?.();
+    if (credentialProvider?.canRecover?.(error) !== true) throw error;
+    credentialProvider?.invalidate?.();
     return collect(requester);
   }
 }
@@ -309,8 +348,8 @@ function describeCaught(error: unknown): { outcome: string; wrappedBy: string } 
       outcome: `Error2 ${error.code} (cause: ${cause?.name ?? (error.cause instanceof Error ? error.cause.name : 'none')})`,
       wrappedBy:
         cause !== undefined
-          ? 'ChatProvider wrapped → ModelRequester translated'
-          : 'NOT wrapped by ChatProvider — raw error caught by the ModelRequester safety net',
+          ? 'ChatProvider wrapped → Requester translated'
+          : 'NOT wrapped by ChatProvider — raw error caught by the Requester safety net',
     };
   }
   if (error instanceof ChatProviderError) {
@@ -364,7 +403,7 @@ async function probeBoundaries(): Promise<void> {
   const baseUrl = `http://127.0.0.1:${String(port)}`;
 
   const registry = new ProtocolAdapterRegistry();
-  const makeRequester = (credentials: LlmCredentialProvider, url = baseUrl): ModelRequester => {
+  const makeRequester = (credentialProvider: LlmCredentialProvider, url = baseUrl): Requester => {
     const model: Model = {
       id: 'probe',
       name: 'probe-model',
@@ -376,9 +415,9 @@ async function probeBoundaries(): Promise<void> {
       maxContextSize: 8192,
       alwaysThinking: false,
       providerName: 'probe',
-      credentials,
+      credentialProvider,
     };
-    return new ModelRequesterImpl(model, registry);
+    return createRequester(model, registry);
   };
   const resetCounts = (): void => {
     requestCount = 0;
@@ -389,7 +428,7 @@ async function probeBoundaries(): Promise<void> {
     // 1) happy path — the requester's event envelope on top of the raw stream.
     resetCounts();
     handler = (_req, res) => writePong(res);
-    const ok = await collect(makeRequester(staticCredentials('sk-probe')));
+    const ok = await collect(makeRequester(createStaticCredentialProvider('sk-probe')));
     assert(ok.text === 'pong', 'happy path assembles streamed text');
     assert(ok.events.includes('usage'), 'happy path emits a usage event');
     assert(ok.events.includes('finish'), 'happy path emits a finish event');
@@ -402,7 +441,7 @@ async function probeBoundaries(): Promise<void> {
     resetCounts();
     handler = (_req, res) => writeJsonError(res, 401, 'invalid api key');
     try {
-      await collect(makeRequester(staticCredentials('sk-bad')));
+      await collect(makeRequester(createStaticCredentialProvider('sk-bad')));
       throw new Error('expected a failure');
     } catch (error) {
       const { outcome, wrappedBy } = describeCaught(error);
@@ -420,7 +459,7 @@ async function probeBoundaries(): Promise<void> {
       else writeJsonError(res, 401, 'token expired');
     };
     let resolveCalls = 0;
-    const refreshable = oauthCredentials((options) => {
+    const refreshable = createOAuthCredentialProvider((options) => {
       resolveCalls += 1;
       return Promise.resolve(options?.force === true ? 'sk-good' : 'sk-stale');
     });
@@ -428,7 +467,7 @@ async function probeBoundaries(): Promise<void> {
     assert(replayed.text === 'pong', 'refresh+replay succeeds');
     assert(resolveCalls === 2, 'resolve called twice (normal + forced)');
     assert(requests() === 2, 'exactly one replay after the 401');
-    report('auth-401-refresh-replay', `success after ${String(requestCount)} attempts`, 'caller-owned recovery (ModelRequester surfaces the 401)');
+    report('auth-401-refresh-replay', `success after ${String(requestCount)} attempts`, 'caller-owned recovery (Requester surfaces the 401)');
 
     // 4) 401 that survives a forced refresh: the provider rejected the account
     // — surfaced as provider.auth_error, not a re-login prompt.
@@ -448,7 +487,7 @@ async function probeBoundaries(): Promise<void> {
     resetCounts();
     handler = (_req, res) => writeJsonError(res, 429, 'too many requests', { 'retry-after': '2' });
     try {
-      await collect(makeRequester(staticCredentials('sk-probe')));
+      await collect(makeRequester(createStaticCredentialProvider('sk-probe')));
       throw new Error('expected a failure');
     } catch (error) {
       const { outcome, wrappedBy } = describeCaught(error);
@@ -463,7 +502,7 @@ async function probeBoundaries(): Promise<void> {
     handler = (_req, res) =>
       writeJsonError(res, 400, 'This model\'s maximum context length is 8192 tokens.');
     try {
-      await collect(makeRequester(staticCredentials('sk-probe')));
+      await collect(makeRequester(createStaticCredentialProvider('sk-probe')));
       throw new Error('expected a failure');
     } catch (error) {
       const { outcome, wrappedBy } = describeCaught(error);
@@ -479,7 +518,7 @@ async function probeBoundaries(): Promise<void> {
       res.end('<html><head><title>500 Internal Server Error</title></head><body>oops</body></html>');
     };
     try {
-      await collect(makeRequester(staticCredentials('sk-probe')));
+      await collect(makeRequester(createStaticCredentialProvider('sk-probe')));
       throw new Error('expected a failure');
     } catch (error) {
       const { outcome, wrappedBy } = describeCaught(error);
@@ -500,7 +539,7 @@ async function probeBoundaries(): Promise<void> {
   });
     handler = (_req, res) => writePong(res); // unused — nothing listens there
     try {
-      await collect(makeRequester(staticCredentials('sk-probe'), `http://127.0.0.1:${String(deadPort)}`));
+      await collect(makeRequester(createStaticCredentialProvider('sk-probe'), `http://127.0.0.1:${String(deadPort)}`));
       throw new Error('expected a failure');
     } catch (error) {
       const { outcome, wrappedBy } = describeCaught(error);
@@ -512,7 +551,7 @@ async function probeBoundaries(): Promise<void> {
     resetCounts();
     handler = (_req, res) => writeSse(res, []);
     try {
-      await collect(makeRequester(staticCredentials('sk-probe')));
+      await collect(makeRequester(createStaticCredentialProvider('sk-probe')));
       throw new Error('expected a failure');
     } catch (error) {
       const { outcome, wrappedBy } = describeCaught(error);
@@ -528,7 +567,7 @@ async function probeBoundaries(): Promise<void> {
       res.end('data: {this is not json}\n\ndata: [DONE]\n\n');
     };
     try {
-      await collect(makeRequester(staticCredentials('sk-probe')));
+      await collect(makeRequester(createStaticCredentialProvider('sk-probe')));
       throw new Error('expected a failure');
     } catch (error) {
       const { outcome, wrappedBy } = describeCaught(error);
@@ -545,7 +584,7 @@ async function probeBoundaries(): Promise<void> {
       });
     };
     try {
-      await collect(makeRequester(staticCredentials('sk-probe')));
+      await collect(makeRequester(createStaticCredentialProvider('sk-probe')));
       throw new Error('expected a failure');
     } catch (error) {
       const { outcome, wrappedBy } = describeCaught(error);
@@ -556,7 +595,7 @@ async function probeBoundaries(): Promise<void> {
     // --- tool-call boundary probes -------------------------------------------
     // Response side: streamed `delta.tool_calls` fragments are buffered per
     // index by the OpenAI base and routed into `message.toolCalls` by the
-    // contract's generate() driver — both BELOW the ModelRequester, which just
+    // contract's generate() driver — both BELOW the Requester, which just
     // forwards the parts. Request side: tool declarations and tool-result
     // history are encoded by the ChatProvider.
 
@@ -578,7 +617,7 @@ async function probeBoundaries(): Promise<void> {
         sseToolDelta([], 'tool_calls'),
         SSE_USAGE,
       ]);
-    const toolOk = await collect(makeRequester(staticCredentials('sk-probe')), undefined, TOOL_INPUT);
+    const toolOk = await collect(makeRequester(createStaticCredentialProvider('sk-probe')), undefined, TOOL_INPUT);
     const wireTools = (lastRequestBody as { tools?: { function?: { name?: string } }[] }).tools;
     assert(
       wireTools?.some((t) => t.function?.name === 'get_weather') === true,
@@ -617,7 +656,7 @@ async function probeBoundaries(): Promise<void> {
         sseToolDelta([], 'tool_calls'),
         SSE_USAGE,
       ]);
-    const parallel = await collect(makeRequester(staticCredentials('sk-probe')), undefined, TOOL_INPUT);
+    const parallel = await collect(makeRequester(createStaticCredentialProvider('sk-probe')), undefined, TOOL_INPUT);
     assert(parallel.toolCalls.length === 2, 'two parallel tool calls assembled');
     assert(
       parallel.toolCalls[0]?.name === 'tool_a' && parallel.toolCalls[0]?.arguments === '{"a":1}',
@@ -651,7 +690,7 @@ async function probeBoundaries(): Promise<void> {
         sseToolDelta([], 'tool_calls'),
         SSE_USAGE,
       ]);
-    const malformedArgs = await collect(makeRequester(staticCredentials('sk-probe')), undefined, TOOL_INPUT);
+    const malformedArgs = await collect(makeRequester(createStaticCredentialProvider('sk-probe')), undefined, TOOL_INPUT);
     assert(
       malformedArgs.toolCalls[0]?.arguments === '{not json',
       'malformed arguments pass through untouched',
@@ -676,7 +715,7 @@ async function probeBoundaries(): Promise<void> {
         sseToolDelta([], 'tool_calls'),
         SSE_USAGE,
       ]);
-    const indexless = await collect(makeRequester(staticCredentials('sk-probe')), undefined, TOOL_INPUT);
+    const indexless = await collect(makeRequester(createStaticCredentialProvider('sk-probe')), undefined, TOOL_INPUT);
     assert(
       indexless.toolCalls[0]?.arguments === '{"location":"HZ"}',
       'index-less fragments merge into the pending call',
@@ -694,7 +733,7 @@ async function probeBoundaries(): Promise<void> {
     handler = (_req, res) =>
       writeJsonError(res, 400, 'tool_call_id "call_1" is not found');
     try {
-      await collect(makeRequester(staticCredentials('sk-probe')), undefined, TOOL_HISTORY_INPUT);
+      await collect(makeRequester(createStaticCredentialProvider('sk-probe')), undefined, TOOL_HISTORY_INPUT);
       throw new Error('expected a failure');
     } catch (error) {
       const { outcome, wrappedBy } = describeCaught(error);
@@ -710,7 +749,7 @@ async function probeBoundaries(): Promise<void> {
     // the tool result must hit the wire in the provider's shape.
     resetCounts();
     handler = (_req, res) => writePong(res);
-    await collect(makeRequester(staticCredentials('sk-probe')), undefined, TOOL_HISTORY_INPUT);
+    await collect(makeRequester(createStaticCredentialProvider('sk-probe')), undefined, TOOL_HISTORY_INPUT);
     const wireMessages = (lastRequestBody as { messages?: Record<string, unknown>[] }).messages;
     assert(
       wireMessages?.some(
@@ -740,7 +779,7 @@ async function probeBoundaries(): Promise<void> {
     };
     const ac = new AbortController();
     try {
-      for await (const event of makeRequester(staticCredentials('sk-probe')).request(PING_INPUT, ac.signal)) {
+      for await (const event of makeRequester(createStaticCredentialProvider('sk-probe')).request(PING_INPUT, ac.signal)) {
         if (event.type === 'part') ac.abort();
       }
       throw new Error('expected an abort');

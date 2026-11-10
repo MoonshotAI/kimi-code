@@ -1,4 +1,4 @@
-import type { ContentPart, ToolCall, ToolDescription as Tool } from '#human/llm/message';
+import type { ContentPart, SystemMessage, ToolCall, ToolDescription as Tool, UserMessage } from '#human/llm/message';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
@@ -27,6 +27,8 @@ export interface ToolDelivery {
   readonly kind: ToolDeliveryKind;
   readonly message: ToolDeliveryMessage;
 }
+
+export type ToolRemind = (message: SystemMessage | UserMessage) => void;
 
 export interface ExecutableToolSuccessResult {
   readonly output: ExecutableToolOutput;
@@ -72,6 +74,7 @@ export interface ExecutableToolContext {
   readonly metadata?: unknown;
   readonly signal: AbortSignal;
   readonly steerSignal?: AbortSignal;
+  readonly remind?: ToolRemind;
   readonly onUpdate?: ((update: ToolUpdate) => void) | undefined;
   readonly onForegroundTaskStart?: ((taskId: string) => void) | undefined;
 }
@@ -107,6 +110,27 @@ export interface ToolDefinition {
 
 export interface ToolInfo extends ToolDefinition {
   readonly source: ToolSource;
+}
+
+function canonicalToolValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalToolValue);
+  if (typeof value !== 'object' || value === null) return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .toSorted(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => [key, canonicalToolValue(item)]),
+  );
+}
+
+export function toolDefinitionSchemaSignature(
+  tool: Pick<ToolDefinition, 'name' | 'description' | 'parameters'>,
+): string {
+  const parameters = tool.parameters ?? { type: 'object', properties: {} };
+  return JSON.stringify([tool.name, tool.description, canonicalToolValue(parameters)]);
+}
+
+export function toolDefinitionVersionSignature(tool: ToolInfo): string {
+  return JSON.stringify([toolDefinitionSchemaSignature(tool), tool.source, tool.disclosure]);
 }
 
 export interface AgentTool<Input = unknown> extends ExecutableTool<Input> {

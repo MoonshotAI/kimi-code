@@ -1,17 +1,33 @@
 import { z } from 'zod';
 
+import type { PromptOrigin } from './origin';
 import type { HistoryMessage } from './turn';
 
-const textPartSchema = z.object({ type: z.literal('text'), text: z.string() });
+const contentPartBaseSchema = {
+  contentType: z.string().optional(),
+  meta: z.record(z.string(), z.unknown()).optional(),
+};
+const textPartSchema = z.object({
+  ...contentPartBaseSchema,
+  type: z.literal('text'),
+  text: z.string(),
+});
 const thinkPartSchema = z.object({
+  ...contentPartBaseSchema,
   type: z.literal('think'),
   think: z.string(),
   encrypted: z.string().optional(),
   detailsIndex: z.number().optional(),
+  hidden: z.boolean().optional(),
+  reasoningKey: z.string().optional(),
 });
 const imageUrlPartSchema = z.object({
   type: z.literal('image_url'),
-  imageUrl: z.object({ url: z.string(), id: z.string().optional(), name: z.string().optional() }),
+  imageUrl: z.object({
+    url: z.string(),
+    id: z.string().optional(),
+    name: z.string().optional(),
+  }),
 });
 const audioUrlPartSchema = z.object({
   type: z.literal('audio_url'),
@@ -19,7 +35,11 @@ const audioUrlPartSchema = z.object({
 });
 const videoUrlPartSchema = z.object({
   type: z.literal('video_url'),
-  videoUrl: z.object({ url: z.string(), id: z.string().optional(), name: z.string().optional() }),
+  videoUrl: z.object({
+    url: z.string(),
+    id: z.string().optional(),
+    name: z.string().optional(),
+  }),
 });
 
 export const contentPartSchema = z.discriminatedUnion('type', [
@@ -73,7 +93,7 @@ export const toolMessageSchema = z.object({
 const tokenUsageSchema = z.object({
   inputOther: z.number(),
   output: z.number(),
-  inputCacheRead: z.number(),
+  inputCacheRead: z.number().optional(),
   inputCacheCreation: z.number(),
   raw: z.record(z.string(), z.unknown()).optional(),
 });
@@ -85,6 +105,14 @@ const finishInfoSchema = z.object({
 
 const entryMetaSchema = z.object({ source: z.string().optional(), key: z.string().optional() });
 
+export const userMetaSchema = entryMetaSchema.extend({
+  promptId: z.string().optional(),
+  origin: z.custom<PromptOrigin>().optional(),
+  tracked: z.boolean().optional(),
+  createdAt: z.string().optional(),
+  userMessageId: z.string().optional(),
+});
+
 const assistantMetaSchema = entryMetaSchema.extend({
   model: z.object({ provider: z.string(), model: z.string() }).optional(),
   usage: tokenUsageSchema,
@@ -93,9 +121,29 @@ const assistantMetaSchema = entryMetaSchema.extend({
   messageId: z.string().optional(),
 });
 
+export const systemEntrySchema = z.object({
+  message: systemMessageSchema,
+  meta: entryMetaSchema.optional(),
+});
+
+export const userEntrySchema = z.object({
+  message: userMessageSchema,
+  meta: userMetaSchema.optional(),
+});
+
+const assistantEntrySchema = z.object({
+  message: assistantMessageSchema,
+  meta: assistantMetaSchema.optional(),
+});
+
+const toolEntrySchema = z.object({
+  message: toolMessageSchema,
+  meta: entryMetaSchema.optional(),
+});
+
 export const historyMessageSchema = z.union([
-  z.object({ message: systemMessageSchema, meta: entryMetaSchema }),
-  z.object({ message: userMessageSchema, meta: entryMetaSchema }),
-  z.object({ message: assistantMessageSchema, meta: assistantMetaSchema }),
-  z.object({ message: toolMessageSchema, meta: entryMetaSchema }),
+  systemEntrySchema,
+  userEntrySchema,
+  assistantEntrySchema,
+  toolEntrySchema,
 ]) as z.ZodType<HistoryMessage>;

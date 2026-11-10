@@ -1,15 +1,13 @@
 import { bench, describe } from 'vitest';
 
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { TestInstantiationService } from '#/_base/di/test';
 import { ILogService, type ILogger } from '#/_base/log/log';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { IAgentContextProjectorService } from '#/agent/contextProjector/contextProjector';
-import { AgentContextProjectorService } from '#/agent/contextProjector/contextProjectorService';
+import { AgentLoopProjector } from '#/agent/loop/projector';
+import { AgentStateService } from '#/agent/state/agentStateService';
+import { recordingTelemetry } from '../../app/telemetry/stubs';
 import { ErrorCodes, Error2 } from '#/errors';
-import type { Message } from '#/llm-adapter/contract/message';
-import type { ContentPart, TextPart, ToolCall } from '#human/llm/message';
+import type { ContentPart, Message, TextPart, ToolCall } from '#human/llm/message';
 
 const noopLogger: ILogger = {
   error: () => {},
@@ -57,7 +55,7 @@ function projectLegacy(history: readonly ContextMessage[]): Message[] {
         { details: { toolCallId: source.toolCallId } },
       );
     }
-    if (content.length === 0 && source.toolCalls.length === 0) return;
+    if (content.length === 0 && (source.role !== 'assistant' || source.toolCalls.length === 0)) return;
 
     const message = content === source.content ? source : { ...source, content };
     if (mergeSource !== undefined && canMergeUserMessage(message)) {
@@ -76,6 +74,7 @@ function projectLegacy(history: readonly ContextMessage[]): Message[] {
       continue;
     }
     emit(message);
+    if (message.role !== 'assistant') continue;
     for (const call of message.toolCalls) {
       emit(answers.get(call) ?? createInterruptedToolResult(call.id));
     }
@@ -91,7 +90,6 @@ function createInterruptedToolResult(toolCallId: string): ContextMessage {
   return {
     role: 'tool',
     content: [{ type: 'text', text: TOOL_INTERRUPTED_TEXT }],
-    toolCalls: [],
     toolCallId,
     isError: true,
   };
@@ -112,7 +110,7 @@ function mergeTwoUserMessages(a: ContextMessage, b: ContextMessage): ContextMess
     ...a.content.filter((part) => part.type !== 'text'),
     ...b.content.filter((part) => part.type !== 'text'),
   );
-  return { role: 'user', content, toolCalls: [], origin: a.origin };
+  return { role: 'user', content, origin: a.origin };
 }
 
 function extractText(message: ContextMessage): string {
@@ -123,14 +121,21 @@ function extractText(message: ContextMessage): string {
 }
 
 function stripContextMetadata(message: ContextMessage): Message {
-  return {
-    role: message.role,
-    name: message.name,
-    content: message.content.map((part) => ({ ...part })) as ContentPart[],
-    toolCalls: message.toolCalls.map((toolCall) => ({ ...toolCall })),
-    toolCallId: message.toolCallId,
-    partial: message.partial,
-  };
+  const content = message.content.map((part) => ({ ...part })) as ContentPart[];
+  switch (message.role) {
+    case 'system':
+      return { role: 'system', content, tools: message.tools };
+    case 'user':
+      return { role: 'user', content };
+    case 'assistant':
+      return {
+        role: 'assistant',
+        content,
+        toolCalls: message.toolCalls.map((toolCall) => ({ ...toolCall })),
+      };
+    case 'tool':
+      return { role: 'tool', content, toolCallId: message.toolCallId };
+  }
 }
 
 function makeExchangeHistory(exchanges: number, callsPerStep: number): ContextMessage[] {
@@ -139,7 +144,6 @@ function makeExchangeHistory(exchanges: number, callsPerStep: number): ContextMe
     history.push({
       role: 'user',
       content: [{ type: 'text', text: `reminder ${i}` }],
-      toolCalls: [],
       origin: { kind: 'injection', variant: 'host' },
     });
     const ids = Array.from({ length: callsPerStep }, (_, j) => `c${i}_${j}`);
@@ -152,8 +156,7 @@ function makeExchangeHistory(exchanges: number, callsPerStep: number): ContextMe
       history.push({
         role: 'tool',
         content: [{ type: 'text', text: `result for ${id} `.repeat(20) }],
-        toolCalls: [],
-        toolCallId: id,
+          toolCallId: id,
       });
     }
   }
@@ -165,7 +168,6 @@ function makeMergeHistory(count: number, textSize: number): ContextMessage[] {
   return Array.from({ length: count }, (_, i) => ({
     role: 'user' as const,
     content: [{ type: 'text' as const, text: `${i} ${text}` }],
-    toolCalls: [],
     origin: { kind: 'user' as const },
   }));
 }
@@ -179,11 +181,8 @@ function makeMixedHistory(turns: number): ContextMessage[] {
   return history;
 }
 
-function createProjector(disposables: DisposableStore): IAgentContextProjectorService {
-  const ix = disposables.add(new TestInstantiationService());
-  ix.set(ILogService, noopLogService);
-  ix.set(IAgentContextProjectorService, new SyncDescriptor(AgentContextProjectorService));
-  return ix.get(IAgentContextProjectorService);
+function createProjector(_disposables: DisposableStore): AgentLoopProjector {
+  return new AgentLoopProjector(noopLogService, recordingTelemetry([]), new AgentStateService());
 }
 
 const disposables = new DisposableStore();

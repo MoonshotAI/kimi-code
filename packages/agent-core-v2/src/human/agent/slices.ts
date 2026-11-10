@@ -1,7 +1,6 @@
 import type { CombinedState, EventStore } from '#/eventStore/eventStore';
 import { createSlice } from '#/eventStore/slice';
 import type { BranchRef } from '#/store/types';
-import type { UserMessage } from '#/llm/message';
 
 import {
   inputCancelled,
@@ -26,11 +25,6 @@ import {
 } from './events';
 import { createSystemEntry, createUserEntry, type HistoryMessage, type UserEntry } from './turn';
 
-export interface QueuedPrompt {
-  id?: string;
-  message: UserMessage;
-}
-
 export const historySlice = createSlice({
   name: 'history',
   initialState: () => [] as HistoryMessage[],
@@ -43,15 +37,19 @@ export const historySlice = createSlice({
 
 export const queueSlice = createSlice({
   name: 'queue',
-  initialState: () => [] as QueuedPrompt[],
+  initialState: () => [] as UserEntry[],
   reducers: {
     [inputSubmitted.type]: (draft, event: InputSubmitted) => {
-      draft.push({ id: event.id, message: event.message });
+      if ('entry' in event) {
+        draft.push(createUserEntry(event.entry.message, { source: 'input', ...event.entry.meta }));
+      } else {
+        draft.push(createUserEntry(event.message, { source: 'input', promptId: event.id }));
+      }
     },
     [inputCancelled.type]: (draft, event: InputCancelled) =>
-      draft.filter((entry) => entry.id !== event.id),
+      draft.filter((entry) => entry.meta?.promptId !== event.id),
     [inputSteered.type]: (draft, event: InputSteered) =>
-      draft.filter((entry) => entry.id !== event.id),
+      draft.filter((entry) => entry.meta?.promptId !== event.id),
     [queueDrained.type]: (draft) => {
       draft.shift();
     },
@@ -63,7 +61,11 @@ export const notificationsSlice = createSlice({
   initialState: () => [] as UserEntry[],
   reducers: {
     [inputNotified.type]: (draft, event: InputNotified) => {
-      draft.push(createUserEntry(event.message, { source: event.source ?? 'notify' }));
+      if ('entry' in event) {
+        draft.push(createUserEntry(event.entry.message, { source: 'notify', ...event.entry.meta }));
+      } else {
+        draft.push(createUserEntry(event.message, { source: event.source ?? 'notify' }));
+      }
     },
     [inputSteered.type]: (draft, event: InputSteered) => {
       draft.push(createUserEntry(event.message, { source: 'input' }));
@@ -78,13 +80,21 @@ export const remindersSlice = createSlice({
   initialState: () => [] as HistoryMessage[],
   reducers: {
     [inputReminded.type]: (draft, event: InputReminded) => {
-      const kept = draft.filter((entry) => entry.meta.key !== event.key);
-      kept.push(
-        event.message.role === 'system'
-          ? createSystemEntry(event.message, { source: 'reminder', key: event.key })
-          : createUserEntry(event.message, { source: 'reminder', key: event.key }),
-      );
-      return kept;
+      const payload = event.message;
+      if ('message' in payload) {
+        const meta = { source: 'reminder', ...payload.meta };
+        draft.push(
+          payload.message.role === 'system'
+            ? createSystemEntry(payload.message, meta)
+            : createUserEntry(payload.message, meta),
+        );
+      } else {
+        draft.push(
+          payload.role === 'system'
+            ? createSystemEntry(payload, { source: 'reminder' })
+            : createUserEntry(payload, { source: 'reminder' }),
+        );
+      }
     },
     [inputDrained.type]: () => [],
   },
@@ -107,11 +117,12 @@ export const turnIndexSlice = createSlice({
   reducers: {
     [turnStarted.type]: (draft, event: TurnStarted, ctx) => {
       draft.turns.push({ turnId: event.turnId, start: ctx.ref });
+      if (event.turnId >= draft.nextTurnId) draft.nextTurnId = event.turnId + 1;
     },
     [turnEnded.type]: (draft, event: TurnEnded, ctx) => {
       const entry = draft.turns.findLast((turn) => turn.turnId === event.turnId);
       if (entry !== undefined) entry.end = ctx.ref;
-      draft.nextTurnId = event.turnId + 1;
+      if (event.turnId >= draft.nextTurnId) draft.nextTurnId = event.turnId + 1;
     },
   },
 });

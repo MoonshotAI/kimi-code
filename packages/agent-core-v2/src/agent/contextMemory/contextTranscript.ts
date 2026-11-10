@@ -21,16 +21,7 @@ export interface ContextTranscriptReducer {
   result(): ContextTranscript;
 }
 
-interface MutableMessage {
-  id?: string;
-  role: ContextMessage['role'];
-  content: ContentPart[];
-  toolCalls: ToolCall[];
-  toolCallId?: string;
-  isError?: boolean;
-  note?: string;
-  origin?: ContextMessage['origin'];
-}
+type MutableMessage = ContextMessage & { toolCalls: ToolCall[] };
 
 interface MutableEntry {
   message: MutableMessage;
@@ -63,7 +54,7 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
       openEntry?.message.content.push(part);
     },
     appendOpenToolCall: (call) => {
-      openEntry?.message.toolCalls.push(call);
+      if (openEntry?.message.role === 'assistant') openEntry.message.toolCalls.push(call);
     },
     dropOpenAssistant: () => {
       if (openEntry === undefined) return;
@@ -73,11 +64,18 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
       transcript.splice(index, 1);
       foldedLength = Math.max(0, foldedLength - 1);
     },
-    sealOpenAssistant: () => {
+    sealOpenAssistant: (meta) => {
+      if (openEntry !== undefined) {
+        openEntry.message = {
+          ...openEntry.message,
+          ...(meta?.usage === undefined ? {} : { usage: meta.usage }),
+          ...(meta?.llmTiming === undefined ? {} : { llmTiming: meta.llmTiming }),
+        };
+      }
       openEntry = undefined;
     },
     pushToolMessage: (message, time) => {
-      push({ message: message as MutableMessage, time });
+      push({ message: { ...message, toolCalls: [] }, time });
     },
     pushMessage: (message, time) => {
       push(toMutableEntry(message, time));
@@ -166,18 +164,35 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
 }
 
 function toMutableEntry(message: ContextMessage, time: number | undefined): MutableEntry {
-  return {
-    message: {
-      ...(message.id !== undefined ? { id: message.id } : {}),
-      role: message.role,
-      content: [...message.content],
-      toolCalls: [...message.toolCalls],
-      ...(message.toolCallId !== undefined ? { toolCallId: message.toolCallId } : {}),
-      ...(message.isError !== undefined ? { isError: message.isError } : {}),
-      ...(message.origin !== undefined ? { origin: message.origin } : {}),
-    },
-    time,
+  const base = {
+    ...(message.id !== undefined ? { id: message.id } : {}),
+    content: [...message.content],
+    toolCalls: [],
+    ...(message.isError !== undefined ? { isError: message.isError } : {}),
+    ...(message.origin !== undefined ? { origin: message.origin } : {}),
+    ...(message.usage === undefined ? {} : { usage: message.usage }),
+    ...(message.llmTiming === undefined ? {} : { llmTiming: message.llmTiming }),
   };
+  switch (message.role) {
+    case 'system':
+      return {
+        message: {
+          ...base,
+          role: 'system',
+          ...(message.tools === undefined ? {} : { tools: message.tools }),
+        },
+        time,
+      };
+    case 'user':
+      return { message: { ...base, role: 'user' }, time };
+    case 'assistant':
+      return {
+        message: { ...base, role: 'assistant', toolCalls: [...message.toolCalls] },
+        time,
+      };
+    case 'tool':
+      return { message: { ...base, role: 'tool', toolCallId: message.toolCallId }, time };
+  }
 }
 
 function recoverFoldedLength(

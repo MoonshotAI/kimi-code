@@ -35,7 +35,21 @@ import type {
 import type { FileMeta } from '@moonshot-ai/agent-core-v2/app/file/fileService';
 import type { ModelRecord } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model';
 import type { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
+import type {
+  ModelRequestEvent,
+  ModelRequestInput,
+} from '@moonshot-ai/agent-core-v2/llm-adapter/model/generate';
+import {
+  fromCoreMessage,
+  fromCorePart,
+  toCoreMessage,
+} from '@moonshot-ai/agent-core-v2/human/message';
+import {
+  fromLlmMessage,
+  toLlmMessage,
+} from '@moonshot-ai/agent-core-v2/llm-adapter/contract/message';
 import type { IProviderDiscoveryService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/discovery';
+import type { IModelsDevImportService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/modelsDevImport';
 
 import type { McpServerConfig } from '../../contract/mcp.js';
 import type { CallOptions } from '../channel.js';
@@ -57,7 +71,8 @@ import type {
   PluginUpdateStatus,
   ReloadSummary,
 } from '@moonshot-ai/agent-core-v2/app/plugin/types';
-import type { CapabilityStatus } from '@moonshot-ai/agent-core-v2/app/capability/types';
+import type { CapabilityInstallOptions, CapabilityStatus } from '@moonshot-ai/agent-core-v2/app/capability/types';
+import type { InstallPluginInput } from '@moonshot-ai/agent-core-v2/app/plugin/plugin';
 
 /** Low-level caller the klient factory builds: routes + validates one service call. */
 export type Caller = (
@@ -90,7 +105,7 @@ export type ScopedStreamCaller = (
 // ---------------------------------------------------------------------------
 
 export type RefreshProviderModelsResponse = Awaited<
-  ReturnType<IOAuthService['refreshOAuthProviderModels']>
+  ReturnType<IProviderDiscoveryService['refreshProviderModels']>
 >;
 export type OAuthFlowStart = Awaited<ReturnType<IOAuthService['startLogin']>>;
 export type OAuthFlowSnapshot = NonNullable<Awaited<ReturnType<IOAuthService['getFlow']>>>;
@@ -110,6 +125,13 @@ export type RefreshProviderModelsOptions = NonNullable<
 
 /** String-literal form of the engine's `ConfigTarget` enum, so consumers never import the enum value. */
 export type ConfigTargetLiteral = `${ConfigTarget}`;
+
+export type ImportCustomRegistryOptions = Parameters<
+  IModelsDevImportService['importCustomRegistry']
+>[0];
+export type ImportCustomRegistryResult = Awaited<
+  ReturnType<IModelsDevImportService['importCustomRegistry']>
+>;
 
 // ---------------------------------------------------------------------------
 // Facade interfaces
@@ -131,6 +153,7 @@ export interface GlobalSessionsFacade {
     additionalDirs?: readonly string[];
     title?: string;
     mcpServers?: Readonly<Record<string, McpServerConfig>>;
+    environmentId?: string;
   }): Promise<SessionMeta>;
 }
 
@@ -174,6 +197,7 @@ export interface GlobalKosongFacade {
   addProvider(config: AnonymousProviderInput): Promise<void>;
   removeProvider(id: string): Promise<void>;
   refreshProviders(opts?: RefreshProviderModelsOptions): Promise<RefreshProviderModelsResponse>;
+  importCustomRegistry(options: ImportCustomRegistryOptions): Promise<ImportCustomRegistryResult>;
 
   // -- Model ------------------------------------------------------------
   listModels(): Promise<readonly ModelCatalogItem[]>;
@@ -220,13 +244,13 @@ export interface GlobalFlagsFacade {
 export interface GlobalCapabilitiesFacade {
   list(): Promise<readonly CapabilityStatus[]>;
   get(id: string): Promise<CapabilityStatus>;
-  install(id: string): Promise<CapabilityStatus>;
+  install(id: string, options?: CapabilityInstallOptions): Promise<CapabilityStatus>;
 }
 
 export interface GlobalPluginsFacade {
   list(): Promise<readonly PluginSummary[]>;
-  info(id: string): Promise<PluginInfo>;
-  install(source: string): Promise<PluginSummary>;
+  info(id: string, locale?: string): Promise<PluginInfo>;
+  install(input: string | InstallPluginInput): Promise<PluginSummary>;
   setEnabled(input: { id: string; enabled: boolean }): Promise<void>;
   setMcpServerEnabled(input: { id: string; server: string; enabled: boolean }): Promise<void>;
   remove(id: string): Promise<void>;
@@ -386,7 +410,7 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
       const scalars = Object.fromEntries(
         ENV_SCALAR_PROPERTIES.map((prop, index) => [prop, values[index]]),
       );
-      const identity = values[values.length - 1] as { version: string };
+      const identity = values.at(-1) as { version: string };
       return { ...scalars, clientVersion: identity.version } as unknown as KlientEnvInfo;
     });
     return envPromise;
@@ -399,9 +423,9 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
       get: (id) => call('sessionIndex', 'get', [id]) as Promise<SessionSummary | undefined>,
       countActive: (workspaceIds) =>
         call('sessionIndex', 'count', [{ workspaceIds }]) as Promise<number>,
-      create: async ({ workDir, additionalDirs, title, mcpServers }) => {
+      create: async ({ workDir, additionalDirs, title, mcpServers, environmentId }) => {
         const handle = (await scoped({}, 'sessionManager', 'create', [
-          { workDir, additionalDirs, mcpServers },
+          { workDir, additionalDirs, mcpServers, environmentId },
         ])) as { id: string };
         const scope = { sessionId: handle.id };
         if (title !== undefined) {
@@ -448,6 +472,8 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
     },
 
     kosong: {
+      importCustomRegistry: (options) =>
+        call('modelsDevImport', 'importCustomRegistry', [options]) as Promise<ImportCustomRegistryResult>,
       listProviders: () =>
         call('modelResolver', 'listProviders', []) as Promise<
           readonly ProviderCatalogItem[]
@@ -505,8 +531,29 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
       setDefaultModel: (id) =>
         call('modelResolver', 'setDefaultModel', [id]) as Promise<SetDefaultModelResponse>,
 
-      generate: (modelId, input, params) =>
-        streamCall('modelResolver', 'generate', [modelId, input, params]) as AsyncIterable<GenerateEvent>,
+      generate: (modelId, input, params) => {
+        const coreInput: ModelRequestInput = {
+          ...input,
+          tools: input.tools as ModelRequestInput['tools'],
+          messages: input.messages.map((message) => toCoreMessage(toLlmMessage(message))),
+        };
+        const events = streamCall('modelResolver', 'generate', [
+          modelId,
+          coreInput,
+          params,
+        ]) as AsyncIterable<ModelRequestEvent>;
+        return (async function* (): AsyncGenerator<GenerateEvent> {
+          for await (const event of events) {
+            if (event.type === 'part') {
+              yield { ...event, part: fromCorePart(event.part) };
+            } else if (event.type === 'finish') {
+              yield { ...event, message: fromLlmMessage(fromCoreMessage(event.message)) };
+            } else {
+              yield event as GenerateEvent;
+            }
+          }
+        })();
+      },
     },
 
     auth: {
@@ -537,9 +584,11 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
 
     plugins: {
       list: () => call('pluginService', 'listPlugins', []) as Promise<readonly PluginSummary[]>,
-      info: (id) => call('pluginService', 'getPluginInfo', [{ id }]) as Promise<PluginInfo>,
-      install: (source) =>
-        call('pluginService', 'installPlugin', [{ source }]) as Promise<PluginSummary>,
+      info: (id, locale) => call('pluginService', 'getPluginInfo', [{ id, locale }]) as Promise<PluginInfo>,
+      install: (input) =>
+        call('pluginService', 'installPlugin', [
+          typeof input === 'string' ? { source: input } : input,
+        ]) as Promise<PluginSummary>,
       setEnabled: (input) => call('pluginService', 'setPluginEnabled', [input]) as Promise<void>,
       setMcpServerEnabled: (input) =>
         call('pluginService', 'setPluginMcpServerEnabled', [input]) as Promise<void>,
@@ -554,8 +603,8 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
     capabilities: {
       list: () => call('capabilityService', 'listCapabilities', []) as Promise<readonly CapabilityStatus[]>,
       get: (id) => call('capabilityService', 'getCapability', [id]) as Promise<CapabilityStatus>,
-      install: (id) =>
-        call('capabilityService', 'installCapability', [id]) as Promise<CapabilityStatus>,
+      install: (id, options) =>
+        call('capabilityService', 'installCapability', [id, options]) as Promise<CapabilityStatus>,
     },
 
     hostFs: {

@@ -9,17 +9,18 @@ import {
   isRequestTooLargeStatusError,
   isToolExchangeAdjacencyStatusError,
   llmStatusErrorMessage,
-  sanitizeStatusErrorMessage,
   type LlmErrorMessage,
   type LlmRemoteErrorMessage,
-} from '#human/llm/errors';
-import type { FinishReason } from '#human/llm/finish-reason';
+} from '#human/llm-requester/errors';
+import type { FinishReason } from '#human/llm-requester/finish-reason';
+import { isTransientHttpStatus } from '#human/llm/protocol/rules/status';
+import type { LlmErrorDiagnostics } from '#human/llm/response';
 
 export {
   isAbortError,
   parseRetryAfterMs,
   sanitizeStatusErrorMessage,
-} from '#human/llm/errors';
+} from '#human/llm-requester/errors';
 
 export const CONFIG_INVALID_ERROR_CODE = 'config.invalid';
 
@@ -40,7 +41,22 @@ export type ProviderErrorCode =
   | typeof PROVIDER_OVERLOADED_ERROR_CODE
   | typeof CONTEXT_OVERFLOW_ERROR_CODE;
 
-function codeForStatusError(statusCode: number): ProviderErrorCode {
+function isProviderErrorCode(value: string): value is ProviderErrorCode {
+  switch (value) {
+    case PROVIDER_API_ERROR_CODE:
+    case PROVIDER_FILTERED_ERROR_CODE:
+    case PROVIDER_RATE_LIMIT_ERROR_CODE:
+    case PROVIDER_AUTH_ERROR_CODE:
+    case PROVIDER_CONNECTION_ERROR_CODE:
+    case PROVIDER_OVERLOADED_ERROR_CODE:
+    case CONTEXT_OVERFLOW_ERROR_CODE:
+      return true;
+    default:
+      return false;
+  }
+}
+
+function codeForStatusError(statusCode: number | undefined): ProviderErrorCode {
   if (statusCode === 429) return PROVIDER_RATE_LIMIT_ERROR_CODE;
   if (statusCode === 401 || statusCode === 403) return PROVIDER_AUTH_ERROR_CODE;
   if (statusCode === 529) return PROVIDER_OVERLOADED_ERROR_CODE;
@@ -48,83 +64,138 @@ function codeForStatusError(statusCode: number): ProviderErrorCode {
 }
 
 export class ChatProviderError extends Error2 {
+  readonly diagnostics: LlmErrorDiagnostics | undefined;
+  readonly retryable: boolean;
+
   constructor(
     message: string,
     code: ProviderErrorCode = PROVIDER_API_ERROR_CODE,
     options?: Error2Options,
+    diagnostics?: LlmErrorDiagnostics,
+    retryable = true,
   ) {
     super(code, message, { ...options, name: 'ChatProviderError' });
+    this.diagnostics = diagnostics;
+    this.retryable = retryable;
   }
 }
 
 export class APIConnectionError extends ChatProviderError {
-  constructor(message: string) {
-    super(message, PROVIDER_CONNECTION_ERROR_CODE);
+  constructor(message: string, diagnostics?: LlmErrorDiagnostics) {
+    super(message, PROVIDER_CONNECTION_ERROR_CODE, undefined, diagnostics, true);
     this.name = 'APIConnectionError';
   }
 }
 
 export class VideoUploadUnsupportedError extends ChatProviderError {
   constructor(message: string) {
-    super(message);
+    super(message, PROVIDER_API_ERROR_CODE, undefined, undefined, false);
     this.name = 'VideoUploadUnsupportedError';
   }
 }
 
-export class APITimeoutError extends ChatProviderError {
+export class ImageUploadUnsupportedError extends ChatProviderError {
   constructor(message: string) {
-    super(message, PROVIDER_CONNECTION_ERROR_CODE);
+    super(message, PROVIDER_API_ERROR_CODE, undefined, undefined, false);
+    this.name = 'ImageUploadUnsupportedError';
+  }
+}
+
+export class APITimeoutError extends ChatProviderError {
+  constructor(message: string, diagnostics?: LlmErrorDiagnostics) {
+    super(message, PROVIDER_CONNECTION_ERROR_CODE, undefined, diagnostics, true);
     this.name = 'APITimeoutError';
   }
 }
 
 export class APIStatusError extends ChatProviderError {
-  readonly statusCode: number;
+  readonly statusCode?: number;
   readonly requestId: string | null;
   readonly retryAfterMs: number | null;
   readonly traceId: string | null;
+  override readonly retryable: boolean;
 
   constructor(
-    statusCode: number,
+    statusCode: number | undefined,
     message: string,
+    retryable: boolean,
     requestId?: string | null,
     retryAfterMs?: number | null,
+    diagnosticsOrTraceId?: LlmErrorDiagnostics | string | null,
+    codeOrTraceId?: string | null,
     traceId?: string | null,
-    code: ProviderErrorCode = codeForStatusError(statusCode),
   ) {
-    super(sanitizeStatusErrorMessage(message), code, {
-      details: { statusCode, requestId: requestId ?? null, traceId: traceId ?? null },
-    });
+    const diagnostics =
+      diagnosticsOrTraceId !== null && typeof diagnosticsOrTraceId === 'object'
+        ? diagnosticsOrTraceId
+        : undefined;
+    const legacyTraceId =
+      typeof diagnosticsOrTraceId === 'string' || diagnosticsOrTraceId === null
+        ? diagnosticsOrTraceId
+        : typeof codeOrTraceId === 'string' && !isProviderErrorCode(codeOrTraceId)
+          ? codeOrTraceId
+          : undefined;
+    const code =
+      typeof codeOrTraceId === 'string' && isProviderErrorCode(codeOrTraceId)
+        ? codeOrTraceId
+        : codeForStatusError(statusCode);
+    const resolvedTraceId = traceId === undefined ? legacyTraceId : traceId;
+    super(
+      message,
+      code,
+      {
+        details: {
+          statusCode,
+          requestId: requestId ?? null,
+          traceId: resolvedTraceId ?? null,
+          diagnostics,
+        },
+      },
+      diagnostics,
+      retryable,
+    );
     this.name = 'APIStatusError';
     this.statusCode = statusCode;
     this.requestId = requestId ?? null;
     this.retryAfterMs = retryAfterMs ?? null;
-    this.traceId = traceId ?? null;
+    this.traceId = resolvedTraceId ?? null;
+    this.retryable = retryable;
   }
 }
 
 export class APIContextOverflowError extends APIStatusError {
   constructor(
-    statusCode: number,
+    statusCode: number | undefined,
     message: string,
     requestId?: string | null,
     retryAfterMs?: number | null,
+    diagnosticsOrTraceId?: LlmErrorDiagnostics | string | null,
     traceId?: string | null,
   ) {
-    super(statusCode, message, requestId, retryAfterMs, traceId, CONTEXT_OVERFLOW_ERROR_CODE);
+    super(
+      statusCode,
+      message,
+      false,
+      requestId,
+      retryAfterMs,
+      diagnosticsOrTraceId,
+      CONTEXT_OVERFLOW_ERROR_CODE,
+      traceId,
+    );
     this.name = 'APIContextOverflowError';
   }
 }
 
 export class APIRequestTooLargeError extends APIStatusError {
   constructor(
-    statusCode: number,
+    statusCode: number | undefined,
     message: string,
     requestId?: string | null,
     retryAfterMs?: number | null,
+    diagnosticsOrTraceId?: LlmErrorDiagnostics | string | null,
     traceId?: string | null,
   ) {
-    super(statusCode, message, requestId, retryAfterMs, traceId);
+    super(statusCode, message, false, requestId, retryAfterMs, diagnosticsOrTraceId, traceId);
     this.name = 'APIRequestTooLargeError';
   }
 }
@@ -134,9 +205,20 @@ export class APIProviderRateLimitError extends APIStatusError {
     message: string,
     requestId?: string | null,
     retryAfterMs?: number | null,
+    diagnosticsOrTraceId?: LlmErrorDiagnostics | string | null,
+    options?: { readonly statusCode?: number },
     traceId?: string | null,
   ) {
-    super(429, message, requestId, retryAfterMs, traceId);
+    super(
+      options === undefined ? 429 : options.statusCode,
+      message,
+      true,
+      requestId,
+      retryAfterMs,
+      diagnosticsOrTraceId,
+      PROVIDER_RATE_LIMIT_ERROR_CODE,
+      traceId,
+    );
     this.name = 'APIProviderRateLimitError';
   }
 }
@@ -146,22 +228,43 @@ export class APIProviderQuotaExhaustedError extends APIStatusError {
     message: string,
     requestId?: string | null,
     retryAfterMs?: number | null,
+    diagnosticsOrTraceId?: LlmErrorDiagnostics | string | null,
+    options?: { readonly statusCode?: number },
     traceId?: string | null,
   ) {
-    super(429, message, requestId, retryAfterMs, traceId, PROVIDER_API_ERROR_CODE);
+    super(
+      options === undefined ? 429 : options.statusCode,
+      message,
+      false,
+      requestId,
+      retryAfterMs,
+      diagnosticsOrTraceId,
+      PROVIDER_API_ERROR_CODE,
+      traceId,
+    );
     this.name = 'APIProviderQuotaExhaustedError';
   }
 }
 
 export class APIProviderOverloadedError extends APIStatusError {
   constructor(
-    statusCode: number,
+    statusCode: number | undefined,
     message: string,
     requestId?: string | null,
     retryAfterMs?: number | null,
+    diagnosticsOrTraceId?: LlmErrorDiagnostics | string | null,
     traceId?: string | null,
   ) {
-    super(statusCode, message, requestId, retryAfterMs, traceId, PROVIDER_OVERLOADED_ERROR_CODE);
+    super(
+      statusCode,
+      message,
+      true,
+      requestId,
+      retryAfterMs,
+      diagnosticsOrTraceId,
+      PROVIDER_OVERLOADED_ERROR_CODE,
+      traceId,
+    );
     this.name = 'APIProviderOverloadedError';
   }
 }
@@ -175,6 +278,7 @@ export class APIEmptyResponseError extends ChatProviderError {
     options: {
       readonly finishReason?: FinishReason | null;
       readonly rawFinishReason?: string | null;
+      readonly diagnostics?: LlmErrorDiagnostics;
     } = {},
   ) {
     const finishReason = options.finishReason ?? null;
@@ -182,7 +286,9 @@ export class APIEmptyResponseError extends ChatProviderError {
     super(
       message,
       finishReason === 'filtered' ? PROVIDER_FILTERED_ERROR_CODE : PROVIDER_API_ERROR_CODE,
-      { details: { finishReason, rawFinishReason } },
+      { details: { finishReason, rawFinishReason, diagnostics: options.diagnostics } },
+      options.diagnostics,
+      finishReason !== 'filtered',
     );
     this.name = 'APIEmptyResponseError';
     this.finishReason = finishReason;
@@ -209,7 +315,7 @@ export function isImageFormatError(error: unknown): boolean {
   if (error instanceof APIStatusError) {
     if (error instanceof APIContextOverflowError) return false;
     if (error instanceof APIRequestTooLargeError) return false;
-    return isImageFormatStatusError(error.statusCode, error.message);
+    return error.statusCode !== undefined && isImageFormatStatusError(error.statusCode, error.message);
   }
   if (error instanceof ChatProviderError) {
     const lowerMessage = error.message.toLowerCase();
@@ -219,22 +325,8 @@ export function isImageFormatError(error: unknown): boolean {
 }
 
 export function isRetryableGenerateError(error: unknown): boolean {
-  if (error instanceof APIConnectionError || error instanceof APITimeoutError) {
-    return true;
-  }
-  if (error instanceof APIEmptyResponseError) {
-    return error.finishReason !== 'filtered';
-  }
-  if (error instanceof APIProviderOverloadedError) {
-    return true;
-  }
-  if (error instanceof APIStatusError) {
-    if (error instanceof APIProviderQuotaExhaustedError) {
-      return false;
-    }
-    return [408, 409, 429, 500, 502, 503, 504, 529].includes(error.statusCode);
-  }
-  return error instanceof ChatProviderError && !isImageFormatError(error);
+  if (isAbortError(error)) return false;
+  return error instanceof ChatProviderError && error.retryable;
 }
 
 const NETWORK_RE = /network|connection|connect|disconnect|terminated/i;
@@ -269,26 +361,27 @@ export function normalizeAPIStatusError(
   message: string,
   requestId?: string | null,
   retryAfterMs?: number | null,
-  traceId?: string | null,
+  diagnostics?: LlmErrorDiagnostics,
 ): APIStatusError {
   if (statusCode === 429) {
-    return new APIProviderRateLimitError(message, requestId, retryAfterMs, traceId);
+    return new APIProviderRateLimitError(message, requestId, retryAfterMs, diagnostics);
   }
   if (isContextOverflowStatusError(statusCode, message)) {
-    return new APIContextOverflowError(statusCode, message, requestId, retryAfterMs, traceId);
+    return new APIContextOverflowError(statusCode, message, requestId, retryAfterMs, diagnostics);
   }
   if (isRequestTooLargeStatusError(statusCode, message)) {
-    return new APIRequestTooLargeError(statusCode, message, requestId, retryAfterMs, traceId);
+    return new APIRequestTooLargeError(statusCode, message, requestId, retryAfterMs, diagnostics);
   }
   if (isProviderOverloadStatusError(statusCode, message)) {
-    return new APIProviderOverloadedError(statusCode, message, requestId, retryAfterMs, traceId);
+    return new APIProviderOverloadedError(statusCode, message, requestId, retryAfterMs, diagnostics);
   }
   return new APIStatusError(
     statusCode,
     appendThinkingEffortConfigHint(statusCode, message),
+    isTransientHttpStatus(statusCode),
     requestId,
     retryAfterMs,
-    traceId,
+    diagnostics,
   );
 }
 
@@ -314,13 +407,19 @@ export function traceIdFromHeadersRecord(headers: Record<string, string> | null)
 export function isToolExchangeAdjacencyError(error: unknown): boolean {
   if (!(error instanceof APIStatusError)) return false;
   if (error instanceof APIContextOverflowError) return false;
-  return isToolExchangeAdjacencyStatusError(error.statusCode, error.message);
+  return (
+    error.statusCode !== undefined &&
+    isToolExchangeAdjacencyStatusError(error.statusCode, error.message)
+  );
 }
 
 export function isRecoverableRequestStructureError(error: unknown): boolean {
   if (!(error instanceof APIStatusError)) return false;
   if (error instanceof APIContextOverflowError) return false;
-  return isRequestStructureStatusError(error.statusCode, error.message);
+  return (
+    error.statusCode !== undefined &&
+    isRequestStructureStatusError(error.statusCode, error.message)
+  );
 }
 
 export function isProviderRateLimitError(error: unknown): boolean {
@@ -381,15 +480,16 @@ export function classifyApiError(error: unknown): ApiErrorClassification {
   if (error instanceof APIProviderQuotaExhaustedError) {
     return { kind: 'quota_exhausted', statusCode };
   }
+  if (error instanceof APIProviderRateLimitError) return { kind: 'rate_limit', statusCode };
   if (error instanceof APIStatusError) {
-    if (isContextOverflowStatusError(error.statusCode, error.message)) {
+    if (error.statusCode !== undefined && isContextOverflowStatusError(error.statusCode, error.message)) {
       return { kind: 'context_overflow', statusCode };
     }
     if (error.statusCode === 429) return { kind: 'rate_limit', statusCode };
     if (error.statusCode === 529) return { kind: 'overloaded', statusCode };
     if (error.statusCode === 401 || error.statusCode === 403) return { kind: 'auth', statusCode };
-    if (error.statusCode >= 500) return { kind: '5xx_server', statusCode };
-    if (error.statusCode >= 400) return { kind: '4xx_client', statusCode };
+    if (error.statusCode !== undefined && error.statusCode >= 500) return { kind: '5xx_server', statusCode };
+    if (error.statusCode !== undefined && error.statusCode >= 400) return { kind: '4xx_client', statusCode };
   }
   if (error instanceof APIConnectionError) return { kind: 'network', statusCode };
   if (error instanceof APITimeoutError) return { kind: 'timeout', statusCode };
@@ -410,19 +510,49 @@ export function isUnauthorizedLlmError(error: unknown): boolean {
   return isLlmErrorMessage(error) && llmStatusErrorMessage(error)?.statusCode === 401;
 }
 
-export function errorFromLlmMessage(error: LlmErrorMessage): Error {
+export function errorDiagnostics(error: unknown): LlmErrorDiagnostics | undefined {
+  if (error instanceof ChatProviderError) return error.diagnostics;
+  if (error instanceof Error2) {
+    return error.details?.['diagnostics'] as LlmErrorDiagnostics | undefined;
+  }
+  return undefined;
+}
+
+export function withErrorDiagnostics<T extends Error>(
+  error: T,
+  diagnostics: LlmErrorDiagnostics | undefined,
+): T {
+  if (diagnostics === undefined) return error;
+  if (error instanceof ChatProviderError) {
+    (error as { diagnostics: LlmErrorDiagnostics | undefined }).diagnostics = diagnostics;
+  }
+  if (error instanceof Error2) {
+    (error as { details?: Record<string, unknown> }).details = {
+      ...error.details,
+      diagnostics,
+    };
+  }
+  return error;
+}
+
+export function errorFromLlmMessage(
+  error: LlmErrorMessage,
+  diagnostics?: LlmErrorDiagnostics,
+): Error {
   switch (error.kind) {
     case 'abort':
       return createAbortError();
     case 'connection':
-      return new APIConnectionError(error.message);
+      return new APIConnectionError(error.message, diagnostics);
     case 'timeout':
-      return new APITimeoutError(error.message);
+      return new APITimeoutError(error.message, diagnostics);
     case 'rate_limit':
       return new APIProviderRateLimitError(
         error.message,
         error.requestId,
         error.retryAfterMs,
+        diagnostics,
+        { statusCode: error.statusCode },
         traceIdFromHeadersRecord(error.headers),
       );
     case 'quota_exhausted':
@@ -430,6 +560,8 @@ export function errorFromLlmMessage(error: LlmErrorMessage): Error {
         error.message,
         error.requestId,
         error.retryAfterMs,
+        diagnostics,
+        { statusCode: error.statusCode },
         traceIdFromHeadersRecord(error.headers),
       );
     case 'overloaded':
@@ -438,6 +570,7 @@ export function errorFromLlmMessage(error: LlmErrorMessage): Error {
         error.message,
         error.requestId,
         error.retryAfterMs,
+        diagnostics,
         traceIdFromHeadersRecord(error.headers),
       );
     case 'context_overflow':
@@ -446,6 +579,7 @@ export function errorFromLlmMessage(error: LlmErrorMessage): Error {
         error.message,
         error.requestId,
         error.retryAfterMs,
+        diagnostics,
         traceIdFromHeadersRecord(error.headers),
       );
     case 'request_too_large':
@@ -454,6 +588,7 @@ export function errorFromLlmMessage(error: LlmErrorMessage): Error {
         error.message,
         error.requestId,
         error.retryAfterMs,
+        diagnostics,
         traceIdFromHeadersRecord(error.headers),
       );
     case 'request_structure':
@@ -462,19 +597,36 @@ export function errorFromLlmMessage(error: LlmErrorMessage): Error {
       return new APIStatusError(
         error.statusCode,
         error.message,
+        error.retryable,
         error.requestId,
         error.retryAfterMs,
+        diagnostics,
+        undefined,
         traceIdFromHeadersRecord(error.headers),
       );
     case 'empty_response':
       return new APIEmptyResponseError(error.message, {
         finishReason: error.finishReason,
         rawFinishReason: error.rawFinishReason,
+        diagnostics,
       });
     case 'syntax':
-    case 'provider':
     case 'unknown':
-      return new ChatProviderError(error.message);
+      return new ChatProviderError(
+        error.message,
+        PROVIDER_API_ERROR_CODE,
+        undefined,
+        diagnostics,
+        false,
+      );
+    case 'provider':
+      return new ChatProviderError(
+        error.message,
+        PROVIDER_API_ERROR_CODE,
+        undefined,
+        diagnostics,
+        error.retryable,
+      );
   }
 }
 
@@ -487,20 +639,22 @@ export function llmMessageFromError(error: unknown): LlmRemoteErrorMessage | und
     return {
       kind: 'rate_limit',
       message: error.message,
-      statusCode: 429,
+      statusCode: error.statusCode,
       requestId: error.requestId,
       retryAfterMs: error.retryAfterMs,
       headers: traceHeadersOf(error),
+      retryable: error.retryable,
     };
   }
   if (error instanceof APIProviderQuotaExhaustedError) {
     return {
       kind: 'quota_exhausted',
       message: error.message,
-      statusCode: 429,
+      statusCode: error.statusCode,
       requestId: error.requestId,
       retryAfterMs: error.retryAfterMs,
       headers: traceHeadersOf(error),
+      retryable: error.retryable,
     };
   }
   if (error instanceof APIContextOverflowError) {
@@ -511,6 +665,7 @@ export function llmMessageFromError(error: unknown): LlmRemoteErrorMessage | und
       requestId: error.requestId,
       retryAfterMs: error.retryAfterMs,
       headers: traceHeadersOf(error),
+      retryable: error.retryable,
     };
   }
   if (error instanceof APIRequestTooLargeError) {
@@ -521,6 +676,7 @@ export function llmMessageFromError(error: unknown): LlmRemoteErrorMessage | und
       requestId: error.requestId,
       retryAfterMs: error.retryAfterMs,
       headers: traceHeadersOf(error),
+      retryable: error.retryable,
     };
   }
   if (error instanceof APIProviderOverloadedError) {
@@ -531,13 +687,14 @@ export function llmMessageFromError(error: unknown): LlmRemoteErrorMessage | und
       requestId: error.requestId,
       retryAfterMs: error.retryAfterMs,
       headers: traceHeadersOf(error),
+      retryable: error.retryable,
     };
   }
   if (error instanceof APIConnectionError) {
-    return { kind: 'connection', message: error.message };
+    return { kind: 'connection', message: error.message, retryable: error.retryable };
   }
   if (error instanceof APITimeoutError) {
-    return { kind: 'timeout', message: error.message };
+    return { kind: 'timeout', message: error.message, retryable: error.retryable };
   }
   if (error instanceof APIEmptyResponseError) {
     return {
@@ -545,6 +702,7 @@ export function llmMessageFromError(error: unknown): LlmRemoteErrorMessage | und
       message: error.message,
       finishReason: error.finishReason,
       rawFinishReason: error.rawFinishReason,
+      retryable: error.retryable,
     };
   }
   if (error instanceof APIStatusError) {
@@ -555,10 +713,11 @@ export function llmMessageFromError(error: unknown): LlmRemoteErrorMessage | und
       requestId: error.requestId,
       retryAfterMs: error.retryAfterMs,
       headers: traceHeadersOf(error),
+      retryable: error.retryable,
     };
   }
   if (error instanceof ChatProviderError) {
-    return { kind: 'provider', message: error.message };
+    return { kind: 'provider', message: error.message, retryable: error.retryable };
   }
   return undefined;
 }

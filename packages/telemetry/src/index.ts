@@ -2,6 +2,7 @@ import {
   flushSync,
   getSink,
   setContext,
+  setEnabled,
   shutdown,
   track as trackEvent,
   withContext,
@@ -28,6 +29,10 @@ export function setTelemetryModel(model: string | undefined): void {
   getSink()?.setModel(model);
 }
 
+export function setTelemetryEnabled(enabled: boolean): void {
+  setEnabled(enabled);
+}
+
 export function withTelemetryContext(patch: TelemetryContextIds): TelemetryClient {
   return withContext(patch);
 }
@@ -39,7 +44,9 @@ export function flushTelemetrySync(): void {
 export async function shutdownTelemetry(
   options: { readonly timeoutMs?: number } = {},
 ): Promise<void> {
-  await shutdown(options);
+  try {
+    await shutdown(options);
+  } catch {}
 }
 
 export { initializeTelemetry, isTelemetryDisabledByEnv, shouldEnableTelemetry } from './bootstrap';

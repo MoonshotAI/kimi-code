@@ -193,15 +193,6 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
     return parseToml(text) as Record<string, unknown>;
   }
 
-  async function waitForServerState(check: () => Promise<boolean>, timeoutMs = 3000): Promise<void> {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      if (await check()) return;
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-    throw new Error('waitForServerState timed out');
-  }
-
   it('lists pruned directory entries with import eligibility resolved', async () => {
     await boot();
     const { status, body } = await getJson<{ items: Array<Record<string, unknown>> }>(
@@ -369,10 +360,7 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
     models['openai/retired'] = { provider: 'openai', model: 'retired', max_context_size: 1 };
     const { stringify: stringifyToml } = await import('smol-toml');
     await writeFile(join(home as string, 'config.toml'), stringifyToml(before), 'utf-8');
-    await waitForServerState(async () => {
-      const cfg = await getJson<{ models: Record<string, unknown> }>('/api/v1/config');
-      return 'openai/retired' in (cfg.body.data.models ?? {});
-    });
+    await (server as RunningServer).core.accessor.get(IConfigService).reload();
 
     const second = await postJson('/api/v1/providers:import_catalog', {
       catalog_id: 'openai',
@@ -553,7 +541,7 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
     expect(status).toBe(201);
     expect(body.code).toBe(0);
     expect(body.data.models_imported).toBe(2);
-    expect(body.data.providers.map((p) => p['id']).sort()).toEqual(['acme-claude', 'acme-gpt']);
+    expect(body.data.providers.map((p) => p['id']).toSorted()).toEqual(['acme-claude', 'acme-gpt']);
     expect(seen.authorization).toBe('Bearer tok-1');
 
     const config = await readConfigToml();
@@ -585,9 +573,9 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
     });
   });
 
-  it('never touches the global default pointers on registry import', async () => {
+  it('never touches the global default pointers or future thinking fields on registry import', async () => {
     setModelsDevUpstreamForTest({ fetchImpl: registryFetch(REGISTRY_DOC) });
-    await boot(DEFAULTED_TOML);
+    await boot(`${DEFAULTED_TOML}\n[thinking]\nenabled = true\nfuture_option = "keep-me"\n`);
     const { status } = await postJson('/api/v1/providers:import_registry', {
       url: REGISTRY_URL,
       api_key: 'tok-1',
@@ -596,6 +584,7 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
     const config = await readConfigToml();
     expect(config['default_provider']).toBe('kimi');
     expect(config['default_model']).toBe('k2');
+    expect(config['thinking']).toEqual({ enabled: true, future_option: 'keep-me' });
   });
 
   it('seeds the global default_model from the first registry model on a fresh setup', async () => {

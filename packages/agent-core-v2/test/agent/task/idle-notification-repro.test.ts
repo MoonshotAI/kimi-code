@@ -5,13 +5,14 @@ import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LifecycleScope } from '#/app/scopes';
 import { type IAgentScopeHandle } from '#/_base/di/scope';
-import type { LlmRequester } from '#human/llm/requester/requester';
+import type { LlmRequester } from '#human/llm-requester/requester';
 import { IAgentTaskService } from '#/agent/task/task';
 import { SubagentTask } from '#/agent/tools/agent/subagent-task';
 import { runAgentTurn } from '#/session/subagent/runAgentTurn';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
+import { TurnPrompt } from '#/agent/loop/turnOps';
 import { IEventBus } from '#/app/event/eventBus';
 import {
   taskServices,
@@ -63,10 +64,18 @@ describe('task notification → main agent (real Agent instance)', () => {
     });
 
     it('IDLE: completed bg agent notification auto-launches a turn that consumes it', async () => {
-      expect(loop.status().activeTurnId).toBeUndefined();
+      expect(loop.snapshot().activeTurnId).toBeUndefined();
       expect(ctx.llmCalls.length).toBe(0);
 
       ctx.mockNextResponse({ type: 'text', text: 'ack from main agent' });
+      const turnStarted: TurnStarted[] = [];
+      const turnPrompts: TurnPrompt[] = [];
+      const subscription = ctx.get(IEventBus).subscribe(TurnStarted, (event) => {
+        turnStarted.push(event);
+      });
+      const promptSubscription = ctx.get(IEventBus).subscribe(TurnPrompt, (event) => {
+        turnPrompts.push(event);
+      });
       const turnEnd = ctx.untilTurnEnd();
       const taskId = background.registerTask(agentTask(
         Promise.resolve({ result: 'background agent finished its job' }),
@@ -91,6 +100,20 @@ describe('task notification → main agent (real Agent instance)', () => {
       expect(flatHistoryText).toContain('idle-state repro completed.');
       expect(flatHistoryText).toContain('<output-file');
       expect(flatHistoryText).not.toContain('background agent finished its job');
+      const notificationTurn = turnStarted.find((event) => event.origin?.kind === 'task');
+      expect(notificationTurn?.prompt).toBeUndefined();
+      expect(notificationTurn?.promptId).toBeUndefined();
+      const notificationPromptText = JSON.stringify(
+        turnPrompts.find(
+          (event) => event.origin.kind === 'task' && event.turnId === notificationTurn?.turnId,
+        )?.input,
+      );
+      expect(notificationPromptText).toContain('<notification');
+      expect(notificationPromptText).toContain(taskId);
+      expect(notificationPromptText).toContain('<output-file');
+      expect(notificationPromptText).toContain('</notification>');
+      subscription.dispose();
+      promptSubscription.dispose();
     });
 
     it('BUSY: completed bg agent during an active turn is flushed into an LLM call', async () => {
@@ -170,8 +193,8 @@ describe('task notification → main agent (real Agent instance)', () => {
       await turnEnd;
       await vi.waitFor(
         () => {
-          expect(loop.status().state).toBe('idle');
-          expect(loop.status().hasPendingRequests).toBe(false);
+          expect(loop.snapshot().state).toBe('idle');
+          expect(loop.snapshot().hasPendingRequests).toBe(false);
         },
         { timeout: 2000 },
       );
@@ -275,7 +298,7 @@ describe('task notification → main agent (real Agent instance)', () => {
         void completion.catch(() => {});
 
         await inFlight;
-        expect(childLoop.status().state).toBe('running');
+        expect(childLoop.snapshot().state).toBe('running');
 
         const background = main.get(IAgentTaskService);
         const taskId = background.registerTask(
@@ -292,7 +315,7 @@ describe('task notification → main agent (real Agent instance)', () => {
 
         const info = await background.stop(taskId, 'User initiated stop');
         expect(info?.status).toBe('killed');
-        expect(childLoop.status().state).toBe('idle');
+        expect(childLoop.snapshot().state).toBe('idle');
 
         await vi.waitFor(
           () => {
@@ -303,7 +326,7 @@ describe('task notification → main agent (real Agent instance)', () => {
         const notified = JSON.stringify(main.llmCalls.at(-1)!.history);
         expect(notified).toContain('task.killed');
         expect(notified).toContain(taskId);
-        expect(childLoop.status().state).toBe('idle');
+        expect(childLoop.snapshot().state).toBe('idle');
 
         await notificationTurnEnd;
       } finally {
@@ -382,7 +405,7 @@ describe('task notification → main agent (real Agent instance)', () => {
 
       expect(launches).toEqual([]);
       expect(ctx.llmCalls.length).toBe(0);
-      expect(loop.status().activeTurnId).toBeUndefined();
+      expect(loop.snapshot().activeTurnId).toBeUndefined();
       launchSubscription.dispose();
 
       const flatContext = JSON.stringify(ctx.contextData());

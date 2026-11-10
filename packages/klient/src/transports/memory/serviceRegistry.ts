@@ -12,6 +12,7 @@ import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
 import { IModelService } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model';
 import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import { IProviderDiscoveryService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/discovery';
+import { IModelsDevImportService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/modelsDevImport';
 import { IProviderService } from '@moonshot-ai/agent-core-v2/llm-adapter/provider/provider';
 import {
   IAuthSummaryService,
@@ -29,11 +30,11 @@ import { ISessionManager } from '@moonshot-ai/agent-core-v2/app/sessionManager/s
 import { ISessionMetadata } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
 import { ISessionSkillCatalog } from '@moonshot-ai/agent-core-v2/features/skill/session/skillCatalog';
 import { ISessionTitleService } from '@moonshot-ai/agent-core-v2/session/sessionTitle/sessionTitle';
-import { IAgentPromptService } from '@moonshot-ai/agent-core-v2/agent/prompt/prompt';
 import { IAgentLoopService } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
+import { IAgentPromptChannel } from '@moonshot-ai/agent-core-v2/agent/loop/promptChannel';
 import { IAgentPermissionModeService } from '@moonshot-ai/agent-core-v2/agent/permissionMode/permissionMode';
 import { IAgentCommandService } from '@moonshot-ai/agent-core-v2/agent/command/agentCommand';
-import { IAgentRuntimeBindingService } from '@moonshot-ai/agent-core-v2/agent/runtimeBinding/runtimeBinding';
+import { IAgentEnvironmentBindingService } from '@moonshot-ai/agent-core-v2/agent/environmentBinding/environmentBinding';
 import { IAgentContextMemoryService } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextMemory';
 import { ISessionTokenCountingService } from '@moonshot-ai/agent-core-v2/session/tokenCounting/sessionTokenCounting';
 import { ISessionActivityView } from '@moonshot-ai/agent-core-v2/session/sessionActivity/sessionActivity';
@@ -54,6 +55,7 @@ export const serviceTokens: Readonly<Record<string, ServiceIdentifier<unknown>>>
   modelService: IModelService,
   modelResolver: IModelCatalog,
   providerDiscovery: IProviderDiscoveryService,
+  modelsDevImport: IModelsDevImportService,
   providerService: IProviderService,
   oauthService: IOAuthService,
   authSummaryService: IAuthSummaryService,
@@ -68,11 +70,11 @@ export const serviceTokens: Readonly<Record<string, ServiceIdentifier<unknown>>>
   sessionMetadata: ISessionMetadata,
   sessionSkillCatalog: ISessionSkillCatalog,
   sessionTitleService: ISessionTitleService,
-  agentPromptService: IAgentPromptService,
+  agentPromptService: IAgentPromptChannel,
   agentLoopService: IAgentLoopService,
   agentPermissionModeService: IAgentPermissionModeService,
   agentCommandService: IAgentCommandService,
-  agentRuntimeBindingService: IAgentRuntimeBindingService,
+  agentEnvironmentBindingService: IAgentEnvironmentBindingService,
   agentContextMemoryService: IAgentContextMemoryService,
   agentTokenCountingService: ISessionTokenCountingService,
   sessionActivityView: ISessionActivityView,

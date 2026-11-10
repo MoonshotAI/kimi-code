@@ -8,12 +8,14 @@ import { IEventBus } from '#/app/event/eventBus';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { isToolActive } from '#/agent/toolPolicy/evaluate';
+import { SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolContribution } from '#/agent/toolRegistry/toolContribution';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 
 import { IAgentToolActivationService } from './toolActivation';
+import { isToolAvailable } from './toolAvailability';
 
 export class AgentToolActivationService extends Service implements IAgentToolActivationService {
   declare readonly _serviceBrand: undefined;
@@ -25,7 +27,7 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @ISessionToolPolicyGate private readonly toolPolicyGate: ISessionToolPolicyGate,
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @IEventBus eventBus: IEventBus,
     @AgentToolContribution private readonly contributions: CollectionView<AgentToolContribution>,
   ) {
@@ -35,7 +37,6 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
         void this.activate();
       }),
     );
-    this._register(this.runtime.onDidChange(() => this.refreshRuntimeRecords()));
     this._register(
       this.contributions.onDidChange((change) => {
         this.activateRecords(change.added);
@@ -55,16 +56,20 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
     if (records.length === 0) return;
     const data = this.profile.data();
     const policy = { tools: data.activeToolNames, disallowedTools: data.disallowedTools };
+    const disclosurePolicy = { disallowedTools: data.disallowedTools };
     const workspaceVeto = { disallowedTools: this.toolPolicyGate.disabledTools };
     this.instantiationService.invokeFunction((accessor) => {
       for (const record of records) {
         const { id, options } = record;
         const source = options.source ?? 'builtin';
         if (this.toolRegistry.resolve(options.name) !== undefined) continue;
-        if (!this.runtimeAllows(record)) continue;
         if (!isToolActive(workspaceVeto, options.name, source)) continue;
-        if (!isToolActive(policy, options.name, source)) continue;
-        if (options.when !== undefined && !options.when(accessor)) continue;
+        const activeByProfile =
+          options.name === SELECT_TOOLS_TOOL_NAME
+            ? isToolActive(disclosurePolicy, options.name, source)
+            : isToolActive(policy, options.name, source);
+        if (!activeByProfile) continue;
+        if (!isToolAvailable(options, accessor, this.environment)) continue;
         const tool = accessor.get(id);
         const registration = this.toolRegistry.register(tool, {
           source: options.source,
@@ -74,18 +79,6 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
         this._register(registration);
       }
     });
-  }
-
-  private refreshRuntimeRecords(): void {
-    for (const record of this.contributions.items) {
-      if (!this.runtimeAllows(record)) this.deactivateRecord(record);
-    }
-    this.activateRecords(this.contributions.items);
-  }
-
-  private runtimeAllows(record: AgentToolContribution): boolean {
-    const required = record.options.requiredRuntimeCapabilities;
-    return required === undefined || this.runtime.isAvailable(required);
   }
 
   private deactivateRecord(record: AgentToolContribution): void {

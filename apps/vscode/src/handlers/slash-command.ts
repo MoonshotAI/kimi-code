@@ -51,8 +51,14 @@ export async function runHostSlashCommand(
 ): Promise<boolean> {
   if (command.name.startsWith("skill:")) {
     const skillName = command.name.slice("skill:".length);
+    const skills = await runtime.session.listSkills();
+    const candidates = skills.filter((skill) =>
+      skill.name.toLowerCase() === skillName.toLowerCase() &&
+      skill.scopes === undefined &&
+      (skill.type === undefined || skill.type === "prompt" || skill.type === "inline" || skill.type === "flow"));
+    const skill = candidates.find((candidate) => candidate.name === skillName) ?? candidates[0];
     const result = await runtime.runTurnAction(command.raw, () =>
-      runtime.session.activateSkill(skillName, command.args || undefined));
+      runtime.session.activateSkill(skillName, command.args || undefined, { path: skill?.path }));
     return result.status === "finished";
   }
 
@@ -129,7 +135,7 @@ async function toggleLegacyPermission(
     return;
   }
   emit(flags.afk
-    ? "Auto mode enabled. Questions will be auto-dismissed and tool calls auto-approved."
+    ? "Auto mode enabled. Questions will be auto-dismissed and tool calls auto-approved; plans in plan mode still wait for your review."
     : flags.yolo
       ? "Auto mode disabled. You are back at the keyboard. Yolo is still on."
       : "Auto mode disabled. You are back at the keyboard.");

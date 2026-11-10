@@ -1,5 +1,5 @@
 import type { Message, ToolDescription } from '#/llm/message';
-import type { TokenUsage } from '#/llm/usage';
+import { emptyUsage, grandTotal, type TokenUsage } from '#/llm-requester/usage';
 
 import type { AssistantEntry, HistoryMessage } from './turn';
 
@@ -10,8 +10,8 @@ export interface ContextUsagePrefix {
   tools?: readonly ToolDescription[];
 }
 
-export function calculateContextTokens(usage: TokenUsage): number {
-  return usage.inputOther + usage.inputCacheRead + usage.inputCacheCreation + usage.output;
+export function calculateContextTokens(usage: TokenUsage): number | undefined {
+  return grandTotal(usage);
 }
 
 export function estimateTextTokens(text: string): number {
@@ -62,8 +62,8 @@ export function estimateUsedContextTokens(
   for (let i = history.length - 1; i >= 0; i--) {
     const entry = history[i] as HistoryMessage;
     if (entry.message.role !== 'assistant') continue;
-    const tokens = calculateContextTokens((entry as AssistantEntry).meta.usage);
-    if (tokens > 0) {
+    const tokens = calculateContextTokens((entry as AssistantEntry).meta?.usage ?? emptyUsage());
+    if (tokens !== undefined && tokens > 0) {
       lastUsageIndex = i;
       usageTokens = tokens;
       break;

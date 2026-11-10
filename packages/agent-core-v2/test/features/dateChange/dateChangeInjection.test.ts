@@ -8,6 +8,7 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import {
   AgentDateChangeService,
@@ -266,7 +267,6 @@ describe('AgentDateChangeService', () => {
     context.append({
       role: 'user',
       content: [{ type: 'text', text: 'older metadata reminder' }],
-      toolCalls: [],
       origin: {
         kind: 'injection',
         variant: 'date_change',
@@ -284,7 +284,7 @@ describe('AgentDateChangeService', () => {
     expect(dateReminders(context)).toHaveLength(2);
   });
 
-  it('re-injects after undo removes the structured reminder metadata', async () => {
+  it('keeps the structured reminder metadata exactly once across undo and the next step', async () => {
     updateSystemPrompt(
       profile,
       'You are a deterministic test agent.',
@@ -293,18 +293,16 @@ describe('AgentDateChangeService', () => {
     context.append({
       role: 'user',
       content: [{ type: 'text', text: 'first turn' }],
-      toolCalls: [],
       origin: { kind: 'user' },
     });
     await runWillBeginStepHooks(loop);
     expect(dateReminders(context)).toHaveLength(1);
 
-    expect(context.undo(1)).toMatchObject({ removedCount: 1 });
-    expect(dateReminders(context)).toHaveLength(0);
+    await ctx.get(IAgentConversationUndoService).undo(1);
+    expect(dateReminders(context)).toHaveLength(1);
     context.append({
       role: 'user',
       content: [{ type: 'text', text: 'replacement turn' }],
-      toolCalls: [],
       origin: { kind: 'user' },
     });
 
@@ -313,7 +311,7 @@ describe('AgentDateChangeService', () => {
     expect(dateReminders(context)).toHaveLength(1);
   });
 
-  it('re-discloses after undo removes the initial disclosure', async () => {
+  it('keeps the initial date disclosure across undo and the next step', async () => {
     updateSystemPrompt(
       profile,
       'You are a deterministic test agent.',
@@ -322,18 +320,16 @@ describe('AgentDateChangeService', () => {
     context.append({
       role: 'user',
       content: [{ type: 'text', text: 'first turn' }],
-      toolCalls: [],
       origin: { kind: 'user' },
     });
     await runWillBeginStepHooks(loop);
     expect(dateReminders(context)).toHaveLength(1);
 
-    expect(context.undo(1)).toMatchObject({ removedCount: 1 });
-    expect(dateReminders(context)).toHaveLength(0);
+    await ctx.get(IAgentConversationUndoService).undo(1);
+    expect(dateReminders(context)).toHaveLength(1);
     context.append({
       role: 'user',
       content: [{ type: 'text', text: 'replacement turn' }],
-      toolCalls: [],
       origin: { kind: 'user' },
     });
 
@@ -432,5 +428,31 @@ describe('AgentDateChangeService', () => {
     await runWillBeginStepHooks(loop);
 
     expect(dateReminders(context)).toHaveLength(2);
+  });
+
+  it('labels the disclosure and change reminders with the local client timezone', async () => {
+    updateSystemPrompt(
+      profile,
+      'You are a deterministic test agent.',
+      ctx.get(ISessionContext).cwd,
+    );
+    await runWillBeginStepHooks(loop);
+
+    const initial = dateReminders(context);
+    expect(initial).toHaveLength(1);
+    const initialText = messageText(initial[0] as ContextMessage);
+    expect(initialText).toContain('2026-07-29');
+    expect(initialText).toContain(TEST_TIME_ZONE);
+    expect(initialText).toContain('local client');
+
+    clock.set('2026-07-30T04:00:00.000Z');
+    await runWillBeginStepHooks(loop);
+
+    const reminders = dateReminders(context);
+    expect(reminders).toHaveLength(2);
+    const changeText = messageText(reminders[1] as ContextMessage);
+    expect(changeText).toContain('2026-07-30');
+    expect(changeText).toContain(TEST_TIME_ZONE);
+    expect(changeText).toContain('local client');
   });
 });

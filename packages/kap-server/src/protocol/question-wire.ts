@@ -39,6 +39,7 @@ function buildItem(item: QuestionItem, itemIdx: number): ProtocolQuestionItem {
 export function toWireQuestion(
   interaction: WireQuestionSource,
   sessionId: string,
+  agentId?: string,
 ): ProtocolQuestionRequest {
   const req = interaction.payload as QuestionRequest;
   const createdAt = new Date(interaction.createdAt).toISOString();
@@ -48,6 +49,7 @@ export function toWireQuestion(
     questions: req.questions.map((q, i) => buildItem(q, i)),
     created_at: createdAt,
   };
+  if (agentId !== undefined) out.agent_id = agentId;
   if (req.turnId !== undefined) out.turn_id = req.turnId;
   if (req.toolCallId !== undefined) out.tool_call_id = req.toolCallId;
   return out;

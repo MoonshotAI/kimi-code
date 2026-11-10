@@ -8,7 +8,7 @@ import { runPrompt } from '#/cli/run-prompt';
 import { runShell } from '#/cli/run-shell';
 import { formatStartupError } from '#/cli/startup-error';
 import { runUpdatePreflight } from '#/cli/update/preflight';
-import { handleMainCommand, handleUpgradeCommand, main } from '#/main';
+import { handleMainCommand, handleUpgradeCommand, main } from '#/cli/main';
 
 const mocks = vi.hoisted(() => {
   const parse = vi.fn();
@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => {
     getVersion: vi.fn(() => '0.0.1-alpha.2'),
     validateOptions: vi.fn(),
     runUpdatePreflight: vi.fn(),
+    runForcedUpgradePreflight: vi.fn(async () => 'continue'),
     runShell: vi.fn(),
     runPrompt: vi.fn(),
     installCrashHandlers: vi.fn(),
@@ -124,6 +125,10 @@ vi.mock('../../src/cli/update/preflight', () => ({
   runUpdatePreflight: mocks.runUpdatePreflight,
 }));
 
+vi.mock('../../src/cli/update/forced', () => ({
+  runForcedUpgradePreflight: mocks.runForcedUpgradePreflight,
+}));
+
 vi.mock('../../src/cli/update/native-swap', () => ({
   maybeRelaunchWithStagedNativeUpdate: mocks.maybeRelaunch,
 }));
@@ -163,6 +168,7 @@ function defaultOpts(): CLIOptions {
     skillsDirs: [],
     agent: undefined,
     agentFiles: [],
+    environment: undefined,
   };
 }
 
@@ -417,6 +423,18 @@ describe('main entry command handling', () => {
     } finally {
       process.title = originalTitle;
     }
+  });
+
+  it('exits with SIGINT status when the forced upgrade prompt is interrupted', async () => {
+    const opts = defaultOpts();
+    mocks.validateOptions.mockReturnValue({ options: opts, uiMode: 'shell' });
+    mocks.runForcedUpgradePreflight.mockResolvedValueOnce('interrupt');
+
+    const exitCode = await runHandleMainCommand(opts);
+
+    expect(exitCode).toBe(130);
+    expect(mocks.runUpdatePreflight).not.toHaveBeenCalled();
+    expect(mocks.runShell).not.toHaveBeenCalled();
   });
 
   it('exits early when update preflight requests process exit', async () => {

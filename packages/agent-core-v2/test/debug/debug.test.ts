@@ -308,7 +308,7 @@ describe('debug domain — IDebugEventsService', () => {
       uid: expect.any(Number),
     });
     expect(result.buses).toEqual([
-      { scopePath: 'app', all: 1, perType: { 'debug.test': 2 } },
+      { scopePath: 'app', all: 1, perType: { 'debug.test': 2 }, perAgent: {} },
     ]);
     expect(() => JSON.stringify(result)).not.toThrow();
     app.dispose();

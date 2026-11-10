@@ -20,6 +20,12 @@ export interface ISessionEventBus extends IEventBus {
   deactivateAgent(agent: AgentContext): void;
   isAgentActive(agent: AgentContext): boolean;
   sourceOf(event: Event2<any>): AgentContext | undefined;
+  subscribeAgent(agent: AgentContext, handler: (event: Event2<any>) => void): IDisposable;
+  subscribeAgent(
+    agent: AgentContext,
+    type: string,
+    handler: (event: Event2<any>) => void,
+  ): IDisposable;
   onAgent<P extends AgentDomainTrait, E extends Event2<P>>(
     agent: AgentContext,
     cls: Event2Class<P, E>,

@@ -34,10 +34,11 @@ describe('loop-event fold parity', () => {
     return messages.map((m) => ({
       role: m.role,
       content: m.content,
-      toolCalls: m.toolCalls,
-      toolCallId: m.toolCallId,
+      toolCalls: m.role === 'assistant' ? m.toolCalls : undefined,
+      toolCallId: m.role === 'tool' ? m.toolCallId : undefined,
       isError: m.isError,
       note: m.note,
+      durationMs: m.durationMs,
     }));
   }
 
@@ -47,13 +48,24 @@ describe('loop-event fold parity', () => {
         {
           role: 'assistant',
           content: [{ type: 'text', text: 'I will call.' }],
-          toolCalls: [{ type: 'function', id: 'c1', name: 'Lookup', arguments: '{"q":"moon"}' }],
+          toolCalls: [{ type: 'function', id: 'c1', name: 'Bash', arguments: '{"q":"moon"}' }],
         },
         {
           role: 'tool',
           content: [{ type: 'text', text: 'lookup result' }],
-          toolCalls: [],
           toolCallId: 'c1',
+          isError: false,
+          durationMs: 42,
+        },
+        {
+          role: 'assistant',
+          content: [],
+          toolCalls: [{ type: 'function', id: 'c2', name: 'Lookup', arguments: '{"q":"mars"}' }],
+        },
+        {
+          role: 'tool',
+          content: [{ type: 'text', text: 'other result' }],
+          toolCallId: 'c2',
           isError: false,
         },
       ]),
@@ -71,15 +83,29 @@ describe('loop-event fold parity', () => {
           type: 'tool.call',
           stepUuid: 's1',
           toolCallId: 'c1',
-          name: 'Lookup',
+          name: 'Bash',
           args: { q: 'moon' },
         },
         {
           type: 'tool.result',
           toolCallId: 'c1',
-          result: { output: 'lookup result', isError: false },
+          result: { output: 'lookup result', isError: false, durationMs: 42 },
         },
         { type: 'step.end', uuid: 's1' },
+        { type: 'step.begin', uuid: 's2' },
+        {
+          type: 'tool.call',
+          stepUuid: 's2',
+          toolCallId: 'c2',
+          name: 'Lookup',
+          args: { q: 'mars' },
+        },
+        {
+          type: 'tool.result',
+          toolCallId: 'c2',
+          result: { output: 'other result', isError: false, durationMs: 7 },
+        },
+        { type: 'step.end', uuid: 's2' },
       ]),
     );
 
@@ -97,7 +123,6 @@ describe('loop-event fold parity', () => {
         {
           role: 'tool',
           content: [{ type: 'text', text: 'boom' }],
-          toolCalls: [],
           toolCallId: 'c2',
           isError: true,
         },
@@ -130,8 +155,8 @@ describe('loop-event fold parity', () => {
     return messages.map((m) => ({
       role: m.role,
       content: m.content,
-      toolCalls: m.toolCalls,
-      toolCallId: m.toolCallId,
+      toolCalls: m.role === 'assistant' ? m.toolCalls : undefined,
+      toolCallId: m.role === 'tool' ? m.toolCallId : undefined,
       isError: m.isError,
       partial: m.partial,
     }));
@@ -191,7 +216,7 @@ describe('loop-event fold parity', () => {
       {
         role: 'tool',
         content: expect.any(Array),
-        toolCalls: [],
+        toolCalls: undefined,
         toolCallId: 'c1',
         isError: true,
         partial: undefined,
@@ -387,8 +412,7 @@ describe('loop-event fold parity', () => {
       {
         role: 'tool',
         content: expect.any(Array),
-        toolCalls: [],
-        toolCallId: 'c1',
+          toolCallId: 'c1',
         isError: true,
         partial: undefined,
       },
@@ -406,7 +430,6 @@ describe('loop-event fold parity', () => {
         {
           role: 'tool',
           content: [{ type: 'text', text: 'result text' }],
-          toolCalls: [],
           toolCallId: 'c3',
           isError: false,
           note: '<system>Image compressed.</system>',
@@ -438,5 +461,59 @@ describe('loop-event fold parity', () => {
     );
 
     expect(folded).toEqual(baseline);
+  });
+
+  it('matches immutable output while reusing the state array in mutable mode', () => {
+    const user: ContextMessage = { role: 'user', content: [{ type: 'text', text: 'go' }] };
+    let actual = foldAppendMessage([], user, true);
+    let expected = foldAppendMessage([], user);
+    const restored = actual;
+    const events: LoopRecordedEvent[] = [
+      { type: 'step.begin', uuid: 's1' },
+      { type: 'content.part', stepUuid: 's1', part: { type: 'text', text: 'first' } },
+      { type: 'tool.call', stepUuid: 's1', toolCallId: 'c1', name: 'Bash', args: {} },
+      { type: 'tool.result', toolCallId: 'c1', result: { output: 'done' } },
+      { type: 'step.end', uuid: 's1' },
+      { type: 'step.begin', uuid: 's2' },
+      { type: 'step.begin', uuid: 's3' },
+      { type: 'content.part', stepUuid: 's3', part: { type: 'text', text: 'last' } },
+      { type: 'step.end', uuid: 's3' },
+    ];
+    for (const event of events) {
+      actual = foldLoopEvent(actual, event, true);
+      expected = foldLoopEvent(expected, event);
+      expect(actual).toBe(restored);
+      expect(actual).toEqual(expected);
+    }
+  });
+
+  it('preserves deferred messages when mutable replay switches to live folding', () => {
+    const events: LoopRecordedEvent[] = [
+      { type: 'step.begin', uuid: 's1' },
+      { type: 'tool.call', stepUuid: 's1', toolCallId: 'c1', name: 'Bash', args: {} },
+    ];
+    let actual: readonly ContextMessage[] = [];
+    let expected: readonly ContextMessage[] = [];
+    for (const event of events) {
+      actual = foldLoopEvent(actual, event, true);
+      expected = foldLoopEvent(expected, event);
+    }
+    const deferred: ContextMessage = {
+      role: 'user',
+      content: [{ type: 'text', text: 'deferred' }],
+    };
+    actual = foldAppendMessage(actual, deferred, true);
+    expected = foldAppendMessage(expected, deferred);
+    expect(actual).toEqual(expected);
+
+    for (const event of [
+      { type: 'tool.result', toolCallId: 'c1', result: { output: 'done' } },
+      { type: 'step.end', uuid: 's1' },
+    ] as const) {
+      actual = foldLoopEvent(actual, event, false);
+      expected = foldLoopEvent(expected, event);
+      expect(actual).toEqual(expected);
+    }
+    expect(actual.map((message) => message.role)).toEqual(['assistant', 'tool', 'user']);
   });
 });

@@ -13,8 +13,8 @@ This distinction matters: many users run `export KIMI_API_KEY=xxx` in the shell 
 Environment variables fall into three categories by function and cannot be collapsed into a single linear priority order:
 
 1. **Locating the config file**: `KIMI_CODE_HOME` sets the data root directory, making the config file path `$KIMI_CODE_HOME/config.toml`. This step runs before all other resolution and is not a fallback for individual parameters.
-2. **Runtime switches**: A small set of variables like `KIMI_DISABLE_TELEMETRY` directly shut down the corresponding subsystem. Even if `config.toml` has `telemetry = true`, a truthy value for this variable disables telemetry. The semantics are "additionally disable", not "ordinary override".
-3. **Runtime endpoints and diagnostics**: Variables like `KIMI_CODE_OAUTH_HOST`, `KIMI_CODE_BASE_URL`, and `KIMI_LOG_LEVEL` are read when the OAuth or logging subsystems initialize. For the full list, see [Environment variables](./env-vars.md).
+2. **Environment switches**: A small set of variables like `KIMI_DISABLE_TELEMETRY` directly shut down the corresponding subsystem. Even if `config.toml` has `telemetry = true`, a truthy value for this variable disables telemetry. The semantics are "additionally disable", not "ordinary override".
+3. **Environment endpoints and diagnostics**: Variables like `KIMI_CODE_OAUTH_HOST`, `KIMI_CODE_BASE_URL`, and `KIMI_LOG_LEVEL` are read when the OAuth or logging subsystems initialize. For the full list, see [Environment variables](./env-vars.md).
 
 ## Priority for ordinary runtime parameters
 
@@ -26,7 +26,7 @@ For ordinary runtime parameters such as model alias, Plan mode, permission mode,
 A small number of environment variables explicitly override specific config file fields. For example, `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` has higher priority than `[background].keep_alive_on_exit`. These exceptions are noted in [Environment variables](./env-vars.md) and in the relevant field descriptions in [Configuration files](./config-files.md).
 
 ::: warning
-**Ordinary runtime parameters do not fall back to shell environment variables.** Provider `api_key` / `base_url` are read only from `config.toml` (including the `[providers.<name>.env]` sub-table) and do not fall back to `export`-ed shell variables. The only exception is the explicit `KIMI_MODEL_*` channel; see [Define a model from environment variables](./env-vars.md#define-a-model-from-environment-variables-kimi_model_).
+**Ordinary runtime parameters do not fall back to shell environment variables.** Provider `api_key` / `base_url` are read only from `config.toml` (including the `[providers.<name>.env]` sub-table) and do not fall back to `export`-ed shell variables. The only exceptions are the `KIMI_MODEL_*` family and a provider's `api_key_env` field, two explicit channels that *do* read credentials from the shell; see [Define a model from environment variables](./env-vars.md#define-a-model-from-environment-variables-kimi_model_) and [Provider credentials](#provider-credentials).
 :::
 
 The CLI currently reads a single user-level config file and has no project-level config file mechanism. To isolate config between different projects, point `KIMI_CODE_HOME` at different data directories; see [Common scenarios](#common-scenarios) below.
@@ -37,9 +37,14 @@ Provider credentials (`api_key`, `base_url`) follow their own resolution rules, 
 
 For a single provider, credentials are resolved in this order:
 
-1. `[providers.<name>].api_key`: key written directly in the config file; highest priority
-2. The matching key inside the `[providers.<name>.env]` sub-table (`KIMI_API_KEY`, `ANTHROPIC_API_KEY`, etc.): consulted only when `api_key` is empty
-3. If both are absent, startup fails with an error indicating the provider is missing credentials
+1. `[providers.<name>].api_key`: key written directly in the config file
+2. `[providers.<name>].api_key_env`: name of a shell environment variable to read the key from
+3. The matching key inside the `[providers.<name>.env]` sub-table (`KIMI_API_KEY`, `ANTHROPIC_API_KEY`, etc.): consulted only when neither field above is present
+4. If all are absent, startup fails with an error indicating the provider is missing credentials
+
+`api_key` and `api_key_env` are alternatives, not a priority chain: set exactly one — setting both is rejected as a configuration conflict, as is setting `api_key_env` together with `oauth`.
+
+`api_key_env` is the one deliberate exception to "no shell environment variables for credentials": the value is re-read from the process's own environment on every request, so it is never cached beyond the process lifetime and no secret lands in `config.toml`. Note that a running process only sees the environment it started with — rotating the variable takes a restart of the `kimi` / TUI or kap-server process; a fresh `export` in the parent shell only affects newly spawned processes. Declaring `api_key_env` while the variable is unset or empty fails fast with an error naming the provider and the variable — at session readiness checks (print mode, kap-server session creation) and at request time — and is never silently ignored, with no fallback to another credential source.
 
 `base_url` is resolved the same way: first `[providers.<name>].base_url`, then the `*_BASE_URL` key in `[providers.<name>.env]`.
 
@@ -56,7 +61,7 @@ Options passed at startup have the highest priority and apply only to the curren
 | `-S, --session [id]` | Resume a specific session; enters interactive selection when no id is given |
 | `-c, --continue` | Resume the last session for the current working directory |
 | `-y, --yolo` | Ask When Needed mode: routine edits and commands run automatically; the agent may still ask questions |
-| `--auto` | Never Ask mode: never interrupts you; the agent will not ask questions |
+| `--auto` | Never Ask mode: the agent will not ask questions; only plans in Plan mode wait for your review |
 | `--plan` | Start in Plan mode |
 | `-m, --model <model>` | Use a specific model alias for this session |
 | `-p, --prompt <prompt>` | Run in non-interactive mode: execute a single prompt and exit |

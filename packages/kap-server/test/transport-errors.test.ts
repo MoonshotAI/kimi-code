@@ -5,6 +5,13 @@ import { describe, expect, it } from 'vitest';
 import { mapError } from '../src/transport/errors';
 import { installErrorHandler } from '../src/error-handler';
 
+describe('ErrorCode', () => {
+  it('has unique numeric values', () => {
+    const values = Object.values(ErrorCode);
+    expect(new Set(values).size).toBe(values.length);
+  });
+});
+
 describe('/api/v1/debug transport mapError', () => {
   it.each([
     [ErrorCodes.OS_FS_NOT_FOUND, ErrorCode.FS_PATH_NOT_FOUND],
@@ -22,6 +29,23 @@ describe('/api/v1/debug transport mapError', () => {
     expect(env.code).toBe(wire);
   });
 
+  it('maps session-specific public errors and preserves public details', () => {
+    const details = { holder: { clientIdentity: 'other' } };
+    const env = mapError(
+      new Error2(ErrorCodes.SESSION_OCCUPIED, 'boom', { details }),
+      'req-1',
+    );
+    expect(env.details).toEqual(details);
+    const versionDetails = { minReaderVersion: '9.9', readerVersion: '1.5' };
+    const incompatible = mapError(
+      new Error2(ErrorCodes.WIRE_VERSION_TOO_LOW, 'upgrade', { details: versionDetails }),
+      'req-1',
+    );
+    expect(incompatible.code).toBe(ErrorCode.WIRE_VERSION_TOO_LOW);
+    expect(incompatible.msg).toBe('upgrade');
+    expect(incompatible.details).toEqual(versionDetails);
+  });
+
   it('falls back to INTERNAL_ERROR for coded errors without a wire equivalent', () => {
     const env = mapError(new Error2(ErrorCodes.OS_FS_UNKNOWN, 'boom'), 'req-1');
     expect(env.code).toBe(ErrorCode.INTERNAL_ERROR);
@@ -29,7 +53,7 @@ describe('/api/v1/debug transport mapError', () => {
 });
 
 describe('installErrorHandler (catch-all)', () => {
-  function run(err: unknown): { code: number; msg: string } {
+  function run(err: unknown): { code: number; msg: string; details?: unknown } {
     let installed: unknown;
     installErrorHandler({
       setErrorHandler: (h) => {
@@ -42,7 +66,7 @@ describe('installErrorHandler (catch-all)', () => {
       req: { id: string; log: { error: () => void } },
       reply: { status: (code: number) => { send: (p: unknown) => void } },
     ) => void;
-    let payload: { code: number; msg: string } | undefined;
+    let payload: { code: number; msg: string; details?: unknown } | undefined;
     handler(
       err,
       { id: 'req-1', log: { error: () => {} } },
@@ -51,10 +75,17 @@ describe('installErrorHandler (catch-all)', () => {
     return payload!;
   }
 
-  it('maps an escaped config.invalid to VALIDATION_FAILED', () => {
+  it('maps escaped public errors to their protocol codes', () => {
     const env = run(new Error2(ErrorCodes.CONFIG_INVALID, 'broken pool'));
     expect(env.code).toBe(ErrorCode.VALIDATION_FAILED);
     expect(env.msg).toContain('broken pool');
+    const details = { minReaderVersion: '9.9', readerVersion: '1.5' };
+    const incompatible = run(
+      new Error2(ErrorCodes.WIRE_VERSION_TOO_LOW, 'upgrade required', { details }),
+    );
+    expect(incompatible.code).toBe(ErrorCode.WIRE_VERSION_TOO_LOW);
+    expect(incompatible.msg).toContain('upgrade required');
+    expect(incompatible.details).toEqual(details);
   });
 
   it('keeps unknown exceptions at INTERNAL_ERROR', () => {

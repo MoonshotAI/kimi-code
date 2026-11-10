@@ -64,6 +64,7 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
   readonly onDidChange: Event<SessionActivityChangedEvent> = this._onDidChange.event;
 
   private readonly agentSubscriptions = new Map<string, IDisposable>();
+  private activeAt = Date.now();
 
   constructor(
     @ISessionStateService private readonly states: ISessionStateService,
@@ -118,6 +119,10 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
 
   state(): SessionActivityState {
     return this.current;
+  }
+
+  lastActiveAt(): number {
+    return this.activeAt;
   }
 
   private attachAgent(handle: IAgentScopeHandle): void {
@@ -211,6 +216,7 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
     const next = this.aggregate();
     if (activityEquals(this.current, next)) return;
     this.current = next;
+    this.activeAt = Date.now();
     this._onDidChange.fire({ state: next, cause });
   }
 
@@ -248,11 +254,11 @@ function seedFold(handle: IAgentScopeHandle): AgentWorkFold {
       ? states.get(turnKey).lastEnded
       : undefined;
   return {
-    turnActive: loop?.status().state === 'running',
+    turnActive: loop?.snapshot().state === 'running',
     background: new Set(tasks?.list(true).map((task) => task.taskId) ?? []),
     compacting: (compaction?.compacting ?? null) !== null,
     lastTurnReason:
-      loop?.status().state === 'running' ? undefined : mapTurnReason(lastEnded?.reason),
+      loop?.snapshot().state === 'running' ? undefined : mapTurnReason(lastEnded?.reason),
   };
 }
 

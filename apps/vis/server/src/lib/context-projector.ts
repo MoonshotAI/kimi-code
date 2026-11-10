@@ -8,8 +8,8 @@ import {
 } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextOps';
 import { createLoopEventFold } from '@moonshot-ai/agent-core-v2/agent/contextMemory/loopEventFold';
 import { renderToolResultForModel } from '@moonshot-ai/agent-core-v2/agent/contextMemory/toolResultRender';
+import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
 import type {
-  ContentPart,
   ContextMessage,
   PermissionMode,
   TokenUsage,
@@ -167,7 +167,7 @@ export function projectContext(
       };
     },
     appendOpenToolCall: (call) => {
-      if (openMessage === undefined) return;
+      if (openMessage === undefined || openMessage.message.role !== 'assistant') return;
       openMessage.message = {
         ...openMessage.message,
         toolCalls: [...openMessage.message.toolCalls, call],
@@ -245,11 +245,13 @@ export function projectContext(
           // resetting to 0 — so guard against a false drop here too.
           if ('usage' in ev && ev.usage !== undefined) {
             const fill =
-              ev.usage.inputCacheRead +
-              ev.usage.inputCacheCreation +
-              ev.usage.inputOther +
-              ev.usage.output;
-            if (fill > 0) contextTokens = fill;
+              ev.usage.inputCacheRead === undefined
+                ? undefined
+                : ev.usage.inputCacheRead +
+                  ev.usage.inputCacheCreation +
+                  ev.usage.inputOther +
+                  ev.usage.output;
+            if (fill !== undefined && fill > 0) contextTokens = fill;
           }
         }
         break;
@@ -504,6 +506,7 @@ export function projectContext(
           const prev: GoalSnapshot = goal;
           goal = {
             ...prev,
+            objective: rec.objective ?? prev.objective,
             status: rec.status ?? prev.status,
             actor: rec.actor ?? prev.actor,
             reason: rec.reason ?? prev.reason,
@@ -541,6 +544,7 @@ export function projectContext(
       // are never part of context state:
       case 'metadata':
       case 'forked':
+      case 'changeNotifier.snapshot':
       case 'turn.prompt':
       case 'turn.steer':
       case 'turn.cancel':
@@ -556,12 +560,17 @@ export function projectContext(
       case 'task.started':
       case 'task.terminated':
       case 'task.waitDelivered':
+      case 'subagent.spawned':
+      case 'subagent.started':
+      case 'subagent.completed':
+      case 'subagent.failed':
+      case 'subagent.cancelled':
       case 'cron.add':
       case 'cron.cursor':
       case 'cron.delete':
       case 'plan.revision':
       case 'plugin.session_start':
-      case 'runtime.set_binding':
+      case 'environment.set_binding':
       case 'staleGuard.recorded':
       case 'staleGuard.cleared':
       case 'interruptionReminder.recorded':
@@ -577,6 +586,10 @@ export function projectContext(
       case 'llm.tools_snapshot':
       case 'llm.request':
       case 'mcp.tools_discovered':
+      case 'tool_select.initialized':
+      case 'tool_select.tools_changed':
+      case 'mcp.server_failed':
+      case 'mcp.server_failure_resolved':
       case 'file_history.checkpoint':
       case 'file_history.tracked':
         break;

@@ -112,6 +112,106 @@ describe('fetchCustomRegistry', () => {
     });
   });
 
+  it.each([
+    {
+      name: 'input only',
+      modalities: { input: ['text', 'image', 'video'] },
+      capabilities: ['image_in', 'video_in'],
+    },
+    {
+      name: 'output only',
+      modalities: { output: ['text', 'image', 'audio'] },
+      capabilities: ['image_out', 'audio_out'],
+    },
+    { name: 'empty input only', modalities: { input: [] }, capabilities: [] },
+    { name: 'empty output only', modalities: { output: [] }, capabilities: [] },
+  ])('preserves $name modalities through parsing and configuration', async ({ modalities, capabilities }) => {
+    const body = makeKokubResponseBody();
+    const upgrade = { model: 'next', migration_markdown: 'Use {model_to}' };
+    body['registry_chat-completions']!.models['current'] = { id: 'current', modalities, upgrade };
+    body['registry_chat-completions']!.models['next'] = { id: 'next' };
+    const fetchMock = vi.fn(async () => makeJsonResponse(body));
+
+    const result = await fetchCustomRegistry(
+      KOKUB_SOURCE,
+      { fetchImpl: fetchMock as unknown as typeof fetch },
+    );
+    const provider = result['registry_chat-completions']!;
+
+    expect(provider.models['current']?.modalities).toEqual(modalities);
+    expect(provider.models['current']?.upgrade).toEqual(upgrade);
+
+    const config: ManagedKimiConfigShape = { providers: {} };
+    applyCustomRegistryProvider(config, provider, KOKUB_SOURCE);
+    expect(config.models?.['registry_chat-completions/current']).toMatchObject({ capabilities });
+  });
+
+  it('parses upgrade metadata and null retirement time', async () => {
+    const body = makeKokubResponseBody();
+    body['registry_chat-completions']!.models['gpt-5.5'] = {
+      id: 'gpt-5.5',
+      name: 'GPT 5.5',
+      upgrade: {
+        model: 'gpt-6',
+        migration_markdown: 'Use {model_to}',
+        retirement_at: '2030-01-01T00:00:00Z',
+      },
+    };
+    body['registry_chat-completions']!.models['gpt-5.4'] = {
+      id: 'gpt-5.4',
+      upgrade: {
+        model: 'gpt-6',
+        migration_markdown: '',
+        retirement_at: null,
+      },
+    };
+    body['registry_chat-completions']!.models['gpt-5.3'] = {
+      id: 'gpt-5.3',
+      upgrade: {
+        model: 'gpt-6',
+        migration_markdown: 'Use GPT-6',
+        retirement_at: '2030-01-01t00:00:00z',
+      },
+    };
+    const fetchMock = vi.fn(async () => makeJsonResponse(body));
+
+    const result = await fetchCustomRegistry(
+      KOKUB_SOURCE,
+      { fetchImpl: fetchMock as unknown as typeof fetch },
+    );
+
+    expect(result['registry_chat-completions']?.models['gpt-5.5']?.upgrade).toEqual({
+      model: 'gpt-6',
+      migration_markdown: 'Use {model_to}',
+      retirement_at: '2030-01-01T00:00:00Z',
+    });
+    expect(result['registry_chat-completions']?.models['gpt-5.4']?.upgrade).toEqual({
+      model: 'gpt-6',
+      migration_markdown: '',
+      retirement_at: null,
+    });
+    expect(result['registry_chat-completions']?.models['gpt-5.3']?.upgrade?.retirement_at).toBe(
+      '2030-01-01t00:00:00z',
+    );
+  });
+
+  it('rejects malformed upgrade timestamps', async () => {
+    const body = makeKokubResponseBody();
+    body['registry_chat-completions']!.models['gpt-5.5'] = {
+      id: 'gpt-5.5',
+      upgrade: {
+        model: 'gpt-6',
+        migration_markdown: 'Use GPT-6',
+        retirement_at: 'not-a-timestamp',
+      },
+    };
+    const fetchMock = vi.fn(async () => makeJsonResponse(body));
+
+    await expect(
+      fetchCustomRegistry(KOKUB_SOURCE, { fetchImpl: fetchMock as unknown as typeof fetch }),
+    ).rejects.toThrow('retirement_at must be an RFC3339 timestamp or null');
+  });
+
   it('omits the Authorization header when the apiKey is empty', async () => {
     const fetchMock = vi.fn(async () => makeJsonResponse(makeKokubResponseBody()));
 
@@ -177,7 +277,7 @@ describe('fetchCustomRegistry', () => {
     const error = await fetchCustomRegistry(
       KOKUB_SOURCE,
       { fetchImpl: fetchMock as unknown as typeof fetch },
-    ).catch((caught: unknown) => caught);
+    ).catch((error: unknown) => error);
 
     expect(error).toBeInstanceOf(CustomRegistryApiError);
     expect((error as CustomRegistryApiError).status).toBe(401);
@@ -204,7 +304,7 @@ describe('fetchCustomRegistry', () => {
             id: 'unknown-type',
             name: 'Unknown Type',
             api: 'https://example.test/v1',
-            type: 'google-genai',
+            type: 'vertexai',
             models: { 'm-1': { id: 'm-1' } },
           },
           'registry_chat-completions': goodEntry,
@@ -231,6 +331,45 @@ describe('fetchCustomRegistry', () => {
     } finally {
       warnSpy.mockRestore();
     }
+  });
+
+  it('imports a google-genai provider whose api already includes the version path', async () => {
+    const fetchMock = vi.fn(async () =>
+      makeJsonResponse({
+        'registry_gemini-generate': {
+          id: 'registry_gemini-generate',
+          name: 'Sample Registry (Gemini)',
+          api: 'https://gateway.example.test/v1beta',
+          type: 'google-genai',
+          models: {
+            'gemini-4-argon': {
+              id: 'gemini-4-argon',
+              name: 'Gemini 4 Argon',
+              limit: { context: 1_000_000, output: 1_000_000 },
+              tool_call: true,
+              reasoning: true,
+              modalities: { input: ['text', 'image', 'video'], output: ['text'] },
+              support_efforts: ['low', 'medium', 'high'],
+              default_effort: 'high',
+            },
+          },
+        },
+      }),
+    );
+
+    const result = await fetchCustomRegistry(KOKUB_SOURCE, {
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+
+    expect(result['registry_gemini-generate']).toMatchObject({
+      type: 'google-genai',
+      api: 'https://gateway.example.test/v1beta',
+    });
+    expect(result['registry_gemini-generate']?.models['gemini-4-argon']).toMatchObject({
+      id: 'gemini-4-argon',
+      support_efforts: ['low', 'medium', 'high'],
+      default_effort: 'high',
+    });
   });
 });
 
@@ -328,6 +467,31 @@ describe('applyCustomRegistryProvider', () => {
     expect(alias.maxContextSize).toBe(200000);
     expect(alias.capabilities).toEqual(expect.arrayContaining(['tool_use', 'thinking', 'image_in']));
     expect(alias.capabilities).not.toContain('image_out');
+  });
+
+  it('maps limit.output onto the model alias maxOutputSize', () => {
+    const config: ManagedKimiConfigShape = { providers: {} };
+
+    applyCustomRegistryProvider(
+      config,
+      {
+        id: 'registry_chat-completions',
+        name: 'Sample Registry (chat completions)',
+        api: 'https://registry.example.test/v1',
+        type: 'openai_responses',
+        models: {
+          'deepseek-flash': {
+            id: 'deepseek-flash',
+            name: 'DeepSeek Flash',
+            limit: { context: 1000000, output: 393216 },
+          },
+        },
+      },
+      KOKUB_SOURCE,
+    );
+
+    const alias = config.models?.['registry_chat-completions/deepseek-flash'];
+    expect(alias?.['maxOutputSize']).toBe(393216);
   });
 
   it('clears stale aliases for the same provider before re-populating', () => {
@@ -462,6 +626,37 @@ describe('applyCustomRegistryProvider', () => {
     expect(alias['supportEfforts']).toEqual(['low', 'high', 'max']);
   });
 
+  it('drops a stale maxOutputSize when a refresh no longer declares limit.output', () => {
+    const config: ManagedKimiConfigShape = {
+      providers: {},
+      models: {
+        'registry_chat-completions/gpt-5.5': {
+          provider: 'registry_chat-completions',
+          model: 'gpt-5.5',
+          maxContextSize: 131072,
+          maxOutputSize: 8192,
+        } as Record<string, unknown>,
+      },
+    };
+
+    applyCustomRegistryProvider(
+      config,
+      {
+        id: 'registry_chat-completions',
+        name: 'Sample Registry (chat completions)',
+        api: 'https://registry.example.test/v1',
+        type: 'openai',
+        models: {
+          'gpt-5.5': { id: 'gpt-5.5', name: 'GPT 5.5' },
+        },
+      },
+      KOKUB_SOURCE,
+    );
+
+    const alias = config.models?.['registry_chat-completions/gpt-5.5'];
+    expect(alias?.['maxOutputSize']).toBeUndefined();
+  });
+
   it('drops stale effort fields when a refresh no longer declares them', () => {
     const config: ManagedKimiConfigShape = {
       providers: {},
@@ -493,6 +688,89 @@ describe('applyCustomRegistryProvider', () => {
     const alias = config.models?.['registry_chat-completions/gpt-5.5'];
     expect(alias?.['supportEfforts']).toBeUndefined();
     expect(alias?.['defaultEffort']).toBeUndefined();
+  });
+
+  it('persists upgrade metadata with model ids filled in and clears it when upstream removes it', () => {
+    const config: ManagedKimiConfigShape = { providers: {} };
+    const source = {
+      kind: 'apiJson' as const,
+      url: 'https://demo.example/api.json',
+      apiKey: 'x',
+    };
+    const entry: CustomRegistryProviderEntry = {
+      id: 'demo',
+      name: 'Demo',
+      api: 'https://demo.example/v1',
+      type: 'openai',
+      models: {
+        current: {
+          id: 'current',
+          upgrade: {
+            model: 'actual-next',
+            migration_markdown: 'Move from {model_from} to {model_to}',
+            retirement_at: null,
+          },
+        },
+        'replacement-key': { id: 'actual-next', default_effort: 'high' },
+        self: {
+          id: 'self',
+          upgrade: { model: 'self', migration_markdown: 'Ignore self' },
+        },
+        orphan: {
+          id: 'orphan',
+          upgrade: { model: 'missing', migration_markdown: 'Ignore missing' },
+        },
+      },
+    };
+
+    applyCustomRegistryProvider(config, entry, source);
+    expect(config.models?.['demo/current']?.['upgrade']).toEqual({
+      model: 'demo/replacement-key',
+      migrationMarkdown: 'Move from current to actual-next',
+    });
+    expect(config.models?.['demo/self']?.['upgrade']).toBeUndefined();
+    expect(config.models?.['demo/orphan']?.['upgrade']).toBeUndefined();
+
+    applyCustomRegistryProvider(
+      config,
+      {
+        ...entry,
+        models: {
+          current: { id: 'current' },
+          'replacement-key': { id: 'actual-next', default_effort: 'high' },
+        },
+      },
+      source,
+    );
+    expect(config.models?.['demo/current']?.['upgrade']).toBeUndefined();
+  });
+
+  it('does not preserve apiKeyEnv when the colliding provider is manual (no registry source)', () => {
+    const config: ManagedKimiConfigShape = {
+      providers: {
+        acme: {
+          type: 'openai',
+          baseUrl: 'https://acme.example.test/v1',
+          apiKeyEnv: 'VICTIM_KEY',
+        },
+      },
+    };
+    const entry: CustomRegistryProviderEntry = {
+      id: 'acme',
+      name: 'Acme',
+      api: 'https://attacker.example.test/v1',
+      type: 'openai',
+      models: { m1: { id: 'm1' } },
+    };
+
+    applyCustomRegistryProvider(config, entry, KOKUB_SOURCE);
+
+    expect(config.providers['acme']).toEqual({
+      type: 'openai',
+      baseUrl: 'https://attacker.example.test/v1',
+      apiKey: 'sk-token',
+      source: KOKUB_SOURCE,
+    });
   });
 });
 
@@ -580,7 +858,7 @@ describe('applyCustomRegistryEntries', () => {
     applyCustomRegistryEntries(config, entries, source);
     applyCustomRegistryEntries(config, entries, source);
 
-    expect(Object.keys(config.providers).sort()).toEqual(['a', 'b', 'c']);
+    expect(Object.keys(config.providers).toSorted()).toEqual(['a', 'b', 'c']);
     expect(config.models?.['a/m1']).toBeDefined();
     expect(config.models?.['b/m1']).toBeDefined();
     expect(config.models?.['c/m1']).toBeDefined();

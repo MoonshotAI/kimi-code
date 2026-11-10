@@ -22,7 +22,6 @@ function userMessage(text: string, origin?: PromptOrigin): ContextMessage {
   return {
     role: 'user',
     content: [{ type: 'text', text }],
-    toolCalls: [],
     ...(origin === undefined ? {} : { origin }),
   };
 }
@@ -98,6 +97,7 @@ describe('reduceContextTranscript', () => {
     expect(texts(result)).toEqual(['u1', 'a1', 'u2', 'a2', 'SUM', 'u3']);
     expect(result.entries[4]!.origin).toEqual({ kind: 'compaction_summary' });
     expect(result.entries[4]!.role).toBe('user');
+    expect(result.entries[4]).toHaveProperty('toolCalls', []);
     expect(result.foldedLength).toBe(4);
   });
 
@@ -146,6 +146,46 @@ describe('reduceContextTranscript', () => {
 
     expect(result.entries.map((m) => m.role)).toEqual(['user', 'assistant', 'tool', 'user']);
     expect(result.times).toEqual([100, 200, 220, undefined]);
+  });
+
+  it('attaches step.end usage and timing to the sealed assistant message', () => {
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('u1')),
+      loopEvent({ type: 'step.begin', uuid: 'st1' }),
+      loopEvent({ type: 'content.part', stepUuid: 'st1', part: { type: 'text', text: 'a1' } }),
+      loopEvent({
+        type: 'step.end',
+        uuid: 'st1',
+        usage: { inputOther: 10, output: 20, inputCacheRead: 30, inputCacheCreation: 40 },
+        llmFirstTokenLatencyMs: 800,
+        llmStreamDurationMs: 5000,
+      }),
+    ]);
+    const assistant = result.entries.find((m) => m.role === 'assistant');
+    expect(assistant?.usage).toEqual({
+      inputOther: 10,
+      output: 20,
+      inputCacheRead: 30,
+      inputCacheCreation: 40,
+    });
+    expect(assistant?.llmTiming).toEqual({
+      llmFirstTokenLatencyMs: 800,
+      llmStreamDurationMs: 5000,
+    });
+  });
+
+  it('seals without usage or timing when step.end carries neither', () => {
+    const result = reduceContextTranscript([
+      appendMessage({ role: 'system', content: [{ type: 'text', text: 'rules' }] }),
+      appendMessage(userMessage('u1')),
+      ...assistantStep('st1', 'a1'),
+    ]);
+    for (const message of result.entries) {
+      expect(message).not.toHaveProperty('usage');
+      expect(message).not.toHaveProperty('llmTiming');
+      expect(message).toHaveProperty('toolCalls', []);
+    }
+    expect(result.entries[0]).not.toHaveProperty('tools');
   });
 
   it('preserves the pre-compaction assistant reply after a later undo', () => {
@@ -242,9 +282,11 @@ describe('reduceContextTranscript', () => {
       loopEvent({ type: 'step.end', uuid: 's1' }),
     ]);
     expect(result.entries.map((m) => m.role)).toEqual(['user', 'assistant', 'tool']);
-    expect(result.entries[1]!.toolCalls).toHaveLength(1);
-    expect(result.entries[1]!.toolCalls[0]!.id).toBe('call_1');
-    expect(result.entries[2]!.toolCallId).toBe('call_1');
+    expect(result.entries[1]).toMatchObject({
+      role: 'assistant',
+      toolCalls: [{ id: 'call_1' }],
+    });
+    expect(result.entries[2]).toMatchObject({ role: 'tool', toolCallId: 'call_1', toolCalls: [] });
     expect(result.foldedLength).toBe(3);
   });
 
@@ -327,8 +369,8 @@ describe('live fold parity', () => {
     return messages.map((m) => ({
       role: m.role,
       content: m.content,
-      toolCalls: m.toolCalls,
-      toolCallId: m.toolCallId,
+      toolCalls: m.role === 'assistant' ? m.toolCalls : undefined,
+      toolCallId: m.role === 'tool' ? m.toolCallId : undefined,
       isError: m.isError,
       note: m.note,
     }));
@@ -426,7 +468,7 @@ describe('live fold parity', () => {
       'user',
       'assistant',
     ]);
-    expect(transcript.entries[2]!.toolCallId).toBe('c1');
+    expect(transcript.entries[2]).toMatchObject({ role: 'tool', toolCallId: 'c1' });
     expect(transcript.entries[2]!.isError).toBe(true);
     expect(transcript.foldedLength).toBe(live.length);
   });

@@ -60,7 +60,13 @@ function towerModeReminderVariant(
       assistantTurnsSince += 1;
       continue;
     }
-    if (message.role === 'user' && assistantTurnsSince >= 1) return 'full';
+    if (
+      message.role === 'user' &&
+      message.origin?.kind !== 'injection' &&
+      assistantTurnsSince >= 1
+    ) {
+      return 'full';
+    }
   }
   if (assistantTurnsSince >= TOWER_MODE_FULL_REFRESH_TURNS) return 'full';
   if (assistantTurnsSince >= TOWER_MODE_DEDUP_MIN_TURNS) return 'sparse';

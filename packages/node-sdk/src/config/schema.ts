@@ -1,4 +1,5 @@
 import { parsePattern } from '@moonshot-ai/agent-core-v2/agent/permissionRules/matchesRule';
+import { EnvironmentsSectionSchema } from '@moonshot-ai/agent-core-v2/remote/declaration/remoteEnvironmentDeclaration';
 import { z } from 'zod';
 
 import { ErrorCodes, KimiError } from '#/errors';
@@ -46,6 +47,7 @@ const StringRecordSchema = z.record(z.string(), z.string());
 export const ProviderConfigSchema = z.object({
   type: ProviderTypeSchema,
   apiKey: z.string().optional(),
+  apiKeyEnv: z.string().optional(),
   baseUrl: z.string().optional(),
   defaultModel: z.string().optional(),
   oauth: OAuthRefSchema.optional(),
@@ -55,6 +57,12 @@ export const ProviderConfigSchema = z.object({
 });
 
 export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;
+
+const ModelUpgradeSchema = z.object({
+  model: z.string().min(1),
+  migrationMarkdown: z.string(),
+  retirementAt: z.string().optional(),
+});
 
 const ModelAliasBaseSchema = z.object({
   provider: z.string(),
@@ -72,6 +80,7 @@ const ModelAliasBaseSchema = z.object({
   offEffort: z.string().optional(),
   betaApi: z.boolean().optional(),
   baseUrl: z.string().optional(),
+  upgrade: ModelUpgradeSchema.optional(),
 });
 
 export const ModelAliasOverrideSchema = ModelAliasBaseSchema.omit({
@@ -80,6 +89,7 @@ export const ModelAliasOverrideSchema = ModelAliasBaseSchema.omit({
   protocol: true,
   betaApi: true,
   baseUrl: true,
+  upgrade: true,
 }).partial();
 
 export type ModelAliasOverrides = z.infer<typeof ModelAliasOverrideSchema>;
@@ -90,11 +100,11 @@ export const ModelAliasSchema = ModelAliasBaseSchema.extend({
 
 export type ModelAlias = z.infer<typeof ModelAliasSchema>;
 
-export const SecondaryModelConfigSchema = ModelAliasOverrideSchema.extend({
+export const SecondaryModelConfigSchema = z.object({
   model: z.string().min(1).optional(),
   defaultModel: z.string().min(1).optional(),
   models: z.record(z.string(), z.string()).optional(),
-  force: z.boolean().optional(),
+  defaultEffort: z.string().optional(),
 });
 
 export type SecondaryModelConfig = z.infer<typeof SecondaryModelConfigSchema>;
@@ -138,6 +148,7 @@ export const LoopControlSchema = z.object({
   maxRalphIterations: z.number().int().min(-1).optional(),
   reservedContextSize: z.number().int().min(0).optional(),
   compactionTriggerRatio: z.number().min(0.5).max(0.99).optional(),
+  compactionMaxAttempts: z.number().int().min(1).optional(),
 });
 
 export type LoopControl = z.infer<typeof LoopControlSchema>;
@@ -167,6 +178,8 @@ const McpTimeoutMsSchema = z.number().int().min(1).max(MAX_MCP_TIMEOUT_MS);
 export const McpConfigSchema = z.object({
   startupTimeoutMs: McpTimeoutMsSchema.optional(),
   toolTimeoutMs: McpTimeoutMsSchema.optional(),
+  reconnectInitialDelayMs: McpTimeoutMsSchema.optional(),
+  reconnectMaxDelayMs: McpTimeoutMsSchema.optional(),
 });
 
 export type McpConfig = z.infer<typeof McpConfigSchema>;
@@ -188,6 +201,10 @@ export type ModelCatalogConfig = z.infer<typeof ModelCatalogConfigSchema>;
 export const ExperimentalConfigSchema = z.record(z.string(), z.boolean());
 
 export type ExperimentalConfig = z.infer<typeof ExperimentalConfigSchema>;
+
+export const EnvironmentsConfigSchema = EnvironmentsSectionSchema;
+
+export type EnvironmentsConfig = z.infer<typeof EnvironmentsConfigSchema>;
 
 export const HookDefSchema = z
   .object({
@@ -230,7 +247,6 @@ export const McpServerStdioConfigSchema = z.object({
   args: z.array(z.string()).optional(),
   env: StringRecordSchema.optional(),
   cwd: z.string().optional(),
-  executor: z.enum(['local', 'kaos']).optional(),
   ...McpServerCommonFields,
 });
 
@@ -287,6 +303,7 @@ export const KimiConfigSchema = z.object({
   yolo: z.boolean().optional(),
   defaultPermissionMode: PermissionModeSchema.optional(),
   defaultPlanMode: z.boolean().optional(),
+  autoSessionTitle: z.boolean().optional(),
   permission: PermissionConfigSchema.optional(),
   hooks: z.array(HookDefSchema).optional(),
   services: ServicesConfigSchema.optional(),
@@ -301,7 +318,9 @@ export const KimiConfigSchema = z.object({
   image: ImageConfigSchema.optional(),
   modelCatalog: ModelCatalogConfigSchema.optional(),
   experimental: ExperimentalConfigSchema.optional(),
+  environments: EnvironmentsConfigSchema.optional(),
   telemetry: z.boolean().optional(),
+  disableFeedbackSurvey: z.boolean().optional(),
   raw: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -336,6 +355,7 @@ export const KimiConfigPatchSchema = z
     yolo: z.boolean().optional(),
     defaultPermissionMode: PermissionModeSchema.optional(),
     defaultPlanMode: z.boolean().optional(),
+    autoSessionTitle: z.boolean().optional(),
     permission: PermissionConfigPatchSchema.optional(),
     hooks: z.array(HookDefSchema).optional(),
     services: ServicesConfigPatchSchema.optional(),
@@ -350,7 +370,9 @@ export const KimiConfigPatchSchema = z
     image: ImageConfigPatchSchema.optional(),
     modelCatalog: ModelCatalogConfigPatchSchema.optional(),
     experimental: ExperimentalConfigPatchSchema.optional(),
+    environments: EnvironmentsConfigSchema.optional(),
     telemetry: z.boolean().optional(),
+    disableFeedbackSurvey: z.boolean().optional(),
   })
   .strict();
 

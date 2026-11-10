@@ -28,12 +28,22 @@ const pluginSessionStartSchema = z.object({
   skill: z.string(),
 });
 
+const pluginInterfaceOverrideSchema = z.object({
+  displayName: z.string().optional(),
+  description: z.string().optional(),
+  iconUrl: z.string().optional(),
+});
+
 const pluginInterfaceSchema = z.object({
   displayName: z.string().optional(),
   shortDescription: z.string().optional(),
   longDescription: z.string().optional(),
   developerName: z.string().optional(),
   websiteURL: z.string().optional(),
+  defaultLocale: z.string().optional(),
+  locales: z.string().optional(),
+  mcpOverrides: z.record(z.string(), pluginInterfaceOverrideSchema).optional(),
+  skillOverrides: z.record(z.string(), pluginInterfaceOverrideSchema).optional(),
 });
 
 const hookDefSchema = z.object({
@@ -101,6 +111,9 @@ export const pluginManifestSchema = z.object({
 
 export const pluginMcpServerInfoSchema = z.object({
   name: z.string(),
+  displayName: z.string().optional(),
+  description: z.string().optional(),
+  iconUrl: z.string().optional(),
   runtimeName: z.string(),
   enabled: z.boolean(),
   transport: z.enum(['stdio', 'http', 'sse']),
@@ -122,6 +135,9 @@ export const pluginGithubMetadataSchema = z.object({
 export const pluginSummarySchema = z.object({
   id: z.string(),
   displayName: z.string(),
+  description: z.string().optional(),
+  shortDescription: z.string().optional(),
+  longDescription: z.string().optional(),
   version: z.string().optional(),
   enabled: z.boolean(),
   state: pluginStateSchema,
@@ -132,17 +148,31 @@ export const pluginSummarySchema = z.object({
   commandCount: z.number(),
   hasErrors: z.boolean(),
   source: pluginSourceSchema,
+  origin: z.enum(['marketplace', 'custom', 'unknown']),
+  catalogId: z.string().optional(),
+  installedAt: z.string(),
   originalSource: z.string().optional(),
   github: pluginGithubMetadataSchema.optional(),
 });
 
+export const pluginSkillInfoSchema = z.object({
+  name: z.string(),
+  displayName: z.string().optional(),
+  description: z.string().optional(),
+});
+
+export const pluginCapabilitiesSchema = z.object({
+  skills: z.array(pluginSkillInfoSchema),
+  mcpServers: z.array(pluginMcpServerInfoSchema),
+});
+
 export const pluginInfoSchema = pluginSummarySchema.extend({
   root: z.string(),
-  installedAt: z.string(),
   updatedAt: z.string().optional(),
   manifestKind: pluginManifestKindSchema.optional(),
   manifestPath: z.string().optional(),
   manifest: pluginManifestSchema.optional(),
+  skills: z.array(pluginSkillInfoSchema),
   mcpServers: z.array(pluginMcpServerInfoSchema),
   shadowedManifestPath: z.string().optional(),
   diagnostics: z.array(pluginDiagnosticSchema),
@@ -172,9 +202,18 @@ export const pluginCommandDefSchema = z.object({
   path: z.string(),
 });
 
-export const installPluginInputSchema = z.object({
-  source: z.string(),
-});
+export const installPluginInputSchema = z.union([
+  z.object({ source: z.string() }).strict(),
+  z
+    .object({
+      marketplaceId: z.string(),
+      expectedVersion: z.string().optional(),
+      expectedSha256: z.string().optional(),
+      marketplaceSource: z.string().optional(),
+      migrateFrom: z.string().optional(),
+    })
+    .strict(),
+]);
 
 export const setPluginEnabledInputSchema = z.object({
   id: z.string(),
@@ -193,6 +232,7 @@ export const removePluginInputSchema = z.object({
 
 export const getPluginInfoInputSchema = z.object({
   id: z.string(),
+  locale: z.string().optional(),
 });
 
 export const pluginsContract = {

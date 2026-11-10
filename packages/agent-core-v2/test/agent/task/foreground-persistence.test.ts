@@ -103,8 +103,8 @@ async function drainPendingNotifications(
   });
   await vi.waitFor(() => {
     const loop = ctx.get(IAgentLoopService);
-    expect(loop.status().state).toBe('idle');
-    expect(loop.hasPendingRequests()).toBe(false);
+    expect(loop.snapshot().state).toBe('idle');
+    expect(loop.snapshot().hasPendingRequests).toBe(false);
   });
 }
 

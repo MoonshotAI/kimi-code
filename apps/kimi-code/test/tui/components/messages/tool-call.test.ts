@@ -1,11 +1,13 @@
-import { visibleWidth, type TUI } from '@moonshot-ai/pi-tui';
+import { resetCapabilitiesCache, setCapabilities, Text, visibleWidth, type TUI } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
 import { setExperimentalFeatures } from '#/tui/commands/experimental-flags';
 import { ToolCallComponent } from '#/tui/components/messages/tool-call';
-import { STATUS_BULLET } from '#/tui/constant/symbols';
+import { TruncatedHeaderLine } from '#/tui/components/messages/truncated-header-line';
+import { NOTIFY_USER_MARK, STATUS_BULLET } from '#/tui/constant/symbols';
 import { darkColors } from '#/tui/theme/colors';
+import { setRenderCacheEnabled } from '#/tui/utils/render-cache';
 
 import { captureProcessWrite } from '../../../helpers/process';
 
@@ -113,7 +115,7 @@ describe('ToolCallComponent', () => {
       );
 
       vi.advanceTimersByTime(5_000);
-      component.setResult({ tool_call_id: 'call_bash_short', output: 'hi', is_error: false });
+      component.setResult({ tool_call_id: 'call_bash_short', output: 'hi', is_error: false }, { known: false });
       vi.advanceTimersByTime(10_000);
 
       expect(strip(component.render(100).join('\n'))).not.toContain(
@@ -198,6 +200,86 @@ describe('ToolCallComponent', () => {
     expect(collapsed).toContain('… (2 more lines, ctrl+o to expand)');
   });
 
+  it('keeps a failing command fully visible when only one row would hide', () => {
+    const component = new ToolCallComponent(
+      {
+        id: 'call_shell_err_edge',
+        name: 'Bash',
+        args: { command: 'false' },
+      },
+      {
+        tool_call_id: 'call_shell_err_edge',
+        output: ['err1', 'err2', 'err3', 'err4'].join('\n'),
+        is_error: true,
+      },
+    );
+
+    const collapsed = strip(component.render(100).join('\n'));
+    expect(collapsed).toContain('err1');
+    expect(collapsed).toContain('err4');
+    expect(collapsed).not.toContain('more lines');
+    expect(component.hasHiddenContent()).toBe(false);
+  });
+
+  it('advertises ctrl+o for a failing command once folding saves a row', () => {
+    const component = new ToolCallComponent(
+      {
+        id: 'call_shell_err_fold',
+        name: 'Bash',
+        args: { command: 'false' },
+      },
+      {
+        tool_call_id: 'call_shell_err_fold',
+        output: ['err1', 'err2', 'err3', 'err4', 'err5'].join('\n'),
+        is_error: true,
+      },
+    );
+
+    component.render(100);
+    expect(component.hasHiddenContent()).toBe(true);
+  });
+
+  it('counts error rows like the preview does, interior blanks included', () => {
+    // Four non-empty rows plus an interior blank: the preview folds (five
+    // rendered rows > cap + 1), so the predicate must not count non-empty
+    // lines only.
+    const component = new ToolCallComponent(
+      {
+        id: 'call_shell_err_blank',
+        name: 'Bash',
+        args: { command: 'false' },
+      },
+      {
+        tool_call_id: 'call_shell_err_blank',
+        output: 'a\n\nb\nc\nd',
+        is_error: true,
+      },
+    );
+
+    component.render(100);
+    expect(component.hasHiddenContent()).toBe(true);
+  });
+
+  it('does not count control-only rows the preview strips from Bash errors', () => {
+    // Four visible rows plus a trailing reset: the sanitized preview shows
+    // all four without folding, so ctrl+o must stay off.
+    const component = new ToolCallComponent(
+      {
+        id: 'call_shell_err_ansi',
+        name: 'Bash',
+        args: { command: 'false' },
+      },
+      {
+        tool_call_id: 'call_shell_err_ansi',
+        output: 'a\nb\nc\nd\n\u001B[0m',
+        is_error: true,
+      },
+    );
+
+    component.render(100);
+    expect(component.hasHiddenContent()).toBe(false);
+  });
+
   it('renders live Bash output while the command is running', () => {
     const component = new ToolCallComponent(
       {
@@ -241,7 +323,7 @@ describe('ToolCallComponent', () => {
       tool_call_id: 'call_shell_live_done',
       output: 'final-only\n',
       is_error: false,
-    });
+    }, { known: false });
     component.setExpanded(true);
 
     const out = strip(component.render(100).join('\n'));
@@ -284,7 +366,7 @@ describe('ToolCallComponent', () => {
         tool_call_id: 'call_bash_done',
         output: 'step a\nstep b\nstep c\ndone',
         is_error: false,
-      });
+      }, { known: false });
 
       const collapsed = component.render(100).map(strip).filter((line) => line.trim().length > 0);
       expect(collapsed).toHaveLength(2);
@@ -328,7 +410,7 @@ describe('ToolCallComponent', () => {
     });
     const message = 'Login module is clean.\n\nThe bug must be in **session expiry**.';
 
-    it('collapses to a header with the first line and expands to the full message', () => {
+    it('collapses to the Update badge and title, then expands to the full message', () => {
       const component = new ToolCallComponent(
         { id: 'call_notify', name: 'NotifyUser', args: { message } },
         { tool_call_id: 'call_notify', output: 'Update shown to the user.', is_error: false },
@@ -336,17 +418,296 @@ describe('ToolCallComponent', () => {
 
       const collapsed = component.render(100).map(strip).filter((line) => line.trim().length > 0);
       expect(collapsed).toHaveLength(1);
-      expect(collapsed[0]).toContain('Sent you an update');
-      expect(collapsed[0]).toContain('Login module is clean.');
+      expect(collapsed[0]).toBe(`${NOTIFY_USER_MARK} Login module is clean.`);
+      expect(collapsed[0]).not.toContain('Sent you an update');
       expect(collapsed[0]).not.toContain('session expiry');
       expect(collapsed[0]).not.toContain('Update shown');
       expect(component.hasHiddenContent()).toBe(true);
 
       component.setExpanded(true);
       const expanded = strip(component.render(100).join('\n'));
-      expect(expanded).toContain('session expiry');
+      expect(expanded).toContain(`${NOTIFY_USER_MARK} Login module is clean.`);
+      expect(expanded).toContain('  The bug must be in session expiry.');
       expect(expanded).not.toContain('Update shown');
       expect(component.hasHiddenContent()).toBe(true);
+    });
+
+    it('renders the Update badge with a primary background and white text', () => {
+      const component = new ToolCallComponent(
+        { id: 'call_notify_brand', name: 'NotifyUser', args: { message } },
+        { tool_call_id: 'call_notify_brand', output: 'Update shown to the user.', is_error: false },
+      );
+
+      const output = component.render(100).join('\n');
+      const expectedMark = chalk.bgHex(darkColors.primary)(chalk.hex('#FFFFFF')(NOTIFY_USER_MARK));
+      expect(output).toContain(expectedMark);
+    });
+
+    it('uses the title as the header and keeps the message behind ctrl+o', () => {
+      const component = new ToolCallComponent(
+        {
+          id: 'call_notify_titled',
+          name: 'NotifyUser',
+          args: { title: 'Root cause found', message },
+        },
+        { tool_call_id: 'call_notify_titled', output: 'Update shown to the user.', is_error: false },
+      );
+
+      const collapsed = component.render(100).map(strip).filter((line) => line.trim().length > 0);
+      expect(collapsed).toHaveLength(1);
+      expect(collapsed[0]).toBe(`${NOTIFY_USER_MARK} Root cause found`);
+      expect(collapsed[0]).not.toContain('Sent you an update');
+      expect(collapsed[0]).not.toContain('Login module is clean.');
+
+      component.setExpanded(true);
+      const expanded = strip(component.render(100).join('\n'));
+      expect(expanded).toContain('Login module is clean.');
+      expect(expanded).toContain('session expiry');
+    });
+
+    it('uses the first non-empty message line as a plain-text title fallback', () => {
+      const component = new ToolCallComponent(
+        {
+          id: 'call_notify_fallback',
+          name: 'NotifyUser',
+          args: { message: '\n- **Root cause found**\n\nDetails' },
+        },
+        {
+          tool_call_id: 'call_notify_fallback',
+          output: 'Update shown to the user.',
+          is_error: false,
+        },
+      );
+
+      const rows = component.render(100).map(strip).filter((line) => line.trim().length > 0);
+      expect(rows).toEqual([`${NOTIFY_USER_MARK} Root cause found`]);
+    });
+
+    it('wraps an expanded title using each row\'s own available width', () => {
+      const title = 'x'.repeat(114);
+      const component = new ToolCallComponent(
+        { id: 'call_notify_wrap', name: 'NotifyUser', args: { title, message: 'Body' } },
+        {
+          tool_call_id: 'call_notify_wrap',
+          output: 'Update shown to the user.',
+          is_error: false,
+        },
+      );
+
+      const collapsed = component.render(60).map(strip).filter((line) => line.trim().length > 0);
+      expect(collapsed).toHaveLength(1);
+      expect(collapsed[0]).toContain('…');
+      expect(visibleWidth(collapsed[0]!)).toBeLessThanOrEqual(60);
+
+      component.setExpanded(true);
+      const rows = component.render(60).map(strip).filter((line) => line.trim().length > 0);
+      const titleRows = rows.filter((line) => line.includes('x'));
+      expect(titleRows).toHaveLength(3);
+      expect(titleRows[0]!.replace(`${NOTIFY_USER_MARK} `, '')).toHaveLength(51);
+      expect(titleRows[1]).toBe(`  ${'x'.repeat(58)}`);
+      expect(titleRows[2]).toBe(`  ${'x'.repeat(5)}`);
+      expect(rows.at(-1)).toBe('  Body');
+      for (const row of rows) expect(visibleWidth(row)).toBeLessThanOrEqual(60);
+    });
+
+    it('aligns Chinese title continuations and the body with tool output', () => {
+      const title = '找到登录状态在页面刷新后失效的根因，并确认 cookie 写回修复不会影响现有会话';
+      const component = new ToolCallComponent(
+        {
+          id: 'call_notify_cjk',
+          name: 'NotifyUser',
+          args: { title, message: 'refreshSession() 写回 cookie。' },
+        },
+        {
+          tool_call_id: 'call_notify_cjk',
+          output: 'Update shown to the user.',
+          is_error: false,
+        },
+      );
+      component.setExpanded(true);
+
+      const rows = component.render(60).map(strip).filter((line) => line.trim().length > 0);
+      const titleStart = rows.findIndex((line) => line.includes('找到登录状态'));
+      const bodyStart = rows.findIndex((line) => line.includes('refreshSession()'));
+      expect(titleStart).toBeGreaterThanOrEqual(0);
+      expect(bodyStart).toBeGreaterThan(titleStart + 1);
+      for (const row of rows.slice(titleStart + 1, bodyStart + 1)) {
+        expect(row.search(/\S/)).toBe(2);
+      }
+      expect(rows.join('').replaceAll(/\s/g, '')).toContain(title.replaceAll(/\s/g, ''));
+      for (const width of [1, 2, 4, 10, 24, 48]) {
+        for (const row of component.render(width)) {
+          expect(visibleWidth(row)).toBeLessThanOrEqual(width);
+        }
+      }
+    });
+
+    it('renders the whole body in tool-output dim', () => {
+      const previousLevel = chalk.level;
+      chalk.level = 3;
+      try {
+        const component = new ToolCallComponent(
+          {
+            id: 'call_notify_color',
+            name: 'NotifyUser',
+            args: { title: 'Root cause found', message: '`refreshSession()` returns a new token.' },
+          },
+          {
+            tool_call_id: 'call_notify_color',
+            output: 'Update shown to the user.',
+            is_error: false,
+          },
+        );
+
+        component.setExpanded(true);
+        const body = component
+          .render(100)
+          .find((line) => line.includes('refreshSession()'));
+        expect(body).toBe(chalk.dim('  refreshSession() returns a new token.'));
+      } finally {
+        chalk.level = previousLevel;
+      }
+    });
+
+    it('uses tool-output dim for the message while it streams', () => {
+      const previousLevel = chalk.level;
+      chalk.level = 3;
+      try {
+        const component = new ToolCallComponent(
+          {
+            id: 'call_notify_stream_color',
+            name: 'NotifyUser',
+            args: {},
+            streamingArguments:
+              '{"title":"Root cause found","message":"`refreshSession()` returns a new token.',
+          },
+          undefined,
+        );
+        component.setExpanded(true);
+
+        const body = component
+          .render(100)
+          .find((line) => line.includes('refreshSession()'));
+        expect(body).toBe(chalk.dim('  refreshSession() returns a new token.'));
+      } finally {
+        chalk.level = previousLevel;
+      }
+    });
+
+    it.each([false, true])('preserves Markdown link targets while dimming, streaming: %s', (streaming) => {
+      setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+      try {
+        const component = new ToolCallComponent(
+          streaming
+            ? {
+                id: 'call_notify_link_stream',
+                name: 'NotifyUser',
+                args: {},
+                streamingArguments: '{"message":"[logs](https://example.test)"}',
+              }
+            : {
+                id: 'call_notify_link',
+                name: 'NotifyUser',
+                args: { message: '[logs](https://example.test)' },
+              },
+          streaming
+            ? undefined
+            : {
+                tool_call_id: 'call_notify_link',
+                output: 'Update shown to the user.',
+                is_error: false,
+              },
+        );
+        component.setExpanded(true);
+
+        const output = component.render(100).join('\n');
+        expect(output).toContain(`${ESC}]8;;https://example.test${ESC}\\`);
+        expect(output).toContain(`${ESC}]8;;${ESC}\\`);
+      } finally {
+        resetCapabilitiesCache();
+      }
+    });
+
+    it('keeps a failed delivery on the existing error card', () => {
+      const component = new ToolCallComponent(
+        { id: 'call_notify_error', name: 'NotifyUser', args: { title: 'Failed', message } },
+        { tool_call_id: 'call_notify_error', output: 'Delivery failed.', is_error: true },
+      );
+
+      const rendered = strip(component.render(100).join('\n'));
+      expect(rendered).toContain('Could not send you an update');
+      expect(rendered).toContain('Delivery failed.');
+      expect(rendered).not.toContain(`${NOTIFY_USER_MARK} `);
+    });
+
+    it('streams the collapsed title and the expanded message before delivery', () => {
+      const component = new ToolCallComponent(
+        {
+          id: 'call_notify_transition',
+          name: 'NotifyUser',
+          args: {},
+          streamingArguments: '{"title":"Root c',
+        },
+        undefined,
+      );
+      let rows = component.render(100).map(strip).filter((line) => line.trim().length > 0);
+      expect(rows).toEqual([`${NOTIFY_USER_MARK} Root c`]);
+      expect(component.hasHiddenContent()).toBe(false);
+
+      component.updateToolCall({
+        id: 'call_notify_transition',
+        name: 'NotifyUser',
+        args: { title: 'Root cause' },
+        streamingArguments: '{"title":"Root cause","message":"Login module is cl',
+      });
+      rows = component.render(100).map(strip).filter((line) => line.trim().length > 0);
+      expect(rows).toEqual([`${NOTIFY_USER_MARK} Root cause`]);
+      expect(component.hasHiddenContent()).toBe(true);
+
+      component.setExpanded(true);
+      rows = component
+        .render(100)
+        .map(strip)
+        .filter((line) => line.trim().length > 0)
+        .map((line) => line.trimEnd());
+      expect(rows).toEqual([`${NOTIFY_USER_MARK} Root cause`, '  Login module is cl']);
+      expect(rows.join('\n')).not.toContain('sending');
+      component.setExpanded(false);
+
+      component.updateToolCall({
+        id: 'call_notify_transition',
+        name: 'NotifyUser',
+        args: { title: 'Root cause', message },
+        streamingArguments: undefined,
+      });
+      expect(component.hasHiddenContent()).toBe(true);
+      component.setResult({
+        tool_call_id: 'call_notify_transition',
+        output: 'Update shown to the user.',
+        is_error: false,
+      }, { known: false });
+      rows = component.render(100).map(strip).filter((line) => line.trim().length > 0);
+      expect(rows).toEqual([`${NOTIFY_USER_MARK} Root cause`]);
+      expect(component.hasHiddenContent()).toBe(true);
+    });
+
+    it('keeps the collapsed card to one row while a long title and message stream', () => {
+      const component = new ToolCallComponent(
+        {
+          id: 'call_notify_stream_narrow',
+          name: 'NotifyUser',
+          args: {},
+          streamingArguments: `{"title":"${'x'.repeat(100)}","message":"Streaming body`,
+        },
+        undefined,
+      );
+
+      for (const width of [20, 40, 60]) {
+        const rows = component.render(width).map(strip).filter((line) => line.trim().length > 0);
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toContain(NOTIFY_USER_MARK);
+        expect(visibleWidth(rows[0]!)).toBeLessThanOrEqual(width);
+      }
     });
 
     it('renders historical calls as ordinary tool records when disabled', () => {
@@ -357,16 +718,22 @@ describe('ToolCallComponent', () => {
       );
       const output = strip(component.render(100).join('\n'));
       expect(output).toContain('Used NotifyUser');
+      expect(output).not.toContain(`${NOTIFY_USER_MARK} `);
       expect(output).not.toContain('Sent you an update');
       expect(output).toContain('Update shown to the user.');
     });
 
-    it('labels the in-flight call as sending', () => {
+    it('shows only the Update badge before streamed content is available', () => {
       const component = new ToolCallComponent(
         { id: 'call_notify_live', name: 'NotifyUser', args: {}, streamingArguments: '{"mess' },
         undefined,
       );
-      expect(strip(component.render(100).join('\n'))).toContain('Sending you an update');
+      const rows = component
+        .render(100)
+        .map(strip)
+        .filter((line) => line.trim().length > 0)
+        .map((line) => line.trimEnd());
+      expect(rows).toEqual([NOTIFY_USER_MARK.trimEnd()]);
       expect(component.hasHiddenContent()).toBe(false);
     });
 
@@ -381,6 +748,7 @@ describe('ToolCallComponent', () => {
         component.setExpanded(expanded);
         const rendered = strip(component.render(150).join('\n'));
         expect(rendered).not.toContain('Sent you an update');
+        expect(rendered).not.toContain(`${NOTIFY_USER_MARK} `);
         expect(rendered).toContain(output);
         if (enabled) expect(rendered).toContain('Update not displayed');
       }
@@ -393,6 +761,7 @@ describe('ToolCallComponent', () => {
       );
       const rendered = strip(component.render(150).join('\n'));
       expect(rendered).not.toContain('Sent you an update');
+      expect(rendered).not.toContain(`${NOTIFY_USER_MARK} `);
       expect(rendered).toContain('An unrecognized result.');
     });
 
@@ -411,6 +780,7 @@ describe('ToolCallComponent', () => {
       expect(out).toContain('Update cut off');
       expect(out).not.toContain('Sending you an update');
       expect(out).toContain('call never executed');
+      expect(out).not.toContain(`${NOTIFY_USER_MARK} `);
       expect(component.hasHiddenContent()).toBe(false);
     });
   });
@@ -445,7 +815,8 @@ describe('ToolCallComponent', () => {
       const rows = component.render(50).map(strip).filter((line) => line.trim().length > 0);
       expect(rows).toHaveLength(1);
       expect(visibleWidth(rows[0]!)).toBeLessThanOrEqual(50);
-      expect(rows[0]).toContain('Sent you an update');
+      expect(rows[0]).toContain(NOTIFY_USER_MARK);
+      expect(rows[0]).toContain('…');
       expect(component.hasHiddenContent()).toBe(true);
     });
 
@@ -462,7 +833,7 @@ describe('ToolCallComponent', () => {
       expect(header.render(100)).toBe(first);
       expect(header.render(80)).not.toBe(first);
 
-      component.setResult({ tool_call_id: 'call_bash_cached', output: 'ok', is_error: false });
+      component.setResult({ tool_call_id: 'call_bash_cached', output: 'ok', is_error: false }, { known: false });
       const finished = header.render(100);
       expect(finished).not.toBe(first);
       expect(strip(finished[0]!)).toContain('Ran a command');
@@ -1254,7 +1625,7 @@ describe('ToolCallComponent', () => {
       tool_call_id: 'call_agent',
       output: 'parent duplicate result',
       is_error: false,
-    });
+    }, { known: false });
     vi.setSystemTime(30_000);
 
     out = strip(component.render(120).join('\n'));
@@ -1330,7 +1701,7 @@ describe('ToolCallComponent', () => {
       tool_call_id: 'call_agent_detach',
       output: 'agent_id: sub_detach_1\nactual_subagent_type: explore\n',
       is_error: false,
-    });
+    }, { known: false });
     out = strip(component.render(120).join('\n'));
     expect(out).toContain('Backgrounded');
     expect(out).not.toContain('Completed');
@@ -1480,6 +1851,204 @@ describe('ToolCallComponent', () => {
     expect(lines.join('\n')).not.toContain('seg00');
   });
 
+  it('keeps a leading blank row when the subagent tail starts with a newline', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_agent_leading_blank',
+        name: 'Agent',
+        args: { description: 'blank first row' },
+      },
+      undefined,
+    );
+    component.onSubagentSpawned({
+      agentId: 'sub_blank',
+      agentName: 'explore',
+      runInBackground: false,
+    });
+    component.appendSubagentText('\nanswer', 'text');
+
+    const rows = strip(component.render(60).join('\n'))
+      .split('\n')
+      .filter((line) => line.includes('│'));
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).not.toContain('answer');
+    expect(rows[1]).toContain('answer');
+    component.dispose();
+  });
+
+  it('keeps the two-row window identical for multi-line text past the preview cap', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_agent_long_multiline',
+        name: 'Agent',
+        args: { description: 'long multi-line output' },
+      },
+      undefined,
+    );
+    component.onSubagentSpawned({
+      agentId: 'sub_long_multiline',
+      agentName: 'explore',
+      runInBackground: false,
+    });
+    // Well past SUBAGENT_PREVIEW_TEXT_MAX_CHARS.
+    const text = Array.from({ length: 900 }, (_, i) => `line ${String(i)} with a few words`).join('\n');
+    component.appendSubagentText(text, 'text');
+
+    const rows = strip(component.render(60).join('\n'))
+      .split('\n')
+      .filter((line) => line.includes('│'));
+    // The reference is the unbounded render: the preview cap must not move rows.
+    const reference = new Text(text, 0, 0).render(56).slice(-2);
+    expect(rows.map((line) => line.trimEnd())).toEqual(
+      reference.map((line) => strip(`  │ ${line}`).trimEnd()),
+    );
+    component.dispose();
+  });
+
+  it('keeps the newest line visible when the tail is one long line then a short one', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_agent_long_line_then_short',
+        name: 'Agent',
+        args: { description: 'long line then done' },
+      },
+      undefined,
+    );
+    component.onSubagentSpawned({
+      agentId: 'sub_long_line_then_short',
+      agentName: 'explore',
+      runInBackground: false,
+    });
+    component.appendSubagentText(`${'x'.repeat(8001)}\ndone`, 'text');
+
+    const rows = strip(component.render(60).join('\n'))
+      .split('\n')
+      .filter((line) => line.includes('│'));
+    expect(rows).toHaveLength(2);
+    // The partial first line still fills the upper row; the short line stays.
+    expect(rows[0]).toContain('x');
+    expect(rows[1]).toContain('done');
+    component.dispose();
+  });
+
+  it('strips control sequences from the retained tail past the preview cap', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_agent_ansi_tail',
+        name: 'Agent',
+        args: { description: 'colored tail' },
+      },
+      undefined,
+    );
+    component.onSubagentSpawned({
+      agentId: 'sub_ansi_tail',
+      agentName: 'explore',
+      runInBackground: false,
+    });
+    // Past the cap, so the tail is trimmed; the SGR codes sit inside it.
+    const text = `${'plain line\n'.repeat(900)}${ESC}[31mfinal answer${ESC}[0m`;
+    component.appendSubagentText(text, 'text');
+
+    const raw = component.render(60).join('\n');
+    expect(raw).toContain('final answer');
+    // The retained tail carries no source styling, so its colour code is gone
+    // instead of being replayed without the matching reset.
+    expect(raw).not.toContain(`${ESC}[31m`);
+    component.dispose();
+  });
+
+  it('keeps the long line in the finished window when the tail ends with a blank', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_agent_long_line_trailing_blank',
+        name: 'Agent',
+        args: { description: 'long line then done then blank' },
+      },
+      undefined,
+    );
+    component.onSubagentSpawned({
+      agentId: 'sub_long_line_trailing_blank',
+      agentName: 'explore',
+      runInBackground: false,
+    });
+    component.appendSubagentText(`${'x'.repeat(8001)}\ndone\n`, 'text');
+    component.onSubagentCompleted({ contextTokens: 0, resultSummary: '' } as never);
+
+    const rows = strip(component.render(60).join('\n'))
+      .split('\n')
+      .filter((line) => line.includes('│'));
+    expect(rows).toHaveLength(2);
+    // The finished window filters blank lines, so the trailing blank must not
+    // be counted as the second retained line.
+    expect(rows[0]).toContain('x');
+    expect(rows[1]).toContain('done');
+    component.dispose();
+  });
+
+  it('keeps the first error line for grouped failures', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_agent_long_error',
+        name: 'Agent',
+        args: { description: 'fails with a long error' },
+      },
+      undefined,
+    );
+    component.onSubagentSpawned({
+      agentId: 'sub_long_error',
+      agentName: 'explore',
+      runInBackground: false,
+    });
+    const error = `boom: request failed\n${'stack line\n'.repeat(2000)}`;
+    component.onSubagentFailed({ error });
+
+    // AgentGroup renders errorText.split('\n').at(0).
+    expect(component.getSubagentSnapshot().errorText?.split('\n').at(0)).toBe(
+      'boom: request failed',
+    );
+    component.dispose();
+  });
+
+  it('bounds a single logical line longer than the two-row window', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_agent_long_line',
+        name: 'Agent',
+        args: { description: 'long single line' },
+      },
+      undefined,
+    );
+    component.onSubagentSpawned({
+      agentId: 'sub_long_line',
+      agentName: 'explore',
+      runInBackground: false,
+    });
+    const tokens = Array.from({ length: 20_000 }, (_, i) => `tok${String(i).padStart(5, '0')}`);
+    component.appendSubagentText(tokens.join(' '), 'text');
+
+    const rows = strip(component.render(80).join('\n'))
+      .split('\n')
+      .filter((line) => line.includes('│'));
+    expect(rows).toHaveLength(2);
+    expect(rows.join('\n')).toContain('tok19999');
+    expect(rows.join('\n')).not.toContain('tok00000');
+    component.dispose();
+  });
+
   it('shows a two-row tail of an ongoing subagent Bash output', () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
@@ -1615,7 +2184,7 @@ describe('ToolCallComponent', () => {
     const runningLines = strip(component.render(120).join('\n')).split('\n').length;
 
     component.onSubagentCompleted({ resultSummary: 'short answer' });
-    component.setResult({ tool_call_id: 'call_agent_height', output: 'done', is_error: false });
+    component.setResult({ tool_call_id: 'call_agent_height', output: 'done', is_error: false }, { known: false });
 
     const doneLines = strip(component.render(120).join('\n')).split('\n').length;
 
@@ -1719,7 +2288,7 @@ describe('ToolCallComponent', () => {
       );
       component.setBackgroundTaskTerminalStatus('lost');
       // Now the spawn-success result lands.
-      component.setResult({ ...spawnSuccessResult, tool_call_id: 'call_bg_agent' });
+      component.setResult({ ...spawnSuccessResult, tool_call_id: 'call_bg_agent' }, { known: false });
       expect(component.getSubagentSnapshot().phase).toBe('failed');
     });
 
@@ -1977,12 +2546,68 @@ describe('ToolCallComponent', () => {
       tool_call_id: 'call_write_snap',
       output: 'Wrote big.txt',
       is_error: false,
-    });
+    }, { known: false });
 
     const after = strip(component.render(100).join('\n'));
     expect(after).toContain('line1');
     expect(after).not.toContain('line25');
     expect(after).toContain('ctrl+o to expand');
+  });
+
+  it('shows a Write preview one row over the cap instead of swapping it for a same-height hint', () => {
+    const lines: string[] = [];
+    for (let i = 1; i <= 11; i++) lines.push(`line${String(i)}`);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_write_edge',
+        name: 'Write',
+        args: { file_path: 'edge.ts', content: lines.join('\n') },
+      },
+      undefined,
+    );
+    const out = strip(component.render(100).join('\n'));
+    expect(out).toContain('line1');
+    expect(out).toContain('line11');
+    expect(out).not.toContain('more lines');
+    expect(component.hasHiddenContent()).toBe(false);
+  });
+
+  it('caps the Write preview once folding saves at least one row', () => {
+    const lines: string[] = [];
+    for (let i = 1; i <= 12; i++) lines.push(`line${String(i)}`);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_write_edge_cap',
+        name: 'Write',
+        args: { file_path: 'edge2.ts', content: lines.join('\n') },
+      },
+      undefined,
+    );
+    const out = strip(component.render(100).join('\n'));
+    expect(out).toContain('line1');
+    expect(out).toContain('line10');
+    expect(out).not.toContain('line11');
+    expect(out).toContain('… (2 more lines, 12 total, ctrl+o to expand)');
+    expect(component.hasHiddenContent()).toBe(true);
+  });
+
+  it('keeps the Write cap and the expand predicate consistent for a trailing newline', () => {
+    // highlightLines keeps a trailing empty entry for content ending in '\n',
+    // so the renderer counts 12 rows for 11 visible lines; the predicate must
+    // count the same way or ctrl+o is refused while the hint stays.
+    const lines: string[] = [];
+    for (let i = 1; i <= 11; i++) lines.push(`line${String(i)}`);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_write_trailing',
+        name: 'Write',
+        args: { file_path: 'noext', content: lines.join('\n') + '\n' },
+      },
+      undefined,
+    );
+    const out = strip(component.render(100).join('\n'));
+    expect(out).toContain('… (2 more lines, 12 total, ctrl+o to expand)');
+    expect(component.hasHiddenContent()).toBe(true);
   });
 
   it('refreshes the header when file_path arrives in a later streaming delta', () => {
@@ -2088,7 +2713,7 @@ describe('ToolCallComponent', () => {
       tool_call_id: 'call_edit_timer',
       output: 'Replaced 1 occurrence in foo.ts',
       is_error: false,
-    });
+    }, { known: false });
     vi.advanceTimersByTime(1000);
     expect(ui.requestRender).not.toHaveBeenCalled();
 
@@ -2249,6 +2874,36 @@ describe('ToolCallComponent', () => {
       );
     });
 
+    it('renders a wait ended by new input as interrupted', () => {
+      const component = new ToolCallComponent(
+        {
+          id: 'call_wait_interrupted',
+          name: 'WaitFor',
+          args: { task_id: 'bash-x', timeout: 60 },
+        },
+        {
+          tool_call_id: 'call_wait_interrupted',
+          output: [
+            'wait_status: interrupted',
+            'reason: steer',
+            'task_id: bash-x',
+            'waited_ms: 4000',
+            'timeout_ms: 60000',
+            '',
+            '[still_running]',
+            'active_background_tasks: 1',
+            'task_id: bash-x',
+            'description: slow build',
+          ].join('\n'),
+          is_error: false,
+        },
+      );
+
+      const out = strip(component.render(100).join('\n'));
+      expect(out).toContain('Wait interrupted by new input (bash-x)');
+      expect(out).toContain('1 background task still running: slow build');
+    });
+
     it('renders errors with the failure tense', () => {
       const component = new ToolCallComponent(
         {
@@ -2380,7 +3035,7 @@ describe('ToolCallComponent hasHiddenContent', () => {
     expect(component.hasHiddenContent()).toBe(false);
     component.appendLiveOutput('one\ntwo\n');
     expect(component.hasHiddenContent()).toBe(true);
-    component.setResult({ tool_call_id: 'tc', output: 'one\ntwo', is_error: false });
+    component.setResult({ tool_call_id: 'tc', output: 'one\ntwo', is_error: false }, { known: false });
     expect(component.hasHiddenContent()).toBe(false);
     component.dispose();
   });
@@ -2461,7 +3116,7 @@ describe('ToolCallComponent hasHiddenContent for a solo subagent card', () => {
       tool_call_id: 'call_agent',
       output: 'line 1\nline 2\nline 3\nline 4\nline 5',
       is_error: false,
-    });
+    }, { known: false });
     expect(component.hasHiddenContent()).toBe(false);
     component.dispose();
   });
@@ -2719,5 +3374,114 @@ describe('ToolCallComponent hasHiddenContent while arguments stream', () => {
     );
     expect(bash.hasHiddenContent()).toBe(true);
     bash.dispose();
+  });
+});
+
+describe('ToolCallComponent render cache', () => {
+  const readCall = { id: 'call_cache', name: 'Read', args: { path: 'foo.ts' } };
+  const readResult = { tool_call_id: 'call_cache', output: 'content', is_error: false };
+
+  it('returns the same array when nothing changed between renders', () => {
+    const component = new ToolCallComponent(readCall, readResult);
+    const first = component.render(100);
+    expect(component.render(100)).toBe(first);
+    component.dispose();
+  });
+
+  it('renders the same text as a fresh card after a width change and back', () => {
+    const component = new ToolCallComponent(readCall, readResult);
+    const wide = component.render(100);
+    const narrow = component.render(20);
+    expect(narrow).toEqual(new ToolCallComponent(readCall, readResult).render(20));
+    expect(component.render(100)).toEqual(wide);
+    component.dispose();
+  });
+
+  it('re-renders when the result arrives', () => {
+    const component = new ToolCallComponent(readCall, undefined);
+    const pending = component.render(100);
+    component.setResult(readResult, { known: false });
+    const done = component.render(100);
+    expect(done).not.toBe(pending);
+    expect(done).toEqual(new ToolCallComponent(readCall, readResult).render(100));
+    component.dispose();
+  });
+
+  describe('with the render cache disabled', () => {
+    beforeEach(() => setRenderCacheEnabled(false));
+    afterEach(() => setRenderCacheEnabled(true));
+
+    it('renders the card again with equal text', () => {
+      const component = new ToolCallComponent(readCall, readResult);
+      const first = component.render(100);
+      const second = component.render(100);
+      expect(second).not.toBe(first);
+      expect(second).toEqual(first);
+      component.dispose();
+    });
+
+    it('renders the spacer again with equal text', () => {
+      const component = new ToolCallComponent(readCall, readResult);
+      const spacer = component.children.find((child) => child.constructor.name === 'StableSpacer');
+      if (spacer === undefined) throw new Error('spacer not found');
+      const first = spacer.render(100);
+      const second = spacer.render(100);
+      expect(second).not.toBe(first);
+      expect(second).toEqual(first);
+      component.dispose();
+    });
+  });
+});
+
+describe('ToolCallComponent expanded clip detection', () => {
+  const bashCall = { id: 'call_clip', name: 'Bash', args: { command: 'echo hi' } };
+  const longLine = 'x'.repeat(200);
+  const bashResult = { tool_call_id: 'call_clip', output: longLine, is_error: false };
+
+  it('tracks the render width instead of keeping the first answer', () => {
+    const component = new ToolCallComponent(bashCall, bashResult);
+    component.setExpanded(true);
+    component.render(400);
+    expect(component.hasHiddenContent()).toBe(false);
+    component.render(60);
+    expect(component.hasHiddenContent()).toBe(true);
+    component.dispose();
+  });
+
+  it('forgets the answer when the result changes', () => {
+    const component = new ToolCallComponent(bashCall, { ...bashResult, output: 'short' });
+    component.setExpanded(true);
+    component.render(60);
+    expect(component.hasHiddenContent()).toBe(false);
+    component.setResult(bashResult, { known: false });
+    component.render(60);
+    expect(component.hasHiddenContent()).toBe(true);
+    component.dispose();
+  });
+
+  it('measures the output again on every render when the render cache is disabled', () => {
+    const measure = vi.spyOn(TruncatedHeaderLine.prototype, 'render');
+    const countRenderCalls = (cacheEnabled: boolean): number[] => {
+      setRenderCacheEnabled(cacheEnabled);
+      const component = new ToolCallComponent(bashCall, { ...bashResult, output: 'short' });
+      component.setExpanded(true);
+      const counts: number[] = [];
+      for (let pass = 0; pass < 2; pass += 1) {
+        measure.mockClear();
+        component.render(60);
+        counts.push(measure.mock.calls.length);
+      }
+      component.dispose();
+      return counts;
+    };
+    try {
+      const [first, second] = countRenderCalls(true);
+      expect(first).toBeGreaterThan(0);
+      expect(second).toBeLessThan(first!);
+      expect(countRenderCalls(false)).toEqual([first, first]);
+    } finally {
+      setRenderCacheEnabled(true);
+      measure.mockRestore();
+    }
   });
 });

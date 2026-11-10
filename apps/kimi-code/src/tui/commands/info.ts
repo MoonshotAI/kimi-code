@@ -6,6 +6,7 @@ import { buildMcpStatusReportLines } from '../components/messages/mcp-status-pan
 import { buildStatusReportLines } from '../components/messages/status-panel';
 import { buildUsageReportLines, UsagePanelComponent, type ManagedUsageReport } from '../components/messages/usage-panel';
 import { isExperimentalFlagEnabled } from './experimental-flags';
+import { quotaUsageRows } from '#/utils/usage/usage-format';
 import {
   FEEDBACK_ISSUE_URL,
   FEEDBACK_STATUS_CANCELLED,
@@ -24,6 +25,7 @@ import {
 import { DEFAULT_OAUTH_PROVIDER_NAME, isManagedUsageProvider } from '../constant/kimi-tui';
 import { submitFeedbackWithAttachments } from '../../feedback/feedback-attachments';
 import { formatErrorMessage } from '../utils/event-payload';
+import { sessionWorkDir } from '../utils/session-work-dir';
 import { openUrl } from '#/utils/open-url';
 import { promptFeedbackAttachment, promptFeedbackInput } from './prompts';
 import type { SlashCommandHost } from './dispatch';
@@ -69,7 +71,18 @@ export async function handleFeedbackCommand(host: SlashCommandHost): Promise<voi
   }
 
   // Stage 2: ask whether to attach diagnostics (logs / codebase).
-  const level = await promptFeedbackAttachment(host);
+  // The codebase scanner reads the local filesystem, so a remote-bound
+  // session cannot package its codebase — drop the option with a hint
+  // instead of scanning the wrong machine.
+  const remoteSession =
+    host.state.appState.environment !== undefined &&
+    host.state.appState.environment.environmentId !== 'local';
+  if (remoteSession) {
+    host.showStatus(
+      'Codebase attachment is not supported for remote sessions — the scanner only reads the local filesystem.',
+    );
+  }
+  const level = await promptFeedbackAttachment(host, remoteSession);
   if (level === undefined) {
     host.showStatus(FEEDBACK_STATUS_CANCELLED);
     return;
@@ -171,7 +184,7 @@ export async function showStatusReport(host: SlashCommandHost): Promise<void> {
   const reportArgs = {
     version: appState.version,
     model: appState.model,
-    workDir: appState.workDir,
+    workDir: sessionWorkDir(appState),
     sessionId: appState.sessionId,
     sessionTitle: appState.sessionTitle,
     thinkingEffort: appState.thinkingEffort,
@@ -219,16 +232,18 @@ export async function showMcpServers(host: SlashCommandHost): Promise<void> {
 }
 
 async function loadSessionUsageReport(host: SlashCommandHost): Promise<SessionUsageResult> {
+  if (host.session === undefined) return {};
   try {
-    return { usage: await host.requireSession().getUsage() };
+    return { usage: await host.session.getUsage() };
   } catch (error) {
     return { error: formatErrorMessage(error) };
   }
 }
 
 async function loadRuntimeStatusReport(host: SlashCommandHost): Promise<RuntimeStatusResult> {
+  if (host.session === undefined) return {};
   try {
-    return { status: await host.requireSession().getStatus() };
+    return { status: await host.session.getStatus() };
   } catch (error) {
     return { error: error instanceof Error ? error.message : String(error) };
   }
@@ -248,5 +263,5 @@ async function loadManagedUsageReport(host: SlashCommandHost): Promise<ManagedUs
   if (res.kind === 'error') {
     return { error: res.message };
   }
-  return { usage: { summary: res.summary, limits: res.limits, extraUsage: res.extraUsage } };
+  return { usage: { rows: quotaUsageRows(res.quota), extraUsage: res.quota.extraUsage } };
 }

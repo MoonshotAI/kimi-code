@@ -74,7 +74,7 @@ describe('server-v2 exposure hardening hooks', () => {
       expect(res.headers['x-content-type-options']).toBe('nosniff');
       expect(res.headers['referrer-policy']).toBe('no-referrer');
       expect(res.headers['content-security-policy']).toBe(
-        "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'self'",
+        "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' data: blob:; font-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'self'",
       );
       expect(res.headers['strict-transport-security']).toBeUndefined();
     } finally {
@@ -91,7 +91,7 @@ describe('server-v2 exposure hardening hooks', () => {
     expect(res.headers['strict-transport-security']).toBeUndefined();
   });
 
-  it('does not register shutdown or terminal routes on non-loopback by default', async () => {
+  it('does not register shutdown routes on non-loopback by default', async () => {
     const alt = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
       host: '0.0.0.0',
@@ -108,13 +108,6 @@ describe('server-v2 exposure hardening hooks', () => {
         headers: { authorization: `Bearer ${token}` },
       });
       expect(shutdown.statusCode).toBe(404);
-
-      const terminals = await alt.app.inject({
-        method: 'GET',
-        url: '/api/v1/sessions/missing/terminals',
-        headers: { authorization: `Bearer ${token}` },
-      });
-      expect(terminals.statusCode).toBe(404);
     } finally {
       await alt.close();
     }

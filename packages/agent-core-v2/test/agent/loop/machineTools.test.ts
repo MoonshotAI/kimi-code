@@ -5,7 +5,7 @@ import type {
   ToolExecutionResult,
 } from '#/agent/toolExecutor/toolExecutor';
 import { createMachineTools } from '#/agent/loop/machine/tools';
-import type { ToolCall } from '#human/llm/message';
+import type { ToolCall } from '#human/message';
 import type { ToolExecuteInput } from '#human/tool/executor';
 import type { ToolInfo } from '#/tool/toolContract';
 
@@ -30,6 +30,7 @@ function createRecordingExecutor(): {
           toolCallId: toolCall.id,
           toolName: toolCall.name,
           result: { output: `ok:${toolCall.id}` },
+          durationMs: 7,
         } satisfies ToolExecutionResult;
       }
     },
@@ -46,12 +47,15 @@ describe('createMachineTools duplicate tool call ids', () => {
   it('runs one batch per unique id and settles the superseded pending entry', async () => {
     const { toolExecutor, batches } = createRecordingExecutor();
     const onBatchError = vi.fn();
+    const onToolResult = vi.fn();
     const tools = createMachineTools({
       toolExecutor,
-      toolInfos,
+      toolInfos: () => toolInfos,
       turnId: () => 1,
       onBatchError,
+      onToolResult,
     });
+    tools.sync();
     const bash = tools.tools.find((tool) => tool.name === 'Bash');
     const read = tools.tools.find((tool) => tool.name === 'Read');
     if (bash === undefined || read === undefined) throw new Error('missing tool definitions');
@@ -65,6 +69,8 @@ describe('createMachineTools duplicate tool call ids', () => {
 
     expect(batches).toEqual([['t1', 't2']]);
     expect(onBatchError).not.toHaveBeenCalled();
+    expect(onToolResult).toHaveBeenCalledWith('t1', { output: 'ok:t1' }, 7);
+    expect(onToolResult).toHaveBeenCalledWith('t2', { output: 'ok:t2' }, 7);
     expect(firstResult.isError).toBe(true);
     expect(secondResult.content).toEqual([{ type: 'text', text: 'ok:t1' }]);
     expect(secondResult.isError).toBeUndefined();
@@ -84,10 +90,11 @@ describe('createMachineTools duplicate tool call ids', () => {
     const onBatchError = vi.fn();
     const tools = createMachineTools({
       toolExecutor,
-      toolInfos,
+      toolInfos: () => toolInfos,
       turnId: () => 1,
       onBatchError,
     });
+    tools.sync();
     const bash = tools.tools.find((tool) => tool.name === 'Bash');
     const read = tools.tools.find((tool) => tool.name === 'Read');
     if (bash === undefined || read === undefined) throw new Error('missing tool definitions');

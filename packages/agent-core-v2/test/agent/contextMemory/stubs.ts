@@ -18,6 +18,7 @@ import { stubAgentContext } from '../agentContext/stubs';
 
 export interface StubContextMemory extends IAgentContextMemoryService {
   readonly messages: readonly ContextMessage[];
+  undo(count: number): UndoCut;
 }
 
 function publishSplice(
@@ -42,12 +43,14 @@ function publishSplice(
 
 export function stubContextMemory(eventBus?: IEventBus): StubContextMemory {
   const messages: ContextMessage[] = [];
+  let revision = 0;
   return {
     _serviceBrand: undefined,
     get messages() {
       return messages;
     },
     get: () => [...messages],
+    prefixRevision: () => revision,
     append: (...inserted) => {
       const start = messages.length;
       messages.push(...inserted);
@@ -59,6 +62,7 @@ export function stubContextMemory(eventBus?: IEventBus): StubContextMemory {
       const deleteCount = messages.length;
       if (deleteCount === 0) return;
       messages.splice(0, deleteCount);
+      revision += 1;
       publishSplice(eventBus, { start: 0, deleteCount, messages: [] });
     },
     undo: (count) => {
@@ -66,6 +70,7 @@ export function stubContextMemory(eventBus?: IEventBus): StubContextMemory {
       if (cut.cutIndex >= 0 && cut.removedCount >= count) {
         const deleteCount = messages.length - cut.cutIndex;
         messages.splice(cut.cutIndex, deleteCount);
+        revision += 1;
         publishSplice(eventBus, { start: cut.cutIndex, deleteCount, messages: [] });
       }
       return cut;
@@ -74,6 +79,7 @@ export function stubContextMemory(eventBus?: IEventBus): StubContextMemory {
       const shape = buildContextCompactionShape(messages, input);
       const previousLength = messages.length;
       messages.splice(0, previousLength, ...shape.messages);
+      if (previousLength > 0) revision += 1;
       publishSplice(eventBus, {
         start: 0,
         deleteCount: previousLength,
@@ -111,11 +117,11 @@ class StubContextMemoryService implements IAgentContextMemoryService {
   publishTrailingRemoval(previous: readonly ContextMessage[]): boolean {
     return this.impl.publishTrailingRemoval(previous);
   }
-  undo(count: number): UndoCut {
-    return this.impl.undo(count);
-  }
   applyCompaction(input: ContextCompactionInput): ContextCompactionResult {
     return this.impl.applyCompaction(input);
+  }
+  prefixRevision(): number {
+    return this.impl.prefixRevision();
   }
 }
 

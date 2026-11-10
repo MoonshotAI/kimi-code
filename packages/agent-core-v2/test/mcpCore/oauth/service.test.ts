@@ -5,6 +5,10 @@ import type { OAuthClientInformationFull } from '@modelcontextprotocol/sdk/share
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ILogger as Logger } from '#/_base/log/log';
+import {
+  createMcpAuthTool,
+  MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE,
+} from '#/agent/mcp/tools/auth';
 import * as callbackServerModule from '#/mcpCore/oauth/callback-server';
 import {
   META_SUFFIX,
@@ -19,7 +23,7 @@ import {
 } from '#/mcpCore/oauth/service';
 import { mcpOAuthStoreKey, type McpOAuthStore } from '#/mcpCore/oauth/store';
 
-import { createMemoryMcpOAuthStore, ManualMcpOAuthScheduler } from '../stubs';
+import { createMemoryMcpOAuthStore, executeTool, ManualMcpOAuthScheduler } from '../stubs';
 
 const SERVER_NAME = 'notion';
 const SERVER_URL = 'https://mcp.example.test/mcp';
@@ -66,12 +70,14 @@ async function readyProvider(fixture: Fixture): Promise<McpOAuthClientProvider> 
 interface FakeAuthServer {
   readonly url: string;
   readonly counts: { register: number; exchange: number; refresh: number };
+  readonly registerScopes: Array<string | undefined>;
 }
 
 async function startFakeAuthServer(
   options: { readonly rejectRefreshToken?: boolean; readonly refreshExpiresIn?: number } = {},
 ): Promise<FakeAuthServer> {
   const counts = { register: 0, exchange: 0, refresh: 0 };
+  const registerScopes: Array<string | undefined> = [];
   const httpServer: HttpServer = createHttpServer((req, res) => {
     if (req.method !== 'POST' || (req.url !== '/token' && req.url !== '/register')) {
       res.writeHead(404).end();
@@ -85,6 +91,7 @@ async function startFakeAuthServer(
       if (req.url === '/register') {
         counts.register += 1;
         const metadata = JSON.parse(body) as Record<string, unknown>;
+        registerScopes.push(typeof metadata['scope'] === 'string' ? (metadata['scope'] as string) : undefined);
         res.writeHead(201, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ ...metadata, client_id: `test-client-${counts.register}` }));
         return;
@@ -123,7 +130,7 @@ async function startFakeAuthServer(
       }),
   );
   const port = (httpServer.address() as HttpAddress).port;
-  return { url: `http://127.0.0.1:${port}`, counts };
+  return { url: `http://127.0.0.1:${port}`, counts, registerScopes };
 }
 
 async function startHangingServer(): Promise<{ readonly url: string; readonly counts: { requests: number } }> {
@@ -215,7 +222,13 @@ async function startGatedExchangeAuthServer(): Promise<GatedExchangeAuthServer> 
   return { url: `http://127.0.0.1:${port}`, counts, exchangeStarted, releaseExchange };
 }
 
-function authServerState(authServerUrl: string) {
+function authServerState(
+  authServerUrl: string,
+  options: {
+    readonly scopesSupported?: string[];
+    readonly resourceScopesSupported?: string[];
+  } = {},
+) {
   return {
     discovery: {
       authorizationServerUrl: authServerUrl,
@@ -227,7 +240,16 @@ function authServerState(authServerUrl: string) {
         response_types_supported: ['code'],
         grant_types_supported: ['authorization_code', 'refresh_token'],
         token_endpoint_auth_methods_supported: ['none'],
+        scopes_supported: options.scopesSupported,
       },
+      resourceMetadata:
+        options.resourceScopesSupported === undefined
+          ? undefined
+          : {
+              resource: SERVER_URL,
+              authorization_servers: [authServerUrl],
+              scopes_supported: options.resourceScopesSupported,
+            },
     },
     client: {
       client_id: 'cached-client',
@@ -399,6 +421,28 @@ describe('McpOAuthService credential bookkeeping', () => {
     expect(fixture.events).toEqual([
       { type: 'tokens-saved', serverName: SERVER_NAME, serverUrl: SERVER_URL },
     ]);
+  });
+
+  it('keeps shared credentials until the last configuration reference disappears', async () => {
+    const fixture = makeFixture();
+    cleanups.push(() => fixture.service.dispose());
+    const first = {};
+    const second = {};
+    await fixture.service
+      .getProvider(SERVER_NAME, SERVER_URL)
+      .saveTokens({ access_token: 'a', token_type: 'Bearer', expires_in: 3600 });
+    fixture.service.setConfigurationSource(first, [[SERVER_NAME, SERVER_URL]]);
+    fixture.service.setConfigurationSource(second, [[SERVER_NAME, SERVER_URL]]);
+
+    await fixture.service.invalidateFromConfiguration(first, SERVER_NAME, SERVER_URL);
+    expect((await fixture.service.tokenState(SERVER_NAME, SERVER_URL)).hasTokens).toBe(true);
+
+    fixture.service.setConfigurationSource(first, [[SERVER_NAME, SERVER_URL]]);
+    await Promise.all([
+      fixture.service.invalidateFromConfiguration(first, SERVER_NAME, SERVER_URL),
+      fixture.service.invalidateFromConfiguration(second, SERVER_NAME, SERVER_URL),
+    ]);
+    expect((await fixture.service.tokenState(SERVER_NAME, SERVER_URL)).hasTokens).toBe(false);
   });
 
   it('treats tokens without expiry data as non-expiring', async () => {
@@ -681,6 +725,123 @@ describe('McpOAuthService single-flight refresh', () => {
 });
 
 describe('McpOAuthService interactive flow serialization', () => {
+  it('preserves a shared authorization until the last configuration reference is removed', async () => {
+    const fixture = makeFixture();
+    cleanups.push(() => fixture.service.dispose());
+    const authServer = await startFakeAuthServer();
+    const provider = await readyProvider(fixture);
+    await provider.saveDiscoveryState(authServerState(authServer.url).discovery);
+    const sourceA = {};
+    const sourceB = {};
+    fixture.service.setConfigurationSource(sourceA, [[SERVER_NAME, SERVER_URL]]);
+    fixture.service.setConfigurationSource(sourceB, [[SERVER_NAME, SERVER_URL]]);
+
+    const flow = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
+    const completion = flow.complete({ timeoutMs: 10_000 });
+    await fixture.service.cancelAuthorizationFromConfiguration(sourceA, SERVER_NAME, SERVER_URL);
+    await deliverCallback(flow);
+    await completion;
+
+    const next = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
+    const nextCompletion = next.complete({ timeoutMs: 10_000 });
+    void nextCompletion.catch(() => undefined);
+    await fixture.service.cancelAuthorizationFromConfiguration(sourceB, SERVER_NAME, SERVER_URL);
+
+    await expect(nextCompletion).rejects.toThrow(/callback listener closed/);
+  }, 15000);
+
+  it('cancels an active authorization by server credential without exchanging tokens', async () => {
+    const fixture = makeFixture();
+    cleanups.push(() => fixture.service.dispose());
+    const authServer = await startFakeAuthServer();
+    const provider = await readyProvider(fixture);
+    await provider.saveDiscoveryState(authServerState(authServer.url).discovery);
+
+    const flow = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
+    const completion = flow.complete({ timeoutMs: 10_000 });
+    void completion.catch(() => undefined);
+    await fixture.service.cancelAuthorization(SERVER_NAME, SERVER_URL);
+
+    await expect(completion).rejects.toThrow(/callback listener closed/);
+    expect(authServer.counts.exchange).toBe(0);
+    await expect(
+      fixture.service.cancelAuthorization(SERVER_NAME, SERVER_URL),
+    ).resolves.toBeUndefined();
+
+    const next = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
+    expect(next.authorizationUrl.toString()).not.toBe(flow.authorizationUrl.toString());
+    await next.cancel();
+  }, 15000);
+
+  it('keeps a replacement authorization tracked and completable when an older cancellation settles', async () => {
+    const fixture = makeFixture();
+    cleanups.push(() => fixture.service.dispose());
+    const authServer = await startFakeAuthServer();
+    const provider = await readyProvider(fixture);
+    await provider.saveDiscoveryState(authServerState(authServer.url).discovery);
+    let releaseFirstClose!: () => void;
+    const firstCloseGate = new Promise<void>((resolve) => {
+      releaseFirstClose = resolve;
+    });
+    let markFirstCloseStarted!: () => void;
+    const firstCloseStarted = new Promise<void>((resolve) => {
+      markFirstCloseStarted = resolve;
+    });
+    const startCallbackServer = callbackServerModule.startCallbackServer;
+    let callbackCount = 0;
+    const startSpy = vi.spyOn(callbackServerModule, 'startCallbackServer').mockImplementation(async () => {
+      const server = await startCallbackServer();
+      callbackCount += 1;
+      if (callbackCount === 1) {
+        const close = server.close;
+        server.close = async () => {
+          markFirstCloseStarted();
+          await firstCloseGate;
+          await close();
+        };
+      }
+      return server;
+    });
+    cleanups.push(() => {
+      startSpy.mockRestore();
+    });
+
+    const first = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
+    const firstCompletion = first.complete({ timeoutMs: 10_000 });
+    void firstCompletion.catch(() => undefined);
+    const cancellation = fixture.service.cancelAuthorization(SERVER_NAME, SERVER_URL);
+    await firstCloseStarted;
+    const replacement = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
+    releaseFirstClose();
+    await cancellation;
+
+    const joined = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
+    expect(joined.authorizationUrl.toString()).toBe(replacement.authorizationUrl.toString());
+    const replacementCompletion = replacement.complete({ timeoutMs: 10_000 });
+    await deliverCallback(replacement);
+    await replacementCompletion;
+    await joined.cancel();
+    await replacement.cancel();
+    await expect(firstCompletion).rejects.toThrow(/callback listener closed/);
+    expect(authServer.counts.exchange).toBe(1);
+  }, 15000);
+
+  it('publishes a provider after its first dynamic registration', async () => {
+    const fixture = makeFixture();
+    cleanups.push(() => fixture.service.dispose());
+    const authServer = await startFakeAuthServer();
+    const provider = await readyProvider(fixture);
+    await provider.saveDiscoveryState(authServerState(authServer.url).discovery);
+
+    const flow = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
+
+    expect(authServer.counts.register).toBe(1);
+    await expect(
+      fixture.service.getProvider(SERVER_NAME, SERVER_URL).clientInformation(),
+    ).resolves.toMatchObject({ client_id: 'test-client-1' });
+    await flow.cancel();
+  }, 15000);
+
   it('closes the callback listener when stale registration cleanup fails', async () => {
     const memory = createMemoryMcpOAuthStore();
     const store: McpOAuthStore = {
@@ -722,13 +883,29 @@ describe('McpOAuthService interactive flow serialization', () => {
     cleanups.push(() => fixture.service.dispose());
     const authServer = await startFakeAuthServer();
     const provider = await readyProvider(fixture);
-    await provider.saveDiscoveryState(authServerState(authServer.url).discovery);
+    await provider.saveDiscoveryState(
+      authServerState(authServer.url, {
+        scopesSupported: ['openid', 'offline_access'],
+        resourceScopesSupported: ['openid'],
+      }).discovery,
+    );
+    await provider.saveClientInformation({
+      client_id: 'stale-client',
+      redirect_uris: ['http://127.0.0.1:45678/callback'],
+      token_endpoint_auth_method: 'none',
+      grant_types: ['authorization_code', 'refresh_token'],
+      response_types: ['code'],
+      scope: 'openid',
+    } satisfies OAuthClientInformationFull);
 
     const first = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
     const second = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL, {
       clientLabel: 'other-client',
     });
     expect(second.authorizationUrl.toString()).toBe(first.authorizationUrl.toString());
+    expect(first.authorizationUrl.searchParams.get('scope')).toBe('openid offline_access');
+    expect(authServer.counts.register).toBe(1);
+    expect(authServer.registerScopes).toEqual(['openid offline_access']);
 
     const firstComplete = first.complete({ timeoutMs: 10_000 });
     await deliverCallback(first);
@@ -736,6 +913,9 @@ describe('McpOAuthService interactive flow serialization', () => {
     await second.complete();
     expect(authServer.counts.exchange).toBe(1);
     expect((await fixture.service.tokenState(SERVER_NAME, SERVER_URL)).hasTokens).toBe(true);
+    await expect(
+      fixture.service.getProvider(SERVER_NAME, SERVER_URL).clientInformation(),
+    ).resolves.toMatchObject({ client_id: 'test-client-1' });
   }, 15000);
 
   it('skips a refresh that fires while an interactive flow owns the credential', async () => {
@@ -862,6 +1042,75 @@ describe('McpOAuthService interactive flow serialization', () => {
     expect(authServer.counts.exchange).toBe(1);
   }, 15000);
 
+  it('cancels an active authenticate tool wait by ID while another waiter completes', async () => {
+    const fixture = makeFixture();
+    cleanups.push(() => fixture.service.dispose());
+    const authServer = await startFakeAuthServer();
+    const provider = await readyProvider(fixture);
+    await provider.saveDiscoveryState(authServerState(authServer.url).discovery);
+    const signal = new AbortController().signal;
+    const reconnect = vi.fn(async () => undefined);
+    let resolveWaitId!: (waitId: string) => void;
+    const ready = new Promise<string>((resolve) => {
+      resolveWaitId = resolve;
+    });
+    const tool = createMcpAuthTool({
+      serverName: SERVER_NAME,
+      serverUrl: SERVER_URL,
+      oauthService: fixture.service,
+      reconnect,
+    });
+    const result = executeTool(tool, {
+      turnId: 1,
+      toolCallId: 'auth-call',
+      args: {},
+      signal,
+      onUpdate: (update) => {
+        if (update.customKind === MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE) {
+          resolveWaitId((update.customData as { waitId: string }).waitId);
+        }
+      },
+    });
+    const waitId = await ready;
+    expect(waitId).toEqual(expect.any(String));
+    const second = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
+    const completion = second.complete({ timeoutMs: 10_000 });
+
+    await fixture.service.cancelAuthorizationWait(waitId);
+    const cancelled = await result;
+    expect(cancelled.isError).toBe(true);
+    expect(cancelled.output).toMatch(/cancelled/);
+    expect(cancelled.stopTurn).toBeUndefined();
+    expect(signal.aborted).toBe(false);
+    expect(reconnect).not.toHaveBeenCalled();
+
+    await deliverCallback(second);
+    await completion;
+    await fixture.service.cancelAuthorizationWait(waitId);
+    await fixture.service.cancelAuthorizationWait(second.waitId);
+    expect(authServer.counts.exchange).toBe(1);
+    expect((await fixture.service.tokenState(SERVER_NAME, SERVER_URL)).hasTokens).toBe(true);
+  }, 15000);
+
+  it('keeps a joined completion alive when the first completing caller aborts', async () => {
+    const fixture = makeFixture();
+    cleanups.push(() => fixture.service.dispose());
+    const authServer = await startFakeAuthServer();
+    const provider = await readyProvider(fixture);
+    await provider.saveDiscoveryState(authServerState(authServer.url).discovery);
+    const first = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
+    const second = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
+    const controller = new AbortController();
+    const firstCompletion = first.complete({ signal: controller.signal, timeoutMs: 10_000 });
+    const rejected = expect(firstCompletion).rejects.toThrow();
+    const secondCompletion = second.complete({ timeoutMs: 10_000 });
+    controller.abort();
+    await rejected;
+    await deliverCallback(second);
+    await secondCompletion;
+    expect(authServer.counts.exchange).toBe(1);
+  }, 15000);
+
   it('keeps the shared flow active when the first handle cancels, so a joined handle completes', async () => {
     const fixture = makeFixture();
     cleanups.push(() => fixture.service.dispose());
@@ -894,6 +1143,8 @@ describe('McpOAuthService interactive flow serialization', () => {
 
     const third = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
     expect(third.authorizationUrl.toString()).not.toBe(first.authorizationUrl.toString());
+    expect(third.authorizationUrl.searchParams.get('scope')).toBeNull();
+    expect(authServer.registerScopes).toEqual([undefined, undefined]);
     await third.cancel();
   }, 15000);
 
@@ -941,6 +1192,30 @@ describe('McpOAuthService interactive flow serialization', () => {
     expect(hanging.counts.requests).toBeGreaterThan(0);
     expect(authServer.counts.exchange).toBe(1);
     expect((await fixture.service.tokenState(SERVER_NAME, hanging.url)).hasTokens).toBe(true);
+  }, 15000);
+
+  it('keeps the callback timeout from limiting the token exchange', async () => {
+    const gated = await startGatedExchangeAuthServer();
+    const fixture = makeFixture();
+    cleanups.push(() => fixture.service.dispose());
+    cleanups.push(() => {
+      gated.releaseExchange();
+    });
+    const provider = fixture.service.getProvider(SERVER_NAME, gated.url);
+    await provider.ready;
+    const state = authServerState(gated.url);
+    await provider.saveDiscoveryState(state.discovery);
+    await provider.saveClientInformation(state.client);
+    const flow = await fixture.service.beginAuthorization(SERVER_NAME, gated.url);
+    const timeoutMs = 100;
+    const complete = flow.complete({ timeoutMs });
+    const completion = complete.then(() => undefined, (error: unknown) => error);
+    await deliverCallback(flow);
+    await gated.exchangeStarted;
+    await new Promise((resolve) => setTimeout(resolve, timeoutMs + 20));
+    gated.releaseExchange();
+    expect(await completion).toBeUndefined();
+    expect((await fixture.service.tokenState(SERVER_NAME, gated.url)).hasTokens).toBe(true);
   }, 15000);
 
   it('rejects completion without writing tokens when the caller aborts after the callback', async () => {

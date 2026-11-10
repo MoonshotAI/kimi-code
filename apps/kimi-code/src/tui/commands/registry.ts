@@ -155,7 +155,7 @@ export const BUILTIN_SLASH_COMMANDS = [
   {
     name: 'auto',
     aliases: [],
-    description: 'Never Ask mode: never interrupts you; everything runs and is decided automatically.',
+    description: 'Never Ask mode: everything runs and is decided automatically; only plans in Plan mode wait for your review.',
     priority: 99,
     availability: 'always',
   },
@@ -247,7 +247,7 @@ export const BUILTIN_SLASH_COMMANDS = [
   {
     name: 'new',
     aliases: ['clear'],
-    description: 'Start a fresh session in the current workspace',
+    description: 'Start a fresh session in the current environment',
     priority: 80,
   },
   {
@@ -417,6 +417,13 @@ export const BUILTIN_SLASH_COMMANDS = [
     priority: 40,
   },
   {
+    name: 'import-sessions',
+    aliases: [],
+    description: 'Import recent Claude Code and Codex sessions',
+    priority: 40,
+    availability: 'idle-only',
+  },
+  {
     name: 'copy',
     aliases: [],
     description: 'Copy the last assistant message to the clipboard',
@@ -426,6 +433,13 @@ export const BUILTIN_SLASH_COMMANDS = [
     name: 'web',
     aliases: [],
     description: 'Open the current session in the Web UI by starting a new server',
+    priority: 40,
+    availability: 'always',
+  },
+  {
+    name: 'desktop',
+    aliases: ['install-desktop'],
+    description: 'Open the Kimi Code desktop app page in your browser',
     priority: 40,
     availability: 'always',
   },

@@ -1,7 +1,6 @@
 import { createDecorator } from "#/_base/di/instantiation";
 import type { WireLineRange } from '#/wire/record';
 
-import type { UndoCut } from './contextOps';
 import type { LoopRecordedEvent } from './loopEventFold';
 import type { ContextMessage } from './types';
 
@@ -35,6 +34,8 @@ export interface IAgentContextMemoryService {
 
   get(): readonly ContextMessage[];
 
+  prefixRevision(): number;
+
   append(...messages: readonly ContextMessage[]): void;
 
   appendLoopEvent(event: LoopRecordedEvent): void;
@@ -42,8 +43,6 @@ export interface IAgentContextMemoryService {
   publishTrailingRemoval(previous: readonly ContextMessage[]): boolean;
 
   clear(): void;
-
-  undo(count: number): UndoCut;
 
   applyCompaction(input: ContextCompactionInput): ContextCompactionResult;
 }

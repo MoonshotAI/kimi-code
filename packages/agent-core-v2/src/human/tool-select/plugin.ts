@@ -1,4 +1,5 @@
 import { createUserMessage } from '#/llm/message';
+import { createSystemEntry, createUserEntry } from '#/agent/turn';
 import type { Plugin } from '#/plugin';
 
 import type { ToolSelectState } from './state';
@@ -22,21 +23,24 @@ export function createToolSelectPlugin(state: ToolSelectState): ToolSelectPlugin
         if (!state.enabled()) return;
         const announcement = state.announcement();
         if (announcement === undefined) return;
-        target.remind(LOADABLE_TOOLS_REMINDER_KEY, createUserMessage(announcement));
+        target.remind(createUserEntry(createUserMessage(announcement), { key: LOADABLE_TOOLS_REMINDER_KEY }));
       });
       const pushSchemas = () => {
         if (!state.enabled()) return;
         const tools = state.pendingSchemas();
         if (tools.length === 0) return;
-        target.remind(DYNAMIC_TOOL_SCHEMA_REMINDER_KEY, { role: 'system', content: [], tools });
+        target.remind(createSystemEntry(
+          { role: 'system', content: [], tools },
+          { key: DYNAMIC_TOOL_SCHEMA_REMINDER_KEY },
+        ));
       };
       target.on('tool.done', pushSchemas);
       target.on('tool.failed', pushSchemas);
       target.on('turn.reminders_consumed', (event) => {
         if (event.type !== 'turn.reminders_consumed') return;
         for (const entry of event.reminders) {
-          if (entry.meta.key === LOADABLE_TOOLS_REMINDER_KEY) state.markAnnounced();
-          if (entry.meta.key === DYNAMIC_TOOL_SCHEMA_REMINDER_KEY) state.markSchemasLanded();
+          if (entry.meta?.key === LOADABLE_TOOLS_REMINDER_KEY) state.markAnnounced();
+          if (entry.meta?.key === DYNAMIC_TOOL_SCHEMA_REMINDER_KEY) state.markSchemasLanded();
         }
       });
       target.on('context.reset', () => {

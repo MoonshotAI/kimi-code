@@ -2,19 +2,19 @@ import type { Session } from '@moonshot-ai/kimi-code-sdk';
 
 import { AgentGroupComponent } from '../components/messages/agent-group';
 import { AssistantMessageComponent } from '../components/messages/assistant-message';
-import { currentWorkingTip } from '../components/chrome/working-tips';
 import { CompactionComponent } from '../components/dialogs/compaction';
 import { ReadGroupComponent } from '../components/messages/read-group';
 import { ThinkingComponent } from '../components/messages/thinking';
 import { ToolCallComponent } from '../components/messages/tool-call';
-import { STREAMING_UI_FLUSH_MS } from '../constant/streaming';
+import { STREAMING_UI_FLUSH_MS, UNNAMED_TOOL_CALL_NAME } from '../constant/streaming';
 import { hasDispose } from '../utils/component-capabilities';
 import { appendStreamingArgsPreview, parseStreamingArgs } from '../utils/event-payload';
 import { notifyTerminalOnce } from '../utils/terminal-notification';
 import { nextTranscriptId } from '../utils/transcript-id';
-import type { TodoItem } from '../components/chrome/todo-panel';
+import { TurnTimeline } from '../utils/turn-timeline';
 import type {
   AppState,
+  Elapsed,
   LivePaneState,
   QueuedMessage,
   ToolCallBlockData,
@@ -30,6 +30,7 @@ export interface StreamingUIHost {
   patchLivePane(patch: Partial<LivePaneState>): void;
   resetLivePane(): void;
   updateActivityPane(): void;
+  updateActivityPaneForTranscriptGrouping(): void;
   updateQueueDisplay(): void;
   requireSession(): Session;
   deferUserMessages: boolean;
@@ -56,8 +57,9 @@ export class StreamingUIController {
   private _thinkingDraft = '';
   private _streamingBlock: { component: AssistantMessageComponent; entry: TranscriptEntry } | null = null;
   private _activeThinkingComponent: ThinkingComponent | undefined = undefined;
-  private _activeCompactionBlock: CompactionComponent | undefined = undefined;
+  private _activeCompaction: { instruction: string | undefined } | undefined = undefined;
   private _activeToolCalls = new Map<string, ToolCallBlockData>();
+  private _runningWaitForCalls = new Set<string>();
   private _streamingToolCallArguments = new Map<
     string,
     { name?: string; argumentsText: string; startedAtMs: number }
@@ -75,6 +77,8 @@ export class StreamingUIController {
     solo?: ToolCallComponent;
     group?: ReadGroupComponent;
   } | null = null;
+
+  readonly timeline = new TurnTimeline();
 
   constructor(private readonly host: StreamingUIHost) {}
 
@@ -147,6 +151,21 @@ export class StreamingUIController {
     return this._activeToolCalls.has(id);
   }
 
+  /** Marks a main-agent WaitFor call as actually waiting — its first
+   *  progress update arrives only once the wait began, never for calls that
+   *  were rejected, skipped, or had nothing to wait for. Returns whether the
+   *  call was newly marked. */
+  markWaitForRunning(toolCallId: string): boolean {
+    if (this._activeToolCalls.get(toolCallId)?.name !== 'WaitFor') return false;
+    if (this._runningWaitForCalls.has(toolCallId)) return false;
+    this._runningWaitForCalls.add(toolCallId);
+    return true;
+  }
+
+  isWaitForRunning(): boolean {
+    return this._runningWaitForCalls.size > 0;
+  }
+
   setActiveToolCall(id: string, toolCall: ToolCallBlockData): void {
     this._activeToolCalls.set(id, toolCall);
   }
@@ -175,6 +194,16 @@ export class StreamingUIController {
     if (!this._activeToolCalls.has(toolCallId)) {
       this._pendingToolComponents.delete(toolCallId);
     }
+  }
+
+  /** Drops a tool call together with its card, as if it had never rendered. */
+  discardToolCall(toolCallId: string): void {
+    const component = this._pendingToolComponents.get(toolCallId);
+    this._pendingToolComponents.delete(toolCallId);
+    this._activeToolCalls.delete(toolCallId);
+    if (component === undefined) return;
+    this.host.state.transcriptContainer.removeChild(component);
+    this.host.state.ui.requestRender();
   }
 
   /**
@@ -314,6 +343,7 @@ export class StreamingUIController {
     const existingComponent = this._pendingToolComponents.get(toolCall.id);
     if (existingComponent !== undefined) {
       existingComponent.updateToolCall(toolCall);
+      this.host.updateActivityPaneForTranscriptGrouping();
     } else if (existing === undefined) {
       this.finalizeLiveTextBuffers('tool');
       if (toolCall.name !== 'Agent' && toolCall.name !== 'AgentSwarm') {
@@ -331,7 +361,7 @@ export class StreamingUIController {
   ): void {
     const existing = this._streamingToolCallArguments.get(id);
     const argumentsText = appendStreamingArgsPreview(existing?.argumentsText, argumentsPart);
-    const name = eventName ?? existing?.name ?? this._activeToolCalls.get(id)?.name ?? 'Tool';
+    const name = eventName ?? existing?.name ?? this._activeToolCalls.get(id)?.name ?? UNNAMED_TOOL_CALL_NAME;
     const startedAtMs = existing?.startedAtMs ?? Date.now();
     this._streamingToolCallArguments.set(id, { name, argumentsText, startedAtMs });
     this.pendingToolCallFlushIds.add(id);
@@ -343,7 +373,7 @@ export class StreamingUIController {
     const streaming = this._streamingToolCallArguments.get(id);
     if (streaming === undefined) return undefined;
     return {
-      name: streaming.name ?? this._activeToolCalls.get(id)?.name ?? 'Tool',
+      name: streaming.name ?? this._activeToolCalls.get(id)?.name ?? UNNAMED_TOOL_CALL_NAME,
       args: parseStreamingArgs(streaming.argumentsText),
       argumentsText: streaming.argumentsText,
       startedAtMs: streaming.startedAtMs,
@@ -358,6 +388,7 @@ export class StreamingUIController {
       this.onToolCallEnd(toolCallId, result);
     }
     this._activeToolCalls.delete(toolCallId);
+    this._runningWaitForCalls.delete(toolCallId);
     this._streamingToolCallArguments.delete(toolCallId);
     return matchedCall;
   }
@@ -415,11 +446,8 @@ export class StreamingUIController {
     this._pendingToolComponents.clear();
   }
 
-  disposeActiveCompactionBlock(): void {
-    if (this._activeCompactionBlock !== undefined) {
-      this._activeCompactionBlock.dispose();
-      this._activeCompactionBlock = undefined;
-    }
+  clearActiveCompaction(): void {
+    this._activeCompaction = undefined;
   }
 
   // ---------------------------------------------------------------------------
@@ -542,6 +570,7 @@ export class StreamingUIController {
 
   resetToolCallState(): void {
     this._activeToolCalls.clear();
+    this._runningWaitForCalls.clear();
   }
 
   finalizeLiveTextBuffers(nextMode: LivePaneState['mode'] = 'idle'): void {
@@ -550,6 +579,7 @@ export class StreamingUIController {
   }
 
   finalizeTurn(sendQueued: (item: QueuedMessage) => void): void {
+    this.timeline.turnEnded();
     const { state } = this.host;
     if (state.appState.streamingPhase === 'idle') return;
     this.host.deferUserMessages = false;
@@ -642,7 +672,7 @@ export class StreamingUIController {
         'live',
         state.ui,
       );
-      if (state.toolOutputExpanded) this._activeThinkingComponent.setExpanded(true);
+      if (state.transcriptContainer.toolOutputExpanded) this._activeThinkingComponent.setExpanded(true);
       state.transcriptContainer.addChild(this._activeThinkingComponent);
     } else {
       this._activeThinkingComponent.setText(fullText);
@@ -652,7 +682,8 @@ export class StreamingUIController {
 
   onThinkingEnd(): void {
     if (this._activeThinkingComponent === undefined) return;
-    this._activeThinkingComponent.finalize();
+    const component = this._activeThinkingComponent;
+    component.finalize(elapsedSince(component.startedAtMs, this.host.state.appState.isReplaying));
     this._activeThinkingComponent = undefined;
     this.host.state.ui.requestRender();
     this.host.mergeCurrentTurnSteps();
@@ -668,7 +699,7 @@ export class StreamingUIController {
       state.ui,
       state.appState.workDir,
     );
-    if (state.toolOutputExpanded) tc.setExpanded(true);
+    if (state.transcriptContainer.toolOutputExpanded) tc.setExpanded(true);
     this._pendingToolComponents.set(toolCall.id, tc);
 
     if (toolCall.name !== 'Agent') this._pendingAgentGroup = null;
@@ -680,13 +711,14 @@ export class StreamingUIController {
       state.transcriptContainer.addChild(tc);
       state.ui.requestRender();
     }
+    this.host.updateActivityPaneForTranscriptGrouping();
 
     if (toolCall.name === 'ExitPlanMode' && typeof toolCall.args['plan'] !== 'string') {
       const session = this.host.requireSession();
       void (async () => {
         try {
           const plan = await session.getPlan();
-          tc.setPlanInfo(plan === null ? {} : { plan: plan.content, path: plan.path });
+          tc.setPlanInfo(plan === null ? {} : { plan: plan.content, path: plan.path ?? undefined });
         } catch {
           tc.setPlanInfo({});
         }
@@ -699,8 +731,9 @@ export class StreamingUIController {
     const matchedCall = this._activeToolCalls.get(toolCallId);
     const tc = this._pendingToolComponents.get(toolCallId);
     if (tc) {
-      tc.setResult(result);
+      tc.setResult(result, elapsedSince(tc.startedAtMs, state.appState.isReplaying));
       this._pendingToolComponents.delete(toolCallId);
+      this.host.updateActivityPaneForTranscriptGrouping();
       state.ui.requestRender();
       this.host.mergeCurrentTurnSteps();
       return;
@@ -713,52 +746,45 @@ export class StreamingUIController {
         state.ui,
         state.appState.workDir,
       );
-      if (state.toolOutputExpanded) completed.setExpanded(true);
+      if (state.transcriptContainer.toolOutputExpanded) completed.setExpanded(true);
       state.transcriptContainer.addChild(completed);
       state.ui.requestRender();
     }
     this.host.mergeCurrentTurnSteps();
   }
 
-  setTodoList(todos: readonly TodoItem[]): void {
-    const { state } = this.host;
-    state.todoPanel.setTodos(todos);
-    state.todoPanelContainer.clear();
-    if (!state.todoPanel.isEmpty()) {
-      state.todoPanelContainer.addChild(state.todoPanel);
-    }
-    state.ui.requestRender();
-  }
-
   beginCompaction(instruction?: string): void {
-    const { state } = this.host;
-    if (this._activeCompactionBlock !== undefined) {
-      this._activeCompactionBlock.markDone();
-      this._activeCompactionBlock = undefined;
-    }
-    const block = new CompactionComponent(state.ui, instruction, currentWorkingTip()?.text);
-    this._activeCompactionBlock = block;
-    state.transcriptContainer.addChild(block);
-    if (state.toolOutputExpanded) {
-      block.setExpanded(true);
-    }
-    state.ui.requestRender();
+    if (this._activeCompaction !== undefined) this.endCompaction();
+    this._activeCompaction = { instruction };
+    this.host.state.ui.requestRender();
   }
 
   endCompaction(tokensBefore?: number, tokensAfter?: number, summary?: string): void {
-    const block = this._activeCompactionBlock;
-    if (block === undefined) return;
+    const compaction = this._activeCompaction;
+    if (compaction === undefined) return;
+    const { state } = this.host;
+    const block = new CompactionComponent(state.ui, compaction.instruction);
     block.markDone(tokensBefore, tokensAfter, summary);
-    this._activeCompactionBlock = undefined;
-    this.host.state.ui.requestRender();
+    this._activeCompaction = undefined;
+    this.mountCompactionBlock(block);
+    state.ui.requestRender();
   }
 
   cancelCompaction(): void {
-    const block = this._activeCompactionBlock;
-    if (block === undefined) return;
+    const compaction = this._activeCompaction;
+    if (compaction === undefined) return;
+    const { state } = this.host;
+    const block = new CompactionComponent(state.ui, compaction.instruction);
     block.markCanceled();
-    this._activeCompactionBlock = undefined;
-    this.host.state.ui.requestRender();
+    this._activeCompaction = undefined;
+    this.mountCompactionBlock(block);
+    state.ui.requestRender();
+  }
+
+  private mountCompactionBlock(block: CompactionComponent): void {
+    const { state } = this.host;
+    state.transcriptContainer.addChild(block);
+    if (state.transcriptContainer.toolOutputExpanded) block.setExpanded(true);
   }
 
   // ---------------------------------------------------------------------------
@@ -770,7 +796,7 @@ export class StreamingUIController {
     if (streaming === undefined) return;
     const toolCall: ToolCallBlockData = {
       id,
-      name: streaming.name ?? this._activeToolCalls.get(id)?.name ?? 'Tool',
+      name: streaming.name ?? this._activeToolCalls.get(id)?.name ?? UNNAMED_TOOL_CALL_NAME,
       args: parseStreamingArgs(streaming.argumentsText),
       streamingArguments: streaming.argumentsText,
       streamingStartedAtMs: streaming.startedAtMs,
@@ -836,12 +862,8 @@ export class StreamingUIController {
   private upgradeSoloAgentToGroup(solo: ToolCallComponent): AgentGroupComponent {
     const { state } = this.host;
     const group = new AgentGroupComponent(state.ui);
-    const children = state.transcriptContainer.children;
-    const idx = children.indexOf(solo);
-    if (idx >= 0) {
-      // In-place replacement is picked up by the container's ref-checked
-      // render cache; a tree-wide invalidate is unnecessary (and costly).
-      children[idx] = group;
+    if (state.transcriptContainer.children.includes(solo)) {
+      state.transcriptContainer.replaceChild(solo, group);
     } else {
       state.transcriptContainer.addChild(group);
     }
@@ -894,17 +916,17 @@ export class StreamingUIController {
   private upgradeSoloReadToGroup(solo: ToolCallComponent): ReadGroupComponent {
     const { state } = this.host;
     const group = new ReadGroupComponent(state.ui);
-    if (state.toolOutputExpanded) group.setExpanded(true);
-    const children = state.transcriptContainer.children;
-    const idx = children.indexOf(solo);
-    if (idx >= 0) {
-      // In-place replacement is picked up by the container's ref-checked
-      // render cache; a tree-wide invalidate is unnecessary (and costly).
-      children[idx] = group;
+    if (state.transcriptContainer.toolOutputExpanded) group.setExpanded(true);
+    if (state.transcriptContainer.children.includes(solo)) {
+      state.transcriptContainer.replaceChild(solo, group);
     } else {
       state.transcriptContainer.addChild(group);
     }
     group.attach(solo.toolCallView.id, solo);
     return group;
   }
+}
+
+function elapsedSince(startedAtMs: number, isReplaying: boolean): Elapsed {
+  return isReplaying ? { known: false } : { known: true, ms: Date.now() - startedAtMs };
 }

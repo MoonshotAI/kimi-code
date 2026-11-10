@@ -121,6 +121,7 @@ export class CascadeTree {
   private _settleWaiters: Array<() => void> = [];
   private readonly _scopeSeq = new Map<object, number>();
   private _nextScopeSeq = 0;
+  private readonly _droppedScopes = new WeakSet<object>();
   private readonly _onDidAddEngine = new Emitter<CascadeEngine>();
   readonly onDidAddEngine: Event<CascadeEngine> = this._onDidAddEngine.event;
   private readonly _onDidRemoveEngine = new Emitter<CascadeEngine>();
@@ -162,10 +163,19 @@ export class CascadeTree {
   seqOf(scope: object): number {
     let seq = this._scopeSeq.get(scope);
     if (seq === undefined) {
+      if (this._droppedScopes.has(scope)) {
+        return -1;
+      }
       seq = this._nextScopeSeq++;
       this._scopeSeq.set(scope, seq);
     }
     return seq;
+  }
+
+  dropScope(scope: object): void {
+    this._droppedScopes.add(scope);
+    this._scopeSeq.delete(scope);
+    this._inFlight.deleteScope(scope);
   }
 
   addSettleWaiter(waiter: () => void): void {
@@ -324,7 +334,7 @@ export class CascadeEngine {
   private _recheckTreeFixpoint(rebuilt: string[], failed: string[]): void {
     const enginesInOrder = [...this._tree.engines]
       .filter((engine) => !engine._disposed)
-      .sort((a, b) => a._scope.cascadeDepth - b._scope.cascadeDepth);
+      .toSorted((a, b) => a._scope.cascadeDepth - b._scope.cascadeDepth);
     for (;;) {
       let progress = false;
       for (const engine of enginesInOrder) {
@@ -382,6 +392,7 @@ export class CascadeEngine {
   dispose(): void {
     this._disposed = true;
     this._tree.removeEngine(this);
+    this._tree.dropScope(this._scope);
     this._units.clear();
     this._pendingIndex.clear();
     const remaining: QueuedRequest[] = [];

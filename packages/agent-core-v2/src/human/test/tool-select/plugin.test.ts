@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { createActor, waitFor } from '#/xstate2';
-import { UNKNOWN_CAPABILITY } from '#/llm/capability';
+import { UNKNOWN_CAPABILITY } from '#/llm-requester/capability';
 import {
   createAssistantMessage,
   createUserMessage,
@@ -9,17 +9,18 @@ import {
   type SystemMessage,
   type ToolCall,
   type UserMessage,
-} from '#/llm/message';
-import type { LlmModel } from '#/llm/model';
-import type { LlmRequestConfig, LlmRequester, LlmRequestEvent } from '#/llm/requester/requester';
+} from '#/message';
+import type { LlmModel } from '#/llm-requester/model';
+import type { LlmRequestConfig, LlmRequester, LlmRequestEvent } from '#/llm-requester/requester';
 import { connectPlugins, type AgentPluginTarget } from '#/plugin';
 import { createAgentMachine, type AgentEmitted } from '#/agent/machine';
 import { agentSlices, type AgentEventStore } from '#/agent/slices';
-import { createTurnMachine, type HistoryMessage } from '#/agent/turn';
+import type { HistoryMessage } from '#/agent/turn';
 import { createEventStore } from '#/eventStore/eventStore';
 import { journalFromBranch } from '#/eventStore/journal';
 import { MemoryBackend } from '#/store/backend/memory';
 import { TreeStore } from '#/store/store';
+import { testScopeFactory } from '#/test/agent/scope-factory';
 import type { ToolExecuteInput } from '#/tool/executor';
 import { defineTool, type ToolDefinition } from '#/tool/tool';
 import {
@@ -161,15 +162,15 @@ describe('deferTool', () => {
 
 function createTarget() {
   const handlers = new Map<string, ((event: AgentEmitted) => void)[]>();
-  const reminded: { key: string; message: UserMessage | SystemMessage }[] = [];
+  const reminded: { key: string | undefined; message: UserMessage | SystemMessage }[] = [];
   const target: AgentPluginTarget = {
     kind: 'agent',
     on: (type, handler) => {
       handlers.set(type, [...(handlers.get(type) ?? []), handler]);
     },
     notify: () => undefined,
-    remind: (key, message) => {
-      reminded.push({ key, message });
+    remind: (entry) => {
+      reminded.push({ key: entry.meta?.key, message: entry.message });
     },
   };
   const emit = (event: AgentEmitted) => {
@@ -301,16 +302,19 @@ describe('tool select agent flow', () => {
       state,
     );
     const store = await testStore();
-    const actor = createActor(
-      createAgentMachine({
-        tools: [createSelectToolsTool(state), deferred],
-        turnActor: createTurnMachine(requester),
-      }),
-      { input: { request: { model }, store } },
-    );
+    const actor = createActor(createAgentMachine({}), {
+      input: {
+        request: { model },
+        scopeFactory: testScopeFactory({
+          store,
+          requester,
+          tools: [createSelectToolsTool(state), deferred],
+        }),
+      },
+    });
     connectPlugins(actor, [plugin]);
     actor.start();
-    actor.send({ type: 'input.submit', message: createUserMessage('weather?') });
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('weather?') } });
     await waitFor(
       actor,
       (s) => s.matches('idle') && store.getState().history.length > 1,
@@ -325,7 +329,7 @@ describe('tool select agent flow', () => {
     const schemaEntry = store.getState().history.find(
       (entry: HistoryMessage) => entry.message.role === 'system',
     );
-    expect(schemaEntry?.meta.key).toBe(DYNAMIC_TOOL_SCHEMA_REMINDER_KEY);
+    expect(schemaEntry?.meta?.key).toBe(DYNAMIC_TOOL_SCHEMA_REMINDER_KEY);
     const schemaMessage = schemaEntry?.message as SystemMessage;
     expect(schemaMessage.tools?.map((tool) => tool.name)).toEqual(['get_weather']);
 

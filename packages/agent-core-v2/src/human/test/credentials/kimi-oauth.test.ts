@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { kimiOAuthCredentialProvider } from '#/credentials/kimi-oauth';
+import { createKimiOAuthCredentialProvider } from '#/credentials/kimi-oauth';
 
-describe('kimiOAuthCredentialProvider', () => {
+describe('createKimiOAuthCredentialProvider', () => {
   function createTokens() {
     const calls: (boolean | undefined)[] = [];
     return {
@@ -18,7 +18,7 @@ describe('kimiOAuthCredentialProvider', () => {
 
   it('resolves the access token from the token provider', async () => {
     const { calls, tokens } = createTokens();
-    const provider = kimiOAuthCredentialProvider(tokens);
+    const provider = createKimiOAuthCredentialProvider(tokens);
 
     await expect(provider.resolve()).resolves.toEqual({ apiKey: 'access-token' });
     expect(calls).toEqual([undefined]);

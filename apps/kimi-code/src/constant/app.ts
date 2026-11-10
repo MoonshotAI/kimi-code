@@ -1,6 +1,6 @@
 import { ErrorCodes, type HostUiCapability } from '@moonshot-ai/kimi-code-sdk';
 
-import { currentKimiProfile } from '#/utils/region';
+import { currentKimiManagedRuntimeAuth, currentKimiProfile } from '#/utils/region';
 
 export const PRODUCT_NAME = 'Kimi Code';
 export const CLI_COMMAND_NAME = 'kimi';
@@ -8,6 +8,7 @@ export const PROCESS_NAME = 'kimi-code';
 
 // Used in telemetry app names and HTTP User-Agent headers.
 export const CLI_USER_AGENT_PRODUCT = 'kimi-code-cli';
+export const CLI_MSH_PLATFORM = 'kimi_code_cli';
 export const CLI_UI_MODE = 'shell';
 // UI surfaces the TUI renders; declared to the engine at bootstrap so features that need a
 // host-side surface (the NotifyUser update panel) are offered to this process only.
@@ -67,8 +68,8 @@ export const KIMI_CODE_UPDATE_REEXEC_ENV = 'KIMI_CODE_UPDATE_REEXEC';
 export const KIMI_CODE_INPUT_HISTORY_DIR_NAME = 'user-history';
 export const KIMI_CODE_BANNER_DIR_NAME = 'banner';
 export const KIMI_CODE_BANNER_STATE_FILE_NAME = 'state.json';
-export const KIMI_CODE_SURVEY_STATE_FILE_NAME = 'feedback-survey-state.json';
 export const KIMI_CODE_RECOMMENDED_EFFORT_STATE_FILE_NAME = 'recommended-effort-state.json';
+export const KIMI_CODE_MODEL_MIGRATION_STATE_FILE_NAME = 'model-migrations.json';
 
 // Managed Kimi auth provider key shared with OAuth/SDK config.
 export const DEFAULT_OAUTH_PROVIDER_NAME = 'managed:kimi-code';
@@ -108,24 +109,26 @@ export function kimiCodeCdnLatestUrl(): string {
 export function kimiCodeCdnLatestJsonUrl(): string {
   return `${kimiCodeCdnBase()}/latest.json`;
 }
+// Canary channel pointer, same wire shape as `latest.json`. Only the selected
+// canary channel reads it; stable never requests it.
+export function kimiCodeCdnCanaryChannelUrl(): string {
+  return `${kimiCodeCdnBase()}/channels/canary.json`;
+}
 // Per-release native artifacts: `/binaries/<version>/manifest.json` +
 // `/binaries/<version>/kimi-code-<target>[.exe]` — the bare platform binary
 // (same layout install.ps1 consumes).
 export function kimiCodeCdnBinariesBase(): string {
   return `${kimiCodeCdnBase()}/binaries`;
 }
-// The marketplace env override name lives in the shared agent-core-v2 plugin
-// domain (kap-server consumes it from there). Deep-path import: this module is
-// evaluated on every CLI invocation, so it must not pull in the engine root.
-export { KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV } from '@moonshot-ai/agent-core-v2/app/plugin/marketplace';
-// The CLI-side default catalog derives from the current region profile; the
-// env override above takes priority at the call site.
+export {
+  isTrustedPluginMarketplaceUrl as isTrustedKimiCodePluginMarketplace,
+  KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV,
+} from '@moonshot-ai/kimi-code-sdk';
 export function kimiCodePluginMarketplaceUrl(): string {
-  return `${kimiCodeCdnBase()}/plugins/marketplace.json`;
+  const auth = currentKimiManagedRuntimeAuth();
+  const baseUrl = (auth.baseUrl ?? currentKimiProfile().baseUrl).trim().replace(/\/+$/, '');
+  return `${baseUrl}/plugins/marketplace`;
 }
-// Bound on each background "latest release" lookup when the TUI fills in
-// marketplace versions. Without it a stalled connection to github.com hangs
-// the version phase for undici's default header timeout (300s).
 export const MARKETPLACE_VERSION_LOOKUP_TIMEOUT_MS = 5000;
 export const INTERACTIVE_UPDATE_CHECK_TIMEOUT_MS = 10_000;
 // Official plugins whose usage bills against the user's plan quota. Installing

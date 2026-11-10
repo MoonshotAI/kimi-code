@@ -199,8 +199,18 @@ describe('approval adapter', () => {
     });
 
     expect(adapted.choices).toEqual([
-      { label: 'Approach A', response: 'approved', selected_label: 'Approach A' },
-      { label: 'Approach B', response: 'approved', selected_label: 'Approach B' },
+      {
+        label: 'Approach A',
+        response: 'approved',
+        selected_label: 'Approach A',
+        description: 'Small refactor',
+      },
+      {
+        label: 'Approach B',
+        response: 'approved',
+        selected_label: 'Approach B',
+        description: 'Full refactor',
+      },
       { label: 'Reject', response: 'rejected', selected_label: 'Reject' },
       {
         label: 'Revise',
@@ -240,14 +250,14 @@ describe('approval adapter', () => {
         response: 'approved',
         selected_label: 'auto',
         description:
-          'Best if you want Kimi Code to keep working while you are away. Tools are approved automatically, and questions are skipped.',
+          'Best if you want Kimi Code to keep working while you are away. Tools are approved automatically and questions are skipped; only plans in Plan mode wait for your review.',
       },
       {
         label: 'Switch to Ask When Needed and start',
         response: 'approved',
         selected_label: 'yolo',
         description:
-          'Tools and plan changes are approved automatically. Kimi Code may still ask you questions.',
+          'Tools are approved automatically. Kimi Code may still ask you questions.',
       },
       {
         label: 'Start in Always Ask',
@@ -284,14 +294,14 @@ describe('approval adapter', () => {
         response: 'approved',
         selected_label: 'auto',
         description:
-          'Best if you want Kimi Code to keep working while you are away. Tools are approved automatically, and questions are skipped.',
+          'Best if you want Kimi Code to keep working while you are away. Tools are approved automatically and questions are skipped; only plans in Plan mode wait for your review.',
       },
       {
         label: 'Keep Ask When Needed and start',
         response: 'approved',
         selected_label: 'yolo',
         description:
-          'Tools and plan changes stay approved automatically. Kimi Code may still ask you questions.',
+          'Tools stay approved automatically. Kimi Code may still ask you questions.',
       },
       {
         label: 'Do not start',

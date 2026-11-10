@@ -5,7 +5,7 @@ description: Use when generating changesets in the kimi-code repository — deci
 
 # Generate Changesets
 
-The only user-facing published package is the CLI: `@moonshot-ai/kimi-code`. All other `@moonshot-ai/*` packages (sdk, kosong, kaos, oauth, telemetry, and so on) are internal.
+The only user-facing published package is the CLI: `@moonshot-ai/kimi-code`. All other `@moonshot-ai/*` packages (sdk, oauth, telemetry, and so on) are internal.
 
 ## 1. Whether to Write
 
@@ -32,6 +32,7 @@ Fix occasional loss of tool call results in long conversations.
 
 Wording:
 - One short, user-facing English sentence that states only what changed. Drop trailing clauses that explain the cause, the benefit, or the mechanism.
+- When a default flips or an existing behavior is removed, name the behavior users lose, not only the new default. State the escape hatch if one exists, e.g. `Stop hot-reloading config, skills, and AGENTS.md by default; set [watch] enabled = true or KIMI_CODE_WATCH=1 to turn it back on.`; if there is none, say plainly that the old behavior is no longer available.
 - New features: say plainly what it is plus one line on how to use it, e.g. `Add the /foo slash command to list active sessions. Run /foo to see them.`
 - Experimental features: also state how to enable them (the flag, config key, or env var).
 - No file, class, or function names, and no PR numbers. No vague words like refactor, optimize, or improve. No real internal identifiers — use neutral placeholders such as `example.com` or `YOUR_API_KEY`.
@@ -50,7 +51,7 @@ Wording:
 - An internal change does not enter the CLI or is not user-perceivable → write nothing; if it is written, list only that internal package.
 - Never mix packages ignored in `.changeset/config.json` with non-ignored packages in one frontmatter.
 - pi-tui exception: pi-tui-only changes list `@moonshot-ai/pi-tui`; if the same change is also visible to CLI users, write a separate CLI changeset (two files, never mixed).
-- kimi-inspect and the vis packages never appear in a changeset.
+- The vis packages never appear in a changeset.
 
 ## 5. Workflow
 
@@ -60,4 +61,4 @@ Wording:
 4. **Show the changeset text to whoever requested the work and get their confirmation before committing.**
 5. Do not guess at changes you do not understand: finish the parts that are clear, then list what is unclear and ask whether you may dig into the code.
 
-Before a release, review the accumulated `.changeset/` entries and delete the non-user-facing ones — the release PR regenerates from `.changeset/` on main, so deleting a file removes its changelog entry without touching shipped code.
+Before a release, review the accumulated `.changeset/` entries and delete the non-user-facing ones — the release PR regenerates from `.changeset/` on the selected release branch, so deleting a file removes its changelog entry without touching shipped code.

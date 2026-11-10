@@ -3,20 +3,23 @@ import { ReadBuffer, serializeMessage } from '@modelcontextprotocol/sdk/shared/s
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 
-import { ErrorCodes, Error2 } from '#/errors';
-import type { IHostProcess } from '#/os/interface/hostProcess';
-import type { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 import { proxyEnvForChild, reconcileChildNoProxy } from '#/_base/utils/proxy';
+import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
+import { EnvironmentError } from '#/environment/environmentRegistry';
+import { ErrorCodes, Error2 } from '#/errors';
+import { HostProcessError, HostProcessErrorCode, type IHostProcess } from '#/os/interface/hostProcess';
+import type { EnvironmentResolver } from '#/app/environment/environment';
 
 import {
   buildRequestOptions,
   KIMI_MCP_CLIENT_NAME,
   KIMI_MCP_CLIENT_VERSION,
   MCP_LIVENESS_PROBE_TIMEOUT_MS,
+  McpClassifiedStartupError,
   toMcpToolDefinition,
   toMcpToolResult,
-  type UnexpectedCloseListener,
-  type UnexpectedCloseReason,
+  type SessionEvidence,
+  type SessionEvidenceListener,
 } from './client-shared';
 import type { McpServerStdioConfig } from './config-schema';
 import type { MCPClient, MCPToolDefinition, MCPToolResult } from './types';
@@ -27,16 +30,17 @@ export interface StdioMcpClientOptions {
   readonly startupTimeoutMs?: number;
   readonly toolCallTimeoutMs?: number;
   readonly defaultCwd?: string;
-  readonly runtimeResolver: IRuntimeResolver;
-  readonly workspaceId: string;
-  readonly runtimeId: string;
+  readonly environmentResolver: EnvironmentResolver;
+  readonly environmentId: string;
+  readonly sessionId?: string;
 }
 
 const STDERR_BUFFER_CAPACITY = 4 * 1024;
+const STDIO_TERMINATION_GRACE_MS = 5_000;
 
 export class StdioMcpClient implements MCPClient {
   private readonly client: Client;
-  private readonly transport: RuntimeStdioTransport;
+  private readonly transport: EnvironmentStdioTransport;
   private readonly startupTimeoutMs?: number;
   private readonly toolCallTimeoutMs?: number;
   private readonly stderrBuffer = new BoundedTail(STDERR_BUFFER_CAPACITY);
@@ -44,17 +48,14 @@ export class StdioMcpClient implements MCPClient {
   private closed = false;
   private ready = false;
   private hooksInstalled = false;
-  private unexpectedCloseListener: UnexpectedCloseListener | undefined;
+  private sessionEvidenceListener: SessionEvidenceListener | undefined;
   private lastTransportError: Error | undefined;
-  private pendingUnexpectedClose: UnexpectedCloseReason | undefined;
+  private pendingSessionEvidence: SessionEvidence | undefined;
 
   static readonly stderrBufferCapacity = STDERR_BUFFER_CAPACITY;
 
   constructor(config: McpServerStdioConfig, options: StdioMcpClientOptions) {
-    if (config.executor !== undefined && config.executor !== 'local') {
-      throw new Error2(ErrorCodes.NOT_IMPLEMENTED, `MCP stdio executor '${config.executor}' is not yet implemented`);
-    }
-    this.transport = new RuntimeStdioTransport(config, options, this.stderrBuffer);
+    this.transport = new EnvironmentStdioTransport(config, options, this.stderrBuffer);
     this.client = new Client({
       name: options.clientName ?? KIMI_MCP_CLIENT_NAME,
       version: options.clientVersion ?? KIMI_MCP_CLIENT_VERSION,
@@ -77,7 +78,7 @@ export class StdioMcpClient implements MCPClient {
       );
     } catch (error) {
       await this.closeStartedClient();
-      throw error;
+      throw classifyStdioStartupError(error);
     }
     if (this.closed) {
       await this.closeStartedClient();
@@ -92,11 +93,11 @@ export class StdioMcpClient implements MCPClient {
     await this.closeStartedClient();
   }
 
-  onUnexpectedClose(listener: UnexpectedCloseListener): void {
-    this.unexpectedCloseListener = listener;
-    const pending = this.pendingUnexpectedClose;
+  onSessionEvidence(listener: SessionEvidenceListener): void {
+    this.sessionEvidenceListener = listener;
+    const pending = this.pendingSessionEvidence;
     if (pending !== undefined) {
-      this.pendingUnexpectedClose = undefined;
+      this.pendingSessionEvidence = undefined;
       listener(pending);
     }
   }
@@ -140,15 +141,18 @@ export class StdioMcpClient implements MCPClient {
       if (this.closed) return;
       if (!this.ready) return;
       const stderr = this.stderrBuffer.snapshot();
-      const reason: UnexpectedCloseReason = {
-        error: this.lastTransportError,
-        stderr: stderr.length > 0 ? stderr : undefined,
+      const evidence: SessionEvidence = {
+        kind: 'hard',
+        reason: {
+          error: this.lastTransportError,
+          stderr: stderr.length > 0 ? stderr : undefined,
+        },
       };
-      const listener = this.unexpectedCloseListener;
+      const listener = this.sessionEvidenceListener;
       if (listener !== undefined) {
-        listener(reason);
+        listener(evidence);
       } else {
-        this.pendingUnexpectedClose = reason;
+        this.pendingSessionEvidence = evidence;
       }
     };
     this.client.onerror = (error) => {
@@ -157,13 +161,14 @@ export class StdioMcpClient implements MCPClient {
   }
 }
 
-class RuntimeStdioTransport implements Transport {
+class EnvironmentStdioTransport implements Transport {
   onclose?: () => void;
   onerror?: (error: Error) => void;
   onmessage?: <T extends JSONRPCMessage>(message: T) => void;
   private readonly readBuffer = new ReadBuffer();
   private process: IHostProcess | undefined;
-  private lease: ReturnType<IRuntimeResolver['acquire']> | undefined;
+  private lease: ReturnType<EnvironmentResolver['acquire']> | undefined;
+  private tracked: { dispose(): void | Promise<void> } | undefined;
   private started = false;
   private closed = false;
 
@@ -174,24 +179,46 @@ class RuntimeStdioTransport implements Transport {
   ) {}
 
   async start(): Promise<void> {
-    if (this.started) throw new Error('Runtime stdio transport is already started');
-    if (this.closed) throw new Error('Runtime stdio transport is closed');
+    if (this.started) throw new Error('Environment stdio transport is already started');
+    if (this.closed) throw new Error('Environment stdio transport is closed');
+    if (this.config.executor !== undefined && this.config.executor !== 'local') {
+      throw new Error2(
+        ErrorCodes.NOT_IMPLEMENTED,
+        `MCP stdio executor '${this.config.executor}' is not supported; use environment_id to select the execution environment`,
+      );
+    }
     this.started = true;
-    const lease = this.options.runtimeResolver.acquire(
-      { workspaceId: this.options.workspaceId, runtimeId: this.options.runtimeId },
-      ['process'],
-    );
+    const binding = {
+      environmentId: this.options.environmentId,
+    };
+    const required = ['process'] as const;
+    const lease = await this.options.environmentResolver.acquireWhenReady(binding, required);
     this.lease = lease;
     try {
-      const base = lease.runtime.path.resolve(this.options.defaultCwd ?? lease.runtime.environment.homeDir);
-      const cwd = this.config.cwd === undefined ? base : lease.runtime.path.resolve(base, this.config.cwd);
-      const process = lease.track(await lease.runtime.process!.spawn(
-        this.config.command,
-        this.config.args,
-        { cwd, env: mergeStdioEnv(this.config.env) },
-      ));
+      const host = lease.environment.host;
+      const path = lease.environment.path;
+      if (host === undefined || path === undefined) {
+        throw new EnvironmentError('environment.unavailable', `environment ${this.options.environmentId} is not ready`);
+      }
+      const base = path.resolve(
+        this.options.environmentId === LOCAL_ENVIRONMENT_ID
+          ? this.options.defaultCwd ?? host.homeDir
+          : host.cwd ?? host.homeDir,
+      );
+      const cwd =
+        this.config.cwd === undefined
+          ? base
+          : path.resolve(base, this.config.cwd);
+      const env =
+        this.options.environmentId === LOCAL_ENVIRONMENT_ID
+          ? mergeStdioEnv(this.config.env)
+          : (this.config.env ?? {});
+      const process = lease.track(
+        await lease.environment.process!.spawn(this.config.command, this.config.args, { cwd, env }),
+        this.options.sessionId,
+      );
       this.process = process;
-      lease.track(this);
+      this.tracked = lease.track(this, this.options.sessionId);
       process.stdin.on('error', (error: Error) => this.onerror?.(error));
       process.stdout.on('data', (chunk: Buffer | string) => this.onData(chunk));
       process.stdout.on('end', () => this.finish());
@@ -216,7 +243,8 @@ class RuntimeStdioTransport implements Transport {
 
   async send(message: JSONRPCMessage): Promise<void> {
     const process = this.process;
-    if (process === undefined || this.closed) throw new Error('Runtime stdio transport is not running');
+    if (process === undefined || this.closed)
+      throw new Error('Environment stdio transport is not running');
     const data = serializeMessage(message);
     await new Promise<void>((resolve, reject) => {
       process.stdin.write(data, (error) => {
@@ -238,10 +266,31 @@ class RuntimeStdioTransport implements Transport {
     if (process !== undefined) {
       try {
         await process.kill();
+        let graceTimer: ReturnType<typeof setTimeout> | undefined;
+        const exited = await Promise.race([
+          process.wait().then(
+            () => true,
+            () => true,
+          ),
+          new Promise<false>((resolve) => {
+            graceTimer = setTimeout(() => {
+              resolve(false);
+            }, STDIO_TERMINATION_GRACE_MS);
+            graceTimer.unref?.();
+          }),
+        ]);
+        if (graceTimer !== undefined) clearTimeout(graceTimer);
+        if (!exited && process.exitCode === null) {
+          await process.kill('SIGKILL');
+          await process.wait();
+        }
       } catch {}
       void process.dispose();
     }
     this.readBuffer.clear();
+    const tracked = this.tracked;
+    this.tracked = undefined;
+    void tracked?.dispose();
     const lease = this.lease;
     this.lease = undefined;
     lease?.dispose();
@@ -264,8 +313,13 @@ class RuntimeStdioTransport implements Transport {
   private finish(): void {
     if (this.closed) return;
     this.closed = true;
+    const process = this.process;
     this.process = undefined;
+    void process?.dispose();
     this.readBuffer.clear();
+    const tracked = this.tracked;
+    this.tracked = undefined;
+    void tracked?.dispose();
     const lease = this.lease;
     this.lease = undefined;
     lease?.dispose();
@@ -301,4 +355,18 @@ export function mergeStdioEnv(
   Object.assign(merged, proxyEnvForChild(merged));
   reconcileChildNoProxy(merged, configEnv);
   return merged;
+}
+
+const permanentSpawnErrnos = new Set(['ENOENT', 'EACCES', 'ENOEXEC', 'ENOTDIR', 'EISDIR']);
+
+function classifyStdioStartupError(error: unknown): unknown {
+  if (!(error instanceof HostProcessError) || error.code !== HostProcessErrorCode.SpawnFailed) {
+    return error;
+  }
+  const cause = error.cause as { readonly code?: unknown } | undefined;
+  const errno = error.details?.['errno'] ?? cause?.code;
+  if (typeof errno === 'string' && permanentSpawnErrnos.has(errno)) {
+    return new McpClassifiedStartupError('config', error.message, { cause: error });
+  }
+  return error;
 }

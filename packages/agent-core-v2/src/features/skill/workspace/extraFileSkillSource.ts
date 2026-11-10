@@ -1,6 +1,7 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import { Disposable } from '#/_base/di/lifecycle';
+import { Disposable, MutableDisposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
+import type { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import {
@@ -14,7 +15,10 @@ import {
   type ISkillSource,
   type SkillContribution,
 } from '#/features/skill/catalog/skillSource';
+import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
+
+import { ConfiguredSkillRootWatcher } from './configuredSkillRootWatcher';
 
 export interface IExtraFileSkillSource extends ISkillSource {
   readonly _serviceBrand: undefined;
@@ -30,12 +34,16 @@ export class ExtraFileSkillSource extends Disposable implements IExtraFileSkillS
   readonly priority = SKILL_SOURCE_PRIORITY.extra;
   private readonly onDidChangeEmitter = this._register(new Emitter<void>());
   readonly onDidChange: Event<void> = this.onDidChangeEmitter.event;
+  private readonly watcher = this._register(new MutableDisposable<ConfiguredSkillRootWatcher>());
+  private watchedDirs: readonly string[] = [];
 
   constructor(
     @ISkillDiscovery private readonly discovery: ISkillDiscovery,
     @IConfigService private readonly config: IConfigService,
     @IWorkspaceContext private readonly workspace: IWorkspaceContext,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
+    private readonly fs: IHostFileSystem,
+    private readonly log?: ILogService,
   ) {
     super();
     this._register(
@@ -48,8 +56,25 @@ export class ExtraFileSkillSource extends Disposable implements IExtraFileSkillS
   async load(): Promise<SkillContribution> {
     await this.config.ready;
     const extraSkillDirs = this.config.get<ExtraSkillDirsConfig>(EXTRA_SKILL_DIRS_SECTION) ?? [];
+    if (extraSkillDirs.length !== this.watchedDirs.length ||
+        extraSkillDirs.some((dir, index) => dir !== this.watchedDirs[index])) {
+      this.watchedDirs = [...extraSkillDirs];
+      this.watcher.value = extraSkillDirs.length === 0
+        ? undefined
+        : new ConfiguredSkillRootWatcher({
+            dirs: this.watchedDirs,
+            cwd: this.workspace.cwd,
+            osHomeDir: this.bootstrap.osHomeDir,
+            source: this.id,
+            fs: this.fs,
+            log: this.log,
+          }, () => {
+            this.onDidChangeEmitter.fire();
+          });
+    }
+    await this.watcher.value?.registered;
     return this.discovery.discover(
-      await configuredRoots(extraSkillDirs, this.workspace.cwd, this.bootstrap.osHomeDir, 'extra'),
+      await configuredRoots(extraSkillDirs, this.workspace.cwd, this.bootstrap.osHomeDir, 'extra', this.fs),
     );
   }
 }

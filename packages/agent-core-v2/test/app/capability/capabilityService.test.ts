@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { isError2 } from '#/_base/errors/errors';
+import { Error2, isError2 } from '#/_base/errors/errors';
 import type { ILogService, LogPayload } from '#/_base/log/log';
 import { CapabilityErrors } from '#/app/capability/errors';
 import { CapabilityService } from '#/app/capability/capabilityService';
@@ -41,6 +41,7 @@ function fakeService(
     undefined as never,
     undefined as never,
     undefined as never,
+    undefined as never,
     log,
     undefined as never,
     entries,
@@ -53,6 +54,27 @@ function expectErrorCode(error: unknown, code: string): void {
 }
 
 describe('CapabilityService', () => {
+  it('publishes confirmation without an install error and forwards explicit consent on retry', async () => {
+    const entry = fakeEntry({ id: 'kimi-cu' });
+    let installed = false;
+    entry.install = async (_report, options) => {
+      if (!options?.stopRunningProcesses) {
+        throw new Error2(CapabilityErrors.codes.CAPABILITY_PROCESSES_RUNNING, 'processes running');
+      }
+      installed = true;
+      return undefined;
+    };
+    const service = fakeService([entry]);
+    await service.installCapability('kimi-cu');
+    expect((await service.getCapability('kimi-cu')).install).toEqual({
+      running: false, confirmationRequired: 'stop-processes',
+    });
+    expect(installed).toBe(false);
+    await service.installCapability('kimi-cu', { stopRunningProcesses: true });
+    expect(installed).toBe(true);
+    expect((await service.getCapability('kimi-cu')).install.confirmationRequired).toBeUndefined();
+  });
+
   it('lists entries with readiness computed from required steps', async () => {
     const service = fakeService([
       fakeEntry({

@@ -14,6 +14,7 @@ import {
   type AgentActorRestoreEvent,
 } from '#/agent/actorService/agentActorService';
 import { ContextAppendMessage } from '#/agent/contextMemory/contextEvents';
+import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { GoalInjection, GOAL_WAIT_FOR_GUIDANCE } from '#/features/goal/injection/goalInjection';
 import { LOOP_CONTROL_SECTION, type LoopControl } from '#/agent/loop/configSection';
@@ -49,6 +50,7 @@ import {
   type KimiErrorPayload,
 } from '#/errors';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { Forked } from '#/session/agentLifecycle/forked';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ExecutableToolResult } from '#/tool/toolContract';
@@ -58,7 +60,6 @@ import { IGoalDeadlineScheduler } from './goalDeadlineScheduler';
 import {
   GoalClear,
   GoalCreate,
-  GoalForked,
   GoalUpdate,
   GoalUpdated,
   type GoalModelState,
@@ -66,6 +67,7 @@ import {
 } from './goalOps';
 import type {
   CreateGoalInput,
+  EditGoalObjectiveInput,
   GoalActor,
   GoalBudgetLimits,
   GoalBudgetReport,
@@ -79,7 +81,7 @@ import type {
 registerEvent2Class(GoalCreate);
 registerEvent2Class(GoalUpdate);
 registerEvent2Class(GoalClear);
-registerEvent2Class(GoalForked);
+registerEvent2Class(Forked);
 
 const MAX_GOAL_OBJECTIVE_LENGTH = 4000;
 
@@ -127,6 +129,8 @@ const GOAL_BUDGET_TOOLS_REJECTED_MESSAGE =
   'Goal budget exhausted; tool calls are rejected. Write your final message.';
 const GOAL_STALE_TOOL_RESULT =
   'Goal changed since this turn started; ignored stale goal tool call.';
+export const GOAL_OBJECTIVE_EDITED_TOOL_RESULT =
+  'The goal objective was edited since this turn started, so this status update was ignored. End this turn normally; the next turn receives the new objective.';
 
 const GOAL_CONTINUATION_PROMPT = [
   'Continue working toward the active goal.',
@@ -177,8 +181,9 @@ export interface GoalRuntimeState {
 }
 
 interface PendingContinuation {
-  readonly turn: Turn;
+  readonly promptId: string;
   readonly goalId: string;
+  turn?: Turn;
   turnId?: number;
 }
 
@@ -198,6 +203,8 @@ interface GoalEffectState {
   readonly budgetGraceTurns: Set<number>;
   readonly pendingContinuationGoals: Map<number, string>;
   readonly goalTurnTargets: Map<number, string>;
+  readonly turnObjectiveRevisions: Map<number, number>;
+  objectiveRevision: number;
   readonly exhaustedTurnBudgetGoals: Map<number, string>;
   liveWallClockStartedAt?: number;
   resumeContinuation?: ResumeContinuation;
@@ -269,6 +276,12 @@ function isGoalToolTarget(context: GoalOperationContext, turnId: number, goalId:
   return context.effects.goalTurnTargets.get(turnId) === goalId;
 }
 
+function isObjectiveEditedSinceTurnStart(context: GoalOperationContext, turnId: number): boolean {
+  assertSupportedAgent(context);
+  const revision = context.effects.turnObjectiveRevisions.get(turnId);
+  return revision !== undefined && revision !== context.effects.objectiveRevision;
+}
+
 async function createGoal(context: GoalOperationContext, input: CreateGoalInput, actor: GoalActor = 'user'): Promise<GoalSnapshot> {
   assertSupportedAgent(context);
   const objective = validateObjective(context, input.objective);
@@ -304,6 +317,26 @@ function validateObjective(context: GoalOperationContext, value: string): string
     );
   }
   return objective;
+}
+
+async function editGoalObjective(context: GoalOperationContext, input: EditGoalObjectiveInput, actor: GoalActor = 'user'): Promise<GoalSnapshot> {
+  assertSupportedAgent(context);
+  const state = requireState(context);
+  if (state.status === 'complete') {
+    throw new Error2(
+      ErrorCodes.GOAL_STATUS_INVALID,
+      `Cannot edit a goal in status "${state.status}"`,
+    );
+  }
+  const objective = validateObjective(context, input.objective);
+  if (objective === state.objective) return toSnapshot(context, state);
+  void context.runtime.dispatch(
+    new GoalUpdate({ agentId: context.runtime.agent.agentId, objective, actor }),
+  );
+  context.effects.objectiveRevision += 1;
+  const snapshot = toSnapshot(context, requireState(context));
+  emitGoalUpdated(context, snapshot);
+  return snapshot;
 }
 
 function prepareForGoalCreation(context: GoalOperationContext, replace: boolean): void {
@@ -397,7 +430,7 @@ async function cancelGoal(context: GoalOperationContext, _input: GoalReasonInput
   const state = requireState(context);
   const snapshot = toSnapshot(context, state);
   if (state.status === 'active' && context.effects.liveTurnId !== undefined) {
-    context.runtime.get(IAgentLoopService).cancel(context.effects.liveTurnId, abortError('Goal cancelled'));
+    context.runtime.get(IAgentLoopService).cancel({ turnId: context.effects.liveTurnId }, abortError('Goal cancelled'));
   }
   clearInternal(context, actor);
   if (actor === 'user') {
@@ -517,6 +550,7 @@ function handleTurnLaunched(context: GoalOperationContext, turnId: number, origi
   context.effects.pendingContinuationGoals.delete(turnId);
   context.effects.goalOutcomeToolResultTurns.delete(turnId);
   context.effects.goalOutcomeContinuationTurns.delete(turnId);
+  context.effects.turnObjectiveRevisions.set(turnId, context.effects.objectiveRevision);
 }
 
 function adoptStarterTurn(context: GoalOperationContext, actor: GoalActor): void {
@@ -524,6 +558,9 @@ function adoptStarterTurn(context: GoalOperationContext, actor: GoalActor): void
   if (turnId === undefined) return;
   const state = context.runtime.getState().goal;
   if (state === null || state.status !== 'active') return;
+  if (!context.effects.turnObjectiveRevisions.has(turnId)) {
+    context.effects.turnObjectiveRevisions.set(turnId, context.effects.objectiveRevision);
+  }
   const goalId = context.effects.goalDrivenTurns.get(turnId);
   if (actor === 'model') context.effects.goalTurnTargets.set(turnId, state.goalId);
   if (toSnapshot(context, state).budget.turnBudgetReached) {
@@ -665,6 +702,7 @@ function clearTurnTracking(
   context.effects.budgetGraceTurns.delete(turnId);
   context.effects.pendingContinuationGoals.delete(turnId);
   context.effects.goalTurnTargets.delete(turnId);
+  context.effects.turnObjectiveRevisions.delete(turnId);
   context.effects.exhaustedTurnBudgetGoals.delete(turnId);
   return { goalId, lifecycleGoalId, starterTurn };
 }
@@ -725,14 +763,21 @@ function launchContinuationTurn(context: GoalOperationContext, goalId: string, s
           : prompt,
       },
     ],
-    toolCalls: [],
     origin: GOAL_CONTINUATION_ORIGIN,
   };
-  const { turn } = context.runtime.get(IAgentLoopService).submit({ message });
-  const pending: PendingContinuation = { turn, goalId };
+  const loop = context.runtime.get(IAgentLoopService);
+  const { id } = loop.submit({
+    message: { role: 'user', content: message.content },
+    meta: { origin: message.origin },
+  });
+  const handle = loop.promptHandle(id)!;
+  const pending: PendingContinuation = { promptId: id, goalId };
   context.effects.pendingContinuation = pending;
-  void turn.ready.then(() => { pending.turnId = turn.id; }).catch(() => undefined);
-  void turn.result.finally(() => {
+  void handle.launched.then((launchedTurn) => {
+    pending.turn = launchedTurn;
+    pending.turnId = launchedTurn?.id;
+  }).catch(() => undefined);
+  void handle.completion.finally(() => {
     if (pending.turnId !== undefined) context.effects.pendingContinuationGoals.delete(pending.turnId);
     if (context.effects.pendingContinuation === pending) context.effects.pendingContinuation = undefined;
   });
@@ -740,7 +785,7 @@ function launchContinuationTurn(context: GoalOperationContext, goalId: string, s
 
 function canLaunchContinuation(context: GoalOperationContext): boolean {
   if (context.effects.liveTurnId !== undefined || context.effects.pendingContinuation !== undefined) return false;
-  const status = context.runtime.get(IAgentLoopService).status();
+  const status = context.runtime.get(IAgentLoopService).snapshot();
   return status.state === 'idle' && !status.hasPendingRequests;
 }
 
@@ -769,9 +814,12 @@ function cancelPendingContinuation(context: GoalOperationContext,
   if (preserveLiveContinuation && pending?.turnId === context.effects.liveTurnId) return;
   context.effects.pendingContinuation = undefined;
   const cancellation = reason ?? abortError('Goal continuation cancelled');
-  const cancelled = pending?.turn.cancel(cancellation) ?? false;
-  if (pending !== undefined && !cancelled && pending.turnId !== undefined) {
-    context.runtime.get(IAgentLoopService).cancel(pending.turnId, cancellation);
+  const cancelled = pending?.turn?.cancel(cancellation) ?? false;
+  if (pending !== undefined && !cancelled) {
+    context.runtime.get(IAgentLoopService).cancel(
+      pending.turnId !== undefined ? { turnId: pending.turnId } : { promptId: pending.promptId },
+      cancellation,
+    );
   }
 }
 
@@ -816,6 +864,7 @@ function clearInternal(context: GoalOperationContext,
   cancelPendingContinuation(context, opts.preserveLiveContinuation === true);
   context.runtime.send({ type: 'goal.deadline.clear' });
   context.effects.liveWallClockStartedAt = undefined;
+  context.effects.turnObjectiveRevisions.clear();
   void context.runtime.dispatch(new GoalClear({ agentId: context.runtime.agent.agentId }));
   if (opts.emit !== false) emitGoalUpdated(context, null);
   if (opts.track !== false) context.runtime.get(ITelemetryService).track2('goal_cleared', { actor });
@@ -967,7 +1016,7 @@ function handleWallClockDeadline(context: GoalOperationContext): void {
     cancellationReason: cancellation,
   });
   if (liveTurnId !== undefined && liveTurnId !== pendingTurnId) {
-    context.runtime.get(IAgentLoopService).cancel(liveTurnId, cancellation);
+    context.runtime.get(IAgentLoopService).cancel({ turnId: liveTurnId }, cancellation);
   }
 }
 
@@ -1189,7 +1238,11 @@ const goalEffects = fromCallback(({
   const disposables: IDisposable[] = [deadline];
   if (input.runtime.agent.agentId === MAIN_AGENT_ID) {
     disposables.push(input.runtime.get(IAgentLifecycleService).onWillClose(handlers.closing));
-    disposables.push(new GoalInjection(handlers.injection, reminderOf(input.runtime)));
+    disposables.push(new GoalInjection(
+      handlers.injection,
+      reminderOf(input.runtime),
+      input.runtime.get(IAgentContextMemoryService),
+    ));
     disposables.push(input.runtime.get(IEventBus).subscribe(TurnStarted, handlers.turnStarted));
     disposables.push(input.runtime.get(ISessionUsageService).onDidRecord(handlers.usageRecorded));
     const loop = input.runtime.get(IAgentLoopService);
@@ -1244,6 +1297,8 @@ const goalActorLogic = setup({
       budgetGraceTurns: new Set(),
       pendingContinuationGoals: new Map(),
       goalTurnTargets: new Map(),
+      turnObjectiveRevisions: new Map(),
+      objectiveRevision: 0,
       exhaustedTurnBudgetGoals: new Map(),
     },
     runtime: input,
@@ -1279,7 +1334,9 @@ export interface IAgentGoalService {
   readonly _serviceBrand: undefined;
   getGoal(): GoalToolResult;
   isGoalToolTarget(turnId: number, goalId: string): boolean;
+  isObjectiveEditedSinceTurnStart(turnId: number): boolean;
   createGoal(input: CreateGoalInput, actor?: GoalActor): Promise<GoalSnapshot>;
+  editGoalObjective(input: EditGoalObjectiveInput, actor?: GoalActor): Promise<GoalSnapshot>;
   pauseGoal(input?: GoalReasonInput, actor?: GoalActor): Promise<GoalSnapshot>;
   resumeGoal(input?: ResumeGoalInput, actor?: GoalActor): Promise<GoalSnapshot>;
   setBudgetLimits(
@@ -1310,7 +1367,7 @@ export class AgentGoalService extends AgentActorService<GoalRuntimeState> implem
     this.actor = this.attachActor(goalActorLogic, {
       id: 'goal',
       durable: {
-        events: [GoalCreate, GoalUpdate, GoalClear, GoalForked, ContextAppendMessage],
+        events: [GoalCreate, GoalUpdate, GoalClear, Forked, ContextAppendMessage],
         undoable: false,
         transition: (state, event) => {
           if (event instanceof GoalCreate) {
@@ -1331,6 +1388,9 @@ export class AgentGoalService extends AgentActorService<GoalRuntimeState> implem
           if (event instanceof GoalUpdate) {
             const s = state.goal;
             if (s !== null) {
+              if (event.objective !== undefined) {
+                s.objective = event.objective;
+              }
               if (event.status !== undefined && event.status !== s.status) {
                 s.status = event.status;
                 s.terminalReason = event.status === 'active' ? undefined : event.reason;
@@ -1363,7 +1423,7 @@ export class AgentGoalService extends AgentActorService<GoalRuntimeState> implem
             state.forkNotice.goalPresent = false;
             return;
           }
-          if (event instanceof GoalForked) {
+          if (event instanceof Forked) {
             state.goal = null;
             state.forkNotice.reminderPending =
               state.forkNotice.goalPresent || state.forkNotice.reminderPending;
@@ -1390,8 +1450,17 @@ export class AgentGoalService extends AgentActorService<GoalRuntimeState> implem
     return isGoalToolTarget(goalOperationContext(this.actor), turnId, goalId);
   }
 
+  isObjectiveEditedSinceTurnStart(turnId: number): boolean {
+    return isObjectiveEditedSinceTurnStart(goalOperationContext(this.actor), turnId);
+  }
+
+
   async createGoal(input: CreateGoalInput, actor: GoalActor = 'user'): Promise<GoalSnapshot> {
     return createGoal(goalOperationContext(this.actor), input, actor);
+  }
+
+  async editGoalObjective(input: EditGoalObjectiveInput, actor: GoalActor = 'user'): Promise<GoalSnapshot> {
+    return editGoalObjective(goalOperationContext(this.actor), input, actor);
   }
 
   async pauseGoal(input: GoalReasonInput = {}, actor: GoalActor = 'user'): Promise<GoalSnapshot> {

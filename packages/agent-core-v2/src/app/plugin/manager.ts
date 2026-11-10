@@ -10,9 +10,11 @@ import { BugIndicatingError, Error2, ErrorCodes, PluginErrors } from '#/errors';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 
 import { downloadZip, extractZip } from './archive';
+import { PluginAvailabilityStore } from './availability';
 import { loadPluginCommand } from './commands';
 import { resolveGithubCommitSha, resolveGithubSource } from './github-resolver';
 import { parseManifest, type ParsedManifestResult } from './manifest';
+import { PluginPackageCache } from './packageCache';
 import { resolveInstallSource } from './source';
 import { readInstalled, writeInstalled, type InstalledRecord } from './store';
 import type { PluginAgentRoot } from './types';
@@ -20,12 +22,16 @@ import {
   normalizePluginId,
   type EnabledPluginSessionStart,
   type EnabledPluginSystemPrompt,
+  type PluginCapabilities,
   type PluginCapabilityState,
   type PluginCommandDef,
   type PluginGithubMetadata,
   type PluginInfo,
+  type PluginInterface,
   type PluginMcpServerEntry,
   type PluginMcpServerInfo,
+  type PluginOrigin,
+  type PluginSkillInfo,
   type PluginRecord,
   type PluginSource,
   type PluginSummary,
@@ -35,7 +41,28 @@ import {
 
 export interface PluginManagerOptions {
   readonly kimiHomeDir: string;
+  readonly client?: 'desktop' | 'cli';
+  readonly platform?: NodeJS.Platform;
+  readonly availability?: PluginAvailabilityStore;
   readonly discoverSkills?: (roots: readonly SkillRoot[]) => Promise<SkillDiscoveryResult>;
+}
+
+export interface PluginInstallOptions {
+  readonly expectedSha256?: string;
+  readonly expectedPluginId?: string;
+  readonly origin?: PluginOrigin;
+  readonly catalogId?: string;
+  readonly marketplaceSource?: string;
+  readonly migrateFrom?: string;
+  readonly requiredSkill?: string;
+  readonly fetchImpl?: typeof fetch;
+}
+
+export interface PluginInspectionOptions {
+  readonly expectedSha256: string;
+  readonly expectedPluginId: string;
+  readonly locale?: string;
+  readonly fetchImpl?: typeof fetch;
 }
 
 interface ManagedPluginCopy {
@@ -43,17 +70,45 @@ interface ManagedPluginCopy {
   readonly previousRoot?: string;
 }
 
+interface RequiredPluginSkill {
+  readonly pluginId: string;
+  readonly name: string;
+}
+
+export interface PluginInstallReloadResult {
+  readonly record: PluginRecord;
+  readonly summary: ReloadSummary;
+}
+
+type PluginInspection = Pick<
+  PluginRecord,
+  'id' | 'capabilities' | 'manifest' | 'interfaceLocales' | 'skills'
+>;
+
+const INSPECTION_CACHE_LIMIT = 20;
+
 export class PluginManager {
   private readonly kimiHomeDir: string;
+  private readonly client: 'desktop' | 'cli';
+  private readonly platform: NodeJS.Platform;
+  private readonly availability: PluginAvailabilityStore;
   private readonly discoverSkills: (roots: readonly SkillRoot[]) => Promise<SkillDiscoveryResult>;
+  private readonly packages: PluginPackageCache;
+  private readonly inspections = new Map<string, PluginInspection>();
+  private readonly inspectionLoads = new Map<string, Promise<PluginInspection>>();
   private records = new Map<string, PluginRecord>();
 
   constructor(options: PluginManagerOptions) {
     this.kimiHomeDir = options.kimiHomeDir;
+    this.client = options.client ?? 'cli';
+    this.platform = options.platform ?? process.platform;
+    this.availability = options.availability ?? new PluginAvailabilityStore(options.kimiHomeDir);
     this.discoverSkills = options.discoverSkills ?? discoverFileSkills;
+    this.packages = new PluginPackageCache(options.kimiHomeDir);
   }
 
   async load(): Promise<void> {
+    await this.availability.refresh();
     const file = await readInstalled(this.kimiHomeDir);
     const next = new Map<string, PluginRecord>();
     for (const entry of file.plugins) {
@@ -62,16 +117,62 @@ export class PluginManager {
     this.records = next;
   }
 
+  private recordAvailable(record: PluginRecord): boolean {
+    return this.availability.supports(record, this.client, this.platform);
+  }
+
+  private requireAvailable(record: PluginRecord): void {
+    if (!this.recordAvailable(record)) throw pluginNotFound(record.id);
+  }
+
   list(): readonly PluginRecord[] {
-    return [...this.records.values()].toSorted((a, b) => a.id.localeCompare(b.id));
+    return [...this.records.values()]
+      .filter((record) => this.recordAvailable(record))
+      .toSorted((a, b) => a.id.localeCompare(b.id));
   }
 
   get(id: string): PluginRecord | undefined {
-    return this.records.get(normalizePluginId(id));
+    const record = this.records.get(normalizePluginId(id));
+    return record !== undefined && this.recordAvailable(record) ? record : undefined;
   }
 
-  async install(source: string): Promise<PluginRecord> {
+  async install(source: string, options: PluginInstallOptions = {}): Promise<PluginRecord> {
+    return this.installInternal(source, options, false);
+  }
+
+  async installAndReload(
+    source: string,
+    options: PluginInstallOptions = {},
+  ): Promise<PluginInstallReloadResult> {
+    return this.installInternal(source, options, true);
+  }
+
+  private async installInternal(
+    source: string,
+    options: PluginInstallOptions,
+    reloadAfterInstall: false,
+  ): Promise<PluginRecord>;
+  private async installInternal(
+    source: string,
+    options: PluginInstallOptions,
+    reloadAfterInstall: true,
+  ): Promise<PluginInstallReloadResult>;
+  private async installInternal(
+    source: string,
+    options: PluginInstallOptions,
+    reloadAfterInstall: boolean,
+  ): Promise<PluginRecord | PluginInstallReloadResult> {
     const resolved = resolveInstallSource(source);
+    const migrateFrom =
+      options.migrateFrom === undefined ? undefined : normalizePluginId(options.migrateFrom);
+    const legacy = migrateFrom === undefined ? undefined : this.records.get(migrateFrom);
+    if (options.expectedSha256 !== undefined && resolved.kind !== 'zip-url') {
+      throw new Error2(
+        ErrorCodes.VALIDATION_FAILED,
+        'Marketplace plugin installation requires an HTTP(S) ZIP source',
+        { details: { source } },
+      );
+    }
 
     let sourceRoot: string;
     let originalSource: string;
@@ -79,6 +180,8 @@ export class PluginManager {
     let zipTmpDir: string | undefined;
     let managedCopy: ManagedPluginCopy | undefined;
     let github: PluginGithubMetadata | undefined;
+    const previousRecords = this.records;
+    let persisted = false;
 
     try {
       if (resolved.kind === 'local-path') {
@@ -109,7 +212,14 @@ export class PluginManager {
                 return resolution.tarballUrl;
               })()
             : resolved.path;
-        const buffer = await downloadZip(zipUrl);
+        const buffer =
+          options.expectedSha256 === undefined
+            ? await downloadZip(zipUrl, undefined, options.fetchImpl)
+            : await this.packages.load(zipUrl, {
+                expectedSha256: options.expectedSha256,
+                expectedPluginId: options.expectedPluginId,
+                fetchImpl: options.fetchImpl,
+              });
         zipTmpDir = await mkdtemp(path.join(tmpdir(), 'kimi-plugin-zip-'));
         sourceRoot = await extractZip(buffer, zipTmpDir);
       }
@@ -126,8 +236,30 @@ export class PluginManager {
           { details: { sourceType } },
         );
       }
+      if (
+        options.expectedPluginId !== undefined &&
+        normalizePluginId(parsed.manifest.name) !== normalizePluginId(options.expectedPluginId)
+      ) {
+        throw new Error2(
+          ErrorCodes.PLUGIN_LOAD_FAILED,
+          `Plugin manifest ID mismatch: expected "${options.expectedPluginId}", got "${parsed.manifest.name}"`,
+          {
+            details: {
+              expectedPluginId: options.expectedPluginId,
+              actualPluginId: parsed.manifest.name,
+            },
+          },
+        );
+      }
 
       const id = normalizePluginId(parsed.manifest.name);
+      if (migrateFrom === id) {
+        throw new Error2(
+          ErrorCodes.VALIDATION_FAILED,
+          `Plugin migration source and target must differ (both are "${id}")`,
+          { details: { migrateFrom, pluginId: id } },
+        );
+      }
       managedCopy = await copyPluginToManagedRoot(this.kimiHomeDir, id, sourceRoot);
       const normalizedRoot = managedCopy.root;
       const managedParsed = await parseManifest(normalizedRoot);
@@ -136,42 +268,89 @@ export class PluginManager {
       const record = await recordFrom({
         id,
         root: normalizedRoot,
-        enabled: existing?.enabled ?? true,
-        installedAt: existing?.installedAt ?? now,
+        enabled: existing?.enabled ?? legacy?.enabled ?? true,
+        installedAt: existing?.installedAt ?? legacy?.installedAt ?? now,
         updatedAt: now,
         originalSource,
         source: sourceType,
-        capabilities: existing?.capabilities,
+        origin: options.origin ?? legacy?.origin ?? 'custom',
+        catalogId: options.catalogId,
+        marketplaceSource: options.marketplaceSource ?? existing?.marketplaceSource ?? legacy?.marketplaceSource,
+        capabilities: existing?.capabilities ?? legacy?.capabilities,
         github,
         parsed: managedParsed,
+        requiredSkill: options.requiredSkill,
         discoverSkills: this.discoverSkills,
       });
       const next = new Map(this.records);
+      if (migrateFrom !== undefined) next.delete(migrateFrom);
       next.set(id, record);
       await this.persist(next);
       this.records = next;
+      persisted = true;
+      let result: PluginRecord | PluginInstallReloadResult = record;
+      if (reloadAfterInstall) {
+        const requiredSkill =
+          options.requiredSkill === undefined
+            ? undefined
+            : { pluginId: id, name: options.requiredSkill };
+        const summary = await this.reload(requiredSkill);
+        const targetErrors = summary.errors.filter((entry) => entry.id === id);
+        if (targetErrors.length > 0) {
+          throw new Error2(
+            ErrorCodes.PLUGIN_LOAD_FAILED,
+            `Plugin "${id}" failed to reload after installation: ${targetErrors.map((entry) => `${entry.id}: ${entry.message}`).join('; ')}`,
+            { details: { pluginId: id, errors: targetErrors } },
+          );
+        }
+        const installedRecord = this.records.get(id);
+        if (installedRecord === undefined) {
+          throw new Error2(
+            ErrorCodes.PLUGIN_LOAD_FAILED,
+            `Plugin "${id}" is missing after installation reload`,
+            { details: { pluginId: id, errors: summary.errors } },
+          );
+        }
+        if (
+          options.requiredSkill !== undefined &&
+          (installedRecord.state !== 'ok' || installedRecord.manifest === undefined)
+        ) {
+          throw new Error2(
+            ErrorCodes.PLUGIN_LOAD_FAILED,
+            `Plugin "${id}" is not healthy after installation reload`,
+            { details: { pluginId: id, diagnostics: installedRecord.diagnostics } },
+          );
+        }
+        result = { record: installedRecord, summary };
+      }
       if (managedCopy.previousRoot !== undefined) {
         await rm(managedCopy.previousRoot, { recursive: true, force: true }).catch(() => undefined);
       }
       managedCopy = undefined;
-      return record;
+      return result;
     } catch (error) {
+      const restorationErrors: unknown[] = [];
+      if (persisted) {
+        try {
+          await this.persist(previousRecords);
+        } catch (restoreError) {
+          restorationErrors.push(restoreError);
+        }
+        this.records = previousRecords;
+      }
       if (managedCopy !== undefined) {
         try {
           await rollbackManagedPluginCopy(managedCopy);
         } catch (rollbackError) {
-          throw new Error2(
-            ErrorCodes.PLUGIN_LOAD_FAILED,
-            'Plugin installation failed and the previous managed copy could not be restored',
-            {
-              cause: new AggregateError(
-                [error, rollbackError],
-                'Plugin installation failed and the previous managed copy could not be restored',
-                { cause: error },
-              ),
-            },
-          );
+          restorationErrors.push(rollbackError);
         }
+      }
+      if (restorationErrors.length > 0) {
+        const message =
+          'Plugin installation failed and the previous plugin state could not be fully restored';
+        throw new Error2(ErrorCodes.PLUGIN_LOAD_FAILED, message, {
+          cause: new AggregateError([error, ...restorationErrors], message, { cause: error }),
+        });
       }
       throw error;
     } finally {
@@ -185,6 +364,7 @@ export class PluginManager {
     const key = normalizePluginId(id);
     const current = this.records.get(key);
     if (current === undefined) throw pluginNotFound(id);
+    this.requireAvailable(current);
     if (current.enabled === enabled) return;
     const next = new Map(this.records);
     next.set(key, { ...current, enabled, updatedAt: new Date().toISOString() });
@@ -196,6 +376,7 @@ export class PluginManager {
     const key = normalizePluginId(id);
     const current = this.records.get(key);
     if (current === undefined) throw pluginNotFound(id);
+    this.requireAvailable(current);
     if (current.manifest?.mcpServers?.[server] === undefined) {
       throw new Error2(
         ErrorCodes.MCP_SERVER_NOT_FOUND,
@@ -223,17 +404,18 @@ export class PluginManager {
 
   async remove(id: string): Promise<void> {
     const key = normalizePluginId(id);
+    const current = this.records.get(key);
+    if (current === undefined) throw pluginNotFound(id);
+    this.requireAvailable(current);
     const next = new Map(this.records);
-    if (!next.delete(key)) {
-      throw pluginNotFound(id);
-    }
+    next.delete(key);
     await this.persist(next);
     this.records = next;
   }
 
   async checkUpdates(): Promise<readonly PluginUpdateStatus[]> {
     const records = [...this.records.values()].filter(
-      (record) => record.source === 'github' && record.github !== undefined,
+      (record) => this.recordAvailable(record) && record.source === 'github' && record.github !== undefined,
     );
     const results = await Promise.all(
       records.map(async (record) => {
@@ -249,30 +431,38 @@ export class PluginManager {
       .toSorted((a, b) => a.id.localeCompare(b.id));
   }
 
-  async reload(): Promise<ReloadSummary> {
-    const prevIds = new Set(this.records.keys());
+  async reload(requiredSkill?: RequiredPluginSkill): Promise<ReloadSummary> {
+    const prevIds = new Set(this.list().map((record) => record.id));
+    await this.availability.refresh();
     const file = await readInstalled(this.kimiHomeDir);
     const next = new Map<string, PluginRecord>();
     const errors: Array<{ id: string; message: string }> = [];
     for (const entry of file.plugins) {
       try {
-        next.set(entry.id, await this.materialize(entry));
+        next.set(
+          entry.id,
+          await this.materialize(
+            entry,
+            entry.id === requiredSkill?.pluginId ? requiredSkill.name : undefined,
+          ),
+        );
       } catch (error) {
         errors.push({ id: entry.id, message: (error as Error).message });
       }
     }
-    const added: string[] = [];
-    for (const id of next.keys()) if (!prevIds.has(id)) added.push(id);
-    const removed: string[] = [];
-    for (const id of prevIds) if (!next.has(id)) removed.push(id);
     this.records = next;
+    const nextIds = new Set(this.list().map((record) => record.id));
+    const added: string[] = [];
+    for (const id of nextIds) if (!prevIds.has(id)) added.push(id);
+    const removed: string[] = [];
+    for (const id of prevIds) if (!nextIds.has(id)) removed.push(id);
     return { added, removed, errors };
   }
 
   enabledHooks(): readonly HookDef[] {
     const out: HookDef[] = [];
     for (const record of this.records.values()) {
-      if (!record.enabled || record.state !== 'ok' || record.manifest === undefined) continue;
+      if (!this.recordAvailable(record) || !record.enabled || record.state !== 'ok' || record.manifest === undefined) continue;
       for (const hook of record.manifest.hooks ?? []) {
         out.push({
           ...hook,
@@ -291,7 +481,7 @@ export class PluginManager {
     const out: PluginCommandDef[] = [];
     const records = [...this.records.values()];
     for (const record of records) {
-      if (!record.enabled || record.state !== 'ok' || record.manifest === undefined) continue;
+      if (!this.recordAvailable(record) || !record.enabled || record.state !== 'ok' || record.manifest === undefined) continue;
       for (const entry of record.manifest.commands ?? []) {
         const def = await loadPluginCommand({
           commandPath: entry.path,
@@ -307,7 +497,7 @@ export class PluginManager {
   pluginSkillRoots(): readonly SkillRoot[] {
     const roots: SkillRoot[] = [];
     for (const record of this.records.values()) {
-      if (!record.enabled || record.state !== 'ok' || record.manifest === undefined) continue;
+      if (!this.recordAvailable(record) || !record.enabled || record.state !== 'ok' || record.manifest === undefined) continue;
       for (const dir of record.manifest.skills ?? []) {
         roots.push({
           path: dir,
@@ -323,7 +513,7 @@ export class PluginManager {
   pluginAgentRoots(): readonly PluginAgentRoot[] {
     const roots: PluginAgentRoot[] = [];
     for (const record of this.records.values()) {
-      if (!record.enabled || record.state !== 'ok' || record.manifest === undefined) continue;
+      if (!this.recordAvailable(record) || !record.enabled || record.state !== 'ok' || record.manifest === undefined) continue;
       for (const dir of record.manifest.agents ?? []) {
         roots.push({ path: dir, source: 'plugin' });
       }
@@ -334,7 +524,7 @@ export class PluginManager {
   enabledSessionStarts(): readonly EnabledPluginSessionStart[] {
     const out: EnabledPluginSessionStart[] = [];
     for (const record of this.records.values()) {
-      if (!record.enabled || record.state !== 'ok') continue;
+      if (!this.recordAvailable(record) || !record.enabled || record.state !== 'ok') continue;
       const skill = record.manifest?.sessionStart?.skill;
       if (skill === undefined) continue;
       out.push({ pluginId: record.id, skillName: skill });
@@ -345,7 +535,7 @@ export class PluginManager {
   enabledSystemPrompts(): readonly EnabledPluginSystemPrompt[] {
     const out: EnabledPluginSystemPrompt[] = [];
     for (const record of this.records.values()) {
-      if (!record.enabled || record.state !== 'ok') continue;
+      if (!this.recordAvailable(record) || !record.enabled || record.state !== 'ok') continue;
       const content = record.manifest?.systemPrompt;
       if (content === undefined) continue;
       out.push({ pluginId: record.id, content });
@@ -356,7 +546,7 @@ export class PluginManager {
   enabledMcpServers(): Record<string, McpServerConfig> {
     const out: Record<string, McpServerConfig> = {};
     for (const record of this.records.values()) {
-      if (!record.enabled || record.state !== 'ok' || record.manifest === undefined) continue;
+      if (!this.recordAvailable(record) || !record.enabled || record.state !== 'ok' || record.manifest === undefined) continue;
       for (const [name, config] of Object.entries(record.manifest.mcpServers ?? {})) {
         if (!isMcpServerEnabled(record, name, config)) continue;
         out[pluginMcpRuntimeName(record.id, name)] = withPluginMcpRuntime(
@@ -372,7 +562,7 @@ export class PluginManager {
   mcpServerEntries(): readonly PluginMcpServerEntry[] {
     const out: PluginMcpServerEntry[] = [];
     for (const record of this.records.values()) {
-      if (record.state !== 'ok' || record.manifest === undefined) continue;
+      if (!this.recordAvailable(record) || record.state !== 'ok' || record.manifest === undefined) continue;
       for (const [name, config] of Object.entries(record.manifest.mcpServers ?? {})) {
         const enabled = record.enabled && isMcpServerEnabled(record, name, config);
         const effective = withPluginMcpRuntime(
@@ -395,9 +585,109 @@ export class PluginManager {
     return this.list().map((record) => recordToSummary(record));
   }
 
-  info(id: string): PluginInfo | undefined {
+  info(id: string, locale?: string): PluginInfo | undefined {
     const record = this.get(id);
-    return record === undefined ? undefined : recordToInfo(record);
+    return record === undefined ? undefined : recordToInfo(record, locale);
+  }
+
+  async inspect(
+    source: string,
+    options: PluginInspectionOptions,
+  ): Promise<PluginCapabilities> {
+    const resolved = resolveInstallSource(source);
+    if (resolved.kind !== 'zip-url') {
+      throw new Error2(
+        ErrorCodes.VALIDATION_FAILED,
+        'Marketplace plugin inspection requires an HTTP(S) ZIP source',
+        { details: { source } },
+      );
+    }
+    const cacheKey = `${options.expectedSha256.toLowerCase()}:${options.expectedPluginId}`;
+    const cached = this.inspections.get(cacheKey);
+    if (cached !== undefined) {
+      this.inspections.delete(cacheKey);
+      this.inspections.set(cacheKey, cached);
+      return pluginCapabilities(cached, options.locale);
+    }
+    const pending = this.inspectionLoads.get(cacheKey);
+    if (pending !== undefined) return pluginCapabilities(await pending, options.locale);
+    const load = this.inspectArchive(resolved.path, options);
+    this.inspectionLoads.set(cacheKey, load);
+    try {
+      const record = await load;
+      this.inspections.set(cacheKey, record);
+      if (this.inspections.size > INSPECTION_CACHE_LIMIT) {
+        const oldest = this.inspections.keys().next().value;
+        if (oldest !== undefined) this.inspections.delete(oldest);
+      }
+      return pluginCapabilities(record, options.locale);
+    } finally {
+      if (this.inspectionLoads.get(cacheKey) === load) this.inspectionLoads.delete(cacheKey);
+    }
+  }
+
+  private async inspectArchive(
+    source: string,
+    options: PluginInspectionOptions,
+  ): Promise<PluginInspection> {
+    const buffer = await this.packages.load(source, {
+      expectedSha256: options.expectedSha256,
+      expectedPluginId: options.expectedPluginId,
+      fetchImpl: options.fetchImpl,
+    });
+    const zipTmpDir = await mkdtemp(path.join(tmpdir(), 'kimi-plugin-inspect-'));
+    try {
+      const sourceRoot = await extractZip(buffer, zipTmpDir);
+      const parsed = await parseManifest(sourceRoot);
+      if (parsed.manifest === undefined) {
+        const message =
+          parsed.diagnostics.find((diagnostic) => diagnostic.severity === 'error')?.message ??
+          'no manifest';
+        throw new Error2(
+          ErrorCodes.PLUGIN_LOAD_FAILED,
+          `Cannot inspect plugin from ${source}: ${message}`,
+          { details: { source } },
+        );
+      }
+      if (normalizePluginId(parsed.manifest.name) !== normalizePluginId(options.expectedPluginId)) {
+        throw new Error2(
+          ErrorCodes.PLUGIN_LOAD_FAILED,
+          `Plugin manifest ID mismatch: expected "${options.expectedPluginId}", got "${parsed.manifest.name}"`,
+          {
+            details: {
+              expectedPluginId: options.expectedPluginId,
+              actualPluginId: parsed.manifest.name,
+            },
+          },
+        );
+      }
+      const record = await recordFrom({
+        id: normalizePluginId(parsed.manifest.name),
+        root: sourceRoot,
+        enabled: true,
+        installedAt: new Date(0).toISOString(),
+        source: 'zip-url',
+        origin: 'marketplace',
+        parsed,
+        discoverSkills: this.discoverSkills,
+      });
+      if (record.state === 'error') {
+        throw new Error2(
+          ErrorCodes.PLUGIN_LOAD_FAILED,
+          `Plugin "${record.id}" has an invalid manifest`,
+          { details: { pluginId: record.id, diagnostics: record.diagnostics } },
+        );
+      }
+      return {
+        id: record.id,
+        capabilities: record.capabilities,
+        manifest: record.manifest,
+        interfaceLocales: record.interfaceLocales,
+        skills: record.skills,
+      };
+    } finally {
+      await rm(zipTmpDir, { recursive: true, force: true });
+    }
   }
 
   private async persist(records: ReadonlyMap<string, PluginRecord>): Promise<void> {
@@ -405,6 +695,9 @@ export class PluginManager {
       id: record.id,
       root: record.root,
       source: record.source,
+      origin: record.origin,
+      catalogId: record.catalogId,
+      marketplaceSource: record.marketplaceSource,
       enabled: record.enabled,
       installedAt: record.installedAt,
       updatedAt: record.updatedAt,
@@ -415,7 +708,10 @@ export class PluginManager {
     await writeInstalled(this.kimiHomeDir, { version: 1, plugins: installed });
   }
 
-  private async materialize(entry: InstalledRecord): Promise<PluginRecord> {
+  private async materialize(
+    entry: InstalledRecord,
+    requiredSkill?: string,
+  ): Promise<PluginRecord> {
     const parsed = await parseManifest(entry.root);
     return recordFrom({
       id: entry.id,
@@ -427,7 +723,11 @@ export class PluginManager {
       capabilities: entry.capabilities,
       github: entry.github,
       source: entry.source,
+      origin: entry.origin === 'marketplace' || entry.origin === 'custom' ? entry.origin : 'unknown',
+      catalogId: entry.catalogId,
+      marketplaceSource: entry.marketplaceSource,
       parsed,
+      requiredSkill,
       discoverSkills: this.discoverSkills,
     });
   }
@@ -589,24 +889,71 @@ async function recordFrom(input: {
   capabilities?: PluginCapabilityState;
   github?: PluginGithubMetadata;
   source?: PluginSource;
+  origin: PluginOrigin;
+  catalogId?: string;
+  marketplaceSource?: string;
   parsed: ParsedManifestResult;
+  requiredSkill?: string;
   discoverSkills: (roots: readonly SkillRoot[]) => Promise<SkillDiscoveryResult>;
 }): Promise<PluginRecord> {
   const { parsed } = input;
   const hasError = parsed.diagnostics.some((d) => d.severity === 'error');
+  const state = hasError || parsed.manifest === undefined ? 'error' : 'ok';
+  if (input.requiredSkill !== undefined && state === 'error') {
+    const message =
+      parsed.diagnostics.find((diagnostic) => diagnostic.severity === 'error')?.message ??
+      'manifest is unavailable';
+    throw new Error2(
+      ErrorCodes.PLUGIN_LOAD_FAILED,
+      `Plugin "${input.id}" has an unhealthy manifest: ${message}`,
+      { details: { pluginId: input.id, diagnostics: parsed.diagnostics } },
+    );
+  }
+  const discovered = await discoverPluginSkills(input.id, parsed.manifest, input.discoverSkills);
+  if (
+    input.requiredSkill !== undefined &&
+    !discovered.skills.some(
+      (skill) => skill.name === input.requiredSkill && skill.plugin?.id === input.id,
+    )
+  ) {
+    throw new Error2(
+      ErrorCodes.PLUGIN_LOAD_FAILED,
+      `Plugin "${input.id}" does not provide required skill "${input.requiredSkill}"`,
+      {
+        details: {
+          pluginId: input.id,
+          requiredSkill: input.requiredSkill,
+          discoveredSkills: discovered.skills.map((skill) => skill.name),
+        },
+      },
+    );
+  }
   return {
     id: input.id,
     root: input.root,
     source: input.source ?? 'local-path',
+    origin: input.origin,
+    catalogId: input.catalogId,
+    marketplaceSource: input.marketplaceSource,
     enabled: input.enabled,
-    state: hasError || parsed.manifest === undefined ? 'error' : 'ok',
+    state,
     installedAt: input.installedAt,
     updatedAt: input.updatedAt,
     originalSource: input.originalSource,
     capabilities: input.capabilities,
     github: input.github,
-    skillCount: await countDiscoveredPluginSkills(input.id, parsed.manifest, input.discoverSkills),
+    skills: discovered.skills.map((skill) => {
+      const override = parsed.manifest?.interface?.skillOverrides?.[path.basename(skill.dir)];
+      return {
+        name: skill.name,
+        displayName: override?.displayName,
+        description: override?.description ?? skill.description,
+        overrideKey: path.basename(skill.dir),
+      };
+    }),
+    skillCount: discovered.skills.length,
     manifest: parsed.manifest,
+    interfaceLocales: parsed.interfaceLocales,
     manifestKind: parsed.manifestKind,
     manifestPath: parsed.manifestPath,
     shadowedManifestPath: parsed.shadowedManifestPath,
@@ -619,6 +966,9 @@ function recordToSummary(record: PluginRecord): PluginSummary {
   return {
     id: record.id,
     displayName: record.manifest?.interface?.displayName ?? record.id,
+    description: record.manifest?.description,
+    shortDescription: record.manifest?.interface?.shortDescription,
+    longDescription: record.manifest?.interface?.longDescription,
     version: record.manifest?.version,
     enabled: record.enabled,
     state: record.state,
@@ -629,12 +979,15 @@ function recordToSummary(record: PluginRecord): PluginSummary {
     commandCount: record.manifest?.commands?.length ?? 0,
     hasErrors: record.diagnostics.some((d) => d.severity === 'error'),
     source: record.source,
+    origin: record.origin,
+    catalogId: record.catalogId,
+    installedAt: record.installedAt,
     originalSource: record.originalSource,
     github: record.github,
   };
 }
 
-function recordToInfo(record: PluginRecord): PluginInfo {
+function recordToInfo(record: PluginRecord, locale?: string): PluginInfo {
   return {
     ...recordToSummary(record),
     root: record.root,
@@ -643,30 +996,90 @@ function recordToInfo(record: PluginRecord): PluginInfo {
     manifestKind: record.manifestKind,
     manifestPath: record.manifestPath,
     manifest: record.manifest,
-    mcpServers: pluginMcpServersInfo(record),
+    skills: pluginSkillsInfo(record, locale),
+    mcpServers: pluginMcpServersInfo(record, locale),
     shadowedManifestPath: record.shadowedManifestPath,
     diagnostics: record.diagnostics,
   };
 }
 
-function isMcpServerEnabled(record: PluginRecord, name: string, config: McpServerConfig): boolean {
+function pluginCapabilities(
+  record: PluginInspection,
+  locale?: string,
+): PluginCapabilities {
+  return {
+    skills: pluginSkillsInfo(record, locale),
+    mcpServers: pluginMcpServersInfo(record, locale),
+  };
+}
+
+function pluginSkillsInfo(record: PluginInspection, locale?: string): readonly PluginSkillInfo[] {
+  const localized = pluginInterfaceForLocale(record, locale);
+  return (record.skills ?? []).map((skill) => {
+    const override = localized?.skillOverrides?.[skill.overrideKey];
+    return {
+      name: skill.name,
+      displayName: override?.displayName ?? skill.displayName,
+      description: override?.description ?? skill.description,
+    };
+  });
+}
+
+function pluginInterfaceForLocale(record: PluginInspection, locale?: string): PluginInterface | undefined {
+  if (locale === undefined) return undefined;
+  const entries = Object.entries(record.interfaceLocales ?? {}).map(
+    ([key, value]) => [normalizedLocale(key), value] as const,
+  );
+  const normalized = normalizedLocale(locale);
+  const base = normalized.split('-')[0];
+  const exact = entries.find(([key]) => key === normalized);
+  if (exact !== undefined) return exact[1];
+  if (base !== normalized) {
+    const baseEntry = entries.find(([key]) => key === base);
+    if (baseEntry !== undefined) return baseEntry[1];
+  }
+  const defaultLocale = record.manifest?.interface?.defaultLocale;
+  if (defaultLocale !== undefined && normalizedLocale(defaultLocale).split('-')[0] === base) {
+    const normalizedDefault = normalizedLocale(defaultLocale);
+    return entries.find(([key]) => key === normalizedDefault)?.[1];
+  }
+  return entries
+    .filter(([key]) => key.split('-')[0] === base)
+    .toSorted(([a], [b]) => a.localeCompare(b))[0]?.[1];
+}
+
+function normalizedLocale(value: string): string {
+  return value.replaceAll('_', '-').toLowerCase();
+}
+
+function isMcpServerEnabled(record: PluginInspection, name: string, config: McpServerConfig): boolean {
   return record.capabilities?.mcpServers?.[name]?.enabled ?? config.enabled !== false;
 }
 
-function pluginMcpServersInfo(record: PluginRecord): readonly PluginMcpServerInfo[] {
+function pluginMcpServersInfo(record: PluginInspection, locale?: string): readonly PluginMcpServerInfo[] {
+  const localized = pluginInterfaceForLocale(record, locale);
   return Object.entries(record.manifest?.mcpServers ?? {})
-    .map(([name, config]) => pluginMcpServerInfo(record, name, config))
+    .map(([name, config]) => pluginMcpServerInfo(record, name, config, localized))
     .toSorted((a, b) => a.name.localeCompare(b.name));
 }
 
 function pluginMcpServerInfo(
-  record: PluginRecord,
+  record: PluginInspection,
   name: string,
   config: McpServerConfig,
+  localized?: PluginInterface,
 ): PluginMcpServerInfo {
+  const baseOverride = record.manifest?.interface?.mcpOverrides?.[name];
+  const override = localized?.mcpOverrides?.[name];
+  const presentation = {
+    displayName: override?.displayName ?? baseOverride?.displayName,
+    description: override?.description ?? baseOverride?.description,
+    iconUrl: override?.iconUrl ?? baseOverride?.iconUrl,
+  };
   if (config.transport === 'http' || config.transport === 'sse') {
     return {
       name,
+      ...presentation,
       runtimeName: pluginMcpRuntimeName(record.id, name),
       enabled: isMcpServerEnabled(record, name, config),
       transport: config.transport,
@@ -676,6 +1089,7 @@ function pluginMcpServerInfo(
   }
   return {
     name,
+    ...presentation,
     runtimeName: pluginMcpRuntimeName(record.id, name),
     enabled: isMcpServerEnabled(record, name, config),
     transport: 'stdio',
@@ -740,19 +1154,20 @@ function isKimiNativeBinary(): boolean {
   return !path.basename(process.execPath).toLowerCase().startsWith('node');
 }
 
-async function countDiscoveredPluginSkills(
+async function discoverPluginSkills(
   pluginId: string,
   manifest: PluginRecord['manifest'],
   discoverSkills: (roots: readonly SkillRoot[]) => Promise<SkillDiscoveryResult>,
-): Promise<number> {
+): Promise<SkillDiscoveryResult> {
   const dirs = manifest?.skills ?? [];
-  if (dirs.length === 0) return 0;
+  if (dirs.length === 0) {
+    return { skills: [], variants: [], skipped: [], scannedRoots: [], scannedDirectories: [] };
+  }
   const roots: SkillRoot[] = dirs.map((dir) => ({
     path: dir,
     source: 'extra',
     plugin: { id: pluginId, instructions: manifest?.skillInstructions },
     scanMode: manifest?.rootSkillFallback ? 'root-skill-only' : undefined,
   }));
-  const result = await discoverSkills(roots);
-  return result.skills.length;
+  return discoverSkills(roots);
 }

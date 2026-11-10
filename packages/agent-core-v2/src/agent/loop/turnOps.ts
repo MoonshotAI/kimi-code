@@ -27,12 +27,6 @@ export interface TurnModelState {
   };
 }
 
-const turnInputShape = {
-  agentId: z.string(),
-  input: z.custom<readonly ContentPart[]>(),
-  origin: z.custom<PromptOrigin>(),
-};
-
 const turnPromptSchema = z.object({
   agentId: z.string(),
   input: z.custom<readonly ContentPart[]>(),
@@ -44,6 +38,7 @@ const turnPromptSchema = z.object({
 export class TurnPrompt extends AgentEvent2<z.infer<typeof turnPromptSchema>> {
   static override readonly type = 'turn.prompt';
   static override readonly durable = true;
+  static override readonly observable = true;
   static override readonly schema = turnPromptSchema;
 }
 export interface TurnPrompt {
@@ -54,7 +49,14 @@ export interface TurnPrompt {
   readonly turnId?: number;
 }
 
-const turnSteerSchema = z.object(turnInputShape);
+const turnSteerSchema = z.object({
+  agentId: z.string(),
+  input: z.custom<readonly ContentPart[]>(),
+  origin: z.custom<PromptOrigin>(),
+  messageId: z.string().optional(),
+  promptIds: z.array(z.string()).optional(),
+  turnId: z.number().optional(),
+});
 
 export class TurnSteer extends AgentEvent2<z.infer<typeof turnSteerSchema>> {
   static override readonly type = 'turn.steer';
@@ -66,6 +68,9 @@ export interface TurnSteer {
   readonly agentId: string;
   readonly input: readonly ContentPart[];
   readonly origin: PromptOrigin;
+  readonly messageId?: string;
+  readonly promptIds?: readonly string[];
+  readonly turnId?: number;
 }
 
 const turnCancelSchema = z.object({
@@ -94,6 +99,7 @@ const turnEndedSchema = z.object({
   error: z.custom<KimiErrorPayload>().optional(),
   durationMs: z.number().optional(),
   stopReason: z.string().optional(),
+  requestId: z.string().optional(),
 });
 
 export interface TurnEndedPayload {
@@ -104,6 +110,7 @@ export interface TurnEndedPayload {
   readonly durationMs?: number;
   readonly interruptReason?: TurnInterruptReason;
   readonly stopReason?: string;
+  readonly requestId?: string;
 }
 
 export class TurnEnded extends AgentEvent2<TurnEndedPayload> {
@@ -122,6 +129,7 @@ export class TurnEnded extends AgentEvent2<TurnEndedPayload> {
     if (this.error !== undefined) record['error'] = this.error;
     if (this.durationMs !== undefined) record['durationMs'] = this.durationMs;
     if (this.stopReason !== undefined) record['stopReason'] = this.stopReason;
+    if (this.requestId !== undefined) record['requestId'] = this.requestId;
     record['time'] = this.time;
     return record as SerializedEvent2;
   }
@@ -184,6 +192,7 @@ export interface TurnEndedEvent {
   readonly error?: KimiErrorPayload;
   readonly durationMs?: number;
   readonly interruptReason?: TurnInterruptReason;
+  readonly requestId?: string;
 }
 
 function advanceTurnClock(

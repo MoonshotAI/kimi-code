@@ -88,7 +88,9 @@ function v2AgentsToV1(agents: Readonly<Record<string, V2AgentMeta>>): Record<str
       // v1 persists an explicit null for a parentless agent where v2 leaves
       // the field unset.
       parentAgentId: agent.parentAgentId ?? null,
-      swarmItem: agent.swarmItem,
+      swarmItem: agent.labels?.['swarmItem'] ?? agent.swarmItem,
+      profileName: agent.labels?.['profileName'],
+      sessionInit: agent.labels?.['sessionInit'],
     };
   }
   return mapped;

@@ -17,6 +17,16 @@ export const TERMINAL_FOCUS_OUT = `${ESC}[O`;
 export const ENABLE_TERMINAL_FOCUS_REPORTING = `${ESC}[?1004h`;
 export const DISABLE_TERMINAL_FOCUS_REPORTING = `${ESC}[?1004l`;
 
+// A click this soon after the terminal window regained focus, or after the
+// prompt under it appeared, is most likely not a deliberate choice.
+export const CLICK_GUARD_MS = 300;
+
+// SGR faint and normal intensity. Normal intensity also ends bold, so a faded
+// line re-enters faint after every such reset inside it.
+export const SGR_FAINT = `${ESC}[2m`;
+export const SGR_NORMAL_INTENSITY = `${ESC}[22m`;
+export const SGR_SEQUENCE = new RegExp(String.raw`${ESC}\[([0-9;:]*)m`, "g");
+
 // Standard OSC 11 background-color query. The response regex intentionally
 // allows a missing leading ESC because terminals can echo replies alongside
 // other raw input, but it requires an OSC terminator so fragmented color

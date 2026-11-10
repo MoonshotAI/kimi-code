@@ -1,6 +1,7 @@
+import { apiKeyEnvMissingMessage } from '@moonshot-ai/kimi-code-oauth/provider-credential';
 import type {
-  AuthManagedUserInfoResult,
   AuthManagedUsageResult,
+  AuthManagedUserInfoResult,
   BearerTokenProvider,
   KimiOAuthLoginOptions,
   KimiOAuthLoginResult,
@@ -11,6 +12,7 @@ import type {
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { Error2 } from '#/_base/errors/errors';
 
+import { CONFIG_INVALID_ERROR_CODE } from '#/llm-adapter/contract/errors';
 import type { OAuthRef } from '#/llm-adapter/provider/provider';
 
 import { AuthErrors } from './errors';
@@ -45,6 +47,7 @@ export interface IOAuthService {
   resolveTokenProvider(provider: string, oauthRef?: OAuthRef): BearerTokenProvider | undefined;
   getCachedAccessToken(provider: string, oauthRef?: OAuthRef): Promise<string | undefined>;
   getRegion(): KimiRegion;
+  getRegionAsync(): Promise<KimiRegion>;
 }
 
 export const IOAuthService: ServiceIdentifier<IOAuthService> =
@@ -101,6 +104,19 @@ export class AuthTokenMissingError extends Error2 {
       AuthErrors.codes.AUTH_TOKEN_MISSING,
       `provider ${providerId} has no credential configured`,
       { details: { provider_id: providerId }, name: 'AuthTokenMissingError' },
+    );
+    this.providerId = providerId;
+  }
+}
+
+export class AuthCredentialEnvMissingError extends Error2 {
+  readonly providerId: string;
+
+  constructor(providerId: string, envName: string) {
+    super(
+      CONFIG_INVALID_ERROR_CODE,
+      apiKeyEnvMissingMessage(providerId, envName),
+      { details: { provider_id: providerId }, name: 'AuthCredentialEnvMissingError' },
     );
     this.providerId = providerId;
   }

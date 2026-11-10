@@ -3,7 +3,7 @@
  * klient in-memory transport and a local mock model endpoint.
  *
  * Every case runs the REAL pipeline: klient facade → engine session/loop →
- * llmRequester → ModelRequesterImpl → composed ChatProvider.generate → the
+ * llmRequester → core requester → composed ChatProvider.generate → the
  * provider's message-conversion layer → HTTP against a local `node:http`
  * server. The mock server captures request bodies (so fallbacks can be
  * asserted on their wire shape) and replies with scripted SSE streams or
@@ -36,7 +36,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { bootstrap, logSeed, resolveLoggingConfig } from '@moonshot-ai/agent-core-v2';
 
 import { TEST_CLIENT_IDENTITY } from '../helpers/engine.js';
-import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
+import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/message';
 import { IModelService } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model';
 
 import type { Klient } from '../../src/index.js';
@@ -127,12 +127,14 @@ type MockReply =
 type MockHandler = (request: CapturedRequest, callIndex: number) => MockReply;
 
 const requests: CapturedRequest[] = [];
+const abortedRequests: string[] = [];
 let handler: MockHandler = () => {
   throw new Error('mock handler not installed for this case');
 };
 
 function resetMock(next: MockHandler): void {
   requests.length = 0;
+  abortedRequests.length = 0;
   handler = next;
 }
 
@@ -333,7 +335,12 @@ beforeAll(async () => {
         res.end(JSON.stringify({ error: { message: `mock handler: ${String(error)}` } }));
         return;
       }
-      if (reply.kind === 'hang') return; // never answered; the client aborts it
+      if (reply.kind === 'hang') {
+        res.on('close', () => {
+          if (!res.writableEnded) abortedRequests.push(req.url ?? '');
+        });
+        return;
+      }
       if (reply.kind === 'json') {
         res.writeHead(reply.status, { 'content-type': 'application/json' });
         res.end(JSON.stringify(reply.body));
@@ -475,7 +482,9 @@ async function promptAndWait(ctx: CaseContext, input: readonly ContentPart[]): P
 
 /** Chat-completions messages array of the n-th captured request. */
 function openAiMessages(callIndex: number): Record<string, unknown>[] {
-  const body = requests[callIndex]?.json as { messages?: Record<string, unknown>[] } | undefined;
+  const body = requests.filter((request) => request.url === '/v1/chat/completions')[callIndex]?.json as
+    | { messages?: Record<string, unknown>[] }
+    | undefined;
   expect(body?.messages, `request #${callIndex} should carry a messages array`).toBeDefined();
   return body!.messages!.filter((message) => !isDateReminderMessage(message));
 }
@@ -723,38 +732,84 @@ describe('image blocks with invalid data', () => {
 // ---------------------------------------------------------------------------
 
 describe('daemon file references (kimi-file://)', () => {
-  it('a kimi-file image reference reaches the provider as a data URL, never verbatim', async () => {
-    // Regression for the duplicated resolver-token shadowing: the legacy
-    // video-only resolver won the shared DI token on the production import
-    // order, so image kimi-file refs leaked to the provider unchanged and
-    // gateways rejected the unknown scheme with a 400 ("unsupported image
-    // url"), which the media-strip fallback then mistook for a bad image.
-    const cases = [
-      { label: 'kimifile-image-openai', model: M_OPENAI_VISION, reply: OK_OPENAI },
-      { label: 'kimifile-image-kimi', model: M_KIMI, reply: OK_OPENAI },
-    ] as const;
-    for (const { label, model, reply } of cases) {
-      const meta = await klient.global.files.save({
-        data: new Uint8Array(Buffer.from(PNG_1X1_BASE64, 'base64')),
-        filename: 'pasted-image.png',
-        mimeType: 'image/png',
-        expiresInSec: 3600,
-      });
-      const ctx = await newCase(model, label);
-      resetMock(queueScript(reply));
-      await promptAndWait(ctx, [
-        { type: 'image_url', imageUrl: { url: `kimi-file://${meta.id}` } },
-        { type: 'text', text: 'what is this?' },
-      ]);
-      expect(requests, label).toHaveLength(1);
-      expect(JSON.stringify(requests[0]?.json), label).not.toContain(`kimi-file://${meta.id}`);
-      const content = openAiMessages(0).at(-1)?.['content'] as unknown[];
-      const imagePart = content.find(
-        (part) => (part as { type?: string }).type === 'image_url',
-      ) as { image_url?: { url?: string } } | undefined;
-      expect(imagePart?.image_url?.url ?? '', label).toMatch(/^data:image\/png;base64,/);
-      expect(ctx.payloads('prompt.completed')[0]?.['reason'], label).toBe('completed');
-    }
+  // Regression for the duplicated resolver-token shadowing: the legacy
+  // video-only resolver won the shared DI token on the production import
+  // order, so image kimi-file refs leaked to the provider unchanged and
+  // gateways rejected the unknown scheme with a 400 ("unsupported image
+  // url"), which the media-strip fallback then mistook for a bad image.
+  // Kimi models now upload the image via the files API and reference it as
+  // ms://<id>; other providers keep the inline data URL.
+  it('a kimi-file image reference reaches a non-kimi provider as a data URL, never verbatim', async () => {
+    const meta = await klient.global.files.save({
+      data: new Uint8Array(Buffer.from(PNG_1X1_BASE64, 'base64')),
+      filename: 'pasted-image.png',
+      mimeType: 'image/png',
+      expiresInSec: 3600,
+    });
+    const ctx = await newCase(M_OPENAI_VISION, 'kimifile-image-openai');
+    resetMock(queueScript(OK_OPENAI));
+    await promptAndWait(ctx, [
+      { type: 'image_url', imageUrl: { url: `kimi-file://${meta.id}` } },
+      { type: 'text', text: 'what is this?' },
+    ]);
+    expect(requests).toHaveLength(1);
+    expect(JSON.stringify(requests[0]?.json)).not.toContain(`kimi-file://${meta.id}`);
+    const content = openAiMessages(0).at(-1)?.['content'] as unknown[];
+    const imagePart = content.find(
+      (part) => (part as { type?: string }).type === 'image_url',
+    ) as { image_url?: { url?: string } } | undefined;
+    expect(imagePart?.image_url?.url ?? '').toMatch(/^data:image\/png;base64,/);
+    expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('completed');
+  }, 60_000);
+
+  it('a kimi-file image reference reaches kimi as an uploaded ms:// reference, never verbatim', async () => {
+    const meta = await klient.global.files.save({
+      data: new Uint8Array(Buffer.from(PNG_1X1_BASE64, 'base64')),
+      filename: 'pasted-image.png',
+      mimeType: 'image/png',
+      expiresInSec: 3600,
+    });
+    const ctx = await newCase(M_KIMI, 'kimifile-image-kimi');
+    resetMock((req) => {
+      if (req.url === '/v1/files') {
+        return {
+          kind: 'json',
+          status: 200,
+          body: {
+            id: 'file-mock-image',
+            object: 'file',
+            bytes: 68,
+            created_at: 1,
+            filename: 'pasted-image.png',
+            purpose: 'image',
+          },
+        };
+      }
+      return OK_OPENAI;
+    });
+    await promptAndWait(ctx, [
+      { type: 'image_url', imageUrl: { url: `kimi-file://${meta.id}` } },
+      { type: 'text', text: 'what is this?' },
+    ]);
+
+    const fileUpload = requests.find((request) => request.url === '/v1/files');
+    expect(fileUpload).toBeDefined();
+    expect(fileUpload?.contentType).toContain('multipart/form-data');
+    const formText = fileUpload!.raw.toString('latin1');
+    expect(formText).toContain('name="purpose"');
+    expect(formText).toContain('image');
+
+    const chatCalls = requests.filter((request) => request.url === '/v1/chat/completions');
+    expect(chatCalls).toHaveLength(1);
+    expect(JSON.stringify(chatCalls[0]?.json)).not.toContain(`kimi-file://${meta.id}`);
+    const content = (chatCalls[0]?.json as { messages?: Record<string, unknown>[] })
+      .messages?.filter((message) => !isDateReminderMessage(message))
+      .at(-1)?.['content'] as unknown[];
+    const imagePart = content.find(
+      (part) => (part as { type?: string }).type === 'image_url',
+    ) as { image_url?: { url?: string } } | undefined;
+    expect(imagePart?.image_url?.url ?? '').toBe('ms://file-mock-image');
+    expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('completed');
   }, 60_000);
 });
 
@@ -889,7 +944,32 @@ describe('video blocks', () => {
     expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('completed');
   }, 30_000);
 
-  it('openai: no uploadVideo capability — the tool result is an error text, no files call', async () => {
+  it('kimi (composed): cancelling ReadMediaFile aborts the in-flight video upload', async () => {
+    const ctx = await newCase(M_KIMI, 'kimi-video-upload-cancel');
+    await writeFile(
+      join(ctx.workDir, 'clip.mp4'),
+      Buffer.concat([Buffer.from(MP4_FTYP_HEX, 'hex'), Buffer.from([0])]),
+    );
+
+    resetMock((req) => {
+      if (req.url === '/v1/files') return { kind: 'hang' };
+      return {
+        kind: 'sse',
+        lines: openAiToolCallSse('call_video_1', 'ReadMediaFile', '{"path":"clip.mp4"}'),
+      };
+    });
+    const promptAborted = onceEvent(ctx.agent.events, 'prompt.aborted', 10_000);
+    await ctx.agent.prompt({ input: [{ type: 'text', text: 'watch clip.mp4' }] });
+    await waitFor(() => requests.some((request) => request.url === '/v1/files'), 10_000);
+
+    await ctx.agent.cancel();
+    await promptAborted;
+
+    await waitFor(() => abortedRequests.includes('/v1/files'), 2_000);
+    expect(ctx.payloads('turn.ended')[0]?.['reason']).toBe('cancelled');
+  }, 15_000);
+
+  it('openai: no uploadVideo capability — the tool result is a path placeholder, no files call', async () => {
     const ctx = await newCase(M_OPENAI_VISION, 'openai-video-upload');
     await writeFile(join(ctx.workDir, 'clip.mp4'), Buffer.from(MP4_FTYP_HEX, 'hex'));
 
@@ -906,9 +986,8 @@ describe('video blocks', () => {
     expect(chatCalls).toHaveLength(2);
     const secondBody = chatCalls[1]?.json as { messages: Record<string, unknown>[] };
     const toolMessage = secondBody.messages.find((message) => message['role'] === 'tool');
-    // ModelRequesterImpl.uploadVideo throws for providers without the hook;
-    // ReadMediaFile converts that into an error tool result (engine fallback).
-    expect(String(toolMessage?.['content'])).toContain('does not support video upload');
+    expect(String(toolMessage?.['content'])).toContain('<video path=');
+    expect(String(toolMessage?.['content'])).toContain('.mp4');
     expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('completed');
   }, 30_000);
 
@@ -994,15 +1073,30 @@ describe('tool exchange structure', () => {
     ): Promise<Record<string, unknown>[]> => {
       const ctx = await newCase(model, label);
       await writeFile(join(ctx.workDir, 'pixel.png'), Buffer.from(PNG_1X1_BASE64, 'base64'));
-      resetMock(
-        queueScript(
-          {
-            kind: 'sse',
-            lines: openAiToolCallSse('call_media_1', 'ReadMediaFile', '{"path":"pixel.png"}'),
-          },
-          OK_OPENAI,
-        ),
+      const replies = queueScript(
+        {
+          kind: 'sse',
+          lines: openAiToolCallSse('call_media_1', 'ReadMediaFile', '{"path":"pixel.png"}'),
+        },
+        OK_OPENAI,
       );
+      resetMock((req) => {
+        if (req.url === '/v1/files') {
+          return {
+            kind: 'json',
+            status: 200,
+            body: {
+              id: 'file-mock-media',
+              object: 'file',
+              bytes: 32,
+              created_at: 1,
+              filename: 'pixel.png',
+              purpose: 'image',
+            },
+          };
+        }
+        return replies(req, 0);
+      });
       await promptAndWait(ctx, [{ type: 'text', text: 'look at pixel.png' }]);
       expect(ctx.payloads('prompt.completed')[0]?.['reason'], label).toBe('completed');
       return openAiMessages(1);

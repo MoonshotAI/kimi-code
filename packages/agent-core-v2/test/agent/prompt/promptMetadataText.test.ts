@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { promptMetadataTextFromContentParts } from '#/agent/prompt/promptMetadataText';
 import {
   applyPromptMetadataUpdate,
+  isUntitled,
   type PromptMetadataUpdateTarget,
 } from '#/session/sessionMetadata/promptMetadata';
 import { buildImageCompressionCaption } from '#/agent/media/image-compress';
@@ -20,6 +21,18 @@ const CAPTION = buildImageCompressionCaption({
 });
 
 describe('promptMetadataTextFromContentParts', () => {
+  it('uses explicit display text without exposing serialized evidence and keeps redaction', () => {
+    expect(promptMetadataTextFromContentParts([{ type: 'text', text: '<browser_capture>internal evidence</browser_capture>' }], [{ display_text: 'Save button · Rename it\npassword=example-secret' }])).toBe('Save button · Rename it password=[redacted]');
+  });
+
+  it('joins complete display records in order and does not drop an input with missing metadata', () => {
+    const parts = [{ type: 'text' as const, text: 'complete fallback' }];
+    expect(promptMetadataTextFromContentParts(parts, [{ display_text: 'one' }, { display_text: 'two' }])).toBe('one two');
+    expect(promptMetadataTextFromContentParts(parts, [{ display_text: 'one' }, {}])).toBe('complete fallback');
+    expect(promptMetadataTextFromContentParts(parts, [{ display_text: 3 }])).toBe('complete fallback');
+    expect(promptMetadataTextFromContentParts(parts, [{ display_text: 'x'.repeat(5_000) }])?.length).toBeLessThanOrEqual(4_000);
+  });
+
   it('renders text and media placeholders', () => {
     const text = promptMetadataTextFromContentParts([
       { type: 'text', text: 'look at this' },
@@ -81,6 +94,14 @@ describe('applyPromptMetadataUpdate', () => {
         update: (patch: SessionMetaPatch) => {
           meta = { ...meta, ...patch };
           return Promise.resolve();
+        },
+        applyPromptMetadata: (lastPrompt: string, title: string) => {
+          const applyTitle = meta.titleKind !== 'custom' && isUntitled(meta.title);
+          const patch: SessionMetaPatch = applyTitle
+            ? { lastPrompt, title, titleKind: 'replaceable' }
+            : { lastPrompt };
+          meta = { ...meta, ...patch };
+          return Promise.resolve(applyTitle);
         },
       } as unknown as ISessionMetadata,
       eventService: { publish: () => undefined } as unknown as IEventService,

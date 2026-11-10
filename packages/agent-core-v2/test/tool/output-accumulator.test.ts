@@ -123,6 +123,46 @@ describe('ToolOutputAccumulator', () => {
     expect(builder.ok().spill).toBeUndefined();
   });
 
+  it('caps retained output on a code point boundary', () => {
+    const builder = new ToolOutputAccumulator();
+
+    builder.write(`${'x'.repeat(9_999_999)}\u{1F600}tail`);
+
+    const result = builder.ok();
+    expect(result.output).toBe('x'.repeat(9_999_999));
+    expect(builder.nChars).toBe(9_999_999);
+    expect(builder.totalChars).toBe(10_000_005);
+    expect(result.spill).toEqual({ totalChars: 10_000_005 });
+  });
+
+  it('drops all writes after a cut leaves the head mid-pair', () => {
+    const builder = new ToolOutputAccumulator();
+
+    builder.write('x'.repeat(9_999_999));
+    builder.write(`\u{1F600}${'y'.repeat(10)}`);
+    builder.write('z');
+
+    const result = builder.ok();
+    expect(result.output).toBe('x'.repeat(9_999_999));
+    expect(builder.nChars).toBe(9_999_999);
+    expect(builder.totalChars).toBe(10_000_012);
+    expect(result.spill).toEqual({ totalChars: 10_000_012 });
+  });
+
+  it('keeps a complete pair that fills retention exactly', () => {
+    const builder = new ToolOutputAccumulator();
+
+    builder.write('x'.repeat(9_999_998));
+    builder.write('\u{1F600}');
+    builder.write('z');
+
+    const result = builder.ok();
+    expect(result.output).toBe(`${'x'.repeat(9_999_998)}\u{1F600}`);
+    expect(builder.nChars).toBe(10_000_000);
+    expect(builder.totalChars).toBe(10_000_001);
+    expect(result.spill).toEqual({ totalChars: 10_000_001 });
+  });
+
   it('treats an empty write as a no-op', () => {
     const builder = new ToolOutputAccumulator();
 

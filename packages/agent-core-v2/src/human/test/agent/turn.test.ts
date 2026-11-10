@@ -2,15 +2,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { assign, createActor, emit, setup } from '#/xstate2';
 
 import { credentialsRecovery } from '#/credentials/credentials';
-import { UNKNOWN_CAPABILITY } from '#/llm/capability';
-import type { LlmErrorMessage } from '#/llm/errors';
+import { UNKNOWN_CAPABILITY } from '#/llm-requester/capability';
+import type { LlmErrorMessage } from '#/llm-requester/errors';
 import type { ContentPart, Message, UserMessage } from '#/llm/message';
-import { createMediaDegradeRecovery } from '#/llm/media/degrade';
-import type { LlmModel } from '#/llm/model';
-import { createRequestActor, type LlmEvent } from '#/llm/requester/actor';
-import type { LlmRecovery } from '#/llm/requester/recovery';
-import type { LlmCredentialProvider, LlmRequester } from '#/llm/requester/requester';
-import type { LlmRetryOptions } from '#/llm/requester/retry';
+import {
+  MEDIA_DEGRADE_KEEP_RECENT,
+  degradeOlderMediaParts,
+  stripMediaParts,
+} from '#/llm/builtin/policy/media-degrade';
+import type { LlmModel } from '#/llm-requester/model';
+import { createRequestActor, type LlmEvent } from '#/llm-requester/actor';
+import type { LlmRecovery } from '#/llm-requester/recovery';
+import type { LlmCredentialProvider, LlmRequester } from '#/llm-requester/requester';
+import type { LlmRetryOptions } from '#/llm-requester/retry';
 import {
   createTurnMachine,
   createUserEntry,
@@ -19,6 +23,7 @@ import {
   type TurnInput,
   type TurnLlmEvent,
   type TurnOutput,
+  type TurnSignal,
 } from '#/agent/turn';
 
 const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
@@ -32,7 +37,15 @@ function statusError(
   message: string,
   retryAfterMs: number | null = null,
 ): LlmErrorMessage {
-  return { kind: 'status', statusCode, message, requestId: null, retryAfterMs, headers: null };
+  return {
+    kind: 'status',
+    statusCode,
+    message,
+    requestId: null,
+    retryAfterMs,
+    headers: null,
+    retryable: [408, 409, 429, 500, 502, 503, 504, 529].includes(statusCode),
+  };
 }
 
 function createStubRequester(
@@ -91,7 +104,7 @@ function startTurnActor(
       input: {} as TurnInput,
       context: {} as HarnessContext,
       events: {} as TurnEvent,
-      emitted: {} as TurnLlmEvent,
+      emitted: {} as TurnLlmEvent | TurnSignal,
     },
     actors: { turn: createTurnMachine(requester, options) },
   }).createMachine({
@@ -110,7 +123,7 @@ function startTurnActor(
         },
         on: {
           '*': {
-            actions: emit(({ event }) => event as TurnLlmEvent),
+            actions: emit(({ event }) => event as TurnLlmEvent | TurnSignal),
           },
         },
       },
@@ -121,16 +134,19 @@ function startTurnActor(
   const recovering: RecoveringEvent[] = [];
   const sent: SentEvent[] = [];
   const failed: unknown[] = [];
+  const stream: string[] = [];
   const actor = createActor(harness, {
     input: { request: { model }, history: [], ...turnInput },
   });
+  actor.on('llm.streaming.part', (event) => stream.push(`part:${event.block ?? '-'}`));
+  actor.on('step.stream_reset', () => stream.push('reset'));
   actor.on('llm.retrying', (event) => retrying.push(event));
   actor.on('llm.recovering', (event) => recovering.push(event));
   actor.on('llm.sent', (event) => sent.push(event));
   actor.on('llm.failed.syntax', (event) => failed.push(event.error));
   actor.on('llm.failed.remote', (event) => failed.push(event.error));
   actor.start();
-  return { actor, retrying, recovering, sent, failed };
+  return { actor, retrying, recovering, sent, failed, stream };
 }
 
 function startRequestActor(requester: LlmRequester, signal: AbortSignal) {
@@ -196,7 +212,11 @@ describe('turn machine llm retry', () => {
       'think_only',
       statusError(429, 'rate limited'),
       statusError(500, 'server error'),
-      { kind: 'provider', message: 'Error: upstream error, status_code=429: too many requests' },
+      {
+        kind: 'provider',
+        message: 'Error: upstream error, status_code=429: too many requests',
+        retryable: true,
+      },
       'ok',
     ]);
     const { actor, retrying, failed } = startTurnActor(requester, {
@@ -299,6 +319,7 @@ describe('turn machine llm retry', () => {
         requestId: null,
         retryAfterMs: null,
         headers: null,
+        retryable: false,
       },
     ];
     for (const error of cases) {
@@ -327,6 +348,7 @@ describe('turn machine llm retry', () => {
       kind: 'empty_response',
       finishReason: 'filtered',
       rawFinishReason: 'content_filter',
+      retryable: false,
     });
   });
 
@@ -355,6 +377,7 @@ describe('turn machine llm retry', () => {
           requestId: null,
           retryAfterMs: 2000,
           headers: null,
+          retryable: true,
         },
         2000,
       ],
@@ -390,6 +413,7 @@ describe('turn machine llm retry', () => {
       requestId: null,
       retryAfterMs: 1000,
       headers: null,
+      retryable: false,
     };
     const { requester, calls } = createStubRequester([error]);
     const { actor, retrying } = startTurnActor(requester, { retry: { maxAttemptsPerStep: 5 } });
@@ -421,6 +445,7 @@ function tooLargeError(): LlmErrorMessage {
     requestId: null,
     retryAfterMs: null,
     headers: null,
+    retryable: false,
   };
 }
 
@@ -432,6 +457,7 @@ function imageFormatError(): LlmErrorMessage {
     requestId: null,
     retryAfterMs: null,
     headers: null,
+    retryable: false,
   };
 }
 
@@ -480,6 +506,30 @@ function mediaHistory(messages: readonly UserMessage[]): Partial<TurnInput> {
   return { history: messages.map((message) => createUserEntry(message)) };
 }
 
+function createTurnMediaRecovery(): LlmRecovery {
+  return {
+    propose: ({ error, messages, appliedRecoveries }) => {
+      const done = new Set(
+        appliedRecoveries.filter((r) => r.strategy === 'media-degrade').map((r) => r.action),
+      );
+      if (error.kind !== 'request_too_large' && error.kind !== 'image_format') return undefined;
+      if (error.kind === 'request_too_large' && !done.has('degraded')) {
+        const degraded = degradeOlderMediaParts(messages, MEDIA_DEGRADE_KEEP_RECENT);
+        if (degraded !== messages) {
+          return { strategy: 'media-degrade', action: 'degraded', attemptMessageOverride: degraded };
+        }
+      }
+      if (!done.has('stripped')) {
+        const stripped = stripMediaParts(messages);
+        if (stripped !== messages) {
+          return { strategy: 'media-degrade', action: 'stripped', attemptMessageOverride: stripped };
+        }
+      }
+      return undefined;
+    },
+  };
+}
+
 describe('turn machine media recovery', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -498,7 +548,7 @@ describe('turn machine media recovery', () => {
     ]);
     const { actor, recovering, sent, failed } = startTurnActor(
       requester,
-      { recovery: createMediaDegradeRecovery() },
+      { recovery: createTurnMediaRecovery() },
       mediaHistory(messages),
     );
 
@@ -526,7 +576,7 @@ describe('turn machine media recovery', () => {
     const { requester, calls, seen } = createCapturingRequester([tooLargeError(), 'ok']);
     const { actor, recovering } = startTurnActor(
       requester,
-      { recovery: createMediaDegradeRecovery() },
+      { recovery: createTurnMediaRecovery() },
       mediaHistory(messages),
     );
 
@@ -543,7 +593,7 @@ describe('turn machine media recovery', () => {
     const { requester, calls, seen } = createCapturingRequester([imageFormatError(), 'ok']);
     const { actor, recovering, sent } = startTurnActor(
       requester,
-      { recovery: createMediaDegradeRecovery() },
+      { recovery: createTurnMediaRecovery() },
       mediaHistory(messages),
     );
 
@@ -562,7 +612,7 @@ describe('turn machine media recovery', () => {
     const { requester, calls } = createCapturingRequester([tooLargeError()]);
     const { actor, recovering } = startTurnActor(
       requester,
-      { recovery: createMediaDegradeRecovery() },
+      { recovery: createTurnMediaRecovery() },
       mediaHistory([mediaMessage('plain', 0)]),
     );
 
@@ -627,7 +677,7 @@ describe('turn machine credential recovery', () => {
       requester,
       { recovery: credentialsRecovery },
       {
-        request: { model, credentials: provider },
+        request: { model, credentialProvider: provider },
       },
     );
 
@@ -654,7 +704,7 @@ describe('turn machine credential recovery', () => {
       statusError(401, 'unauthorized'),
       'ok',
     ]);
-    const mediaDegrade = createMediaDegradeRecovery();
+    const mediaDegrade = createTurnMediaRecovery();
     const { actor, recovering } = startTurnActor(
       requester,
       {
@@ -664,7 +714,7 @@ describe('turn machine credential recovery', () => {
       },
       {
         ...mediaHistory([mediaMessage('a', 2), mediaMessage('b', 1), mediaMessage('c', 1)]),
-        request: { model, credentials: provider },
+        request: { model, credentialProvider: provider },
       },
     );
 
@@ -692,7 +742,7 @@ describe('turn machine credential recovery', () => {
       requester,
       { recovery: credentialsRecovery },
       {
-        request: { model, credentials: provider },
+        request: { model, credentialProvider: provider },
       },
     );
 
@@ -723,7 +773,7 @@ describe('turn machine credential recovery', () => {
       resolve: () => Promise.reject(new Error('login required')),
     };
     const { actor, failed } = startTurnActor(requester, undefined, {
-      request: { model, credentials: provider },
+      request: { model, credentialProvider: provider },
     });
 
     await drain();
@@ -758,5 +808,50 @@ describe('turn machine credential recovery', () => {
     await drain();
 
     expect(failed).toHaveLength(0);
+  });
+});
+
+describe('turn machine streamed blocks', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function scriptedRequester(script: readonly LlmEvent[]): LlmRequester {
+    return {
+      generate: (_config, _content, { onEvent }) => {
+        for (const event of script) onEvent?.(event as Parameters<NonNullable<typeof onEvent>>[0]);
+        return Promise.resolve();
+      },
+    };
+  }
+
+  it('numbers each streamed part by the content block it lands in', async () => {
+    const { actor, stream } = startTurnActor(
+      scriptedRequester([
+        { type: 'llm.streaming.part', part: { type: 'think', think: 'a' } },
+        { type: 'llm.streaming.part', part: { type: 'think', think: 'b', encrypted: 'sig' } },
+        { type: 'llm.streaming.part', part: { type: 'think', think: 'c' } },
+        { type: 'llm.streaming.part', part: { type: 'text', text: 'x' } },
+        { type: 'llm.streaming.part', part: { type: 'think', think: '' } },
+        { type: 'llm.streaming.part', part: { type: 'text', text: 'y' } },
+        { type: 'llm.done' },
+      ]),
+    );
+
+    await drain();
+
+    expect(stream).toEqual(['part:0', 'part:0', 'part:1', 'part:2', 'part:-', 'part:2']);
+    const output = actor.getSnapshot().context.turnOutput;
+    expect(output?.type).toBe('done');
+    const last = output?.produced.at(-1)?.message;
+    expect(last?.role === 'assistant' ? last.content : undefined).toEqual([
+      { type: 'think', think: 'ab', encrypted: 'sig' },
+      { type: 'think', think: 'c' },
+      { type: 'text', text: 'xy' },
+    ]);
   });
 });

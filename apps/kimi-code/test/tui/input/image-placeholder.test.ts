@@ -7,19 +7,22 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync,
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
-import { parseDaemonFileUrl } from '@moonshot-ai/kimi-code-sdk';
+import { parseDaemonFileUrl, type PromptPart, type Session } from '@moonshot-ai/kimi-code-sdk';
 
 import { KIMI_CODE_HOME_ENV } from '#/constant/app';
 import { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
 import {
   extractMediaAttachments,
   makeExtractionResendable,
+  omitExpiredVideoFileRefs,
   pendingMediaIngestions,
   persistOriginalImageSync,
   refreshExpiringImageFileRefs,
   resolveOriginalCaptions,
+  resolveSessionOriginalCaptions,
+  makeSessionExtractionResendable,
   rewriteMediaPlaceholders,
 } from '#/tui/utils/image-placeholder';
 import { getCacheDir } from '#/utils/paths';
@@ -65,7 +68,51 @@ function videoUrlFromParts(parts: unknown[]): string {
   return part.videoUrl.url;
 }
 
+describe('omitExpiredVideoFileRefs', () => {
+  it('omits an expired video only when its skill argument has a cached copy', () => {
+    const store = new ImageAttachmentStore();
+    const expired = store.addVideo('video/mp4', '/tmp/expired.mp4');
+    const live = store.addVideo('video/mp4', '/tmp/live.mp4');
+    store.completeVideo(expired, { fileId: 'file-expired', fileExpiresAt: Date.now() - 1 });
+    store.completeVideo(live, { fileId: 'file-live', fileExpiresAt: Date.now() + 3600_000 });
+    const parts: PromptPart[] = [
+      { type: 'text', text: 'describe these videos' },
+      { type: 'video_url', videoUrl: { url: 'kimi-file://file-expired' } },
+      { type: 'video_url', videoUrl: { url: 'kimi-file://file-live' } },
+      { type: 'video_url', videoUrl: { url: 'kimi-file://file-uncached' } },
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AQ==' } },
+    ];
+    expect(omitExpiredVideoFileRefs(parts, [expired, live])).toEqual([
+      parts[0], parts[2], parts[3], parts[4],
+    ]);
+    expect(omitExpiredVideoFileRefs(parts, [])).toEqual(parts);
+  });
+});
+
 describe('extractMediaAttachments', () => {
+  it('uses captured argument media after a reset without retaining a reused attachment id', () => {
+    const { cleanup } = setupTempCache();
+    try {
+      const store = new ImageAttachmentStore();
+      const original = store.addImage(new Uint8Array([1]), 'image/png', 1, 1);
+      const extraction = extractMediaAttachments(original.placeholder, store);
+      store.clear();
+      const current = store.addImage(new Uint8Array([2]), 'image/png', 1, 1, undefined, 'file-current');
+      expect(current.id).toBe(original.id);
+      const later = store.addImage(new Uint8Array([3]), 'image/png', 1, 1);
+      const rewrite = rewriteMediaPlaceholders(
+        `${original.placeholder} ${later.placeholder}`, store, 'plain', extraction.mediaSnapshots,
+      );
+      expect(rewrite.text).toContain(later.placeholder);
+      expect(rewrite.hasMedia).toBe(true);
+      expect(readFileSync(rewrite.stagingPaths[0]!)).toEqual(Buffer.from([1]));
+      expect(rewrite.imageAttachmentIds).toEqual([]);
+      expect(rewrite.videoAttachmentIds).toEqual([]);
+      expect(store.takeFileIds([current.id])).toEqual(['file-current']);
+    } finally {
+      cleanup();
+    }
+  });
   it('returns no parts and hasMedia=false for plain text', () => {
     const store = new ImageAttachmentStore();
     const r = extractMediaAttachments('hello world', store);
@@ -865,5 +912,52 @@ describe('pendingMediaIngestions', () => {
     const part = r.parts.find((p) => p.type === 'image_url');
     if (part?.type !== 'image_url') throw new Error('expected an image part');
     expect(part.imageUrl.url.startsWith('data:image/png;base64,')).toBe(true);
+  });
+});
+
+describe('session-owned pasted originals', () => {
+  it('uses a stable attachment reference and registers again in a new session', async () => {
+    const dir = makeTempDir();
+    const bytes = new Uint8Array([9, 8, 7]);
+    const store = new ImageAttachmentStore();
+    const attachment = store.addImage(new Uint8Array([1]), 'image/png', 100, 100, {
+      bytes, width: 200, height: 200, byteLength: bytes.length, mime: 'image/png',
+    });
+    const extraction = extractMediaAttachments(attachment.placeholder, store);
+    const attachFile = vi.fn(async () => 'kimi-file://f_original');
+    const session = { id: 's1', summary: { sessionDir: dir }, attachFile } as unknown as Session;
+    try {
+      const parts = await resolveSessionOriginalCaptions(extraction.parts, extraction.imageAttachmentIds, store, session);
+      expect(parts[0]).toMatchObject({ type: 'text', text: expect.stringContaining('kimi-file://f_original') });
+      expect((parts[0] as { text: string }).text).not.toContain(dir);
+      await resolveSessionOriginalCaptions(parts, extraction.imageAttachmentIds, store, session);
+      expect(attachFile).toHaveBeenCalledTimes(1);
+      await resolveSessionOriginalCaptions(parts, extraction.imageAttachmentIds, store, { id: 's2', summary: { sessionDir: dir }, attachFile } as unknown as Session);
+      expect(attachFile).toHaveBeenCalledTimes(2);
+      expect(attachFile).toHaveBeenLastCalledWith(Buffer.from(bytes), { name: 'original.png', mimeType: 'image/png' });
+      const snapshot = extractMediaAttachments(attachment.placeholder, store);
+      expect(snapshot.imageSnapshots[0]?.original?.bytes).toEqual(Buffer.from(bytes));
+      store.clear();
+      const rebuilt = await makeSessionExtractionResendable({ ...snapshot, parts }, { id: 's3', summary: { sessionDir: dir }, attachFile } as unknown as Session);
+      expect(rebuilt.parts).toHaveLength(2);
+      expect(rebuilt.parts[0]).toMatchObject({ type: 'text', text: expect.stringContaining('kimi-file://f_original') });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('reports attachment persistence failure and retries without advertising a local path', async () => {
+    const dir = makeTempDir();
+    const store = new ImageAttachmentStore();
+    const attachment = store.addImage(new Uint8Array([1]), 'image/png', 100, 100, {
+      bytes: new Uint8Array([9]), width: 200, height: 200, byteLength: 1, mime: 'image/png',
+    });
+    const extraction = extractMediaAttachments(attachment.placeholder, store);
+    const attachFile = vi.fn().mockRejectedValueOnce(new Error('disk full')).mockResolvedValue('kimi-file://f_retry');
+    const session = { id: 's1', summary: { sessionDir: dir }, attachFile } as unknown as Session;
+    try {
+      await expect(resolveSessionOriginalCaptions(extraction.parts, extraction.imageAttachmentIds, store, session)).rejects.toThrow('disk full');
+      const retried = await resolveSessionOriginalCaptions(extraction.parts, extraction.imageAttachmentIds, store, session);
+      expect(retried[0]).toMatchObject({ type: 'text', text: expect.stringContaining('kimi-file://f_retry') });
+      expect((retried[0] as { text: string }).text).not.toContain(dir);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });

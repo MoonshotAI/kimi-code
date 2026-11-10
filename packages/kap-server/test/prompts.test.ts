@@ -1,3 +1,5 @@
+import { IEnvironmentService } from '@moonshot-ai/agent-core-v2';
+import { environmentBindingKey } from '@moonshot-ai/agent-core-v2/agent/environmentBinding/environmentBindingOps';
 import { chmod, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -5,23 +7,32 @@ import { deflateSync } from 'node:zlib';
 
 import {
   agentContextOf,
-  agentRuntimeBindingKey,
   IAgentTitlePromptSource,
   IAgentContextMemoryService,
   IAgentLifecycleService,
   IAgentPermissionModeService,
   IAgentProfileService,
+  IAgentLoopService,
   IAgentStateService,
+  IAgentSwarmService,
   IAgentToolPolicyService,
   IBootstrapService,
   IConfigService,
+  IEventBus,
   IFileService,
   ISessionContext,
   ISessionMetadata,
+  IWorkspaceInstanceManager,
   MAX_IMAGE_DECODE_BYTES,
+  Error2,
+  ErrorCodes,
   closeSessionById,
   getLiveSessionById,
+  resumeSessionById,
 } from '@moonshot-ai/agent-core-v2';
+import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
+import { HostProcessService } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostProcessService';
+import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -43,6 +54,7 @@ interface PromptItemWire {
   status: 'running' | 'queued';
   content: unknown;
   created_at: string;
+  metadata?: Record<string, unknown>;
 }
 
 type PromptContentPart =
@@ -305,6 +317,40 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(Array.isArray(list.body.data.queued)).toBe(true);
   });
 
+  it('applies swarm_mode before submitting the prompt', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const session = getLiveSessionById(server!.core.accessor, id)!;
+    const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
+    const swarm = agent.accessor.get(IAgentSwarmService);
+    const loop = agent.accessor.get(IAgentLoopService);
+    const enter = vi.spyOn(swarm, 'enter');
+    const exit = vi.spyOn(swarm, 'exit');
+    const submit = vi.spyOn(loop, 'submit');
+    const post = (swarmMode: boolean) =>
+      call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+        content: [{ type: 'text', text: 'hello' }],
+        swarm_mode: swarmMode,
+      });
+
+    const first = await post(true);
+    expect(first.body.code).toBe(0);
+    expect(enter).toHaveBeenCalledTimes(1);
+    expect(enter).toHaveBeenCalledWith('manual');
+    expect(enter.mock.invocationCallOrder[0]!).toBeLessThan(submit.mock.invocationCallOrder[0]!);
+    expect(swarm.isActive).toBe(true);
+
+    const repeated = await post(true);
+    expect(repeated.body.code).toBe(0);
+    expect(enter).toHaveBeenCalledTimes(1);
+
+    const off = await post(false);
+    expect(off.body.code).toBe(0);
+    expect(exit).toHaveBeenCalledTimes(1);
+    expect(exit.mock.invocationCallOrder[0]!).toBeLessThan(submit.mock.invocationCallOrder[2]!);
+    expect(swarm.isActive).toBe(false);
+  });
+
   it('accepts a prompt-carried model when default_model is not configured', async () => {
     await writeConfigToml(home as string, PROMPT_TOML_NO_DEFAULT);
     const id = await createSession(home as string);
@@ -341,15 +387,33 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(submitted.body.code).toBe(0);
   });
 
-  it('rejects when neither prompt, session, nor default_model resolves a model', async () => {
+  it('accepts the prompt and fails the turn at runtime when no model resolves', async () => {
     await writeConfigToml(home as string, PROMPT_TOML_NO_DEFAULT);
     const id = await createSession(home as string);
     await createMainAgent(id);
 
-    const submitted = await call('POST', `/api/v1/sessions/${id}/prompts`, {
+    const session = getLiveSessionById(server!.core.accessor, id);
+    const main = session!.accessor.get(IAgentLifecycleService).handleOf('main')!;
+    const ended: { reason?: string; error?: { code?: string; message?: string } }[] = [];
+    const completed: { reason?: string }[] = [];
+    const subscription = main.accessor.get(IEventBus).subscribe((event) => {
+      if (event.type === 'turn.ended') ended.push(event as (typeof ended)[number]);
+      if (event.type === 'prompt.completed') completed.push(event as (typeof completed)[number]);
+    });
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
       content: [{ type: 'text', text: 'hello' }],
     });
-    expect(submitted.body.code).toBe(40113);
+    expect(submitted.body.code).toBe(0);
+
+    await vi.waitFor(() => {
+      expect(ended).toHaveLength(1);
+    });
+    subscription.dispose();
+    expect(ended[0]).toMatchObject({
+      reason: 'failed',
+      error: { code: 'model.not_configured', message: 'Model not set' },
+    });
+    expect(completed).toContainEqual(expect.objectContaining({ reason: 'failed' }));
   });
 
   it('rejects a bound profile switch with 40001 even when the session model is stale', async () => {
@@ -380,16 +444,36 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(submitted.body.msg).toContain('already bound');
   });
 
-  it('rejects a stale session model when no profile switch is requested', async () => {
+  it('accepts the prompt and fails the turn at runtime when the session model is stale', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
     await setSessionModel(id, 'stub');
-    await writeConfigToml(home as string, PROMPT_TOML_OTHER_DEFAULT);
+    await writeConfigToml(home as string, PROMPT_TOML_OTHER_DEFAULT.replace('default_model = "other"\n\n', ''));
+    await server!.core.accessor.get(IConfigService).reload();
 
-    const submitted = await call('POST', `/api/v1/sessions/${id}/prompts`, {
+    const session = getLiveSessionById(server!.core.accessor, id);
+    const main = session!.accessor.get(IAgentLifecycleService).handleOf('main')!;
+    const ended: { reason?: string; error?: { code?: string; message?: string } }[] = [];
+    const completed: { reason?: string }[] = [];
+    const subscription = main.accessor.get(IEventBus).subscribe((event) => {
+      if (event.type === 'turn.ended') ended.push(event as (typeof ended)[number]);
+      if (event.type === 'prompt.completed') completed.push(event as (typeof completed)[number]);
+    });
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
       content: [{ type: 'text', text: 'hello' }],
     });
-    expect(submitted.body.code).toBe(40113);
+    expect(submitted.body.code).toBe(0);
+
+    await vi.waitFor(
+      () => {
+        expect(ended).toHaveLength(1);
+      },
+      { timeout: 15000 },
+    );
+    subscription.dispose();
+    expect(ended[0]?.reason).toBe('failed');
+    expect(ended[0]?.error?.message).toContain('stub');
+    expect(completed).toContainEqual(expect.objectContaining({ reason: 'failed' }));
   });
 
   it('submits a bundled skill prompt through the skills field', async () => {
@@ -426,10 +510,14 @@ describe('server-v2 /api/v1 prompts', () => {
       message: {
         role: 'user',
         content: [
+          {
+            type: 'text',
+            text: '<hook_result hook_event="UserPromptSubmit">\nhook note\n</hook_result>',
+            meta: { contentType: 'text/xml', source: 'user prompt submit hook' },
+          },
           { type: 'text', text: 'rendered skill block' },
           { type: 'text', text: 'Review this change.' },
         ],
-        toolCalls: [],
         origin: {
           kind: 'user',
           skillActivations: [{ activationId: 'a1', skillName: 'update-config' }],
@@ -445,11 +533,72 @@ describe('server-v2 /api/v1 prompts', () => {
       message: {
         role: 'user',
         content: [{ type: 'text', text: 'plain question' }],
-        toolCalls: [],
         origin: { kind: 'user' },
       },
     });
     expect(plain.content).toEqual([{ type: 'text', text: 'plain question' }]);
+  });
+
+  it('projects client metadata for an active skill activation prompt', () => {
+    const metadata = { display_text: 'Save button', kimi_code_composer: { version: 1 } };
+    const projected = projectPromptSnapshot({
+      id: 'msg_skill',
+      userMessageId: 'msg_skill',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      state: 'running',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'User activated the skill' }],
+        origin: { kind: 'skill_activation', activationId: 'act-1', skillName: 'update-config', trigger: 'user-slash', clientMetadata: [metadata] },
+      },
+    });
+    expect(projected.metadata).toEqual(metadata);
+  });
+
+  it.each([
+    ['pending', 'queued'],
+    ['running', 'running'],
+    ['steered', 'running'],
+    ['blocked', 'blocked'],
+    ['failed', 'failed'],
+  ] as const)('projects the engine prompt state %s as the %s status', (state, status) => {
+    const projected = projectPromptSnapshot({
+      id: 'msg_state',
+      userMessageId: 'msg_state',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      state,
+      message: { role: 'user', content: [{ type: 'text', text: 'hello' }], origin: { kind: 'user' } },
+    });
+    expect(projected.status).toBe(status);
+  });
+
+  it.each([
+    ['blocked', async (ctx: { block: boolean }) => {
+      ctx.block = true;
+    }],
+    ['failed', async () => {
+      throw new Error('prompt hook crashed');
+    }],
+  ] as const)('reports an idle submission whose prompt gate ends it without a turn as %s', async (status, gate) => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const loop = getLiveSessionById(server!.core.accessor, id)!
+      .accessor.get(IAgentLifecycleService)
+      .handleOf('main')!
+      .accessor.get(IAgentLoopService);
+    const hook = loop.hooks.onBeforeSubmitPrompt.register('prompts-test-gate', async (ctx, next) => {
+      await gate(ctx);
+      await next();
+    });
+    try {
+      const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+        content: [{ type: 'text', text: 'hello' }],
+      });
+      expect(submitted.body.code).toBe(0);
+      expect(submitted.body.data.status).toBe(status);
+    } finally {
+      hook.dispose();
+    }
   });
 
   it('honors a client-chosen prompt_id on submit', async () => {
@@ -463,6 +612,63 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(submitted.body.code).toBe(0);
     expect(submitted.body.data.prompt_id).toBe('submission-1');
     expect(submitted.body.data.user_message_id).toBe('submission-1');
+  });
+
+  it('reloads a stale session and resubmits under the same prompt_id', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const handle = getLiveSessionById(server!.core.accessor, id)!;
+    const loop = handle.accessor
+      .get(IAgentLifecycleService)
+      .handleOf('main')!
+      .accessor.get(IAgentLoopService);
+    const submit = vi.spyOn(loop, 'submit').mockImplementation(() => {
+      throw new Error2(ErrorCodes.SESSION_STALE, 'stale');
+    });
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'hello' }],
+      prompt_id: 'submission-1',
+    });
+
+    expect(submitted.body.code).toBe(0);
+    expect(submitted.body.data.prompt_id).toBe('submission-1');
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(getLiveSessionById(server!.core.accessor, id)).not.toBe(handle);
+  });
+
+  it.each([false, true])('preserves client metadata through submission and cold resume (skills=%s)', async (withSkills) => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const metadata = {
+      display_text: 'Example browser element · Example comment',
+      kimi_code_composer: {
+        version: 1,
+        doc: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '[literal](example.md)' }] }] },
+        browserReferences: [{ id: 'ref-example', captureId: 'capture-example', comment: 'Example comment' }],
+      },
+    };
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'Visible prompt' }],
+      metadata,
+      skills: withSkills ? [{ name: 'update-config' }] : undefined,
+    });
+    expect(submitted.body.code).toBe(0);
+    expect(submitted.body.data.metadata).toEqual(metadata);
+    await closeSessionById(server!.core.accessor, id);
+    const resumed = await call('GET', `/api/v1/sessions/${id}/prompts`);
+    expect(resumed.body.code).toBe(0);
+    const session = getLiveSessionById(server!.core.accessor, id);
+    const agent = session!.accessor.get(IAgentLifecycleService).handleOf('main');
+    const history = agent!.accessor.get(IAgentContextMemoryService).get();
+    const saved = history.find((message) => message.origin?.kind === 'user');
+    expect(saved?.origin).toMatchObject({ clientMetadata: [metadata] });
+    expect(await session!.accessor.get(ISessionMetadata).read()).toMatchObject({ title: metadata.display_text, lastPrompt: metadata.display_text });
+    expect(JSON.stringify(saved?.content)).not.toContain('ref-example');
+    const page = await call<{ turns: { items: { type: string; metadata?: unknown }[] }[] }>('GET', `/api/v1/sessions/${id}/agents/main/turns`);
+    expect(page.body.code).toBe(0);
+    const opener = page.body.data.turns[0]?.items[0];
+    expect(opener).toMatchObject({ type: 'user_message', origin: { kind: 'user' }, metadata });
   });
 
   it('updates session metadata for a bundled prompt routed to a non-main agent', async () => {
@@ -515,8 +721,26 @@ describe('server-v2 /api/v1 prompts', () => {
       prompt_id: 'submission-1',
     });
     expect(afterResume.body.code).toBe(40927);
-    const resumed = getLiveSessionById(server!.core.accessor, id);
+    const resumed = await resumeSessionById(server!.core.accessor, id);
     expect((await resumed!.accessor.get(ISessionMetadata).read()).lastPrompt).toBe('first prompt');
+  });
+
+  it('answers a resubmission with the same prompt_id and request with the first result', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const request = { content: [{ type: 'text', text: 'only once' }], prompt_id: 'submission-2' };
+
+    const [first, again] = await Promise.all([
+      call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, request),
+      call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, request),
+    ]);
+    const later = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, request);
+
+    expect(first.body.code).toBe(0);
+    expect(again.body).toEqual({ ...first.body, request_id: again.body.request_id });
+    expect(later.body).toEqual({ ...first.body, request_id: later.body.request_id });
+    const turns = await call<{ turns: { items: { type: string }[] }[] }>('GET', `/api/v1/sessions/${id}/agents/main/turns`);
+    expect(turns.body.data.turns.flatMap((turn) => turn.items).filter((item) => item.type === 'user_message')).toHaveLength(1);
   });
 
   it('rejects a bundled submission with an unknown skill and records nothing', async () => {
@@ -566,19 +790,24 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(session!.accessor.get(IAgentLifecycleService).handleOf('main')).toBeUndefined();
   });
 
-  it('rejects a bundled prompt_id combination before any override or agent materialization', async () => {
+  it('honors a client-chosen prompt_id on a bundled skill submission', async () => {
     const id = await createSession(home as string);
+    await createMainAgent(id);
 
-    const submitted = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
       content: [{ type: 'text', text: 'Review this change.' }],
-      permission_mode: 'yolo',
       prompt_id: 'submission-1',
       skills: [{ name: 'update-config' }],
     });
-    expect(submitted.body.code).toBe(40001);
+    expect(submitted.body.code).toBe(0);
+    expect(submitted.body.data.prompt_id).toBe('submission-1');
 
-    const session = getLiveSessionById(server!.core.accessor, id);
-    expect(session!.accessor.get(IAgentLifecycleService).handleOf('main')).toBeUndefined();
+    const duplicate = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'Review it again.' }],
+      prompt_id: 'submission-1',
+      skills: [{ name: 'update-config' }],
+    });
+    expect(duplicate.body.code).toBe(40927);
   });
 
   it('cleans bundled staging through the settlement tracker', async () => {
@@ -772,11 +1001,10 @@ describe('server-v2 /api/v1 prompts', () => {
     const session = getLiveSessionById(server!.core.accessor, id);
     const main = session!.accessor.get(IAgentLifecycleService).handleOf('main')!;
     const memory = main.accessor.get(IAgentContextMemoryService).get();
-    const reminder = memory.find((m) => m.origin?.kind === 'injection');
-    const reminderText = reminder?.content[0];
-    expect(reminderText?.type).toBe('text');
-    expect((reminderText as { type: 'text'; text: string }).text).toContain('<system-reminder>');
-    expect((reminderText as { type: 'text'; text: string }).text).toContain('Image compressed');
+    const promptMessage = memory.find((m) => m.origin?.kind === 'user');
+    const captionPart = promptMessage?.content[0];
+    expect(captionPart?.type).toBe('text');
+    expect((captionPart as { type: 'text'; text: string }).text).toContain('Image compressed');
   });
 
   it('rolls back a compressed upload when a later prompt part fails to resolve', async () => {
@@ -885,11 +1113,7 @@ describe('server-v2 /api/v1 prompts', () => {
       expect(replayedMessage).toBeDefined();
       expect(replayedMessage!.content).toContainEqual({
         type: 'image_url',
-        imageUrl: {
-          url: `kimi-file://${uploaded.id}`,
-          id: uploaded.id,
-          name: 'small.png',
-        },
+        imageUrl: { url: `kimi-file://${uploaded.id}`, id: uploaded.id, name: 'small.png' },
       });
     });
   });
@@ -1384,14 +1608,14 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(body.code).toBe(40001);
   });
 
-  it('rejects path attachments on a non-local runtime before touching the filesystem', async () => {
+  it('rejects path attachments on a non-local environment before touching the filesystem', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
     const session = getLiveSessionById(server!.core.accessor, id);
+    const workspaceId = session!.accessor.get(ISessionContext).workspaceId;
     const main = session!.accessor.get(IAgentLifecycleService).handleOf('main')!;
-    main.accessor.get(IAgentStateService).set(agentRuntimeBindingKey, {
-      workspaceId: session!.accessor.get(ISessionContext).workspaceId,
-      runtimeId: 'fake-remote',
+    main.accessor.get(IAgentStateService).set(environmentBindingKey, {
+      environmentId: 'fake-remote',
     });
 
     const sourcePath = join(home as string, 'note.txt');
@@ -1400,27 +1624,160 @@ describe('server-v2 /api/v1 prompts', () => {
       content: [{ type: 'file', path: sourcePath }],
     });
     expect(existing.body.code).toBe(40001);
-    expect(existing.body.msg).toContain('local runtime');
+    expect(existing.body.msg).toContain('local environment');
 
     const missing = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
       content: [{ type: 'file', path: join(home as string, 'nope.txt') }],
     });
     expect(missing.body.code).toBe(40001);
 
-    const uploadBytes = Buffer.from('upload unaffected');
-    const uploaded = await uploadFile(uploadBytes, 'text/plain', 'up.txt');
-    const upload = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
-      content: [
-        {
-          type: 'file',
-          file_id: uploaded.id,
-          name: 'up.txt',
-          media_type: 'text/plain',
-          size: uploadBytes.length,
-        },
-      ],
+    const remoteRoot = await realpath(await mkdtemp(join(tmpdir(), 'kimi-prompt-fake-remote-')));
+    try {
+      const instance = server!.core.accessor.get(IWorkspaceInstanceManager).get(workspaceId);
+      const fake = new FakeEnvironment(
+        { environmentId: 'fake-remote', generation: 'fake-generation' },
+        { capabilities: ['fs'] },
+      );
+      server!.core.accessor.get(IEnvironmentService).register(Object.assign(fake, {
+        fs: new HostFileSystem(),
+        host: { ...fake.host, tempDir: join(remoteRoot, 'remote-tmp') },
+      }));
+
+      const uploadBytes = Buffer.from('upload unaffected');
+      const uploaded = await uploadFile(uploadBytes, 'text/plain', 'up.txt');
+      const upload = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+        content: [
+          {
+            type: 'file',
+            file_id: uploaded.id,
+            name: 'up.txt',
+            media_type: 'text/plain',
+            size: uploadBytes.length,
+          },
+        ],
+      });
+      expect(upload.body.code).toBe(0);
+      const content = upload.body.data.content as Array<{ type: string; text?: string }>;
+      const attachedPath = attachedPathFrom(content[0]?.text ?? '');
+      expect(dirname(attachedPath)).toBe(join(remoteRoot, 'remote-tmp', 'kimi-code', 'attachments'));
+      expect(await readFile(attachedPath)).toEqual(uploadBytes);
+    } finally {
+      await rm(remoteRoot, { recursive: true, force: true });
+    }
+  });
+
+  async function createRemoteBoundSession(): Promise<{ id: string; remoteTempDir: string; dispose(): Promise<void> }> {
+    const remoteRoot = await realpath(await mkdtemp(join(tmpdir(), 'kimi-prompt-remote-')));
+    const remoteTempDir = join(remoteRoot, 'remote-tmp');
+    const provider = await server!.core.accessor.get(IEnvironmentService).addProvider({
+      id: 'prompt-remote-provider',
+      attach: async (host) => {
+        const fake = new FakeEnvironment(
+          { environmentId: 'remote-test', generation: 'remote-generation' },
+          { capabilities: ['fs', 'process'] },
+        );
+        const environment = Object.assign(fake, {
+          fs: new HostFileSystem(),
+          process: new HostProcessService(),
+          host: { ...fake.host, tempDir: remoteTempDir },
+        });
+        const registration = host.registerEnvironment(environment);
+        return { dispose: () => registration.remove() };
+      },
     });
-    expect(upload.body.code).toBe(0);
+    const created = await call<{ id: string }>('POST', '/api/v1/sessions', {
+      metadata: { cwd: remoteRoot },
+      environment_id: 'remote-test',
+      environment_cwd: remoteRoot,
+    });
+    if (created.body.code !== 0) {
+      await provider.dispose();
+      await rm(remoteRoot, { recursive: true, force: true });
+    }
+    expect(created.body.code).toBe(0);
+    return {
+      id: created.body.data.id,
+      remoteTempDir,
+      dispose: async () => {
+        await provider.dispose();
+        await rm(remoteRoot, { recursive: true, force: true });
+      },
+    };
+  }
+
+  async function expectNoLocalAttachments(sessionId: string): Promise<void> {
+    const session = getLiveSessionById(server!.core.accessor, sessionId);
+    const localAttachmentsDir = join(session!.accessor.get(ISessionContext).sessionDir, 'attachments');
+    await expect(readdir(localAttachmentsDir)).rejects.toMatchObject({ code: 'ENOENT' });
+  }
+
+  it('materializes file_id attachments into the bound environment tempDir, never the server-local session dir', async () => {
+    const remote = await createRemoteBoundSession();
+    const id = remote.id;
+    try {
+      const pdfBytes = Buffer.from('%PDF-1.4 fake pdf bytes');
+      const uploaded = await uploadFile(pdfBytes, 'application/pdf', 'report.pdf');
+
+      const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+        content: [
+          { type: 'text', text: 'summarize this' },
+          { type: 'file', file_id: uploaded.id, name: 'report.pdf', media_type: 'application/pdf', size: pdfBytes.length },
+        ],
+      });
+      expect(submitted.body.code).toBe(0);
+
+      const content = submitted.body.data.content as Array<{ type: string; text?: string }>;
+      expect(content).toHaveLength(2);
+      const attachedPath = attachedPathFrom(content[1]?.text ?? '');
+      expect(dirname(attachedPath)).toBe(join(remote.remoteTempDir, 'kimi-code', 'attachments'));
+      expect(attachedPath.endsWith(`${uploaded.id}-report.pdf`)).toBe(true);
+      expect(await readFile(attachedPath)).toEqual(pdfBytes);
+
+      await expectNoLocalAttachments(id);
+    } finally {
+      await remote.dispose();
+    }
+  });
+
+  it('fails loudly instead of writing the server-local disk when the environment fs write fails', async () => {
+    const id = await createSession(home as string);
+    const remoteRoot = await realpath(await mkdtemp(join(tmpdir(), 'kimi-prompt-broken-remote-')));
+    const session = getLiveSessionById(server!.core.accessor, id);
+    const workspaceId = session!.accessor.get(ISessionContext).workspaceId;
+    try {
+      const instance = server!.core.accessor.get(IWorkspaceInstanceManager).get(workspaceId);
+      const fake = new FakeEnvironment(
+        { environmentId: 'broken-remote', generation: 'broken-generation' },
+        { capabilities: ['fs'] },
+      );
+      server!.core.accessor.get(IEnvironmentService).register(Object.assign(fake, {
+        fs: Object.assign(new HostFileSystem(), {
+          mkdir: async () => {
+            throw new Error('remote fs unavailable');
+          },
+        }),
+        host: { ...fake.host, tempDir: join(remoteRoot, 'remote-tmp') },
+      }));
+      await createMainAgent(id);
+      const main = session!.accessor.get(IAgentLifecycleService).handleOf('main')!;
+      main.accessor.get(IAgentStateService).set(environmentBindingKey, {
+        environmentId: 'broken-remote',
+      });
+
+      const bytes = Buffer.from('%PDF-1.4 fake pdf bytes');
+      const uploaded = await uploadFile(bytes, 'application/pdf', 'report.pdf');
+      const submitted = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+        content: [
+          { type: 'file', file_id: uploaded.id, name: 'report.pdf', media_type: 'application/pdf', size: bytes.length },
+        ],
+      });
+      expect(submitted.body.code).not.toBe(0);
+
+      await expectNoLocalAttachments(id);
+      await expect(readdir(join(remoteRoot, 'remote-tmp'))).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await rm(remoteRoot, { recursive: true, force: true });
+    }
   });
 
   it('rejects an upload file part missing metadata', async () => {
@@ -1663,6 +2020,39 @@ describe('server-v2 /api/v1 prompts', () => {
       agent_id: 'agent_does_not_exist',
     });
     expect(body.code).toBe(40401);
+  });
+
+  it('rebuilds a forked agent named by agent_id after a session reload', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const session = getLiveSessionById(server!.core.accessor, id);
+    if (session === undefined) throw new Error(`session ${id} not found`);
+    const lifecycle = session.accessor.get(IAgentLifecycleService);
+    const childContext = await lifecycle.fork(agentContextOf(lifecycle.handleOf('main')!));
+
+    await closeSessionById(server!.core.accessor, id);
+    expect(getLiveSessionById(server!.core.accessor, id)).toBeUndefined();
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'side question after reload' }],
+      agent_id: childContext.agentId,
+    });
+    expect(submitted.body.code).toBe(0);
+
+    const resumed = getLiveSessionById(server!.core.accessor, id);
+    if (resumed === undefined) throw new Error(`session ${id} not live after reload`);
+    const rebuilt = resumed.accessor.get(IAgentLifecycleService).handleOf(childContext.agentId);
+    expect(rebuilt).toBeDefined();
+    const hasText = rebuilt!.accessor
+      .get(IAgentContextMemoryService)
+      .get()
+      .some(
+        (m) =>
+          m.role === 'user' &&
+          m.content.some((p) => p.type === 'text' && p.text === 'side question after reload'),
+      );
+    expect(hasText).toBe(true);
   });
 
   it('rejects an unknown agent profile with 40001', async () => {

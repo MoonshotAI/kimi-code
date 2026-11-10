@@ -27,6 +27,7 @@ const host = vi.hoisted(() => {
     getConfig: vi.fn(),
     setConfig: vi.fn(async () => undefined),
     listSessions: vi.fn(async () => []),
+    listWorkspaceSkills: vi.fn(),
     resumeSession: vi.fn(),
     forkSession: vi.fn(),
     deleteSession: vi.fn(async () => undefined),
@@ -217,6 +218,22 @@ describe("Webview RPC boundary (validates requests before host dispatch)", () =>
     expect(showLogs).toHaveBeenCalledOnce();
   });
 
+  it("deduplicates same-name workspace skills using the default-first listing", async () => {
+    host.harness.listWorkspaceSkills.mockResolvedValueOnce([
+      { name: "review", description: "from A", path: "/work/A/review/SKILL.md", source: "project", workspaceDir: "/work/A" },
+      { name: "review", description: "from B", path: "/work/B/review/SKILL.md", source: "project", workspaceDir: "/work/B" },
+    ]);
+
+    const response = await bridge.handle({ id: "rpc-skills", method: Methods.GetSlashCommands }, "view-1");
+    const commands = (response as { result: Array<{ name: string; aliases: string[]; description: string }> }).result
+      .filter((command) => command.name.startsWith("skill:"));
+
+    expect(commands).toEqual([
+      { name: "skill:review", aliases: [], description: "from A" },
+    ]);
+    expect(host.harness.listWorkspaceSkills).toHaveBeenCalledOnce();
+  });
+
   it("keeps provider identity when configured models share a display name", async () => {
     host.harness.getConfig.mockResolvedValueOnce({
       defaultModel: "openai/shared",
@@ -250,7 +267,7 @@ describe("Webview RPC boundary (validates requests before host dispatch)", () =>
     });
   });
 
-  it("preserves adaptive thinking metadata in the Webview model list", async () => {
+  it("preserves adaptive thinking metadata and tolerates a missing model name", async () => {
     host.harness.getConfig.mockResolvedValueOnce({
       defaultModel: "anthropic/claude",
       models: {
@@ -274,6 +291,19 @@ describe("Webview RPC boundary (validates requests before host dispatch)", () =>
           adaptive_thinking: true,
         }],
       },
+    });
+
+    host.harness.getConfig.mockResolvedValueOnce({
+      defaultModel: "custom/missing",
+      models: {
+        "custom/missing": { provider: "custom", maxContextSize: 200_000 },
+      },
+    } as never);
+    await expect(
+      bridge.handle({ id: "rpc-models", method: Methods.GetModels }, "view-1"),
+    ).resolves.toMatchObject({
+      id: "rpc-models",
+      result: { models: [{ id: "custom/missing" }] },
     });
   });
 

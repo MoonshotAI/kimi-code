@@ -159,6 +159,8 @@ export class InstantiationService implements IInstantiationService {
     CollectionViewImpl<any>
   >();
 
+  private readonly _edgeNodes = new Set<object>();
+
   debugLabel: string | undefined;
 
   private _fiberHost: FiberHost | undefined;
@@ -437,6 +439,9 @@ export class InstantiationService implements IInstantiationService {
       return undefined;
     }
     this._instanceEntries.delete(instance);
+    const serviceInstance = instance as object;
+    this._edgeNodes.delete(serviceInstance);
+    this._tree.graph.removeInstance(serviceInstance);
     return entry.dispose();
   }
 
@@ -524,6 +529,7 @@ export class InstantiationService implements IInstantiationService {
         }
         const owner = this._ownerOf(id);
         if (owner !== undefined) {
+          this._edgeNodes.add(node);
           this.dependencyGraph.addEdge(node, { scope: owner, token: id }, 'instance');
         }
       },
@@ -683,6 +689,11 @@ export class InstantiationService implements IInstantiationService {
         view.dispose();
       }
       this._collectionViews.clear();
+      for (const node of this._edgeNodes) {
+        this._tree.graph.removeInstance(node);
+      }
+      this._edgeNodes.clear();
+      this._tree.graph.removeScope(this);
     } finally {
       this._children.clear();
       this._parentLedgerEntry?.release();

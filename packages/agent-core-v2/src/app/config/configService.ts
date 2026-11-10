@@ -13,7 +13,8 @@ import { BugIndicatingError, Error2, ErrorCodes, onUnexpectedError } from '#/err
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ILogService } from '#/_base/log/log';
 import { IAtomicTomlDocumentStore } from '#/persistence/interface/atomicDocumentStore';
-import { watch } from '#human/utils/watch';
+import { setWatchEnabled, watchCandidates } from '#human/utils/watch';
+import { WATCH_SECTION, type WatchConfig } from '#/app/watch/configSection';
 
 import {
   type AnyEnvBindings,
@@ -24,6 +25,7 @@ import {
   type ConfigInspectValue,
   type ConfigMerge,
   type ConfigOverlayRegisteredEvent,
+  type ConfigReplaceSectionsOptions,
   type ConfigSchema,
   type ConfigSection,
   type ConfigSectionRegisteredEvent,
@@ -62,6 +64,19 @@ type OnDeprecatedEnv = (oldName: string, newName: string) => void;
 
 function isEnvBinding(value: unknown): value is EnvBinding {
   return typeof value === 'string' || (isPlainObject(value) && 'env' in value);
+}
+
+function mergeExactEntries(
+  current: unknown,
+  submitted: Record<string, unknown>,
+  exact: readonly string[],
+): Record<string, unknown> {
+  const merged = isPlainObject(current) ? { ...current } : {};
+  for (const key of exact) {
+    delete merged[key];
+    if (Object.hasOwn(submitted, key)) merged[key] = submitted[key];
+  }
+  return merged;
 }
 
 function parseBoundRaw(binding: EnvBinding, raw: string): unknown {
@@ -135,6 +150,38 @@ export function applySectionEnv(
   const target: Record<string, unknown> = isPlainObject(base) ? { ...base } : {};
   applyEnvBindings(target, env, getEnv, onDeprecatedEnv);
   return target;
+}
+
+function collectEnvNames(bindings: AnyEnvBindings, into: string[]): void {
+  if (isEnvBinding(bindings)) {
+    if (typeof bindings === 'string') {
+      into.push(bindings);
+      return;
+    }
+    into.push(bindings.env);
+    if (bindings.deprecatedEnv !== undefined) into.push(bindings.deprecatedEnv);
+    return;
+  }
+  for (const child of Object.values(bindings)) {
+    if (child !== undefined) collectEnvNames(child, into);
+  }
+}
+
+function sameEnvValues(
+  a: readonly (string | undefined)[],
+  b: readonly (string | undefined)[],
+): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+interface EnvSectionResolution {
+  readonly base: unknown;
+  readonly envValues: readonly (string | undefined)[];
+  readonly value: unknown;
 }
 
 function isSameSection(
@@ -317,7 +364,9 @@ export class ConfigService extends Disposable implements IConfigService {
   private readonly diagnosticsList: ConfigDiagnostic[] = [];
   private lastDiagnosticsSnapshot = '[]';
   private readonly configKey: string;
-  private tainted = false;
+  private readError?: unknown;
+  private readonly envNamesBySection = new WeakMap<ConfigSection, readonly string[]>();
+  private readonly envSectionResolutions = new WeakMap<ConfigSection, EnvSectionResolution>();
 
   constructor(
     @IConfigRegistry private readonly registry: IConfigRegistry,
@@ -333,9 +382,10 @@ export class ConfigService extends Disposable implements IConfigService {
     const { configKey } = this;
     const { homeDir } = this.bootstrap;
     this.seedInitialLoad();
+    this.applyWatchEnabled();
     this.ready = this.load('load');
     const configFile = join(homeDir, configKey);
-    const handle = watch(homeDir, { depth: 0 });
+    const handle = watchCandidates(homeDir, [configFile]);
     this._register(handle);
     this._register(
       handle.onDidChange((change) => {
@@ -362,6 +412,27 @@ export class ConfigService extends Disposable implements IConfigService {
       userValue: this.raw[domain] as T | undefined,
       memoryValue,
     };
+  }
+
+  assertValid(domain: string): void {
+    if (this.readError !== undefined) {
+      throw new Error2(
+        ErrorCodes.CONFIG_INVALID,
+        `Cannot use config section '${domain}' because ${this.bootstrap.configPath} could not be read`,
+        { cause: this.readError },
+      );
+    }
+    const value = this.raw[domain];
+    if (value === undefined) return;
+    try {
+      this.registry.validate(domain, value);
+    } catch (error) {
+      throw new Error2(
+        ErrorCodes.CONFIG_INVALID,
+        `Invalid config section '${domain}': ${describeUnknownError(error)}`,
+        { cause: error },
+      );
+    }
   }
 
   getAll(): ResolvedConfig {
@@ -463,19 +534,26 @@ export class ConfigService extends Disposable implements IConfigService {
   async replaceSections(
     sections: Readonly<Record<string, unknown>>,
     target: ConfigTarget = ConfigTarget.User,
+    options: ConfigReplaceSectionsOptions = {},
   ): Promise<void> {
     await this.ready;
     const domains = Object.keys(sections);
     if (domains.length === 0) return;
     if (target === ConfigTarget.Memory) {
+      this.assertExpectedValues(this.memory, options.expectedValues);
       const staged: ResolvedConfig = { ...this.memory };
       for (const domain of domains) {
-        const value = sections[domain];
-        if (value === undefined || value === null) {
+        const submitted = sections[domain];
+        if (submitted === undefined || submitted === null) {
           delete staged[domain];
-        } else {
-          staged[domain] = this.registry.validate(domain, value);
+          continue;
         }
+        const exact = options.exactKeys?.[domain];
+        const value =
+          exact === undefined || !isPlainObject(submitted)
+            ? submitted
+            : mergeExactEntries(staged[domain], submitted, exact);
+        staged[domain] = this.registry.validate(domain, value);
       }
       this.memory = staged;
       this.commit('set', domains);
@@ -483,19 +561,57 @@ export class ConfigService extends Disposable implements IConfigService {
     }
     await this.enqueueStateTransition(async () => {
       this.assertPersistable();
-      await this.persistDomains(domains, (stagedRaw, stagedRawSnake) => {
-        for (const domain of domains) {
-          const value = sections[domain] === null ? undefined : sections[domain];
-          const stripped = this.stripEnv(domain, value, stagedRaw, stagedRawSnake);
-          if (stripped === undefined) {
-            delete stagedRaw[domain];
-          } else {
-            stagedRaw[domain] = this.registry.validate(domain, stripped);
+      await this.persistDomains(
+        domains,
+        (stagedRaw, stagedRawSnake) => {
+          for (const domain of domains) {
+            const submitted = sections[domain] === null ? undefined : sections[domain];
+            const exact = options.exactKeys?.[domain];
+            const value =
+              exact === undefined || !isPlainObject(submitted)
+                ? submitted
+                : mergeExactEntries(stagedRaw[domain], submitted, exact);
+            const stripped = this.stripEnv(domain, value, stagedRaw, stagedRawSnake);
+            if (stripped === undefined) {
+              delete stagedRaw[domain];
+            } else {
+              stagedRaw[domain] = this.registry.validate(domain, stripped);
+            }
           }
-        }
-      });
+        },
+        options.preserveUnknown !== false,
+        options.exactKeys,
+        options.expectedValues,
+      );
       this.rebuildEffective('set', domains);
     });
+  }
+
+  private assertExpectedValues(
+    current: ResolvedConfig,
+    expectedValues: Readonly<Record<string, unknown>> | undefined,
+  ): void {
+    if (expectedValues === undefined) return;
+    const changed: string[] = [];
+    for (const [domain, rawExpected] of Object.entries(expectedValues)) {
+      const expected = rawExpected === null ? undefined : rawExpected;
+      const currentValue = current[domain];
+      const normalizedCurrent =
+        currentValue === undefined && isPlainObject(expected)
+          ? this.registry.validate(domain, {})
+          : currentValue === undefined
+            ? undefined
+            : this.registry.validate(domain, currentValue);
+      const normalizedExpected =
+        expected === undefined ? undefined : this.registry.validate(domain, expected);
+      if (!deepEqual(normalizedCurrent, normalizedExpected)) changed.push(domain);
+    }
+    if (changed.length === 0) return;
+    throw new Error2(
+      ErrorCodes.CONFIG_INVALID,
+      'Configuration changed while this update was being prepared; retry the operation.',
+      { details: { domains: changed } },
+    );
   }
 
   private stripEnv(
@@ -555,12 +671,12 @@ export class ConfigService extends Disposable implements IConfigService {
   private async load(source: ConfigChangeSource): Promise<void> {
     this.diagnosticsList.length = 0;
     let fileData: ResolvedConfig = {};
-    let failed = false;
     try {
       const data = await this.documentStore.get<ResolvedConfig>(CONFIG_SCOPE, this.configKey);
       fileData = data !== undefined && isPlainObject(data) ? data : {};
+      this.readError = undefined;
     } catch (error) {
-      failed = true;
+      this.readError = error;
       const message =
         error instanceof TomlError
           ? `Failed to parse ${this.bootstrap.configPath}: ${describeTomlSyntaxError(error)}`
@@ -568,12 +684,10 @@ export class ConfigService extends Disposable implements IConfigService {
       this.pushDiagnostic({ severity: 'error', message });
       this.log.warn('config load failed', { error: describeUnknownError(error) });
       if (source !== 'load') {
-        this.tainted = true;
         this.emitDiagnosticsIfChanged();
         return;
       }
     }
-    this.tainted = failed;
     const nextRawSnake = cloneRecord(fileData);
     for (const diagnostic of collectKeyDeprecations(nextRawSnake, this.registry.listSections())) {
       this.pushDiagnostic(diagnostic);
@@ -607,6 +721,7 @@ export class ConfigService extends Disposable implements IConfigService {
     this.applySectionEnvBindings(next, true);
     this.applyEnvOverlay(next);
     this.effective = next;
+    this.applyWatchEnabled();
 
     const candidates = new Set(
       domains ?? [...Object.keys(previous), ...Object.keys(next)],
@@ -616,6 +731,10 @@ export class ConfigService extends Disposable implements IConfigService {
     }
     this.commit(source, [...candidates]);
     this.emitDiagnosticsIfChanged();
+  }
+
+  private applyWatchEnabled(): void {
+    setWatchEnabled(this.get<WatchConfig | undefined>(WATCH_SECTION)?.enabled ?? true);
   }
 
   private deliveredValue(domain: string): unknown {
@@ -657,12 +776,32 @@ export class ConfigService extends Disposable implements IConfigService {
     return validated;
   }
 
+  private sectionEnvNames(section: ConfigSection): readonly string[] {
+    const cached = this.envNamesBySection.get(section);
+    if (cached !== undefined) return cached;
+    const names: string[] = [];
+    if (section.env !== undefined) collectEnvNames(section.env, names);
+    this.envNamesBySection.set(section, names);
+    return names;
+  }
+
   private applySectionEnvBindings(effective: ResolvedConfig, reportErrors: boolean): void {
     const getEnv = (name: string): string | undefined => this.bootstrap.getEnv(name);
     for (const section of this.registry.listSections()) {
       if (section.env === undefined) continue;
+      const base = effective[section.domain];
+      const envValues = this.sectionEnvNames(section).map(getEnv);
+      const resolved = this.envSectionResolutions.get(section);
+      if (
+        !reportErrors &&
+        resolved !== undefined &&
+        resolved.base === base &&
+        sameEnvValues(resolved.envValues, envValues)
+      ) {
+        effective[section.domain] = resolved.value;
+        continue;
+      }
       try {
-        const base = effective[section.domain];
         const onDeprecatedEnv: OnDeprecatedEnv | undefined = reportErrors
           ? (oldName, newName) => {
               this.pushDiagnostic({
@@ -673,8 +812,11 @@ export class ConfigService extends Disposable implements IConfigService {
             }
           : undefined;
         const next = applySectionEnv(base, section.env, getEnv, onDeprecatedEnv);
-        effective[section.domain] = this.registry.validate(section.domain, next);
+        const value = this.registry.validate(section.domain, next);
+        effective[section.domain] = value;
+        this.envSectionResolutions.set(section, { base, envValues, value });
       } catch (error) {
+        this.envSectionResolutions.delete(section);
         if (reportErrors) {
           this.pushDiagnostic({
             domain: section.domain,
@@ -787,7 +929,7 @@ export class ConfigService extends Disposable implements IConfigService {
   }
 
   private assertPersistable(): void {
-    if (!this.tainted) return;
+    if (this.readError === undefined) return;
     throw new Error2(
       ErrorCodes.CONFIG_PERSIST_BLOCKED,
       `Refusing to persist config: ${this.bootstrap.configPath} could not be read; fix the file and reload before writing.`,
@@ -804,6 +946,9 @@ export class ConfigService extends Disposable implements IConfigService {
   private async persistDomains(
     domains: readonly string[],
     rebase: (stagedRaw: ResolvedConfig, stagedRawSnake: ResolvedConfig) => void,
+    preserveUnknown = true,
+    exactKeys?: Readonly<Record<string, readonly string[]>>,
+    expectedValues?: Readonly<Record<string, unknown>>,
   ): Promise<void> {
     this.assertPersistable();
     let onDisk: ResolvedConfig = {};
@@ -820,7 +965,7 @@ export class ConfigService extends Disposable implements IConfigService {
       this.log.warn('config persist aborted: re-read failed', {
         error: describeUnknownError(error),
       });
-      this.tainted = true;
+      this.readError = error;
       throw new Error2(
         ErrorCodes.CONFIG_PERSIST_BLOCKED,
         `Refusing to persist config: ${this.bootstrap.configPath} could not be read; fix the file and reload before writing.`,
@@ -835,12 +980,25 @@ export class ConfigService extends Disposable implements IConfigService {
     }
     const stagedRawSnake = cloneRecord(onDisk);
     const stagedRaw = transformTomlData(onDisk, this.registry);
+    this.assertExpectedValues(stagedRaw, expectedValues);
     const previousSnake: ResolvedConfig = {};
     for (const domain of domains) {
       const snakeKey = camelToSnake(domain);
       previousSnake[snakeKey] = stagedRawSnake[snakeKey];
     }
     rebase(stagedRaw, stagedRawSnake);
+    if (!preserveUnknown) {
+      for (const domain of domains) {
+        const snakeDomain = camelToSnake(domain);
+        const keys = exactKeys?.[domain];
+        const rawDomain = stagedRawSnake[snakeDomain];
+        if (keys !== undefined && isPlainObject(rawDomain)) {
+          for (const key of keys) delete rawDomain[key];
+        } else {
+          delete stagedRawSnake[snakeDomain];
+        }
+      }
+    }
     for (const domain of domains) {
       applySectionToToml(stagedRawSnake, domain, stagedRaw[domain], this.registry);
     }

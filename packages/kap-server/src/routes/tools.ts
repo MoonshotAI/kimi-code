@@ -5,7 +5,9 @@ import {
   IAgentToolRegistryService,
   IAgentToolPolicyService,
   getLiveSessionById,
+  resumeSessionById,
   Error2,
+  type ISessionScopeHandle,
   type Scope,
   type ToolInfo,
   type ToolSource,
@@ -108,6 +110,7 @@ export function registerToolsRoutes(app: ToolsRouteHost, core: Scope): void {
       success: { data: restartMcpServerResultSchema },
       errors: {
         [ErrorCode.MCP_SERVER_NOT_FOUND]: {},
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
       },
       description: 'Restart an MCP server by ID',
       tags: ['tools'],
@@ -157,9 +160,13 @@ export function registerToolsRoutes(app: ToolsRouteHost, core: Scope): void {
 }
 
 async function resolveEffectiveAgent(core: Scope, sessionId: string | undefined) {
-  const sid = sessionId ?? (await mostRecentSessionId(core));
-  if (sid === undefined) return undefined;
-  const session = getLiveSessionById(core.accessor, sid);
+  let session: ISessionScopeHandle | undefined;
+  if (sessionId !== undefined) {
+    session = await resumeSessionById(core.accessor, sessionId);
+  } else {
+    const recent = await mostRecentSessionId(core);
+    session = recent === undefined ? undefined : getLiveSessionById(core.accessor, recent);
+  }
   if (session === undefined) return undefined;
   return ensureMainAgent(session);
 }
@@ -234,6 +241,7 @@ function toProtocolMcpServer(entry: McpEntry): McpServer {
     transport: entry.transport,
     status: mapMcpStatus(entry.status),
     tool_count: entry.toolCount,
+    next_retry_at: entry.nextRetryAt,
   };
   if (entry.error !== undefined && entry.error.length > 0) {
     return { ...base, last_error: entry.error };

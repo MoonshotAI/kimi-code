@@ -1,6 +1,7 @@
 import type { Scope } from '@moonshot-ai/agent-core-v2';
 
 import { requestLog } from '../lib/requestLog';
+import { beginPromptAttempt, type PromptAttempt } from '../routes/prompts';
 import { okEnvelope } from '../protocol/envelope';
 import { ErrorCode } from '../protocol/error-codes';
 import type { ScopeKind } from './channel';
@@ -84,7 +85,17 @@ function makeHandler(
       );
     }
 
+    let promptAttempt: PromptAttempt | undefined;
     try {
+      promptAttempt =
+        scopeKind === 'agent' && service === 'agentPromptService' && method === 'submit'
+          ? beginPromptAttempt(
+              (req.params as Record<string, string>)['session_id'] ?? '',
+              (arg as { promptId?: string } | undefined)?.promptId,
+              { route: 'rpc', arg },
+            )
+          : undefined;
+      if (promptAttempt?.earlier !== undefined) return reply.send(okEnvelope(await promptAttempt.earlier, requestId));
       const result = await withTimeout(
         dispatch(
           core,
@@ -92,13 +103,16 @@ function makeHandler(
           req.params as Record<string, string>,
           service,
           method,
-          arg,
+          promptAttempt === undefined ? arg : { ...(arg as object), promptId: promptAttempt.id },
           lookup,
         ),
         opts.callTimeoutMs ?? 30_000,
       );
+      promptAttempt?.enqueued();
+      promptAttempt?.succeed(result);
       return reply.send(okEnvelope(result, requestId));
     } catch (error) {
+      promptAttempt?.fail(error);
       const envelope = mapError(error, requestId);
       const log = requestLog(req);
       if (envelope.code === ErrorCode.INTERNAL_ERROR) {

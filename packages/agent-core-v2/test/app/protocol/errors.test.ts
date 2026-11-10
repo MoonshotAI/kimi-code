@@ -25,7 +25,7 @@ describe('translateProviderError', () => {
   });
 
   it('maps 429 to provider.rate_limit at birth, passing through with status in details', () => {
-    const raw = new APIStatusError(429, 'Too Many Requests', 'req-1');
+    const raw = new APIStatusError(429, 'Too Many Requests', true, 'req-1');
     const error = translateProviderError(raw);
     expect(error).toBe(raw);
     expect(error.code).toBe('provider.rate_limit');
@@ -34,16 +34,16 @@ describe('translateProviderError', () => {
   });
 
   it('maps 401 / 403 to provider.auth_error', () => {
-    expect(translateProviderError(new APIStatusError(401, 'Unauthorized')).code).toBe(
+    expect(translateProviderError(new APIStatusError(401, 'Unauthorized', false)).code).toBe(
       'provider.auth_error',
     );
-    expect(translateProviderError(new APIStatusError(403, 'Forbidden')).code).toBe(
+    expect(translateProviderError(new APIStatusError(403, 'Forbidden', false)).code).toBe(
       'provider.auth_error',
     );
   });
 
   it('maps other status codes to provider.api_error', () => {
-    expect(translateProviderError(new APIStatusError(500, 'oops')).code).toBe('provider.api_error');
+    expect(translateProviderError(new APIStatusError(500, 'oops', true)).code).toBe('provider.api_error');
   });
 
   it('maps context-overflow status errors to context.overflow', () => {
@@ -60,12 +60,12 @@ describe('translateProviderError', () => {
   });
 
   it('maps a bare 529 status error to provider.overloaded', () => {
-    const error = translateProviderError(new APIStatusError(529, 'Overloaded'));
+    const error = translateProviderError(new APIStatusError(529, 'Overloaded', true));
     expect(error.code).toBe('provider.overloaded');
   });
 
   it('keeps a bare 503 status error on provider.api_error', () => {
-    const error = translateProviderError(new APIStatusError(503, 'Service Unavailable'));
+    const error = translateProviderError(new APIStatusError(503, 'Service Unavailable', true));
     expect(error.code).toBe('provider.api_error');
   });
 
@@ -112,42 +112,42 @@ describe('translateProviderError', () => {
     expect(translateProviderError(undefined).code).toBe('internal');
   });
 
-  describe('message sanitization', () => {
-    it('extracts the <title> from an nginx 413 HTML body and strips CR', () => {
-      const error = translateProviderError(new APIStatusError(413, NGINX_413_HTML));
+  describe('backend message preservation', () => {
+    it('preserves an nginx 413 HTML body without cleanup', () => {
+      const error = translateProviderError(new APIStatusError(413, NGINX_413_HTML, false));
       expect(error.code).toBe('provider.api_error');
-      expect(error.message).toBe('413 Request Entity Too Large');
+      expect(error.message).toBe(NGINX_413_HTML);
       expect(error.details).toMatchObject({ statusCode: 413 });
     });
 
-    it('extracts the <title> from other nginx HTML error pages', () => {
+    it('preserves other nginx HTML error pages without cleanup', () => {
       const html =
         '<html>\r\n<head><title>502 Bad Gateway</title></head>\r\n' +
         '<body><center><h1>502 Bad Gateway</h1></center></body></html>';
-      expect(translateProviderError(new APIStatusError(502, html)).message).toBe('502 Bad Gateway');
+      expect(translateProviderError(new APIStatusError(502, html, true)).message).toBe(html);
     });
 
     it('leaves a plain-text message unchanged', () => {
-      expect(translateProviderError(new APIStatusError(500, 'Internal Server Error')).message).toBe(
+      expect(translateProviderError(new APIStatusError(500, 'Internal Server Error', true)).message).toBe(
         'Internal Server Error',
       );
     });
 
-    it('strips carriage returns from a non-HTML message', () => {
-      expect(translateProviderError(new APIStatusError(500, 'line1\r\nline2\r')).message).toBe(
-        'line1\nline2',
+    it('preserves carriage returns from the backend message', () => {
+      expect(translateProviderError(new APIStatusError(500, 'line1\r\nline2\r', true)).message).toBe(
+        'line1\r\nline2\r',
       );
     });
 
-    it('falls back to the original message when the <title> is empty', () => {
+    it('preserves a message with an empty HTML title', () => {
       const html = '<html><head><title>   </title></head><body>x</body></html>';
-      expect(translateProviderError(new APIStatusError(500, html)).message).toContain('<html>');
+      expect(translateProviderError(new APIStatusError(500, html, true)).message).toBe(html);
     });
 
     it('does not affect 429 / 401 code mapping, only the message', () => {
       const html = '<html><head><title>429 Too Many Requests</title></head></html>';
-      expect(translateProviderError(new APIStatusError(429, html)).code).toBe('provider.rate_limit');
-      expect(translateProviderError(new APIStatusError(401, 'Unauthorized')).code).toBe(
+      expect(translateProviderError(new APIStatusError(429, html, true)).code).toBe('provider.rate_limit');
+      expect(translateProviderError(new APIStatusError(401, 'Unauthorized', false)).code).toBe(
         'provider.auth_error',
       );
     });

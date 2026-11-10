@@ -1,18 +1,18 @@
 import type {
   AgentLLMRequestFinish,
   AgentLLMRequestSource,
-  IAgentLLMRequesterService,
-} from '#/agent/llmRequester/llmRequester';
+  LoopRequester,
+} from '../requesterContract';
 import { unwrapErrorCause } from '#/errors';
 import { llmMessageFromError } from '#/llm-adapter/contract/errors';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
-import { toLlmErrorMessage, type LlmRemoteErrorMessage } from '#human/llm/errors';
+import { toLlmErrorMessage, type LlmRemoteErrorMessage } from '#human/llm-requester/errors';
 import type {
   LlmRequestConfig,
   LlmRequestContent,
   LlmRequestControl,
   LlmRequester,
-} from '#human/llm/requester/requester';
+} from '#human/llm-requester/requester';
 
 export type MachineRequesterGateDecision =
   | { readonly type: 'proceed'; readonly signal?: AbortSignal; readonly step?: number }
@@ -33,6 +33,7 @@ export interface MachineRequester {
 const GATE_FAILURE: LlmRemoteErrorMessage = {
   kind: 'abort',
   message: 'The agent loop gate stopped the step.',
+  retryable: false,
 };
 
 function toRemoteErrorMessage(error: unknown, signal: AbortSignal): LlmRemoteErrorMessage {
@@ -41,13 +42,13 @@ function toRemoteErrorMessage(error: unknown, signal: AbortSignal): LlmRemoteErr
     llmMessageFromError(raw) ?? (raw === error ? undefined : llmMessageFromError(error));
   if (known !== undefined) return known;
   if (signal.aborted) {
-    return { kind: 'abort', message: 'The operation was aborted.' };
+    return { kind: 'abort', message: 'The operation was aborted.', retryable: false };
   }
   return toLlmErrorMessage(raw);
 }
 
 export function createMachineRequester(
-  service: IAgentLLMRequesterService,
+  service: LoopRequester,
   options?: MachineRequesterOptions,
 ): MachineRequester {
   let lastFinish: AgentLLMRequestFinish | undefined;

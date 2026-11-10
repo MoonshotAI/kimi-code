@@ -66,7 +66,8 @@ export const authStatusSchema = z.object({
   provider: z.string().optional(),
 });
 
-/** Same shape as `refreshProviderModelsResponseSchema` in `./catalog.js` — keep in sync. */
+/** Subset of `refreshProviderModelsResponseSchema` in `./providerDiscovery.js`: the
+ * OAuth-only login refresh never produces its optional `retired_default`. */
 export const refreshOAuthProviderModelsResponseSchema = z.object({
   changed: z.array(
     z.object({

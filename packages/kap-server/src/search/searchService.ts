@@ -4,7 +4,9 @@ import { stat } from 'node:fs/promises';
 
 import {
   createDecorator,
+  databaseGlobalSearchEnabled,
   databaseSearchEnabled,
+  databaseSearchSyncTuning,
   IBootstrapService,
   IConfigService,
   ILogService,
@@ -17,7 +19,6 @@ import {
   type SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
 import { normalizeLiteral, tokenize } from '@moonshot-ai/minidb';
-import type { TranscriptStore } from '@moonshot-ai/transcript';
 
 import {
   GlobalSearchError,
@@ -26,7 +27,6 @@ import {
   type GlobalSearchPage,
   type GlobalSearchQuery,
 } from './contract';
-import { MAX_DOC_TEXT_CHARS, type MessageDoc, type TitleDoc } from './docs';
 import {
   SearchIndexCore,
   type CoreIndexView,
@@ -39,10 +39,7 @@ import {
 } from './indexCore';
 import {
   boundaryOf,
-  decodePageToken,
   encodePageToken,
-  matchDocs,
-  paginateRows,
   type MatchedRow,
   type NormalizedQuery,
   type SearchBudgets,
@@ -55,6 +52,8 @@ export type { GlobalSearchErrorReason } from './contract';
 
 const INDEX_DIR_NAME = 'search-index';
 const SESSION_PAGE_SIZE = 500;
+const GLOBAL_SEARCH_DISABLED_DETAIL =
+  'global search is disabled; set [database] global_search = true or KIMI_CODE_GLOBAL_SEARCH=1 to enable it';
 
 const MAX_QUERY_TERMS = 32;
 const MAX_LITERAL_QUERY_CHARS = 1_024;
@@ -98,16 +97,9 @@ export interface IGlobalSearchService {
     lifecycle: CoreLifecycleReport;
   }>;
   lifecycleReport(): CoreLifecycleReport;
-  setLiveTranscriptSource(source: LiveTranscriptSource): void;
 }
 
 export const IGlobalSearchService = createDecorator<IGlobalSearchService>('globalSearch');
-
-export interface LiveTranscriptSource {
-  forSessionLive(sessionId: string): TranscriptStore | undefined;
-  whenReady(sessionId: string): Promise<void>;
-  ensureAgentHistory(sessionId: string, agentId: string): Promise<void>;
-}
 
 function normalizeQuery(input: GlobalSearchQuery, maxQueryTerms: number): NormalizedQuery {
   const mode = input.mode ?? 'terms';
@@ -157,12 +149,13 @@ export interface SearchBackend {
 export class InlineSearchBackend implements SearchBackend {
   readonly core: SearchIndexCore;
 
-  constructor(options: { indexDir: string; log: ILogService }) {
+  constructor(options: { indexDir: string; log: ILogService; syncSessionCap?: number }) {
     this.core = new SearchIndexCore({
       ...options,
       bootSalt: randomUUID(),
       onLockToken: noteLiveLockToken,
     });
+    if (options.syncSessionCap !== undefined) this.core.syncSessionCap = options.syncSessionCap;
   }
 
   beginClose(): void {
@@ -228,11 +221,11 @@ export class GlobalSearchService implements IGlobalSearchService {
   private summaries = new Map<string, SessionSummary>();
   private disposed = false;
   private reindexing = false;
-  private liveSource: LiveTranscriptSource | null = null;
   private syncQueued = false;
   private syncTimer: ReturnType<typeof setTimeout> | null = null;
   private lastRefreshError: { at: number; message: string } | null = null;
   private drainSettled = false;
+  private disabledLogged = false;
 
   constructor(
     @ISessionIndex private readonly sessionIndex: ISessionIndex,
@@ -243,10 +236,6 @@ export class GlobalSearchService implements IGlobalSearchService {
     this.requestSync();
   }
 
-  setLiveTranscriptSource(source: LiveTranscriptSource): void {
-    this.liveSource = source;
-  }
-
   private get indexDir(): string {
     return join(this.bootstrap.homeDir, INDEX_DIR_NAME);
   }
@@ -254,10 +243,19 @@ export class GlobalSearchService implements IGlobalSearchService {
   private ensureBackend(): Promise<SearchBackend> {
     if (this.backend !== null) return Promise.resolve(this.backend);
     this.backendPromise ??= this.config.ready.then(() => {
+      if (!databaseGlobalSearchEnabled(this.config)) {
+        throw new GlobalSearchError('index_unavailable', GLOBAL_SEARCH_DISABLED_DETAIL);
+      }
       if (this.backend === null) {
+        const tuning = databaseSearchSyncTuning(this.config);
+        if (tuning.debounceMs !== undefined) this.syncDebounceMs = tuning.debounceMs;
         this.backend = databaseSearchEnabled(this.config)
-          ? new SearchWorkerHost({ dir: this.indexDir, log: this.log })
-          : new InlineSearchBackend({ indexDir: this.indexDir, log: this.log });
+          ? new SearchWorkerHost({ dir: this.indexDir, log: this.log, syncSessionCap: tuning.sessionCap })
+          : new InlineSearchBackend({
+              indexDir: this.indexDir,
+              log: this.log,
+              syncSessionCap: tuning.sessionCap,
+            });
         if (this.disposed) this.backend.beginClose();
       }
       return this.backend;
@@ -289,7 +287,7 @@ export class GlobalSearchService implements IGlobalSearchService {
     const pending = (async () => {
       await this.syncPromise?.catch(() => {});
       await this.refreshPromise?.catch(() => {});
-      const backend = await this.backendPromise;
+      const backend = await this.backendPromise?.catch(() => undefined);
       await backend?.dispose();
       this.drainSettled = true;
     })();
@@ -346,6 +344,7 @@ export class GlobalSearchService implements IGlobalSearchService {
 
   private async runSync(): Promise<void> {
     if (this.disposed || this.reindexing) return;
+    if (!(await this.enabled())) return;
     const backend = await this.ensureBackend();
     const sessions = await this.listAllSessions();
     if (this.disposed) return;
@@ -358,6 +357,16 @@ export class GlobalSearchService implements IGlobalSearchService {
     this.lastSyncStartedAt = Date.now();
     const outcome = await backend.sync(sessions.map((s) => this.toSyncInput(s)));
     if (outcome.truncated || outcome.failures > 0) this.requestSync();
+  }
+
+  private async enabled(): Promise<boolean> {
+    await this.config.ready;
+    if (databaseGlobalSearchEnabled(this.config)) return true;
+    if (!this.disabledLogged) {
+      this.disabledLogged = true;
+      this.log.info(`global search: ${GLOBAL_SEARCH_DISABLED_DETAIL}`);
+    }
+    return false;
   }
 
   private async listAllSessions(): Promise<SessionSummary[]> {
@@ -393,146 +402,10 @@ export class GlobalSearchService implements IGlobalSearchService {
 
   async search(input: GlobalSearchQuery): Promise<GlobalSearchPage> {
     const q = normalizeQuery(input, this.maxQueryTerms);
-    const sessionId = q.container?.sessionId;
-    const liveStore = sessionId !== undefined ? this.liveSource?.forSessionLive(sessionId) : undefined;
-    if (liveStore !== undefined && sessionId !== undefined) {
-      return this.searchLive(q, sessionId, liveStore, input.pageToken);
+    if (!(await this.enabled())) {
+      throw new GlobalSearchError('index_unavailable', GLOBAL_SEARCH_DISABLED_DETAIL);
     }
     return this.searchIndex(q, input.pageToken);
-  }
-
-  private async searchLive(
-    q: NormalizedQuery,
-    sessionId: string,
-    store: TranscriptStore,
-    pageToken: string | undefined,
-  ): Promise<GlobalSearchPage> {
-    const page = decodePageToken(q, 'live', pageToken, undefined);
-    const source = this.liveSource;
-    if (source === null) {
-      throw new GlobalSearchError('index_unavailable', 'live transcript source is not wired');
-    }
-    await source.whenReady(sessionId);
-    const agentIds =
-      q.container?.agentId !== undefined
-        ? [q.container.agentId]
-        : store.agents().map((agent) => agent.agentId);
-    for (const agentId of agentIds) {
-      await source.ensureAgentHistory(sessionId, agentId);
-    }
-    const docs = await this.collectLiveDocs(sessionId, store, agentIds);
-    const budget = {
-      deadlineAt: Date.now() + this.queryDeadlineMs,
-      textCharsLeft: this.queryTextBudgetChars,
-    };
-    const boundary = page.kind === 'keyset' ? page.boundary : undefined;
-    const matched =
-      q.mode === 'literal'
-        ? matchDocs(
-            q,
-            docs.map(({ key, value }) => ({ key, value, score: 0 })),
-            boundary,
-            budget,
-          )
-        : matchDocs(q, matchLiveTerms(q.termsQuery ?? [], docs), boundary, budget);
-    const { pageRows, hasMore } = paginateRows(q, page, matched.rows);
-    return {
-      items: pageRows.map((row) => this.projectHit(q, row)),
-      hasMore,
-      pageToken: hasMore
-        ? encodePageToken(q, 'live', boundaryOf(q, pageRows[pageRows.length - 1]!), undefined)
-        : undefined,
-      incomplete: matched.incomplete,
-      indexState: {
-        state: 'ready',
-        indexedSessions: 1,
-        totalSessions: 1,
-        documents: docs.length,
-      },
-      source: 'live',
-    };
-  }
-
-  private async collectLiveDocs(
-    sessionId: string,
-    store: TranscriptStore,
-    agentIds: readonly string[],
-  ): Promise<{ key: string; value: MessageDoc | TitleDoc }[]> {
-    const summary = await this.sessionIndex.get(sessionId);
-    const workspaceId = summary?.workspaceId ?? '';
-    const sessionTitle = summary?.title ?? '';
-    const fallbackTime = summary?.updatedAt ?? 0;
-    const parseTime = (iso: string | undefined): number => {
-      if (iso === undefined) return fallbackTime;
-      const ms = Date.parse(iso);
-      return Number.isNaN(ms) ? fallbackTime : ms;
-    };
-    const docs: { key: string; value: MessageDoc | TitleDoc }[] = [];
-    for (const agentId of agentIds) {
-      const transcript = store.getAgent(agentId);
-      if (transcript === undefined) continue;
-      for (const item of transcript.snapshot().items) {
-        if (item.kind !== 'turn') continue;
-        const turnTime = parseTime(item.startedAt);
-        const prompt = item.prompt?.trim() ?? '';
-        if (prompt.length > 0) {
-          docs.push({
-            key: `${sessionId}/${agentId}/live/u/t${item.ordinal}`,
-            value: {
-              kind: 'message',
-              sessionId,
-              workspaceId,
-              sessionTitle,
-              agentId,
-              role: 'user',
-              text: prompt.length > MAX_DOC_TEXT_CHARS ? prompt.slice(0, MAX_DOC_TEXT_CHARS) : prompt,
-              time: turnTime,
-              turn: item.ordinal,
-              stepId: undefined,
-            },
-          });
-        }
-        for (const step of item.steps) {
-          const stepTime = parseTime(step.endedAt ?? step.startedAt ?? item.startedAt);
-          for (const frame of step.frames) {
-            if (frame.kind !== 'text' || frame.role !== 'assistant') continue;
-            const text = frame.text.trim();
-            if (text.length === 0) continue;
-            docs.push({
-              key: `${sessionId}/${agentId}/live/a/${frame.frameId}`,
-              value: {
-                kind: 'message',
-                sessionId,
-                workspaceId,
-                sessionTitle,
-                agentId,
-                role: 'assistant',
-                text: text.length > MAX_DOC_TEXT_CHARS ? text.slice(0, MAX_DOC_TEXT_CHARS) : text,
-                time: stepTime,
-                turn: item.ordinal,
-                stepId: step.stepId,
-              },
-            });
-          }
-        }
-      }
-    }
-    if (sessionTitle.length > 0) {
-      docs.push({
-        key: `${sessionId}/$title`,
-        value: {
-          kind: 'title',
-          sessionId,
-          workspaceId,
-          sessionTitle,
-          agentId: '',
-          role: 'title',
-          text: sessionTitle,
-          time: fallbackTime,
-        },
-      });
-    }
-    return docs;
   }
 
   private budgets(): SearchBudgets {
@@ -606,13 +479,12 @@ export class GlobalSearchService implements IGlobalSearchService {
         ? encodePageToken(
             q,
             'index',
-            boundaryOf(q, result.rows[result.rows.length - 1]!),
+            boundaryOf(q, result.rows.at(-1)!),
             result.generation,
           )
         : undefined,
       incomplete: result.incomplete,
       indexState: this.composeIndexState(result.index),
-      source: 'index',
     };
   }
 
@@ -621,7 +493,7 @@ export class GlobalSearchService implements IGlobalSearchService {
     return {
       sessionId: doc.sessionId,
       workspaceId: doc.workspaceId,
-      sessionTitle: this.summaries.get(doc.sessionId)?.title ?? doc.sessionTitle,
+      sessionTitle: doc.sessionTitle,
       agentId: doc.agentId,
       role: doc.role,
       snippet:
@@ -669,7 +541,6 @@ export class GlobalSearchService implements IGlobalSearchService {
         stale: true,
         degraded: this.lastRefreshError?.message ?? view?.degraded,
       },
-      source: 'index',
     };
   }
 
@@ -707,6 +578,9 @@ export class GlobalSearchService implements IGlobalSearchService {
         lifecycle: { state: this.drainSettled ? 'stopped' : 'closing' },
       };
     }
+    if (!(await this.enabled())) {
+      return { ...empty, lifecycle: { state: 'stopped', detail: GLOBAL_SEARCH_DISABLED_DETAIL } };
+    }
     try {
       const backend = await this.ensureBackend();
       const status = await backend.status();
@@ -729,30 +603,6 @@ export class GlobalSearchService implements IGlobalSearchService {
     if (this.disposed) return { state: this.drainSettled ? 'stopped' : 'closing' };
     return this.backend?.lifecycleSnapshot() ?? { state: 'stopped' };
   }
-}
-
-function matchLiveTerms(
-  terms: readonly string[],
-  docs: readonly { key: string; value: MessageDoc | TitleDoc }[],
-): { key: string; value: MessageDoc | TitleDoc; score: number }[] {
-  if (terms.length === 0) return [];
-  const matched: { key: string; value: MessageDoc | TitleDoc; score: number }[] = [];
-  for (const { key, value: doc } of docs) {
-    const counts = new Map<string, number>();
-    for (const token of tokenize(doc.text)) counts.set(token, (counts.get(token) ?? 0) + 1);
-    let score = 0;
-    let hit = true;
-    for (const term of terms) {
-      const tf = counts.get(term) ?? 0;
-      if (tf === 0) {
-        hit = false;
-        break;
-      }
-      score += Math.log(1 + tf);
-    }
-    if (hit) matched.push({ key, value: doc, score });
-  }
-  return matched;
 }
 
 registerScopedService(

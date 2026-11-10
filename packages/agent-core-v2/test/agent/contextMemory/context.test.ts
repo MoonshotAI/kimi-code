@@ -1,5 +1,4 @@
-import type { Message } from '#/llm-adapter/contract/message';
-import type { ToolCall } from '#human/llm/message';
+import type { Message, ToolCall } from '#human/llm/message';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { estimateTokens, estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
@@ -9,9 +8,10 @@ import {
   COMPACT_USER_MESSAGE_HEAD_TOKENS,
   COMPACT_USER_MESSAGE_MAX_TOKENS,
   selectCompactionUserMessages,
+  selectRecentUserMessages,
   type TokenEstimate,
 } from '#/agent/contextMemory/compactionHandoff';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import { type ContextMessage } from '#/agent/contextMemory/types';
 import {
   closeTrailingOpenToolExchange,
   INHERITED_IN_FLIGHT_TOOL_OUTPUT,
@@ -31,12 +31,13 @@ describe('Agent context', () => {
   let profile: IAgentProfileService;
   let wire: IWireService;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     ctx = createTestAgent();
     context = ctx.get(IAgentContextMemoryService);
     tokenCounting = ctx.tokenCounting;
     profile = ctx.get(IAgentProfileService);
     wire = ctx.get(IWireService);
+    await ctx.restorePersisted();
   });
 
   afterEach(async () => {
@@ -61,7 +62,6 @@ describe('Agent context', () => {
       {
         role: 'tool',
         content: [{ type: 'text', text: 'tool output' }],
-        toolCalls: [],
         toolCallId: 'call_origin',
       },
     );
@@ -95,7 +95,6 @@ describe('Agent context', () => {
             text: '<system>ERROR: Tool execution failed.</system>\npermission denied',
           },
         ],
-        toolCalls: [],
         toolCallId: 'call_error',
       },
     );
@@ -103,7 +102,6 @@ describe('Agent context', () => {
       {
         role: 'tool',
         content: [{ type: 'text', text: '<system>Tool output is empty.</system>' }],
-        toolCalls: [],
         toolCallId: 'call_empty',
       },
     );
@@ -136,7 +134,6 @@ describe('Agent context', () => {
           { type: 'text', text: '' },
           { type: 'text', text: 'Run the tool' },
         ],
-        toolCalls: [],
       },
       {
         role: 'assistant',
@@ -151,7 +148,6 @@ describe('Agent context', () => {
       {
         role: 'tool',
         content: [{ type: 'text', text: 'done' }],
-        toolCalls: [],
         toolCallId: 'call_empty',
       },
       {
@@ -162,7 +158,6 @@ describe('Agent context', () => {
       {
         role: 'user',
         content: [{ type: 'text', text: '   ' }],
-        toolCalls: [],
       },
     ];
 
@@ -170,7 +165,6 @@ describe('Agent context', () => {
       {
         role: 'user',
         content: [{ type: 'text', text: 'Run the tool' }],
-        toolCalls: [],
       },
       {
         role: 'assistant',
@@ -180,7 +174,6 @@ describe('Agent context', () => {
       {
         role: 'tool',
         content: [{ type: 'text', text: 'done' }],
-        toolCalls: [],
         toolCallId: 'call_empty',
       },
       {
@@ -207,7 +200,6 @@ describe('Agent context', () => {
         role: 'tool',
         content: [{ type: 'text', text: '' }],
         toolCallId: 'call_empty',
-        toolCalls: [],
       },
     ];
 
@@ -220,7 +212,6 @@ describe('Agent context', () => {
       {
         role: 'tool',
         content: [{ type: 'text', text: '<system>Tool output is empty.</system>' }],
-        toolCalls: [],
         toolCallId: 'call_empty',
       },
     ]);
@@ -237,7 +228,6 @@ describe('Agent context', () => {
             text: '<hook_result hook_event="UserPromptSubmit">\nhook response\n</hook_result>',
           },
         ],
-        toolCalls: [],
         origin: { kind: 'hook_result', event: 'UserPromptSubmit' },
       },
     );
@@ -258,7 +248,6 @@ describe('Agent context', () => {
       {
         role: 'user',
         content: [{ type: 'text', text: 'continue from stop hook' }],
-        toolCalls: [],
         origin: { kind: 'hook_result', event: 'Stop' },
       },
     );
@@ -268,7 +257,6 @@ describe('Agent context', () => {
       {
         role: 'user',
         content: [{ type: 'text', text: 'hooked input' }],
-        toolCalls: [],
       },
       {
         role: 'user',
@@ -278,7 +266,6 @@ describe('Agent context', () => {
             text: '<hook_result hook_event="UserPromptSubmit">\nhook response\n</hook_result>',
           },
         ],
-        toolCalls: [],
       },
       {
         role: 'assistant',
@@ -293,7 +280,6 @@ describe('Agent context', () => {
       {
         role: 'user',
         content: [{ type: 'text', text: 'continue from stop hook' }],
-        toolCalls: [],
       },
     ]);
   });
@@ -320,7 +306,6 @@ describe('Agent context', () => {
       {
         role: 'user',
         content: [{ type: 'text', text: 'blocked prompt' }],
-        toolCalls: [],
       },
       {
         role: 'assistant',
@@ -335,7 +320,6 @@ describe('Agent context', () => {
       {
         role: 'user',
         content: [{ type: 'text', text: 'safe followup' }],
-        toolCalls: [],
       },
     ]);
   });
@@ -398,7 +382,6 @@ describe('Agent context', () => {
       {
         role: 'user',
         content: [{ type: 'text', text: '<system-reminder>\nskill body\n</system-reminder>' }],
-        toolCalls: [],
         origin: {
           kind: 'skill_activation',
           activationId: 'act_skill',
@@ -421,7 +404,6 @@ describe('Agent context', () => {
       {
         role: 'tool',
         content: [{ type: 'text', text: 'wrote file' }],
-        toolCalls: [],
         toolCallId: 'call_write',
       },
     );
@@ -437,7 +419,6 @@ describe('Agent context', () => {
       {
         role: 'tool',
         content: [{ type: 'text', text: 'skill loaded' }],
-        toolCalls: [],
         toolCallId: 'call_skill',
       },
     );
@@ -504,7 +485,6 @@ describe('Agent context', () => {
       {
         role: 'tool',
         content: [{ type: 'text', text: 'large tool result '.repeat(50) }],
-        toolCalls: [],
         toolCallId: 'call_pending_tokens',
       },
     );
@@ -622,7 +602,6 @@ describe('Agent context', () => {
       {
         role: 'user',
         content: [{ type: 'text', text: 'background task completed' }],
-        toolCalls: [],
         origin: {
           kind: 'task',
           taskId: 'bash-001',
@@ -645,7 +624,7 @@ describe('Agent context', () => {
     expect(context.get().map((m) => m.role)).toEqual(['user', 'assistant']);
   });
 
-  it('removes injection messages inside the undone turn', async () => {
+  it('keeps un-owned injection messages from the undone turn in the rebuilt context', async () => {
     ctx.appendUserTurn('earlier question');
     ctx.appendUserTurn('do the work');
     context.append(
@@ -671,10 +650,15 @@ describe('Agent context', () => {
         content: [{ type: 'text', text: 'earlier question' }],
         origin: { kind: 'user' },
       }),
+      expect.objectContaining({
+        role: 'user',
+        content: [{ type: 'text', text: 'Plan mode is active' }],
+        origin: { kind: 'injection', variant: 'plan_mode' },
+      }),
     ]);
   });
 
-  it('removes the prompt-owned image compression reminder when undoing its prompt', async () => {
+  it('keeps the image compression caption inline and removes it with its prompt on undo', async () => {
     profile.update({ activeToolNames: [] });
     const caption = buildImageCompressionCaption({
       original: { width: 3264, height: 666, byteLength: 344 * 1024, mimeType: 'image/png' },
@@ -689,13 +673,10 @@ describe('Agent context', () => {
 
     expect(context.get()).toMatchObject([
       {
-        origin: {
-          kind: 'injection',
-          variant: 'image_compression',
-          ownerPromptId: expect.any(String),
-        },
+        origin: { kind: 'user' },
+        id: expect.any(String),
+        content: [{ type: 'text', text: `inspect this image ${caption}` }],
       },
-      { origin: { kind: 'user' }, id: expect.any(String) },
       { role: 'assistant' },
     ]);
 
@@ -772,13 +753,31 @@ describe('Agent context', () => {
       expect(zeroed.tail).toHaveLength(messages.length);
 
       expect(selectCompactionUserMessages(messages).elided).toBe(true);
+
+      const hooked: ContextMessage = {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: '<hook_result hook_event="UserPromptSubmit">\nhook note\n</hook_result>',
+            meta: { contentType: 'text/xml', source: 'user prompt submit hook' },
+          },
+          { type: 'text', text: 'x'.repeat(4000) },
+        ],
+      };
+      const truncated = selectRecentUserMessages([hooked], 10);
+      expect(truncated[0]?.content[0]).toMatchObject({
+        type: 'text',
+        text: '<hook_result hook_event="UserPromptSubmit">\nhook note\n</hook_result>',
+        meta: { contentType: 'text/xml', source: 'user prompt submit hook' },
+      });
+      expect(truncated[0]?.content).toHaveLength(2);
     });
 
     it('falls back to a zero tokensAfter', () => {
       const history = [userMessage('u1'), {
         role: 'assistant',
         content: [{ type: 'text', text: 'a1' }],
-        toolCalls: [],
       } as ContextMessage];
 
       const shape = buildContextCompactionShape(
@@ -797,7 +796,6 @@ describe('Agent context', () => {
       const history = [userMessage('u1'), {
         role: 'assistant',
         content: [{ type: 'text', text: 'a1' }],
-        toolCalls: [],
       } as ContextMessage];
 
       const withMeasured = buildContextCompactionShape(history, {
@@ -823,7 +821,6 @@ describe('Agent context', () => {
       const history = [userMessage('u1'), {
         role: 'assistant',
         content: [{ type: 'text', text: 'a1' }],
-        toolCalls: [],
       } as ContextMessage];
 
       const withOverhead = buildContextCompactionShape(history, {
@@ -843,6 +840,14 @@ describe('Agent context', () => {
       expect(withOverhead.tokensAfter).toBe(withoutOverhead.tokensAfter + 3_000);
       expect(withOverhead.messages).toEqual(withoutOverhead.messages);
     });
+  });
+
+  it('preserves surrogate pairs when truncating from the end', () => {
+    const suffix = (maxTokens: number) =>
+      selectCompactionUserMessages([userMessage('x😀')], maxTokens, 0, () => 100).tail[0]?.content[0];
+
+    expect(suffix(1)).toMatchObject({ type: 'text', text: '😀' });
+    expect(suffix(2)).toMatchObject({ type: 'text', text: 'x😀' });
   });
 
   describe('legacy compaction layout', () => {
@@ -876,7 +881,6 @@ function userMessage(text: string, origin?: ContextMessage['origin']): ContextMe
   return {
     role: 'user',
     content: [{ type: 'text', text }],
-    toolCalls: [],
     origin,
   };
 }
@@ -892,7 +896,6 @@ describe('closeTrailingOpenToolExchange', () => {
   const user: ContextMessage = {
     role: 'user',
     content: [{ type: 'text', text: 'hi' }],
-    toolCalls: [],
   };
   const readCall: ToolCall = { type: 'function', id: 'call_read', name: 'Read', arguments: '{}' };
   const agentCall: ToolCall = { type: 'function', id: 'call_agent', name: 'Agent', arguments: '{}' };
@@ -914,7 +917,6 @@ describe('closeTrailingOpenToolExchange', () => {
         role: 'tool',
         toolCallId: 'call_read',
         content: [{ type: 'text', text: 'contents' }],
-        toolCalls: [],
       },
     ];
     expect(closeTrailingOpenToolExchange(history)).toEqual(history);
@@ -934,8 +936,7 @@ describe('closeTrailingOpenToolExchange', () => {
       role: 'tool',
       toolCallId: 'call_agent',
       content: [{ type: 'text', text: INHERITED_IN_FLIGHT_TOOL_OUTPUT }],
-      toolCalls: [],
-    });
+      });
   });
 
   it('seals a partial assistant when closing an unanswered trailing call', () => {
@@ -965,8 +966,7 @@ describe('closeTrailingOpenToolExchange', () => {
       role: 'tool',
       toolCallId: 'call_read',
       content: [{ type: 'text', text: 'contents' }],
-      toolCalls: [],
-    };
+      };
     const seed = closeTrailingOpenToolExchange([user, assistant, answered]);
 
     expect(seed).toHaveLength(4);

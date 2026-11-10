@@ -11,15 +11,14 @@ import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { SessionMediaStoreService } from '#/agent/media/sessionMediaStoreService';
 import { mcpResultToExecutableOutput } from '#/agent/mcp/output';
-import { detectFileType } from '#/agent/media/file-type';
+import { detectFileType, sniffImageDimensions } from '#/agent/media/file-type';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
-import { lowerMessage as lowerOpenAI } from '#human/llm/requester/bases/openai/lower';
-import { lowerMessage as lowerAnthropic } from '#human/llm/requester/bases/anthropic/lower';
-import { providerImagePolicy } from '#human/llm/media/image-formats';
-import type { ToolMessage } from '#human/llm/message';
-import { degradeOlderMediaParts } from '#/agent/contextProjector/mediaProjection';
+import { lowerMessage as lowerOpenAI } from '#human/llm/builtin/protocol/openai/lower';
+import { lowerMessage as lowerAnthropic } from '#human/llm/builtin/protocol/anthropic/lower';
+import { providerImagePolicy } from '#human/llm/protocol/kit/media';
+import type { Message, ToolMessage } from '#human/llm/message';
+import { degradeLeadingMediaParts } from '#human/llm/builtin/policy/media-degrade';
 import { parseDaemonFileUrl } from '#/agent/media/mediaRef';
-import type { Message } from '#/llm-adapter/contract/message';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
@@ -222,19 +221,23 @@ describe('SessionMediaStoreService', () => {
 
   it('preserves an unchanged image before older media is degraded', async () => {
     const bytes = Buffer.from(await new Jimp({ width: 32, height: 32, color: 0x3366ccff }).getBuffer('image/png'));
+    const materialize = vi.spyOn(store, 'materialize');
     const result = await mcpResultToExecutableOutput({
       isError: false,
       content: [{ type: 'image', mimeType: 'image/png', data: bytes.toString('base64') }],
     }, 'mcp__example__image', { attachmentStore: store });
     const content = renderToolResultForModel(result);
+    const reference = JSON.parse(/Attachment reference: ("[^\n]+")/.exec(modelText(result))![1]!) as string;
+    expect(content).toContainEqual({ type: 'image_url', imageUrl: { url: reference } });
+    expect(materialize).toHaveBeenCalledTimes(1);
     const messages: Message[] = [
-      { role: 'tool', toolCallId: 'image', content, toolCalls: [] },
-      { role: 'user', toolCalls: [], content: [
+      { role: 'tool', toolCallId: 'image', content },
+      { role: 'user', content: [
         { type: 'image_url', imageUrl: { url: 'data:image/png;base64,bmV3' } },
         { type: 'image_url', imageUrl: { url: 'data:image/png;base64,bmV3Mg==' } },
       ] },
     ];
-    const degraded = degradeOlderMediaParts(messages, 2)[0]!;
+    const degraded = degradeLeadingMediaParts(messages, 1)[0]!;
     const text = degraded.content.map((part) => part.type === 'text' ? part.text : '').join('\n');
     expect(degraded.content.some((part) => part.type === 'image_url')).toBe(false);
     expect(text).not.toContain('Image compressed');
@@ -250,11 +253,16 @@ describe('SessionMediaStoreService', () => {
       isError: false,
       content: [{ type: 'image', mimeType: 'image/png', data: bytes.toString('base64') }],
     }, 'mcp__example__image', { attachmentStore: store });
-    const text = renderToolResultForModel(result).map((part) => part.type === 'text' ? part.text : '').join('\n');
+    const content = renderToolResultForModel(result);
+    const text = modelText(result);
     expect(text).toContain('Image compressed');
     const relative = /Session-relative attachment: ("[^\n]+")/.exec(text)?.[1];
     expect(relative).toBeDefined();
     expect((await readFile(join(sessionDir, JSON.parse(relative!) as string))).equals(bytes)).toBe(true);
+    const image = content.find((part) => part.type === 'image_url');
+    expect(image?.imageUrl.url).toMatch(/^kimi-file:\/\//);
+    const final = await store.get(image!.imageUrl.url);
+    expect(sniffImageDimensions(final!.bytes)).toMatchObject({ width: 2000, height: 1000 });
   });
 
   it.each([
@@ -322,10 +330,11 @@ describe('SessionMediaStoreService', () => {
     expect(writes).toHaveBeenCalledTimes(alreadyAborted ? 0 : 1);
   });
 
-  it('keeps a same-size copy without re-reading the stream', async () => {
-    await store.materialize(input());
+  it('keeps a same-size copy without re-reading the stream or changing metadata on abort', async () => {
+    await store.materialize(input({ name: 'original.mp4' }));
     const again = await store.materialize(
       input({
+        name: 'renamed.mp4',
         stream: () => {
           throw new Error('must not be read');
         },
@@ -333,6 +342,21 @@ describe('SessionMediaStoreService', () => {
     );
     expect(again).toBe(pathFor('f_1', '.mp4'));
     expect(await readFile(again!)).toEqual(BYTES);
+
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      store.materialize(
+        input({
+          name: 'cancelled.mp4',
+          signal: controller.signal,
+          stream: () => {
+            throw new Error('must not be read');
+          },
+        }),
+      ),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect((await store.open('f_1'))?.name).toBe('renamed.mp4');
   });
 
   it('overwrites a wrong-size copy', async () => {
@@ -371,12 +395,18 @@ describe('SessionMediaStoreService', () => {
     );
   });
 
-  it('reads canonical bytes independently from the daemon file store', async () => {
-    await store.materialize(input());
-    await expect(store.read('f_1')).resolves.toEqual({
-      data: BYTES,
-      name: 'f_1.mp4',
+  it('puts and gets canonical media with its metadata', async () => {
+    const reference = await store.put({
+      bytes: BYTES,
+      mimeType: 'video/mp4',
+      filename: 'clip.mp4',
     });
+
+    expect(reference).toMatch(/^kimi-file:\/\/f_/);
+    const stored = await store.get(reference);
+    expect(stored?.mimeType).toBe('video/mp4');
+    expect(stored?.filename).toBe('clip.mp4');
+    expect(Buffer.from(stored!.bytes)).toEqual(BYTES);
   });
 
   it('opens canonical media with its persisted download metadata', async () => {
