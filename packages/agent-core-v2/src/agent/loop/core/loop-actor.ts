@@ -239,15 +239,25 @@ class LoopMailbox {
     };
   }
 
+  takeNotify(): MailboxTurn | undefined {
+    const head = this.notifyEntries[0];
+    if (head === undefined) return undefined;
+    this.notifyEntries = this.notifyEntries.slice(1);
+    const promptOnly = this.notifyEntries.length > 0;
+    const reminders = promptOnly ? [] : this.drainReminders();
+    return {
+      kind: 'notify',
+      pending: [
+        { kind: 'notify', entry: head },
+        ...reminders.map((entry) => ({ kind: 'remind' as const, entry })),
+      ],
+      promptOnly,
+    };
+  }
+
   drainReminders(): RemindEntry[] {
     const entries = this.reminders;
     this.reminders = [];
-    return entries;
-  }
-
-  drainNotify(): UserEntry[] {
-    const entries = this.notifyEntries;
-    this.notifyEntries = [];
     return entries;
   }
 
@@ -790,7 +800,10 @@ class LoopActor implements Loop {
     this.check({ type: 'input.steer', promptIds });
     if (!this.open()) return undefined;
     const ack = this.mailbox.steer(promptIds);
-    if ((ack.entries?.length ?? 0) > 0) this.releaseIntake();
+    if ((ack.entries?.length ?? 0) > 0) {
+      this.releaseIntake();
+      if (this.turn?.phase === 'requesting') this.abortRequest();
+    }
     this.kick();
     return ack;
   }
@@ -1333,19 +1346,21 @@ class LoopActor implements Loop {
 
   private finishSteeredStep(turn: LiveTurn, step: StepState): boolean {
     if (!step.steerRequested || turn.outcome?.type === 'aborted') return false;
-    const steered = this.mailbox.drainNotify();
     step.outcome = { type: 'done', cause: STEERED };
     if (turn.promptOnly !== true) {
       this.record({ type: 'step.ended', turnId: turn.id, step: turn.step, outcome: step.outcome });
     }
     this.step = undefined;
-    if (steered.length === 0) {
+    const steered = this.mailbox.takeNotify();
+    if (steered === undefined) {
       turn.outcome = step.outcome;
       turn.phase = 'finished';
       this.post({ type: 'turn.finish', turn });
       return true;
     }
-    turn.pending.push(...steered.map((entry) => ({ kind: 'notify' as const, entry })));
+    turn.pending = steered.pending;
+    turn.outcome = undefined;
+    turn.phase = 'appending';
     this.post({ type: 'turn.append', turn });
     return true;
   }
@@ -1918,6 +1933,7 @@ class LoopActor implements Loop {
     const outcome = turn.outcome ?? { type: 'aborted' as const };
     turn.outcome = outcome;
     turn.phase = 'finished';
+    if (outcome.type === 'aborted') this.appendPendingReminders(turn);
     this.record({ type: 'turn.ended', turnId: turn.id, outcome });
     this.completionHandoff = false;
     this.completionContinuation = undefined;
@@ -1927,6 +1943,18 @@ class LoopActor implements Loop {
     this.completedTurns.push(turn);
     if (outcome.type === 'aborted' && turn.continueAfterAbort === true) this.held = false;
     this.schedule();
+  }
+
+  private appendPendingReminders(turn: LiveTurn): void {
+    for (const entry of this.mailbox.drainReminders()) {
+      this.record({
+        type: 'message.appended',
+        turnId: turn.id,
+        step: turn.step,
+        source: 'remind',
+        entry,
+      });
+    }
   }
 
   private settleUnfinished(outcome: StepOutcome): void {

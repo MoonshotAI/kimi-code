@@ -1161,7 +1161,7 @@ describe('tool exchange structure', () => {
     }
   }, 60_000);
 
-  it('after a user abort, an interruption reminder follows the next user message on the wire', async () => {
+  it('after a user abort, an interruption reminder is on the wire before the next user message', async () => {
     const ctx = await newCase(M_OPENAI, 'abort-merge');
     resetMock((_req, callIndex) => (callIndex === 0 ? { kind: 'hang' } : OK_OPENAI));
 
@@ -1175,13 +1175,11 @@ describe('tool exchange structure', () => {
 
     expect(requests).toHaveLength(2);
     const userMessages = openAiMessages(1).filter((message) => message['role'] === 'user');
-    // The next user message is appended first. The interruption reminder is
-    // injected at the following step boundary, so it trails that message.
     expect(userMessages).toHaveLength(3);
     expect(String(userMessages[0]?.['content'])).toContain('first message');
-    expect(String(userMessages[1]?.['content'])).toContain('second message');
-    expect(String(userMessages[2]?.['content'])).toContain('<system-reminder>');
-    expect(String(userMessages[2]?.['content'])).toContain('interrupted by the user');
+    expect(String(userMessages[1]?.['content'])).toContain('<system-reminder>');
+    expect(String(userMessages[1]?.['content'])).toContain('interrupted by the user');
+    expect(String(userMessages[2]?.['content'])).toContain('second message');
     expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('completed');
   }, 60_000);
 });

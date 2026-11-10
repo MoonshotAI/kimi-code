@@ -307,6 +307,7 @@ export class LoopJournal {
   private readonly notify: UserEntry[] = [];
   private readonly steps = new Map<string, StepJournal>();
   private readonly toolCallUuids = new Map<string, string>();
+  private readonly pendingContextMessages: ContextMessage[] = [];
   private turn: PendingTurn | undefined;
 
   constructor(
@@ -359,10 +360,9 @@ export class LoopJournal {
           trigger: event.trigger,
           prompted: false,
         };
-        this.writeTurnPrompt();
         return;
       case 'step.started':
-        this.writeTurnPrompt();
+        this.persistTurnPrompt();
         this.steps.set(stepKey(event.turnId, event.step), {
           uuid: randomUUID(),
           streamedBlocks: new Map(),
@@ -440,7 +440,7 @@ export class LoopJournal {
         return;
       }
       case 'turn.ended': {
-        this.writeTurnPrompt();
+        this.persistTurnPrompt();
         this.turn = undefined;
         if (this.dispatcher !== undefined) return;
         const record: WireRecord = {
@@ -482,11 +482,6 @@ export class LoopJournal {
     const steeredIntoOpenTurn = event.source === 'notify'
       && this.turn?.prompted === true
       && appendedPromptId !== openingPromptId;
-    if (event.source === 'normal' || event.source === 'notify') {
-      this.writeTurnPrompt(event.entry as UserEntry);
-    } else {
-      this.writeTurnPrompt();
-    }
     if (event.source === 'llm' || event.source === 'partial') {
       const assistant = event.entry as AssistantEntry;
       const step = this.steps.get(stepKey(event.turnId, event.step));
@@ -533,19 +528,11 @@ export class LoopJournal {
           extras: toolCall?.extras,
         });
       }
-      this.write({
-        type: 'context.append_message',
-        agentId: this.agentId,
-        message: contextFromHistoryEntry(entry),
-      });
+      this.appendContextMessage(entry);
       return;
     }
     if (steeredIntoOpenTurn) this.writeTurnSteer(event.entry as UserEntry);
-    this.write({
-      type: 'context.append_message',
-      agentId: this.agentId,
-      message: contextFromHistoryEntry(event.entry),
-    });
+    this.appendContextMessage(event.entry);
     if (event.source !== 'notify') return;
     const notifyIndex = this.notify.findIndex((entry) => entryKey(entry) === entryKey(event.entry));
     if (notifyIndex >= 0) this.notify.splice(notifyIndex, 1);
@@ -560,6 +547,32 @@ export class LoopJournal {
       turnId: String(turnId),
       step: stepNumber,
     });
+  }
+
+  private persistTurnPrompt(): void {
+    this.writeTurnPrompt();
+    if (this.turn?.prompted !== true) return;
+    const pending = this.pendingContextMessages.splice(0);
+    for (const message of pending) {
+      this.write({
+        type: 'context.append_message',
+        agentId: this.agentId,
+        message,
+      });
+    }
+  }
+
+  private appendContextMessage(entry: HistoryMessage): void {
+    const message = contextFromHistoryEntry(entry);
+    if (this.turn?.prompted === true) {
+      this.write({
+        type: 'context.append_message',
+        agentId: this.agentId,
+        message,
+      });
+      return;
+    }
+    this.pendingContextMessages.push(message);
   }
 
   private writeTurnPrompt(entry?: UserEntry): void {

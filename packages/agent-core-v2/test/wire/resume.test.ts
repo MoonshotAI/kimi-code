@@ -656,9 +656,9 @@ describe('Agent resume', () => {
       }]),
     ] as unknown as WireRecord[]);
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-bg-resume-delivered-'));
+    const ctx = testAgent(homeDirServices(homeDir), { autoConfigure: false, persistence });
     try {
       const backgroundPersistence = createAgentTaskPersistence(homeDir);
-      const ctx = testAgent(homeDirServices(homeDir), { autoConfigure: false, persistence });
       await backgroundPersistence.appendTaskOutput(
         'agent-seen0000',
         'already delivered summary',
@@ -672,6 +672,7 @@ describe('Agent resume', () => {
 
       expect(steer).not.toHaveBeenCalled();
     } finally {
+      await ctx.dispose();
       await rm(homeDir, { recursive: true, force: true });
     }
   });

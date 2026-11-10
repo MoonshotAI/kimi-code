@@ -68,6 +68,7 @@ import { applyPromptMetadataUpdate } from '#/session/sessionMetadata/promptMetad
 import { promptMetadataTextFromContentParts } from '#/agent/prompt/promptMetadataText';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IEventDispatcher } from '#/state/eventDispatcher';
+import { IEventBus } from '#/app/event/eventBus';
 import { IWireService } from '#/wire/wire';
 import { LOOP_CONTROL_SECTION, type LoopControl } from './configSection';
 import {
@@ -145,6 +146,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     @IAgentToolRegistryService _toolRegistry: IAgentToolRegistryService,
     @IConfigService private readonly config: IConfigService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
+    @IEventBus events: IEventBus,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
@@ -193,6 +195,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     );
     this.turns = new AgentTurnProjection({
       dispatcher,
+      events,
       scopeContext,
       telemetry,
       plugins,
@@ -203,11 +206,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       errorHandlers: this.errorHandlers,
       maxSteps: () => this.config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxStepsPerTurn,
       cancel: (turnId, reason) => this.cancelActiveTurn(turnId, reason),
-      notifyCancellation: (reason) => {
-        if (!this.disposing) {
-          this.instantiation.invokeFunction((accessor) => accessor.get(IAgentInterruptionReminderService).notifyUserCancellation(reason));
-        }
-      },
       recordStreamPart: (turnId, step, block) => this.journal.recordStreamPart(turnId, step, block),
     });
     this.profileAdapter = new AgentLoopProfileAdapter(
@@ -834,7 +832,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         role: 'user',
         content: [
           ...ctx.hookParts,
-          ...gateImageFormatParts(promptMessage.content, this.profile.getModelProviderType()),
+          ...gateImageFormatParts(promptMessage.content, this.getModelProviderType()),
         ],
       };
       return undefined;
@@ -856,7 +854,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           ...event.item.entry,
           message: {
             ...event.item.entry.message,
-            content: gateImageFormatParts(event.item.entry.message.content, this.profile.getModelProviderType()),
+            content: gateImageFormatParts(event.item.entry.message.content, this.getModelProviderType()),
           },
         },
       };
@@ -980,6 +978,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       }));
     }
     if (isUserCancellation(cancellation)) this.cancelQueuedSkillActivations(cancellation);
+    if (isUserCancellation(cancellation) && !this.disposing) {
+      this.instantiation.invokeFunction((accessor) => {
+        accessor.get(IAgentInterruptionReminderService).notifyUserCancellation(cancellation);
+      });
+    }
     this.turns.abort(activeTurnId, cancellation);
     const hasUserContinuation =
       this.pendingSubmissions.some((entry) => entry.meta?.origin?.kind === 'user') ||

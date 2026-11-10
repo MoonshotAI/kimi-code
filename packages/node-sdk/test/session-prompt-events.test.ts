@@ -580,6 +580,12 @@ describe('Session.prompt events', () => {
           expect(events).toContainEqual(
             expect.objectContaining({ type: 'turn.ended', agentId: 'main', reason: 'completed' }),
           );
+          expect(events).toContainEqual(
+            expect.objectContaining({
+              type: 'background.task.terminated',
+              info: expect.objectContaining({ status: 'killed' }),
+            }),
+          );
         },
         { timeout: 10_000, interval: 10 },
       );
@@ -593,9 +599,17 @@ describe('Session.prompt events', () => {
       );
       expect(stopResults).toHaveLength(1);
       expect(JSON.stringify(stopResults[0])).toContain('status: killed');
-      expect(JSON.stringify(stopResults[0])).toContain('[partial output]');
-      expect(JSON.stringify(stopResults[0])).toContain(finding);
-      expect(JSON.stringify(stopResults[0]).split(draft)).toHaveLength(2);
+      expect(JSON.stringify(stopResults[0])).toContain('Stopped by TaskStop');
+      const terminated = events.find(
+        (event) => event.type === 'background.task.terminated' && event.info.status === 'killed',
+      );
+      if (terminated?.type !== 'background.task.terminated') {
+        throw new Error('Expected a killed background task notification');
+      }
+      const stoppedOutput = await session.getBackgroundTaskOutput(terminated.info.taskId);
+      expect(stoppedOutput).toContain('[partial output]');
+      expect(stoppedOutput).toContain(finding);
+      expect(stoppedOutput.split(draft)).toHaveLength(2);
       const terminalEvents = events.filter(
         (event) => event.type === 'subagent.cancelled' || event.type === 'subagent.failed',
       );
@@ -622,8 +636,14 @@ describe('Session.prompt events', () => {
       );
       expect(JSON.stringify(childReplay).split(finding)).toHaveLength(2);
       expect(JSON.stringify(childReplay).split(draft)).toHaveLength(2);
-      expect(JSON.stringify(agents['main']?.replay)).toContain('[partial output]');
-      expect(JSON.stringify(agents['main']?.replay).split(draft)).toHaveLength(2);
+      expect(agents['main']?.replay).toContainEqual(
+        expect.objectContaining({
+          type: 'message',
+          message: expect.objectContaining({
+            origin: expect.objectContaining({ kind: 'task', status: 'killed' }),
+          }),
+        }),
+      );
     } finally {
       parentAfterChild.resolve();
       await harness.close();

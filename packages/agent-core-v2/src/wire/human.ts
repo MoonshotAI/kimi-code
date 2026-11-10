@@ -57,6 +57,7 @@ interface LegacyTurnSegment {
 export function normalizeLegacyTurnSteerRecords(records: readonly WireRecord[]): WireRecord[] {
   const normalized: WireRecord[] = [];
   const segments = new Map<number, LegacyTurnSegment>();
+  const cancelledTurnIds = new Set<number>();
   let active: LegacyTurnSegment | undefined;
   let nextTurnId = 0;
 
@@ -80,7 +81,23 @@ export function normalizeLegacyTurnSteerRecords(records: readonly WireRecord[]):
     if (record.type === 'turn.steer') {
       const sourceTurnId = recordTurnId(record) ?? active?.sourceTurnId;
       const current = sourceTurnId === undefined ? active : segments.get(sourceTurnId);
-      const endedTurnId = current?.turnId ?? sourceTurnId;
+      if (current === undefined) {
+        const turnId = sourceTurnId ?? nextTurnId;
+        const promptIds = record['promptIds'];
+        const firstPromptId = Array.isArray(promptIds) && typeof promptIds[0] === 'string' ? promptIds[0] : undefined;
+        startTurn(turnId, {
+          type: 'turn.prompt',
+          agentId: record['agentId'],
+          input: record['input'],
+          origin: record['origin'],
+          promptId: typeof record['messageId'] === 'string' ? record['messageId'] : firstPromptId,
+          turnId,
+          trigger: 'notify',
+          time: record.time,
+        });
+        continue;
+      }
+      const endedTurnId = current.turnId ?? sourceTurnId;
       normalized.push({
         type: 'turn.ended',
         agentId: record['agentId'],
@@ -115,6 +132,11 @@ export function normalizeLegacyTurnSteerRecords(records: readonly WireRecord[]):
     if (record.type === 'turn.cancel') {
       const sourceTurnId = recordTurnId(record);
       const segment = sourceTurnId === undefined ? active : segments.get(sourceTurnId);
+      const turnId = segment?.turnId ?? sourceTurnId;
+      if (record['target'] !== undefined && typeof turnId === 'number' && turnId >= nextTurnId) {
+        cancelledTurnIds.add(turnId);
+        while (cancelledTurnIds.delete(nextTurnId)) nextTurnId += 1;
+      }
       normalized.push(segment === undefined ? record : { ...record, turnId: segment.turnId });
       continue;
     }

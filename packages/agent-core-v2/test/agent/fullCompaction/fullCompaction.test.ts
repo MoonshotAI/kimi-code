@@ -1950,7 +1950,6 @@ describe('FullCompaction', () => {
           user: text <compaction-instruction>
 
       call 2:
-        tools: Agent, AgentSwarm, AskUserQuestion, Bash, CreateGoal, CronCreate, CronDelete, CronList, Edit, ExitPlanMode, FetchURL, GetGoal, Glob, Grep, Read, ReadMediaFile, SetGoalBudget, Skill, TaskList, TaskOutput, TaskStop, TodoList, UpdateGoal, WaitFor, Write
         messages:
           user: text "old user one"
           user: text "old user two"

@@ -341,7 +341,7 @@ describe('AgentConversationUndoService', () => {
       branch: 'b1',
       base: { branch: 'main', line: 1 },
       turns: 2,
-      legacyUndoLine: 13,
+      legacyUndoLine: 15,
     });
     expect(persisted[edgeIndex + 1]).toMatchObject({ type: 'context.undo', count: 2 });
     expect(persisted[edgeIndex + 2]).toMatchObject({ type: 'context.undone', turns: 2 });

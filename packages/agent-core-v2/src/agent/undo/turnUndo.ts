@@ -62,9 +62,6 @@ export function projectTurnUndo(
   let stoppedAtCompaction = false;
   let nextTurnId = 0;
   const cancelledTurnIds = new Set<number>();
-  const legacyMessageAnchors = !records.some(({ record }) =>
-    record.type === 'turn.prompt' || record.type === 'turn.steer',
-  );
   for (let index = 0; index < records.length; index++) {
     const { record, line } = records[index]!;
     if (record.type === 'context.clear') {
@@ -92,20 +89,27 @@ export function projectTurnUndo(
       }
       continue;
     }
-    if (record.type === 'turn.steer') continue;
-    if (legacyMessageAnchors && record.type === 'context.append_message') {
-      const message = asRecord(record['message']);
-      if (message?.['role'] !== 'user') continue;
-      const origin = asRecord(message['origin']);
-      const kind = origin?.['kind'];
-      if (kind !== undefined && kind !== 'user') continue;
-      const promptId = typeof message['id'] === 'string' ? message['id'] : undefined;
-      anchors.push({
-        turnId: anchors.length,
+    if (record.type === 'turn.steer') {
+      const turnId = nextTurnId;
+      nextTurnId += 1;
+      while (cancelledTurnIds.delete(nextTurnId)) nextTurnId += 1;
+      const promptIds = record['promptIds'];
+      const promptId = typeof record['messageId'] === 'string'
+        ? record['messageId']
+        : Array.isArray(promptIds) && typeof promptIds[0] === 'string' ? promptIds[0] : undefined;
+      const prompt = {
+        origin: record['origin'] as PromptOrigin | undefined,
+        trigger: 'notify' as const,
+        input: Array.isArray(record['input']) ? record['input'] as readonly ContentPart[] : [],
         promptId,
-        origin: origin as PromptOrigin | undefined,
-        input: Array.isArray(message['content']) ? message['content'] as readonly ContentPart[] : [],
-        cutIndex: index,
+      };
+      if (!isUndoAnchorTurnPrompt(prompt)) continue;
+      anchors.push({
+        turnId,
+        promptId,
+        origin: prompt.origin,
+        input: prompt.input,
+        cutIndex: promptOwnedRecordStart(records, index, promptId),
       });
       continue;
     }

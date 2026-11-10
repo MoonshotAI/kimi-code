@@ -79,6 +79,7 @@ export interface ToolOutputSnapshot {
 export interface ToolOutput {
   readonly closed?: boolean;
   append(chunk: string): number | undefined;
+  onAppend?(listener: (chunk: string, offset: number) => void): () => void;
   preview(maxBytes?: number): ToolOutputSnapshot;
   read(offset: number, maxBytes: number): Promise<string>;
   flush(): Promise<void>;

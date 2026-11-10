@@ -310,7 +310,7 @@ function applyMessage(state: ConversationState, message: ContextMessage | undefi
   const inTurn = origin !== undefined && 'inTurn' in origin && origin.inTurn === true;
   if (inTurn || (steered && state.pendingPrompt === undefined && open !== undefined)) {
     const turn = open ?? addTurn(state, time);
-    if (!steered && isUndoAnchorOrigin(message.origin)) {
+    if (isUndoAnchorOrigin(message.origin)) {
       state.anchors.push({ turnId: turn.turn_id, itemCount: turn.items.length, stepCount: state.steps[turn.turn_id]?.length ?? 0 });
     }
     turn.items.push(userMessage(message.id ?? nextItemId(turn), 'steer', message.id, message, time));
@@ -447,18 +447,16 @@ function applyLoopEvent(state: ConversationState, event: LoopRecordedEvent | und
 
 function applySteer(state: ConversationState, record: WireRecord): void {
   const messageId = stringField(record['messageId']);
-  if (messageId === undefined) {
-    state.pendingSteers += 1;
-    return;
-  }
   const promptIds = record['promptIds'];
-  if (!Array.isArray(promptIds)) return;
-  for (let index = state.turns.length - 1; index >= 0; index--) {
-    const item = state.turns[index]!.items.find((candidate) => candidate.item_id === messageId);
-    if (item?.type !== 'user_message') continue;
-    item.prompt_ids = promptIdsOf(item.origin, promptIds.filter((id): id is string => typeof id === 'string'));
-    return;
+  if (messageId !== undefined && Array.isArray(promptIds)) {
+    for (let index = state.turns.length - 1; index >= 0; index--) {
+      const item = state.turns[index]!.items.find((candidate) => candidate.item_id === messageId);
+      if (item?.type !== 'user_message') continue;
+      item.prompt_ids = promptIdsOf(item.origin, promptIds.filter((id): id is string => typeof id === 'string'));
+      return;
+    }
   }
+  state.pendingSteers += 1;
 }
 
 function markProvisionalEnd(state: ConversationState, turnNumber: unknown, end: TurnEnd): void {

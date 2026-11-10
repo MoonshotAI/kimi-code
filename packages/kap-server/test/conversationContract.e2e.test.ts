@@ -8,6 +8,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket, type RawData } from 'ws';
 import {
   IAgentLifecycleService,
+  IAgentPermissionModeService,
   IAgentTaskOutputService,
   IAgentToolExecutorService,
   IConfigService,
@@ -738,25 +739,21 @@ describe('conversation contract e2e', () => {
     const agents = getLiveSessionById(server!.core.accessor, sid)!.accessor.get(IAgentLifecycleService);
     if (agents.handleOf(MAIN_AGENT_ID) === undefined) await agents.create({ agentId: MAIN_AGENT_ID });
     const main = agents.handleOf(MAIN_AGENT_ID)!;
+    main.accessor.get(IAgentPermissionModeService).setMode('yolo');
     const handler = main.accessor.get(IAgentToolExecutorService).executor.execute({
       type: 'function',
       id: 'call_s9_watch',
       name: 'Bash',
       arguments: JSON.stringify({ command: "printf '  VITE ready\\n'", description: 'npm run dev', run_in_background: true }),
     }, { turnId: 0 });
-    console.error('S9_BEFORE_HANDLER', handler.taskId);
     await handler;
-    console.error('S9_AFTER_HANDLER', handler.snapshot().phase, handler.snapshot().detached);
     const taskId = handler.taskId;
     const sink = main.accessor.get(IAgentTaskOutputService).open(taskId);
     const isOutput = (frame: any): boolean => frame.type === 'task.output';
 
     const first = await openFrameSocket(server!);
-    console.error('S9_BEFORE_WATCH');
     first.send({ type: 'task.watch', request_id: 'r1', session_id: sid, agent_id: MAIN_AGENT_ID, task_id: taskId });
-    const response = await first.next((f) => f.type === 'response');
-    console.error('S9_RESPONSE', JSON.stringify(response).slice(0, 400));
-    expect(response).toMatchObject({ request_id: 'r1', code: 0 });
+    expect(await first.next((f) => f.type === 'response')).toMatchObject({ request_id: 'r1', code: 0 });
     expect(await first.next(isOutput)).toMatchObject({
       agent_id: MAIN_AGENT_ID,
       task_id: taskId,
@@ -788,6 +785,7 @@ describe('conversation contract e2e', () => {
 
     const child = await agents.create({ agentId: 'agent-s9-child' });
     const childHandle = agents.handleOf(child.agentId)!;
+    childHandle.accessor.get(IAgentPermissionModeService).setMode('yolo');
     const childHandler = childHandle.accessor.get(IAgentToolExecutorService).executor.execute({
       type: 'function',
       id: 'call_s9_child_watch',

@@ -44,6 +44,7 @@ class OutputBody {
   private failure: string | undefined;
   private writerHeld = false;
   private queue: Promise<void> = Promise.resolve();
+  private readonly appendListeners = new Set<(chunk: string, offset: number) => void>();
 
   constructor(restored?: RestoredOutput) {
     this.totalBytes = restored?.totalBytes ?? 0;
@@ -62,6 +63,13 @@ class OutputBody {
     this.writerHeld = false;
   }
 
+  onAppend(listener: (chunk: string, offset: number) => void): () => void {
+    this.appendListeners.add(listener);
+    return () => {
+      this.appendListeners.delete(listener);
+    };
+  }
+
   append(text: string): number | undefined {
     if (this.failure !== undefined) return undefined;
     const offset = this.totalBytes;
@@ -73,6 +81,7 @@ class OutputBody {
     }).catch((error: unknown) => {
       this.failure ??= errorMessage(error);
     });
+    for (const listener of this.appendListeners) listener(text, offset);
     return offset;
   }
 
@@ -198,15 +207,11 @@ class OutputHandle implements ToolOutput {
   }
 
   append(chunk: string): number | undefined {
-    if (this.closing !== undefined) {
-      this.localError ??= 'Tool output is closed';
-      return undefined;
-    }
-    if (!this.writer) {
-      this.localError ??= 'Tool output is already open for writing';
-      return undefined;
-    }
     return this.body.append(chunk);
+  }
+
+  onAppend(listener: (chunk: string, offset: number) => void): () => void {
+    return this.body.onAppend(listener);
   }
 
   preview(maxBytes?: number): ToolOutputSnapshot {

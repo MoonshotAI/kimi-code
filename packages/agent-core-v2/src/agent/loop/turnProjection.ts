@@ -8,6 +8,7 @@ import { toErrorMessage } from '#/_base/errors/errorMessage';
 import { retryErrorFields } from '#/_base/utils/retry';
 import { defineState } from '#/state/state';
 import type { IEventDispatcher } from '#/state/eventDispatcher';
+import type { IEventBus } from '#/app/event/eventBus';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import type {
   TurnEndedEvent as TurnEndedTelemetryEvent,
@@ -33,7 +34,8 @@ import type { ThinkingEffort } from '#human/llm-requester/thinking';
 import { emptyUsage, type TokenUsage } from '#human/llm-requester/usage';
 import type { AssistantEntry, HistoryMessage, UserEntry } from '#human/agent/turn';
 import { createUserEntry } from '#human/agent/turn';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
+import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import { contextFromHistoryEntry, EMPTY_LOOP_PROMPT } from './history';
 import {
   AssistantDelta,
@@ -50,7 +52,7 @@ import {
   type TurnInterruptReason,
 } from './turnEvents';
 import { AgentErrorEvent } from '#/agent/mcp/mcpEvents';
-import { TurnEnded } from './turnOps';
+import { TurnEnded, TurnPrompt } from './turnOps';
 import { ErrorCodes, Error2, isError2, toKimiErrorPayload } from '#/errors';
 import type {
   AfterStepContext,
@@ -132,6 +134,7 @@ type MutableTurn = {
 
 export interface TurnProjectionOptions {
   readonly dispatcher: IEventDispatcher;
+  readonly events: IEventBus;
   readonly scopeContext: IAgentScopeContext;
   readonly telemetry: ITelemetryService;
   readonly plugins: IPluginService;
@@ -142,7 +145,6 @@ export interface TurnProjectionOptions {
   readonly errorHandlers: readonly LoopErrorHandler[];
   readonly maxSteps: () => number | undefined;
   readonly cancel: (turnId: number, reason: unknown) => boolean;
-  readonly notifyCancellation: (reason: unknown) => void;
   readonly recordStreamPart: (turnId: number, step: number, block: number) => void;
 }
 
@@ -152,6 +154,7 @@ export class AgentTurnProjection {
   private activeRequestTrace: LLMRequestTrace | undefined;
   private turnWatch: { timer: NodeJS.Timeout; signature: string; since: number; lastWarnAt: number } | undefined;
   private readonly promptOnlyTurnIds = new Set<number>();
+  private readonly publishedPromptTurns = new Set<number>();
   private readonly turnTriggers = new Map<number, TurnTrigger>();
   private readonly entryTurnIds = new WeakMap<HistoryMessage, number>();
   private readonly failedTurnIds = new Set<number>();
@@ -468,6 +471,7 @@ export class AgentTurnProjection {
     switch (event.type) {
       case 'turn.started': {
         if (event.promptOnly === true) {
+          this.publishTurnPrompt(event.turnId, event.trigger, event.entry);
           const pending = this.options.prompts.activatePromptOnly(event);
           if (pending !== undefined) this.activate(pending, event.turnId);
         }
@@ -485,6 +489,7 @@ export class AgentTurnProjection {
           const trigger = this.turnTriggers.get(event.turnId) ?? 'continue';
           const pending = this.options.prompts.activatePending(event.turnId);
           const entry = pending?.entry ?? this.options.prompts.entryForTurn(event.turnId);
+          this.publishTurnPrompt(event.turnId, trigger, entry);
           if (entry !== undefined) {
             const waiter = pending?.waiter ?? this.options.prompts.ensure(entry, false);
             this.activate({ entry, waiter, trigger, message: pending?.message ?? entry.message }, event.turnId);
@@ -613,6 +618,16 @@ export class AgentTurnProjection {
         return;
       }
       case 'message.appended': {
+        const history = loop.state.messages;
+        const appended = history.at(-1);
+        if (appended !== undefined) {
+          void this.options.dispatcher.dispatch(new ContextSpliced({
+            agentId: this.options.scopeContext.agentId,
+            start: history.length - 1,
+            deleteCount: 0,
+            messages: [contextFromHistoryEntry(appended)],
+          }));
+        }
         this.options.prompts.appended(event);
         if (this.active !== undefined) this.options.prompts.materialized(this.active.turn);
         if (event.source !== 'llm') return;
@@ -762,6 +777,20 @@ export class AgentTurnProjection {
     this.options.prompts.materialized(turn);
   }
 
+  private publishTurnPrompt(turnId: number, trigger: TurnTrigger, entry: UserEntry | undefined): void {
+    if (this.publishedPromptTurns.has(turnId)) return;
+    this.publishedPromptTurns.add(turnId);
+    const origin = (entry?.meta?.origin as PromptOrigin | undefined) ?? { kind: 'user' };
+    this.options.events.publish(new TurnPrompt({
+      agentId: this.options.scopeContext.agentId,
+      input: entry?.message.content ?? [],
+      origin,
+      promptId: entry?.meta?.promptId,
+      turnId,
+      trigger: trigger === 'notify' || trigger === 'continue' ? trigger : 'normal',
+    }));
+  }
+
   private endOrInterruptStep(turn: ActiveTurn, step: CoreStepState, finishReason: FinishReason): void {
     if (turn.controller.signal.aborted) {
       turn.current = undefined;
@@ -843,7 +872,6 @@ export class AgentTurnProjection {
   }
 
   private interruptRunForCancel(turn: ActiveTurn, reason: unknown): void {
-    this.options.notifyCancellation(reason);
     const current = turn.current;
     if (current !== undefined) turn.current = undefined;
     if (turn.interruptStep !== undefined) {

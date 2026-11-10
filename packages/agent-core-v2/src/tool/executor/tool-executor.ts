@@ -443,9 +443,17 @@ class CallControl<TContext> {
 
   write(text: string): number | undefined {
     if (text.length === 0 || this.frozen) return undefined;
-    const offset = (this.log ??= this.store.open(this.taskId)).append(text);
-    if (offset !== undefined) this.emit({ type: 'output', offset, text });
-    return offset;
+    return this.outputLog().append(text);
+  }
+
+  private outputLog(): ToolOutput {
+    if (this.log === undefined) {
+      this.log = this.store.open(this.taskId);
+      this.log.onAppend?.((chunk, offset) => {
+        this.emit({ type: 'output', offset, text: chunk });
+      });
+    }
+    return this.log;
   }
 
   set(fields: object): void {
