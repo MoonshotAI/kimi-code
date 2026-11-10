@@ -16,6 +16,7 @@ export async function getOrRestoreAgent(
     agentId,
     forkedFrom: meta.forkedFrom,
     labels: meta.labels,
+    userInputId: meta.userInputId,
   });
   return lifecycle.handleOf(agentId);
 }

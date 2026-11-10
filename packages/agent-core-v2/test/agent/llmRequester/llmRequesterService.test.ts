@@ -393,6 +393,29 @@ describe('AgentLoopRequester request metadata', () => {
     expect(metadataHeader(other.service, source)).toBeUndefined();
   });
 
+  it('uses the agent user input id when the turn has none of its own', () => {
+    const inherited = createService(
+      createRequester({ value: 0 }, undefined, [], undefined, { providerType: 'kimi' }),
+      {
+        metadata: {
+          ...metadata,
+          agents: {
+            'test-agent': { ...metadata.agents?.['test-agent'], userInputId: 'msg_parent' },
+          },
+        },
+      },
+    );
+
+    expect(
+      JSON.parse(
+        metadataHeader(inherited.service, { type: 'turn', turnId: 2, step: 1 }) ?? '{}',
+      ),
+    ).toEqual({
+      agent_role: 'subagent',
+      user_input_id: 'msg_parent',
+    });
+  });
+
   it('sends only the agent role when the request has no turn source', () => {
     const { service } = createService(
       createRequester({ value: 0 }, undefined, [], undefined, { providerType: 'kimi' }),

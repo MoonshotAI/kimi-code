@@ -21,12 +21,14 @@ export interface CreateAgentOptions {
   readonly environmentCwd?: string;
   readonly forkedFrom?: string;
   readonly labels?: Readonly<Record<string, string>>;
+  readonly userInputId?: string;
 }
 
 export interface ForkAgentOptions {
   readonly agentId?: string;
   readonly binding?: Partial<BindAgentInput>;
   readonly labels?: Readonly<Record<string, string>>;
+  readonly userInputId?: string;
 }
 
 export interface AgentListFilter {

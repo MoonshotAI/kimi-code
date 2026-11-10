@@ -9,6 +9,7 @@ import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostFileSystem, type HostFileStat } from '#/os/interface/hostFileSystem';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
@@ -112,6 +113,7 @@ describe('SessionInitService', () => {
       id: 'main',
       accessor: {
         get: (id: unknown) => {
+          if (id === IAgentLoopService) return { currentUserInputId: () => undefined };
           if (id === IAgentLifecycleService) return lifecycle;
           if (id === ISessionSubagentService) return lifecycle;
           if (id === IAgentScopeContext) {

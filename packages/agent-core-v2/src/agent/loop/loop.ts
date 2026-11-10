@@ -224,6 +224,8 @@ export interface IAgentLoopService {
 
   snapshot(): LoopSnapshot;
 
+  currentUserInputId(): string | undefined;
+
   settled(): Promise<void>;
 
   tryAcquireQuiescence(): IDisposable | undefined;

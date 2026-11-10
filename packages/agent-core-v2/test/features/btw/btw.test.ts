@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
@@ -84,6 +85,7 @@ describe('SessionBtwService', () => {
       id: 'main',
       accessor: {
         get: (id: unknown) => {
+          if (id === IAgentLoopService) return { currentUserInputId: () => undefined };
           if (id === IAgentScopeContext) {
             return {
               _serviceBrand: undefined,
@@ -121,6 +123,7 @@ describe('SessionBtwService', () => {
     expect(id).toBe('agent-btw-1');
     expect(fork).toHaveBeenCalledWith(expect.objectContaining({ agentId: 'main', generation: 1 }), {
       labels: { [BTW_AGENT_LABEL]: 'true' },
+      userInputId: undefined,
     });
     expect(appendReminder).toHaveBeenCalledWith(SIDE_QUESTION_SYSTEM_REMINDER, {
       variant: 'btw',

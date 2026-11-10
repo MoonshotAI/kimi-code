@@ -30,7 +30,7 @@ export type TurnTrigger =
   | 'shell_background'
   | 'other';
 
-export type StepReason = 'turn_start' | 'tool_results' | 'notify' | 'retry' | 'recovery';
+export type StepReason = 'turn_start' | 'tool_results';
 
 export function agentRoleOf(agentId: string, meta: AgentMeta | undefined): AgentRole {
   if (agentId === MAIN_AGENT_ID) return 'main';

@@ -27,6 +27,7 @@ import { ILogService } from '#/_base/log/log';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { createHooks } from '#/hooks';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
@@ -154,6 +155,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
         if (plan.fork) {
           const forked = await this.agentLifecycle.fork(agentContextOf(caller), {
             labels: opts.labels,
+            userInputId: caller.accessor.get(IAgentLoopService).currentUserInputId(),
           });
           created = this.agentLifecycle.handleOf(forked.agentId)!;
           created.accessor
@@ -169,6 +171,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
             labels: opts.labels,
             environmentId: callerBinding.environmentId,
             environmentCwd: callerBinding.cwd,
+            userInputId: caller.accessor.get(IAgentLoopService).currentUserInputId(),
           });
           created = this.agentLifecycle.handleOf(createdContext.agentId)!;
         }

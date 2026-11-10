@@ -347,6 +347,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
           opts.labels,
           agentId === 'main' ? undefined : opts.binding?.profile,
         ),
+        userInputId: agentId === 'main' ? undefined : opts.userInputId,
       };
       await this.sessionMetadata.registerAgent(agentId, meta);
       this.onDidCreateEmitter.fire(agent);
@@ -451,6 +452,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       environmentCwd: sourceBinding.cwd,
       forkedFrom: source.id,
       labels: withSubagentProfile(opts?.labels, override?.profile ?? sourceData.profileName),
+      userInputId: opts?.userInputId,
     });
     const child = this.requireManaged(childContext).handle;
 

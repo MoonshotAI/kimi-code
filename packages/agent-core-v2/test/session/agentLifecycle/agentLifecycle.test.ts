@@ -451,6 +451,7 @@ describe('AgentLifecycleService', () => {
       tryAcquireQuiescence: vi.fn(() => ({ dispose: vi.fn() })),
       buildAttachBundle: () => stubAttachBundle(),
       attachEngine: () => stubAttachEngine(),
+      currentUserInputId: () => undefined,
     } as unknown as IAgentLoopService);
     ix.stub(ITelemetryService, {
       _serviceBrand: undefined,

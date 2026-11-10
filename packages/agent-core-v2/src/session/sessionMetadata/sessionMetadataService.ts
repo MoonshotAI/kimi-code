@@ -274,6 +274,7 @@ function agentMetaEquals(a: AgentMeta, b: AgentMeta): boolean {
     (a.parentAgentId ?? null) === (b.parentAgentId ?? null) &&
     a.forkedFrom === b.forkedFrom &&
     a.swarmItem === b.swarmItem &&
+    a.userInputId === b.userInputId &&
     recordEquals(a.labels, b.labels)
   );
 }

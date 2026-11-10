@@ -327,7 +327,7 @@ describe('Agent loop', () => {
       start.mock.calls.map(([overrides]) =>
         overrides?.source?.type === 'turn' ? overrides.source.stepReason : undefined,
       ),
-    ).toEqual(['turn_start', 'recovery']);
+    ).toEqual(['turn_start', 'turn_start']);
     expect(ctx.allEvents).toContainEqual(
       expect.objectContaining({
         event: 'turn.ended',
@@ -827,7 +827,7 @@ describe('Agent loop', () => {
     const reasons = start.mock.calls.map(([overrides]) =>
       overrides?.source?.type === 'turn' ? overrides.source.stepReason : undefined,
     );
-    expect(reasons).toEqual(['turn_start', 'tool_results', 'retry', 'notify', 'turn_start']);
+    expect(reasons).toEqual(['turn_start', 'tool_results', 'tool_results', 'tool_results', 'turn_start']);
   });
 
   it('keeps the terminal real 503 after an earlier real 429', async () => {

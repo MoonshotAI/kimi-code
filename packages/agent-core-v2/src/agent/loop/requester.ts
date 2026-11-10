@@ -788,7 +788,7 @@ export class AgentLoopRequester implements LoopRequester {
       agentRole: agentRoleOf(this.scopeContext.agentId, metadata),
       turnTrigger: turn?.turnTrigger,
       stepReason: turn?.stepReason,
-      userInputId: turn?.userInputId,
+      userInputId: turn?.userInputId ?? metadata?.userInputId,
     });
     const endpoint = contentsOf(request).endpoint;
     return request.with({
