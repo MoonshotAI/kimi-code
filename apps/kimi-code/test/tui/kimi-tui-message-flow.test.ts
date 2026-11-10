@@ -8086,7 +8086,7 @@ capabilities = ["image_in", "video_in"]
         } as Event,
         sendQueued,
       );
-      await vi.runAllTimersAsync();
+      await vi.advanceTimersByTimeAsync(0);
 
       expect(sendQueued).toHaveBeenCalledWith({ text: 'next' });
       expect(driver.state.queuedMessages).toEqual([]);
@@ -9210,6 +9210,10 @@ capabilities = ["image_in", "video_in"]
     try {
       const { driver } = await makeDriver();
       const sendQueued = vi.fn();
+      const onAnimationFrame = () => {
+        setTimeout(onAnimationFrame, 120);
+      };
+      setTimeout(onAnimationFrame, 120);
       driver.sessionEventHandler.handleEvent(
         {
           type: 'compaction.started',
@@ -9229,7 +9233,7 @@ capabilities = ["image_in", "video_in"]
         } as Event,
         sendQueued,
       );
-      await vi.runAllTimersAsync();
+      await vi.advanceTimersByTimeAsync(0);
 
       expect(driver.state.appState.isCompacting).toBe(false);
       expect(driver.state.appState.streamingPhase).toBe('idle');
