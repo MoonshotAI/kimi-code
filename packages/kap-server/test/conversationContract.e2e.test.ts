@@ -747,6 +747,7 @@ describe('conversation contract e2e', () => {
       arguments: JSON.stringify({ command: "printf '  VITE ready\\n'", description: 'npm run dev', run_in_background: true }),
     }, { turnId: 0 });
     await handler;
+    await until('background output', () => handler.output().preview.includes('VITE ready'));
     const taskId = handler.taskId;
     const sink = main.accessor.get(IAgentTaskOutputService).open(taskId);
     const isOutput = (frame: any): boolean => frame.type === 'task.output';
@@ -793,6 +794,7 @@ describe('conversation contract e2e', () => {
       arguments: JSON.stringify({ command: "printf ' RUN  v3.2.4\\n'", description: 'pnpm test --watch', run_in_background: true }),
     }, { turnId: 0 });
     await childHandler;
+    await until('child output', () => childHandler.output().preview.includes('RUN  v3.2.4'));
     const childTaskId = childHandler.taskId;
     second.send({ type: 'task.watch', request_id: 'r4', session_id: sid, agent_id: MAIN_AGENT_ID, task_id: childTaskId });
     expect(await second.next((f) => f.type === 'response')).toMatchObject({ request_id: 'r4', code: 40406 });

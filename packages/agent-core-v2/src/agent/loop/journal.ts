@@ -307,7 +307,6 @@ export class LoopJournal {
   private readonly notify: UserEntry[] = [];
   private readonly steps = new Map<string, StepJournal>();
   private readonly toolCallUuids = new Map<string, string>();
-  private readonly pendingContextMessages: ContextMessage[] = [];
   private turn: PendingTurn | undefined;
 
   constructor(
@@ -360,15 +359,19 @@ export class LoopJournal {
           trigger: event.trigger,
           prompted: false,
         };
+        this.writeTurnPrompt();
         return;
-      case 'step.started':
-        this.persistTurnPrompt();
-        this.steps.set(stepKey(event.turnId, event.step), {
+      case 'step.started': {
+        this.writeTurnPrompt();
+        const step = {
           uuid: randomUUID(),
           streamedBlocks: new Map(),
           started: false,
-        });
+        };
+        this.steps.set(stepKey(event.turnId, event.step), step);
+        this.ensureStepStarted(event.turnId, event.step, step);
         return;
+      }
       case 'message.appended':
         this.appendMessage(event);
         return;
@@ -440,7 +443,7 @@ export class LoopJournal {
         return;
       }
       case 'turn.ended': {
-        this.persistTurnPrompt();
+        this.writeTurnPrompt();
         this.turn = undefined;
         if (this.dispatcher !== undefined) return;
         const record: WireRecord = {
@@ -482,6 +485,11 @@ export class LoopJournal {
     const steeredIntoOpenTurn = event.source === 'notify'
       && this.turn?.prompted === true
       && appendedPromptId !== openingPromptId;
+    if (event.source === 'normal' || event.source === 'notify') {
+      this.writeTurnPrompt(event.entry as UserEntry);
+    } else {
+      this.writeTurnPrompt();
+    }
     if (event.source === 'llm' || event.source === 'partial') {
       const assistant = event.entry as AssistantEntry;
       const step = this.steps.get(stepKey(event.turnId, event.step));
@@ -549,30 +557,16 @@ export class LoopJournal {
     });
   }
 
-  private persistTurnPrompt(): void {
-    this.writeTurnPrompt();
-    if (this.turn?.prompted !== true) return;
-    const pending = this.pendingContextMessages.splice(0);
-    for (const message of pending) {
-      this.write({
-        type: 'context.append_message',
-        agentId: this.agentId,
-        message,
-      });
-    }
+  private appendContextMessage(entry: HistoryMessage): void {
+    this.writeContextMessage(contextFromHistoryEntry(entry));
   }
 
-  private appendContextMessage(entry: HistoryMessage): void {
-    const message = contextFromHistoryEntry(entry);
-    if (this.turn?.prompted === true) {
-      this.write({
-        type: 'context.append_message',
-        agentId: this.agentId,
-        message,
-      });
-      return;
-    }
-    this.pendingContextMessages.push(message);
+  private writeContextMessage(message: ContextMessage): void {
+    this.write({
+      type: 'context.append_message',
+      agentId: this.agentId,
+      message,
+    });
   }
 
   private writeTurnPrompt(entry?: UserEntry): void {

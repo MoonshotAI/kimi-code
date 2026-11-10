@@ -239,22 +239,6 @@ class LoopMailbox {
     };
   }
 
-  takeNotify(): MailboxTurn | undefined {
-    const head = this.notifyEntries[0];
-    if (head === undefined) return undefined;
-    this.notifyEntries = this.notifyEntries.slice(1);
-    const promptOnly = this.notifyEntries.length > 0;
-    const reminders = promptOnly ? [] : this.drainReminders();
-    return {
-      kind: 'notify',
-      pending: [
-        { kind: 'notify', entry: head },
-        ...reminders.map((entry) => ({ kind: 'remind' as const, entry })),
-      ],
-      promptOnly,
-    };
-  }
-
   drainReminders(): RemindEntry[] {
     const entries = this.reminders;
     this.reminders = [];
@@ -1351,17 +1335,9 @@ class LoopActor implements Loop {
       this.record({ type: 'step.ended', turnId: turn.id, step: turn.step, outcome: step.outcome });
     }
     this.step = undefined;
-    const steered = this.mailbox.takeNotify();
-    if (steered === undefined) {
-      turn.outcome = step.outcome;
-      turn.phase = 'finished';
-      this.post({ type: 'turn.finish', turn });
-      return true;
-    }
-    turn.pending = steered.pending;
-    turn.outcome = undefined;
-    turn.phase = 'appending';
-    this.post({ type: 'turn.append', turn });
+    turn.outcome = step.outcome;
+    turn.phase = 'finished';
+    this.post({ type: 'turn.finish', turn });
     return true;
   }
 

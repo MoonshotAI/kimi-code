@@ -53,6 +53,13 @@ describe('loop journal restore', () => {
 
     expect(snapshot.input.messages!.map((entry) => entry.message)).toMatchObject([prompt('old').message]);
     expect(snapshot.input.nextTurnId).toBe(3);
+    const promptBeforeMessage = restoreLoopJournal([
+      { type: 'turn.prompt', input: [], trigger: 'normal', origin: { kind: 'user' }, promptId: 'old', turnId: 0 },
+      { type: 'context.append_message', message: contextFromHistoryEntry(prompt('old')) },
+      { type: 'turn.ended', turnId: 0, reason: 'completed' },
+    ]);
+    expect(promptBeforeMessage.input.messages!.map((entry) => entry.message)).toMatchObject([prompt('old').message]);
+    expect(promptBeforeMessage.input.nextTurnId).toBe(1);
     expect(snapshot.input.profile?.systemPrompt).toBe('from-update');
     expect(snapshot.input.unfinished).toBeUndefined();
   });
@@ -104,8 +111,11 @@ describe('loop journal restore', () => {
   it('writes one prompt per turn and converts legacy steers on read', () => {
     const records: WireRecord[] = [];
     const journal = new LoopJournal(memoryWire(records), 'main');
+    const prior = prompt('prior');
     const first = prompt('p1');
     const second = prompt('p2');
+    journal.append({ type: 'message.appended', turnId: 0, step: 0, source: 'remind', entry: prior });
+    expect(records).toMatchObject([{ type: 'context.append_message' }]);
     journal.append({ type: 'prompt.submitted', entry: prompt('active') });
     journal.append({ type: 'turn.started', turnId: 0, trigger: 'normal', entry: prompt('active') });
     journal.append({ type: 'message.appended', turnId: 0, step: 0, source: 'normal', entry: prompt('active') });
@@ -127,7 +137,8 @@ describe('loop journal restore', () => {
       { turnId: 2, promptId: 'p2', trigger: 'notify' },
     ]);
     expect(records.every((record) => !record.type.startsWith('agent.'))).toBe(true);
-    expect(journal.snapshot().input.messages!.map((entry) => entry.message.role)).toEqual(['user', 'user', 'user']);
+    expect(journal.snapshot().input.messages!.map((entry) => entry.message.role)).toEqual(['user', 'user', 'user', 'user']);
+    expect(journal.snapshot().input.messages![0]?.message).toMatchObject(prior.message);
 
     const historical = normalizeLegacyTurnSteerRecords([
       { type: 'turn.prompt', turnId: 0, input: [], origin: { kind: 'user' } },

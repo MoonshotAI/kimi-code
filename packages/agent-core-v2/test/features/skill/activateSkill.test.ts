@@ -252,7 +252,6 @@ describe('promptWithSkills', () => {
     catalog.register(stubSkill('other'));
     catalog.registerVariants([parentA, parentB, childA, childB, stubSkill('other')], { replace: true });
     ctx = createTestAgent(skillServices(catalog));
-    ctx.mockNextResponse({ type: 'text', text: 'first reply' });
     ctx.mockNextResponse({ type: 'text', text: 'Load child.' }, {
       type: 'function',
       id: 'call_child',
@@ -278,7 +277,7 @@ describe('promptWithSkills', () => {
     const steered = await multipleSteer;
     expect(steered.steered).toBe(true);
     await promptPromise;
-    await ctx.untilTurnEnd();
+    await ctx.get(IAgentLoopService).settled();
 
     const nested = ctx.context.history().filter((message) =>
       message.origin?.kind === 'skill_activation' && message.origin.skillName === 'child'

@@ -286,6 +286,20 @@ describe('server-v2 /api/v1 prompts', () => {
     await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
   }
 
+  function stubUnreachableModel(): () => void {
+    const actual = globalThis.fetch.bind(globalThis);
+    const cause = new Error('connect ECONNREFUSED 127.0.0.1:9999');
+    (cause as NodeJS.ErrnoException).code = 'ECONNREFUSED';
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.includes('127.0.0.1:9999')) {
+        return Promise.reject(new TypeError('fetch failed', { cause }));
+      }
+      return actual(input, init);
+    });
+    return () => spy.mockRestore();
+  }
+
   async function setSessionModel(sessionId: string, model: string): Promise<void> {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
@@ -295,41 +309,46 @@ describe('server-v2 /api/v1 prompts', () => {
   }
 
   it('submits a prompt and lists it as active', async () => {
-    const id = await createSession(home as string);
-    await createMainAgent(id);
+    const restoreModel = stubUnreachableModel();
+    try {
+      const id = await createSession(home as string);
+      await createMainAgent(id);
 
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
-      content: [{ type: 'text', text: 'hello' }],
-    });
-    expect(submitted.body.code).toBe(0);
-    expect(submitted.body.data.prompt_id).toMatch(/^msg_/);
-    expect(submitted.body.data.status).toBe('running');
-    expect(submitted.body.data.user_message_id).toBe(submitted.body.data.prompt_id);
-    const session = getLiveSessionById(server!.core.accessor, id)!;
-    const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
-    const loop = agent.accessor.get(IAgentLoopService);
-    await loop.settled();
-    const quiescence = loop.tryAcquireQuiescence();
-    expect(quiescence).toBeDefined();
-    loop.submit({
-      message: { role: 'user', content: [{ type: 'text', text: 'goal continuation' }] },
-      meta: {
-        promptId: 'goal-queued',
-        origin: { kind: 'system_trigger', name: 'goal_continuation' } as PromptOrigin,
-      },
-    });
+      const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+        content: [{ type: 'text', text: 'hello' }],
+      });
+      expect(submitted.body.code).toBe(0);
+      expect(submitted.body.data.prompt_id).toMatch(/^msg_/);
+      expect(submitted.body.data.status).toBe('running');
+      expect(submitted.body.data.user_message_id).toBe(submitted.body.data.prompt_id);
+      const session = getLiveSessionById(server!.core.accessor, id)!;
+      const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
+      const loop = agent.accessor.get(IAgentLoopService);
+      await loop.settled();
+      const quiescence = loop.tryAcquireQuiescence();
+      expect(quiescence).toBeDefined();
+      loop.submit({
+        message: { role: 'user', content: [{ type: 'text', text: 'goal continuation' }] },
+        meta: {
+          promptId: 'goal-queued',
+          origin: { kind: 'system_trigger', name: 'goal_continuation' } as PromptOrigin,
+        },
+      });
 
-    const list = await call<{ active: PromptItemWire | null; queued: PromptItemWire[] }>(
-      'GET',
-      `/api/v1/sessions/${id}/prompts`,
-    );
-    expect(list.body.code).toBe(0);
-    if (list.body.data.active !== null) {
-      expect(list.body.data.active.prompt_id).toBe(submitted.body.data.prompt_id);
+      const list = await call<{ active: PromptItemWire | null; queued: PromptItemWire[] }>(
+        'GET',
+        `/api/v1/sessions/${id}/prompts`,
+      );
+      expect(list.body.code).toBe(0);
+      if (list.body.data.active !== null) {
+        expect(list.body.data.active.prompt_id).toBe(submitted.body.data.prompt_id);
+      }
+      expect(Array.isArray(list.body.data.queued)).toBe(true);
+      expect(list.body.data.queued.map((item) => item.prompt_id)).toContain('goal-queued');
+      quiescence?.dispose();
+    } finally {
+      restoreModel();
     }
-    expect(Array.isArray(list.body.data.queued)).toBe(true);
-    expect(list.body.data.queued.map((item) => item.prompt_id)).toContain('goal-queued');
-    quiescence?.dispose();
   });
 
   it('applies swarm_mode before submitting the prompt', async () => {
@@ -1983,23 +2002,28 @@ describe('server-v2 /api/v1 prompts', () => {
   });
 
   it('returns 40402 when aborting a prompt that already settled', async () => {
-    const id = await createSession(home as string);
-    await createMainAgent(id);
+    const restoreModel = stubUnreachableModel();
+    try {
+      const id = await createSession(home as string);
+      await createMainAgent(id);
 
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
-      content: [{ type: 'text', text: 'hello' }],
-    });
-    const promptId = submitted.body.data.prompt_id;
-    const session = getLiveSessionById(server!.core.accessor, id)!;
-    const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
-    const loop = agent.accessor.get(IAgentLoopService);
-    await loop.promptHandle(promptId)!.completion;
+      const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+        content: [{ type: 'text', text: 'hello' }],
+      });
+      const promptId = submitted.body.data.prompt_id;
+      const session = getLiveSessionById(server!.core.accessor, id)!;
+      const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
+      const loop = agent.accessor.get(IAgentLoopService);
+      await loop.promptHandle(promptId)!.completion;
 
-    const aborted = await call<{ aborted: boolean }>(
-      'POST',
-      `/api/v1/sessions/${id}/prompts/${promptId}:abort`,
-    );
-    expect(aborted.body.code).toBe(40402);
+      const aborted = await call<{ aborted: boolean }>(
+        'POST',
+        `/api/v1/sessions/${id}/prompts/${promptId}:abort`,
+      );
+      expect(aborted.body.code).toBe(40402);
+    } finally {
+      restoreModel();
+    }
   });
 
   it('returns 40402 when aborting an unknown prompt', async () => {

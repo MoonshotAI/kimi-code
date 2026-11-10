@@ -819,34 +819,28 @@ describe('BashTool', () => {
   });
 
   it('reports timeout instead of premature close when cleanup destroys open output streams', async () => {
-    vi.useFakeTimers();
-    try {
-      const proc = processWithOpenStreamsThatExitOnKill();
-      const { runner } = createTestRunner(proc);
-      const tool = bashTool(
-        runner,
-        createTestEnv(),
-        createTestCtx(),
-        createTaskChannel().service,
-        stubToolPolicy(),
-        stubConfig({ task: { bashAutoBackgroundOnTimeout: false } }),
-      );
+    vi.useRealTimers();
+    const proc = processWithOpenStreamsThatExitOnKill();
+    const { runner } = createTestRunner(proc);
+    const tool = bashTool(
+      runner,
+      createTestEnv(),
+      createTestCtx(),
+      createTaskChannel().service,
+      stubToolPolicy(),
+      stubConfig({ task: { bashAutoBackgroundOnTimeout: false } }),
+    );
 
-      const running = executeTool(tool, context({ command: 'sleep 2', timeout: 1 }));
-      await vi.advanceTimersByTimeAsync(1000);
-      await vi.advanceTimersByTimeAsync(250);
-      const result = await running;
+    const result = await executeTool(tool, context({ command: 'sleep 2', timeout: 1 }));
 
-      expect(proc.kill).toHaveBeenCalledWith('SIGTERM');
-      expect(result).toMatchObject({ isError: true, brief: 'Killed by timeout (1s)' });
-      expect(result.output).toContain('Command killed by timeout (1s)');
-      expect(result.output).not.toContain('Premature close');
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(proc.kill).toHaveBeenCalledWith('SIGTERM');
+    expect(result).toMatchObject({ isError: true, brief: 'Killed by timeout (1s)' });
+    expect(result.output).toContain('Command killed by timeout (1s)');
+    expect(result.output).not.toContain('Premature close');
   });
 
   it('reports a stream read error as a tool error even when the process exits with code 0', async () => {
+    vi.useRealTimers();
     const proc = processWithStreamError({
       stdoutError: new Error('SSH channel read failed'),
       exitCode: 0,
