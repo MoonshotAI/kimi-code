@@ -656,7 +656,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `last_turn_reason` | string | main agent 最近一次轮次的结果：`completed` / `cancelled` / `failed` |
 | `last_prompt` | string | 最近一条用户提示词文本（如有） |
 | `metadata` | object | 自定义元数据；始终携带 `cwd`（会话的工作目录） |
-| `agent_config` | object | 投影为 `{ model }`；`model` 在大多数响应中为 `""`，仅由 `GET /api/v1/sessions/{session_id}/snapshot` 填入实时模型 |
+| `agent_config` | object | 投影为 `{ model }`；`model` 在大多数响应中为 `""`，由 `GET /api/v1/sessions/{session_id}/snapshot` 填入实时模型；创建请求设置了模型时，创建响应和 `event.session.created` 里也会带上 |
 | `usage` | object | token 汇总 `{ input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, context_tokens, context_limit?, total_cost_usd?, turn_count? }`；在 snapshot 端点之外全为零 |
 | `permission_rules` | array | 会话权限规则；当前始终为 `[]` |
 | `message_count` | integer | 消息数；当前始终为 `0` |
@@ -669,15 +669,16 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `workspace_id` | body | string | 未提供 `metadata.cwd` 时**必填**。已注册的工作区 id；会话创建于该工作区的根目录 |
-| `metadata` | body | object | 自定义元数据。`metadata.cwd` 为工作目录，未提供 `workspace_id` 时**必填**；两者同时提供时必须等于工作区根目录 |
+| `metadata` | body | object | 自定义元数据。`metadata.cwd` 为工作目录，未提供 `workspace_id` 时**必填**；两者同时提供时必须等于工作区根目录。其他键保存为会话的自定义元数据；保留键 `goal`、`parent_session_id`、`child_session_kind` 会被丢弃 |
 | `title` | body | string | 初始标题（至少 1 个字符）；否则会话无标题 |
-| `agent_config` | body | object | schema 接受该字段但当前不会应用——模型与各模式请通过 `POST /api/v1/sessions/{session_id}/profile` 设置 |
+| `agent_config` | body | object | main agent 的部分配置，字段与 `POST /api/v1/sessions/{session_id}/profile` 相同，在返回会话之前应用。无法应用时不创建会话，直接返回错误。`tower_mode: true` 会被拒绝（返回 `40001`）：进入 Tower 模式会改动仓库，创建失败时无法撤销，请在会话建好后通过 `POST /api/v1/sessions/{session_id}/profile` 开启 |
 
 成功时，`data` 为新会话的 [session 对象](#session-对象)。
 
-- `40001`：`workspace_id` 与 `metadata.cwd` 都未提供，或 `metadata.cwd` 与工作区根目录不一致（`details` 会列出该字段）
+- `40001`：`workspace_id` 与 `metadata.cwd` 都未提供，`metadata.cwd` 与工作区根目录不一致，或 `agent_config` 设置了 `tower_mode: true`（`details` 会列出该字段）；`agent_config.model` 未配置，或模型不支持 `agent_config.thinking` 时也返回此码
 - `40409`：工作目录不存在或不是目录
 - `40410`：没有以该 `workspace_id` 注册的工作区
+- `40913`–`40918`、`40920`：`agent_config` 因目标相关错误无法应用
 
 #### `GET /api/v1/sessions`
 
@@ -745,8 +746,6 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `swarm_mode` | boolean | 进入或退出 swarm 模式 |
 | `goal_objective` | string | 以该文本为内容创建一个目标 |
 | `goal_control` | string | `pause` / `resume` / `cancel` 当前目标 |
-
-schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`，以及顶层的 `permission_rules` 数组，但更新路由当前不会应用它们。
 
 成功时，`data` 为更新后的 [session 对象](#session-对象)。
 

@@ -656,7 +656,7 @@ Every endpoint that returns a session uses this wire shape. The live facts (`bus
 | `last_turn_reason` | string | Main agent's latest turn outcome: `completed` / `cancelled` / `failed` |
 | `last_prompt` | string | Most recent user prompt text, when present |
 | `metadata` | object | Custom metadata; always carries `cwd` (the session's working directory) |
-| `agent_config` | object | Projected as `{ model }`; `model` is `""` in most responses and only filled with the live model by `GET /api/v1/sessions/{session_id}/snapshot` |
+| `agent_config` | object | Projected as `{ model }`; `model` is `""` in most responses and filled with the live model by `GET /api/v1/sessions/{session_id}/snapshot`, and by the creation response and `event.session.created` when the creation request set a model |
 | `usage` | object | Token rollup `{ input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, context_tokens, context_limit?, total_cost_usd?, turn_count? }`; all zeros outside the snapshot endpoint |
 | `permission_rules` | array | Session permission rules; currently always `[]` |
 | `message_count` | integer | Message count; currently always `0` |
@@ -669,15 +669,16 @@ Creates a session and returns it. The target directory comes from `workspace_id`
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `workspace_id` | body | string | **Required** when `metadata.cwd` is absent. Registered workspace id; the session is created at that workspace's root |
-| `metadata` | body | object | Custom metadata. `metadata.cwd` is the working directory and is **required** when `workspace_id` is absent; with both given, it must equal the workspace root |
+| `metadata` | body | object | Custom metadata. `metadata.cwd` is the working directory and is **required** when `workspace_id` is absent; with both given, it must equal the workspace root. Other keys are kept as the session's custom metadata, except the reserved keys `goal`, `parent_session_id`, and `child_session_kind`, which are dropped |
 | `title` | body | string | Initial title (at least 1 character); the session is untitled otherwise |
-| `agent_config` | body | object | Accepted by the schema but currently not applied — set the model and modes through `POST /api/v1/sessions/{session_id}/profile` |
+| `agent_config` | body | object | Partial main-agent config, with the same fields as `POST /api/v1/sessions/{session_id}/profile`, applied before the session is returned. When it cannot be applied, the session is not created and the error is returned. `tower_mode: true` is rejected (`40001`): entering Tower mode changes the repository and cannot be undone if creation fails, so enable it through `POST /api/v1/sessions/{session_id}/profile` once the session exists |
 
 On success, `data` is [the session object](#the-session-object) of the new session.
 
-- `40001`: neither `workspace_id` nor `metadata.cwd` given, or `metadata.cwd` does not match the workspace root (`details` lists the field)
+- `40001`: neither `workspace_id` nor `metadata.cwd` given, `metadata.cwd` does not match the workspace root, or `agent_config` sets `tower_mode: true` (`details` lists the field); also when `agent_config.model` is not configured or the model does not support `agent_config.thinking`
 - `40409`: the working directory does not exist or is not a directory
 - `40410`: no registered workspace with that `workspace_id`
+- `40913`–`40918`, `40920`: `agent_config` could not be applied because of a goal error
 
 #### `GET /api/v1/sessions`
 
@@ -745,8 +746,6 @@ Each `agent_config` field is applied immediately to the main agent:
 | `swarm_mode` | boolean | Enter or exit swarm mode |
 | `goal_objective` | string | Create a goal with this objective |
 | `goal_control` | string | `pause` / `resume` / `cancel` the current goal |
-
-The schema also accepts `system_prompt`, `tools`, `mcp_servers` inside `agent_config`, and a top-level `permission_rules` array, but the update route currently does not apply them.
 
 On success, `data` is the updated [session object](#the-session-object).
 
