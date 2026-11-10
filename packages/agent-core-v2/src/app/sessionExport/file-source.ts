@@ -1,10 +1,3 @@
-/**
- * `sessionExport` domain — bounded file source ownership.
- *
- * Opens one stable file handle, snapshots its current size, and exposes an
- * idempotent close operation shared by normal completion and failure cleanup.
- */
-
 import { open, type FileHandle } from 'node:fs/promises';
 import { Readable } from 'node:stream';
 import { finished } from 'node:stream/promises';

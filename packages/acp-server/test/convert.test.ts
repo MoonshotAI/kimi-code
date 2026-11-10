@@ -19,7 +19,7 @@ describe('acpMcpServersToConfigRecord', () => {
     expect(acpMcpServersToConfigRecord([])).toBeUndefined();
   });
 
-  it('maps stdio servers (no `type` discriminator) with env pairs as a record', () => {
+  it('maps stdio servers (no type field) to local stdio configs', () => {
     const servers: McpServer[] = [
       {
         name: 'fs',
@@ -37,6 +37,7 @@ describe('acpMcpServersToConfigRecord', () => {
         command: '/usr/local/bin/mcp-fs',
         args: ['--root', '/tmp'],
         env: { API_KEY: 'secret', DEBUG: '1' },
+        environment_id: 'local',
       },
     });
   });
@@ -93,7 +94,7 @@ describe('compressPromptImageParts', () => {
   const trash: string[] = [];
 
   afterEach(async () => {
-    await Promise.all(trash.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+    await Promise.all(trash.splice(0).map((dir) => rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })));
   });
 
   async function tempOriginalsDir(): Promise<string> {
@@ -106,27 +107,18 @@ describe('compressPromptImageParts', () => {
     return { type: 'image_url', imageUrl: { url } };
   }
 
-  it('drops an unsupported image format and stands a text notice in', async () => {
-    // Zero bytes carry no magic number, so the declared MIME wins the
-    // effective-MIME resolution and the gate rejects it.
+  it('leaves format judgment to the engine: a format it cannot re-encode passes through', async () => {
+    // Which formats are acceptable depends on the provider the agent is
+    // bound to, which this edge does not know; the engine's prompt gate
+    // decides. So neither a HEIC payload nor a MIME alias is rewritten here.
     const heic = `data:image/heic;base64,${Buffer.alloc(32).toString('base64')}`;
-    const out = await compressPromptImageParts([{ type: 'text', text: 'look' }, imagePart(heic)]);
-    expect(out).toHaveLength(2);
-    expect(out[0]).toEqual({ type: 'text', text: 'look' });
-    const notice = out[1];
-    expect(notice?.type).toBe('text');
-    expect((notice as { text: string }).text).toContain('unsupported image format image/heic');
-  });
-
-  it('rewrites accepted MIME aliases to the canonical form', async () => {
-    const base64 = solidPngBase64(8, 8);
-    const out = await compressPromptImageParts([imagePart(`data:IMAGE/PNG;base64,${base64}`)]);
-    expect(out).toHaveLength(1);
-    const part = out[0];
-    expect(part?.type).toBe('image_url');
-    expect((part as { imageUrl: { url: string } }).imageUrl.url).toBe(
-      `data:image/png;base64,${base64}`,
-    );
+    const alias = `data:IMAGE/PNG;base64,${solidPngBase64(8, 8)}`;
+    const out = await compressPromptImageParts([
+      { type: 'text', text: 'look' },
+      imagePart(heic),
+      imagePart(alias),
+    ]);
+    expect(out).toEqual([{ type: 'text', text: 'look' }, imagePart(heic), imagePart(alias)]);
   });
 
   it('passes an under-limit image through unchanged and persists nothing', async () => {

@@ -1,12 +1,4 @@
 import {
-  ErrorCodes,
-  KimiError,
-  resolveKimiHome,
-  type Logger,
-  type ModelProvider,
-  type ResolvedRuntimeProvider,
-} from '@moonshot-ai/agent-core';
-import {
   createKimiDefaultHeaders,
   KIMI_CODE_FLOW_CONFIG,
   KIMI_CODE_PROVIDER_NAME,
@@ -17,12 +9,20 @@ import {
   type KimiHostIdentity,
   type ManagedKimiOAuthRef,
 } from '@moonshot-ai/kimi-code-oauth';
+import {
+  APIStatusError,
+  resolveKimiHome,
+  UNKNOWN_CAPABILITY,
+} from '@moonshot-ai/agent-core-v2';
+
+import { ErrorCodes, KimiError } from '#/errors';
+import type { Logger } from '#/logging/index';
 import type {
+  ModelProvider,
   ProviderConfig as KosongProviderConfig,
   ProviderRequestAuth,
-} from '@moonshot-ai/kosong';
-import { APIStatusError, UNKNOWN_CAPABILITY } from '@moonshot-ai/kosong';
-
+  ResolvedRuntimeProvider,
+} from '#/model-provider';
 import { mapOAuthTokenError } from '#/oauth-error';
 
 export interface KimiForCodingProviderOptions extends KimiHostIdentity {

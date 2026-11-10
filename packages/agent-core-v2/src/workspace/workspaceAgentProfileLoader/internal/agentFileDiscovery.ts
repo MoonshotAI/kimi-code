@@ -1,21 +1,3 @@
-/**
- * `workspaceAgentProfileLoader` domain — filesystem agent-file discovery.
- *
- * Discovers and parses agent files through the `hostFs` filesystem boundary.
- * Invalid files are isolated from the rest of the discovery pass. Failure
- * policy: below a root, ANY readdir failure (notably EACCES) skips just that
- * directory — one unreadable subdirectory must not zero the whole source; at
- * a root, a missing directory is simply "no agents here", a transient
- * whole-fs outage (`os.fs.unavailable`) propagates so an existing
- * contribution is kept instead of replaced by a partial scan, and any other
- * failure skips just that root. Skip warnings are capped
- * (`MAX_SKIP_WARNINGS`) so a misconfigured root (e.g. an extra dir pointing
- * at a docs-heavy tree) cannot spam one line per non-agent file; the returned
- * `skipped` list keeps the full parse-failure detail regardless, and the
- * capping summary names a few suppressed paths so the rest stay findable. No
- * scoped state.
- */
-
 import { join } from 'pathe';
 
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';

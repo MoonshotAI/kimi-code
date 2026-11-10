@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 
 import type { ImportInfo } from '../../types';
-import { formatAbsoluteTime, formatRelativeTime } from '../../util/time';
+import { formatAbsoluteTime, formatRelativeTime, parseTimestamp } from '../../util/time';
 import { CopyButton } from '../shared/CopyButton';
 import { JsonViewer } from '../shared/JsonViewer';
 import { Pill } from '../shared/Pill';
@@ -16,8 +16,8 @@ interface StateJsonShape {
   isCustomTitle?: boolean;
   lastPrompt?: string;
   forkedFrom?: string;
-  createdAt?: string;
-  updatedAt?: string;
+  createdAt?: string | number;
+  updatedAt?: string | number;
   agents?: Record<string, unknown>;
   custom?: Record<string, unknown> & { imported_from_kimi_cli?: boolean };
 }
@@ -32,8 +32,8 @@ export function StateTab({ state, importMeta }: StateTabProps) {
     return (state ?? {}) as StateJsonShape;
   }, [state]);
 
-  const createdMs = parseIso(s.createdAt);
-  const updatedMs = parseIso(s.updatedAt);
+  const createdMs = parseTimestamp(s.createdAt);
+  const updatedMs = parseTimestamp(s.updatedAt);
   const agentIds = s.agents !== undefined ? Object.keys(s.agents) : [];
   const importedFromKimiCli = s.custom?.imported_from_kimi_cli === true;
 
@@ -203,7 +203,7 @@ function ManifestCard({ meta }: { meta: ImportInfo }) {
   );
 }
 
-function TsValue({ ms, raw }: { ms: number | null; raw: string | undefined }) {
+function TsValue({ ms, raw }: { ms: number | null; raw: string | number | undefined }) {
   if (ms === null) {
     return raw !== undefined && raw !== '' ? (
       <span className="font-mono text-[12px] text-fg-3 break-all">{raw}</span>
@@ -221,10 +221,4 @@ function TsValue({ ms, raw }: { ms: number | null; raw: string | undefined }) {
       </span>
     </span>
   );
-}
-
-function parseIso(input: string | undefined): number | null {
-  if (input === undefined || input === '') return null;
-  const n = Date.parse(input);
-  return Number.isFinite(n) ? n : null;
 }

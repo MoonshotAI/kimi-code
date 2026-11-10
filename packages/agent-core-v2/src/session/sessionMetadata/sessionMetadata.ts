@@ -1,14 +1,3 @@
-/**
- * `sessionMetadata` domain — typed session metadata.
- *
- * Defines the `SessionMeta` model and the `ISessionMetadata` used by upper
- * layers to read and update the session's durable metadata (title, timestamps,
- * archived flag, fork provenance). Owns the in-memory copy, persists it as a
- * single atomic document through `storage`, and notifies changes via
- * `onDidChangeMetadata`. Session-scoped — one instance per session. The initial
- * document is materialized when the session is created.
- */
-
 import type { Event } from '#/_base/event';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
@@ -23,19 +12,25 @@ export interface AgentMeta {
 
 export const SESSION_META_VERSION = 2;
 
+export type SessionTitleKind = 'replaceable' | 'generated' | 'custom';
+
 export interface SessionMeta {
   readonly id: string;
   readonly version?: number;
   readonly title?: string;
-  readonly isCustomTitle?: boolean;
+  readonly titleKind?: SessionTitleKind;
   readonly lastPrompt?: string;
   readonly createdAt: number;
   readonly updatedAt: number;
   readonly archived: boolean;
+  readonly archivedAt?: number;
   readonly cwd?: string;
+  readonly environmentId?: string;
+  readonly environmentCwd?: string;
   readonly forkedFrom?: string;
   readonly agents?: Readonly<Record<string, AgentMeta>>;
   readonly custom?: Record<string, unknown>;
+  readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
 }
 
 export type SessionMetaPatch = Partial<Omit<SessionMeta, 'id' | 'createdAt'>>;
@@ -48,10 +43,16 @@ export interface ISessionMetadata {
   readonly _serviceBrand: undefined;
 
   readonly ready: Promise<void>;
+  readonly effectiveCwd: string;
   readonly onDidChangeMetadata: Event<SessionMetadataChangedEvent>;
   read(): Promise<SessionMeta>;
-  update(patch: SessionMetaPatch): Promise<void>;
+  update(patch: SessionMetaPatch, opts?: { readonly touchUpdatedAt?: boolean }): Promise<void>;
+  applyPromptMetadata(lastPrompt: string, title: string): Promise<boolean>;
   setTitle(title: string): Promise<void>;
+  setGeneratedTitleIfUncustomized(
+    title: string,
+    opts?: { force?: boolean },
+  ): Promise<boolean>;
   setArchived(archived: boolean): Promise<void>;
   registerAgent(agentId: string, meta: AgentMeta): Promise<void>;
 }

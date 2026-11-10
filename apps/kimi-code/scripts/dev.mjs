@@ -4,40 +4,20 @@ import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { startPluginMarketplaceServer } from './dev-plugin-marketplace-server.mjs';
-
 const require = createRequire(import.meta.url);
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = resolve(SCRIPT_DIR, '..');
 // Monorepo root. Used as the dev CLI's working directory so `make dev` opens
 // the whole repo instead of just apps/kimi-code.
 const REPO_ROOT = resolve(APP_ROOT, '../..');
-// Runtime variable the CLI reads to locate the marketplace JSON.
 const MARKETPLACE_ENV = 'KIMI_CODE_PLUGIN_MARKETPLACE_URL';
-// Opt-in for dev: point this run at an external marketplace instead of a local one.
 const EXTERNAL_MARKETPLACE_ENV = 'KIMI_CODE_DEV_MARKETPLACE_URL';
 
-let marketplaceServer;
 const env = { ...process.env };
-
 const externalUrl = process.env[EXTERNAL_MARKETPLACE_ENV]?.trim();
 if (externalUrl !== undefined && externalUrl.length > 0) {
-  // Explicitly asked to use an external marketplace; don't start a local server.
   env[MARKETPLACE_ENV] = externalUrl;
   console.error(`Using external plugin marketplace: ${externalUrl}`);
-} else {
-  // Default: every `pnpm run dev:cli` runs its own isolated marketplace server on a
-  // random port, so multiple concurrent dev instances never collide. Overwrite any
-  // inherited MARKETPLACE_ENV so a stale URL from a dead instance can't break this run.
-  const inherited = process.env[MARKETPLACE_ENV]?.trim();
-  marketplaceServer = await startPluginMarketplaceServer();
-  env[MARKETPLACE_ENV] = marketplaceServer.marketplaceUrl;
-  console.error(`Plugin marketplace dev server: ${marketplaceServer.marketplaceUrl}`);
-  if (inherited !== undefined && inherited.length > 0 && inherited !== marketplaceServer.marketplaceUrl) {
-    console.error(
-      `(ignored inherited ${MARKETPLACE_ENV}=${inherited}; set ${EXTERNAL_MARKETPLACE_ENV} to use an external marketplace)`,
-    );
-  }
 }
 
 const tsxCli = require.resolve('tsx/cli');
@@ -49,7 +29,7 @@ const child = spawn(
     tsxCli,
     // Use the dev tsconfig whose `include` covers packages/*/src, so tsx's
     // esbuild transform sees `experimentalDecorators: true` for DI parameter
-    // decorators in agent-core. Mirrors `dev:server` in package.json.
+    // decorators in agent-core-v2. Mirrors `dev:server` in package.json.
     '--tsconfig',
     resolve(APP_ROOT, 'tsconfig.dev.json'),
     '--import',
@@ -64,14 +44,12 @@ const child = spawn(
   },
 );
 
-child.on('error', async (error) => {
+child.on('error', (error) => {
   console.error(`Failed to start Kimi Code dev CLI: ${error.message}`);
-  await marketplaceServer?.close();
   process.exit(1);
 });
 
-child.on('exit', async (code, signal) => {
-  await marketplaceServer?.close();
+child.on('exit', (code, signal) => {
   if (signal !== null) {
     process.exit(1);
   }

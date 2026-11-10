@@ -18,6 +18,21 @@ on:
         required: false
         type: boolean
         default: false
+      sign-windows:
+        description: 'Whether to sign Windows builds with Azure Artifact Signing (requires AZURE_* secrets and AZURE_TRUSTED_SIGNING_* variables)'
+        required: false
+        type: boolean
+        default: false
+      sha:
+        description: 'Commit to build; empty builds the triggering commit'
+        required: false
+        type: string
+        default: ''
+      version:
+        description: 'Override the CLI package version before building; empty keeps package.json'
+        required: false
+        type: string
+        default: ''
     secrets:
       APPLE_CERTIFICATE_P12:
         required: false
@@ -28,6 +43,12 @@ on:
       APPLE_NOTARIZATION_KEY_ID:
         required: false
       APPLE_NOTARIZATION_ISSUER_ID:
+        required: false
+      AZURE_TENANT_ID:
+        required: false
+      AZURE_CLIENT_ID:
+        required: false
+      AZURE_CLIENT_SECRET:
         required: false
 
 permissions:
@@ -57,6 +78,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.sha }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -66,6 +89,14 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: 'pnpm'
+
+      - name: Override CLI version
+        if: inputs.version != ''
+        shell: bash
+        working-directory: apps/kimi-code
+        env:
+          VERSION: ${{ inputs.version }}
+        run: npm pkg set version="$VERSION"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -86,11 +117,9 @@ jobs:
           echo "KIMI_CODE_BUILT_IN_CATALOG_FILE=$CATALOG_FILE" >> "$GITHUB_ENV"
 
       - name: Build Kimi web assets
-        # The SEA blob step embeds apps/kimi-code/dist-web; build the web app
-        # and stage its assets before producing the native executable.
-        run: |
-          pnpm --filter @moonshot-ai/kimi-web run build
-          node apps/kimi-code/scripts/copy-web-assets.mjs
+        # The SEA blob step embeds apps/kimi-code/dist-web. The bundle is
+        # committed (synced from the code-app repo) — just verify it is in place.
+        run: node apps/kimi-code/scripts/check-web-assets.mjs
 
       - name: Build native executable (release profile, macOS signed)
         if: runner.os == 'macOS' && inputs.sign-macos
@@ -98,6 +127,14 @@ jobs:
 
       - name: Build native executable (local profile)
         if: '!(runner.os == ''macOS'' && inputs.sign-macos)'
+        env:
+          KIMI_AZURE_TRUSTED_SIGNING: ${{ runner.os == 'Windows' && inputs.sign-windows && 'true' || 'false' }}
+          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ vars.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ vars.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
+          AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ vars.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
         run: pnpm --filter @moonshot-ai/kimi-code run build:native:sea
 
       - name: Notarize macOS binary

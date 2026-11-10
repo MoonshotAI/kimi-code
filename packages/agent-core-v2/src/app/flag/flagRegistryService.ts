@@ -1,13 +1,6 @@
-/**
- * `flag` domain — `IFlagRegistry` implementation.
- *
- * In-memory catalog of flag definitions. Seeds itself from the import-time
- * contributions (`getContributedFlags`) on construction, and also accepts
- * runtime `register` calls (used by tests). Bound at App scope.
- */
-
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { BugIndicatingError } from '#/errors';
 
 import {

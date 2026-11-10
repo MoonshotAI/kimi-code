@@ -42,7 +42,7 @@ Main directories:
 - `reverse-rpc` converts SDK approval/question requests into the data shape a UI panel/dialog needs, and converts the user's choice back into an SDK response.
 - `theme` is the single source of truth for colors and styles. Components must not bypass the theme system and use chalk named colors directly.
 - `utils` holds utility functions with no UI-state dependency. Logic that needs `TUIState` or a component instance must not live under app-level `src/utils`.
-- `apps/kimi-code` may only use core capabilities through `@moonshot-ai/kimi-code-sdk`. Do not import `@moonshot-ai/agent-core` directly in app code.
+- `apps/kimi-code` may only use core capabilities through `@moonshot-ai/kimi-code-sdk`. Do not import engine packages directly in app code.
 
 ## TUI Coding Conventions
 
@@ -65,6 +65,7 @@ The theme apply/switch mechanics live in the `write-tui` skill. The following ru
 
 ## General Coding Requirements
 
+- The startup path before the workspace trust gate (`KimiTUI.start()` -> `maybeRunWorkspaceTrustPrompt()`) must not spawn child processes by bare command name — on Windows, cmd.exe / CreateProcess resolve them from the current directory first, so a binary planted in an untrusted workspace would run before the user confirms trust. When an external command is unavoidable, resolve it with `resolveCommandPath` from `src/utils/process/resolve-command.ts`, which returns an absolute PATH hit and refuses matches inside the cwd.
 - For optional object properties, pass `undefined` directly — do not use conditional spread.
 - Optional object properties do not need to additionally allow `undefined` in the type.
 - Internal methods with only a single parameter should not be turned into options objects just for stylistic uniformity.

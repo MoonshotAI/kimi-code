@@ -1,5 +1,4 @@
-import type { Message } from '#/kosong/contract/message';
-import type { Tool as LLMTool } from '#/kosong/contract/tool';
+import type { Message, ToolDescription as LLMTool } from '#human/llm/message';
 import { expect } from 'vitest';
 
 import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
@@ -48,7 +47,33 @@ export function eventSnapshot(
   events: readonly EventSnapshotEntry[],
   labels: SnapshotLabels,
 ) {
-  const normalized = events.map((event) => normalizeValue(event, labels));
+  const normalized = events.map((event) => {
+    let stableEvent = event;
+    if (event.type === '[wire]' && event.event === 'tool_select.initialized') {
+      const args = event.args as { readonly tools: readonly { readonly name: string }[] };
+      stableEvent = {
+        ...event,
+        args: { ...args, tools: args.tools.map((tool) => tool.name) },
+      };
+    }
+    if (event.type === '[wire]' && event.event === 'llm.tools_snapshot') {
+      const args = event.args as { readonly tools: readonly { readonly name: string }[] };
+      stableEvent = {
+        ...event,
+        args: { ...args, hash: '<tools-hash>', tools: args.tools.map((tool) => tool.name) },
+      };
+    }
+    if (
+      event.type === '[wire]' &&
+      event.event === 'llm.request' &&
+      event.args !== null &&
+      typeof event.args === 'object' &&
+      'toolsHash' in event.args
+    ) {
+      stableEvent = { ...event, args: { ...event.args, toolsHash: '<tools-hash>' } };
+    }
+    return normalizeValue(stableEvent, labels);
+  });
   (normalized as unknown as Record<symbol, true>)[IS_EVENT_ARRAY] = true;
   return normalized;
 }
@@ -56,12 +81,14 @@ export function eventSnapshot(
 interface SnapshotLabels {
   readonly uuidLabels: Map<string, string>;
   readonly msgLabels: Map<string, string>;
+  readonly interactionLabels: Map<string, string>;
 }
 
 export function createEventSnapshotter() {
   const labels: SnapshotLabels = {
     uuidLabels: new Map<string, string>(),
     msgLabels: new Map<string, string>(),
+    interactionLabels: new Map<string, string>(),
   };
 
   return (events: readonly EventSnapshotEntry[]): EventSnapshot => eventSnapshot(events, labels);
@@ -91,6 +118,56 @@ export function generateInputsSnapshot(
 
 export function normalizeGenerateInput(input: GenerateCall): GenerateCall {
   return stripUndefined(input) as GenerateCall;
+}
+
+export type GenerateCallPrefixBreak =
+  | { readonly at: 'systemPrompt'; readonly previous: string; readonly next: string }
+  | {
+      readonly at: 'tools' | 'history';
+      readonly index: number;
+      readonly previous: unknown;
+      readonly next: unknown;
+    };
+
+export function findGenerateCallPrefixBreak(
+  previous: GenerateCall,
+  next: GenerateCall,
+): GenerateCallPrefixBreak | undefined {
+  if (previous.systemPrompt !== next.systemPrompt) {
+    return { at: 'systemPrompt', previous: previous.systemPrompt, next: next.systemPrompt };
+  }
+  const toolIndex = firstDifference(
+    previous.tools,
+    next.tools,
+    Math.max(previous.tools.length, next.tools.length),
+  );
+  if (toolIndex !== undefined) {
+    return {
+      at: 'tools',
+      index: toolIndex,
+      previous: previous.tools[toolIndex],
+      next: next.tools[toolIndex],
+    };
+  }
+  const historyIndex = firstDifference(previous.history, next.history, previous.history.length);
+  if (historyIndex === undefined) return undefined;
+  return {
+    at: 'history',
+    index: historyIndex,
+    previous: previous.history[historyIndex],
+    next: next.history[historyIndex],
+  };
+}
+
+function firstDifference(
+  previous: readonly unknown[],
+  next: readonly unknown[],
+  length: number,
+): number | undefined {
+  for (let index = 0; index < length; index += 1) {
+    if (!isDeepEqual(previous[index], next[index])) return index;
+  }
+  return undefined;
 }
 
 function stringifyCompact(obj: unknown) {
@@ -192,18 +269,16 @@ function formatToolNames(tools: GenerateCall['tools']): string {
 }
 
 function isMessagePrefix(previous: readonly Message[], input: readonly Message[]): boolean {
-  if (previous.length > input.length) return false;
-  return previous.every((message, index) => isDeepEqual(message, input[index]));
+  return firstDifference(previous, input, previous.length) === undefined;
 }
 
 function formatMessages(messages: readonly Message[]): string[] {
   if (messages.length === 0) return ['  []'];
 
   return messages.map((message) => {
-    const role =
-      message.toolCallId === undefined ? message.role : `${message.role}[${message.toolCallId}]`;
+    const role = message.role === 'tool' ? `${message.role}[${message.toolCallId}]` : message.role;
     const parts = [formatContent(message.content)];
-    if (message.toolCalls.length > 0) {
+    if (message.role === 'assistant' && message.toolCalls.length > 0) {
       parts.push(`calls ${message.toolCalls.map((call) => formatToolCall(call)).join(', ')}`);
     }
     return `  ${role}: ${parts.join('  ')}`;
@@ -232,13 +307,16 @@ function formatText(text: string): string {
   if (isPlanModeReminder(text)) {
     return '<plan-mode-reminder>';
   }
-  if (text.includes('first-person handoff note')) {
+  if (isDateReminder(text)) {
+    return '<date-reminder>';
+  }
+  if (text.includes('You are about to run out of context.')) {
     return '<compaction-instruction>';
   }
-  return JSON.stringify(text);
+  return JSON.stringify(normalizeWallTime(text));
 }
 
-function formatToolCall(call: Message['toolCalls'][number]): string {
+function formatToolCall(call: Extract<Message, { role: 'assistant' }>['toolCalls'][number]): string {
   return `${call.id}:${call.name} ${formatToolCallArguments(call.arguments)}`;
 }
 
@@ -261,9 +339,14 @@ function normalizeValue(value: unknown, labels: SnapshotLabels): unknown {
     if (isAutoModeEnterReminder(value)) return '<auto-mode-enter-reminder>';
     if (isAutoModeExitReminder(value)) return '<auto-mode-exit-reminder>';
     if (isPlanModeReminder(value)) return '<plan-mode-reminder>';
+    if (isDateReminder(value)) return '<date-reminder>';
+    const interactionKind = interactionIdKind(value);
+    if (interactionKind !== undefined) {
+      return labelFor(value, labels.interactionLabels, interactionKind);
+    }
     if (isUuid(value)) return labelFor(value, labels.uuidLabels, 'uuid');
     if (isMessageId(value)) return labelFor(value, labels.msgLabels, 'msg');
-    return value;
+    return normalizeWallTime(value);
   }
 
   if (Array.isArray(value)) {
@@ -283,16 +366,18 @@ function normalizeValue(value: unknown, labels: SnapshotLabels): unknown {
 
 function normalizeObjectField(key: string, value: unknown, labels: SnapshotLabels): unknown {
   if (
-    (key === 'time' || key === 'created_at' || key === 'since' || key === 'at') &&
+    (key === 'time' || key === 'created_at' || key === 'since' || key === 'at' || key === 'startedAt') &&
     typeof value === 'number'
   ) {
     return '<time>';
   }
-  if ((key === 'finishedAt' || key === 'abortedAt' || key === 'steeredAt') && typeof value === 'string') return '<time>';
+  if ((key === 'finishedAt' || key === 'abortedAt' || key === 'steeredAt' || key === 'createdAt') && typeof value === 'string') return '<time>';
   if (key === 'protocol_version' && value === WIRE_PROTOCOL_VERSION) {
     return '<protocol-version>';
   }
   if (key === 'cwd' && typeof value === 'string') return '<cwd>';
+  if (key === 'localDate' && typeof value === 'string') return '<date>';
+  if (key === 'timeZone' && typeof value === 'string') return '<time-zone>';
   return normalizeValue(value, labels);
 }
 
@@ -316,6 +401,13 @@ function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
+function interactionIdKind(value: string): string | undefined {
+  const match = /^(approval|question|user_tool)_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.exec(
+    value,
+  );
+  return match?.[1];
+}
+
 function isMessageId(value: string): boolean {
   return /^msg_[0-9A-Z]{26}$/.test(value);
 }
@@ -329,6 +421,10 @@ function labelFor(value: string, labels: Map<string, string>, kind: string): str
   return label;
 }
 
+function normalizeWallTime(value: string): string {
+  return value.replaceAll(/Wall time: \d+\.\d{3} seconds/g, 'Wall time: <duration> seconds');
+}
+
 function isVolatileDurationKey(key: string): boolean {
   return (
     key === 'llmFirstTokenLatencyMs' ||
@@ -337,13 +433,15 @@ function isVolatileDurationKey(key: string): boolean {
     key === 'llmServerFirstTokenMs' ||
     key === 'llmServerDecodeMs' ||
     key === 'llmClientConsumeMs' ||
+    key === 'llmClientBlockedMs' ||
     key === 'durationMs'
   );
 }
 
 function isPlanModeReminder(value: string): boolean {
   return (
-    value.includes('Plan mode is active. You MUST NOT make any edits') &&
+    value.includes('Plan mode is active') &&
+    value.includes('You MUST NOT make any edits') &&
     value.includes('Plan file:')
   );
 }
@@ -354,4 +452,11 @@ function isAutoModeEnterReminder(value: string): boolean {
 
 function isAutoModeExitReminder(value: string): boolean {
   return value.includes('Auto permission mode is no longer active.');
+}
+
+function isDateReminder(value: string): boolean {
+  return (
+    value.includes('The current date is restated in a reminder whenever it changes') ||
+    value.includes('Rely on this reminder over any earlier date statement')
+  );
 }

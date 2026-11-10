@@ -1,54 +1,45 @@
-/**
- * MCP tool-call result → ExecutableTool output pipeline.
- *
- * Owns the full path from "MCP protocol content blocks" to "what the agent
- * loop feeds back to the model":
- *  1. Convert each {@link MCPContentBlock} to a kosong `ContentPart`
- *     (dropping unsupported shapes).
- *  2. Wrap media-only outputs in `<mcp_tool_result name="…">` tags so the
- *     model can attribute binary output when several tools return media.
- *  3. Apply the 100K text/think character budget to the tool's own text.
- *     This runs BEFORE captions exist, so a chatty tool (page text + a
- *     screenshot) can never evict or slice the compression caption — that
- *     would silently reintroduce the very degradation the caption reports.
- *  4. Compress oversized inline images, announcing each compression with a
- *     caption (original vs. sent size, readback path to the persisted
- *     original) so downsampling is never silent. The captions ride the
- *     result's `note` side channel — projected to the model at fold time, but
- *     kept out of `output` so UIs never render them.
- *  5. Apply the per-part 10 MB binary cap: oversized binary parts
- *     (image/audio/video URLs) collapse to a notice, so a single
- *     screenshot cannot evict every text part.
- *  6. Collapse a single-text-part result to a plain string output; otherwise
- *     emit the `ContentPart[]` as-is.
- *
- * `mcpResultToExecutableOutput` is the single entry point; the per-step
- * helpers stay private so callers cannot bypass the limits.
- */
+import { createHash } from 'node:crypto';
+import { Readable } from 'node:stream';
+import { isDeepStrictEqual } from 'node:util';
 
-import type { ContentPart } from '#/kosong/contract/message';
+import type { ContentPart } from '#human/llm/message';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
+import type { ExecutableToolResult } from '#/tool/toolContract';
+import { textExtensionForMime } from '#/_base/utils/fileMeta';
 
-import { compressImageContentParts } from '#/agent/media/image-compress';
+import { compressImageContentParts, gateImageFormatParts } from '#/agent/media/image-compress';
+import { sniffMediaFromMagic } from '#/agent/media/file-type';
 import {
   buildUnsupportedImageNotice,
   isModelAcceptedImageMime,
+  parseImageDataUrl,
+  resolveEffectiveImageMime,
+  decodeBase64Prefix,
 } from '#/agent/media/image-format-policy';
 import { persistOriginalImage } from '#/agent/media/image-originals';
+import type { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
+import { buildDaemonFileUrl, mediaExtensionForMime } from '#/agent/media/mediaRef';
+import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { MCPContentBlock, MCPToolResult } from '#/mcpCore/types';
+import type { EnvironmentPath } from '#/environment/environment';
 
-export interface McpOutputOptions {
-  readonly originalsDir?: string;
-  readonly telemetry?: ITelemetryService;
+export interface McpOriginalsTarget {
+  readonly fs: IHostFileSystem;
+  readonly dir: string;
+  readonly path?: EnvironmentPath;
 }
 
-export const MCP_MAX_OUTPUT_CHARS = 100_000;
-const MCP_OUTPUT_TRUNCATED_TEXT = `\n\n[Output truncated: exceeded ${String(
-  MCP_MAX_OUTPUT_CHARS,
-)} character limit. Use pagination or more specific queries to get remaining content.]`;
+export interface McpOutputOptions {
+  readonly signal?: AbortSignal;
+  readonly attachmentStore?: ISessionMediaStore;
+  readonly originals?: McpOriginalsTarget;
+  readonly telemetry?: ITelemetryService;
+  readonly providerType?: string;
+}
 
 export const MCP_MAX_BINARY_PART_BYTES = 10 * 1024 * 1024;
 const MCP_MAX_BINARY_PART_CHARS = Math.ceil((MCP_MAX_BINARY_PART_BYTES * 4) / 3);
+const MCP_MAX_INLINE_NOTICES_CHARS = 4096;
 
 function binaryPartTooLargeNotice(kind: 'image' | 'audio' | 'video', urlLength: number): string {
   const approxMb = ((urlLength * 3) / 4 / (1024 * 1024)).toFixed(1);
@@ -56,7 +47,11 @@ function binaryPartTooLargeNotice(kind: 'image' | 'audio' | 'video', urlLength: 
   return `[${kind}_url dropped: ~${approxMb} MB exceeds ${capMb} MB per-part limit. Try a smaller resource.]`;
 }
 
-export function convertMCPContentBlock(block: MCPContentBlock): ContentPart | null {
+function droppedBlockNotice(reason: string): ContentPart {
+  return { type: 'text', text: `[MCP content dropped: ${reason}]` };
+}
+
+export function convertMCPContentBlock(block: MCPContentBlock, providerType?: string): ContentPart {
   if (block.type === 'text' && typeof block.text === 'string') {
     return { type: 'text', text: block.text };
   }
@@ -102,16 +97,22 @@ export function convertMCPContentBlock(block: MCPContentBlock): ContentPart | nu
           videoUrl: { url: `data:${mimeType};base64,${res.blob}` },
         };
       }
-      return null;
+      const approxMb = ((res.blob.length * 3) / 4 / (1024 * 1024)).toFixed(1);
+      return droppedBlockNotice(
+        `resource blob with unsupported mimeType "${mimeType}" (~${approxMb} MB, uri: ${res.uri}) was not delivered.`,
+      );
     }
-    return null;
+    return droppedBlockNotice(`resource (uri: ${res.uri}) carried no text or blob payload.`);
   }
 
   if (block.type === 'resource_link' && typeof block.uri === 'string') {
     const mimeType = block.mimeType ?? 'application/octet-stream';
     if (mimeType.startsWith('image/')) {
-      if (!isModelAcceptedImageMime(mimeType)) {
-        return { type: 'text', text: buildUnsupportedImageNotice(mimeType, block.uri) };
+      if (!isModelAcceptedImageMime(mimeType, providerType)) {
+        return {
+          type: 'text',
+          text: buildUnsupportedImageNotice(mimeType, block.uri, providerType),
+        };
       }
       return { type: 'image_url', imageUrl: { url: block.uri } };
     }
@@ -121,85 +122,287 @@ export function convertMCPContentBlock(block: MCPContentBlock): ContentPart | nu
     if (mimeType.startsWith('video/')) {
       return { type: 'video_url', videoUrl: { url: block.uri } };
     }
-    return null;
+    return droppedBlockNotice(
+      `resource_link with unsupported mimeType "${mimeType}" was not delivered. Fetch it directly if needed: ${block.uri}`,
+    );
   }
 
-  return null;
+  return droppedBlockNotice(`content block of unsupported type "${block.type}" was not delivered.`);
 }
 
 export async function mcpResultToExecutableOutput(
   result: MCPToolResult,
   qualifiedToolName: string,
   options: McpOutputOptions = {},
-): Promise<{
-  output: string | ContentPart[];
-  isError: boolean;
-  note?: string;
-  truncated?: true;
-}> {
+): Promise<ExecutableToolResult> {
+  options.signal?.throwIfAborted();
   const converted: ContentPart[] = [];
+  const attachmentNotices: string[] = [];
+  const preservedUrls = new Map<string, string | undefined>();
+  let omittedAttachment = false;
+  const preserveInlineMedia = async (url: string): Promise<string | undefined> => {
+    options.signal?.throwIfAborted();
+    if (preservedUrls.has(url)) return preservedUrls.get(url);
+    const parsed = parseImageDataUrl(url);
+    if (parsed === null) return;
+    const mime = parsed.mimeType.startsWith('image/')
+      ? resolveEffectiveImageMime(parsed.mimeType, decodeBase64Prefix(parsed.base64))
+      : parsed.mimeType;
+    const { notice, reference } = await preserveAttachment(parsed.base64, mime, options);
+    attachmentNotices.push(notice);
+    preservedUrls.set(url, reference);
+    return reference;
+  };
   for (const block of result.content) {
-    const part = convertMCPContentBlock(block);
-    if (part !== null) {
-      converted.push(part);
+    options.signal?.throwIfAborted();
+    const part = convertMCPContentBlock(block, options.providerType);
+    const gated = gateImageFormatParts([part], options.providerType);
+    if (part.type === 'image_url' && options.attachmentStore !== undefined) {
+      const reference = await preserveInlineMedia(part.imageUrl.url);
+      const image = gated[0];
+      if (image?.type === 'image_url') preservedUrls.set(image.imageUrl.url, reference);
+    }
+    if (part.type === 'audio_url') await preserveInlineMedia(part.audioUrl.url);
+    if (part.type === 'video_url') await preserveInlineMedia(part.videoUrl.url);
+    converted.push(...gated);
+    if (part.type === 'image_url' && gated[0]?.type === 'text') {
+      omittedAttachment = true;
+      await preserveInlineMedia(part.imageUrl.url);
+    }
+    if (part.type === 'text' && block.type === 'resource' &&
+      typeof block.resource?.blob === 'string' && typeof block.resource.text !== 'string') {
+      omittedAttachment = true;
+      const { notice } = await preserveAttachment(
+        block.resource.blob,
+        block.resource.mimeType ?? 'application/octet-stream',
+        options,
+      );
+      attachmentNotices.push(notice);
     }
   }
 
   const wrapped = wrapMediaOnly(converted, qualifiedToolName);
-  // Structured payloads (structuredContent per MCP spec, plus server metadata
-  // in _meta) carry machine-readable contracts such as browser-handoff URLs.
-  // Appended AFTER the media wrap so a media-only result keeps its
-  // <mcp_tool_result> attribution, and BEFORE the text budget so oversized
-  // payloads stay bounded. Literal closing tags inside the serialized
-  // payload are stripped so server data cannot fake an early end of the
-  // block.
+  const hasStructuredCopy = result.structuredContent !== undefined && converted.some((part) => {
+    if (part.type !== 'text') return false;
+    try {
+      return isDeepStrictEqual(parseComparableJson(part.text), result.structuredContent);
+    } catch {
+      return false;
+    }
+  });
   const structuredExtras: Record<string, unknown> = {};
-  if (result.structuredContent !== undefined) {
+  if (result.structuredContent !== undefined && !hasStructuredCopy) {
     structuredExtras['structuredContent'] = result.structuredContent;
   }
   if (result._meta !== undefined) {
-    structuredExtras['_meta'] = result._meta;
+    const meta = stripReservedMetaKeys(result._meta);
+    if (meta !== undefined) {
+      structuredExtras['_meta'] = meta;
+    }
   }
   if (Object.keys(structuredExtras).length > 0) {
-    try {
-      const serialized = JSON.stringify(structuredExtras).replaceAll(
-        '</mcp-structured-result>',
-        '',
-      );
+    const serialized = serializeStructuredExtras(structuredExtras);
+    if (serialized !== undefined) {
       wrapped.push({
         type: 'text',
-        text: `\n<mcp-structured-result>\n${serialized}\n</mcp-structured-result>`,
+        text: `\n<mcp-result-extras>\n${serialized}\n</mcp-result-extras>`,
       });
-    } catch {
-      // Non-serialisable payloads are dropped rather than failing the call.
     }
   }
 
-  const budgeted = applyTextBudget(wrapped);
-  const compressed = await compressImageContentParts(budgeted.parts, {
-    telemetry:
-      options.telemetry === undefined
-        ? undefined
-        : { client: options.telemetry, source: 'mcp_tool_result' },
+  const compressed = await compressImageContentParts(wrapped, {
+    signal: options.signal,
+    telemetry: options.telemetry,
+    telemetrySource: 'mcp_tool_result',
+    providerType: options.providerType,
     annotate: {
-      persistOriginal: (bytes, mimeType) =>
-        persistOriginalImage(
+      persistOriginal: async (bytes, mimeType) => {
+        if (options.attachmentStore !== undefined) {
+          const saved = await saveAttachment(bytes, mimeType, options.attachmentStore, options.signal);
+          attachmentNotices.push(attachmentNotice(saved, mimeType, bytes.length));
+          return saved.reference;
+        }
+        return persistOriginalImage(
           bytes,
           mimeType,
-          options.originalsDir === undefined ? {} : { dir: options.originalsDir },
-        ),
+          options.originals === undefined
+            ? {}
+            : { fs: options.originals.fs, dir: options.originals.dir, path: options.originals.path },
+        );
+      },
     },
   });
-  const capped = applyBinaryPartCap(compressed.parts);
-  const truncated = budgeted.truncated || capped.truncated;
-  const output = collapseSingleText(capped.parts);
-  const note = compressed.captions.length > 0 ? compressed.captions.join('\n') : undefined;
-  return {
+  const capped = await applyBinaryPartCap(compressed.parts, preserveInlineMedia);
+  const parts: ContentPart[] = [];
+  for (const part of capped.parts) {
+    parts.push(await referenceInlineImage(part, options, preservedUrls));
+  }
+  const notices = await attachmentDetails(
+    [...compressed.captions, ...attachmentNotices, ...capped.notices], options,
+  );
+  if (notices.content.length > 0) parts.push({ type: 'text', text: notices.content });
+  const output = collapseSingleText(parts);
+  const base = {
     output,
-    isError: result.isError,
-    note,
-    truncated: truncated ? true : undefined,
+    truncated: capped.truncated || omittedAttachment ? true : undefined,
+    spill: notices.suffix.length > 0 ? { suffix: notices.suffix } : undefined,
   };
+  return result.isError ? { ...base, isError: true } : base;
+}
+
+async function referenceInlineImage(
+  part: ContentPart,
+  options: McpOutputOptions,
+  preservedUrls: ReadonlyMap<string, string | undefined>,
+): Promise<ContentPart> {
+  if (part.type !== 'image_url' || options.attachmentStore === undefined) return part;
+  const url = part.imageUrl.url;
+  const image = parseImageDataUrl(url);
+  if (image === null || sniffMediaFromMagic(decodeBase64Prefix(image.base64))?.kind !== 'image') return part;
+  options.signal?.throwIfAborted();
+  let reference = preservedUrls.get(url);
+  if (reference === undefined && preservedUrls.has(url)) return part;
+  try {
+    reference ??= (await saveAttachment(
+      decodeAttachment(image.base64), image.mimeType, options.attachmentStore, options.signal,
+    )).reference;
+    return { ...part, imageUrl: { ...part.imageUrl, url: reference } };
+  } catch {
+    options.signal?.throwIfAborted();
+    return part;
+  }
+}
+
+async function attachmentDetails(
+  notices: readonly string[],
+  options: McpOutputOptions,
+): Promise<{ readonly content: string; readonly suffix: string }> {
+  options.signal?.throwIfAborted();
+  const content = [...new Set(notices)].join('\n');
+  if (content.length <= MCP_MAX_INLINE_NOTICES_CHARS) return { content, suffix: content };
+  try {
+    if (options.attachmentStore === undefined) throw new Error('Session attachment storage is unavailable');
+    const saved = await saveAttachment(Buffer.from(content, 'utf8'), 'text/plain', options.attachmentStore, options.signal);
+    const pointer = [
+      ...(saved.path === undefined ? [] : [`MCP attachment details saved at: ${JSON.stringify(saved.path)}`]),
+      `Attachment details reference: ${JSON.stringify(saved.reference)}`,
+      `Session-relative attachment details: ${JSON.stringify(saved.relativePath)}`,
+      'Pass the attachment details reference to Read to retrieve all original attachment references and compression details in the current session.',
+    ].join('\n');
+    return { content: pointer, suffix: pointer };
+  } catch {
+    options.signal?.throwIfAborted();
+    const suffix = 'The complete MCP attachment list could not be saved separately. Attachment details are included in the tool output and may be truncated. Do not repeat the MCP call automatically.';
+    return { content: `${content}\n${suffix}`, suffix };
+  }
+}
+
+async function preserveAttachment(
+  base64: string,
+  mimeType: string,
+  options: McpOutputOptions,
+): Promise<{ readonly notice: string; readonly reference?: string }> {
+  options.signal?.throwIfAborted();
+  try {
+    if (options.attachmentStore === undefined) throw new Error('Session attachment storage is unavailable');
+    const bytes = decodeAttachment(base64);
+    const saved = await saveAttachment(bytes, mimeType, options.attachmentStore, options.signal);
+    return { notice: attachmentNotice(saved, mimeType, bytes.length), reference: saved.reference };
+  } catch (error) {
+    options.signal?.throwIfAborted();
+    return {
+      notice: `Original attachment could not be saved (${JSON.stringify(mimeType)}): ${error instanceof Error ? error.message : String(error)}. No readable original path is available; original attachment preservation is incomplete. Do not repeat the MCP call automatically.`,
+    };
+  }
+}
+
+function decodeAttachment(base64: string): Buffer {
+  const compact = base64.replaceAll(/\s/g, '');
+  const bytes = Buffer.from(compact, 'base64');
+  const canonical = bytes.toString('base64');
+  if (canonical !== compact && canonical.replace(/=+$/, '') !== compact) {
+    throw new Error('Invalid base64 attachment');
+  }
+  return bytes;
+}
+
+interface SavedAttachment {
+  readonly path?: string;
+  readonly reference: string;
+  readonly relativePath: string;
+}
+
+function attachmentNotice(saved: SavedAttachment, mimeType: string, size: number): string {
+  return [
+    ...(saved.path === undefined ? [] : [`Original attachment saved at: ${JSON.stringify(saved.path)}`]),
+    `Attachment reference: ${JSON.stringify(saved.reference)}`,
+    `Session-relative attachment: ${JSON.stringify(saved.relativePath)}`,
+    `MIME: ${JSON.stringify(mimeType)}; size: ${String(size)} bytes. Pass the attachment reference to Read or ReadMediaFile in the current session. For other binary formats, Read reports the resolved local path for a converter.`,
+  ].join('\n');
+}
+
+async function saveAttachment(
+  bytes: Uint8Array,
+  mimeType: string,
+  store: ISessionMediaStore,
+  signal?: AbortSignal,
+): Promise<SavedAttachment> {
+  signal?.throwIfAborted();
+  const mime = mimeType.split(';')[0]!.trim().toLowerCase();
+  const hash = createHash('sha256').update(mime).update('\0').update(bytes).digest('hex');
+  const ext = mime === 'application/pdf' ? '.pdf'
+    : mime === 'image/svg+xml' ? (bytes[0] === 0x1f && bytes[1] === 0x8b ? '.svgz' : '.svg')
+      : textExtensionForMime(mime) ?? mediaExtensionForMime(mime) ?? '.bin';
+  const fileId = `f_mcp_${hash}`;
+  const path = await store.materialize({
+    fileId,
+    size: bytes.length,
+    name: `attachment${ext}`,
+    mimeType: mime,
+    stream: () => Readable.from([bytes]),
+    signal,
+  });
+  signal?.throwIfAborted();
+  return { path, reference: buildDaemonFileUrl(fileId), relativePath: `media/${fileId}${ext}` };
+}
+
+function parseComparableJson(text: string): unknown {
+  return JSON.parse(text, (_key: string, value: unknown, context?: { source?: string }) => {
+    if (typeof value === 'number' && context?.source !== JSON.stringify(value)) {
+      throw new Error('JSON number cannot be compared without normalization');
+    }
+    return value;
+  });
+}
+
+function serializeStructuredExtras(extras: Record<string, unknown>): string | undefined {
+  try {
+    return JSON.stringify(extras).replaceAll('<', '\\u003c');
+  } catch {
+    return undefined;
+  }
+}
+
+function stripReservedMetaKeys(
+  meta: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(meta)) {
+    if (!isReservedMetaKey(key)) {
+      out[key] = value;
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function isReservedMetaKey(key: string): boolean {
+  const slash = key.indexOf('/');
+  if (slash <= 0) return false;
+  const labels = key.slice(0, slash).split('.');
+  return labels.some(
+    (label, i) =>
+      (label === 'modelcontextprotocol' || label === 'mcp') && i < labels.length - 1,
+  );
 }
 
 function wrapMediaOnly(parts: readonly ContentPart[], qualifiedToolName: string): ContentPart[] {
@@ -215,63 +418,17 @@ function wrapMediaOnly(parts: readonly ContentPart[], qualifiedToolName: string)
   ];
 }
 
-function applyTextBudget(parts: readonly ContentPart[]): {
+async function applyBinaryPartCap(
+  parts: readonly ContentPart[],
+  preserve: (url: string) => Promise<unknown>,
+): Promise<{
   readonly parts: ContentPart[];
   readonly truncated: boolean;
-} {
-  let remaining = MCP_MAX_OUTPUT_CHARS;
+  readonly notices: string[];
+}> {
   let truncated = false;
   const out: ContentPart[] = [];
-
-  for (const part of parts) {
-    if (part.type === 'text') {
-      if (remaining <= 0) {
-        truncated = true;
-        continue;
-      }
-      if (part.text.length > remaining) {
-        out.push({ type: 'text', text: part.text.slice(0, remaining) });
-        remaining = 0;
-        truncated = true;
-      } else {
-        out.push(part);
-        remaining -= part.text.length;
-      }
-      continue;
-    }
-
-    if (part.type === 'think') {
-      const size = part.think.length + (part.encrypted?.length ?? 0);
-      if (remaining <= 0) {
-        truncated = true;
-        continue;
-      }
-      if (size > remaining) {
-        out.push({ type: 'think', think: part.think.slice(0, remaining) });
-        remaining = 0;
-        truncated = true;
-      } else {
-        out.push(part);
-        remaining -= size;
-      }
-      continue;
-    }
-
-    out.push(part);
-  }
-
-  if (truncated) {
-    appendTruncationNotice(out);
-  }
-  return { parts: out, truncated };
-}
-
-function applyBinaryPartCap(parts: readonly ContentPart[]): {
-  readonly parts: ContentPart[];
-  readonly truncated: boolean;
-} {
-  let truncated = false;
-  const out: ContentPart[] = [];
+  const notices: string[] = [];
 
   for (const part of parts) {
     if (part.type === 'text' || part.type === 'think') {
@@ -286,27 +443,19 @@ function applyBinaryPartCap(parts: readonly ContentPart[]): {
           ? part.audioUrl.url
           : part.videoUrl.url;
     if (url.length > MCP_MAX_BINARY_PART_CHARS) {
+      await preserve(url);
       const kind =
         part.type === 'image_url' ? 'image' : part.type === 'audio_url' ? 'audio' : 'video';
-      out.push({ type: 'text', text: binaryPartTooLargeNotice(kind, url.length) });
+      const notice = binaryPartTooLargeNotice(kind, url.length);
+      out.push({ type: 'text', text: notice });
+      notices.push(notice);
       truncated = true;
       continue;
     }
     out.push(part);
   }
 
-  return { parts: out, truncated };
-}
-
-function appendTruncationNotice(out: ContentPart[]): void {
-  for (let i = out.length - 1; i >= 0; i--) {
-    const candidate = out[i];
-    if (candidate?.type === 'text') {
-      out[i] = { type: 'text', text: candidate.text + MCP_OUTPUT_TRUNCATED_TEXT };
-      return;
-    }
-  }
-  out.push({ type: 'text', text: MCP_OUTPUT_TRUNCATED_TEXT });
+  return { parts: out, truncated, notices };
 }
 
 function collapseSingleText(parts: readonly ContentPart[]): string | ContentPart[] {

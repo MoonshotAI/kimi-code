@@ -1,0 +1,51 @@
+import { describe, expect, it } from 'vitest';
+
+import { getAgentProfileContributions } from '#/app/agentProfileCatalog/contribution';
+import { TOWER_WORKER_PROFILE_DEF } from '#/features/tower/workerProfile';
+import '#/session/agentLifecycle/profile/profiles';
+
+function builtinProfile(name: string) {
+  const found = getAgentProfileContributions().find((p) => p.name === name);
+  expect(found, `builtin profile "${name}" is registered`).toBeDefined();
+  return found!;
+}
+
+describe('tower-worker profile', () => {
+  it('gives tower-worker the coder tools (minus Agent and AgentSwarm) plus the seven shared tower tools', () => {
+    const coder = builtinProfile('coder');
+    const tools = TOWER_WORKER_PROFILE_DEF.tools ?? [];
+
+    for (const name of coder.tools ?? []) {
+      if (name === 'Agent' || name === 'AgentSwarm') continue;
+      expect(tools).toContain(name);
+    }
+    expect(tools).not.toContain('Agent');
+    expect(tools).not.toContain('AgentSwarm');
+    for (const name of [
+      'TowerComplete',
+      'TowerSend',
+      'TowerInbox',
+      'TowerFinding',
+      'TowerReview',
+      'TowerMission',
+      'TowerStatus',
+    ]) {
+      expect(tools).toContain(name);
+    }
+    for (const name of ['TowerInit', 'TowerPlan', 'TowerSpawn', 'TowerMerge', 'TowerRebase', 'TowerTeardown']) {
+      expect(tools).not.toContain(name);
+    }
+  });
+
+  it('leaves plan mode tools out of the worker profile', () => {
+    const tools = TOWER_WORKER_PROFILE_DEF.tools ?? [];
+
+    expect(tools).not.toContain('EnterPlanMode');
+    expect(tools).not.toContain('ExitPlanMode');
+  });
+
+  it('keeps the coder whenToUse', () => {
+    const coder = builtinProfile('coder');
+    expect(TOWER_WORKER_PROFILE_DEF.whenToUse).toBe(coder.whenToUse);
+  });
+});

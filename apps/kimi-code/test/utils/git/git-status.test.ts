@@ -1,57 +1,100 @@
 /* eslint-disable import/first -- vi.mock setup must run before the imports it stubs out. */
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { join } from 'node:path';
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  spawnSync: vi.fn(),
   execFile: vi.fn(),
+  resolveCommandPath: vi.fn(),
+  watchers: [] as Array<{
+    options: unknown;
+    add: ReturnType<typeof vi.fn>;
+    close: ReturnType<typeof vi.fn>;
+    emit: (event: string) => void;
+  }>,
 }));
 
 vi.mock('node:child_process', () => ({
   execFile: mocks.execFile,
-  spawnSync: mocks.spawnSync,
 }));
 
-import { createGitStatusCache, formatGitBadge } from '#/utils/git/git-status';
+vi.mock('#/utils/process/resolve-command', () => ({
+  resolveCommandPath: mocks.resolveCommandPath,
+}));
+
+vi.mock('chokidar', () => {
+  class FSWatcher {
+    options: unknown;
+    add = vi.fn();
+    close = vi.fn(() => Promise.resolve());
+    private listeners = new Map<string, Array<() => void>>();
+
+    constructor(options: unknown) {
+      this.options = options;
+      mocks.watchers.push(this);
+    }
+
+    on(event: string, cb: () => void): this {
+      const list = this.listeners.get(event) ?? [];
+      list.push(cb);
+      this.listeners.set(event, list);
+      return this;
+    }
+
+    emit(event: string): void {
+      for (const cb of this.listeners.get(event) ?? []) cb();
+    }
+  }
+
+  return { FSWatcher };
+});
+
+import type { GitPullRequest, GitStatusSummary } from '@moonshot-ai/kimi-code-sdk';
+
+import { createGitStatusCache, formatGitBadge, type GitStatusSource } from '#/utils/git/git-status';
+
+beforeEach(() => {
+  mocks.resolveCommandPath.mockImplementation((command: string) => `/usr/bin/${command}`);
+  mocks.execFile.mockImplementation(
+    (_cmd: string, _args: string[], _options: unknown, callback: (error: Error | null, stdout: string) => void) => {
+      callback(null, 'C:/repo/.git\n');
+    },
+  );
+  mocks.watchers.length = 0;
+});
 
 afterEach(() => {
   vi.useRealTimers();
   vi.clearAllMocks();
 });
 
+async function drain(): Promise<void> {
+  for (let i = 0; i < 30; i++) await Promise.resolve();
+}
+
+function summary(overrides: Partial<GitStatusSummary> = {}): GitStatusSummary {
+  return { branch: 'main', dirty: false, ahead: 0, behind: 0, additions: 0, deletions: 0, ...overrides };
+}
+
+function fakeSource(
+  status: () => Promise<GitStatusSummary | null>,
+  pullRequest: () => Promise<GitPullRequest | null> = async () => null,
+): GitStatusSource & { status: ReturnType<typeof vi.fn>; pullRequest: ReturnType<typeof vi.fn> } {
+  return { status: vi.fn(status), pullRequest: vi.fn(pullRequest), localWorkDir: '/tmp/repo' };
+}
+
 describe('git status cache', () => {
-  it('caches branch and status reads until their TTL expires', async () => {
+  it('reads the cache without blocking and refreshes status on a 30s TTL', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-04-24T00:00:00Z'));
-    mocks.execFile.mockImplementation(
-      (
-        _cmd: string,
-        _args: string[],
-        _options: unknown,
-        callback: (error: Error | null, stdout: string, stderr: string) => void,
-      ) => {
-        callback(new Error('no pull request'), '', '');
-      },
-    );
-    mocks.spawnSync.mockImplementation((_cmd: string, args: string[]) => {
-      if (args.includes('rev-parse')) {
-        return { status: 0, stdout: 'true\n' };
-      }
-      if (args.includes('branch')) {
-        return { status: 0, stdout: 'main\n' };
-      }
-      if (args.includes('status')) {
-        return {
-          status: 0,
-          stdout: '## main...origin/main [ahead 2, behind 1]\n M src/app.ts\n',
-        };
-      }
-      if (args.includes('diff')) {
-        return { status: 0, stdout: '4\t1\tsrc/app.ts\n' };
-      }
-      return { status: 1, stdout: '' };
-    });
+    const source = fakeSource(async () => summary({ dirty: true, ahead: 2, behind: 1, additions: 4, deletions: 1 }));
 
-    const cache = createGitStatusCache('/tmp/repo');
+    const cache = createGitStatusCache(source);
+    expect(source.status).not.toHaveBeenCalled();
+    expect(cache.getStatus()).toBeNull();
+    expect(source.status).not.toHaveBeenCalled();
+
+    await drain();
 
     expect(cache.getStatus()).toEqual({
       branch: 'main',
@@ -62,147 +105,89 @@ describe('git status cache', () => {
       diffDeleted: 1,
       pullRequest: null,
     });
-    expect(cache.getStatus()).toEqual({
-      branch: 'main',
-      dirty: true,
-      ahead: 2,
-      behind: 1,
-      diffAdded: 4,
-      diffDeleted: 1,
-      pullRequest: null,
-    });
-    expect(mocks.spawnSync).toHaveBeenCalledTimes(4);
-    expect(mocks.execFile).toHaveBeenCalledTimes(1);
+    expect(source.status).toHaveBeenCalledTimes(1);
 
-    await Promise.resolve();
-
-    vi.setSystemTime(new Date('2026-04-24T00:00:06Z'));
     cache.getStatus();
-    expect(mocks.spawnSync).toHaveBeenCalledTimes(5);
-    expect(mocks.execFile).toHaveBeenCalledTimes(1);
+    await drain();
+    expect(source.status).toHaveBeenCalledTimes(1);
 
-    vi.setSystemTime(new Date('2026-04-24T00:00:16Z'));
+    vi.setSystemTime(new Date('2026-04-24T00:00:30Z'));
     cache.getStatus();
-    expect(mocks.spawnSync).toHaveBeenCalledTimes(8);
-    expect(mocks.execFile).toHaveBeenCalledTimes(1);
+    await drain();
+    expect(source.status).toHaveBeenCalledTimes(2);
+    cache.dispose();
   });
 
-  it('reads uncommitted diff line counts and current pull request metadata', async () => {
+  it('attaches the current pull request and keeps the status when the lookup fails', async () => {
     const onChange = vi.fn();
-    mocks.execFile.mockImplementation(
-      (
-        _cmd: string,
-        _args: string[],
-        _options: unknown,
-        callback: (error: Error | null, stdout: string, stderr: string) => void,
-      ) => {
-        callback(null, '{"number":12,"url":"https://github.com/acme/repo/pull/12"}\n', '');
-      },
+    const found = fakeSource(
+      async () => summary({ branch: 'feature/footer' }),
+      async () => ({ number: 12, url: 'https://github.com/acme/repo/pull/12', state: 'open' }),
     );
-    mocks.spawnSync.mockImplementation((_cmd: string, args: string[]) => {
-      if (args.includes('rev-parse')) {
-        return { status: 0, stdout: 'true\n' };
-      }
-      if (args.includes('branch')) {
-        return { status: 0, stdout: 'feature/footer\n' };
-      }
-      if (args.includes('status')) {
-        return {
-          status: 0,
-          stdout: '## feature/footer...origin/feature/footer\n M src/app.ts\n',
-        };
-      }
-      if (args.includes('diff')) {
-        return {
-          status: 0,
-          stdout: '10\t3\tsrc/app.ts\n-\t-\timage.png\n0\t5\tdeleted.ts\n',
-        };
-      }
-      return { status: 1, stdout: '' };
-    });
+    const cache = createGitStatusCache(found, { onChange });
+    cache.getStatus();
+    await drain();
+    expect(cache.getStatus()?.pullRequest).toEqual({ number: 12, url: 'https://github.com/acme/repo/pull/12' });
+    expect(onChange).toHaveBeenCalled();
+    cache.dispose();
 
-    const cache = createGitStatusCache('/tmp/repo', { onChange });
-    expect(cache.getStatus()).toEqual({
-      branch: 'feature/footer',
-      dirty: true,
-      ahead: 0,
-      behind: 0,
-      diffAdded: 10,
-      diffDeleted: 8,
-      pullRequest: null,
-    });
-
-    await Promise.resolve();
-
-    expect(onChange).toHaveBeenCalledTimes(1);
-    expect(cache.getStatus()).toEqual({
-      branch: 'feature/footer',
-      dirty: true,
-      ahead: 0,
-      behind: 0,
-      diffAdded: 10,
-      diffDeleted: 8,
-      pullRequest: {
-        number: 12,
-        url: 'https://github.com/acme/repo/pull/12',
-      },
-    });
+    const failing = fakeSource(async () => summary(), () => Promise.reject(new Error('gh failed')));
+    const kept = createGitStatusCache(failing);
+    kept.getStatus();
+    await drain();
+    expect(kept.getStatus()).toMatchObject({ branch: 'main', pullRequest: null });
+    kept.dispose();
   });
 
-  it('keeps footer git status working when gh pull-request lookup throws synchronously', async () => {
-    const onChange = vi.fn();
-    mocks.execFile.mockImplementation(() => {
-      const error = Object.assign(new Error('spawn ENOTDIR'), { code: 'ENOTDIR' });
-      throw error;
-    });
-    mocks.spawnSync.mockImplementation((_cmd: string, args: string[]) => {
-      if (args.includes('rev-parse')) {
-        return { status: 0, stdout: 'true\n' };
-      }
-      if (args.includes('branch')) {
-        return { status: 0, stdout: 'main\n' };
-      }
-      if (args.includes('status')) {
-        return {
-          status: 0,
-          stdout: '## main...origin/main\n M src/app.ts\n',
-        };
-      }
-      if (args.includes('diff')) {
-        return { status: 0, stdout: '2\t1\tsrc/app.ts\n' };
-      }
-      return { status: 1, stdout: '' };
-    });
+  it('polls only the local HEAD found through the resolved git path', async () => {
+    const cache = createGitStatusCache(fakeSource(async () => summary()));
+    cache.getStatus();
+    await drain();
 
-    const cache = createGitStatusCache('/tmp/repo', { onChange });
-
-    expect(cache.getStatus()).toEqual({
-      branch: 'main',
-      dirty: true,
-      ahead: 0,
-      behind: 0,
-      diffAdded: 2,
-      diffDeleted: 1,
-      pullRequest: null,
-    });
-
-    await Promise.resolve();
-
-    expect(onChange).not.toHaveBeenCalled();
-    expect(cache.getStatus()).toEqual({
-      branch: 'main',
-      dirty: true,
-      ahead: 0,
-      behind: 0,
-      diffAdded: 2,
-      diffDeleted: 1,
-      pullRequest: null,
-    });
+    expect(mocks.resolveCommandPath).toHaveBeenCalledWith('git', '/tmp/repo');
+    expect(mocks.execFile).toHaveBeenCalledWith(
+      '/usr/bin/git',
+      ['-C', '/tmp/repo', 'rev-parse', '--absolute-git-dir'],
+      expect.anything(),
+      expect.any(Function),
+    );
+    expect(mocks.watchers).toHaveLength(1);
+    expect(mocks.watchers[0]?.options).toEqual(
+      expect.objectContaining({ usePolling: true, interval: 2_000, ignoreInitial: true }),
+    );
+    expect(mocks.watchers[0]?.add).toHaveBeenCalledWith(join('C:/repo/.git', 'HEAD'));
+    cache.dispose();
+    expect(mocks.watchers[0]?.close).toHaveBeenCalledTimes(1);
   });
 
-  it('returns null when the working directory is not a git repo and formats badges', () => {
-    mocks.spawnSync.mockReturnValue({ status: 1, stdout: '' });
-    expect(createGitStatusCache('/tmp/not-a-repo').getStatus()).toBeNull();
+  it('never touches the local machine for a remote source', async () => {
+    const cache = createGitStatusCache({ ...fakeSource(async () => summary()), localWorkDir: undefined });
+    cache.getStatus();
+    await drain();
+    expect(cache.getStatus()?.branch).toBe('main');
+    expect(mocks.execFile).not.toHaveBeenCalled();
+    expect(mocks.watchers).toHaveLength(0);
+    cache.dispose();
+  });
+
+  it('returns null outside a git repo and on a detached HEAD', async () => {
+    const notRepo = fakeSource(async () => null);
+    const outside = createGitStatusCache(notRepo);
+    outside.getStatus();
+    await drain();
+    expect(outside.getStatus()).toBeNull();
+    outside.dispose();
+
+    const detachedSource = fakeSource(async () => summary({ branch: '' }));
+    const detached = createGitStatusCache(detachedSource);
+    detached.getStatus();
+    await drain();
+    expect(detached.getStatus()).toBeNull();
+    expect(detachedSource.pullRequest).not.toHaveBeenCalled();
+    detached.dispose();
+  });
+
+  it('formats badges', () => {
     expect(
       formatGitBadge({
         branch: 'main',
@@ -225,6 +210,74 @@ describe('git status cache', () => {
         pullRequest: null,
       }),
     ).toBe('main [±]');
+  });
+
+  it('refreshes when HEAD changes and when refresh() is called inside the TTL', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-24T00:00:00Z'));
+    const source = fakeSource(async () => summary());
+    const cache = createGitStatusCache(source);
+    cache.getStatus();
+    await drain();
+    expect(source.status).toHaveBeenCalledTimes(1);
+
+    mocks.watchers[0]?.emit('change');
+    await drain();
+    expect(source.status).toHaveBeenCalledTimes(2);
+
+    cache.refresh();
+    await drain();
+    expect(source.status).toHaveBeenCalledTimes(3);
+    expect(mocks.execFile).toHaveBeenCalledTimes(1);
+    cache.dispose();
+  });
+
+  it('keeps the last good status when a later read fails', async () => {
+    let fail = false;
+    const source = fakeSource(async () => {
+      if (fail) throw new Error('environment disconnected');
+      return summary({ dirty: true, additions: 2, deletions: 1 });
+    });
+    const cache = createGitStatusCache(source);
+    cache.getStatus();
+    await drain();
+
+    fail = true;
+    cache.refresh();
+    await drain();
+
+    expect(source.status).toHaveBeenCalledTimes(2);
+    expect(cache.getStatus()).toEqual({
+      branch: 'main',
+      dirty: true,
+      ahead: 0,
+      behind: 0,
+      diffAdded: 2,
+      diffDeleted: 1,
+      pullRequest: null,
+    });
+    cache.dispose();
+  });
+
+  it('coalesces a forced refresh that arrives while one is in flight', async () => {
+    const releases: Array<(value: GitStatusSummary) => void> = [];
+    const source = fakeSource(() => new Promise((resolve) => releases.push(resolve)));
+    const cache = createGitStatusCache(source);
+    cache.getStatus();
+    await drain();
+    expect(source.status).toHaveBeenCalledTimes(1);
+
+    cache.refresh();
+    cache.refresh();
+    releases[0]?.(summary());
+    await drain();
+    expect(source.status).toHaveBeenCalledTimes(2);
+
+    releases[1]?.(summary({ branch: 'topic' }));
+    await drain();
+    expect(cache.getStatus()?.branch).toBe('topic');
+    expect(source.status).toHaveBeenCalledTimes(2);
+    cache.dispose();
   });
 
   it('formats pull request badges as terminal hyperlinks when requested', () => {

@@ -6,23 +6,18 @@
  * a provider, or inspect what is configured without launching the TUI.
  *
  * `add` writes the same `source = { kind: 'apiJson', url, apiKey }` blob the
- * TUI does; the next launch's `refreshAllProviderModels`
- * (apps/kimi-code/src/tui/utils/refresh-providers.ts) groups by URL, retries
- * available API-key candidates, and re-fetches the model list, so periodic
- * refresh is automatic.
+ * TUI does; the next launch's provider-model refresh
+ * (`KimiHarness.refreshProviderModels`, backed by the engine's discovery
+ * service) groups by URL, retries available API-key candidates, and
+ * re-fetches the model list, so periodic refresh is automatic.
  */
 
-import {
-  applyCustomRegistryProvider,
-  CustomRegistryApiError,
-  fetchCustomRegistry,
-  type CustomRegistrySource,
-  type ManagedKimiConfigShape,
-} from '@moonshot-ai/kimi-code-oauth';
 import {
   applyCatalogProvider,
   catalogProviderModels,
   CatalogFetchError,
+  RegistryImportError,
+  type ImportCustomRegistryResult,
   createKimiHarness,
   DEFAULT_CATALOG_URL,
   resolveCatalogImport,
@@ -33,7 +28,7 @@ import {
 } from '@moonshot-ai/kimi-code-sdk';
 import type { Command } from 'commander';
 
-import { createKimiCodeHostIdentity, createKimiCodeUserAgent } from '#/cli/version';
+import { createKimiCodeHostIdentity, createKimiCodeUserAgent } from '#/cli/host-identity';
 import { fetchCatalogOrBuiltIn } from '#/utils/catalog-fetch';
 
 interface WritableLike {
@@ -75,12 +70,6 @@ export async function handleProviderAdd(
   opts: AddOptions,
 ): Promise<void> {
   const apiKey = resolveApiKey(opts.apiKey, deps.env);
-  if (apiKey === undefined) {
-    deps.stderr.write(
-      'Missing API key. Pass --api-key <key> or set KIMI_REGISTRY_API_KEY.\n',
-    );
-    deps.exit(1);
-  }
 
   const trimmedUrl = url.trim();
   if (trimmedUrl.length === 0) {
@@ -88,62 +77,44 @@ export async function handleProviderAdd(
     deps.exit(1);
   }
 
-  const source: CustomRegistrySource = {
-    kind: 'apiJson',
-    url: trimmedUrl,
-    apiKey,
-  };
-
   const harness = deps.getHarness();
   await harness.ensureConfigFile();
 
-  let entries: Awaited<ReturnType<typeof fetchCustomRegistry>>;
+  let result: ImportCustomRegistryResult;
   try {
-    entries = await fetchCustomRegistry(source, { userAgent: createKimiCodeUserAgent() });
+    result = await harness.importCustomRegistry({
+      url: trimmedUrl,
+      apiKey,
+      setDefaultWhenUnset: false,
+    });
   } catch (error) {
-    const suffix = error instanceof CustomRegistryApiError ? ` (HTTP ${String(error.status)})` : '';
+    if (!(error instanceof RegistryImportError) || error.phase === 'apply') throw error;
+    if (error.phase === 'empty') {
+      deps.stderr.write(`Registry at ${trimmedUrl} contained no usable providers.\n`);
+      deps.exit(1);
+    }
+    const suffix = error.status === undefined ? '' : ` (HTTP ${String(error.status)})`;
     deps.stderr.write(`Failed to fetch registry${suffix}: ${errorMessage(error)}\n`);
+    if (apiKey === undefined && (error.status === 401 || error.status === 403)) {
+      deps.stderr.write(
+        'This registry requires authentication — pass --api-key <key> or set KIMI_REGISTRY_API_KEY.\n',
+      );
+    }
     deps.exit(1);
   }
 
-  const entryList = Object.values(entries);
-  if (entryList.length === 0) {
-    deps.stderr.write(`Registry at ${trimmedUrl} contained no usable providers.\n`);
-    deps.exit(1);
-  }
-
-  // `harness.removeProvider` reloads the config from disk on each call (see
-  // `core-impl.ts removeKimiProvider`), so calling it inside the apply loop
-  // would discard providers we already applied in memory but have not yet
-  // persisted. Drop every stale id up front in a single batch instead, then
-  // apply against the resulting fresh config.
-  let config = await harness.getConfig();
-  const staleIds = entryList
-    .filter((entry) => config.providers[entry.id] !== undefined)
-    .map((entry) => entry.id);
-  for (const id of staleIds) {
-    config = await harness.removeProvider(id);
-  }
-
-  const addedProviderIds: string[] = [];
-  let modelCount = 0;
-  for (const entry of entryList) {
-    applyCustomRegistryProvider(asManaged(config), entry, source);
-    addedProviderIds.push(entry.id);
-    modelCount += Object.keys(entry.models).length;
-  }
-
-  await harness.setConfig({
-    providers: config.providers,
-    models: config.models,
-  });
-
+  const count = result.providers.length;
   deps.stdout.write(
-    `Imported ${String(addedProviderIds.length)} provider${addedProviderIds.length === 1 ? '' : 's'} ` +
-      `(${String(modelCount)} model${modelCount === 1 ? '' : 's'}) from ${trimmedUrl}:\n`,
+    `Imported ${String(count)} provider${count === 1 ? '' : 's'} ` +
+      `(${String(result.modelsImported)} model${result.modelsImported === 1 ? '' : 's'}) from ${trimmedUrl}:\n`,
   );
-  for (const id of addedProviderIds) {
-    deps.stdout.write(`  - ${id}\n`);
+  for (const provider of result.providers) {
+    deps.stdout.write(`  - ${provider.id}\n`);
+  }
+  for (const [id, envName] of Object.entries(result.credentialEnv)) {
+    deps.stdout.write(
+      `provider "${id}" declares credential env var "${envName}" — set api_key_env in config.toml to use it\n`,
+    );
   }
 }
 
@@ -406,7 +377,7 @@ export async function handleCatalogAdd(
 
   // Always restore `[thinking]` from what was there before — including
   // `undefined`. Persisting `enabled: false` when the user never set it would
-  // make `resolveThinkingEffort` (agent-core/src/agent/config/thinking.ts) treat
+  // make `resolveThinkingEffort` (agent-core-v2/src/kosong/model/thinking.ts) treat
   // it as an explicit "off" request and silently disable thinking, even for
   // thinking-capable models.
   config.thinking = previousThinking;
@@ -457,19 +428,27 @@ export function registerProviderCommand(parent: Command, deps?: Partial<Provider
   // anything that escapes (e.g. a config write rejected because config.toml
   // is invalid) must end as a one-line error + exit 1, not an unhandled
   // rejection dumping a stack trace.
-  const runAction = async (resolved: ProviderDeps, run: () => Promise<void>): Promise<void> => {
+  const runAction = async (
+    resolved: ResolvedProviderDeps,
+    run: () => Promise<void>,
+  ): Promise<void> => {
     try {
       await run();
     } catch (error) {
       resolved.stderr.write(`${errorMessage(error)}\n`);
       resolved.exit(1);
+    } finally {
+      await resolved.close();
     }
   };
 
   provider
     .command('add <url>')
     .description('Import every provider listed in a custom registry (api.json).')
-    .option('--api-key <key>', 'Registry API key. Falls back to KIMI_REGISTRY_API_KEY.')
+    .option(
+      '--api-key <key>',
+      'Registry API key. Falls back to KIMI_REGISTRY_API_KEY; omit both for public registries.',
+    )
     .action(async (url: string, options: { apiKey?: string }) => {
       const resolved = resolveDeps(deps);
       await runAction(resolved, () => handleProviderAdd(resolved, url, { apiKey: options.apiKey }));
@@ -546,7 +525,9 @@ export function registerProviderCommand(parent: Command, deps?: Partial<Provider
     );
 }
 
-function resolveDeps(overrides: Partial<ProviderDeps> = {}): ProviderDeps {
+type ResolvedProviderDeps = ProviderDeps & { readonly close: () => Promise<void> };
+
+function resolveDeps(overrides: Partial<ProviderDeps> = {}): ResolvedProviderDeps {
   let harness: KimiHarness | undefined;
   const identity = createKimiCodeHostIdentity();
   return {
@@ -560,6 +541,11 @@ function resolveDeps(overrides: Partial<ProviderDeps> = {}): ProviderDeps {
     stderr: overrides.stderr ?? process.stderr,
     env: overrides.env ?? process.env,
     exit: overrides.exit ?? ((code: number) => process.exit(code)),
+    // The v2 harness boots an engine whose watchers hold the event loop open;
+    // close it so a one-shot command can exit. No-op for injected harnesses.
+    close: async () => {
+      await harness?.close();
+    },
   };
 }
 
@@ -568,10 +554,6 @@ function resolveApiKey(flag: string | undefined, env: NodeJS.ProcessEnv): string
   const fromEnv = env['KIMI_REGISTRY_API_KEY'];
   if (typeof fromEnv === 'string' && fromEnv.length > 0) return fromEnv;
   return undefined;
-}
-
-function asManaged(config: KimiConfig): ManagedKimiConfigShape {
-  return config as unknown as ManagedKimiConfigShape;
 }
 
 function providerSourceLabel(provider: KimiConfig['providers'][string]): string {

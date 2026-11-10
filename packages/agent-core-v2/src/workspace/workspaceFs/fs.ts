@@ -1,15 +1,3 @@
-/**
- * `workspaceFs` domain — wire-shaped filesystem operations.
- *
- * Defines the `IWorkspaceFsService` contract — content search, content
- * grep, and git status/diff — together with the zod DTO schemas the wire
- * transports validate against. It orchestrates the os
- * `IHostFileSystem` (file IO, resolved against the workspace root) plus the
- * handler-shared `ISessionProcessRunner` (for `rg`). Workspace-scoped — one
- * instance per handler, pinned to the handler root (chdir is gone, so the
- * root never changes).
- */
-
 import { z } from 'zod';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -20,6 +8,13 @@ import {
   type FsDiffResponse,
   type FsGitStatusRequest,
   type FsGitStatusResponse,
+  type FsGitStatusBatchRequest,
+  type FsGitStatusBatchResponse,
+  type FsBatchError,
+  type FsPullRequest,
+  type FsPullRequestRequest,
+  type FsPullRequestBatchRequest,
+  type FsPullRequestBatchResponse,
 } from '#/app/git/git';
 
 export {
@@ -27,8 +22,26 @@ export {
   fsDiffResponseSchema,
   fsGitStatusRequestSchema,
   fsGitStatusResponseSchema,
+  fsGitStatusBatchRequestSchema,
+  fsGitStatusBatchResponseSchema,
+  fsPullRequestRequestSchema,
+  fsPullRequestSchema,
+  fsPullRequestBatchRequestSchema,
+  fsPullRequestBatchResponseSchema,
 } from '#/app/git/git';
-export type { FsDiffRequest, FsDiffResponse, FsGitStatusRequest, FsGitStatusResponse };
+export type {
+  FsDiffRequest,
+  FsDiffResponse,
+  FsGitStatusRequest,
+  FsGitStatusResponse,
+  FsGitStatusBatchRequest,
+  FsGitStatusBatchResponse,
+  FsBatchError,
+  FsPullRequest,
+  FsPullRequestRequest,
+  FsPullRequestBatchRequest,
+  FsPullRequestBatchResponse,
+};
 
 export const fsKindSchema = z.enum(['file', 'directory', 'symlink']);
 export type FsKind = z.infer<typeof fsKindSchema>;
@@ -43,6 +56,7 @@ export const fsEntrySchema = z.object({
   mime: z.string().optional(),
   language_id: z.string().optional(),
   is_binary: z.boolean().optional(),
+  is_directory: z.boolean().optional(),
   is_symlink_to: z.string().optional(),
   git_status: fsGitStatusSchema.optional(),
   child_count: z.number().int().nonnegative().optional(),
@@ -89,6 +103,8 @@ export const fsListRequestSchema = z.object({
   show_hidden: z.boolean().default(false),
   follow_gitignore: z.boolean().default(true),
   exclude_globs: z.array(z.string()).optional(),
+  allow_ignored_globs: z.array(z.string()).optional(),
+  allow_external_symlinks: z.boolean().optional(),
   sort: fsListSortSchema.default('type_first'),
   include_git_status: z.boolean().default(false),
 });
@@ -110,6 +126,7 @@ export const fsReadRequestSchema = z.object({
   offset: z.number().int().nonnegative().default(0),
   length: z.number().int().min(1).max(10_485_760).default(1_048_576),
   encoding: fsReadEncodingRequestSchema.default('auto'),
+  allow_external_symlinks: z.boolean().optional(),
 });
 export type FsReadRequest = z.infer<typeof fsReadRequestSchema>;
 
@@ -194,6 +211,31 @@ export const fsSearchResponseSchema = z.object({
 });
 export type FsSearchResponse = z.infer<typeof fsSearchResponseSchema>;
 
+export const fsSuggestItemSchema = z.object({
+  path: z.string(),
+  name: z.string(),
+  kind: fsKindSchema,
+  score: z.number().min(0).max(1),
+  match_positions: z.array(z.number().int().nonnegative()),
+});
+export type FsSuggestItem = z.infer<typeof fsSuggestItemSchema>;
+
+export const fsSuggestRequestSchema = z.object({
+  query: z.string(),
+  limit: z.number().int().min(1).max(200).default(50),
+  follow_gitignore: z.boolean().default(true),
+  show_hidden: z.boolean().default(false),
+  include_globs: z.array(z.string()).optional(),
+  exclude_globs: z.array(z.string()).optional(),
+});
+export type FsSuggestRequest = z.infer<typeof fsSuggestRequestSchema>;
+
+export const fsSuggestResponseSchema = z.object({
+  items: z.array(fsSuggestItemSchema),
+  truncated: z.boolean(),
+});
+export type FsSuggestResponse = z.infer<typeof fsSuggestResponseSchema>;
+
 export const fsGrepRequestSchema = z.object({
   pattern: z.string().min(1),
   regex: z.boolean().default(false),
@@ -241,11 +283,15 @@ export interface IWorkspaceFsService {
   statMany(req: FsStatManyRequest): Promise<FsStatManyResponse>;
   mkdir(req: FsMkdirRequest): Promise<FsMkdirResponse>;
   search(req: FsSearchRequest): Promise<FsSearchResponse>;
+  suggest(req: FsSuggestRequest): Promise<FsSuggestResponse>;
   grep(req: FsGrepRequest): Promise<FsGrepResponse>;
   gitStatus(req: FsGitStatusRequest): Promise<FsGitStatusResponse>;
+  gitStatusBatch(req: FsGitStatusBatchRequest): Promise<FsGitStatusBatchResponse>;
+  pullRequest(req: FsPullRequestRequest): Promise<FsPullRequest | null>;
+  pullRequestBatch(req: FsPullRequestBatchRequest): Promise<FsPullRequestBatchResponse>;
   diff(req: FsDiffRequest): Promise<FsDiffResponse>;
   resolvePath(relPath: string): Promise<FsPathResolved>;
-  resolveDownload(relPath: string): Promise<FsDownloadResolved>;
+  resolveDownload(relPath: string, allowExternalSymlinks?: boolean): Promise<FsDownloadResolved>;
 }
 
 export const IWorkspaceFsService: ServiceIdentifier<IWorkspaceFsService> =

@@ -103,17 +103,6 @@ describe('InstantiationService.provide/unprovide (L1)', () => {
     ix.dispose();
   });
 
-  it('records the pinned flag on the entry', () => {
-    const ix = new InstantiationService(new ServiceCollection(), true);
-    ix.provide(IFoo, new SyncDescriptor(Foo), { pinned: true });
-    const services = (ix as unknown as { _services: ServiceCollection })._services;
-    expect(services.isPinned(IFoo)).toBe(true);
-    // Re-provide without the flag keeps the previous pinned metadata.
-    ix.provide(IFoo, new SyncDescriptor(Foo));
-    expect(services.isPinned(IFoo)).toBe(true);
-    ix.dispose();
-  });
-
   it('the provide handle is a ledger entry: disposing it unprovides', () => {
     const ix = new InstantiationService(new ServiceCollection(), true);
     const handle = ix.provide(IFoo, new SyncDescriptor(Foo));

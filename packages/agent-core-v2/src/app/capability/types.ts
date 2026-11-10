@@ -1,14 +1,3 @@
-/**
- * `capability` domain types — built-in product capabilities (kimi-cu,
- * kimi-webbridge) that bundle a binary runtime + agent wiring + manual
- * user steps. A capability is NOT a plugin: plugins are declarative
- * contributions to a session, while capabilities own imperative install
- * orchestration and a layered readiness state machine for product-specific
- * runtimes (macOS app + launchd service + TCC permissions; local HTTP
- * daemon + browser extension). Steps marked `optional` never block
- * `ready`; `install.note` is a machine key clients localize.
- */
-
 export type CapabilityId = 'kimi-cu' | 'kimi-webbridge';
 
 export type CapabilityReadiness = 'not_installed' | 'partial' | 'ready' | 'unsupported';
@@ -27,6 +16,12 @@ export interface CapabilityInstallProgress {
   readonly step?: string;
   readonly percent?: number;
   readonly error?: string;
+  readonly note?: string;
+  readonly confirmationRequired?: 'stop-processes';
+}
+
+export interface CapabilityInstallOptions {
+  readonly stopRunningProcesses?: boolean;
 }
 
 export interface CapabilityDetectResult {
@@ -36,6 +31,7 @@ export interface CapabilityDetectResult {
 
 export interface CapabilityStatus {
   readonly id: CapabilityId;
+  readonly pluginId?: string;
   readonly displayName: string;
   readonly description: string;
   readonly supported: boolean;
@@ -47,11 +43,25 @@ export interface CapabilityStatus {
 
 export type CapabilityInstallReporter = (step: string, percent?: number) => void;
 
+export interface CapabilityDescriptor {
+  readonly id: CapabilityId;
+  readonly pluginId?: string;
+  readonly displayName: string;
+  readonly description: string;
+  readonly supported: boolean;
+}
+
+export interface CapabilityInstallChange {
+  readonly id: CapabilityId;
+  readonly install: CapabilityInstallProgress;
+}
+
 export interface CapabilityEntry {
   readonly id: CapabilityId;
+  readonly pluginId?: string;
   readonly displayName: string;
   readonly description: string;
   readonly supported: boolean;
   detect(): Promise<CapabilityDetectResult>;
-  install(report: CapabilityInstallReporter): Promise<void>;
+  install(report: CapabilityInstallReporter, options?: CapabilityInstallOptions): Promise<string | undefined>;
 }

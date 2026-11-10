@@ -43,11 +43,11 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { MiniDb } from '../src/index.js';
 import { ClusterDb, shardDirName } from '../src/cluster/index.js';
 import { shardFor } from '../src/cluster/utils.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const __dirname = import.meta.dirname;
 const WORKER = path.join(__dirname, 'reader-worker.ts');
 
 const SIZES = (process.env.READER_BENCH_KEYS ?? '10000,50000').split(',').map(Number);
@@ -83,7 +83,7 @@ function spawnWorker(args: string[]): { child: ReturnType<typeof spawn>; done: P
         reject(new Error(`worker failed (code=${code}) args=${args.join(' ')}\n${stderr}`));
         return;
       }
-      const report = JSON.parse(lines[lines.length - 1]!) as Report;
+      const report = JSON.parse(lines.at(-1)!) as Report;
       if (!report.ok) reject(new Error(`worker error args=${args.join(' ')}: ${report.error}`));
       else resolve(report);
     });
@@ -101,7 +101,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 function percentile(sorted: number[], p: number): number {
-  if (!sorted.length) return NaN;
+  if (sorted.length === 0) return NaN;
   const idx = Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1);
   return sorted[Math.max(0, idx)]!;
 }
@@ -119,6 +119,7 @@ function preloadKeys(n: number): string[] {
 interface Row {
   keys: number;
   buildMs: number;
+  fullReopenMs: number;
   reads: number;
   qps: number;
   p50: number;
@@ -139,6 +140,20 @@ async function benchSize(n: number): Promise<Row> {
     const t0 = performance.now();
     await runWorker(['preload', dir, String(SHARDS), String(HOT_SHARD), String(n), String(VALUE_BYTES)]);
     const buildMs = performance.now() - t0;
+
+    // Full-reopen cost of the built shard: what a reader pays when incremental
+    // catch-up cannot serve (first attach, fingerprint mismatch, forced
+    // resync). Median of three cold read-only opens of the hot shard.
+    const shardDir = path.join(dir, shardDirName(HOT_SHARD, SHARDS));
+    const reopens: number[] = [];
+    for (let r = 0; r < 3; r++) {
+      const t = performance.now();
+      const shard = await MiniDb.open({ dir: shardDir, valueCodec: 'json', readOnly: true });
+      reopens.push(performance.now() - t);
+      await shard.close();
+    }
+    reopens.sort((a, b) => a - b);
+    const fullReopenMs = reopens[1]!;
 
     db = await ClusterDb.open({ dir, readOnly: true });
     // Warm the reader cache (this first open pays the full replay once).
@@ -189,6 +204,7 @@ async function benchSize(n: number): Promise<Row> {
     return {
       keys: n,
       buildMs,
+      fullReopenMs,
       reads: lat.length,
       qps: (lat.length / windowMs) * 1000,
       p50: percentile(lat, 50),
@@ -215,23 +231,23 @@ async function main(): Promise<void> {
     const row = await benchSize(n);
     rows.push(row);
     console.log(
-      `built in ${fmt(row.buildMs)}ms; reads=${fmt(row.reads)} (${fmt(row.qps)}/s), ` +
+      `built in ${fmt(row.buildMs)}ms; fullReopen=${row.fullReopenMs.toFixed(1)}ms; reads=${fmt(row.reads)} (${fmt(row.qps)}/s), ` +
         `p50=${row.p50.toFixed(1)}ms p95=${row.p95.toFixed(1)}ms p99=${row.p99.toFixed(1)}ms, ` +
         `writerOps=${fmt(row.writerOps)}, fullReopens=${fmt(row.readerReopens)}, ` +
         `incrementalCatchups=${fmt(row.incrementalCatchups)}, catchupFrames=${fmt(row.catchupFramesApplied)}`,
     );
   }
 
-  console.log(`\n  ${'keys'.padStart(8)} | ${'build'.padStart(8)} | ${'reads'.padStart(7)} | ${'qps'.padStart(8)} | ${'p50 ms'.padStart(8)} | ${'p95 ms'.padStart(8)} | ${'p99 ms'.padStart(8)} | ${'reopens'.padStart(8)} | ${'catchups'.padStart(9)} | ${'frames'.padStart(9)}`);
+  console.log(`\n  ${'keys'.padStart(8)} | ${'build'.padStart(8)} | ${'reopen'.padStart(8)} | ${'reads'.padStart(7)} | ${'qps'.padStart(8)} | ${'p50 ms'.padStart(8)} | ${'p95 ms'.padStart(8)} | ${'p99 ms'.padStart(8)} | ${'reopens'.padStart(8)} | ${'catchups'.padStart(9)} | ${'frames'.padStart(9)}`);
   for (const r of rows) {
     console.log(
-      `  ${fmt(r.keys).padStart(8)} | ${fmt(r.buildMs).padStart(8)} | ${fmt(r.reads).padStart(7)} | ${fmt(r.qps).padStart(8)} | ${r.p50.toFixed(1).padStart(8)} | ${r.p95.toFixed(1).padStart(8)} | ${r.p99.toFixed(1).padStart(8)} | ${fmt(r.readerReopens).padStart(8)} | ${fmt(r.incrementalCatchups).padStart(9)} | ${fmt(r.catchupFramesApplied).padStart(9)}`,
+      `  ${fmt(r.keys).padStart(8)} | ${fmt(r.buildMs).padStart(8)} | ${r.fullReopenMs.toFixed(1).padStart(8)} | ${fmt(r.reads).padStart(7)} | ${fmt(r.qps).padStart(8)} | ${r.p50.toFixed(1).padStart(8)} | ${r.p95.toFixed(1).padStart(8)} | ${r.p99.toFixed(1).padStart(8)} | ${fmt(r.readerReopens).padStart(8)} | ${fmt(r.incrementalCatchups).padStart(9)} | ${fmt(r.catchupFramesApplied).padStart(9)}`,
     );
   }
   console.log('');
 }
 
-main().catch((e) => {
-  console.error(e);
+main().catch((error) => {
+  console.error(error);
   process.exit(1);
 });

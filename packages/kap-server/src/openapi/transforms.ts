@@ -1,15 +1,3 @@
-/**
- * `openapi` transforms — post-process the `@fastify/swagger` document so the
- * routes that swagger cannot describe from static schemas (multipart upload,
- * binary download, and the `{tail}` dispatchers) are represented accurately.
- *
- * Tailored to the route subset `server-v2` actually registers. Notably, the
- * session-action dispatcher only serves `::archive` in v2, so this module
- * projects `/sessions/{tail}` into a single `/sessions/{session_id}:archive`
- * operation — unlike v1, which clones it into fork / compact / undo. Wire
- * schemas are re-used from the local `protocol/` tree and `@moonshot-ai/agent-core-v2`; none are re-declared here.
- */
-
 import {
   fsDiffRequestSchema,
   fsDiffResponseSchema,
@@ -49,11 +37,11 @@ import {
   fsRevealResponseSchema,
 } from '../protocol/rest-fs';
 import {
-  questionDismissResultSchema,
-  questionResolveRequestSchema,
-  questionResolveResultSchema,
-} from '../protocol/rest-question';
-import { archiveSessionResponseSchema } from '../protocol/rest-session';
+  archiveSessionResponseSchema,
+  takeoverSessionResponseSchema,
+  deleteSessionResponseSchema,
+  getSessionResponseSchema,
+} from '../protocol/rest-session';
 
 const binarySchema = {
   type: 'string',
@@ -108,13 +96,6 @@ const fsActionResponseSchema = {
   ],
 } as const;
 
-const questionResponseSchema = {
-  oneOf: [
-    openApiDocumentEnvelopeJsonSchema(questionResolveResultSchema),
-    openApiDocumentEnvelopeJsonSchema(questionDismissResultSchema),
-  ],
-} as const;
-
 export function transformOpenApiDocument(
   document: Record<string, unknown>,
 ): Record<string, unknown> {
@@ -127,7 +108,6 @@ export function transformOpenApiDocument(
   patchSessionAction(paths);
   patchFsAction(paths);
   patchFsDownload(paths);
-  patchQuestionResolveOrDismiss(paths);
 
   return document;
 }
@@ -195,18 +175,40 @@ function patchSessionAction(paths: Record<string, unknown>): void {
   const operation = asRecord(pathItem?.['post']);
   if (pathItem === undefined || operation === undefined) return;
 
+  projectSessionAction(paths, pathItem, 'archive', 'runSessionArchiveAction', {
+    description: 'Session archive response',
+    content: jsonContent(openApiDocumentEnvelopeJsonSchema(archiveSessionResponseSchema)),
+  });
+  projectSessionAction(paths, pathItem, 'delete', 'runSessionDeleteAction', {
+    description: 'Session delete response',
+    content: jsonContent(openApiDocumentEnvelopeJsonSchema(deleteSessionResponseSchema)),
+  });
+  projectSessionAction(paths, pathItem, 'reload', 'runSessionReloadAction', {
+    description: 'Session reload response',
+    content: jsonContent(openApiDocumentEnvelopeJsonSchema(getSessionResponseSchema)),
+  });
+  projectSessionAction(paths, pathItem, 'takeover', 'runSessionTakeoverAction', {
+    description: 'Session lock takeover response',
+    content: jsonContent(openApiDocumentEnvelopeJsonSchema(takeoverSessionResponseSchema)),
+  });
+  delete paths[internalPath];
+}
+
+function projectSessionAction(
+  paths: Record<string, unknown>,
+  pathItem: Record<string, unknown>,
+  action: string,
+  operationId: string,
+  okResponse: Record<string, unknown>,
+): void {
   const cloned = cloneRecord(pathItem);
   replacePathParamName(cloned, 'tail', 'session_id');
   const clonedOperation = asRecord(cloned['post']);
   if (clonedOperation !== undefined) {
-    clonedOperation['operationId'] = 'runSessionArchiveAction';
-    setResponse(clonedOperation, '200', {
-      description: 'Session archive response',
-      content: jsonContent(openApiDocumentEnvelopeJsonSchema(archiveSessionResponseSchema)),
-    });
+    clonedOperation['operationId'] = operationId;
+    setResponse(clonedOperation, '200', okResponse);
   }
-  paths['/api/v1/sessions/{session_id}:archive'] = cloned;
-  delete paths[internalPath];
+  paths[`/api/v1/sessions/{session_id}:${action}`] = cloned;
 }
 
 function patchFsAction(paths: Record<string, unknown>): void {
@@ -265,24 +267,6 @@ function patchFsDownload(paths: Record<string, unknown>): void {
     headers: {
       etag: headerString(),
     },
-  });
-}
-
-function patchQuestionResolveOrDismiss(paths: Record<string, unknown>): void {
-  const operation = getOperation(paths, '/api/v1/sessions/{session_id}/questions/{tail}', 'post');
-  if (operation === undefined) return;
-
-  operation['description'] = appendDescription(
-    operation['description'],
-    'Resolve uses the question response body; `:dismiss` sends an empty body.',
-  );
-  operation['requestBody'] = {
-    required: false,
-    content: jsonContent(openApiDocumentJsonSchema(questionResolveRequestSchema)),
-  };
-  setResponse(operation, '200', {
-    description: 'Question resolved or dismissed',
-    content: jsonContent(questionResponseSchema),
   });
 }
 

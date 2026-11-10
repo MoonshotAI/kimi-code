@@ -1,17 +1,3 @@
-/**
- * `tools` domain — `WebSearchTool` implementation (the `WebSearch` tool).
- *
- * Resolves the host-injected `WebSearchProvider` from the App-scope
- * `IWebSearchProviderService` (`auth` domain) at construction — the tool only
- * activates when a provider is configured, because there is no local search
- * backend — renders the results through `ToolResultBuilder`, and classifies
- * provider errors into model-readable output.
- *
- * Registered via the module-level `registerAgentToolService(IWebSearchTool,
- * WebSearchTool)` at the bottom of this file — the same "import = register"
- * pattern used by every agent tool. Bound at Agent scope.
- */
-
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '#/tool/rule-match';
 import {
@@ -20,19 +6,16 @@ import {
   type ExecutableToolResult,
   type ToolExecution,
 } from '#/tool/toolContract';
-import { ToolResultBuilder } from '#/tool/result-builder';
+import { ToolOutputAccumulator } from '#/tool/output-accumulator';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import { IWebSearchProviderService } from '#/app/auth/webSearch/webSearch';
-import { Error2, ErrorCodes } from '#/errors';
 
 import {
   IWebSearchTool,
   WebSearchInputSchema,
   type WebSearchInput,
-  type WebSearchProvider,
 } from './web-search';
 import DESCRIPTION from './web-search.md?raw';
-
 
 export class WebSearchTool implements IWebSearchTool {
   declare readonly _serviceBrand: undefined;
@@ -40,17 +23,9 @@ export class WebSearchTool implements IWebSearchTool {
   readonly description: string = DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(WebSearchInputSchema);
 
-  private readonly provider: WebSearchProvider;
-
   constructor(
-    @IWebSearchProviderService providerService: IWebSearchProviderService,
-  ) {
-    const provider = providerService.getWebSearchProvider();
-    if (provider === undefined) {
-      throw new Error2(ErrorCodes.INTERNAL, 'WebSearchProviderService returned no provider during tool activation.');
-    }
-    this.provider = provider;
-  }
+    @IWebSearchProviderService private readonly providerService: IWebSearchProviderService,
+  ) {}
 
   resolveExecution(args: WebSearchInput): ToolExecution {
     const preview = args.query.length > 40 ? `${args.query.slice(0, 40)}…` : args.query;
@@ -68,9 +43,16 @@ export class WebSearchTool implements IWebSearchTool {
     args: WebSearchInput,
     { toolCallId, signal }: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
+    const provider = this.providerService.getWebSearchProvider();
+    if (provider === undefined) {
+      return {
+        isError: true,
+        output: 'Web search is no longer configured; the provider was removed after this session started.',
+      };
+    }
     try {
-      const results = await this.provider.search(args.query, { toolCallId, signal });
-      const builder = new ToolResultBuilder({ maxLineLength: null });
+      const results = await provider.search(args.query, { toolCallId, signal });
+      const builder = new ToolOutputAccumulator();
 
       if (results.length === 0) {
         builder.write('No search results found.');
@@ -104,7 +86,6 @@ export class WebSearchTool implements IWebSearchTool {
   }
 }
 
-
 function classifySearchError(error: unknown): string {
   const name = error instanceof Error ? error.name : '';
   const message = error instanceof Error ? error.message : String(error);
@@ -133,5 +114,5 @@ function classifySearchError(error: unknown): string {
 registerAgentToolService(IWebSearchTool, WebSearchTool, {
   name: 'WebSearch',
   domain: 'auth',
-  when: (accessor) => accessor.get(IWebSearchProviderService).getWebSearchProvider() !== undefined,
+  when: (accessor) => accessor.get(IWebSearchProviderService).hasWebSearchProvider(),
 });

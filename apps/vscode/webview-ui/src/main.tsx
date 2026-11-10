@@ -1,5 +1,6 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./App";
 
 function syncTheme() {
@@ -15,12 +16,16 @@ observer.observe(document.body, {
   attributeFilter: ["class"],
 });
 
-const container = document.getElementById("root");
+const container = document.querySelector("#root");
+
+const queryClient = new QueryClient();
 
 if (container) {
   createRoot(container).render(
     <StrictMode>
-      <App />
+      <QueryClientProvider client={queryClient}>
+        <App />
+      </QueryClientProvider>
     </StrictMode>,
   );
 }

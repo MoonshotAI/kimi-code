@@ -2,7 +2,7 @@
  * Footer/status bar — multi-line status display at the bottom of the TUI.
  *
  * Layout:
- *   Line 1: [yolo] [plan] <model> <cwd>  <git-badge>  <shortcut hints>
+ *   Line 1: [Ask When Needed] [plan] <model> <cwd>  <git-badge>  <shortcut hints>
  *   Line 2: context: N% (tokens/max)
  */
 
@@ -11,11 +11,15 @@ import { truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 import { effectiveModelAlias } from '@moonshot-ai/kimi-code-sdk';
 
-import { ALL_TIPS, type ToolbarTip } from '#/tui/constant/tips';
+import { ALL_TIPS, TRANSCRIPT_GROUPING_TIP, type ToolbarTip } from '#/tui/constant/tips';
+import { transcriptGroupingActive } from '#/tui/config';
 import { isRainbowDancing, renderDanceFooterModel } from '#/tui/easter-eggs/dance';
 import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
-import type { AppState } from '#/tui/types';
+import type { AppState, EnvironmentSlotState } from '#/tui/types';
+import { PERMISSION_MODE_DISPLAY_NAMES } from '#/tui/utils/permission-mode';
+import { sessionWorkDir } from '#/tui/utils/session-work-dir';
+import { SpinnerTicker } from '#/tui/utils/spinner-ticker';
 import {
   StatusLineCommandRunner,
   type StatusLinePayload,
@@ -26,6 +30,7 @@ import {
   formatPullRequestBadge,
   type GitStatus,
   type GitStatusCache,
+  type GitStatusSource,
 } from '#/utils/git/git-status';
 import {
   formatTokenCount,
@@ -33,9 +38,13 @@ import {
   usagePercentFromRatio,
 } from '#/utils/usage/usage-format';
 
-const DEFAULT_STATUS_LINE_ITEMS = ['mode', 'goal', 'model', 'tasks', 'cwd', 'git'] as const;
+/** What the footer's fixed ctrl+o hint offers: expand collapsed tool output, or collapse it again. */
+export type ToolOutputExpandHint = 'expand' | 'collapse';
+
+const DEFAULT_STATUS_LINE_ITEMS = ['mode', 'goal', 'model', 'tasks', 'environment', 'cwd', 'git'] as const;
 
 const MAX_CWD_SEGMENTS = 3;
+const MAX_ENVIRONMENT_REASON_WIDTH = 40;
 const GOAL_TIMER_INTERVAL_MS = 1_000;
 
 // Toolbar tips — rotates every 10s. Most tips are short and pair up (two
@@ -74,9 +83,17 @@ export function buildWeightedTips(tips: readonly ToolbarTip[]): readonly Toolbar
 }
 
 const ROTATION: readonly ToolbarTip[] = buildWeightedTips(ALL_TIPS);
+const GROUPING_ROTATION: readonly ToolbarTip[] = buildWeightedTips([
+  ...ALL_TIPS,
+  TRANSCRIPT_GROUPING_TIP,
+]);
 
 function currentTipIndex(): number {
   return Math.floor(Date.now() / TIP_ROTATE_INTERVAL_MS);
+}
+
+function showsGroupingTip(state: AppState, fullscreen: boolean): boolean {
+  return transcriptGroupingActive({ ...state.transcript, fullscreen });
 }
 
 /**
@@ -87,13 +104,17 @@ function currentTipIndex(): number {
  * current tip (which can happen at the wrap boundary), keeping long/important
  * tips on their own and avoiding "X | X".
  */
-function tipsForIndex(index: number): { primary: string; pair: string | null } {
-  const n = ROTATION.length;
+function tipsForIndex(
+  index: number,
+  groupingTip: boolean,
+): { primary: string; pair: string | null } {
+  const rotation = groupingTip ? GROUPING_ROTATION : ROTATION;
+  const n = rotation.length;
   if (n === 0) return { primary: '', pair: null };
   const offset = ((index % n) + n) % n;
-  const current = ROTATION[offset]!;
+  const current = rotation[offset]!;
   if (n === 1 || current.solo) return { primary: current.text, pair: null };
-  const next = ROTATION[(offset + 1) % n]!;
+  const next = rotation[(offset + 1) % n]!;
   if (next.solo || next.text === current.text) return { primary: current.text, pair: null };
   return { primary: current.text, pair: current.text + TIP_SEPARATOR + next.text };
 }
@@ -147,14 +168,17 @@ function modelDisplayName(state: AppState): string {
   return effective?.displayName ?? effective?.model ?? state.model;
 }
 
-function shortenCwd(path: string): string {
+function isRemoteEnvironment(environment: AppState['environment']): environment is EnvironmentSlotState {
+  return environment !== undefined && environment.environmentId !== 'local';
+}
+
+function shortenCwd(path: string, home: string | undefined): string {
   if (!path) return path;
-  const home = process.env['HOME'] ?? '';
   let work = path;
-  if (home && path === home) {
+  if (home !== undefined && home.length > 0 && path === home) {
     return '~';
   }
-  if (home && path.startsWith(home + '/')) {
+  if (home !== undefined && home.length > 0 && path.startsWith(home + '/')) {
     work = '~' + path.slice(home.length);
   }
 
@@ -188,15 +212,28 @@ export function formatFooterGitBadge(status: GitStatus, colors: ColorPalette): s
   return `${base} ${pullRequest}`;
 }
 
+/** Where the footer reads git state for a given app state; a new key replaces the cache. */
+export interface FooterGitBinding {
+  readonly key: string;
+  readonly source: GitStatusSource;
+}
+
 export class FooterComponent implements Component {
   private state: AppState;
   private readonly onRefresh: () => void;
-  private gitCache: GitStatusCache;
-  private gitCacheWorkDir: string;
+  private readonly runningFullscreen: boolean;
+  private gitBinding: ((state: AppState) => FooterGitBinding | null) | null = null;
+  private gitCache: GitStatusCache | null = null;
+  private gitCacheKey: string | null = null;
   private transientHint: string | null = null;
+  private warningHint: string | null = null;
+  private expandHintProvider: (() => ToolOutputExpandHint | null) | null = null;
   private goalSnapshotKey: string | null = null;
   private goalObservedAtMs = Date.now();
   private goalTimer: ReturnType<typeof setInterval> | null = null;
+  private readonly environmentSpinner = new SpinnerTicker(() => {
+    this.onRefresh();
+  });
   private statusLineRunner: StatusLineCommandRunner | null = null;
   /**
    * Non-terminal background-task counts split by kind so the footer can
@@ -208,25 +245,44 @@ export class FooterComponent implements Component {
   private backgroundBashTaskCount = 0;
   private backgroundAgentCount = 0;
 
-  constructor(state: AppState, onRefresh: () => void = () => {}) {
+  constructor(state: AppState, onRefresh: () => void = () => {}, runningFullscreen = false) {
     this.state = state;
     this.onRefresh = onRefresh;
-    this.gitCacheWorkDir = state.workDir;
-    this.gitCache = createGitStatusCache(state.workDir, { onChange: this.onRefresh });
+    this.runningFullscreen = runningFullscreen;
     this.syncGoalClock(state.goal);
     this.syncGoalTimer(state.goal);
+    this.syncEnvironmentSpinner(state.environment);
     this.syncStatusLineRunner(state);
   }
 
   setState(state: AppState): void {
-    if (state.workDir !== this.gitCacheWorkDir) {
-      this.gitCacheWorkDir = state.workDir;
-      this.gitCache = createGitStatusCache(state.workDir, { onChange: this.onRefresh });
+    this.syncGitCache(state);
+    if (state.environment?.status === 'ready' && this.state.environment?.status !== 'ready') {
+      this.gitCache?.refresh();
     }
     this.syncGoalClock(state.goal);
     this.syncGoalTimer(state.goal);
+    this.syncEnvironmentSpinner(state.environment);
     this.syncStatusLineRunner(state);
     this.state = state;
+  }
+
+  /**
+   * Resolves the git source for each app state. Until it is set, or while it
+   * resolves to `null`, the git slot stays empty.
+   */
+  setGitBinding(resolve: (state: AppState) => FooterGitBinding | null): void {
+    this.gitBinding = resolve;
+    this.syncGitCache(this.state);
+  }
+
+  private syncGitCache(state: AppState): void {
+    const binding = this.gitBinding?.(state) ?? null;
+    const key = binding?.key ?? null;
+    if (key === this.gitCacheKey) return;
+    this.gitCache?.dispose();
+    this.gitCacheKey = key;
+    this.gitCache = binding === null ? null : createGitStatusCache(binding.source, { onChange: this.onRefresh });
   }
 
   private syncStatusLineRunner(state: AppState): void {
@@ -259,6 +315,27 @@ export class FooterComponent implements Component {
   }
 
   /**
+   * Longer-lived warning for line 2 (e.g. the over-long `/goal` objective
+   * warning). Unlike the transient hint it has no owner/timeout: the caller
+   * sets and clears it directly. A transient hint takes precedence while
+   * present; the warning returns as soon as the transient hint clears.
+   * Pass `null` to clear.
+   */
+  setWarningHint(hint: string | null): void {
+    this.warningHint = hint;
+  }
+
+  /**
+   * Source of the fixed `ctrl+o expand` / `ctrl+o collapse` hint on line 1:
+   * `expand` while the transcript holds collapsed tool output ctrl+o can
+   * reveal, `collapse` once it is shown, `null` when there is nothing to
+   * toggle. Read on every render so it tracks the transcript exactly.
+   */
+  setExpandHintProvider(provider: () => ToolOutputExpandHint | null): void {
+    this.expandHintProvider = provider;
+  }
+
+  /**
    * Sync both background-task badges with live counts. Each non-zero
    * count produces its own bracketed badge on line 1; zeros hide them
    * independently.
@@ -266,6 +343,10 @@ export class FooterComponent implements Component {
   setBackgroundCounts(counts: { bashTasks: number; agentTasks: number }): void {
     this.backgroundBashTaskCount = Math.max(0, counts.bashTasks);
     this.backgroundAgentCount = Math.max(0, counts.agentTasks);
+  }
+
+  refreshGitStatus(): void {
+    this.gitCache?.refresh();
   }
 
   invalidate(): void {}
@@ -289,35 +370,45 @@ export class FooterComponent implements Component {
       const slots = this.buildSlots(colors);
       const configured = this.state.statusLine?.items ?? null;
       const order: readonly string[] = configured ?? DEFAULT_STATUS_LINE_ITEMS;
-      const left: string[] = [];
-      for (const slot of order) {
-        const pieces = slots[slot as keyof typeof slots];
-        if (pieces !== undefined) left.push(...pieces);
-      }
-
-      const leftLine = left.join('  ');
-      const leftWidth = visibleWidth(leftLine);
-
-      // Rotating hint tips stay on the right unless they were given an
-      // inline slot in items (rendered above at their configured position)
-      // or the user dropped 'tips' from items.
-      let tipText = '';
-      const tipsInline = order.includes('tips');
-      const showTips = !tipsInline && (configured === null || configured.includes('tips'));
-      if (showTips) {
-        const { primary, pair } = tipsForIndex(currentTipIndex());
-        const gap = 2;
-        const remaining = Math.max(0, width - leftWidth - gap);
-        if (pair && visibleWidth(pair) <= remaining) {
-          tipText = pair;
-        } else if (primary && visibleWidth(primary) <= remaining) {
-          tipText = primary;
+      const composeLeft = (withTips: boolean): string => {
+        const left: string[] = [];
+        for (const slot of order) {
+          if (!withTips && slot === 'tips') continue;
+          const pieces = slots[slot as keyof typeof slots];
+          if (pieces !== undefined) left.push(...pieces);
         }
-      }
+        return left.join('  ');
+      };
+      let leftLine = composeLeft(true);
+      let leftWidth = visibleWidth(leftLine);
 
-      if (tipText) {
-        const pad = width - leftWidth - visibleWidth(tipText);
-        line1 = leftLine + ' '.repeat(Math.max(0, pad)) + chalk.hex(colors.textMuted)(tipText);
+      // The right side holds the fixed ctrl+o hint (while the transcript has
+      // tool output to expand or collapse) and the rotating tips, unless the
+      // tips were given an inline slot in items or dropped from items. The
+      // hint never rotates and wins over a tip that no longer fits — an
+      // inline tip included: it gives way when the hint would not fit beside it.
+      const tipsInline = order.includes('tips');
+      const shortcut = this.expandShortcut();
+      if (tipsInline && shortcut !== null && leftWidth + 2 + visibleWidth(shortcut) > width) {
+        leftLine = composeLeft(false);
+        leftWidth = visibleWidth(leftLine);
+      }
+      const showTips = !tipsInline && (configured === null || configured.includes('tips'));
+      const tipCandidates: string[] = [];
+      if (showTips) {
+        const { primary, pair } = tipsForIndex(
+          currentTipIndex(),
+          showsGroupingTip(state, this.runningFullscreen),
+        );
+        if (pair) tipCandidates.push(pair);
+        if (primary) tipCandidates.push(primary);
+      }
+      const remaining = Math.max(0, width - leftWidth - 2);
+      const rightText = this.buildRightText(tipCandidates, remaining, colors);
+
+      if (rightText.length > 0) {
+        const pad = width - leftWidth - visibleWidth(rightText);
+        line1 = leftLine + ' '.repeat(Math.max(0, pad)) + rightText;
       } else if (leftWidth <= width) {
         line1 = leftLine;
       } else {
@@ -325,7 +416,7 @@ export class FooterComponent implements Component {
       }
     }
 
-    // ── Line 2: transient hint (bottom-left) + context (right) ──
+    // ── Line 2: hint (bottom-left) + context (right) ──
     const contextText = formatContextStatus(
       state.contextUsage,
       state.contextTokens,
@@ -333,12 +424,11 @@ export class FooterComponent implements Component {
     );
     const contextWidth = visibleWidth(contextText);
     let line2: string;
-    if (this.transientHint) {
+    const hint = this.transientHint ?? this.warningHint;
+    if (hint) {
       const maxHintWidth = Math.max(0, width - contextWidth - 1);
       const shownHint =
-        visibleWidth(this.transientHint) <= maxHintWidth
-          ? this.transientHint
-          : truncateToWidth(this.transientHint, maxHintWidth, '…');
+        visibleWidth(hint) <= maxHintWidth ? hint : truncateToWidth(hint, maxHintWidth, '…');
       const hintWidth = visibleWidth(shownHint);
       const pad = Math.max(0, width - hintWidth - contextWidth);
       line2 =
@@ -346,11 +436,41 @@ export class FooterComponent implements Component {
         ' '.repeat(pad) +
         chalk.hex(colors.text)(contextText);
     } else {
-      const leftPad = Math.max(0, width - contextWidth);
-      line2 = ' '.repeat(leftPad) + chalk.hex(colors.text)(contextText);
+      // A status_line.command owns line 1 outright, so the ctrl+o hint moves
+      // down here; the transient and warning hints above take precedence.
+      const shortcut = customLine !== null ? this.expandShortcut() : null;
+      const left =
+        shortcut !== null && visibleWidth(shortcut) + 1 + contextWidth <= width
+          ? chalk.hex(colors.textDim)(shortcut)
+          : '';
+      const leftPad = Math.max(0, width - visibleWidth(left) - contextWidth);
+      line2 = left + ' '.repeat(leftPad) + chalk.hex(colors.text)(contextText);
     }
 
     return [truncateToWidth(line1, width), truncateToWidth(line2, width)];
+  }
+
+  /** The fixed ctrl+o hint plus the first rotating tip that still fits beside it. */
+  /** `ctrl+o expand` / `ctrl+o collapse`, or null when there is nothing to toggle. */
+  private expandShortcut(): string | null {
+    const hint = this.expandHintProvider?.() ?? null;
+    return hint === null ? null : `ctrl+o ${hint}`;
+  }
+
+  private buildRightText(tips: readonly string[], remaining: number, colors: ColorPalette): string {
+    const shortcut = this.expandShortcut();
+    if (shortcut === null) {
+      const tip = tips.find((candidate) => visibleWidth(candidate) <= remaining);
+      return tip === undefined ? '' : chalk.hex(colors.textMuted)(tip);
+    }
+    for (const tip of tips) {
+      if (visibleWidth(`${shortcut}${TIP_SEPARATOR}${tip}`) <= remaining) {
+        return (
+          chalk.hex(colors.textDim)(shortcut) + chalk.hex(colors.textMuted)(`${TIP_SEPARATOR}${tip}`)
+        );
+      }
+    }
+    return visibleWidth(shortcut) <= remaining ? chalk.hex(colors.textDim)(shortcut) : '';
   }
 
   /**
@@ -364,22 +484,27 @@ export class FooterComponent implements Component {
       goal: [],
       model: [],
       tasks: [],
+      environment: [],
       cwd: [],
       git: [],
       tips: [],
     };
 
     {
-      const { primary, pair } = tipsForIndex(currentTipIndex());
+      const { primary, pair } = tipsForIndex(
+        currentTipIndex(),
+        showsGroupingTip(state, this.runningFullscreen),
+      );
       const tip = pair ?? primary;
       if (tip) slots['tips'] = [chalk.hex(colors.textMuted)(tip)];
     }
 
     const modes: string[] = [];
-    if (state.permissionMode === 'auto') modes.push(chalk.hex(colors.warning).bold('auto'));
-    if (state.permissionMode === 'yolo') modes.push(chalk.hex(colors.warning).bold('yolo'));
+    if (state.permissionMode === 'auto') modes.push(chalk.hex(colors.warning).bold(PERMISSION_MODE_DISPLAY_NAMES.auto));
+    if (state.permissionMode === 'yolo') modes.push(chalk.hex(colors.warning).bold(PERMISSION_MODE_DISPLAY_NAMES.yolo));
     if (state.planMode) modes.push(chalk.hex(colors.primary).bold('plan'));
     if (state.swarmMode) modes.push(chalk.hex(colors.accent).bold('swarm'));
+    if (state.towerMode) modes.push(chalk.hex(colors.accent).bold('tower'));
     if (modes.length > 0) slots['mode'] = [modes.join(' ')];
 
     const goalBadge = formatGoalBadge(state.goal, colors, this.goalWallClockMs(state.goal));
@@ -426,10 +551,51 @@ export class FooterComponent implements Component {
     }
     slots['tasks'] = taskBadges;
 
-    const cwd = shortenCwd(state.workDir);
+    // Environment slot: the local environment renders nothing; a remote binding
+    // shows its bare environment id ahead of the cwd — error-colored while
+    // disconnected, with the first connect-error line appended so the failure
+    // reason is visible at a glance. A pending environment (never connected or
+    // deliberately reaped while idle) is not a failure and renders dim like a
+    // ready one. While connecting, a braille spinner ticks ahead of the id (see
+    // syncEnvironmentSpinner for the bounded timer).
+    const environment = state.environment;
+    const remote = isRemoteEnvironment(environment);
+    if (remote) {
+      const tone =
+        environment.status === 'disconnected'
+          ? colors.error
+          : environment.status === 'ready' || environment.status === 'pending'
+            ? colors.textDim
+            : colors.warning;
+      const label = environment.environmentId;
+      const reason =
+        environment.status === 'disconnected' && environment.connectError !== undefined
+          ? environment.connectError.split('\n', 1)[0]
+          : undefined;
+      const spinner =
+        environment.status === 'connecting' ? `${this.environmentSpinner.current} ` : '';
+      slots['environment'] = [
+        chalk.hex(tone)(
+          reason === undefined
+            ? `${spinner}${label}`
+            : `${spinner}${label} (${truncateToWidth(reason, MAX_ENVIRONMENT_REASON_WIDTH, '…')})`,
+        ),
+      ];
+    }
+
+    // A remote-bound session works on the target host, so the slot shows the
+    // binding cwd rather than the frozen local workDir. The environment-info
+    // surface (getEnvironment/listEnvironments) does not carry the remote home dir,
+    // so the remote path shortens by segments only and never claims ~ — a
+    // wrong ~ would be worse than a full path.
+    const bindingCwd = remote ? environment.cwd : undefined;
+    const cwd =
+      bindingCwd !== undefined
+        ? shortenCwd(bindingCwd, undefined)
+        : shortenCwd(state.workDir, process.env['HOME']);
     if (cwd) slots['cwd'] = [chalk.hex(colors.textDim)(cwd)];
 
-    const git = this.gitCache.getStatus();
+    const git = this.gitCache?.getStatus() ?? null;
     if (git !== null) slots['git'] = [formatFooterGitBadge(git, colors)];
 
     return slots;
@@ -439,8 +605,8 @@ export class FooterComponent implements Component {
     const state = this.state;
     return {
       model: modelDisplayName(state),
-      cwd: state.workDir,
-      gitBranch: this.gitCache.getStatus()?.branch ?? null,
+      cwd: sessionWorkDir(state),
+      gitBranch: this.gitCache?.getStatus()?.branch ?? null,
       permissionMode: state.permissionMode,
       planMode: state.planMode,
       contextUsage: state.contextUsage,
@@ -474,11 +640,32 @@ export class FooterComponent implements Component {
     }
   }
 
+  /**
+   * The connecting spinner ticks on the shared braille ticker — the slot state
+   * itself only changes with the environment status. The ticker is strictly
+   * bounded to the connecting status: it starts when the slot enters
+   * connecting and stops the moment the status moves on, so no always-on
+   * ticker exists. Each frame repaints through onRefresh.
+   */
+  private syncEnvironmentSpinner(environment: AppState['environment']): void {
+    const connecting =
+      environment !== undefined &&
+      environment.environmentId !== 'local' &&
+      environment.status === 'connecting';
+    if (connecting) {
+      this.environmentSpinner.start();
+    } else {
+      this.environmentSpinner.stop();
+    }
+  }
+
   dispose(): void {
+    this.gitCache?.dispose();
     if (this.goalTimer !== null) {
       clearInterval(this.goalTimer);
       this.goalTimer = null;
     }
+    this.environmentSpinner.dispose();
   }
 
   private goalWallClockMs(goal: AppState['goal']): number | undefined {

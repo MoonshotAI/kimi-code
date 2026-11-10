@@ -1,6 +1,6 @@
 # Data locations
 
-Kimi Code CLI stores all runtime data — the config file, session history, login credentials, and diagnostic logs — under `~/.kimi-code/`. This page helps you understand where each type of data lives, what it is for, and how to clean up or relocate it when needed.
+Kimi Code CLI stores the config file, session history, login credentials, diagnostic logs, and other runtime data under `~/.kimi-code/`. This page helps you understand where each type of data lives, what it is for, and how to clean up or relocate it when needed.
 
 ## Data root directory
 
@@ -16,7 +16,7 @@ If you need to move the data directory elsewhere (for example, to isolate config
 export KIMI_CODE_HOME="$HOME/.config/kimi-code"
 ```
 
-Once set, **all** Kimi Code data — config, sessions, logs, OAuth credentials, Kimi-specific user Skills, global `AGENTS.md`, and more — lands under the new path. For the full reference on `KIMI_CODE_HOME`, see [Environment variables](./env-vars.md).
+Once set, **all** Kimi Code data lands under the new path: config, sessions, logs, OAuth credentials, Kimi-specific user Skills, global `AGENTS.md`, and more. For the full reference on `KIMI_CODE_HOME`, see [Environment variables](./env-vars.md).
 
 ::: tip Note
 
@@ -42,6 +42,8 @@ $KIMI_CODE_HOME  (default: ~/.kimi-code)
 │       └── <key>-<suffix>.json
 ├── sessions/               # Session data (see below)
 │   └── <workDirKey>/<sessionId>/
+├── locks/
+│   └── sessions/           # Cross-process occupancy locks while a client writes a session
 ├── bin/
 │   ├── rg                  # managed ripgrep binary for Grep (rg.exe on Windows)
 │   └── fd                  # managed fd binary for file references (fd.exe on Windows)
@@ -70,7 +72,7 @@ Each top-level file under the data root serves a specific purpose; most are mana
 
 ## Session data
 
-Each session's data is stored under `sessions/<workDirKey>/<sessionId>/`, and a top-level `session_index.jsonl` index is maintained (one record per line, each containing `sessionId`, `sessionDir`, and `workDir`). `workDirKey` is a bucket name derived from the working directory path, in the format `wd_<slug>_<first-12-chars-of-sha256>`.
+Each session's data is stored under `sessions/<workspaceId>/<sessionId>/`, and a top-level `session_index.jsonl` index is maintained (one record per line, each containing `sessionId`, `sessionDir`, and `workDir`). For an implicit workspace, `workspaceId` is a bucket name derived from the working directory path, in the format `wd_<slug>_<first-12-chars-of-sha256>`. For a managed workspace (a project created explicitly), `workspaceId` is the generated `wm_<uuid>`.
 
 Inside each session directory:
 
@@ -80,7 +82,7 @@ Inside each session directory:
 - **`agents/main/plans/`**: plan files written in Plan mode, named by plan id (`<id>.md`).
 - **`agents/agent-0/` etc.**: sub-Agent instance directories, each containing their own `wire.jsonl`.
 - **`logs/kimi-code.log`**: diagnostic log for this session; only present when a diagnostic event occurs.
-- **`tasks/`**: background task persistence — `tasks/<task_id>.json` stores status/pid/exit code; `tasks/<task_id>/output.log` stores output.
+- **`tasks/`**: background task persistence. `tasks/<task_id>.json` stores status/pid/exit code; `tasks/<task_id>/output.log` stores output.
 - **`cron/`**: scheduled task persistence; reloaded into the scheduler when the session is resumed with `kimi --session`. See [Scheduled tasks](../reference/tools.md#scheduled-tasks).
 
 ## Built-in tool cache

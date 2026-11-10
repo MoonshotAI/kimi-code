@@ -1,15 +1,3 @@
-/**
- * `hostFolderBrowser` domain — host-side folder picker.
- *
- * Defines the `IHostFolderBrowser` used by the program side (TUI / server) to
- * let the user browse the real local filesystem when choosing a workspace
- * folder. App-scoped.
- *
- * The wire shapes (`FsBrowseResponse` / `FsHomeResponse`) are defined here as
- * zod schemas. Domain errors (`HostFolder*Error`) carry the failing path and
- * are translated to wire error codes at the transport boundary.
- */
-
 import { z } from 'zod';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

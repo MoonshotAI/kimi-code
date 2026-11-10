@@ -1,25 +1,6 @@
-/**
- *   POST    /v1/sessions                  body: SessionCreate   data: Session
- *   GET     /v1/sessions                  query: ListSessions   data: Page<Session>
- *   GET     /v1/sessions/{id}             -                     data: Session
- *   GET     /v1/sessions/{id}/profile     -                     data: Session
- *   POST    /v1/sessions/{id}/profile     body: SessionUpdate   data: Session
- *   POST    /v1/sessions/{id}:fork        body: SessionFork     data: Session
- *   POST    /v1/sessions/{id}:btw         -                     data: StartBtwSession
- *   GET     /v1/sessions/{id}/children    query: ListSessions   data: Page<Session>
- *   POST    /v1/sessions/{id}/children    body: SessionChild    data: Session
- *   GET     /v1/sessions/{id}/status      -                     data: SessionStatus
- *   POST    /v1/sessions/{id}:compact     body: CompactSession  data: {}
- *   POST    /v1/sessions/{id}:undo        body: UndoSession     data: UndoSession
- *   POST    /v1/sessions/{id}:archive     -                     data: { archived: true }
- *   POST    /v1/sessions/{id}:restore     -                     data: Session
- */
-
 import { z } from 'zod';
 
-import { messageSchema } from './message';
 import {
-  sessionStatusResponseSchema,
   sessionWarningSchema,
   sessionWarningsResponseSchema,
   updateSessionProfileRequestSchema,
@@ -36,13 +17,11 @@ import {
 } from './session';
 
 export {
-  sessionStatusResponseSchema,
   sessionWarningSchema,
   sessionWarningsResponseSchema,
   updateSessionProfileRequestSchema,
 };
 export type {
-  SessionStatusResponse,
   SessionWarning,
   SessionWarningsResponse,
   UpdateSessionProfileRequest,
@@ -94,9 +73,6 @@ export const exportSessionRequestSchema = z
         message: `web_log must not exceed ${MAX_SESSION_EXPORT_WEB_LOG_BYTES} UTF-8 bytes`,
       })
       .optional(),
-    // Desktop hosts set this to bundle the on-disk desktop app log
-    // (`<home>/logs/kimi-code-desktop.log`) into the archive; the server reads
-    // the file itself, so no log content crosses the request.
     desktop: z.boolean().optional(),
   })
   .strict();
@@ -128,8 +104,6 @@ export const startBtwSessionResponseSchema = z.object({
 });
 export type StartBtwSessionResponse = z.infer<typeof startBtwSessionResponseSchema>;
 
-// Child lists intentionally omit exclude_empty: the /sessions/{id}/children route
-// does not filter by it, so advertising it would mislead generated clients.
 export const listSessionChildrenQuerySchema = cursorQuerySchema.and(
   z.object({
     busy: booleanQueryParam,
@@ -147,11 +121,16 @@ export type CreateSessionChildRequest = z.infer<typeof createSessionChildRequest
 export const createSessionChildResponseSchema = sessionSchema;
 export type CreateSessionChildResponse = z.infer<typeof createSessionChildResponseSchema>;
 
-// GET /sessions/{id}/goal — the session's current goal snapshot (camelCase,
-// same shape as the `goal.updated` WS event payload), or null when none is
-// active.
 export const getSessionGoalResponseSchema = goalSnapshotSchema.nullable();
 export type GetSessionGoalResponse = z.infer<typeof getSessionGoalResponseSchema>;
+
+export const editSessionGoalRequestSchema = z.object({
+  objective: z.string(),
+});
+export type EditSessionGoalRequest = z.infer<typeof editSessionGoalRequestSchema>;
+
+export const editSessionGoalResponseSchema = goalSnapshotSchema;
+export type EditSessionGoalResponse = z.infer<typeof editSessionGoalResponseSchema>;
 
 export const compactSessionRequestSchema = z.preprocess(
   (value) => value === undefined ? {} : value,
@@ -164,18 +143,14 @@ export type CompactSessionRequest = z.infer<typeof compactSessionRequestSchema>;
 export const compactSessionResponseSchema = z.object({});
 export type CompactSessionResponse = z.infer<typeof compactSessionResponseSchema>;
 
-export const undoSessionRequestSchema = z.preprocess(
-  (value) => value === undefined ? {} : value,
-  z.object({
-    count: z.number().int().positive().default(1),
-    page_size: z.number().int().min(1).max(100).optional(),
-  }),
-);
+export const undoSessionRequestSchema = z.object({
+  turn_id: z.string().min(1),
+  agent_id: z.string().min(1).optional(),
+});
 export type UndoSessionRequest = z.infer<typeof undoSessionRequestSchema>;
 
 export const undoSessionResponseSchema = z.object({
-  messages: pageResponseSchema(messageSchema),
-  status: sessionStatusResponseSchema,
+  removed_turn_ids: z.array(z.string().min(1)),
 });
 export type UndoSessionResponse = z.infer<typeof undoSessionResponseSchema>;
 
@@ -184,13 +159,18 @@ export const archiveSessionResponseSchema = z.object({
 });
 export type ArchiveSessionResponse = z.infer<typeof archiveSessionResponseSchema>;
 
+export const takeoverSessionResponseSchema = z.object({
+  taken_over: z.literal(true),
+});
+export type TakeoverSessionResponse = z.infer<typeof takeoverSessionResponseSchema>;
+
 export const restoreSessionResponseSchema = sessionSchema;
 export type RestoreSessionResponse = z.infer<typeof restoreSessionResponseSchema>;
 
-/** @deprecated kept as an alias for backward compatibility; prefer archiveSessionResponseSchema. */
-export const deleteSessionResponseSchema = archiveSessionResponseSchema;
-/** @deprecated kept as an alias for backward compatibility; prefer ArchiveSessionResponse. */
-export type DeleteSessionResponse = ArchiveSessionResponse;
+export const deleteSessionResponseSchema = z.object({
+  deleted: z.literal(true),
+});
+export type DeleteSessionResponse = z.infer<typeof deleteSessionResponseSchema>;
 
 export const sessionAbortResponseSchema = z.object({
   aborted: z.boolean(),

@@ -1,23 +1,19 @@
-/**
- * `telemetry` domain — `CloudAppender`, an `ITelemetryAppender` that
- * batches events, drops non-primitive properties, redacts PII from string
- * values, enriches events with common context, and posts them to the
- * telemetry endpoint through `CloudTransport`, which persists failed events
- * through the `storage` byte layer. Reads host facts (`clientIdentity`, env,
- * platform/arch) from `IBootstrapService`; `createCloudAppender` assembles
- * one from a `ServicesAccessor` so hosts only supply identity facts.
- * App-scoped; independent of `@moonshot-ai/kimi-telemetry`.
- */
-
 import { randomUUID } from 'node:crypto';
 import { release } from 'node:os';
+
+import {
+  kimiRegionProfile,
+  type KimiRegionResolution,
+} from '@moonshot-ai/kimi-code-oauth';
 
 import type { ServicesAccessor } from '#/_base/di/instantiation';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IRegionService } from '#/app/region/region';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
-import type { ITelemetryAppender, TelemetryContextPatch, TelemetryProperties } from './telemetry';
+import type { ITelemetryAppender, TelemetryAppenderRecord } from './telemetry';
+import type { TelemetryProperties } from './context';
 import {
   type CloudContext,
   type CloudPrimitive,
@@ -32,6 +28,7 @@ import { cleanTelemetryProperties } from './privacy';
 export interface CloudAppenderOptions {
   readonly storage: IFileSystemStorageService;
   readonly bootstrap: IBootstrapService;
+  readonly resolveRegion: () => KimiRegionResolution;
   readonly deviceId: string;
   readonly sessionId?: string;
   readonly appName: string;
@@ -65,9 +62,11 @@ export function createCloudAppender(
   accessor: ServicesAccessor,
   host: CloudAppenderHostOptions,
 ): CloudAppender {
+  const regions = accessor.get(IRegionService);
   return new CloudAppender({
     storage: accessor.get(IFileSystemStorageService),
     bootstrap: accessor.get(IBootstrapService),
+    resolveRegion: () => regions.current(),
     ...host,
   });
 }
@@ -78,6 +77,7 @@ const DEFAULT_FLUSH_INTERVAL_MS = 30_000;
 export class CloudAppender implements ITelemetryAppender {
   private readonly transport: CloudTransport;
   private readonly context: CloudContext;
+  private readonly resolveRegion: () => KimiRegionResolution;
   private readonly flushThreshold: number;
   private readonly flushIntervalMs: number;
   private deviceId: string;
@@ -88,13 +88,19 @@ export class CloudAppender implements ITelemetryAppender {
   constructor(options: CloudAppenderOptions) {
     this.deviceId = options.deviceId;
     this.sessionId = options.sessionId ?? null;
+    this.resolveRegion = options.resolveRegion;
     this.flushThreshold = options.flushThreshold ?? DEFAULT_FLUSH_THRESHOLD;
     this.flushIntervalMs = options.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS;
     this.context = buildContext(options);
+    this.refreshRegionContext();
     this.transport = new CloudTransport({
       storage: options.storage,
       deviceId: options.deviceId,
       endpoint: options.endpoint,
+      resolveEndpoint:
+        options.endpoint === undefined
+          ? () => kimiRegionProfile(this.resolveRegion().region).telemetryEndpoint
+          : undefined,
       getAccessToken: options.getAccessToken,
       fetchImpl: options.fetchImpl,
       retryBackoffsMs: options.retryBackoffsMs,
@@ -104,16 +110,18 @@ export class CloudAppender implements ITelemetryAppender {
     });
   }
 
-  track(event: string, properties?: TelemetryProperties): void {
-    const eventSessionId = properties?.['sessionId'];
+  track(record: TelemetryAppenderRecord): void {
+    this.refreshRegionContext();
+    const ambientSessionId = record.context['session_id'];
     const enriched: EnrichedCloudEvent = {
       event_id: randomUUID().replaceAll('-', ''),
       device_id: this.deviceId,
-      session_id: typeof eventSessionId === 'string' ? eventSessionId : this.sessionId,
-      event,
+      session_id:
+        typeof ambientSessionId === 'string' ? ambientSessionId : this.sessionId,
+      event: record.event,
       timestamp: Date.now() / 1000,
-      properties: cleanTelemetryProperties(sanitizeProperties(properties)),
-      context: { ...this.context },
+      properties: cleanTelemetryProperties(sanitizeProperties(record.properties)),
+      context: this.envelopeContext(record.context),
     };
     this.buffer.push(enriched);
     if (this.buffer.length >= this.flushThreshold) {
@@ -121,26 +129,31 @@ export class CloudAppender implements ITelemetryAppender {
     }
   }
 
-  setContext(patch: TelemetryContextPatch): void {
-    const deviceId = patch['deviceId'];
-    if (typeof deviceId === 'string') {
-      this.deviceId = deviceId;
+  private refreshRegionContext(): void {
+    const resolution = this.resolveRegion();
+    setPrimitive(this.context, 'region', resolution.region);
+    setPrimitive(this.context, 'region_source', resolution.source);
+  }
+
+  private envelopeContext(ambient: TelemetryProperties): CloudContext {
+    const context: CloudContext = { ...this.context };
+    const ambientModel = ambient['model'];
+    if (typeof ambientModel === 'string' && ambientModel.length > 0) {
+      context['model'] = ambientModel;
     }
-    const sessionId = patch['sessionId'];
-    if (typeof sessionId === 'string') {
-      this.sessionId = sessionId;
-    }
-    const model = patch['model'];
-    if (typeof model === 'string') {
-      setPrimitive(this.context, 'model', model);
-    }
+    return context;
   }
 
   async flush(): Promise<void> {
     if (this.buffer.length === 0) return;
     const events = this.buffer;
     this.buffer = [];
-    await this.transport.send(events);
+    try {
+      await this.transport.send(events);
+    } catch (error) {
+      this.buffer = [...events, ...this.buffer];
+      throw error;
+    }
   }
 
   async shutdown(): Promise<void> {

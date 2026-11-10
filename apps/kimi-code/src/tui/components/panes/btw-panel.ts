@@ -1,14 +1,13 @@
 import type { Component, MarkdownTheme } from '@moonshot-ai/pi-tui';
-import {
-  Markdown,
-  Text,
-  truncateToWidth,
-  visibleWidth,
-} from '@moonshot-ai/pi-tui';
+import { Text, truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 
+import { Markdown } from '../markdown/markdown';
 import { THINKING_PREVIEW_LINES } from '../../constant/rendering';
 import { currentTheme } from '../../theme';
+import type { KimiMarkdownTheme } from '../../theme/pi-tui-theme';
+import type { InlineSkillActivation } from '../../types';
+import { createMarkdownOptions } from '../../utils/markdown-options';
 
 type BtwPanelPhase = 'running' | 'done' | 'failed';
 
@@ -30,7 +29,10 @@ interface BtwBodyRender {
 export interface BtwPanelOptions {
   readonly markdownTheme: MarkdownTheme;
   readonly canUseScrollKeys: () => boolean;
-  readonly onPrompt: (prompt: string) => void;
+  readonly onPrompt: (
+    prompt: string,
+    inlineSkillActivations?: readonly InlineSkillActivation[],
+  ) => void;
   readonly terminalRows: () => number;
 }
 
@@ -44,7 +46,7 @@ export class BtwPanelComponent implements Component {
 
   constructor(private readonly options: BtwPanelOptions) {}
 
-  submit(prompt: string): void {
+  submit(prompt: string, inlineSkillActivations?: readonly InlineSkillActivation[]): void {
     const normalized = prompt.trim();
     if (normalized.length === 0 || this.isRunning()) return;
     this.followTail = true;
@@ -56,7 +58,7 @@ export class BtwPanelComponent implements Component {
       thinking: '',
       phase: 'running',
     });
-    this.options.onPrompt(normalized);
+    this.options.onPrompt(normalized, inlineSkillActivations);
   }
 
   addTransientNotice(message: string): void {
@@ -140,7 +142,7 @@ export class BtwPanelComponent implements Component {
       lines.push(...this.renderTurn(turn, width));
     }
     if (this.turns.length === 0) {
-      lines.push(chalk.hex(currentTheme.palette.textDim)('Ready for a side question...'));
+      lines.push(chalk.hex(currentTheme.palette.textDim)('Ready for a side question…'));
     }
     lines.push(...this.renderTransientNotices(width));
     return this.fitBodyLines(lines);
@@ -195,7 +197,13 @@ export class BtwPanelComponent implements Component {
     const answer = turn.answer.trim();
     const thinking = turn.thinking.trim();
     if (answer.length > 0) {
-      lines.push(...new Markdown(answer, 0, 0, this.options.markdownTheme).render(width));
+      const theme: KimiMarkdownTheme =
+        turn.phase === 'running'
+          ? { ...this.options.markdownTheme, transient: true }
+          : this.options.markdownTheme;
+      lines.push(
+        ...new Markdown(answer, 0, 0, theme, undefined, createMarkdownOptions()).render(width),
+      );
     } else if (thinking.length > 0) {
       const thinkingLines = new Text(chalk.hex(currentTheme.palette.textDim)(thinking), 0, 0).render(
         width,
@@ -206,7 +214,7 @@ export class BtwPanelComponent implements Component {
           : thinkingLines;
       lines.push(...visibleThinking);
     } else if (turn.error === undefined) {
-      lines.push(chalk.hex(currentTheme.palette.textDim)('Waiting for answer...'));
+      lines.push(chalk.hex(currentTheme.palette.textDim)('Waiting for answer…'));
     }
     if (turn.error !== undefined) {
       const error = chalk.hex(currentTheme.palette.error)(turn.error);

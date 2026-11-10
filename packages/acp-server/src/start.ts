@@ -16,9 +16,20 @@ import { Readable, Writable } from 'node:stream';
 import { ndJsonStream, type AgentConnection, type Stream } from '@agentclientprotocol/sdk';
 import {
   bootstrap,
+  drainLogCloses,
+  drainQueryStoreDisposals,
+  drainSessionIndexMirror,
+  drainSessionMetadataWrites,
+  ensureMainAgent,
   getLiveSessionById,
+  IAgentLifecycleService,
+  IAgentEnvironmentBindingService,
   IAppendLogStore,
+  IHostEnvironment,
+  IHostProcessService,
   ISessionContext,
+  ISessionIndexMirror,
+  IEnvironmentService,
   logSeed,
   resolveConfigPath,
   resolveKimiHome,
@@ -36,9 +47,7 @@ import { acpClientFromContext } from './acp-client';
 // module side effects. `IAcpConnection` is used below to bind the ACP client
 // connection.
 import { IAcpConnection } from './acp-fs';
-// Importing the `acp-terminal` barrel registers the ACP-backed Agent-scope
-// `ISessionProcessRunner` (capability-gated — see the module doc).
-import './acp-terminal';
+import { AcpEnvironmentProviderFactory } from './acp-terminal';
 import { AcpServer, type AcpServerOptions, createAcpAgentApp } from './server';
 
 export interface RunAcpServerOptions extends AcpServerOptions {
@@ -121,24 +130,51 @@ export async function runAcpServerWithStream(
 
   // Route every inbound ACP method to the `AcpServer`. The app must be
   // connected before the outbound client surface (`conn.client`) — and thus
-  // the server — exists, so handlers dereference `server` lazily. No inbound
-  // message can be dispatched before this synchronous block yields (the
-  // connection's reader only runs on later microtasks), so `server` is always
-  // assigned by the time a handler fires.
-  let server: AcpServer;
-  const app = createAcpAgentApp(() => server);
+  // the server — exists. Handlers wait for `serverReady` so requests received
+  // while the environment provider is attaching run only after construction.
+  let resolveServer!: (server: AcpServer) => void;
+  let rejectServer!: (error: unknown) => void;
+  const serverReady = new Promise<AcpServer>((resolve, reject) => {
+    resolveServer = resolve;
+    rejectServer = reject;
+  });
+  void serverReady.catch(() => {});
+  const app = createAcpAgentApp(() => serverReady);
   const conn = app.connect(stream);
   const client = acpClientFromContext(conn.client);
   // Bind the process-wide ACP client connection before any session performs
   // file IO. The `acp` `IHostFileSystem` reads it lazily via
   // `IAcpConnection.get()`.
   acpConnection.bind(client);
-  server = new AcpServer(client, klient, acpConnection, {
+  const acpEnvironmentProvider = new AcpEnvironmentProviderFactory(acpConnection, core.accessor.get(IHostEnvironment), core.accessor.get(IHostProcessService));
+  const acpProviderRegistration = await core.accessor
+    .get(IEnvironmentService)
+    .addProvider(acpEnvironmentProvider)
+    .catch((error: unknown) => {
+      rejectServer(error);
+      throw error;
+    });
+  const server = new AcpServer(client, klient, acpConnection, {
     agentInfo: opts.agentInfo,
     disableAuth: opts.disableAuth,
     terminalAuthEnv: opts.terminalAuthEnv,
     terminalAuthLegacyCommand: opts.terminalAuthLegacyCommand,
     slashCommands: opts.slashCommands,
+    bindSessionEnvironment: async (sessionId) => {
+      const handle = getLiveSessionById(core.accessor, sessionId);
+      if (handle === undefined) throw new Error(`session ${sessionId} is not live`);
+      const context = handle.accessor.get(ISessionContext);
+      const environmentId = acpEnvironmentProvider.bindSession(sessionId, context.cwd);
+      const agentContext = await ensureMainAgent(handle, { environmentId, environmentCwd: context.cwd });
+      handle.accessor
+        .get(IAgentLifecycleService)
+        .handleOf(agentContext.agentId)!
+        .accessor.get(IAgentEnvironmentBindingService)
+        .bind(environmentId, context.cwd);
+    },
+    unbindSessionEnvironment: async (sessionId) => {
+      await acpEnvironmentProvider.unbindSession(sessionId);
+    },
     // Prompt-image compression persists originals into the session's own
     // media-originals dir (same resolution as kap-server's prompt route):
     // live session scope → `ISessionContext.sessionDir`. A session that is
@@ -150,6 +186,7 @@ export async function runAcpServerWithStream(
         : sessionMediaOriginalsDir(handle.accessor.get(ISessionContext).sessionDir);
     },
   });
+  resolveServer(server);
 
   let closePromise: Promise<void> | undefined;
   const close = async (): Promise<void> => {
@@ -161,12 +198,29 @@ export async function runAcpServerWithStream(
       // Flush the append-log write-behind before disposing, so a clean shutdown
       // never races a pending drain against teardown (and doesn't drop the last
       // persisted ops). Best-effort: a flush failure must not block disposal.
+      const appendLogStore = core.accessor.get(IAppendLogStore);
       try {
-        await core.accessor.get(IAppendLogStore).flush();
+        await appendLogStore.flush();
       } catch {
         // ignore — disposal proceeds regardless
       }
+      // Same shutdown order as kap-server: settle queued session-metadata
+      // writes, then drain the session-index mirror while the query store is
+      // still open, so a queued summary lands in the read model.
+      await drainSessionMetadataWrites();
+      await core.accessor.get(ISessionIndexMirror).drain();
+      await acpProviderRegistration.dispose();
       core.dispose();
+      // `core.dispose()` runs the mirror's and the query store's synchronous
+      // `dispose()`, whose drains/closes are asynchronous — await them so an
+      // embedding host that removes homeDir right after close() never races
+      // an in-flight shard close (ENOTEMPTY on teardown). The same window
+      // exists for the append-log retirement flushes released by disposal.
+      await appendLogStore.drainRetirements();
+      await drainSessionIndexMirror();
+      await drainQueryStoreDisposals();
+      await drainSessionMetadataWrites();
+      await drainLogCloses();
     })();
     return closePromise;
   };

@@ -3,23 +3,20 @@
  * bus. Covers the status-snapshot fold: v2 emits `agent.status.updated` in
  * slices and the model slice rides only the bind-time emission, so the
  * wiring merges a consistent usage + context + model snapshot into every
- * status event (mirrors kap-server's broadcaster bridge), including the
- * secondary-model derived id resolution.
+ * status event (mirrors kap-server's broadcaster bridge).
  * Run: pnpm exec vitest run test/session-event-wiring.test.ts
  */
 import { describe, expect, it } from 'vitest';
 
-import type { Event } from '@moonshot-ai/agent-core';
+import type { Event } from '#/index';
 import {
   IAgentLifecycleService,
   IAgentProfileService,
-  IAgentTokenCountingService,
-  IAgentUsageService,
+  IAgentScopeContext,
   IEventBus,
-  IModelCatalog,
-  ISessionInteractionService,
-  SECONDARY_DERIVED_MODEL_ID,
-  type IAgentScopeHandle,
+  ISessionTokenCountingService,
+  ISessionUsageService,
+  makeAgentScopeContext,
   type ISessionScopeHandle,
 } from '@moonshot-ai/agent-core-v2';
 
@@ -51,8 +48,12 @@ class FakeAgentHandle {
   readonly kind = 2;
   readonly bus = new FakeAgentBus();
   readonly accessor;
+  readonly context;
   private readonly services = new Map<unknown, unknown>();
   constructor(readonly id: string) {
+    const scopeContext = makeAgentScopeContext({ agentId: id, agentScope: `agents/${id}` });
+    this.context = scopeContext.agentContext;
+    this.services.set(IAgentScopeContext, scopeContext);
     this.services.set(IEventBus, this.bus);
     this.accessor = {
       get: (token: unknown) => this.services.get(token),
@@ -66,18 +67,15 @@ class FakeAgentHandle {
 
 function makeSession(agents: FakeAgentHandle[]): ISessionScopeHandle {
   const lifecycle = {
-    list: () => agents,
+    list: () => agents.map((agent) => agent.context),
+    get: (agentId: string) => agents.find((agent) => agent.id === agentId)?.context,
+    handleOf: (agentId: string) => agents.find((agent) => agent.id === agentId),
     onDidCreate: () => ({ dispose: () => {} }),
-    onDidDispose: () => ({ dispose: () => {} }),
-  };
-  const interactions = {
-    onDidChangePending: () => ({ dispose: () => {} }),
-    listPending: () => [],
+    onDidClose: () => ({ dispose: () => {} }),
   };
   const accessor = {
     get: (token: unknown): unknown => {
       if (token === IAgentLifecycleService) return lifecycle;
-      if (token === ISessionInteractionService) return interactions;
       return undefined;
     },
   };
@@ -104,12 +102,12 @@ const USAGE = {
 };
 
 function bindStatusServices(agent: FakeAgentHandle, model: string): void {
-  agent.set(IAgentTokenCountingService, { statusSize: () => 10 });
+  agent.set(ISessionTokenCountingService, { statusSize: () => 10 });
   agent.set(IAgentProfileService, {
     getModel: () => model,
     getModelCapabilities: () => ({ max_context_tokens: 128_000 }),
   });
-  agent.set(IAgentUsageService, { status: () => USAGE });
+  agent.set(ISessionUsageService, { status: () => USAGE });
 }
 
 // ---------------------------------------------------------------------------
@@ -122,18 +120,31 @@ describe('SessionEventWiring status snapshot fold', () => {
     bindStatusServices(sub, 'sub-model');
     const { sink, events } = collectingSink();
     const wiring = new SessionEventWiring(makeSession([sub]), sink);
+    const steerInput = [
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAA' } },
+      { type: 'audio_url', audioUrl: { url: 'https://example.com/a.mp3' } },
+      { type: 'video_url', videoUrl: { url: 'ms://video-1', id: 'video-1' } },
+    ];
     try {
       // The v2 model slice rides only the subagent's bind-time emission, which
       // reaches clients before `subagent.spawned` and is dropped there; a
       // later usage-only slice must still carry the model at this edge.
       sub.bus.emit({ type: 'agent.status.updated', usage: USAGE });
       // Non-status events pass through untouched.
-      sub.bus.emit({ type: 'assistant.delta', delta: 'Hi' });
+      sub.bus.emit({ type: 'assistant.delta', delta: 'Hi', time: 1_700_000_000_123 });
+      sub.bus.emit({
+        type: 'tool.result',
+        output: [
+          { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAA' } },
+          { type: 'custom', source: { kind: 'inline' } },
+        ],
+      });
+      sub.bus.emit({ type: 'turn.steer', input: steerInput });
     } finally {
       wiring.dispose();
     }
 
-    expect(events).toHaveLength(2);
+    expect(events).toHaveLength(4);
     expect(events[0]).toMatchObject({
       type: 'agent.status.updated',
       sessionId: 's1',
@@ -141,44 +152,70 @@ describe('SessionEventWiring status snapshot fold', () => {
       usage: USAGE,
       contextTokens: 10,
       maxContextTokens: 128_000,
+      contextUsage: 10 / 128_000,
       model: 'sub-model',
     });
-    expect(events[1]).toMatchObject({ type: 'assistant.delta', delta: 'Hi' });
+    expect(events[1]).toMatchObject({
+      type: 'assistant.delta',
+      delta: 'Hi',
+      time: 1_700_000_000_123,
+    });
     expect(events[1]).not.toHaveProperty('model');
+    expect(events[2]).toMatchObject({
+      type: 'tool.result',
+      sessionId: 's1',
+      agentId: 'agent-1',
+      output: [
+        { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAA' } },
+        { type: 'custom', source: { kind: 'inline' } },
+      ],
+    });
+    expect(events[3]).toMatchObject({ type: 'turn.steer', input: steerInput });
+    expect(JSON.stringify(events[3])).not.toContain('"source"');
   });
 
-  it('resolves the secondary derived model id to a display string', () => {
+  it.each(['blocked', 'failed'] as const)('forwards prompt.completed(%s) so rejected prompts can settle clients', (reason) => {
     const sub = new FakeAgentHandle('agent-1');
-    bindStatusServices(sub, SECONDARY_DERIVED_MODEL_ID);
     const { sink, events } = collectingSink();
     const wiring = new SessionEventWiring(makeSession([sub]), sink);
     try {
-      sub.set(IModelCatalog, {
-        get: (id: string) => {
-          expect(id).toBe(SECONDARY_DERIVED_MODEL_ID);
-          return { id, name: 'kimi-k2-wire', displayName: 'Kimi K2' };
-        },
+      sub.bus.emit({
+        type: 'prompt.completed',
+        promptId: 'prompt-1',
+        finishedAt: '2026-01-01T00:00:00.000Z',
+        reason,
       });
-      sub.bus.emit({ type: 'agent.status.updated', usage: USAGE });
-      // Without a displayName the pointed entry's wire name is shown.
-      sub.set(IModelCatalog, { get: (id: string) => ({ id, name: 'kimi-k2-wire' }) });
-      sub.bus.emit({ type: 'agent.status.updated', usage: USAGE });
-      // A resolution failure falls back to the raw alias.
-      sub.set(IModelCatalog, {
-        get: () => {
-          throw new Error('unknown model');
-        },
-      });
-      sub.bus.emit({ type: 'agent.status.updated', usage: USAGE });
     } finally {
       wiring.dispose();
     }
 
-    expect(events.map((event) => (event as { model?: string }).model)).toEqual([
-      'Kimi K2',
-      'kimi-k2-wire',
-      SECONDARY_DERIVED_MODEL_ID,
-    ]);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: 'prompt.completed',
+      sessionId: 's1',
+      agentId: 'agent-1',
+      promptId: 'prompt-1',
+      reason,
+    });
+  });
+
+  it('keeps prompt.completed(completed) on the internal bus', () => {
+    const reason = 'completed';
+    const sub = new FakeAgentHandle('agent-1');
+    const { sink, events } = collectingSink();
+    const wiring = new SessionEventWiring(makeSession([sub]), sink);
+    try {
+      sub.bus.emit({
+        type: 'prompt.completed',
+        promptId: 'prompt-1',
+        finishedAt: '2026-01-01T00:00:00.000Z',
+        reason,
+      });
+    } finally {
+      wiring.dispose();
+    }
+
+    expect(events).toEqual([]);
   });
 
   it('passes status events through unchanged when the agent services are incomplete', () => {
@@ -195,5 +232,52 @@ describe('SessionEventWiring status snapshot fold', () => {
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({ type: 'agent.status.updated', usage: USAGE });
     expect(events[0]).not.toHaveProperty('model');
+  });
+
+  it('forwards turn.prompt and strips the internal promptAttachments field from turn.started', () => {
+    const sub = new FakeAgentHandle('agent-1');
+    const { sink, events } = collectingSink();
+    const wiring = new SessionEventWiring(makeSession([sub]), sink);
+    try {
+      // `promptAttachments` is transcript-projection metadata: kap-server
+      // strips it from the WS wire event, so SDK consumers must not see it
+      // either.
+      sub.bus.emit({
+        type: 'turn.prompt',
+        turnId: 1,
+        promptId: 'prompt-1',
+        input: [{ type: 'text', text: '<notification>internal only</notification>' }],
+        origin: { kind: 'task', taskId: 'task_1' },
+      });
+      sub.bus.emit({
+        type: 'turn.started',
+        turnId: 1,
+        promptId: 'prompt-1',
+        origin: { kind: 'user' },
+        prompt: 'describe this',
+        promptAttachments: [{ kind: 'image', fileId: 'f_1' }],
+      });
+    } finally {
+      wiring.dispose();
+    }
+
+    expect(events).toHaveLength(2);
+    expect(events[0]).toMatchObject({
+      type: 'turn.prompt',
+      turnId: 1,
+      sessionId: 's1',
+      agentId: 'agent-1',
+      promptId: 'prompt-1',
+      input: [{ type: 'text', text: '<notification>internal only</notification>' }],
+    });
+    expect(events[1]).toMatchObject({
+      type: 'turn.started',
+      turnId: 1,
+      sessionId: 's1',
+      agentId: 'agent-1',
+      promptId: 'prompt-1',
+      prompt: 'describe this',
+    });
+    expect(events[1]).not.toHaveProperty('promptAttachments');
   });
 });

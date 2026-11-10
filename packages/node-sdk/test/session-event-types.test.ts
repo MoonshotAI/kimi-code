@@ -19,6 +19,9 @@ describe('Event public types', () => {
     expectTypeOf<EventByType<'tool.call.started'>['toolCallId']>().toEqualTypeOf<string>();
     expectTypeOf<EventByType<'tool.call.started'>['name']>().toEqualTypeOf<string>();
     expectTypeOf<EventByType<'tool.call.started'>['args']>().toEqualTypeOf<unknown>();
+    expectTypeOf<EventByType<'mcp.server.status'>['server']['nextRetryAt']>().toEqualTypeOf<
+      number | undefined
+    >();
   });
 
   it('exposes LLM stream timing on step completion events', () => {
@@ -40,6 +43,9 @@ describe('Event public types', () => {
     expectTypeOf<EventByType<'turn.step.completed'>['llmClientConsumeMs']>().toEqualTypeOf<
       number | undefined
     >();
+    expectTypeOf<EventByType<'turn.step.completed'>['llmClientBlockedMs']>().toEqualTypeOf<
+      number | undefined
+    >();
   });
 
   it('narrows subagent lifecycle events by type', () => {
@@ -56,6 +62,8 @@ describe('Event public types', () => {
   it('exposes approval and question reverse-RPC requests', () => {
     expectTypeOf<ApprovalRequest['turnId']>().toEqualTypeOf<number | undefined>();
     expectTypeOf<ApprovalRequest['toolName']>().toEqualTypeOf<string>();
+    expectTypeOf<ApprovalRequest['agentId']>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<QuestionRequest['agentId']>().toEqualTypeOf<string | undefined>();
     expectTypeOf<QuestionRequest['questions'][number]['question']>().toEqualTypeOf<string>();
   });
 
@@ -75,10 +83,14 @@ describe('Event public types', () => {
         case 'event.workspace.updated':
         case 'event.workspace.deleted':
         case 'event.config.changed':
+        case 'event.config.warning':
         case 'event.model_catalog.changed':
+        case 'event.plugin.changed':
+        case 'event.capability.changed':
         case 'goal.updated':
         case 'skill.activated':
         case 'plugin_command.activated':
+        case 'environment.status.changed':
         case 'error':
         case 'warning':
         case 'turn.started':
@@ -104,6 +116,7 @@ describe('Event public types', () => {
         case 'subagent.suspended':
         case 'subagent.completed':
         case 'subagent.failed':
+        case 'subagent.cancelled':
         case 'compaction.started':
         case 'compaction.blocked':
         case 'compaction.cancelled':

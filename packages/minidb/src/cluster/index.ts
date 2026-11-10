@@ -57,6 +57,8 @@ export type {
 export { Router } from './router.js';
 export { Topology } from './topology.js';
 export { LockError } from '../lockfile.js';
+export { wipeCluster } from './wipe.js';
+export type { WipeOutcome } from '../wipe.js';
 export type { ShardOpenOptions } from './shard.js';
 export { shardDirName, shardFor, stableHash32 } from './utils.js';
 
@@ -123,9 +125,9 @@ export class ClusterDb<V = unknown> {
         for (const { name, fields } of reg.textIndexes) {
           try {
             await db.createTextIndex(name, { fields: fields ?? undefined });
-          } catch (e) {
+          } catch (error) {
             // Idempotent apply: the def may already exist on this shard.
-            if (!(e instanceof Error) || !e.message.includes('already exists')) throw e;
+            if (!(error instanceof Error) || !error.message.includes('already exists')) throw error;
           }
         }
       },
@@ -305,9 +307,9 @@ export class ClusterDb<V = unknown> {
     try {
       const raw = JSON.parse(await fs.readFile(file, 'utf8')) as Partial<ClusterIndexRegistry>;
       return { indexes: raw.indexes ?? [], compoundIndexes: raw.compoundIndexes ?? [], textIndexes: raw.textIndexes ?? [] };
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === 'ENOENT') return { indexes: [], compoundIndexes: [], textIndexes: [] };
-      throw e;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { indexes: [], compoundIndexes: [], textIndexes: [] };
+      throw error;
     }
   }
 
@@ -421,14 +423,14 @@ export class ClusterDb<V = unknown> {
           createdOn.push(shardId);
         }
       });
-    } catch (e) {
+    } catch (error) {
       // Roll back the partial fan-out: drop the index from exactly the shards
       // this call created it on, so no shard keeps enforcing an index the
       // registry never recorded.
       await this.rollbackShards(createdOn, async (db) => {
         await db.dropIndex(name);
       });
-      throw e;
+      throw error;
     }
     await this.mutateRegistry((current) => {
       const existing = current.indexes.find((i) => i.name === name);
@@ -536,12 +538,12 @@ export class ClusterDb<V = unknown> {
           createdOn.push(shardId);
         }
       });
-    } catch (e) {
+    } catch (error) {
       // Roll back the partial fan-out (see createIndex).
       await this.rollbackShards(createdOn, async (db) => {
         await db.dropCompoundIndex(name);
       });
-      throw e;
+      throw error;
     }
     await this.mutateRegistry((current) => {
       const existing = current.compoundIndexes.find((i) => i.name === name);
@@ -596,17 +598,17 @@ export class ClusterDb<V = unknown> {
         try {
           await db.createTextIndex(name, opts);
           createdOn.push(shardId);
-        } catch (e) {
-          if (!(e instanceof Error) || !e.message.includes('already exists')) throw e;
+        } catch (error) {
+          if (!(error instanceof Error) || !error.message.includes('already exists')) throw error;
         }
       });
-    } catch (e) {
+    } catch (error) {
       // Roll back the partial fan-out: drop the text index only from the
       // shards this call created it on (see createIndex).
       await this.rollbackShards(createdOn, async (db) => {
         await db.dropTextIndex(name);
       });
-      throw e;
+      throw error;
     }
     const fields = opts.fields ?? null;
     await this.mutateRegistry((current) => {
@@ -623,8 +625,8 @@ export class ClusterDb<V = unknown> {
     await this.forEachShardWriter(async (db) => {
       try {
         await db.dropTextIndex(name);
-      } catch (e) {
-        if (!(e instanceof Error) || !e.message.includes('no such text index')) throw e;
+      } catch (error) {
+        if (!(error instanceof Error) || !error.message.includes('no such text index')) throw error;
       }
     });
     if (!existed) return false;
@@ -647,9 +649,9 @@ export class ClusterDb<V = unknown> {
       const rows = await this.reader(id, (db) => {
         try {
           return db.search(name, q, opts);
-        } catch (e) {
-          if (e instanceof Error && e.message.includes('no such text index')) return [];
-          throw e;
+        } catch (error) {
+          if (error instanceof Error && error.message.includes('no such text index')) return [];
+          throw error;
         }
       });
       out.push(...rows);
@@ -670,9 +672,9 @@ export class ClusterDb<V = unknown> {
       try {
         await this.writer(id, (db) => db.compact());
         compacted.push(id);
-      } catch (e) {
-        if (e instanceof LockError) skipped.push(id);
-        else throw e;
+      } catch (error) {
+        if (error instanceof LockError) skipped.push(id);
+        else throw error;
       }
     }
     return { compacted, skipped };

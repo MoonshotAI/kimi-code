@@ -1,0 +1,670 @@
+import { createHash } from 'node:crypto';
+import { createReadStream, type Stats } from 'node:fs';
+import { mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { basename, extname, isAbsolute, join } from 'node:path';
+import { Readable } from 'node:stream';
+
+import {
+  buildDaemonFileUrl,
+  buildImageCompressionCaption,
+  buildUnsupportedImageNotice,
+  compressBase64ForModel,
+  compressImageForModel,
+  decodeBase64Prefix,
+  Error2,
+  ErrorCodes,
+  fileNotFoundError,
+  isModelAcceptedImageMime,
+  MAX_IMAGE_DECODE_BYTES,
+  normalizeImageMime,
+  persistOriginalImage,
+  resolveEffectiveImageMime,
+  unsupportedImageMimeFromUrl,
+  type EnvironmentBinding,
+  type GetResult,
+  type IAgentEnvironmentService,
+  type IFileService,
+  type ISessionMediaStore,
+  type ITelemetryService,
+  type PromptFileAttachment,
+} from '@moonshot-ai/agent-core-v2';
+import { sniffMediaFromMagic } from '@moonshot-ai/agent-core-v2/agent/media/file-type';
+import {
+  toCorePart,
+  type ContentPart as LegacyContentPart,
+} from '@moonshot-ai/agent-core-v2/human/message';
+import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
+import {
+  IMAGE_MIME_BY_SUFFIX,
+  VIDEO_MIME_BY_SUFFIX,
+} from '@moonshot-ai/agent-core-v2/agent/media/mediaRef';
+import { isSensitiveFile } from '@moonshot-ai/agent-core-v2/tool/path-access';
+import type { IHostFileSystem } from '@moonshot-ai/agent-core-v2/os/interface/hostFileSystem';
+import type { Environment, EnvironmentLease, EnvironmentPath } from '@moonshot-ai/agent-core-v2/environment/environment';
+
+import type { PromptSubmission } from '../protocol/rest-prompt';
+
+type WireContent = PromptSubmission['content'];
+
+export async function assertPromptFileRefs(content: WireContent, store: IFileService): Promise<void> {
+  for (const part of content) {
+    if (part.type === 'file') {
+      if (part.file_id !== undefined) await store.get(part.file_id);
+    } else if ((part.type === 'image' || part.type === 'video') && part.source.kind === 'file') {
+      const file = await store.get(part.source.file_id);
+      assertMediaFile(file, part.type);
+    }
+  }
+}
+
+export async function assertPromptPathRefs(content: WireContent): Promise<void> {
+  for (const part of content) {
+    const path = promptPartPath(part);
+    if (path === undefined) continue;
+    if (!isAbsolute(path)) {
+      throw new Error2('validation.failed', `attachment path must be absolute: ${path}`);
+    }
+    const { resolvedPath } = await statAttachmentFile(path);
+    if (isSensitiveFile(resolvedPath)) {
+      throw new Error2('validation.failed', `attachment path is a sensitive file: ${path}`);
+    }
+  }
+}
+
+export function contentHasPathRefs(content: WireContent): boolean {
+  return content.some((part) => promptPartPath(part) !== undefined);
+}
+
+function promptPartPath(part: WireContent[number]): string | undefined {
+  if (part.type === 'file') return part.path;
+  if ((part.type === 'image' || part.type === 'video') && part.source.kind === 'path') {
+    return part.source.path;
+  }
+  return undefined;
+}
+
+async function statAttachmentFile(sourcePath: string): Promise<{ resolvedPath: string; info: Stats }> {
+  const resolvedPath = await realpath(sourcePath).catch(() => undefined);
+  if (resolvedPath === undefined) throw fileNotFoundError(sourcePath);
+  const info = await stat(resolvedPath).catch(() => undefined);
+  if (info === undefined || !info.isFile()) throw fileNotFoundError(sourcePath);
+  return { resolvedPath, info };
+}
+
+function isFsError(error: unknown): boolean {
+  return error instanceof Error && typeof (error as NodeJS.ErrnoException).code === 'string';
+}
+
+export async function resolvePromptSessionMediaRefs(
+  content: WireContent,
+  store: ISessionMediaStore,
+): Promise<WireContent> {
+  const resolved: WireContent = [];
+  let changed = false;
+  for (const part of content) {
+    if (
+      (part.type !== 'image' && part.type !== 'video') ||
+      part.source.kind !== 'session_media'
+    ) {
+      resolved.push(part);
+      continue;
+    }
+    const file = await store.open(part.source.file_id);
+    if (file === undefined) throw fileNotFoundError(part.source.file_id);
+    if (part.name === undefined) {
+      resolved.push({ ...part, name: file.name });
+      changed = true;
+    } else {
+      resolved.push(part);
+    }
+  }
+  return changed ? resolved : content;
+}
+
+export function contentToCoreParts(content: WireContent): ContentPart[] {
+  const parts: LegacyContentPart[] = [];
+  for (const part of content) {
+    if (part.type === 'text') parts.push({ type: 'text', text: part.text });
+    else if (part.type === 'image' && part.source.kind === 'url') parts.push({ type: 'image_url', imageUrl: { url: part.source.url, id: part.source.id, name: part.name } });
+    else if (part.type === 'image' && part.source.kind === 'base64') parts.push({ type: 'image_url', imageUrl: { url: `data:${part.source.media_type};base64,${part.source.data}`, name: part.name } });
+    else if (part.type === 'image' && part.source.kind === 'session_media') parts.push({ type: 'image_url', imageUrl: { url: buildDaemonFileUrl(part.source.file_id), id: part.source.file_id, name: part.name } });
+    else if (part.type === 'video' && part.source.kind === 'url') parts.push({ type: 'video_url', videoUrl: { url: part.source.url, id: part.source.id, name: part.name } });
+    else if (part.type === 'video' && part.source.kind === 'base64') parts.push({ type: 'video_url', videoUrl: { url: `data:${part.source.media_type};base64,${part.source.data}`, name: part.name } });
+    else if (part.type === 'video' && part.source.kind === 'session_media') parts.push({ type: 'video_url', videoUrl: { url: buildDaemonFileUrl(part.source.file_id), id: part.source.file_id, name: part.name } });
+  }
+  return parts.map(toCorePart);
+}
+
+export interface ResolvePromptMediaOptions {
+  readonly resolveOriginalsTarget?: () => Promise<PromptAttachmentsTarget | undefined>;
+  readonly resolveAttachmentsTarget?: () => Promise<PromptAttachmentsTarget | undefined>;
+  readonly telemetry?: ITelemetryService;
+  readonly providerType?: string;
+}
+
+export interface PromptAttachmentsTarget {
+  readonly dir: string;
+  readonly fs?: IHostFileSystem;
+  readonly path?: EnvironmentPath;
+}
+
+export interface EnvironmentMediaTargets {
+  readonly resolveOriginalsTarget?: () => Promise<PromptAttachmentsTarget>;
+  readonly resolveAttachmentsTarget?: () => Promise<PromptAttachmentsTarget>;
+  dispose(): void;
+}
+
+export function environmentMediaTargets(
+  binding: EnvironmentBinding,
+  environment: IAgentEnvironmentService,
+): EnvironmentMediaTargets {
+  if (binding.environmentId === 'local') return { dispose: () => {} };
+  let lease: EnvironmentLease | undefined;
+  const acquire = async (): Promise<Environment> => {
+    lease ??= await environment.acquireWhenReady(['fs']);
+    return lease.environment;
+  };
+  return {
+    resolveOriginalsTarget: async () => environmentTempDirTarget(await acquire(), 'original-images'),
+    resolveAttachmentsTarget: async () => environmentTempDirTarget(await acquire(), 'attachments'),
+    dispose: () => lease?.dispose(),
+  };
+}
+
+function environmentTempDirTarget(environment: Environment, subdir: string): PromptAttachmentsTarget {
+  const tempDir = (environment.host as Environment['host'] & { tempDir?: string }).tempDir;
+  if (tempDir === undefined || environment.fs === undefined || environment.path === undefined) {
+    throw new Error2(
+      ErrorCodes.INTERNAL,
+      `environment ${environment.identity.environmentId} does not provide a writable tempDir`,
+    );
+  }
+  return {
+    dir: environment.path.join(tempDir, 'kimi-code', subdir),
+    fs: environment.fs,
+    path: environment.path,
+  };
+}
+
+interface AttachmentSink {
+  readonly dir: string;
+  join(...parts: readonly string[]): string;
+  prepare(): Promise<void>;
+  size(path: string): Promise<number | undefined>;
+  write(path: string, data: Uint8Array | AsyncIterable<Uint8Array>): Promise<void>;
+  remove(path: string): Promise<void>;
+}
+
+function localAttachmentSink(dir: string): AttachmentSink {
+  return {
+    dir,
+    join: (...parts) => join(...parts),
+    prepare: async () => {
+      await mkdir(dir, { recursive: true });
+    },
+    size: (path) => stat(path).then((info) => info.size, () => undefined),
+    write: (path, data) => writeFile(path, data),
+    remove: (path) => rm(path, { force: true }),
+  };
+}
+
+function environmentAttachmentSink(target: { readonly dir: string; readonly fs: IHostFileSystem; readonly path: EnvironmentPath }): AttachmentSink {
+  return {
+    dir: target.dir,
+    join: (...parts) => target.path.join(...parts),
+    prepare: async () => {
+      await target.fs.mkdir(target.dir, { recursive: true });
+    },
+    size: (path) => target.fs.stat(path).then((info) => info.size, () => undefined),
+    write: (path, data) => target.fs.writeBytes(path, data),
+    remove: (path) => target.fs.remove(path),
+  };
+}
+
+export interface PromptMediaPreparation {
+  readonly content: WireContent;
+  readonly attachments: readonly PromptFileAttachment[];
+  readonly discard: () => Promise<void>;
+  readonly discardStaged: () => Promise<void>;
+}
+
+export async function resolvePromptMediaFiles(
+  input: WireContent,
+  store: IFileService,
+  cacheDir: string,
+  options: ResolvePromptMediaOptions = {},
+): Promise<PromptMediaPreparation> {
+  const ownedFileIds = new Set<string>();
+  let discarded = false;
+  const discard = async (): Promise<void> => {
+    if (discarded) return;
+    discarded = true;
+    await Promise.all(
+      [...ownedFileIds].map((fileId) => store.delete(fileId).catch(() => undefined)),
+    );
+  };
+  let stagedDiscarded = false;
+  const discardStaged = async (): Promise<void> => {
+    await discard();
+    if (stagedDiscarded) return;
+    stagedDiscarded = true;
+    if (attachmentsSink === undefined || stagedPaths.size === 0) return;
+    const sink = attachmentsSink;
+    await Promise.all([...stagedPaths].map((path) => sink.remove(path).catch(() => undefined)));
+  };
+  let changed = false;
+  let originals: PromptAttachmentsTarget | undefined;
+  let originalsResolved = false;
+  const resolveOriginals = async (): Promise<PromptAttachmentsTarget | undefined> => {
+    if (!originalsResolved) {
+      originalsResolved = true;
+      originals = await options.resolveOriginalsTarget?.();
+    }
+    return originals;
+  };
+  const stagedPaths = new Set<string>();
+  let attachmentsSink: AttachmentSink | undefined;
+  const resolveAttachmentsSink = async (): Promise<AttachmentSink> => {
+    if (attachmentsSink !== undefined) return attachmentsSink;
+    const target = await options.resolveAttachmentsTarget?.();
+    const base =
+      target?.fs !== undefined && target.path !== undefined
+        ? environmentAttachmentSink({ dir: target.dir, fs: target.fs, path: target.path })
+        : localAttachmentSink(target?.dir ?? cacheDir);
+    attachmentsSink = {
+      ...base,
+      write: async (path, data) => {
+        stagedPaths.add(path);
+        await base.write(path, data);
+      },
+    };
+    return attachmentsSink;
+  };
+  const attachments: PromptFileAttachment[] = [];
+  const content: WireContent = [];
+  try {
+    for (const part of input) {
+      if (part.type === 'image' && part.source.kind === 'base64') {
+        const effectiveMime = resolveEffectiveImageMime(
+          part.source.media_type,
+          decodeBase64Prefix(part.source.data),
+        );
+        if (!isModelAcceptedImageMime(effectiveMime, options.providerType)) {
+          const bytes = Buffer.from(part.source.data, 'base64');
+          const name = part.name ?? `image.${imageExtensionForMime(effectiveMime)}`;
+          const persisted = await persistAttachmentBytes(
+            bytes,
+            `${createHash('sha256').update(bytes).digest('hex').slice(0, 32)}-${sanitizeAttachmentName(name)}`,
+            await resolveAttachmentsSink(),
+          );
+          content.push({
+            type: 'text',
+            text: persisted === null
+              ? buildUnsupportedImageNotice(effectiveMime, undefined, options.providerType)
+              : buildAttachedFileNotice(name, effectiveMime, bytes.length, persisted),
+          });
+          if (persisted !== null) {
+            attachments.push({ name, mediaType: effectiveMime, size: bytes.length, path: persisted });
+          }
+          changed = true;
+          continue;
+        }
+        const canonicalMime = normalizeImageMime(effectiveMime);
+        const compressed = await compressBase64ForModel(part.source.data, canonicalMime, {
+          telemetry: options.telemetry,
+          telemetrySource: 'prompt_inline',
+        });
+        if (compressed.changed) {
+          const originals = await resolveOriginals();
+          const originalPath = await persistOriginalImage(
+            Buffer.from(part.source.data, 'base64'),
+            part.source.media_type,
+            { dir: originals?.dir, fs: originals?.fs, path: originals?.path },
+          );
+          content.push({
+            type: 'text',
+            text: buildImageCompressionCaption({
+              original: {
+                width: compressed.originalWidth,
+                height: compressed.originalHeight,
+                byteLength: compressed.originalByteLength,
+                mimeType: part.source.media_type,
+              },
+              final: {
+                width: compressed.width,
+                height: compressed.height,
+                byteLength: compressed.finalByteLength,
+                mimeType: compressed.mimeType,
+              },
+              originalPath,
+            }),
+          });
+          content.push({
+            type: 'image',
+            source: { kind: 'base64', media_type: compressed.mimeType, data: compressed.base64 },
+            name: part.name,
+          });
+          changed = true;
+        } else {
+          content.push(part);
+        }
+        continue;
+      }
+
+      if (part.type === 'image' && part.source.kind === 'url') {
+        const extMime = unsupportedImageMimeFromUrl(part.source.url, options.providerType);
+        if (extMime !== null) {
+          content.push({
+            type: 'text',
+            text: buildUnsupportedImageNotice(extMime, part.source.url, options.providerType),
+          });
+          changed = true;
+          continue;
+        }
+        content.push(part);
+        continue;
+      }
+
+      if (part.type === 'file') {
+        if (part.path !== undefined) {
+          const sourcePath = part.path;
+          const { info } = await statAttachmentFile(sourcePath);
+          const name = part.name ?? basename(sourcePath);
+          const mediaType = part.media_type ?? 'application/octet-stream';
+          content.push({
+            type: 'text',
+            text: buildAttachedFileNotice(name, mediaType, info.size, sourcePath),
+          });
+          attachments.push({ name, mediaType, size: info.size, path: sourcePath });
+          changed = true;
+          continue;
+        }
+        if (part.file_id === undefined) {
+          throw new Error2('validation.failed', 'file part requires file_id or path');
+        }
+        const file = await store.get(part.file_id);
+        const attachedPath = await materializeAttachment(file, await resolveAttachmentsSink());
+        content.push({
+          type: 'text',
+          text: buildAttachedFileNotice(file.meta.name, file.meta.media_type, file.meta.size, attachedPath),
+        });
+        attachments.push({
+          name: file.meta.name,
+          mediaType: file.meta.media_type,
+          size: file.meta.size,
+          path: attachedPath,
+        });
+        changed = true;
+        continue;
+      }
+
+      if (part.type === 'image' && part.source.kind === 'path') {
+        const sourcePath = part.source.path;
+        const { resolvedPath, info } = await statAttachmentFile(sourcePath);
+        if (info.size > MAX_IMAGE_DECODE_BYTES) {
+          throw new Error2(
+            'validation.failed',
+            `${sourcePath} is ${info.size} bytes, over the ${MAX_IMAGE_DECODE_BYTES}-byte image decode limit — attach it as a file instead`,
+          );
+        }
+        const data = await readFile(resolvedPath).catch((error: unknown) => {
+          if (isFsError(error)) throw fileNotFoundError(sourcePath);
+          throw error;
+        });
+        const name = part.name ?? basename(sourcePath);
+        const declared = pathMediaMime(sourcePath, data, 'image');
+        if (!declared.startsWith('image/')) {
+          throw new Error2('validation.failed', `${sourcePath} is ${declared}, not an image`);
+        }
+        let mediaType = resolveEffectiveImageMime(declared, data);
+        if (!isModelAcceptedImageMime(mediaType, options.providerType)) {
+          content.push({
+            type: 'text',
+            text: buildAttachedFileNotice(name, mediaType, data.length, sourcePath),
+          });
+          attachments.push({ name, mediaType, size: data.length, path: sourcePath });
+          changed = true;
+          continue;
+        }
+        mediaType = normalizeImageMime(mediaType);
+        const compressed = await compressImageForModel(data, mediaType, {
+          telemetry: options.telemetry,
+          telemetrySource: 'prompt_file',
+        });
+        if (compressed.changed) {
+          content.push({
+            type: 'text',
+            text: buildImageCompressionCaption({
+              original: {
+                width: compressed.originalWidth,
+                height: compressed.originalHeight,
+                byteLength: compressed.originalByteLength,
+                mimeType: mediaType,
+              },
+              final: {
+                width: compressed.width,
+                height: compressed.height,
+                byteLength: compressed.finalByteLength,
+                mimeType: compressed.mimeType,
+              },
+              originalPath: sourcePath,
+            }),
+          });
+        }
+        const saved = await store.save(
+          Readable.from(compressed.changed ? Buffer.from(compressed.data) : data),
+          compressed.changed ? compressedUploadName(name, compressed.mimeType) : name,
+          { mimeType: compressed.changed ? compressed.mimeType : mediaType },
+        );
+        ownedFileIds.add(saved.id);
+        content.push({
+          type: 'image',
+          source: { kind: 'url', url: buildDaemonFileUrl(saved.id) },
+          name: part.name ?? name,
+        });
+        changed = true;
+        continue;
+      }
+
+      if (part.type === 'video' && part.source.kind === 'path') {
+        const sourcePath = part.source.path;
+        const { resolvedPath } = await statAttachmentFile(sourcePath);
+        const mediaType = pathMediaMime(sourcePath, undefined, 'video');
+        if (!mediaType.startsWith('video/')) {
+          throw new Error2('validation.failed', `${sourcePath} is ${mediaType}, not a video`);
+        }
+        const saved = await store
+          .save(createReadStream(resolvedPath), basename(sourcePath), { mimeType: mediaType })
+          .catch((error: unknown) => {
+            if (isFsError(error)) throw fileNotFoundError(sourcePath);
+            throw error;
+          });
+        ownedFileIds.add(saved.id);
+        content.push({
+          type: 'video',
+          source: { kind: 'url', url: buildDaemonFileUrl(saved.id) },
+          name: part.name ?? basename(sourcePath),
+        });
+        changed = true;
+        continue;
+      }
+
+      if ((part.type !== 'image' && part.type !== 'video') || part.source.kind !== 'file') {
+        content.push(part);
+        continue;
+      }
+
+      const file = await store.get(part.source.file_id);
+      assertMediaFile(file, part.type);
+      if (part.type === 'image') {
+        const data = await readFileOrStream(file);
+        let mediaType = file.meta.media_type;
+        mediaType = resolveEffectiveImageMime(mediaType, data);
+        if (!isModelAcceptedImageMime(mediaType, options.providerType)) {
+          const name = part.name ?? file.meta.name;
+          const persisted = await persistAttachmentBytes(
+            data,
+            `${file.meta.id}-${sanitizeAttachmentName(name)}`,
+            await resolveAttachmentsSink(),
+          );
+          content.push({
+            type: 'text',
+            text: persisted === null
+              ? buildUnsupportedImageNotice(mediaType, name, options.providerType)
+              : buildAttachedFileNotice(name, mediaType, file.meta.size, persisted),
+          });
+          if (persisted !== null) {
+            attachments.push({
+              name,
+              mediaType,
+              size: file.meta.size,
+              path: persisted,
+            });
+          }
+          changed = true;
+          continue;
+        }
+        mediaType = normalizeImageMime(mediaType);
+        const compressed = await compressImageForModel(data, mediaType, {
+          telemetry: options.telemetry,
+          telemetrySource: 'prompt_file',
+        });
+        if (compressed.changed) {
+          const originals = await resolveOriginals();
+          const originalPath = await persistOriginalImage(data, mediaType, { dir: originals?.dir, fs: originals?.fs, path: originals?.path });
+          content.push({
+            type: 'text',
+            text: buildImageCompressionCaption({
+              original: {
+                width: compressed.originalWidth,
+                height: compressed.originalHeight,
+                byteLength: compressed.originalByteLength,
+                mimeType: mediaType,
+              },
+              final: {
+                width: compressed.width,
+                height: compressed.height,
+                byteLength: compressed.finalByteLength,
+                mimeType: compressed.mimeType,
+              },
+              originalPath,
+            }),
+          });
+        }
+        let finalFile = file;
+        if (compressed.changed) {
+          const saved = await store.save(
+            Readable.from(Buffer.from(compressed.data)),
+            compressedUploadName(file.meta.name, compressed.mimeType),
+            { mimeType: compressed.mimeType },
+          );
+          ownedFileIds.add(saved.id);
+          finalFile = await store.get(saved.id);
+        }
+        content.push({
+          type: 'image',
+          source: { kind: 'url', url: buildDaemonFileUrl(finalFile.meta.id) },
+          name: part.name ?? file.meta.name,
+        });
+        changed = true;
+        continue;
+      }
+
+      content.push({
+        type: 'video',
+        source: { kind: 'url', url: buildDaemonFileUrl(file.meta.id) },
+        name: part.name ?? file.meta.name,
+      });
+      changed = true;
+    }
+    return { content: changed ? content : input, attachments, discard, discardStaged };
+  } catch (error) {
+    await discardStaged();
+    throw error;
+  }
+}
+
+function compressedUploadName(originalName: string, mimeType: string): string {
+  const base = originalName.replace(/\.[^./\\]*$/, '');
+  return `${base.length > 0 ? base : 'image'}.${imageExtensionForMime(mimeType)}`;
+}
+
+const ATTACHMENT_NAME_MAX = 100;
+
+function sanitizeAttachmentName(name: string): string {
+  const cleaned = name
+    .replaceAll(/[\\/]/g, '_')
+    .replaceAll(/[\u0000-\u001F\u007F]/g, '')
+    .replace(/^\.+/, '')
+    .trim()
+    .slice(0, ATTACHMENT_NAME_MAX);
+  return cleaned.length > 0 ? cleaned : 'attachment';
+}
+
+async function materializeAttachment(file: GetResult, sink: AttachmentSink): Promise<string> {
+  await sink.prepare();
+  const target = sink.join(sink.dir, `${file.meta.id}-${sanitizeAttachmentName(file.meta.name)}`);
+  if ((await sink.size(target)) === file.meta.size) return target;
+  await sink.write(target, file.stream());
+  return target;
+}
+
+async function persistAttachmentBytes(
+  bytes: Uint8Array,
+  name: string,
+  sink: AttachmentSink,
+): Promise<string | null> {
+  try {
+    await sink.prepare();
+    const target = sink.join(sink.dir, name);
+    if ((await sink.size(target)) !== bytes.length) await sink.write(target, bytes);
+    return target;
+  } catch {
+    return null;
+  }
+}
+
+function imageExtensionForMime(mediaType: string): string {
+  const subtype = mediaType.split('/')[1]?.toLowerCase().split('+')[0] ?? '';
+  const ext = subtype.replaceAll(/[^a-z0-9-]/g, '');
+  return ext.length > 0 ? ext : 'img';
+}
+
+function pathMediaMime(
+  sourcePath: string,
+  data: Uint8Array | undefined,
+  kind: 'image' | 'video',
+): string {
+  const suffix = extname(sourcePath).toLowerCase();
+  if (kind === 'image') {
+    if (suffix === '.svg') return 'image/svg+xml';
+    const declared = IMAGE_MIME_BY_SUFFIX[suffix];
+    if (declared !== undefined) return declared;
+  } else {
+    const declared = VIDEO_MIME_BY_SUFFIX[suffix];
+    if (declared !== undefined) return declared;
+  }
+  const sniffed = data === undefined ? null : sniffMediaFromMagic(data);
+  return sniffed?.mimeType ?? 'application/octet-stream';
+}
+
+function buildAttachedFileNotice(name: string, mediaType: string, size: number, path: string): string {
+  return `Attached file "${name}" (${mediaType}, ${size} bytes): ${path} — open it with the Read tool`;
+}
+
+async function readFileOrStream(file: GetResult): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of file.stream()) {
+    chunks.push(Buffer.from(chunk as string | Uint8Array));
+  }
+  return Buffer.concat(chunks);
+}
+
+function assertMediaFile(file: GetResult, expected: 'image' | 'video'): void {
+  const prefix = expected === 'video' ? 'video/' : 'image/';
+  if (file.meta.media_type.toLowerCase().startsWith(prefix)) return;
+  throw new Error2(
+    'validation.failed',
+    `file ${file.meta.id} is ${file.meta.media_type}, not ${expected === 'video' ? 'a video' : 'an image'}`,
+  );
+}

@@ -10,6 +10,7 @@ function makeHarness() {
         k2: { model: 'moonshot-v1', maxContextSize: 100 },
       },
     })),
+    onConfigSectionChanged: vi.fn(() => vi.fn()),
     createSession: vi.fn(async () => ({ id: 'ses-1', model: 'k2' })),
     resumeSession: vi.fn(async () => ({ id: 'ses-1', model: 'k2' })),
     listSessions: vi.fn(async () => []),
@@ -41,6 +42,7 @@ function makeStartupInput(): KimiTUIStartupInput {
       skillsDirs: [],
       agent: undefined,
       agentFiles: [],
+      environment: undefined,
     },
     tuiConfig: {
       theme: 'dark',
@@ -48,6 +50,7 @@ function makeStartupInput(): KimiTUIStartupInput {
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
+      transcript: { toolCallDensity: 'compact', thinking: 'grouped' },
       statusLine: { items: null, command: null },
     },
     version: '0.0.0-test',

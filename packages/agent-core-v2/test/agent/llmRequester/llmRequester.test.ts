@@ -1,24 +1,36 @@
-import { APIConnectionError, APIStatusError } from '#/kosong/contract/errors';
+import {
+  APIConnectionError,
+  APIRequestTooLargeError,
+  APIStatusError,
+} from '#/llm-adapter/contract/errors';
 import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
-import { type StreamedMessagePart } from '#/kosong/contract/message';
-import type { Tool } from '#/kosong/contract/tool';
-import { emptyUsage } from '#/kosong/contract/usage';
+import type {
+  Message,
+  StreamedMessagePart,
+  ToolDescription as Tool,
+} from '#human/llm/message';
+import { emptyUsage } from '#human/llm-requester/usage';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  IAgentLLMRequesterService,
-  type AgentLLMRequestFinish,
-} from '#/agent/llmRequester/llmRequester';
+import type {
+  LoopRequester,
+  AgentLLMRequestFinish,
+} from '#/agent/loop/requesterContract';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { ILogger as Logger, LogPayload } from '#/_base/log/log';
 import {
   configServices,
   createTestAgent,
+  findGenerateCallPrefixBreak,
   llmGenerateServices,
   logServices,
+  requesterFromGenerateFn,
   telemetryServices,
   type TestAgentContext,
 } from '../../harness';
+import { promptCacheComparisons } from '../../harness/prompt-cache-guard';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
 interface CapturedLogEntry {
@@ -46,7 +58,8 @@ function captureLogs(): { logger: Logger; entries: CapturedLogEntry[] } {
 describe('LLMRequester service migration coverage', () => {
   describe('wire observability records', () => {
     let ctx: TestAgentContext;
-    let llmRequester: IAgentLLMRequesterService;
+    let llmRequester: LoopRequester;
+    let shouldVerifyResume = true;
 
     const requestTools: readonly Tool[] = [
       {
@@ -74,14 +87,15 @@ describe('LLMRequester service migration coverage', () => {
 
     beforeEach(() => {
       vi.stubEnv(TOOL_SELECT_FLAG_ENV, '1');
+      shouldVerifyResume = true;
       ctx = createTestAgent();
-      llmRequester = ctx.get(IAgentLLMRequesterService);
+      llmRequester = ctx.get(IAgentLoopService).requester;
     });
 
     afterEach(async () => {
       vi.unstubAllEnvs();
       try {
-        await ctx.expectResumeMatches();
+        if (shouldVerifyResume) await ctx.expectResumeMatches();
       } finally {
         await ctx.dispose();
       }
@@ -141,8 +155,6 @@ describe('LLMRequester service migration coverage', () => {
       expect(requests).toHaveLength(2);
       expect(requests[0]?.args).toMatchObject({
         kind: 'loop',
-        // The durable record's `provider` field carries the wire protocol:
-        // Kimi is a vendor over the openai base, not a protocol.
         provider: 'openai',
         model: 'mock-model',
         modelAlias: 'mock-model',
@@ -189,7 +201,7 @@ describe('LLMRequester service migration coverage', () => {
       await ctx.dispose();
       vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'max');
       ctx = createTestAgent();
-      llmRequester = ctx.get(IAgentLLMRequesterService);
+      llmRequester = ctx.get(IAgentLoopService).requester;
       ctx.configure({
         modelCapabilities: {
           image_in: false,
@@ -218,10 +230,10 @@ describe('LLMRequester service migration coverage', () => {
       await ctx.dispose();
       let calls = 0;
       ctx = createTestAgent(
-        llmGenerateServices(async () => {
+        llmGenerateServices(requesterFromGenerateFn(async () => {
           calls += 1;
           if (calls === 1) {
-            throw new APIStatusError(400, 'tool_use ids must be unique');
+            throw new APIStatusError(400, 'tool_use ids must be unique', false);
           }
           return {
             id: 'strict-response',
@@ -234,9 +246,9 @@ describe('LLMRequester service migration coverage', () => {
             finishReason: 'completed',
             rawFinishReason: 'stop',
           };
-        }),
+        })),
       );
-      llmRequester = ctx.get(IAgentLLMRequesterService);
+      llmRequester = ctx.get(IAgentLoopService).requester;
 
       await llmRequester.request();
 
@@ -245,6 +257,107 @@ describe('LLMRequester service migration coverage', () => {
       expect((requests[0]?.args as Record<string, unknown> | undefined)?.['projection']).toBeUndefined();
       expect(requests[1]?.args).toMatchObject({ projection: 'strict' });
     });
+
+    it('emits cache break with loop-assigned identifiers and per-agent baselines', async () => {
+      shouldVerifyResume = false;
+      await ctx.dispose();
+      const records: TelemetryRecord[] = [];
+      const cacheReads = [10000, 5000, 10000, 5000, 1000, 5000] as const;
+      let calls = 0;
+      ctx = createTestAgent(
+        llmGenerateServices(requesterFromGenerateFn(async () => {
+          const index = calls++;
+          return {
+            id: `response-${index + 1}`,
+            message: {
+              role: 'assistant',
+              content: [{ type: 'text', text: `response-${index + 1}` }],
+              toolCalls: [],
+            },
+            usage: {
+              inputOther: 100,
+              output: 50,
+              inputCacheRead: cacheReads[index]!,
+              inputCacheCreation: 0,
+            },
+            finishReason: 'completed',
+            rawFinishReason: 'stop',
+            requestId: `trace-${index + 1}`,
+          };
+        })),
+        telemetryServices(recordingTelemetry(records)),
+      );
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'first main turn' }] });
+      await ctx.untilTurnEnd();
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'second main turn' }] });
+      await ctx.untilTurnEnd();
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'third main turn' }] });
+      await ctx.untilTurnEnd();
+
+      const lifecycle = ctx.get(IAgentLifecycleService);
+      const childContext = await lifecycle.create({
+        agentId: 'agent-child',
+        binding: { profile: 'coder', model: 'mock-model' },
+      });
+      const childLoop = lifecycle
+        .handleOf(childContext.agentId)!
+        .accessor.get(IAgentLoopService);
+      const runChildTurn = async (text: string): Promise<void> => {
+        const { id } = childLoop.submit({
+          message: { role: 'user', content: [{ type: 'text', text }] },
+          meta: { origin: { kind: 'user' }, tracked: true },
+        });
+        expect((await childLoop.promptHandle(id)!.completion).state).toBe('completed');
+      };
+      await runChildTurn('child first turn');
+      await runChildTurn('child second turn');
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'fourth main turn' }] });
+      await ctx.untilTurnEnd();
+
+      const events = records.filter((record) => record.event === 'cache_break_detected');
+      expect(events).toHaveLength(3);
+      expect(events.map((record) => record.properties?.['agent_id'])).toEqual([
+        'main',
+        'agent-child',
+        'main',
+      ]);
+      expect(events[0]?.properties).toMatchObject({
+        agent_id: 'main',
+        turn_id: 1,
+        step_no: 1,
+        trace_id: 'trace-2',
+        prev_turn_id: 0,
+        prev_step_no: 1,
+        prev_trace_id: 'trace-1',
+        prev_input_cache_read: 10000,
+        curr_input_cache_read: 5000,
+      });
+      expect(events[1]?.properties).toMatchObject({
+        agent_id: 'agent-child',
+        turn_id: 4,
+        step_no: 1,
+        trace_id: 'trace-5',
+        prev_turn_id: 3,
+        prev_step_no: 1,
+        prev_trace_id: 'trace-4',
+        prev_input_cache_read: 5000,
+        curr_input_cache_read: 1000,
+      });
+      expect(events[2]?.properties).toMatchObject({
+        agent_id: 'main',
+        turn_id: 3,
+        step_no: 1,
+        trace_id: 'trace-6',
+        prev_turn_id: 2,
+        prev_step_no: 1,
+        prev_trace_id: 'trace-3',
+        prev_input_cache_read: 10000,
+        curr_input_cache_read: 5000,
+      });
+    });
+
   });
 
   describe('tool-call deltas', () => {
@@ -302,9 +415,9 @@ describe('LLMRequester service migration coverage', () => {
       });
 
       expect(protocolEvents(ctx, 'tool.call.delta').map((event) => event.args)).toEqual([
-        { turnId: 0, toolCallId: 'call_lookup', name: 'Lookup', argumentsPart: undefined },
-        { turnId: 0, toolCallId: 'call_lookup', name: 'Lookup', argumentsPart: '{"query"' },
-        { turnId: 0, toolCallId: 'call_lookup', name: 'Lookup', argumentsPart: ':"moon"}' },
+        { time: expect.any(Number), agentId: 'main', turnId: 0, toolCallId: 'call_lookup', name: 'Lookup', argumentsPart: undefined },
+        { time: expect.any(Number), agentId: 'main', turnId: 0, toolCallId: 'call_lookup', name: 'Lookup', argumentsPart: '{"query"' },
+        { time: expect.any(Number), agentId: 'main', turnId: 0, toolCallId: 'call_lookup', name: 'Lookup', argumentsPart: ':"moon"}' },
       ]);
       expect(protocolEvents(ctx, 'toolCall').at(-1)?.args).toEqual({
         turnId: 0,
@@ -340,12 +453,12 @@ describe('LLMRequester service migration coverage', () => {
         child: () => logger,
       };
       ctx = createTestAgent(
-        llmGenerateServices(async () => {
+        llmGenerateServices(requesterFromGenerateFn(async () => {
           throw new Error('temporary provider failure');
-        }),
+        })),
         logServices(logger),
       );
-      const llmRequester = ctx.get(IAgentLLMRequesterService);
+      const llmRequester = ctx.get(IAgentLoopService).requester;
 
       await expect(
         llmRequester.request({
@@ -373,12 +486,12 @@ describe('LLMRequester service migration coverage', () => {
     it('fails a retryable provider error on the first attempt — retries are the loop\u2019s concern', async () => {
       let calls = 0;
       ctx = createTestAgent(
-        llmGenerateServices(async () => {
+        llmGenerateServices(requesterFromGenerateFn(async () => {
           calls += 1;
           throw new APIConnectionError('terminated');
-        }),
+        })),
       );
-      const llmRequester = ctx.get(IAgentLLMRequesterService);
+      const llmRequester = ctx.get(IAgentLoopService).requester;
 
       await expect(llmRequester.request()).rejects.toMatchObject({
         name: 'APIConnectionError',
@@ -389,12 +502,12 @@ describe('LLMRequester service migration coverage', () => {
     it('tracks api_error with the v1 wire shape (model id, alias, protocol, status code)', async () => {
       const records: TelemetryRecord[] = [];
       ctx = createTestAgent(
-        llmGenerateServices(async () => {
-          throw new APIStatusError(429, 'rate limited');
-        }),
+        llmGenerateServices(requesterFromGenerateFn(async () => {
+          throw new APIStatusError(429, 'rate limited', true);
+        })),
         telemetryServices(recordingTelemetry(records)),
       );
-      const llmRequester = ctx.get(IAgentLLMRequesterService);
+      const llmRequester = ctx.get(IAgentLoopService).requester;
 
       await expect(llmRequester.request()).rejects.toMatchObject({
         name: 'APIStatusError',
@@ -407,8 +520,6 @@ describe('LLMRequester service migration coverage', () => {
           agent_id: 'main',
           model: 'mock-model',
           alias: 'mock-model',
-          // vendor and wire protocol are separate fields now: the mock
-          // provider is the kimi vendor over the openai base.
           provider_type: 'kimi',
           protocol: 'openai',
           retryable: expect.any(Boolean),
@@ -421,12 +532,12 @@ describe('LLMRequester service migration coverage', () => {
     it('tags api_error with turn_id and request_kind from the request source', async () => {
       const records: TelemetryRecord[] = [];
       ctx = createTestAgent(
-        llmGenerateServices(async () => {
+        llmGenerateServices(requesterFromGenerateFn(async () => {
           throw new APIConnectionError('terminated');
-        }),
+        })),
         telemetryServices(recordingTelemetry(records)),
       );
-      const llmRequester = ctx.get(IAgentLLMRequesterService);
+      const llmRequester = ctx.get(IAgentLoopService).requester;
 
       await expect(
         llmRequester.request({ source: { type: 'turn', turnId: 3, step: 1 } }),
@@ -458,7 +569,7 @@ describe('LLMRequester service migration coverage', () => {
 
   describe('request timing and budget', () => {
     let ctx: TestAgentContext;
-    let llmRequester: IAgentLLMRequesterService;
+    let llmRequester: LoopRequester;
     let profile: IAgentProfileService;
     let requestMaxTokens: unknown;
     let logEntries: CapturedLogEntry[];
@@ -468,13 +579,9 @@ describe('LLMRequester service migration coverage', () => {
       const { logger, entries } = captureLogs();
       logEntries = entries;
       ctx = createTestAgent(
-        llmGenerateServices(async (_provider, _systemPrompt, _tools, _messages, callbacks, options) => {
-          // The per-turn completion budget arrives as a GenerateOptions
-          // intent (the morph-era baked `modelParameters.max_tokens` is gone).
+        llmGenerateServices(requesterFromGenerateFn(async (_provider, _systemPrompt, _tools, _messages, callbacks, options) => {
           requestMaxTokens = options?.maxCompletionTokens;
-          options?.onRequestStart?.();
           await callbacks?.onMessagePart?.({ type: 'text', text: 'timed' });
-          options?.onStreamEnd?.();
           return {
             id: 'response-1',
             message: {
@@ -486,7 +593,7 @@ describe('LLMRequester service migration coverage', () => {
             finishReason: 'completed',
             rawFinishReason: 'stop',
           };
-        }),
+        })),
         configServices(() => ({
           defaultModel: 'deepseek/deepseek-v4-flash',
           providers: {
@@ -508,7 +615,7 @@ describe('LLMRequester service migration coverage', () => {
         })),
         logServices(logger),
       );
-      llmRequester = ctx.get(IAgentLLMRequesterService);
+      llmRequester = ctx.get(IAgentLoopService).requester;
       profile = ctx.get(IAgentProfileService);
       profile.update({
         modelAlias: 'deepseek/deepseek-v4-flash',
@@ -525,7 +632,7 @@ describe('LLMRequester service migration coverage', () => {
       }
     });
 
-    it('emits stream timing and applies the model output budget through IAgentLLMRequesterService', async () => {
+    it('emits stream timing and applies the model output budget through LoopRequester', async () => {
       const { parts, finish } = await collectLLMRequest((onPart) =>
         llmRequester.request(undefined, onPart),
       );
@@ -602,13 +709,13 @@ describe('LLMRequester service migration coverage', () => {
 
   describe('per-turn intent handoff', () => {
     let ctx: TestAgentContext;
-    let llmRequester: IAgentLLMRequesterService;
+    let llmRequester: LoopRequester;
     let capturedCacheKey: unknown;
 
     beforeEach(() => {
       capturedCacheKey = undefined;
       ctx = createTestAgent(
-        llmGenerateServices(async (_provider, _systemPrompt, _tools, _messages, _callbacks, options) => {
+        llmGenerateServices(requesterFromGenerateFn(async (_provider, _systemPrompt, _tools, _messages, _callbacks, options) => {
           capturedCacheKey = options?.cacheKey;
           return {
             id: 'response-1',
@@ -621,9 +728,9 @@ describe('LLMRequester service migration coverage', () => {
             finishReason: 'completed',
             rawFinishReason: 'stop',
           };
-        }),
+        })),
       );
-      llmRequester = ctx.get(IAgentLLMRequesterService);
+      llmRequester = ctx.get(IAgentLoopService).requester;
     });
 
     afterEach(async () => {
@@ -635,14 +742,73 @@ describe('LLMRequester service migration coverage', () => {
     });
 
     it('forwards the session id as the per-turn cache-key intent', async () => {
-      // The engine half of the cache-key probe: the same session's id reaches
-      // the composed provider as GenerateOptions.cacheKey. How each dialect
-      // encodes it (Kimi `prompt_cache_key`, Anthropic `metadata.user_id`) is
-      // asserted at the kosong/provider composition layer.
       await llmRequester.request();
 
       expect(capturedCacheKey).toBe('test-session');
     });
+  });
+
+  describe('media recovery across turns', () => {
+    function countMedia(history: readonly Message[]): number {
+      return history
+        .flatMap((message) => message.content)
+        .filter((part) => part.type === 'image_url' || part.type === 'video_url').length;
+    }
+
+    it.each([
+      {
+        recovery: 'media-degraded',
+        error: new APIRequestTooLargeError(413, 'Request Entity Too Large'),
+        keptMedia: 2,
+      },
+      {
+        recovery: 'media-stripped',
+        error: new APIStatusError(400, 'unsupported image format: image/avif is not supported', false),
+        keptMedia: 0,
+      },
+    ])(
+      'starts the next turn as a prefix extension of the $recovery request the previous turn settled on',
+      async ({ error, keptMedia }) => {
+        const compared = promptCacheComparisons();
+        const ctx = createTestAgent();
+        try {
+          ctx.configure({
+            provider: {
+              type: 'kimi',
+              apiKey: 'test-key',
+              baseUrl: 'https://api.example/v1',
+              model: 'kimi-code',
+            },
+            modelCapabilities: {
+              image_in: true,
+              video_in: true,
+              audio_in: false,
+              thinking: true,
+              tool_use: true,
+              max_context_tokens: 256_000,
+            },
+          });
+          ctx.appendRichToolExchange();
+          ctx.appendRichToolExchange();
+          ctx.mockNextProviderResponse({ error });
+          ctx.mockNextResponse({ type: 'text', text: 'First answer.' });
+          await ctx.rpc.prompt({ input: [{ type: 'text', text: 'describe the media' }] });
+          await ctx.untilTurnEnd();
+          ctx.mockNextResponse({ type: 'text', text: 'Second answer.' });
+          await ctx.rpc.prompt({ input: [{ type: 'text', text: 'and now?' }] });
+          await ctx.untilTurnEnd();
+
+          const [rejected, settled, nextTurn] = ctx.llmCalls;
+          expect(countMedia(rejected!.history)).toBeGreaterThan(2);
+          expect(countMedia(settled!.history)).toBe(keptMedia);
+          expect(findGenerateCallPrefixBreak(settled!, nextTurn!)).toBeUndefined();
+          expect(ctx.llmCalls).toHaveLength(3);
+          expect(promptCacheComparisons()).toBeGreaterThan(compared);
+        } finally {
+          await ctx.dispose();
+        }
+      },
+    );
   });
 
 });
@@ -676,7 +842,7 @@ function wireEvents(
 }
 
 function userMessage(text: string) {
-  return { role: 'user' as const, content: [{ type: 'text' as const, text }], toolCalls: [] };
+  return { role: 'user' as const, content: [{ type: 'text' as const, text }] };
 }
 
 async function collectLLMRequest(

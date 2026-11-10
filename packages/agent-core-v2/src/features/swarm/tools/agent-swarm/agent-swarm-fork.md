@@ -1,0 +1,1 @@
+Context forking: pass `fork: true` so every item-spawned subagent starts with a snapshot of your completed conversation history, inheriting your current agent type, model, and tool set.

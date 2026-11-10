@@ -1,0 +1,1 @@
+Set a hard budget for the current goal, only when the user clearly states one, such as "stop after 20 turns", "use no more than 500k tokens", or "finish within 30 minutes". Do not invent limits, and do not set one for vague wording such as "spend some time" or "try to be quick". Convert a compound time to one unit first: "2 hours and 3 minutes" → `value: 123, unit: "minutes"`.

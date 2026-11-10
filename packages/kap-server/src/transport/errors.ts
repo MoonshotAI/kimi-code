@@ -1,14 +1,8 @@
-/**
- * `/api/v1/debug` transport error handling — map internal errors onto the project
- * envelope, guard serialization, time-box calls, and gate access.
- */
-
 import { ErrorCodes, Error2 } from '@moonshot-ai/agent-core-v2';
 
 import { errEnvelope } from '../protocol/envelope';
 import { ErrorCode } from '../protocol/error-codes';
 
-/** Thrown by {@link withTimeout} when a call exceeds its deadline. */
 export class TimeoutError extends Error {
   constructor(readonly ms: number) {
     super(`call timed out after ${ms}ms`);
@@ -16,7 +10,6 @@ export class TimeoutError extends Error {
   }
 }
 
-/** Race a promise against a deadline. */
 export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   if (ms <= 0) return promise;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -31,15 +24,25 @@ export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 
 const KIMI_TO_PROTOCOL: Record<string, ErrorCode> = {
   [ErrorCodes.SESSION_NOT_FOUND]: ErrorCode.SESSION_NOT_FOUND,
-  // v1 maps a missing agent onto the session-not-found envelope; keep parity.
   [ErrorCodes.AGENT_NOT_FOUND]: ErrorCode.SESSION_NOT_FOUND,
   [ErrorCodes.SESSION_UNDO_UNAVAILABLE]: ErrorCode.SESSION_UNDO_UNAVAILABLE,
+  [ErrorCodes.TURN_NOT_FOUND]: ErrorCode.TURN_NOT_FOUND,
   [ErrorCodes.REQUEST_INVALID]: ErrorCode.VALIDATION_FAILED,
+  [ErrorCodes.CONFIG_INVALID]: ErrorCode.VALIDATION_FAILED,
   [ErrorCodes.NOT_IMPLEMENTED]: ErrorCode.INTERNAL_ERROR,
   [ErrorCodes.PROMPT_NOT_FOUND]: ErrorCode.PROMPT_NOT_FOUND,
   [ErrorCodes.FS_PATH_NOT_FOUND]: ErrorCode.FS_PATH_NOT_FOUND,
   [ErrorCodes.SESSION_BUSY]: ErrorCode.SESSION_BUSY,
-  [ErrorCodes.PROMPT_ALREADY_COMPLETED]: ErrorCode.PROMPT_ALREADY_COMPLETED,
+  [ErrorCodes.SESSION_FORK_ACTIVE_TURN]: ErrorCode.SESSION_BUSY,
+  [ErrorCodes.SESSION_OCCUPIED]: ErrorCode.SESSION_OCCUPIED,
+  [ErrorCodes.SESSION_STALE]: ErrorCode.SESSION_STALE,
+  [ErrorCodes.COMPACTION_UNABLE]: ErrorCode.COMPACTION_UNABLE,
+  [ErrorCodes.FILE_NOT_FOUND]: ErrorCode.FILE_NOT_FOUND,
+  [ErrorCodes.SKILL_NOT_FOUND]: ErrorCode.SKILL_NOT_FOUND,
+  [ErrorCodes.SKILL_NAME_EMPTY]: ErrorCode.SKILL_NOT_FOUND,
+  [ErrorCodes.SKILL_TYPE_UNSUPPORTED]: ErrorCode.SKILL_NOT_ACTIVATABLE,
+  [ErrorCodes.VALIDATION_FAILED]: ErrorCode.VALIDATION_FAILED,
+  [ErrorCodes.PROMPT_ID_CONFLICT]: ErrorCode.PROMPT_ID_CONFLICT,
   [ErrorCodes.GOAL_ALREADY_EXISTS]: ErrorCode.GOAL_ALREADY_EXISTS,
   [ErrorCodes.GOAL_NOT_FOUND]: ErrorCode.GOAL_NOT_FOUND,
   [ErrorCodes.GOAL_STATUS_INVALID]: ErrorCode.GOAL_STATUS_INVALID,
@@ -47,8 +50,6 @@ const KIMI_TO_PROTOCOL: Record<string, ErrorCode> = {
   [ErrorCodes.GOAL_OBJECTIVE_EMPTY]: ErrorCode.GOAL_OBJECTIVE_EMPTY,
   [ErrorCodes.GOAL_OBJECTIVE_TOO_LONG]: ErrorCode.GOAL_OBJECTIVE_TOO_LONG,
   [ErrorCodes.GOAL_UNSUPPORTED_AGENT]: ErrorCode.GOAL_UNSUPPORTED_AGENT,
-  // hostFs / storage codes → closest v1 wire equivalent (ENOTDIR collapses
-  // into path-not-found); codes without an equivalent fall back to 50001.
   [ErrorCodes.OS_FS_NOT_FOUND]: ErrorCode.FS_PATH_NOT_FOUND,
   [ErrorCodes.OS_FS_NOT_DIRECTORY]: ErrorCode.FS_PATH_NOT_FOUND,
   [ErrorCodes.OS_FS_IS_DIRECTORY]: ErrorCode.FS_IS_DIRECTORY,
@@ -56,17 +57,20 @@ const KIMI_TO_PROTOCOL: Record<string, ErrorCode> = {
   [ErrorCodes.OS_FS_PERMISSION_DENIED]: ErrorCode.FS_PERMISSION_DENIED,
   [ErrorCodes.STORAGE_IO_FAILED]: ErrorCode.PERSISTENCE_FAILURE,
   [ErrorCodes.STORAGE_LOCKED]: ErrorCode.PERSISTENCE_FAILURE,
+  [ErrorCodes.WIRE_VERSION_TOO_LOW]: ErrorCode.WIRE_VERSION_TOO_LOW,
 };
 
-/**
- * Map an internal error to the project envelope. `Error2` keeps its coded
- * mapping; everything else becomes `50001`. Stack traces are intentionally not
- * surfaced.
- */
+const PUBLIC_DETAIL_CODES: ReadonlySet<string> = new Set([
+  ErrorCodes.SESSION_OCCUPIED,
+  ErrorCodes.SESSION_STALE,
+  ErrorCodes.WIRE_VERSION_TOO_LOW,
+]);
+
 export function mapError(err: unknown, requestId: string): ReturnType<typeof errEnvelope> {
   if (err instanceof Error2) {
     const code = KIMI_TO_PROTOCOL[err.code] ?? ErrorCode.INTERNAL_ERROR;
-    return errEnvelope(code, err.message, requestId, err.stack);
+    const details = PUBLIC_DETAIL_CODES.has(err.code) ? err.details : undefined;
+    return errEnvelope(code, err.message, requestId, err.stack, details);
   }
   if (err instanceof TimeoutError) {
     return errEnvelope(ErrorCode.INTERNAL_ERROR, err.message, requestId, err.stack);
@@ -79,7 +83,6 @@ export function mapError(err: unknown, requestId: string): ReturnType<typeof err
   );
 }
 
-/** Build a `40001` envelope with structured details. */
 export function validationEnvelope(
   details: { path: string; message: string }[],
   requestId: string,
@@ -106,11 +109,6 @@ export function validationEnvelope(
   };
 }
 
-/**
- * Ensure a value survives a JSON round-trip (catches circular refs, `BigInt`,
- * functions). Returns the value unchanged; throws `Error2` on failure so the
- * caller maps it to `50001` with a clear message.
- */
 export function assertSerializable(value: unknown): unknown {
   if (value === undefined) return null;
   try {

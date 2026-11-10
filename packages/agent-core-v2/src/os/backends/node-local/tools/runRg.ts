@@ -1,12 +1,3 @@
-/**
- * `fileTools` domain — shared ripgrep subprocess plumbing.
- *
- * Single place that knows how to spawn `rg` through the host
- * `IHostProcessService`: timeout / abort handling, capped stdout / stderr
- * draining, two-phase kill with process disposal, and the EAGAIN retry
- * predicate.
- */
-
 import type { Readable } from 'node:stream';
 
 import { BugIndicatingError } from '#/errors';
@@ -30,7 +21,7 @@ export type RunRgOutcome = RunRgResult | { readonly kind: 'aborted' };
 
 function disposeProcess(proc: IHostProcess): void {
   try {
-    proc.dispose();
+    void proc.dispose();
   } catch {
   }
 }
@@ -109,7 +100,9 @@ export async function runRgOnce(
   try {
     const isTerminating = (): boolean => timedOut || aborted || killed;
     const [stdoutResult, stderrResult, code] = await Promise.all([
-      readStreamWithCap(proc.stdout, MAX_OUTPUT_BYTES, isTerminating),
+      readStreamWithCap(proc.stdout, MAX_OUTPUT_BYTES, isTerminating, () => {
+        void killProc();
+      }),
       readStreamWithCap(proc.stderr, MAX_OUTPUT_BYTES, isTerminating),
       proc.wait(),
     ]);
@@ -148,6 +141,7 @@ export function shouldRetryRipgrepEagain(result: RunRgResult): boolean {
     result.exitCode !== 0 &&
     result.exitCode !== 1 &&
     !result.timedOut &&
+    !result.bufferTruncated &&
     isEagainRipgrepError(result.stderrText)
   );
 }
@@ -172,6 +166,7 @@ async function readStreamWithCap(
   stream: Readable,
   maxBytes: number,
   suppressPrematureClose?: () => boolean,
+  onLimit?: () => void,
 ): Promise<CappedStreamResult> {
   const chunks: Buffer[] = [];
   let total = 0;
@@ -186,6 +181,7 @@ async function readStreamWithCap(
         if (remaining > 0) chunks.push(buf.subarray(0, remaining));
         total = maxBytes;
         truncated = true;
+        onLimit?.();
         continue;
       }
       chunks.push(buf);

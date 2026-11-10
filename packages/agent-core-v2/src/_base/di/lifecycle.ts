@@ -1,11 +1,15 @@
-/**
- * `di` domain — disposable lifecycle primitives (`Disposable`, `DisposableStore`, `IDisposable`).
- */
-
 import { onUnexpectedError } from '../errors/unexpectedError';
 import { Ledger, type LedgerEntry } from '../lifecycle/ledger';
 
+export interface IDisposableDebugLabel {
+  readonly debugLabel?: string;
+}
+
 function disposableLabel(d: IDisposable): string {
+  const debugLabel = (d as IDisposableDebugLabel).debugLabel;
+  if (typeof debugLabel === 'string' && debugLabel.length > 0) {
+    return debugLabel;
+  }
   return `disposable:${d.constructor?.name ?? 'anonymous'}`;
 }
 
@@ -233,6 +237,10 @@ export class DisposableStore implements IDisposable {
     trackDisposable(this);
   }
 
+  get ledger(): Ledger {
+    return this._ledger;
+  }
+
   add<T extends IDisposable>(d: T): T {
     if ((d as unknown as DisposableStore) === this) {
       throw new Error('Cannot register a disposable on itself!');
@@ -328,7 +336,6 @@ export abstract class Disposable implements IDisposable {
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-namespace
 export namespace Disposable {
   export const None: IDisposable = Object.freeze({
     dispose(): void {},
@@ -548,7 +555,6 @@ export class DisposableMap<K, V extends IDisposable = IDisposable>
 
   set(key: K, value: V, skipDisposeOnOverwrite = false): void {
     if (this._isDisposed) {
-      // eslint-disable-next-line no-console
       console.warn(
         new Error(
           'Trying to add a disposable to a DisposableMap that has already been disposed of. The added object will be leaked!',
@@ -631,7 +637,6 @@ export class DisposableSet<V extends IDisposable = IDisposable>
 
   add(value: V): void {
     if (this._isDisposed) {
-      // eslint-disable-next-line no-console
       console.warn(
         new Error(
           'Trying to add a disposable to a DisposableSet that has already been disposed of. The added object will be leaked!',

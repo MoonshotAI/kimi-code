@@ -1,4 +1,5 @@
-import type { HookDefConfig } from '#/agent/externalHooks/configSection';
+import type { IWaitUntil } from '#/_base/event';
+import type { HookDefConfig } from '#/features/externalHooks/configSection';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 
 export type PluginDiagnosticSeverity = 'error' | 'warn' | 'info';
@@ -22,12 +23,22 @@ export interface PluginAgentRoot {
   readonly source: 'plugin';
 }
 
+export interface PluginInterfaceOverride {
+  readonly displayName?: string;
+  readonly description?: string;
+  readonly iconUrl?: string;
+}
+
 export interface PluginInterface {
   readonly displayName?: string;
   readonly shortDescription?: string;
   readonly longDescription?: string;
   readonly developerName?: string;
   readonly websiteURL?: string;
+  readonly defaultLocale?: string;
+  readonly locales?: string;
+  readonly mcpOverrides?: Readonly<Record<string, PluginInterfaceOverride>>;
+  readonly skillOverrides?: Readonly<Record<string, PluginInterfaceOverride>>;
 }
 
 export interface PluginManifest {
@@ -39,6 +50,7 @@ export interface PluginManifest {
   readonly homepage?: string;
   readonly license?: string;
   readonly skills?: readonly string[];
+  readonly rootSkillFallback?: boolean;
   readonly agents?: readonly string[];
   readonly sessionStart?: PluginSessionStart;
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
@@ -57,8 +69,26 @@ export interface PluginCapabilityState {
   readonly mcpServers?: Readonly<Record<string, PluginMcpServerState>>;
 }
 
+export interface PluginSkillInfo {
+  readonly name: string;
+  readonly displayName?: string;
+  readonly description?: string;
+}
+
+export interface PluginSkillRecord extends PluginSkillInfo {
+  readonly overrideKey: string;
+}
+
+export interface PluginCapabilities {
+  readonly skills: readonly PluginSkillInfo[];
+  readonly mcpServers: readonly PluginMcpServerInfo[];
+}
+
 export interface PluginMcpServerInfo {
   readonly name: string;
+  readonly displayName?: string;
+  readonly description?: string;
+  readonly iconUrl?: string;
   readonly runtimeName: string;
   readonly enabled: boolean;
   readonly transport: 'stdio' | 'http' | 'sse';
@@ -68,6 +98,13 @@ export interface PluginMcpServerInfo {
   readonly url?: string;
   readonly envKeys?: readonly string[];
   readonly headerKeys?: readonly string[];
+}
+
+export interface PluginMcpServerEntry {
+  readonly name: string;
+  readonly config: McpServerConfig;
+  readonly pluginId: string;
+  readonly serverName: string;
 }
 
 export interface PluginCommandDef {
@@ -85,6 +122,7 @@ export interface PluginCommandEntry {
 
 export type PluginManifestKind = 'kimi-plugin-root' | 'kimi-plugin-dir';
 export type PluginSource = 'local-path' | 'zip-url' | 'github';
+export type PluginOrigin = 'marketplace' | 'custom' | 'unknown';
 export type PluginState = 'ok' | 'error';
 
 export interface PluginGithubRef {
@@ -103,6 +141,9 @@ export interface PluginRecord {
   readonly id: string;
   readonly root: string;
   readonly source: PluginSource;
+  readonly origin: PluginOrigin;
+  readonly catalogId?: string;
+  readonly marketplaceSource?: string;
   readonly enabled: boolean;
   readonly state: PluginState;
   readonly installedAt: string;
@@ -111,8 +152,10 @@ export interface PluginRecord {
   readonly capabilities?: PluginCapabilityState;
   readonly github?: PluginGithubMetadata;
   readonly skillInstructions?: string;
+  readonly skills?: readonly PluginSkillRecord[];
   readonly skillCount: number;
   readonly manifest?: PluginManifest;
+  readonly interfaceLocales?: Readonly<Record<string, PluginInterface>>;
   readonly manifestKind?: PluginManifestKind;
   readonly manifestPath?: string;
   readonly shadowedManifestPath?: string;
@@ -122,6 +165,9 @@ export interface PluginRecord {
 export interface PluginSummary {
   readonly id: string;
   readonly displayName: string;
+  readonly description?: string;
+  readonly shortDescription?: string;
+  readonly longDescription?: string;
   readonly version?: string;
   readonly enabled: boolean;
   readonly state: PluginState;
@@ -132,18 +178,19 @@ export interface PluginSummary {
   readonly commandCount: number;
   readonly hasErrors: boolean;
   readonly source: PluginSource;
+  readonly origin: PluginOrigin;
+  readonly catalogId?: string;
+  readonly installedAt: string;
   readonly originalSource?: string;
   readonly github?: PluginGithubMetadata;
 }
 
-export interface PluginInfo extends PluginSummary {
+export interface PluginInfo extends PluginSummary, PluginCapabilities {
   readonly root: string;
-  readonly installedAt: string;
   readonly updatedAt?: string;
   readonly manifestKind?: PluginManifestKind;
   readonly manifestPath?: string;
   readonly manifest?: PluginManifest;
-  readonly mcpServers: readonly PluginMcpServerInfo[];
   readonly shadowedManifestPath?: string;
   readonly diagnostics: readonly PluginDiagnostic[];
 }
@@ -164,6 +211,17 @@ export interface ReloadSummary {
   readonly errors: ReadonlyArray<{ readonly id: string; readonly message: string }>;
 }
 
+export type PluginReloadEvent = ReloadSummary & IWaitUntil;
+
+export interface PluginMutation {
+  readonly kind: 'install' | 'enable' | 'disable' | 'remove' | 'mcp-server';
+  readonly id: string;
+}
+
+export interface PluginMutationSummary extends ReloadSummary {
+  readonly mutation: PluginMutation;
+}
+
 export interface PluginUpdateStatus {
   readonly id: string;
   readonly source: PluginSource;
@@ -173,7 +231,7 @@ export interface PluginUpdateStatus {
   readonly updateAvailable: boolean;
 }
 
-export const PLUGIN_NAME_REGEX = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+export const PLUGIN_NAME_REGEX = /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*(?:@[A-Za-z0-9_-]+)?$/;
 
 export function normalizePluginId(name: string): string {
   return name.toLowerCase();

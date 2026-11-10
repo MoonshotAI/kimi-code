@@ -99,6 +99,39 @@ describe('ModelSelectorComponent', () => {
     expect(text(picker)).toContain('Thinking  (←→ to switch)');
   });
 
+  it('hides the Thinking footer when thinkingControl is false', () => {
+    const picker = new ModelSelectorComponent({
+      models: { kimi: model('Kimi K2', ['thinking']) },
+      currentValue: 'kimi',
+      currentThinkingEffort: 'on',
+      thinkingControl: false,
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    expect(text(picker)).not.toContain('Thinking');
+  });
+
+  it('ignores Left/Right when thinkingControl is false', () => {
+    const onSelect = vi.fn();
+    const picker = new ModelSelectorComponent({
+      models: { kimi: model('Kimi K2', ['thinking']) },
+      currentValue: 'kimi',
+      currentThinkingEffort: 'on',
+      thinkingControl: false,
+      onSelect,
+      onCancel: vi.fn(),
+    });
+
+    // Same setup as the toggle test above: either arrow would flip 'on' to 'off'.
+    picker.handleInput(LEFT);
+    picker.handleInput('\r');
+    expect(onSelect).toHaveBeenLastCalledWith({ alias: 'kimi', thinking: 'on' });
+    picker.handleInput(RIGHT);
+    picker.handleInput('\r');
+    expect(onSelect).toHaveBeenLastCalledWith({ alias: 'kimi', thinking: 'on' });
+  });
+
   it('forces always-thinking models on and unsupported models off', () => {
     const onSelect = vi.fn();
     const picker = new ModelSelectorComponent({
@@ -508,6 +541,37 @@ describe('ModelSelectorComponent', () => {
     // Word-wrapped: nothing dropped — the full warning survives across lines.
     const squashed = lines.join('').replaceAll(/\s+/g, '');
     expect(squashed).toContain(warning.replaceAll(/\s+/g, ''));
+  });
+});
+
+describe('ModelSelectorComponent effort descriptions', () => {
+  it('updates descriptions for the highlighted effort and hides them for other providers', () => {
+    const picker = new ModelSelectorComponent({
+      models: {
+        kimi: effortModel('Kimi K3', ['low', 'high', 'max'], 'high'),
+        custom: { ...effortModel('Custom K3', ['low', 'high', 'max'], 'high'), provider: 'custom' },
+      },
+      currentValue: 'kimi',
+      currentThinkingEffort: 'high',
+      effortDescriptions: {
+        low: 'Light reasoning.',
+        high: 'Deeper reasoning.',
+        max: 'Maximum reasoning.',
+      },
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    expect(text(picker)).toContain('Deeper reasoning.');
+    picker.handleInput(RIGHT);
+    expect(text(picker)).toContain('Maximum reasoning.');
+    picker.handleInput(LEFT);
+    picker.handleInput(LEFT);
+    expect(text(picker)).toContain('Light reasoning.');
+    picker.handleInput(LEFT);
+    expect(text(picker)).not.toContain('Light reasoning.');
+    picker.handleInput(DOWN);
+    expect(text(picker)).not.toContain('Deeper reasoning.');
   });
 });
 

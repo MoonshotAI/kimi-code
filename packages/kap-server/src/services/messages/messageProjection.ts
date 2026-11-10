@@ -1,26 +1,8 @@
-/**
- * `ContextMessage` → v1 wire `Message` projection.
- *
- * Mirrors the v1 protocol projection so the `messages`, `snapshot`, and
- * `sessions` (`:undo`) surfaces produce byte-compatible message objects.
- * Lives in kap-server (next to the wire schema in `protocol/message.ts`) —
- * the engine speaks only the native `ContextMessage`.
- *
- * Tool results project to a single `tool_result` part: plain-text results keep
- * the historical flattened-text output, while a result carrying media parts
- * (image/video/audio — e.g. ReadMediaFile) passes the raw kosong content-part
- * array through, the same shape the live `tool.result` event stream carries,
- * so REST consumers can still render the media after reload/resume.
- *
- * A user `video_url` part projects to a structured `video` content part so
- * REST consumers can render it: an internal `kimi-file://<id>?path=…`
- * reference becomes `{ kind: 'file', file_id }` (the materialization path is
- * stripped, never leaked to clients); any other url becomes `{ kind: 'url' }`
- * carrying the provider id. An `audio_url` part still flattens to a text
- * marker.
- */
-
-import { parseKimiFileUrl, type ContextMessage } from '@moonshot-ai/agent-core-v2';
+import { daemonFileRefFromPart, parseDaemonFileUrl, type ContextMessage } from '@moonshot-ai/agent-core-v2';
+import { isUserPromptSubmitHookPart } from '@moonshot-ai/agent-core-v2/agent/contextMemory/hookParts';
+import { stripBundledSkillBlocks, type SteerMessage } from '@moonshot-ai/agent-core-v2/human/agent/origin';
+import { fromCorePart } from '@moonshot-ai/agent-core-v2/human/message';
+import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
 
 import type { Message, MessageContent, MessageRole, ToolUseContent } from '../../protocol/message';
 
@@ -34,42 +16,106 @@ function toProtocolRole(role: ContextMessage['role']): MessageRole {
 }
 
 function mapContentPart(part: ContextMessage['content'][number]): MessageContent {
-  switch (part.type) {
+  const legacy = fromCorePart(part);
+  switch (legacy.type) {
     case 'text':
-      return { type: 'text', text: part.text };
+      return { type: 'text', text: legacy.text };
     case 'think': {
-      const sig = part.encrypted;
+      const sig = legacy.encrypted;
       return sig !== undefined
-        ? { type: 'thinking', thinking: part.think, signature: sig }
-        : { type: 'thinking', thinking: part.think };
+        ? { type: 'thinking', thinking: legacy.think, signature: sig }
+        : { type: 'thinking', thinking: legacy.think };
     }
-    case 'image_url':
-      return {
-        type: 'image',
-        source: { kind: 'url', url: part.imageUrl.url, id: part.imageUrl.id },
-      };
-    case 'audio_url':
-      return { type: 'text', text: `[audio:${part.audioUrl.url}]` };
-    case 'video_url': {
-      const ref = parseKimiFileUrl(part.videoUrl.url);
+    case 'image_url': {
+      const ref = parseDaemonFileUrl(legacy.imageUrl.url);
       return ref !== undefined
-        ? { type: 'video', source: { kind: 'file', file_id: ref.fileId } }
-        : { type: 'video', source: { kind: 'url', url: part.videoUrl.url, id: part.videoUrl.id } };
+        ? { type: 'image', source: { kind: 'session_media', file_id: ref.fileId }, name: legacy.imageUrl.name }
+        : { type: 'image', source: { kind: 'url', url: legacy.imageUrl.url, id: legacy.imageUrl.id }, name: legacy.imageUrl.name };
+    }
+    case 'audio_url':
+      return { type: 'text', text: `[audio:${legacy.audioUrl.url}]` };
+    case 'video_url': {
+      const ref = parseDaemonFileUrl(legacy.videoUrl.url);
+      return ref !== undefined
+        ? { type: 'video', source: { kind: 'session_media', file_id: ref.fileId }, name: legacy.videoUrl.name }
+        : { type: 'video', source: { kind: 'url', url: legacy.videoUrl.url, id: legacy.videoUrl.id }, name: legacy.videoUrl.name };
     }
   }
 }
 
+interface CoreMediaPart {
+  readonly type: 'image_url' | 'audio_url' | 'video_url';
+  readonly source:
+    | { readonly kind: 'url'; readonly url: string }
+    | { readonly kind: 'inline' | 'file' | 'store' };
+}
+
+function isCoreMediaPart(part: unknown): part is CoreMediaPart {
+  if (typeof part !== 'object' || part === null || !('type' in part) || !('source' in part)) {
+    return false;
+  }
+  if (part.type !== 'image_url' && part.type !== 'audio_url' && part.type !== 'video_url') {
+    return false;
+  }
+  const source = part.source;
+  if (typeof source !== 'object' || source === null || !('kind' in source)) return false;
+  return (
+    source.kind === 'url' ||
+    source.kind === 'inline' ||
+    source.kind === 'file' ||
+    source.kind === 'store'
+  );
+}
+
+function projectToolResultMediaPart(part: unknown): unknown {
+  if (isCoreMediaPart(part)) {
+    if (part.source.kind !== 'url' || part.type === 'audio_url') return part;
+    const ref = parseDaemonFileUrl(part.source.url);
+    if (ref === undefined) return part;
+    return {
+      type: part.type === 'image_url' ? 'image' : 'video',
+      source: { kind: 'session_media', file_id: ref.fileId },
+      name: (part as { name?: unknown }).name,
+    };
+  }
+  const legacy = part as ContentPart;
+  if (typeof legacy !== 'object' || legacy === null) return legacy;
+  const ref = daemonFileRefFromPart(legacy);
+  if (ref === undefined) return legacy;
+  if (legacy.type === 'image_url') {
+    return {
+      type: 'image',
+      source: { kind: 'session_media', file_id: ref.ref.fileId },
+      name: legacy.imageUrl.name,
+    };
+  }
+  if (legacy.type === 'video_url') {
+    return {
+      type: 'video',
+      source: { kind: 'session_media', file_id: ref.ref.fileId },
+      name: legacy.videoUrl.name,
+    };
+  }
+  return legacy;
+}
+
+function projectToolResultOutput(output: unknown): unknown {
+  if (!Array.isArray(output)) return output;
+  return output.map((part) => projectToolResultMediaPart(part));
+}
+
 function buildProtocolContent(msg: ContextMessage): MessageContent[] {
+  const visibleContent = msg.content.filter((p) => p.type !== 'think' || p.hidden !== true);
   if (msg.role === 'tool') {
     if (msg.toolCallId === undefined) {
-      return msg.content.map((p) => mapContentPart(p));
+      return visibleContent.map((p) => mapContentPart(p));
     }
-    const hasMediaPart = msg.content.some(
+    const hasMediaPart = visibleContent.some(
       (p) => p.type === 'image_url' || p.type === 'video_url' || p.type === 'audio_url',
     );
     const output: unknown = hasMediaPart
-      ? msg.content
-      : msg.content.map((p) => (p.type === 'text' ? p.text : '')).join('');
+      ? projectToolResultOutput(visibleContent)
+      : visibleContent.map((p) => (p.type === 'text' ? p.text : '')).join('');
     const part: MessageContent =
       msg.isError === true
         ? {
@@ -86,7 +132,7 @@ function buildProtocolContent(msg: ContextMessage): MessageContent[] {
     return [part];
   }
 
-  const base = msg.content.map((p) => mapContentPart(p));
+  const base = visibleContent.map((p) => mapContentPart(p));
 
   if (msg.role === 'assistant' && msg.toolCalls.length > 0) {
     for (const call of msg.toolCalls) {
@@ -109,6 +155,46 @@ function buildProtocolContent(msg: ContextMessage): MessageContent[] {
   }
 
   return base;
+}
+
+export function projectPromptContentParts(content: readonly ContentPart[]): MessageContent[] {
+  const parts: MessageContent[] = [];
+  for (const part of content) {
+    const daemonRef = daemonFileRefFromPart(part);
+    const legacy = fromCorePart(part);
+    if (daemonRef !== undefined) {
+      parts.push({
+        type: daemonRef.kind,
+        source: { kind: 'session_media', file_id: daemonRef.ref.fileId },
+        name:
+          legacy.type === 'image_url'
+            ? legacy.imageUrl.name
+            : legacy.type === 'video_url'
+              ? legacy.videoUrl.name
+              : undefined,
+      });
+      continue;
+    }
+    if (legacy.type === 'text') parts.push({ type: 'text', text: legacy.text });
+    else if (legacy.type === 'image_url') {
+      const match = /^data:([^;]+);base64,(.*)$/.exec(legacy.imageUrl.url);
+      parts.push(match === null
+        ? { type: 'image', source: { kind: 'url', url: legacy.imageUrl.url, id: legacy.imageUrl.id }, name: legacy.imageUrl.name }
+        : { type: 'image', source: { kind: 'base64', media_type: match[1]!, data: match[2]! }, name: legacy.imageUrl.name });
+    } else if (legacy.type === 'video_url') {
+      const match = /^data:([^;]+);base64,(.*)$/.exec(legacy.videoUrl.url);
+      parts.push(match === null
+        ? { type: 'video', source: { kind: 'url', url: legacy.videoUrl.url, id: legacy.videoUrl.id }, name: legacy.videoUrl.name }
+        : { type: 'video', source: { kind: 'base64', media_type: match[1]!, data: match[2]! }, name: legacy.videoUrl.name });
+    }
+  }
+  return parts;
+}
+
+export function projectUserContent(message: SteerMessage): MessageContent[] {
+  const origin = message.origin as { readonly kind: string; readonly name?: unknown } | undefined;
+  if (origin?.kind === 'retry' || (origin?.kind === 'system_trigger' && origin.name !== 'subagent')) return [];
+  return projectPromptContentParts(stripBundledSkillBlocks(message).filter((part) => !isUserPromptSubmitHookPart(part)));
 }
 
 export function toProtocolMessage(

@@ -26,6 +26,13 @@ const SWARM_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
   { value: 'off', description: 'Turn swarm mode off' },
 ];
 
+const TOWER_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
+  { value: 'status', description: 'Report tower status' },
+  { value: 'teardown', description: 'Tear down the tower' },
+  { value: 'on', description: 'Turn tower mode on' },
+  { value: 'off', description: 'Turn tower mode off' },
+];
+
 const ADD_DIR_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
   { value: 'list', description: 'Show configured additional workspace directories' },
 ];
@@ -47,6 +54,11 @@ export function goalArgumentCompletions(argumentPrefix: string): AutocompleteIte
 /** Argument autocompletion for the `/swarm` command (subcommands). */
 export function swarmArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
   return completeLeadingArg(SWARM_ARG_COMPLETIONS, argumentPrefix);
+}
+
+/** Argument autocompletion for the `/tower` command (subcommands). */
+export function towerArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
+  return completeLeadingArg(TOWER_ARG_COMPLETIONS, argumentPrefix);
 }
 
 /** Argument autocompletion for the `/add-dir` command. */
@@ -136,14 +148,14 @@ export const BUILTIN_SLASH_COMMANDS = [
   {
     name: 'yolo',
     aliases: ['yes'],
-    description: 'Toggle YOLO mode: auto-approve tool actions, but the agent may still ask questions.',
+    description: 'Ask When Needed mode: routine edits and commands run automatically; risky actions, questions, and plans still ask.',
     priority: 101,
     availability: 'always',
   },
   {
     name: 'auto',
     aliases: [],
-    description: 'Toggle Auto mode: fully autonomous, agent decides everything without asking.',
+    description: 'Never Ask mode: everything runs and is decided automatically; only plans in Plan mode wait for your review.',
     priority: 99,
     availability: 'always',
   },
@@ -178,6 +190,19 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'idle-only',
   },
   {
+    name: 'tower',
+    aliases: [],
+    description: 'Report tower status, toggle tower mode, or turn it on with a base branch',
+    priority: 100,
+    argumentHint: '[status|teardown|on|off] | <base-branch>',
+    completeArgs: towerArgumentCompletions,
+    // Every form stays available while busy: base selections apply to the next
+    // TowerInit of the running coordinator turn, so /tower commands never wait
+    // for the previous one to finish.
+    availability: 'always',
+    experimentalFlag: 'tower',
+  },
+  {
     name: 'model',
     aliases: [],
     description: 'Switch LLM model',
@@ -185,12 +210,11 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
-    name: 'secondary_model',
-    aliases: [],
+    name: 'secondary-model',
+    aliases: ['subagent-model'],
     description: 'Configure the secondary model for subagents',
     priority: 90,
     availability: 'always',
-    experimentalFlag: 'secondary-model',
   },
   {
     name: 'effort',
@@ -223,7 +247,7 @@ export const BUILTIN_SLASH_COMMANDS = [
   {
     name: 'new',
     aliases: ['clear'],
-    description: 'Start a fresh session in the current workspace',
+    description: 'Start a fresh session in the current environment',
     priority: 80,
   },
   {
@@ -342,7 +366,7 @@ export const BUILTIN_SLASH_COMMANDS = [
   },
   {
     name: 'feedback',
-    aliases: [],
+    aliases: ['bug'],
     description: 'Send feedback to make Kimi Code better',
     priority: 60,
     availability: 'always',
@@ -393,6 +417,13 @@ export const BUILTIN_SLASH_COMMANDS = [
     priority: 40,
   },
   {
+    name: 'import-sessions',
+    aliases: [],
+    description: 'Import recent Claude Code and Codex sessions',
+    priority: 40,
+    availability: 'idle-only',
+  },
+  {
     name: 'copy',
     aliases: [],
     description: 'Copy the last assistant message to the clipboard',
@@ -402,6 +433,20 @@ export const BUILTIN_SLASH_COMMANDS = [
     name: 'web',
     aliases: [],
     description: 'Open the current session in the Web UI by starting a new server',
+    priority: 40,
+    availability: 'always',
+  },
+  {
+    name: 'desktop',
+    aliases: ['install-desktop'],
+    description: 'Open the Kimi Code desktop app page in your browser',
+    priority: 40,
+    availability: 'always',
+  },
+  {
+    name: 'remote-control',
+    aliases: ['rc'],
+    description: 'Open the current session through Kimi Remote Control',
     priority: 40,
     availability: 'always',
   },

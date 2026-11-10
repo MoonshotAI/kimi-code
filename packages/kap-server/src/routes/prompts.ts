@@ -1,58 +1,46 @@
-/**
- * `/api/v1` prompt routes — v1-compatible prompt surface backed directly by
- * the Agent-scoped `prompt` scheduler. This edge applies protocol conversion,
- * request overrides, and metadata updates while preserving the paths and wire
- * shapes from `packages/server/src/routes/prompts.ts`.
- */
-
 import { createHash } from 'node:crypto';
-import { createWriteStream } from 'node:fs';
-import { mkdir, stat, writeFile } from 'node:fs/promises';
-import { extname, join } from 'node:path';
-import { pipeline } from 'node:stream/promises';
+import { join } from 'node:path';
 
 import {
   IBootstrapService,
-  IAgentLifecycleService,
+  getOrRestoreAgent,
+  IAgentLoopService,
   IAgentPermissionModeService,
   IAgentProfileService,
+  IAgentEnvironmentBindingService,
+  IAgentEnvironmentService,
   IAgentToolPolicyService,
-  IAgentPromptService,
-  IAuthSummaryService,
+  IAgentSkillService,
+  IAgentSwarmService,
+  IEventBus,
   IEventService,
   IFileService,
+  ISessionManager,
+  ISessionMediaStore,
   ISessionMetadata,
-  buildKimiFileUrl,
-  parseKimiFileUrl,
+  ISessionSkillCatalog,
+  isUserActivatableSkillType,
   promptMetadataTextFromContentParts,
   ProfileError,
-  type ContentPart,
+  type ContextMessage,
   type PromptHandle,
-  type PromptQueueSnapshot,
+  type PromptOrigin,
+  type PromptState,
+  type PromptWithSkillsResult,
+  newMessageId,
   ISessionContext,
+  reloadOnStale,
   resumeSessionById,
   ITelemetryService,
   applyPromptMetadataUpdate,
-  buildImageCompressionCaption,
-  buildUnsupportedImageNotice,
-  compressBase64ForModel,
-  compressImageForModel,
-  decodeBase64Prefix,
-  isError2,
   Error2,
   ErrorCodes,
-  isModelAcceptedImageMime,
-  normalizeImageMime,
-  persistOriginalImage,
-  resolveEffectiveImageMime,
   sessionMediaOriginalsDir,
-  unsupportedImageMimeFromUrl,
-  type GetResult,
-  type ImageCompressionTelemetry,
   type ISessionScopeHandle,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import { ErrorCode } from '../protocol/error-codes';
+import { projectPromptContentParts, projectUserContent } from '../services/messages/messageProjection';
 import {
   promptAbortResponseSchema,
   promptListResponseSchema,
@@ -60,15 +48,30 @@ import {
   promptSteerResultSchema,
   promptSubmissionSchema,
   promptSubmitResultSchema,
-  type PromptSubmission,
+  type PromptSkillActivation,
 } from '../protocol/rest-prompt';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
+import {
+  sendMappedError as sendSessionMappedError,
+  sessionConflictErrors,
+} from './sessionErrors';
+import {
+  assertPromptFileRefs,
+  assertPromptPathRefs,
+  contentHasPathRefs,
+  contentToCoreParts,
+  resolvePromptMediaFiles,
+  resolvePromptSessionMediaRefs,
+  environmentMediaTargets,
+  type PromptMediaPreparation,
+} from '../lib/promptMedia';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
-import { parseActionSuffix } from './action-suffix';
+import { type ActionTable, resolveActionTarget, runAction } from './action-dispatch';
+import { sendEnvironmentError } from './environment';
 
 interface PromptRouteHost {
   get(
@@ -94,22 +97,8 @@ const sessionIdParamSchema = z.object({
 });
 
 const validationDetailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
-const authProviderDetailsSchema = z.object({ provider_id: z.string() });
-const authModelDetailsSchema = z.object({ model_id: z.string(), provider_id: z.string() }).partial();
-const VIDEO_EXT_BY_MIME: Record<string, string> = {
-  'video/mp4': '.mp4',
-  'video/quicktime': '.mov',
-  'video/webm': '.webm',
-  'video/x-msvideo': '.avi',
-  'video/x-matroska': '.mkv',
-  'video/mpeg': '.mpeg',
-};
 
 async function resolveSession(core: Scope, sessionId: string): Promise<ISessionScopeHandle> {
-  // `resume` (not `get`) so a persisted-but-cold session — created by a previous
-  // process, by v1, or closed in this one — is loaded from disk instead of
-  // being reported as `session.not_found`. Mirrors the snapshot route. Returns
-  // `undefined` only when the session is unknown or its workspace is gone.
   const session = await resumeSessionById(core.accessor, sessionId);
   if (session === undefined) {
     throw new Error2('session.not_found', `session ${sessionId} does not exist`);
@@ -122,42 +111,45 @@ async function resolvePrompt(core: Scope, sessionId: string, agentId?: string) {
 }
 
 async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: string) {
-  // A prompt may target a forked side-channel agent (e.g. `/btw`) via
-  // `body.agent_id`. Default to `main` when absent; only `main` is
-  // auto-created — any other id must already exist (forked beforehand), or it
-  // is reported as `agent.not_found`.
   const agent =
     agentId === undefined || agentId === MAIN_AGENT_ID
       ? await ensureMainAgent(session)
-      : session.accessor.get(IAgentLifecycleService).get(agentId);
+      : await getOrRestoreAgent(session, agentId);
   if (agent === undefined) {
     throw new Error2('agent.not_found', `agent ${agentId} does not exist`);
   }
   return {
-    prompt: agent.accessor.get(IAgentPromptService),
-    auth: agent.accessor.get(IAuthSummaryService),
+    prompt: agent.accessor.get(IAgentLoopService),
+    skill: agent.accessor.get(IAgentSkillService),
+    events: agent.accessor.get(IEventBus),
     profile: agent.accessor.get(IAgentProfileService),
     toolPolicy: agent.accessor.get(IAgentToolPolicyService),
     permissionMode: agent.accessor.get(IAgentPermissionModeService),
+    binding: agent.accessor.get(IAgentEnvironmentBindingService),
+    environment: agent.accessor.get(IAgentEnvironmentService),
+    swarm: agent.accessor.get(IAgentSwarmService),
   };
 }
 
-/**
- * Bind the resolved agent to the profile named by a prompt submission's
- * `profile` field. First-bind semantics live in the engine: a same-name
- * repeat is short-circuited here as a no-op, while an unknown name or a
- * post-bind switch is rejected by `AgentProfileService.bind` with a coded
- * `ProfileError` — this edge only maps it onto 40001. Checking anything
- * beyond the no-op shortcut here would re-introduce a check-then-act window
- * the engine guard has already closed.
- *
- * `model` falls back to the configured default inside the engine. `thinking`
- * rides along in the bind so an unsupported effort rejects atomically —
- * before any state mutation — instead of wedging the session's identity with
- * a successful bind followed by a failed `setThinking`.
- *
- * Returns true when a bind happened (i.e. `thinking` was consumed by it).
- */
+async function assertActivatableSkills(
+  catalog: ISessionSkillCatalog,
+  skills: readonly PromptSkillActivation[],
+): Promise<void> {
+  await catalog.ready;
+  for (const skill of skills) {
+    const definition = catalog.catalog.getSkill(skill.name, skill.path);
+    if (definition === undefined) {
+      throw new Error2(ErrorCodes.SKILL_NOT_FOUND, `Skill "${skill.name}" was not found`);
+    }
+    if (!isUserActivatableSkillType(definition.metadata.type)) {
+      throw new Error2(
+        ErrorCodes.SKILL_TYPE_UNSUPPORTED,
+        `Skill "${definition.name}" cannot be activated by the user`,
+      );
+    }
+  }
+}
+
 async function applyProfileSelection(
   profile: IAgentProfileService,
   profileName: string,
@@ -181,32 +173,20 @@ async function applyProfileSelection(
   return true;
 }
 
-/**
- * Fail fast on stale or mis-kinded file references before anything
- * session-scoped happens: a bad `file_id` (unknown, or a real file used with
- * the wrong media kind, e.g. a PDF submitted as a video) must reject the
- * request without creating the prompt agent and without touching the
- * session's model/thinking/permission.
- */
-async function assertPromptFileRefs(body: PromptSubmission, store: IFileService): Promise<void> {
-  for (const part of body.content) {
-    if (part.type === 'file') {
-      await store.get(part.file_id);
-    } else if ((part.type === 'image' || part.type === 'video') && part.source.kind === 'file') {
-      const file = await store.get(part.source.file_id);
-      assertMediaFile(file, part.type);
-    }
-  }
-}
-
 export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
+  core.accessor.get(ISessionManager).onWillDeleteSession?.((event) => {
+    promptAttempts.delete(event.sessionId);
+  });
   const listRoute = defineRoute(
     {
       method: 'GET',
       path: '/sessions/{session_id}/prompts',
       params: sessionIdParamSchema,
       success: { data: promptListResponseSchema },
-      errors: { [ErrorCode.SESSION_NOT_FOUND]: {} },
+      errors: {
+        [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
+      },
       description: 'List the active prompt and queued prompts for a session',
       tags: ['prompts'],
       operationId: 'listPrompts',
@@ -214,7 +194,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
     async (req, reply) => {
       try {
         const { session_id } = req.params;
-        const result = projectPromptList((await resolvePrompt(core, session_id)).prompt.list());
+        const result = projectPromptList((await resolvePrompt(core, session_id)).prompt);
         reply.send(okEnvelope(result, req.id));
       } catch (error) {
         sendMappedError(reply, req, error);
@@ -232,12 +212,14 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
       success: { data: promptSubmitResultSchema },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema: validationDetailsSchema },
-        [ErrorCode.AUTH_PROVISIONING_REQUIRED]: {},
-        [ErrorCode.AUTH_TOKEN_MISSING]: { detailsSchema: authProviderDetailsSchema },
-        [ErrorCode.AUTH_TOKEN_UNAUTHORIZED]: { detailsSchema: authProviderDetailsSchema },
-        [ErrorCode.AUTH_MODEL_NOT_RESOLVED]: { detailsSchema: authModelDetailsSchema },
+        [ErrorCode.SKILL_NOT_FOUND]: {},
+        [ErrorCode.SKILL_NOT_ACTIVATABLE]: {},
         [ErrorCode.SESSION_NOT_FOUND]: {},
-        [ErrorCode.PROMPT_ALREADY_COMPLETED]: { dataSchema: z.object({ aborted: z.literal(false) }) },
+        [ErrorCode.FILE_NOT_FOUND]: {},
+        [ErrorCode.PROMPT_ID_CONFLICT]: {},
+        [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
+        [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
+        ...sessionConflictErrors,
       },
       description: 'Submit a prompt to a session',
       tags: ['prompts'],
@@ -245,82 +227,186 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
     },
     async (req, reply) => {
       const { session_id } = req.params;
+      let attempt: PromptAttempt;
       try {
-        // Fail fast on stale file references before anything is resolved or
-        // mutated: a bad `file_id` must not create the agent, register `main`
-        // in session metadata, or touch the session's controls.
-        await assertPromptFileRefs(req.body, core.accessor.get(IFileService));
-        const resolved = await resolvePrompt(core, session_id, req.body.agent_id);
-        await resolved.auth.ensureReady();
-
-        // Media resolution runs BEFORE any control mutation, so a failed
-        // submission leaves the session's controls untouched. Prompt videos
-        // are materialized to a local copy and carried into context as an
-        // internal `kimi-file://` reference; the engine resolves them to a
-        // provider form (upload / inline / `<video path>` tag) at request
-        // time, so the edge no longer uploads.
-        const telemetry = core.accessor.get(ITelemetryService).withContext({ sessionId: session_id });
-        const resolvedBody = await resolvePromptMediaFiles(
-          req.body,
-          core.accessor.get(IFileService),
-          core.accessor.get(IBootstrapService).cacheDir,
-          {
-            telemetry,
-            resolveOriginalsDir: async () => {
-              const session = await resumeSessionById(core.accessor, session_id);
-              if (session === undefined) return undefined;
-              return sessionMediaOriginalsDir(session.accessor.get(ISessionContext).sessionDir);
-            },
-            resolveAttachmentsDir: async () => {
-              const session = await resumeSessionById(core.accessor, session_id);
-              if (session === undefined) return undefined;
-              return join(session.accessor.get(ISessionContext).sessionDir, 'attachments');
-            },
-          },
-        );
-
-        // Media prepared successfully — only now do the overrides bind.
-        let thinkingConsumed = false;
-        if (req.body.profile !== undefined) {
-          thinkingConsumed =
-            (await applyProfileSelection(
-              resolved.profile,
-              req.body.profile,
-              req.body.model,
-              req.body.thinking,
-            )) && req.body.thinking !== undefined;
+        attempt = beginPromptAttempt(session_id, req.body.prompt_id, { route: 'prompts', body: req.body });
+        if (attempt.earlier !== undefined) {
+          reply.send(okEnvelope(await attempt.earlier, req.id));
+          return;
         }
-        if (req.body.model !== undefined) await resolved.profile.setModel(req.body.model);
-        if (req.body.thinking !== undefined && !thinkingConsumed)
-          resolved.profile.setThinking(req.body.thinking);
-        if (req.body.permission_mode !== undefined) resolved.permissionMode.setMode(req.body.permission_mode);
-        if (req.body.disabled_tools !== undefined) {
-          // A session denylist before bind throws `profile.not_bound` — map it
-          // onto 40001 like the profile-selection errors above.
-          try {
-            await resolved.toolPolicy.setSessionDisabledTools(req.body.disabled_tools);
-          } catch (error) {
-            if (error instanceof ProfileError) {
-              throw new Error2(ErrorCodes.REQUEST_INVALID, error.message);
-            }
-            throw error;
-          }
-        }
-        const parts = contentToCoreParts(resolvedBody.content);
-        const session = await resolveSession(core, session_id);
-        await applyPromptMetadataUpdate({
-          metadata: session.accessor.get(ISessionMetadata),
-          eventService: core.accessor.get(IEventService),
-          sessionId: session_id,
-        }, promptMetadataTextFromContentParts(parts));
-        const handle = await resolved.prompt.enqueue({ message: {
-          role: 'user',
-          content: parts,
-          toolCalls: [],
-          origin: { kind: 'user' },
-        } });
-        reply.send(okEnvelope(projectPromptHandle(handle), req.id));
       } catch (error) {
+        sendMappedError(reply, req, error);
+        return;
+      }
+      const submitOnce = async (): Promise<unknown> => {
+        let preparedMedia: PromptMediaPreparation | undefined;
+        let enqueued = false;
+        try {
+          const session = await resolveSession(core, session_id);
+          let resolved: Awaited<ReturnType<typeof resolvePromptFromSession>> | undefined;
+          if (contentHasPathRefs(req.body.content)) {
+            resolved = await resolvePromptFromSession(session, req.body.agent_id);
+            if (resolved.binding.current.environmentId !== 'local') {
+              throw new Error2(
+                ErrorCodes.REQUEST_INVALID,
+                'file attachments by server-local path require the local environment',
+              );
+            }
+          }
+          await assertPromptFileRefs(req.body.content, core.accessor.get(IFileService));
+          await assertPromptPathRefs(req.body.content);
+          if (req.body.skills !== undefined) {
+            await assertActivatableSkills(
+              session.accessor.get(ISessionSkillCatalog),
+              req.body.skills,
+            );
+          }
+          const resolvedSessionMedia = await resolvePromptSessionMediaRefs(
+            req.body.content,
+            session.accessor.get(ISessionMediaStore),
+          );
+          resolved ??= await resolvePromptFromSession(session, req.body.agent_id);
+
+          const telemetry = core.accessor.get(ITelemetryService).withContext({ session_id });
+          const environmentMedia = environmentMediaTargets(resolved.binding.current, resolved.environment);
+          try {
+            preparedMedia = await resolvePromptMediaFiles(
+              resolvedSessionMedia,
+              core.accessor.get(IFileService),
+              core.accessor.get(IBootstrapService).cacheDir,
+              {
+                telemetry,
+                providerType: resolved.profile.getModelProviderType(req.body.model),
+                resolveOriginalsTarget: environmentMedia.resolveOriginalsTarget ?? (async () => {
+                  try {
+                    const session = await resumeSessionById(core.accessor, session_id);
+                    return session === undefined
+                      ? undefined
+                      : { dir: sessionMediaOriginalsDir(session.accessor.get(ISessionContext).sessionDir) };
+                  } catch {
+                    return undefined;
+                  }
+                }),
+                resolveAttachmentsTarget: environmentMedia.resolveAttachmentsTarget ?? (async () => {
+                  try {
+                    const session = await resumeSessionById(core.accessor, session_id);
+                    return session === undefined
+                      ? undefined
+                      : { dir: join(session.accessor.get(ISessionContext).sessionDir, 'attachments') };
+                  } catch {
+                    return undefined;
+                  }
+                }),
+              },
+            );
+          } finally {
+            environmentMedia.dispose();
+          }
+          const resolvedContent = preparedMedia.content;
+          const promptAttachments =
+            preparedMedia.attachments.length > 0 ? preparedMedia.attachments : undefined;
+
+          let thinkingConsumed = false;
+          if (req.body.profile !== undefined) {
+            thinkingConsumed =
+              (await applyProfileSelection(
+                resolved.profile,
+                req.body.profile,
+                req.body.model,
+                req.body.thinking,
+              )) && req.body.thinking !== undefined;
+          }
+          if (req.body.model !== undefined) await resolved.profile.setModel(req.body.model);
+          if (req.body.thinking !== undefined && !thinkingConsumed)
+            resolved.profile.setThinking(req.body.thinking);
+          if (req.body.permission_mode !== undefined) resolved.permissionMode.setMode(req.body.permission_mode);
+          if (req.body.swarm_mode !== undefined && resolved.swarm.isActive !== req.body.swarm_mode) {
+            if (req.body.swarm_mode) resolved.swarm.enter('manual');
+            else resolved.swarm.exit();
+          }
+          if (req.body.disabled_tools !== undefined) {
+            try {
+              await resolved.toolPolicy.setSessionDisabledTools(req.body.disabled_tools);
+            } catch (error) {
+              if (error instanceof ProfileError) {
+                throw new Error2(ErrorCodes.REQUEST_INVALID, error.message);
+              }
+              throw error;
+            }
+          }
+          const parts = contentToCoreParts(resolvedContent);
+          const clientMetadata = req.body.metadata === undefined ? undefined : [structuredClone(req.body.metadata)];
+          if (req.body.skills !== undefined) {
+            if (req.body.agent_id !== undefined && req.body.agent_id !== MAIN_AGENT_ID) {
+              await applyPromptMetadataUpdate({
+                metadata: session.accessor.get(ISessionMetadata),
+                eventService: core.accessor.get(IEventService),
+                sessionId: session_id,
+              }, promptMetadataTextFromContentParts(parts, clientMetadata));
+            }
+            const settlement = watchPromptSettlements(resolved.events);
+            let result: PromptWithSkillsResult;
+            try {
+              result = await resolved.skill.promptWithSkills({
+                input: parts,
+                promptId: attempt.id,
+                clientMetadata,
+                skills: req.body.skills,
+                attachments: promptAttachments,
+              });
+            } catch (error) {
+              settlement.dispose();
+              throw error;
+            }
+            attempt.enqueued();
+            enqueued = true;
+            settlement.settle(result.prompt_id, () => preparedMedia?.discard());
+            return {
+              prompt_id: result.prompt_id,
+              user_message_id: result.prompt_id,
+              status: result.state,
+              content: projectPromptContentParts(parts),
+              created_at: result.created_at,
+              metadata: clientMetadata?.[0],
+            };
+          }
+          await applyPromptMetadataUpdate({
+            metadata: session.accessor.get(ISessionMetadata),
+            eventService: core.accessor.get(IEventService),
+            sessionId: session_id,
+          }, promptMetadataTextFromContentParts(parts, clientMetadata));
+          const status = resolved.prompt.snapshot();
+          const { id } = resolved.prompt.submit({
+            message: { role: 'user', content: parts },
+            meta: {
+              promptId: attempt.id,
+              origin: { kind: 'user', attachments: promptAttachments, clientMetadata } as PromptOrigin,
+              tracked: true,
+            },
+          });
+          attempt.enqueued();
+          enqueued = true;
+          const handle = resolved.prompt.promptHandle(id)!;
+          if (status.state === 'idle' && !status.paused && status.queue.length === 0) {
+            await Promise.race([handle.launched, handle.completion]);
+          }
+          const staging = preparedMedia;
+          void Promise.race([handle.launched, handle.completion]).then(
+            () => staging?.discard(),
+            () => staging?.discard(),
+          );
+          return projectPromptHandle(handle);
+        } catch (error) {
+          if (!enqueued) await preparedMedia?.discardStaged();
+          throw error;
+        }
+      };
+      try {
+        const response = await reloadOnStale(core.accessor, session_id, submitOnce);
+        attempt.succeed(response);
+        reply.send(okEnvelope(response, req.id));
+      } catch (error) {
+        attempt.fail(error);
         sendMappedError(reply, req, error);
       }
     },
@@ -338,6 +424,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         [ErrorCode.VALIDATION_FAILED]: {},
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.PROMPT_NOT_FOUND]: {},
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
       },
       description: 'Steer queued prompts into the active turn',
       tags: ['prompts'],
@@ -365,34 +452,31 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         [ErrorCode.VALIDATION_FAILED]: {},
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.PROMPT_NOT_FOUND]: {},
-        [ErrorCode.PROMPT_ALREADY_COMPLETED]: { dataSchema: z.object({ aborted: z.literal(false) }) },
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
       },
       description: 'Abort a running prompt or steer a queued prompt',
       tags: ['prompts'],
       operationId: 'promptAction',
     },
     async (req, reply) => {
+      const { session_id, tail } = req.params as { session_id: string; tail: string };
       try {
-        const { session_id, tail } = req.params as { session_id: string; tail: string };
-        const parsed = parseActionSuffix({
+        const target = resolveActionTarget({
           tail,
-          allowedActions: ['abort', 'steer'] as const,
+          actions: promptActions,
           resourceLabel: 'prompt',
         });
-        if (parsed.kind !== 'action') {
-          const message = parsed.kind === 'invalid' ? parsed.reason : `unsupported action: ${tail}`;
-          reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, message, req.id));
+        if ('message' in target) {
+          reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, target.message, req.id));
           return;
         }
         const resolved = await resolvePrompt(core, session_id);
-        if (parsed.action === 'abort') {
-          resolved.prompt.abort(parsed.id);
-          requestLog(req)?.info({ session_id, prompt_id: parsed.id }, 'prompt aborted');
-          reply.send(okEnvelope({ aborted: true }, req.id));
-        } else {
-          await resolved.prompt.steer([parsed.id]);
-          reply.send(okEnvelope({ steered: true, prompt_ids: [parsed.id] }, req.id));
-        }
+        await runAction({
+          action: target.action,
+          id: target.id,
+          actions: promptActions,
+          extra: { resolved, session_id, req, reply },
+        });
       } catch (error) {
         sendMappedError(reply, req, error);
       }
@@ -401,10 +485,52 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
   app.post(actionRoute.path, actionRoute.options, actionRoute.handler as Parameters<PromptRouteHost['post']>[2]);
 }
 
-function projectPromptList(snapshot: PromptQueueSnapshot) {
+type PromptActionExtra = {
+  readonly resolved: Awaited<ReturnType<typeof resolvePrompt>>;
+  readonly session_id: string;
+  readonly req: { readonly id: string };
+  readonly reply: { readonly send: (payload: unknown) => unknown };
+};
+
+type PromptActionCtx = PromptActionExtra & { readonly id: string; readonly body: unknown };
+
+const promptActions: ActionTable<'abort' | 'steer', PromptActionExtra> = {
+  abort: { handle: abortPromptAction },
+  steer: { handle: steerPromptAction },
+};
+
+async function abortPromptAction(ctx: PromptActionCtx): Promise<void> {
+  const { resolved, session_id, req, reply, id } = ctx;
+  resolved.prompt.cancel({ promptId: id });
+  requestLog(req)?.info({ session_id, prompt_id: id }, 'prompt aborted');
+  reply.send(okEnvelope({ aborted: true }, req.id));
+}
+
+async function steerPromptAction(ctx: PromptActionCtx): Promise<void> {
+  const { resolved, req, reply, id } = ctx;
+  await resolved.prompt.steer([id]);
+  reply.send(okEnvelope({ steered: true, prompt_ids: [id] }, req.id));
+}
+
+function projectPromptList(loop: IAgentLoopService) {
+  const snapshot = loop.snapshot();
+  const active =
+    snapshot.activePromptId === undefined
+      ? undefined
+      : loop.promptHandle(snapshot.activePromptId);
   return {
-    active: snapshot.active === undefined ? null : projectPromptSnapshot(snapshot.active),
-    queued: snapshot.pending.map(projectPromptSnapshot),
+    active: active === undefined ? null : projectPromptSnapshot(active),
+    queued: snapshot.queue
+      .filter((item) => item.meta?.tracked === true)
+      .map((item) =>
+        projectPromptSnapshot({
+          id: item.meta?.promptId ?? '',
+          userMessageId: item.meta?.userMessageId ?? '',
+          createdAt: item.meta?.createdAt ?? '',
+          state: 'pending',
+          message: { ...item.message, origin: item.meta?.origin as PromptOrigin | undefined },
+        }),
+      ),
   };
 }
 
@@ -412,516 +538,156 @@ function projectPromptHandle(handle: PromptHandle) {
   return projectPromptSnapshot(handle);
 }
 
-function projectPromptSnapshot(prompt: PromptQueueSnapshot['pending'][number]) {
+export function projectPromptSnapshot(prompt: {
+  readonly id: string;
+  readonly userMessageId: string;
+  readonly createdAt: string;
+  readonly state: PromptState;
+  readonly message: ContextMessage;
+}) {
   const status = prompt.state === 'running' || prompt.state === 'steered'
     ? 'running'
-    : prompt.state === 'blocked' ? 'blocked' : 'queued';
+    : prompt.state === 'blocked' || prompt.state === 'failed' ? prompt.state : 'queued';
+  const origin = prompt.message.origin;
   return {
     prompt_id: prompt.id,
     user_message_id: prompt.userMessageId,
     status,
-    content: corePartsToProtocol(prompt.message.content),
+    content: projectUserContent(prompt.message),
     created_at: prompt.createdAt,
+    metadata: origin?.kind === 'user' || origin?.kind === 'skill_activation' ? origin.clientMetadata?.[0] : undefined,
   };
 }
 
-function corePartsToProtocol(content: readonly ContentPart[]): PromptSubmission['content'] {
-  const parts: PromptSubmission['content'] = [];
-  for (const part of content) {
-    if (part.type === 'text') parts.push({ type: 'text', text: part.text });
-    else if (part.type === 'image_url') {
-      const match = /^data:([^;]+);base64,(.*)$/.exec(part.imageUrl.url);
-      parts.push(match === null
-        ? { type: 'image', source: { kind: 'url', url: part.imageUrl.url, id: part.imageUrl.id } }
-        : { type: 'image', source: { kind: 'base64', media_type: match[1]!, data: match[2]! } });
-    } else if (part.type === 'video_url') {
-      // An internal `kimi-file://<id>?path=…` reference projects back to the
-      // daemon upload it came from — the materialization path never leaks to
-      // the client.
-      const kimiFile = parseKimiFileUrl(part.videoUrl.url);
-      if (kimiFile !== undefined) {
-        parts.push({ type: 'video', source: { kind: 'file', file_id: kimiFile.fileId } });
-        continue;
-      }
-      const match = /^data:([^;]+);base64,(.*)$/.exec(part.videoUrl.url);
-      parts.push(match === null
-        ? { type: 'video', source: { kind: 'url', url: part.videoUrl.url, id: part.videoUrl.id } }
-        : { type: 'video', source: { kind: 'base64', media_type: match[1]!, data: match[2]! } });
-    }
+export interface PromptAttempt {
+  readonly id: string;
+  readonly earlier?: Promise<unknown>;
+  enqueued(): void;
+  succeed(response: unknown): void;
+  fail(error: unknown): void;
+}
+
+interface PromptAttemptRecord {
+  readonly fingerprint: string;
+  readonly response: Promise<unknown>;
+  settled: boolean;
+}
+
+const PROMPT_ATTEMPTS_PER_SESSION = 256;
+const promptAttempts = new Map<string, Map<string, PromptAttemptRecord>>();
+
+export function beginPromptAttempt(sessionId: string, promptId: string | undefined, request: unknown): PromptAttempt {
+  if (promptId === undefined) return { id: newMessageId(), enqueued: () => {}, succeed: () => {}, fail: () => {} };
+  if (promptId.length === 0) throw new Error2(ErrorCodes.REQUEST_INVALID, 'prompt_id must not be empty');
+  let attempts = promptAttempts.get(sessionId);
+  if (attempts === undefined) {
+    attempts = new Map();
+    promptAttempts.set(sessionId, attempts);
   }
-  return parts;
-}
-
-function contentToCoreParts(content: PromptSubmission['content']): ContentPart[] {
-  const parts: ContentPart[] = [];
-  for (const part of content) {
-    if (part.type === 'text') parts.push({ type: 'text', text: part.text });
-    else if (part.type === 'image' && part.source.kind === 'url') parts.push({ type: 'image_url', imageUrl: { url: part.source.url, id: part.source.id } });
-    else if (part.type === 'image' && part.source.kind === 'base64') parts.push({ type: 'image_url', imageUrl: { url: `data:${part.source.media_type};base64,${part.source.data}` } });
-    else if (part.type === 'video' && part.source.kind === 'url') parts.push({ type: 'video_url', videoUrl: { url: part.source.url, id: part.source.id } });
-    else if (part.type === 'video' && part.source.kind === 'base64') parts.push({ type: 'video_url', videoUrl: { url: `data:${part.source.media_type};base64,${part.source.data}` } });
-  }
-  return parts;
-}
-
-interface ResolvePromptMediaOptions {
-  /**
-   * Lazily resolve the session's media-originals dir for persisting the
-   * pre-compression bytes of inline base64 images. Only invoked when an image
-   * was actually compressed; a failure or undefined result falls back to the
-   * shared temp-dir cache.
-   */
-  readonly resolveOriginalsDir?: () => Promise<string | undefined>;
-  /**
-   * Lazily resolve the session's attachments dir for materializing arbitrary
-   * file uploads (and image bytes the provider rejects) into a path the model
-   * can open with the Read tool. A failure or undefined result falls back to
-   * the shared cache dir.
-   */
-  readonly resolveAttachmentsDir?: () => Promise<string | undefined>;
-  /** Report an `image_compress` event per compressed prompt image. */
-  readonly telemetry?: ITelemetryService;
-}
-
-async function resolvePromptMediaFiles(
-  body: PromptSubmission,
-  store: IFileService,
-  cacheDir: string,
-  options: ResolvePromptMediaOptions = {},
-): Promise<PromptSubmission> {
-  let changed = false;
-  let originalsDir: string | undefined;
-  let originalsDirResolved = false;
-  const resolveOriginalsDir = async (): Promise<string | undefined> => {
-    if (!originalsDirResolved) {
-      originalsDirResolved = true;
-      originalsDir = await options.resolveOriginalsDir?.().catch(() => undefined);
+  const fingerprint = createHash('sha256').update(canonicalJson(request)).digest('hex');
+  const earlier = attempts.get(promptId);
+  if (earlier !== undefined) {
+    if (earlier.fingerprint !== fingerprint) {
+      throw new Error2(ErrorCodes.PROMPT_ID_CONFLICT, `prompt_id '${promptId}' is already used by a different request`);
     }
-    return originalsDir;
+    return { id: promptId, earlier: earlier.response, enqueued: () => {}, succeed: () => {}, fail: () => {} };
+  }
+  let resolve!: (response: unknown) => void;
+  let reject!: (error: unknown) => void;
+  const response = new Promise<unknown>((settleOk, settleError) => {
+    resolve = settleOk;
+    reject = settleError;
+  });
+  const record: PromptAttemptRecord = { fingerprint, response, settled: false };
+  const settle = (): void => {
+    record.settled = true;
   };
-  let attachmentsDir: string | undefined;
-  let attachmentsDirResolved = false;
-  const resolveAttachmentsDir = async (): Promise<string> => {
-    if (!attachmentsDirResolved) {
-      attachmentsDirResolved = true;
-      attachmentsDir = await options.resolveAttachmentsDir?.().catch(() => undefined);
-    }
-    return attachmentsDir ?? cacheDir;
+  response.then(settle, settle);
+  attempts.set(promptId, record);
+  for (const [oldest, candidate] of attempts) {
+    if (attempts.size <= PROMPT_ATTEMPTS_PER_SESSION) break;
+    if (candidate.settled) attempts.delete(oldest);
+  }
+  let enqueued = false;
+  return {
+    id: promptId,
+    enqueued: () => {
+      enqueued = true;
+    },
+    succeed: resolve,
+    fail: (error) => {
+      if (!enqueued && attempts.get(promptId)?.response === response) {
+        attempts.delete(promptId);
+        if (attempts.size === 0 && promptAttempts.get(sessionId) === attempts) promptAttempts.delete(sessionId);
+      }
+      reject(error);
+    },
   };
-  const telemetryFor = (source: string): ImageCompressionTelemetry | undefined =>
-    options.telemetry === undefined ? undefined : { client: options.telemetry, source };
-  const content: PromptSubmission['content'] = [];
-  for (const part of body.content) {
-    // Inline base64 image: compress the payload in place. This mirrors the v1
-    // server path for REST clients that submit an image without uploading it.
-    if (part.type === 'image' && part.source.kind === 'base64') {
-      // Formats the provider cannot accept must never enter the session
-      // history — one unsupported image_url makes every later request fail.
-      // The bytes are authoritative: an image labeled image/png that is
-      // actually AVIF is gated on the sniffed format, not the label. The
-      // bytes are still the user's content, though: persist them as a
-      // path-referenced attachment so the model can read and convert them
-      // itself (best effort — the plain notice stands in when persisting
-      // fails). Inline base64 has no original name, so the file is addressed
-      // by content hash with a name derived from the sniffed format.
-      const effectiveMime = resolveEffectiveImageMime(
-        part.source.media_type,
-        decodeBase64Prefix(part.source.data),
-      );
-      if (!isModelAcceptedImageMime(effectiveMime)) {
-        const bytes = Buffer.from(part.source.data, 'base64');
-        const name = `image.${imageExtensionForMime(effectiveMime)}`;
-        const persisted = await persistAttachmentBytes(
-          bytes,
-          `${createHash('sha256').update(bytes).digest('hex').slice(0, 32)}-${name}`,
-          await resolveAttachmentsDir(),
-        );
-        content.push({
-          type: 'text',
-          text: persisted === null
-            ? buildUnsupportedImageNotice(effectiveMime)
-            : buildAttachedFileNotice(name, effectiveMime, bytes.length, persisted),
-        });
-        changed = true;
-        continue;
-      }
-      const canonicalMime = normalizeImageMime(effectiveMime);
-      const compressed = await compressBase64ForModel(part.source.data, canonicalMime, {
-        telemetry: telemetryFor('prompt_inline'),
-      });
-      if (compressed.changed) {
-        const dir = await resolveOriginalsDir();
-        const originalPath = await persistOriginalImage(
-          Buffer.from(part.source.data, 'base64'),
-          part.source.media_type,
-          { dir },
-        );
-        content.push({
-          type: 'text',
-          text: buildImageCompressionCaption({
-            original: {
-              width: compressed.originalWidth,
-              height: compressed.originalHeight,
-              byteLength: compressed.originalByteLength,
-              mimeType: part.source.media_type,
-            },
-            final: {
-              width: compressed.width,
-              height: compressed.height,
-              byteLength: compressed.finalByteLength,
-              mimeType: compressed.mimeType,
-            },
-            originalPath,
-          }),
-        });
-        content.push({
-          type: 'image',
-          source: { kind: 'base64', media_type: compressed.mimeType, data: compressed.base64 },
-        });
-        changed = true;
-      } else {
-        content.push(part);
-      }
-      continue;
-    }
-
-    // Remote image URL: no bytes to sniff, so reject when its path extension
-    // names a format providers reject (e.g. a link ending in `.avif`) — the
-    // notice keeps the URL so the model can still fetch and convert the
-    // image. Extensionless / unknown URLs pass through to the provider and
-    // the 400 recovery. Image+URL parts that pass are re-emitted unchanged.
-    if (part.type === 'image' && part.source.kind === 'url') {
-      const extMime = unsupportedImageMimeFromUrl(part.source.url);
-      if (extMime !== null) {
-        content.push({ type: 'text', text: buildUnsupportedImageNotice(extMime, part.source.url) });
-        changed = true;
-        continue;
-      }
-      content.push(part);
-      continue;
-    }
-
-    // Arbitrary file attachment: materialize the uploaded bytes next to the
-    // session and replace the part with a path reference — the model opens it
-    // with the Read tool instead of receiving it as a media part.
-    if (part.type === 'file') {
-      const file = await store.get(part.file_id);
-      const attachedPath = await materializeAttachmentToDir(file, await resolveAttachmentsDir());
-      content.push({
-        type: 'text',
-        text: buildAttachedFileNotice(file.meta.name, file.meta.media_type, file.meta.size, attachedPath),
-      });
-      changed = true;
-      continue;
-    }
-
-    if ((part.type !== 'image' && part.type !== 'video') || part.source.kind !== 'file') {
-      content.push(part);
-      continue;
-    }
-
-    const file = await store.get(part.source.file_id);
-    assertMediaFile(file, part.type);
-    if (part.type === 'image') {
-      const data = await readFileOrStream(file);
-      let mediaType = file.meta.media_type;
-      let bytes: Uint8Array = data;
-      // Same format gate as the inline path above, and again the bytes are
-      // authoritative: an upload whose Content-Type lies (AVIF bytes sent
-      // as image/png) is gated on the sniffed format. Like the inline path,
-      // keep the bytes as a path-referenced attachment instead of dropping
-      // them (best effort — the plain notice stands in when persisting
-      // fails).
-      mediaType = resolveEffectiveImageMime(mediaType, data);
-      if (!isModelAcceptedImageMime(mediaType)) {
-        const persisted = await persistAttachmentBytes(
-          data,
-          `${file.meta.id}-${sanitizeAttachmentName(file.meta.name)}`,
-          await resolveAttachmentsDir(),
-        );
-        content.push({
-          type: 'text',
-          text: persisted === null
-            ? buildUnsupportedImageNotice(mediaType, file.meta.name)
-            : buildAttachedFileNotice(file.meta.name, mediaType, file.meta.size, persisted),
-        });
-        changed = true;
-        continue;
-      }
-      // Forward the canonical MIME (image/jpg → image/jpeg, case/whitespace)
-      // — strict provider whitelists reject the raw alias.
-      mediaType = normalizeImageMime(mediaType);
-      const compressed = await compressImageForModel(data, mediaType, {
-        telemetry: telemetryFor('prompt_file'),
-      });
-      if (compressed.changed) {
-        const dir = await resolveOriginalsDir();
-        const originalPath = await persistOriginalImage(data, mediaType, { dir });
-        content.push({
-          type: 'text',
-          text: buildImageCompressionCaption({
-            original: {
-              width: compressed.originalWidth,
-              height: compressed.originalHeight,
-              byteLength: compressed.originalByteLength,
-              mimeType: mediaType,
-            },
-            final: {
-              width: compressed.width,
-              height: compressed.height,
-              byteLength: compressed.finalByteLength,
-              mimeType: compressed.mimeType,
-            },
-            originalPath,
-          }),
-        });
-      }
-      bytes = compressed.data;
-      mediaType = compressed.mimeType;
-      content.push({
-        type: 'image',
-        source: {
-          kind: 'base64',
-          media_type: mediaType,
-          data: Buffer.from(bytes).toString('base64'),
-        },
-      });
-      changed = true;
-      continue;
-    }
-
-    // Uploaded video: materialize a local copy the model can open as a
-    // fallback, and carry the upload into context as an internal
-    // `kimi-file://<id>?path=<materialized path>` reference. The engine
-    // resolves it to a provider form (upload / inline / `<video path>` tag) at
-    // request time, so the edge never uploads and never blocks on the provider.
-    const cachePath = await materializeVideoToCache(file, cacheDir);
-    content.push({
-      type: 'video',
-      source: { kind: 'url', url: buildKimiFileUrl(file.meta.id, cachePath) },
-    });
-    changed = true;
-  }
-  return changed ? { ...body, content } : body;
 }
 
-async function materializeVideoToCache(file: GetResult, cacheDir: string): Promise<string> {
-  await mkdir(cacheDir, { recursive: true });
-  const ext = extname(file.meta.name) || (VIDEO_EXT_BY_MIME[file.meta.media_type.toLowerCase()] ?? '.bin');
-  const target = join(cacheDir, `${file.meta.id}${ext}`);
-  const info = await stat(target).catch(() => undefined);
-  if (info?.size === file.meta.size) return target;
-
-  await pipeline(file.stream(), createWriteStream(target));
-  return target;
-}
-
-const ATTACHMENT_NAME_MAX = 100;
-
-/**
- * Attachment file names are untrusted (the multipart filename / a wire field):
- * strip path separators, control chars, and leading dots so the materialized
- * file can never escape its directory or land as a hidden file, and cap the
- * length so the path stays manageable.
- */
-function sanitizeAttachmentName(name: string): string {
-  const cleaned = name
-    .replaceAll(/[\\/]/g, '_')
-    .replaceAll(/[\u0000-\u001F\u007F]/g, '')
-    .replace(/^\.+/, '')
-    .trim()
-    .slice(0, ATTACHMENT_NAME_MAX);
-  return cleaned.length > 0 ? cleaned : 'attachment';
-}
-
-/** Stream an uploaded file into `dir` as `<fileId>-<sanitized name>`. */
-async function materializeAttachmentToDir(file: GetResult, dir: string): Promise<string> {
-  await mkdir(dir, { recursive: true });
-  const target = join(dir, `${file.meta.id}-${sanitizeAttachmentName(file.meta.name)}`);
-  const info = await stat(target).catch(() => undefined);
-  if (info?.size === file.meta.size) return target;
-
-  await pipeline(file.stream(), createWriteStream(target));
-  return target;
-}
-
-/**
- * Write already-buffered attachment bytes into `dir` under `name` (the caller
- * builds the name: file-id or content-hash prefixed). Best effort — returns
- * null instead of throwing so a prompt never fails over the persisted copy.
- */
-async function persistAttachmentBytes(
-  bytes: Uint8Array,
-  name: string,
-  dir: string,
-): Promise<string | null> {
-  try {
-    await mkdir(dir, { recursive: true });
-    const target = join(dir, name);
-    const info = await stat(target).catch(() => undefined);
-    if (info?.size !== bytes.length) await writeFile(target, bytes);
-    return target;
-  } catch {
-    return null;
-  }
-}
-
-/** Derive a file extension from an image MIME (`image/svg+xml` → `svg`). */
-function imageExtensionForMime(mediaType: string): string {
-  const subtype = mediaType.split('/')[1]?.toLowerCase().split('+')[0] ?? '';
-  const ext = subtype.replaceAll(/[^a-z0-9-]/g, '');
-  return ext.length > 0 ? ext : 'img';
-}
-
-// This notice's exact shape is a client contract: kimi-web's messagesToTurns
-// parses it (ATTACHED_FILE_NOTICE_RE) to rebuild the attachment chip after a
-// resync — change the wording there too.
-function buildAttachedFileNotice(name: string, mediaType: string, size: number, path: string): string {
-  return `Attached file "${name}" (${mediaType}, ${size} bytes): ${path} — open it with the Read tool`;
-}
-
-async function readFileOrStream(file: GetResult): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of file.stream()) {
-    chunks.push(Buffer.from(chunk as string | Uint8Array));
-  }
-  return Buffer.concat(chunks);
-}
-
-function assertMediaFile(file: GetResult, expected: 'image' | 'video'): void {
-  const prefix = expected === 'video' ? 'video/' : 'image/';
-  if (file.meta.media_type.toLowerCase().startsWith(prefix)) return;
-  throw new Error2(
-    'validation.failed',
-    `file ${file.meta.id} is ${file.meta.media_type}, not ${expected === 'video' ? 'a video' : 'an image'}`,
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(value, (_key, field: unknown) =>
+    field !== null && typeof field === 'object' && !Array.isArray(field)
+      ? Object.fromEntries(Object.entries(field).toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+      : field,
   );
+}
+
+export function watchPromptSettlements(events: IEventBus): {
+  settle(promptId: string, discard: () => void | Promise<void>): void;
+  dispose(): void;
+} {
+  const settledIds = new Set<string>();
+  const parentOf = new Map<string, string>();
+  let armed: { id: string; discard: () => void | Promise<void> } | undefined;
+  const subscription = events.subscribe((event) => {
+    if (event.type === 'prompt.steered') {
+      const steered = event as {
+        readonly promptIds?: unknown;
+        readonly activePromptId?: unknown;
+      };
+      if (Array.isArray(steered.promptIds) && typeof steered.activePromptId === 'string') {
+        for (const childId of steered.promptIds) {
+          if (typeof childId === 'string') parentOf.set(childId, steered.activePromptId);
+        }
+        if (armed !== undefined && steered.promptIds.includes(armed.id)) {
+          armed = { id: steered.activePromptId, discard: armed.discard };
+        }
+      }
+      return;
+    }
+    if (event.type !== 'prompt.completed' && event.type !== 'prompt.aborted') return;
+    const id = (event as { readonly promptId?: unknown }).promptId;
+    if (typeof id !== 'string') return;
+    settledIds.add(id);
+    if (armed !== undefined && armed.id === id) {
+      const { discard } = armed;
+      armed = undefined;
+      subscription.dispose();
+      void discard();
+    }
+  });
+  return {
+    settle(promptId: string, discard: () => void | Promise<void>): void {
+      if (settledIds.has(promptId) || settledIds.has(parentOf.get(promptId) ?? '')) {
+        subscription.dispose();
+        void discard();
+        return;
+      }
+      armed = { id: promptId, discard };
+    },
+    dispose(): void {
+      armed = undefined;
+      subscription.dispose();
+    },
+  };
 }
 
 function sendMappedError(
   reply: { send(payload: unknown): unknown },
   req: { id: string },
-  err: unknown,
+  error: unknown,
 ): void {
-  const requestId = req.id;
-  const log = requestLog(req);
-  if (isError2(err)) {
-    switch (err.code) {
-      case 'session.not_found':
-      case 'agent.not_found':
-        reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId, err.stack));
-        return;
-      case 'file.not_found':
-        reply.send(errEnvelope(ErrorCode.FILE_NOT_FOUND, err.message, requestId, err.stack));
-        return;
-      case 'prompt.not_found':
-        reply.send(errEnvelope(ErrorCode.PROMPT_NOT_FOUND, err.message, requestId, err.stack));
-        return;
-      case 'session.busy':
-        reply.send(errEnvelope(ErrorCode.SESSION_BUSY, err.message, requestId, err.stack));
-        return;
-      case 'prompt.already_completed':
-        reply.send({
-          code: ErrorCode.PROMPT_ALREADY_COMPLETED,
-          msg: err.message,
-          data: { aborted: false },
-          request_id: requestId,
-          stack: err.stack,
-        });
-        return;
-      case 'request.invalid':
-      case 'validation.failed':
-        reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, err.message, requestId, err.stack));
-        return;
-      case 'auth.provisioning_required':
-        reply.send({
-          code: ErrorCode.AUTH_PROVISIONING_REQUIRED,
-          msg: err.message,
-          data: null,
-          request_id: requestId,
-          stack: err.stack,
-          details: null,
-        });
-        return;
-      case 'auth.token_missing': {
-        const details = authProviderDetails(err);
-        if (details === undefined) {
-          log?.error({ err }, 'prompt request failed');
-          reply.send(
-            errEnvelope(
-              ErrorCode.INTERNAL_ERROR,
-              `auth error ${err.code} missing provider_id`,
-              requestId,
-            ),
-          );
-          return;
-        }
-        reply.send({
-          code: ErrorCode.AUTH_TOKEN_MISSING,
-          msg: err.message,
-          data: null,
-          request_id: requestId,
-          stack: err.stack,
-          details,
-        });
-        return;
-      }
-      case 'auth.token_unauthorized': {
-        const details = authProviderDetails(err);
-        if (details === undefined) {
-          log?.error({ err }, 'prompt request failed');
-          reply.send(
-            errEnvelope(
-              ErrorCode.INTERNAL_ERROR,
-              `auth error ${err.code} missing provider_id`,
-              requestId,
-            ),
-          );
-          return;
-        }
-        reply.send({
-          code: ErrorCode.AUTH_TOKEN_UNAUTHORIZED,
-          msg: err.message,
-          data: null,
-          request_id: requestId,
-          stack: err.stack,
-          details,
-        });
-        return;
-      }
-      case 'auth.model_not_resolved':
-        reply.send({
-          code: ErrorCode.AUTH_MODEL_NOT_RESOLVED,
-          msg: err.message,
-          data: null,
-          request_id: requestId,
-          stack: err.stack,
-          details: authModelDetails(err),
-        });
-        return;
-    }
-  }
-  log?.error({ err }, 'prompt request failed');
-  reply.send(
-    errEnvelope(
-      ErrorCode.INTERNAL_ERROR,
-      err instanceof Error ? err.message : String(err),
-      requestId,
-      err instanceof Error ? err.stack : undefined,
-    ),
-  );
-}
-
-function authProviderDetails(err: Error2): { provider_id: string } | undefined {
-  const providerId = err.details?.['provider_id'];
-  if (typeof providerId !== 'string') return undefined;
-  return { provider_id: providerId };
-}
-
-function authModelDetails(err: Error2): { model_id?: string; provider_id?: string } | null {
-  const details: { model_id?: string; provider_id?: string } = {};
-  const modelId = err.details?.['model_id'];
-  const providerId = err.details?.['provider_id'];
-  if (typeof modelId === 'string') details.model_id = modelId;
-  if (typeof providerId === 'string') details.provider_id = providerId;
-  return Object.keys(details).length === 0 ? null : details;
+  if (sendEnvironmentError(reply, req.id, error)) return;
+  sendSessionMappedError(reply, req, error);
 }

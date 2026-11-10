@@ -104,6 +104,102 @@ describe('FileMentionProvider', () => {
     expect(result).toBeNull();
   });
 
+  it('exposes workspace metadata and reports the selected variant', async () => {
+    const selections: Array<{ commandName: string; path: string; start: number }> = [];
+    const command = {
+      name: 'skill:review',
+      description: 'Review',
+      skillPath: '/work/B/review/SKILL.md',
+      workspaceDir: '/work/B',
+    };
+    const provider = new FileMentionProvider(
+      [command],
+      workDir,
+      NO_FD,
+      [],
+      () => 'prompt',
+      new Set(['skill:review']),
+      undefined,
+      (selection) => selections.push(selection),
+    );
+    const suggestions = await provider.getSuggestions(['/skill:rev'], 0, 10, { signal: ctrl() });
+    expect(suggestions?.items[0]?.data?.['workspaceLabel']).toBe('B');
+    provider.applyCompletion(['/skill:rev'], 0, 10, suggestions!.items[0]!, suggestions!.prefix);
+    expect(selections).toEqual([{ commandName: 'skill:review', path: '/work/B/review/SKILL.md', start: 0 }]);
+
+    provider.applyCompletion(['first line', 'check /rev'], 1, 10, suggestions!.items[0]!, '/rev');
+    expect(selections[1]).toEqual({ commandName: 'skill:review', path: '/work/B/review/SKILL.md', start: 17 });
+  });
+
+  it('expands only duplicate workspace basenames to full paths', async () => {
+    const commands = [
+      { name: 'skill:review', description: 'Review A', workspaceDir: '/repos/acme/service' },
+      { name: 'skill:review', description: 'Review B', workspaceDir: '/tmp/service' },
+      { name: 'skill:other', description: 'Other', workspaceDir: '/work/other' },
+      { name: 'skill:extra', description: 'Extra', workspaceDir: '/work/other' },
+    ];
+    const provider = new FileMentionProvider(
+      commands,
+      workDir,
+      NO_FD,
+      [],
+      () => 'prompt',
+      new Set(['skill:review', 'skill:other', 'skill:extra']),
+    );
+
+    const suggestions = await provider.getSuggestions(['/'], 0, 1, { signal: ctrl() });
+    expect(suggestions?.items.map((item) => item.data?.['workspaceLabel'])).toEqual([
+      '/repos/acme/service',
+      '/tmp/service',
+      'other',
+      'other',
+    ]);
+
+    const line = 'check /rev';
+    const inline = await provider.getSuggestions([line], 0, line.length, { signal: ctrl() });
+    expect(inline?.items.map((item) => item.data?.['workspaceLabel'])).toEqual([
+      '/repos/acme/service',
+      '/tmp/service',
+    ]);
+  });
+
+  it('exposes global and built-in source labels when no workspace directory exists', async () => {
+    const provider = new FileMentionProvider([
+      { name: 'skill:global', description: 'Global', skillSource: 'user' },
+      { name: 'skill:builtin', description: 'Builtin', skillSource: 'builtin' },
+    ], workDir, NO_FD);
+
+    const suggestions = await provider.getSuggestions(['/skill:'], 0, 7, { signal: ctrl() });
+
+    expect(Object.fromEntries(suggestions?.items.map((item) => [item.value, item.data?.['workspaceLabel']]) ?? [])).toEqual({
+      'skill:global': 'Global',
+      'skill:builtin': 'Built-in',
+    });
+  });
+
+  it('places ordinary commands before one continuous skill group with and without fuzzy matching', async () => {
+    const provider = new FileMentionProvider([
+      { name: 'skill:lark-calendar', description: 'Calendar', isSkill: true },
+      { name: 'plan', description: 'Toggle plan mode' },
+      { name: 'skill:lark-approval', description: 'Approval', isSkill: true },
+      { name: 'skill:lark-vc', description: 'Video calls', isSkill: true },
+    ], workDir, NO_FD);
+    const expected = [
+      'plan',
+      'skill:lark-calendar',
+      'skill:lark-approval',
+      'skill:lark-vc',
+    ];
+
+    const all = await provider.getSuggestions(['/'], 0, 1, { signal: ctrl() });
+    const suggestions = await provider.getSuggestions(['/la'], 0, 3, { signal: ctrl() });
+
+    expect(all?.items.map((item) => item.value)).toEqual(expected);
+    expect(suggestions?.items.map((item) => item.value)).toEqual(expected);
+    expect(suggestions?.items[0]?.data?.['group']).toBeUndefined();
+    expect(suggestions?.items.slice(1).every((item) => item.data?.['group'] === 'skill')).toBe(true);
+  });
+
   it('does not complete slash arguments before existing free text', async () => {
     const provider = new FileMentionProvider([GOAL_COMMAND], workDir, NO_FD);
     const line = '/goal Fix the checkout docs';
@@ -283,6 +379,63 @@ describe('FileMentionProvider', () => {
     expect(result).toBeNull();
   });
 
+  it('maps remote @ mention candidates without scanning the local workspace', async () => {
+    writeFileSync(join(workDir, 'local-only.ts'), 'local');
+    const remoteSuggest = vi.fn(async () => [
+      { path: 'src/app.ts', kind: 'file' as const },
+      { path: 'src/components', kind: 'directory' as const },
+      { path: 'docs/with space.md', kind: 'file' as const },
+    ]);
+    const provider = new FileMentionProvider(
+      [],
+      workDir,
+      NO_FD,
+      [],
+      () => 'prompt',
+      undefined,
+      remoteSuggest,
+    );
+
+    const result = await provider.getSuggestions(['@'], 0, 1, { signal: ctrl() });
+
+    expect(remoteSuggest).toHaveBeenCalledWith('');
+    expect(result).not.toBeNull();
+    expect(result!.prefix).toBe('@');
+    expect(result!.items.map((item) => item.value)).toEqual([
+      '@src/app.ts',
+      '@src/components/',
+      '@"docs/with space.md"',
+    ]);
+    expect(result!.items.some((item) => item.value.includes('local-only'))).toBe(false);
+  });
+
+  it('returns null instead of local candidates when remote suggestions are unavailable', async () => {
+    writeFileSync(join(workDir, 'local-only.ts'), 'local');
+    const unavailable = new FileMentionProvider(
+      [],
+      workDir,
+      NO_FD,
+      [],
+      () => 'prompt',
+      undefined,
+      async () => undefined,
+    );
+    const failing = new FileMentionProvider(
+      [],
+      workDir,
+      NO_FD,
+      [],
+      () => 'prompt',
+      undefined,
+      async () => {
+        throw new Error('remote unavailable');
+      },
+    );
+
+    await expect(unavailable.getSuggestions(['@local'], 0, 6, { signal: ctrl() })).resolves.toBeNull();
+    await expect(failing.getSuggestions(['@local'], 0, 6, { signal: ctrl() })).resolves.toBeNull();
+  });
+
   it('uses a filesystem fallback for @ mentions when fd is not available', async () => {
     mkdirSync(join(workDir, 'src', 'components'), { recursive: true });
     writeFileSync(join(workDir, 'src', 'components', 'Button.tsx'), 'export {};');
@@ -307,6 +460,59 @@ describe('FileMentionProvider', () => {
     expect(result).not.toBeNull();
     expect(result!.items.map((item) => item.value)).toContain(
       `@${join(extraDir, 'src', 'Additional.ts').replaceAll('\\', '/')}`,
+    );
+  });
+
+  it('redistributes unused fallback scan capacity to additional roots', async () => {
+    const extraDir = createExtraDir();
+    for (let i = 0; i < 1500; i++) {
+      writeFileSync(join(extraDir, `entry-${i}.ts`), 'export {};');
+    }
+    writeFileSync(join(extraDir, 'target-needle.ts'), 'export {};');
+    const provider = new FileMentionProvider([], workDir, join(workDir, 'missing-fd'), [extraDir]);
+
+    const result = await provider.getSuggestions(['@target-needle'], 0, '@target-needle'.length, {
+      signal: ctrl(),
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.items.map((item) => item.value)).toContain(
+      `@${join(extraDir, 'target-needle.ts').replaceAll('\\', '/')}`,
+    );
+  });
+
+  it('deduplicates fallback roots equal to cwd before scanning', async () => {
+    for (let i = 0; i < 1500; i++) {
+      writeFileSync(join(workDir, `entry-${i}.ts`), 'export {};');
+    }
+    mkdirSync(join(workDir, 'deep'));
+    writeFileSync(join(workDir, 'deep', 'target-needle.ts'), 'export {};');
+    const provider = new FileMentionProvider([], workDir, join(workDir, 'missing-fd'), [workDir]);
+
+    const result = await provider.getSuggestions(['@target-needle'], 0, '@target-needle'.length, {
+      signal: ctrl(),
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.items.map((item) => item.value)).toContain('@deep/target-needle.ts');
+  });
+
+  it('scans additionalDirs within a shared bounded fallback budget', async () => {
+    for (let i = 0; i < 2000; i++) {
+      writeFileSync(join(workDir, `filler-${i}.ts`), 'export {};');
+    }
+    const extraDir = createExtraDir();
+    mkdirSync(join(extraDir, 'deep'), { recursive: true });
+    writeFileSync(join(extraDir, 'deep', 'target-needle.ts'), 'export {};');
+    const provider = new FileMentionProvider([], workDir, join(workDir, 'missing-fd'), [extraDir]);
+
+    const result = await provider.getSuggestions(['@target-needle'], 0, '@target-needle'.length, {
+      signal: ctrl(),
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.items.map((item) => item.value)).toContain(
+      `@${join(extraDir, 'deep', 'target-needle.ts').replaceAll('\\', '/')}`,
     );
   });
 
@@ -392,6 +598,7 @@ describe('FileMentionProvider', () => {
       (item) => item.description === join(extraDir, 'src', 'Overlap.ts').replaceAll('\\', '/'),
     );
     expect(overlapItems).toHaveLength(1);
+    expect(overlapItems[0]?.value).toBe('@extra/src/Overlap.ts');
   });
 
   it.runIf(IS_FD_INSTALLED)(
@@ -420,6 +627,20 @@ describe('FileMentionProvider', () => {
     const values = result!.items.map((item) => item.value);
     expect(values).toContain('@src/');
     expect(values.some((value) => value.startsWith('@.git'))).toBe(false);
+  });
+
+  it('uses the filesystem fallback for an unclosed quoted @ mention', async () => {
+    mkdirSync(join(workDir, 'actions'));
+    mkdirSync(join(workDir, 'activity'));
+    const provider = new FileMentionProvider([], workDir, NO_FD);
+
+    const result = await provider.getSuggestions(['@"ac'], 0, 4, { signal: ctrl() });
+
+    expect(result).not.toBeNull();
+    expect(result!.prefix).toBe('@"ac');
+    expect(result!.items.map((item) => item.value)).toEqual(
+      expect.arrayContaining(['@"actions/"', '@"activity/"']),
+    );
   });
 
   it('filesystem fallback quotes paths with spaces', async () => {
@@ -476,6 +697,184 @@ describe('FileMentionProvider', () => {
       '@sr',
     );
     expect(dir.lines[0]).toBe('hey @src/');
+  });
+
+  it('does not recut a path item just because the cursor is on an @ token', () => {
+    const provider = new FileMentionProvider([], workDir, NO_FD);
+    const result = provider.applyCompletion(
+      ['@'],
+      0,
+      1,
+      { value: 'README.md', label: 'README.md' },
+      '',
+    );
+
+    expect(result.lines[0]).toBe('@README.md');
+  });
+
+  it('does not recut a stale @-named path item after the user types @', () => {
+    const provider = new FileMentionProvider([], workDir, NO_FD);
+    const result = provider.applyCompletion(
+      ['@'],
+      0,
+      1,
+      { value: '@scope/', label: '@scope/' },
+      '',
+    );
+
+    expect(result.lines[0]).toBe('@@scope/');
+  });
+
+  it('still applies path completion for a directory whose name starts with @', () => {
+    const provider = new FileMentionProvider([], workDir, NO_FD);
+    const line = 'cd ';
+    const result = provider.applyCompletion(
+      [line],
+      0,
+      line.length,
+      { value: '@scope/', label: '@scope/' },
+      '',
+    );
+
+    expect(result.lines[0]).toBe('cd @scope/');
+  });
+
+  describe('applyCompletion live @ token', () => {
+    const selectedDir = {
+      value: '@/mnt/e/mlbb-android-2.1.46.1156.1_HB/',
+      label: 'mlbb-android-2.1.46.1156.1_HB/',
+    };
+
+    it('replaces the live @ token when the cached prefix is a stale shorter query', () => {
+      const provider = new FileMentionProvider([], workDir, NO_FD);
+      const line = ' @/mnt/e/mlbb-simple-android-trunk';
+      const result = provider.applyCompletion(
+        [line],
+        0,
+        line.length,
+        selectedDir,
+        '@/mnt/e/mlbb-simple-and',
+      );
+
+      expect(result.lines[0]).toBe(' @/mnt/e/mlbb-android-2.1.46.1156.1_HB/');
+      expect(result.cursorCol).toBe(' @/mnt/e/mlbb-android-2.1.46.1156.1_HB/'.length);
+    });
+
+    it('replaces the live @ token when the cached prefix is longer than the current token', () => {
+      const provider = new FileMentionProvider([], workDir, NO_FD);
+      const line = '@/mnt/e/mlbb-simple-and';
+      const result = provider.applyCompletion(
+        [line],
+        0,
+        line.length,
+        selectedDir,
+        '@/mnt/e/mlbb-simple-android-trunk',
+      );
+
+      expect(result.lines[0]).toBe('@/mnt/e/mlbb-android-2.1.46.1156.1_HB/');
+    });
+
+    it('replaces the live @ token when the cached prefix is a suffix of a path that contains @', () => {
+      const provider = new FileMentionProvider([], workDir, NO_FD);
+      const line = '@packages/@';
+      const result = provider.applyCompletion(
+        [line],
+        0,
+        line.length,
+        { value: '@src/', label: 'src/' },
+        '@',
+      );
+
+      expect(result.lines[0]).toBe('@src/');
+    });
+
+    it('replaces only the current @ token when earlier text is present', () => {
+      const provider = new FileMentionProvider([], workDir, NO_FD);
+      const line = 'see @a @/mnt/e/mlbb-simple-android-trunk';
+      const result = provider.applyCompletion(
+        [line],
+        0,
+        line.length,
+        selectedDir,
+        '@/mnt/e/mlbb-simple-and',
+      );
+
+      expect(result.lines[0]).toBe('see @a @/mnt/e/mlbb-android-2.1.46.1156.1_HB/');
+    });
+
+    it('does not splice when the cursor has already left the @ token', () => {
+      const provider = new FileMentionProvider([], workDir, NO_FD);
+      const line = '@/mnt/e/mlbb-simple-and ';
+      const result = provider.applyCompletion(
+        [line],
+        0,
+        line.length,
+        selectedDir,
+        '@/mnt/e/mlbb-simple-and',
+      );
+
+      expect(result.lines[0]).toBe(line);
+      expect(result.cursorCol).toBe(line.length);
+    });
+
+    it('replaces an unclosed quoted @ token when the cached prefix is stale', () => {
+      const provider = new FileMentionProvider([], workDir, NO_FD);
+      const line = '@"ac';
+      const result = provider.applyCompletion(
+        [line],
+        0,
+        line.length,
+        { value: '@"actions/"', label: 'actions/' },
+        '@"a',
+      );
+
+      expect(result.lines[0]).toBe('@"actions/"');
+      expect(result.cursorCol).toBe('@"actions/'.length);
+    });
+
+    it('quotes a stale unquoted mention item when the live token is quoted', () => {
+      const provider = new FileMentionProvider([], workDir, NO_FD);
+      const line = '@"ac"';
+      const result = provider.applyCompletion(
+        [line],
+        0,
+        4,
+        { value: '@actions/', label: 'actions/' },
+        '@ac',
+      );
+
+      expect(result.lines[0]).toBe('@"actions/"');
+      expect(result.cursorCol).toBe('@"actions/'.length);
+    });
+
+    it('consumes the closing quote after the cursor for a quoted fallback item', () => {
+      const provider = new FileMentionProvider([], workDir, NO_FD);
+      const line = '@"ac"';
+      const result = provider.applyCompletion(
+        [line],
+        0,
+        4,
+        { value: '@"actions/"', label: 'actions/' },
+        '@"ac',
+      );
+
+      expect(result.lines[0]).toBe('@"actions/"');
+      expect(result.cursorCol).toBe('@"actions/'.length);
+    });
+
+    it('replaces a quoted @ token that contains spaces when the cached prefix is stale', () => {
+      const provider = new FileMentionProvider([], workDir, NO_FD);
+      const line = '@"my folder/te';
+      const result = provider.applyCompletion(
+        [line],
+        0,
+        line.length,
+        { value: '@"my folder/test.txt"', label: 'test.txt' },
+        '@"my',
+      );
+
+      expect(result.lines[0]).toBe('@"my folder/test.txt" ');
+    });
   });
 
   describe('bash-mode path completion dotfile filtering', () => {
@@ -638,6 +1037,145 @@ describe('FileMentionProvider', () => {
 
       expect(getArgumentCompletions).toHaveBeenCalled();
       expect(result?.items.map((item) => item.label)).toContain('shared/');
+    });
+  });
+
+  describe('inline skill completion', () => {
+    const REVIEW_COMMAND = {
+      name: 'skill:review',
+      aliases: [],
+      description: 'Review changes',
+    };
+    const SECURITY_COMMAND = {
+      name: 'skill:security',
+      aliases: [],
+      description: 'Check security',
+    };
+    const SKILL_NAMES = new Set(['skill:review', 'skill:security']);
+
+    function skillProvider(
+      commands: ConstructorParameters<typeof FileMentionProvider>[0] = [
+        REVIEW_COMMAND,
+        SECURITY_COMMAND,
+        HELP_COMMAND,
+      ],
+    ) {
+      return new FileMentionProvider(
+        commands,
+        workDir,
+        NO_FD,
+        [],
+        () => 'prompt',
+        SKILL_NAMES,
+      );
+    }
+
+    it('offers skill-only suggestions for a `/` after whitespace mid-input', async () => {
+      const provider = skillProvider();
+      const line = 'hello /';
+      const result = await provider.getSuggestions([line], 0, line.length, { signal: ctrl() });
+
+      expect(result).not.toBeNull();
+      expect(result!.prefix).toBe('/');
+      expect(result!.items.map((item) => item.value).toSorted()).toEqual([
+        'skill:review',
+        'skill:security',
+      ]);
+    });
+
+    it('filters inline suggestions by the typed prefix', async () => {
+      const provider = skillProvider();
+      const line = 'hello /rev';
+      const result = await provider.getSuggestions([line], 0, line.length, { signal: ctrl() });
+
+      expect(result).not.toBeNull();
+      expect(result!.prefix).toBe('/rev');
+      expect(result!.items.map((item) => item.value)).toEqual(['skill:review']);
+    });
+
+    it('offers the skill picker for a `/` at the start of a later line', async () => {
+      const provider = skillProvider();
+      const result = await provider.getSuggestions(['first line', '/'], 1, 1, { signal: ctrl() });
+
+      expect(result).not.toBeNull();
+      expect(result!.items.map((item) => item.value).toSorted()).toEqual([
+        'skill:review',
+        'skill:security',
+      ]);
+    });
+
+    it('stays in skill-only mode while typing a token on a later line', async () => {
+      const provider = skillProvider();
+      const result = await provider.getSuggestions(['first line', '/rev'], 1, 4, {
+        signal: ctrl(),
+      });
+
+      expect(result).not.toBeNull();
+      expect(result!.prefix).toBe('/rev');
+      expect(result!.items.map((item) => item.value)).toEqual(['skill:review']);
+    });
+
+    it('offers inline skills on an indented later line', async () => {
+      const provider = skillProvider();
+      const result = await provider.getSuggestions(['first line', '  /skill:rev'], 1, 12, {
+        signal: ctrl(),
+      });
+
+      expect(result).not.toBeNull();
+      expect(result!.prefix).toBe('/skill:rev');
+      expect(result!.items.map((item) => item.value)).toEqual(['skill:review']);
+    });
+
+    it('offers inline skills for an indented token on the first line', async () => {
+      const provider = skillProvider();
+      const result = await provider.getSuggestions(['  /skill:rev'], 0, 12, { signal: ctrl() });
+
+      expect(result).not.toBeNull();
+      expect(result!.prefix).toBe('/skill:rev');
+      expect(result!.items.map((item) => item.value)).toEqual(['skill:review']);
+    });
+
+    it('does not leak built-in commands onto later lines', async () => {
+      const provider = skillProvider();
+      const result = await provider.getSuggestions(['first line', '/hel'], 1, 4, {
+        signal: ctrl(),
+      });
+
+      expect(result?.items.map((item) => item.value) ?? []).not.toContain('help');
+    });
+
+    it('returns null for a prose slash when no skills are registered', async () => {
+      const provider = new FileMentionProvider([HELP_COMMAND], workDir, NO_FD, [], () => 'prompt');
+      const line = 'hello /';
+      const result = await provider.getSuggestions([line], 0, line.length, { signal: ctrl() });
+      expect(result).toBeNull();
+    });
+
+    it('keeps slash-command argument completions ahead of inline skills', async () => {
+      const provider = skillProvider([ADD_DIR_COMMAND, REVIEW_COMMAND]);
+      const line = '/add-dir /';
+      const result = await provider.getSuggestions([line], 0, line.length, {
+        signal: ctrl(),
+        force: false,
+      });
+
+      expect(result).not.toBeNull();
+      expect(result!.items.map((item) => item.value)).toEqual(['/tmp/shared/']);
+    });
+
+    it('applyCompletion preserves the slash and appends a trailing space', () => {
+      const provider = skillProvider();
+      const line = 'hello /rev';
+      const result = provider.applyCompletion(
+        [line],
+        0,
+        line.length,
+        { value: 'skill:review', label: 'skill:review', data: { inlineSkill: true } },
+        '/rev',
+      );
+
+      expect(result.lines[0]).toBe('hello /skill:review ');
+      expect(result.cursorCol).toBe('hello /skill:review '.length);
     });
   });
 });

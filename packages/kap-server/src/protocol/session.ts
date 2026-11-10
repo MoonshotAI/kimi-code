@@ -15,10 +15,10 @@ export const sessionUsageSchema = z.object({
   output_tokens: z.number().int().nonnegative(),
   cache_read_tokens: z.number().int().nonnegative(),
   cache_creation_tokens: z.number().int().nonnegative(),
-  total_cost_usd: z.number().nonnegative(),
+  total_cost_usd: z.number().nonnegative().optional(),
   context_tokens: z.number().int().nonnegative(),
-  context_limit: z.number().int().nonnegative(),
-  turn_count: z.number().int().nonnegative(),
+  context_limit: z.number().int().nonnegative().optional(),
+  turn_count: z.number().int().nonnegative().optional(),
 });
 
 export type SessionUsage = z.infer<typeof sessionUsageSchema>;
@@ -45,40 +45,48 @@ export const sessionSchema = z.object({
   title: z.string(),
   created_at: isoDateTimeSchema,
   updated_at: isoDateTimeSchema,
-  /** Any agent in the session holds an active turn or background lease. */
   busy: z.boolean(),
-  /** Whether the main agent currently owns an active turn. */
   main_turn_active: z.boolean().optional(),
-  /** Highest-priority pending human interaction. */
   pending_interaction: sessionPendingInteractionSchema.optional(),
-  /** Outcome of the main agent's most recent turn. */
   last_turn_reason: z.enum(['completed', 'cancelled', 'failed']).optional(),
   archived: z.boolean().optional(),
+  archived_at: isoDateTimeSchema.optional(),
   current_prompt_id: z.string().min(1).optional(),
-  /** Text of the most recent user prompt, for search/preview. Absent for empty sessions. */
   last_prompt: z.string().optional(),
   metadata: sessionMetadataSchema,
   agent_config: sessionAgentConfigSchema,
   usage: sessionUsageSchema,
   permission_rules: z.array(permissionRuleSchema),
   message_count: z.number().int().nonnegative(),
-  last_seq: z.number().int().nonnegative(),
 });
 
 export type Session = z.infer<typeof sessionSchema>;
 
-export const sessionCreateSchema = z.object({
-  title: z.string().min(1).optional(),
-  metadata: sessionMetadataSchema.optional(),
-  agent_config: sessionAgentConfigPartialSchema.optional(),
-  workspace_id: workspaceIdSchema.optional(),
-});
+export const sessionCreateSchema = z
+  .object({
+    title: z.string().min(1).optional(),
+    metadata: sessionMetadataSchema.optional(),
+    agent_config: sessionAgentConfigPartialSchema.optional(),
+    workspace_id: workspaceIdSchema.optional(),
+    environment_id: z.string().min(1).optional(),
+    environment_cwd: z.string().min(1).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.environment_cwd !== undefined && value.environment_id === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'environment_cwd requires environment_id',
+        path: ['environment_cwd'],
+      });
+    }
+  });
 
 export type SessionCreate = z.infer<typeof sessionCreateSchema>;
 
 export const sessionForkSchema = z.object({
   title: z.string().min(1).optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
+  turn_index: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
 });
 
 export type SessionFork = z.infer<typeof sessionForkSchema>;

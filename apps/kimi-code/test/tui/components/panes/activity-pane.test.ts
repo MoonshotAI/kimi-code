@@ -27,26 +27,52 @@ function createMockSpinner(initialText = 'working') {
 }
 
 describe('ActivityPaneComponent', () => {
-  it('renders waiting loader after a spacer', () => {
+  it('renders the waiting loader after a spacer', () => {
+    const { spinner } = createMockSpinner('loading');
     const component = new ActivityPaneComponent({
       mode: 'waiting',
-      spinner: new Text('loading', 0, 0) as never,
+      spinner,
     });
 
     expect(component.render(80).map((line) => line.trimEnd())).toEqual(['', 'loading']);
   });
 
-  it('renders composing spinner after a spacer', () => {
+  it('renders the composing spinner after a spacer', () => {
+    const { spinner } = createMockSpinner('working');
     const component = new ActivityPaneComponent({
       mode: 'composing',
-      spinner: new Text('working', 0, 0) as never,
+      spinner,
     });
 
     expect(component.render(80).map((line) => line.trimEnd())).toEqual(['', 'working']);
   });
 
-  it.each(['waiting', 'tool', 'composing'] as const)(
-    'renders %s spinner with tip after a spacer',
+  it('renders the thinking spinner after a spacer', () => {
+    const { spinner } = createMockSpinner('thinking');
+    const component = new ActivityPaneComponent({
+      mode: 'thinking',
+      spinner,
+    });
+
+    expect(component.render(80).map((line) => line.trimEnd())).toEqual(['', 'thinking']);
+  });
+
+  it('renders the detail line under the waiting spinner', () => {
+    const { spinner } = createMockSpinner('working');
+    const component = new ActivityPaneComponent({
+      mode: 'waiting',
+      spinner,
+      detail: '429 · rate limited',
+    });
+
+    const lines = component
+      .render(80)
+      .map((line) => line.replaceAll(/\u001B\[[0-9;]*m/g, '').trimEnd());
+    expect(lines).toEqual(['', 'working', '    429 · rate limited']);
+  });
+
+  it.each(['waiting', 'tool', 'composing', 'thinking', 'compacting'] as const)(
+    'renders the %s spinner with tip after a spacer',
     (mode) => {
       const { spinner } = createMockSpinner('working');
       const component = new ActivityPaneComponent({
@@ -62,7 +88,7 @@ describe('ActivityPaneComponent', () => {
     },
   );
 
-  it.each(['waiting', 'tool', 'composing'] as const)(
+  it.each(['waiting', 'tool', 'composing', 'compacting'] as const)(
     'does not render a tip for %s when none is provided',
     (mode) => {
       const { spinner } = createMockSpinner('working');
@@ -75,12 +101,12 @@ describe('ActivityPaneComponent', () => {
     },
   );
 
-  it('renders nothing for hidden and thinking modes', () => {
+  it('renders nothing for hidden, or for thinking without a spinner', () => {
     expect(new ActivityPaneComponent({ mode: 'hidden' }).render(80)).toEqual([]);
     expect(new ActivityPaneComponent({ mode: 'thinking' }).render(80)).toEqual([]);
   });
 
-  it.each(['waiting', 'tool', 'composing'] as const)(
+  it.each(['waiting', 'tool', 'composing', 'compacting'] as const)(
     'hides the tip for %s when the terminal is too narrow',
     (mode) => {
       const { spinner } = createMockSpinner('working');

@@ -1,5 +1,5 @@
 import { createDecorator } from "#/_base/di/instantiation";
-import type { ApprovalResponse } from "#/session/approval/approval";
+import type { ApprovalResponse } from "#/agent/interaction/approval";
 
 export interface PermissionApprovalResultRecord {
   readonly turnId: number;
@@ -26,7 +26,7 @@ export interface IAgentPermissionRulesService {
 
   readonly rules: readonly PermissionRule[];
   readonly sessionApprovalRulePatterns: readonly string[];
-  addRules(rules: readonly PermissionRule[]): void;
+  addRules(rules: readonly PermissionRule[]): Promise<void>;
   recordApprovalResult(record: PermissionApprovalResultRecord): void;
 }
 

@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "golden-stdio": {
+      "command": "npx",
+      "args": [
+        "golden-mcp@latest"
+      ],
+      "env": {
+        "GOLDEN_KEY": "golden-value"
+      }
+    },
+    "golden-remote": {
+      "url": "https://mcp.example.test/mcp",
+      "transport": "http",
+      "auth": "oauth"
+    }
+  }
+}

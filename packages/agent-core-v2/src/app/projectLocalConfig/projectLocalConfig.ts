@@ -1,13 +1,3 @@
-/**
- * `projectLocalConfig` domain — project-local config access.
- *
- * Defines the App-scoped `IProjectLocalConfigService` contract for
- * project-local `.kimi-code/local.toml` access. The service works purely by
- * path: it discovers the project root (the nearest `.git` ancestor) from a
- * working directory and reads/writes the project-local TOML there — it never
- * touches the workspace catalog or a `workspaceId`.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
 export interface ProjectAdditionalDirsLoadResult {
@@ -16,15 +6,22 @@ export interface ProjectAdditionalDirsLoadResult {
   readonly additionalDirs: readonly string[];
 }
 
+export interface ProjectPermissionRulesLoadResult {
+  readonly projectRoot: string;
+  readonly configPath: string;
+  readonly rules: readonly unknown[];
+}
+
 export interface IProjectLocalConfigService {
   readonly _serviceBrand: undefined;
 
   readAdditionalDirs(workDir: string): Promise<ProjectAdditionalDirsLoadResult>;
   resolveAdditionalDirs(baseDir: string, additionalDirs: readonly string[]): Promise<string[]>;
-  appendAdditionalDir(
+  readPermissionRules(workDir: string): Promise<ProjectPermissionRulesLoadResult>;
+  appendPermissionRules(
     workDir: string,
-    inputPath: string,
-  ): Promise<ProjectAdditionalDirsLoadResult>;
+    rules: readonly unknown[],
+  ): Promise<ProjectPermissionRulesLoadResult>;
 }
 
 export const IProjectLocalConfigService: ServiceIdentifier<IProjectLocalConfigService> =

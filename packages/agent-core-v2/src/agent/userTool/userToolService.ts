@@ -1,24 +1,9 @@
-/**
- * `userTool` domain — `IAgentUserToolService` implementation.
- *
- * Holds the set of host-registered user tools in the `wire` `UserToolModel`
- * (`Map<string, UserToolRegistration>`), mutating it only through the
- * `tools.register_user_tool` / `tools.unregister_user_tool` Ops
- * (`wire.dispatch(...)`). The live side effects — `registry.register` +
- * `profile.addActiveTool` (and the matching dispose / `removeActiveTool`) — run
- * after the dispatch, and are re-derived from the rebuilt Model by
- * `wire.hooks.onDidRestore` after `wire.restore`, so a resumed agent re-registers
- * exactly the tools the persisted ops describe without re-firing any live
- * notification.
- * The restore re-registers into the tool registry only: the active-tool set is
- * owned by the persisted `ActiveToolsModel`, so the ephemeral `addActiveTool`
- * overlay is not rebuilt (it is live-only by design). The per-tool
- * `IDisposable` handles stay live-only (they cannot be persisted).
- * Bound at Agent scope.
- */
+import { randomUUID } from 'node:crypto';
 
-import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { type IDisposable } from '#/_base/di/lifecycle';
+import { Service } from '#/_base/di/service';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { abortable } from '#/_base/utils/abort';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import type {
@@ -27,11 +12,25 @@ import type {
   ExecutableToolResult,
 } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import { ISessionInteractionService } from '#/session/interaction/interaction';
-import { IWireService } from '#/wire/wire';
+import { IAgentStateService } from '#/agent/state/agentState';
+import {
+  INTERACTION_TAG_AGENT_ID,
+  INTERACTION_TAG_SESSION_ID,
+  INTERACTION_TAG_TOOL_CALL_ID,
+  INTERACTION_TAG_TURN_ID,
+  type InteractionTags,
+} from '#/human/interaction/interaction';
+import { interactions } from '#/human/interaction/facade';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { IAgentUserToolService, type UserToolRegistration } from './userTool';
-import { registerUserTool, unregisterUserTool, UserToolModel } from './userToolOps';
+import {
+  ToolsRegisterUserTool,
+  ToolsUnregisterUserTool,
+  userToolKey,
+} from './userToolOps';
 
 interface UserToolExecutionRequest {
   readonly turnId?: number;
@@ -40,20 +39,23 @@ interface UserToolExecutionRequest {
   readonly args: unknown;
 }
 
-export class AgentUserToolService extends Disposable implements IAgentUserToolService {
+export class AgentUserToolService extends Service implements IAgentUserToolService {
   declare readonly _serviceBrand: undefined;
 
   private readonly registrations = new Map<string, IDisposable>();
 
   constructor(
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentToolRegistryService private readonly registry: IAgentToolRegistryService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
-    @ISessionInteractionService private readonly interaction: ISessionInteractionService,
-    @IWireService private readonly wire: IWireService,
+    @ISessionContext private readonly session: ISessionContext,
+    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
+    @IAgentStateService private readonly agentState: IAgentStateService,
   ) {
     super();
+    this.agentState.contributeState(userToolKey);
     this._register(
-      this.wire.hooks.onDidRestore.register('user-tool', async (_ctx, next) => {
+      this.dispatcher.hooks.onDidRestore.register('user-tool', async (_ctx, next) => {
         this.restoreRegisteredTools();
         await next();
       }),
@@ -61,28 +63,40 @@ export class AgentUserToolService extends Disposable implements IAgentUserToolSe
   }
 
   list(): readonly UserToolRegistration[] {
-    return [...this.wire.getModel(UserToolModel).values()];
+    return [...this.agentState.get(userToolKey).values()];
   }
 
-  inheritUserTools(parent: IAgentUserToolService): void {
+  inheritUserTools(
+    parent: IAgentUserToolService,
+    activeToolNames?: readonly string[],
+  ): void {
     for (const registration of parent.list()) {
-      this.register(registration);
+      void this.dispatcher.dispatch(
+        new ToolsRegisterUserTool({ ...registration, agentId: this.scopeContext.agentId }),
+      );
+      const activate =
+        activeToolNames === undefined || activeToolNames.includes(registration.name);
+      this.applyRegister(registration, { activate });
     }
   }
 
   register(input: UserToolRegistration): void {
-    this.wire.dispatch(registerUserTool(input));
+    void this.dispatcher.dispatch(
+      new ToolsRegisterUserTool({ ...input, agentId: this.scopeContext.agentId }),
+    );
     this.applyRegister(input);
   }
 
   unregister(name: string): void {
-    this.wire.dispatch(unregisterUserTool({ name }));
+    void this.dispatcher.dispatch(
+      new ToolsUnregisterUserTool({ agentId: this.scopeContext.agentId, name }),
+    );
     this.applyUnregister(name);
   }
 
   private restoreRegisteredTools(): void {
     const persistedActive = this.profile.getActiveToolNames();
-    for (const registration of this.wire.getModel(UserToolModel).values()) {
+    for (const registration of this.agentState.get(userToolKey).values()) {
       const activate =
         persistedActive === undefined || persistedActive.includes(registration.name);
       this.applyRegister(registration, { activate });
@@ -124,8 +138,15 @@ export class AgentUserToolService extends Disposable implements IAgentUserToolSe
     name: string,
     args: unknown,
   ): Promise<ExecutableToolResult> {
-    const request = this.interaction.request<UserToolExecutionRequest, ExecutableToolResult>({
-      id: context.toolCallId,
+    const id = `user_tool_${randomUUID()}`;
+    const tags: InteractionTags = {
+      [INTERACTION_TAG_AGENT_ID]: this.scopeContext.agentId,
+      [INTERACTION_TAG_SESSION_ID]: this.session.sessionId,
+      [INTERACTION_TAG_TOOL_CALL_ID]: context.toolCallId,
+    };
+    if (context.turnId !== undefined) tags[INTERACTION_TAG_TURN_ID] = context.turnId;
+    const request = interactions.request<UserToolExecutionRequest, ExecutableToolResult>({
+      id,
       kind: 'user_tool',
       payload: {
         turnId: context.turnId,
@@ -133,15 +154,13 @@ export class AgentUserToolService extends Disposable implements IAgentUserToolSe
         name,
         args,
       },
-      origin: {
-        turnId: context.turnId,
-      },
+      tags,
     });
     try {
       return await abortable(request, context.signal);
     } catch (error) {
       if (context.signal.aborted) {
-        this.interaction.respond(context.toolCallId, {
+        interactions.respond(id, {
           output: `User tool "${name}" was aborted.`,
           isError: true,
         });

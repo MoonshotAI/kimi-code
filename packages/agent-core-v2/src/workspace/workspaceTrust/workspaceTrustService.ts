@@ -1,38 +1,18 @@
-/**
- * `workspaceTrust` domain — `IWorkspaceTrust` implementation.
- *
- * Persists the trust marker through the `persistence` domain's
- * `IAtomicDocumentStore` under the `workspace-trust` scope, one document per
- * workspace keyed by `encodeWorkDirKey(root)`, with the raw root kept in the
- * value for inspection. The document's presence IS the trusted state: `trust()`
- * writes it, `untrust()` deletes it. The record lives under the kimi home,
- * never inside the workspace, so a checked-out tree cannot pre-trust
- * itself. The flag is read once through `ready` and every later mutation
- * goes through this service, so the view is in-process: another process
- * flipping the same record is picked up only on restart (a `docs.watch`
- * sync can join when a second writer exists). A read failure resolves to
- * untrusted. The plain-data state (`trusted`) is registered into
- * `workspaceState` (`IWorkspaceStateService`) and read/written through it.
- * Bound at Workspace scope.
- */
-
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter } from '#/_base/event';
-import { defineState } from '#/_base/state/stateRegistry';
-import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
-import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { IConfigService } from '#/app/config/config';
+import { defineState } from '#/state/state';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
-import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
+import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 
+import { workspaceTrustRequired } from './configSection';
 import { IWorkspaceTrust, type WorkspaceTrustChange } from './workspaceTrust';
+import {
+  IWorkspaceTrustStore,
+  type IWorkspaceTrustEntry,
+} from './workspaceTrustStore';
 
-const TRUST_SCOPE = 'workspace-trust';
-
-interface TrustRecord {
-  readonly root: string;
-  readonly trustedAt: number;
-}
+export { TRUST_WORKSPACE_ENV, trustWorkspaceEnvTrusted } from './trustEnv';
 
 export const workspaceTrustTrustedKey = defineState<boolean>(
   'workspaceTrust.trusted',
@@ -42,22 +22,56 @@ export const workspaceTrustTrustedKey = defineState<boolean>(
 export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust {
   declare readonly _serviceBrand: undefined;
 
-  readonly ready: Promise<void>;
-  private readonly root: string;
-  private readonly storeKey: string;
+  private initialization?: Promise<void>;
+  private inner: IWorkspaceTrustEntry;
+  private innerSubscription?: { dispose(): void };
   private readonly changeEmitter = this._register(new Emitter<WorkspaceTrustChange>());
   readonly onDidChange = this.changeEmitter.event;
 
   constructor(
-    @IWorkspaceContext workspace: IWorkspaceContext,
-    @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
+    @IWorkspaceDirs private readonly dirs: IWorkspaceDirs,
+    @IWorkspaceTrustStore private readonly trustStore: IWorkspaceTrustStore,
     @IWorkspaceStateService private readonly states: IWorkspaceStateService,
+    @IConfigService private readonly config: IConfigService,
   ) {
     super();
-    this.states.register(workspaceTrustTrustedKey);
-    this.root = workspace.cwd;
-    this.storeKey = encodeWorkDirKey(workspace.cwd);
-    this.ready = this.initialize();
+    this.states.contributeState(workspaceTrustTrustedKey);
+    this.inner = this.bindTrust();
+    this._register({ dispose: () => this.innerSubscription?.dispose() });
+    this._register(this.dirs.onDidChange(() => this.rebindTrust()));
+  }
+
+  private bindTrust(onDidChange?: () => void): IWorkspaceTrustEntry {
+    this.innerSubscription?.dispose();
+    const inner = this.trustStore.forRoots([this.dirs.primary, ...this.dirs.additionalDirs]);
+    this.innerSubscription = inner.onDidChange((change) => {
+      onDidChange?.();
+      this.trusted = change.trusted;
+      this.changeEmitter.fire(change);
+    });
+    return inner;
+  }
+
+  private rebindTrust(): void {
+    const previous = this.trusted;
+    let notified = false;
+    this.inner = this.bindTrust(() => {
+      notified = true;
+    });
+    this.initialization = undefined;
+    void this.ready.then(() => {
+      if (!notified && previous !== this.trusted) this.changeEmitter.fire({ trusted: this.trusted });
+    }).catch(() => {});
+  }
+
+  get ready(): Promise<void> {
+    if (this.initialization !== undefined) return this.initialization;
+    const initialization = this.initialize();
+    this.initialization = initialization;
+    void initialization.catch(() => {
+      if (this.initialization === initialization) this.initialization = undefined;
+    });
+    return initialization;
   }
 
   private get trusted(): boolean {
@@ -69,44 +83,26 @@ export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust
   }
 
   isTrusted(): boolean {
-    return this.trusted;
+    return this.inner.isTrusted();
   }
 
   async get(): Promise<boolean> {
+    await this.config.ready;
+    if (!workspaceTrustRequired(this.config)) return true;
     await this.ready;
-    return this.trusted;
+    return this.inner.get();
   }
 
-  async trust(): Promise<void> {
-    if (this.trusted) return;
-    await this.docs.set(TRUST_SCOPE, this.storeKey, {
-      root: this.root,
-      trustedAt: Date.now(),
-    });
-    this.trusted = true;
-    this.changeEmitter.fire({ trusted: true });
+  trust(): Promise<void> {
+    return this.inner.trust();
   }
 
-  async untrust(): Promise<void> {
-    if (!this.trusted) return;
-    await this.docs.delete(TRUST_SCOPE, this.storeKey);
-    this.trusted = false;
-    this.changeEmitter.fire({ trusted: false });
+  untrust(): Promise<void> {
+    return this.inner.untrust();
   }
 
   private async initialize(): Promise<void> {
-    try {
-      this.trusted = (await this.docs.get<TrustRecord>(TRUST_SCOPE, this.storeKey)) !== undefined;
-    } catch {
-      this.trusted = false;
-    }
+    await this.inner.ready;
+    this.trusted = this.inner.isPersistedTrusted();
   }
 }
-
-registerScopedService(
-  LifecycleScope.Workspace,
-  IWorkspaceTrust,
-  WorkspaceTrustService,
-  ScopeActivation.OnDemand,
-  'workspaceTrust',
-);

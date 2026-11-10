@@ -1,29 +1,11 @@
-/**
- * `tools` domain — `WriteTool` implementation.
- *
- * Resolves path access policy before any filesystem I/O, creates missing
- * parent directories (`mkdir(recursive)`), and writes through
- * `IHostFileSystem.writeText` / `appendText`. Append uses a native
- * `O_APPEND`-style append, so existing content is never read or rewritten —
- * keeping appends atomic with respect to concurrent writers and safe against
- * mid-write crashes.
- *
- * Write access flows through the os `hostFs` domain (`IHostFileSystem`); path
- * semantics (home expansion, path class) come from the `hostEnvironment`
- * domain; the workspace and skill roots come from `ISessionWorkspaceContext`
- * / `ISessionSkillCatalog`.
- *
- * Ported from v1.
- * Bound at Agent scope; self-registers via `registerAgentToolService(...)` at module
- * load.
- */
-
 import { dirname } from 'pathe';
 
-import { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import { type HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { unwrapErrorCause } from '#/_base/errors/errors';
-import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { type HostFileStat, type IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { isHostFsNotDirectory, isHostFsNotFound } from '#/os/interface/hostFsErrors';
+import { acquireOrWhenReady, IAgentEnvironmentService, pinnedGeneration } from '#/agent/environmentBinding/agentEnvironment';
+import { IAgentPlanService } from '#/features/plan/plan';
+import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
+import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
   ToolAccesses,
@@ -32,7 +14,6 @@ import {
 } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import {
-  extendWorkspaceWithSkillRoots,
   resolvePathAccessPath,
   type WorkspaceConfig,
 } from '#/tool/path-access';
@@ -48,64 +29,103 @@ export class WriteTool implements IWriteTool {
   readonly parameters: Record<string, unknown> = toInputJsonSchema(WriteInputSchema);
 
   constructor(
-    @IHostFileSystem private readonly fs: IHostFileSystem,
-    @IHostEnvironment private readonly env: IHostEnvironment,
+    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
+    @IAgentPlanService private readonly planService?: IAgentPlanService,
   ) {}
 
-  private get workspaceConfig(): WorkspaceConfig {
-    return extendWorkspaceWithSkillRoots(
-      {
-        workspaceDir: this.workspaceCtx.workDir,
-        additionalDirs: this.workspaceCtx.additionalDirs,
-      },
-      this.skillCatalog?.catalog.getSkillRoots() ?? [],
-      this.env.pathClass,
-    );
+  private workspaceConfig(view: EnvironmentWorkspaceView): WorkspaceConfig {
+    return { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
   }
 
-  resolveExecution(args: WriteInput): ToolExecution {
-    const path = resolvePathAccessPath(args.path, {
-      env: this.env,
-      workspace: this.workspaceConfig,
-      operation: 'write',
-    });
-    return {
-      accesses: ToolAccesses.writeFile(path),
-      description: `Writing ${args.path}`,
-      display: { kind: 'file_io', operation: 'write', path, content: args.content },
-      approvalRule: literalRulePattern(this.name, path),
-      matchesRule: (ruleArgs) =>
-        matchesPathRuleSubject(ruleArgs, path, {
-          cwd: this.workspaceConfig.workspaceDir,
-          pathClass: this.env.pathClass,
-          homeDir: this.env.homeDir,
+  async resolveExecution(args: WriteInput): Promise<ToolExecution> {
+    const planTarget = await this.planService?.resolveFile(args.path);
+    if (planTarget !== undefined) {
+      const path = planTarget.path;
+      return {
+        accesses: ToolAccesses.writeFile(path),
+        description: `Writing ${args.path}`,
+        display: { kind: 'file_io', operation: 'write', path, content: args.content },
+        approvalRule: literalRulePattern(this.name, path),
+        matchesRule: (ruleArgs) => matchesPathRuleSubject(ruleArgs, path, {
+          cwd: planTarget.environmentPath.dirname(path), pathClass: planTarget.pathClass,
         }),
-      execute: () => this.execution(args, path),
-    };
+        execute: async () => {
+          const current = await this.planService?.resolveFile(path);
+          if (current === undefined || current.path !== path) return { isError: true, output: 'The active plan changed before execution. Retry the tool call.' };
+          return this.execution(current.fs, args, path, current.environmentPath.dirname(path));
+        },
+      };
+    }
+    const resolutionLease = await acquireOrWhenReady(this.environment, ['fs']);
+    try {
+      const inspected = resolutionLease.environment;
+      const expectedGeneration = pinnedGeneration(inspected);
+      const view = new EnvironmentWorkspaceView(inspected, {
+        workDir: this.workspaceCtx.workDir,
+        additionalDirs: [
+          ...this.workspaceCtx.additionalDirs,
+          ...(this.skillCatalog?.catalog.getSkillRoots() ?? []),
+        ],
+      });
+      const env = { _serviceBrand: undefined, ...view.host, ready: Promise.resolve() };
+      const workspace = this.workspaceConfig(view);
+      const path = resolvePathAccessPath(args.path, {
+        env,
+        shellPathBridge: view.shellPathBridge,
+        workspace,
+        operation: 'write',
+      });
+      return {
+        accesses: ToolAccesses.writeFile(path),
+        description: `Writing ${args.path}`,
+        display: { kind: 'file_io', operation: 'write', path, content: args.content },
+        approvalRule: literalRulePattern(this.name, path),
+        matchesRule: (ruleArgs) =>
+          matchesPathRuleSubject(ruleArgs, path, {
+            cwd: workspace.workspaceDir,
+            pathClass: env.pathClass,
+            homeDir: env.homeDir,
+          }),
+        execute: async () => {
+          const lease = await acquireOrWhenReady(this.environment, ['fs']);
+          try {
+            if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
+              return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
+            }
+            return await this.execution(lease.environment.fs!, args, path);
+          } finally {
+            lease.dispose();
+          }
+        },
+      };
+    } finally {
+      resolutionLease.dispose();
+    }
   }
 
-  private async execution(args: WriteInput, safePath: string): Promise<ExecutableToolResult> {
-    const parentError = await this.ensureParentDirectory(safePath);
-    if (parentError !== undefined) {
-      return { isError: true, output: parentError };
-    }
-
+  private async execution(fs: IHostFileSystem, args: WriteInput, safePath: string, parent = dirname(safePath)): Promise<ExecutableToolResult> {
+    const mode = args.mode ?? 'overwrite';
+    const write = () => mode === 'append' ? fs.appendText(safePath, args.content) : fs.writeText(safePath, args.content);
     try {
-      const mode = args.mode ?? 'overwrite';
-      if (mode === 'append') {
-        await this.fs.appendText(safePath, args.content);
-      } else {
-        await this.fs.writeText(safePath, args.content);
+      try {
+        await write();
+      } catch (error) {
+        if (!isHostFsNotFound(error) && !isHostFsNotDirectory(error)) throw error;
+        const parentError = await this.ensureParentDirectory(fs, parent);
+        if (parentError !== undefined) {
+          return { isError: true, output: parentError };
+        }
+        await write();
       }
       const bytesWritten = Buffer.byteLength(args.content, 'utf8');
       return {
         output: `${mode === 'append' ? 'Appended' : 'Wrote'} ${String(bytesWritten)} bytes to ${args.path}`,
+        note: '<system>The change is applied; there is no need to Read the file back to check it.</system>',
       };
     } catch (error) {
-      const code = (unwrapErrorCause(error) as { code?: unknown } | null)?.code;
-      if (code === 'ENOENT') {
+      if (isHostFsNotFound(error)) {
         return {
           isError: true,
           output: `Failed to write ${args.path}: parent directory does not exist.`,
@@ -118,15 +138,14 @@ export class WriteTool implements IWriteTool {
     }
   }
 
-  private async ensureParentDirectory(safePath: string): Promise<string | undefined> {
-    const parent = dirname(safePath);
+  private async ensureParentDirectory(fs: IHostFileSystem, parent: string): Promise<string | undefined> {
     let stat: HostFileStat;
     try {
-      stat = await this.fs.stat(parent);
+      stat = await fs.stat(parent);
     } catch (error) {
-      if ((unwrapErrorCause(error) as { code?: unknown } | null)?.code === 'ENOENT') {
+      if (isHostFsNotFound(error)) {
         try {
-          await this.fs.mkdir(parent, { recursive: true });
+          await fs.mkdir(parent, { recursive: true });
           return undefined;
         } catch (mkdirError) {
           return mkdirError instanceof Error ? mkdirError.message : String(mkdirError);
@@ -141,4 +160,8 @@ export class WriteTool implements IWriteTool {
   }
 }
 
-registerAgentToolService(IWriteTool, WriteTool, { name: 'Write', domain: 'os/backends' });
+registerAgentToolService(IWriteTool, WriteTool, {
+  name: 'Write',
+  domain: 'os/backends',
+  requiredEnvironmentCapabilities: ['fs'],
+});

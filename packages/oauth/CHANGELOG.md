@@ -1,5 +1,21 @@
 # @moonshot-ai/kimi-code-oauth
 
+## 0.5.0
+
+### Minor Changes
+
+- [#4209](https://github.com/MoonshotAI/kimi-code/pull/4209) [`9f0693b`](https://github.com/MoonshotAI/kimi-code/commit/9f0693becb63a329cbf764325688448e76f40922) Thanks [@liruifengv](https://github.com/liruifengv)! - Switch managed Kimi Code model listing to the unified /models schema: context length is read from `limit.context`, thinking capabilities from the `reasoning` object (`type: only | both | none`, with optional `effort.valid` / `effort.default`), image/video input from `modalities.input`, and dynamic-tool support from `tools.dynamic_load`. The legacy flat fields (`context_length`, `supports_reasoning`, `supports_image_in`, `supports_video_in`, `supports_thinking_type`, `think_efforts`, `supports_dynamic_tools`) are no longer read, and entries without a positive `limit.context` are rejected.
+
+## 0.4.0
+
+### Minor Changes
+
+- [#2885](https://github.com/MoonshotAI/kimi-code/pull/2885) [`4a93f70`](https://github.com/MoonshotAI/kimi-code/commit/4a93f70aa2cf5f70a88b4f8eeb2e409aab2c8f59) Thanks [@liruifengv](https://github.com/liruifengv)! - Add a browser-safe `./device` subpath export exposing the device-code flow's pure-fetch HTTP wrappers and flow config, so browser bundles can run OAuth sign-in without pulling in Node-only modules. Import from `@moonshot-ai/kimi-code-oauth/device`.
+
+### Patch Changes
+
+- [#2351](https://github.com/MoonshotAI/kimi-code/pull/2351) [`6be2697`](https://github.com/MoonshotAI/kimi-code/commit/6be26978b123bacf1c5ebce52bbeb6f7b7ff0629) Thanks [@7Sageer](https://github.com/7Sageer)! - Add `fetchChatTitle` for the managed platform `/tools` `chat_title` method: protocol headers, an 8s timeout, response validation, and structured failures.
+
 ## 0.3.0
 
 ### Minor Changes

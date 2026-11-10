@@ -20,15 +20,15 @@ All flags are optional — run `kimi` directly to enter an interactive session:
 | `--model <model>` | `-m` | Specify a model alias for this launch. When omitted, new sessions use `default_model` from the config file |
 | `--prompt <prompt>` | `-p` | Run a single prompt non-interactively and stream the Assistant output to stdout. This mode does not open the TUI |
 | `--output-format <format>` | | Set the non-interactive output format; supports `text` and `stream-json`. Can only be used with `--prompt`; defaults to `text` |
-| `--yolo` | `-y` | Auto-approve regular tool calls, skipping approval requests |
-| `--auto` | | Start with auto permission mode; tool approvals are handled automatically and the Agent will not ask the user questions |
+| `--yolo` | `-y` | Start in Ask When Needed mode: routine edits and commands run automatically; risky actions, questions, and plans still ask |
+| `--auto` | | Start in Never Ask mode: everything runs and is decided automatically; only plans in Plan mode wait for your review |
 | `--plan` | | Start a new session in Plan mode — the AI will prioritize read-only tools for exploration and planning |
 | `--skills-dir <dir>` | | Load Skills from the specified directory, replacing the automatically discovered user and project directories. Can be repeated |
 | `--agent <name>` | | Start a new session with the specified agent as the main Agent. Cannot be combined with `--session`/`--continue` |
 | `--agent-file <path>` | | Load a custom agent from a Markdown file for the new session and select it. Cannot be repeated or combined with `--agent`, `--session`, or `--continue` |
 | `--add-dir <dir>` | | Add an extra workspace directory for this session. Relative paths resolve against the current working directory. Can be repeated |
 
-`-r` / `--resume` is a hidden alias for `--session`; `--yes` and `--auto-approve` are hidden aliases for `--yolo` and are not shown in help output.
+`-r` / `--resume` is a hidden alias for `--session`; `--yes` and `--auto-approve` are hidden aliases for `--yolo` and are not shown in help output. The hidden `--environment <id>` flag binds the new session to a configured remote environment, and `--environment-cwd <path>` overrides that environment's working directory (see [Remote environments](../guides/remote-environment.md#picking-an-environment-for-one-launch)).
 
 ::: warning
 `--yolo` skips human approval for regular tool calls, including file writes and shell command execution. Use it only in trusted working directories. Plan mode exit approval is not bypassed by `--yolo`; `Bash` inside Plan mode is handled under the regular allow rules.
@@ -42,8 +42,12 @@ The following combinations are rejected at startup:
 - `--yolo` and `--auto` are mutually exclusive — the two permission modes cannot be combined
 - `--prompt` cannot be used with `--yolo`, `--auto`, or `--plan` — non-interactive mode uses `auto` permission by default
 - `--output-format` can only be used together with `--prompt`
+- `--environment` cannot be combined with `--session`/`--continue` — the environment is bound at session creation and the bound environment is restored automatically on resume
+- `--environment-cwd` requires `--environment`; both flags are creation-only and cannot be combined with `--session`/`--continue`
 
-When resuming a session, you can override its saved permission or plan mode by adding `--auto`, `--yolo`, or `--plan`. For example, `kimi --continue --auto` resumes the latest session and switches it to auto permission mode.
+Nobody can review a plan in non-interactive mode, so `default_plan_mode` is not applied to new sessions. A resumed session that is already in Plan mode still runs and stays in Plan mode, but its plan cannot be approved in non-interactive mode: it waits for your review the next time you open the session with `kimi -r`.
+
+When resuming a session, you can override its saved permission or plan mode by adding `--auto`, `--yolo`, or `--plan`. For example, `kimi --continue --auto` resumes the latest session and switches it to Never Ask mode.
 
 ## Common Usage
 
@@ -133,7 +137,7 @@ In `stream-json` mode, regular replies produce an Assistant message; when the mo
 
 ## Subcommands
 
-`kimi` provides the following subcommands: `login` (non-interactive login), `acp` (ACP IDE mode), `web` (run the local REST/WebSocket/web service in the foreground and open the web UI), `doctor` (validate configuration files), `export` (export a session), `migrate` (migrate legacy data), `upgrade` (check for updates), and `provider` (manage providers).
+`kimi` provides the following subcommands: `login` (non-interactive login), `acp` (ACP IDE mode), `web` (run the local REST/WebSocket/web service in the foreground and open the web UI), `doctor` (validate configuration files), `export` (export a session), `migrate` (migrate legacy data), `import-sessions` (import Claude Code and Codex sessions), `upgrade` (check for updates), and `provider` (manage providers).
 
 ### `kimi login`
 
@@ -157,7 +161,7 @@ kimi acp
 
 Run the local Kimi server in the foreground of the current terminal — a single process that exposes the REST + WebSocket API and serves the web UI from the same origin — and open the web UI in the default browser once it is ready. The command stays attached to the terminal and shuts down cleanly on `SIGINT` / `SIGTERM` (e.g. `Ctrl-C`).
 
-When the server is running, `GET /openapi.json` returns the REST OpenAPI document and `GET /asyncapi.json` returns the local WebSocket AsyncAPI document.
+When the server is running, `GET /openapi.json` returns the REST OpenAPI document and `GET /asyncapi.json` returns the local WebSocket AsyncAPI document. For an end-to-end walkthrough of driving sessions over the API, see [Server API: Drive a session over the API](./server-api.md#drive-a-session-over-the-api); for the protocol details, see the [Server API](./server-api.md) reference.
 
 ```sh
 kimi web                 # run the server in the foreground and open the browser
@@ -175,6 +179,7 @@ Multiple instances can share one home directory: each registers itself under `~/
 | `--log-level <level>` | Enable server logs at the selected level; omitted by default |
 | `--debug-endpoints` | Mount `/api/v1/debug/*` routes (off by default) |
 | `--dangerous-bypass-auth` | Disable bearer-token auth on all REST and WebSocket routes so the web UI connects without a token; only for trusted networks or behind an authenticating proxy |
+| `--web-title <title>` | Custom browser tab title for the web UI; defaults to the workspace directory name |
 | `--no-open` | Do not open the browser once the server is ready |
 
 `kimi web` binds to local loopback only by default and prints the bearer token in the startup banner; the web UI authenticates automatically via the `#token=` URL fragment.
@@ -194,6 +199,29 @@ Deprecated — only stops a server started by a version before 0.28.0. Those ver
 #### `kimi web rotate-token`
 
 Generate a new persistent bearer token (written to `~/.kimi-code/server.token`); the previous token stops working immediately. The token is shared by the whole home directory, so every running instance picks the new one up on its next auth check — no restart needed.
+
+### `kimi app`
+
+Open Kimi Code desktop and start a new chat in the current directory or a specified directory:
+
+```sh
+kimi app
+kimi app ~/project
+```
+
+This requires an installed desktop version that supports opening workspaces from the CLI. Relative paths are resolved from the current directory. An existing workspace opens a new draft instead of restoring its previous session.
+
+If the system reports that it cannot open the app, the command suggests `kimi install-desktop`, which opens the download page. This command does not download or install the desktop app automatically.
+
+### `kimi install-desktop`
+
+Print the Kimi Code desktop app page and open it in the default browser, so you can download and install the desktop app without leaving the terminal. The URL follows the active region: `https://www.kimi.com/code` on the mainland region, `https://www.kimi.ai/code` on the global region.
+
+```sh
+kimi install-desktop
+```
+
+This subcommand has no flags. The former name, `kimi install-app`, still works as a hidden alias. The same page is also reachable from the TUI with the `/desktop` (alias `/install-desktop`) slash command.
 
 ### `kimi doctor`
 
@@ -215,7 +243,7 @@ When an explicit path is passed, the file must exist. The command exits with `0`
 # Check the default config files
 kimi doctor
 
-# Check only the default runtime config
+# Check only the default environment config
 kimi doctor config
 
 # Check a candidate TUI config before replacing the live config
@@ -260,15 +288,29 @@ kimi migrate
 
 For full migration instructions, see [Migrating from kimi-cli](../guides/migration.md).
 
+### `kimi import-sessions`
+
+Import recent Claude Code and Codex sessions as regular Kimi Code sessions. The command opens an interactive page: choose the last 15 days (the default) or the last 30 days, then follow the progress and the summary. Inside the TUI, `/import-sessions` opens the same page.
+
+```sh
+kimi import-sessions
+```
+
+- Each run imports at most the newest 100 sessions; sessions imported before are skipped.
+- Sessions without a prompt, subagent sessions, and non-interactive runs such as `codex exec` are not listed. Sessions whose project folder no longer exists, sessions still being written, and Codex sessions that were forked or restarted from an earlier message are skipped and reported.
+- Sessions are read from `~/.claude` and `~/.codex`; set `CLAUDE_CONFIG_DIR` or `CODEX_HOME` to read them from other locations. The original session files are not changed.
+
+See [Importing sessions from Claude Code and Codex](../guides/sessions.md#importing-sessions-from-claude-code-and-codex) for what an imported session contains.
+
 ### `kimi upgrade`
 
 Immediately check for the latest version and display an update prompt; exits after you make a selection. `kimi update` is an alias for this command.
 
 ```sh
-kimi upgrade
+kimi upgrade [-y]
 ```
 
-For global npm, pnpm, yarn, bun, and macOS / Linux native installations, `kimi upgrade` shows update options; selecting `Install update now` runs the corresponding foreground install command. When the current installation method cannot be upgraded automatically (e.g., Windows native installation), the manual update command is printed instead.
+For global npm, pnpm, yarn, and bun installations, `kimi upgrade` shows update options; selecting `Install update now` runs the corresponding foreground install command. For native installations (including Windows), it downloads and verifies the new binary in the foreground and swaps it in on the next start. When the current installation method cannot be upgraded automatically, the manual update command is printed instead. Pass `-y, --yes` to skip the confirmation prompt and install the update directly.
 
 ### `kimi vis`
 
@@ -308,18 +350,21 @@ Five actions are available:
 
 #### `kimi provider add <url>`
 
-Bulk-import all providers from a custom registry (`api.json`). The command fetches the registry, creates a `[providers.<id>]` and `[models.<alias>]` entry for each item, and writes `source` metadata so the TUI refreshes providers and models from the same registry URL automatically on next startup.
+Bulk-import all providers from a custom registry (`api.json`). The command fetches the registry, creates a `[providers.<id>]` and `[models.<alias>]` entry for each item, and writes `source` metadata so the TUI refreshes providers and models from the same registry URL automatically on next startup. When a registry entry declares the `env` field, the command prints a hint naming the declared variable — set `api_key_env` in `config.toml` to use it; see [Providers and models](../configuration/providers.md).
 
 | Parameter / Option | Description |
 | --- | --- |
 | `<url>` | Registry URL |
-| `--api-key <key>` | Bearer token for accessing the registry. Falls back to the `KIMI_REGISTRY_API_KEY` environment variable if not provided; required |
+| `--api-key <key>` | Bearer token for accessing the registry. Falls back to the `KIMI_REGISTRY_API_KEY` environment variable if not provided; optional — omit both for public registries |
 
 ```sh
 kimi provider add https://registry.example.com/v1/models/api.json --api-key YOUR_KEY
 
 # Or via environment variable (suitable for CI / .envrc)
 KIMI_REGISTRY_API_KEY=YOUR_KEY kimi provider add https://registry.example.com/v1/models/api.json
+
+# Public registry: no key needed
+kimi provider add https://registry.example.com/v1/models/api.json
 ```
 
 If a provider ID already exists, it is removed and re-created. The default model is not set automatically; you can select one later with `-m` or `/model` in the TUI.

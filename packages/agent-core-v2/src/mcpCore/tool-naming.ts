@@ -1,7 +1,3 @@
-/**
- * `mcpCore` domain — qualified `mcp__server__tool` name sanitizing and hashing.
- */
-
 const MCP_NAME_PREFIX = 'mcp__';
 const MCP_NAME_SEPARATOR = '__';
 

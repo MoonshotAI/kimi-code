@@ -9,6 +9,10 @@ if (delayMs > 0) {
   await sleep(delayMs);
 }
 
+if (process.env['KIMI_TEST_MCP_IGNORE_SIGTERM'] === '1') {
+  process.on('SIGTERM', () => {});
+}
+
 const server = new McpServer({ name: 'mock-stdio', version: '0.0.1' });
 
 server.registerTool(
@@ -42,6 +46,17 @@ server.registerTool(
   },
   ({ name }) => ({
     content: [{ type: 'text', text: process.env[name] ?? '' }],
+  }),
+);
+
+server.registerTool(
+  'whoami',
+  {
+    description: 'Returns the client name announced during initialize',
+    inputSchema: {},
+  },
+  () => ({
+    content: [{ type: 'text', text: server.server.getClientVersion()?.name ?? '' }],
   }),
 );
 

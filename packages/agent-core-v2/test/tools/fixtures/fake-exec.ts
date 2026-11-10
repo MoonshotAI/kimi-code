@@ -1,16 +1,16 @@
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import type { ISessionProcessRunner } from '#/session/process/processRunner';
+import type { IHostProcessService } from '#/os/interface/hostProcess';
 
 function notImplemented(name: string): never {
   throw new Error(`${name} not implemented - override it in the test`);
 }
 
 export function createFakeProcessRunner(
-  overrides: Partial<ISessionProcessRunner> = {},
-): ISessionProcessRunner {
+  overrides: Partial<IHostProcessService> = {},
+): IHostProcessService {
   return {
     _serviceBrand: undefined,
-    exec: () => notImplemented('FakeProcessRunner.exec'),
+    spawn: () => notImplemented('FakeProcessService.spawn'),
     ...overrides,
   };
 }
@@ -22,15 +22,24 @@ export function createFakeHostFs(overrides: Partial<IHostFileSystem> = {}): IHos
     writeText: () => notImplemented('FakeHostFs.writeText'),
     appendText: () => notImplemented('FakeHostFs.appendText'),
     readBytes: () => notImplemented('FakeHostFs.readBytes'),
+    readFileHead: () => notImplemented('FakeHostFs.readFileHead'),
     writeBytes: () => notImplemented('FakeHostFs.writeBytes'),
     readLines: () => notImplemented('FakeHostFs.readLines'),
     createExclusive: () => notImplemented('FakeHostFs.createExclusive'),
     stat: () => notImplemented('FakeHostFs.stat'),
     lstat: () => notImplemented('FakeHostFs.lstat'),
     readdir: () => notImplemented('FakeHostFs.readdir'),
+    walk: () => notImplemented('FakeHostFs.walk'),
     mkdir: () => notImplemented('FakeHostFs.mkdir'),
     remove: () => notImplemented('FakeHostFs.remove'),
     realpath: () => notImplemented('FakeHostFs.realpath'),
   };
-  return { ...fs, ...overrides };
+  const merged: IHostFileSystem = { ...fs, ...overrides };
+  if (overrides.readFileHead === undefined) {
+    merged.readFileHead = async (path, maxBytes) => {
+      const stat = await merged.stat(path);
+      return { stat, bytes: stat.isFile ? await merged.readBytes(path, maxBytes) : new Uint8Array() };
+    };
+  }
+  return merged;
 }

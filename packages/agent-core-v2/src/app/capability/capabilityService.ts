@@ -1,20 +1,15 @@
-/**
- * `capability` domain (L3) — `ICapabilityService` implementation.
- *
- * Holds the closed registry of built-in capability entries and serializes
- * install runs per entry. Install progress lives in memory only and is
- * polled by clients; a failed attempt leaves its error in the progress state
- * until the next attempt starts. Listing degrades a single entry's failing
- * detection to a failed step on that entry instead of rejecting the whole
- * list. Bound at App scope.
- */
-
 import { homedir } from 'node:os';
 
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { Error2 } from '#/errors';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Disposable } from '#/_base/di/lifecycle';
+import { Emitter, type Event } from '#/_base/event';
+import { ILogService } from '#/_base/log/log';
+import { Error2, isError2 } from '#/errors';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IPluginService } from '#/app/plugin/plugin';
+import { IPluginMarketplaceService } from '#/app/plugin/marketplaceService';
+import { IRegionService } from '#/app/region/region';
 import { IHostProcessService } from '#/os/interface/hostProcess';
 
 import { ICapabilityService } from './capability';
@@ -24,26 +19,44 @@ import { createKimiWebbridgeEntry } from './entries/kimiWebbridge';
 import type {
   CapabilityEntry,
   CapabilityId,
+  CapabilityDescriptor,
+  CapabilityInstallChange,
   CapabilityInstallProgress,
+  CapabilityInstallOptions,
   CapabilityReadiness,
   CapabilityStatus,
 } from './types';
 
 const IDLE_PROGRESS: CapabilityInstallProgress = { running: false };
 
-export class CapabilityService implements ICapabilityService {
+export class CapabilityService extends Disposable implements ICapabilityService {
   declare readonly _serviceBrand: undefined;
+
+  private readonly onDidChangeInstallEmitter = this._register(
+    new Emitter<CapabilityInstallChange>(),
+  );
+  readonly onDidChangeInstall: Event<CapabilityInstallChange> =
+    this.onDidChangeInstallEmitter.event;
 
   private readonly entries: ReadonlyMap<CapabilityId, CapabilityEntry>;
   private readonly installProgress = new Map<CapabilityId, CapabilityInstallProgress>();
   private readonly runningInstalls = new Set<CapabilityId>();
 
+  private setInstallProgress(id: CapabilityId, progress: CapabilityInstallProgress): void {
+    this.installProgress.set(id, progress);
+    this.onDidChangeInstallEmitter.fire({ id, install: progress });
+  }
+
   constructor(
     @IBootstrapService bootstrap: IBootstrapService,
     @IPluginService plugins: IPluginService,
+    @IPluginMarketplaceService marketplace: IPluginMarketplaceService,
     @IHostProcessService hostProcess: IHostProcessService,
+    @ILogService private readonly log: ILogService,
+    @IRegionService regions: IRegionService,
     entriesOverride?: readonly CapabilityEntry[],
   ) {
+    super();
     if (entriesOverride !== undefined) {
       this.entries = new Map(entriesOverride.map((entry) => [entry.id, entry]));
     } else {
@@ -53,13 +66,25 @@ export class CapabilityService implements ICapabilityService {
         kimiHomeDir: bootstrap.homeDir,
         userHomeDir: homedir(),
         plugins,
+        marketplace,
         hostProcess,
+        resolveRegion: () => regions.getRegionAsync(),
       };
       this.entries = new Map<CapabilityId, CapabilityEntry>([
         ['kimi-cu', createKimiCuEntry(ctx)],
         ['kimi-webbridge', createKimiWebbridgeEntry(ctx)],
       ]);
     }
+  }
+
+  describeCapabilities(): readonly CapabilityDescriptor[] {
+    return [...this.entries.values()].map((entry) => ({
+      id: entry.id,
+      pluginId: entry.pluginId,
+      displayName: entry.displayName,
+      description: entry.description,
+      supported: entry.supported,
+    }));
   }
 
   listCapabilities(): Promise<readonly CapabilityStatus[]> {
@@ -70,7 +95,7 @@ export class CapabilityService implements ICapabilityService {
     return this.statusOf(this.requireEntry(id));
   }
 
-  async installCapability(id: string): Promise<CapabilityStatus> {
+  async installCapability(id: string, options?: CapabilityInstallOptions): Promise<CapabilityStatus> {
     const entry = this.requireEntry(id);
     if (!entry.supported) {
       throw new Error2(
@@ -87,18 +112,28 @@ export class CapabilityService implements ICapabilityService {
     }
 
     this.runningInstalls.add(entry.id);
-    this.installProgress.set(entry.id, { running: true });
+    this.setInstallProgress(entry.id, { running: true });
     void (async () => {
       try {
-        await entry.install((step, percent) => {
-          this.installProgress.set(
+        const note = await entry.install((step, percent) => {
+          this.setInstallProgress(
             entry.id,
             percent === undefined ? { running: true, step } : { running: true, step, percent },
           );
-        });
-        this.installProgress.set(entry.id, { running: false });
+        }, options);
+        this.setInstallProgress(entry.id, { running: false, note });
       } catch (error) {
-        this.installProgress.set(entry.id, {
+        if (isError2(error) && error.code === CapabilityErrors.codes.CAPABILITY_PROCESSES_RUNNING) {
+          this.setInstallProgress(entry.id, { running: false, confirmationRequired: 'stop-processes' });
+          return;
+        }
+        const step = this.installProgress.get(entry.id)?.step;
+        this.log.warn('capability install failed', {
+          capabilityId: entry.id,
+          step,
+          error,
+        });
+        this.setInstallProgress(entry.id, {
           running: false,
           error: error instanceof Error ? error.message : String(error),
         });
@@ -126,6 +161,7 @@ export class CapabilityService implements ICapabilityService {
     const install = this.installProgress.get(entry.id) ?? IDLE_PROGRESS;
     const base = {
       id: entry.id,
+      pluginId: entry.pluginId,
       displayName: entry.displayName,
       description: entry.description,
       install,
@@ -155,6 +191,7 @@ export class CapabilityService implements ICapabilityService {
       const detail = error instanceof Error ? error.message : String(error);
       const base = {
         id: entry.id,
+        pluginId: entry.pluginId,
         displayName: entry.displayName,
         description: entry.description,
         install,

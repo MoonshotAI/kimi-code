@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { bridge, Events } from "@/services";
 import { requiresManagedProviderLogin, useSettingsStore } from "@/stores";
 import type { ExtensionConfig } from "shared/types";
@@ -58,9 +58,11 @@ export function useAppInit(): AppInitState {
     modelsCount: 0,
   });
   const [initKey, setInitKey] = useState(0);
-  const { initModels, setExtensionConfig, setMCPServers, setWireSlashCommands, setIsLoggedIn, setWorkspaceRoot } = useSettingsStore();
+  const catalogApplied = useRef(false);
+  const { initModels, setModels, setExtensionConfig, setWireSlashCommands, setIsLoggedIn, setWorkspaceRoot } = useSettingsStore();
 
   const refresh = useCallback(() => {
+    catalogApplied.current = false;
     setState({ status: "loading", errorMessage: null, modelsCount: 0 });
     setInitKey((k) => k + 1);
   }, []);
@@ -70,6 +72,26 @@ export function useAppInit(): AppInitState {
       setExtensionConfig(config);
     });
   }, [setExtensionConfig, refresh]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let latestRead = 0;
+    const unsubscribe = bridge.on(Events.ModelCatalogChanged, () => {
+      const read = ++latestRead;
+      void bridge.getModels().then(({ models }) => {
+        if (!cancelled && read === latestRead) {
+          catalogApplied.current = true;
+          setModels(models);
+        }
+      }).catch((error: unknown) => {
+        console.error("[AppInit] Failed to refresh models:", error);
+      });
+    });
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [setModels]);
 
   useEffect(() => {
     let cancelled = false;
@@ -88,9 +110,8 @@ export function useAppInit(): AppInitState {
 
         setWorkspaceRoot(workspace.workspaceRoot ?? workspace.path ?? null);
 
-        const [extensionConfig, mcpServers, slashCommands] = await Promise.all([
+        const [extensionConfig, slashCommands] = await Promise.all([
           bridge.getExtensionConfig(),
-          bridge.getMCPServers(),
           bridge.getSlashCommands(),
         ]);
         if (cancelled) {
@@ -98,7 +119,6 @@ export function useAppInit(): AppInitState {
         }
 
         setExtensionConfig(extensionConfig);
-        setMCPServers(mcpServers);
         setWireSlashCommands(slashCommands);
 
         const [loginStatus, kimiConfig] = await Promise.all([bridge.checkLoginStatus(), bridge.getModels()]);
@@ -109,9 +129,14 @@ export function useAppInit(): AppInitState {
         console.log("[AppInit] Login status:", loginStatus, "kimiConfig:", kimiConfig);
 
         setIsLoggedIn(loginStatus.loggedIn);
-        initModels(kimiConfig.models, kimiConfig.defaultModel, kimiConfig.defaultThinking, kimiConfig.defaultThinkingEffort);
+        initModels(
+          catalogApplied.current ? useSettingsStore.getState().models : kimiConfig.models,
+          kimiConfig.defaultModel,
+          kimiConfig.defaultThinking,
+          kimiConfig.defaultThinkingEffort,
+        );
 
-        const modelsCount = kimiConfig.models?.length ?? 0;
+        const modelsCount = useSettingsStore.getState().models.length;
 
         if (modelsCount === 0 && !loginStatus.loggedIn) {
           setState({ status: "not-logged-in", errorMessage: null, modelsCount });
@@ -129,11 +154,11 @@ export function useAppInit(): AppInitState {
         }
 
         setState({ status: "ready", errorMessage: null, modelsCount });
-      } catch (err) {
+      } catch (error) {
         if (!cancelled) {
           setState({
             status: "runtime-error",
-            errorMessage: err instanceof Error ? err.message : "Failed to initialize",
+            errorMessage: error instanceof Error ? error.message : "Failed to initialize",
             modelsCount: 0,
           });
         }
@@ -144,7 +169,7 @@ export function useAppInit(): AppInitState {
     return () => {
       cancelled = true;
     };
-  }, [initKey, initModels, setExtensionConfig, setMCPServers, setWireSlashCommands, setIsLoggedIn]);
+  }, [initKey, initModels, setExtensionConfig, setWireSlashCommands, setIsLoggedIn]);
 
   return { ...state, refresh };
 }

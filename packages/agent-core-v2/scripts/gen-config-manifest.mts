@@ -1,26 +1,3 @@
-/**
- * Generates `docs/config-manifest.toml` — the single place to see every config
- * section registered via `registerConfigSection(...)` plus every effective
- * overlay registered via `registerConfigOverlay(...)`.
- *
- * Two passes:
- *   1. Static scan of `src/**` maps each registered section domain (and each
- *      overlay) to the source file that registers it — the "owner".
- *   2. Runtime pass imports `src/index.ts` ("import = register") and drains the
- *      module-level contributions, capturing defaults, env bindings, and the
- *      registered hooks exactly as the running process sees them.
- *
- * The output is TOML in the on-disk shape (snake_case keys): one `[table]` per
- * section, uncommented assignments for registered defaults, and commented
- * `# field: type` lines for the remaining schema fields.
- *
- * Usage:
- *   pnpm --filter @moonshot-ai/agent-core-v2 gen:config-manifest          # write the file
- *   pnpm --filter @moonshot-ai/agent-core-v2 gen:config-manifest --check  # freshness check (CI-style)
- *
- * Freshness is also enforced by `test/app/config/configManifest.test.ts`.
- */
-
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -44,10 +21,6 @@ const PKG = join(import.meta.dirname, '..');
 const SRC = join(PKG, 'src');
 export const MANIFEST_PATH = join(PKG, 'docs', 'config-manifest.toml');
 
-// ---------------------------------------------------------------------------
-// Static pass — domain/overlay → owner file
-// ---------------------------------------------------------------------------
-
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
     const p = join(dir, entry);
@@ -62,7 +35,6 @@ function constStringValue(source: string, ident: string): string | undefined {
   return re.exec(source)?.[1];
 }
 
-/** domain key → owner file (relative to the package root). */
 function scanSectionOwners(): Map<string, string> {
   const owners = new Map<string, string>();
   for (const file of walk(SRC)) {
@@ -77,12 +49,9 @@ function scanSectionOwners(): Map<string, string> {
   return owners;
 }
 
-/** overlay variable name → owner file (relative to the package root). */
 function scanOverlayOwners(): Map<string, string> {
   const owners = new Map<string, string>();
   for (const file of walk(SRC)) {
-    // Skip the collector module itself — its `registerConfigOverlay(overlay)`
-    // function signature is not a registration.
     if (file.endsWith('configOverlayContributions.ts')) continue;
     const source = readFileSync(file, 'utf-8');
     if (!source.includes('registerConfigOverlay(')) continue;
@@ -94,11 +63,6 @@ function scanOverlayOwners(): Map<string, string> {
   return owners;
 }
 
-// ---------------------------------------------------------------------------
-// TOML-like rendering helpers
-// ---------------------------------------------------------------------------
-
-/** Serialize a small JSON value as an inline TOML value. */
 function toTomlValue(value: unknown): string {
   if (typeof value === 'string') return JSON.stringify(value);
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
@@ -116,7 +80,6 @@ interface EnvRow {
   readonly detail: string;
 }
 
-/** Property access shape of an `EnvBinding` object (avoids index-signature access). */
 interface EnvBindingFields {
   readonly env?: unknown;
   readonly deprecatedEnv?: unknown;
@@ -148,11 +111,6 @@ function snakePath(field: string): string {
 
 const RULE = `# ${'#'.repeat(74)}`;
 
-// ---------------------------------------------------------------------------
-// Section rendering
-// ---------------------------------------------------------------------------
-
-/** `# field: type (default: x)` comment lines for an object schema's properties. */
 function renderFieldComments(
   properties: Record<string, unknown>,
   root: JsonSchema,
@@ -165,8 +123,6 @@ function renderFieldComments(
     const propDefault = asJsonSchema(resolved)?.default;
     const defNote = propDefault !== undefined ? ` (default: ${JSON.stringify(propDefault)})` : '';
     lines.push(`${indent}# ${camelToSnake(name)}: ${describeType(resolved)}${defNote}`);
-    // Expand nested object fields one level at a time (depth-capped so a
-    // recursive $ref cannot loop).
     const subProps = asJsonSchema(resolved)?.properties;
     if (depth < 3 && isRecord(subProps) && Object.keys(subProps).length > 0) {
       lines.push(...renderFieldComments(subProps, root, `${indent}  `, depth + 1));
@@ -181,7 +137,6 @@ function renderBody(section: ConfigSectionContribution): string[] {
   const jsonSchema = schema === undefined ? undefined : toJsonSchema(schema);
 
   if (jsonSchema === undefined) {
-    // No schema (passthrough) or a schema that JSON Schema cannot represent.
     if (isRecord(options.defaultValue)) {
       return [
         `[${key}]`,
@@ -197,7 +152,6 @@ function renderBody(section: ConfigSectionContribution): string[] {
     return [`[${key}]`, `# (${schema === undefined ? 'no schema — passthrough' : 'schema uses transforms; see the owner file'})`];
   }
 
-  // Object with named fields.
   if (isRecord(jsonSchema.properties) && Object.keys(jsonSchema.properties).length > 0) {
     const defaults = isRecord(options.defaultValue) ? options.defaultValue : {};
     const lines = [`[${key}]`];
@@ -207,8 +161,6 @@ function renderBody(section: ConfigSectionContribution): string[] {
         lines.push(`${fieldKey} = ${truncate(toTomlValue(defaults[name]))}`);
         continue;
       }
-      // A nested object field is an on-disk sub-table (`[section.field]`) —
-      // render its own fields instead of a flat `field: object` comment.
       const resolved = resolveRef(prop, jsonSchema);
       const subProps = asJsonSchema(resolved)?.properties;
       if (isRecord(subProps) && Object.keys(subProps).length > 0) {
@@ -217,7 +169,6 @@ function renderBody(section: ConfigSectionContribution): string[] {
         lines.push(...renderFieldComments(subProps, jsonSchema, '  '));
         continue;
       }
-      // An array-of-objects field carries its element fields inline.
       const itemProps = asJsonSchema(
         resolveRef(asJsonSchema(resolved)?.items, jsonSchema),
       )?.properties;
@@ -231,7 +182,6 @@ function renderBody(section: ConfigSectionContribution): string[] {
     return lines;
   }
 
-  // Record section — one sub-table per entry.
   if (jsonSchema.additionalProperties !== undefined) {
     const valueSchema = resolveRef(jsonSchema.additionalProperties, jsonSchema);
     const valueProps = asJsonSchema(valueSchema)?.properties;
@@ -247,10 +197,6 @@ function renderBody(section: ConfigSectionContribution): string[] {
     return lines;
   }
 
-  // Array-of-tables section — one `[[section]]` entry per element. There is
-  // no `[section]` parent table in TOML, so the whole shape stays commented;
-  // emitting a bare `[${key}]` header would parse as a plain table, which
-  // array sections (e.g. `hooks`) reject on load.
   if (jsonSchema.type === 'array') {
     const itemProps = asJsonSchema(resolveRef(jsonSchema.items, jsonSchema))?.properties;
     if (isRecord(itemProps) && Object.keys(itemProps).length > 0) {
@@ -262,7 +208,6 @@ function renderBody(section: ConfigSectionContribution): string[] {
     }
   }
 
-  // Scalar / array section — a plain top-level key.
   if (options.defaultValue !== undefined) {
     return [`${key} = ${truncate(toTomlValue(options.defaultValue))}`];
   }
@@ -302,12 +247,7 @@ function renderSection(section: ConfigSectionContribution, owner: string | undef
   return lines;
 }
 
-// ---------------------------------------------------------------------------
-// Manifest rendering
-// ---------------------------------------------------------------------------
-
 export async function buildConfigManifest(): Promise<string> {
-  // "import = register": loading the package root fills the contribution bags.
   await import('../src/index.ts');
   const sections = getConfigSectionContributions().toSorted((a, b) =>
     a.domain.localeCompare(b.domain),
@@ -344,10 +284,6 @@ export async function buildConfigManifest(): Promise<string> {
   }
   return out.join('\n');
 }
-
-// ---------------------------------------------------------------------------
-// CLI
-// ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
   const check = process.argv.includes('--check');

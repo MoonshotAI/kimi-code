@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-
-import { LifecycleScope, ScopeActivation, _clearScopedRegistryForTests, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, _clearScopedRegistryForTests, registerScopedService } from '#/_base/di/scope';
 import { createScopedTestHost } from '#/_base/di/test';
 import {
   IBootstrapService,
@@ -16,7 +16,6 @@ import { stubClientIdentity } from './stubs';
 
 describe('BootstrapService (scoped)', () => {
   beforeEach(() => {
-    // Keep the registry minimal so unrelated OnScopeCreated services do not run.
     _clearScopedRegistryForTests();
     registerScopedService(
       LifecycleScope.App,

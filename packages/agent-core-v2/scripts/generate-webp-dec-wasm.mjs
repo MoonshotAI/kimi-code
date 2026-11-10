@@ -1,15 +1,3 @@
-/**
- * Regenerate `src/agent/media/webp-dec-wasm.ts` from the installed
- * `@jsquash/webp` package.
- *
- * The WebP decoder wasm is committed as a base64 string module because the
- * published CLI bundles every dependency into a single file with no runtime
- * node_modules — a file-path lookup for the .wasm would break there, while a
- * string constant survives every packaging (vitest on sources, tsdown
- * bundling, nix builds) unchanged. Run this after bumping @jsquash/webp:
- *
- *   node scripts/generate-webp-dec-wasm.mjs
- */
 import { createRequire } from 'node:module';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';

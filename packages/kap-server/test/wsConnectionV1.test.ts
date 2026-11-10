@@ -1,22 +1,14 @@
-/**
- * `WsConnectionV1` — outbound send buffer: coalescing of high-frequency
- * volatile text deltas, batch flush, backpressure deferral, and close flush.
- */
-
 import type { WebSocket } from 'ws';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { Error2, ErrorCodes, type AgentTaskOutputChunk, type IAgentTaskService } from '@moonshot-ai/agent-core-v2';
+import type { AgentTaskInfo } from '@moonshot-ai/agent-core-v2/agent/task/types';
+
+import { TASK_OUTPUT_DEFAULT_TAIL_BYTES, TASK_OUTPUT_MAX_TAIL_BYTES } from '../src/protocol/ws-task';
 import type { IConnectionRegistry } from '../src/transport/ws/connectionRegistry';
 import type { SessionEventBroadcaster } from '../src/transport/ws/v1/sessionEventBroadcaster';
-import {
-  type WsConnectionV1Options,
-  WsConnectionV1,
-  coalesceFrames,
-} from '../src/transport/ws/v1/wsConnectionV1';
-
-// ---------------------------------------------------------------------------
-// Fakes
-// ---------------------------------------------------------------------------
+import type { TaskSource } from '../src/transport/ws/v1/taskRequests';
+import { type WsConnectionV1Options, WsConnectionV1 } from '../src/transport/ws/v1/wsConnectionV1';
 
 class FakeSocket {
   readonly OPEN = 1;
@@ -58,19 +50,18 @@ class FakeSocket {
   }
 }
 
-function makeBroadcaster(): SessionEventBroadcaster {
+function makeBroadcaster(overrides: Record<string, unknown> = {}): SessionEventBroadcaster {
   return {
-    subscribe: async () => true,
+    subscribe: async (_sessionId: string, _target: unknown, _agentIds: readonly string[], accepted?: () => void) => {
+      accepted?.();
+    },
     unsubscribe: () => {},
+    sessionsOf: () => [],
+    removeTarget: () => {},
     addGlobalTarget: () => {},
     removeGlobalTarget: () => {},
-    getCursor: async () => ({ seq: 0, epoch: '' }),
-    getBufferedSince: async () => ({
-      events: [],
-      resyncRequired: false,
-      currentSeq: 0,
-      epoch: '',
-    }),
+    sendPendingInteractions: () => {},
+    ...overrides,
   } as unknown as SessionEventBroadcaster;
 }
 
@@ -89,6 +80,7 @@ function makeConn(socket: FakeSocket, opts: Partial<WsConnectionV1Options> = {})
   return new WsConnectionV1({
     socket: socket as unknown as WebSocket,
     broadcaster: makeBroadcaster(),
+    taskSource: async () => ({ kind: 'session_not_found' }),
     connectionRegistry: makeRegistry(),
     remoteAddress: null,
     userAgent: null,
@@ -96,537 +88,283 @@ function makeConn(socket: FakeSocket, opts: Partial<WsConnectionV1Options> = {})
   });
 }
 
-function delta(
-  sessionId: string,
-  agentId: string,
-  turnId: number,
-  text: string,
-  offset: number,
-  type: 'assistant.delta' | 'thinking.delta' = 'assistant.delta',
-) {
+function frame(type: string, sessionId: string, seq: number) {
   return {
     type,
-    seq: 1,
-    volatile: true as const,
-    offset,
     session_id: sessionId,
     timestamp: '2026-01-01T00:00:00.000Z',
-    payload: { type, agentId, sessionId, turnId, delta: text },
+    payload: { type, agent_id: 'main', seq },
   };
 }
 
-function durable(type: string, sessionId: string, seq: number) {
-  return {
-    type,
-    seq,
-    session_id: sessionId,
-    timestamp: '2026-01-01T00:00:00.000Z',
-    payload: { type, agentId: 'main', sessionId },
-  };
+function command(type: string, fields: Record<string, unknown>, requestId = 'req-1'): string {
+  return JSON.stringify({ type, request_id: requestId, ...fields });
 }
 
-// ---------------------------------------------------------------------------
-// coalesceFrames — pure
-// ---------------------------------------------------------------------------
+function responses(socket: FakeSocket): Array<{ request_id: string; code: number; msg?: string }> {
+  return socket
+    .frames()
+    .filter((f) => (f as { type: string }).type === 'response') as Array<{
+    request_id: string;
+    code: number;
+    msg?: string;
+  }>;
+}
 
-describe('coalesceFrames', () => {
-  it('merges adjacent compatible assistant deltas', () => {
-    const out = coalesceFrames([
-      delta('s1', 'main', 1, 'Hello', 0),
-      delta('s1', 'main', 1, ' ', 5),
-      delta('s1', 'main', 1, 'world', 6),
-    ]);
-    expect(out).toHaveLength(1);
-    const f = out[0] as { offset: number; volatile: boolean; seq: number; payload: { delta: string } };
-    expect(f.payload.delta).toBe('Hello world');
-    expect(f.offset).toBe(0);
-    expect(f.volatile).toBe(true);
-    expect(f.seq).toBe(1);
-  });
-
-  it('does not merge across a durable frame', () => {
-    const out = coalesceFrames([
-      delta('s1', 'main', 1, 'a', 0),
-      durable('turn.ended', 's1', 2),
-      delta('s1', 'main', 1, 'b', 1),
-    ]);
-    expect(out).toHaveLength(3);
-    expect((out[0] as { payload: { delta: string } }).payload.delta).toBe('a');
-    expect((out[1] as { type: string }).type).toBe('turn.ended');
-    expect((out[2] as { payload: { delta: string } }).payload.delta).toBe('b');
-  });
-
-  it('does not merge different delta types', () => {
-    const out = coalesceFrames([
-      delta('s1', 'main', 1, 'hi', 0, 'assistant.delta'),
-      delta('s1', 'main', 1, 'think', 0, 'thinking.delta'),
-    ]);
-    expect(out).toHaveLength(2);
-  });
-
-  it('does not merge deltas from different sessions / agents / turns', () => {
-    expect(
-      coalesceFrames([delta('s1', 'main', 1, 'a', 0), delta('s2', 'main', 1, 'b', 0)]),
-    ).toHaveLength(2);
-    expect(
-      coalesceFrames([delta('s1', 'main', 1, 'a', 0), delta('s1', 'sub', 1, 'b', 0)]),
-    ).toHaveLength(2);
-    expect(
-      coalesceFrames([delta('s1', 'main', 1, 'a', 0), delta('s1', 'main', 2, 'b', 0)]),
-    ).toHaveLength(2);
-  });
-
-  it('leaves non-volatile and non-text frames untouched', () => {
-    const toolCallDelta = {
-      type: 'tool.call.delta',
-      seq: 1,
-      volatile: true as const,
-      session_id: 's1',
-      timestamp: '2026-01-01T00:00:00.000Z',
-      payload: { type: 'tool.call.delta', agentId: 'main', turnId: 1, args: { x: 1 } },
-    };
-    expect(coalesceFrames([toolCallDelta, toolCallDelta])).toHaveLength(2);
-  });
-
-  it('does not mutate the input frames', () => {
-    const a = delta('s1', 'main', 1, 'a', 0);
-    const b = delta('s1', 'main', 1, 'b', 1);
-    const out = coalesceFrames([a, b]);
-    expect(out).toHaveLength(1);
-    expect(a.payload.delta).toBe('a');
-    expect(b.payload.delta).toBe('b');
-  });
-
-  it('handles empty and single-element input', () => {
-    expect(coalesceFrames([])).toEqual([]);
-    const only = delta('s1', 'main', 1, 'x', 0);
-    const out = coalesceFrames([only]);
-    expect(out).toHaveLength(1);
-    expect(out[0]).toBe(only);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// WsConnectionV1 — transcript subscription parsing
-// ---------------------------------------------------------------------------
-
-describe('WsConnectionV1 transcript subscriptions (subscribe_v2)', () => {
+describe('WsConnectionV1 control frames', () => {
   interface SubscribeCall {
     sessionId: string;
-    filter: unknown;
-    grades: unknown;
-    opts?: { deferTranscriptReset?: boolean; transcriptSince?: Record<string, number> };
+    agentIds: readonly string[];
+  }
+
+  interface UnsubscribeCall {
+    sessionId: string;
+    agentIds?: readonly string[];
   }
 
   function makeCapturingBroadcaster(): {
     broadcaster: SessionEventBroadcaster;
     calls: SubscribeCall[];
-    detaches: { sessionId: string; agentIds?: readonly string[] }[];
+    unsubscribes: UnsubscribeCall[];
+    removals: unknown[];
   } {
     const calls: SubscribeCall[] = [];
-    const detaches: { sessionId: string; agentIds?: readonly string[] }[] = [];
-    const broadcaster = {
-      subscribe: async (
-        sessionId: string,
-        _target: unknown,
-        filter: unknown,
-        grades: unknown,
-        opts?: { deferTranscriptReset?: boolean; transcriptSince?: Record<string, number> },
-      ) => {
-        calls.push({ sessionId, filter, grades, opts });
-        return true;
+    const unsubscribes: UnsubscribeCall[] = [];
+    const removals: unknown[] = [];
+    const subscribed = new Map<string, Set<string>>();
+    const broadcaster = makeBroadcaster({
+      subscribe: async (sessionId: string, _target: unknown, agentIds: readonly string[], accepted?: () => void) => {
+        calls.push({ sessionId, agentIds });
+        const agents = subscribed.get(sessionId) ?? new Set<string>();
+        for (const agentId of agentIds) agents.add(agentId);
+        subscribed.set(sessionId, agents);
+        accepted?.();
       },
-      unsubscribe: () => {},
-      unsubscribeTranscript: (sessionId: string, _target: unknown, agentIds?: readonly string[]) => {
-        detaches.push({ sessionId, agentIds });
+      unsubscribe: (sessionId: string, _target: unknown, agentIds?: readonly string[]) => {
+        unsubscribes.push(agentIds === undefined ? { sessionId } : { sessionId, agentIds });
+        const agents = subscribed.get(sessionId);
+        for (const agentId of agentIds ?? [...(agents ?? [])]) agents?.delete(agentId);
+        if (agents?.size === 0) subscribed.delete(sessionId);
       },
-      addGlobalTarget: () => {},
-      removeGlobalTarget: () => {},
-      getCursor: async () => ({ seq: 0, epoch: '' }),
-      getBufferedSince: async () => ({
-        events: [],
-        resyncRequired: false,
-        currentSeq: 0,
-        epoch: '',
-      }),
-    } as unknown as SessionEventBroadcaster;
-    return { broadcaster, calls, detaches };
+      sessionsOf: () => [...subscribed.keys()].toSorted(),
+      removeTarget: (target: unknown) => {
+        removals.push(target);
+        subscribed.clear();
+      },
+    });
+    return { broadcaster, calls, unsubscribes, removals };
   }
 
-  function controlFrame(type: string, payload: Record<string, unknown>): string {
-    return JSON.stringify({ type, id: 'req-1', payload });
-  }
-
-  it('forwards subscribe_v2 grades and transcript_since to the broadcaster and stores them per session', async () => {
+  it('sends nothing until a command arrives and ignores handshake and unknown frames', async () => {
     const socket = new FakeSocket();
     const { broadcaster, calls } = makeCapturingBroadcaster();
     const conn = makeConn(socket, { broadcaster });
 
-    socket.emit(
-      'message',
-      controlFrame('subscribe_v2', {
-        session_id: 's1',
-        transcript: { '*': 'delta' },
-        transcript_since: { main: 7, '*': 3 },
-      }),
-    );
-    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    socket.emit('message', JSON.stringify({ type: 'client_hello', id: 'hello', payload: { client_id: 'c1' } }));
+    socket.emit('message', JSON.stringify({ type: 'subscribe_v2', id: 'old', payload: { session_id: 's1' } }));
+    socket.emit('message', command('subscribe', { session_id: 's1' }, 'sub'));
+    await vi.waitFor(() => expect(responses(socket)).toHaveLength(1));
 
-    expect(calls[0]).toMatchObject({
-      sessionId: 's1',
-      grades: { '*': 'delta' },
-      opts: { transcriptSince: { main: 7, '*': 3 } },
-    });
-    expect(conn.subscriptions.get('s1')).toEqual({
-      agentFilter: undefined,
-      transcriptGrades: { '*': 'delta' },
-    });
-    await vi.waitFor(() =>
-      expect(socket.sent.some((f) => JSON.parse(f).type === 'ack')).toBe(true),
-    );
-    const ack = socket.sent.map((f) => JSON.parse(f)).find((f) => f.type === 'ack');
-    expect(ack).toMatchObject({ code: 0, payload: { accepted: ['s1'], not_found: [] } });
+    expect(socket.frames()).toEqual([{ type: 'response', request_id: 'sub', code: 0 }]);
+    expect(calls).toEqual([{ sessionId: 's1', agentIds: ['main'] }]);
+    expect(socket.closeCalls).toHaveLength(0);
     conn.close();
   });
 
-  it('ignores legacy transcript fields on client_hello and subscribe', async () => {
+  it('closes the connection with 1008 when a subscribe has no readable request_id', async () => {
     const socket = new FakeSocket();
     const { broadcaster, calls } = makeCapturingBroadcaster();
-    const conn = makeConn(socket, { broadcaster });
+    makeConn(socket, { broadcaster });
 
-    socket.emit(
-      'message',
-      controlFrame('client_hello', {
-        client_id: 'c1',
-        subscriptions: ['s1'],
-        transcript: { s1: { '*': 'delta' } },
-        transcript_since: { s1: { main: 7 } },
-      }),
-    );
-    await vi.waitFor(() => expect(calls).toHaveLength(1));
-    expect(calls[0]).toMatchObject({ sessionId: 's1', grades: undefined });
-    expect(calls[0]!.opts?.transcriptSince).toBeUndefined();
-    expect(conn.subscriptions.get('s1')).toEqual({
-      agentFilter: undefined,
-      transcriptGrades: undefined,
-    });
+    socket.emit('message', JSON.stringify({ type: 'subscribe', session_id: 's1' }));
+    await vi.waitFor(() => expect(socket.closeCalls).toHaveLength(1));
 
-    socket.emit(
-      'message',
-      controlFrame('subscribe', {
-        session_ids: ['s2'],
-        transcript: { s2: { '*': 'delta' } },
-      }),
-    );
-    await vi.waitFor(() => expect(calls).toHaveLength(2));
-    expect(calls[1]).toMatchObject({ sessionId: 's2', grades: undefined });
-    expect(conn.subscriptions.get('s2')).toEqual({
-      agentFilter: undefined,
-      transcriptGrades: undefined,
-    });
-    conn.close();
-  });
-
-  it('acks an invalid subscribe_v2 payload with an error and does not attach', async () => {
-    const socket = new FakeSocket();
-    const { broadcaster, calls } = makeCapturingBroadcaster();
-    const conn = makeConn(socket, { broadcaster });
-
-    socket.emit(
-      'message',
-      controlFrame('subscribe_v2', {
-        session_id: 's1',
-        transcript: { main: 'everything' },
-      }),
-    );
-    await vi.waitFor(() =>
-      expect(socket.sent.some((f) => JSON.parse(f).type === 'ack')).toBe(true),
-    );
-
+    expect(socket.closeCalls[0]).toEqual({ code: 1008, reason: 'invalid message' });
     expect(calls).toHaveLength(0);
-    expect(conn.subscriptions.size).toBe(0);
-    const ack = socket.sent.map((f) => JSON.parse(f)).find((f) => f.type === 'ack');
-    expect(ack.code).toBe(1);
-    conn.close();
   });
 
-  it('preserves the existing agent filter when subscribe_v2 updates the grades', async () => {
-    const socket = new FakeSocket();
-    const { broadcaster, calls } = makeCapturingBroadcaster();
-    const conn = makeConn(socket, { broadcaster });
-
-    socket.emit(
-      'message',
-      controlFrame('subscribe', { session_ids: ['s1'], agent_filter: { s1: ['main'] } }),
-    );
-    await vi.waitFor(() => expect(calls).toHaveLength(1));
-
-    socket.emit(
-      'message',
-      controlFrame('subscribe_v2', { session_id: 's1', transcript: { main: 'block' } }),
-    );
-    await vi.waitFor(() => expect(calls).toHaveLength(2));
-
-    expect(calls[1]).toMatchObject({ sessionId: 's1', grades: { main: 'block' } });
-    expect(calls[1]!.filter).toEqual(new Set(['main']));
-    expect(conn.subscriptions.get('s1')).toEqual({
-      agentFilter: new Set(['main']),
-      transcriptGrades: { main: 'block' },
-    });
-    conn.close();
-  });
-
-  it('keeps subscribe_v2 grades across a plain re-subscribe and filters the cursor replay through them', async () => {
-    const socket = new FakeSocket();
-    const backlog = [
-      durable('turn.started', 's1', 3),
-      durable('assistant.delta', 's1', 4),
-      durable('event.session.work_changed', 's1', 5),
-    ];
-    // Mirror the real broadcaster's replay crop: with a transcript grade spec
-    // the projected types drop out, retained (global/lifecycle) events stay.
-    // The dedicated suppression coverage lives in sessionEventBroadcaster's
-    // tests — here we only verify the preserved grade spec reaches
-    // `getBufferedSince`.
-    const PROJECTED = new Set(['turn.started', 'assistant.delta']);
-    let seenGrades: unknown;
-    const broadcaster = {
-      subscribe: async (
-        _sid: string,
-        target: { send: (e: unknown) => void },
-        _filter: unknown,
-        _grades: unknown,
-        opts?: { deferTranscriptReset?: boolean },
-      ) => {
-        if (opts?.deferTranscriptReset !== true) {
-          target.send({ type: 'transcript.reset', seq: 10, session_id: 's1', payload: {} });
-        }
-        return true;
-      },
-      flushTranscriptSeed: async (_sid: string, target: { send: (e: unknown) => void }) => {
-        target.send({ type: 'transcript.reset', seq: 10, session_id: 's1', payload: {} });
-      },
-      unsubscribe: () => {},
-      addGlobalTarget: () => {},
-      removeGlobalTarget: () => {},
-      getCursor: async () => ({ seq: 10, epoch: 'e1' }),
-      getBufferedSince: async (_sid: string, _cursor: unknown, _filter: unknown, grades: unknown) => {
-        seenGrades = grades;
-        return {
-          events: backlog
-            .filter((envelope) => grades === undefined || !PROJECTED.has(envelope.type))
-            .map((envelope) => ({ seq: envelope.seq, envelope })),
-          resyncRequired: false,
-          currentSeq: 10,
-          epoch: 'e1',
-        };
-      },
-    } as unknown as SessionEventBroadcaster;
-    const conn = makeConn(socket, { broadcaster, flushIntervalMs: 1 });
-
-    // Grades arrive via subscribe_v2 first (no cursor → immediate baseline)…
-    socket.emit(
-      'message',
-      controlFrame('subscribe_v2', { session_id: 's1', transcript: { '*': 'delta' } }),
-    );
-    await vi.waitFor(() => {
-      const types = socket.frames().map((f) => (f as { type: string }).type);
-      expect(types).toContain('transcript.reset');
-    });
-    expect(conn.subscriptions.get('s1')?.transcriptGrades).toEqual({ '*': 'delta' });
-
-    // …then a plain re-subscribe with a durable cursor must not wipe them.
-    socket.emit(
-      'message',
-      controlFrame('subscribe', {
-        session_ids: ['s1'],
-        cursors: { s1: { seq: 2, epoch: 'e1' } },
-      }),
-    );
-    await vi.waitFor(() => expect(seenGrades).toEqual({ '*': 'delta' }));
-    expect(conn.subscriptions.get('s1')?.transcriptGrades).toEqual({ '*': 'delta' });
-
-    const types = socket.frames().map((f) => (f as { type: string }).type);
-    // The replay is filtered through the preserved grades: projected events
-    // are suppressed; only the retained global event replays, and the
-    // deferred baseline reset lands after it.
-    expect(types).not.toContain('turn.started');
-    expect(types).not.toContain('assistant.delta');
-    expect(
-      types.slice(types.indexOf('event.session.work_changed'), types.lastIndexOf('transcript.reset') + 1),
-    ).toEqual(['event.session.work_changed', 'transcript.reset']);
-    conn.close();
-  });
-
-  it('reports an unknown session in the subscribe_v2 ack not_found list', async () => {
+  it('sends the pending interactions of an accepted session right after the response', async () => {
     const socket = new FakeSocket();
     const { broadcaster } = makeCapturingBroadcaster();
-    broadcaster.subscribe = async () => false;
+    broadcaster.sendPendingInteractions = (sessionId, target) => {
+      target.send(
+        { type: 'interaction', session_id: sessionId, timestamp: '', payload: {} },
+        'immediate',
+      );
+    };
     const conn = makeConn(socket, { broadcaster });
+    const types = () => socket.frames().map((f) => (f as { type: string }).type);
 
-    socket.emit(
-      'message',
-      controlFrame('subscribe_v2', { session_id: 'gone', transcript: { '*': 'delta' } }),
-    );
-    await vi.waitFor(() =>
-      expect(socket.sent.some((f) => JSON.parse(f).type === 'ack')).toBe(true),
-    );
-
-    const ack = socket.sent.map((f) => JSON.parse(f)).find((f) => f.type === 'ack');
-    expect(ack).toMatchObject({ code: 0, payload: { accepted: [], not_found: ['gone'] } });
-    expect(conn.subscriptions.size).toBe(0);
+    socket.emit('message', command('subscribe', { session_id: 's1' }));
+    await vi.waitFor(() => expect(types()).toEqual(['response', 'interaction']));
     conn.close();
   });
 
-  it('unsubscribe_v2 detaches listed agents with an explicit off, keeping the filter and other grades', async () => {
+  it('forwards subscribe agent ids to the broadcaster, defaulting to the main agent', async () => {
     const socket = new FakeSocket();
-    const { broadcaster, calls, detaches } = makeCapturingBroadcaster();
+    const { broadcaster, calls } = makeCapturingBroadcaster();
     const conn = makeConn(socket, { broadcaster });
 
+    socket.emit('message', command('subscribe', { session_id: 's1' }, 'r1'));
     socket.emit(
       'message',
-      controlFrame('subscribe', { session_ids: ['s1'], agent_filter: { s1: ['main'] } }),
+      command('subscribe', { session_id: 's2', agent_ids: ['main', 'agent-0'] }, 'r2'),
     );
-    await vi.waitFor(() => expect(calls).toHaveLength(1));
-    socket.emit(
-      'message',
-      controlFrame('subscribe_v2', { session_id: 's1', transcript: { '*': 'delta' } }),
-    );
-    await vi.waitFor(() =>
-      expect(conn.subscriptions.get('s1')?.transcriptGrades).toEqual({ '*': 'delta' }),
-    );
+    await vi.waitFor(() => expect(responses(socket)).toHaveLength(2));
 
-    socket.emit(
-      'message',
-      controlFrame('unsubscribe_v2', { session_id: 's1', agent_ids: ['main'] }),
-    );
-    await vi.waitFor(() => expect(detaches).toHaveLength(1));
-
-    expect(detaches[0]).toEqual({ sessionId: 's1', agentIds: ['main'] });
-    // An explicit 'off' — deleting the key would fall back to the '*' default.
-    expect(conn.subscriptions.get('s1')).toEqual({
-      agentFilter: new Set(['main']),
-      transcriptGrades: { '*': 'delta', main: 'off' },
-    });
-    const ack = socket.sent.map((f) => JSON.parse(f)).findLast((f) => f.type === 'ack');
-    expect(ack).toMatchObject({ code: 0, payload: { accepted: ['s1'], not_found: [] } });
+    expect(calls).toEqual([
+      { sessionId: 's1', agentIds: ['main'] },
+      { sessionId: 's2', agentIds: ['main', 'agent-0'] },
+    ]);
+    expect(conn.subscriptionSessionIds).toEqual(['s1', 's2']);
+    expect(responses(socket)).toEqual([
+      { type: 'response', request_id: 'r1', code: 0 },
+      { type: 'response', request_id: 'r2', code: 0 },
+    ]);
     conn.close();
   });
 
-  it('unsubscribe_v2 without agent_ids detaches the whole transcript stream', async () => {
+  it('answers an invalid subscribe with 40001 and does not attach', async () => {
     const socket = new FakeSocket();
-    const { broadcaster, detaches } = makeCapturingBroadcaster();
+    const { broadcaster, calls } = makeCapturingBroadcaster();
     const conn = makeConn(socket, { broadcaster });
 
-    socket.emit(
-      'message',
-      controlFrame('subscribe_v2', { session_id: 's1', transcript: { '*': 'delta' } }),
-    );
-    await vi.waitFor(() =>
-      expect(conn.subscriptions.get('s1')?.transcriptGrades).toEqual({ '*': 'delta' }),
-    );
-
-    socket.emit('message', controlFrame('unsubscribe_v2', { session_id: 's1' }));
-    await vi.waitFor(() => expect(detaches).toHaveLength(1));
-
-    expect(detaches[0]).toEqual({ sessionId: 's1', agentIds: undefined });
-    expect(conn.subscriptions.get('s1')).toEqual({
-      agentFilter: undefined,
-      transcriptGrades: undefined,
-    });
-    conn.close();
-  });
-
-  it('unsubscribe_v2 is idempotent for an unsubscribed session and never touches the broadcaster', async () => {
-    const socket = new FakeSocket();
-    const { broadcaster, calls, detaches } = makeCapturingBroadcaster();
-    const conn = makeConn(socket, { broadcaster });
-
-    socket.emit('message', controlFrame('unsubscribe_v2', { session_id: 's1' }));
-    await vi.waitFor(() =>
-      expect(socket.sent.some((f) => JSON.parse(f).type === 'ack')).toBe(true),
-    );
+    socket.emit('message', command('subscribe', { session_id: 's1', agent_ids: [] }));
+    await vi.waitFor(() => expect(responses(socket)).toHaveLength(1));
 
     expect(calls).toHaveLength(0);
-    expect(detaches).toHaveLength(0);
-    const ack = socket.sent.map((f) => JSON.parse(f)).find((f) => f.type === 'ack');
-    expect(ack).toMatchObject({ code: 0, payload: { accepted: ['s1'] } });
+    expect(conn.subscriptionSessionIds).toEqual([]);
+    expect(responses(socket)[0]).toMatchObject({ request_id: 'req-1', code: 40001 });
     conn.close();
   });
 
-  it('acks an invalid unsubscribe_v2 payload with an error', async () => {
+  it('reports an unknown session with 40401', async () => {
     const socket = new FakeSocket();
-    const { broadcaster, detaches } = makeCapturingBroadcaster();
+    const { broadcaster } = makeCapturingBroadcaster();
+    broadcaster.subscribe = async () => {
+      throw new Error2(ErrorCodes.SESSION_NOT_FOUND, 'session not found: gone');
+    };
     const conn = makeConn(socket, { broadcaster });
 
-    socket.emit('message', controlFrame('unsubscribe_v2', { agent_ids: ['main'] }));
-    socket.emit(
-      'message',
-      controlFrame('unsubscribe_v2', { session_id: 's1', agent_ids: [] }),
-    );
-    await vi.waitFor(() =>
-      expect(socket.sent.filter((f) => JSON.parse(f).type === 'ack')).toHaveLength(2),
-    );
+    socket.emit('message', command('subscribe', { session_id: 'gone' }));
+    await vi.waitFor(() => expect(responses(socket)).toHaveLength(1));
 
-    expect(detaches).toHaveLength(0);
-    const acks = socket.sent.map((f) => JSON.parse(f)).filter((f) => f.type === 'ack');
-    expect(acks.every((a) => a.code === 1)).toBe(true);
+    expect(responses(socket)[0]).toMatchObject({ request_id: 'req-1', code: 40401 });
+    expect(conn.subscriptionSessionIds).toEqual([]);
     conn.close();
   });
 
-  it('serializes back-to-back control frames: subscribe then subscribe_v2 lands filter and grades', async () => {
+  it('reports why a session cannot be opened', async () => {
     const socket = new FakeSocket();
-    const { broadcaster, calls } = makeCapturingBroadcaster();
+    const { broadcaster } = makeCapturingBroadcaster();
+    broadcaster.subscribe = async () => {
+      throw new Error2(ErrorCodes.WIRE_VERSION_TOO_LOW, 'upgrade to read this session');
+    };
     const conn = makeConn(socket, { broadcaster });
 
-    // No awaits between the frames — the second handler reads state the
-    // first one stores, so they must run in receive order.
-    socket.emit(
-      'message',
-      controlFrame('subscribe', { session_ids: ['s1'], agent_filter: { s1: ['main'] } }),
-    );
-    socket.emit(
-      'message',
-      controlFrame('subscribe_v2', { session_id: 's1', transcript: { '*': 'delta' } }),
-    );
-    await vi.waitFor(() => expect(calls).toHaveLength(2));
+    socket.emit('message', command('subscribe', { session_id: 'newer' }));
+    await vi.waitFor(() => expect(responses(socket)).toHaveLength(1));
 
-    expect(conn.subscriptions.get('s1')).toEqual({
-      agentFilter: new Set(['main']),
-      transcriptGrades: { '*': 'delta' },
+    expect(responses(socket)[0]).toMatchObject({
+      code: 40930,
+      msg: 'upgrade to read this session',
     });
+    expect(conn.subscriptionSessionIds).toEqual([]);
     conn.close();
   });
 
-  it('re-subscribes an agent at full grade after it was detached', async () => {
+  it('unsubscribe with agent_ids keeps the session while another agent stays subscribed', async () => {
     const socket = new FakeSocket();
-    const { broadcaster, calls } = makeCapturingBroadcaster();
+    const { broadcaster, unsubscribes } = makeCapturingBroadcaster();
     const conn = makeConn(socket, { broadcaster });
 
     socket.emit(
       'message',
-      controlFrame('subscribe_v2', { session_id: 's1', transcript: { '*': 'delta' } }),
+      command('subscribe', { session_id: 's1', agent_ids: ['main', 'agent-0'] }, 'r1'),
     );
-    socket.emit('message', controlFrame('unsubscribe_v2', { session_id: 's1' }));
-    await vi.waitFor(() =>
-      expect(conn.subscriptions.get('s1')?.transcriptGrades).toBeUndefined(),
-    );
+    socket.emit('message', command('unsubscribe', { session_id: 's1', agent_ids: ['main'] }, 'r2'));
+    await vi.waitFor(() => expect(responses(socket)).toHaveLength(2));
 
-    socket.emit(
-      'message',
-      controlFrame('subscribe_v2', { session_id: 's1', transcript: { main: 'turn' } }),
-    );
+    expect(unsubscribes).toEqual([{ sessionId: 's1', agentIds: ['main'] }]);
+    expect(conn.subscriptionSessionIds).toEqual(['s1']);
+    expect(responses(socket)[1]).toEqual({ type: 'response', request_id: 'r2', code: 0 });
+    conn.close();
+  });
+
+  it('unsubscribe drops the session once no agent stays subscribed', async () => {
+    const socket = new FakeSocket();
+    const { broadcaster, unsubscribes } = makeCapturingBroadcaster();
+    const conn = makeConn(socket, { broadcaster });
+
+    socket.emit('message', command('subscribe', { session_id: 's1' }, 'r1'));
+    socket.emit('message', command('subscribe', { session_id: 's2' }, 'r2'));
+    socket.emit('message', command('unsubscribe', { session_id: 's1', agent_ids: ['main'] }, 'r3'));
+    socket.emit('message', command('unsubscribe', { session_id: 's2' }, 'r4'));
+    await vi.waitFor(() => expect(responses(socket)).toHaveLength(4));
+
+    expect(unsubscribes).toEqual([{ sessionId: 's1', agentIds: ['main'] }, { sessionId: 's2' }]);
+    expect(conn.subscriptionSessionIds).toEqual([]);
+    conn.close();
+  });
+
+  it('unsubscribe answers for an unsubscribed session and leaves the no-op to the broadcaster', async () => {
+    const socket = new FakeSocket();
+    const { broadcaster, calls, unsubscribes } = makeCapturingBroadcaster();
+    const conn = makeConn(socket, { broadcaster });
+
+    socket.emit('message', command('unsubscribe', { session_id: 's1' }));
+    await vi.waitFor(() => expect(responses(socket)).toHaveLength(1));
+
+    expect(calls).toHaveLength(0);
+    expect(unsubscribes).toEqual([{ sessionId: 's1' }]);
+    expect(conn.subscriptionSessionIds).toEqual([]);
+    expect(responses(socket)[0]).toEqual({ type: 'response', request_id: 'req-1', code: 0 });
+    conn.close();
+  });
+
+  it('answers an invalid unsubscribe with 40001', async () => {
+    const socket = new FakeSocket();
+    const { broadcaster, unsubscribes } = makeCapturingBroadcaster();
+    const conn = makeConn(socket, { broadcaster });
+
+    socket.emit('message', command('unsubscribe', { agent_ids: ['main'] }, 'r1'));
+    socket.emit('message', command('unsubscribe', { session_id: 's1', agent_ids: [] }, 'r2'));
+    await vi.waitFor(() => expect(responses(socket)).toHaveLength(2));
+
+    expect(unsubscribes).toHaveLength(0);
+    expect(responses(socket).every((r) => r.code === 40001)).toBe(true);
+    conn.close();
+  });
+
+  it('re-subscribes a session after it was fully detached', async () => {
+    const socket = new FakeSocket();
+    const { broadcaster, calls } = makeCapturingBroadcaster();
+    const conn = makeConn(socket, { broadcaster });
+
+    socket.emit('message', command('subscribe', { session_id: 's1' }, 'r1'));
+    socket.emit('message', command('unsubscribe', { session_id: 's1' }, 'r2'));
+    socket.emit('message', command('subscribe', { session_id: 's1', agent_ids: ['agent-0'] }, 'r3'));
     await vi.waitFor(() => expect(calls).toHaveLength(2));
 
-    expect(calls[1]).toMatchObject({ sessionId: 's1', grades: { main: 'turn' } });
-    expect(conn.subscriptions.get('s1')?.transcriptGrades).toEqual({ main: 'turn' });
+    expect(calls[1]).toEqual({ sessionId: 's1', agentIds: ['agent-0'] });
+    expect(conn.subscriptionSessionIds).toEqual(['s1']);
     conn.close();
+  });
+
+  it('removes itself from the broadcaster when the socket closes', async () => {
+    const socket = new FakeSocket();
+    const { broadcaster, removals } = makeCapturingBroadcaster();
+    const conn = makeConn(socket, { broadcaster });
+
+    socket.emit('message', command('subscribe', { session_id: 's1' }, 'r1'));
+    socket.emit('message', command('subscribe', { session_id: 's2' }, 'r2'));
+    await vi.waitFor(() => expect(conn.subscriptionSessionIds).toEqual(['s1', 's2']));
+
+    socket.emit('close');
+    expect(removals).toEqual([conn]);
+    expect(conn.subscriptionSessionIds).toEqual([]);
   });
 });
-
-// ---------------------------------------------------------------------------
-// WsConnectionV1 — flush / backpressure / close
-// ---------------------------------------------------------------------------
 
 describe('WsConnectionV1 outbound buffer', () => {
   beforeEach(() => {
@@ -636,62 +374,38 @@ describe('WsConnectionV1 outbound buffer', () => {
     vi.useRealTimers();
   });
 
-  it('sends server_hello immediately', () => {
+  it('buffers subscription frames and flushes them in order after the interval', async () => {
     const socket = new FakeSocket();
     const conn = makeConn(socket, { flushIntervalMs: 16 });
-    expect(socket.frames().map((f) => (f as { type: string }).type)).toEqual(['server_hello']);
-    conn.close();
-  });
 
-  it('buffers subscribe_v2 transcript frames without merging them', async () => {
-    const socket = new FakeSocket();
-    const conn = makeConn(socket, { flushIntervalMs: 16 });
-    socket.sent = [];
-
-    conn.send(durable('transcript.reset', 's1', 7));
-    conn.send(durable('transcript.ops', 's1', 8));
+    conn.send(frame('turn.started', 's1', 7));
+    conn.send(frame('item.delta', 's1', 8));
+    conn.send(frame('item.delta', 's1', 9));
     expect(socket.sent).toHaveLength(0);
     await vi.advanceTimersByTimeAsync(15);
     expect(socket.sent).toHaveLength(0);
     await vi.advanceTimersByTimeAsync(1);
 
-    const frames = socket.frames() as Array<{ type: string; seq: number }>;
-    expect(frames.map((frame) => frame.type)).toEqual(['transcript.reset', 'transcript.ops']);
-    expect(frames.map((frame) => frame.seq)).toEqual([7, 8]);
+    const frames = socket.frames() as Array<{ type: string; payload: { seq: number } }>;
+    expect(frames.map((f) => f.type)).toEqual([
+      'turn.started',
+      'item.delta',
+      'item.delta',
+    ]);
+    expect(frames.map((f) => f.payload.seq)).toEqual([7, 8, 9]);
     conn.close();
   });
 
-  it('coalesces adjacent subscribed deltas into one socket.send', async () => {
+  it('sends immediate frames at once and preserves FIFO with buffered frames', async () => {
     const socket = new FakeSocket();
     const conn = makeConn(socket, { flushIntervalMs: 16 });
-    socket.sent = [];
 
-    conn.send(delta('s1', 'main', 1, 'Hello', 0));
-    conn.send(delta('s1', 'main', 1, ' ', 5));
-    conn.send(delta('s1', 'main', 1, 'world', 6));
+    conn.send(frame('item.delta', 's1', 1));
     expect(socket.sent).toHaveLength(0);
-    await vi.advanceTimersByTimeAsync(16);
-
-    const frames = socket.frames();
-    expect(frames).toHaveLength(1);
-    const f = frames[0] as { type: string; offset: number; payload: { delta: string } };
-    expect(f.type).toBe('assistant.delta');
-    expect(f.offset).toBe(0);
-    expect(f.payload.delta).toBe('Hello world');
-    conn.close();
-  });
-
-  it('sends public events immediately and preserves FIFO with subscribed events', async () => {
-    const socket = new FakeSocket();
-    const conn = makeConn(socket, { flushIntervalMs: 16 });
-    socket.sent = [];
-
-    conn.send(delta('s1', 'main', 1, 'before', 0));
-    expect(socket.sent).toHaveLength(0);
-    conn.send(durable('event.session.work_changed', 's1', 2), 'immediate');
+    conn.send(frame('event.session.work_changed', 's1', 2), 'immediate');
 
     expect(socket.frames().map((f) => (f as { type: string }).type)).toEqual([
-      'assistant.delta',
+      'item.delta',
       'event.session.work_changed',
     ]);
     await vi.advanceTimersByTimeAsync(16);
@@ -699,93 +413,155 @@ describe('WsConnectionV1 outbound buffer', () => {
     conn.close();
   });
 
-  it('flushes immediately once the subscribed batch reaches maxBatchSize', () => {
+  it('flushes immediately once the buffered batch reaches maxBatchSize', () => {
     const socket = new FakeSocket();
     const conn = makeConn(socket, { flushIntervalMs: 1000, maxBatchSize: 3 });
-    socket.sent = [];
 
-    conn.send(delta('s1', 'main', 1, 'a', 0));
-    conn.send(delta('s1', 'main', 1, 'b', 1));
-    conn.send(delta('s1', 'main', 1, 'c', 2));
+    conn.send(frame('item.delta', 's1', 1));
+    conn.send(frame('item.delta', 's1', 2));
+    expect(socket.sent).toHaveLength(0);
+    conn.send(frame('item.delta', 's1', 3));
 
-    const frames = socket.frames();
-    expect(frames).toHaveLength(1);
-    expect((frames[0] as { payload: { delta: string } }).payload.delta).toBe('abc');
+    expect(socket.sent).toHaveLength(3);
     conn.close();
   });
 
-  it('defers flushing while the peer is above the watermark, then coalesces on drain', async () => {
+  it('defers flushing while the peer is above the watermark, then drains', async () => {
     const socket = new FakeSocket();
-    const conn = makeConn(socket, {
-      flushIntervalMs: 16,
-      highWaterMarkBytes: 100,
-    });
-    socket.sent = [];
+    const conn = makeConn(socket, { flushIntervalMs: 16, highWaterMarkBytes: 100 });
 
     socket.bufferedAmount = 200;
-    conn.send(delta('s1', 'main', 1, 'Hello', 0));
+    conn.send(frame('item.delta', 's1', 1));
     await vi.advanceTimersByTimeAsync(16);
     expect(socket.sent).toHaveLength(0);
 
-    conn.send(delta('s1', 'main', 1, ' world', 5));
+    conn.send(frame('item.delta', 's1', 2));
     await vi.advanceTimersByTimeAsync(5);
     expect(socket.sent).toHaveLength(0);
 
     socket.bufferedAmount = 0;
     await vi.advanceTimersByTimeAsync(5);
-    const frames = socket.frames();
-    expect(frames).toHaveLength(1);
-    expect((frames[0] as { payload: { delta: string } }).payload.delta).toBe('Hello world');
+    expect(
+      (socket.frames() as Array<{ payload: { seq: number } }>).map((f) => f.payload.seq),
+    ).toEqual([1, 2]);
     conn.close();
   });
 
   it('force-flushes buffered subscription frames on close', () => {
     const socket = new FakeSocket();
     const conn = makeConn(socket, { flushIntervalMs: 1000 });
-    socket.sent = [];
 
-    conn.send(delta('s1', 'main', 1, 'tail', 0));
+    conn.send(frame('item.delta', 's1', 1));
     expect(socket.sent).toHaveLength(0);
 
     conn.close();
-    const frames = socket.frames();
-    expect(frames).toHaveLength(1);
-    expect((frames[0] as { payload: { delta: string } }).payload.delta).toBe('tail');
+    expect(socket.frames()).toHaveLength(1);
   });
 
   it('drops buffered frames when the socket is already closed at flush time', async () => {
     const socket = new FakeSocket();
     const conn = makeConn(socket, { flushIntervalMs: 16 });
-    socket.sent = [];
 
     socket.readyState = socket.CLOSED;
-    conn.send(delta('s1', 'main', 1, 'lost', 0));
+    conn.send(frame('item.delta', 's1', 1));
     await vi.advanceTimersByTimeAsync(16);
     expect(socket.sent).toHaveLength(0);
   });
 });
 
-// ---------------------------------------------------------------------------
-// WsConnectionV1 — global-event registration lifecycle
-// ---------------------------------------------------------------------------
+describe('WsConnectionV1 heartbeat', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function sentTypes(socket: FakeSocket): string[] {
+    return socket.frames().map((f) => (f as { type: string }).type);
+  }
+
+  it('sends nothing on connect and pings every 10 seconds by default', () => {
+    const socket = new FakeSocket();
+    const conn = makeConn(socket);
+    expect(socket.sent).toHaveLength(0);
+
+    vi.advanceTimersByTime(9_999);
+    expect(socket.sent).toHaveLength(0);
+    vi.advanceTimersByTime(1);
+    expect(socket.frames()).toEqual([{ type: 'ping' }]);
+    conn.close();
+  });
+
+  it('sends a ping every interval while the peer keeps answering', () => {
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { heartbeatIntervalMs: 10 });
+
+    for (let i = 0; i < 3; i++) {
+      vi.advanceTimersByTime(10);
+      expect(sentTypes(socket)).toHaveLength(i + 1);
+      socket.emit('message', JSON.stringify({ type: 'pong' }));
+    }
+
+    expect(socket.frames()).toEqual([{ type: 'ping' }, { type: 'ping' }, { type: 'ping' }]);
+    expect(socket.closeCalls).toHaveLength(0);
+    conn.close();
+  });
+
+  it('reaps the connection after two silent cycles', () => {
+    const socket = new FakeSocket();
+    makeConn(socket, { heartbeatIntervalMs: 10 });
+
+    vi.advanceTimersByTime(10);
+    expect(sentTypes(socket)).toEqual(['ping']);
+    expect(socket.closeCalls).toHaveLength(0);
+
+    vi.advanceTimersByTime(10);
+    expect(socket.closeCalls).toEqual([{ code: 1001, reason: 'heartbeat timeout' }]);
+    expect(sentTypes(socket)).toEqual(['ping']);
+
+    vi.advanceTimersByTime(100);
+    expect(sentTypes(socket)).toEqual(['ping']);
+    expect(socket.closeCalls).toHaveLength(1);
+  });
+
+  it('treats any inbound frame — not just pong — as proof of life', () => {
+    const socket = new FakeSocket();
+    makeConn(socket, { heartbeatIntervalMs: 10 });
+
+    vi.advanceTimersByTime(15);
+    socket.emit('message', JSON.stringify({ type: 'some_future_frame', payload: {} }));
+
+    vi.advanceTimersByTime(20);
+    expect(sentTypes(socket)).toEqual(['ping', 'ping', 'ping']);
+    expect(socket.closeCalls).toHaveLength(0);
+
+    vi.advanceTimersByTime(5);
+    expect(socket.closeCalls).toEqual([{ code: 1001, reason: 'heartbeat timeout' }]);
+  });
+
+  it('stops heartbeating once the socket closes on its own', () => {
+    const socket = new FakeSocket();
+    makeConn(socket, { heartbeatIntervalMs: 10 });
+
+    vi.advanceTimersByTime(10);
+    expect(sentTypes(socket)).toEqual(['ping']);
+
+    socket.terminate();
+    vi.advanceTimersByTime(100);
+    expect(sentTypes(socket)).toEqual(['ping']);
+    expect(socket.closeCalls).toHaveLength(0);
+  });
+});
 
 describe('WsConnectionV1 global target registration', () => {
   function makeGlobalTargetBroadcaster() {
     const added: unknown[] = [];
     const removed: unknown[] = [];
-    const broadcaster = {
-      subscribe: async () => true,
-      unsubscribe: () => {},
+    const broadcaster = makeBroadcaster({
       addGlobalTarget: (target: unknown) => added.push(target),
-      removeGlobalTarget: (target: unknown) => removed.push(target),
-      getCursor: async () => ({ seq: 0, epoch: '' }),
-      getBufferedSince: async () => ({
-        events: [],
-        resyncRequired: false,
-        currentSeq: 0,
-        epoch: '',
-      }),
-    } as unknown as SessionEventBroadcaster;
+      removeTarget: (target: unknown) => removed.push(target),
+    });
     return { broadcaster, added, removed };
   }
 
@@ -809,5 +585,656 @@ describe('WsConnectionV1 global target registration', () => {
 
     socket.emit('close');
     expect(removed).toEqual([conn]);
+  });
+});
+
+describe('WsConnectionV1 task output', () => {
+  interface FakeTaskOutput {
+    readonly source: TaskSource;
+    write(text: string): void;
+    readonly listenerCount: () => number;
+    readonly sourceCalls: () => number;
+    holdTailRead(): () => void;
+    holdSource(): () => void;
+    failTailRead(): void;
+    corruptTailRead(): void;
+    withholdTailBytes(count: number): void;
+    refuseDetach(): void;
+  }
+
+  function makeTaskOutput(taskId: string, initial = '', ownerAgentId = 'main'): FakeTaskOutput {
+    let bytes = Buffer.from(initial, 'utf-8');
+    const listeners = new Set<(chunk: AgentTaskOutputChunk) => void>();
+    let detachable = true;
+    let gate: Promise<void> | undefined;
+    let sourceGate: Promise<void> | undefined;
+    let sourceCalls = 0;
+    let tailReadFails = false;
+    let tailReadCorrupt = false;
+    let withheld = 0;
+    let info: AgentTaskInfo = {
+      taskId,
+      kind: 'process',
+      description: 'dev server',
+      status: 'running',
+      detached: false,
+      startedAt: 1_700_000_000_000,
+      endedAt: null,
+      command: 'npm run dev',
+      pid: 1,
+      exitCode: null,
+      parentToolCallId: 'call_bash',
+    };
+    const tasks = {
+      getTask: (id: string) => (id === taskId ? info : undefined),
+      stopByUser: async (id: string) => {
+        if (id !== taskId) return undefined;
+        info = { ...info, status: 'killed', endedAt: 1_700_000_005_000 };
+        return info;
+      },
+      detach: (id: string) => {
+        if (id !== taskId) return undefined;
+        if (detachable) info = { ...info, detached: true };
+        return info;
+      },
+      onDidAppendOutput: (listener: (chunk: AgentTaskOutputChunk) => void) => {
+        listeners.add(listener);
+        return { dispose: () => listeners.delete(listener) };
+      },
+      readOutputTail: async (_id: string, maxBytes: number) => {
+        await gate;
+        if (tailReadFails) throw new Error('EACCES: permission denied');
+        if (tailReadCorrupt) return { offset: 0, data: undefined };
+        const visible = bytes.subarray(0, bytes.byteLength - withheld);
+        const offset = Math.max(0, visible.byteLength - maxBytes);
+        return { offset, data: new Uint8Array(visible.subarray(offset)) };
+      },
+    } as unknown as IAgentTaskService;
+    return {
+      source: async (sessionId, agentId, id) => {
+        sourceCalls += 1;
+        await sourceGate;
+        if (sessionId !== 's1') return { kind: 'session_not_found' };
+        if (agentId !== ownerAgentId || id !== taskId) return { kind: 'task_not_found' };
+        return { kind: 'found', tasks };
+      },
+      sourceCalls: () => sourceCalls,
+      holdSource: () => {
+        let release!: () => void;
+        sourceGate = new Promise((resolve) => {
+          release = resolve;
+        });
+        return () => {
+          sourceGate = undefined;
+          release();
+        };
+      },
+      corruptTailRead: () => {
+        tailReadCorrupt = true;
+      },
+      withholdTailBytes: (count) => {
+        withheld = count;
+      },
+      write: (text) => {
+        const offset = bytes.byteLength;
+        bytes = Buffer.concat([bytes, Buffer.from(text, 'utf-8')]);
+        for (const listener of listeners) listener({ taskId, offset, text });
+      },
+      listenerCount: () => listeners.size,
+      holdTailRead: () => {
+        let release!: () => void;
+        gate = new Promise((resolve) => {
+          release = resolve;
+        });
+        return () => {
+          gate = undefined;
+          release();
+        };
+      },
+      failTailRead: () => {
+        tailReadFails = true;
+      },
+      refuseDetach: () => {
+        detachable = false;
+      },
+    };
+  }
+
+  function send(socket: FakeSocket, frame: Record<string, unknown>): void {
+    socket.emit('message', JSON.stringify(frame));
+  }
+
+  function taskFrames(socket: FakeSocket): unknown[] {
+    return socket.frames();
+  }
+
+  const ok = (requestId: string): unknown =>
+    expect.objectContaining({ type: 'response', request_id: requestId, code: 0 });
+
+  const startLines =
+    '\n> web@0.1.0 dev\n> vite\n\n  VITE v6.3.5  ready in 412 ms\n\n  ➜  Local:   http://localhost:5173/\n';
+  const hmrLine = '4:42:10 PM [vite] hmr update /src/App.vue\n';
+
+  it('replies, sends the current output from offset 0, then streams new output', async () => {
+    const output = makeTaskOutput('bash-k3f9x2ab', startLines);
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { taskSource: output.source });
+
+    send(socket, { type: 'task.watch', request_id: 'r1', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(2));
+    output.write(hmrLine);
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(3));
+
+    expect(taskFrames(socket)).toEqual([
+      ok('r1'),
+      { type: 'task.output', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab', offset: 0, text: startLines },
+      {
+        type: 'task.output',
+        session_id: 's1',
+        agent_id: 'main',
+        task_id: 'bash-k3f9x2ab',
+        offset: Buffer.byteLength(startLines, 'utf-8'),
+        text: hmrLine,
+      },
+    ]);
+    conn.close();
+  });
+
+  it('sends only the output after since_offset when it is within the tail', async () => {
+    const output = makeTaskOutput('bash-k3f9x2ab', startLines + hmrLine);
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { taskSource: output.source });
+    const since = Buffer.byteLength(startLines, 'utf-8');
+
+    send(socket, {
+      type: 'task.watch',
+      request_id: 'r1',
+      session_id: 's1',
+      agent_id: 'main',
+      task_id: 'bash-k3f9x2ab',
+      since_offset: since,
+    });
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(2));
+
+    expect(taskFrames(socket)[1]).toEqual({
+      type: 'task.output',
+      session_id: 's1',
+      agent_id: 'main',
+      task_id: 'bash-k3f9x2ab',
+      offset: since,
+      text: hmrLine,
+    });
+    conn.close();
+  });
+
+  it('sends an empty first chunk when since_offset is already at the end', async () => {
+    const output = makeTaskOutput('bash-k3f9x2ab', startLines);
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { taskSource: output.source });
+    const end = Buffer.byteLength(startLines, 'utf-8');
+
+    send(socket, {
+      type: 'task.watch',
+      request_id: 'r1',
+      session_id: 's1',
+      agent_id: 'main',
+      task_id: 'bash-k3f9x2ab',
+      since_offset: end,
+    });
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(2));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(taskFrames(socket)).toEqual([
+      ok('r1'),
+      { type: 'task.output', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab', offset: end, text: '' },
+    ]);
+    conn.close();
+  });
+
+  it('sends an empty first chunk when the task has no output yet', async () => {
+    const output = makeTaskOutput('bash-k3f9x2ab');
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { taskSource: output.source });
+
+    send(socket, { type: 'task.watch', request_id: 'r1', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(2));
+
+    expect(taskFrames(socket)[1]).toEqual({
+      type: 'task.output',
+      session_id: 's1',
+      agent_id: 'main',
+      task_id: 'bash-k3f9x2ab',
+      offset: 0,
+      text: '',
+    });
+    conn.close();
+  });
+
+  it('falls back to the last tail bytes aligned to a character boundary when since_offset is too old', async () => {
+    const filler = 'x'.repeat(TASK_OUTPUT_DEFAULT_TAIL_BYTES * 2);
+    const total = filler + '➜' + 'y'.repeat(TASK_OUTPUT_DEFAULT_TAIL_BYTES - 2);
+    const output = makeTaskOutput('bash-k3f9x2ab', total);
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { taskSource: output.source });
+
+    send(socket, {
+      type: 'task.watch',
+      request_id: 'r1',
+      session_id: 's1',
+      agent_id: 'main',
+      task_id: 'bash-k3f9x2ab',
+      since_offset: 12,
+    });
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(2));
+
+    const totalBytes = Buffer.byteLength(total, 'utf-8');
+    const first = taskFrames(socket)[1] as { offset: number; text: string };
+    expect(first.offset).toBe(totalBytes - TASK_OUTPUT_DEFAULT_TAIL_BYTES + 2);
+    expect(first.text).toBe('y'.repeat(TASK_OUTPUT_DEFAULT_TAIL_BYTES - 2));
+    expect(first.text).not.toContain('\uFFFD');
+    conn.close();
+  });
+
+  it('falls back to the tail start when since_offset splits a character', async () => {
+    const output = makeTaskOutput('bash-k3f9x2ab', startLines);
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { taskSource: output.source });
+    const arrowStart = Buffer.from(startLines, 'utf-8').indexOf(Buffer.from('➜', 'utf-8'));
+
+    send(socket, {
+      type: 'task.watch',
+      request_id: 'r1',
+      session_id: 's1',
+      agent_id: 'main',
+      task_id: 'bash-k3f9x2ab',
+      since_offset: arrowStart + 1,
+    });
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(2));
+
+    expect(taskFrames(socket)[1]).toEqual({
+      type: 'task.output',
+      session_id: 's1',
+      agent_id: 'main',
+      task_id: 'bash-k3f9x2ab',
+      offset: 0,
+      text: startLines,
+    });
+    conn.close();
+  });
+
+  it('drops output already covered by the first chunk and forwards output written during the read', async () => {
+    const output = makeTaskOutput('bash-k3f9x2ab', startLines);
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { taskSource: output.source });
+    const release = output.holdTailRead();
+
+    send(socket, { type: 'task.watch', request_id: 'r1', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
+    await vi.waitFor(() => expect(output.listenerCount()).toBe(1));
+    output.write(hmrLine);
+    release();
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(2));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(taskFrames(socket)).toEqual([
+      ok('r1'),
+      {
+        type: 'task.output',
+        session_id: 's1',
+        agent_id: 'main',
+        task_id: 'bash-k3f9x2ab',
+        offset: 0,
+        text: startLines + hmrLine,
+      },
+    ]);
+    conn.close();
+  });
+
+  it('stops streaming after task.unwatch and replies to it', async () => {
+    const output = makeTaskOutput('bash-k3f9x2ab', startLines);
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { taskSource: output.source });
+
+    send(socket, { type: 'task.watch', request_id: 'r1', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(2));
+    send(socket, { type: 'task.unwatch', request_id: 'r2', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(3));
+    output.write(hmrLine);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(taskFrames(socket)[2]).toEqual(ok('r2'));
+    expect(taskFrames(socket)).toHaveLength(3);
+    expect(output.listenerCount()).toBe(0);
+    conn.close();
+  });
+
+  it('applies an unwatch sent during a pending watch after that watch completes', async () => {
+    const output = makeTaskOutput('bash-k3f9x2ab', startLines);
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { taskSource: output.source });
+    const release = output.holdTailRead();
+
+    send(socket, { type: 'task.watch', request_id: 'r1', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
+    await vi.waitFor(() => expect(output.listenerCount()).toBe(1));
+    send(socket, { type: 'task.unwatch', request_id: 'r2', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(taskFrames(socket)).toEqual([]);
+    release();
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(3));
+
+    expect(taskFrames(socket)).toEqual([
+      ok('r1'),
+      { type: 'task.output', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab', offset: 0, text: startLines },
+      ok('r2'),
+    ]);
+    expect(output.listenerCount()).toBe(0);
+    conn.close();
+  });
+
+  it('does not hold a watch behind a slow watch of another task', async () => {
+    const slow = makeTaskOutput('bash-slow0001', startLines);
+    const fast = makeTaskOutput('bash-fast0001', hmrLine);
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, {
+      taskSource: (sessionId, agentId, taskId) =>
+        (taskId === 'bash-slow0001' ? slow : fast).source(sessionId, agentId, taskId),
+    });
+    const release = slow.holdTailRead();
+
+    send(socket, { type: 'task.watch', request_id: 'r1', session_id: 's1', agent_id: 'main', task_id: 'bash-slow0001' });
+    send(socket, { type: 'task.watch', request_id: 'r2', session_id: 's1', agent_id: 'main', task_id: 'bash-fast0001' });
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(2));
+    expect(taskFrames(socket)[0]).toEqual(ok('r2'));
+
+    release();
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(4));
+    expect(taskFrames(socket)[2]).toEqual(ok('r1'));
+    conn.close();
+  });
+
+  it('limits the first chunk to tail_bytes', async () => {
+    const output = makeTaskOutput('bash-k3f9x2ab', startLines + hmrLine);
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { taskSource: output.source });
+
+    send(socket, {
+      type: 'task.watch',
+      request_id: 'r1',
+      session_id: 's1',
+      agent_id: 'main',
+      task_id: 'bash-k3f9x2ab',
+      tail_bytes: Buffer.byteLength(hmrLine, 'utf-8'),
+    });
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(2));
+
+    expect(taskFrames(socket)[1]).toMatchObject({
+      offset: Buffer.byteLength(startLines, 'utf-8'),
+      text: hmrLine,
+    });
+    conn.close();
+  });
+
+  it('streams a task owned by a subagent under that agent id', async () => {
+    const output = makeTaskOutput('bash-k3f9x2ab', startLines, 'agent-sub1');
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { taskSource: output.source });
+
+    send(socket, { type: 'task.watch', request_id: 'r1', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
+    send(socket, { type: 'task.watch', request_id: 'r2', session_id: 's1', agent_id: 'agent-sub1', task_id: 'bash-k3f9x2ab' });
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(3));
+
+    expect(taskFrames(socket)).toEqual([
+      { type: 'response', request_id: 'r1', code: 40406, msg: 'task not found' },
+      ok('r2'),
+      { type: 'task.output', session_id: 's1', agent_id: 'agent-sub1', task_id: 'bash-k3f9x2ab', offset: 0, text: startLines },
+    ]);
+    conn.close();
+  });
+
+  it('replies with error codes for unknown sessions, unknown tasks, and invalid messages', async () => {
+    const output = makeTaskOutput('bash-k3f9x2ab');
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { taskSource: output.source });
+
+    send(socket, { type: 'task.watch', request_id: 'r1', session_id: 's2', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
+    send(socket, { type: 'task.watch', request_id: 'r2', session_id: 's1', agent_id: 'main', task_id: 'bash-00000000' });
+    send(socket, { type: 'task.watch', request_id: 'r3', session_id: 's1', agent_id: 'main' });
+    send(socket, { type: 'task.watch', request_id: 'r4', session_id: 's1', agent_id: 'main', task_id: '' });
+    send(socket, { type: 'task.unwatch', request_id: 'r5', session_id: '', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
+    send(socket, { type: 'task.watch', request_id: 'r6', session_id: 's1', task_id: 'bash-k3f9x2ab' });
+    send(socket, {
+      type: 'task.watch',
+      request_id: 'r7',
+      session_id: 's1',
+      agent_id: 'main',
+      task_id: 'bash-k3f9x2ab',
+      tail_bytes: TASK_OUTPUT_MAX_TAIL_BYTES + 1,
+    });
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(7));
+
+    const codes = Object.fromEntries(
+      (taskFrames(socket) as Array<{ request_id: string; code: number }>).map((frame) => [
+        frame.request_id,
+        frame.code,
+      ]),
+    );
+    expect(codes).toEqual({
+      r1: 40401,
+      r2: 40406,
+      r3: 40001,
+      r4: 40001,
+      r5: 40001,
+      r6: 40001,
+      r7: 40001,
+    });
+    conn.close();
+  });
+
+  it('replies with an internal error when the task lookup throws', async () => {
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, {
+      taskSource: async () => {
+        throw new Error('session restore failed');
+      },
+    });
+
+    send(socket, { type: 'task.watch', request_id: 'r1', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(1));
+
+    expect(taskFrames(socket)).toEqual([
+      { type: 'response', request_id: 'r1', code: 50001, msg: 'internal error' },
+    ]);
+    conn.close();
+  });
+
+  it('replies with a persistence error and releases the watch when the output cannot be read', async () => {
+    const output = makeTaskOutput('bash-k3f9x2ab', startLines);
+    output.failTailRead();
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { taskSource: output.source });
+
+    send(socket, { type: 'task.watch', request_id: 'r1', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(1));
+    output.write(hmrLine);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(taskFrames(socket)).toEqual([
+      { type: 'response', request_id: 'r1', code: 50003, msg: 'task output unavailable' },
+    ]);
+    expect(output.listenerCount()).toBe(0);
+    conn.close();
+  });
+
+  it('closes the connection with 1008 when a task output message has no readable request_id', async () => {
+    const output = makeTaskOutput('bash-k3f9x2ab');
+    const socket = new FakeSocket();
+    makeConn(socket, { taskSource: output.source });
+
+    send(socket, { type: 'task.watch', session_id: 's1', task_id: 'bash-k3f9x2ab' });
+    await vi.waitFor(() => expect(socket.closeCalls).toHaveLength(1));
+
+    expect(socket.closeCalls[0]).toEqual({ code: 1008, reason: 'invalid message' });
+    expect(taskFrames(socket)).toEqual([]);
+  });
+
+  it('releases watches when the connection closes', async () => {
+    const output = makeTaskOutput('bash-k3f9x2ab', startLines);
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { taskSource: output.source });
+
+    send(socket, { type: 'task.watch', request_id: 'r1', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(2));
+    conn.close();
+
+    expect(output.listenerCount()).toBe(0);
+  });
+
+  it('does not resolve watches still queued when the connection closes', async () => {
+    const output = makeTaskOutput('bash-k3f9x2ab', startLines);
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { taskSource: output.source });
+    const release = output.holdSource();
+
+    send(socket, { type: 'task.watch', request_id: 'r1', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
+    send(socket, { type: 'task.watch', request_id: 'r2', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
+    await vi.waitFor(() => expect(output.sourceCalls()).toBe(1));
+    conn.close();
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(output.sourceCalls()).toBe(1);
+    expect(output.listenerCount()).toBe(0);
+  });
+
+  it('replies with an internal error and releases the watch when streaming setup throws', async () => {
+    const output = makeTaskOutput('bash-k3f9x2ab', startLines);
+    output.corruptTailRead();
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { taskSource: output.source });
+
+    send(socket, { type: 'task.watch', request_id: 'r1', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(1));
+
+    expect(taskFrames(socket)).toEqual([
+      { type: 'response', request_id: 'r1', code: 50001, msg: 'internal error' },
+    ]);
+    expect(output.listenerCount()).toBe(0);
+    conn.close();
+  });
+
+  it('forwards the unread rest of a chunk the tail read caught mid-write', async () => {
+    const output = makeTaskOutput('bash-k3f9x2ab', startLines);
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { taskSource: output.source });
+    const release = output.holdTailRead();
+    const line = 'héllo\n';
+
+    send(socket, { type: 'task.watch', request_id: 'r1', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
+    await vi.waitFor(() => expect(output.listenerCount()).toBe(1));
+    output.write(line);
+    output.withholdTailBytes(Buffer.byteLength(line, 'utf-8') - 2);
+    release();
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(3));
+
+    const start = Buffer.byteLength(startLines, 'utf-8');
+    expect(taskFrames(socket).slice(1)).toEqual([
+      {
+        type: 'task.output',
+        session_id: 's1',
+        agent_id: 'main',
+        task_id: 'bash-k3f9x2ab',
+        offset: 0,
+        text: `${startLines}h`,
+      },
+      {
+        type: 'task.output',
+        session_id: 's1',
+        agent_id: 'main',
+        task_id: 'bash-k3f9x2ab',
+        offset: start + 1,
+        text: 'éllo\n',
+      },
+    ]);
+    conn.close();
+  });
+
+  it('replies to a watch with the current state of the task', async () => {
+    const output = makeTaskOutput('bash-k3f9x2ab', startLines);
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { taskSource: output.source });
+
+    send(socket, { type: 'task.watch', request_id: 'r1', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(2));
+
+    expect(taskFrames(socket)[0]).toEqual({
+      type: 'response',
+      request_id: 'r1',
+      code: 0,
+      task: {
+        task_id: 'bash-k3f9x2ab',
+        kind: 'shell',
+        status: 'running',
+        detached: false,
+        description: 'dev server',
+        parent_tool_call_id: 'call_bash',
+        command: 'npm run dev',
+        started_at: new Date(1_700_000_000_000).toISOString(),
+      },
+    });
+    conn.close();
+  });
+
+  it('stops a task and moves a task to the background, replying with its new state', async () => {
+    const output = makeTaskOutput('bash-k3f9x2ab');
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { taskSource: output.source });
+
+    send(socket, { type: 'task.background', request_id: 'r1', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
+    send(socket, { type: 'task.stop', request_id: 'r2', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
+    send(socket, { type: 'task.stop', request_id: 'r3', session_id: 's1', agent_id: 'main', task_id: 'bash-00000000' });
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(3));
+
+    const responses = new Map(
+      (taskFrames(socket) as Array<{ request_id: string; code: number; task?: unknown }>).map((frame) => [
+        frame.request_id,
+        frame,
+      ]),
+    );
+    expect(responses.get('r1')).toMatchObject({ code: 0, task: { status: 'running', detached: true } });
+    expect(responses.get('r2')).toMatchObject({
+      code: 0,
+      task: { status: 'ended', outcome: 'killed', detached: true },
+    });
+    expect(responses.get('r3')).toMatchObject({ code: 40406 });
+    conn.close();
+  });
+
+  it('refuses to move a task to the background when it stays in the foreground', async () => {
+    const output = makeTaskOutput('agent-member');
+    output.refuseDetach();
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { taskSource: output.source });
+
+    send(socket, { type: 'task.background', request_id: 'r1', session_id: 's1', agent_id: 'main', task_id: 'agent-member' });
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(1));
+
+    expect(taskFrames(socket)[0]).toMatchObject({
+      type: 'response',
+      request_id: 'r1',
+      code: 40933,
+      msg: 'task cannot be moved to the background',
+      task: { status: 'running', detached: false },
+    });
+    conn.close();
+  });
+
+  it('closes the connection with 1008 when a task command has no readable request_id', async () => {
+    const output = makeTaskOutput('bash-k3f9x2ab');
+    const socket = new FakeSocket();
+    makeConn(socket, { taskSource: output.source });
+
+    send(socket, { type: 'task.stop', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
+    await vi.waitFor(() => expect(socket.closeCalls).toHaveLength(1));
+
+    expect(socket.closeCalls[0]).toEqual({ code: 1008, reason: 'invalid message' });
   });
 });

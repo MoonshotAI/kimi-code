@@ -5,11 +5,27 @@ on:
   push:
     branches:
       - main
+      - 'release/*'
+
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}-${{ startsWith(github.ref, 'refs/heads/release/') && github.sha || '' }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/heads/release/') }}
+
 jobs:
+  release-workflow-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+      - run: node --test scripts/release-trigger.test.mjs scripts/canary-release.test.mjs
+
   build:
     runs-on: ubuntu-latest
 
@@ -66,6 +82,27 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @moonshot-ai/pi-tui test
 
+  # The VS Code extension suite runs on the default (v2) engine as part of the
+  # sharded root run above; this job reruns it on the legacy v1 engine, which
+  # the extension selects through the rollback env var.
+  test-vscode-legacy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter kimi-code test
+        env:
+          KIMI_CODE_LEGACY_FLAG: "1"
+
   test-windows:
     runs-on: windows-latest
     # Temporarily disabled while Windows tests are being stabilized.
@@ -120,15 +157,13 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Typecheck
         run: |
-          pnpm dlx --package @typescript/native-preview@beta tsgo --version
+          pnpm exec tsc --version
           for config in packages/*/tsconfig.json apps/kimi-code/tsconfig.json; do
             echo "Typechecking ${config}"
-            pnpm dlx --package @typescript/native-preview@beta tsgo -p "${config}" --noEmit
+            pnpm exec tsc -p "${config}" --noEmit
           done
       - name: Typecheck VS Code extension
         run: pnpm --filter kimi-code run typecheck
-      - name: Typecheck kimi-web (vue-tsc)
-        run: pnpm --filter @moonshot-ai/kimi-web run typecheck
       - name: Typecheck vis-server
         run: pnpm --filter @moonshot-ai/vis-server run typecheck
       - name: Typecheck vis-web

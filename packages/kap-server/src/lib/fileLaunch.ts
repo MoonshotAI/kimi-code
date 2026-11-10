@@ -6,6 +6,7 @@ export interface LaunchCommand {
   readonly command: string;
   readonly args: readonly string[];
   readonly shell?: boolean;
+  readonly windowsVerbatimArguments?: boolean;
 }
 
 export function openFileCommandFor(
@@ -44,7 +45,11 @@ export function revealFileCommandFor(
     case 'darwin':
       return { command: 'open', args: ['-R', absolutePath] };
     case 'win32':
-      return { command: 'explorer.exe', args: [`/select,${absolutePath}`] };
+      return {
+        command: 'explorer.exe',
+        args: [explorerSelectArg(absolutePath)],
+        windowsVerbatimArguments: true,
+      };
     default:
       return { command: 'xdg-open', args: [path.dirname(absolutePath)] };
   }
@@ -163,7 +168,11 @@ function openInFinder(
     case 'win32':
       return isDirectory
         ? { command: 'explorer.exe', args: [absolutePath] }
-        : { command: 'explorer.exe', args: [`/select,${absolutePath}`] };
+        : {
+            command: 'explorer.exe',
+            args: [explorerSelectArg(absolutePath)],
+            windowsVerbatimArguments: true,
+          };
     default:
       return {
         command: 'xdg-open',
@@ -180,7 +189,6 @@ function openInMacApp(
   if (platform === 'darwin') {
     return { command: 'open', args: ['-a', appName, absolutePath] };
   }
-  // These apps are macOS-only in the UI; fall back to the platform default.
   return openFileCommandFor(absolutePath, undefined, process.env, platform);
 }
 
@@ -191,6 +199,7 @@ export async function launchDetached(cmd: LaunchCommand): Promise<void> {
       detached: true,
       stdio: 'ignore',
       shell: cmd.shell,
+      windowsVerbatimArguments: cmd.windowsVerbatimArguments,
     });
     child.once('error', (err) => {
       if (settled) return;
@@ -217,6 +226,11 @@ function resolveEditorCommand(env: Record<string, string | undefined>): string |
 function supportsLineTarget(command: string): boolean {
   const first = command.trim().split(/\s+/)[0] ?? '';
   return /(?:^|\/)(code|cursor|windsurf)(?:\.cmd|\.exe)?$/i.test(first);
+}
+
+function explorerSelectArg(absolutePath: string): string {
+  const trimmed = absolutePath.replace(/\\+$/, '');
+  return `/select,"${trimmed}"`;
 }
 
 function quoteShellArg(value: string, platform: NodeJS.Platform): string {

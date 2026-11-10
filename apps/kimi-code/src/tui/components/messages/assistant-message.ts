@@ -5,12 +5,15 @@
  * to align after the bullet.
  */
 
-import { Container, Markdown, truncateToWidth, visibleWidth, type Component } from '@moonshot-ai/pi-tui';
+import { Container, truncateToWidth, visibleWidth, type Component, type TuiMouseDispatchResult, type TuiMouseEvent } from '@moonshot-ai/pi-tui';
 
+import { Markdown } from '#/tui/components/markdown/markdown';
 import { MESSAGE_INDENT } from '#/tui/constant/rendering';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
+import { createMarkdownOptions } from '#/tui/utils/markdown-options';
+import { markOsc133Zone } from '#/tui/utils/osc133';
 import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 
 type AssistantMarkdownOptions = {
@@ -24,6 +27,7 @@ export class AssistantMessageComponent implements Component {
   private lastText = '';
   private lastTransient = false;
   private showBullet: boolean;
+  private projectionVersion = 0;
 
   private renderCache: { width: number; lines: string[] } | undefined;
 
@@ -48,6 +52,9 @@ export class AssistantMessageComponent implements Component {
 
     if (displayText === this.lastText && transient === this.lastTransient) return;
 
+    if ((this.lastText.length === 0) !== (displayText.length === 0)) {
+      this.projectionVersion += 1;
+    }
     this.lastText = displayText;
     this.lastTransient = transient;
     this.markRenderDirty();
@@ -61,13 +68,32 @@ export class AssistantMessageComponent implements Component {
 
     if (this.markdown === undefined || this.markdownTransient !== transient) {
       this.contentContainer.clear();
-      this.markdown = new Markdown(displayText, 0, 0, createMarkdownTheme({ transient }));
+      this.markdown = new Markdown(
+        displayText,
+        0,
+        0,
+        createMarkdownTheme({ transient }),
+        undefined,
+        {
+          ...createMarkdownOptions(),
+          copySource: true,
+          onVisualStateChange: () => this.markRenderDirty(),
+        },
+      );
       this.markdownTransient = transient;
       this.contentContainer.addChild(this.markdown);
       return;
     }
 
     this.markdown.setText(displayText);
+  }
+
+  get transcriptProjectionVersion(): number {
+    return this.projectionVersion;
+  }
+
+  get hasVisibleContent(): boolean {
+    return this.lastText.length > 0;
   }
 
   invalidate(): void {
@@ -84,10 +110,37 @@ export class AssistantMessageComponent implements Component {
         0,
         0,
         createMarkdownTheme({ transient: this.lastTransient }),
+        undefined,
+        {
+          ...createMarkdownOptions(),
+          copySource: true,
+          onVisualStateChange: () => this.markRenderDirty(),
+        },
       );
       this.markdownTransient = this.lastTransient;
       this.contentContainer.addChild(this.markdown);
     }
+  }
+
+  handleMouse(event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
+    if (this.lastText.trim().length === 0) return undefined;
+
+    const prefix = this.showBullet ? STATUS_BULLET : MESSAGE_INDENT;
+    const prefixWidth = visibleWidth(prefix);
+    const contentWidth = Math.max(1, Math.max(0, event.width) - prefixWidth);
+    const y = event.y - 1;
+    if (y < 0) return undefined;
+
+    const contentHeight = this.contentContainer.render(contentWidth).length;
+    if (y >= contentHeight) return undefined;
+
+    return this.contentContainer.handleMouse({
+      ...event,
+      x: event.x - prefixWidth,
+      y,
+      width: contentWidth,
+      height: contentHeight,
+    });
   }
 
   render(width: number): string[] {
@@ -114,7 +167,7 @@ export class AssistantMessageComponent implements Component {
         i === 0 && this.showBullet ? currentTheme.fg('text', STATUS_BULLET) : MESSAGE_INDENT;
       lines.push(p + contentLines[i]);
     }
-    const rendered = lines.map((line) => truncateToWidth(line, safeWidth, '…'));
+    const rendered = markOsc133Zone(lines.map((line) => truncateToWidth(line, safeWidth, '…')));
     if (isRenderCacheEnabled()) {
       this.renderCache = { width: safeWidth, lines: rendered };
     }

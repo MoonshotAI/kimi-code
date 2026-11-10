@@ -24,6 +24,7 @@ function makeStartupInput(): KimiTUIStartupInput {
       skillsDirs: [],
       agent: undefined,
       agentFiles: [],
+      environment: undefined,
     },
     tuiConfig: {
       theme: 'dark',
@@ -31,6 +32,7 @@ function makeStartupInput(): KimiTUIStartupInput {
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
+      transcript: { toolCallDensity: 'compact', thinking: 'grouped' },
       statusLine: { items: null, command: null },
     },
     version: '0.0.0-test',
@@ -41,12 +43,19 @@ function makeStartupInput(): KimiTUIStartupInput {
 function makeHarness() {
   return {
     getConfig: vi.fn(async () => ({})),
+    onConfigSectionChanged: vi.fn(() => vi.fn()),
     createSession: vi.fn(),
     resumeSession: vi.fn(),
     listSessions: vi.fn(async () => []),
     close: vi.fn(async () => {}),
     track: vi.fn(),
     setTelemetryContext: vi.fn(),
+    getWorkspaceTrustInfo: vi.fn(async () => ({
+      trusted: true,
+      gatedMcpServers: [],
+      gatedAdditionalDirs: [], additionalDirSources: [], warnings: [],
+      instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [], paths: [] },
+    })),
     auth: {
       status: vi.fn(async () => ({ providers: [] })),
       login: vi.fn(),

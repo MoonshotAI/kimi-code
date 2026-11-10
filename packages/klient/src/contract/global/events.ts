@@ -9,10 +9,10 @@
 import { z } from 'zod';
 
 import type { ConfigChangedEvent } from '@moonshot-ai/agent-core-v2/app/config/config';
-import type { ModelsChangedEvent } from '@moonshot-ai/agent-core-v2/kosong/model/model';
-import type { ProvidersChangedEvent } from '@moonshot-ai/agent-core-v2/kosong/provider/provider';
+import type { ModelsChangedEvent } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model';
+import type { ProvidersChangedEvent } from '@moonshot-ai/agent-core-v2/llm-adapter/provider/provider';
 import type { ReloadSummary } from '@moonshot-ai/agent-core-v2/app/plugin/types';
-import type { IOAuthService } from '@moonshot-ai/agent-core-v2/app/auth/auth';
+import type { IProviderDiscoveryService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/discovery';
 
 import { stringDeltaSchema } from '../helpers.js';
 import type { EventRegistration } from '../types.js';
@@ -22,7 +22,7 @@ export interface SessionArchivedPayload {
   readonly sessionId: string;
 }
 
-/** Payload of `session.meta.updated` on the global bus (`agent/rpc/prompt-metadata.ts`). */
+/** Payload of `session.meta.updated` on the global bus (`session/sessionMetadata/promptMetadata.ts`). */
 export interface SessionMetaUpdatedPayload {
   readonly agentId: string;
   readonly sessionId: string;
@@ -30,13 +30,13 @@ export interface SessionMetaUpdatedPayload {
   readonly patch: {
     readonly title?: string;
     readonly isCustomTitle?: boolean;
-    readonly lastPrompt: string;
+    readonly lastPrompt?: string;
   };
 }
 
-/** Payload of `event.model_catalog.changed` — same shape as an OAuth refresh result. */
+/** Payload of `event.model_catalog.changed` — same shape as a provider-discovery refresh result. */
 export type CatalogChangedPayload = Awaited<
-  ReturnType<IOAuthService['refreshOAuthProviderModels']>
+  ReturnType<IProviderDiscoveryService['refreshProviderModels']>
 >;
 
 /** Public event name → payload type. Keys must stay in sync with `globalEvents`. */
@@ -73,9 +73,9 @@ const sessionMetaUpdatedSchema = z.object({
   patch: z.object({
     title: z.string().optional(),
     isCustomTitle: z.boolean().optional(),
-    lastPrompt: z.string(),
+    lastPrompt: z.string().optional(),
   }),
-});
+}) satisfies z.ZodType<SessionMetaUpdatedPayload>;
 
 export const catalogChangedSchema = z.object({
   changed: z.array(
@@ -88,6 +88,13 @@ export const catalogChangedSchema = z.object({
   ),
   unchanged: z.array(z.string()),
   failed: z.array(z.object({ provider: z.string(), reason: z.string() })),
+  retired_default: z
+    .object({
+      from: z.string(),
+      to: z.string(),
+      from_display_name: z.string(),
+    })
+    .optional(),
 });
 
 /** Public event name → source binding + payload schema. */

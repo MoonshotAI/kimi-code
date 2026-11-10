@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 
 import { SessionEventHandler } from '#/tui/controllers/session-event-handler';
+import { TurnTimeline } from '#/tui/utils/turn-timeline';
 import { getBuiltInPalette } from '#/tui/theme';
 import { readGoalQueue, removeGoalQueueItem, restoreGoalQueueItem } from '#/tui/goal-queue-store';
 
@@ -57,7 +58,6 @@ function makeHost(options: { createGoalRejects?: boolean } = {}) {
       queuedMessageDispatchPending: false,
       theme: { palette: getBuiltInPalette('dark') },
       toolOutputExpanded: false,
-      todoPanel: { getTodos: vi.fn(() => []) },
       transcriptContainer: { addChild: vi.fn() },
       ui: { requestRender: vi.fn() },
     },
@@ -65,9 +65,12 @@ function makeHost(options: { createGoalRejects?: boolean } = {}) {
     aborted: false,
     sessionEventUnsubscribe: undefined,
     streamingUI: {
+      timeline: new TurnTimeline(),
       setTurnId: vi.fn(),
       flushNow: vi.fn(),
       resetToolUi: vi.fn(),
+      clearNotifyPanel: vi.fn(),
+      markNotifyPanelEnded: vi.fn(),
       finalizeTurn: vi.fn(),
       hasActiveTurn: vi.fn(() => false),
       hasThinkingDraft: vi.fn(() => false),
@@ -86,6 +89,8 @@ function makeHost(options: { createGoalRejects?: boolean } = {}) {
     showStatus: vi.fn(),
     showNotice: vi.fn(),
     track: vi.fn(),
+    recordSessionActivity: vi.fn(),
+    noteCompactionFinished: vi.fn(),
     mountEditorReplacement: vi.fn(),
     restoreEditor: vi.fn(),
     restoreInputText: vi.fn(),
@@ -94,6 +99,7 @@ function makeHost(options: { createGoalRejects?: boolean } = {}) {
     sendQueuedMessage: vi.fn(),
     shiftQueuedMessage: vi.fn(),
     btwPanelController: { routeEvent: vi.fn(() => false) },
+    surveyController: { notifyCompactionFinished: vi.fn() },
     tasksBrowserController: {},
   };
   host.setAppState.mockImplementation((patch: Record<string, unknown>) => {

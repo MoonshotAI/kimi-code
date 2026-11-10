@@ -6,7 +6,8 @@
  */
 
 import assert from "node:assert";
-import { beforeEach, describe, it } from "node:test";
+import { afterEach, beforeEach, describe, it } from "node:test";
+import { matchesKey } from "../src/keys.ts";
 import { StdinBuffer } from "../src/stdin-buffer.ts";
 
 describe("StdinBuffer", () => {
@@ -22,6 +23,8 @@ describe("StdinBuffer", () => {
 			emittedSequences.push(sequence);
 		});
 	});
+
+	afterEach(() => buffer.destroy());
 
 	// Helper to process data through the buffer
 	function processInput(data: string | Buffer): void {
@@ -132,6 +135,189 @@ describe("StdinBuffer", () => {
 			await wait(15);
 
 			assert.deepStrictEqual(emittedSequences, ["\x1b[<35"]);
+		});
+
+		it("should flush a lone ESC as Escape when CR arrives after the timeout", async () => {
+			// Legacy-mode Alt+Enter is ESC + CR; when the terminal/transport splits
+			// the bytes further apart than the timeout, ESC is flushed alone and the
+			// host sees Escape (interrupt) instead of Alt+Enter. This locks in the
+			// behavior so the configurable timeout in ProcessTerminal stays honest.
+			processInput("\x1b");
+			await wait(20); // buffer timeout is 10ms in beforeEach
+			processInput("\r");
+
+			assert.deepStrictEqual(emittedSequences, ["\x1b", "\r"]);
+			assert.equal(matchesKey(emittedSequences[0] ?? "", "escape"), true);
+		});
+
+		it("should merge ESC + CR split across chunks within a larger timeout", async () => {
+			buffer = new StdinBuffer({ escapeTimeout: 100 });
+			emittedSequences = [];
+			buffer.on("data", (sequence) => {
+				emittedSequences.push(sequence);
+			});
+
+			processInput("\x1b");
+			await wait(20); // > 10ms default escapeTimeout, < 100ms configured escapeTimeout
+			processInput("\r");
+
+			assert.deepStrictEqual(emittedSequences, ["\x1b\r"]);
+			assert.equal(matchesKey(emittedSequences[0] ?? "", "alt+enter"), true);
+		});
+
+		it("does not apply the sequence timeout to a lone ESC", async () => {
+			buffer = new StdinBuffer({ timeout: 100 });
+			emittedSequences = [];
+			buffer.on("data", (sequence) => {
+				emittedSequences.push(sequence);
+			});
+
+			processInput("\x1b");
+			await wait(20);
+			processInput("\r");
+
+			assert.deepStrictEqual(emittedSequences, ["\x1b", "\r"]);
+			assert.equal(matchesKey(emittedSequences[0] ?? "", "escape"), true);
+		});
+
+		it("keeps fragmented mouse sequences buffered across delayed chunks by default", async () => {
+			const delayedBuffer = new StdinBuffer();
+			const delayedSequences: string[] = [];
+			delayedBuffer.on("data", (sequence) => delayedSequences.push(sequence));
+
+			delayedBuffer.process("\x1b[");
+			await wait(20);
+			assert.deepStrictEqual(delayedSequences, []);
+			delayedBuffer.process("<65;48;39M");
+			assert.deepStrictEqual(delayedSequences, ["\x1b[<65;48;39M"]);
+			delayedBuffer.destroy();
+		});
+	});
+
+	describe("Terminal Reply Strings", () => {
+		const replies = [
+			{ header: "\x1b]4;1;", reply: "\x1b]4;1;rgb:eaea/6c6c/6d6d\x07" }, // Ghostty's Ayu Light palette color 1.
+			{ header: "\x1b]10;", reply: "\x1b]10;rgb:ffff/ffff/ffff\x1b\\" },
+			{ header: "\x1b]11;", reply: "\x1b]11;rgb:0000/0000/0000\x07" },
+			{ header: "\x1b]4;1;", reply: "\x1b]4;1;rgb:6464/6464/4d4d\x07" }, // Another reported color-reply tail.
+			{ header: "\x1bP>|", reply: "\x1bP>|Ghostty 1.3.1\x1b\\" },
+			{ header: "\x1b_Gi=1;", reply: "\x1b_Gi=1;OK\x1b\\" },
+			{ header: "\x1b]7501;?", reply: "\x1b]7501;?\x1b\\" },
+		];
+
+		for (const { header, reply } of replies) {
+			it(`keeps delayed ${JSON.stringify(reply)} intact at every split after its reply header`, (t) => {
+				t.mock.timers.enable({ apis: ["setTimeout"] });
+				for (let split = header.length; split < reply.length; split++) {
+					const delayedBuffer = new StdinBuffer();
+					const sequences: string[] = [];
+					delayedBuffer.on("data", (sequence) => sequences.push(sequence));
+					try {
+						delayedBuffer.process(reply.slice(0, split));
+						t.mock.timers.tick(5000);
+						delayedBuffer.process(`${reply.slice(split)}x`);
+						assert.equal(
+							sequences.some((sequence) => matchesKey(sequence, "ctrl+g")),
+							false,
+						);
+						assert.deepStrictEqual(sequences, [reply, "x"]);
+					} finally {
+						delayedBuffer.destroy();
+					}
+				}
+			});
+		}
+
+		it("keeps an OSC reply buffered across multiple expired sequence timeouts", (t) => {
+			t.mock.timers.enable({ apis: ["setTimeout"] });
+			processInput("\x1b]4;1;rgb:eaea/6c");
+			t.mock.timers.tick(100);
+			assert.deepStrictEqual(emittedSequences, []);
+			processInput("6c/6d6d");
+			t.mock.timers.tick(100);
+			assert.deepStrictEqual(emittedSequences, []);
+			processInput("\x07");
+			assert.deepStrictEqual(emittedSequences, [replies[0].reply]);
+		});
+
+		it("still times out bare string introducers as Alt keys", (t) => {
+			t.mock.timers.enable({ apis: ["setTimeout"] });
+			for (const prefix of ["\x1b]", "\x1bP", "\x1b_"]) {
+				processInput(prefix);
+				t.mock.timers.tick(10);
+			}
+			assert.deepStrictEqual(emittedSequences, ["\x1b]", "\x1bP", "\x1b_"]);
+		});
+
+		for (const ambiguous of [
+			"\x1b]a",
+			"\x1b]1",
+			"\x1b]10",
+			"\x1b]0;title",
+			"\x1b]4;",
+			"\x1b]4;a;",
+			"\x1bPa",
+			"\x1bP>",
+			"\x1b_a",
+			"\x1b_G",
+			"\x1b_Gi=1",
+		]) {
+			it(`recovers batched legacy Alt input ${JSON.stringify(ambiguous)} within the sequence timeout`, (t) => {
+				t.mock.timers.enable({ apis: ["setTimeout"] });
+				const legacyBuffer = new StdinBuffer();
+				const sequences: string[] = [];
+				legacyBuffer.on("data", (sequence) => sequences.push(sequence));
+				try {
+					legacyBuffer.process(ambiguous);
+					t.mock.timers.tick(20);
+					legacyBuffer.process("x\r\x03\x04");
+					t.mock.timers.tick(49);
+					assert.deepStrictEqual(sequences, []);
+					t.mock.timers.tick(1);
+					assert.deepStrictEqual(sequences, [
+						ambiguous.slice(0, 2),
+						...ambiguous.slice(2),
+						"x",
+						"\r",
+						"\x03",
+						"\x04",
+					]);
+					assert.strictEqual(legacyBuffer.getBuffer(), "");
+
+					legacyBuffer.process("y\r\x03\x04");
+					assert.deepStrictEqual(sequences.slice(-4), ["y", "\r", "\x03", "\x04"]);
+				} finally {
+					legacyBuffer.destroy();
+				}
+			});
+		}
+
+		it("recognizes a reply header assembled within the ambiguous-input timeout", (t) => {
+			t.mock.timers.enable({ apis: ["setTimeout"] });
+			processInput("\x1b]1");
+			t.mock.timers.tick(5);
+			processInput("0;");
+			t.mock.timers.tick(5000);
+			assert.deepStrictEqual(emittedSequences, []);
+			processInput("rgb:ffff/ffff/ffff\x1b\\");
+			assert.deepStrictEqual(emittedSequences, [replies[1].reply]);
+		});
+
+		it("recovers from an unterminated reply when a new escape sequence arrives", (t) => {
+			t.mock.timers.enable({ apis: ["setTimeout"] });
+			processInput("\x1b]4;1;rgb:eaea/6c");
+			t.mock.timers.tick(100);
+			processInput("\x1b");
+			t.mock.timers.tick(100);
+			processInput("[Ahello");
+			assert.deepStrictEqual(emittedSequences, ["\x1b[A", "h", "e", "l", "l", "o"]);
+		});
+
+		it("discards a canceled reply without swallowing subsequent input", () => {
+			for (const cancel of ["\x18", "\x1a"]) {
+				processInput(`\x1b]11;rgb:0000${cancel}x`);
+			}
+			assert.deepStrictEqual(emittedSequences, ["x", "x"]);
 		});
 	});
 
@@ -312,6 +498,17 @@ describe("StdinBuffer", () => {
 			// After timeout, should emit
 			await wait(15);
 			assert.deepStrictEqual(emittedSequences, ["\x1b"]);
+		});
+
+		it("flushes a lone escape promptly with the longer default sequence timeout", async () => {
+			const defaultBuffer = new StdinBuffer();
+			const defaultSequences: string[] = [];
+			defaultBuffer.on("data", (sequence) => defaultSequences.push(sequence));
+
+			defaultBuffer.process("\x1b");
+			await wait(20);
+			assert.deepStrictEqual(defaultSequences, ["\x1b"]);
+			defaultBuffer.destroy();
 		});
 
 		it("should handle lone escape character with explicit flush", () => {

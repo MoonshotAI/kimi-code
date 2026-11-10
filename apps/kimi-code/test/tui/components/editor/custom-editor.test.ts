@@ -1,13 +1,18 @@
-import type {
-  AutocompleteItem,
-  AutocompleteProvider,
-  AutocompleteSuggestions,
-  TUI,
+import {
+  CURSOR_MARKER,
+  FAKE_CURSOR_END,
+  FAKE_CURSOR_START,
+  type AutocompleteItem,
+  type AutocompleteProvider,
+  type AutocompleteSuggestions,
+  type TUI,
 } from '@moonshot-ai/pi-tui';
-import { describe, expect, it, vi } from 'vitest';
+import chalk from 'chalk';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { CustomEditor } from '#/tui/components/editor/custom-editor';
 import { FileMentionProvider } from '#/tui/components/editor/file-mention-provider';
+import { currentTheme } from '#/tui/theme';
 
 function makeEditor(): CustomEditor {
   const tui = {
@@ -516,8 +521,6 @@ describe('CustomEditor paste marker expansion', () => {
     expect(editor.getText()).toContain('[paste #1');
     expect(editor.getText()).toContain('[paste #2');
 
-    editor.setText('[paste #1 +15 lines] [paste #2 +15 lines]');
-
     simulateLargePaste(editor, 'anything');
 
     expect(editor.getText()).toContain('[paste #1');
@@ -550,7 +553,9 @@ describe('CustomEditor paste marker expansion', () => {
     simulateLargePaste(editor, 'anything');
     expect(editor.getText()).toContain(longText);
 
-    editor.setText(markerText);
+    // Undo (Ctrl+-) restores both the marker text and its paste-registry entry.
+    editor.handleInput('\u001B[45;5u');
+    expect(editor.getText()).toContain('[paste #1');
 
     simulateLargePaste(editor, 'anything');
     expect(editor.getText()).not.toContain('[paste #');
@@ -615,6 +620,33 @@ describe('CustomEditor paste marker expansion', () => {
       process.off('unhandledRejection', onRejection);
     }
   });
+
+  it('queues Enter and typing until an asynchronous image paste inserts its placeholder', async () => {
+    const editor = makeEditor();
+    const submit = vi.fn();
+    editor.onSubmit = submit;
+    let resolvePaste!: (handled: boolean) => void;
+    editor.onPasteImage = () =>
+      new Promise<boolean>((resolve) => {
+        resolvePaste = (handled) => {
+          editor.insertTextAtCursor?.('[image #1 (1×1)] ');
+          resolve(handled);
+        };
+      });
+
+    const pasteKey = process.platform === 'win32' ? '\u001Bv' : '\u0016';
+    editor.handleInput(pasteKey);
+    editor.handleInput('hello');
+    editor.handleInput('\r');
+
+    expect(editor.getText()).toBe('');
+    expect(submit).not.toHaveBeenCalled();
+
+    resolvePaste(true);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(submit).toHaveBeenCalledWith('[image #1 (1×1)] hello');
+  });
 });
 
 describe('CustomEditor shortcut telemetry hooks', () => {
@@ -629,15 +661,66 @@ describe('CustomEditor shortcut telemetry hooks', () => {
     expect(onUndo).toHaveBeenCalledOnce();
   });
 
-  it('invokes onToggleTodoExpand on Ctrl+T', () => {
+  it.each(['\u000E', '\u001B[110;5u'] as const)(
+    'toggles Updates focus on %j without changing the draft',
+    (key) => {
+      const editor = makeEditor();
+      const onPageNotify = vi.fn().mockReturnValue(true);
+      editor.onPageNotify = onPageNotify;
+      editor.setText('draft\nsecond line');
+      const cursor = editor.getCursor();
+      editor.handleInput(key);
+      expect(onPageNotify).toHaveBeenCalledWith();
+      expect(editor.getText()).toBe('draft\nsecond line');
+      expect(editor.getCursor()).toEqual(cursor);
+    },
+  );
+
+  it('fades the whole box, keeping token hues, when keyboard or terminal focus is lost', () => {
+    const previousLevel = chalk.level;
+    chalk.level = 3;
+    onTestFinished(() => {
+      chalk.level = previousLevel;
+    });
+    const primary = currentTheme.fg('primary', 'x').split('x')[0]!;
+    const faint = '\u001B[2m';
     const editor = makeEditor();
-    const onToggleTodoExpand = vi.fn().mockReturnValue(true);
-    editor.onToggleTodoExpand = onToggleTodoExpand;
+    editor.setText('/help me');
 
-    editor.handleInput('\u0014');
+    editor.focused = true;
+    const focused = editor.render(40);
+    expect(focused.join('\n')).not.toContain(faint);
+    expect(focused[1]).toContain(FAKE_CURSOR_START);
+    expect(focused[1]).toContain(FAKE_CURSOR_END);
 
-    expect(onToggleTodoExpand).toHaveBeenCalledOnce();
+    editor.focused = false;
+    const unfocused = editor.render(40);
+    expect(unfocused.every((line) => line.startsWith(faint))).toBe(true);
+    expect(unfocused[1]).toContain(`${primary}\u001B[1m/help\u001B[22m${faint}`);
+    expect(unfocused[1]).not.toContain('\u001B[7m');
+    expect(unfocused[1]).not.toContain(FAKE_CURSOR_START);
+    expect(unfocused[1]).not.toContain(FAKE_CURSOR_END);
+
+    editor.focused = true;
+    editor.terminalFocused = false;
+    const terminalUnfocused = editor.render(40);
+    expect(editor.focused).toBe(true);
+    expect(terminalUnfocused.map((line) => line.replace(CURSOR_MARKER, ''))).toEqual(unfocused);
   });
+
+  it('keeps the original editor bindings when Updates paging is unavailable', () => {
+    const editor = makeEditor();
+    const baseline = makeEditor();
+    editor.onPageNotify = () => false;
+    for (const instance of [editor, baseline]) instance.setText('first\nsecond');
+    for (const key of ['\u0010', '\u000E']) {
+      editor.handleInput(key);
+      baseline.handleInput(key);
+      expect(editor.getCursor()).toEqual(baseline.getCursor());
+      expect(editor.getText()).toBe(baseline.getText());
+    }
+  });
+
 });
 
 describe('CustomEditor bash mode border label', () => {

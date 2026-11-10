@@ -1,14 +1,3 @@
-/**
- * Debug-route gating (port of v1 `debug-nonloopback.e2e.test.ts`).
- *
- * Security property: `/api/v1/debug/*` — the dev-only, whitelist-free RPC
- * surface (`--debug-endpoints`) — must NOT be reachable on a non-loopback
- * bind (suppressed in `start.ts` regardless of the option), and must stay
- * unmounted by default on loopback too. Pinned here: 404 on a public bind
- * even with `debugEndpoints: true`, 404 on loopback without the option, and
- * the mounted surface on loopback with the option.
- */
-
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -31,7 +20,6 @@ afterEach(async () => {
     try {
       await r.close();
     } catch {
-      // ignore
     }
   }
   for (const dir of createdDirs.splice(0)) {
@@ -72,7 +60,6 @@ describe('debug endpoints are not exposed on a non-loopback bind', () => {
       debugEndpoints: true,
     });
     running.push(server);
-    // Route suppressed → 404 (a missing route with a valid token is 404, not 401).
     expect(await probeDebug(server)).toBe(404);
   });
 

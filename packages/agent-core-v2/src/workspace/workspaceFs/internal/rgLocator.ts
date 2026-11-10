@@ -1,25 +1,8 @@
-/**
- * `workspaceFs` domain — shared ripgrep (`rg`) binary locator.
- *
- * Single place that decides which `rg` the fs search/grep paths run. The
- * lookup mirrors v1's `ensureRgPath` intent (bundled-or-system, graceful
- * degradation) but is driven through a caller-supplied {@link RgProbe} so it
- * works against whatever execution environment the caller has.
- *
- * Lookup order (first hit wins):
- *   1. System `rg` on the execution-environment PATH (`rg --version`).
- *   2. Persistent cache at `<KIMI_CODE_HOME|~/.kimi-code>/bin/rg` — where a
- *      previously bootstrapped or manually dropped static binary lives. Only
- *      attempted when `allowCachedFallback` is set.
- *
- * If nothing resolves, {@link ensureRgPath} throws and callers surface
- * {@link rgUnavailableMessage} instead of a naked `spawn rg ENOENT`.
- */
-
-import { homedir } from 'node:os';
-import { join } from 'node:path';
-
 import { ErrorCodes, Error2 } from '#/errors';
+import type { Environment } from '#/environment/environment';
+import { shareBinRgPath } from '#/environment/shareBinRg';
+
+export { getShareBinRgPath } from '#/environment/shareBinRg';
 
 export type RgResolutionSource = 'system-path' | 'share-bin-cached';
 
@@ -35,20 +18,7 @@ export interface RgProbe {
 export interface EnsureRgPathOptions {
   readonly signal?: AbortSignal;
   readonly allowCachedFallback?: boolean;
-}
-
-function rgBinaryName(): string {
-  return process.platform === 'win32' ? 'rg.exe' : 'rg';
-}
-
-function getShareDir(): string {
-  const override = process.env['KIMI_CODE_HOME'];
-  if (override !== undefined && override !== '') return override;
-  return join(homedir(), '.kimi-code');
-}
-
-export function getShareBinRgPath(): string {
-  return join(getShareDir(), 'bin', rgBinaryName());
+  readonly environment?: Environment;
 }
 
 function throwIfAborted(signal: AbortSignal | undefined): void {
@@ -70,7 +40,7 @@ export async function ensureRgPath(
 
   if (options.allowCachedFallback === true) {
     throwIfAborted(options.signal);
-    const cached = getShareBinRgPath();
+    const cached = shareBinRgPath(options.environment);
     const cachedRun = await probe.exec([cached, '--version']).catch(() => ({ exitCode: -1 }));
     if (cachedRun.exitCode === 0) {
       return { path: cached, source: 'share-bin-cached' };
@@ -78,22 +48,4 @@ export async function ensureRgPath(
   }
 
   throw new Error2(ErrorCodes.OS_FS_UNAVAILABLE, 'ripgrep (rg) is not available on PATH');
-}
-
-export function rgUnavailableMessage(cause: unknown): string {
-  const detail =
-    cause instanceof Error ? cause.message : typeof cause === 'string' ? cause : 'unknown error';
-  const shareBin = getShareBinRgPath();
-  return (
-    `ripgrep (rg) is not available.\n` +
-    `\n` +
-    `Error: ${detail}\n` +
-    `\n` +
-    `Fix options:\n` +
-    `  macOS:   brew install ripgrep\n` +
-    `  Ubuntu:  sudo apt-get install ripgrep\n` +
-    `  Other:   https://github.com/BurntSushi/ripgrep#installation\n` +
-    `\n` +
-    `Alternatively, drop a static rg binary at ${shareBin}`
-  );
 }

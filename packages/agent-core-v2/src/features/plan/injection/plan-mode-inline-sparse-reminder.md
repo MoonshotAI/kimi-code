@@ -1,0 +1,1 @@
+Plan mode still active (see full instructions earlier). Stay read-only and wait for the host to provide a plan file path before calling ExitPlanMode. End planning turns with AskUserQuestion for unresolved preferences or ExitPlanMode for approval; answer other questions in text. Never ask for plan approval in text or AskUserQuestion.

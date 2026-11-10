@@ -1,12 +1,6 @@
-/**
- * Scenario: shared Agent task test wiring and per-agent persistence addressing.
- *
- * Exposes the test manager contract and builds persistence beneath the main
- * agent scope so fixtures cannot accidentally seed session-wide task records.
- */
-
 import { join } from 'pathe';
 
+import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import {
   AgentTaskPersistence,
   type AgentTaskInfo,
@@ -32,4 +26,21 @@ export function createAgentTaskPersistence(homedir: string): AgentTaskPersistenc
     new JsonAtomicDocumentStore(storage),
     storage,
   );
+}
+
+export interface RecordingAppendWrite {
+  readonly path: string;
+  readonly data: string;
+}
+
+export function recordingAppendFs(writes: RecordingAppendWrite[]): IHostFileSystem {
+  return {
+    mkdir: async () => {},
+    writeText: async (path: string, data: string) => {
+      writes.push({ path, data });
+    },
+    appendText: async (path: string, data: string) => {
+      writes.push({ path, data });
+    },
+  } as unknown as IHostFileSystem;
 }

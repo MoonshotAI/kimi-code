@@ -182,7 +182,7 @@ describe('BannerComponent', () => {
   });
 
   it('keeps subsequent main lines indented to the main-text column and subtext aligned with the tag text', () => {
-    const width = 20;
+    const width = 24;
     const lines = new BannerComponent(
       makeBannerState({
         tag: 'New:',
@@ -196,9 +196,89 @@ describe('BannerComponent', () => {
     expect(lines[0]).toContain('✦ New:');
     const firstLine = lines[0]!;
     const mainTextStart = visibleWidth(firstLine.slice(0, firstLine.indexOf('Line 1')));
-    const continuationLine = lines.find((line) => line.includes('lot of'))!;
-    expect(visibleWidth(continuationLine.slice(0, continuationLine.indexOf('lot of')))).toBe(mainTextStart);
+    const continuationLine = lines.find((line) => line.includes('of content'))!;
+    expect(visibleWidth(continuationLine.slice(0, continuationLine.indexOf('of content')))).toBe(mainTextStart);
     const subLine = lines.find((line) => line.includes('Sub text'))!;
     expect(visibleWidth(subLine.slice(0, subLine.indexOf('Sub text')))).toBe(visibleWidth('✦ '));
+  });
+
+  it('moves a long tag onto its own line so the main text keeps a usable width', () => {
+    // Regression: remote banner configs can set a full-sentence tag. Inline it
+    // would leave the main text only a few columns, which hard-breaks words.
+    const width = 50;
+    const lines = new BannerComponent(
+      makeBannerState({
+        tag: 'Use Kimi K3 with High thinking effort',
+        mainText: '- for the best balance between token spend and capability',
+        subText: 'Run /model to switch to K3 and set thinking effort to High',
+      }),
+    ).render(width);
+    for (const line of lines) {
+      expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+    }
+    // The tag occupies the first line alone; no main text is squeezed next to it.
+    expect(lines[0]).toContain('✦ Use Kimi K3 with High thinking effort');
+    expect(lines[0]).not.toContain('- for');
+    // Words stay intact (no mid-word hard breaks like "balan"/"ce").
+    const joined = lines.join('\n');
+    for (const word of ['balance', 'between', 'capability', 'thinking', 'effort']) {
+      expect(joined).toContain(word);
+    }
+    // Main text and subtext align with the tag text (right after "✦ ").
+    const mainLine = lines.find((line) => line.includes('- for'))!;
+    expect(visibleWidth(mainLine.slice(0, mainLine.indexOf('- for')))).toBe(visibleWidth('✦ '));
+    const subLine = lines.find((line) => line.includes('Run /model'))!;
+    expect(visibleWidth(subLine.slice(0, subLine.indexOf('Run /model')))).toBe(visibleWidth('✦ '));
+  });
+
+  it('keeps a short tag inline when the remaining width is enough', () => {
+    const width = 40;
+    const lines = new BannerComponent(
+      makeBannerState({ tag: 'Tip:', mainText: 'Use /help to list commands.' }),
+    ).render(width);
+    expect(lines[0]).toContain('✦ Tip:');
+    expect(lines[0]).toContain('Use /help');
+  });
+
+  it('renders a title-only banner without a main-text line', () => {
+    const lines = new BannerComponent(makeBannerState({ tag: 'Big news', mainText: null })).render(80);
+    expect(lines.length).toBe(2);
+    expect(lines[0]).toContain('✦ Big news');
+    expect(lines[1]).toBe('');
+  });
+
+  it('renders subtext under a title-only banner', () => {
+    const lines = new BannerComponent(
+      makeBannerState({ tag: 'Big news', mainText: null, subText: 'Details here' }),
+    ).render(80);
+    expect(lines.length).toBe(3);
+    expect(lines[0]).toContain('✦ Big news');
+    expect(lines[1]).toContain('Details here');
+    expect(lines[2]).toBe('');
+  });
+
+  it('wraps a long title-only tag instead of dropping it', () => {
+    const width = 20;
+    const lines = new BannerComponent(
+      makeBannerState({ tag: 'A fairly long banner title', mainText: null }),
+    ).render(width);
+    const joined = lines.join('\n');
+    for (const word of ['fairly', 'long', 'banner', 'title']) {
+      expect(joined).toContain(word);
+    }
+    for (const line of lines) {
+      expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+    }
+  });
+
+  it('drops the subtext indent when a title-only banner cannot fit it', () => {
+    for (const width of [1, 2]) {
+      const lines = new BannerComponent(
+        makeBannerState({ tag: 'Big news', mainText: null, subText: 'Details here' }),
+      ).render(width);
+      for (const line of lines) {
+        expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+      }
+    }
   });
 });

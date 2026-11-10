@@ -1,11 +1,22 @@
 import { mkdirSync, mkdtempSync, realpathSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+
 import { join } from 'pathe';
 import { describe, expect, it } from 'vitest';
 
-import { Error2 } from '#/errors';
-import { mergeStdioEnv, StdioMcpClient } from '#/mcpCore/client-stdio';
+import type { EnvironmentLease, EnvironmentStatus } from '#/environment/environment';
+import { EnvironmentError, environmentIsReady } from '#/environment/environmentRegistry';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
+import {
+  mergeStdioEnv,
+  StdioMcpClient,
+  type StdioMcpClientOptions,
+} from '#/mcpCore/client-stdio';
+import type { McpServerStdioConfig } from '#/mcpCore/config-schema';
+import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
+import type { IHostProcessService } from '#/os/interface/hostProcess';
+import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 
 import {
   crashAfterConnectFixture,
@@ -14,32 +25,168 @@ import {
   stdioFixture,
 } from './stubs';
 
-describe('StdioMcpClient', () => {
-  it('rejects unsupported executor at construction time', () => {
-    expect(
-      () =>
-        new StdioMcpClient({
-          transport: 'stdio',
-          command: 'true',
-          executor: 'kaos',
-        }),
-    ).toThrow(
-      expect.objectContaining({ name: 'Error2', code: 'not_implemented' }) as unknown as Error,
-    );
-
-    let thrown: unknown;
-    try {
-      const client = new StdioMcpClient({ transport: 'stdio', command: 'true', executor: 'kaos' });
-      void client;
-    } catch (error) {
-      thrown = error;
-    }
-    expect(thrown).toBeInstanceOf(Error2);
+function createClient(
+  config: McpServerStdioConfig,
+  options: Partial<StdioMcpClientOptions> = {},
+): StdioMcpClient {
+  const environment = Object.assign(
+    new FakeEnvironment(
+      { environmentId: 'local', generation: 'test' },
+      { capabilities: ['process'] },
+    ),
+    { process: new HostProcessService() },
+  );
+  return new StdioMcpClient(config, {
+    environmentResolver: {
+      _serviceBrand: undefined,
+      inspect: () => environment,
+      acquire: () => ({
+        environment,
+        track: (resource) => resource,
+        dispose: () => {},
+      }),
+      acquireWhenReady: async () => ({
+        environment,
+        track: (resource) => resource,
+        dispose: () => {},
+      }),
+    },
+    environmentId: 'local',
+    defaultCwd: process.cwd(),
+    ...options,
   });
+}
+
+interface EnvironmentClientHarness {
+  readonly client: StdioMcpClient;
+  readonly calls: string[];
+  readonly spawnEnvs: Array<Record<string, string> | undefined>;
+  readonly spawnCwds: Array<string | undefined>;
+}
+
+function createEnvironmentClient(
+  config: McpServerStdioConfig,
+  options: {
+    environmentId?: string;
+    status?: EnvironmentStatus;
+    host?: Partial<FakeEnvironment['host']>;
+    defaultCwd?: string;
+  } = {},
+): EnvironmentClientHarness {
+  const environmentId = options.environmentId ?? 'local';
+  const calls: string[] = [];
+  const spawnEnvs: Array<Record<string, string> | undefined> = [];
+  const spawnCwds: Array<string | undefined> = [];
+  const hostProcess = new HostProcessService();
+  const recordingProcess: IHostProcessService = {
+    _serviceBrand: undefined,
+    spawn: (command, args, spawnOptions) => {
+      spawnEnvs.push(spawnOptions?.env);
+      spawnCwds.push(spawnOptions?.cwd);
+      return hostProcess.spawn(command, args, spawnOptions);
+    },
+  };
+  const environment = new FakeEnvironment(
+    { environmentId, generation: 'test' },
+    {
+      capabilities: ['process'],
+      status: options.status ?? 'ready',
+      host: options.host ?? { homeDir: process.cwd() },
+    },
+  );
+  const connect = async (): Promise<void> => {
+    calls.push('connect');
+    environment.setStatus('ready');
+  };
+  Object.assign(environment, {
+    process: recordingProcess,
+    connect,
+  });
+  const lease = (): EnvironmentLease => ({
+    environment,
+    track: (resource) => resource,
+    dispose: () => {},
+  });
+  const unavailable = (): never => {
+    throw new EnvironmentError('environment.unavailable', `environment is ${environment.status}`);
+  };
+  const environmentResolver: EnvironmentResolver = {
+    _serviceBrand: undefined,
+    inspect: () => {
+      calls.push('inspect');
+      return environment;
+    },
+    acquire: () => {
+      calls.push('acquire');
+      if (!environmentIsReady(environment)) unavailable();
+      return lease();
+    },
+    acquireWhenReady: async () => {
+      calls.push('acquireWhenReady');
+      if (!environmentIsReady(environment)) await connect();
+      if (!environmentIsReady(environment)) unavailable();
+      return lease();
+    },
+  };
+  const client = new StdioMcpClient(config, {
+    environmentResolver,
+    environmentId,
+    defaultCwd: options.defaultCwd ?? process.cwd(),
+  });
+  return { client, calls, spawnEnvs, spawnCwds };
+}
+
+function isPostCloseTransportError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes('Not connected') ||
+    message.includes('Connection closed') ||
+    message.includes('transport is not running')
+  );
+}
+
+describe('StdioMcpClient', () => {
+  it('rejects a removed executor value instead of silently running on local', async () => {
+    const client = createClient({ transport: 'stdio', command: process.execPath, executor: 'kaos' });
+    await expect(client.connect()).rejects.toThrowError(
+      expect.objectContaining({ code: 'not_implemented' }),
+    );
+  });
+
+  it('accepts executor local for backward compatibility', async () => {
+    const client = createClient({ transport: 'stdio', command: process.execPath, args: [stdioFixture], executor: 'local' });
+    try {
+      await client.connect();
+      const result = await client.callTool('echo', { text: 'hello' });
+      expect(result.content).toEqual([{ type: 'text', text: 'hello' }]);
+    } finally {
+      await client.close();
+    }
+  }, 15000);
+
+  it('sends only the configured env overlay to a non-local environment', async () => {
+    const harness = createEnvironmentClient(
+      {
+        transport: 'stdio',
+        command: process.execPath,
+        args: [stdioFixture],
+        env: { KIMI_TEST_LITERAL: 'literal' },
+      },
+      { environmentId: 'dev-box' },
+    );
+    try {
+      await harness.client.connect();
+      expect(harness.spawnEnvs).toEqual([{ KIMI_TEST_LITERAL: 'literal' }]);
+      const result = await harness.client.callTool('read_env', { name: 'KIMI_TEST_LITERAL' });
+      expect(result.content).toEqual([{ type: 'text', text: 'literal' }]);
+    } finally {
+      await harness.client.close();
+    }
+  }, 15000);
 
   it('uses defaultCwd when config.cwd is omitted', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'kimi-mcp-default-cwd-'));
-    const client = new StdioMcpClient(
+    const client = createClient(
       {
         transport: 'stdio',
         command: process.execPath,
@@ -60,8 +207,9 @@ describe('StdioMcpClient', () => {
 
   it('prefers explicit config.cwd over defaultCwd', async () => {
     const defaultCwd = mkdtempSync(join(tmpdir(), 'kimi-mcp-default-cwd-'));
-    const configuredCwd = mkdtempSync(join(tmpdir(), 'kimi-mcp-configured-cwd-'));
-    const client = new StdioMcpClient(
+    const configuredCwd = join(defaultCwd, 'configured');
+    mkdirSync(configuredCwd);
+    const client = createClient(
       {
         transport: 'stdio',
         command: process.execPath,
@@ -86,7 +234,7 @@ describe('StdioMcpClient', () => {
     const defaultCwd = mkdtempSync(join(tmpdir(), 'kimi-mcp-relative-cwd-'));
     const configuredCwd = join(defaultCwd, 'tools', 'mcp');
     mkdirSync(configuredCwd, { recursive: true });
-    const client = new StdioMcpClient(
+    const client = createClient(
       {
         transport: 'stdio',
         command: process.execPath,
@@ -106,8 +254,67 @@ describe('StdioMcpClient', () => {
     }
   }, 15000);
 
+  it('allows explicit config.cwd outside defaultCwd', async () => {
+    const defaultCwd = mkdtempSync(join(tmpdir(), 'kimi-mcp-default-cwd-'));
+    const outsideCwd = mkdtempSync(join(tmpdir(), 'kimi-mcp-outside-cwd-'));
+    const client = createClient(
+      {
+        transport: 'stdio',
+        command: process.execPath,
+        args: [cwdStdioFixture],
+        cwd: outsideCwd,
+      },
+      { defaultCwd },
+    );
+    try {
+      await client.connect();
+      const result = await client.callTool('get_cwd', {});
+      const text = (result.content[0] as { type: 'text'; text: string }).text;
+      expect(realpathSync(text)).toBe(realpathSync(outsideCwd));
+    } finally {
+      await client.close();
+      await rm(defaultCwd, { recursive: true, force: true });
+      await rm(outsideCwd, { recursive: true, force: true });
+    }
+  }, 15000);
+
+  it('roots a remote server at the target environment cwd instead of defaultCwd', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'kimi-mcp-remote-cwd-'));
+    const remoteCwd = join(base, 'target');
+    const remoteHome = join(base, 'remote-home');
+    const explicitCwd = join(base, 'explicit');
+    const carrierCwd = join(base, 'carrier');
+    mkdirSync(remoteCwd);
+    mkdirSync(remoteHome);
+    mkdirSync(explicitCwd);
+    mkdirSync(carrierCwd);
+    const cases = [
+      { config: {}, host: { homeDir: remoteHome, cwd: remoteCwd }, expected: remoteCwd },
+      { config: {}, host: { homeDir: remoteHome }, expected: remoteHome },
+      { config: { cwd: explicitCwd }, host: { homeDir: remoteHome, cwd: remoteCwd }, expected: explicitCwd },
+    ];
+    const harnesses = cases.map(({ config, host }) =>
+      createEnvironmentClient(
+        { transport: 'stdio', command: process.execPath, args: [cwdStdioFixture], ...config },
+        { environmentId: 'dev-box', host, defaultCwd: carrierCwd },
+      ),
+    );
+    try {
+      for (const [index, harness] of harnesses.entries()) {
+        await harness.client.connect();
+        const result = await harness.client.callTool('get_cwd', {});
+        const text = (result.content[0] as { type: 'text'; text: string }).text;
+        expect(realpathSync(text)).toBe(realpathSync(cases[index]!.expected));
+        expect(harness.spawnCwds).toEqual([cases[index]!.expected]);
+      }
+    } finally {
+      for (const harness of harnesses) await harness.client.close();
+      await rm(base, { recursive: true, force: true });
+    }
+  }, 15000);
+
   it('connects, lists tools, and round-trips a text result', async () => {
-    const client = new StdioMcpClient({
+    const client = createClient({
       transport: 'stdio',
       command: process.execPath,
       args: [stdioFixture],
@@ -115,7 +322,7 @@ describe('StdioMcpClient', () => {
     try {
       await client.connect();
       const tools = await client.listTools();
-      expect(tools.map((t) => t.name).toSorted()).toEqual(['boom', 'echo', 'read_env']);
+      expect(tools.map((t) => t.name).toSorted()).toEqual(['boom', 'echo', 'read_env', 'whoami']);
       const echo = tools.find((t) => t.name === 'echo');
       expect(echo?.description).toBe('Echoes input text');
       expect(echo?.inputSchema).toMatchObject({ type: 'object' });
@@ -129,7 +336,7 @@ describe('StdioMcpClient', () => {
   }, 15000);
 
   it('propagates server-reported isError', async () => {
-    const client = new StdioMcpClient({
+    const client = createClient({
       transport: 'stdio',
       command: process.execPath,
       args: [stdioFixture],
@@ -145,7 +352,7 @@ describe('StdioMcpClient', () => {
   }, 15000);
 
   it('forwards configured env to the spawned server', async () => {
-    const client = new StdioMcpClient({
+    const client = createClient({
       transport: 'stdio',
       command: process.execPath,
       args: [stdioFixture],
@@ -165,7 +372,7 @@ describe('StdioMcpClient', () => {
     const shared = `KIMI_TEST_SHARED_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     process.env[parentOnly] = 'from-parent';
     process.env[shared] = 'from-parent';
-    const client = new StdioMcpClient({
+    const client = createClient({
       transport: 'stdio',
       command: process.execPath,
       args: [stdioFixture],
@@ -186,7 +393,7 @@ describe('StdioMcpClient', () => {
 
   it('captures recent stderr into a snapshot the manager can attach to errors', async () => {
     const banner = `kimi-test-stderr-${Date.now()}`;
-    const client = new StdioMcpClient({
+    const client = createClient({
       transport: 'stdio',
       command: process.execPath,
       args: [stderrThenExitFixture],
@@ -201,7 +408,7 @@ describe('StdioMcpClient', () => {
   }, 15000);
 
   it('keeps the stderr buffer bounded so noisy servers cannot exhaust memory', async () => {
-    const client = new StdioMcpClient({
+    const client = createClient({
       transport: 'stdio',
       command: process.execPath,
       args: [stdioFixture],
@@ -215,17 +422,21 @@ describe('StdioMcpClient', () => {
     }
   }, 15000);
 
-  it('notifies an unexpected-close listener when the child exits after connect', async () => {
+  it('notifies a session-evidence listener with hard evidence when the child exits after connect', async () => {
     const banner = `kimi-test-crash-${Date.now()}`;
-    const client = new StdioMcpClient({
+    const client = createClient({
       transport: 'stdio',
       command: process.execPath,
       args: [crashAfterConnectFixture],
       env: { KIMI_TEST_MCP_EXIT_AFTER_MS: '50', KIMI_TEST_MCP_STDERR: banner },
     });
-    const closes: Array<{ stderr?: string; error?: string }> = [];
-    client.onUnexpectedClose((reason) => {
-      closes.push({ stderr: reason.stderr, error: reason.error?.message });
+    const closes: Array<{ kind?: string; stderr?: string; error?: string }> = [];
+    client.onSessionEvidence((evidence) => {
+      closes.push({
+        kind: evidence.kind,
+        stderr: evidence.reason.stderr,
+        error: evidence.reason.error?.message,
+      });
     });
     try {
       await client.connect();
@@ -234,6 +445,7 @@ describe('StdioMcpClient', () => {
         await new Promise((r) => setTimeout(r, 25));
       }
       expect(closes).toHaveLength(1);
+      expect(closes[0]?.kind).toBe('hard');
       expect(closes[0]?.stderr ?? '').toContain(banner);
     } finally {
       await client.close();
@@ -242,7 +454,7 @@ describe('StdioMcpClient', () => {
 
   it('buffers an early close and replays it on listener registration', async () => {
     const banner = `kimi-test-early-${Date.now()}`;
-    const client = new StdioMcpClient({
+    const client = createClient({
       transport: 'stdio',
       command: process.execPath,
       args: [crashAfterConnectFixture],
@@ -263,39 +475,101 @@ describe('StdioMcpClient', () => {
       while (Date.now() < drainDeadline) {
         try {
           await client.callTool('echo', { text: 'probe' });
-        } catch {
-          transportConfirmedDead = true;
-          break;
+        } catch (error) {
+          if (isPostCloseTransportError(error)) {
+            transportConfirmedDead = true;
+            break;
+          }
         }
         await new Promise((r) => setTimeout(r, 10));
       }
       expect(transportConfirmedDead).toBe(true);
 
-      let received: { stderr?: string } | undefined;
+      let received: { kind?: string; stderr?: string } | undefined;
       let syncedOnRegister = false;
-      client.onUnexpectedClose((reason) => {
+      client.onSessionEvidence((evidence) => {
         syncedOnRegister = true;
-        received = { stderr: reason.stderr };
+        received = { kind: evidence.kind, stderr: evidence.reason.stderr };
       });
       expect(syncedOnRegister).toBe(true);
-      expect(received?.stderr ?? '').toContain(banner);
+      expect(received).toBeDefined();
+      expect(received?.kind).toBe('hard');
     } finally {
       await client.close();
     }
   }, 15000);
 
-  it('does not fire unexpected-close when the caller closes the client itself', async () => {
-    const client = new StdioMcpClient({
+  it('does not fire session evidence when the caller closes the client itself', async () => {
+    const client = createClient({
       transport: 'stdio',
       command: process.execPath,
       args: [stdioFixture],
     });
     const closes: number[] = [];
-    client.onUnexpectedClose(() => closes.push(Date.now()));
+    client.onSessionEvidence(() => closes.push(Date.now()));
     await client.connect();
     await client.close();
     await new Promise((r) => setTimeout(r, 100));
     expect(closes).toEqual([]);
+  }, 15000);
+
+  function createTrackingClient(
+    config: McpServerStdioConfig,
+  ): { client: StdioMcpClient; tracked: Array<{ sessionId?: string; disposed: boolean }> } {
+    const tracked: Array<{ sessionId?: string; disposed: boolean }> = [];
+    const environment = Object.assign(
+      new FakeEnvironment(
+        { environmentId: 'local', generation: 'test' },
+        { capabilities: ['process'] },
+      ),
+      { process: new HostProcessService() },
+    );
+    const track = <T extends { dispose(): void | Promise<void> }>(
+      resource: T,
+      sessionId?: string,
+    ): T => {
+      const entry = { sessionId, disposed: false };
+      tracked.push(entry);
+      return new Proxy(resource, {
+        get: (target, property) => {
+          if (property === 'dispose') {
+            return () => {
+              if (entry.disposed) return undefined;
+              entry.disposed = true;
+              return target.dispose();
+            };
+          }
+          return Reflect.get(target, property, target);
+        },
+      });
+    };
+    const client = new StdioMcpClient(config, {
+      environmentResolver: {
+        _serviceBrand: undefined,
+        inspect: () => environment,
+        acquire: () => ({ environment, track, dispose: () => {} }),
+        acquireWhenReady: async () => ({ environment, track, dispose: () => {} }),
+      },
+      environmentId: 'local',
+      defaultCwd: process.cwd(),
+      sessionId: 's1',
+    });
+    return { client, tracked };
+  }
+
+  it('disposes tracked environment resources on close', async () => {
+    const { client, tracked } = createTrackingClient({
+      transport: 'stdio',
+      command: process.execPath,
+      args: [stdioFixture],
+    });
+    await client.connect();
+    expect(tracked).toHaveLength(2);
+    expect(tracked.every((entry) => entry.sessionId === 's1')).toBe(true);
+
+    await client.close();
+
+    expect(tracked.every((entry) => entry.disposed)).toBe(true);
   }, 15000);
 });
 

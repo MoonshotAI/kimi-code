@@ -316,6 +316,54 @@ describe('buildExportMarkdown', () => {
     expect(md).toContain('deep thought');
   });
 
+  it('renders an uploaded image daemon ref as [image] in the exported user message', () => {
+    // An uploaded image persists as a self-contained `kimi-file://` part —
+    // the export keeps the real text and `[image]`, never the materialization
+    // path or the internal url.
+    const msgs: ContextMessage[] = [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'what is this? ' },
+          {
+            type: 'image_url',
+            imageUrl: { url: 'kimi-file://f_1?path=%2FUsers%2Falice%2Fmedia%2Ff_1.png' },
+          },
+        ],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+      assistantMsg('a screenshot'),
+    ];
+    const md = buildExportMarkdown({
+      sessionId: 'ses_test',
+      workDir: '/tmp',
+      history: msgs,
+      tokenCount: 0,
+      now,
+    });
+    expect(md).toContain('what is this?');
+    expect(md).toContain('[image]');
+    expect(md).not.toContain('/Users/alice');
+    expect(md).not.toContain('kimi-file');
+    expect(md).not.toContain('<image path=');
+  });
+
+  it('keeps an unpaired standalone <media path> tag as user text in the export', () => {
+    const msgs: ContextMessage[] = [
+      userMsg('<image path="/tmp/shot.png">', { kind: 'user' }),
+      assistantMsg('ok'),
+    ];
+    const md = buildExportMarkdown({
+      sessionId: 'ses_test',
+      workDir: '/tmp',
+      history: msgs,
+      tokenCount: 0,
+      now,
+    });
+    expect(md).toContain('<image path="/tmp/shot.png">');
+  });
+
   it('renders tool calls and results', () => {
     const tc = makeToolCall('c1', 'Read', { file_path: '/foo.ts' });
     const msgs: ContextMessage[] = [
@@ -339,6 +387,19 @@ describe('buildExportMarkdown', () => {
 
   it('filters out internal messages', () => {
     const msgs: ContextMessage[] = [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: '<hook_result hook_event="UserPromptSubmit">\nhook note\n</hook_result>',
+            meta: { contentType: 'text/xml', source: 'user prompt submit hook' },
+          } as ContentPart,
+          { type: 'text', text: 'clean prompt' },
+        ],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
       userMsg('hello', { kind: 'user' }),
       userMsg('injected stuff', { kind: 'injection', variant: 'system-reminder' }),
       assistantMsg('response'),
@@ -351,6 +412,9 @@ describe('buildExportMarkdown', () => {
       now,
     });
     expect(md).not.toContain('injected stuff');
+    expect(md).not.toContain('hook_result');
+    expect(md).not.toContain('hook note');
+    expect(md).toContain('- **Topic**: clean prompt');
     expect(md).toContain('hello');
     expect(md).toContain('response');
   });

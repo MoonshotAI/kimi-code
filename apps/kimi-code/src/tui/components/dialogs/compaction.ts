@@ -120,6 +120,18 @@ export class CompactionComponent extends Container {
     this.ui?.requestRender();
   }
 
+  hasHiddenContent(): boolean {
+    return this.summary !== undefined && this.summary.length > 0;
+  }
+
+  isExpanded(): boolean {
+    return this.expanded;
+  }
+
+  omitsExpandHint(): boolean {
+    return true;
+  }
+
   private addSummaryChild(): void {
     if (this.summaryText !== undefined || this.summary === undefined || this.summary.length === 0) {
       return;
@@ -165,7 +177,7 @@ export class CompactionComponent extends Container {
       return `${bullet}${label}`;
     }
     const bullet = this.blinkOn ? currentTheme.fg('text', STATUS_BULLET) : '  ';
-    const label = currentTheme.boldFg('primary', 'Compacting context...');
+    const label = currentTheme.boldFg('primary', 'Compacting context…');
     const tip = this.tip ? currentTheme.fg('textDim', ` · Tip: ${this.tip}`) : '';
     return `${bullet}${label}${tip}`;
   }

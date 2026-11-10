@@ -1,28 +1,18 @@
-/**
- * `sessionExport` domain — `ISessionExportService` implementation.
- *
- * Coordinates live session flushing through the live workspace handler
- * registry, derives session paths from the handler-chain addressing, reads
- * persisted summaries through the session index, and packages diagnostic
- * files through the local zip writer. Bound at App scope.
- */
-
 import { join, resolve } from 'pathe';
-
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import type { ISessionScopeHandle } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { resolveGlobalLogPath } from '#/_base/log/logConfig';
 import { IWireService } from '#/wire/wire';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
-import { IWorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycle';
+import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IWorkspaceService } from '#/app/workspace/workspace';
 import {
   sessionDirOf,
   workspacePersistenceScope,
 } from '#/workspace/sessionLifecycle/internal/addressing';
-import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
@@ -42,6 +32,7 @@ import {
   writeExportZip,
 } from './zip';
 import { openZipSource, type ZipSource } from './file-source';
+import { FILE_HISTORY_BLOB_PREFIX } from '#/features/fileHistory/fileHistoryService';
 
 const SESSION_LOG_REL = 'logs/kimi-code.log';
 const GLOBAL_LOG_REL = 'logs/global/kimi-code.log';
@@ -54,7 +45,7 @@ export class SessionExportService implements ISessionExportService {
   constructor(
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @ISessionIndex private readonly index: ISessionIndex,
-    @IWorkspaceLifecycleService private readonly workspaceLifecycle: IWorkspaceLifecycleService,
+    @ISessionManager private readonly sessions: ISessionManager,
     @IWorkspaceService private readonly workspaces: IWorkspaceService,
     @ILogService private readonly log: ILogService,
   ) {}
@@ -99,7 +90,6 @@ export class SessionExportService implements ISessionExportService {
           : undefined,
       webLog: options.webLog,
       signal: options.signal,
-      maxArchiveBytes: options.maxArchiveBytes,
     });
   }
 
@@ -140,8 +130,10 @@ export class SessionExportService implements ISessionExportService {
     );
     const agents = handle.accessor.get(IAgentLifecycleService);
     for (const agent of agents.list()) {
+      const agentHandle = agents.handleOf(agent.agentId);
+      if (agentHandle === undefined) continue;
       await this.warnIfFails('export agent wire flush failed', () =>
-        agent.accessor.get(IWireService).flush(),
+        agentHandle.accessor.get(IWireService).flush(),
       );
     }
 
@@ -149,11 +141,7 @@ export class SessionExportService implements ISessionExportService {
   }
 
   private liveSession(sessionId: string): ISessionScopeHandle | undefined {
-    for (const handler of this.workspaceLifecycle.handlers.list()) {
-      const handle = handler.accessor.get(ISessionLifecycleService).get(sessionId);
-      if (handle !== undefined) return handle;
-    }
-    return undefined;
+    return this.sessions.get(sessionId);
   }
 
   private async warnIfFails(
@@ -185,7 +173,6 @@ export async function exportSessionDirectory(input: {
   readonly desktopLogPath?: string | undefined;
   readonly webLog?: string;
   readonly signal?: AbortSignal;
-  readonly maxArchiveBytes?: number;
 }): Promise<ExportSessionResult> {
   input.signal?.throwIfAborted();
   const sessionDir = input.summary.sessionDir;
@@ -217,7 +204,8 @@ export async function exportSessionDirectory(input: {
     const sessionScan = await scanSessionWire(sessionDir, input.signal);
     const stableSessionLog = sessionLogSource;
     const selectedSessionFiles: SessionZipEntry[] = sessionFiles.filter(
-      (file) => file !== sessionLogPath,
+      (file) =>
+        file !== sessionLogPath && !file.split(/[\\/]/).includes(FILE_HISTORY_BLOB_PREFIX),
     );
     if (stableSessionLog !== undefined) {
       selectedSessionFiles.push({ path: sessionLogPath, source: stableSessionLog });
@@ -265,7 +253,6 @@ export async function exportSessionDirectory(input: {
       sessionFiles: selectedSessionFiles,
       extraEntries: extras,
       signal: input.signal,
-      maxArchiveBytes: input.maxArchiveBytes,
     });
     sessionLogSourceTransferred = sessionLogSource !== undefined;
     globalSourceTransferred = globalSource !== undefined;

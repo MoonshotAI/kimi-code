@@ -70,7 +70,7 @@ function CodeBlock({ content, maxLines = 10 }: { content: string; maxLines?: num
     <div className="relative group/codeblock">
       <pre className="text-[11px] bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 rounded px-3 py-2 overflow-x-auto whitespace-pre-wrap break-all">
         {displayContent}
-        {shouldCollapse && !expanded && <span className="text-zinc-500">{"\n"}...</span>}
+        {shouldCollapse && !expanded && <span className="text-zinc-500">{"\n"}…</span>}
       </pre>
       {shouldCollapse && (
         <button
@@ -332,7 +332,7 @@ function TaskTool({ call, result, subagentSteps }: ToolRendererProps) {
     if (!hasSubagentSteps) {
       return result ? formatOutput(result.output) : "";
     }
-    const lastStep = subagentSteps[subagentSteps.length - 1];
+    const lastStep = subagentSteps.at(-1);
     const textItems = lastStep.items.filter((i) => i.type === "text");
     if (textItems.length > 0) {
       return textItems.map((i) => (i as { type: "text"; content: string }).content).join("\n");

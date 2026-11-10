@@ -1,13 +1,3 @@
-/**
- * Covers: rg-locator (ripgrep hybrid binary resolution).
- *
- * Pure-lookup pins (no real CDN download):
- *   - `findExistingRg` returns undefined when PATH + share-bin are both empty
- *   - Resolves from `<shareDir>/bin/rg` when that binary exists
- *   - Prefers system PATH over share-dir cache when both are available
- *   - `rgUnavailableMessage` surfaces the underlying cause + install hints
- */
-
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -18,6 +8,7 @@ import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  detectRemoteTarget,
   detectTarget,
   ensureRgPath,
   extractRgFromZip,
@@ -26,15 +17,16 @@ import {
   verifyArchiveChecksum,
   type RgProbe,
 } from '#/os/backends/node-local/tools/rgLocator';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
+import type { Environment } from '#/environment/environment';
+import { stubRgProbe } from '../../../stubs';
 
 vi.mock('tar', () => ({ extract: vi.fn() }));
 
 function probeWith(
   resolveExitCode: (args: readonly string[]) => number,
 ): RgProbe & { exec: ReturnType<typeof vi.fn> } {
-  return {
-    exec: vi.fn(async (args: readonly string[]) => ({ exitCode: resolveExitCode(args) })),
-  };
+  return stubRgProbe(resolveExitCode);
 }
 
 function noRgProbe(): RgProbe & { exec: ReturnType<typeof vi.fn> } {
@@ -104,6 +96,121 @@ describe('findExistingRg', () => {
   });
 });
 
+describe('ensureRgPath remote environment branch', () => {
+  let savedFetch: typeof globalThis.fetch | undefined;
+  beforeEach(() => {
+    savedFetch = globalThis.fetch;
+  });
+  afterEach(() => {
+    if (savedFetch === undefined) {
+      delete (globalThis as unknown as { fetch?: typeof fetch }).fetch;
+    } else {
+      globalThis.fetch = savedFetch;
+    }
+    vi.restoreAllMocks();
+  });
+
+  function remoteEnvironment(
+    environmentId: string,
+    options: {
+      readonly generation?: string;
+      readonly osKind?: string;
+      readonly osArch?: string;
+      readonly pathClass?: 'posix' | 'win32';
+      readonly withFs?: boolean;
+    } = {},
+  ): Environment {
+    const environment = new FakeEnvironment(
+      { environmentId, generation: options.generation ?? `${environmentId}-g1` },
+      {
+        capabilities: ['fs', 'process'],
+        pathClass: options.pathClass,
+        host: {
+          osKind: options.osKind ?? 'Linux',
+          osArch: options.osArch ?? 'x64',
+          homeDir: options.pathClass === 'win32' ? 'C:\\Users\\remote' : '/home/remote',
+        },
+      },
+    );
+    if (options.withFs !== false) {
+      Object.assign(environment, {
+        fs: {
+          mkdir: vi.fn(async () => {}),
+          writeBytes: vi.fn(async () => {}),
+          rename: vi.fn(async () => {}),
+          remove: vi.fn(async () => {}),
+        },
+        process: {},
+      });
+    }
+    return environment;
+  }
+
+  it('requires allowCachedFallback before touching the share bin or the network', async () => {
+    const probe = noRgProbe();
+    const environment = remoteEnvironment('remote-no-fallback');
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await expect(ensureRgPath(probe, { environment })).rejects.toThrow(/on PATH/);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(environment.fs!.mkdir as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+  });
+
+  it('uses rg.exe and target-native paths for a Windows cache hit', async () => {
+    const probe = probeWith((args) => (args[0] === 'rg' ? -1 : 0));
+    const environment = remoteEnvironment('remote-windows', { osKind: 'Windows', pathClass: 'win32' });
+
+    const resolution = await ensureRgPath(probe, { environment, allowCachedFallback: true });
+
+    expect(resolution).toEqual({
+      path: 'C:\\Users\\remote\\.kimi-code\\bin\\rg.exe',
+      source: 'share-bin-cached',
+    });
+    expect(probe.exec).toHaveBeenCalledTimes(2);
+    expect(probe.exec).toHaveBeenCalledWith(['C:\\Users\\remote\\.kimi-code\\bin\\rg.exe', '--version']);
+    expect(environment.fs!.mkdir).not.toHaveBeenCalled();
+  });
+
+  it.each(['x64', 'arm64'])('downloads the target Windows ZIP on a cache miss (%s)', async (osArch) => {
+    const probe = noRgProbe();
+    const environment = remoteEnvironment(`remote-windows-download-${osArch}`, { osKind: 'Windows', pathClass: 'win32', osArch });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, body: bodyFromBuffer(Buffer.from('invalid checksum')) });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await expect(ensureRgPath(probe, { environment, allowCachedFallback: true })).rejects.toThrow(/checksum mismatch/);
+
+    const arch = osArch === 'x64' ? 'x86_64' : 'aarch64';
+    expect(fetchMock.mock.calls[0]?.[0]).toMatch(new RegExp(`ripgrep-15\\.0\\.0-${arch}-pc-windows-msvc\\.zip$`));
+    expect(probe.exec).toHaveBeenCalledWith([String.raw`C:\Users\remote\.kimi-code\bin\rg.exe`, '--version']);
+    expect(environment.fs!.writeBytes).not.toHaveBeenCalled();
+  });
+
+  it('keeps the local flow for the local environment', async () => {
+    const probe = noRgProbe();
+    const environment = new FakeEnvironment(
+      { environmentId: 'local', generation: 'local-g1' },
+      { capabilities: ['fs', 'process'] },
+    );
+    const fakeShare = join(tmpdir(), `kimi-rg-local-${String(Date.now())}-${String(Math.random()).slice(2)}`);
+    mkdirSync(join(fakeShare, 'bin'), { recursive: true });
+    const savedPath = process.env['PATH'];
+    process.env['PATH'] = '';
+    try {
+      writeFileSync(join(fakeShare, 'bin', process.platform === 'win32' ? 'rg.exe' : 'rg'), 'fake rg');
+      const resolution = await ensureRgPath(probe, { environment, shareDir: fakeShare, allowCachedFallback: true });
+      expect(resolution.source).toBe('share-bin-cached');
+    } finally {
+      if (savedPath === undefined) {
+        delete process.env['PATH'];
+      } else {
+        process.env['PATH'] = savedPath;
+      }
+      rmSync(fakeShare, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('detectTarget', () => {
   let savedArch: string;
   let savedPlatform: string;
@@ -140,6 +247,10 @@ describe('detectTarget', () => {
   it('win32 x64 -> x86_64-pc-windows-msvc', () => {
     setPlatform('x64', 'win32');
     expect(detectTarget()).toBe('x86_64-pc-windows-msvc');
+  });
+  it('win32 remote targets use Windows archives', () => {
+    expect(detectRemoteTarget('Windows', 'x64')).toBe('x86_64-pc-windows-msvc');
+    expect(detectRemoteTarget('Windows', 'arm64')).toBe('aarch64-pc-windows-msvc');
   });
   it('unsupported arch -> undefined', () => {
     setPlatform('mips', 'linux');
@@ -324,6 +435,64 @@ describe('ensureRgPath download branch', () => {
 
     const [url] = fetchMock.mock.calls[0] as [string];
     expect(new URL(url).protocol).toBe('https:');
+  });
+
+  it('downloads from the global CDN when the env pins the global region', async () => {
+    const savedHost = process.env['KIMI_CODE_OAUTH_HOST'];
+    process.env['KIMI_CODE_OAUTH_HOST'] = 'https://auth.kimi.ai';
+    try {
+      const body = bodyFromBuffer(Buffer.from('not a real archive', 'utf8'));
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        body,
+      });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      await expect(
+        ensureRgPath(noRgProbe(), { shareDir: fakeShare, allowCachedFallback: true }),
+      ).rejects.toThrow();
+
+      const [url] = fetchMock.mock.calls[0] as [string];
+      expect(url).toMatch(/^https:\/\/code\.kimi\.ai\/kimi-code\/rg\/ripgrep-/);
+    } finally {
+      if (savedHost === undefined) delete process.env['KIMI_CODE_OAUTH_HOST'];
+      else process.env['KIMI_CODE_OAUTH_HOST'] = savedHost;
+    }
+  });
+
+  it('downloads from the cn CDN by default (no env override, no install marker)', async () => {
+    const savedHost = process.env['KIMI_CODE_OAUTH_HOST'];
+    const savedLegacyHost = process.env['KIMI_OAUTH_HOST'];
+    const savedHome = process.env['KIMI_CODE_HOME'];
+    delete process.env['KIMI_CODE_OAUTH_HOST'];
+    delete process.env['KIMI_OAUTH_HOST'];
+    process.env['KIMI_CODE_HOME'] = fakeShare;
+    try {
+      const body = bodyFromBuffer(Buffer.from('not a real archive', 'utf8'));
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        body,
+      });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      await expect(
+        ensureRgPath(noRgProbe(), { shareDir: fakeShare, allowCachedFallback: true }),
+      ).rejects.toThrow();
+
+      const [url] = fetchMock.mock.calls[0] as [string];
+      expect(url).toMatch(/^https:\/\/code\.kimi\.com\/kimi-code\/rg\/ripgrep-/);
+    } finally {
+      if (savedHost === undefined) delete process.env['KIMI_CODE_OAUTH_HOST'];
+      else process.env['KIMI_CODE_OAUTH_HOST'] = savedHost;
+      if (savedLegacyHost === undefined) delete process.env['KIMI_OAUTH_HOST'];
+      else process.env['KIMI_OAUTH_HOST'] = savedLegacyHost;
+      if (savedHome === undefined) delete process.env['KIMI_CODE_HOME'];
+      else process.env['KIMI_CODE_HOME'] = savedHome;
+    }
   });
 
   it('rejects archives that do not match the pinned SHA-256 before extraction', async () => {

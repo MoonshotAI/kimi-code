@@ -97,4 +97,24 @@ describe('SearchableList', () => {
     expect(search.handleKey(BACKSPACE)).toBe(true);
     expect(search.view().query).toBe('');
   });
+
+  it('setItems replaces the items, keeps the query, and clamps the cursor', () => {
+    const list = make({ searchable: true });
+    for (const ch of 'zz') list.handleKey(ch);
+    list.setItems([...ITEMS, 'item10']);
+    // The active query survives an items swap and still filters.
+    expect(list.view().query).toBe('zz');
+    expect(list.view().items).toHaveLength(0);
+
+    expect(list.clearQuery()).toBe(true);
+    for (let i = 0; i < 20; i++) list.moveDown();
+    expect(list.view().selectedIndex).toBe(10);
+
+    // Shrinking the set clamps the cursor into the new range.
+    list.setItems(['item00']);
+    const v = list.view();
+    expect(v.items).toEqual(['item00']);
+    expect(v.selectedIndex).toBe(0);
+    expect(list.selected()).toBe('item00');
+  });
 });

@@ -5,6 +5,8 @@ import type {
   ToolCall,
 } from "@moonshot-ai/kimi-code-sdk";
 
+import { withoutUserPromptSubmitHookParts } from "./hook-parts";
+
 const INTERNAL_ORIGINS = new Set<PromptOrigin["kind"]>([
   "injection",
   "system_trigger",
@@ -200,7 +202,7 @@ function formatPartMarkdown(part: ContentPart): string {
 }
 
 function stringifyParts(parts: readonly ContentPart[]): string {
-  return parts.map((part) => {
+  return withoutUserPromptSubmitHookParts(parts).map((part) => {
     if (part.type === "text") return part.text;
     if (part.type === "think") return part.think.trim() ? `<thinking>\n${part.think}\n</thinking>` : "";
     if (part.type === "image_url") return "[image]";

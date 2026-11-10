@@ -1,7 +1,3 @@
-/**
- * `mcpCore` domain — SSE transport MCP client.
- */
-
 import { ErrorCodes, Error2 } from '#/errors';
 import type { McpServerSseConfig } from './config-schema';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -15,10 +11,11 @@ import {
   MCP_LIVENESS_PROBE_TIMEOUT_MS,
   toMcpToolDefinition,
   toMcpToolResult,
-  type UnexpectedCloseListener,
-  type UnexpectedCloseReason,
+  type SessionEvidence,
+  type SessionEvidenceListener,
 } from './client-shared';
-import { buildMcpRemoteHeaders } from './client-remote';
+import { buildMcpRemoteHeaders, classifyRemoteStartupError } from './client-remote';
+import { createMcpOAuthFetch } from './oauth/provider';
 import type { MCPClient, MCPToolDefinition, MCPToolResult } from './types';
 
 export interface SseMcpClientOptions {
@@ -40,18 +37,18 @@ export class SseMcpClient implements MCPClient {
   private closed = false;
   private ready = false;
   private hooksInstalled = false;
-  private unexpectedCloseListener: UnexpectedCloseListener | undefined;
+  private sessionEvidenceListener: SessionEvidenceListener | undefined;
   private lastTransportError: Error | undefined;
-  private pendingUnexpectedClose: UnexpectedCloseReason | undefined;
-  private unexpectedCloseFired = false;
+  private pendingSessionEvidence: SessionEvidence | undefined;
+  private sessionEvidenceFired = false;
 
-  constructor(config: McpServerSseConfig, options: SseMcpClientOptions = {}) {
+  constructor(private readonly config: McpServerSseConfig, options: SseMcpClientOptions = {}) {
     const envLookup = options.envLookup ?? ((name) => process.env[name]);
     const headers = buildMcpRemoteHeaders(config, envLookup);
 
     this.transport = new SSEClientTransport(new URL(config.url), {
       requestInit: headers !== undefined ? { headers } : undefined,
-      fetch: options.fetch,
+      fetch: createMcpOAuthFetch(options.oauthProvider, options.fetch),
       authProvider: options.oauthProvider,
     });
     this.client = new Client({
@@ -76,7 +73,7 @@ export class SseMcpClient implements MCPClient {
       );
     } catch (error) {
       await this.closeStartedClient();
-      throw error;
+      throw classifyRemoteStartupError(this.config, error);
     }
     if (this.closed) {
       await this.closeStartedClient();
@@ -91,11 +88,11 @@ export class SseMcpClient implements MCPClient {
     await this.closeStartedClient();
   }
 
-  onUnexpectedClose(listener: UnexpectedCloseListener): void {
-    this.unexpectedCloseListener = listener;
-    const pending = this.pendingUnexpectedClose;
+  onSessionEvidence(listener: SessionEvidenceListener): void {
+    this.sessionEvidenceListener = listener;
+    const pending = this.pendingSessionEvidence;
     if (pending !== undefined) {
-      this.pendingUnexpectedClose = undefined;
+      this.pendingSessionEvidence = undefined;
       listener(pending);
     }
   }
@@ -134,26 +131,26 @@ export class SseMcpClient implements MCPClient {
     this.client.onclose = () => {
       if (this.closed) return;
       if (!this.ready) return;
-      this.fireUnexpectedClose({ error: this.lastTransportError });
+      this.fireSessionEvidence({ kind: 'hard', reason: { error: this.lastTransportError } });
     };
     this.client.onerror = (error) => {
       this.lastTransportError = error;
       if (this.closed) return;
       if (!this.ready) return;
       if (isTerminalSseTransportError(error)) {
-        this.fireUnexpectedClose({ error });
+        this.fireSessionEvidence({ kind: 'hard', reason: { error } });
       }
     };
   }
 
-  private fireUnexpectedClose(reason: UnexpectedCloseReason): void {
-    if (this.unexpectedCloseFired) return;
-    this.unexpectedCloseFired = true;
-    const listener = this.unexpectedCloseListener;
+  private fireSessionEvidence(evidence: SessionEvidence): void {
+    if (this.sessionEvidenceFired) return;
+    this.sessionEvidenceFired = true;
+    const listener = this.sessionEvidenceListener;
     if (listener !== undefined) {
-      listener(reason);
+      listener(evidence);
     } else {
-      this.pendingUnexpectedClose = reason;
+      this.pendingSessionEvidence = evidence;
     }
   }
 }

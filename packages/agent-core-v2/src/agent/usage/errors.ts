@@ -1,7 +1,3 @@
-/**
- * `usage` domain error codes — invalid persisted usage records.
- */
-
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
 
 export const UsageErrors = {

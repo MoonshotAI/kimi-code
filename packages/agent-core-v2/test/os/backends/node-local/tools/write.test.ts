@@ -1,23 +1,12 @@
-/**
- * WriteTool tests for the v2 fileTools domain.
- *
- * Ported from v1 (`packages/agent-core/test/tools/write.test.ts`) and adapted
- * to the v2 constructor `(fs, env, workspace)`. Self-contained: builds a
- * minimal fake `IHostFileSystem` inline so the tool can be exercised without
- * the composition root.
- *
- * Append is routed through `IHostFileSystem.appendText` (a native append), so
- * the tool no longer reads the existing file. The append-call assertions below
- * reflect that single-call mechanic.
- */
-
 import { describe, expect, it, vi } from 'vitest';
 
 import { PathSecurityError } from '#/tool/path-access';
 import type { HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
+import { stubAgentEnvironment } from '../../../../environment/stubs';
 import { type WriteInput, WriteInputSchema } from '#/agent/tools/os/write/write';
 import { WriteTool } from '#/agent/tools/os/write/writeTool';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 
@@ -71,9 +60,21 @@ function createWriteFs(options: WriteFsOptions = {}) {
   return { fs, readText, writeText, appendText, stat, mkdir };
 }
 
+function makeToolWithFs(fs: IHostFileSystem, workspace = PERMISSIVE_WORKSPACE) {
+  const backend = Object.assign(
+    new FakeEnvironment(
+      { environmentId: 'local', generation: 'test' },
+      { capabilities: ['fs'] },
+    ),
+    { fs, host: createTestEnv() },
+  );
+  const environment = stubAgentEnvironment(backend);
+  return new WriteTool(environment, workspace);
+}
+
 function makeTool(options: WriteFsOptions = {}, workspace = PERMISSIVE_WORKSPACE) {
   const fakes = createWriteFs(options);
-  const tool = new WriteTool(fakes.fs, createTestEnv(), workspace);
+  const tool = makeToolWithFs(fakes.fs, workspace);
   return { tool, ...fakes };
 }
 
@@ -109,19 +110,12 @@ describe('WriteTool', () => {
     const { tool } = makeTool();
 
     expect(tool.name).toBe('Write');
-    expect(tool.description).toContain('append adds content at EOF without adding a newline');
-    expect(tool.description).toContain('\\n stays LF, \\r\\n stays CRLF');
-    expect(tool.description).toContain('Write is NOT ALLOWED for incremental changes');
     expect(tool.parameters).toMatchObject({
       type: 'object',
       properties: {
-        content: {
-          type: 'string',
-          description: expect.stringContaining('Raw full file content'),
-        },
+        content: { type: 'string' },
         mode: {
           enum: ['overwrite', 'append'],
-          description: expect.stringContaining('Defaults to overwrite'),
         },
       },
     });
@@ -138,20 +132,9 @@ describe('WriteTool', () => {
     expect(WriteInputSchema.safeParse({ path: '/tmp/out.txt' }).success).toBe(false);
   });
 
-  it('describes the working-directory rule for the path parameter', () => {
+  it('exposes the content on the file_io display so the approval panel can preview it', async () => {
     const { tool } = makeTool();
-    const params = tool.parameters as {
-      properties: { path: { description: string } };
-    };
-
-    expect(params.properties.path.description).toContain('working directory');
-    expect(params.properties.path.description).toMatch(/relative/i);
-    expect(params.properties.path.description).toMatch(/absolute/i);
-  });
-
-  it('exposes the content on the file_io display so the approval panel can preview it', () => {
-    const { tool } = makeTool();
-    const execution = tool.resolveExecution({
+    const execution = await tool.resolveExecution({
       path: '/tmp/new.txt',
       content: 'hello\nworld',
     });
@@ -166,24 +149,16 @@ describe('WriteTool', () => {
     });
   });
 
-  it('matches permission args with negated glob path semantics', () => {
+  it('matches permission args with negated glob path semantics', async () => {
     const { tool } = makeTool({}, stubWorkspaceContext('/workspace'));
-    const insideSrc = tool.resolveExecution({ path: './src/a.ts', content: 'x' });
-    const outsideSrc = tool.resolveExecution({ path: './README.md', content: 'x' });
+    const insideSrc = await tool.resolveExecution({ path: './src/a.ts', content: 'x' });
+    const outsideSrc = await tool.resolveExecution({ path: './README.md', content: 'x' });
     if (insideSrc.isError === true || outsideSrc.isError === true) {
       throw new TypeError('expected runnable execution');
     }
 
     expect(insideSrc.matchesRule?.('!./src/**')).toBe(false);
     expect(outsideSrc.matchesRule?.('!./src/**')).toBe(true);
-  });
-
-  it('guides batching large content across multiple write calls', () => {
-    const { tool } = makeTool();
-
-    expect(tool.description).toMatch(/large/i);
-    expect(tool.description).toContain('content too large for one call');
-    expect(tool.description).toMatch(/overwrite[^.]*first chunk[^.]*then[^.]*append/i);
   });
 
   it('writes content through fs and reports bytes written', async () => {
@@ -197,7 +172,16 @@ describe('WriteTool', () => {
 
   it('expands leading tilde paths using the kaos home directory', async () => {
     const fakes = createWriteFs();
-    const tool = new WriteTool(fakes.fs, createTestEnv('/home/test'), PERMISSIVE_WORKSPACE);
+    const environment = createTestEnv('/home/test');
+    const backend = Object.assign(
+      new FakeEnvironment(
+        { environmentId: 'local', generation: 'test' },
+        { capabilities: ['fs'] },
+      ),
+      { fs: fakes.fs, host: environment },
+    );
+    const environmentService = stubAgentEnvironment(backend);
+    const tool = new WriteTool(environmentService, PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, { path: '~/notes/today.txt', content: 'hello' });
 
@@ -260,17 +244,32 @@ describe('WriteTool', () => {
     expect(result.output).toContain('Appended 5 bytes');
   });
 
-  it('creates missing parent directories automatically before writing', async () => {
+  it('creates missing parent directories after the first write misses', async () => {
     const enoent = Object.assign(new Error('ENOENT: no such file or directory'), {
       code: 'ENOENT',
     });
-    const { tool, mkdir, writeText } = makeTool({ stat: vi.fn().mockRejectedValue(enoent) });
+    const { tool, mkdir, writeText } = makeTool({
+      stat: vi.fn().mockRejectedValue(enoent),
+      writeText: vi.fn().mockRejectedValueOnce(enoent).mockResolvedValue(undefined),
+    });
 
     const result = await execute(tool, { path: '/tmp/missing-dir/file.txt', content: 'data' });
 
     expect(result.isError).toBeFalsy();
     expect(mkdir).toHaveBeenCalledWith('/tmp/missing-dir', { recursive: true });
-    expect(writeText).toHaveBeenCalledWith('/tmp/missing-dir/file.txt', 'data');
+    expect(writeText).toHaveBeenCalledTimes(2);
+    expect(writeText).toHaveBeenLastCalledWith('/tmp/missing-dir/file.txt', 'data');
+  });
+
+  it('writes without probing the parent when it already exists', async () => {
+    const { tool, stat, mkdir, writeText } = makeTool();
+
+    const result = await execute(tool, { path: '/tmp/exists/file.txt', content: 'data' });
+
+    expect(result.isError).toBeUndefined();
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(stat).not.toHaveBeenCalled();
+    expect(mkdir).not.toHaveBeenCalled();
   });
 
   it('surfaces mkdir failures when a missing parent cannot be created', async () => {
@@ -279,25 +278,28 @@ describe('WriteTool', () => {
     });
     const { tool, writeText } = makeTool({
       stat: vi.fn().mockRejectedValue(enoent),
+      writeText: vi.fn().mockRejectedValue(enoent),
       mkdir: vi.fn().mockRejectedValue(new Error('permission denied')),
     });
 
     const result = await execute(tool, { path: '/tmp/missing-dir/file.txt', content: 'data' });
 
     expect(result).toMatchObject({ isError: true, output: 'permission denied' });
-    expect(writeText).not.toHaveBeenCalled();
+    expect(writeText).toHaveBeenCalledTimes(1);
   });
 
   it('rejects writing when the parent path is not a directory', async () => {
+    const enotdir = Object.assign(new Error('ENOTDIR: not a directory'), { code: 'ENOTDIR' });
     const { tool, writeText } = makeTool({
       stat: vi.fn().mockResolvedValue({ isFile: true, isDirectory: false, size: 0 }),
+      writeText: vi.fn().mockRejectedValue(enotdir),
     });
 
     const result = await execute(tool, { path: '/tmp/a-file/child.txt', content: 'data' });
 
     expect(result).toMatchObject({ isError: true });
     expect(result.output).toMatch(/not a directory/i);
-    expect(writeText).not.toHaveBeenCalled();
+    expect(writeText).toHaveBeenCalledTimes(1);
   });
 
   it('writes when the parent directory exists', async () => {

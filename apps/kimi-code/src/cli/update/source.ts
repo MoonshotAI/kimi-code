@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
 
 import { getHostPackageRoot } from '#/cli/version';
+import { resolveCommandPath } from '#/utils/process/resolve-command';
 
 import { NPM_PACKAGE_NAME, type InstallSource } from './types';
 
@@ -70,10 +71,22 @@ export interface DetectInstallSourceDeps {
   readonly getGlobalPrefix: () => Promise<string>;
   readonly detectNative: () => boolean;
   readonly platform: NodeJS.Platform;
+  readonly allowGlobalPrefix?: boolean;
 }
 
 function npmCommand(platform: NodeJS.Platform): string {
   return platform === 'win32' ? 'npm.cmd' : 'npm';
+}
+
+// The install-source detection runs before the workspace trust gate, so the
+// npm binary must be resolved through PATH to an absolute path — a bare name
+// would let cmd.exe pick up an `npm.cmd` planted in the current directory.
+function npmGlobalPrefix(platform: NodeJS.Platform): Promise<string> {
+  const resolved = resolveCommandPath(npmCommand(platform));
+  if (resolved === undefined) {
+    return Promise.reject(new Error('npm was not found in PATH'));
+  }
+  return execFileText(resolved, ['prefix', '-g']).then((text) => text.trim());
 }
 
 function execFileText(command: string, args: readonly string[]): Promise<string> {
@@ -132,24 +145,39 @@ export function classifyInstallSource(
   return 'unsupported';
 }
 
+export function detectInstallSource(
+  deps: Partial<DetectInstallSourceDeps> & { readonly allowGlobalPrefix: false },
+): Promise<InstallSource | null>;
+export function detectInstallSource(
+  deps?: Partial<Omit<DetectInstallSourceDeps, 'allowGlobalPrefix'>> & {
+    readonly allowGlobalPrefix?: true;
+  },
+): Promise<InstallSource>;
+export function detectInstallSource(
+  deps: Partial<DetectInstallSourceDeps> & { readonly allowGlobalPrefix: boolean },
+): Promise<InstallSource | null>;
+export function detectInstallSource(
+  deps?: Partial<DetectInstallSourceDeps>,
+): Promise<InstallSource | null>;
 export async function detectInstallSource(
   deps: Partial<DetectInstallSourceDeps> = {},
-): Promise<InstallSource> {
+): Promise<InstallSource | null> {
   const platform = deps.platform ?? process.platform;
   const resolved: DetectInstallSourceDeps = {
     getPackageRoot: deps.getPackageRoot ?? getHostPackageRoot,
     getGlobalPrefix:
       deps.getGlobalPrefix ??
-      (() => execFileText(npmCommand(platform), ['prefix', '-g']).then((text) => text.trim())),
+      (() => npmGlobalPrefix(platform)),
     detectNative: deps.detectNative ?? detectNativeInstall,
     platform,
+    allowGlobalPrefix: deps.allowGlobalPrefix ?? true,
   };
 
   if (resolved.detectNative()) return 'native';
 
   const packageRoot = resolved.getPackageRoot();
   const heuristic = classifyByPathHeuristic(packageRoot);
-  if (heuristic !== null) return heuristic;
+  if (heuristic !== null || !resolved.allowGlobalPrefix) return heuristic;
 
   try {
     const globalPrefix = await resolved.getGlobalPrefix();

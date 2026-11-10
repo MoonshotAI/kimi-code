@@ -1,15 +1,3 @@
-/**
- * Scenario: SYSTEM.md prompt-override profile — file tolerance (missing /
- * empty / unreadable → no profile), synthesized profile shape (default name +
- * override opt-in, description/tools inherited from the builtin default), and
- * template rendering through the shared variable table (`${skills}` gating,
- * `${base_prompt}`, `${plugin_sections}`, `${additional_dirs_info}`). Pure
- * logic against real temp dirs plus a targeted fake fs for the read-failure
- * path.
- * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/app/agentFileCatalog/systemFile.test.ts`.
- */
-
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
@@ -18,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   DEFAULT_AGENT_PROFILE_NAME,
+  normalizeAgentProfile,
   type AgentProfile,
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import {
@@ -30,13 +19,13 @@ import { HostFsError, OsFsErrors } from '#/os/interface/hostFsErrors';
 
 const hostFs = new HostFileSystem();
 
-const BUILTIN_DEFAULT: AgentProfile = {
+const BUILTIN_DEFAULT: AgentProfile = normalizeAgentProfile({
   name: DEFAULT_AGENT_PROFILE_NAME,
   description: 'builtin default description',
   tools: ['Read', 'Skill', 'Bash'],
   disallowedTools: ['Write'],
   systemPrompt: () => 'BUILTIN PROMPT',
-};
+});
 
 function collectWarnings(): { warnings: string[]; warn: (message: string) => void } {
   const warnings: string[] = [];
@@ -45,6 +34,14 @@ function collectWarnings(): { warnings: string[]; warn: (message: string) => voi
 
 describe('loadSystemMdProfile', () => {
   let home: string;
+
+  function loadProfile(
+    fs: IHostFileSystem,
+    builtinDefault: AgentProfile,
+    warn: (message: string) => void,
+  ) {
+    return loadSystemMdProfile(fs, home, builtinDefault, warn);
+  }
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'system-md-'));
@@ -56,14 +53,14 @@ describe('loadSystemMdProfile', () => {
 
   it('returns undefined when SYSTEM.md does not exist', async () => {
     const { warnings, warn } = collectWarnings();
-    expect(await loadSystemMdProfile(hostFs, home, BUILTIN_DEFAULT, warn)).toBeUndefined();
+    expect(await loadProfile(hostFs, BUILTIN_DEFAULT, warn)).toBeUndefined();
     expect(warnings).toEqual([]);
   });
 
   it('returns undefined when SYSTEM.md is empty or whitespace-only', async () => {
     await writeFile(join(home, SYSTEM_MD_FILENAME), ' \n\n');
     const { warn } = collectWarnings();
-    expect(await loadSystemMdProfile(hostFs, home, BUILTIN_DEFAULT, warn)).toBeUndefined();
+    expect(await loadProfile(hostFs, BUILTIN_DEFAULT, warn)).toBeUndefined();
   });
 
   it('degrades to a warning when the file cannot be read', async () => {
@@ -76,7 +73,7 @@ describe('loadSystemMdProfile', () => {
     } as unknown as IHostFileSystem;
     const { warnings, warn } = collectWarnings();
 
-    expect(await loadSystemMdProfile(unreadableFs, home, BUILTIN_DEFAULT, warn)).toBeUndefined();
+    expect(await loadProfile(unreadableFs, BUILTIN_DEFAULT, warn)).toBeUndefined();
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain('SYSTEM.md');
   });
@@ -92,7 +89,7 @@ describe('loadSystemMdProfile', () => {
     } as unknown as IHostFileSystem;
     const { warnings, warn } = collectWarnings();
 
-    expect(await loadSystemMdProfile(unreadableFs, home, BUILTIN_DEFAULT, warn)).toBeUndefined();
+    expect(await loadProfile(unreadableFs, BUILTIN_DEFAULT, warn)).toBeUndefined();
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain('SYSTEM.md');
   });
@@ -101,7 +98,7 @@ describe('loadSystemMdProfile', () => {
     await writeFile(join(home, SYSTEM_MD_FILENAME), 'You are a custom main agent.');
     const { warn } = collectWarnings();
 
-    const profile = await loadSystemMdProfile(hostFs, home, BUILTIN_DEFAULT, warn);
+    const profile = await loadProfile(hostFs, BUILTIN_DEFAULT, warn);
 
     expect(profile?.name).toBe(DEFAULT_AGENT_PROFILE_NAME);
     expect(profile?.override).toBe(true);
@@ -113,15 +110,15 @@ describe('loadSystemMdProfile', () => {
 
   it('empties ${skills} when the builtin default disables the Skill tool', async () => {
     await writeFile(join(home, SYSTEM_MD_FILENAME), 'skills=${skills}');
-    const noSkillBuiltin: AgentProfile = {
+    const noSkillBuiltin: AgentProfile = normalizeAgentProfile({
       name: DEFAULT_AGENT_PROFILE_NAME,
       description: 'builtin without Skill',
       tools: ['Read', 'Bash'],
       systemPrompt: () => 'BUILTIN PROMPT',
-    };
+    });
     const { warn } = collectWarnings();
 
-    const profile = await loadSystemMdProfile(hostFs, home, noSkillBuiltin, warn);
+    const profile = await loadProfile(hostFs, noSkillBuiltin, warn);
 
     expect(profile?.systemPrompt({ skills: 'SKILLS' })).toBe('skills=');
   });
@@ -130,7 +127,7 @@ describe('loadSystemMdProfile', () => {
     await writeFile(join(home, SYSTEM_MD_FILENAME), 'custom header\n\n${base_prompt}');
     const { warn } = collectWarnings();
 
-    const profile = await loadSystemMdProfile(hostFs, home, BUILTIN_DEFAULT, warn);
+    const profile = await loadProfile(hostFs, BUILTIN_DEFAULT, warn);
 
     expect(profile?.systemPrompt({})).toBe('custom header\n\nBUILTIN PROMPT');
   });
@@ -139,7 +136,7 @@ describe('loadSystemMdProfile', () => {
     await writeFile(join(home, SYSTEM_MD_FILENAME), 'before\n${plugin_sections}after');
     const { warn } = collectWarnings();
 
-    const profile = await loadSystemMdProfile(hostFs, home, BUILTIN_DEFAULT, warn);
+    const profile = await loadProfile(hostFs, BUILTIN_DEFAULT, warn);
     const prompt = profile?.systemPrompt({ pluginSections: 'PLUGIN_INSTRUCTIONS' });
 
     expect(prompt).toContain('before');
@@ -152,7 +149,7 @@ describe('loadSystemMdProfile', () => {
     await writeFile(join(home, SYSTEM_MD_FILENAME), 'dirs=${additional_dirs_info}');
     const { warn } = collectWarnings();
 
-    const profile = await loadSystemMdProfile(hostFs, home, BUILTIN_DEFAULT, warn);
+    const profile = await loadProfile(hostFs, BUILTIN_DEFAULT, warn);
 
     expect(profile?.systemPrompt({ additionalDirsInfo: '/extra' })).toBe('dirs=/extra');
   });

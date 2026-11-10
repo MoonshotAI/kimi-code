@@ -2,31 +2,103 @@
  * Renders a user message in the transcript.
  */
 
-import { Spacer, Text, truncateToWidth, visibleWidth, type Component } from '@moonshot-ai/pi-tui';
+import {
+  Spacer,
+  Text,
+  truncateToWidth,
+  visibleWidth,
+  wrapTextWithAnsi,
+  type Component,
+} from '@moonshot-ai/pi-tui';
 
 import { ImageThumbnail } from '#/tui/components/media/image-thumbnail';
 import { USER_MESSAGE_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import type { ImageAttachment } from '#/tui/utils/image-attachment-store';
+import { findInlineSkillTokens } from '#/tui/utils/inline-skill-tokens';
+import { markOsc133Zone } from '#/tui/utils/osc133';
 import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
+
+export function firstContentLineIndex(lines: string[]): number {
+  let first = 0;
+  while (first < lines.length && lines[first]!.trim() === '') first++;
+  return first;
+}
+
+export function userMessageLineHeights(text: string, width: number, bullet?: string): number[] {
+  const marker = bullet ?? USER_MESSAGE_BULLET;
+  const contentWidth = Math.max(1, width - visibleWidth(marker));
+  const lines = text.split(/\r?\n/);
+  return lines
+    .slice(firstContentLineIndex(lines))
+    .map((line) => wrapTextWithAnsi(line.replaceAll('\t', '   '), contentWidth).length);
+}
 
 export class UserMessageComponent implements Component {
   private text: string;
   private readonly bullet?: string;
+  private readonly skillNames?: readonly string[];
   private spacerComponent: Spacer;
   private imageThumbnails: ImageThumbnail[];
+  private steerPending: boolean;
 
   private renderCache: { width: number; lines: string[] } | undefined;
 
-  constructor(text: string, images?: ImageAttachment[], bullet?: string) {
+  constructor(
+    text: string,
+    images?: ImageAttachment[],
+    bullet?: string,
+    skillNames?: readonly string[],
+    steerPending = false,
+  ) {
     this.text = text;
     this.bullet = bullet;
+    this.skillNames = skillNames;
+    this.steerPending = steerPending;
     this.spacerComponent = new Spacer(1);
     this.imageThumbnails = images?.map((img) => new ImageThumbnail(img)) ?? [];
   }
 
   private markRenderDirty(): void {
     this.renderCache = undefined;
+  }
+
+  isSteerPending(): boolean {
+    return this.steerPending;
+  }
+
+  setSteerPending(pending: boolean): void {
+    if (this.steerPending === pending) return;
+    this.steerPending = pending;
+    this.markRenderDirty();
+  }
+
+  colorText(text: string): string {
+    const names = this.skillNames;
+    if (names === undefined || names.length === 0) {
+      return currentTheme.boldFg('roleUser', text);
+    }
+    const known = new Set(names.map(normalizeSkillTokenName));
+    const tokens = findInlineSkillTokens(text, {
+      isKnownSkill: (commandName) => known.has(normalizeSkillTokenName(commandName)),
+      includeLeading: true,
+    });
+    if (tokens.length === 0) {
+      return currentTheme.boldFg('roleUser', text);
+    }
+    const segments: string[] = [];
+    let cursor = 0;
+    for (const token of tokens) {
+      if (token.start > cursor) {
+        segments.push(currentTheme.boldFg('roleUser', text.slice(cursor, token.start)));
+      }
+      segments.push(currentTheme.boldFg('primary', text.slice(token.start, token.end)));
+      cursor = token.end;
+    }
+    if (cursor < text.length) {
+      segments.push(currentTheme.boldFg('roleUser', text.slice(cursor)));
+    }
+    return segments.join('');
   }
 
   invalidate(): void {
@@ -60,13 +132,11 @@ export class UserMessageComponent implements Component {
       lines.push(line);
     }
 
-    // Text is re-dyed from the current theme; invalidate() (theme change) clears
-    // the render cache so the new colours are picked up on the next render.
-    const coloredText = currentTheme.boldFg('roleUser', this.text);
-    const textLines = new Text(coloredText, 0, 0).render(contentWidth);
+    const textLines = new Text(this.colorText(this.text), 0, 0).render(contentWidth);
     for (let i = 0; i < textLines.length; i++) {
       const prefix = i === 0 ? bullet : ' '.repeat(bulletWidth);
-      lines.push(prefix + textLines[i]);
+      const line = prefix + textLines[i];
+      lines.push(this.steerPending ? currentTheme.fade(line) : line);
     }
 
     // Images — indented to align with text after the bullet
@@ -77,20 +147,26 @@ export class UserMessageComponent implements Component {
       }
     }
 
-    const rendered = lines.map((line) => {
-      // Inline image sequences (Kitty / iTerm2) carry their own placement
-      // information and have zero visible width, but pi-tui's truncateToWidth
-      // treats the embedded base64 payload as visible text and would chop the
-      // escape sequence in half, leaving garbage like "0m...". Skip truncation
-      // for those lines; the image itself already respects maxWidthCells.
-      if (isImageLine(line)) return line;
-      return truncateToWidth(line, safeWidth, '…');
-    });
+    const rendered = markOsc133Zone(
+      lines.map((line) => {
+        // Inline image sequences (Kitty / iTerm2) carry their own placement
+        // information and have zero visible width, but pi-tui's truncateToWidth
+        // treats the embedded base64 payload as visible text and would chop the
+        // escape sequence in half, leaving garbage like "0m...". Skip truncation
+        // for those lines; the image itself already respects maxWidthCells.
+        if (isImageLine(line)) return line;
+        return truncateToWidth(line, safeWidth, '…');
+      }),
+    );
     if (isRenderCacheEnabled()) {
       this.renderCache = { width: safeWidth, lines: rendered };
     }
     return rendered;
   }
+}
+
+function normalizeSkillTokenName(name: string): string {
+  return name.startsWith('skill:') ? name.slice('skill:'.length) : name;
 }
 
 function isImageLine(line: string): boolean {

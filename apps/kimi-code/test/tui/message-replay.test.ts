@@ -4,6 +4,8 @@ import type {
   AgentReplayRecord,
   BackgroundTaskInfo,
   ContentPart,
+  ContextMessage,
+  Event,
   GoalSnapshot,
   PromptOrigin,
   ResumedAgentState,
@@ -25,12 +27,20 @@ import {
 } from '#/tui/utils/transcript-window';
 import { ToolCallComponent } from '#/tui/components/messages/tool-call';
 import { ReadGroupComponent } from '#/tui/components/messages/read-group';
+import { replayBackgroundProjection } from '#/tui/utils/message-replay';
+import type { TaskNotificationOrigin } from '#/tui/utils/message-replay';
+import { isToolCallId, monotonicNow, phaseAt, type ToolCallId } from '#/tui/utils/turn-timeline';
 
 vi.mock('#/utils/open-url', () => ({ openUrl: vi.fn() }));
 
 type GoalReplayRecord = Extract<AgentReplayRecord, { type: 'goal_updated' }>;
 
 const REPLAY_TIME = 1_700_000_000_000;
+
+function callId(id: string): ToolCallId {
+  if (!isToolCallId(id)) throw new Error('a tool call id is never empty');
+  return id;
+}
 
 function stripAnsi(text: string): string {
   return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
@@ -58,6 +68,7 @@ function makeStartupInput(): KimiTUIStartupInput {
       skillsDirs: [],
       agent: undefined,
       agentFiles: [],
+      environment: undefined,
     },
     tuiConfig: {
       theme: 'dark',
@@ -65,6 +76,7 @@ function makeStartupInput(): KimiTUIStartupInput {
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
+      transcript: { toolCallDensity: 'compact', thinking: 'grouped' },
       statusLine: { items: null, command: null },
     },
     version: '0.0.0-test',
@@ -77,8 +89,9 @@ function message(
   content: readonly ContentPart[],
   extra: {
     readonly toolCalls?: readonly ToolCall[];
+    readonly toolCallDisplays?: ContextMessage['toolCallDisplays'];
     readonly toolCallId?: string;
-    readonly origin?: PromptOrigin;
+    readonly origin?: PromptOrigin | TaskNotificationOrigin;
     readonly isError?: boolean;
   } = {},
 ): AgentReplayRecord {
@@ -89,8 +102,9 @@ function message(
       role,
       content: [...content],
       toolCalls: [...(extra.toolCalls ?? [])],
+      toolCallDisplays: extra.toolCallDisplays,
       toolCallId: extra.toolCallId,
-      origin: extra.origin,
+      origin: extra.origin as PromptOrigin | undefined,
       isError: extra.isError,
     },
   };
@@ -198,6 +212,7 @@ function makeSession(
     getGoal: vi.fn(async () => ({ goal: null })),
     setApprovalHandler: vi.fn(),
     setQuestionHandler: vi.fn(),
+    setStaleReloadHandler: vi.fn(),
     setModel: vi.fn(async () => {}),
     setThinking: vi.fn(async () => {}),
     setPermission: vi.fn(async () => {}),
@@ -222,6 +237,8 @@ function makeHarness(initialSession: Session) {
       },
     })),
     setConfig: vi.fn(async () => ({ providers: {} })),
+    resolveSessionEnvironment: vi.fn(async () => ({ environmentId: 'local', cwd: undefined })),
+    onConfigSectionChanged: vi.fn(() => vi.fn()),
     createSession: vi.fn(async () => initialSession),
     resumeSession: vi.fn(async () => initialSession),
     forkSession: vi.fn(async () => initialSession),
@@ -318,6 +335,57 @@ describe('KimiTUI resume message replay', () => {
     expect(transcript).not.toContain('Goal complete');
   });
 
+  it('renders an uploaded image daemon ref as a bare placeholder on replay', async () => {
+    // An uploaded image persists as a self-contained `kimi-file://` part; on
+    // replay it renders as a bare `[image]` placeholder — neither the
+    // materialization path nor the internal url may surface.
+    const driver = await replayIntoDriver([
+      message(
+        'user',
+        [
+          { type: 'text', text: 'what is this? ' },
+          {
+            type: 'image_url',
+            imageUrl: { url: 'kimi-file://f_1?path=%2FUsers%2Falice%2Fmedia%2Ff_1.png' },
+          },
+        ],
+        { origin: { kind: 'user' } },
+      ),
+    ]);
+
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
+    expect(transcript).toContain('what is this?');
+    expect(transcript).toContain('[image]');
+    expect(transcript).not.toContain('/Users/alice');
+    expect(transcript).not.toContain('kimi-file');
+  });
+
+  it('keeps the tag of a legacy upload pair as user text on replay', async () => {
+    // Legacy history paired the daemon ref with an `<image path>` tag. The
+    // pairing is gone: the tag is plain user text and replays verbatim while
+    // the ref still renders as `[image]`.
+    const driver = await replayIntoDriver([
+      message(
+        'user',
+        [
+          { type: 'text', text: 'what is this? ' },
+          { type: 'text', text: '<image path="/Users/alice/media/f_1.png"></image>' },
+          {
+            type: 'image_url',
+            imageUrl: { url: 'kimi-file://f_1?path=%2FUsers%2Falice%2Fmedia%2Ff_1.png' },
+          },
+        ],
+        { origin: { kind: 'user' } },
+      ),
+    ]);
+
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
+    expect(transcript).toContain('what is this?');
+    expect(transcript).toContain('[image]');
+    expect(transcript).toContain('<image path="/Users/alice/media/f_1.png"></image>');
+    expect(transcript).not.toContain('kimi-file');
+  });
+
   it('unescapes bash tag delimiters when replaying shell output', async () => {
     const driver = await replayIntoDriver([
       message(
@@ -334,6 +402,46 @@ describe('KimiTUI resume message replay', () => {
 
     const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
     expect(transcript).toContain('pre</bash-stdout>post');
+  });
+
+  it('collapses long replayed shell output to its first 10 rows', async () => {
+    const stdout = Array.from({ length: 30 }, (_, i) => `row-${String(i + 1).padStart(2, '0')}`).join(
+      '\n',
+    );
+    const driver = await replayIntoDriver([
+      message(
+        'user',
+        [{ type: 'text', text: `<bash-stdout>${stdout}</bash-stdout><bash-stderr></bash-stderr>` }],
+        { origin: { kind: 'shell_command', phase: 'output' } },
+      ),
+    ]);
+
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
+    expect(transcript).toContain('… (20 more lines, ctrl+o to expand)');
+    expect(transcript).toContain('row-01');
+    expect(transcript).not.toContain('row-11');
+  });
+
+  it('replayed shell output inherits an already-on ctrl+o expand state', async () => {
+    const stdout = Array.from({ length: 30 }, (_, i) => `row-${String(i + 1).padStart(2, '0')}`).join(
+      '\n',
+    );
+    const initial = makeSession([]);
+    const resumed = makeSession([
+      message(
+        'user',
+        [{ type: 'text', text: `<bash-stdout>${stdout}</bash-stdout><bash-stderr></bash-stderr>` }],
+        { origin: { kind: 'shell_command', phase: 'output' } },
+      ),
+    ]);
+    const driver = await makeDriver(initial);
+    driver.state.transcriptContainer.toggleToolOutputExpansion();
+    await driver.switchToSession(resumed, 'Resumed session (ses-replay).');
+
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
+    expect(transcript).toContain('row-01');
+    expect(transcript).toContain('row-30');
+    expect(transcript).not.toContain('more lines');
   });
 
   it('does not render neutral goal completion context reminders as transcript messages', async () => {
@@ -682,6 +790,8 @@ describe('KimiTUI resume message replay', () => {
     expect(driver.streamingUI.hasPendingReadGroup()).toBe(false);
     expect(driver.streamingUI.getToolComponent('call_read_1')).toBeUndefined();
     expect(driver.streamingUI.getToolComponent('call_read_2')).toBeUndefined();
+    expect(phaseAt(driver.streamingUI.timeline.call(callId('call_read_1')), monotonicNow())).toEqual({ kind: 'history' });
+    expect(driver.streamingUI.timeline.turn()).toBeUndefined();
   });
 
   it('renders replayed AgentSwarm calls as compact result summaries', async () => {
@@ -759,25 +869,71 @@ describe('KimiTUI resume message replay', () => {
     expect(transcript).not.toContain('<agent_swarm_result>');
   });
 
-  it('hydrates todo and background snapshot state from resumed main agent', async () => {
-    const driver = await replayIntoDriver([], {
-      toolStore: {
-        todo: [
-          { title: 'Review resume snapshot', status: 'done' },
-          { title: 'Render replay transcript', status: 'in_progress' },
-          { title: '', status: 'pending' },
+  it('does not render replayed AgentSwarm calls rejected before any subagent started', async () => {
+    const replay: AgentReplayRecord[] = [
+      message('user', [{ type: 'text', text: 'use agentswarm to review the files' }]),
+      message('assistant', [], {
+        toolCalls: [
+          toolCall('call_swarm', 'AgentSwarm', {
+            description: 'Review changed files',
+            prompt_template: 'Review {{item}}',
+            items: ['src/a.ts', 'src/b.ts'],
+          }),
         ],
-      },
+      }),
+      message(
+        'tool',
+        [{
+          type: 'text',
+          text: 'Swarm mode is off, so AgentSwarm did not run and no subagents were started.',
+        }],
+        { toolCallId: 'call_swarm', isError: true },
+      ),
+      message('assistant', [{ type: 'text', text: 'Swarm mode is off. Run /swarm <task> to start it.' }]),
+    ];
+
+    const driver = await replayIntoDriver(replay);
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
+
+    expect(transcript).toContain('use agentswarm to review the files');
+    expect(transcript).toContain('Run /swarm <task> to start it.');
+    expect(transcript).not.toContain('Agent swarm');
+    expect(transcript).not.toContain('Review changed files');
+    expect(transcript).not.toContain('AgentSwarm did not run');
+    expect(driver.streamingUI.getToolComponent('call_swarm')).toBeUndefined();
+  });
+
+  it('keeps replayed AgentSwarm calls cancelled before any subagent started', async () => {
+    const replay: AgentReplayRecord[] = [
+      message('user', [{ type: 'text', text: 'review files with a swarm' }]),
+      message('assistant', [], {
+        toolCalls: [
+          toolCall('call_swarm', 'AgentSwarm', {
+            description: 'Review changed files',
+            items: ['src/a.ts', 'src/b.ts'],
+          }),
+        ],
+      }),
+      message('tool', [{ type: 'text', text: 'Aborted by the user' }], {
+        toolCallId: 'call_swarm',
+        isError: true,
+      }),
+    ];
+
+    const driver = await replayIntoDriver(replay);
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
+
+    expect(transcript).toContain('Agent swarm: ⊘ Aborted.');
+  });
+
+  it('hydrates background snapshot state from resumed main agent', async () => {
+    const driver = await replayIntoDriver([], {
       background: [
         backgroundTask('agent-bg1', 'Review long-running work', 'running'),
         backgroundTask('bash-bg1', 'Build package', 'completed'),
       ],
     });
 
-    expect(driver.state.todoPanel.getTodos()).toEqual([
-      { title: 'Review resume snapshot', status: 'done' },
-      { title: 'Render replay transcript', status: 'in_progress' },
-    ]);
     expect(driver.sessionEventHandler.backgroundTasks.has('agent-bg1')).toBe(true);
     expect(driver.sessionEventHandler.backgroundTasks.has('bash-bg1')).toBe(true);
     expect(driver.sessionEventHandler.backgroundTaskTranscriptedTerminal.has('bash-bg1')).toBe(true);
@@ -873,6 +1029,9 @@ describe('KimiTUI resume message replay', () => {
     ).toBe(false);
     expect(driver.sessionEventHandler.backgroundTaskTranscriptedTerminal.has('task-bg-timeout'))
       .toBe(true);
+    // An agent-kind task termination mounts no transcript card on its own —
+    // the subagent lifecycle path owns agent terminal cards, and here it is
+    // suppressed because the task was already transcripted as timed out.
     expect(
       driver.state.transcriptEntries.some(
         (entry) => entry.backgroundAgentStatus?.phase === 'failed',
@@ -904,6 +1063,46 @@ describe('KimiTUI resume message replay', () => {
     expect(status?.backgroundAgentStatus?.headline).toBe('bash task lost');
     expect(status?.backgroundAgentStatus?.detail).toContain('Background timestamp logger');
     expect(status?.backgroundAgentStatus?.headline).not.toContain('agent');
+  });
+
+  it('renders replayed v2 task notifications (task origin) as bash tasks', async () => {
+    const driver = await replayIntoDriver(
+      [
+        message(
+          'user',
+          [
+            {
+              type: 'text',
+              text: '<notification id="task:bash-done0000:completed" category="task" type="task.completed" source_kind="background_task" source_id="bash-done0000">\nTitle: Background process completed\n</notification>',
+            },
+          ],
+          {
+            origin: {
+              kind: 'task',
+              taskId: 'bash-done0000',
+              status: 'completed',
+              notificationId: 'task:bash-done0000:completed',
+            },
+          },
+        ),
+      ],
+      {
+        background: [backgroundTask('bash-done0000', 'Codex comment poller', 'completed')],
+      },
+    );
+
+    const status = driver.state.transcriptEntries.find(
+      (entry) => entry.backgroundAgentStatus !== undefined,
+    );
+
+    expect(status?.backgroundAgentStatus?.headline).toBe('bash task completed in background');
+    expect(status?.backgroundAgentStatus?.detail).toContain('Codex comment poller');
+    // The raw notification XML must not leak into the visible transcript.
+    expect(
+      driver.state.transcriptEntries.some(
+        (entry) => entry.kind === 'user' && entry.content.includes('<notification'),
+      ),
+    ).toBe(false);
   });
 
   it('renders only the most recent ten visible user turns', async () => {
@@ -982,6 +1181,52 @@ describe('KimiTUI resume message replay', () => {
     ).toEqual(['run nightly']);
   });
 
+  it('keeps the previous turn’s final answer visible when a cron turn follows in replay', async () => {
+    const cronFire =
+      '<cron-fire jobId="job-1" cron="*/5 * * * *" recurring="true" coalescedCount="1" stale="false">\n<prompt>\nrun nightly\n</prompt>\n</cron-fire>';
+    const driver = await replayIntoDriver([
+      message('user', [{ type: 'text', text: 'real prompt' }]),
+      message('assistant', [{ type: 'text', text: 'real answer' }]),
+      message('user', [{ type: 'text', text: cronFire }], {
+        origin: {
+          kind: 'cron_job',
+          jobId: 'job-1',
+          cron: '*/5 * * * *',
+          recurring: true,
+          coalescedCount: 1,
+          stale: false,
+        },
+      }),
+      message('assistant', [{ type: 'text', text: 'cron report part one' }]),
+      message('assistant', [{ type: 'text', text: 'cron report final' }]),
+    ]);
+
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(120).join('\n'));
+    expect(transcript).toContain('cron report final');
+    expect(transcript).toContain('real answer');
+  });
+
+  it('keeps the previous turn’s final answer visible when a task-notification turn follows in replay', async () => {
+    const driver = await replayIntoDriver([
+      message('user', [{ type: 'text', text: 'real prompt' }]),
+      message('assistant', [{ type: 'text', text: 'real answer' }]),
+      message('user', [{ type: 'text', text: 'task finished' }], {
+        origin: {
+          kind: 'task',
+          taskId: 'task-1',
+          status: 'completed',
+          notificationId: 'ntf-1',
+        },
+      }),
+      message('assistant', [{ type: 'text', text: 'task report part one' }]),
+      message('assistant', [{ type: 'text', text: 'task report final' }]),
+    ]);
+
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(120).join('\n'));
+    expect(transcript).toContain('task report final');
+    expect(transcript).toContain('real answer');
+  });
+
   it('renders cron_missed origin records during replay without exposing raw XML', async () => {
     const cronMissed =
       '<cron-fire jobId="job-2" missed="true" count="3">\n3 one-shot tasks missed while offline\n</cron-fire>';
@@ -1009,6 +1254,150 @@ describe('KimiTUI resume message replay', () => {
     ).toEqual(['3 one-shot tasks missed while offline']);
   });
 
+  it('renders a bundled skill prompt as one user entry without skill cards', async () => {
+    const driver = await replayIntoDriver([
+      message(
+        'user',
+        [
+          {
+            type: 'text',
+            text: 'expanded review instructions',
+            meta: { source: 'skill activation', activationId: 'act-1' },
+          } as ContentPart,
+          {
+            type: 'text',
+            text: 'expanded security instructions',
+            meta: { source: 'skill activation', activationId: 'act-2' },
+          } as ContentPart,
+          { type: 'text', text: 'please /skill:review and /skill:security' },
+        ],
+        {
+          origin: {
+            kind: 'user',
+            skillActivations: [
+              { activationId: 'act-1', skillName: 'review', skillPath: '/work/A/review/SKILL.md' },
+              { activationId: 'act-2', skillName: 'security', skillPath: '/work/B/security/SKILL.md' },
+            ],
+          } as PromptOrigin,
+        },
+      ),
+    ]);
+
+    const entries = driver.state.transcriptEntries;
+    expect(entries.map((entry) => entry.kind)).toEqual(['user']);
+    expect(entries[0]!.content).toBe('please /skill:review and /skill:security');
+    expect(entries[0]!.skillNames).toEqual(['review', 'security']);
+    expect(entries[0]!.inlineSkillActivations).toEqual([
+      { skillName: 'review', path: '/work/A/review/SKILL.md' },
+      { skillName: 'security', path: '/work/B/security/SKILL.md' },
+    ]);
+    expect(driver.sessionEventHandler.seenSkillActivationIds.has('act-1')).toBe(true);
+    expect(driver.sessionEventHandler.seenSkillActivationIds.has('act-2')).toBe(true);
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(120).join('\n'));
+    expect(transcript).toContain('please /skill:review and /skill:security');
+    expect(transcript).not.toContain('expanded review instructions');
+    expect(transcript).not.toContain('Activated skill');
+  });
+
+  it('strips unmarked leading skill parts of legacy bundled prompts', async () => {
+    const driver = await replayIntoDriver([
+      message(
+        'user',
+        [
+          { type: 'text', text: 'expanded legacy instructions' },
+          { type: 'text', text: 'please /commit' },
+        ],
+        {
+          origin: {
+            kind: 'user',
+            skillActivations: [{ activationId: 'act-3', skillName: 'commit' }],
+          } as PromptOrigin,
+        },
+      ),
+    ]);
+
+    const entries = driver.state.transcriptEntries;
+    expect(entries.map((entry) => entry.kind)).toEqual(['user']);
+    expect(entries[0]!.content).toBe('please /commit');
+    expect(entries[0]!.skillNames).toEqual(['commit']);
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(120).join('\n'));
+    expect(transcript).not.toContain('expanded legacy instructions');
+  });
+
+  it('replays a steered bundled prompt using the existing turn rule', async () => {
+    const driver = await replayIntoDriver([
+      message('user', [{ type: 'text', text: 'first prompt' }], { origin: { kind: 'user' } }),
+      message('assistant', [{ type: 'text', text: 'first answer' }]),
+      message(
+        'user',
+        [
+          {
+            type: 'text',
+            text: 'expanded review instructions',
+            meta: { source: 'skill activation', activationId: 'act-steer' },
+          } as ContentPart,
+          { type: 'text', text: 'steered /skill:review note' },
+        ],
+        {
+          origin: {
+            kind: 'user',
+            inTurn: true,
+            skillActivations: [{ activationId: 'act-steer', skillName: 'review' }],
+          } as PromptOrigin,
+        },
+      ),
+    ]);
+
+    const users = driver.state.transcriptEntries.filter((entry) => entry.kind === 'user');
+    expect(users.map((entry) => entry.content)).toEqual([
+      'first prompt',
+      'steered /skill:review note',
+    ]);
+    expect(users[1]!.turnId).not.toBe(users[0]!.turnId);
+    expect(users[1]!.skillNames).toEqual(['review']);
+  });
+
+  it('records live user-slash skill activations without rendering a card', async () => {
+    const driver = await makeDriver(makeSession([]));
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'skill.activated',
+        sessionId: 'ses-replay',
+        agentId: 'main',
+        activationId: 'act-live-user',
+        skillName: 'review',
+        skillArgs: 'src/app.ts',
+        trigger: 'user-slash',
+      } as Event,
+      () => {},
+    );
+
+    expect(driver.state.transcriptEntries).toEqual([]);
+    expect(driver.sessionEventHandler.seenSkillActivationIds.has('act-live-user')).toBe(true);
+  });
+
+  it('keeps rendering live model-tool skill activation cards', async () => {
+    const driver = await makeDriver(makeSession([]));
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'skill.activated',
+        sessionId: 'ses-replay',
+        agentId: 'main',
+        activationId: 'act-live-model',
+        skillName: 'review',
+        trigger: 'model-tool',
+      } as Event,
+      () => {},
+    );
+
+    expect(driver.state.transcriptEntries.map((entry) => entry.kind)).toEqual([
+      'skill_activation',
+    ]);
+    expect(driver.sessionEventHandler.seenSkillActivationIds.has('act-live-model')).toBe(true);
+  });
+
   it('renders user-slash skill activation once without exposing injected prompt text', async () => {
     const activation = message(
       'user',
@@ -1018,6 +1407,7 @@ describe('KimiTUI resume message replay', () => {
           kind: 'skill_activation',
           activationId: 'act-review',
           skillName: 'review',
+          skillPath: '/work/B/review/SKILL.md',
           skillArgs: 'src/app.ts',
           trigger: 'user-slash',
         },
@@ -1025,12 +1415,175 @@ describe('KimiTUI resume message replay', () => {
     );
 
     const driver = await replayIntoDriver([activation, activation]);
-    const transcript = driver.state.transcriptContainer.render(120).join('\n');
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(120).join('\n'));
 
-    expect(transcript).toContain('review');
-    expect(transcript).toContain('src/app.ts');
+    const entries = driver.state.transcriptEntries;
+    expect(entries.map((entry) => entry.kind)).toEqual(['user']);
+    expect(entries[0]!.content).toBe('/skill:review src/app.ts');
+    expect(entries[0]!.skillNames).toEqual(['review']);
+    expect(entries[0]!.inlineSkillActivations).toEqual([
+      { skillName: 'review', path: '/work/B/review/SKILL.md' },
+    ]);
+    expect(entries[0]!.skillActivationId).toBe('act-review');
+    expect(entries[0]!.skillName).toBe('review');
+    expect(entries[0]!.skillArgs).toBe('src/app.ts');
+    expect(entries[0]!.skillTrigger).toBe('user-slash');
+    expect(transcript).toContain('/skill:review src/app.ts');
     expect(transcript).not.toContain('Review the requested file');
-    expect(driver.sessionEventHandler.renderedSkillActivationIds.has('act-review')).toBe(true);
+    expect(transcript).not.toContain('Activated skill');
+    expect(driver.sessionEventHandler.seenSkillActivationIds.has('act-review')).toBe(true);
+  });
+
+  it('keeps full saved args when reconstructing the canonical skill command', async () => {
+    const longArgs = 'check ' + 'src/very/long/path/file.ts '.repeat(30).trim();
+    const driver = await replayIntoDriver([
+      message('user', [{ type: 'text', text: 'expanded skill body' }], {
+        origin: {
+          kind: 'skill_activation',
+          activationId: 'act-long',
+          skillName: 'review',
+          skillArgs: longArgs,
+          trigger: 'user-slash',
+        },
+      }),
+    ]);
+
+    const entries = driver.state.transcriptEntries;
+    expect(entries.map((entry) => entry.kind)).toEqual(['user']);
+    expect(entries[0]!.content).toBe(`/skill:review ${longArgs}`);
+    expect(entries[0]!.content).not.toContain('…');
+  });
+
+  it('reconstructs a bare canonical command when no args were saved', async () => {
+    const driver = await replayIntoDriver([
+      message('user', [{ type: 'text', text: 'expanded skill body' }], {
+        origin: {
+          kind: 'skill_activation',
+          activationId: 'act-bare',
+          skillName: 'commit',
+          trigger: 'user-slash',
+        },
+      }),
+    ]);
+
+    const entries = driver.state.transcriptEntries;
+    expect(entries.map((entry) => entry.kind)).toEqual(['user']);
+    expect(entries[0]!.content).toBe('/skill:commit');
+    expect(entries[0]!.skillNames).toEqual(['commit']);
+  });
+
+  it.each([
+    { skillArgs: undefined, expected: '/example' },
+    { skillArgs: 'inspect project', expected: '/example inspect project' },
+  ])('preserves recorded builtin command syntax in replay ($expected)', async ({ skillArgs, expected }) => {
+    const driver = await replayIntoDriver([
+      message('user', [{ type: 'text', text: 'expanded builtin skill body' }], {
+        origin: {
+          kind: 'skill_activation', activationId: 'act-builtin', skillName: 'example',
+          skillSource: 'builtin', skillArgs, trigger: 'user-slash',
+        },
+      }),
+    ]);
+    expect(driver.state.transcriptEntries.filter((entry) => entry.kind === 'user')).toEqual([
+      expect.objectContaining({ content: expected, skillNames: ['example'] }),
+    ]);
+  });
+
+  it('prefers explicitly saved caller text over the canonical reconstruction', async () => {
+    const driver = await replayIntoDriver([
+      message(
+        'user',
+        [
+          { type: 'text', text: 'expanded skill body' },
+          { type: 'text', text: '/review please check this carefully' },
+        ],
+        {
+          origin: {
+            kind: 'skill_activation',
+            activationId: 'act-caller',
+            skillName: 'review',
+            skillArgs: 'please check this carefully',
+            trigger: 'user-slash',
+          },
+        },
+      ),
+    ]);
+
+    const entries = driver.state.transcriptEntries;
+    expect(entries.map((entry) => entry.kind)).toEqual(['user']);
+    expect(entries[0]!.content).toBe('/review please check this carefully');
+    expect(entries[0]!.skillNames).toEqual(['review']);
+  });
+
+  it('keeps the skill command when an external activation carried attachments', async () => {
+    const driver = await replayIntoDriver([
+      message(
+        'user',
+        [
+          { type: 'text', text: 'expanded skill body' },
+          { type: 'text', text: 'Captured page evidence' },
+          { type: 'image_url', imageUrl: { url: 'kimi-file://file-evidence' } },
+        ] as ContentPart[],
+        {
+          origin: {
+            kind: 'skill_activation',
+            activationId: 'act-attachments',
+            skillName: 'review',
+            skillArgs: 'src/app.ts',
+            trigger: 'user-slash',
+          },
+        },
+      ),
+    ]);
+
+    const entries = driver.state.transcriptEntries;
+    expect(entries.map((entry) => entry.kind)).toEqual(['user']);
+    expect(entries[0]!.content).toBe('/skill:review src/app.ts Captured page evidence[image]');
+    expect(entries[0]!.skillNames).toEqual(['review']);
+  });
+
+  it('prepends the skill command when an external activation carried only text attachments', async () => {
+    const driver = await replayIntoDriver([
+      message(
+        'user',
+        [
+          { type: 'text', text: 'expanded skill body' },
+          { type: 'text', text: 'Captured page evidence' },
+        ],
+        {
+          origin: {
+            kind: 'skill_activation',
+            activationId: 'act-text-attachments',
+            skillName: 'review',
+            skillArgs: 'src/app.ts',
+            trigger: 'user-slash',
+          },
+        },
+      ),
+    ]);
+
+    const entries = driver.state.transcriptEntries;
+    expect(entries.map((entry) => entry.kind)).toEqual(['user']);
+    expect(entries[0]!.content).toBe('/skill:review src/app.ts Captured page evidence');
+    expect(entries[0]!.skillNames).toEqual(['review']);
+  });
+
+  it('keeps rendering replayed model-tool skill activation cards', async () => {
+    const driver = await replayIntoDriver([
+      message('user', [{ type: 'text', text: 'expanded skill body' }], {
+        origin: {
+          kind: 'skill_activation',
+          activationId: 'act-model',
+          skillName: 'review',
+          trigger: 'model-tool',
+        },
+      }),
+    ]);
+
+    const entries = driver.state.transcriptEntries;
+    expect(entries.map((entry) => entry.kind)).toEqual(['skill_activation']);
+    expect(entries[0]!.skillName).toBe('review');
+    expect(driver.sessionEventHandler.seenSkillActivationIds.has('act-model')).toBe(true);
   });
 
   it('renders replayed hook results as assistant transcript entries', async () => {
@@ -1042,6 +1595,34 @@ describe('KimiTUI resume message replay', () => {
       message('user', [{ type: 'text', text: hookResult }], {
         origin: { kind: 'hook_result', event: 'UserPromptSubmit' },
       }),
+      message('user', [
+        {
+          type: 'text',
+          text: '<hook_result hook_event="UserPromptSubmit">\nmerged hook note\n</hook_result>',
+          meta: { contentType: 'text/xml', source: 'user prompt submit hook' },
+        } as ContentPart,
+        { type: 'text', text: 'merged prompt' },
+      ]),
+      message(
+        'user',
+        [
+          {
+            type: 'text',
+            text: '<hook_result hook_event="UserPromptSubmit">\nskill hook note\n</hook_result>',
+            meta: { contentType: 'text/xml', source: 'user prompt submit hook' },
+          } as ContentPart,
+          { type: 'text', text: 'Review the requested file.' },
+        ],
+        {
+          origin: {
+            kind: 'skill_activation',
+            activationId: 'act-review',
+            skillName: 'review',
+            skillArgs: 'src/app.ts',
+            trigger: 'user-slash',
+          },
+        },
+      ),
     ]);
 
     const transcript = driver.state.transcriptContainer.render(120).join('\n');
@@ -1049,6 +1630,13 @@ describe('KimiTUI resume message replay', () => {
     expect(transcript).toContain('UserPromptSubmit hook');
     expect(transcript).toContain('hook response 1');
     expect(transcript).toContain('hook response 2');
+    expect(transcript).toContain('merged hook note');
+    expect(transcript).toContain('skill hook note');
+    expect(
+      driver.state.transcriptEntries
+        .filter((entry) => entry.kind === 'user')
+        .map((entry) => entry.content),
+    ).toEqual(['prompt', 'merged prompt', '/skill:review src/app.ts']);
   });
 
   it('renders replayed compaction records as completed compaction blocks', async () => {
@@ -1103,7 +1691,7 @@ describe('KimiTUI resume message replay', () => {
       },
     ]);
     const driver = await makeDriver(initial);
-    driver.state.toolOutputExpanded = true;
+    driver.state.transcriptContainer.toggleToolOutputExpansion();
     await driver.switchToSession(resumed, 'Resumed session (ses-replay).');
 
     const transcript = stripAnsi(driver.state.transcriptContainer.render(120).join('\n'));
@@ -1163,9 +1751,9 @@ describe('KimiTUI resume message replay', () => {
     const transcript = driver.state.transcriptContainer.render(120).join('\n');
 
     expect(transcript).toContain('Plan mode: ON');
-    expect(transcript).toContain('Permission mode: auto');
-    expect(transcript).toContain('YOLO mode: ON');
-    expect(transcript).toContain('YOLO mode: OFF');
+    expect(transcript).toContain('Permission mode: Never Ask');
+    expect(transcript).toContain('Ask When Needed mode: ON');
+    expect(transcript).toContain('Ask When Needed mode: OFF');
     expect(transcript).toContain('Approved for session: run command');
     expect(transcript).toContain('Plan mode: OFF');
   });
@@ -1310,5 +1898,61 @@ describe('KimiTUI resume message replay', () => {
     const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
     expect(transcript).not.toContain('final text 0');
     expect(transcript).toContain('final text 4');
+  });
+});
+
+describe('replayBackgroundProjection', () => {
+  function agentTask(overrides: Record<string, unknown> = {}): BackgroundTaskInfo {
+    return {
+      taskId: 'agent-task1',
+      kind: 'agent',
+      agentId: 'agent-1',
+      description: 'background job',
+      status: 'running',
+      startedAt: 1,
+      endedAt: null,
+      ...overrides,
+    } as BackgroundTaskInfo;
+  }
+
+  it('threads the persisted model (catalog-mapped) and concrete effort into the metadata', () => {
+    const projection = replayBackgroundProjection(
+      [agentTask({ model: 'k2-cheap', thinkingEffort: 'low' })],
+      {
+        'k2-cheap': {
+          provider: 'managed:kimi-code',
+          model: 'kimi-k2-cheap',
+          displayName: 'Kimi K2 Cheap',
+        },
+      } as never,
+    );
+    expect(projection.backgroundAgentMetadata.get('agent-1')).toMatchObject({
+      model: 'Kimi K2 Cheap',
+      effort: 'low',
+    });
+  });
+
+  it('falls back to the raw alias and drops boolean effort states', () => {
+    const projection = replayBackgroundProjection([
+      agentTask({ model: 'k2-cheap', thinkingEffort: 'on' }),
+      agentTask({
+        taskId: 'agent-task2',
+        agentId: 'agent-2',
+        model: 'k2-cheap',
+        thinkingEffort: 'off',
+      }),
+    ]);
+    expect(projection.backgroundAgentMetadata.get('agent-1')).toMatchObject({
+      model: 'k2-cheap',
+      effort: undefined,
+    });
+    expect(projection.backgroundAgentMetadata.get('agent-2')?.effort).toBeUndefined();
+  });
+
+  it('omits model and effort for records that predate the fields', () => {
+    const projection = replayBackgroundProjection([agentTask()]);
+    const meta = projection.backgroundAgentMetadata.get('agent-1');
+    expect(meta?.model).toBeUndefined();
+    expect(meta?.effort).toBeUndefined();
   });
 });

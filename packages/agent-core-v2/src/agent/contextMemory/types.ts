@@ -1,17 +1,41 @@
-import type { ContentPart, Message } from '#/kosong/contract/message';
+import type { ContentPart, Message } from '#human/llm/message';
+import type { TokenUsage } from '#human/llm-requester/usage';
+import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import type { AgentTaskStatus } from '#/agent/task/task';
 
 export type SkillSource = 'project' | 'user' | 'extra' | 'builtin';
 
+export interface PromptFileAttachment {
+  readonly name: string;
+  readonly mediaType: string;
+  readonly size: number;
+  readonly path: string;
+}
+
 export interface UserPromptOrigin {
   readonly kind: 'user';
+  readonly inTurn?: true;
+  readonly clientMetadata?: readonly Readonly<Record<string, unknown>>[];
+  readonly skillActivations?: readonly BundledSkillActivation[];
+  readonly attachments?: readonly PromptFileAttachment[];
 }
 
 export const USER_PROMPT_ORIGIN: UserPromptOrigin = { kind: 'user' };
 
+export interface BundledSkillActivation {
+  readonly activationId: string;
+  readonly skillName: string;
+  readonly skillArgs?: string;
+  readonly skillType?: string;
+  readonly skillPath?: string;
+  readonly skillSource?: SkillSource;
+}
+
 export interface SkillActivationOrigin {
   readonly kind: 'skill_activation';
+  readonly inTurn?: true;
+  readonly clientMetadata?: readonly Readonly<Record<string, unknown>>[];
   readonly activationId: string;
   readonly skillName: string;
   readonly skillArgs?: string | undefined;
@@ -19,10 +43,12 @@ export interface SkillActivationOrigin {
   readonly skillType?: string | undefined;
   readonly skillPath?: string | undefined;
   readonly skillSource?: SkillSource | undefined;
+  readonly attachments?: readonly PromptFileAttachment[];
 }
 
 export interface PluginCommandOrigin {
   readonly kind: 'plugin_command';
+  readonly inTurn?: true;
   readonly activationId: string;
   readonly pluginId: string;
   readonly commandName: string;
@@ -34,6 +60,7 @@ export interface InjectionOrigin {
   readonly kind: 'injection';
   readonly variant: string;
   readonly ownerPromptId?: string;
+  readonly disclosure?: unknown;
 }
 
 export interface ShellCommandOrigin {
@@ -97,12 +124,23 @@ export type PromptOrigin =
   | HookResultOrigin
   | RetryOrigin;
 
+export interface ContextMessageTiming {
+  readonly llmFirstTokenLatencyMs?: number;
+  readonly llmStreamDurationMs?: number;
+}
+
 export type ContextMessage = Message & {
   readonly id?: string;
   readonly providerMessageId?: string;
+  readonly name?: string;
   readonly origin?: PromptOrigin | undefined;
   readonly isError?: boolean;
+  readonly partial?: boolean;
+  toolCallDisplays?: Record<string, ToolInputDisplay>;
   readonly note?: string;
+  readonly usage?: TokenUsage;
+  readonly llmTiming?: ContextMessageTiming;
+  readonly durationMs?: number;
 };
 
 export interface UserMessageRecord {

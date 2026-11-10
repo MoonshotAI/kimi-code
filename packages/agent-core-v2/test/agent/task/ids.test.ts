@@ -1,7 +1,7 @@
 import { Readable } from 'node:stream';
 import type { Writable } from 'node:stream';
 
-import type { IProcess } from '#/session/process/processRunner';
+import type { IHostProcess } from '#/os/interface/hostProcess';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -17,7 +17,7 @@ import { createAgentTaskPersistence } from './stubs';
 
 function registerProcess(
   manager: IAgentTaskService,
-  proc: IProcess,
+  proc: IHostProcess,
   command: string,
   description: string,
 ): string {
@@ -40,13 +40,14 @@ function agentTask(
   );
 }
 
-function pendingProcess(): IProcess & { resolve(code: number): void } {
+function pendingProcess(): IHostProcess & { resolve(code: number): void } {
   let resolveWait: (code: number) => void = () => {};
   const waitPromise = new Promise<number>((resolve) => {
     resolveWait = resolve;
   });
   let currentExitCode: number | null = null;
   return {
+    _serviceBrand: undefined,
     stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
     stdout: Readable.from([]),
     stderr: Readable.from([]),
@@ -55,8 +56,8 @@ function pendingProcess(): IProcess & { resolve(code: number): void } {
       return currentExitCode;
     },
     wait: () => waitPromise,
-    kill: vi.fn().mockResolvedValue(undefined) as IProcess['kill'],
-    dispose: vi.fn().mockResolvedValue(undefined) as IProcess['dispose'],
+    kill: vi.fn().mockResolvedValue(undefined) as IHostProcess['kill'],
+    dispose: vi.fn().mockResolvedValue(undefined) as IHostProcess['dispose'],
     resolve(code: number): void {
       currentExitCode = code;
       resolveWait(code);

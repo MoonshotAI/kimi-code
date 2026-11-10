@@ -1,0 +1,1 @@
+Read the current goal: its objective, completion criterion, status, budgets with what remains of each, and the terminal reason once it has stopped. Returns `{ "goal": null }` when there is no current goal.

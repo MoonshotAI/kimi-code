@@ -28,8 +28,8 @@ async function withRetry<T>(fn: () => Promise<T>, stats: { retries: number }, de
   for (;;) {
     try {
       return await fn();
-    } catch (e) {
-      if (!isLockError(e) || Date.now() > deadline) throw e;
+    } catch (error) {
+      if (!isLockError(error) || Date.now() > deadline) throw error;
       stats.retries++;
       await sleep(20 + Math.floor(Math.random() * 60));
     }
@@ -223,11 +223,25 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (mode === 'compound-defs') {
+    // compound-defs <dir> <shardCount> <create|drop> — change ONLY the
+    // compound index definitions (sidecar rewrites, no data writes), so the
+    // parent can verify its cached shard reader detects the change purely
+    // from the file fingerprint.
+    const [dir, shardCount, action] = rest;
+    const db = await ClusterDb.open({ dir: dir!, shardCount: Number(shardCount), valueCodec: 'json', lockHoldMs: 0 });
+    if (action === 'create') await db.createCompoundIndex('cg', { groupBy: 'c', orderBy: 'n' });
+    else await db.dropCompoundIndex('cg');
+    out({ ok: 1, mode, action });
+    await db.close();
+    return;
+  }
+
   out({ ok: 0, error: `unknown mode: ${mode}` });
   process.exit(1);
 }
 
-main().catch((e) => {
-  out({ ok: 0, mode, error: String(e && (e as Error).stack ? (e as Error).stack : e) });
+main().catch((error) => {
+  out({ ok: 0, mode, error: String(error && (error as Error).stack ? (error as Error).stack : error) });
   process.exit(1);
 });

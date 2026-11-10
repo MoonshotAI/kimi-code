@@ -1,42 +1,23 @@
-/**
- * `agentProfileCatalog` domain — shared prompt helpers for builtin profiles.
- *
- * Keeps the base system-prompt template and the task-agent role prefix in the
- * registry domain.
- *
- * All system-prompt rendering — the builtin template, `SYSTEM.md`, and agent
- * files — shares one `${var}` substitution pass over one variable table
- * ({@link systemPromptVars}); unknown placeholders stay verbatim. Conditional
- * sections (Windows notes, additional directories, skills, plugin
- * instructions) are composed here
- * as pre-rendered blocks because the renderer has no conditional syntax. Raw
- * context fields render as empty strings when missing and the composed
- * `*_section` / `windows_notes` blocks are empty unless their content exists,
- * so templates can place them on their own line without leaving stray
- * headings behind. Host-identity blocks (`product_name`, `reply_style_guide`)
- * work the same way: the context may carry overrides seeded by the embedding
- * host (e.g. a desktop app), and the table falls back to the CLI defaults
- * ({@link DEFAULT_PRODUCT_NAME}, {@link DEFAULT_REPLY_STYLE_GUIDE}) when it
- * does not. `renderPromptTemplate` renders a user-owned template (an
- * agent-file body or `SYSTEM.md`) against the table; `${base_prompt}` is
- * bound to the default profile's prompt when a `basePrompt` is given,
- * resolved lazily and only when the template actually references it. Also
- * shared: `skillActiveFor` (whether the Skill tool survives a profile's tool
- * list — drives skills injection) and the `subagents`-allowlist helpers
- * (`subagentAllowlistFor`, `subagentTypeNotAllowedMessage`).
- */
-
 import { renderPrompt } from '#/_base/utils/render-prompt';
 
-import type { AgentProfile, AgentProfileContext } from './agentProfileCatalog';
+import {
+  DEFAULT_AGENT_PROFILE_NAME,
+  type AgentProfile,
+  type AgentProfileContext,
+  type EnvironmentDisclosureSnapshot,
+  type SystemPromptRenderResult,
+} from './agentProfileCatalog';
+import { BUILTIN_AGENT_PROFILE_SOURCE_ID } from './builtinAgentProfileLoader';
 
 import SYSTEM_PROMPT_TEMPLATE from './system.md?raw';
+import CODING_SECTION from './coding.md?raw';
+import DELIVERING_WORK_SECTION from './delivering-work.md?raw';
+import READ_ONLY_DELIVERING_WORK_SECTION from './delivering-work-read-only.md?raw';
+import PROJECT_INFORMATION_SECTION from './project-information.md?raw';
 
 export const TASK_AGENT_ROLE_PREFIX =
-  'You are now running as a subagent. All the `user` messages are sent by the main agent. ' +
-  'The main agent cannot see your context, it can only see your last message when you finish the task. ' +
-  'You must treat the parent agent as your caller. Do not directly ask the end user questions. ' +
-  'If something is unclear, explain the ambiguity in your final summary to the parent agent.';
+  'You are a subagent; the main agent is your caller and all `user` messages come from it. ' +
+  'The main agent sees only your final message. Do not ask the end user questions; explain ambiguities in your final handoff.';
 
 export function skillActiveFor(tools: readonly string[]): boolean {
   return tools.includes('Skill');
@@ -50,8 +31,68 @@ export function subagentAllowlistFor(
     readonly profileName?: string;
     readonly subagents?: readonly string[];
   },
+  extras?: readonly string[],
 ): readonly string[] | undefined {
-  return caller.profileName === undefined ? catalog.getDefault().subagents : caller.subagents;
+  const declared = caller.subagents ?? catalog.getDefault().subagents;
+  if (declared?.length === 1 && declared[0] === '*') return undefined;
+  if (extras === undefined || extras.length === 0) return declared;
+  return [...new Set([...(declared ?? []), ...extras])];
+}
+
+export function isDiscoveredAgentProfileSource(sourceId: string | undefined): boolean {
+  return (
+    sourceId !== undefined &&
+    sourceId !== BUILTIN_AGENT_PROFILE_SOURCE_ID &&
+    !sourceId.startsWith('feature:')
+  );
+}
+
+export function rootDelegationExtras(
+  catalog: {
+    inspect(name: string): { readonly sourceId: string } | undefined;
+  },
+  caller: {
+    readonly profileName?: string;
+    readonly subagents?: readonly string[];
+  },
+  profiles: readonly { readonly name: string }[],
+): readonly string[] | undefined {
+  if (
+    caller.profileName !== undefined &&
+    caller.profileName !== DEFAULT_AGENT_PROFILE_NAME &&
+    caller.subagents !== undefined
+  ) {
+    return undefined;
+  }
+  const discovered = profiles
+    .filter(
+      (profile) =>
+        profile.name !== DEFAULT_AGENT_PROFILE_NAME &&
+        isDiscoveredAgentProfileSource(catalog.inspect(profile.name)?.sourceId),
+    )
+    .map((profile) => profile.name);
+  return discovered.length === 0 ? undefined : discovered;
+}
+
+export function profileCanDelegate(
+  profile: Pick<AgentProfile, 'tools' | 'disallowedTools'>,
+): boolean {
+  const possesses = (name: string) =>
+    (profile.tools === undefined || profile.tools.includes(name)) &&
+    !(profile.disallowedTools ?? []).includes(name);
+  return possesses('Agent') || possesses('AgentSwarm');
+}
+
+export function withoutDelegatingTargets(
+  catalog: {
+    get(name: string): Pick<AgentProfile, 'tools' | 'disallowedTools'> | undefined;
+  },
+  allowlist: readonly string[],
+): readonly string[] {
+  return allowlist.filter((name) => {
+    const target = catalog.get(name);
+    return target === undefined || !profileCanDelegate(target);
+  });
 }
 
 export function subagentTypeNotAllowedMessage(
@@ -68,14 +109,32 @@ const WINDOWS_NOTES =
 export const DEFAULT_PRODUCT_NAME = 'Kimi Code CLI';
 
 export const DEFAULT_REPLY_STYLE_GUIDE =
-  "Your text replies render as Markdown in the user's terminal. Use light Markdown that reads well there: short paragraphs, `-` bullets for lists, backticks for code, commands, paths, and identifiers, and fenced blocks for multi-line code. Keep structure shallow — avoid deep nesting, large tables, and heavy headings in ordinary replies. Do not use emoji unless the user does first or asks for it. Default to prose; reach for a list only when the content is genuinely a set of items or steps. When you point to a specific code location, cite it as `path/to/file.ts:42` — a precise, consistent reference the user can navigate to.";
+  "Your text replies render as Markdown in the user's terminal. Keep structure light and shallow — deep nesting, large tables, and heavy headings read poorly there. Cite code locations as `path/to/file.ts:42` so the user can navigate to them. Do not use emoji unless the user does first or asks for it.";
+
+export const NOTIFY_USER_GUIDANCE =
+  'When `NotifyUser` is available, use it proactively to keep the end user informed while you work: for a multi-step task, send an early update describing your approach, then report meaningful findings, phase conclusions, long waits, and blockers.';
+
+export const TODO_LIST_GUIDANCE =
+  'When you track work in `TodoList`, keep it in step with what you have actually done: mark an item done as soon as it is finished, before you start the next one, and make sure the list matches what you did before you write your final message.';
+
+export const PLAN_MODE_GUIDANCE =
+  'Plan mode is a read-only planning state that only the user can turn on (for example with Shift-Tab or `/plan` in the terminal); you cannot enter it yourself, so if asked, tell the user how. When they ask you to plan first, wait for their go-ahead before changing code.';
+
+export function renderAgentProfilePrompt(
+  profile: AgentProfile,
+  context: AgentProfileContext,
+): SystemPromptRenderResult {
+  const rendered = profile.renderSystemPrompt(context);
+  if (context.notifyUserActive !== true || rendered.text.includes(NOTIFY_USER_GUIDANCE)) return rendered;
+  return { ...rendered, text: `${rendered.text}\n\n${NOTIFY_USER_GUIDANCE}` };
+}
 
 const ADDITIONAL_DIRS_SECTION_PROSE =
   'The following directories have been added to the workspace. You can read, write, search, and glob files in these directories as part of your workspace scope.';
 
 const SKILLS_SECTION_PROSE =
   'Skills are reusable, composable capabilities that enhance your abilities. Each skill is either a self-contained directory with a `SKILL.md` file or a standalone `.md` file that contains instructions, examples, and/or reference material.\n\n' +
-  'Identify the skills relevant to your current task and read the skill file for its instructions; only read further skill details when needed, to conserve the context window.\n\n' +
+  'Identify the skills relevant to your current task and invoke them with the `Skill` tool; only read further skill details when needed, to conserve the context window.\n\n' +
   '## Available skills\n\n' +
   'Skills are grouped by scope (`Project`, `User`, `Extra`, `Built-in`) so you can tell where each came from. When the user refers to "the skill in this project" or "the user-scope skill", use the scope heading to disambiguate. When multiple scopes define a skill with the same name, the more specific scope takes precedence: **Project overrides User overrides Extra overrides Built-in**.';
 
@@ -84,7 +143,7 @@ const PLUGIN_SECTIONS_PROSE =
 
 export function systemPromptVars(
   context: AgentProfileContext,
-  options: { readonly skillActive: boolean },
+  options: { readonly skillActive: boolean; readonly readOnly?: boolean },
 ): Record<string, string> {
   const shellName = context.shellName ?? '';
   const shellPath = context.shellPath ?? '';
@@ -92,17 +151,39 @@ export function systemPromptVars(
   const skills = skillActive ? (context.skills ?? '') : '';
   const pluginSections = context.pluginSections ?? '';
   const additionalDirsInfo = context.additionalDirsInfo ?? '';
+  const agentsMd = context.agentsMd ?? '';
+  const todoListGuidance = context.todoListActive === true ? `${TODO_LIST_GUIDANCE}\n\n` : '';
+  const deliveringWorkSection =
+    options.readOnly === true
+      ? READ_ONLY_DELIVERING_WORK_SECTION
+      : renderPrompt(DELIVERING_WORK_SECTION, {
+          plan_mode_guidance: context.planModeAvailable === true ? `${PLAN_MODE_GUIDANCE}\n\n` : '',
+          todo_list_guidance: todoListGuidance,
+        });
   return {
     role_additional: '',
     product_name: context.productName ?? DEFAULT_PRODUCT_NAME,
     reply_style_guide: context.replyStyleGuide ?? DEFAULT_REPLY_STYLE_GUIDE,
+    notify_user_guidance: context.notifyUserActive === true ? ` ${NOTIFY_USER_GUIDANCE}` : '',
+    todo_list_guidance: todoListGuidance,
+    coding_section: options.readOnly === true ? '' : `${CODING_SECTION}\n`,
+    delivering_work_section: `${deliveringWorkSection}\n`,
     os: context.osKind ?? '',
     windows_notes: context.osKind === 'Windows' ? `\n\n${WINDOWS_NOTES}\n\n` : '',
     shell: shellName.length > 0 ? `${shellName} (\`${shellPath}\`)` : '',
-    now: context.now ?? new Date().toISOString(),
     cwd: context.cwd ?? '',
     cwd_listing: context.cwdListing ?? '',
-    agents_md: context.agentsMd ?? '',
+    agents_md: agentsMd,
+    agents_section:
+      agentsMd.length > 0 || options.readOnly !== true
+        ? renderPrompt(PROJECT_INFORMATION_SECTION, {
+            agents_md: agentsMd,
+            agents_md_update:
+              options.readOnly === true
+                ? ''
+                : ' If you change anything an `AGENTS.md` documents, update that `AGENTS.md` to match.',
+          })
+        : '',
     additional_dirs_info: additionalDirsInfo,
     additional_dirs_section:
       additionalDirsInfo.length > 0
@@ -118,26 +199,46 @@ export function systemPromptVars(
   };
 }
 
-export function renderPromptTemplate(
+export function renderPromptTemplateResult(
   template: string,
   context: AgentProfileContext,
-  options: { readonly skillActive: boolean },
-  basePrompt?: (context: AgentProfileContext) => string,
-): string {
+  options: { readonly skillActive: boolean; readonly readOnly?: boolean },
+  basePrompt?: (context: AgentProfileContext) => SystemPromptRenderResult,
+): SystemPromptRenderResult {
   const vars = systemPromptVars(context, options);
+  let baseResult: SystemPromptRenderResult | undefined;
   if (basePrompt !== undefined && template.includes('${base_prompt}')) {
-    vars['base_prompt'] = basePrompt(context);
+    baseResult = basePrompt(context);
+    vars['base_prompt'] = baseResult.text;
   }
-  return renderPrompt(template, vars);
+  return {
+    text: renderPrompt(template, vars),
+    environment: mergeEnvironmentDisclosure(environmentForTemplate(context), baseResult?.environment),
+  };
 }
 
-export function renderSystemPrompt(
+export function renderSystemPromptResult(
   roleAdditional: string,
   context: AgentProfileContext,
-  options: { readonly skillActive: boolean },
-): string {
-  return renderPrompt(SYSTEM_PROMPT_TEMPLATE, {
-    ...systemPromptVars(context, options),
-    role_additional: roleAdditional,
-  });
+  options: { readonly skillActive: boolean; readonly readOnly?: boolean },
+): SystemPromptRenderResult {
+  return {
+    text: renderPrompt(SYSTEM_PROMPT_TEMPLATE, {
+      ...systemPromptVars(context, options),
+      role_additional: roleAdditional,
+    }),
+    environment: environmentForTemplate(context),
+  };
+}
+
+function environmentForTemplate(context: AgentProfileContext): EnvironmentDisclosureSnapshot {
+  return { cwd: context.cwd ?? '' };
+}
+
+function mergeEnvironmentDisclosure(
+  direct: EnvironmentDisclosureSnapshot,
+  base: EnvironmentDisclosureSnapshot | undefined,
+): EnvironmentDisclosureSnapshot {
+  if (base === undefined) return direct;
+  return { cwd: direct.cwd || base.cwd };
 }

@@ -1,4 +1,4 @@
-import { copyFile, mkdir, stat } from 'node:fs/promises';
+import { copyFile, mkdir, readdir, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 import { fail, run, tryRun } from './exec.mjs';
@@ -33,13 +33,40 @@ async function copyNodeExecutable(target) {
   }
 }
 
+async function fileExists(path) {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function signtoolPath() {
+  const programFilesX86 = process.env['ProgramFiles(x86)'] ?? 'C:/Program Files (x86)';
+  const binRoot = resolve(programFilesX86, 'Windows Kits/10/bin');
+  const archDir = process.arch === 'arm64' ? 'arm64' : 'x64';
+  let versions;
+  try {
+    versions = (await readdir(binRoot)).filter((entry) => entry.startsWith('10.'));
+  } catch {
+    return null;
+  }
+  versions.sort((a, b) => b.localeCompare(a));
+  for (const version of versions) {
+    const candidate = resolve(binRoot, version, archDir, 'signtool.exe');
+    if (await fileExists(candidate)) return candidate;
+  }
+  return null;
+}
+
 async function removeSignatureIfNeeded(target) {
   const out = nativeBinPath(target);
   if (process.platform === 'darwin') {
     await tryRun('codesign', ['--remove-signature', out]);
   }
   if (process.platform === 'win32') {
-    await tryRun('signtool', ['remove', '/s', out]);
+    await tryRun((await signtoolPath()) ?? 'signtool', ['remove', '/s', out]);
   }
 }
 

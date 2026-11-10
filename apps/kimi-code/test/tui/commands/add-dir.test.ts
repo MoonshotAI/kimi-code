@@ -30,8 +30,6 @@ function makeHost(additionalDirs: readonly string[] = []) {
     },
     addAdditionalDir: vi.fn(async (path: string, options: { persist: boolean }) => ({
       additionalDirs: [...additionalDirs, path],
-      projectRoot: '/repo',
-      configPath: '/repo/.kimi-code/local.toml',
       persisted: options.persist,
     })),
   };
@@ -148,7 +146,7 @@ describe('handleAddDirCommand', () => {
     });
     await vi.waitFor(() => {
       expect(host.showStatus).toHaveBeenCalledWith(
-        'Added workspace directory:\n  ../shared\n  Saved to:\n  /repo/.kimi-code/local.toml',
+        'Added workspace directory:\n  ../shared\n  Remembered in the workspace registry',
         'success',
       );
     });
@@ -193,7 +191,6 @@ describe('handleAddDirCommand', () => {
     // Session-less v2: the path-adding form lazy-creates via ensureSession.
     Object.assign(host, {
       session: undefined,
-      engineV2: true,
       ensureSession: vi.fn(async () => {
         // A first prompt starts a turn while the session is being created.
         host.state.appState.streamingPhase = 'waiting';

@@ -1,19 +1,92 @@
-import type { Component } from '@moonshot-ai/pi-tui';
+import type { Component, TuiMouseEvent } from '@moonshot-ai/pi-tui';
 import { describe, expect, it, vi } from 'vitest';
 
 import { GutterContainer } from '#/tui/components/chrome/gutter-container';
+import { isRenderCacheEnabled, setRenderCacheEnabled } from '#/tui/utils/render-cache';
 
 class FakeChild implements Component {
-  constructor(
-    private readonly lines: (innerWidth: number) => string[],
-  ) {}
+  constructor(private readonly lines: (innerWidth: number) => string[]) {}
   invalidate(): void {}
   render(width: number): string[] {
     return this.lines(width);
   }
 }
 
+class MouseChild extends FakeChild {
+  readonly events: TuiMouseEvent[] = [];
+  handleMouse(event: TuiMouseEvent) {
+    this.events.push(event);
+    return { handled: true as const };
+  }
+}
+
+function clickAt(x: number, y: number, width: number, height: number): TuiMouseEvent {
+  return {
+    type: 'click',
+    button: 'left',
+    x,
+    y,
+    screenX: x,
+    screenY: y,
+    width,
+    height,
+    shift: false,
+    alt: false,
+    ctrl: false,
+    clickCount: 1,
+  };
+}
+
 describe('GutterContainer', () => {
+  it('exposes completed child geometry without rendering again and preserves it while heights stay equal', () => {
+    let lines = ['first'];
+    const render = vi.fn(() => lines);
+    const child = new FakeChild(render);
+    const container = new GutterContainer(2, 3);
+    container.addChild(child);
+    expect(container.getRenderedLayout()).toBeUndefined();
+    container.render(20);
+    const initial = container.getRenderedLayout();
+    expect(initial).toEqual({ contentWidth: 15, children: [{ component: child, height: 1 }] });
+    expect(render).toHaveBeenCalledTimes(1);
+
+    lines = ['updated'];
+    container.render(20);
+    expect(container.getRenderedLayout()).toBe(initial);
+    lines = ['first', 'second'];
+    container.render(20);
+    expect(container.getRenderedLayout()?.children[0]?.height).toBe(2);
+    expect(initial?.children[0]?.height).toBe(1);
+    const taller = container.getRenderedLayout();
+    container.render(21);
+    expect(container.getRenderedLayout()).not.toBe(taller);
+    expect(container.getRenderedLayout()?.contentWidth).toBe(16);
+
+    const replacement = new FakeChild(() => ['first', 'second']);
+    container.children[0] = replacement;
+    container.render(21);
+    expect(container.getRenderedLayout()?.children[0]?.component).toBe(replacement);
+    container.clear();
+    container.render(21);
+    expect(container.getRenderedLayout()?.children).toEqual([]);
+  });
+
+  it('records current geometry even with render caching disabled', () => {
+    const enabled = isRenderCacheEnabled();
+    setRenderCacheEnabled(false);
+    try {
+      const container = new GutterContainer(2, 2);
+      container.addChild(new FakeChild(() => ['one', 'two']));
+      container.render(20);
+      const initial = container.getRenderedLayout();
+      expect(initial?.children[0]?.height).toBe(2);
+      container.render(20);
+      expect(container.getRenderedLayout()).toBe(initial);
+    } finally {
+      setRenderCacheEnabled(enabled);
+    }
+  });
+
   it('prefixes every child line with `left` spaces', () => {
     const c = new GutterContainer(2, 2);
     c.addChild(new FakeChild(() => ['hello', 'world']));
@@ -53,5 +126,40 @@ describe('GutterContainer', () => {
     const c = new GutterContainer(2, 2);
     c.addChild(new FakeChild(() => [colored]));
     expect(c.render(20)).toEqual([`  ${colored}`]);
+  });
+
+  it('keeps a leading OSC 133 zone marker at byte 0, before the gutter', () => {
+    const c = new GutterContainer(2, 2);
+    const marked = `\u001B]133;A\u0007content`;
+    const doubleMarked = `\u001B]133;B\u0007\u001B]133;C\u0007last`;
+    c.addChild(new FakeChild(() => [marked, doubleMarked]));
+    expect(c.render(20)).toEqual([
+      `\u001B]133;A\u0007  content`,
+      `\u001B]133;B\u0007\u001B]133;C\u0007  last`,
+    ]);
+  });
+
+  it('translates mouse events into the inner coordinate frame', () => {
+    const child = new MouseChild(() => ['x']);
+    const c = new GutterContainer(2, 3);
+    c.addChild(child);
+
+    c.handleMouse(clickAt(5, 0, 20, 1));
+    expect(child.events).toHaveLength(1);
+    expect(child.events[0]).toMatchObject({ x: 3, width: 15 });
+  });
+
+  it('measures child heights at the inner width when hit-testing', () => {
+    const first = new MouseChild((w) => (w >= 19 ? ['a'] : ['a', 'a']));
+    const second = new MouseChild(() => ['b']);
+    const c = new GutterContainer(1, 1);
+    c.addChild(first);
+    c.addChild(second);
+
+    // Inner width is 17, where the first child wraps to two rows.
+    c.handleMouse(clickAt(3, 1, 19, 3));
+    expect(first.events).toHaveLength(1);
+    expect(first.events[0]).toMatchObject({ y: 1 });
+    expect(second.events).toHaveLength(0);
   });
 });

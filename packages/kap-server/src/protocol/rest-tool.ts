@@ -1,9 +1,3 @@
-/**
- *   GET  /v1/tools                       query: { session_id? }
- *   GET  /v1/mcp/servers
- *   POST /v1/mcp/servers/{mcp_server_id}:restart
- */
-
 import { z } from 'zod';
 
 import { mcpServerSchema, toolDescriptorSchema } from './tool';

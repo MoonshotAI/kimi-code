@@ -1,17 +1,4 @@
-/**
- * `workspaceAgentProfileLoader` domain — `IWorkspaceAgentProfileLoader` implementation.
- *
- * Discovers the workspace's agent files (`.kimi-code/agents`, `.agents/agents`
- * under the project root, resolved through `workspaceContext` and `hostFs`)
- * and registers them via the shared loader skeleton. `${base_prompt}` is
- * backed by the user loader's effective default profile. Watches the project
- * agent-root candidates through `hostFsWatch` (watched whether or not they
- * exist yet) and reloads debounced, so a project agent-file change
- * re-registers this contribution only. Bound at Workspace scope: the scan is
- * per handler and the registration dies with it.
- */
-
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { DisposableStore } from '#/_base/di/lifecycle';
 import { ILogService } from '#/_base/log/log';
 import { TimeoutTimer } from '#/_base/utils/timer';
 import { subtreeWatchFilter } from '#/_base/utils/paths';
@@ -21,13 +8,14 @@ import {
   AGENT_PROFILE_SOURCE_PRIORITY,
   type AgentProfileContribution,
 } from '#/app/agentProfileCatalog/agentProfileContribution';
+import type { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
 import { profilesFromDiscovery } from './internal/agentProfileFromFile';
 import { projectAgentRootCandidates, projectAgentRoots } from '#/workspace/workspaceAgentProfileLoader/internal/agentRoots';
 import { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
-import { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
+import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
+import { watchCandidates } from '#human/utils/watch';
 
 import { IWorkspaceAgentProfileLoader } from './workspaceAgentProfileLoader';
 
@@ -44,17 +32,35 @@ export class WorkspaceAgentProfileLoaderService
 
   private readonly watchDebounce = this._register(new TimeoutTimer());
   private readonly watchReady: Promise<void>;
+  private watchers?: DisposableStore;
+  private watchedPrimary?: string;
+  private primaryReloadTail: Promise<void> = Promise.resolve();
 
   constructor(
     @IWorkspaceContext private readonly workspace: IWorkspaceContext,
     @IHostFileSystem private readonly fs: IHostFileSystem,
+    @IWorkspaceDirs private readonly dirs: IWorkspaceDirs,
     @ILogService log: ILogService,
     @IUserAgentProfileLoader private readonly user: IUserAgentProfileLoader,
-    @IHostFsWatchService private readonly fsWatch: IHostFsWatchService,
-    @IAgentProfileRegistry registry: IAgentProfileRegistry,
+    registry?: IAgentProfileRegistry,
+    protected override readonly contextKey?: string,
+    private readonly watchEnabled = true,
   ) {
-    super(registry, log);
-    this.watchReady = this.watchProjectAgentRoots();
+    super(log, registry);
+    this._register({ dispose: () => this.watchers?.dispose() });
+    this.primaryReloadTail = this.refreshPrimary(false);
+    this.watchReady = this.primaryReloadTail;
+    this._register(
+      this.dirs.onDidChange(() => {
+        this.primaryReloadTail = this.primaryReloadTail.then(
+          () => this.refreshPrimary(),
+          () => this.refreshPrimary(),
+        );
+        void this.primaryReloadTail.catch((error) => {
+          this.log.warn(`agent profile primary reload failed: ${String(error)}`);
+        });
+      }),
+    );
     this.start();
   }
 
@@ -64,41 +70,45 @@ export class WorkspaceAgentProfileLoaderService
 
   protected async load(): Promise<AgentProfileContribution> {
     await this.watchReady;
-    const roots = await projectAgentRoots(this.fs, this.workspace.cwd, (message, error) => {
+    const roots = await projectAgentRoots(this.fs, this.dirs.primary, (message, error) => {
       this.log.warn(message, error);
     });
     return profilesFromDiscovery(
       await discoverAgentFiles(this.fs, roots, (message) => this.log.warn(message)),
-      (context) => this.user.getDefaultProfile().systemPrompt(context),
+      (context) => this.user.getDefaultProfile().renderSystemPrompt(context),
     );
   }
 
-  private async watchProjectAgentRoots(): Promise<void> {
+  private async refreshPrimary(reload = true): Promise<void> {
+    await this.dirs.ready;
+    const primary = this.dirs.primary;
+    if (this.watchedPrimary === primary) return;
+    await this.refreshProjectAgentRoots();
+    if (reload) await this.reload();
+  }
+
+  private async refreshProjectAgentRoots(): Promise<void> {
+    const primary = this.dirs.primary;
+    if (!this.watchEnabled || this.watchedPrimary === primary) return;
     const { projectRoot, candidates } = await projectAgentRootCandidates(
       this.fs,
-      this.workspace.cwd,
-      (message) => this.log.warn(message),
+      primary,
+      (message, error) => this.log.warn(message, error),
     );
-    const handle = this.fsWatch.watch(projectRoot, {
+    const handle = watchCandidates(projectRoot, candidates, {
       ignored: subtreeWatchFilter(projectRoot, candidates),
     });
-    this._register(handle);
-    this._register(
-      handle.onDidChange(() => {
-        this.watchDebounce.cancelAndSet(() => {
-          void this.reload().catch((error) => {
-            this.log.warn(`agent profile loader "workspace" reload failed: ${String(error)}`);
-          });
-        }, WATCH_DEBOUNCE_MS);
-      }),
-    );
+    const subscription = handle.onDidChange(() => {
+      this.watchDebounce.cancelAndSet(() => {
+        void this.reload().catch((error) => {
+          this.log.warn(`agent profile loader "workspace" reload failed: ${String(error)}`);
+        });
+      }, WATCH_DEBOUNCE_MS);
+    });
+    this.watchers?.dispose();
+    this.watchers = new DisposableStore();
+    this.watchers.add(handle);
+    this.watchers.add(subscription);
+    this.watchedPrimary = primary;
   }
 }
-
-registerScopedService(
-  LifecycleScope.Workspace,
-  IWorkspaceAgentProfileLoader,
-  WorkspaceAgentProfileLoaderService,
-  ScopeActivation.OnScopeCreated,
-  'workspaceAgentProfileLoader',
-);

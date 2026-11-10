@@ -62,6 +62,18 @@ describe('buildAcpSkillSlashCommands', () => {
     expect(commands.map((command) => command.name)).toEqual(['skill:flow-one', 'skill:inline-one']);
   });
 
+  it('filters out skills restricted to specific client scopes', () => {
+    const { commands, commandMap } = buildAcpSkillSlashCommands([
+      skill('tui-only', { source: 'builtin', scopes: ['tui'] }),
+      skill('web-only', { source: 'builtin', scopes: ['web'] }),
+      skill('unrestricted', { source: 'builtin' }),
+    ]);
+
+    expect(commands.map((command) => command.name)).toEqual(['unrestricted']);
+    expect(commandMap.has('tui-only')).toBe(false);
+    expect(commandMap.has('web-only')).toBe(false);
+  });
+
   it('drops skills whose command name collides with an ACP builtin', () => {
     const { commands, commandMap } = buildAcpSkillSlashCommands([
       skill('compact', { source: 'builtin' }),
@@ -84,7 +96,7 @@ describe('acp-server skills / available commands', () => {
       client = undefined;
     }
     if (homeDir !== undefined) {
-      await rm(homeDir, { recursive: true, force: true });
+      await rm(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
       homeDir = undefined;
     }
   });
@@ -192,7 +204,7 @@ describe('acp-server skills / available commands', () => {
     // The model received the rendered skill activation (content + args), not
     // the raw slash text.
     const history = JSON.stringify(scripted!.callHistory()[0]);
-    expect(history).toContain('kimi-skill-loaded');
+    expect(history).toContain('skill-loaded');
     expect(history).toContain('Always answer with the word FIXTURE');
     expect(history).toContain('ARGUMENTS: some args');
     expect(history).not.toContain('/skill:acp-fixture');
@@ -211,7 +223,7 @@ describe('acp-server skills / available commands', () => {
     expect(scripted!.callCount()).toBe(1);
 
     const history = JSON.stringify(scripted!.callHistory()[0]);
-    expect(history).toContain('kimi-skill-loaded');
+    expect(history).toContain('skill-loaded');
     expect(history).toContain('write-goal');
   }, 30_000);
 

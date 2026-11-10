@@ -270,7 +270,10 @@ trivial per Redis's `rio.c`) so existing Redis clients can talk to minidb.
 
 ```
 src/
-  index.ts            public API: open/get/set/del/mget/mset/expire/range/...
+  index.ts            public API barrel; MiniDb in mini-db.ts, facets: types /
+                      value-codec / memory-guard / backup / query-engine /
+                      text-registry / wal-group / generation-builder(+loader) /
+                      write-path / read-path / index-admin / lifecycle / stats
   codec.ts            frame encode/decode + CRC streaming parser   [done]
   crc32.ts            table-based CRC-32                           [done]
   wal.ts              buffered append + group commit + fsync policy
@@ -283,7 +286,7 @@ src/
   compound-index.ts   compound indexes (groupBy + orderBy, multiple dt columns)
   dt-index.ts         datetime-column range indexes (per-column skip list)
   query.ts            value path / Mongo-like filter / projection / sort
-  text-index.ts       full-text index (CJK n-gram + TF-IDF): in-RAM dictionary + delta + tombstones
+  text-index/         full-text index (CJK n-gram + TF-IDF): in-RAM dictionary + delta + tombstones
   text-postings.ts    on-disk postings file (delta+varint + CRC) for the text index
   lockfile.ts         exclusive file lock + stale-lock recovery + read-only
   server.ts           optional RESP TCP server (redis-cli compatible)

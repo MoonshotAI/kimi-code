@@ -5,6 +5,8 @@ import type { McpServerInfo, SessionStatus, SessionUsage } from '@moonshot-ai/ki
 import { buildMcpStatusReportLines } from '../components/messages/mcp-status-panel';
 import { buildStatusReportLines } from '../components/messages/status-panel';
 import { buildUsageReportLines, UsagePanelComponent, type ManagedUsageReport } from '../components/messages/usage-panel';
+import { isExperimentalFlagEnabled } from './experimental-flags';
+import { quotaUsageRows } from '#/utils/usage/usage-format';
 import {
   FEEDBACK_ISSUE_URL,
   FEEDBACK_STATUS_CANCELLED,
@@ -17,11 +19,13 @@ import {
   FEEDBACK_TELEMETRY_EVENT,
   feedbackIdLine,
   feedbackSessionLine,
+  kimiCodeSignupUrl,
   withFeedbackVersionPrefix,
 } from '../constant/feedback';
-import { isManagedUsageProvider } from '../constant/kimi-tui';
+import { DEFAULT_OAUTH_PROVIDER_NAME, isManagedUsageProvider } from '../constant/kimi-tui';
 import { submitFeedbackWithAttachments } from '../../feedback/feedback-attachments';
 import { formatErrorMessage } from '../utils/event-payload';
+import { sessionWorkDir } from '../utils/session-work-dir';
 import { openUrl } from '#/utils/open-url';
 import { promptFeedbackAttachment, promptFeedbackInput } from './prompts';
 import type { SlashCommandHost } from './dispatch';
@@ -37,9 +41,25 @@ export async function handleFeedbackCommand(host: SlashCommandHost): Promise<voi
     openUrl(FEEDBACK_ISSUE_URL);
   };
 
-  const providerKey = host.state.appState.availableModels[host.state.appState.model]?.provider;
-  if (!isManagedUsageProvider(providerKey)) {
-    fallback(FEEDBACK_STATUS_NOT_SIGNED_IN);
+  // Gate on the OAuth token rather than the active model's provider: a
+  // signed-in user running an API-key model can still submit feedback
+  // through the authenticated channel.
+  let signedIn = false;
+  try {
+    const status = await host.harness.auth.status(DEFAULT_OAUTH_PROVIDER_NAME);
+    signedIn = status.providers.some(
+      (provider) => provider.providerName === DEFAULT_OAUTH_PROVIDER_NAME && provider.hasToken,
+    );
+  } catch {
+    // The sign-in state is unreadable — keep the feedback entry usable by
+    // falling back to GitHub Issues instead of failing the command.
+    fallback(FEEDBACK_STATUS_FALLBACK);
+    return;
+  }
+  if (!signedIn) {
+    host.showStatus(FEEDBACK_STATUS_NOT_SIGNED_IN);
+    host.showStatus(kimiCodeSignupUrl());
+    host.showStatus(FEEDBACK_ISSUE_URL);
     return;
   }
 
@@ -51,7 +71,18 @@ export async function handleFeedbackCommand(host: SlashCommandHost): Promise<voi
   }
 
   // Stage 2: ask whether to attach diagnostics (logs / codebase).
-  const level = await promptFeedbackAttachment(host);
+  // The codebase scanner reads the local filesystem, so a remote-bound
+  // session cannot package its codebase — drop the option with a hint
+  // instead of scanning the wrong machine.
+  const remoteSession =
+    host.state.appState.environment !== undefined &&
+    host.state.appState.environment.environmentId !== 'local';
+  if (remoteSession) {
+    host.showStatus(
+      'Codebase attachment is not supported for remote sessions — the scanner only reads the local filesystem.',
+    );
+  }
+  const level = await promptFeedbackAttachment(host, remoteSession);
   if (level === undefined) {
     host.showStatus(FEEDBACK_STATUS_CANCELLED);
     return;
@@ -60,8 +91,8 @@ export async function handleFeedbackCommand(host: SlashCommandHost): Promise<voi
   const version = withFeedbackVersionPrefix(host.state.appState.version);
   const spinner = host.showLoginProgressSpinner(FEEDBACK_STATUS_SUBMITTING);
   // Guarantee the spinner's underlying setInterval is always cleared, even when
-  // submitFeedback or submitFeedbackWithAttachments throws — otherwise the
-  // interval (and its per-frame requestRender) leaks for the rest of the session.
+  // submitFeedback throws — otherwise the interval (and its per-frame
+  // requestRender) leaks for the rest of the session.
   let stopped = false;
   const stopSpinner = (opts: { ok: boolean; label: string }): void => {
     if (stopped) return;
@@ -84,7 +115,15 @@ export async function handleFeedbackCommand(host: SlashCommandHost): Promise<voi
     }
 
     // Stage 3: prepare and upload each requested attachment independently.
-    const attachmentFailed = await submitFeedbackWithAttachments(host, res.feedbackId, level);
+    // Attachment failures are non-fatal partial failures — the text feedback
+    // already exists server-side — so a throw here degrades to the
+    // partial-failure status, never to the GitHub fallback in the outer catch.
+    let attachmentFailed = false;
+    try {
+      attachmentFailed = await submitFeedbackWithAttachments(host, res.feedbackId, level);
+    } catch {
+      attachmentFailed = true;
+    }
 
     stopSpinner({ ok: true, label: FEEDBACK_STATUS_SUCCESS });
     host.showStatus(feedbackSessionLine(host.state.appState.sessionId));
@@ -95,6 +134,7 @@ export async function handleFeedbackCommand(host: SlashCommandHost): Promise<voi
     }
   } catch (error) {
     stopSpinner({ ok: false, label: FEEDBACK_STATUS_NETWORK_ERROR });
+    fallback(FEEDBACK_STATUS_FALLBACK);
     throw error;
   }
 }
@@ -144,12 +184,14 @@ export async function showStatusReport(host: SlashCommandHost): Promise<void> {
   const reportArgs = {
     version: appState.version,
     model: appState.model,
-    workDir: appState.workDir,
+    workDir: sessionWorkDir(appState),
     sessionId: appState.sessionId,
     sessionTitle: appState.sessionTitle,
     thinkingEffort: appState.thinkingEffort,
     permissionMode: appState.permissionMode,
     planMode: appState.planMode,
+    towerMode: appState.towerMode,
+    towerAvailable: isExperimentalFlagEnabled('tower'),
     contextUsage: appState.contextUsage,
     contextTokens: appState.contextTokens,
     maxContextTokens: appState.maxContextTokens,
@@ -169,12 +211,10 @@ export async function showMcpServers(host: SlashCommandHost): Promise<void> {
   try {
     if (host.session !== undefined) {
       servers = await host.session.listMcpServers();
-    } else if (host.engineV2) {
+    } else {
       // v2 session-less: the MCP connection set is workspace-scoped, so it is
       // inspectable before the first session exists.
       servers = await host.harness.listWorkspaceMcpServers(host.state.appState.workDir);
-    } else {
-      servers = await host.requireSession().listMcpServers();
     }
   } catch (error) {
     host.showError(`Failed to load MCP servers: ${formatErrorMessage(error)}`);
@@ -192,16 +232,18 @@ export async function showMcpServers(host: SlashCommandHost): Promise<void> {
 }
 
 async function loadSessionUsageReport(host: SlashCommandHost): Promise<SessionUsageResult> {
+  if (host.session === undefined) return {};
   try {
-    return { usage: await host.requireSession().getUsage() };
+    return { usage: await host.session.getUsage() };
   } catch (error) {
     return { error: formatErrorMessage(error) };
   }
 }
 
 async function loadRuntimeStatusReport(host: SlashCommandHost): Promise<RuntimeStatusResult> {
+  if (host.session === undefined) return {};
   try {
-    return { status: await host.requireSession().getStatus() };
+    return { status: await host.session.getStatus() };
   } catch (error) {
     return { error: error instanceof Error ? error.message : String(error) };
   }
@@ -221,5 +263,5 @@ async function loadManagedUsageReport(host: SlashCommandHost): Promise<ManagedUs
   if (res.kind === 'error') {
     return { error: res.message };
   }
-  return { usage: { summary: res.summary, limits: res.limits, extraUsage: res.extraUsage } };
+  return { usage: { rows: quotaUsageRows(res.quota), extraUsage: res.quota.extraUsage } };
 }

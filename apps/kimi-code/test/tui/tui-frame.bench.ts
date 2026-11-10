@@ -14,7 +14,7 @@
  */
 
 import type { Component, Terminal } from '@moonshot-ai/pi-tui';
-import { TUI } from '@moonshot-ai/pi-tui';
+import { TuiMainScreen } from '@moonshot-ai/pi-tui';
 import { bench, describe } from 'vitest';
 
 const WIDTH = 120;
@@ -51,6 +51,7 @@ class StubTerminal implements Terminal {
   clearScreen(): void {}
   setTitle(): void {}
   setProgress(): void {}
+  setProgramStatus(): void {}
 }
 
 /** Returns the same array reference every frame, mirroring the app's cached message components. */
@@ -72,7 +73,7 @@ class SpinnerComponent implements Component {
 
 describe('TUI steady-state frame', () => {
   const terminal = new StubTerminal();
-  const tui = new TUI(terminal);
+  const tui = new TuiMainScreen(terminal);
   const spinner = new SpinnerComponent();
   tui.addChild(
     new StaticTranscript(

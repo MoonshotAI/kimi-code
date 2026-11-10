@@ -67,12 +67,13 @@ export interface ToolResult {
 
 export interface TurnBegin {
   user_input: string | ContentPart[];
+  turnIndex?: number;
 }
 
 export interface TokenUsage {
   input_other: number;
   output: number;
-  input_cache_read: number;
+  input_cache_read?: number;
   input_cache_creation: number;
 }
 
@@ -191,6 +192,12 @@ export interface MCPServerConfig {
   headers?: Record<string, string>;
   auth?: 'oauth';
   bearerTokenEnvVar?: string;
+  /** Unified management view tags; absent on cores predating the management plane. */
+  source?: 'global' | 'plugin' | 'caller';
+  /** global: defining file path; plugin: plugin id. */
+  origin?: string;
+  /** false for plugin / project-layer entries — the panel hides mutating actions for them. */
+  mutable?: boolean;
 }
 
 export interface UpdateMCPServerRequest {

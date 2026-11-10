@@ -1,12 +1,3 @@
-/**
- * `contextMemory` test stubs — shared doubles for `IAgentContextMemoryService` and its
- * collaborator (`IWireService`).
- *
- * Lives under `test/` (not `src/`) so test-support code stays out of the
- * production tree. Import from a relative path (`./stubs` or
- * `../contextMemory/stubs`).
- */
-
 import type { ServiceRegistration } from '#/_base/di/test';
 import { buildContextCompactionShape } from '#/agent/contextMemory/compactionHandoff';
 import {
@@ -15,16 +6,19 @@ import {
   type ContextCompactionResult,
 } from '#/agent/contextMemory/contextMemory';
 import { computeUndoCut, type UndoCut } from '#/agent/contextMemory/contextOps';
+import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { IEventBus } from '#/app/event/eventBus';
+import { IEventBus, type ISessionEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { IWireService } from '#/wire/wire';
 
 import { stubAgentWire } from '../../wire/stubs';
+import { stubAgentContext } from '../agentContext/stubs';
 
 export interface StubContextMemory extends IAgentContextMemoryService {
   readonly messages: readonly ContextMessage[];
+  undo(count: number): UndoCut;
 }
 
 function publishSplice(
@@ -36,27 +30,39 @@ function publishSplice(
     tokens?: number;
   },
 ): void {
-  eventBus?.publish({ type: 'context.spliced', ...input });
+  if (eventBus === undefined) return;
+  const sessionBus = eventBus as Partial<ISessionEventBus>;
+  if (typeof sessionBus.activateAgent === 'function') {
+    const context = stubAgentContext('main', 1);
+    sessionBus.activateAgent(context);
+    sessionBus.publish?.(new ContextSpliced({ agentId: 'main', ...input }), context);
+    return;
+  }
+  eventBus.publish(new ContextSpliced({ agentId: 'main', ...input }));
 }
 
 export function stubContextMemory(eventBus?: IEventBus): StubContextMemory {
   const messages: ContextMessage[] = [];
+  let revision = 0;
   return {
     _serviceBrand: undefined,
     get messages() {
       return messages;
     },
     get: () => [...messages],
+    prefixRevision: () => revision,
     append: (...inserted) => {
       const start = messages.length;
       messages.push(...inserted);
       publishSplice(eventBus, { start, deleteCount: 0, messages: [...inserted] });
     },
     appendLoopEvent: () => {},
+    publishTrailingRemoval: () => false,
     clear: () => {
       const deleteCount = messages.length;
       if (deleteCount === 0) return;
       messages.splice(0, deleteCount);
+      revision += 1;
       publishSplice(eventBus, { start: 0, deleteCount, messages: [] });
     },
     undo: (count) => {
@@ -64,6 +70,7 @@ export function stubContextMemory(eventBus?: IEventBus): StubContextMemory {
       if (cut.cutIndex >= 0 && cut.removedCount >= count) {
         const deleteCount = messages.length - cut.cutIndex;
         messages.splice(cut.cutIndex, deleteCount);
+        revision += 1;
         publishSplice(eventBus, { start: cut.cutIndex, deleteCount, messages: [] });
       }
       return cut;
@@ -72,6 +79,7 @@ export function stubContextMemory(eventBus?: IEventBus): StubContextMemory {
       const shape = buildContextCompactionShape(messages, input);
       const previousLength = messages.length;
       messages.splice(0, previousLength, ...shape.messages);
+      if (previousLength > 0) revision += 1;
       publishSplice(eventBus, {
         start: 0,
         deleteCount: previousLength,
@@ -106,11 +114,14 @@ class StubContextMemoryService implements IAgentContextMemoryService {
   appendLoopEvent(event: LoopRecordedEvent): void {
     this.impl.appendLoopEvent(event);
   }
-  undo(count: number): UndoCut {
-    return this.impl.undo(count);
+  publishTrailingRemoval(previous: readonly ContextMessage[]): boolean {
+    return this.impl.publishTrailingRemoval(previous);
   }
   applyCompaction(input: ContextCompactionInput): ContextCompactionResult {
     return this.impl.applyCompaction(input);
+  }
+  prefixRevision(): number {
+    return this.impl.prefixRevision();
   }
 }
 

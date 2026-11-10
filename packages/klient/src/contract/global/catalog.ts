@@ -2,7 +2,7 @@
  * `modelResolver` — the engine's `IModelCatalog`: materialized model lookup
  * plus the read-only catalog enumeration over configured providers and model
  * aliases, and the global default-model selection. Mirrors
- * `agent-core-v2/kosong/model/catalog.ts`; wire shapes mirror
+ * `agent-core-v2/llm-adapter/model/catalog.ts`; wire shapes mirror
  * `protocol/src/modelCatalog.ts` and `protocol/src/rest/modelCatalog.ts`
  * (snake_case fields).
  */
@@ -19,6 +19,13 @@ export const modelCatalogItemSchema = z.object({
   capabilities: z.array(z.string()).optional(),
   support_efforts: z.array(z.string()).optional(),
   default_effort: z.string().optional(),
+  upgrade: z
+    .object({
+      model: z.string(),
+      migration_markdown: z.string(),
+      retirement_at: z.string().optional(),
+    })
+    .optional(),
 });
 
 export const providerCatalogStatusSchema = z.enum(['connected', 'error', 'unconfigured']);
@@ -28,6 +35,7 @@ export const providerCatalogItemSchema = z.object({
   type: z.string(),
   base_url: z.string().optional(),
   default_model: z.string().optional(),
+  api_key_env: z.string().optional(),
   has_api_key: z.boolean(),
   status: providerCatalogStatusSchema,
   models: z.array(z.string()).optional(),

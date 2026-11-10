@@ -1,7 +1,3 @@
-/**
- * `_base.lifecycle` — Ledger errors.
- */
-
 export class LedgerDisposedError extends Error {
   constructor(
     readonly ledgerLabel: string,

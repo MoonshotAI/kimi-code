@@ -1,8 +1,3 @@
-/**
- * Base error classes shared by every domain — `Error2` and related
- * control-flow errors.
- */
-
 import { CoreErrors } from './codes';
 import type { ErrorCode } from '#/errors';
 

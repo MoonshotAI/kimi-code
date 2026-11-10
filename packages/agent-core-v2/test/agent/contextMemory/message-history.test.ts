@@ -6,17 +6,23 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { AgentContextMemoryService } from '#/agent/contextMemory/contextMemoryService';
+import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 
-import { registerTestAgentWire } from '../../wire/stubs';
+import { registerTestAgentWire, registerTestEventDispatcher } from '../../wire/stubs';
 
 function textMessage(role: ContextMessage['role'], text: string): ContextMessage {
-  return {
-    role,
-    content: [{ type: 'text', text }],
-    toolCalls: [],
-  };
+  const content = [{ type: 'text' as const, text }];
+  switch (role) {
+    case 'assistant':
+      return { role, content, toolCalls: [] };
+    case 'tool':
+      return { role, content, toolCallId: 'call_1' };
+    case 'system':
+    case 'user':
+      return { role, content };
+  }
 }
 
 function textOf(message: ContextMessage): string {
@@ -24,6 +30,22 @@ function textOf(message: ContextMessage): string {
     .map((part) => (part.type === 'text' ? part.text : ''))
     .join('');
 }
+
+const noopTokenCounting: ISessionTokenCountingService = {
+  _serviceBrand: undefined,
+  strategy: 'measured+estimated',
+  get: () => ({ size: 0, measured: 0, estimated: 0 }),
+  measured: () => {},
+  latestMeasured: () => 0,
+  statusSize: () => 0,
+  recordTruncation: () => {},
+  rebase: () => {},
+  requestSize: () => 0,
+  estimateText: () => 0,
+  estimateMessage: () => 0,
+  estimateMessages: () => 0,
+  estimateTools: () => 0,
+};
 
 
 describe('message history (IAgentContextMemoryService)', () => {
@@ -35,6 +57,8 @@ describe('message history (IAgentContextMemoryService)', () => {
     ix = disposables.add(new TestInstantiationService());
     ix.set(IEventBus, new SyncDescriptor(EventBusService));
     registerTestAgentWire(ix, 'wire/message-history', { eventBus: ix.get(IEventBus) });
+    ix.set(ISessionTokenCountingService, noopTokenCounting);
+    registerTestEventDispatcher(ix);
     ix.set(IAgentContextMemoryService, new SyncDescriptor(AgentContextMemoryService));
   });
   afterEach(() => disposables.dispose());

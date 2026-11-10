@@ -1,10 +1,6 @@
-/**
- *   GET  /v1/sessions/{session_id}/skills
- *   POST /v1/sessions/{session_id}/skills/{skill_name}:activate
- */
-
 import { z } from 'zod';
 
+import { fileContentSchema, imageContentSchema, textContentSchema, videoContentSchema } from './message';
 import { skillDescriptorSchema } from './skill';
 
 export const listSkillsResponseSchema = z.object({
@@ -12,9 +8,20 @@ export const listSkillsResponseSchema = z.object({
 });
 export type ListSkillsResponse = z.infer<typeof listSkillsResponseSchema>;
 
+export const activateSkillAttachmentSchema = z.discriminatedUnion('type', [
+  textContentSchema,
+  imageContentSchema,
+  videoContentSchema,
+  fileContentSchema,
+]);
+export type ActivateSkillAttachment = z.infer<typeof activateSkillAttachmentSchema>;
+
 export const activateSkillRequestSchema = z.object({
-  /** Raw argument string appended after the slash command, e.g. `/review --fix` → `--fix`. */
+  path: z.string().optional(),
   args: z.string().optional(),
+  prompt_id: z.string().min(1).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+  attachments: z.array(activateSkillAttachmentSchema).optional(),
 });
 export type ActivateSkillRequest = z.infer<typeof activateSkillRequestSchema>;
 

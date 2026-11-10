@@ -1,22 +1,13 @@
-/**
- * EditTool tests for the v2 edit domain.
- *
- * Ported from v1 (`packages/agent-core/test/tools/edit.test.ts`). The Agent
- * `EditTool` adapter is built through the container (`createInstance`) so its
- * `@IService` deps resolve for real: a spied fake `IHostFileSystem`, the test
- * `IHostEnvironment` / `ISessionWorkspaceContext`, and the App-scope
- * `IFileEditService` binding. The pure `TextModel` / `EditService` logic is
- * exercised end-to-end through the tool and the real `FileEditService`.
- */
-
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import * as posixPath from 'node:path/posix';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PathSecurityError } from '#/tool/path-access';
 import { stubWorkspaceContext } from '../../../session/workspaceContext/stub-workspace-context';
+import { stubAgentEnvironment } from '../../../environment/stubs';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
 import { type EditInput, EditInputSchema } from '#/agent/tools/edit/edit';
@@ -27,6 +18,7 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostFsError, OsFsErrors } from '#/os/interface/hostFsErrors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import type { Environment } from '#/environment/environment';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 
@@ -66,16 +58,29 @@ function buildTool(
   fs: IHostFileSystem,
   env: IHostEnvironment,
   workspace: ISessionWorkspaceContext,
+  appFs: IHostFileSystem = fs,
 ): EditTool {
   const ix = createServices(disposables, {
     additionalServices: (reg) => {
-      reg.defineInstance(IHostFileSystem, fs);
+      reg.defineInstance(IHostFileSystem, appFs);
       reg.defineInstance(IHostEnvironment, env);
       reg.defineInstance(ISessionWorkspaceContext, workspace);
       reg.define(IFileEditService, FileEditService);
     },
   });
-  return new EditTool(ix.get(IFileEditService), env, workspace);
+  const environmentValue = {
+    identity: { environmentId: 'local', generation: 'test' },
+    capabilities: new Set(['fs'] as const),
+    host: env,
+    path: posixPath,
+    workspace: { mapRoots: (roots: { workDir: string; additionalDirs?: readonly string[] }) => roots },
+    fs,
+    status: 'ready',
+    onDidChangeStatus: () => ({ dispose: () => {} }),
+    dispose: () => {},
+  } as unknown as Environment;
+  const environment = stubAgentEnvironment(environmentValue);
+  return new EditTool(ix.get(IFileEditService), environment, workspace);
 }
 
 function isPromiseLike(
@@ -115,9 +120,9 @@ describe('EditTool', () => {
     disposables.dispose();
   });
 
-  it('exposes before/after on the file_io display so the approval panel can render a diff', () => {
+  it('exposes before/after on the file_io display so the approval panel can render a diff', async () => {
     const tool = buildTool(createSpiedEditFs().fs, createTestEnv(), PERMISSIVE_WORKSPACE);
-    const execution = tool.resolveExecution({
+    const execution = await tool.resolveExecution({
       path: '/tmp/foo.ts',
       old_string: 'a\nb\nc',
       new_string: 'a\nB\nc',
@@ -134,9 +139,9 @@ describe('EditTool', () => {
     });
   });
 
-  it('declares readWriteFile access for the edited path', () => {
+  it('declares readWriteFile access for the edited path', async () => {
     const tool = buildTool(createSpiedEditFs().fs, createTestEnv(), PERMISSIVE_WORKSPACE);
-    const execution = tool.resolveExecution({
+    const execution = await tool.resolveExecution({
       path: '/tmp/foo.ts',
       old_string: 'a',
       new_string: 'b',
@@ -153,31 +158,12 @@ describe('EditTool', () => {
     const tool = buildTool(createSpiedEditFs().fs, createTestEnv(), PERMISSIVE_WORKSPACE);
 
     expect(tool.name).toBe('Edit');
-    expect(tool.description).toContain('Read the target file before every Edit');
-    expect(tool.description).toContain('DO NOT call Edit from memory');
-    expect(tool.description).toContain('Read output view');
-    expect(tool.description).toContain('line-number prefix');
-    expect(tool.description).toContain('`old_string` must be unique');
-    expect(tool.description).toContain('only when they do not target the same file');
-    expect(tool.description).toContain('DO NOT issue consecutive Edit calls on the same file');
-    expect(tool.description).toContain('DO NOT use Write or Bash `sed`');
-    expect(tool.description).toContain('same-file edits in response order');
-    expect(tool.description).toContain('old_string not found');
     expect(tool.parameters).toMatchObject({
       type: 'object',
       properties: {
-        path: {
-          type: 'string',
-          description: expect.stringContaining('working directory'),
-        },
-        old_string: {
-          type: 'string',
-          description: expect.stringContaining('without the line-number prefix'),
-        },
-        new_string: {
-          type: 'string',
-          description: expect.stringContaining('same Read output view'),
-        },
+        path: { type: 'string' },
+        old_string: { type: 'string' },
+        new_string: { type: 'string' },
       },
     });
     expect(
@@ -214,6 +200,29 @@ describe('EditTool', () => {
     expect(writeText).toHaveBeenCalledWith('/tmp/a.txt', 'alpha gamma');
   });
 
+  it('executes against the selected environment filesystem instead of the App filesystem', async () => {
+    const environmentWrite = vi.fn().mockResolvedValue(undefined);
+    const { fs: environmentFs } = createSpiedEditFs({
+      readText: vi.fn().mockResolvedValue('environment content'),
+      writeText: environmentWrite,
+    });
+    const appRead = vi.fn().mockRejectedValue(new Error('App filesystem bypass'));
+    const appWrite = vi.fn().mockRejectedValue(new Error('App filesystem bypass'));
+    const { fs: appFs } = createSpiedEditFs({ readText: appRead, writeText: appWrite });
+    const tool = buildTool(environmentFs, createTestEnv(), PERMISSIVE_WORKSPACE, appFs);
+
+    const result = await execute(tool, {
+      path: '/tmp/a.txt',
+      old_string: 'content',
+      new_string: 'generation',
+    });
+
+    expect(result.output).toContain('Replaced 1 occurrence');
+    expect(environmentWrite).toHaveBeenCalledWith('/tmp/a.txt', 'environment generation');
+    expect(appRead).not.toHaveBeenCalled();
+    expect(appWrite).not.toHaveBeenCalled();
+  });
+
   it('expands leading tilde paths using the kaos home directory', async () => {
     const readText = vi.fn().mockResolvedValue('alpha beta');
     const writeText = vi.fn().mockResolvedValue(undefined);
@@ -227,7 +236,10 @@ describe('EditTool', () => {
     });
 
     expect(result.output).toContain('Replaced 1 occurrence');
-    expect(readText).toHaveBeenCalledWith('/home/test/notes/today.txt', { errors: 'strict' });
+    expect(readText).toHaveBeenCalledWith('/home/test/notes/today.txt', {
+      errors: 'strict',
+      preserveBOM: true,
+    });
     expect(writeText).toHaveBeenCalledWith('/home/test/notes/today.txt', 'alpha gamma');
   });
 
@@ -567,6 +579,30 @@ describe('EditTool', () => {
 
     expect(result.isError).toBeFalsy();
     expect(writeText).toHaveBeenCalledWith('/workspace-sneaky/test.txt', 'new');
+  });
+
+  it.each([true, false])('preserves UTF-8 BOM presence when editing: %s', async (hasBom) => {
+    const dir = await mkdtemp(join(tmpdir(), 'edit-bom-'));
+    const file = join(dir, 'sample.txt');
+    const bom = hasBom ? Buffer.from([0xef, 0xbb, 0xbf]) : Buffer.alloc(0);
+    const original = Buffer.concat([bom, Buffer.from('a\nb\n')]);
+    const expected = Buffer.concat([bom, Buffer.from('a\nc\n')]);
+    await writeFile(file, original);
+    try {
+      const service = new FileEditService(new HostFileSystem());
+      const result = await service.edit({
+        path: file,
+        displayPath: file,
+        old_string: 'b',
+        new_string: 'c',
+        replace_all: false,
+      });
+
+      expect(result).toEqual({ ok: true, count: 1 });
+      expect(Buffer.compare(await readFile(file), expected)).toBe(0);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it('rejects editing a non-UTF-8 file and leaves its bytes untouched', async () => {

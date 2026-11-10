@@ -1,6 +1,6 @@
 # 数据路径
 
-Kimi Code CLI 把所有运行时数据——配置文件、会话历史、登录凭据、诊断日志——集中存放在 `~/.kimi-code/` 下。本页帮你搞清楚每类数据在哪里、用来做什么，以及需要时怎么清理或搬迁。
+Kimi Code CLI 把配置文件、会话历史、登录凭据、诊断日志等运行时数据集中存放在 `~/.kimi-code/` 下。本页帮你搞清楚每类数据在哪里、用来做什么，以及需要时怎么清理或搬迁。
 
 ## 数据根目录
 
@@ -42,6 +42,8 @@ $KIMI_CODE_HOME  （默认 ~/.kimi-code）
 │       └── <key>-<suffix>.json
 ├── sessions/               # 会话数据（详见下文）
 │   └── <workDirKey>/<sessionId>/
+├── locks/
+│   └── sessions/           # 客户端写会话期间持有的跨进程占用锁
 ├── bin/
 │   ├── rg                  # Grep 使用的托管 ripgrep 二进制（Windows 为 rg.exe）
 │   └── fd                  # 文件引用使用的托管 fd 二进制（Windows 为 fd.exe）
@@ -61,7 +63,7 @@ $KIMI_CODE_HOME  （默认 ~/.kimi-code）
 数据根下的顶层文件各有用途，大部分由 CLI 自动管理：
 
 - **`config.toml`**：主运行时配置，存放供应商、模型、循环控制等用户级设置。详见[配置文件](./config-files.md)。
-- **`tui.toml`**：终端界面客户端偏好，包括 `[upgrade].auto_install`（自动更新，默认开启）。可在 `/settings` 关闭，或手动设为 `auto_install = false`。
+- **`tui.toml`**：终端界面客户端偏好，包括自动更新开关 `[upgrade].auto_install`（默认开启）。可在 `/settings` 关闭，或手动设为 `auto_install = false`。
 - **`AGENTS.md`**：全局 Kimi 专属 Agent 指令。该文件会随 `KIMI_CODE_HOME` 移动；跨工具通用指令仍可放在 `~/.agents/AGENTS.md`。
 - **`mcp.json`**：用户级 MCP server 声明，启动时与项目内的 `.kimi-code/mcp.json` 合并加载。详见 [MCP](../customization/mcp.md)。
 - **`skills/`**：Kimi 专属用户级 Skills。该目录会随 `KIMI_CODE_HOME` 移动；跨工具通用 Skills 仍可放在 `~/.agents/skills/`。详见 [Agent Skills](../customization/skills.md)。
@@ -70,17 +72,17 @@ $KIMI_CODE_HOME  （默认 ~/.kimi-code）
 
 ## 会话数据
 
-每个会话的数据存在 `sessions/<workDirKey>/<sessionId>/` 下，同时在顶层 `session_index.jsonl` 里维护一份索引（每行一条记录，含 `sessionId`、`sessionDir`、`workDir` 三个字段）。`workDirKey` 是从工作目录路径生成的桶名，格式为 `wd_<slug>_<sha256前12位>`。
+每个会话的数据存在 `sessions/<workspaceId>/<sessionId>/` 下，同时在顶层 `session_index.jsonl` 里维护一份索引（每行一条记录，含 `sessionId`、`sessionDir`、`workDir` 三个字段）。隐式工作区的 `workspaceId` 是从工作目录路径生成的桶名，格式为 `wd_<slug>_<sha256前12位>`；显式创建的项目工作区使用生成的 `wm_<uuid>`。
 
 会话目录内部包含：
 
 - **`state.json`**：会话标题、`lastPrompt`、创建/更新时间、`forkedFrom` 等元数据。
 - **`upcoming-goals.json`**：由 `/goal next <objective>` 创建的 TUI 专属队列。它不属于 Agent 对话；只有当前目标完成并提升后续目标后，才会进入 Agent 对话。
-- **`agents/main/wire.jsonl`**：主 Agent 的完整通信记录，用于会话恢复和回放。
+- **`agents/main/wire.jsonl`**：main agent 的完整通信记录，用于会话恢复和回放。
 - **`agents/main/plans/`**：Plan 模式下写入的计划文件，按计划 id 命名（`<id>.md`）。
-- **`agents/agent-0/` 等**：子 Agent 实例目录，各自含 `wire.jsonl`。
+- **`agents/agent-0/` 等**：subagent 实例目录，各自含 `wire.jsonl`。
 - **`logs/kimi-code.log`**：该会话的诊断日志，只有发生诊断事件时才存在。
-- **`tasks/`**：后台任务持久化——`tasks/<task_id>.json` 保存状态/pid/退出码，`tasks/<task_id>/output.log` 保存输出。
+- **`tasks/`**：后台任务持久化。`tasks/<task_id>.json` 保存状态/pid/退出码，`tasks/<task_id>/output.log` 保存输出。
 - **`cron/`**：定时任务持久化，用 `kimi --session` 恢复会话时重新加载到调度器。详见[定时任务](../reference/tools.md#定时任务)。
 
 ## 内置工具缓存

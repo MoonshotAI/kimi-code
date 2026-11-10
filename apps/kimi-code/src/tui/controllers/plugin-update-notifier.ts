@@ -1,6 +1,6 @@
 import type { PluginSummary } from '@moonshot-ai/kimi-code-sdk';
 
-import { KIMI_CODE_PLUGIN_MARKETPLACE_URL } from '#/constant/app';
+import { kimiCodePluginMarketplaceUrl } from '#/constant/app';
 import {
   computeUpdateStatus,
   loadPluginMarketplace,
@@ -10,6 +10,10 @@ import {
   readPluginUpdateNoticeState,
   writePluginUpdateNoticeState,
 } from '#/utils/plugin-update-notice-state';
+import {
+  installedPluginForMarketplaceEntry,
+  marketplaceEntryIdForInstalledPlugin,
+} from '../utils/capability-marketplace';
 import { isOfficialPluginInstall } from '../utils/plugin-source-label';
 
 /**
@@ -27,6 +31,8 @@ export interface PluginUpdateNotifierDeps {
   readonly notify: (message: string) => void;
   /** Overridable for tests; defaults to the shared marketplace loader. */
   readonly loadMarketplace?: () => Promise<PluginMarketplace>;
+  readonly reloadPlugins?: () => Promise<unknown>;
+  readonly refreshPluginCommands?: () => Promise<unknown>;
   /** Overridable for tests; defaults to the updates dir under the data dir. */
   readonly stateFile?: string;
 }
@@ -34,7 +40,7 @@ export interface PluginUpdateNotifierDeps {
 const MCP_TOOL_NAME_PREFIX = 'mcp__';
 const PLUGIN_MCP_TOOL_NAME_PREFIX = `${MCP_TOOL_NAME_PREFIX}plugin-`;
 // Plugin MCP servers run under the runtime name `plugin-<id>:<server>`
-// (pluginMcpRuntimeName in packages/agent-core/src/plugin/manager.ts).
+// (pluginMcpRuntimeName in packages/agent-core-v2/src/app/plugin/manager.ts).
 const PLUGIN_MCP_RUNTIME_NAME = /^plugin-([a-z0-9][a-z0-9_-]{0,63}):/;
 
 /** Cheap name check for plugin-provided MCP tools (`mcp__plugin-…`). */
@@ -43,7 +49,7 @@ export function isPluginMcpToolName(toolName: string): boolean {
 }
 
 /**
- * Mirror of sanitizeMcpNamePart in packages/agent-core/src/mcp/tool-naming.ts.
+ * Mirror of sanitizeMcpNamePart in packages/agent-core-v2/src/mcpCore/tool-naming.ts.
  * MCP tool names on the wire carry the sanitized server name; the collapse
  * step guarantees the `__` separator never appears inside a name part.
  */
@@ -166,14 +172,18 @@ export class PluginUpdateNotifier {
       // Only the default official catalog can back an "Official Marketplace"
       // notice — a custom catalog (KIMI_CODE_PLUGIN_MARKETPLACE_URL) may
       // advertise anything under any id.
-      if (marketplace.source !== KIMI_CODE_PLUGIN_MARKETPLACE_URL) return;
-      const entry = marketplace.plugins.find((plugin) => plugin.id === pluginId);
+      if (marketplace.source !== kimiCodePluginMarketplaceUrl()) return;
+      const entryId = marketplaceEntryIdForInstalledPlugin(pluginId, true);
+      const entry = marketplace.plugins.find((plugin) => plugin.id === entryId);
       if (entry === undefined) return;
-      const installed = (await session.listPlugins()).find((plugin) => plugin.id === pluginId);
-      if (installed === undefined) return;
-      // Only official installs are tracked against the Official Marketplace —
-      // a local/GitHub fork that happens to share a catalog id is not it.
-      if (!isOfficialPluginInstall(installed)) return;
+      const installed = installedPluginForMarketplaceEntry(
+        entry.id,
+        await session.listPlugins(),
+        undefined,
+        true,
+      );
+      if (installed === undefined || installed.origin === 'custom') return;
+      if (installed.origin === 'unknown' && !isOfficialPluginInstall(installed)) return;
       const status = computeUpdateStatus(entry.version, installed.version, true);
       if (status.kind !== 'update') return;
       const state = await readPluginUpdateNoticeState(this.deps.stateFile);
@@ -203,6 +213,13 @@ export class PluginUpdateNotifier {
   private loadMarketplace(): Promise<PluginMarketplace> {
     const load = this.deps.loadMarketplace;
     if (load !== undefined) return load();
-    return loadPluginMarketplace({ workDir: this.deps.workDir });
+    return loadPluginMarketplace({
+      workDir: this.deps.workDir,
+      reconcileAvailability: async (changed) => {
+        if (!changed) return;
+        await this.deps.reloadPlugins?.();
+        await this.deps.refreshPluginCommands?.();
+      },
+    });
   }
 }

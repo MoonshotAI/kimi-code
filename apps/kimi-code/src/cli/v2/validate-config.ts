@@ -1,10 +1,10 @@
 /**
- * Experimental v2 config.toml validation for `kimi doctor`.
+ * V2 config.toml validation for `kimi doctor`.
  *
- * Loaded lazily (dynamic import) by the doctor command only when the
- * agent-core-v2 master switch (`KIMI_CODE_EXPERIMENTAL_FLAG`) is on, so the
- * v2 module graph stays off the default (v1) doctor path. Validation uses the
- * engine's own section registry instead of v1's whole-document strict schema:
+ * Loaded lazily (dynamic import) by the doctor command on the default
+ * agent-core-v2 path, so the v2 module graph stays off the legacy doctor path.
+ * Validation uses the engine's own section registry instead of the legacy
+ * whole-document strict schema:
  * importing the package root runs every built-in section's side-effect
  * registration ("import = register"), and `ConfigRegistry` is then
  * constructed directly — no DI container, no `ConfigService`, no file IO.

@@ -30,6 +30,7 @@ const KIMI_CONFIG_DOMAINS = [
   'yolo',
   'defaultPermissionMode',
   'defaultPlanMode',
+  'autoSessionTitle',
   'permission',
   'hooks',
   'services',
@@ -38,18 +39,21 @@ const KIMI_CONFIG_DOMAINS = [
   'loopControl',
   'background',
   'subagent',
+  'secondaryModel',
   'mcp',
   'image',
   'modelCatalog',
   'experimental',
+  'environments',
   'telemetry',
+  'disableFeedbackSurvey',
 ] as const;
 
 /**
  * Pick the v1-shaped fields out of the v2 engine's resolved config
  * (`config.getAll()` — the effective view: file values plus env overlays
  * plus registered section defaults). Domains v2 knows but v1 does not
- * (`cron`, `tools`, `secondaryModel`, `extraAgentDirs`, ...) are dropped,
+ * (`cron`, `tools`, `extraAgentDirs`, ...) are dropped,
  * mirroring how v1's schema strips unknown top-level keys.
  */
 export function resolvedConfigToKimiConfig(resolved: Record<string, unknown>): KimiConfig {
@@ -97,6 +101,11 @@ export interface ProviderRemovalPlan {
  * only clears the default-provider pointer, so the SDK replays the full v1
  * cascade through the config facade. Inputs are the USER-layer values
  * (`inspect().userValue`), matching v1's disk-config write base.
+ *
+ * The `[secondary_model]` section is deliberately left untouched: it is the
+ * user's own configuration, and an entry whose model no longer resolves
+ * fails pool validation on the next session create with a message naming
+ * the offending alias — a loud error beats a silent rewrite.
  */
 export function planProviderRemoval(input: {
   readonly providers: Record<string, unknown> | undefined;
@@ -123,30 +132,5 @@ export function planProviderRemoval(input: {
     models,
     clearDefaultModel: removedDefault,
     clearDefaultProvider: input.defaultProvider === input.providerId,
-  };
-}
-
-/**
- * Apply the v1 remove-provider cascade to a whole `KimiConfig` in memory (no
- * persistence): drop the provider entry, every model pointing at it, and the
- * default pointers when they dangle. Hosts that stage a removal and fold it
- * into a later atomic write (instead of persisting it immediately) build on
- * this — the same role the v2 engine's `shapeWithoutProvider` plays for its
- * own refresh path.
- */
-export function removeProviderFromConfig(config: KimiConfig, providerId: string): KimiConfig {
-  const plan = planProviderRemoval({
-    providers: config.providers as Record<string, unknown> | undefined,
-    models: config.models as Record<string, Record<string, unknown>> | undefined,
-    defaultModel: config.defaultModel,
-    defaultProvider: config.defaultProvider,
-    providerId,
-  });
-  return {
-    ...config,
-    providers: plan.providers as KimiConfig['providers'],
-    models: plan.models as KimiConfig['models'],
-    defaultModel: plan.clearDefaultModel ? undefined : config.defaultModel,
-    defaultProvider: plan.clearDefaultProvider ? undefined : config.defaultProvider,
   };
 }

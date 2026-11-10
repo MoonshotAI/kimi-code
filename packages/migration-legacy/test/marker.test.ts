@@ -96,6 +96,8 @@ describe('marker', () => {
       hasConfig: false,
       hasMcp: false,
       hasUserHistory: false,
+      hasSkills: false,
+      hasPlans: false,
       oauthCredentials: [],
       workdirs: [],
       detectedPlugins: [],

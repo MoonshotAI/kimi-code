@@ -1,61 +1,51 @@
-/**
- * `fullCompaction` domain — `IAgentFullCompactionService` implementation.
- *
- * Runs full-history compaction: reserves the per-turn compaction slot, drives
- * the compaction LLM round (with overflow / truncation shrink retries),
- * applies the summary back into context memory, and recovers the loop from
- * context-overflow failures by blocking the turn on the in-flight job. The
- * mutable plain-data state (`compactionCountInTurn`,
- * `observedMaxContextTokensByModel`, `lastCompactedTokenCount`,
- * `consecutiveOverflowCompactions`, `activeTurnId`) is registered into
- * `agentState` (`IAgentStateService`) and read/written through it;
- * `_compacting` (the in-flight job — AbortController / Promise / trace), the
- * `hooks.onWillCompact` slot, the `_onDidFinishCompaction` Emitter, the
- * `strategy`, and the lazily-resolved `contextInjectorService` stay instance
- * fields (mechanism, not plain data). Bound at Agent scope and constructed with
- * the scope so the overflow recovery handler registers before the first turn
- * runs.
- */
-
-import { Disposable } from "#/_base/di/lifecycle";
-import { IInstantiationService } from '#/_base/di/instantiation';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { ILogService } from '#/_base/log/log';
-import { defineState } from '#/_base/state/stateRegistry';
-import { renderPrompt } from "#/_base/utils/render-prompt";
-import { estimateTokensForMessage } from "#/kosong/contract/tokens";
+import type { IDisposable } from '#/_base/di/lifecycle';
+import { Service } from "#/_base/di/service";
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { defineState } from '#/state/state';
+import { estimateTokensForMessage } from "#/llm-adapter/contract/tokens";
 import { buildCompactionSummaryText, isRealUserInput } from '#/agent/contextMemory/compactionHandoff';
-import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
-import { IAgentLLMRequesterService, type AgentLLMRequestFinish } from '#/agent/llmRequester/llmRequester';
-import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
-import { retryBackoffDelays, sleepForRetry } from '#/_base/utils/retry';
+import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
+import type { AgentLLMRequestFinish } from '#/agent/loop/requesterContract';
+import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
+import { retryBackoffDelay, sleepForRetry } from '#/_base/utils/retry';
+import { runWithCredentialRecovery } from '#/llm-adapter/model/credential-recovery';
 import { IAgentLoopService, type LoopErrorContext } from '#/agent/loop/loop';
+import { TurnStarted } from '#/agent/loop/turnEvents';
+import { TurnEnded } from '#/agent/loop/turnOps';
 import { isAbortError } from '#/_base/utils/abort';
 import { IAgentProfileService, type ProfileModelContext } from '#/agent/profile/profile';
+import {
+  agentContextOfScope,
+  IAgentScopeContext,
+} from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import { stripDynamicToolContext } from '#/agent/toolSelect/dynamicTools';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
-import { ISessionTodoService } from '#/session/todo/sessionTodo';
-import { renderTodoList, type TodoItem } from '#/session/todo/todoItem';
+import { IAgentTodoService } from '#/features/todo/todoService';
+import { renderTodoList } from '#/features/todo/todoItem';
+import { onUnexpectedError } from '#/_base/errors/unexpectedError';
+import type { WireLineRange } from '#/wire/record';
+import { IWireService } from '#/wire/wire';
 import {
   APIContextOverflowError,
   APIEmptyResponseError,
   APIStatusError,
+  errorDiagnostics,
   isRetryableGenerateError,
-} from '#/kosong/contract/errors';
-import { createUserMessage, type Message } from '#/kosong/contract/message';
-import type { Tool } from '#/kosong/contract/tool';
-import { inputTotal, type TokenUsage } from '#/kosong/contract/usage';
+} from '#/llm-adapter/contract/errors';
+import { createUserMessage, type Message } from '#human/llm/message';
+import { inputTotal, type TokenUsage } from '#human/llm-requester/usage';
 import { IEventBus } from '#/app/event/eventBus';
 import type { CompactionFailedEvent, CompactionFinishedEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2, isCodedError, isError2, toKimiErrorPayload, unwrapErrorCause } from "#/errors";
-import { IWireService } from '#/wire/wire';
-import compactionInstructionTemplate from './compaction-instruction.md?raw';
+import { AgentErrorEvent } from '#/agent/mcp/mcpEvents';
+import { IEventDispatcher } from '#/state/eventDispatcher';
+import { ISessionRunGate } from '#/session/sessionActivity/sessionRunGate';
+import { renderCompactionInstruction } from './compactionInstruction';
+import { renderContextRecoveryPointer } from './contextRecovery';
 import {
   IAgentFullCompactionService,
   type FullCompactionInput,
@@ -66,10 +56,14 @@ import {
   type CompactionStrategy,
 } from './strategy';
 import {
-  CompactionModel,
-  fullCompactionBegin,
-  fullCompactionCancel,
-  fullCompactionComplete,
+  CompactionBlocked,
+  CompactionCancelled,
+  CompactionCompleted,
+  fullCompactionKey,
+  fullCompactionWireRangesKey,
+  FullCompactionBegin,
+  FullCompactionCancel,
+  FullCompactionComplete,
 } from './compactionOps';
 import {
   type CompactionBeginData,
@@ -81,13 +75,10 @@ import { OrderedHookSlot } from '#/hooks';
 export const MAX_COMPACTION_RETRY_ATTEMPTS = 5;
 const DEFAULT_COMPACTION_MAX_COMPLETION_TOKENS = 128 * 1024;
 const OVERFLOW_CONTEXT_SAFETY_RATIO = 0.85;
+const COMPLETION_BUDGET_ESTIMATE_MARGIN_RATIO = 0.02;
 const OVERFLOW_STATUS_RECOVERY_RATIO = 0.5;
 const MAX_COMPACTION_OVERFLOW_SHRINK_ATTEMPTS = 3;
 const COMPACTION_OVERFLOW_SHRINK_RATIOS = [0.7, 0.5, 0.35] as const;
-const EMPTY_TOOL_PARAMETERS: Record<string, unknown> = {
-  type: 'object',
-  properties: {},
-};
 
 type CompactionTelemetryProperties = Pick<
   CompactionFinishedEvent,
@@ -96,6 +87,7 @@ type CompactionTelemetryProperties = Pick<
 
 interface ActiveCompaction extends FullCompactionTask {
   readonly originTurnId?: number;
+  readonly quiescence?: IDisposable;
   trace?: LLMRequestTrace;
   blockedByTurn: boolean;
 }
@@ -103,7 +95,7 @@ interface ActiveCompaction extends FullCompactionTask {
 interface CompactionAttemptResult {
   readonly summary: string;
   readonly usage: TokenUsage | null;
-  readonly traceId?: string;
+  readonly requestId?: string;
 }
 
 class CompactionTruncatedError extends Error {
@@ -134,7 +126,7 @@ export const fullCompactionActiveTurnIdKey = defineState<number | undefined>(
   () => undefined as number | undefined,
 );
 
-export class AgentFullCompactionService extends Disposable implements IAgentFullCompactionService {
+export class AgentFullCompactionService extends Service implements IAgentFullCompactionService {
   declare readonly _serviceBrand: undefined;
   readonly hooks: IAgentFullCompactionService['hooks'] = {
     onWillCompact: new OrderedHookSlot<FullCompactionTask>(),
@@ -144,45 +136,45 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
 
   private readonly strategy: CompactionStrategy;
   private _compacting: ActiveCompaction | null = null;
-  private contextInjectorService: IAgentContextInjectorService | undefined;
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
-    @IAgentTokenCountingService private readonly tokenCounting: IAgentTokenCountingService,
-    @IAgentLLMRequesterService private readonly llmRequester: IAgentLLMRequesterService,
+    @ISessionTokenCountingService private readonly tokenCounting: ISessionTokenCountingService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
-    @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentToolSelectService private readonly toolSelect: IAgentToolSelectService,
-    @IInstantiationService private readonly instantiation: IInstantiationService,
-    @ISessionTodoService private readonly todo: ISessionTodoService,
+    @IAgentScopeContext private readonly agent: IAgentScopeContext,
+    @IAgentTodoService private readonly todo: IAgentTodoService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    @IWireService private readonly wire: IWireService,
+    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IEventBus private readonly eventBus: IEventBus,
-    @ILogService private readonly log: ILogService,
     @IAgentLoopService private readonly loopService: IAgentLoopService,
     @IAgentStateService private readonly states: IAgentStateService,
+    @IWireService private readonly wire: IWireService,
+    @ISessionRunGate private readonly runGate: ISessionRunGate,
   ) {
     super();
-    this.states.register(fullCompactionCompactionCountInTurnKey);
-    this.states.register(fullCompactionObservedMaxContextTokensByModelKey);
-    this.states.register(fullCompactionLastCompactedTokenCountKey);
-    this.states.register(fullCompactionConsecutiveOverflowCompactionsKey);
-    this.states.register(fullCompactionActiveTurnIdKey);
+    this.states.contributeState(fullCompactionKey);
+    this.states.contributeState(fullCompactionWireRangesKey);
+    this.states.contributeState(fullCompactionCompactionCountInTurnKey);
+    this.states.contributeState(fullCompactionObservedMaxContextTokensByModelKey);
+    this.states.contributeState(fullCompactionLastCompactedTokenCountKey);
+    this.states.contributeState(fullCompactionConsecutiveOverflowCompactionsKey);
+    this.states.contributeState(fullCompactionActiveTurnIdKey);
     this.strategy = new RuntimeCompactionStrategy(
       () => this.resolveModelContextWithEffectiveMax(),
       (message) => this.tokenCounting.estimateMessage(message),
     );
     this._register(
-      this.wire.hooks.onDidRestore.register('full-compaction', async (_ctx, next) => {
+      this.dispatcher.hooks.onDidRestore.register('full-compaction', async (_ctx, next) => {
         this.normalizeAfterReplay();
         await next();
       }),
     );
     this._register(
-      this.eventBus.subscribe('turn.started', () => this.resetForTurn()),
+      this.eventBus.subscribe(TurnStarted, () => this.resetForTurn()),
     );
     this._register(
-      this.eventBus.subscribe('turn.ended', () => {
+      this.eventBus.subscribe(TurnEnded, () => {
         this.activeTurnId = undefined;
       }),
     );
@@ -247,6 +239,17 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     return this._compacting;
   }
 
+  cancel(): void {
+    const active = this._compacting;
+    if (active !== null) {
+      this.telemetry.track2('cancel', {
+        from: 'compacting',
+        request_id: active.requestId,
+      });
+    }
+    active?.abortController.abort();
+  }
+
   private getEffectiveMaxContextTokens(): number {
     const capability = this.profile.data().modelCapabilities;
     const configured = capability.max_input_tokens ?? capability.max_context_tokens;
@@ -278,20 +281,9 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
   private requestTokens(messages: readonly Message[]): number {
     return this.tokenCounting.requestSize({
       systemPrompt: this.profile.getSystemPrompt(),
-      tools: this.defaultTools().filter((tool) => tool.deferred !== true),
+      tools: this.toolSelect.defaultTools().filter((tool) => tool.deferred !== true),
       messages,
     });
-  }
-
-  private defaultTools(): readonly Tool[] {
-    return this.toolSelect
-      .shapeTools(this.toolRegistry.list())
-      .map((tool) => ({
-        name: tool.name,
-        description: tool.description,
-        parameters: tool.parameters ?? EMPTY_TOOL_PARAMETERS,
-        deferred: tool.deferred,
-      }));
   }
 
   private shouldRecoverFromContextOverflow(
@@ -325,25 +317,45 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
   begin(input: FullCompactionInput): boolean {
     if (this._compacting) return false;
     const data: CompactionBeginData = { source: input.source, instruction: input.instruction };
+    if (data.source === 'manual') {
+      this.runGate.begin();
+    }
     if (!this.reserveCompactionSlot(data.source)) return false;
 
     const tokenCount = this.validateCompactionStart(data.source);
-    this.wire.dispatch(fullCompactionBegin(data));
+    const quiescence = data.source === 'manual'
+      ? this.loopService.tryAcquireQuiescence()
+      : undefined;
+    if (data.source === 'manual' && quiescence === undefined) {
+      throw new Error2(
+        ErrorCodes.COMPACTION_UNABLE,
+        'Cannot compact while a turn is active or another context change is running. Wait for it to finish, then retry.',
+      );
+    }
+    try {
+      void this.dispatcher.dispatch(
+        new FullCompactionBegin({ ...data, agentId: this.agent.agentId }),
+      );
 
-    const active = this.createActiveCompaction(
-      data.source,
-      tokenCount,
-      data.source === 'auto' ? this.activeTurnId : undefined,
-    );
-    this._compacting = active.task;
-    active.task.abortController.signal.addEventListener(
-      'abort',
-      () => this.cancelActive(active.task),
-      { once: true },
-    );
-    void this.compactionWorker(active.task, data).then(active.resolve, active.reject);
-    void active.task.promise.catch(() => undefined);
-    return true;
+      const active = this.createActiveCompaction(
+        data.source,
+        tokenCount,
+        data.source === 'auto' ? this.activeTurnId : undefined,
+        quiescence,
+      );
+      this._compacting = active.task;
+      active.task.abortController.signal.addEventListener(
+        'abort',
+        () => this.cancelActive(active.task),
+        { once: true },
+      );
+      void this.compactionWorker(active.task, data).then(active.resolve, active.reject);
+      void active.task.promise.catch(() => undefined);
+      return true;
+    } catch (error) {
+      quiescence?.dispose();
+      throw error;
+    }
   }
 
   private reserveCompactionSlot(source: CompactionBeginData['source']): boolean {
@@ -360,19 +372,20 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     if (history.length === 0) {
       throw new Error2(ErrorCodes.COMPACTION_UNABLE, 'No messages to compact in current history.');
     }
-    if (source === 'manual' && this.loopService.status().state !== 'idle') {
+    if (source === 'manual' && this.loopService.snapshot().state !== 'idle') {
       throw new Error2(
         ErrorCodes.COMPACTION_UNABLE,
         'Cannot compact while a turn is active. Wait for it to finish, then retry.',
       );
     }
-    return this.tokenCounting.estimateMessages(history);
+    return this.requestTokens(history);
   }
 
   private createActiveCompaction(
     trigger: CompactionBeginData['source'],
     tokenCount: number,
     originTurnId: number | undefined,
+    quiescence: IDisposable | undefined,
   ): {
     readonly task: ActiveCompaction;
     readonly resolve: (result: CompactionResult) => void;
@@ -392,8 +405,9 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
         trigger,
         tokenCount,
         originTurnId,
-        get traceId() {
-          return this.trace?.traceId;
+        quiescence,
+        get requestId() {
+          return this.trace?.requestId;
         },
         blockedByTurn: false,
       },
@@ -411,25 +425,25 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
 
   private cancelActive(active: ActiveCompaction): boolean {
     if (this._compacting !== active) return false;
-    this.wire.dispatch(fullCompactionCancel({}));
+    void this.dispatcher.dispatch(new FullCompactionCancel({ agentId: this.agent.agentId }));
     this._compacting = null;
     if (!active.abortController.signal.aborted) {
       active.abortController.abort();
     }
-    this.eventBus.publish({ type: 'compaction.cancelled' });
+    void this.dispatcher.dispatch(new CompactionCancelled({ agentId: this.agent.agentId }));
     return true;
   }
 
   private markCompleted(active: ActiveCompaction): boolean {
     if (this._compacting !== active) return false;
-    this.wire.dispatch(fullCompactionComplete({}));
+    void this.dispatcher.dispatch(new FullCompactionComplete({ agentId: this.agent.agentId }));
     this._compacting = null;
     return true;
   }
 
   private normalizeAfterReplay(): void {
-    if (this.wire.getModel(CompactionModel).phase !== 'running') return;
-    this.wire.dispatch(fullCompactionCancel({}));
+    if (this.states.get(fullCompactionKey).phase !== 'running') return;
+    void this.dispatcher.dispatch(new FullCompactionCancel({ agentId: this.agent.agentId }));
   }
 
   private resetForTurn(): void {
@@ -462,9 +476,8 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
   }
 
   private retryFailedDriver(context: LoopErrorContext): boolean {
-    const driver = context.failedDriver;
-    if (driver === undefined || context.currentStep?.signal.aborted === true) return false;
-    context.retry(driver, { at: 'head' });
+    if (context.signal.aborted) return false;
+    context.retry();
     return true;
   }
 
@@ -514,7 +527,9 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     if (active === null) return;
     active.blockedByTurn = true;
     this.propagateBlockingAbort(active, signal);
-    this.eventBus.publish({ type: 'compaction.blocked', turnId });
+    void this.dispatcher.dispatch(
+      new CompactionBlocked({ agentId: this.agent.agentId, turnId }),
+    );
     try {
       await active.promise;
     } catch (error) {
@@ -551,20 +566,15 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     try {
       const result = await this.compactionRound(active, data);
       if (this._compacting !== active) throw compactionCancelledReason(active);
-      try {
-        await this.profile.refreshSystemPrompt();
-      } catch (error) {
-        this.log.error('failed to refresh system prompt after compaction', { error });
-      }
       this.lastCompactedTokenCount = result.tokensAfter;
-      await this.contextInjector.injectAfterCompaction();
-      this.lastCompactedTokenCount = this.tokenCountWithPending();
       if (!this.markCompleted(active)) {
         throw compactionCancelledReason(active);
       }
       const { contextSummary: _contextSummary, ...eventResult } = result;
       void _contextSummary;
-      this.eventBus.publish({ type: 'compaction.completed', result: eventResult });
+      void this.dispatcher.dispatch(
+        new CompactionCompleted({ agentId: this.agent.agentId, result: eventResult }),
+      );
       return result;
     } catch (error) {
       if (active.abortController.signal.aborted || isAbortError(error)) {
@@ -578,13 +588,16 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
       if (blockedByTurn) {
         throw error;
       }
-      this.eventBus.publish({
-        type: 'error',
-        ...toKimiErrorPayload(error),
-      });
+      void this.dispatcher.dispatch(
+        new AgentErrorEvent({ ...toKimiErrorPayload(error), agentId: this.agent.agentId }),
+      );
       throw error;
     } finally {
-      this._onDidFinishCompaction.fire(active);
+      try {
+        this._onDidFinishCompaction.fire(active);
+      } finally {
+        active.quiescence?.dispose();
+      }
     }
   }
 
@@ -594,7 +607,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
   ): Promise<CompactionResult> {
     const startedAt = Date.now();
     const originalHistory = [...this.context.get()];
-    const tokensBefore = this.tokenCounting.estimateMessages(originalHistory);
+    const tokensBefore = this.requestTokens(originalHistory);
     let retryCount = 0;
     let thinkingEffort = this.profile.data().thinkingLevel;
 
@@ -613,40 +626,62 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
           : undefined;
       const compactionMaxOutputSize = resolvedModel.maxOutputSize ?? defaultCompactionCap;
 
-      const customInstruction = data.instruction?.trim() ?? '';
-      const instruction = renderPrompt(compactionInstructionTemplate, {
-        custom_instruction_block:
-          customInstruction.length > 0 ? `\nOptional user instruction:\n${customInstruction}\n` : '',
-      }).trimEnd();
+      const instruction = renderCompactionInstruction({ customInstruction: data.instruction });
 
-      const delays = retryBackoffDelays(MAX_COMPACTION_RETRY_ATTEMPTS);
+      const maxAttempts = resolvedModel.compactionMaxAttempts ?? MAX_COMPACTION_RETRY_ATTEMPTS;
       let attempt: CompactionAttemptResult | undefined;
-      let historyForModel: readonly ContextMessage[] = stripDynamicToolContext(originalHistory);
+      let historyForModel: readonly ContextMessage[] = originalHistory;
       let droppedCount = 0;
       let overflowShrinkCount = 0;
-      let emptyOrTruncatedShrinkCount = 0;
+      let requestAttempts = 0;
+      let cacheProbePending = true;
+      const preShrunkHistory = this.preShrinkHistoryToWindowBudget(
+        historyForModel,
+        instruction,
+        compactionMaxOutputSize,
+      );
+      droppedCount += historyForModel.length - preShrunkHistory.length;
+      historyForModel = preShrunkHistory;
       while (true) {
         const messagesToCompact = historyForModel;
         const messages: Message[] = [...messagesToCompact, createUserMessage(instruction)];
         const estimatedCompactionRequestTokens = this.requestTokens(messages);
+        const effectiveMaxTokens = this.getEffectiveMaxContextTokens();
+        const usedContextTokens =
+          effectiveMaxTokens > 0
+            ? estimatedCompactionRequestTokens +
+              Math.ceil(effectiveMaxTokens * COMPLETION_BUDGET_ESTIMATE_MARGIN_RATIO)
+            : undefined;
+        requestAttempts += 1;
 
         try {
-          const request = this.llmRequester.start(
-            {
-              messages,
-              maxOutputSize: compactionMaxOutputSize,
-              source: {
-                type: 'operation',
-                turnId: active.originTurnId,
-                requestKind: 'full_compaction',
-                logFields: { droppedCount },
+          const runRequest = async () => {
+            const request = this.loopService.requester.start(
+              {
+                messages,
+                maxOutputSize: compactionMaxOutputSize,
+                usedContextTokens,
+                promptCacheProbe: cacheProbePending ? 'compaction' : undefined,
+                source: {
+                  type: 'operation',
+                  turnId: active.originTurnId,
+                  requestKind: 'full_compaction',
+                  logFields: { droppedCount },
+                },
               },
-            },
-            undefined,
+              undefined,
+              signal,
+            );
+            active.trace = request.trace;
+            return request.result;
+          };
+          const result = await runWithCredentialRecovery(
+            this.loopService.requester.currentCredentialProvider(),
+            runRequest,
             signal,
           );
-          active.trace = request.trace;
-          attempt = collectSummary(await request.result);
+          cacheProbePending = false;
+          attempt = collectSummary(result);
           break;
         } catch (error) {
           const isContextOverflow = this.shouldRecoverFromContextOverflow(
@@ -658,6 +693,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
             overflowShrinkCount += 1;
             if (
               overflowShrinkCount > MAX_COMPACTION_OVERFLOW_SHRINK_ATTEMPTS ||
+              requestAttempts >= maxAttempts ||
               messagesToCompact.length <= 1
             ) {
               throw error;
@@ -668,16 +704,19 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
               overflowShrinkCount,
               (message) => this.tokenCounting.estimateMessage(message),
             );
+            if (historyForModel.length === 0) throw error;
             droppedCount += before - historyForModel.length;
             retryCount = 0;
             continue;
           }
+          const unwrappedError = unwrapErrorCause(error);
           if (
-            (error instanceof CompactionTruncatedError || unwrapErrorCause(error) instanceof APIEmptyResponseError) &&
+            (error instanceof CompactionTruncatedError ||
+              (unwrappedError instanceof APIEmptyResponseError &&
+                unwrappedError.finishReason !== 'filtered')) &&
             messagesToCompact.length > 1
           ) {
-            emptyOrTruncatedShrinkCount += 1;
-            if (emptyOrTruncatedShrinkCount > MAX_COMPACTION_RETRY_ATTEMPTS) {
+            if (requestAttempts >= maxAttempts) {
               throw error;
             }
             const reduced = dropOldestMessageAndLeadingToolResults(messagesToCompact);
@@ -686,13 +725,13 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
             retryCount = 0;
             continue;
           }
-          if (!isRetryableGenerateError(unwrapErrorCause(error))) {
+          if (!isRetryableGenerateError(unwrappedError)) {
             throw error;
           }
-          if (retryCount + 1 >= MAX_COMPACTION_RETRY_ATTEMPTS) {
+          if (requestAttempts >= maxAttempts) {
             throw error;
           }
-          await sleepForRetry(delays[retryCount]!, signal);
+          await sleepForRetry(retryBackoffDelay(retryCount), signal);
           retryCount += 1;
         }
       }
@@ -711,14 +750,25 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
         throw compactionCancelledReason(active);
       }
 
-      const summary = this.postProcessSummary(attempt.summary);
+      const summary = await this.postProcessSummary(attempt.summary);
+      const wireLines = await this.captureWireLines();
+      signal.throwIfAborted();
+      const recoveryFooter = this.renderRecoveryFooter(wireLines);
+      const summaryText = buildCompactionSummaryText(summary);
       const result = this.context.applyCompaction({
         summary,
-        contextSummary: buildCompactionSummaryText(summary),
+        contextSummary:
+          recoveryFooter === undefined ? summaryText : `${summaryText}\n\n${recoveryFooter}`,
         compactedCount: originalHistory.length,
         tokensBefore,
-        summaryOutputTokens: attempt.usage?.output,
+        summaryOutputTokens:
+          attempt.usage === null
+            ? undefined
+            : attempt.usage.output +
+              (recoveryFooter === undefined ? 0 : this.tokenCounting.estimateText(recoveryFooter)),
+        requestOverheadTokens: this.requestTokens([]),
         droppedCount: droppedCount === 0 ? undefined : droppedCount,
+        wireLines,
       });
 
       const properties: CompactionFinishedEvent = {
@@ -732,7 +782,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
         retry_count: retryCount,
         round: 1,
         thinking_effort: thinkingEffort,
-        trace_id: attempt.traceId,
+        request_id: attempt.requestId,
         ...usageTelemetry(attempt.usage),
       };
       this.telemetry.track2('compaction_finished', properties);
@@ -748,7 +798,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
         retry_count: retryCount,
         thinking_effort: thinkingEffort,
         error_type: error instanceof Error ? error.name : 'Unknown',
-        trace_id: findAPIStatusError(error)?.traceId ?? active.traceId,
+        request_id: findRequestId(error) ?? active.requestId,
       };
       this.telemetry.track2('compaction_failed', properties);
       if (
@@ -762,29 +812,66 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     }
   }
 
-  private postProcessSummary(summary: string): string {
-    const todos = this.currentTodos();
+  private preShrinkHistoryToWindowBudget(
+    history: readonly ContextMessage[],
+    instruction: string,
+    compactionMaxOutputSize: number | undefined,
+  ): readonly ContextMessage[] {
+    const effectiveMaxTokens = this.getEffectiveMaxContextTokens();
+    if (effectiveMaxTokens <= 0) return history;
+    const outputReserve =
+      compactionMaxOutputSize === undefined
+        ? Math.floor(effectiveMaxTokens / 8)
+        : Math.min(compactionMaxOutputSize, Math.floor(effectiveMaxTokens / 8));
+    const inputLimit = effectiveMaxTokens - outputReserve;
+    const overheadTokens = this.requestTokens([]);
+    const estimatedMessagesTokens =
+      this.tokenCounting.estimateMessages(history) +
+      this.tokenCounting.estimateMessage(createUserMessage(instruction));
+    if (estimatedMessagesTokens + overheadTokens <= inputLimit) return history;
+    const messageBudget =
+      Math.floor(inputLimit * OVERFLOW_CONTEXT_SAFETY_RATIO) - overheadTokens;
+    if (messageBudget <= 0) return history;
+    const preShrunk = takeRecentMessagesWithinTokenBudget(
+      history,
+      messageBudget,
+      (message) => this.tokenCounting.estimateMessage(message),
+    );
+    return preShrunk.length === 0 ? history : preShrunk;
+  }
+
+  private async postProcessSummary(summary: string): Promise<string> {
+    const todos = this.todo.get();
     if (todos.length === 0) {
       return summary;
     }
     return `${summary.trim()}\n\n${renderTodoList(todos, '## TODO List')}`;
   }
 
-  private currentTodos(): readonly TodoItem[] {
-    return this.todo.getTodos();
+  private async captureWireLines(): Promise<WireLineRange | undefined> {
+    try {
+      await this.wire.flush();
+    } catch (error) {
+      onUnexpectedError(error);
+      return undefined;
+    }
+    const end = this.wire.lineCount();
+    const previous = this.states.get(fullCompactionWireRangesKey).at(-1);
+    const start = Math.max(previous?.end ?? 0, this.wire.lastContextClearLine() ?? 0) + 1;
+    if (end < start) return undefined;
+    return { start, end };
+  }
+
+  private renderRecoveryFooter(wireLines: WireLineRange | undefined): string | undefined {
+    if (wireLines === undefined) return undefined;
+    const journalPath = this.wire.journalPath();
+    if (journalPath === undefined) return undefined;
+    const windows = [...this.states.get(fullCompactionWireRangesKey), wireLines];
+    return renderContextRecoveryPointer({ journalPath, windows });
   }
 
   private tokenCountWithPending(): number {
-    return this.tokenCounting.get().size;
-  }
-
-  private get contextInjector(): IAgentContextInjectorService {
-    if (this.contextInjectorService === undefined) {
-      this.contextInjectorService = this.instantiation.invokeFunction((accessor) =>
-        accessor.get(IAgentContextInjectorService),
-      );
-    }
-    return this.contextInjectorService;
+    return this.tokenCounting.get(agentContextOfScope(this.agent)).size;
   }
 }
 
@@ -797,6 +884,13 @@ function findAPIStatusError(error: unknown): APIStatusError | undefined {
     current = current instanceof Error ? current.cause : undefined;
   }
   return undefined;
+}
+
+function findRequestId(error: unknown): string | undefined {
+  const diagnostics = errorDiagnostics(error);
+  const diagnosticRequestId = diagnostics?.['requestId'];
+  if (typeof diagnosticRequestId === 'string') return diagnosticRequestId;
+  return findAPIStatusError(error)?.requestId ?? undefined;
 }
 
 function collectSummary(finish: AgentLLMRequestFinish): CompactionAttemptResult {
@@ -815,7 +909,7 @@ function collectSummary(finish: AgentLLMRequestFinish): CompactionAttemptResult 
     );
   }
 
-  return { summary, usage: finish.usage, traceId: finish.traceId };
+  return { summary, usage: finish.usage, requestId: finish.requestId };
 }
 
 function historySafeToCompact(

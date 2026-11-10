@@ -1,7 +1,7 @@
 /**
  * `modelService` — model configuration registry. Mirrors
- * `agent-core-v2/kosong/model/model.ts` (`ModelRecordSchema`, including its
- * passthrough of unknown keys) and `agent-core-v2/kosong/protocol/protocol.ts`
+ * `agent-core-v2/llm-adapter/model/model.ts` (`ModelRecordSchema`, including its
+ * passthrough of unknown keys) and `agent-core-v2/llm-adapter/protocol/protocol.ts`
  * (`ProtocolSchema` — the four real wire protocols; `kimi` is a provider
  * `type`, not a protocol, and Vertex AI is a `providerOptions` mode of
  * `google-genai`). The schema name stays `modelConfigSchema` while the

@@ -1,8 +1,10 @@
+import { PRINT_WAIT_CEILING_S_DEFAULT } from '@moonshot-ai/agent-core-v2';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
   applyPrintBackgroundPolicy,
   createPrintTurnEndings,
+  formatTrustGatedMcpWarning,
   PrintSteeredTurnFailedError,
   type PrintTurnEnding,
   type PrintTurnEndings,
@@ -12,7 +14,7 @@ function ending(
   turnId: number,
   reason: PrintTurnEnding['reason'] = 'completed',
 ): PrintTurnEnding {
-  return { type: 'turn.ended', turnId, reason };
+  return { type: 'turn.ended', turnId, reason } as unknown as PrintTurnEnding;
 }
 
 interface ScriptedEntry {
@@ -386,6 +388,96 @@ describe('applyPrintBackgroundPolicy', () => {
     expect(warn.mock.calls[0]?.[0]).toContain('cron');
   });
 
+  it('waits for an in-flight turn instead of treating an empty cron schedule as quiescent', async () => {
+    // A fired one-shot task disappears from the schedule at once, while the
+    // turn it steered is still running: the policy must wait the turn out
+    // rather than return (and let teardown cancel the turn mid-flight).
+    let active = true;
+    let consumed = 0;
+    const warn = vi.fn();
+    await applyPrintBackgroundPolicy({
+      mode: 'steer',
+      ceilingS: 3600,
+      maxTurns: 50,
+      countPending: () => 0,
+      drain: async () => {},
+      turnEndings: scriptedTurnEndings([
+        { event: ending(2), apply: () => { consumed += 1; active = false; } },
+      ]),
+      skipTurnId: 1,
+      warn,
+      now: () => 0,
+      turnActive: () => active,
+      cronNextFireAt: () => null,
+    });
+    expect(consumed).toBe(1);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('does not read a past fire time as a wedged tick while a turn is running', async () => {
+    // A recurring task's fire comes due during a long turn: the tick waits
+    // for the loop to go idle, so the same past fire time is reported until
+    // the turn ends. That is a held fire, not a wedged tick.
+    let active = true;
+    let nextFire: number | null = 500;
+    const warn = vi.fn();
+    const turnEndings: PrintTurnEndings = {
+      next: async (remainingMs) => {
+        // The running turn outlives short grace waits; only a patient wait
+        // observes its ending.
+        if (remainingMs <= 10_000) return null;
+        if (active) {
+          active = false;
+          nextFire = 60_000;
+          return ending(2);
+        }
+        nextFire = null;
+        return ending(3);
+      },
+    };
+    await applyPrintBackgroundPolicy({
+      mode: 'steer',
+      ceilingS: 3600,
+      maxTurns: 50,
+      countPending: () => 0,
+      drain: async () => {},
+      turnEndings,
+      skipTurnId: 1,
+      warn,
+      now: () => 1_000,
+      turnActive: () => active,
+      cronNextFireAt: () => nextFire,
+    });
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('fails the run when an in-flight steered turn does not complete', async () => {
+    await expect(
+      applyPrintBackgroundPolicy({
+        mode: 'steer',
+        ceilingS: 3600,
+        maxTurns: 50,
+        countPending: () => 0,
+        drain: async () => {},
+        turnEndings: scriptedTurnEndings([
+          {
+            event: {
+              type: 'turn.ended',
+              turnId: 2,
+              reason: 'failed',
+              error: { code: 'provider.overloaded', message: 'try later' },
+            } as PrintTurnEnding,
+          },
+        ]),
+        skipTurnId: 1,
+        warn: () => {},
+        now: () => 0,
+        turnActive: () => true,
+        cronNextFireAt: () => null,
+      }),
+    ).rejects.toThrow(PrintSteeredTurnFailedError);
+  });
+
   it('finishes goal waiting before consulting the cron schedule', async () => {
     let active = true;
     let consumed = 0;
@@ -423,6 +515,36 @@ describe('applyPrintBackgroundPolicy', () => {
     expect(cronFirstCallAtConsumed).toBe(2);
     expect(cronNextFireAt).toHaveBeenCalled();
   });
+
+  it('steer keeps waiting under the default ceiling with tasks pending', async () => {
+    let pending = 1;
+    const turnEndings = createPrintTurnEndings();
+    const policy = applyPrintBackgroundPolicy({
+      mode: 'steer',
+      ceilingS: PRINT_WAIT_CEILING_S_DEFAULT,
+      maxTurns: 50,
+      countPending: () => pending,
+      drain: async () => {},
+      turnEndings,
+      skipTurnId: 1,
+      warn: () => {},
+      now: () => Date.now(),
+    });
+    // The default ceiling is ~24.8 days: with tasks still pending the wait
+    // must not return null early and end the run here.
+    const early = await Promise.race([
+      policy.then(() => 'returned' as const),
+      new Promise<'waiting'>((resolve) => setTimeout(() => {
+        resolve('waiting');
+      }, 50)),
+    ]);
+    expect(early).toBe('waiting');
+    // A background task completion steered a new turn; once it ends and no
+    // tasks remain, the policy returns.
+    pending = 0;
+    turnEndings.push(ending(2));
+    await policy;
+  });
 });
 
 describe('createPrintTurnEndings', () => {
@@ -451,5 +573,41 @@ describe('createPrintTurnEndings', () => {
     endings.push(ending(1));
     endings.push(ending(4));
     await expect(pending).resolves.toMatchObject({ turnId: 4 });
+  });
+
+  it('does not resolve null early when the budget exceeds the timer ceiling', async () => {
+    const endings = createPrintTurnEndings();
+    // 10 years in ms — beyond Node's 2^31-1 ms setTimeout ceiling, which an
+    // explicit `print_wait_ceiling_s` can still reach.
+    const pending = endings.next(10 * 365 * 24 * 3600 * 1000, 1);
+    // Node clamps a >2^31-1 ms setTimeout to 1ms; the wait must ride out the
+    // overflow in chunks instead of resolving null at once.
+    const early = await Promise.race([
+      pending,
+      new Promise<'waiting'>((resolve) => setTimeout(() => {
+        resolve('waiting');
+      }, 50)),
+    ]);
+    expect(early).toBe('waiting');
+    endings.push(ending(7));
+    await expect(pending).resolves.toMatchObject({ turnId: 7 });
+  });
+});
+
+describe('formatTrustGatedMcpWarning', () => {
+  it('singularizes the noun for one skipped server', () => {
+    const text = formatTrustGatedMcpWarning([{ name: 'fs', target: 'stdio: node server.js' }]);
+    expect(text).toContain('skipped 1 project-level MCP server: fs (stdio: node server.js).');
+    expect(text).toContain('"Trust this folder"');
+    expect(text).toContain('KIMI_CODE_TRUST_WORKSPACE=1');
+  });
+
+  it('pluralizes and joins multiple skipped servers', () => {
+    const text = formatTrustGatedMcpWarning([
+      { name: 'api', target: 'http: https://example.com/mcp' },
+      { name: 'fs', target: 'stdio: node server.js' },
+    ]);
+    expect(text).toContain('skipped 2 project-level MCP servers:');
+    expect(text).toContain('api (http: https://example.com/mcp), fs (stdio: node server.js)');
   });
 });

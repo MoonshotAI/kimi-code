@@ -90,7 +90,12 @@ describe('AgentShellCommandService', () => {
 
     await shell.run({ command: 'echo hello', commandId: 'cmd-1' });
     expect(events.filter((e) => e.type === 'shell.completed')).toEqual([
-      { type: 'shell.completed', commandId: 'cmd-1', isError: false, taskId: expect.any(String) },
+      expect.objectContaining({
+        type: 'shell.completed',
+        commandId: 'cmd-1',
+        isError: false,
+        taskId: expect.any(String),
+      }),
     ]);
   });
 
@@ -101,7 +106,12 @@ describe('AgentShellCommandService', () => {
 
     await shell.run({ command: 'false', commandId: 'cmd-2' });
     expect(events.filter((e) => e.type === 'shell.completed')).toEqual([
-      { type: 'shell.completed', commandId: 'cmd-2', isError: true, taskId: expect.any(String) },
+      expect.objectContaining({
+        type: 'shell.completed',
+        commandId: 'cmd-2',
+        isError: true,
+        taskId: expect.any(String),
+      }),
     ]);
   });
 
@@ -133,8 +143,6 @@ describe('AgentShellCommandService', () => {
 
     await ctx.get(IAgentShellCommandService).run({ command: 'echo hi', commandId: 'cmd-9' });
 
-    // Later events carry the task id themselves, so a consumer that missed
-    // shell.started can still route them.
     expect(events.find((e) => e.type === 'shell.output')).toMatchObject({
       commandId: 'cmd-9',
       taskId: 'task-9',
@@ -153,8 +161,6 @@ describe('AgentShellCommandService', () => {
 
     await shell.run({ command: 'false', commandId: 'cmd-3' });
     const relevant = events.filter((e) => e.type === 'shell.output' || e.type === 'shell.completed');
-    // The failure text was never streamed live — it rides a final output
-    // chunk ahead of the completion event.
     expect(relevant[0]).toMatchObject({ type: 'shell.output', commandId: 'cmd-3' });
     expect(relevant[0]?.update?.text?.length).toBeGreaterThan(0);
     expect(relevant.at(-1)).toMatchObject({ type: 'shell.completed', commandId: 'cmd-3' });

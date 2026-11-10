@@ -2,7 +2,10 @@ import { CURSOR_MARKER } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 import { beforeAll, describe, expect, it } from 'vitest';
 
-import { QuestionDialogComponent } from '#/tui/components/dialogs/question-dialog';
+import {
+  QuestionDialogComponent,
+  type QuestionDialogOptions,
+} from '#/tui/components/dialogs/question-dialog';
 import type { PendingQuestion } from '#/tui/reverse-rpc/types';
 import { currentTheme } from '#/tui/theme';
 
@@ -36,6 +39,7 @@ function makePending(
 function makeDialog(
   pending: PendingQuestion,
   onToggleToolOutput?: () => void,
+  options?: QuestionDialogOptions,
 ): {
   dialog: QuestionDialogComponent;
   collected: string[][];
@@ -51,7 +55,9 @@ function makeDialog(
     },
     6,
     onToggleToolOutput,
+    options,
   );
+  dialog.focused = true;
   return { dialog, collected, methods };
 }
 
@@ -271,7 +277,6 @@ describe('QuestionDialogComponent', () => {
     ]);
     const { dialog } = makeDialog(pending);
 
-    dialog.focused = true;
     dialog.handleInput('3');
 
     const out = dialog.render(80).join('\n');
@@ -394,6 +399,42 @@ describe('QuestionDialogComponent', () => {
     expect(out).toContain('Mushroom');
   });
 
+  it('multi-select Other can be toggled off after it is committed', () => {
+    const pending = makePending([
+      {
+        question: 'Pick toppings?',
+        multi_select: true,
+        options: [{ label: 'Cheese' }, { label: 'Pepperoni' }],
+      },
+    ]);
+    const { dialog, collected } = makeDialog(pending);
+
+    // Select Other and commit a custom value.
+    dialog.handleInput('3');
+    dialog.handleInput('M');
+    dialog.handleInput('u');
+    dialog.handleInput('s');
+    dialog.handleInput('h');
+    dialog.handleInput('r');
+    dialog.handleInput('o');
+    dialog.handleInput('o');
+    dialog.handleInput('m');
+    dialog.handleInput('\r');
+
+    // Toggle it off using the same key.
+    dialog.handleInput('3');
+    // Select a preset option to confirm the answer still builds correctly.
+    dialog.handleInput('1');
+    dialog.handleInput('\t');
+
+    const review = strip(dialog.render(80).join('\n'));
+    expect(review).toContain('Cheese');
+    expect(review).not.toContain('Mushroom');
+
+    dialog.handleInput('1');
+    expect(collected).toEqual([['Cheese']]);
+  });
+
   it('escape dismisses with empty answers array', () => {
     const pending = makePending([
       {
@@ -419,6 +460,43 @@ describe('QuestionDialogComponent', () => {
     dialog.handleInput(key);
     expect(collected).toEqual([[]]);
   });
+  it('lends the keyboard to Updates on ctrl+n and fades until it comes back', () => {
+    const pending = makePending([
+      { question: 'Pick one?', multi_select: false, options: [{ label: 'A' }, { label: 'B' }] },
+    ]);
+    let updatesReady = false;
+    let terminalFocused = true;
+    const lent: string[] = [];
+    const { dialog, collected } = makeDialog(pending, undefined, {
+      isTerminalFocused: () => terminalFocused,
+      onFocusUpdates: () => {
+        lent.push('ctrl+n');
+        return updatesReady;
+      },
+    });
+    const faint = '\u001B[2m';
+
+    dialog.handleInput('\u000E');
+    expect(lent).toEqual(['ctrl+n']);
+    expect(dialog.render(80).join('\n')).not.toContain(faint);
+
+    updatesReady = true;
+    dialog.handleInput('\u001B[78;69u');
+    expect(lent).toEqual(['ctrl+n', 'ctrl+n']);
+    expect(collected).toEqual([]);
+
+    dialog.focused = false;
+    const faded = dialog.render(80);
+    expect(faded.every((line) => line.length === 0 || line.startsWith(faint))).toBe(true);
+    expect(faded.map(strip).at(-2)).toBe('  esc back to question');
+
+    dialog.focused = true;
+    terminalFocused = false;
+    const away = dialog.render(80);
+    expect(away.every((line) => line.length === 0 || line.startsWith(faint))).toBe(true);
+    expect(away.map(strip).at(-2)).toContain('esc cancel');
+  });
+
   it('forwards ctrl+o to the global tool-output toggle without answering', () => {
     let toggles = 0;
     const pending = makePending([

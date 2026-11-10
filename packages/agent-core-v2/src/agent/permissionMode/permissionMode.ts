@@ -12,6 +12,7 @@ export interface IAgentPermissionModeService {
 
   readonly mode: PermissionMode;
   setMode(mode: PermissionMode): void;
+  setModeAndBroadcast(mode: PermissionMode): void;
 
   readonly onDidChangeMode: Event<PermissionModeChangedContext>;
 }

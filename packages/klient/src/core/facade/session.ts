@@ -7,36 +7,32 @@
  * wire).
  */
 
-import type { AgentActivityState } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
 import type {
   ApprovalRequest,
   ApprovalResponse,
-} from '@moonshot-ai/agent-core-v2/session/approval/approval';
+} from '@moonshot-ai/agent-core-v2/agent/interaction/approval';
 import type {
   Interaction,
   InteractionKind,
-} from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
+} from '@moonshot-ai/agent-core-v2/human/interaction/interaction';
 import type {
   QuestionRequest,
   QuestionResult,
-} from '@moonshot-ai/agent-core-v2/session/question/question';
+} from '@moonshot-ai/agent-core-v2/agent/interaction/question';
 import type {
   AgentMeta,
   SessionMeta,
   SessionMetaPatch,
 } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
-import type { SkillSummary } from '@moonshot-ai/agent-core-v2/app/skillCatalog/types';
+import type { SkillSummary } from '@moonshot-ai/agent-core-v2/features/skill/catalog/types';
 
 import type { ScopeRef } from '../channel.js';
 import type { McpServerConfig } from '../../contract/mcp.js';
-import { RPCError } from '../errors.js';
 import type { ScopedCaller } from './global.js';
-
-const NOT_FOUND = 40404;
 
 export type { ScopedCaller } from './global.js';
 
-/** What `sessionLifecycleService.create/fork/createChild` leaves on the wire. */
+/** What `sessionLifecycleService.create` and `sessionManager.restore` leave on the wire. */
 interface HandleWire {
   readonly id: string;
 }
@@ -78,16 +74,28 @@ export interface SessionSkillsFacade {
 }
 
 /**
- * Derived session lifecycle phase. The engine retired its `sessionActivity`
- * service (#1751) — busy is now derived from agent activity views — so the
- * facade composes the phase from the pending interaction lists and each
- * agent's `agentActivityView`, keeping the retired service's precedence.
+ * Derived session lifecycle phase. The facade reads the engine's session
+ * activity view (busy + pending interaction) and maps it onto the v1
+ * precedence: pending approvals and questions first, then busy, then idle.
  */
 export type SessionStatus = 'running' | 'idle' | 'awaiting_approval' | 'awaiting_question';
 
 export interface SessionFacade {
   get(): Promise<SessionMeta>;
   setTitle(title: string): Promise<void>;
+  /**
+   * Generate and apply a title from the main agent's first prompts via the
+   * managed `chat_title` tool. `undefined` when generation is unavailable
+   * (no managed OAuth login, no prompt yet, or a custom title is set).
+   * `force` regenerates anyway, overwriting a generated or custom title.
+   * `source` picks the conversation excerpt: `user_prompts` (default),
+   * `first_turn` (opening prompt + first reply; strict), or `digest`
+   * (head+tail of a multi-turn conversation).
+   */
+  generateTitle(opts?: {
+    force?: boolean;
+    source?: 'user_prompts' | 'first_turn' | 'digest';
+  }): Promise<string | undefined>;
   update(patch: SessionMetaPatch): Promise<void>;
   setArchived(archived: boolean): Promise<void>;
   status(): Promise<SessionStatus>;
@@ -97,7 +105,11 @@ export interface SessionFacade {
   restore(opts?: SessionRestoreOptions): Promise<boolean>;
   /** Permanently delete the session and its persisted data; throws when missing. */
   delete(): Promise<void>;
-  fork(input?: { title?: string; metadata?: Record<string, unknown> }): Promise<SessionMeta>;
+  fork(input?: {
+    title?: string;
+    metadata?: Record<string, unknown>;
+    turnIndex?: number;
+  }): Promise<SessionMeta>;
   createChild(input?: { title?: string; metadata?: Record<string, unknown> }): Promise<SessionMeta>;
   readonly approvals: SessionApprovalsFacade;
   readonly questions: SessionQuestionsFacade;
@@ -111,87 +123,46 @@ export function createSessionFacade(call: ScopedCaller, sessionId: string): Sess
   const scope: ScopeRef = { sessionId };
   const read = (): Promise<SessionMeta> =>
     call(scope, 'sessionMetadata', 'read', []) as Promise<SessionMeta>;
-  // Session lifecycle methods live on the session's workspace handler
-  // (Workspace scope) — the index supplies the handler's workspaceId.
-  const resolveWorkspaceId = async (): Promise<string | undefined> => {
-    const summary = (await call({}, 'sessionIndex', 'get', [sessionId])) as
-      | { workspaceId: string }
-      | undefined;
-    return summary?.workspaceId;
-  };
   const spawn = async (
     method: 'fork' | 'createChild',
-    input: { title?: string; metadata?: Record<string, unknown> } = {},
+    input: { title?: string; metadata?: Record<string, unknown>; turnIndex?: number } = {},
   ): Promise<SessionMeta> => {
-    const workspaceId = await resolveWorkspaceId();
-    if (workspaceId === undefined) {
-      throw new RPCError(NOT_FOUND, `session not found: ${sessionId}`);
-    }
-    const handle = (await call({ workspaceId }, 'sessionLifecycleService', method, [
-      { sourceSessionId: sessionId, title: input.title, metadata: input.metadata },
-    ])) as HandleWire;
-    return call({ sessionId: handle.id }, 'sessionMetadata', 'read', []) as Promise<SessionMeta>;
+    return call({}, 'sessionManager', method, [
+      {
+        sourceSessionId: sessionId,
+        title: input.title,
+        metadata: input.metadata,
+        turnIndex: input.turnIndex,
+      },
+    ]) as Promise<SessionMeta>;
   };
 
   return {
     get: read,
     setTitle: (title) => call(scope, 'sessionMetadata', 'setTitle', [title]) as Promise<void>,
+    generateTitle: (opts) =>
+      call(scope, 'sessionTitleService', 'generateTitle', [opts]) as Promise<
+        string | undefined
+      >,
     update: (patch) => call(scope, 'sessionMetadata', 'update', [patch]) as Promise<void>,
     setArchived: (archived) =>
       call(scope, 'sessionMetadata', 'setArchived', [archived]) as Promise<void>,
     status: async () => {
-      const pending = (kind: 'approval' | 'question') =>
-        call(scope, 'sessionInteractionService', 'listPending', [kind]) as Promise<
-          readonly unknown[]
-        >;
-      if ((await pending('approval')).length > 0) return 'awaiting_approval';
-      if ((await pending('question')).length > 0) return 'awaiting_question';
-      const meta = await read();
-      for (const agentId of Object.keys(meta.agents ?? {})) {
-        try {
-          const state = (await call(
-            { sessionId, agentId },
-            'agentActivityView',
-            'state',
-            [],
-          )) as AgentActivityState;
-          if (state.turn !== undefined || state.background.length > 0) return 'running';
-        } catch {
-          // Agents stay registered after their live handle is gone; the scope
-          // probe fails for a dead agent, so treat it as not active — the same
-          // view the retired service had from iterating live handles only.
-        }
-      }
-      return 'idle';
+      const activity = (await call(scope, 'sessionActivityView', 'state', [])) as {
+        readonly busy: boolean;
+        readonly pendingInteraction: 'none' | 'approval' | 'question';
+      };
+      if (activity.pendingInteraction === 'approval') return 'awaiting_approval';
+      if (activity.pendingInteraction === 'question') return 'awaiting_question';
+      return activity.busy ? 'running' : 'idle';
     },
-    close: async () => {
-      const workspaceId = await resolveWorkspaceId();
-      if (workspaceId === undefined) return;
-      await call({ workspaceId }, 'sessionLifecycleService', 'close', [sessionId]);
-    },
-    archive: async () => {
-      const workspaceId = await resolveWorkspaceId();
-      if (workspaceId === undefined) return;
-      await call({ workspaceId }, 'sessionLifecycleService', 'archive', [sessionId]);
-    },
+    close: () => call({}, 'sessionManager', 'close', [sessionId]) as Promise<void>,
+    archive: () => call({}, 'sessionManager', 'archive', [sessionId]) as Promise<void>,
     restore: async (opts) => {
-      const workspaceId = await resolveWorkspaceId();
-      if (workspaceId === undefined) return false;
-      const handle = (await call({ workspaceId }, 'sessionLifecycleService', 'restore', [
-        sessionId,
-        opts,
-      ])) as HandleWire | null;
-      // The engine reports "not found" with `undefined`, which JSON transports
-      // may surface as `null` — reject both.
+      const handle = (await call({}, 'sessionManager', 'restore', [sessionId, opts])) as HandleWire | null;
       return handle !== null && handle !== undefined;
     },
-    delete: async () => {
-      const workspaceId = await resolveWorkspaceId();
-      if (workspaceId === undefined) {
-        throw new RPCError(NOT_FOUND, `session not found: ${sessionId}`);
-      }
-      await call({ workspaceId }, 'sessionLifecycleService', 'delete', [sessionId]);
-    },
+    delete: () => call({}, 'sessionManager', 'delete', [sessionId]) as Promise<void>,
     fork: (input) => spawn('fork', input),
     createChild: (input) => spawn('createChild', input),
 

@@ -1,12 +1,20 @@
 # Model Context Protocol
 
-[Model Context Protocol (MCP)](https://modelcontextprotocol.io/) is an open protocol that lets models safely call tools exposed by external processes or services — for example, reading GitHub issues, querying databases, or operating the local file system. Kimi Code CLI acts as an MCP client to connect these external tools and exposes them to the Agent alongside built-in tools (`Read`, `Bash`, `Grep`, etc.) with no behavioral difference.
+[Model Context Protocol (MCP)](https://modelcontextprotocol.io/) is an open protocol that lets models safely call tools exposed by external processes or services: reading GitHub issues, querying databases, or operating the local file system. Kimi Code CLI acts as an MCP client to connect these external tools and exposes them to the Agent alongside built-in tools (`Read`, `Bash`, `Grep`, etc.) with no behavioral difference.
+
+MCP tool results can include text (`content`) and structured data (`structuredContent`). Kimi Code CLI makes both available to the agent and omits the structured copy only when it can confirm that a text block already contains the same complete JSON value. Text summaries and media do not replace structured records.
+
+Kimi Code CLI preserves embedded MCP attachments that cannot be delivered directly because of format or size limits. Embedded images, audio, and video are saved even when they can be delivered unchanged, because provider conversion or later history reduction may omit them. Session-attachment readers remain available without workspace filesystem access when the model supports the corresponding content. Originals are retained in the session's media storage instead of an evictable image cache. Saved originals, including images preserved during compression, have absolute paths and stable `kimi-file://` references. Pass a reference as the `path` to `Read` or `ReadMediaFile`; bytes are read from the current session's storage even when the workspace environment cannot access it. Pagination keeps the reference, including after a fork. For binary formats that `Read` cannot open, its error includes a server-local path when available; an external converter must have access to that filesystem. Text attachments such as CSV, HTML, JSON, and plain SVG use readable extensions.
+
+For providers that support image uploads and file references, later model requests can reuse a new MCP tool image after its first upload.
+
+Attachment paths and compression details share the tool-output budget. Large lists are saved to a text file, with a short pointer that remains visible when accompanying text is shortened; the agent can pass the list’s `kimi-file://` reference to `Read` and page through it. Canceling the tool stops subsequent attachment processing and signals active writes. If decoding or saving fails, the result explicitly reports that the original could not be preserved while retaining other usable output. Resource links are not automatically downloaded.
 
 ## Connection Methods
 
 Kimi Code CLI supports three MCP server connection methods:
 
-- **stdio**: The CLI starts the local MCP server as a child process and communicates via standard input/output. Suitable for local command-line tools.
+- **stdio**: The CLI starts the MCP server as a child process and communicates via standard input/output. Suitable for command-line tools. By default the server runs on the machine running Kimi Code; setting [`environment_id`](#running-stdio-servers-in-a-remote-environment) starts it inside a [remote environment](../guides/remote-environment.md) instead.
 - **HTTP**: The CLI connects to an already-running HTTP endpoint. Suitable for remote services or processes that need to run persistently.
 - **SSE**: The CLI connects to a legacy HTTP+SSE endpoint (Server-Sent Events, a streaming HTTP mechanism). Prefer HTTP for new MCP servers, but use `transport: "sse"` when a service still exposes only the older SSE transport.
 
@@ -20,6 +28,12 @@ MCP server configuration is written in `mcp.json`, at two levels:
 Entries with the same name: the project-level entry takes precedence and overrides the user-level entry.
 
 Run `/mcp-config` in the TUI to interactively add, edit, or delete servers without manually editing the JSON file. Run `/mcp` to view the connection status of all current servers.
+
+Deleting a server from the configuration does not interrupt open sessions: the server stays listed in `/mcp` as `removed`, its tools remain visible there, and calls to them fail with a removal notice, while new sessions do not register the tools at all. Conversely, a server added mid-session by editing `mcp.json` or installing a plugin is not registered in already-open sessions; it only joins sessions created later.
+
+When Kimi Code finds project-level MCP servers in an untrusted folder, it shows each server's transport and launch target in the workspace trust prompt. The prompt defaults to `Trust this folder`; review the listed command and arguments or remote URL before confirming. Trusting the folder enables the project-level MCP servers for that workspace.
+
+Headless runs (for example `kimi -p` in CI) cannot show the trust prompt, so project-level MCP servers stay disabled there unless the workspace is already trusted. Set [`KIMI_CODE_TRUST_WORKSPACE`](../configuration/env-vars.md#runtime-switches) to `1` to trust the workspace for that process. To disable workspace trust globally and load project-level MCP servers without confirmation, set [`[workspace] require_trust = false`](../configuration/config-files.md#workspace-trust) in `config.toml`; use that setting only when every workspace is already trusted.
 
 Structure of `mcp.json`:
 
@@ -48,10 +62,12 @@ Optional fields:
 | Field | Type | Applies to | Description |
 | --- | --- | --- | --- |
 | `env` | `Record<string, string>` | stdio | Environment variables injected into the child process |
+| `environment_id` | `string` | stdio | Id of the [remote environment](../guides/remote-environment.md) that starts the server; defaults to `local` |
 | `cwd` | `string` | stdio | Working directory for the child process |
 | `headers` | `Record<string, string>` | HTTP, SSE | Static request headers appended to every request |
 | `bearerTokenEnvVar` | `string` | HTTP, SSE | Name of an environment variable that contains a bearer token |
 | `enabled` | `boolean` | All | Set to `false` to disable this server |
+| `deferred` | `boolean` | All | Experimental: set to `true` to let the model load this server's tools on demand. Defaults to the global `default_deferred` value (`false` when unset). Prerequisites and behavior: [Loading tools on demand](#loading-tools-on-demand) |
 | `startupTimeoutMs` | `number` | All | Connection timeout from `1` to `2147483647` milliseconds; default `30000` |
 | `toolTimeoutMs` | `number` | All | Timeout from `1` to `2147483647` milliseconds for a single tool call |
 | `enabledTools` | `string[]` | All | Tool allowlist |
@@ -59,13 +75,85 @@ Optional fields:
 
 You do not have to set the connection timeout or the single tool-call timeout per server: `[mcp] startup_timeout_ms` / `[mcp] tool_timeout_ms` in `config.toml` or the `KIMI_MCP_STARTUP_TIMEOUT_MS` / `KIMI_MCP_TOOL_TIMEOUT_MS` environment variables change the global defaults. Precedence is: per-server field > environment variable > `config.toml` > built-in default. See [Configuration files](../configuration/config-files.md#mcp).
 
+When a workspace-level MCP server cannot be reached at startup or drops unexpectedly, it reconnects on its own with exponential backoff (the wait between attempts doubles each time): the first retry happens after `[mcp] reconnect_initial_delay_ms` (default `5000`) and the wait never exceeds `[mcp] reconnect_max_delay_ms` (default `300000`), adjustable via `config.toml` or the `KIMI_MCP_RECONNECT_INITIAL_DELAY_MS` / `KIMI_MCP_RECONNECT_MAX_DELAY_MS` environment variables. Its tools come back automatically once the server is reachable again. Servers that cannot recover on their own — an unknown command, an invalid configuration, or static credentials the server rejects — are not retried and stay `failed`, and session-scoped ephemeral servers are not retried either.
+
 HTTP and SSE servers support providing static credentials via `headers` or `bearerTokenEnvVar`. When OAuth is needed, run `/mcp-config login <server-name>` to complete browser-based authorization.
 
-Plugins can also declare MCP servers in their manifest. Servers declared by a plugin are enabled by default and can be disabled or re-enabled in `/plugins`, then a new session must be started. See [Plugins](./plugins.md) for details.
+Plugins can also declare MCP servers in their manifest. Servers declared by a plugin are enabled by default and can be disabled or re-enabled in `/plugins`: disabling or removing one makes calls from open sessions fail with a removal notice, and adding or enabling a server connects it in open sessions right away. See [Plugins](./plugins.md#mcp-servers-in-plugins) for details.
 
 ::: warning Note
-stdio entries in a project-level `.kimi-code/mcp.json` execute local commands when a session starts. Only enable these in repositories you trust.
+stdio entries in a project-level `.kimi-code/mcp.json` execute commands when a session starts. Only enable these in repositories you trust.
 :::
+
+## Running stdio servers in a remote environment
+
+A stdio server normally runs on the machine running Kimi Code, even for sessions bound to a remote environment. Setting `environment_id` on the server entry changes that: the CLI starts the server inside the named [remote environment](../guides/remote-environment.md), so the process, its working directory, and everything it touches live on the target.
+
+```toml
+# config.toml
+[environments.dev-box]
+type = "ssh"
+host = "dev-box"
+defaultCwd = "/srv/work"
+```
+
+```json
+{
+  "mcpServers": {
+    "remote-fs": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/srv/data"],
+      "environment_id": "dev-box"
+    }
+  }
+}
+```
+
+`environment_id` references an environment declared in `[environments]` in `config.toml` (see [Declaring environments](../guides/remote-environment.md#declaring-environments)). The field defaults to `local` and never follows the session's own environment binding: a session bound to `dev-box` still runs stdio servers without `environment_id` locally. A cold environment connects on demand when the server starts.
+
+### Environment variables for remote stdio servers
+
+A remote stdio server inherits `PATH`, `HOME`, and the rest of its base environment from the target — not from your machine — so local paths never leak into a remote process. The CLI sends only the `env` overlay as literal values, and the target resolves everything else.
+
+```json
+{
+  "mcpServers": {
+    "remote-db": {
+      "command": "db-mcp-server",
+      "environment_id": "dev-box",
+      "env": { "LOG_LEVEL": "debug" }
+    }
+  }
+}
+```
+
+In this example the server receives `LOG_LEVEL=debug` from `env`; every other variable is resolved from the target's own environment.
+
+## Loading tools on demand
+
+By default, every tool of a server goes straight into the model's top-level tool list; with many connected servers — or a single server that exposes many tools — those definitions occupy context for the whole session. Marking a server as deferred keeps its tools out of the top-level list: the model first sees a manifest of loadable tools, loads full definitions on demand through the built-in `select_tools` tool, and can call them in the same turn once loaded.
+
+Loading tools on demand is experimental and takes effect only when both prerequisites are met:
+
+- The `tool-select` experimental flag is on: set `KIMI_CODE_EXPERIMENTAL_TOOL_SELECT=1`, or write `tool-select = true` under `[experimental]` in `config.toml`; the master switch `KIMI_CODE_EXPERIMENTAL_FLAG=1` enables it too.
+- The current model declares the `dynamically_loaded_tools` capability: official models declare it automatically; for other models, add it to `capabilities` in `config.toml` — see [Configuration files](../configuration/config-files.md#models).
+
+With both prerequisites met, set `deferred: true` on the server entry in `mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "url": "https://mcp.example.com/mcp",
+      "deferred": true
+    }
+  }
+}
+```
+
+Servers without `deferred` take the global default (`false` unless changed); when a prerequisite is missing, the field is ignored with the same result. The authentication tool exposed by an OAuth server before authorization completes follows the same field.
+
+To defer every server by default instead of marking them one by one, set `default_deferred = true` under `[mcp]` in `config.toml` — see [Configuration files](../configuration/config-files.md#mcp). A server can still opt out with `deferred: false`; the per-server field always wins over the global default. The value is captured when a server connects, so changing it later does not reshape tools in a running session — reconnect the server or restart the process to apply it.
 
 ## Tool Naming and Permissions
 
@@ -96,7 +184,7 @@ When connecting to external MCP servers, be aware of:
 - Keep manual approval for high-risk tools (file writes, command execution, etc.); avoid using `mcp__*` wildcards to allow all tools at once
 
 ::: warning Note
-In YOLO mode, MCP tool calls are automatically approved. Only use this mode when you fully trust the MCP servers you have connected.
+In [Ask When Needed mode](../guides/interaction.md#the-three-permission-modes), MCP tool calls are automatically approved. Only use this mode when you fully trust the MCP servers you have connected.
 :::
 
 ## Next steps

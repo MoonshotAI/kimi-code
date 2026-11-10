@@ -23,10 +23,6 @@ export async function handleAddDirCommand(host: SlashCommandHost, args: string):
   }
 
   if (session === undefined) {
-    if (!host.engineV2) {
-      host.showError(NO_ACTIVE_SESSION_MESSAGE);
-      return;
-    }
     // The path-adding form needs a live session; lazy-create it on first use
     // (the read-only `list`/bare forms above tolerate a missing session).
     session = await host.ensureSession();
@@ -101,7 +97,7 @@ async function handleAddDirChoice(
     host.refreshSlashCommandAutocomplete();
     host.showStatus(
       choice === 'remember'
-        ? `Added workspace directory:\n  ${path}\n  Saved to:\n  ${result.configPath}`
+        ? `Added workspace directory:\n  ${path}\n  Remembered in the workspace registry`
         : `Added workspace directory:\n  ${path}\n  For this session only`,
       'success',
     );
