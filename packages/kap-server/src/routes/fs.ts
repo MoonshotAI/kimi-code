@@ -606,8 +606,8 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       r.header('etag', resolved.etag);
       r.header('last-modified', resolved.modifiedAt.toUTCString());
       const base = resolved.relative.split('/').at(-1) ?? resolved.relative;
-      const fallback = base.replaceAll(/[^\x20-\x7E]/g, '_').replaceAll('\\', '\\\\').replaceAll('"', '\\"');
-      const encoded = encodeURIComponent(base).replaceAll(/['()*]/g, (char) => `%${char.codePointAt(0).toString(16).toUpperCase()}`);
+      const fallback = base.replace(/[^\x20-\x7e]/g, '_').replaceAll('\\', '\\\\').replaceAll('"', '\\"');
+      const encoded = encodeURIComponent(base).replace(/['()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
       const filenameStar = fallback === base ? '' : `; filename*=UTF-8''${encoded}`;
       r.header('content-disposition', `attachment; filename="${fallback}"${filenameStar}`);
       r.type(resolved.mime);
