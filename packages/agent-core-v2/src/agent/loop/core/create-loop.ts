@@ -50,7 +50,7 @@ export interface Loop {
   readonly hooks: HookRegistry;
   readonly policy: PolicyRegistry;
   submit(entry: UserEntry): LoopAck<'prompt.submitted'> | undefined;
-  notify(entry: UserEntry): LoopAck<'prompt.notified'> | undefined;
+  notify(entry: UserEntry, options?: { readonly steer?: boolean }): LoopAck<'prompt.notified'> | undefined;
   remind(...entries: readonly RemindEntry[]): LoopAck<'prompt.reminded'> | undefined;
   flushReminders(): void;
   steer(promptIds: readonly string[]): LoopAck<'prompt.steered'> | undefined;

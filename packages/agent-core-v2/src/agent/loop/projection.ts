@@ -186,53 +186,17 @@ function pairBlocks(
   return blocks;
 }
 
-interface MergeState {
-  single: { readonly source: ContextMessage; readonly content: ContentPart[] } | undefined;
-  readonly texts: string[];
-  readonly parts: ContentPart[];
-}
-
 function flattenBlocks(
   blocks: readonly Block[],
   layout: SliceLayout,
   onAnomaly?: OnAnomaly,
 ): Message[] {
   const out: Message[] = [];
-  let merge: MergeState | undefined;
-
-  const flushMerge = (): void => {
-    if (merge === undefined) return;
-    if (merge.single !== undefined) {
-      out.push(toWireMessage(merge.single.source, merge.single.content));
-    } else {
-      const text = merge.texts.join('\n\n');
-      const content: ContentPart[] = text === '' ? [] : [{ type: 'text', text }];
-      content.push(...merge.parts);
-      out.push({ role: 'user', content });
-    }
-    merge = undefined;
-  };
-
   for (const block of blocks) {
     if (block.kind === 'message') {
-      if (canMergeUserMessage(block.source)) {
-        if (merge === undefined) {
-          merge = { single: block, texts: [], parts: [] };
-        } else {
-          if (merge.single !== undefined) {
-            appendMergeContent(merge, merge.single.content);
-            merge.single = undefined;
-          }
-          appendMergeContent(merge, block.content);
-        }
-        continue;
-      }
-      flushMerge();
       out.push(toWireMessage(block.source, block.content));
       continue;
     }
-
-    flushMerge();
     const { exchange } = block;
     out.push(toWireMessage(exchange.source, exchange.content));
     for (const pending of exchange.pending) {
@@ -250,7 +214,6 @@ function flattenBlocks(
       }
     }
   }
-  flushMerge();
   return out;
 }
 
@@ -322,15 +285,6 @@ function dropLeadingNonUserMessages(messages: readonly Message[], onAnomaly?: On
     start += 1;
   }
   return start === 0 ? [...messages] : messages.slice(start);
-}
-
-function appendMergeContent(group: MergeState, content: readonly ContentPart[]): void {
-  let text = '';
-  for (const part of content) {
-    if (part.type === 'text') text += part.text;
-    else group.parts.push(part);
-  }
-  if (text.length > 0) group.texts.push(text);
 }
 
 function projectedContent(
@@ -407,10 +361,6 @@ function isInterruptedToolResult(message: Message | undefined): boolean {
 
 function isBlankText(part: ContentPart): boolean {
   return part.type === 'text' && part.text.trim().length === 0;
-}
-
-function canMergeUserMessage(message: ContextMessage): boolean {
-  return message.role === 'user' && message.origin?.kind === 'user';
 }
 
 function hasDeclaredTools(message: ContextMessage): boolean {

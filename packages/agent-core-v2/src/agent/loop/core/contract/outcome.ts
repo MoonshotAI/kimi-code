@@ -5,6 +5,8 @@ export type { Cause } from '#human/tool/contract';
 
 export const INTERRUPTED: Cause = { by: 'loop', reason: 'interrupted' };
 
+export const STEERED: Cause = { by: 'loop', reason: 'steered' };
+
 export const CRASHED: Cause = { by: 'loop', reason: 'crashed' };
 
 export const CLOSED: Cause = { by: 'loop', reason: 'closed' };

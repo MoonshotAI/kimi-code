@@ -107,7 +107,7 @@ import { AgentTurnProjection, loopLastRequestIdKey } from './turnProjection';
 import { AgentNotificationProjection } from './notificationProjection';
 import { AgentLoopProfileAdapter } from './profileAdapter';
 
-export type LoopInterruptReason = 'aborted' | 'max_steps' | 'error';
+export type LoopInterruptReason = 'aborted' | 'max_steps' | 'error' | 'steered';
 
 export { loopLastRequestIdKey } from './turnProjection';
 export const loopDisposingKey = defineState<boolean>('loop.disposing', () => false);
@@ -127,6 +127,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private readonly pendingSubmissions: UserEntry[] = [];
   private readonly pendingReminders: HistoryMessage[] = [];
   private readonly pendingNotifications: UserEntry[] = [];
+  private readonly pendingSteerNotifications = new Set<string>();
   private readonly settleWaiters: Array<() => void> = [];
   private quiescenceDepth = 0;
   private historySnapshotDepth = 0;
@@ -628,7 +629,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const status = this.snapshot();
     const steerable = status.state === 'running';
     const queued = status.state === 'running' || status.paused || status.queue.length > 0;
-    const { id } = steerable ? this.notify(input) : this.submit(input);
+    const { id } = steerable ? this.notify(input, { steer: true }) : this.submit(input);
     const handle = this.promptHandle(id)!;
     if (!steerable && queued) {
       return { prompt_id: id, created_at: handle.createdAt, state: 'queued', steered: false };
@@ -700,12 +701,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return this.prompts.handle(id);
   }
 
-  notify(input: LoopNotifyEntry): LoopSubmitResult;
+  notify(input: LoopNotifyEntry, options?: { readonly steer?: boolean }): LoopSubmitResult;
   notify(note?: LoopNotify): LoopNotifyHandle;
-  notify(note: LoopNotify | LoopNotifyEntry = {}): LoopSubmitResult | LoopNotifyHandle {
+  notify(note: LoopNotify | LoopNotifyEntry = {}, options?: { readonly steer?: boolean }): LoopSubmitResult | LoopNotifyHandle {
     if ('meta' in note) {
       const { id, entry } = this.admit(note);
-      this.sendNotification(entry);
+      this.sendNotification(entry, options?.steer === true);
       this.maybeSettle();
       return { id };
     }
@@ -742,9 +743,14 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     loop.flushReminders();
   }
 
-  private sendNotification(entry: UserEntry): void {
-    if (this.loop !== undefined && this.quiescenceDepth === 0) this.loop.notify(entry);
-    else this.pendingNotifications.push(entry);
+  private sendNotification(entry: UserEntry, steer = false): void {
+    if (this.loop !== undefined && this.quiescenceDepth === 0) {
+      this.loop.notify(entry, { steer });
+      return;
+    }
+    this.pendingNotifications.push(entry);
+    const id = entry.meta?.promptId;
+    if (steer && id !== undefined) this.pendingSteerNotifications.add(id);
   }
 
   private dropNotification(id: string): void {
@@ -752,6 +758,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     for (let index = this.pendingNotifications.length - 1; index >= 0; index -= 1) {
       if (this.pendingNotifications[index]!.meta?.promptId === id) this.pendingNotifications.splice(index, 1);
     }
+    this.pendingSteerNotifications.delete(id);
     this.loop?.cancel(id);
     this.notifications.drop(id);
     this.maybeSettle();
@@ -919,8 +926,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const notify = new Set(loop.state.inbox.notify.map((item) => item.meta?.promptId));
     for (const entry of this.pendingNotifications.splice(0)) {
       const id = entry.meta?.promptId;
+      const steer = id !== undefined && this.pendingSteerNotifications.delete(id);
       if (id === undefined || notify.has(id)) continue;
-      loop.notify(entry);
+      loop.notify(entry, { steer });
     }
     if (this.quiescenceDepth > 0) return;
     if (this.pendingReminders.length > 0) loop.remind(...this.pendingReminders.splice(0));

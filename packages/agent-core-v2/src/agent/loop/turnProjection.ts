@@ -620,8 +620,8 @@ export class AgentTurnProjection {
         step.messageId = meta?.messageId ?? step.messageId;
         this.lastRequestId = this.activeRequestTrace?.requestId;
         const toolCalls = step.entry.message.toolCalls;
-        if (toolCalls.length === 0) this.endOrInterruptStep(turn, step, step.providerFinishReason ?? 'completed');
-        else step.pendingToolIds = new Set(toolCalls.map((call) => call.id));
+        if (toolCalls.length === 0 && meta?.partial !== true) this.endOrInterruptStep(turn, step, step.providerFinishReason ?? 'completed');
+        else if (toolCalls.length > 0) step.pendingToolIds = new Set(toolCalls.map((call) => call.id));
         return;
       }
       case 'tool.ended': {
@@ -642,6 +642,12 @@ export class AgentTurnProjection {
         const step = turn?.current;
         if (turn === undefined) return;
         const outcome = event.outcome;
+        if (outcome.type === 'done' && outcome.cause?.reason === 'steered') {
+          this.emitStepInterrupted(turn.id, event.step, 'steered', undefined, step?.uuid);
+          turn.interruptStep = undefined;
+          turn.current = undefined;
+          return;
+        }
         if (outcome.type === 'blocked' && outcome.cause.reason === MAX_STEPS_REASON) {
           turn.maxStepsError = createMaxStepsExceededError(this.options.maxSteps() ?? 0);
         }
@@ -905,12 +911,13 @@ export class AgentTurnProjection {
     turn.result.resolve(result);
   }
 
-  private emitStepInterrupted(turnId: number, activeStep: number | undefined, reason: LoopInterruptReason, message?: string): void {
+  private emitStepInterrupted(turnId: number, activeStep: number | undefined, reason: LoopInterruptReason, message?: string, stepId?: string): void {
     if (activeStep === undefined) return;
     void this.options.dispatcher.dispatch(new TurnStepInterrupted({
       agentId: this.options.scopeContext.agentId,
       turnId,
       step: activeStep,
+      stepId,
       reason,
       message,
     }));

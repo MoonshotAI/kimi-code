@@ -307,7 +307,7 @@ export interface IAgentLoopService extends EffectiveProfileReader {
   tryAcquireHistorySnapshot(): IDisposable | undefined;
 
   notifyClient(input: LoopNotifyEntry): Promise<SteerResult>;
-  notify(input: LoopNotifyEntry): LoopSubmitResult;
+  notify(input: LoopNotifyEntry, options?: { readonly steer?: boolean }): LoopSubmitResult;
   notify(note?: LoopNotify): LoopNotifyHandle;
 
   remind(...entries: readonly HistoryMessage[]): void;

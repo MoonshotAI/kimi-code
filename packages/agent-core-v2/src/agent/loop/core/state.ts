@@ -86,6 +86,9 @@ export interface StepCall {
 }
 
 export interface StepState {
+  readonly scope: AbortScope;
+  steerRequested: boolean;
+  toolCallStreaming: boolean;
   model?: LlmModelSpec;
   llm?: LlmOutcome;
   readonly calls: StepCall[];

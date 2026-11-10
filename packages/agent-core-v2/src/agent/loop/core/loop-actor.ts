@@ -3,14 +3,14 @@ import type { ToolCall, ToolDescription } from '#human/llm/message';
 import type { LlmOutcome } from '#human/llm/response';
 import { createPolicyRegistry, type PolicyRegistry } from '#human/llm/policy/registry';
 import { isToolDetachAck, type ToolExecutionResponse, type ToolResult } from '#/tool/executor';
-import { createAbortScope, type AbortScope } from '#human/utils/abort';
+import { createAbortScope, withAbort, type AbortScope } from '#human/utils/abort';
 import { waitEvent, type WaitOpts } from '#human/utils/wait';
 import type { CreateLoopOptions, Loop, LoopToolContext, LoopToolExecutor } from './create-loop';
 import type { LoopCommand, LoopInput, UnfinishedTurn } from './contract/command';
 import type { LoopAck, LoopEmitted } from './contract/emitted';
 import type { HookLifecycleEvent, HookPoint } from './contract/hook';
 import type { Inbox, QueuedItem, RemindEntry } from './contract/inbox';
-import { CLOSED, CRASHED, type AsyncToolOutcome, type StepOutcome, type TurnOutcome } from './contract/outcome';
+import { CLOSED, CRASHED, STEERED, type AsyncToolOutcome, type StepOutcome, type TurnOutcome } from './contract/outcome';
 import type { LoopProfile } from './contract/profile';
 import { isEntry, isObject } from './guards';
 import { createHookRegistry, type HookRegistry } from './hook/registry';
@@ -619,6 +619,15 @@ class LoopActor implements Loop {
     if (!this.kicking && !this.dispatching) this.schedule();
   }
 
+  private interruptForSteer(): void {
+    const turn = this.turn;
+    const step = this.step;
+    if (turn === undefined || step === undefined || turn.outcome?.type === 'aborted') return;
+    if ((turn.phase !== 'stepStarting' && turn.phase !== 'requesting') || step.toolCallStreaming) return;
+    step.steerRequested = true;
+    step.scope.abort(STEERED);
+  }
+
   private handle(message: ActorMessage): void {
     switch (message.type) {
       case 'turn.start':
@@ -753,11 +762,12 @@ class LoopActor implements Loop {
     return ack;
   }
 
-  notify(entry: UserEntry): LoopAck<'prompt.notified'> | undefined {
+  notify(entry: UserEntry, options?: { readonly steer?: boolean }): LoopAck<'prompt.notified'> | undefined {
     const normalized = normalizeUserEntry(entry);
     this.check({ type: 'input.notify', entry: normalized });
     if (!this.open()) return undefined;
     const ack = this.mailbox.notify(normalized);
+    if (options?.steer === true) this.interruptForSteer();
     this.releaseIntake();
     this.kick();
     return ack;
@@ -775,7 +785,10 @@ class LoopActor implements Loop {
     this.check({ type: 'input.steer', promptIds });
     if (!this.open()) return undefined;
     const ack = this.mailbox.steer(promptIds);
-    if (ack.entries !== undefined) this.releaseIntake();
+    if ((ack.entries?.length ?? 0) > 0) {
+      this.interruptForSteer();
+      this.releaseIntake();
+    }
     this.kick();
     return ack;
   }
@@ -1249,7 +1262,13 @@ class LoopActor implements Loop {
       this.post({ type: 'turn.finish', turn });
       return;
     }
-    const step: StepState = { calls: [], settled: {} };
+    const step: StepState = {
+      scope: withAbort(turn.scope.signal),
+      steerRequested: false,
+      toolCallStreaming: false,
+      calls: [],
+      settled: {},
+    };
     turn.step += 1;
     turn.phase = 'stepStarting';
     this.step = step;
@@ -1259,10 +1278,11 @@ class LoopActor implements Loop {
 
   private startStepStarting(turn: LiveTurn, step: StepState): void {
     if (!this.isCurrentStep(turn, step, 'stepStarting')) return;
-    this.complete(turn, this.stepStarting(turn), (run) => ({ type: 'step.started', turn, step, run }));
+    if (this.finishSteeredStep(turn, step)) return;
+    this.complete(turn, this.stepStarting(turn, step), (run) => ({ type: 'step.started', turn, step, run }));
   }
 
-  private async stepStarting(turn: LiveTurn): Promise<StepStartingRun> {
+  private async stepStarting(turn: LiveTurn, step: StepState): Promise<StepStartingRun> {
     try {
       return await runStepStarting(
         this.registry,
@@ -1272,15 +1292,24 @@ class LoopActor implements Loop {
           messages: this.durable.messages,
           profile: this.durable.profile,
         },
-        turn.scope.signal,
+        step.scope.signal,
       );
     } catch (error) {
       return { messages: this.durable.messages, failures: [runtimeFailure(error)] };
     }
   }
 
+  private finishSteeredStep(turn: LiveTurn, step: StepState): boolean {
+    if (!step.steerRequested || turn.outcome?.type === 'aborted') return false;
+    step.outcome = { type: 'done', cause: STEERED };
+    this.finalizeStep(turn, step);
+    this.post({ type: 'turn.finish', turn });
+    return true;
+  }
+
   private completeStepStarting(turn: LiveTurn, step: StepState, run: StepStartingRun): void {
     if (!this.isCurrentStep(turn, step, 'stepStarting')) return;
+    if (this.finishSteeredStep(turn, step)) return;
     const reports = hookFailureReports('step.starting', run.failures);
     if (run.rewrittenBy !== undefined) {
       this.record({ type: 'context.settled', messages: [...run.messages], reason: run.rewrittenBy });
@@ -1304,6 +1333,7 @@ class LoopActor implements Loop {
       this.post({ type: 'step.finish', turn, step });
       return;
     }
+    if (this.finishSteeredStep(turn, step)) return;
     if (this.deferForRequest(turn, step, () => this.afterStepStarting(turn, step))) return;
     this.appendReminders(turn, step);
     this.post({ type: 'request.prepare', turn, step });
@@ -1334,6 +1364,7 @@ class LoopActor implements Loop {
 
   private prepareRequest(turn: LiveTurn, step: StepState): void {
     if (!this.isCurrentStep(turn, step, 'requesting')) return;
+    if (this.finishSteeredStep(turn, step)) return;
     const execution = this.execution;
     if (execution === undefined) {
       this.fail(turn, this.executionError ?? new Error('turn has no execution'));
@@ -1345,7 +1376,7 @@ class LoopActor implements Loop {
     }
     this.complete(
       turn,
-      execution.prepare(turn.scope.signal),
+      execution.prepare(step.scope.signal),
       (profile) => ({ type: 'request.prepared', turn, step, profile }),
       (error) => ({ type: 'request.prepare_failed', turn, step, error }),
     );
@@ -1353,6 +1384,7 @@ class LoopActor implements Loop {
 
   private completeRequestPreparation(turn: LiveTurn, step: StepState, profile: LoopProfile): void {
     if (!this.isCurrentStep(turn, step)) return;
+    if (this.finishSteeredStep(turn, step)) return;
     if (turn.scope.signal.aborted) {
       turn.outcome = { type: 'aborted', reason: turn.scope.signal.reason };
       this.post({ type: 'turn.finish', turn });
@@ -1366,6 +1398,7 @@ class LoopActor implements Loop {
 
   private failRequestPreparation(turn: LiveTurn, step: StepState, error: unknown): void {
     if (!this.isCurrent(turn)) return;
+    if (this.finishSteeredStep(turn, step)) return;
     if (!turn.scope.signal.aborted) {
       this.fail(turn, error);
       return;
@@ -1376,6 +1409,7 @@ class LoopActor implements Loop {
 
   private startRequest(turn: LiveTurn, step: StepState): void {
     if (!this.isCurrentStep(turn, step, 'requesting')) return;
+    if (this.finishSteeredStep(turn, step)) return;
     if (this.deferForRequest(turn, step, () => this.startRequest(turn, step))) return;
     const execution = this.execution;
     if (execution === undefined) {
@@ -1386,7 +1420,7 @@ class LoopActor implements Loop {
       { ...execution, requester: execution.requester.with({ policy: this.policy.asPolicy() }) },
       {
         messages: [...this.durable.messages],
-        signal: turn.scope.signal,
+        signal: step.scope.signal,
       },
       (event) => {
         this.post({ type: 'llm.progress', turn, step, event });
@@ -1398,8 +1432,14 @@ class LoopActor implements Loop {
 
   private requestProgress(turn: LiveTurn, step: StepState, event: LoopRequestProgress): void {
     if (!this.isCurrentStep(turn, step, 'requesting')) return;
-    if (event.type === 'llm.prepared') step.model = event.model;
-    else this.record(event);
+    if (event.type === 'llm.prepared') {
+      step.model = event.model;
+      return;
+    }
+    if (event.type === 'llm.streaming.part' && (event.part.type === 'function' || event.part.type === 'tool_call_part')) {
+      step.toolCallStreaming = true;
+    }
+    this.record(event);
   }
 
   private completeRequest(turn: LiveTurn, step: StepState, outcome: LlmOutcome): void {
@@ -1420,6 +1460,7 @@ class LoopActor implements Loop {
         entry,
       });
     }
+    if (outcome.type !== 'done' && this.finishSteeredStep(turn, step)) return;
     if (toolCalls.length > 0) {
       turn.phase = 'batching';
       this.post({ type: 'batch.start', turn, step });

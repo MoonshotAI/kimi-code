@@ -172,7 +172,7 @@ export class AgentSkillService implements IAgentSkillService {
         } as PromptOrigin,
       },
     };
-    const { id } = steerable ? this.loop.notify(submission) : this.loop.submit(submission);
+    const { id } = steerable ? this.loop.notify(submission, { steer: true }) : this.loop.submit(submission);
     const handle = this.loop.promptHandle(id)!;
     if (!steerable && (status.state === 'running' || status.paused || status.queue.length > 0)) {
       if (prepared.length === 1) {
@@ -309,7 +309,7 @@ export class AgentSkillService implements IAgentSkillService {
       message: { role: 'user' as const, content: [...input] },
       meta: { promptId, origin },
     };
-    const { id } = running ? this.loop.notify(submission) : this.loop.submit(submission);
+    const { id } = running ? this.loop.notify(submission, { steer: true }) : this.loop.submit(submission);
     return this.loop.promptHandle(id)!.launched;
   }
 
