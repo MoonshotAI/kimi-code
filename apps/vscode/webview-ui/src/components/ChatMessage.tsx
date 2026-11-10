@@ -249,7 +249,7 @@ function AssistantMessage({ message, turnIndex, isStreaming }: { message: ChatMe
     if (!hasSteps) {
       return typeof message.content === "string" ? message.content : "";
     }
-    const lastStep = steps.at(-1);
+    const lastStep = steps[steps.length - 1];
     const textItems = lastStep.items.filter((item) => item.type === "text");
     if (textItems.length > 0) {
       return textItems.map((item) => (item as { type: "text"; content: string }).content).join("\n");

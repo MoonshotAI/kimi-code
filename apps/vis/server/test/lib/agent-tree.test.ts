@@ -42,7 +42,7 @@ describe('agent-tree', () => {
       info({ agentId: 'agent-0', type: 'sub', parentAgentId: 'does-not-exist' }),
     ]);
     expect(tree).toHaveLength(2);
-    const ids = tree.map((n) => n.agentId).toSorted();
+    const ids = tree.map((n) => n.agentId).sort();
     expect(ids).toEqual(['agent-0', 'main']);
     // orphan is still a root, no children attached anywhere
     const orphan = tree.find((n) => n.agentId === 'agent-0')!;
@@ -83,9 +83,9 @@ describe('agent-tree', () => {
     // non-agent-N id by localeCompare. Sorting any permutation must yield the
     // same order; the OLD comparator was intransitive and order-dependent here.
     const forward = ['agent-2', 'agent-1a', 'agent-10'];
-    const reverse = [...forward].toReversed();
+    const reverse = [...forward].reverse();
     const expected = ['agent-2', 'agent-10', 'agent-1a'];
-    expect([...forward].toSorted(compareAgentIds)).toEqual(expected);
-    expect([...reverse].toSorted(compareAgentIds)).toEqual(expected);
+    expect([...forward].sort(compareAgentIds)).toEqual(expected);
+    expect([...reverse].sort(compareAgentIds)).toEqual(expected);
   });
 });

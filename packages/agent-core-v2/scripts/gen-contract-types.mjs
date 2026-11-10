@@ -9,11 +9,12 @@ import {
   statSync,
 } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
 import { Project, SyntaxKind } from 'ts-morph';
 
-const __dirname = import.meta.dirname;
+const __dirname = dirname(fileURLToPath(import.meta.url));
 const PKG = join(__dirname, '..');
 const SRC = join(PKG, 'src');
 const TMP = join(PKG, '.contract-types-tmp');
@@ -47,8 +48,8 @@ try {
     cwd: PKG,
     stdio: 'pipe',
   });
-} catch (error) {
-  const code = error && typeof error === 'object' && 'status' in error ? error.status : 'unknown';
+} catch (err) {
+  const code = err && typeof err === 'object' && 'status' in err ? err.status : 'unknown';
   log(`tsc exited ${String(code)} (non-fatal; declarations are still emitted)`);
 }
 

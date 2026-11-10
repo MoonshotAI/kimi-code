@@ -29,15 +29,15 @@ export class HostFolderBrowser implements IHostFolderBrowser {
     let realTarget: string;
     try {
       realTarget = await realpath(target);
-    } catch (error) {
-      throw mapFsError(error, target);
+    } catch (err) {
+      throw mapFsError(err, target);
     }
 
     let dirents;
     try {
       dirents = await readdir(realTarget, { withFileTypes: true });
-    } catch (error) {
-      throw mapFsError(error, realTarget);
+    } catch (err) {
+      throw mapFsError(err, realTarget);
     }
 
     const entries: FsBrowseEntry[] = dirents

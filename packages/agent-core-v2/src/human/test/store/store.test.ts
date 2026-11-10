@@ -220,7 +220,7 @@ describe('persistence', () => {
     await b.append(entryData('2'));
     await a.append(entryData('3'));
     const reopened = await openStore(backend);
-    expect(reopened.names().toSorted()).toEqual(['a', 'b']);
+    expect(reopened.names().sort()).toEqual(['a', 'b']);
     const loaded = (await reopened.tree('a')).openBranch('main');
     expect([...loaded.walk()].map((entry) => entry.payload.data)).toEqual([{ text: '3' }, { text: '1' }]);
     const appended = await loaded.append(entryData('4'));

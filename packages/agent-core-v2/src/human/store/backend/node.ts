@@ -20,7 +20,7 @@ class NodeTreeBackend implements TreeBackend {
     return entries
       .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name)
-      .toSorted();
+      .sort();
   }
 
   async listBranches(tree: string): Promise<string[]> {
@@ -34,7 +34,7 @@ class NodeTreeBackend implements TreeBackend {
     return files
       .filter((file) => file.endsWith('.jsonl'))
       .map((file) => file.slice(0, -'.jsonl'.length))
-      .toSorted();
+      .sort();
   }
 
   async read(tree: string, branch: string): Promise<string> {

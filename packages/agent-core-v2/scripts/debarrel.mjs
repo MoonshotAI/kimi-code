@@ -2,8 +2,9 @@
 import { Project } from 'ts-morph';
 import path from 'node:path';
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
-const __dirname = import.meta.dirname;
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PKG = path.resolve(__dirname, '..');
 const SRC = path.join(PKG, 'src');
 const ENTRY = path.join(SRC, 'index.ts');
@@ -97,7 +98,7 @@ function allLeavesUnderDir(dirAbs) {
     }
   };
   walk(dirAbs);
-  return out.toSorted((a, b) => a.localeCompare(b));
+  return out.sort((a, b) => a.localeCompare(b));
 }
 
 function rewriteConsumerFile(sf, onlyBarrelPath) {
@@ -155,7 +156,7 @@ function rewriteConsumerFile(sf, onlyBarrelPath) {
     }
     const structures = buildImportStructures(groups);
     const idx = sf.getImportDeclarations().indexOf(decl);
-    if (structures.length > 0) sf.insertImportDeclarations(idx, structures);
+    if (structures.length) sf.insertImportDeclarations(idx, structures);
     decl.remove();
     report.imports++;
   }
@@ -217,12 +218,12 @@ function buildImportStructures(groups) {
     }
     const values = namedSpecs.filter((s) => !s.isTypeOnly);
     const types = namedSpecs.filter((s) => s.isTypeOnly);
-    if (values.length > 0)
+    if (values.length)
       structures.push({
         moduleSpecifier: spec,
         namedImports: values.map((v) => ({ name: v.name, alias: v.alias })),
       });
-    if (types.length > 0)
+    if (types.length)
       structures.push({
         moduleSpecifier: spec,
         isTypeOnly: true,
@@ -368,7 +369,7 @@ function findRegisterFiles() {
     });
     if (hit) files.push(f);
   }
-  return files.toSorted();
+  return files.sort();
 }
 
 function reachedFromEntry() {
@@ -394,7 +395,7 @@ function verifyCoverage() {
   const reached = reachedFromEntry();
   const missing = regs.filter((f) => !reached.has(f));
   console.log(`register files: ${regs.length}; reachable from entry: ${reached.size}; missing: ${missing.length}`);
-  if (missing.length > 0) {
+  if (missing.length) {
     console.log('MISSING (not reachable from src/index.ts):');
     for (const m of missing) console.log('  ' + path.relative(PKG, m));
     return false;
@@ -458,10 +459,10 @@ function main() {
   console.log(
     `rewrote ${totals.files} files: ${totals.imports} barrel imports, ${totals.exports} barrel exports, ${totals.sideEffects} side-effect loads${DRY ? ' (dry-run)' : ''}`,
   );
-  if (totals.manuals.length > 0) {
+  if (totals.manuals.length) {
     console.log(`MANUAL (${totals.manuals.length}) — could not auto-split:`);
     for (const m of totals.manuals)
-      console.log(`  ${path.relative(PKG, m.sf)} :: ${m.why} :: ${m.text.replaceAll(/\s+/g, ' ').slice(0, 120)}`);
+      console.log(`  ${path.relative(PKG, m.sf)} :: ${m.why} :: ${m.text.replace(/\s+/g, ' ').slice(0, 120)}`);
   }
 
   if (DELETE_BARRELS) {

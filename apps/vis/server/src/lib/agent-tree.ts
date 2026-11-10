@@ -28,7 +28,7 @@ export function buildAgentTree(agents: ReadonlyArray<AgentInfo>): AgentNode[] {
   for (const node of byId.values()) {
     node.children.sort(sortAgents);
   }
-  return roots.toSorted(sortAgents);
+  return roots.sort(sortAgents);
 }
 
 function sortAgents(a: AgentNode, b: AgentNode): number {

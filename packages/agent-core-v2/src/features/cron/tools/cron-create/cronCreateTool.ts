@@ -48,11 +48,11 @@ export class CronCreateTool implements ICronCreateTool {
     let parsed: ParsedCronExpression;
     try {
       parsed = parseCronExpression(normalizedCron);
-    } catch (error) {
+    } catch (err) {
       return {
         isError: true,
         output: `Invalid cron expression: ${
-          error instanceof Error ? error.message : String(error)
+          err instanceof Error ? err.message : String(err)
         }`,
       };
     }

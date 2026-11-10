@@ -17,7 +17,7 @@ export class Tree {
   }
 
   branches(): string[] {
-    return [...this.branchMap.keys()].toSorted();
+    return [...this.branchMap.keys()].sort();
   }
 
   has(name: string): boolean {

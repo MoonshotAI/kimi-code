@@ -191,7 +191,7 @@ export const Markdown = memo(function Markdown({ content, className, enableEnric
       return;
     }
     const paths = extractPaths(content);
-    if (paths.length === 0) {
+    if (!paths.length) {
       setFileMap({});
       return;
     }

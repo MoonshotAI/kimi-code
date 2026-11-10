@@ -4,11 +4,11 @@ export class MemoryTreeBackend implements TreeBackend {
   readonly files = new Map<string, Map<string, string>>();
 
   async list(): Promise<string[]> {
-    return [...this.files.keys()].toSorted();
+    return [...this.files.keys()].sort();
   }
 
   async listBranches(tree: string): Promise<string[]> {
-    return [...(this.files.get(tree)?.keys() ?? [])].toSorted();
+    return [...(this.files.get(tree)?.keys() ?? [])].sort();
   }
 
   async read(tree: string, branch: string): Promise<string> {

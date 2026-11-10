@@ -188,7 +188,7 @@ describe('session-store', () => {
       '{"type":"metadata","protocol_version":"1.1","created_at":1}\n',
     );
     const d = await readSessionDetail(home, 'session_fixture');
-    expect(d!.agents.map((a) => a.agentId).toSorted()).toEqual(['agent-0', 'main']);
+    expect(d!.agents.map((a) => a.agentId).sort()).toEqual(['agent-0', 'main']);
   });
 
   it('rejects session_index entries that point outside KIMI_CODE_HOME', async () => {
@@ -256,7 +256,7 @@ describe('session-store', () => {
     expect(d!.workDir).toBe('/tmp/work');
     // Even with state.json broken, the on-disk agent directories should
     // still be inventoried so users can open wire/context.
-    expect(d!.agents.map((a) => a.agentId).toSorted()).toEqual(['agent-0', 'main']);
+    expect(d!.agents.map((a) => a.agentId).sort()).toEqual(['agent-0', 'main']);
     const main = d!.agents.find((a) => a.agentId === 'main')!;
     expect(main.wireExists).toBe(true);
     expect(main.wireRecordCount).toBe(10);
@@ -268,7 +268,7 @@ describe('session-store', () => {
     const d = await readSessionDetail(home, 'session_fixture');
     expect(d).not.toBeNull();
     expect(d!.workDir).toBe('/tmp/work');
-    expect(d!.agents.map((a) => a.agentId).toSorted()).toEqual(['agent-0', 'main']);
+    expect(d!.agents.map((a) => a.agentId).sort()).toEqual(['agent-0', 'main']);
     const main = d!.agents.find((a) => a.agentId === 'main')!;
     expect(main.type).toBe('main');
     expect(main.parentAgentId).toBeNull();

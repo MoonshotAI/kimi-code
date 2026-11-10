@@ -26,7 +26,7 @@ export function useInputHistory({ text, setText, onHeightChange }: UseInputHisto
     }
 
     void bridge.addInputHistory(trimmed);
-    queryClient.setQueryData<string[]>(INPUT_HISTORY_KEY, (prev) => (prev.at(-1) === trimmed ? prev : [...(prev ?? []), trimmed]));
+    queryClient.setQueryData<string[]>(INPUT_HISTORY_KEY, (prev) => (prev?.[prev.length - 1] === trimmed ? prev : [...(prev ?? []), trimmed]));
     setIndex(-1);
   }, [queryClient]);
 

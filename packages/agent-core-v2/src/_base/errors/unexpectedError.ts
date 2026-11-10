@@ -17,15 +17,15 @@ export function resetUnexpectedErrorHandler(): void {
 export function onUnexpectedError(err: unknown): void {
   try {
     currentHandler(err);
-  } catch (error) {
-    console.error('[unexpected] handler threw', error, 'while reporting', err);
+  } catch (handlerErr) {
+    console.error('[unexpected] handler threw', handlerErr, 'while reporting', err);
   }
 }
 
 export function safelyCallListener(listener: () => void): void {
   try {
     listener();
-  } catch (error) {
-    onUnexpectedError(error);
+  } catch (err) {
+    onUnexpectedError(err);
   }
 }

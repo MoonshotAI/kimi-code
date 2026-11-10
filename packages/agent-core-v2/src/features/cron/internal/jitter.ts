@@ -25,7 +25,7 @@ function fractionFromId(id: string): number {
   }
   let hash = 5381;
   for (let i = 0; i < id.length; i++) {
-    hash = ((hash << 5) + hash + id.codePointAt(i)) | 0;
+    hash = ((hash << 5) + hash + id.charCodeAt(i)) | 0;
   }
   const unsigned = hash >>> 0;
   return unsigned / 0x1_0000_0000;
