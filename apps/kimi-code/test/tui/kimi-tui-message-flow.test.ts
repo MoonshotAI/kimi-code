@@ -9159,7 +9159,7 @@ capabilities = ["image_in", "video_in"]
   });
 
   describe('Auto Review progress on the tool card', () => {
-    const PROGRESS_TEXT = 'Auto Review in progress';
+    const PROGRESS_TEXT = 'Reviewing';
 
     async function startReview(fullscreen = false): Promise<{ driver: MessageDriver; emit: (event: object) => void }> {
       const base = makeStartupInput();
@@ -9213,10 +9213,18 @@ capabilities = ["image_in", "video_in"]
 
     it('shows the status in fullscreen while expanded or collapsed', async () => {
       const { driver, emit } = await startReview(true);
-      expect(stripSgr(renderTranscript(driver))).toContain(PROGRESS_TEXT);
+      const collapsed = stripSgr(renderTranscript(driver));
+      expect(collapsed).toContain('Reviewing echo hi');
+      expect(collapsed).toContain('echo hi');
+      expect(collapsed).not.toContain('Auto Review in progress');
+      expect(collapsed.split('Reviewing').length - 1).toBe(1);
 
       driver.toggleToolOutputExpansion();
-      expect(stripSgr(renderTranscript(driver))).toContain(PROGRESS_TEXT);
+      const expanded = stripSgr(renderTranscript(driver));
+      expect(expanded).toContain('Reviewing…');
+      expect(expanded).toContain('echo hi');
+      expect(expanded).not.toContain('Auto Review in progress');
+      expect(expanded.split('Reviewing').length - 1).toBe(1);
 
       emit({
         type: 'auto_review.decision',

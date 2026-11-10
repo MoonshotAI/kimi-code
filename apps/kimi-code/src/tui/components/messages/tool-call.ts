@@ -2214,7 +2214,7 @@ export class ToolCallComponent extends Container {
   private buildProgressBlock(): void {
     if (this.result !== undefined) return;
     if (this.autoReviewing) {
-      this.addChild(new Text(currentTheme.dim('Auto Review in progress…'), 2, 0));
+      this.addChild(new Text(currentTheme.dim('Reviewing…'), 2, 0));
     }
     for (const raw of this.progressLines) {
       if (raw.length === 0) {
