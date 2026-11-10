@@ -153,6 +153,7 @@ export class Program {
         userAgentProfiles: generation.userAgentProfiles,
         pluginAgentProfiles: generation.pluginAgentProfiles,
         mcp: generation.mcp,
+        trust: generation.trust,
         acquireWorkdir: (environmentId, cwd, followsPrimary) => generation.workdirs.acquire(environmentId, cwd, followsPrimary),
         onDispose: release,
       });
@@ -289,8 +290,8 @@ export class Program {
     try {
       const hostFs = environment.fs!;
       const skillDiscovery = new EnvironmentSkillDiscovery(this.dependencies.log, hostFs);
-      const explicitSkills = new ExplicitFileSkillSource(skillDiscovery, this.context, this.dependencies.bootstrap, hostFs);
-      const extraSkills = own(new ExtraFileSkillSource(skillDiscovery, this.dependencies.config, this.context, this.dependencies.bootstrap, hostFs));
+      const explicitSkills = own(new ExplicitFileSkillSource(skillDiscovery, this.context, this.dependencies.bootstrap, hostFs, this.dependencies.log));
+      const extraSkills = own(new ExtraFileSkillSource(skillDiscovery, this.dependencies.config, this.context, this.dependencies.bootstrap, hostFs, this.dependencies.log));
       const pluginSkills = new PluginSkillSource(skillDiscovery, this.dependencies.plugins);
       const userAgentProfiles = own(new UserAgentProfileLoaderService(this.dependencies.bootstrap, hostFs, this.dependencies.log, this.dependencies.builtinAgentProfiles, this.context, this.dependencies.agentProfiles));
       const pluginAgentProfiles = own(new PluginAgentProfileLoaderService(this.dependencies.plugins, hostFs, this.dependencies.log, userAgentProfiles, this.context, this.dependencies.agentProfiles));

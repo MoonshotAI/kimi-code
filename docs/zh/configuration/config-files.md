@@ -218,7 +218,6 @@ default_model = "kimi-code/kimi-for-coding-highspeed"
 - `default_model`：配置 `models` 表时必填，且必须是其中的 key。
 - `models`：value 中英文均可；空字符串表示只列出别名、不给提示。
 - `default_effort` 是节级设置：无论派生绑定到池中哪个条目都生效。想按条目区分档位时不要设置它，改用下文的模型「变体」。
-- `primary` 是保留字，不能作为池中 key。
 
 池别名引用的是 `[models]` 表的当前内容：如果之后删除供应商、登出账号，或其刷新后的模型列表不再包含某个别名，会话启动时会报出指明失效别名的配置错误，修正或移除对应条目即可恢复。系统不会自动改写 `[secondary_model]` 节。
 
@@ -498,7 +497,7 @@ require_trust = false
 ```
 
 ::: warning 注意
-关闭首次打开的信任确认后，项目级 MCP server 和其他受信任机制控制的项目配置都会不经确认直接加载。仅应在所有工作区均已可信时使用该配置。它不会改变权限模式、工具审批或危险命令保护。
+关闭首次打开的信任确认后，项目级 MCP server 和其他受信任机制控制的项目配置都会不经确认直接加载。仅应在所有工作区均已可信时使用该配置。权限模式和 `dangerous_command_guard` 配置本身不变，但从 `.kimi-code/local.toml` 加载的[项目 `allow` 规则](#permission)可能跳过工具审批提示，包括敏感文件和 git 控制路径保护。
 :::
 
 配置变更在 `/reload` 后生效；已经运行的 TUI 不会补弹启动信任提示。`KIMI_CODE_TRUST_WORKSPACE=1` 仍是独立的进程级信任覆盖，假值不会在 `require_trust` 为 `false` 时恢复首次打开的信任确认。已有信任记录会保留，恢复该要求后继续使用。
@@ -538,14 +537,18 @@ api_key = "sk-xxx"
 
 ## `permission`
 
-`permission` 设置会话启动时自动加载的权限规则，控制 Agent 调用工具时是否需要用户确认。规则用 `[[permission.rules]]` 数组表写出，按顺序匹配，第一条命中即生效。
+`permission` 设置会话启动时自动加载的权限规则，控制 Agent 调用工具时是否需要用户确认。规则用 `[[permission.rules]]` 数组表写出。命中的 `deny` 规则优先于 `ask` 规则，`ask` 规则优先于 `allow` 规则。
+
+用户规则在会话启动时从用户 `config.toml` 加载。为兼容旧配置，用户 `config.toml` 中的 `turn-override` 和 `session-runtime` 规则会静默忽略，不产生警告。
+
+项目规则仅在本地环境且 workspace 已信任时从 `.kimi-code/local.toml` 读取，省略 `scope` 时默认为 `project`。远程环境不支持项目规则。项目规则修改后需要新建会话生效，不会热重载。
 
 也可以在 `[permission]` 下设置 `dangerous_command_guard = false` 完全关闭所有内置 guard 确认策略：危险命令、敏感文件（如 `.env`、`id_rsa`）访问、git 控制路径访问在 "Always Ask" 和 "Ask When Needed" 模式下不再触发审批（"Never Ask" 模式本就不启用这些策略），默认 `true`。环境变量 `KIMI_CODE_DANGEROUS_COMMAND_GUARD=false` 会覆盖文件设置。全部内置 guard 关闭后，"Ask When Needed" 模式下只有你自己配置的 `ask` 规则仍会要求确认；"Always Ask" 模式下未被自动放行的工具照旧逐个询问。`Read`/`Write`/`Edit` 对秘密文件的硬阻断保持不变。此开关只适用于已经在 Agent 之外统一命令限权的环境。
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `decision` | `string` | 是 | 匹配后的处置：`allow`（直接放行）、`deny`（直接拒绝）、`ask`（每次询问） |
-| `scope` | `string` | 否 | 规则有效范围：`turn-override`、`session-runtime`、`project`、`user`，默认 `user` |
+| `scope` | `string` | 否 | 规则有效范围：`turn-override`、`session-runtime`、`project`、`user`，在用户配置中默认 `user`；项目配置仅接受 `project` 和 `user` |
 | `pattern` | `string` | 是 | 匹配模式，格式为 `工具名` 或 `工具名(参数模式)`，如 `Read`、`Bash(rm -rf*)` |
 | `reason` | `string` | 否 | 规则说明，仅用于调试和审计 |
 
@@ -648,6 +651,7 @@ defaultCwd = "/workspace"
 | --- | --- | --- | --- |
 | `theme` | `string` | `auto` | 配色主题：`auto`、`dark`、`light` 或[自定义主题](../customization/themes.md)名 |
 | `tui_mode` | `string` | `regular` | 界面布局：`regular` 渲染进终端滚动缓冲区；`fullscreen`（实验性）部分组件支持鼠标交互，交互更顺手 |
+| `copy_on_select` | `boolean` | `true` | 仅全屏模式：选中文本即复制；也可以按 `Ctrl-C` 复制 |
 | `render_latex` | `boolean` | `true` | 将 Markdown 中的 LaTeX 公式渲染为 Unicode 文本；`false` 保留原始源码 |
 | `disable_paste_burst` | `boolean` | `false` | 禁用非 bracketed paste 的粘贴突发兜底；默认开启，避免快速多行粘贴被逐行提交 |
 | `cache_expiry_hint` | `boolean` | `true` | resume 或长时间空闲后发消息时，若上下文缓存可能过期则提醒，可先压缩或新建会话（仅 v2 引擎） |
@@ -656,8 +660,8 @@ defaultCwd = "/workspace"
 | `[notifications].enabled` | `boolean` | `true` | 是否发送桌面通知 |
 | `[notifications].notification_condition` | `string` | `unfocused` | 何时通知：`unfocused`（仅终端失去焦点时）或 `always`（总是） |
 | `[upgrade].auto_install` | `boolean` | `true` | 是否自动安装新版本 |
-| `[transcript.group].tools` | `string` | `auto` | `fullscreen` 模式下哪些工具调用折进摘要分组：`auto` 折叠除 subagent 和向你提问、通知类工具以外的所有工具调用，`explore` 只折叠读取、搜索和 `ls`、`git status` 这类只读命令，`off` 让每个工具调用保持独立卡片；对应 `/settings` 里的 Tool call folding；`regular` 模式下不生效 |
-| `[transcript.group].group_thinking` | `boolean` | `true` | `fullscreen` 模式下已结束的思考是否折进摘要分组；`false` 改为每段思考显示两行预览；对应 `/settings` 里的 Thinking folding；`regular` 模式下不生效 |
+| `[transcript].tool_call_density` | `string` | `compact` | `fullscreen` 模式下的工具调用密度：`compact`、`balanced` 或 `detailed` |
+| `[transcript].thinking` | `string` | `grouped` | `fullscreen` 模式下的思考折叠：`grouped` 或 `ungrouped` |
 | `[status_line].items` | `string[]` | `[]` | 底部状态栏第一行的内置槽位及顺序：`mode`、`goal`、`model`、`tasks`、`cwd`、`git`、`tips`，未知 id 跳过并告警 |
 | `[status_line].command` | `string` | `""` | 自定义状态栏命令：stdout 首行替换状态栏，stdin 收 JSON 快照；上限 300ms、每秒一次，失败回退内置布局 |
 
@@ -671,7 +675,8 @@ model、cwd、git 分支、permission 模式、plan 模式、上下文用量、s
 ```toml
 # ~/.kimi-code/tui.toml
 theme = "auto" # "auto" | "dark" | "light" | 自定义主题名
-tui_mode = "regular" # "regular" | "fullscreen"（"fullscreen" 为实验性）
+# tui_mode = "regular" # "regular" | "fullscreen"（"fullscreen" 为实验性）
+copy_on_select = true # 仅全屏模式：false 表示按 Ctrl-C 才复制
 render_latex = true # false 表示消息中的 LaTeX 公式保留原始源码
 disable_paste_burst = false # true 表示禁用非 bracketed paste 的粘贴突发兜底
 cache_expiry_hint = true # false 表示关闭 resume / 空闲提交时的"缓存已过期"提醒弹窗
@@ -687,9 +692,9 @@ notification_condition = "unfocused" # "unfocused" | "always"
 [upgrade]
 auto_install = true
 
-[transcript.group] # 仅 fullscreen 模式生效
-tools = "auto" # "auto" | "explore" | "off"
-group_thinking = true # false 表示每段思考显示两行预览
+[transcript] # 仅 fullscreen 模式生效
+tool_call_density = "compact" # "compact" | "balanced" | "detailed"
+thinking = "grouped" # "grouped" | "ungrouped"
 
 # [status_line]
 # items = ["mode", "goal", "model", "tasks", "cwd", "git", "tips"]

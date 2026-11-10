@@ -76,7 +76,7 @@ import { BannerComponent } from './components/chrome/banner';
 import { DeviceCodeBoxComponent } from './components/chrome/device-code-box';
 import type { FooterGitBinding } from './components/chrome/footer';
 import { GutterContainer } from './components/chrome/gutter-container';
-import { MoonLoader, type SpinnerStyle } from './components/chrome/moon-loader';
+import { MoonLoader, type SpinnerLabel, type SpinnerStyle } from './components/chrome/moon-loader';
 import { WelcomeComponent } from './components/chrome/welcome';
 import { pickRandomWorkingTip } from './components/chrome/working-tips';
 import {
@@ -119,8 +119,9 @@ import { UserMessageComponent } from './components/messages/user-message';
 import {
   ActivityPaneComponent,
   type ActivityPaneMode,
+  LastTurnSummary,
 } from './components/panes/activity-pane';
-import { removeLegacySurveySetting, transcriptGroupingActive, type TuiConfig } from './config';
+import { removeLegacySurveySetting, transcriptGroupingActive, type TuiConfig, type TuiMode } from './config';
 import {
   LLM_NOT_SET_MESSAGE,
   MAIN_AGENT_ID,
@@ -180,6 +181,7 @@ import {
   type TUIStartupOptions,
   type TUIStartupState,
 } from './types';
+import { workingLabel } from './utils/activity-label';
 import { hasDispose } from './utils/component-capabilities';
 import { isDeadTerminalError } from './utils/dead-terminal';
 import { formatErrorMessage } from './utils/event-payload';
@@ -225,6 +227,7 @@ import {
 } from './utils/transcript-component-metadata';
 import { isTurnBoundaryComponent } from './utils/transcript-turns';
 import { nextTranscriptId } from './utils/transcript-id';
+import { instant } from './utils/turn-timeline';
 import {
   TRANSCRIPT_HYSTERESIS,
   TRANSCRIPT_KEEP_RECENT_ASSISTANT,
@@ -251,6 +254,7 @@ export interface KimiTUIStartupInput {
   readonly agentProfile?: string;
   readonly additionalDirs?: readonly string[];
   readonly tuiConfig: TuiConfig;
+  readonly resolvedTuiMode?: TuiMode;
   readonly version: string;
   readonly workDir: string;
   readonly startupNotice?: string;
@@ -317,6 +321,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     version: input.version,
     editorCommand: input.tuiConfig.editorCommand,
     disablePasteBurst: input.tuiConfig.disablePasteBurst,
+    copyOnSelect: input.tuiConfig.copyOnSelect,
     renderLatex: input.tuiConfig.renderLatex,
     cacheExpiryHint: input.tuiConfig.cacheExpiryHint,
     disableFeedbackSurvey: input.tuiConfig.disableFeedbackSurvey,
@@ -509,6 +514,7 @@ export class KimiTUI {
     });
     const tuiOptions: KimiTUIOptions = {
       initialAppState: createInitialAppState(startupInput),
+      resolvedTuiMode: startupInput.resolvedTuiMode,
       startup: {
         sessionFlag: startupInput.cliOptions.session,
         continueLast: startupInput.cliOptions.continue,
@@ -581,6 +587,7 @@ export class KimiTUI {
       this.setAppState({ disableFeedbackSurvey: change.value === true ? true : undefined });
     });
     this.streamingUI = new StreamingUIController(this);
+    this.state.transcriptContainer.setTimeline(this.streamingUI.timeline);
     this.authFlow = new AuthFlowController(this);
     this.btwPanelController = new BtwPanelController(this, this.imageStore, this.staging);
     this.sessionEventHandler = new SessionEventHandler(this);
@@ -634,6 +641,7 @@ export class KimiTUI {
             const result = await this.harness.suggestFiles(this.state.appState.workDir, {
               query,
               sessionId: session.id,
+              followGitignore: false,
             });
             return result?.items;
           };
@@ -1196,8 +1204,8 @@ export class KimiTUI {
     this.sessionEventHandler.notifications.setEnabled(isExperimentalFlagEnabled('notify_user'));
     if (this.state.ui instanceof TuiAltScreen) {
       this.track('transcript_display_settings', {
-        group_tools: this.state.appState.transcript.groupTools,
-        group_thinking: this.state.appState.transcript.groupThinking,
+        tool_call_density: this.state.appState.transcript.toolCallDensity,
+        thinking: this.state.appState.transcript.thinking,
         source: 'startup',
       });
     }
@@ -2231,6 +2239,7 @@ export class KimiTUI {
   }
 
   beginSessionRequest(): void {
+    this.streamingUI.timeline.turnStarted();
     this.cacheHint.onTurnBegin();
     this.streamingUI.setTurnId(undefined);
     this.streamingUI.resetLiveText();
@@ -2249,6 +2258,7 @@ export class KimiTUI {
   }
 
   failSessionRequest(message: string): void {
+    this.streamingUI.timeline.turnEnded();
     this.programStatus.failRequest(message);
     this.setAppState({ streamingPhase: 'idle' });
     this.resetLivePane();
@@ -2605,6 +2615,7 @@ export class KimiTUI {
   }): boolean {
     const { session, error, entries, retried, retry, restore } = args;
     if (this.session?.id !== session.id || !isSessionOccupiedError(error)) return false;
+    this.streamingUI.timeline.turnEnded();
     if (entries !== undefined) this.removeTranscriptEntries(entries);
     this.setAppState({ streamingPhase: 'idle' });
     this.resetLivePane();
@@ -3219,9 +3230,6 @@ export class KimiTUI {
       !sameStringArrays(this.state.appState.additionalDirs, patch.additionalDirs ?? []);
     const busyChanged = 'streamingPhase' in patch || 'isCompacting' in patch;
     Object.assign(this.state.appState, patch);
-    if ('streamingPhase' in patch) {
-      this.state.transcriptContainer.setTurnActive(this.state.appState.streamingPhase !== 'idle');
-    }
     if ('planMode' in patch) this.updateEditorBorderHighlight();
     this.state.footer.setState(this.state.appState);
     this.updateActivityPane();
@@ -3648,6 +3656,7 @@ export class KimiTUI {
         },
         () => this.resolveApprovalEnvironment(),
         this.programStatus,
+        this.streamingUI.timeline,
       ),
     );
     session.setQuestionHandler(
@@ -4216,6 +4225,7 @@ export class KimiTUI {
     this.sessionEventHandler.stopAllMcpServerStatusSpinners();
     this.disposeTranscriptChildren();
     this.state.transcriptContainer.clear();
+    this.streamingUI.timeline.reset();
     this.btwPanelController.clear();
     this.clearTerminalInlineImages();
     this.sessionEventHandler.notifications.clear();
@@ -4317,6 +4327,9 @@ export class KimiTUI {
       this.state.transcriptContainer.removeChild(child);
       if (hasDispose(child)) child.dispose();
     }
+    this.streamingUI.timeline.forget(
+      componentsToRemove.flatMap((child) => (child instanceof ToolCallComponent ? [child.toolCallView.id] : [])),
+    );
 
     this.state.transcriptEntries = this.state.transcriptEntries.filter((e) => !toRemove.has(e));
     return true;
@@ -4637,6 +4650,8 @@ export class KimiTUI {
 
     this.lastActivityMode = activityModeKey;
     this.state.activityContainer.clear();
+    const { timeline } = this.streamingUI;
+    const working: SpinnerLabel = (now) => workingLabel(timeline.turn(), instant(now));
 
     switch (effectiveMode) {
       case 'hidden':
@@ -4674,7 +4689,7 @@ export class KimiTUI {
         break;
       }
       case 'thinking': {
-        const spinner = this.ensureActivitySpinner('braille', 'Working…', (s) =>
+        const spinner = this.ensureActivitySpinner('braille', working, (s) =>
           currentTheme.fg('primary', s),
         );
         this.syncAgentSwarmActivitySpinner(undefined);
@@ -4688,7 +4703,7 @@ export class KimiTUI {
         break;
       }
       case 'composing': {
-        const spinner = this.ensureActivitySpinner('braille', 'Working…', (s) =>
+        const spinner = this.ensureActivitySpinner('braille', working, (s) =>
           currentTheme.fg('primary', s),
         );
         this.syncAgentSwarmActivitySpinner(undefined);
@@ -4718,10 +4733,8 @@ export class KimiTUI {
       case 'session': {
         this.stopActivitySpinner();
         this.syncAgentSwarmActivitySpinner(undefined);
-        // Working modes occupy two rows (a spacer above the loader); idle
-        // keeps a one-row placeholder so the dock only shifts once at turn
-        // boundaries instead of on every intra-turn mode flip.
         this.state.activityContainer.addChild(new Spacer(1));
+        this.state.activityContainer.addChild(new LastTurnSummary(timeline));
         break;
       }
     }
@@ -4999,7 +5012,7 @@ export class KimiTUI {
 
   private ensureActivitySpinner(
     style: SpinnerStyle,
-    label = '',
+    label: SpinnerLabel = '',
     colorFn?: (s: string) => string,
   ): MoonLoader {
     if (this.state.activitySpinner?.style !== style) {

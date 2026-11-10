@@ -218,7 +218,6 @@ Constraints between the fields:
 - `default_model`: required when a `models` table is configured, and must be one of its keys.
 - `models`: values may be Chinese or English; an empty string lists the alias with no hint.
 - `default_effort` is section-wide: every spawn binds it regardless of the chosen pool entry. For per-entry efforts, leave it unset and use model variants (see below).
-- `primary` is a reserved alias and cannot be a pool key.
 
 Pool aliases reference the current `[models]` table: if a provider is later deleted or logged out, or its refreshed model list no longer contains an alias, session startup fails with a configuration error naming the broken alias. Fix or remove the entry to recover. The `[secondary_model]` section itself is never rewritten automatically.
 
@@ -499,7 +498,7 @@ require_trust = false
 ```
 
 ::: warning Note
-Disabling the trust requirement loads project-level MCP servers and other trust-gated project configuration without confirmation. Use this setting only when every workspace is already trusted. It does not change permission modes, tool approvals, or dangerous-command guards.
+Disabling the trust requirement loads project-level MCP servers and other trust-gated project configuration without confirmation. Use this setting only when every workspace is already trusted. Permission modes and the `dangerous_command_guard` setting are unchanged, but [project `allow` rules](#permission) loaded from `.kimi-code/local.toml` can suppress tool approval prompts, including sensitive-file and git-control-path guards.
 :::
 
 Changes take effect on `/reload`; a running TUI does not show a startup trust prompt retroactively. `KIMI_CODE_TRUST_WORKSPACE=1` remains an independent per-process trust override, and a falsy value does not restore the first-open requirement when `require_trust` is `false`. Existing trust records are preserved and used again if the requirement is re-enabled.
@@ -539,14 +538,18 @@ api_key = "sk-xxx"
 
 ## `permission`
 
-`permission` sets permission rules that are automatically loaded when a session starts, controlling whether the Agent needs user confirmation before calling a tool. Rules are written as a `[[permission.rules]]` array of tables, matched in order; the first matching rule takes effect.
+`permission` sets permission rules that are automatically loaded when a session starts, controlling whether the Agent needs user confirmation before calling a tool. Rules are written as a `[[permission.rules]]` array of tables. Matching `deny` rules take precedence over matching `ask` rules, which take precedence over matching `allow` rules.
+
+User rules are loaded from the user `config.toml` at session startup. For compatibility, legacy `turn-override` and `session-runtime` rules in the user config are silently ignored without a warning.
+
+Project rules are read from `.kimi-code/local.toml` only in the local environment when the workspace is trusted, with an omitted `scope` defaulting to `project`. Remote project rules are not supported. Project rule changes take effect in a new session and are not hot-reloaded.
 
 You can also set `dangerous_command_guard = false` under `[permission]` to turn off every built-in guard confirmation policy entirely: dangerous commands, access to sensitive files such as `.env` or `id_rsa`, and access to git control paths no longer ask for confirmation in Always Ask and Ask When Needed mode (these policies are never active in Never Ask mode); the default is `true`. An environment variable `KIMI_CODE_DANGEROUS_COMMAND_GUARD=false` overrides the file setting. With all built-in guards off, only `ask` rules you configured yourself can still prompt in Ask When Needed mode; in Always Ask mode, tools that are not auto-approved continue to prompt as before. The hard block that stops `Read`/`Write`/`Edit` from touching secret files stays in effect. Use this switch only for environments that already gate commands outside the agent.
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `decision` | `string` | Yes | Action on match: `allow` (permit immediately), `deny` (reject immediately), `ask` (prompt each time) |
-| `scope` | `string` | No | Rule scope: `turn-override`, `session-runtime`, `project`, `user`; defaults to `user` |
+| `scope` | `string` | No | Rule scope: `turn-override`, `session-runtime`, `project`, `user`; defaults to `user` in the user config. Project config accepts only `project` and `user` |
 | `pattern` | `string` | Yes | Match pattern in the form `ToolName` or `ToolName(arg-pattern)`, e.g. `Read` or `Bash(rm -rf*)` |
 | `reason` | `string` | No | Rule description for debugging and auditing |
 
@@ -649,6 +652,7 @@ Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a c
 | --- | --- | --- | --- |
 | `theme` | `string` | `auto` | Color theme: `auto`, `dark`, `light`, or the name of a [custom theme](../customization/themes.md) |
 | `tui_mode` | `string` | `regular` | UI layout: `regular` renders into the terminal scrollback; `fullscreen` (experimental) makes parts of the UI mouse-interactive for a smoother experience |
+| `copy_on_select` | `boolean` | `true` | Fullscreen mode only: copy text as soon as you select it; you can also press `Ctrl-C` to copy |
 | `render_latex` | `boolean` | `true` | Render LaTeX math expressions in Markdown messages as Unicode text; `false` keeps the raw source |
 | `disable_paste_burst` | `boolean` | `false` | Disable the non-bracketed paste-burst fallback that keeps rapid multi-line pastes from submitting line by line |
 | `cache_expiry_hint` | `boolean` | `true` | On resume or when submitting after a long idle stretch, warn that the context cache may have expired and offer to compact or start a new session (v2 engine only) |
@@ -657,8 +661,8 @@ Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a c
 | `[notifications].enabled` | `boolean` | `true` | Whether desktop notifications are sent |
 | `[notifications].notification_condition` | `string` | `unfocused` | When to notify: `unfocused` (only when the terminal is not focused) or `always` |
 | `[upgrade].auto_install` | `boolean` | `true` | Whether new versions are installed automatically |
-| `[transcript.group].tools` | `string` | `auto` | Which tool calls fold into summary groups in `fullscreen` mode: `auto` folds every tool call except subagents and tools that ask or notify you, `explore` folds only reads, searches, and read-only commands such as `ls` or `git status`, `off` keeps every tool call as its own card; same as Tool call folding in `/settings`; no effect in `regular` mode |
-| `[transcript.group].group_thinking` | `boolean` | `true` | Whether finished thinking folds into summary groups in `fullscreen` mode; `false` shows a two-line preview of each thinking block instead; same as Thinking folding in `/settings`; no effect in `regular` mode |
+| `[transcript].tool_call_density` | `string` | `compact` | Tool call density in `fullscreen` mode: `compact`, `balanced`, or `detailed` |
+| `[transcript].thinking` | `string` | `grouped` | Thinking folding in `fullscreen` mode: `grouped` or `ungrouped` |
 | `[status_line].items` | `string[]` | `[]` | Built-in slots on the first footer line and their order: `mode`, `goal`, `model`, `tasks`, `cwd`, `git`, `tips`; unknown ids are skipped with a warning |
 | `[status_line].command` | `string` | `""` | Custom status line command: its first stdout line replaces the footer, and a JSON snapshot is passed on stdin; capped at 300ms, throttled to once per second, failures fall back to the built-in layout |
 
@@ -672,7 +676,8 @@ Model, cwd, git branch, permission mode, plan mode, context usage, session id, v
 ```toml
 # ~/.kimi-code/tui.toml
 theme = "auto" # "auto" | "dark" | "light" | custom theme name
-tui_mode = "regular" # "regular" | "fullscreen" ("fullscreen" is experimental)
+# tui_mode = "regular" # "regular" | "fullscreen" ("fullscreen" is experimental)
+copy_on_select = true # fullscreen only: false copies only when you press Ctrl-C
 render_latex = true # false keeps LaTeX math in messages as raw source
 disable_paste_burst = false # true disables non-bracketed paste-burst fallback
 cache_expiry_hint = true # false disables the "cache expired" dialog on resume / idle submit
@@ -688,9 +693,9 @@ notification_condition = "unfocused" # "unfocused" | "always"
 [upgrade]
 auto_install = true
 
-[transcript.group] # fullscreen mode only
-tools = "auto" # "auto" | "explore" | "off"
-group_thinking = true # false shows each thinking block as a two-line preview
+[transcript] # fullscreen mode only
+tool_call_density = "compact" # "compact" | "balanced" | "detailed"
+thinking = "grouped" # "grouped" | "ungrouped"
 
 # [status_line]
 # items = ["mode", "goal", "model", "tasks", "cwd", "git", "tips"]

@@ -1,7 +1,7 @@
 import type { Scope } from '@moonshot-ai/agent-core-v2';
 
 import { okEnvelope } from '../protocol/envelope';
-import { mapError, withTimeout } from './errors';
+import { mapDebugError, withTimeout } from './errors';
 import type { RouteHost } from './serviceDispatcherRoutes';
 import {
   agentEnvironmentBindingSnapshot,
@@ -67,6 +67,6 @@ async function sendSnapshot(
   try {
     return reply.send(okEnvelope(await withTimeout(Promise.resolve(read()), callTimeoutMs), req.id));
   } catch (error) {
-    return reply.send(mapError(error, req.id));
+    return reply.send(mapDebugError(error, req.id));
   }
 }

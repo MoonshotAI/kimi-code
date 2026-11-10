@@ -48,6 +48,8 @@ import { interactions } from '#/human/interaction/facade';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { abortError } from '#/_base/utils/abort';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
+
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { closeTrailingOpenToolExchange } from '#/agent/contextMemory/openToolExchange';
 import { IAgentEnvironmentBindingSeed, IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
@@ -363,6 +365,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         );
       }
       stage = 'restore';
+      handle.accessor.get(IAgentPermissionRulesService);
       await handle.accessor.get(IEventDispatcher).restore();
       attachInteractionAgent(agentId, this.ctx.sessionId, handle.accessor.get(IEventDispatcher));
       stage = 'bootstrap';

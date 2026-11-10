@@ -269,19 +269,15 @@ describe('TowerSpawnTool', () => {
     expect(tool.description).toContain('Available models (pass via model):');
     expect(tool.description).toContain('- cheap/fast [default]: fast and cheap');
     expect(tool.description).toContain('- smart/slow: careful and thorough');
-    expect(tool.description).toContain('- primary (= kimi-code): your current model and thinking level');
-    expect(tool.description).toContain(
-      'The [default] marker is the worker pool default, not the reviewer default.',
-    );
+    expect(tool.description).not.toContain('- primary');
 
     secondaryModel = undefined;
     expect(properties()).not.toHaveProperty('model');
     expect(tool.description).not.toContain('Available models');
 
     secondaryModel = { model: 'cheap/fast' };
-    expect(properties()['model']?.type).toBe('string');
-    expect(tool.description).toContain('- cheap/fast [default]');
-    expect(tool.description).toContain('- primary (= kimi-code): your current model and thinking level');
+    expect(properties()).not.toHaveProperty('model');
+    expect(tool.description).not.toContain('Available models');
   });
 
   it('refuses when tower mode is not active', async () => {
@@ -553,30 +549,6 @@ describe('TowerSpawnTool', () => {
     },
   );
 
-  it.each(['worker', 'reviewer'] as const)(
-    'binds a %s to primary when explicitly requested and reports the actual model',
-    async (kind) => {
-      secondaryModel = {
-        defaultModel: 'cheap/fast',
-        defaultEffort: 'low',
-        models: { 'cheap/fast': 'fast and cheap', 'smart/slow': 'careful and thorough' },
-      };
-
-      const result = await execute(argsFor(kind, 'primary'));
-
-      expect(result.isError).toBeUndefined();
-      expect(result.output).toContain('model: kimi-code');
-      expect(createAgent).toHaveBeenCalledWith({
-        binding: { profile: 'tower-worker', model: 'kimi-code', thinking: 'off' },
-        labels: { parentAgentId: 'main' },
-      });
-      const task = registerTask.mock.calls[0]?.[0] as SubagentTask;
-      expect(task.model).toBe('kimi-code');
-      const activityLog = await readFile(join(repo, '.tower/comms/log/activity.log'), 'utf8');
-      expect(activityLog).toMatch(/spawn .*model=kimi-code/);
-    },
-  );
-
   it('carries the configured secondary model into the registered task info', async () => {
     secondaryModel = { model: 'cheap/fast' };
 
@@ -658,8 +630,11 @@ describe('TowerSpawnTool', () => {
     expect(activityLog).toMatch(/spawn .*model=kimi-code/);
   });
 
-  it('binds reviewers to the tower model even when the secondary model is configured', async () => {
-    secondaryModel = { model: 'cheap/fast' };
+  it('binds reviewers to the configured pool default', async () => {
+    secondaryModel = {
+      defaultModel: 'cheap/fast',
+      models: { 'cheap/fast': 'fast and cheap', 'smart/slow': 'careful and thorough' },
+    };
 
     const result = await execute({
       name: 'reviewer-a',
@@ -668,19 +643,9 @@ describe('TowerSpawnTool', () => {
     });
 
     expect(result.isError).toBeUndefined();
-    expect(result.output).toContain('model: kimi-code');
+    expect(result.output).toContain('model: cheap/fast');
     expect(createAgent).toHaveBeenCalledWith({
-      binding: { profile: 'tower-worker', model: 'kimi-code', thinking: 'off' },
-      labels: { parentAgentId: 'main' },
-    });
-  });
-
-  it('accepts an explicit primary choice without a secondary pool', async () => {
-    const result = await execute({ ...WORKER_ARGS, model: 'primary' });
-
-    expect(result.isError).toBeUndefined();
-    expect(createAgent).toHaveBeenCalledWith({
-      binding: { profile: 'tower-worker', model: 'kimi-code', thinking: 'off' },
+      binding: { profile: 'tower-worker', model: 'cheap/fast', thinking: undefined },
       labels: { parentAgentId: 'main' },
     });
   });
@@ -696,12 +661,12 @@ describe('TowerSpawnTool', () => {
 
     expect(result.isError).toBe(true);
     expect(result.output).toContain(
-      'Invalid model "other/valid". Available models: cheap/fast, smart/slow, primary.',
+      'Invalid model "other/valid". Available models: cheap/fast, smart/slow.',
     );
     await expectNoWorkerSpawnSideEffects();
   });
 
-  it('rejects a non-primary explicit model without a secondary pool before any spawn side effect', async () => {
+  it('rejects an explicit model without a secondary pool before any spawn side effect', async () => {
     const result = await execute({ ...WORKER_ARGS, model: 'cheap/fast' });
 
     expect(result.isError).toBe(true);
@@ -709,16 +674,19 @@ describe('TowerSpawnTool', () => {
     await expectNoWorkerSpawnSideEffects();
   });
 
-  it('accepts an explicit primary choice for workers when a secondary model is configured', async () => {
-    secondaryModel = { model: 'cheap/fast' };
+  it('rejects an alias outside the pool before any spawn side effect', async () => {
+    secondaryModel = {
+      defaultModel: 'cheap/fast',
+      models: { 'cheap/fast': 'fast and cheap', 'smart/slow': 'careful and thorough' },
+    };
 
     const result = await execute({ ...WORKER_ARGS, model: 'primary' });
 
-    expect(result.isError).toBeUndefined();
-    expect(createAgent).toHaveBeenCalledWith({
-      binding: { profile: 'tower-worker', model: 'kimi-code', thinking: 'off' },
-      labels: { parentAgentId: 'main' },
-    });
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain(
+      'Invalid model "primary". Available models: cheap/fast, smart/slow.',
+    );
+    await expectNoWorkerSpawnSideEffects();
   });
 
   it('rejects an explicit model when the caller has no model alias instead of ignoring it', async () => {
@@ -984,6 +952,60 @@ describe('TowerSpawnTool', () => {
     expect(prompt).toContain('Call TowerInbox once and fold anything new into your summary');
     expect(prompt).toContain('Call TowerComplete(report=the full survey result)');
     expect(prompt).not.toContain('subject="survey-summary"');
+  });
+
+  it('briefs the artifact worker to commit deliverables and name key artifacts for whole-tip acceptance', async () => {
+    const [artifact] = await store.plan([
+      { title: 'Render report', scope: ['artifacts/**'], kind: 'artifact' },
+    ]);
+
+    const result = await execute({ name: 'agent-artifact', kind: 'worker', mission_id: artifact!.id });
+
+    expect(result.isError).toBeUndefined();
+    const prompt = (runAgent.mock.calls.at(-1)?.[1] as { prompt: string }).prompt;
+    expect(prompt).toContain('git commit` every artifact needed for acceptance');
+    expect(prompt).toContain('Uncommitted files are excluded from acceptance and merge');
+    expect(prompt).toContain('key_artifacts=[the committed paths of the key deliverables');
+    expect(prompt).toContain('does not need to cover the whole diff');
+    expect(prompt).toContain('stores acceptance-request to the tower');
+    expect(prompt).toContain('approval authorizes the entire tip');
+    expect(prompt).toContain('no independent reviewer is required');
+    expect(prompt).toContain('acceptance is bound to the last completion tip');
+    expect(prompt).not.toContain('source files only — no build outputs');
+    expect(prompt).not.toContain('READ-ONLY survey mission');
+    expect(prompt).not.toContain('zero commits');
+  });
+
+  it('briefs an artifact respawn with the previous acceptance-request and human feedback', async () => {
+    const [artifact] = await store.plan([
+      { title: 'Render report', scope: ['artifacts/**'], kind: 'artifact' },
+    ]);
+    const first = await execute({ name: 'agent-artifact', kind: 'worker', mission_id: artifact!.id });
+    expect(first.isError).toBeUndefined();
+    await store.send('agent-artifact', {
+      to: 'tower',
+      subject: 'acceptance-request',
+      body: 'Committed artifacts for acceptance:\n- artifacts/report.html',
+    });
+    await store.submitReview('tower', {
+      target: artifact!.branch,
+      status: 'p1-1items',
+      merge: 'hold',
+      findings: 'the summary needs a correction',
+      decision: 'human requested changes',
+    });
+
+    const result = await execute({ name: 'agent-artifact-2', kind: 'worker', mission_id: artifact!.id });
+
+    expect(result.isError).toBeUndefined();
+    const prompt = (runAgent.mock.calls.at(-1)?.[1] as { prompt: string }).prompt;
+    expect(prompt).toContain('# Previous work on this branch');
+    expect(prompt).toContain('Latest feedback — round 1 by tower: p1-1items');
+    expect(prompt).toContain('the summary needs a correction');
+    expect(prompt).toContain('human requested changes');
+    expect(prompt).toContain("The previous worker's acceptance-request to the tower");
+    expect(prompt).toContain('artifacts/report.html');
+    expect(prompt).not.toContain("The previous worker's review-request to the tower");
   });
 
   it('briefs the reviewer with the mission text and the worker self-report', async () => {

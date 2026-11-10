@@ -6,6 +6,7 @@ import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
+import { Emitter } from '#/_base/event';
 import type { ILogService } from '#/_base/log/log';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import type { IEventService } from '#/app/event/event';
@@ -16,6 +17,7 @@ import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { FileWorkspacePersistence } from '#/app/workspace/fileWorkspacePersistence';
 import { WorkspaceService } from '#/app/workspace/workspaceService';
+import type { Workspace } from '#/app/workspace/workspace';
 import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { WorkspaceDirsService } from '#/workspace/workspaceDirs/workspaceDirsService';
@@ -104,6 +106,29 @@ describe('WorkspaceDirsService (registry source)', () => {
       ),
     );
   }
+
+  it('coalesces pending registry reloads and applies changes received during an active reload', async () => {
+    const project = await workspaces.create({ root: dirA, additionalDirs: [dirB] });
+    const changes = disposables.add(new Emitter<void>());
+    vi.spyOn(persistence, 'onDidChange').mockImplementation(changes.event);
+    const dirs = createDirs(dirA, project.id, 'managed');
+    await dirs.ready;
+    let release!: (workspaces: readonly Workspace[]) => void;
+    const held = new Promise<readonly Workspace[]>((resolve) => {
+      release = resolve;
+    });
+    const list = vi.spyOn(workspaces, 'list').mockImplementationOnce(() => held);
+    changes.fire();
+    await vi.waitFor(() => {
+      expect(list).toHaveBeenCalledTimes(1);
+    });
+    await workspaces.update(project.id, { additionalDirs: [dirC] });
+    for (let index = 0; index < 32; index += 1) changes.fire();
+    release([project]);
+    await dirs.dispose();
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(dirs.additionalDirs).toEqual([dirC]);
+  });
 
   it('keeps the current primary for managed scopes and the associated primary for member scopes', async () => {
     const project = await workspaces.create({ root: dirA, additionalDirs: [dirB], name: 'proj' });

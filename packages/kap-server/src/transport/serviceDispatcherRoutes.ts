@@ -11,7 +11,7 @@ import {
   resolveAnyScopedServiceId,
 } from './channelRegistry';
 import { type ChannelLookup, dispatch } from './dispatcher';
-import { mapError, validationEnvelope, withTimeout } from './errors';
+import { mapDebugError, validationEnvelope, withTimeout } from './errors';
 
 interface RpcRequest {
   readonly id: string;
@@ -113,7 +113,7 @@ function makeHandler(
       return reply.send(okEnvelope(result, requestId));
     } catch (error) {
       promptAttempt?.fail(error);
-      const envelope = mapError(error, requestId);
+      const envelope = mapDebugError(error, requestId);
       const log = requestLog(req);
       if (envelope.code === ErrorCode.INTERNAL_ERROR) {
         log?.error({ err: error, service, method }, 'rpc dispatch failed');

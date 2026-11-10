@@ -11,6 +11,7 @@ import {
 import { TranscriptContainer } from '#/tui/components/messages/transcript-container';
 import { TranscriptView } from '#/tui/components/messages/transcript-view';
 import { clipboard } from '#/utils/clipboard/clipboard-native';
+import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
 import { openUrl } from '#/utils/open-url';
 
 import { DockSection } from './components/chrome/dock-section';
@@ -35,6 +36,7 @@ import {
   type TranscriptEntry,
   type TUIStartupState,
 } from './types';
+import { formatErrorMessage } from './utils/event-payload';
 import {
   setMarkdownAltScreenActive,
   setMarkdownMermaidMode,
@@ -119,13 +121,15 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
   const terminal = new ProcessTerminal();
   setMarkdownRenderLatex(initialAppState.renderLatex ?? DEFAULT_TUI_CONFIG.renderLatex ?? true);
   setMarkdownMermaidMode(initialAppState.markdown?.mermaid ?? DEFAULT_MARKDOWN_CONFIG.mermaid);
-  const fullscreen = initialAppState.tuiMode === 'fullscreen';
+  const fullscreen = (options.resolvedTuiMode ?? initialAppState.tuiMode) === 'fullscreen';
   const ui = fullscreen
       ? new TuiAltScreen(terminal, undefined, undefined, {
           // Mouse capture takes over the terminal's native link activation, so
           // route OSC 8 clicks through our own opener.
           openUrl,
           refocusMouseGuardMs: CLICK_GUARD_MS,
+          copyOnSelect:
+            initialAppState.copyOnSelect ?? DEFAULT_TUI_CONFIG.copyOnSelect,
           // Likewise, on Windows the terminal's native right-click paste is
           // intercepted; feed the clipboard to the focused component as a
           // bracketed paste instead (renderer only calls this on win32).
@@ -144,6 +148,14 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
           // Clickable pill centered on the transcript's last row while it is
           // scrolled away from the end.
           scrollToEndIndicator: () => currentTheme.fg('primary', ' ↓ Jump to bottom '),
+          copySelection: async (text) => {
+            try {
+              const method = await copyTextToClipboard(text);
+              return method === 'native' ? true : 'Copied via terminal';
+            } catch (error) {
+              return formatErrorMessage(error);
+            }
+          },
         })
       : new TuiMainScreen(terminal);
 

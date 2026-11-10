@@ -44,7 +44,8 @@ export class TowerStatusTool implements ITowerStatusTool {
     @IAgentTaskService private readonly tasks: IAgentTaskService,
   ) {}
 
-  resolveExecution(_args: TowerStatusToolInput): ToolExecution {
+  resolveExecution(args: TowerStatusToolInput): ToolExecution {
+    const limit = args.limit ?? 20;
     return {
       description: 'Reading tower status',
       approvalRule: this.name,
@@ -74,17 +75,17 @@ export class TowerStatusTool implements ITowerStatusTool {
             ...renderRecoveredAtWarning(state),
             '## Missions',
             '',
-            ...renderMissions(state),
-            ...renderUnspawnedMissions(state),
-            ...renderDeathWarnings(state),
+            ...renderMissions(state, limit),
+            ...renderUnspawnedMissions(state, limit),
+            ...renderDeathWarnings(state, limit),
             '',
             '## Roster',
             '',
-            ...renderRoster(state),
+            ...renderRoster(state, limit),
             '',
             '## Review gate (unmerged branches)',
             '',
-            ...renderReviewGate(state, gate),
+            ...renderReviewGate(state, gate, limit),
           ];
 
           if (
@@ -149,13 +150,18 @@ function renderRecoveredAtWarning(state: TowerStatusState): string[] {
 function renderReviewGate(
   state: TowerStatusState,
   gate: readonly TowerStatusGate[],
+  limit: number,
 ): string[] {
   const pending = state.missions.filter(
     (mission) => mission.status !== 'merged' && mission.status !== 'abandoned',
   );
   if (pending.length === 0) return ['(no open missions — or none planned yet)'];
-  const lines: string[] = [];
-  for (const missionGate of gate) {
+  const visible = gate.slice(-limit).toReversed();
+  const lines: string[] = [
+    `Showing ${String(visible.length)} of ${String(pending.length)} open mission(s), newest first.`,
+    '',
+  ];
+  for (const missionGate of visible) {
     const review = missionGate.selectedReview;
     const reviewText =
       review === undefined
@@ -175,7 +181,10 @@ function renderReviewGate(
       `- ${missionGate.branch} (${missionGate.missionId}): BLOCKED reasons=${reasons}; ${details}${reviewText}`,
     );
   }
-  return lines;
+  return [
+    ...lines,
+    ...renderOmission(pending.length - visible.length, 'review gate entries'),
+  ];
 }
 
 function renderConcurrency(snapshot: TowerStatusConcurrency): string {
@@ -194,23 +203,40 @@ function renderConcurrency(snapshot: TowerStatusConcurrency): string {
   return parts.join(' · ');
 }
 
-function renderMissions(state: TowerStatusState): string[] {
+function renderMissions(state: TowerStatusState, limit: number): string[] {
   if (state.missions.length === 0) return ['(no missions planned — use TowerPlan)'];
+  const counts = new Map<TowerMission['status'], number>();
+  for (const mission of state.missions) {
+    counts.set(mission.status, (counts.get(mission.status) ?? 0) + 1);
+  }
+  const totals = [...counts]
+    .map(([status, count]) => `${String(count)} ${status}`)
+    .join(', ');
+  const visible = state.missions.slice(-limit).toReversed();
   return [
-    '| ID | Mission | Branch | Worktree | Status | Owner |',
-    '| -- | ------- | ------ | -------- | ------ | ----- |',
-    ...state.missions.map(
+    `Showing ${String(visible.length)} of ${String(state.missions.length)} mission(s), newest first.`,
+    `Status totals: ${totals}.`,
+    '',
+    '| ID | Mission | Branch | Worktree | Status | Owner | Kind |',
+    '| -- | ------- | ------ | -------- | ------ | ----- | ---- |',
+    ...visible.map(
       (m) =>
-        `| ${m.id} | ${m.title}${m.kind === 'survey' ? ' 🔍' : ''} | ${m.branch} | ${m.worktree} | ${STATUS_EMOJI[m.status]} ${m.status} | ${m.owner ?? '—'} |`,
+        `| ${m.id} | ${m.title}${m.kind === 'survey' ? ' 🔍' : ''} | ${m.branch} | ${m.worktree} | ${STATUS_EMOJI[m.status]} ${m.status} | ${m.owner ?? '—'} | ${m.kind} |`,
     ),
+    ...renderOmission(state.missions.length - visible.length, 'missions'),
   ];
 }
 
-function renderRoster(state: TowerStatusState): string[] {
+function renderRoster(state: TowerStatusState, limit: number): string[] {
   if (state.roster.agents.length === 0) {
     return ['(no agents registered — spawn workers/reviewers with TowerSpawn)'];
   }
-  return state.roster.agents.map((a) => {
+  const workers = state.roster.agents.filter((agent) => agent.kind === 'worker').length;
+  const reviewers = state.roster.agents.length - workers;
+  const visible = [...state.roster.agents]
+    .toSorted((a, b) => b.spawnedAt.localeCompare(a.spawnedAt))
+    .slice(0, limit);
+  const lines = visible.map((a) => {
     const assignment =
       a.kind === 'worker'
         ? `mission ${a.missionId ?? '?'} (branch ${a.branch ?? '?'}, worktree ${a.worktree ?? '?'})`
@@ -218,42 +244,70 @@ function renderRoster(state: TowerStatusState): string[] {
     const death = a.diedAt === undefined ? '' : ` — 💀 ${a.deathStatus ?? 'died'}`;
     return `- ${a.name} (${a.kind}) — agent ${a.agentId}, ${assignment}${death}`;
   });
+  return [
+    `Showing ${String(visible.length)} of ${String(state.roster.agents.length)} agent(s) (${String(workers)} workers, ${String(reviewers)} reviewers), newest spawned first.`,
+    '',
+    ...lines,
+    ...renderOmission(state.roster.agents.length - visible.length, 'roster entries'),
+  ];
 }
 
-function renderUnspawnedMissions(state: TowerStatusState): string[] {
+function renderUnspawnedMissions(state: TowerStatusState, limit: number): string[] {
   const pending = state.missions.filter((m) => m.status === 'planned' && m.owner === undefined);
   if (pending.length === 0) return [];
+  const visible = pending.slice(-limit).toReversed();
   return [
     '',
     '## Awaiting spawn',
     '',
-    ...pending.map(
+    `Showing ${String(visible.length)} of ${String(pending.length)} planned mission(s), newest first.`,
+    '',
+    ...visible.map(
       (m) =>
-        `- ${m.id} (${m.branch}) — planned but no worker spawned yet: launch one with TowerSpawn(kind="worker", mission_id="${m.id}", name="...")`,
+        `- ${m.id} [${m.kind}] (${m.branch}) — planned but no worker spawned yet: launch one with TowerSpawn(kind="worker", mission_id="${m.id}", name="...")`,
     ),
+    ...renderOmission(pending.length - visible.length, 'awaiting-spawn missions'),
   ];
 }
 
-function renderDeathWarnings(state: TowerStatusState): string[] {
+function renderDeathWarnings(state: TowerStatusState, limit: number): string[] {
   const deadByName = new Map(
     state.roster.agents.filter((a) => a.diedAt !== undefined).map((a) => [a.name, a]),
   );
-  const lines: string[] = [];
+  const warnings: { diedAt: string; text: string }[] = [];
   for (const mission of state.missions) {
     if (mission.owner === undefined) continue;
     if (mission.status === 'merged' || mission.status === 'abandoned') continue;
     const entry = deadByName.get(mission.owner);
     if (entry === undefined) continue;
-    lines.push(
-      isStoppedByUser(entry)
+    warnings.push({
+      diedAt: entry.diedAt ?? '',
+      text: isStoppedByUser(entry)
         ? `- 🛑 ${mission.id} owner ${entry.name} was stopped by the user (${entry.deathStatus ?? 'unknown'}) — dead by intent: never resume it and do not reassign the mission unless the human asks`
         : entry.kind === 'reviewer'
           ? `- ⚠️ ${mission.id} reviewer ${entry.name} died (${entry.deathStatus ?? 'unknown'}) — diagnose first: check the death status/reason and task state. A reviewer is one-shot: do not resume it or another roster agent; after diagnosis, spawn a fresh reviewer only if the mission still needs one`
           : `- ⚠️ ${mission.id} owner ${entry.name} died (${entry.deathStatus ?? 'unknown'}) — diagnose first: check why it died (the died entry's status/reason, its task state) before reviving anything. Resume with Agent(resume="${entry.agentId}", run_in_background=true, prompt="...") (foreground only when background task tools are unavailable) or reassign the mission only when the cause is transient (lost contact, timeout, OOM); a systematic cause (code or environment defect) is fixed or escalated to the human before any revive`,
-    );
+    });
   }
-  if (lines.length === 0) return lines;
-  return ['', '## Dead workers', '', ...lines];
+  if (warnings.length === 0) return [];
+  const visible = warnings.toSorted((a, b) => b.diedAt.localeCompare(a.diedAt)).slice(0, limit);
+  return [
+    '',
+    '## Dead workers',
+    '',
+    `Showing ${String(visible.length)} of ${String(warnings.length)} death warning(s), newest death first.`,
+    '',
+    ...visible.map((warning) => warning.text),
+    ...renderOmission(warnings.length - visible.length, 'death warnings'),
+  ];
+}
+
+function renderOmission(omitted: number, noun: string): string[] {
+  if (omitted === 0) return [];
+  return [
+    '',
+    `${String(omitted)} earlier ${noun} omitted; call TowerStatus with a larger limit to inspect them.`,
+  ];
 }
 
 function isStoppedByUser(entry: TowerRosterEntry): boolean {

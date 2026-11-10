@@ -783,7 +783,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const parsed = fsSuggestRequestSchema.safeParse({
       query: input.query,
       limit: input.limit ?? 50,
-      follow_gitignore: true,
+      follow_gitignore: input.followGitignore ?? true,
       show_hidden: false,
     });
     if (!parsed.success) {

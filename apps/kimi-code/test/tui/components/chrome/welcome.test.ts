@@ -34,7 +34,7 @@ const appState: AppState = {
   editorCommand: null,
   notifications: { enabled: true, condition: 'unfocused' },
   upgrade: { autoInstall: true },
-  transcript: { groupTools: 'auto', groupThinking: true },
+  transcript: { toolCallDensity: 'compact', thinking: 'grouped' },
   availableModels: {},
   availableProviders: {},
   mcpServersSummary: null,

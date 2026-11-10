@@ -51,7 +51,7 @@ HTTP 状态码几乎总是 200，业务结果以 `code` 为准。例外情况：
 | 创建供应商、导入供应商目录成功 | 201 |
 | 删除供应商成功 | 204 |
 | 二进制与流式端点 | 支持时返回 206（Range 分段）/ 304（ETag 未变），各端点能力不同，详见「[二进制与流式端点](#二进制与流式端点)」 |
-| `GET /api/v1/files/{file_id}` 下载错误 | 真实 404 / 500（响应体仍为信封） |
+| `GET /api/v1/files/{file_id}`、`/api/v1/fs:content` 与会话 `:download` 错误 | 真实 4xx / 500（响应体仍为信封） |
 
 其中 201 的响应体仍是标准信封（`code` 为 `0`），只是状态行遵循 REST 的资源创建惯例；204 按定义没有响应体，删除成功以状态码本身为准。
 
@@ -65,7 +65,7 @@ HTTP 状态码几乎总是 200，业务结果以 `code` 为准。例外情况：
 | `400xx` | 请求参数错误 | `40001` 校验失败（`details` 逐字段说明）、`40003` 供应商由 OAuth 托管、`40006` 工作区源文件夹重复 |
 | `401xx` | 鉴权与就绪状态 | `40101` 未授权、`40110` 未配置供应商、`40113` 模型未解析 |
 | `404xx` | 资源不存在 | `40401` 会话、`40408` MCP 服务、`40409` 文件路径 |
-| `409xx` | 状态冲突 | `40901` 会话忙、`40902` 审批已解决、`40922` 分页条件与 `page_token` 不符、`40931` 会话正被其他客户端使用、`40932` 会话已被其他客户端更新 |
+| `409xx` | 状态冲突 | `40901` 会话忙、`40902` 审批已解决、`40922` 分页条件与 `page_token` 不符、`40931` 会话正被其他客户端使用、`40932` 会话已被其他客户端更新、`40935` 无法进入 Tower 模式 |
 | `410xx` | 资源已过期 | `41001` 审批超时、`41002` 提问超时、`41003` 临时文件过期 |
 | `413xx` | 体积或边界超限 | `41302` 读取文件超 10 MB、`41304` 路径越出会话目录 |
 | `429xx` | 限流 | `42901` 鉴权失败封禁、`42902` 文件监听数超限 |
@@ -858,7 +858,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 
 #### `POST /api/v1/sessions/{session_id}:restore`
 
-取消会话的归档状态并恢复它。
+取消会话的归档状态并恢复它。会话原本已归档时，服务端广播全局 `event.session.restored` 事件。
 
 成功时，`data` 为 `archived: false` 的 [session 对象](#session-对象)。
 
@@ -1781,9 +1781,9 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `limit` | body | integer | 最大命中数，1–200。默认 `50` |
 | `include_globs` | body | string[] | 只保留匹配这些 glob 之一的路径 |
 | `exclude_globs` | body | string[] | 跳过匹配这些 glob 的路径 |
-| `follow_gitignore` | body | boolean | 跳过 gitignore 的路径。默认 `true` |
+| `follow_gitignore` | body | boolean | 为 `true` 时跳过 gitignore 路径。默认 `false` |
 
-成功时 `data` 为 `{ items, truncated }`，每项为 `{ path, name, kind, score, match_positions }`——`kind` 为 `file` / `directory` / `symlink`，`score` 为 0 到 1 之间的模糊匹配得分，`match_positions` 列出匹配到的字符偏移。命中按得分排序（同分按路径），`truncated` 表示超出 `limit` 的命中被丢弃。
+成功时 `data` 为 `{ items, truncated }`，每项为 `{ path, name, kind, score, match_positions }`——`kind` 为 `file` / `directory` / `symlink`，`score` 为 0 到 1 之间的模糊匹配得分，`match_positions` 列出匹配到的字符偏移。命中优先按匹配质量排序，同一匹配质量内普通命中排在忽略命中之前；包含忽略命中时可能执行一次补充扫描。`truncated` 表示超出 `limit` 的命中被丢弃。
 
 - `40001`：请求体校验失败
 - `40401`：该引用既不是会话，也不是可解析的工作区
@@ -1995,7 +1995,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `limit` | body | integer | 最大命中数，1–200。默认 `50` |
 | `include_globs` | body | string[] | 只保留匹配这些 glob 之一的路径 |
 | `exclude_globs` | body | string[] | 跳过匹配这些 glob 的路径 |
-| `follow_gitignore` | body | boolean | 跳过 gitignore 的路径。默认 `true` |
+| `follow_gitignore` | body | boolean | 为 `true` 时跳过 gitignore 路径。默认 `false` |
 
 成功时 `data` 为 `{ items, truncated }`，命中结构与排序同 `fs:search`。
 
@@ -2010,13 +2010,16 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | --- | --- | --- | --- |
 | `workspace` | body | string | **必填。** 已注册工作区 id 或绝对根路径（当场注册） |
 | `query` | body | string | **必填。** 要补全的部分路径文本 |
-| `limit` | body | integer | 最大候选数，1–200。默认 `50` |
-| `follow_gitignore` | body | boolean | 跳过 gitignore 的路径。默认 `true` |
-| `show_hidden` | body | boolean | 包含点文件。默认 `false` |
+| `limit` | body | integer | 最大候选数，1–200。默认 `50`；fd 搜索最多返回 `20` 条 |
+| `follow_gitignore` | body | boolean | 为 `true` 时跳过 gitignore 路径。默认 `false` |
+| `show_hidden` | body | boolean | 包含点文件。默认 `false`；fd 搜索始终包含 |
+| `stream` | body | boolean | 为 `true` 时以 NDJSON 返回 preview/final 事件。默认 `false` |
 | `include_globs` | body | string[] | 只保留匹配这些 glob 之一的路径 |
 | `exclude_globs` | body | string[] | 跳过匹配这些 glob 的路径 |
 
-成功时 `data` 为 `{ items, truncated }`，每项为 `{ path, name, kind, score, match_positions }`，命中结构同 `fs:search`。
+成功时 `data` 为 `{ items, truncated }`，每项为 `{ path, name, kind, score, match_positions }`，命中结构同 `fs:search`。候选优先按匹配质量排序，同一匹配质量内普通候选排在忽略候选之前。fd 可用时采用与本地 `@` 补全相同的策略：始终包含隐藏路径，每个 root 每轮最多扫描 100 条，最多返回 20 条；超出扫描上限的匹配可能遗漏。包含忽略候选时可能执行一次 `--no-ignore-vcs` 补充扫描；fd 不可用时回退到 ripgrep/Node 实现。
+
+使用 `stream:true` 时，响应改为 NDJSON，而不是单个 JSON 对象。每个响应包的 `data` 包含 `phase`（`preview`、`final` 或 `error`）以及相同的结果字段。preview 携带普通 fd 候选且 `truncated:true`；ignored 扫描完成后的 final 用于替换 preview。关闭连接会取消搜索。
 
 - `40001`：请求体校验失败
 - `40410`：工作区不存在，且不是可用的绝对路径
@@ -2407,10 +2410,10 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 
 全局事件是事件帧 `{ "type", "session_id"?, "timestamp", "payload" }`，`type` 即事件类型；会话帧是平铺帧 `{ "type", "session_id", "agent_id", ... }`。按投递范围分两类：
 
-- **全局事件**：发送到每个已建立连接，无需订阅——`session.meta.updated`、`event.session.created`、`event.session.archived`、`event.session.work_changed`、`event.session.status_changed`、`event.workspace.*`、`event.config.*`、`event.model_catalog.*`。
+- **全局事件**：发送到每个已建立连接，无需订阅——`session.meta.updated`、`event.session.created`、`event.session.archived`、`event.session.restored`、`event.session.work_changed`、`event.session.status_changed`、`event.workspace.*`、`event.config.*`、`event.model_catalog.*`。
 - **会话帧**：只发给用 `subscribe` 订阅了该会话的连接，且只包含其接收的 agent——`turns`、`turns.removed`、`turns.failed`、`turn.*`、`item.*` 与 `notice`（见 [对话协议](#对话协议)），以及 `task.list`、`task`、`agent`、`usage`、`goal`、`todo`；`interaction` 帧发给该会话的所有订阅者。`task.output` 只发给用 `task.watch` 订阅了该任务输出的连接。
 
-有三个全局生命周期事件可以让跨工作区概览免掉逐工作区轮询。`event.session.archived` 在在线归档与冷归档两条路径上都会发出；其事件帧 `session_id` 是全局水位 `__global__`，真实会话 id 在 payload 里：`{ "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." }`（payload 字段为 `workspace_id` / `sessionId`）。`event.workspace.created` / `updated` 携带完整工作区对象（`{ id, root, name, created_at, last_opened_at, session_count }`——会话创建触碰工作区时也会发 `updated`），`event.workspace.deleted` 携带 `{ "workspace_id", "root" }`。这些事件只覆盖本服务进程内的变更；其他进程（例如写同一 home 目录的 CLI）的变更要等索引 reconcile（约一分钟）才可见，因此概览客户端应保留低频兜底轮询。目前没有会话删除事件。
+以下全局生命周期事件可以让跨工作区概览免掉逐工作区轮询。`event.session.archived` 在在线归档与冷归档两条路径上都会发出；其事件帧 `session_id` 是全局水位 `__global__`，真实会话 id 在 payload 里：`{ "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." }`（payload 字段为 `workspace_id` / `sessionId`）。已归档的会话被恢复时发出 `event.session.restored`，路径、事件帧和 payload 字段都与 `event.session.archived` 相同。`event.workspace.created` / `updated` 携带完整工作区对象（`{ id, root, name, created_at, last_opened_at, session_count }`——会话创建触碰工作区时也会发 `updated`），`event.workspace.deleted` 携带 `{ "workspace_id", "root" }`。这些事件只覆盖本服务进程内的变更；其他进程（例如写同一 home 目录的 CLI）的变更要等索引 reconcile（约一分钟）才可见，因此概览客户端应保留低频兜底轮询。目前没有会话删除事件。
 
 每个 agent 正在跑的任务——Shell 命令（前台与后台）、subagent（含 swarm 成员）及其他异步工作——由 `task.list` 与 `task` 两种平铺帧同步，和 `interaction` 一样不回放。连接开始接收某个 agent 的任务时（`subscribe` 的 `agent_ids` 中列出、且此前未接收的 agent），先收到一帧 `{ type: "task.list", session_id, agent_id, tasks }`，`tasks` 是该 agent 此刻正在跑的全部任务，客户端用它整份替换本地列表；之后每次变化收到一帧 `{ type: "task", session_id, agent_id, event_created_at, ...任务状态 }`，列出时尚未加入会话的 agent 直接从 `task` 帧开始。任务状态为 `{ task_id, kind: "shell" | "subagent" | "other", status: "running" | "ended", outcome?, phase?, detached, description?, child_agent_id?, parent_tool_call_id?, swarm_index?, command?, started_at?, ended_at?, result_summary?, error?, state_reason?, model?, thinking? }`，每帧都携带完整状态。`detached` 表示发起它的工具调用已不再等它，即后台任务；`outcome`（仅已结束的任务）为 `completed` / `failed` / `timed_out` / `killed` / `lost`；`phase`（仅运行中的 subagent）为 `working` / `suspended`，挂起原因在 `state_reason`；`child_agent_id` 是 subagent 任务的 agent id；`swarm_index` 是 swarm 成员在其 swarm 中的序号；`command` 是 Shell 任务的命令。任务结束时推送它最后一帧 `task`（`status: "ended"`），之后不再出现在 `task.list` 里：已结束任务的结果在会话历史中（工具结果与完成通知），需要精确的最终状态时对它发送 `task.watch`，应答带有其状态。任务与轮次互相独立：撤销轮次不影响任务。任务输出单独推送，形状为 `{ type: "task.output", session_id, agent_id, task_id, offset, text }`，`offset` 是 `text` 在任务输出中的 UTF-8 字节偏移。
 
@@ -2442,7 +2445,7 @@ Agent 自身的状态由另外四种平铺帧同步，每帧都携带完整的�
 - `user_message`：`{ prompt_ids, placement: "opener" | "steer", origin, text, attachments, skills, metadata? }`。`prompt_ids` 列出这条输入承载的 prompt id——包括打包技能提交和技能激活带的 `prompt_id`——客户端可据此撤下本地的乐观气泡；系统触发的输入为空数组。`origin` 为 `{ kind: "user" }`、`{ kind: "skill", name, path?, args? }`、`{ kind: "plugin_command", plugin_id, command, args? }`、`{ kind: "cron", job_id, schedule, recurring, coalesced_count, stale }`、`{ kind: "hook", hook_event }`、目标续跑的 `{ kind: "goal" }`、`{ kind: "retry" }` 或 `{ kind: "system" }`。`text` 用换行拼接可见的文本块，不含打包技能的说明、提示词 hook 的输出、提示模型读取附件文件的说明和图片压缩说明；重试和内部触发的输入为空串。`attachments` 按顺序列出输入中的文件和媒体，形如 `{ kind: "image" | "video" | "audio" | "file", file_id?, url?, name?, media_type?, size?, ordinal }`：上传的文件带 `file_id`，内联和远程媒体带 `url`，服务端存储的媒体在分页中以 `data:` URL 下发，按服务端本地路径附加的文件只带 `name`、`media_type` 和 `size`。`skills` 列出随输入激活的技能，形如 `{ name, path?, args? }`；`metadata` 原样回显提交时的 `metadata`。CLI 的 shell 命令（`!`）和它的输出以原始文本出现在 `origin: { kind: "system" }` 的 `user_message` 中，各自单独成一个已结束的轮。
 - `assistant_message`：`{ text }`。
 - `reasoning`：`{ text, started_at, duration_ms? }`；`duration_ms` 是思考输出的时长，条目结束后才有。隐藏的思考不会下发。
-- `tool_call`：`{ item_id: 工具调用 id, name, stage?, input?, input_text?, display?, output?, media?, error?, progress?, interaction_id?, agent_refs?, started_at, ended_at? }`。调用运行时，模型流式生成参数期间 `stage` 为 `input`（`input_text` 为参数原文），等待审批时为 `awaiting_approval`，其余时候为 `executing`；`output` 流式追加工具的实时输出，`progress` 为 `{ percent?, status?, custom_kind?, custom_data? }`。结束后 `output` 为结果文本，`media` 列出结果中的图片、视频和音频，形如 `{ kind, file_id?, url?, media_type? }`；结果为错误时 `outcome` 为 `failed`，带 `error` 而不带 `output`；该轮在产生结果前结束时为 `interrupted`。`interaction_id` 关联为该调用发起的审批或提问，其内容随 `interaction` 帧下发；`agent_refs` 列出该调用启动的 subagent，形如 `{ agent_id, role: "child" | "member", swarm_index?, task_id? }`。`ExitPlanMode` 调用带 `display`：`{ kind: "plan_review", plan, path?, options: [{ label, description }], review: { state: "pending" | "approved" | "rejected" | "cancelled", selected_option?, feedback? } }`。
+- `tool_call`：`{ item_id: 工具调用 id, name, stage?, input?, input_text?, display?, output?, media?, error?, note?, progress?, task_id?, interaction_id?, agent_refs?, started_at, ended_at? }`。调用运行时，模型流式生成参数期间 `stage` 为 `input`（`input_text` 为参数原文），等待审批时为 `awaiting_approval`，其余时候为 `executing`；`output` 流式追加工具的实时输出，`progress` 为 `{ percent?, status?, custom_kind?, custom_data? }`。结束后 `output` 为结果文本，`media` 列出结果中的图片、视频和音频，形如 `{ kind, file_id?, url?, media_type? }`；结果为错误时 `outcome` 为 `failed`，带 `error` 而不带 `output`；该轮在产生结果前结束时为 `interrupted`。`note` 是工具随结果附给模型的补充说明，例如 `ReadMediaFile` 读取图片时的大小和尺寸。这次调用的工作以后台任务运行时（一开始就在后台，或之后被转到后台），会带上 `task_id`；任务离开 `task.list` 之后，仍可以用它发 `task.watch`、`task.stop`。前台运行中的调用，通过任务的 `parent_tool_call_id` 找到对应的任务。`interaction_id` 关联为该调用发起的审批或提问，其内容随 `interaction` 帧下发；`agent_refs` 列出该调用启动的 subagent，形如 `{ agent_id, role: "child" | "member", swarm_index?, task_id? }`。`ExitPlanMode` 调用带 `display`：`{ kind: "plan_review", plan, path?, options: [{ label, description }], review: { state: "pending" | "approved" | "rejected" | "cancelled", selected_option?, feedback? } }`。
 - `notification`：`{ notification_id, title, body, severity: "info" | "warning" | "error", notification_type, source: { kind, id }, task_id?, agent_id?, output?: { file?, preview?, bytes?, truncated? }, answer?: { answers, note? } }`，投递进对话的后台任务通知。`answer` 是用户对后台提问的回答：`answers` 把每个问题映射到它的回答，`note` 是可选的备注。
 - `system`：完成的上下文压缩为 `{ kind: "compaction", trigger: "manual" | "auto", instruction?, tokens_before?, tokens_after?, compacted_count?, summary? }`，在一轮运行中途完成的压缩放在该轮内；`{ kind: "fork_boundary", source: "btw" | "fork", forked_from: { agent_id } }` 位于从其他 agent 分叉出的 agent（例如侧边对话）的对话开头，分叉时继承的对话不显示。被取消或失败的压缩不在对话中留下任何内容。
 
@@ -2471,7 +2474,7 @@ Agent 自身的状态由另外四种平铺帧同步，每帧都携带完整的�
 | `GET /api/v1/fs:content` | 读取本机任意文件（仅受 token 保护，谨慎暴露端口） | 支持 | 支持 |
 | `POST /api/v1/sessions/{session_id}/export` | 导出会话与诊断信息（zip 流） | 不支持 | 不支持 |
 
-错误语义也不相同：`GET /api/v1/files/{file_id}` 对查找和存储失败返回真实 404 / 500 状态码（参数校验失败仍走 HTTP 200 信封），其余三个端点的所有失败都走标准 [响应信封](#响应信封)——客户端在这三个端点上仍需检查信封中的 `code`。
+错误语义也不相同：`GET /api/v1/files/{file_id}`、`GET /api/v1/fs:content` 与会话 `:download` 对失败返回真实 4xx / 500 状态码，响应体仍是标准 [响应信封](#响应信封)。会话导出仍以 HTTP 200 返回错误信封。普通 JSON RPC 端点继续保持几乎总是 200 的约定，客户端仍需检查信封中的 `code`。
 
 ## 下一步
 

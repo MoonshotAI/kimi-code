@@ -6,14 +6,17 @@ import { currentTheme } from '#/tui/theme';
 
 export type SpinnerStyle = 'moon' | 'braille';
 
+export type SpinnerLabel = string | ((now: number) => string);
+
 export class MoonLoader extends Text {
   private currentFrame = 0;
   private startedAt = 0;
+  private frameTime = 0;
   private frameRequest: number | undefined;
   private ui: TUI;
   private frames: string[];
   private colorFn?: (s: string) => string;
-  private label: string;
+  private label: SpinnerLabel;
   private displayText = '';
   // Inline text used when the spinner is embedded into another line (e.g. the
   // agent-swarm progress status line). It intentionally excludes the tip: the
@@ -28,7 +31,7 @@ export class MoonLoader extends Text {
     ui: TUI,
     style: SpinnerStyle = 'moon',
     colorFn?: (s: string) => string,
-    label: string = '',
+    label: SpinnerLabel = '',
   ) {
     super('', 1, 0);
     this.ui = ui;
@@ -42,6 +45,7 @@ export class MoonLoader extends Text {
     this.stop();
     this.currentFrame = 0;
     this.startedAt = performance.now();
+    this.frameTime = this.startedAt;
     this.updateDisplay();
     this.frameRequest = this.ui.requestAnimationFrame(this.onFrame);
   }
@@ -57,10 +61,10 @@ export class MoonLoader extends Text {
   }
 
   get currentLabel(): string {
-    return this.label;
+    return typeof this.label === 'string' ? this.label : this.label(this.frameTime);
   }
 
-  setLabel(label: string): void {
+  setLabel(label: SpinnerLabel): void {
     this.label = label;
     this.updateDisplay();
   }
@@ -86,8 +90,9 @@ export class MoonLoader extends Text {
   }
 
   private readonly onFrame = (time: number): void => {
+    this.frameTime = time;
     const frame = Math.floor(Math.max(0, time - this.startedAt) / MOON_LOADER_FRAME_MS) % this.frames.length;
-    if (frame !== this.currentFrame) {
+    if (frame !== this.currentFrame || typeof this.label === 'function') {
       this.currentFrame = frame;
       this.updateDisplay();
     }
@@ -97,7 +102,8 @@ export class MoonLoader extends Text {
   private updateDisplay(): void {
     const frame = this.frames[this.currentFrame]!;
     const coloredFrame = this.colorFn ? this.colorFn(frame) : frame;
-    const baseText = this.label ? `${coloredFrame} ${this.label}` : coloredFrame;
+    const label = this.currentLabel;
+    const baseText = label ? `${coloredFrame} ${label}` : coloredFrame;
     this.inlineText = baseText;
     let text = baseText;
     if (this.tip) {

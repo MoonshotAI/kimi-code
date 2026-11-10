@@ -970,7 +970,7 @@ describe('AgentToolPolicyService.setSessionDisabledTools', () => {
     expect(profile.getSystemPrompt()).toBe(before);
   });
 
-  it('omits the skill listing when global tools disable Skill', async () => {
+  it('keeps the skill listing when global tools disable Skill', async () => {
     const skillMarker = 'global-policy-skill-marker';
     ctx = createTestAgent(
       { initialConfig: { tools: { disabled: ['Skill'] } } },
@@ -989,7 +989,7 @@ describe('AgentToolPolicyService.setSessionDisabledTools', () => {
     await profile.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
 
     expect(toolPolicy.isToolActive('Skill')).toBe(false);
-    expect(profile.getSystemPrompt()).not.toContain(skillMarker);
+    expect(profile.getSystemPrompt()).toContain(skillMarker);
   });
 
   it('keeps the skill listing frozen when global tool policy changes at runtime', async () => {
