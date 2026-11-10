@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:net';
 import { setTimeout as sleep } from 'node:timers/promises';
 
+import { HOST_PROTOCOL_VERSION } from './hostProtocol';
 import type { HostEntry } from './hostsConfig';
 
 export type HostStatus = 'pending' | 'connecting' | 'ready' | 'disconnected';
@@ -17,6 +18,7 @@ export type HostConnectFailure =
   | 'executor_not_found'
   | 'executor_outdated'
   | 'remote_busy'
+  | 'remote_start_failed'
   | 'unknown';
 
 export interface HostEndpoint {
@@ -33,6 +35,11 @@ export interface BootstrapResult {
   readonly agentSocket?: string;
 }
 
+export interface RemoteProbe {
+  readonly version: string;
+  readonly protocol: number;
+}
+
 export interface BridgeLogger {
   warn(context: Record<string, unknown>, message: string): void;
 }
@@ -41,6 +48,7 @@ export class HostConnectError extends Error {
   constructor(
     readonly failure: HostConnectFailure,
     message: string,
+    readonly remoteVersion?: string,
   ) {
     super(message);
     this.name = 'HostConnectError';
@@ -50,6 +58,7 @@ export class HostConnectError extends Error {
 const BOOTSTRAP_MARKER = '__KIMI_ENSURE_DAEMON__';
 const DEFAULT_REMOTE_BIN = '~/.kimi-code/bin/kimi';
 const BARE_BIN = /^[A-Za-z0-9._+-]+$/;
+const VERSION_LINE = /^v?\d+\.\d+\.\d+\S*$/;
 const SSH_OPTIONS = [
   '-o',
   'BatchMode=yes',
@@ -71,8 +80,16 @@ const RETRYABLE: ReadonlySet<HostConnectFailure> = new Set([
   'connection_refused',
   'host_unreachable',
   'connect_timeout',
+  'remote_busy',
+  'remote_start_failed',
   'unknown',
 ]);
+const ENSURE_DAEMON_FAILURES: Readonly<Record<string, HostConnectFailure>> = {
+  version_mismatch_busy: 'remote_busy',
+  lock_timeout: 'remote_start_failed',
+  start_timeout: 'remote_start_failed',
+  token_unavailable: 'remote_start_failed',
+};
 
 function shQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
@@ -84,6 +101,11 @@ export function remoteBinCommand(remoteBin: string | undefined): string {
   return bin.startsWith('~/') ? `"$HOME"/${shQuote(bin.slice(2))}` : shQuote(bin);
 }
 
+export function remoteKimiCommand(remoteBin: string | undefined, subcommand: string): string {
+  const bin = remoteBinCommand(remoteBin);
+  return `${bin} --version; ${bin} ${subcommand}`;
+}
+
 export function classifySshFailure(stderr: string, exitCode: number | null): HostConnectFailure {
   if (/Could not resolve hostname|Name or service not known|nodename nor servname/i.test(stderr)) return 'host_not_found';
   if (/Host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED/i.test(stderr)) return 'host_key_changed';
@@ -93,36 +115,75 @@ export function classifySshFailure(stderr: string, exitCode: number | null): Hos
   if (/No route to host|Network is unreachable/i.test(stderr)) return 'host_unreachable';
   if (/timed out/i.test(stderr)) return 'connect_timeout';
   if (exitCode === 126 || exitCode === 127) return 'executor_not_found';
-  if (/unknown command|too many arguments|excess arguments/i.test(stderr)) return 'executor_outdated';
+  if (/unknown command|unknown option|too many arguments|excess arguments/i.test(stderr)) return 'executor_outdated';
   return 'unknown';
 }
 
-export function parseBootstrapOutput(stdout: string): BootstrapResult | undefined {
+function readVersionLine(stdout: string): string | undefined {
+  return stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .findLast((line) => VERSION_LINE.test(line));
+}
+
+function readMarker(stdout: string): Record<string, unknown> | undefined {
   const line = stdout.split('\n').find((candidate) => candidate.startsWith(BOOTSTRAP_MARKER));
-  if (line === undefined) return undefined;
-  const parsed = JSON.parse(line.slice(BOOTSTRAP_MARKER.length)) as Partial<BootstrapResult> & {
-    error?: string;
-    message?: string;
-  };
-  if (parsed.error !== undefined) {
-    throw new HostConnectError(
-      parsed.error === 'version_mismatch_busy' ? 'remote_busy' : 'unknown',
-      parsed.message ?? parsed.error,
-    );
+  return line === undefined ? undefined : (JSON.parse(line.slice(BOOTSTRAP_MARKER.length)) as Record<string, unknown>);
+}
+
+function outdatedError(version: string | undefined): HostConnectError {
+  return new HostConnectError(
+    'executor_outdated',
+    `kimi ${version ?? '(unknown version)'} on this host does not support host protocol ${String(HOST_PROTOCOL_VERSION)}; run \`kimi upgrade\` on the host`,
+    version,
+  );
+}
+
+function checkedMarker(stdout: string): { readonly marker: Record<string, unknown>; readonly version?: string } | undefined {
+  const marker = readMarker(stdout);
+  if (marker === undefined) return undefined;
+  const version = typeof marker['version'] === 'string' ? marker['version'] : readVersionLine(stdout);
+  const protocol = marker['protocol'];
+  if (typeof protocol !== 'number' || protocol < HOST_PROTOCOL_VERSION) throw outdatedError(version);
+  const error = marker['error'];
+  if (typeof error === 'string') {
+    const message = typeof marker['message'] === 'string' ? marker['message'] : error;
+    throw new HostConnectError(ENSURE_DAEMON_FAILURES[error] ?? 'unknown', message, version);
   }
-  if (typeof parsed.port !== 'number' || typeof parsed.token !== 'string') return undefined;
+  return { marker, version };
+}
+
+export function parseBootstrapOutput(stdout: string): BootstrapResult | undefined {
+  const checked = checkedMarker(stdout);
+  if (checked === undefined) return undefined;
+  const { marker, version } = checked;
+  if (typeof marker['port'] !== 'number' || typeof marker['token'] !== 'string') return undefined;
   return {
-    port: parsed.port,
-    token: parsed.token,
-    version: parsed.version ?? 'unknown',
-    agentSocket: parsed.agentSocket,
+    port: marker['port'],
+    token: marker['token'],
+    version: version ?? 'unknown',
+    agentSocket: typeof marker['agentSocket'] === 'string' ? marker['agentSocket'] : undefined,
   };
+}
+
+export function parseProbeOutput(stdout: string): RemoteProbe | undefined {
+  const checked = checkedMarker(stdout);
+  if (checked === undefined) return undefined;
+  return { version: checked.version ?? 'unknown', protocol: checked.marker['protocol'] as number };
 }
 
 interface SshResult {
   readonly code: number | null;
   readonly stdout: string;
   readonly stderr: string;
+}
+
+function sshFailure(result: SshResult): HostConnectError {
+  return new HostConnectError(
+    classifySshFailure(result.stderr, result.code),
+    result.stderr.trim() || `ssh exited with code ${String(result.code)}`,
+    readVersionLine(result.stdout),
+  );
 }
 
 function identityArgs(entry: HostEntry): string[] {
@@ -142,6 +203,7 @@ export class SshKapBridge {
   private statusValue: HostStatus = 'pending';
   private failureValue: HostConnectFailure | undefined;
   private errorValue: string | undefined;
+  private remoteVersionValue: string | undefined;
   private endpointValue: HostEndpoint | undefined;
   private connecting: Promise<HostEndpoint> | undefined;
   private tunnel: ChildProcess | undefined;
@@ -170,6 +232,10 @@ export class SshKapBridge {
     return this.errorValue;
   }
 
+  get remoteVersion(): string | undefined {
+    return this.remoteVersionValue;
+  }
+
   get endpoint(): HostEndpoint | undefined {
     return this.endpointValue;
   }
@@ -191,15 +257,14 @@ export class SshKapBridge {
     this.tunnel = undefined;
   }
 
-  async checkRemoteVersion(): Promise<string> {
+  async probe(): Promise<RemoteProbe> {
     const result = await this.runSsh(
-      [`${remoteBinCommand(this.entry.remoteBin)} --version`],
+      [remoteKimiCommand(this.entry.remoteBin, 'web ensure-daemon --probe')],
       VERSION_TIMEOUT_MS,
     );
-    if (result.code !== 0) {
-      throw new HostConnectError(classifySshFailure(result.stderr, result.code), result.stderr.trim());
-    }
-    return result.stdout.trim().split('\n').pop() ?? '';
+    const parsed = parseProbeOutput(result.stdout);
+    if (parsed !== undefined) return parsed;
+    throw sshFailure(result);
   }
 
   private update(status: HostStatus, failure?: HostConnectFailure, error?: string): void {
@@ -213,6 +278,7 @@ export class SshKapBridge {
     this.update('connecting');
     try {
       const bootstrap = await this.bootstrap();
+      this.remoteVersionValue = bootstrap.version;
       const endpoint = await this.openTunnel(bootstrap);
       this.endpointValue = endpoint;
       this.update('ready');
@@ -221,6 +287,9 @@ export class SshKapBridge {
       const failure = error instanceof HostConnectError ? error.failure : 'unknown';
       const message = error instanceof Error ? error.message : String(error);
       this.endpointValue = undefined;
+      if (error instanceof HostConnectError && error.remoteVersion !== undefined) {
+        this.remoteVersionValue = error.remoteVersion;
+      }
       this.update('disconnected', failure, message);
       throw error instanceof HostConnectError ? error : new HostConnectError(failure, message);
     }
@@ -228,15 +297,12 @@ export class SshKapBridge {
 
   private async bootstrap(): Promise<BootstrapResult> {
     const result = await this.runSsh(
-      [`${remoteBinCommand(this.entry.remoteBin)} web ensure-daemon`],
+      [remoteKimiCommand(this.entry.remoteBin, 'web ensure-daemon')],
       BOOTSTRAP_TIMEOUT_MS,
     );
     const parsed = parseBootstrapOutput(result.stdout);
     if (parsed !== undefined) return parsed;
-    throw new HostConnectError(
-      classifySshFailure(result.stderr, result.code),
-      result.stderr.trim() || `ssh exited with code ${String(result.code)}`,
-    );
+    throw sshFailure(result);
   }
 
   private async allocatePort(): Promise<number> {

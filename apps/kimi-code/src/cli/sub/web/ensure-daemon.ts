@@ -12,7 +12,7 @@ import { mkdir, open, readFile, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import { listLiveServerInstances, type ServerInstanceInfo } from '@moonshot-ai/kap-server';
+import { HOST_PROTOCOL_VERSION, listLiveServerInstances, type ServerInstanceInfo } from '@moonshot-ai/kap-server';
 import type { Command } from 'commander';
 
 import { getDataDir } from '#/utils/paths';
@@ -265,14 +265,23 @@ export function registerEnsureDaemonCommand(web: Command): void {
   web
     .command('ensure-daemon', { hidden: true })
     .description('Internal: reuse or start a background server and print its endpoint.')
-    .action(async () => {
+    .option('--probe', 'Only report the host protocol and version.')
+    .action(async (options: { probe?: boolean }) => {
+      const report = (payload: Record<string, unknown>): void => {
+        process.stdout.write(
+          `${ENSURE_DAEMON_MARKER}${JSON.stringify({ protocol: HOST_PROTOCOL_VERSION, version: getVersion(), ...payload })}\n`,
+        );
+      };
+      if (options.probe === true) {
+        report({});
+        return;
+      }
       try {
-        const result = await ensureDaemon(defaultDeps());
-        process.stdout.write(`${ENSURE_DAEMON_MARKER}${JSON.stringify(result)}\n`);
+        report({ ...(await ensureDaemon(defaultDeps())) });
       } catch (error) {
         const code = error instanceof EnsureDaemonError ? error.code : 'unknown';
         const message = error instanceof Error ? error.message : String(error);
-        process.stdout.write(`${ENSURE_DAEMON_MARKER}${JSON.stringify({ error: code, message })}\n`);
+        report({ error: code, message });
         process.exitCode = 1;
       }
     });

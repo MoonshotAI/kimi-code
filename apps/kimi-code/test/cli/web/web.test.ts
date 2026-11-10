@@ -17,7 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetCapabilitiesCache, setCapabilities } from '@moonshot-ai/pi-tui';
 
-import type { ServerInstanceInfo } from '@moonshot-ai/kap-server';
+import { HOST_PROTOCOL_VERSION, type ServerInstanceInfo } from '@moonshot-ai/kap-server';
 
 import { registerWebCommand } from '#/cli/sub/web';
 import { ensureDaemon, type EnsureDaemonDeps } from '#/cli/sub/web/ensure-daemon';
@@ -96,6 +96,19 @@ describe('kimi web', () => {
     const subs = web?.commands.map((c) => c.name()).toSorted();
     // Foreground servers stop with Ctrl+C, so there is no kill/ps.
     expect(subs).toEqual(['ensure-daemon', 'rotate-token']);
+  });
+
+  it('reports the host protocol from `ensure-daemon --probe` without starting a server', async () => {
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    try {
+      await makeProgram().parseAsync(['node', 'kimi', 'web', 'ensure-daemon', '--probe']);
+      const line = String(write.mock.calls.at(-1)?.[0]);
+      expect(line.startsWith('__KIMI_ENSURE_DAEMON__')).toBe(true);
+      const payload = JSON.parse(line.slice('__KIMI_ENSURE_DAEMON__'.length)) as Record<string, unknown>;
+      expect(payload).toEqual({ protocol: HOST_PROTOCOL_VERSION, version: expect.any(String) });
+    } finally {
+      write.mockRestore();
+    }
   });
 
   it('exposes the foreground server options on `web` itself', () => {

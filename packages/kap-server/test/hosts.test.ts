@@ -1,13 +1,31 @@
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
+import { HOST_PROTOCOL_VERSION } from '../src/services/hosts/hostProtocol';
 import { matchHostProxyPath, upstreamHeaders } from '../src/services/hosts/hostProxy';
 import { hostsSectionSchema, isValidHostId } from '../src/services/hosts/hostsConfig';
 import {
   HostConnectError,
+  SshKapBridge,
   classifySshFailure,
   parseBootstrapOutput,
+  parseProbeOutput,
   remoteBinCommand,
+  remoteKimiCommand,
 } from '../src/services/hosts/sshKapBridge';
+
+function thrown(run: () => unknown): HostConnectError {
+  try {
+    run();
+  } catch (error) {
+    if (error instanceof HostConnectError) return error;
+    throw error;
+  }
+  throw new Error('expected a HostConnectError');
+}
 
 const endpoint = { origin: 'http://127.0.0.1:9000', port: 9000, token: 'remote', version: '1.0.0' };
 
@@ -64,21 +82,58 @@ describe('ssh bootstrap', () => {
     expect(remoteBinCommand(undefined)).toBe(`"$HOME"/'.kimi-code/bin/kimi'`);
     expect(remoteBinCommand('kimi')).toBe('kimi');
     expect(remoteBinCommand('/opt/my kimi')).toBe(`'/opt/my kimi'`);
+    expect(remoteKimiCommand('kimi', 'web ensure-daemon')).toBe('kimi --version; kimi web ensure-daemon');
   });
 
   it('finds the marker line among shell startup noise', () => {
-    const stdout = 'welcome\n__KIMI_ENSURE_DAEMON__{"port":1234,"token":"t","version":"1.0.0","agentSocket":"/s"}\n';
+    const stdout = `welcome\n1.0.0\n__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"port":1234,"token":"t","version":"1.0.0","agentSocket":"/s"}\n`;
     expect(parseBootstrapOutput(stdout)).toEqual({ port: 1234, token: 't', version: '1.0.0', agentSocket: '/s' });
     expect(parseBootstrapOutput('command output without a marker\n')).toBeUndefined();
   });
 
-  it('reports a busy remote as a typed connect failure', () => {
-    const stdout = '__KIMI_ENSURE_DAEMON__{"error":"version_mismatch_busy","message":"busy"}\n';
-    expect(() => parseBootstrapOutput(stdout)).toThrow(HostConnectError);
+  it('reports a remote below the host protocol as outdated with its version', () => {
+    const error = thrown(() =>
+      parseBootstrapOutput('__KIMI_ENSURE_DAEMON__{"port":1234,"token":"t","version":"0.40.0"}\n'),
+    );
+    expect(error.failure).toBe('executor_outdated');
+    expect(error.remoteVersion).toBe('0.40.0');
+    expect(error.message).toContain('kimi upgrade');
+    expect(thrown(() => parseProbeOutput('0.40.0\n__KIMI_ENSURE_DAEMON__{"protocol":0}\n')).remoteVersion).toBe('0.40.0');
+  });
+
+  it.each([
+    ['version_mismatch_busy', 'remote_busy'],
+    ['start_timeout', 'remote_start_failed'],
+    ['lock_timeout', 'remote_start_failed'],
+    ['token_unavailable', 'remote_start_failed'],
+    ['something_new', 'unknown'],
+  ] as const)('maps the ensure-daemon error %s to %s', (code, failure) => {
+    const stdout = `__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"version":"2.0.0","error":"${code}","message":"m"}\n`;
+    const error = thrown(() => parseBootstrapOutput(stdout));
+    expect(error.failure).toBe(failure);
+    expect(error.remoteVersion).toBe('2.0.0');
+  });
+
+  it('reads the protocol and version from a probe', () => {
+    expect(parseProbeOutput(`__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"version":"2.0.0"}\n`)).toEqual({
+      protocol: HOST_PROTOCOL_VERSION,
+      version: '2.0.0',
+    });
+  });
+
+  it.skipIf(process.platform === 'win32')('reports an older kimi without the probe as outdated with its version', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kimi-fake-ssh-'));
     try {
-      parseBootstrapOutput(stdout);
-    } catch (error) {
-      expect((error as HostConnectError).failure).toBe('remote_busy');
+      const ssh = join(dir, 'ssh');
+      writeFileSync(ssh, "#!/bin/sh\necho 'motd line'\necho '0.40.0'\necho \"error: unknown option '--probe'\" >&2\nexit 1\n");
+      chmodSync(ssh, 0o755);
+      const bridge = new SshKapBridge({ host: 'dev' }, { sshProgram: ssh });
+      const error = await bridge.probe().catch((error: unknown) => error);
+      expect(error).toBeInstanceOf(HostConnectError);
+      expect((error as HostConnectError).failure).toBe('executor_outdated');
+      expect((error as HostConnectError).remoteVersion).toBe('0.40.0');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 
@@ -91,6 +146,9 @@ describe('ssh bootstrap', () => {
     ['Error: remote port forwarding failed for listen path /s', 255, 'port_forwarding_denied'],
     ['bash: kimi: command not found', 127, 'executor_not_found'],
     ["error: unknown command 'ensure-daemon'", 1, 'executor_outdated'],
+    ["error: unknown command 'web'. See 'kimi --help'.", 1, 'executor_outdated'],
+    ["error: too many arguments for 'web'. Expected 0 arguments but got 1.", 1, 'executor_outdated'],
+    ["error: unknown option '--probe'", 1, 'executor_outdated'],
     ['something else', 1, 'unknown'],
   ] as const)('classifies %s', (stderr, code, failure) => {
     expect(classifySshFailure(stderr, code)).toBe(failure);

@@ -80,7 +80,7 @@ function toResponse(info: HostInfo): z.infer<typeof hostResponseSchema> {
     name: info.entry.name,
     enabled: info.entry.enabled,
     status: info.bridge?.status ?? 'pending',
-    remote_version: info.bridge?.endpoint?.version,
+    remote_version: info.bridge?.remoteVersion,
     connect_error: info.bridge?.error,
     connect_failure: info.bridge?.failure,
   };
@@ -205,12 +205,14 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
       if (!(await enabled(req, reply))) return;
       const bridge = new SshKapBridge(toEntry(req.body as z.infer<typeof wireEntrySchema>));
       try {
-        reply.send(okEnvelope({ connected: true, remote_version: await bridge.checkRemoteVersion() }, req.id));
+        const probe = await bridge.probe();
+        reply.send(okEnvelope({ connected: true, remote_version: probe.version }, req.id));
       } catch (error) {
         reply.send(
           okEnvelope(
             {
               connected: false,
+              remote_version: error instanceof HostConnectError ? error.remoteVersion : undefined,
               connect_error: error instanceof Error ? error.message : String(error),
               connect_failure: error instanceof HostConnectError ? error.failure : 'unknown',
             },
