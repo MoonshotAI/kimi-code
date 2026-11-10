@@ -181,8 +181,7 @@ Switches that control the behavior of subsystems such as telemetry, background t
 | `KIMI_WEB_SEARCH_API_KEY` | Web search (`WebSearch`) service API key; replaces both the configured key and the OAuth credential | Non-blank string; blank values are ignored |
 | `KIMI_WEB_FETCH_BASE_URL` | Web fetch (`FetchURL`) service API URL; higher priority than the config file; credentials not forwarded. Without an endpoint, signed-in users get the managed Kimi OAuth fetch service before direct local requests | Non-blank string; blank values are ignored |
 | `KIMI_WEB_FETCH_API_KEY` | Web fetch (`FetchURL`) service API key; replaces both the configured key and the OAuth credential | Non-blank string; blank values are ignored |
-| `KIMI_CODE_EXPERIMENTAL_FLAG` | Enable all registered experimental features for this process, and default the TUI layout to `fullscreen` when `tui_mode` is unset in `tui.toml` | `1`, `true`, `yes`, `on` |
-| `KIMI_CODE_TUI_FULL_SCREEN` | Override the TUI layout for this process (`fullscreen` when truthy, `regular` when falsy), taking precedence over `tui.toml` and automatic terminal fallback without modifying `tui.toml` | Truthy: `1`/`true`/`yes`/`on`; falsy: `0`/`false`/`no`/`off` |
+| `KIMI_CODE_EXPERIMENTAL_FLAG` | Enable all registered experimental features for this process | `1`, `true`, `yes`, `on` |
 | `KIMI_SHELL_PATH` | Override the Git Bash path on Windows (used when auto-detection fails) | Absolute path |
 | `KIMI_MODEL_MAX_COMPLETION_TOKENS` | Hard cap on `max_completion_tokens` per LLM step; applies to the `kimi` provider only | Positive integer; `0` or negative disables clamping |
 | `KIMI_MODEL_TEMPERATURE` | Sampling temperature for every request; `kimi` provider only (global, independent of `KIMI_MODEL_NAME`) | Number, e.g. `0.3` |
@@ -217,7 +216,7 @@ The CLI also reads several standard system variables to detect the runtime envir
 - `PATH`: used to locate dependencies such as `rg`, `fd`, `fdfind`, and `git`; on Windows, Git Bash detection checks each `git.exe` found on `PATH`, including package-manager shims such as Scoop
 - `NO_COLOR`, `FORCE_COLOR`: control color output (following the [no-color.org](https://no-color.org) convention)
 - `CI`: when non-empty and not `"0"`, disables theme detection and falls back to the dark theme
-- `TERM_PROGRAM`, `TERM`, `TMUX`, `LC_TERMINAL`, `TERMUX_VERSION`: detect terminal features, notification support, and automatic fallback from `fullscreen` to `regular` TUI mode
+- `TERM_PROGRAM`, `TERM`, `TMUX`: detect terminal features and notification support
 - `DISPLAY`, `WAYLAND_DISPLAY`, `XDG_SESSION_TYPE`: detect Linux graphical sessions (for clipboard and image features)
 - `WSL_DISTRO_NAME`, `WSLENV`: detect WSL for the clipboard PowerShell bridge
 - `LOCALAPPDATA`: used on Windows as a fallback when probing for the Git Bash installation path
