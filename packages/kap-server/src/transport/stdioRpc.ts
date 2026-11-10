@@ -29,6 +29,11 @@ export interface RpcHttpResponseFrame {
   readonly body?: string;
 }
 
+export interface RpcHttpCancelFrame {
+  readonly type: 'http.cancel';
+  readonly id: string;
+}
+
 export interface RpcWsOpenFrame {
   readonly type: 'ws.open';
   readonly id: string;
@@ -51,9 +56,14 @@ export interface RpcWsCloseFrame {
 export type RpcFrame =
   | RpcHttpRequestFrame
   | RpcHttpResponseFrame
+  | RpcHttpCancelFrame
   | RpcWsOpenFrame
   | RpcWsMessageFrame
   | RpcWsCloseFrame;
+
+export const HOST_RPC_MAX_BODY_BYTES = 16 * 1024 * 1024;
+export const WS_BACKPRESSURE_TIMEOUT_MS = 5_000;
+const WS_DRAIN_CHECK_MS = 100;
 
 export interface RpcStreamOptions {
   readonly app: FastifyInstance;
@@ -61,10 +71,18 @@ export interface RpcStreamOptions {
   readonly wssDebug?: WebSocketServer;
 }
 
+class RpcBodyTooLargeError extends Error {
+  constructor() {
+    super(`HTTP body exceeds the ${String(HOST_RPC_MAX_BODY_BYTES)} byte host proxy limit`);
+    this.name = 'RpcBodyTooLargeError';
+  }
+}
+
 class FakeWebSocket extends EventEmitter {
   readonly OPEN = 1;
   readyState = 1;
-  bufferedAmount = 0;
+
+  private pendingBytes = 0;
 
   constructor(
     private readonly onSend: (data: string) => void,
@@ -73,8 +91,17 @@ class FakeWebSocket extends EventEmitter {
     super();
   }
 
+  get bufferedAmount(): number {
+    return this.pendingBytes;
+  }
+
+  drained(): void {
+    this.pendingBytes = 0;
+  }
+
   send(data: string): void {
     if (this.readyState !== this.OPEN) return;
+    this.pendingBytes += Buffer.byteLength(data);
     this.onSend(data);
   }
 
@@ -104,11 +131,41 @@ class FakeWebSocket extends EventEmitter {
 
 export function attachRpcStream(stream: Duplex, opts: RpcStreamOptions): void {
   const sockets = new Map<string, FakeWebSocket>();
-  const write = (frame: RpcFrame): void => {
-    if (!stream.destroyed && stream.writable) {
-      stream.write(`${JSON.stringify(frame)}\n`);
+  const requests = new Map<string, () => void>();
+  const aborted = new Set<string>();
+  let blocked = false;
+  let blockedSince: number | undefined;
+  let drainTimer: ReturnType<typeof setTimeout> | undefined;
+  const write = (frame: RpcFrame): boolean => {
+    if (stream.destroyed || !stream.writable) return false;
+    const ready = stream.write(`${JSON.stringify(frame)}\n`);
+    if (!ready) {
+      blocked = true;
+      blockedSince ??= Date.now();
     }
+    return ready;
   };
+  const respondError = (id: string, status: number, code: number, message: string): void => {
+    write({
+      type: 'http.res',
+      id,
+      status,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(JSON.stringify({ code, msg: message, data: null, request_id: id })).toString('base64'),
+    });
+  };
+  const onDrain = (): void => {
+    blocked = false;
+    blockedSince = undefined;
+    for (const socket of sockets.values()) socket.drained();
+  };
+  stream.on('drain', onDrain);
+  drainTimer = setInterval(() => {
+    if (!blocked || blockedSince === undefined) return;
+    if (Date.now() - blockedSince < WS_BACKPRESSURE_TIMEOUT_MS) return;
+    for (const socket of sockets.values()) socket.close(1013, 'client is not reading');
+  }, WS_DRAIN_CHECK_MS);
+  drainTimer.unref?.();
 
   const lines = createInterface({ input: stream, crlfDelay: Infinity });
   lines.on('line', (line) => {
@@ -121,41 +178,71 @@ export function attachRpcStream(stream: Duplex, opts: RpcStreamOptions): void {
       return;
     }
     if (frame.type === 'http.req') {
-      void opts.app
-        .inject({
+      if (aborted.has(frame.id)) return;
+      requests.set(frame.id, () => {});
+      const finish = (): void => {
+        requests.delete(frame.id);
+        aborted.delete(frame.id);
+      };
+      void (async () => {
+        const contentLength = Number(frame.headers['content-length'] ?? 0);
+        if (contentLength > HOST_RPC_MAX_BODY_BYTES) throw new RpcBodyTooLargeError();
+        const body = frame.body === undefined ? Buffer.alloc(0) : Buffer.from(frame.body, 'base64');
+        if (body.length > HOST_RPC_MAX_BODY_BYTES) throw new RpcBodyTooLargeError();
+        const res = await opts.app.inject({
           method: frame.method as 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
           url: frame.path,
           headers: { ...frame.headers, host: '127.0.0.1' },
-          payload: frame.body === undefined ? undefined : Buffer.from(frame.body, 'base64'),
-        })
-        .then(
-          (res) => {
-            write({
-              type: 'http.res',
-              id: frame.id,
-              status: res.statusCode,
-              headers: res.headers,
-              body: res.rawPayload.length > 0 ? res.rawPayload.toString('base64') : undefined,
-            });
-          },
-          (error: unknown) => {
-            const payload = Buffer.from(
-              JSON.stringify({
-                code: 50000,
-                msg: error instanceof Error ? error.message : String(error),
-                data: null,
-                request_id: frame.id,
-              }),
-            ).toString('base64');
-            write({
-              type: 'http.res',
-              id: frame.id,
-              status: 500,
-              headers: { 'content-type': 'application/json' },
-              body: payload,
-            });
-          },
-        );
+          payload: body,
+          payloadAsStream: true,
+        });
+        const responseStream = res.stream();
+        requests.set(frame.id, () => responseStream.destroy());
+        responseStream.once('close', finish);
+        if (aborted.has(frame.id)) {
+          responseStream.destroy();
+          return;
+        }
+        const declaredLength = Number(res.headers['content-length'] ?? 0);
+        if (declaredLength > HOST_RPC_MAX_BODY_BYTES) {
+          res.stream().destroy();
+          throw new RpcBodyTooLargeError();
+        }
+        const chunks: Buffer[] = [];
+        let size = 0;
+        for await (const chunk of responseStream) {
+          size += (chunk as Buffer).length;
+          if (size > HOST_RPC_MAX_BODY_BYTES) throw new RpcBodyTooLargeError();
+          chunks.push(chunk as Buffer);
+        }
+        if (aborted.has(frame.id)) return;
+        write({
+          type: 'http.res',
+          id: frame.id,
+          status: res.statusCode,
+          headers: res.headers,
+          body: chunks.length > 0 ? Buffer.concat(chunks).toString('base64') : undefined,
+        });
+      })().catch((error: unknown) => {
+        if (aborted.has(frame.id)) {
+          finish();
+          return;
+        }
+        if (error instanceof RpcBodyTooLargeError) {
+          respondError(frame.id, 413, 41301, error.message);
+          finish();
+          return;
+        }
+        respondError(frame.id, 500, 50000, error instanceof Error ? error.message : String(error));
+        requests.get(frame.id)?.();
+        finish();
+      });
+      return;
+    }
+    if (frame.type === 'http.cancel') {
+      aborted.add(frame.id);
+      requests.get(frame.id)?.();
+      requests.delete(frame.id);
       return;
     }
     if (frame.type === 'ws.open') {
@@ -167,7 +254,9 @@ export function attachRpcStream(stream: Duplex, opts: RpcStreamOptions): void {
         return;
       }
       const fake = new FakeWebSocket(
-        (data) => write({ type: 'ws.msg', id: frame.id, data }),
+        (data) => {
+          write({ type: 'ws.msg', id: frame.id, data });
+        },
         (code, reason) => {
           sockets.delete(frame.id);
           write({ type: 'ws.close', id: frame.id, code, reason });
@@ -195,6 +284,13 @@ export function attachRpcStream(stream: Duplex, opts: RpcStreamOptions): void {
 
   const cleanup = (): void => {
     lines.close();
+    stream.off('drain', onDrain);
+    if (drainTimer !== undefined) clearInterval(drainTimer);
+    for (const id of requests.keys()) {
+      aborted.add(id);
+      requests.get(id)?.();
+    }
+    requests.clear();
     for (const socket of sockets.values()) {
       socket.receiveClose(1001, 'rpc stream closed');
     }

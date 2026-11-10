@@ -1,15 +1,16 @@
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createConnection } from 'node:net';
+import { Duplex } from 'node:stream';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import Fastify from 'fastify';
-import { describe, expect, it } from 'vitest';
-import { WebSocketServer } from 'ws';
+import { describe, expect, it, vi } from 'vitest';
+import { WebSocketServer, type WebSocket as NodeWebSocket } from 'ws';
 
 import { HOST_PROTOCOL_VERSION } from '../src/services/hosts/hostProtocol';
-import { matchHostProxyPath, upstreamHeaders } from '../src/services/hosts/hostProxy';
+import { matchHostProxyPath, registerHostProxyRoutes, upstreamHeaders } from '../src/services/hosts/hostProxy';
 import { hostsSectionSchema, isValidHostId } from '../src/services/hosts/hostsConfig';
 import {
   HostConnectError,
@@ -20,7 +21,12 @@ import {
   remoteBinCommand,
   remoteKimiCommand,
 } from '../src/services/hosts/sshKapBridge';
-import { startUnixRpcServer } from '../src/transport/stdioRpc';
+import {
+  attachRpcStream,
+  HOST_RPC_MAX_BODY_BYTES,
+  startUnixRpcServer,
+  WS_BACKPRESSURE_TIMEOUT_MS,
+} from '../src/transport/stdioRpc';
 
 function thrown(run: () => unknown): HostConnectError {
   try {
@@ -239,6 +245,94 @@ done
   });
 });
 
+describe('host HTTP session', () => {
+  it('cancels a timed out request and ignores its late response', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kimi-http-timeout-'));
+    try {
+      const ssh = join(dir, 'ssh');
+      const cancel = join(dir, 'cancel');
+      writeFileSync(ssh, `#!/bin/sh
+echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"version":"1.2.3"}'
+while IFS= read -r line; do
+  case "$line" in
+    *'"type":"http.cancel"'*)
+      echo "$line" > '${cancel}'
+      echo '{"type":"http.res","id":"1","status":200,"headers":{}}'
+      ;;
+  esac
+done
+`);
+      chmodSync(ssh, 0o755);
+      const bridge = new SshKapBridge({ host: 'dev' }, { sshProgram: ssh });
+      try {
+        const session = await bridge.connect();
+        const request = session.request({
+          method: 'GET', path: '/held', headers: {}, timeoutMs: 10,
+        });
+        await expect(request).rejects.toThrow('host request timed out');
+        await vi.waitFor(() => expect(readFileSync(cancel, 'utf8')).toContain('"type":"http.cancel"'));
+      } finally {
+        bridge.dispose();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('host HTTP proxy', () => {
+  it('enforces request limits and maps timeouts to gateway responses', async () => {
+    const app = Fastify();
+    registerHostProxyRoutes(app, {
+      session: () => ({
+        version: '1.0.0',
+        request: async () => { throw new Error('host request timed out'); },
+        openWebSocket: () => { throw new Error('unexpected websocket'); },
+      }),
+    } as never, () => true);
+    await app.ready();
+    const timeout = await app.inject({ method: 'GET', url: '/api/v1/hosts/dev/proxy/api/v1/healthz' });
+    expect(timeout.statusCode).toBe(504);
+    const tooLarge = await app.inject({
+      method: 'POST',
+      url: '/api/v1/hosts/dev/proxy/api/v1/files',
+      headers: { 'content-length': String(HOST_RPC_MAX_BODY_BYTES + 1) },
+    });
+    expect(tooLarge.statusCode).toBe(413);
+    expect(tooLarge.json().code).toBe(41301);
+    await app.close();
+  });
+
+  it('cancels the remote request when the client disconnects', async () => {
+    const app = Fastify();
+    let sessionRequest!: { signal?: AbortSignal };
+    registerHostProxyRoutes(app, {
+      session: () => ({
+        version: '1.0.0',
+        request: (input: typeof sessionRequest) => {
+          sessionRequest = input;
+          return new Promise(() => {});
+        },
+        openWebSocket: () => { throw new Error('unexpected websocket'); },
+      }),
+    } as never, () => true);
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    const address = app.server.address();
+    if (address === null || typeof address === 'string') throw new Error('missing test server address');
+    const socket = createConnection({ host: '127.0.0.1', port: address.port });
+    try {
+      await new Promise<void>((resolve) => socket.once('connect', resolve));
+      socket.write('POST /api/v1/hosts/dev/proxy/api/v1/sessions/s1/messages HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 1\r\nConnection: close\r\n\r\nx');
+      await vi.waitFor(() => expect(sessionRequest).toBeDefined());
+      socket.destroy();
+      await vi.waitFor(() => expect(sessionRequest.signal?.aborted).toBe(true));
+    } finally {
+      socket.destroy();
+      await app.close();
+    }
+  });
+});
+
 describe('stdio rpc transport', () => {
   it.skipIf(process.platform === 'win32')('routes HTTP requests and WebSocket frames over a unix domain socket', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'kimi-rpc-sock-'));
@@ -304,6 +398,121 @@ describe('stdio rpc transport', () => {
       await rpcServer.close();
       await app.close();
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')('drops a cancelled response and keeps serving later requests', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kimi-rpc-cancel-'));
+    const app = Fastify();
+    let started!: () => void;
+    const requestStarted = new Promise<void>((resolve) => { started = resolve; });
+    app.get('/held', async () => {
+      started();
+      await sleep(100);
+      return { done: true };
+    });
+    app.get('/next', async () => ({ done: true }));
+    const rpcServer = await startUnixRpcServer(join(dir, 'daemon.sock'), {
+      app,
+      wssV1: new WebSocketServer({ noServer: true }),
+    });
+    const client = createConnection(join(dir, 'daemon.sock'));
+    try {
+      await new Promise<void>((resolve) => client.once('connect', resolve));
+      const frames: Array<Record<string, unknown>> = [];
+      let buffer = '';
+      client.on('data', (chunk: Buffer) => {
+        buffer += chunk.toString('utf8');
+        const end = buffer.indexOf('\n');
+        if (end < 0) return;
+        frames.push(JSON.parse(buffer.slice(0, end)) as Record<string, unknown>);
+        buffer = buffer.slice(end + 1);
+      });
+      client.write(`${JSON.stringify({ type: 'http.req', id: 'cancel', method: 'GET', path: '/held', headers: {} })}\n`);
+      await requestStarted;
+      client.write(`${JSON.stringify({ type: 'http.cancel', id: 'cancel' })}\n`);
+      client.write(`${JSON.stringify({ type: 'http.req', id: 'next', method: 'GET', path: '/next', headers: {} })}\n`);
+      await vi.waitFor(() => expect(frames.some((frame) => frame['id'] === 'next')).toBe(true));
+      await sleep(150);
+      expect(frames.some((frame) => frame['id'] === 'cancel')).toBe(false);
+    } finally {
+      client.destroy();
+      await rpcServer.close();
+      await app.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')('stops reading an oversized response and returns 413', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kimi-rpc-limit-'));
+    const app = Fastify();
+    app.get('/large', async () => Buffer.alloc(HOST_RPC_MAX_BODY_BYTES + 1));
+    const rpcServer = await startUnixRpcServer(join(dir, 'daemon.sock'), {
+      app,
+      wssV1: new WebSocketServer({ noServer: true }),
+    });
+    const client = createConnection(join(dir, 'daemon.sock'));
+    try {
+      await new Promise<void>((resolve) => client.once('connect', resolve));
+      const response = new Promise<Record<string, unknown>>((resolve) => {
+        let buffer = '';
+        client.on('data', (chunk: Buffer) => {
+          buffer += chunk.toString('utf8');
+          const end = buffer.indexOf('\n');
+          if (end >= 0) resolve(JSON.parse(buffer.slice(0, end)) as Record<string, unknown>);
+        });
+      });
+      client.write(`${JSON.stringify({ type: 'http.req', id: 'large', method: 'GET', path: '/large', headers: {} })}\n`);
+      expect((await response)['status']).toBe(413);
+    } finally {
+      client.destroy();
+      await rpcServer.close();
+      await app.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('closes a websocket only after sustained backpressure', async () => {
+    vi.useFakeTimers();
+    try {
+      const app = Fastify();
+      const wssV1 = new WebSocketServer({ noServer: true });
+      let connected!: NodeWebSocket;
+      wssV1.on('connection', (ws) => { connected = ws; });
+      const frames: Array<Record<string, unknown>> = [];
+      let draining = false;
+      const stream = new Duplex({
+        read() {},
+        write(chunk, encoding, callback) {
+          Duplex.prototype.write.call(stream, chunk, encoding, callback);
+        },
+      });
+      const blockedWrite = stream.write.bind(stream);
+      stream.write = ((chunk: unknown, encoding: BufferEncoding, callback: () => void) => {
+        frames.push(JSON.parse(String(chunk)) as Record<string, unknown>);
+        blockedWrite(chunk, encoding, callback);
+        return draining;
+      }) as typeof stream.write;
+      attachRpcStream(stream, { app, wssV1 });
+      stream.push(`${JSON.stringify({ type: 'ws.open', id: 'slow', path: '/api/v1/ws' })}\n`);
+      await vi.waitFor(() => expect(connected).toBeDefined());
+      connected.send('first');
+      draining = true;
+      stream.emit('drain');
+      connected.send('second');
+      await vi.advanceTimersByTimeAsync(WS_BACKPRESSURE_TIMEOUT_MS + 200);
+      expect(connected.readyState).toBe(connected.OPEN);
+      draining = false;
+      connected.send('third');
+      await vi.advanceTimersByTimeAsync(WS_BACKPRESSURE_TIMEOUT_MS - 1);
+      expect(connected.readyState).toBe(connected.OPEN);
+      await vi.advanceTimersByTimeAsync(201);
+      expect(frames).toContainEqual(expect.objectContaining({ type: 'ws.close', id: 'slow', code: 1013 }));
+      expect(connected.readyState).toBe(3);
+      stream.destroy();
+      await app.close();
+    } finally {
+      vi.useRealTimers();
     }
   });
 });

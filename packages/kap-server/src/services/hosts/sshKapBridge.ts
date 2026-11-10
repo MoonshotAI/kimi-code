@@ -28,7 +28,11 @@ export interface HostHttpRequest {
   readonly path: string;
   readonly headers: IncomingHttpHeaders;
   readonly body?: Buffer;
+  readonly signal?: AbortSignal;
+  readonly timeoutMs?: number;
 }
+
+export const HOST_HTTP_TIMEOUT_MS = 30_000;
 
 export interface HostHttpResponse {
   readonly status: number;
@@ -218,7 +222,13 @@ class ActiveHostSession implements HostSession {
   private closed = false;
   private readonly pendingHttp = new Map<
     string,
-    { resolve(res: HostHttpResponse): void; reject(err: Error): void }
+    {
+      resolve(res: HostHttpResponse): void;
+      reject(err: Error): void;
+      timeout: ReturnType<typeof setTimeout>;
+      signal?: AbortSignal;
+      onCancel?: () => void;
+    }
   >();
   private readonly wsChannels = new Map<string, HostWsHandlers>();
 
@@ -231,10 +241,26 @@ class ActiveHostSession implements HostSession {
     if (this.closed) {
       return Promise.reject(new HostConnectError('connection_refused', 'host session is closed'));
     }
+    if (req.signal?.aborted === true) return Promise.reject(new Error('host request cancelled'));
     const id = String(++this.nextId);
     const body = req.body !== undefined && req.body.length > 0 ? req.body.toString('base64') : undefined;
     return new Promise<HostHttpResponse>((resolve, reject) => {
-      this.pendingHttp.set(id, { resolve, reject });
+      const cancel = (message: string): void => {
+        const pending = this.pendingHttp.get(id);
+        if (pending === undefined) return;
+        this.pendingHttp.delete(id);
+        clearTimeout(pending.timeout);
+        if (pending.signal !== undefined && pending.onCancel !== undefined) {
+          pending.signal.removeEventListener('abort', pending.onCancel);
+        }
+        this.write({ type: 'http.cancel', id });
+        pending.reject(new Error(message));
+      };
+      const onCancel = req.signal === undefined ? undefined : () => cancel('host request cancelled');
+      const timeout = setTimeout(() => cancel('host request timed out'), req.timeoutMs ?? HOST_HTTP_TIMEOUT_MS);
+      timeout.unref?.();
+      this.pendingHttp.set(id, { resolve, reject, timeout, signal: req.signal, onCancel });
+      req.signal?.addEventListener('abort', onCancel!, { once: true });
       this.write({
         type: 'http.req',
         id,
@@ -273,6 +299,10 @@ class ActiveHostSession implements HostSession {
       const pending = this.pendingHttp.get(frame.id);
       if (pending === undefined) return;
       this.pendingHttp.delete(frame.id);
+      clearTimeout(pending.timeout);
+      if (pending.signal !== undefined && pending.onCancel !== undefined) {
+        pending.signal.removeEventListener('abort', pending.onCancel);
+      }
       pending.resolve({
         status: frame.status,
         headers: frame.headers,
@@ -295,7 +325,13 @@ class ActiveHostSession implements HostSession {
     this.closed = true;
     const hadActive = this.pendingHttp.size > 0 || this.wsChannels.size > 0;
     const error = new HostConnectError('connection_refused', 'host connection closed');
-    for (const pending of this.pendingHttp.values()) pending.reject(error);
+    for (const pending of this.pendingHttp.values()) {
+      clearTimeout(pending.timeout);
+      if (pending.signal !== undefined && pending.onCancel !== undefined) {
+        pending.signal.removeEventListener('abort', pending.onCancel);
+      }
+      pending.reject(error);
+    }
     this.pendingHttp.clear();
     for (const handlers of this.wsChannels.values()) handlers.onClose(1001, 'host connection closed');
     this.wsChannels.clear();

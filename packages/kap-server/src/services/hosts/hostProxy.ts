@@ -6,6 +6,7 @@ import { WebSocketServer, type RawData } from 'ws';
 
 import { errEnvelope } from '../../envelope';
 import { ErrorCode } from '../../protocol/error-codes';
+import { HOST_RPC_MAX_BODY_BYTES } from '../../transport/stdioRpc';
 import { selectWsBearerProtocol } from '../../transport/ws/bearerProtocol';
 import type { HostBridgeManager } from './hostBridgeManager';
 import type { HostSession } from './sshKapBridge';
@@ -22,6 +23,13 @@ const HOP_BY_HOP = new Set([
   'upgrade',
 ]);
 const STRIPPED_REQUEST_HEADERS = new Set(['host', 'origin', 'referer', 'authorization', 'cookie']);
+
+class HostBodyTooLargeError extends Error {
+  constructor() {
+    super(`HTTP body exceeds the ${String(HOST_RPC_MAX_BODY_BYTES)} byte host proxy limit`);
+    this.name = 'HostBodyTooLargeError';
+  }
+}
 
 export interface HostProxyTarget {
   readonly hostId: string;
@@ -67,19 +75,36 @@ async function proxyHttp(
     await reply.code(404).send(errEnvelope(ErrorCode.ENVIRONMENT_NOT_FOUND, 'unknown host route', req.id));
     return;
   }
+  const cancellation = new AbortController();
+  const cancel = (): void => cancellation.abort();
+  req.raw.once('aborted', cancel);
+  req.raw.once('close', () => {
+    if (!req.raw.readableEnded) cancel();
+  });
+  reply.raw.once('close', () => {
+    if (!reply.raw.writableFinished) cancel();
+  });
   let session: HostSession;
   try {
     session = await resolveSession(manager, target.hostId);
   } catch (error) {
-    await reply.code(502).send(
-      errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, error instanceof Error ? error.message : String(error), req.id),
-    );
+    if (!reply.raw.destroyed) {
+      await reply.code(502).send(
+        errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, error instanceof Error ? error.message : String(error), req.id),
+      );
+    }
     return;
   }
-  try {
+  const request = async (): Promise<void> => {
+    const declaredLength = Number(req.headers['content-length'] ?? 0);
+    if (declaredLength > HOST_RPC_MAX_BODY_BYTES) throw new HostBodyTooLargeError();
     const chunks: Buffer[] = [];
+    let size = 0;
     for await (const chunk of req.raw) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      size += buffer.length;
+      if (size > HOST_RPC_MAX_BODY_BYTES) throw new HostBodyTooLargeError();
+      chunks.push(buffer);
     }
     const body = chunks.length > 0 ? Buffer.concat(chunks) : undefined;
     const response = await session.request({
@@ -87,15 +112,30 @@ async function proxyHttp(
       path: target.path,
       headers: upstreamHeaders(req.headers),
       body,
+      signal: cancellation.signal,
+      timeoutMs: /^\/api\/v1\/sessions\/[^/]+\/export(?:\?|$)/.test(target.path) ? 5 * 60_000 : undefined,
     });
     for (const [name, value] of Object.entries(response.headers)) {
       if (value !== undefined && !HOP_BY_HOP.has(name.toLowerCase())) {
         reply.header(name, value);
       }
     }
-    await reply.code(response.status).send(response.body);
+    if (!reply.raw.destroyed) await reply.code(response.status).send(response.body);
+  };
+  try {
+    await request();
   } catch (error) {
-    await reply.code(502).send(
+    if (reply.raw.destroyed) return;
+    if (error instanceof HostBodyTooLargeError) {
+      await reply.code(413).send(errEnvelope(ErrorCode.FILE_TOO_LARGE, error.message, req.id));
+      return;
+    }
+    if (cancellation.signal.aborted && error instanceof Error && error.message === 'host request cancelled') {
+      await reply.code(499).send(errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, error.message, req.id));
+      return;
+    }
+    const timedOut = error instanceof Error && error.message === 'host request timed out';
+    await reply.code(timedOut ? 504 : 502).send(
       errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, error instanceof Error ? error.message : String(error), req.id),
     );
   }
