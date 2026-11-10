@@ -425,6 +425,38 @@ describe('FullCompaction', () => {
     expect(ctx.get(IAgentLoopService).snapshot().activeTurnId).toBeUndefined();
   });
 
+  it('queues a manual compaction request while a turn is active and runs it after the turn', async () => {
+    const ctx = testAgent(execEnvServices({ processRunner: createCommandRunner('should-not-run') }));
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+      tools: ['Bash'],
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.mockNextResponse({ type: 'text', text: 'I will wait for approval.' }, bashCall());
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Start the active turn' }] });
+    const approval = await ctx.takeApprovalRequest();
+    const compaction = ctx.get(IAgentFullCompactionService);
+
+    const queued = compaction.requestManual('keep the plan');
+    expect(queued.acceptedAs).toBe('queue');
+    expect(ctx.get(IAgentLoopService).snapshot().queue.map((entry) => entry.meta?.promptId)).toEqual([queued.promptId]);
+    expect(() => compaction.requestManual()).toThrow(expect.objectContaining({ code: 'compaction.unable' }));
+
+    const completed = ctx.once('compaction.completed');
+    ctx.mockNextResponse({ type: 'text', text: 'Turn done.' });
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
+    approval.respond({ decision: 'rejected', selectedLabel: 'reject' });
+    await ctx.untilTurnEnd();
+    await completed;
+    await vi.waitFor(() => expect(ctx.get(IAgentLoopService).snapshot().queue).toEqual([]));
+    expect(compaction.compacting).toBeNull();
+
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted again.' });
+    expect(compaction.requestManual().acceptedAs).toBe('compact');
+    await compaction.compacting?.promise;
+  });
+
   it('projects the compacted prefix before sending the summary request', async () => {
     const ctx = testAgent();
     ctx.configure({

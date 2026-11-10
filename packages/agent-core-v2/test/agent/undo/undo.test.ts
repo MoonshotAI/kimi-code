@@ -807,6 +807,7 @@ describe('AgentConversationUndoService', () => {
       state: 'idle',
       activeTurnId: undefined,
       activePromptId: undefined,
+      engineAttached: true,
       queue: [
         {
           message: {

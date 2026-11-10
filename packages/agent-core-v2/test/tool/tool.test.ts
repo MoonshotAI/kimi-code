@@ -303,7 +303,8 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
         if (serviceId === IAgentLoopService) {
           return {
             _serviceBrand: undefined,
-            snapshot: () => ({ state: 'idle' }),
+            snapshot: () => ({ state: 'idle', queue: [] }),
+            onDidChangeQueue: () => ({ dispose: () => {} }),
           } as never;
         }
         if (serviceId === IAgentEnvironmentBindingService) {

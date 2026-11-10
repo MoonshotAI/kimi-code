@@ -955,7 +955,7 @@ describe('AgentGoalService core workflow hooks', () => {
   ): Promise<ReturnType<typeof vi.fn<() => boolean>>> {
     const abort = vi.fn<() => boolean>(() => abortResult);
     const turn: StubTurn = { ...makeTurn(41), result: new Promise<never>(() => {}), cancel: () => abort() };
-    vi.spyOn(loopService, 'submit').mockReturnValue({ id: 'p' });
+    vi.spyOn(loopService, 'submit').mockReturnValue({ id: 'p', acceptedAs: 'turn' });
     vi.spyOn(loopService, 'promptHandle').mockReturnValue({
       launched: Promise.resolve(turn),
       completion: new Promise(() => {}),
@@ -1204,7 +1204,7 @@ describe('AgentGoalService core workflow hooks', () => {
     const editedTurn = makeTurn(72);
     eventBus.publish(new TurnStarted({ agentId: 'main', turnId: editedTurn.id, origin: USER_PROMPT_ORIGIN }));
     await goals.editGoalObjective({ objective: 'new task' });
-    vi.spyOn(loopService, 'submit').mockReturnValue({ id: 'p' });
+    vi.spyOn(loopService, 'submit').mockReturnValue({ id: 'p', acceptedAs: 'turn' });
     vi.spyOn(loopService, 'promptHandle').mockReturnValue({
       launched: new Promise(() => {}),
       completion: new Promise(() => {}),

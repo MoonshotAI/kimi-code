@@ -69,9 +69,10 @@ describe('server-v2 /api/v1 skills', () => {
   async function postJson<T>(
     path: string,
     body?: unknown,
+    method: 'POST' | 'PUT' = 'POST',
   ): Promise<{ status: number; body: Envelope<T> }> {
     const res = await fetch(`${base}${path}`, {
-      method: 'POST',
+      method,
       headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
       body: JSON.stringify(body ?? {}),
     } as never);
@@ -623,13 +624,13 @@ describe('server-v2 /api/v1 skills', () => {
       const variants = listSkillsResponseSchema.parse(listed.body.data).skills;
       const selected = variants.find((skill) => skill.name === 'e2e-preflight' && skill.path.includes(secondary))!;
 
-      const submitted = await postJson<{ prompt_id: string }>(`/api/v1/sessions/${sid}/prompts`, {
+      const submitted = await postJson<{ prompt_id: string }>(`/api/v1/sessions/${sid}/prompts/secondary-variant`, {
         content: [{ type: 'text', text: 'Use the secondary variant.' }],
         skills: [{ name: 'e2e-preflight', path: selected.path, args: 'secondary' }],
-      });
+      }, 'PUT');
 
       expect(submitted.body.code).toBe(0);
-      expect(submitted.body.data.prompt_id).toMatch(/^msg_/);
+      expect(submitted.body.data.prompt_id).toBe('secondary-variant');
     });
 
     it('honors explicit skill dirs in workspace preview', async () => {

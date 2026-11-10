@@ -198,6 +198,7 @@ function stubAttachEngine(): MachineEngine {
     abort: () => {},
     pause: () => {},
     resume: () => {},
+    move: () => {},
     resetHistory: () => Promise.resolve(),
     resetJournal: () => Promise.resolve(),
     stop: () => {},
@@ -281,6 +282,7 @@ describe('AgentLifecycleService', () => {
   let suppressAllTerminalNotifications: ReturnType<typeof vi.fn>;
   let loopActiveTurnId: number | undefined;
   let loopPendingPromptIds: string[];
+  let loopStartingCompaction: string | undefined;
   let loopCancel: ReturnType<typeof vi.fn<IAgentLoopService['cancel']>>;
   let loopSettled: ReturnType<typeof vi.fn<IAgentLoopService['settled']>>;
   let beforeExecuteListeners: number;
@@ -435,6 +437,7 @@ describe('AgentLifecycleService', () => {
     } as unknown as IAgentToolExecutorService);
     loopActiveTurnId = undefined;
     loopPendingPromptIds = [];
+    loopStartingCompaction = undefined;
     loopCancel = vi.fn<IAgentLoopService['cancel']>((target) => {
       if (target?.promptId !== undefined) {
         loopPendingPromptIds = loopPendingPromptIds.filter((id) => id !== target.promptId);
@@ -461,10 +464,16 @@ describe('AgentLifecycleService', () => {
         state: loopActiveTurnId === undefined ? 'idle' : 'running',
         activeTurnId: loopActiveTurnId,
         activePromptId: undefined,
-        queue: loopPendingPromptIds.map((promptId) => ({
-          message: { role: 'user', content: [] },
-          meta: { promptId },
-        })),
+        queue: [
+          ...(loopStartingCompaction === undefined
+            ? []
+            : [{ message: { role: 'user', content: [] }, meta: { promptId: loopStartingCompaction, kind: 'compact' } }]),
+          ...loopPendingPromptIds.map((promptId) => ({
+            message: { role: 'user', content: [] },
+            meta: { promptId },
+          })),
+        ],
+        startingPromptId: loopStartingCompaction,
         notificationCount: 0,
         paused: false,
         hasPendingRequests: loopActiveTurnId !== undefined || loopPendingPromptIds.length > 0,
@@ -945,6 +954,26 @@ describe('AgentLifecycleService', () => {
     rejectCompaction(abortController.signal.reason);
     await removal;
     expect(removed).toBe(true);
+  });
+
+  it('remove leaves a starting queued compaction to its own abort instead of withdrawing it', async () => {
+    loopPendingPromptIds = ['q2'];
+    loopStartingCompaction = 'c1';
+    loopCancel.mockImplementation((target) => {
+      if (target?.promptId === 'c1') throw new Error('prompt c1 not found');
+      if (target?.promptId !== undefined) {
+        loopPendingPromptIds = loopPendingPromptIds.filter((id) => id !== target.promptId);
+      }
+      return true;
+    });
+    loopSettled.mockImplementation(async () => {
+      loopStartingCompaction = undefined;
+    });
+    const svc = ix.get(IAgentLifecycleService);
+    const main = await svc.create({ agentId: 'main' });
+
+    await expect(svc.remove(main)).resolves.toBeUndefined();
+    expect(loopCancel.mock.calls.map(([target]) => target)).toEqual([{ promptId: 'q2' }, undefined]);
   });
 
   it('ignites the self-wiring toolDedupe plugin so its listeners exist before the first turn', async () => {

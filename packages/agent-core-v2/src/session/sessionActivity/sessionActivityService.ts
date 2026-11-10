@@ -43,6 +43,7 @@ interface AgentWorkFold {
   turnActive: boolean;
   background: ReadonlySet<string>;
   compacting: boolean;
+  queued: boolean;
   lastTurnReason?: SessionTurnOutcome;
 }
 
@@ -182,6 +183,14 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
         this.patchFold(handle.id, (fold) => ({ ...fold, compacting: false })),
       ),
     );
+    const loop = handle.accessor.get(IAgentLoopService) as IAgentLoopService | undefined;
+    if (loop !== undefined) {
+      subscriptions.add(
+        loop.onDidChangeQueue(() =>
+          this.patchFold(handle.id, (fold) => ({ ...fold, queued: loop.snapshot().queue.length > 0 })),
+        ),
+      );
+    }
     const dispatcher = handle.accessor.get(IEventDispatcher) as IEventDispatcher | undefined;
     if (dispatcher !== undefined) {
       subscriptions.add(
@@ -206,6 +215,7 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
     else if (previous.background.size !== next.background.size || previous.compacting !== next.compacting) {
       cause = 'background';
     }
+    else if (previous.queued !== next.queued) cause = 'queue';
     else if (agentId === MAIN_AGENT_ID && previous.lastTurnReason !== next.lastTurnReason) {
       cause = 'turn_ended';
     }
@@ -223,7 +233,7 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
   private aggregate(): SessionActivityState {
     let busy = false;
     for (const fold of this.folds.values()) {
-      if (fold.turnActive || fold.background.size > 0 || fold.compacting) {
+      if (fold.turnActive || fold.background.size > 0 || fold.compacting || fold.queued) {
         busy = true;
         break;
       }
@@ -257,6 +267,7 @@ function seedFold(handle: IAgentScopeHandle): AgentWorkFold {
     turnActive: loop?.snapshot().state === 'running',
     background: new Set(tasks?.list(true).map((task) => task.taskId) ?? []),
     compacting: (compaction?.compacting ?? null) !== null,
+    queued: (loop?.snapshot().queue.length ?? 0) > 0,
     lastTurnReason:
       loop?.snapshot().state === 'running' ? undefined : mapTurnReason(lastEnded?.reason),
   };

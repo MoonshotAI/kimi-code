@@ -976,20 +976,17 @@ async function compactSessionAction(
   ctx: SessionActionCtx<z.infer<typeof compactSessionRequestSchema>>,
 ): Promise<void> {
   const { core, req, reply, id, body } = ctx;
-  await reloadOnStale(core.accessor, id, async () => {
+  const request = await reloadOnStale(core.accessor, id, async () => {
     const agent = await resolveMainAgent(core, id);
-    const started = agent.accessor
+    return agent.accessor
       .get(IAgentFullCompactionService)
-      .begin({ source: 'manual', instruction: normalizeOptional(body.instruction) });
-    if (!started) {
-      throw new Error2(
-        ErrorCodes.COMPACTION_UNABLE,
-        'A compaction is already running. Wait for it to finish, then retry.',
-      );
-    }
+      .requestManual(normalizeOptional(body.instruction));
   });
-  requestLog(req)?.info({ session_id: id, action: 'compact' }, 'session action completed');
-  reply.send(okEnvelope({}, req.id));
+  requestLog(req)?.info(
+    { session_id: id, action: 'compact', accepted_as: request.acceptedAs, prompt_id: request.promptId },
+    'session action completed',
+  );
+  reply.send(okEnvelope({ accepted_as: request.acceptedAs, prompt_id: request.promptId }, req.id));
 }
 
 async function undoSessionAction(
@@ -1083,10 +1080,18 @@ async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
     for (const agent of agentLifecycle.list()) {
       const agentHandle = agentLifecycle.handleOf(agent.agentId);
       if (agentHandle === undefined) continue;
-      if (agentHandle.accessor.get(IAgentLoopService).snapshot().state === 'running') {
+      const loop = agentHandle.accessor.get(IAgentLoopService).snapshot();
+      if (loop.state === 'running') {
         throw new Error2(
           ErrorCodes.SESSION_BUSY,
           `Session "${id}" cannot be reloaded while a turn is running`,
+          { details: { sessionId: id } },
+        );
+      }
+      if (loop.queue.length > 0) {
+        throw new Error2(
+          ErrorCodes.SESSION_BUSY,
+          `Session "${id}" cannot be reloaded while prompts are queued`,
           { details: { sessionId: id } },
         );
       }

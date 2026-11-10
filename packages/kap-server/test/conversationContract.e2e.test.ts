@@ -1,4 +1,5 @@
 
+import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -269,8 +270,8 @@ async function createSession(server: RunningServer, base: string): Promise<strin
 }
 
 function submitPrompt(server: RunningServer, base: string, sid: string, text: string, permissionMode: 'manual' | 'yolo' | 'auto' = 'yolo'): Promise<{ prompt_id: string }> {
-  return rest<{ prompt_id: string }>(server, base, `/api/v1/sessions/${encodeURIComponent(sid)}/prompts`, {
-    method: 'POST',
+  return rest<{ prompt_id: string }>(server, base, `/api/v1/sessions/${encodeURIComponent(sid)}/prompts/${randomUUID()}`, {
+    method: 'PUT',
     body: { content: [{ type: 'text', text }], model: 'stub', permission_mode: permissionMode },
   });
 }
@@ -730,6 +731,56 @@ describe('conversation contract e2e', () => {
       { title: 'write tests', status: 'in_progress' },
       { title: 'ship', status: 'pending' },
     ]);
+    channel.close();
+  });
+
+  it('S11: queued prompts reach subscribers as queue frames, run in their moved order, and a steer joins the running turn', async () => {
+    await boot([{ match: () => llm!.hits.length === 1, respond: () => sseText('first done'), delayMs: 2500 }]);
+    const sid = await createSession(server!, base);
+    const channel = await subscribeConversation(server!, sid);
+    const queueFrames = () => channel.frames.filter((frame) => frame.type === 'queue' && frame.agent_id === MAIN_AGENT_ID);
+    const queued = () => (queueFrames().at(-1)?.inputs ?? []).map((input: any) => input.prompt_id);
+    const submit = (promptId: string, delivery?: 'queue' | 'steer') =>
+      rest<{ prompt_id: string; accepted_as: string }>(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}/prompts/${promptId}`, {
+        method: 'PUT',
+        body: { content: [{ type: 'text', text: `prompt ${promptId}` }], delivery, model: 'stub', permission_mode: 'yolo' },
+      });
+
+    await until('initial queue frame', () => queueFrames().length > 0);
+    expect(queueFrames()[0]).toMatchObject({ type: 'queue', session_id: sid, inputs: [] });
+
+    expect((await submit('first')).accepted_as).toBe('turn');
+    expect((await submit('second')).accepted_as).toBe('queue');
+    expect((await submit('third')).accepted_as).toBe('queue');
+    await until('both queued', () => queued().length === 2);
+    expect(queueFrames().at(-1).inputs[0]).toMatchObject({
+      prompt_id: 'second',
+      user_message_id: 'second',
+      kind: 'input',
+      delivery: 'queue',
+      content: [{ type: 'text', text: 'prompt second' }],
+    });
+
+    await rest(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}/agents/${MAIN_AGENT_ID}/queue/third:move`, {
+      method: 'POST',
+      body: { before_prompt_id: 'second' },
+    });
+    await until('moved queue frame', () => queued().join() === 'third,second');
+    expect((await submit('steer', 'steer')).accepted_as).toBe('steer');
+
+    await until('three turns ended', async () => {
+      const page = await getTurns(server!, base, sid);
+      return page.turns.length === 3 && page.turns.every((turn) => turn.status === 'ended');
+    }, 45000);
+    const end = await getTurns(server!, base, sid);
+    expect(end.turns.map((turn) => turn.items[0].prompt_ids)).toEqual([['first'], ['third'], ['second']]);
+    expect(end.turns[0].items).toContainEqual(expect.objectContaining({ type: 'user_message', placement: 'steer', prompt_ids: ['steer'] }));
+    await until('drained queue frame', () => queued().length === 0);
+    const frames = queueFrames();
+    expect(frames.every((frame) => !frame.inputs.some((input: any) => input.prompt_id === 'first' || input.prompt_id === 'steer'))).toBe(true);
+    for (let index = 1; index < frames.length; index += 1) {
+      expect(JSON.stringify(frames[index].inputs)).not.toBe(JSON.stringify(frames[index - 1].inputs));
+    }
     channel.close();
   });
 

@@ -650,7 +650,7 @@ Every endpoint that returns a session uses this wire shape. The live facts (`bus
 | `created_at` / `updated_at` | string | Creation and last-update times, ISO 8601 |
 | `archived` | boolean | Whether the session is archived (hidden from the default session list) |
 | `archived_at` | string | Archive time, ISO 8601; present only when archived |
-| `busy` | boolean | Any agent has an active turn or background task |
+| `busy` | boolean | Any agent has an active turn, queued input, a running compaction, or a background task |
 | `main_turn_active` | boolean | The main agent has an active turn |
 | `pending_interaction` | string | `none` / `approval` / `question` — an unanswered interaction is waiting |
 | `last_turn_reason` | string | Main agent's latest turn outcome: `completed` / `cancelled` / `failed` |
@@ -788,15 +788,15 @@ On success, `data` is [the session object](#the-session-object) of the new sessi
 
 #### `POST /api/v1/sessions/{session_id}:compact`
 
-Starts a manual full compaction of the main agent's context. The call returns immediately; progress and completion are delivered as the `compaction.*` WebSocket events.
+Requests a manual full compaction of the main agent's context. When the agent is idle and its queue is empty, the compaction starts at once; otherwise it joins the end of the agent's queue and starts when it reaches the head, after the turns ahead of it. The call returns immediately; progress and completion are delivered as the `compaction.*` WebSocket events. A queued compaction is listed in the `queue` frame as a `compact` input; it can be moved and withdrawn with `prompts/{prompt_id}:abort` until it starts, and cannot be steered. A queued compaction that cannot run when its turn comes leaves an error notice and is dropped, and the queue moves on.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `instruction` | body | string | Extra guidance for the compaction summary; a blank value is ignored |
 
-On success, `data` is an empty object.
+On success, `data` is `{ accepted_as, prompt_id }`: `accepted_as` is `compact` when the compaction started at once and `queue` when it was queued, and `prompt_id` is the server-generated id of the request, used to withdraw or move a queued compaction.
 
-- `40910`: a turn or another context change is active, or the history has nothing to compact
+- `40910`: a compaction is already running or queued, another context change is active, or the history has nothing to compact
 
 #### `POST /api/v1/sessions/{session_id}:undo`
 
@@ -815,7 +815,7 @@ On success, `data` is `{ removed_turn_ids }`: the removed turns in ordinal order
 
 #### `POST /api/v1/sessions/{session_id}:abort`
 
-Cancels the main agent's running turn — the programmatic equivalent of the user aborting the turn in the TUI.
+Cancels the main agent's running turn — the programmatic equivalent of the user aborting the turn in the TUI. A queued compaction that has already started at the head of the queue is cancelled too.
 
 On success, `data` is `{ aborted: true }`.
 
@@ -843,7 +843,7 @@ Reloads the session with the latest on-disk configuration: re-reads `config.toml
 
 On success, `data` is [the session object](#the-session-object).
 
-- `40901`: the session has an active turn and cannot be reloaded
+- `40901`: an agent of the session has an active turn, a running compaction, or queued input, so the session cannot be reloaded
 
 #### `POST /api/v1/sessions/{session_id}:takeover`
 
@@ -1043,10 +1043,11 @@ A prompt is one unit of user input: submitting one enqueues it on the session's 
 | Method and path | Description |
 | --- | --- |
 | `GET /api/v1/sessions/{session_id}/prompts` | Active and queued prompts |
-| `POST /api/v1/sessions/{session_id}/prompts` | Submit a prompt (content-part array, optional model / permission-mode overrides) |
+| `PUT /api/v1/sessions/{session_id}/prompts/{prompt_id}` | Submit a prompt (content-part array, optional model / permission-mode overrides) |
 | `POST /api/v1/sessions/{session_id}/prompts:steer` | Steer queued prompts into the active turn |
 | `POST /api/v1/sessions/{session_id}/prompts/{prompt_id}:abort` | Abort a running prompt |
 | `POST /api/v1/sessions/{session_id}/prompts/{prompt_id}:steer` | Steer one queued prompt |
+| `POST /api/v1/sessions/{session_id}/agents/{agent_id}/queue/{prompt_id}:move` | Move one queued prompt |
 
 #### `GET /api/v1/sessions/{session_id}/prompts`
 
@@ -1056,26 +1057,27 @@ Reads the main agent's prompt queue snapshot.
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
 
-On success, `data` is `{ active, queued }`: `active` is the running prompt (`null` when idle) and `queued` lists the pending prompts in order. A prompt is `{ prompt_id, user_message_id, status, content, created_at }` with `status` one of `running` / `queued` / `blocked` / `failed` and `content` in the content-part format accepted by `POST /api/v1/sessions/{session_id}/prompts`.
+On success, `data` is `{ active, queued }`: `active` is the running prompt (`null` when idle) and `queued` lists the pending prompts in order; queued compactions are not listed. A prompt is `{ prompt_id, user_message_id, status, content, created_at }` with `status` one of `running` / `queued` / `blocked` / `failed` and `content` in the content-part format accepted by `PUT /api/v1/sessions/{session_id}/prompts/{prompt_id}`.
 
 - `40401`: session not found
 
-#### `POST /api/v1/sessions/{session_id}/prompts`
+#### `PUT /api/v1/sessions/{session_id}/prompts/{prompt_id}`
 
-Submits a user prompt to the session. Media references are validated first, then the optional overrides are applied to the target agent — `profile` (bound together with `model` / `thinking`), then `model`, `thinking`, `permission_mode`, and `disabled_tools` — and the prompt is enqueued; the response returns as soon as the prompt is accepted, without waiting for the turn. With `skills`, the prompt runs as a bundled skill activation instead of a plain user prompt.
+Submits a user prompt to the session under a client-chosen id. Media references are validated first, then the optional overrides are applied to the target agent — `profile` (bound together with `model` / `thinking`), then `model`, `thinking`, `permission_mode`, and `disabled_tools` — and the prompt is enqueued; the response returns as soon as the prompt is accepted, without waiting for the turn. With `skills`, the prompt runs as a bundled skill activation instead of a plain user prompt.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
+| `prompt_id` | path | string | **Required.** Client-chosen prompt id of 1–128 letters, digits, `_`, or `-`. The submission is idempotent, also with `skills`: sending the same request again with the same id returns the result of the first submission, waiting for it while it is still being processed, and does not submit again; reusing the id for a different request fails `40927` |
 | `content` | body | array | **Required.** Non-empty array of content parts; variants below |
 | `agent_id` | body | string | Target agent. Default the main agent |
-| `prompt_id` | body | string | Client-chosen prompt id that makes the submission idempotent, also with `skills`: sending the same request again with the same id returns the result of the first submission, waiting for it while it is still being processed, and does not submit again; reusing the id for a different request fails `40927` |
 | `skills` | body | array | Bundled skill activations, at least 1 entry of `{ name, path?, args? }`; every skill must exist and be user-activatable. `path` selects a same-name variant from the session catalog |
 | `profile` | body | string | Agent profile to bind before submitting |
 | `model` | body | string | Model alias to switch the agent to |
 | `thinking` | body | string | Thinking-mode effort level |
 | `permission_mode` | body | string | `manual` / `yolo` / `auto` |
 | `disabled_tools` | body | array | Tool names to disable for the session |
+| `delivery` | body | string | `queue` (default) or `steer`: what to do with the prompt when it cannot start a turn at once. `steer` hands it to the running turn at its next step. When no turn started by a user prompt is running, for example while the previous turn is finishing or while a background notification runs a turn, the prompt waits as a steer instead: after earlier steers and before queued prompts, and it joins the next turn that a user prompt starts (or starts that turn itself when it is first). An idle agent with an empty queue always starts a turn |
 
 The schema also accepts `metadata`, `plan_mode`, `swarm_mode`, `goal_objective`, and `goal_control`, but the submit route currently does not apply them. Each `content` part is an object discriminated by `type`:
 
@@ -1087,9 +1089,9 @@ The schema also accepts `metadata`, `plan_mode`, `swarm_mode`, `goal_objective`,
 
 The schema also accepts the `tool_use`, `tool_result`, and `thinking` parts of the shared message format, but they are not meaningful in a user prompt. Unknown or mis-kinded `file_id` references are rejected before the prompt is created and before any override is applied.
 
-On success, `data` is the accepted prompt `{ prompt_id, user_message_id, status, content, created_at }`. On an idle session the response waits until the prompt starts its turn or ends without one: `status` is `blocked` when a hook rejected the prompt, and `failed` when its submission failed before a turn started, for example because a prompt hook failed or an attachment could not be prepared.
+On success, `data` is the accepted prompt `{ prompt_id, user_message_id, status, content, created_at, accepted_as, turn_id? }`. `accepted_as` tells where the prompt went: `turn` when it starts a new turn, `steer` when it joined the running turn or waits as a steer, and `queue` when it waits in the agent's queue; a waiting prompt is listed in the `queue` frame (see [Events](#events)), and a waiting steer has `status` `queued`. `turn_id` is the id of the conversation turn the prompt started, present only when `accepted_as` is `turn` and the turn started. On an idle session the response waits until the prompt starts its turn or ends without one: `status` is `blocked` when a hook rejected the prompt, and `failed` when its submission failed before a turn started, for example because a prompt hook failed or an attachment could not be prepared.
 
-- `40001`: validation failure — for example an unknown `profile`
+- `40001`: validation failure — for example an unknown `profile` or a `prompt_id` that does not match the id rule
 - `40110`: no provider configured yet — finish login first
 - `40111`: the resolved provider has no credential (`details.provider_id`)
 - `40112`: the provider's credential was rejected (`details.provider_id`)
@@ -1102,7 +1104,7 @@ On success, `data` is the accepted prompt `{ prompt_id, user_message_id, status,
 
 #### `POST /api/v1/sessions/{session_id}/prompts:steer`
 
-Steers queued prompts into the active turn, so the running turn consumes them immediately instead of finishing first.
+Steers queued prompts into the active turn, so the running turn consumes them immediately instead of finishing first. When no turn started by a user prompt is running, the prompts move to the steer slot instead, after earlier steers and before queued prompts, and join the next turn that a user prompt starts; a prompt that is already a steer stays where it is. A queued compaction cannot be steered.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -1111,13 +1113,13 @@ Steers queued prompts into the active turn, so the running turn consumes them im
 
 On success, `data` is `{ steered: true, prompt_ids }`.
 
-- `40001`: validation failure
+- `40001`: validation failure, including a queued compaction in `prompt_ids`
 - `40401`: session not found
 - `40402`: a listed prompt id is not in the queue
 
 #### `POST /api/v1/sessions/{session_id}/prompts/{prompt_id}:abort`
 
-Aborts a running prompt. This endpoint and `:steer` below dispatch through one route, `POST /api/v1/sessions/{session_id}/prompts/{tail}`: the tail is parsed as `{prompt_id}:{action}`, and a missing or unknown action fails `40001` (`unsupported action: ...`).
+Aborts a running prompt, or withdraws a queued prompt or a queued compaction from the queue. A compaction that has started is no longer in the queue; cancel it the way any running compaction is cancelled. This endpoint and `:steer` below dispatch through one route, `POST /api/v1/sessions/{session_id}/prompts/{tail}`: the tail is parsed as `{prompt_id}:{action}`, and a missing or unknown action fails `40001` (`unsupported action: ...`).
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -1132,7 +1134,7 @@ On success, `data` is `{ aborted: true }`.
 
 #### `POST /api/v1/sessions/{session_id}/prompts/{prompt_id}:steer`
 
-Steers one queued prompt into the active turn — the single-prompt form of `POST /api/v1/sessions/{session_id}/prompts:steer`.
+Steers one queued prompt into the active turn, or moves it to the steer slot when no turn started by a user prompt is running — the single-prompt form of `POST /api/v1/sessions/{session_id}/prompts:steer`.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -1141,8 +1143,26 @@ Steers one queued prompt into the active turn — the single-prompt form of `POS
 
 On success, `data` is `{ steered: true, prompt_ids: [prompt_id] }`.
 
+- `40001`: the prompt is a queued compaction
 - `40401`: session not found
 - `40402`: no queued prompt with that id
+
+#### `POST /api/v1/sessions/{session_id}/agents/{agent_id}/queue/{prompt_id}:move`
+
+Moves one queued prompt or queued compaction of an agent before another queued entry, or to the end of the queue. A prompt whose turn is starting has left the queue and can no longer be moved. Steers always stay ahead of queued prompts: a steer cannot be moved, and no entry can be moved in front of one. The tail is parsed as `{prompt_id}:{action}`, and an action other than `move` fails `40001`.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **Required.** Session id |
+| `agent_id` | path | string | **Required.** Agent id |
+| `prompt_id` | path | string | **Required.** Queued prompt id |
+| `before_prompt_id` | body | string | Queued prompt to move it in front of. Default the end of the queue |
+
+On success, `data` is `{}` and the agent's subscribers get a new `queue` frame.
+
+- `40001`: validation failure, or `prompt_id` or `before_prompt_id` is a steer
+- `40401`: session or agent not found
+- `40402`: `prompt_id` or `before_prompt_id` is not in the queue
 
 ### Approvals and questions
 
@@ -2385,22 +2405,23 @@ On success, `task.watch`, `task.stop`, and `task.background` carry the task's cu
 Global events are envelopes `{ "type", "session_id"?, "timestamp", "payload" }`, where `type` is the event type itself; session frames are flat `{ "type", "session_id", "agent_id", ... }`. Two delivery scopes:
 
 - **Global events**: sent to every established connection, no subscription needed — `session.meta.updated`, `event.session.created`, `event.session.archived`, `event.session.restored`, `event.session.work_changed`, `event.session.status_changed`, `event.workspace.*`, `event.config.*`, `event.model_catalog.*`.
-- **Session frames**: sent only to connections subscribed to that session with `subscribe`, and only for the agents they receive — `turns`, `turns.removed`, `turns.failed`, `turn.*`, `item.*`, and `notice` (see [Conversation protocol](#conversation-protocol)), `task.list`, `task`, `agent`, `usage`, `goal`, `todo`; `interaction` frames go to every subscriber of the session. `task.output` goes only to connections watching that task with `task.watch`.
+- **Session frames**: sent only to connections subscribed to that session with `subscribe`, and only for the agents they receive — `turns`, `turns.removed`, `turns.failed`, `turn.*`, `item.*`, and `notice` (see [Conversation protocol](#conversation-protocol)), `task.list`, `task`, `agent`, `usage`, `goal`, `todo`, `queue`; `interaction` frames go to every subscriber of the session. `task.output` goes only to connections watching that task with `task.watch`.
 
 Several global lifecycle events keep a cross-workspace overview fresh without polling per workspace. `event.session.archived` fires on both the live and the cold archive path; its envelope `session_id` is the global watermark `__global__` and the real session id rides in the payload: `{ "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." }` (payload keys `workspace_id` / `sessionId`). `event.session.restored` fires when an archived session is restored, on the same paths and with the same envelope and payload keys. `event.workspace.created` / `updated` carry the full workspace object (`{ id, root, name, created_at, last_opened_at, session_count }` — an `updated` also fires when a session creation touches the workspace), and `event.workspace.deleted` carries `{ "workspace_id", "root" }`. These events only cover changes made inside this server process; changes from other processes (for example a CLI writing to the same home) surface through the index reconciliation (about a minute), so overview clients should keep a low-frequency fallback poll. There is no session-deleted event.
 
 Each agent's running tasks — shell commands in the foreground and background, subagents (swarm members included), and other asynchronous work — are synced by two flat frames, `task.list` and `task`, never replayed like `interaction`. When a connection starts receiving an agent's tasks (an agent listed in `subscribe`'s `agent_ids` that it was not receiving yet), it first gets `{ type: "task.list", session_id, agent_id, tasks }`, where `tasks` is every task the agent is running right now and replaces the client's list; after that it gets `{ type: "task", session_id, agent_id, event_created_at, ...task state }` on every change. An agent listed before it joins the session starts directly with `task` frames. The task state is `{ task_id, kind: "shell" | "subagent" | "other", status: "running" | "ended", outcome?, phase?, detached, description?, child_agent_id?, parent_tool_call_id?, swarm_index?, command?, started_at?, ended_at?, result_summary?, error?, state_reason?, model?, thinking? }`, and every frame carries the full state. `detached` means the tool call that started the task no longer waits for it, so it runs in the background; `outcome` (ended tasks only) is `completed` / `failed` / `timed_out` / `killed` / `lost`; `phase` (running subagents only) is `working` / `suspended`, with the reason in `state_reason`; `child_agent_id` is a subagent task's agent id; `swarm_index` is a swarm member's position in its swarm; `command` is a shell task's command. When a task ends, its last `task` frame (`status: "ended"`) is sent and it no longer appears in `task.list`: the outcome of an ended task lives in the session history (tool results and task notifications), and `task.watch` on it replies with its exact final state. Tasks are independent of turns: undoing turns does not touch tasks. Task output streams separately as `{ type: "task.output", session_id, agent_id, task_id, offset, text }`, where `offset` is the UTF-8 byte offset of `text` in the task's output.
 
-An agent's own state is synced by four more flat frames, each carrying the full value and replacing the client copy; like the task frames they are never replayed. When a connection starts receiving an agent (the same rule as `task.list`), it first gets the current `agent`, `usage` (when the agent has a model context), `goal` (main agent only), and `todo` frames, and after that each frame again whenever its value changes; a listed agent that joins the session later announces itself with the same frames. Subscribing to a session creates its main agent if it does not exist yet, so the main agent's frames always follow the subscription. All four are `{ type, session_id, agent_id, event_created_at, ... }`:
+An agent's own state is synced by five more flat frames, each carrying the full value and replacing the client copy; like the task frames they are never replayed. When a connection starts receiving an agent (the same rule as `task.list`), it first gets the current `agent`, `usage` (when the agent has a model context), `goal` (main agent only), `todo`, and `queue` frames, and after that each frame again whenever its value changes; a listed agent that joins the session later announces itself with the same frames. Subscribing to a session creates its main agent if it does not exist yet, so the main agent's frames always follow the subscription. All five are `{ type, session_id, agent_id, event_created_at, ... }`:
 
 - `agent`: `{ status: "idle" | "running", compacting, model?, thinking?, permission_mode?, plan_mode, swarm_mode, tower_mode }`. `status` is `running` while the agent works on a turn and `idle` when it does not. `compacting` is `true` while the agent's context is being compacted, whether inside a turn or not. The running turn, and the retry state of a failed model request, come with the conversation frames. `compacting` and the three mode fields are booleans.
 - `usage`: `{ context_tokens, max_context_tokens? }`. Only the latest value matters, so while the context grows the server sends it at most a few times per second.
 - `goal`: `{ goal? }`, where `goal` is omitted when the session has none, or is `{ objective, status: "active" | "paused" | "blocked" | "complete", completion_criterion?, turns_used, tokens_used, wall_clock_ms }`.
 - `todo`: `{ items: [{ title, status: "pending" | "in_progress" | "done" }] }`, read from the agent's todo store, so it follows undo and survives a restart.
+- `queue`: `{ inputs }`, the prompts and compactions waiting for the agent, in the order they will run: steers first, then queued prompts and compactions. Each input is `{ prompt_id, user_message_id, kind, delivery, content, skills?, client_metadata?, instruction?, created_at }`. `kind` is `input` for a prompt and `compact` for a queued compaction; `delivery` is `steer` for a prompt waiting to join the next user turn and `queue` otherwise. For a prompt, `content` is the submitted content without bundled skill instructions, `skills` lists the bundled skill activations as `{ name, args? }`, and `client_metadata` echoes the `metadata` sent with the prompt. A compaction has empty `content`, `user_message_id` equal to its `prompt_id`, and the requested `instruction`. A prompt leaves the list once its turn starts or it is steered into the running turn, and the `user_message` that carries it then lists its `prompt_id` in `prompt_ids`; a compaction leaves it when it starts.
 
 ### Reconnect and recovery
 
-Subscriptions do not survive a disconnect. After reconnecting, send `subscribe` again for each session: every agent starts again with a `turns` frame holding its latest page, pending interactions are resent after the response, and every agent's `task.list`, `agent`, `usage`, `goal`, and `todo` frames are sent again. Task output watches are dropped as well: send `task.watch` again with `since_offset` set to the end of the output you already have. Global events missed while disconnected are not replayed, so refresh the lists you keep (for example `GET /api/v1/sessions`) over REST.
+Subscriptions do not survive a disconnect. After reconnecting, send `subscribe` again for each session: every agent starts again with a `turns` frame holding its latest page, pending interactions are resent after the response, and every agent's `task.list`, `agent`, `usage`, `goal`, `todo`, and `queue` frames are sent again. Task output watches are dropped as well: send `task.watch` again with `since_offset` set to the end of the output you already have. Global events missed while disconnected are not replayed, so refresh the lists you keep (for example `GET /api/v1/sessions`) over REST.
 
 ### Conversation protocol
 

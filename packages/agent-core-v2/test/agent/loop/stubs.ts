@@ -112,6 +112,7 @@ function stubAttachEngine(): MachineEngine {
     abort: () => {},
     pause: () => {},
     resume: () => {},
+    move: () => {},
     resetHistory: () => Promise.resolve(),
     resetJournal: () => Promise.resolve(),
     stop: () => {},
@@ -123,7 +124,12 @@ function stubAttachEngine(): MachineEngine {
   };
 }
 export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
-  const hooks = createHooks(['onWillBeginStep', 'onDidFinishStep', 'onBeforeSubmitPrompt']) as IAgentLoopService['hooks'];
+  const hooks = createHooks([
+    'onWillBeginStep',
+    'onDidFinishStep',
+    'onBeforeSubmitPrompt',
+    'onRunQueuedCompaction',
+  ]) as IAgentLoopService['hooks'];
   const errorHandlers = registry(); const launches: number[] = []; const cancels: { turnId?: number; reason?: unknown }[] = [];
   const pending: PendingEntry[] = [];
   const handles = new Map<string, PromptHandle>();
@@ -160,9 +166,12 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
         launched: Promise.resolve(turn),
         completion: new Promise(() => {}),
       });
-      return { id };
+      return { id, acceptedAs: 'turn' };
     },
     steer: async () => {},
+    moveQueued: () => {},
+    enqueueCompaction: () => '',
+    onDidChangeQueue: Event.None as IAgentLoopService['onDidChangeQueue'],
     remind(note: LoopNotify = {}): LoopNotifyHandle {
       return this.notify(note);
     },
@@ -190,6 +199,7 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
         state: active !== undefined ? 'running' : 'idle',
         activeTurnId: active?.id,
         activePromptId: undefined,
+        engineAttached: true,
         queue: [],
         notificationCount: 0,
         paused: false,

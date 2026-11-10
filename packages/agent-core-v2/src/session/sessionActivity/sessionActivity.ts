@@ -16,6 +16,7 @@ export type SessionActivityCause =
   | 'turn_started'
   | 'turn_ended'
   | 'background'
+  | 'queue'
   | 'interaction'
   | 'agent_lifecycle';
 

@@ -61,6 +61,7 @@ describe('AgentTitlePromptSource', () => {
             state: 'idle' as const,
             activeTurnId: undefined,
             activePromptId: queue.active?.id,
+            engineAttached: true,
             queue: queue.pending.map((item) => ({
               message: { role: 'user' as const, content: [...item.message.content] },
               meta: {

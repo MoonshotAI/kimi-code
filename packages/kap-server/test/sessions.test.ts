@@ -23,6 +23,7 @@ import {
   IAgentConversationUndoService,
   IAgentCronService,
   IAgentLifecycleService,
+  IAgentLoopService,
   IAgentEnvironmentBindingService,
   IEventBus,
   IEventDispatcher,
@@ -172,10 +173,11 @@ describe('server-v2 /api/v1/sessions', () => {
   async function postJson<T>(
     path: string,
     body?: unknown,
+    method: 'POST' | 'PUT' = 'POST',
   ): Promise<{ status: number; body: Envelope<T> }> {
     const hasBody = body !== undefined;
     const res = await fetch(`${base}${path}`, {
-      method: 'POST',
+      method,
       headers: authHeaders(
         server as RunningServer,
         hasBody ? { 'content-type': 'application/json' } : {},
@@ -775,10 +777,11 @@ describe('server-v2 /api/v1/sessions', () => {
       metadata: { cwd: home as string },
     });
     const id = created.body.data.id;
-    for (const text of ['first REST prompt', 'second REST prompt', 'third REST prompt']) {
+    for (const [index, text] of ['first REST prompt', 'second REST prompt', 'third REST prompt'].entries()) {
       const submitted = await postJson<{ prompt_id: string }>(
-        `/api/v1/sessions/${id}/prompts`,
+        `/api/v1/sessions/${id}/prompts/rest-${String(index)}`,
         { content: [{ type: 'text', text }] },
+        'PUT',
       );
       expect(submitted.body.code).toBe(0);
     }
@@ -1542,6 +1545,54 @@ describe('server-v2 /api/v1/sessions', () => {
       expect(response.body.code).toBe(40901);
     } finally {
       compacting.mockRestore();
+    }
+  });
+
+  it('starts :compact at once on an idle session and reports 40910 when there is nothing to compact', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+    });
+    const id = created.body.data.id;
+    const session = getLiveSessionById((server as RunningServer).core.accessor, id);
+    if (session === undefined) throw new Error('expected live session');
+    await session.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
+    const agent = session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
+
+    const empty = await postJson<null>(`/api/v1/sessions/${id}:compact`, {});
+    expect(empty.body.code).toBe(40910);
+
+    agent.accessor.get(IAgentContextMemoryService).append(
+      { role: 'user', content: [{ type: 'text', text: 'first prompt' }], origin: { kind: 'user' } },
+    );
+    const started = await postJson<{ accepted_as: string; prompt_id: string }>(`/api/v1/sessions/${id}:compact`, {});
+    expect(started.body.code).toBe(0);
+    expect(started.body.data).toEqual({ accepted_as: 'compact', prompt_id: expect.any(String) });
+    agent.accessor.get(IAgentFullCompactionService).cancel();
+  });
+
+  it('returns 40901 when :reload is requested while prompts are queued', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+    });
+    const id = created.body.data.id;
+    const session = getLiveSessionById((server as RunningServer).core.accessor, id);
+    if (session === undefined) throw new Error('expected live session');
+    await session.accessor
+      .get(IAgentLifecycleService)
+      .create({ agentId: MAIN_AGENT_ID });
+    const loop = session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!.accessor.get(IAgentLoopService);
+    const idle = loop.snapshot();
+    const queued = vi.spyOn(loop, 'snapshot').mockReturnValue({
+      ...idle,
+      queue: [{ message: { role: 'user', content: [] }, meta: { promptId: 'p_queued' } }],
+    });
+
+    try {
+      const response = await postJson<null>(`/api/v1/sessions/${id}:reload`);
+      expect(response.body.code).toBe(40901);
+      expect(response.body.msg).toContain('queued');
+    } finally {
+      queued.mockRestore();
     }
   });
 
@@ -2688,8 +2739,9 @@ describe('server-v2 /api/v1/sessions', () => {
       .subscribe((event) => events.push(event as unknown as { type: string; payload: unknown }));
 
     const submitted = await postJson<{ prompt_id: string; status: string }>(
-      `/api/v1/sessions/${id}/prompts`,
+      `/api/v1/sessions/${id}/prompts/web-title`,
       { content: [{ type: 'text', text: 'hello web title' }] },
+      'PUT',
     );
     expect(submitted.body.code).toBe(0);
     sub.dispose();
@@ -3063,9 +3115,9 @@ describe('server-v2 /api/v1/sessions:btw', () => {
     }
   });
 
-  async function postJson<T>(path: string, body: unknown): Promise<Envelope<T>> {
+  async function postJson<T>(path: string, body: unknown, method: 'POST' | 'PUT' = 'POST'): Promise<Envelope<T>> {
     const res = await fetch(`${base}${path}`, {
-      method: 'POST',
+      method,
       headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
       body: JSON.stringify(body),
     } as never);
@@ -3099,10 +3151,10 @@ describe('server-v2 /api/v1/sessions:btw', () => {
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home } });
     const sessionId = created.data.id;
     await agentTurns(sessionId, 'main');
-    await postJson(`/api/v1/sessions/${sessionId}/prompts`, {
+    await postJson(`/api/v1/sessions/${sessionId}/prompts/main-question`, {
       content: [{ type: 'text', text: 'main question' }],
       model: 'fake',
-    });
+    }, 'PUT');
     await vi.waitFor(
       async () => {
         expect((await agentTurns(sessionId, 'main')).map(endOf)).toEqual(['completed']);
@@ -3115,11 +3167,11 @@ describe('server-v2 /api/v1/sessions:btw', () => {
     });
     const btw = await postJson<{ agent_id: string }>(`/api/v1/sessions/${sessionId}:btw`, {});
     const agentId = btw.data.agent_id;
-    await postJson(`/api/v1/sessions/${sessionId}/prompts`, {
+    await postJson(`/api/v1/sessions/${sessionId}/prompts/side-question`, {
       content: [{ type: 'text', text: 'side question' }],
       agent_id: agentId,
       model: 'fake',
-    });
+    }, 'PUT');
     await agentTurns(sessionId, agentId);
     releaseSideAnswer();
 

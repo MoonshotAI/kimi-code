@@ -15,6 +15,8 @@ import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
 import { IAgentGoalService } from '#/features/goal/goalService';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
+import { PromptQueued } from '#/agent/prompt/promptEvents';
+import { ErrorCodes } from '#/errors';
 import { createActor } from '#human/xstate2';
 import { createAgentMachine } from '#human/agent/machine';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
@@ -2418,6 +2420,525 @@ describe('aborted step tool execution', () => {
     }
   });
 });
+
+describe('prompt queue', () => {
+  let ctx: TestAgentContext;
+  let loop: IAgentLoopService;
+  let heldRequests: (() => void)[];
+
+  beforeEach(async () => {
+    heldRequests = [];
+    ctx = createTestAgent({ generate: heldGenerate((release) => heldRequests.push(release)) });
+    await ctx.restorePersisted();
+    loop = ctx.get(IAgentLoopService);
+  });
+
+  afterEach(async () => {
+    await ctx.dispose();
+  });
+
+  const submit = (id: string, options?: { readonly steerIfActive?: boolean; readonly steer?: boolean }) =>
+    loop.submit(
+      {
+        message: { role: 'user', content: [{ type: 'text', text: id }] },
+        meta: { promptId: id, origin: { kind: 'user' }, tracked: true },
+      },
+      options,
+    ).acceptedAs;
+  const queueIds = () => loop.snapshot().queue.map((entry) => entry.meta?.promptId);
+  const notQueued = expect.objectContaining({ code: ErrorCodes.PROMPT_NOT_FOUND });
+  const userTexts = () =>
+    ctx
+      .contextData()
+      .history.filter((message) => message.role === 'user')
+      .map((message) => message.content.map((part) => (part.type === 'text' ? part.text : '')).join(''));
+
+  async function untilModelRequest(): Promise<void> {
+    await vi.waitFor(() => expect(heldRequests.length).toBeGreaterThan(0));
+  }
+
+  it('reports whether each submission started a turn, was steered, or was queued', async () => {
+    expect(submit('a')).toBe('turn');
+    await untilModelRequest();
+    expect(submit('b')).toBe('queue');
+    expect(submit('c', { steerIfActive: true })).toBe('steer');
+    expect(queueIds()).toEqual(['b']);
+  });
+
+  it('queues a prompt behind one parked before the engine attaches', async () => {
+    const parked = createTestAgent(sessionService(IAgentLifecycleService, parkedLifecycleStub()));
+    try {
+      const parkedLoop = parked.get(IAgentLoopService);
+      const submitParked = (id: string, steer?: boolean) =>
+        parkedLoop.submit(
+          {
+            message: { role: 'user', content: [{ type: 'text', text: id }] },
+            meta: { promptId: id, origin: { kind: 'user' }, tracked: true },
+          },
+          { steer },
+        ).acceptedAs;
+      const parkedIds = () => parkedLoop.snapshot().queue.map((entry) => entry.meta?.promptId);
+      const queueLengths: number[] = [];
+      const queuedEvents = parked.get(IEventBus).subscribe(PromptQueued, (event) => queueLengths.push(event.queueLength));
+      const signalled: (string | undefined)[][] = [];
+      const queueChanges = parkedLoop.onDidChangeQueue(() => signalled.push(parkedIds()));
+
+      expect(submitParked('a')).toBe('turn');
+      expect(signalled).toEqual([['a']]);
+      expect(submitParked('b')).toBe('queue');
+      expect(submitParked('c')).toBe('queue');
+      expect(parkedLoop.cancel({ promptId: 'c' })).toBe(true);
+      await vi.waitFor(() => expect(queueLengths).toEqual([2, 3]));
+      queuedEvents.dispose();
+      expect(submitParked('s', true)).toBe('steer');
+      const compact = parkedLoop.enqueueCompaction();
+      expect(parkedIds()).toEqual(['a', 's', 'b', compact]);
+      expect(signalled.at(-1)).toEqual(['a', 's', 'b', compact]);
+      queueChanges.dispose();
+
+      const parkedRef = attachParkedEngine(parkedLoop);
+      try {
+        expect(parkedIds()).toEqual(['a', 's', 'b', compact]);
+      } finally {
+        parkedRef.stop();
+      }
+    } finally {
+      await parked.dispose();
+    }
+  });
+
+  it('moves queued prompts and refuses ids that are not queued', async () => {
+    submit('a');
+    await untilModelRequest();
+    submit('b');
+    submit('c');
+    submit('d');
+
+    loop.moveQueued('d', 'b');
+    expect(queueIds()).toEqual(['d', 'b', 'c']);
+    loop.moveQueued('d');
+    expect(queueIds()).toEqual(['b', 'c', 'd']);
+    expect(() => loop.moveQueued('a')).toThrow(notQueued);
+    expect(() => loop.moveQueued('b', 'missing')).toThrow(notQueued);
+    expect(queueIds()).toEqual(['b', 'c', 'd']);
+    loop.moveQueued('c', 'b');
+    expect(submit('e', { steerIfActive: true })).toBe('steer');
+    expect(queueIds()).toEqual(['c', 'b', 'd']);
+    const started: (string | undefined)[] = [];
+    const subscription = ctx.get(IEventBus).subscribe(TurnStarted, (event) => started.push(event.prompt));
+    for (let round = 0; round < 20 && (heldRequests.length > 0 || queueIds().length > 0); round += 1) {
+      heldRequests.shift()?.();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    subscription.dispose();
+    expect(started).toEqual(['c', 'b', 'd']);
+  });
+
+  it('keeps the starting prompt in place while its submit hooks run', async () => {
+    const gate = deferred();
+    loop.hooks.onBeforeSubmitPrompt.register('test-hold-gate', async (_hookCtx, next) => {
+      await gate.promise;
+      await next();
+    });
+    submit('a');
+    await vi.waitFor(() => expect(loop.snapshot().startingPromptId).toBe('a'));
+
+    expect(submit('b')).toBe('queue');
+    expect(queueIds()).toEqual(['a', 'b']);
+    expect(() => loop.moveQueued('a')).toThrow(notQueued);
+    expect(() => loop.moveQueued('b', 'a')).toThrow(notQueued);
+
+    gate.resolve();
+    await untilModelRequest();
+    expect(loop.snapshot().startingPromptId).toBeUndefined();
+    expect(queueIds()).toEqual(['b']);
+  });
+
+  it('starts a turn for a steer when the agent is idle with an empty queue', () => {
+    expect(submit('a', { steer: true })).toBe('turn');
+    expect(queueIds()).toEqual(['a']);
+    expect(loop.snapshot().queue[0]?.meta?.delivery).toBeUndefined();
+  });
+
+  it('holds steers in the steer slot until a user turn starts, then steers the rest into it', async () => {
+    loop.notify({
+      message: { role: 'user', content: [{ type: 'text', text: 'system' }], origin: { kind: 'system_trigger', name: 'test' } },
+    });
+    await untilModelRequest();
+    const deliveries = () => loop.snapshot().queue.map((entry) => [entry.meta?.promptId, entry.meta?.delivery ?? 'queue']);
+    const invalid = expect.objectContaining({ code: ErrorCodes.REQUEST_INVALID });
+
+    expect(submit('q1')).toBe('queue');
+    expect(submit('s1', { steer: true })).toBe('steer');
+    expect(submit('s2', { steer: true })).toBe('steer');
+    expect(deliveries()).toEqual([['s1', 'steer'], ['s2', 'steer'], ['q1', 'queue']]);
+    expect(() => loop.moveQueued('s1')).toThrow(invalid);
+    expect(() => loop.moveQueued('q1', 's2')).toThrow(invalid);
+    await loop.steer(['q1']);
+    submit('q2');
+    expect(deliveries()).toEqual([['s1', 'steer'], ['s2', 'steer'], ['q1', 'steer'], ['q2', 'queue']]);
+
+    const started: (string | undefined)[] = [];
+    const turnStarts = ctx.get(IEventBus).subscribe(TurnStarted, (event) => started.push(event.prompt));
+    try {
+      for (let round = 0; round < 20 && (heldRequests.length > 0 || queueIds().length > 0); round += 1) {
+        heldRequests.shift()?.();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      await loop.settled();
+    } finally {
+      turnStarts.dispose();
+    }
+
+    expect(started).toEqual(['s1', 'q2']);
+    expect(userTexts()).toEqual(['system', 's1', 's2q1', 'q2']);
+  });
+
+  it('keeps an already slotted steer in place when it is steered again', async () => {
+    loop.notify({
+      message: { role: 'user', content: [{ type: 'text', text: 'system' }], origin: { kind: 'system_trigger', name: 'test' } },
+    });
+    await untilModelRequest();
+    submit('q1');
+    submit('s1', { steer: true });
+    submit('s2', { steer: true });
+    await loop.steer(['s1']);
+    expect(queueIds()).toEqual(['s1', 's2', 'q1']);
+  });
+
+  it('steers a prompt that arrives while the turn finishes into that same turn', async () => {
+    const finishing = deferred();
+    const finishGate = deferred();
+    let armed = true;
+    loop.hooks.onDidFinishStep.register('test-hold-finish', async (_hookCtx, next) => {
+      if (armed) {
+        armed = false;
+        finishing.resolve();
+        await finishGate.promise;
+      }
+      await next();
+    });
+    const started: (string | undefined)[] = [];
+    const turnStarts = ctx.get(IEventBus).subscribe(TurnStarted, (event) => started.push(event.prompt));
+
+    submit('a');
+    await untilModelRequest();
+    heldRequests.shift()?.();
+    await finishing.promise;
+    expect(submit('s', { steer: true })).toBe('steer');
+    const steered = loop.promptHandle('s')!;
+    let steeredDone = false;
+    void steered.completion.then(() => {
+      steeredDone = true;
+    });
+    finishGate.resolve();
+    await untilModelRequest();
+    expect(steeredDone).toBe(false);
+    heldRequests.shift()?.();
+    await loop.settled();
+    turnStarts.dispose();
+
+    expect(started).toEqual(['a']);
+    expect(userTexts()).toEqual(['a', 's']);
+    await expect(steered.completion).resolves.toMatchObject({ promptId: 's', state: 'completed' });
+  });
+
+  it('places a steer behind the head whose submit hooks are running and steers it into that turn', async () => {
+    const gate = deferred();
+    loop.hooks.onBeforeSubmitPrompt.register('test-hold-gate', async (_hookCtx, next) => {
+      await gate.promise;
+      await next();
+    });
+    submit('a');
+    await vi.waitFor(() => expect(loop.snapshot().startingPromptId).toBe('a'));
+
+    expect(submit('s', { steer: true })).toBe('steer');
+    expect(queueIds()).toEqual(['a', 's']);
+
+    gate.resolve();
+    await vi.waitFor(() => expect(queueIds()).toEqual([]));
+    for (let round = 0; round < 20 && heldRequests.length > 0; round += 1) {
+      heldRequests.shift()?.();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    await loop.settled();
+    expect(userTexts()).toEqual(['a', 's']);
+  });
+
+  it('runs a queued compaction at the head instead of a turn, then continues with the queue', async () => {
+    const compaction = ctx.get(IAgentFullCompactionService);
+    const started: (string | undefined)[] = [];
+    const turnStarts = ctx.get(IEventBus).subscribe(TurnStarted, (event) => started.push(event.prompt));
+    const invalid = expect.objectContaining({ code: ErrorCodes.REQUEST_INVALID });
+
+    submit('a');
+    await untilModelRequest();
+    const compact = loop.enqueueCompaction('keep the plan');
+    submit('b');
+    expect(loop.snapshot().queue.map((entry) => [entry.meta?.promptId, entry.meta?.kind, entry.meta?.instruction])).toEqual([
+      [compact, 'compact', 'keep the plan'],
+      ['b', undefined, undefined],
+    ]);
+    await expect(loop.steer([compact])).rejects.toEqual(invalid);
+    loop.moveQueued('b', compact);
+    loop.moveQueued('b');
+    expect(queueIds()).toEqual([compact, 'b']);
+
+    try {
+      heldRequests.shift()?.();
+      await vi.waitFor(() => expect(compaction.compacting).not.toBeNull());
+      await untilModelRequest();
+      expect(loop.snapshot().startingPromptId).toBe(compact);
+      expect(started).toEqual(['a']);
+      expect(() => loop.cancel({ promptId: compact })).toThrow(notQueued);
+      expect(() => loop.moveQueued('b', compact)).toThrow(notQueued);
+
+      heldRequests.shift()?.();
+      await vi.waitFor(() => expect(started).toEqual(['a', 'b']));
+      expect(compaction.compacting).toBeNull();
+      expect(queueIds()).toEqual([]);
+      heldRequests.shift()?.();
+      await loop.settled();
+    } finally {
+      turnStarts.dispose();
+    }
+  });
+
+  it('settles once the last queued compaction is dropped', async () => {
+    const compaction = ctx.get(IAgentFullCompactionService);
+    submit('a');
+    await untilModelRequest();
+    loop.enqueueCompaction();
+    let settled = false;
+    void loop.settled().then(() => {
+      settled = true;
+    });
+
+    heldRequests.shift()?.();
+    await vi.waitFor(() => expect(compaction.compacting).not.toBeNull());
+    await untilModelRequest();
+    expect(settled).toBe(false);
+    heldRequests.shift()?.();
+    await vi.waitFor(() => expect(settled).toBe(true));
+    expect(queueIds()).toEqual([]);
+  });
+
+  it('stops a running queued compaction when the loop is cancelled', async () => {
+    const compaction = ctx.get(IAgentFullCompactionService);
+    submit('a');
+    await untilModelRequest();
+    loop.enqueueCompaction();
+    submit('b');
+
+    heldRequests.shift()?.();
+    await vi.waitFor(() => expect(compaction.compacting).not.toBeNull());
+    loop.cancel();
+    await vi.waitFor(() => expect(userTexts()).toEqual(['a', 'b']));
+    expect(compaction.compacting).toBeNull();
+    for (let round = 0; round < 20 && heldRequests.length > 0; round += 1) {
+      heldRequests.shift()?.();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    await loop.settled();
+  });
+
+  it('withdraws a queued compaction and moves on when a started one is cancelled', async () => {
+    const compaction = ctx.get(IAgentFullCompactionService);
+    submit('a');
+    await untilModelRequest();
+    const withdrawn = loop.enqueueCompaction();
+    expect(loop.cancel({ promptId: withdrawn })).toBe(true);
+    expect(queueIds()).toEqual([]);
+    loop.enqueueCompaction();
+    submit('b');
+
+    heldRequests.shift()?.();
+    await vi.waitFor(() => expect(compaction.compacting).not.toBeNull());
+    compaction.cancel();
+    await vi.waitFor(() => expect(userTexts()).toEqual(['a', 'b']));
+    expect(queueIds()).toEqual([]);
+    for (let round = 0; round < 20 && heldRequests.length > 0; round += 1) {
+      heldRequests.shift()?.();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    await loop.settled();
+  });
+
+  it('finishes a continued turn before the queued head starts, gating the head once', async () => {
+    let continued = false;
+    loop.hooks.onDidFinishStep.register('test-continue-once', async (_hookCtx, next) => {
+      if (continued) return next();
+      continued = true;
+      loop.notify({
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'continue' }],
+          origin: { kind: 'system_trigger', name: 'stop_hook' },
+        },
+      });
+    });
+    const hooked: string[] = [];
+    loop.hooks.onBeforeSubmitPrompt.register('test-record-gate', async (hookCtx, next) => {
+      const [part] = hookCtx.promptMessage.content;
+      if (part?.type === 'text') hooked.push(part.text);
+      await next();
+    });
+    const started: (string | undefined)[] = [];
+    const turnStarts = ctx.get(IEventBus).subscribe(TurnStarted, (event) => started.push(event.prompt));
+    submit('a');
+    await untilModelRequest();
+    const queues: string[] = [];
+    const subscription = loop.onDidChangeQueue(() =>
+      queues.push(JSON.stringify([queueIds(), loop.snapshot().startingPromptId])),
+    );
+    submit('b');
+    try {
+      for (let round = 0; round < 20 && (heldRequests.length > 0 || queueIds().length > 0); round += 1) {
+        heldRequests.shift()?.();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      await loop.settled();
+    } finally {
+      turnStarts.dispose();
+      subscription.dispose();
+    }
+
+    expect(started).toEqual(['a', 'b']);
+    expect(hooked).toEqual(['a', 'b']);
+    expect(queues).toEqual(['[["b"],null]', '[["b"],"b"]', '[[],null]']);
+    expect(userTexts()).toEqual(['a', 'continue', 'b']);
+  });
+
+  it.each([1, 2, 3, 4, 5])('keeps queue invariants under random operations (seed %i)', async (seed) => {
+    const random = seededRandom(seed);
+    const pick = <T,>(items: readonly T[]): T | undefined => items[Math.floor(random() * items.length)];
+    const queueKey = () => JSON.stringify([queueIds(), loop.snapshot().startingPromptId]);
+    const signalled: string[] = [queueKey()];
+    let visible = new Set(queueIds());
+    const departed = new Set<string | undefined>();
+    const reentered: (string | undefined)[] = [];
+    const subscription = loop.onDidChangeQueue(() => {
+      signalled.push(queueKey());
+      const current = new Set(queueIds());
+      for (const id of current) if (departed.has(id)) reentered.push(id);
+      for (const id of visible) if (!current.has(id)) departed.add(id);
+      visible = current;
+    });
+    const completions: Promise<unknown>[] = [];
+    const heldGates: (() => void)[] = [];
+    const hooked: string[] = [];
+    const gateHook = loop.hooks.onBeforeSubmitPrompt.register('test-random-gate', async (hookCtx, nextHook) => {
+      const [part] = hookCtx.promptMessage.content;
+      if (!hookCtx.isSteer && part?.type === 'text') hooked.push(part.text);
+      if (random() < 0.5) await new Promise<void>((resolve) => heldGates.push(resolve));
+      await nextHook();
+    });
+    const expectedOrder: string[] = [];
+    const startedOutOfOrder: string[] = [];
+    const turnStarts = ctx.get(IEventBus).subscribe(TurnStarted, (event) => {
+      const id = event.prompt;
+      if (id === undefined) return;
+      if (expectedOrder[0] !== id) startedOutOfOrder.push(`${id} started before ${String(expectedOrder[0])}`);
+      expectedOrder.splice(expectedOrder.indexOf(id), 1);
+    });
+    const release = () => (random() < 0.5 ? heldGates.shift() ?? heldRequests.shift() : heldRequests.shift() ?? heldGates.shift())?.();
+    let next = 0;
+
+    try {
+      for (let step = 0; step < 60; step += 1) {
+        const queued = queueIds().filter((id): id is string => id !== undefined);
+        const movable = queued.filter((id) => id !== loop.snapshot().startingPromptId);
+        const roll = random();
+        if (roll < 0.35) {
+          const id = `p${String(next++)}`;
+          const steer = random() < 0.4;
+          const active = loop.snapshot().activePromptId;
+          const acceptedAs = submit(id, { steerIfActive: steer });
+          completions.push(loop.promptHandle(id)!.completion);
+          if (acceptedAs !== 'steer') expectedOrder.push(id);
+          if (acceptedAs === 'queue') expect(queueIds()).toContain(id);
+          else expect(queueIds().slice(1)).not.toContain(id);
+          if (acceptedAs === 'steer') expect(active).toBeDefined();
+          if (!steer) expect(acceptedAs).not.toBe('steer');
+        } else if (roll < 0.55 && movable.length > 0) {
+          const id = pick(movable)!;
+          const before = random() < 0.3 ? undefined : pick(movable.filter((other) => other !== id));
+          const head = queued.filter((other) => !movable.includes(other));
+          const rest = movable.filter((other) => other !== id);
+          const index = before === undefined ? rest.length : rest.indexOf(before);
+          loop.moveQueued(id, before);
+          expectedOrder.splice(expectedOrder.indexOf(id), 1);
+          expectedOrder.splice(before === undefined ? expectedOrder.length : expectedOrder.indexOf(before), 0, id);
+          expect(queueIds()).toEqual([...head, ...rest.slice(0, index), id, ...rest.slice(index)]);
+        } else if (roll < 0.65 && queued.length > 0) {
+          const id = pick(queued)!;
+          loop.cancel({ promptId: id });
+          expectedOrder.splice(expectedOrder.indexOf(id), 1);
+          expect(queueIds()).not.toContain(id);
+        } else if (roll < 0.72) {
+          const starting = loop.snapshot().startingPromptId;
+          expect(() => loop.moveQueued(starting ?? 'missing')).toThrow(notQueued);
+        } else {
+          release();
+        }
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(new Set(queueIds()).size).toBe(queueIds().length);
+        expect(signalled.at(-1)).toBe(queueKey());
+        expect(startedOutOfOrder).toEqual([]);
+      }
+
+      for (
+        let round = 0;
+        round < 500 && (heldRequests.length > 0 || heldGates.length > 0 || queueIds().length > 0);
+        round += 1
+      ) {
+        release();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      await loop.settled();
+      await Promise.all(completions);
+      expect(queueIds()).toEqual([]);
+      expect(expectedOrder).toEqual([]);
+      expect(startedOutOfOrder).toEqual([]);
+      expect(signalled.at(-1)).toBe(queueKey());
+      for (let index = 1; index < signalled.length; index += 1) {
+        expect(signalled[index]).not.toBe(signalled[index - 1]);
+      }
+      expect(reentered).toEqual([]);
+      expect(new Set(hooked).size).toBe(hooked.length);
+    } finally {
+      turnStarts.dispose();
+      gateHook.dispose();
+      subscription.dispose();
+    }
+  });
+});
+
+function heldGenerate(hold: (release: () => void) => void): GenerateFn {
+  let responses = 0;
+  return requesterFromGenerateFn(async (_provider, _systemPrompt, _tools, _history, _callbacks, options) => {
+    await new Promise<void>((resolve, reject) => {
+      hold(resolve);
+      options?.signal?.addEventListener('abort', () => reject(options.signal?.reason as unknown), { once: true });
+    });
+    responses += 1;
+    return {
+      id: `response-${String(responses)}`,
+      message: { role: 'assistant', content: [{ type: 'text', text: 'done' }], toolCalls: [] },
+      usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+      finishReason: 'completed',
+      rawFinishReason: 'stop',
+    };
+  });
+}
+
+function seededRandom(seed: number): () => number {
+  let state = seed;
+  return () => {
+    state = (state * 1_103_515_245 + 12_345) % 2_147_483_648;
+    return state / 2_147_483_648;
+  };
+}
 
 function submitTurn(loop: IAgentLoopService, text: string): { readonly turn: Turn } {
   return submitPromptTurn(loop, {

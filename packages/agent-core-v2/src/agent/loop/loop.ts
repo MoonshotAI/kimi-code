@@ -1,5 +1,6 @@
 import { createDecorator } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
+import type { Event } from '#/_base/event';
 import { Error2, isError2, type Error2Options } from '#/_base/errors/errors';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { FinishReason } from '#human/llm-requester/finish-reason';
@@ -37,6 +38,8 @@ export interface LoopSnapshot {
   readonly activeTurnId?: number;
   readonly activePromptId?: string;
   readonly queue: readonly UserEntry[];
+  readonly engineAttached: boolean;
+  readonly startingPromptId?: string;
   readonly notificationCount: number;
   readonly paused: boolean;
   readonly hasPendingRequests: boolean;
@@ -130,11 +133,15 @@ export interface Turn {
 
 export interface LoopSubmitOptions {
   readonly steerIfActive?: boolean;
+  readonly steer?: boolean;
   readonly onMaterialize?: () => void;
 }
 
+export type PromptAcceptance = 'turn' | 'steer' | 'queue';
+
 export interface LoopSubmitResult {
   readonly id: string;
+  readonly acceptedAs: PromptAcceptance;
 }
 
 export interface LoopCancelTarget {
@@ -198,6 +205,11 @@ export interface PromptSubmitContext {
   block: boolean;
 }
 
+export interface QueuedCompactionContext {
+  readonly instruction?: string;
+  readonly signal: AbortSignal;
+}
+
 export interface LoopNotify {
   readonly message?: ContextMessage;
   readonly turnScoped?: boolean;
@@ -219,6 +231,10 @@ export interface IAgentLoopService {
   submit(input: UserEntry, options?: LoopSubmitOptions): LoopSubmitResult;
 
   steer(promptIds: readonly string[]): Promise<void>;
+
+  moveQueued(promptId: string, beforePromptId?: string): void;
+
+  readonly onDidChangeQueue: Event<void>;
 
   cancel(target?: LoopCancelTarget, reason?: unknown): boolean;
 
@@ -247,10 +263,13 @@ export interface IAgentLoopService {
     options?: LoopErrorHandlerRegistrationOptions,
   ): IDisposable;
 
+  enqueueCompaction(instruction?: string): string;
+
   readonly hooks: Hooks<{
     onWillBeginStep: BeforeStepContext;
     onDidFinishStep: AfterStepContext;
     onBeforeSubmitPrompt: PromptSubmitContext;
+    onRunQueuedCompaction: QueuedCompactionContext;
   }>;
 }
 
