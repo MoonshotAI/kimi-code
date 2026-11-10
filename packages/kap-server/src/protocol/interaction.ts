@@ -75,7 +75,6 @@ export const questionInteractionRespondSchema = z
     answers: z.record(z.string().min(1), questionAnswerSchema).optional(),
     dismissed: z.literal(true).optional(),
     method: questionAnswerMethodSchema.optional(),
-    note: z.string().optional(),
   })
   .refine((body) => (body.dismissed === true) !== (body.answers !== undefined), {
     message: 'provide exactly one of answers or dismissed',

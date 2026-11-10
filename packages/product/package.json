@@ -31,6 +31,9 @@
       "default": "./src/session-rating/node/index.ts"
     }
   },
+  "devDependencies": {
+    "@types/semver": "^7.7.0"
+  },
   "scripts": {
     "build": "tsdown",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -40,6 +43,7 @@
   "dependencies": {
     "@moonshot-ai/agent-core-v2": "workspace:^",
     "@moonshot-ai/kimi-code-oauth": "workspace:^",
+    "semver": "^7.7.4",
     "zod": "catalog:"
   }
 }
