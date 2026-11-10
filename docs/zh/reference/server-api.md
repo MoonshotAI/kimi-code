@@ -671,11 +671,11 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `workspace_id` | body | string | 未提供 `metadata.cwd` 时**必填**。已注册的工作区 id；会话创建于该工作区的根目录 |
 | `metadata` | body | object | 自定义元数据。`metadata.cwd` 为工作目录，未提供 `workspace_id` 时**必填**；两者同时提供时必须等于工作区根目录。其他键保存为会话的自定义元数据；保留键 `goal` 会被丢弃 |
 | `title` | body | string | 初始标题（至少 1 个字符）；否则会话无标题 |
-| `agent_config` | body | object | main agent 的部分配置，字段与 `POST /api/v1/sessions/{session_id}/profile` 相同，在返回会话之前应用。无法应用时不创建会话，直接返回错误。`tower_mode: true` 不能与 `goal_objective` 或 `goal_control` 同时出现（返回 `40001`），因为 Tower 模式与目标互斥 |
+| `agent_config` | body | object | main agent 的部分配置，字段与 `POST /api/v1/sessions/{session_id}/profile` 相同，在返回会话之前应用。无法应用时不创建会话，直接返回错误。`tower_mode: true` 会被拒绝（返回 `40001`）：进入 Tower 模式会改动仓库，创建失败时无法撤销，请在会话建好后通过 `POST /api/v1/sessions/{session_id}/profile` 开启 |
 
 成功时，`data` 为新会话的 [session 对象](#session-对象)。
 
-- `40001`：`workspace_id` 与 `metadata.cwd` 都未提供，`metadata.cwd` 与工作区根目录不一致，或 `agent_config` 把 `tower_mode: true` 与 `goal_objective` / `goal_control` 放在一起（`details` 会列出该字段）
+- `40001`：`workspace_id` 与 `metadata.cwd` 都未提供，`metadata.cwd` 与工作区根目录不一致，或 `agent_config` 设置了 `tower_mode: true`（`details` 会列出该字段）
 - `40409`：工作目录不存在或不是目录
 - `40410`：没有以该 `workspace_id` 注册的工作区
 - `40913`–`40918`、`40920`：`agent_config` 因目标相关错误无法应用

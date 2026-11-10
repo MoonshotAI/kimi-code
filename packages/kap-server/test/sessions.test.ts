@@ -938,14 +938,14 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(created.body.data.metadata).toMatchObject({ cwd, source: 'composer' });
   });
 
-  it('rejects tower_mode combined with goal settings before creating anything', async () => {
+  it('rejects enabling tower_mode before creating anything', async () => {
     const listed = async (): Promise<string[]> =>
       (await getJson<PageWire>('/api/v1/sessions')).body.data.items.map((session) => session.id);
     const before = await listed();
 
     const created = await postJson<SessionWire>('/api/v1/sessions', {
       metadata: { cwd: home as string },
-      agent_config: { tower_mode: true, goal_objective: 'ship the release' },
+      agent_config: { tower_mode: true, tower_base: 'release' },
     });
 
     expect(created.body.code).toBe(40001);
@@ -979,10 +979,10 @@ describe('server-v2 /api/v1/sessions', () => {
     try {
       const created = await postJson<SessionWire>('/api/v1/sessions', {
         metadata: { cwd },
-        agent_config: { tower_mode: true },
+        agent_config: { goal_control: 'pause' },
       });
 
-      expect(created.body.code).not.toBe(0);
+      expect(created.body.code).toBe(40914);
       expect(await listed()).toEqual(before);
       expect(announced.filter((type) => type.startsWith('event.session.'))).toEqual([]);
       const index = (server as RunningServer).core.accessor.get(ISessionIndexMirror);

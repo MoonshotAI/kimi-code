@@ -79,14 +79,10 @@ export const sessionCreateSchema = z
         path: ['environment_cwd'],
       });
     }
-    const agentConfig = value.agent_config;
-    if (
-      agentConfig?.tower_mode === true &&
-      (agentConfig.goal_objective !== undefined || agentConfig.goal_control !== undefined)
-    ) {
+    if (value.agent_config?.tower_mode === true) {
       ctx.addIssue({
         code: 'custom',
-        message: 'tower_mode cannot be combined with goal_objective or goal_control',
+        message: 'tower_mode cannot be enabled while creating a session; enable it through the session profile afterwards',
         path: ['agent_config', 'tower_mode'],
       });
     }
