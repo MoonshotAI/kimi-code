@@ -530,6 +530,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.TOWER_MODE_INVALID]: {},
+        ...agentConfigErrors,
         ...sessionConflictErrors,
       },
       description: 'Update session profile (title, metadata, agent_config)',

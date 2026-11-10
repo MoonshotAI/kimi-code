@@ -675,9 +675,10 @@ Creates a session and returns it. The target directory comes from `workspace_id`
 
 On success, `data` is [the session object](#the-session-object) of the new session.
 
-- `40001`: neither `workspace_id` nor `metadata.cwd` given, or `metadata.cwd` does not match the workspace root (`details` lists the field)
+- `40001`: neither `workspace_id` nor `metadata.cwd` given, `metadata.cwd` does not match the workspace root, or `agent_config` combines `tower_mode: true` with `goal_objective` / `goal_control` (`details` lists the field)
 - `40409`: the working directory does not exist or is not a directory
 - `40410`: no registered workspace with that `workspace_id`
+- `40913`–`40918`, `40920`: `agent_config` could not be applied because of a goal error
 
 #### `GET /api/v1/sessions`
 
