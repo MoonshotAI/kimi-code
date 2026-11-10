@@ -35,6 +35,7 @@ import {
   agentContextOf,
   IAgentScopeContext,
   makeAgentScopeContext,
+  replaceAgentMeta,
 } from '#/agent/scopeContext/scopeContext';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import {
@@ -272,8 +273,11 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       ),
       userInputId:
         agentId === 'main'
-          ? undefined
-          : (opts.userInputId ?? this.userInputIdOfAgent(parentAgentId)),
+          ? opts.userInputId
+          : 'userInputId' in opts
+            ? opts.userInputId
+            : this.userInputIdOfAgent(parentAgentId),
+      parentRequestId: agentId === 'main' ? undefined : opts.parentRequestId,
     };
     const scopeContext = makeAgentScopeContext({
       agentId,
@@ -463,6 +467,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       environmentCwd: sourceBinding.cwd,
       forkedFrom: source.id,
       labels: withSubagentProfile(opts?.labels, override?.profile ?? sourceData.profileName),
+      parentRequestId: opts?.parentRequestId,
     });
     const child = this.requireManaged(childContext).handle;
 
@@ -518,6 +523,23 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     const managed = this.roster.get(agentId);
     if (managed === undefined || managed.closing || !managed.active) return undefined;
     return managed.handle;
+  }
+
+  noteAgentAttribution(
+    agentId: string,
+    patch: { readonly userInputId?: string; readonly parentRequestId?: string },
+  ): void {
+    const scope = this.handleOf(agentId)?.accessor.get(IAgentScopeContext);
+    const current = scope?.meta;
+    if (scope === undefined || current === undefined) return;
+    const next: AgentMeta = {
+      ...current,
+      userInputId: patch.userInputId ?? current.userInputId,
+      parentRequestId: patch.parentRequestId ?? current.parentRequestId,
+    };
+    if (next.userInputId === current.userInputId && next.parentRequestId === current.parentRequestId) return;
+    replaceAgentMeta(scope, next);
+    void this.sessionMetadata.registerAgent(agentId, next);
   }
 
   private userInputIdOfAgent(agentId: string | undefined): string | undefined {

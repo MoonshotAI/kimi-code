@@ -656,6 +656,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
         try {
           const runRequest = async () => {
+            const snapshot = this.loopService.snapshot();
             const request = this.loopService.requester.start(
               {
                 messages,
@@ -666,6 +667,8 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
                   type: 'operation',
                   turnId: active.originTurnId,
                   requestKind: 'full_compaction',
+                  turnTrigger: snapshot.activeTurnTrigger,
+                  userInputId: snapshot.activeUserInputId,
                   logFields: { droppedCount },
                 },
               },

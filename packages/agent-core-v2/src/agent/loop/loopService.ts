@@ -44,6 +44,7 @@ import { materializePromptDaemonRefs } from '#/agent/media/promptMediaIntake';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IFileService } from '#/app/file/fileService';
 import { IPluginService } from '#/app/plugin/plugin';
@@ -176,6 +177,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     @IConfigService private readonly config: IConfigService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    @IAgentLifecycleService private readonly lifecycle: IAgentLifecycleService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentStateService private readonly states: IAgentStateService,
     @IWireService private readonly wire: IWireService,
@@ -560,6 +562,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         this.active === undefined
           ? undefined
           : userInputIdOf(this.active.prompt.origin, this.active.prompt.promptId),
+      activeTurnTrigger:
+        this.active === undefined ? undefined : turnTriggerOf(this.active.prompt.origin),
       queue,
       notificationCount: engineSnapshot?.notificationCount ?? 0,
       paused: engineSnapshot?.paused ?? false,
@@ -579,6 +583,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
             },
       activeRequestId: this.activeRequestTrace?.requestId,
     };
+  }
+
+  private rememberUserInput(prompt: ActivePrompt): void {
+    const userInputId = userInputIdOf(prompt.origin, prompt.promptId);
+    if (userInputId === undefined) return;
+    this.lifecycle.noteAgentAttribution(this.scopeContext.agentId, { userInputId });
   }
 
   private settlePromptLaunched(waiter: PromptWaiter, active: ActiveTurn): void {
@@ -1321,6 +1331,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       protocol: undefined,
     };
     this.active = active;
+    this.rememberUserInput(active.prompt);
     this.armTurnWatch(active);
     active.readyResolved = true;
     ready.resolve();

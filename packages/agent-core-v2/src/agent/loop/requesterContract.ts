@@ -30,6 +30,9 @@ export type AgentLLMRequestSource =
       readonly type: 'operation';
       readonly turnId?: number;
       readonly requestKind?: string;
+      readonly turnTrigger?: TurnTrigger;
+      readonly stepReason?: StepReason;
+      readonly userInputId?: string;
       readonly logFields?: AgentLLMRequestLogFields;
     };
 

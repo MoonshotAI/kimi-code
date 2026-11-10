@@ -702,6 +702,7 @@ export interface SessionStateSnapshot {
       readonly labels?: Readonly<Record<string, string>>;
       readonly swarmItem?: string;
       readonly userInputId?: string;
+      readonly parentRequestId?: string;
     }>>;
     readonly custom?: Record<string, unknown>;
     readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';

@@ -354,6 +354,11 @@ export class SubagentTool implements ISubagentTool {
 
     const target = this.agentLifecycle.handleOf(agentId);
     if (target === undefined) throw new Error(`Agent "${agentId}" does not exist`);
+    if (isResume) {
+      this.agentLifecycle.noteAgentAttribution(agentId, {
+        parentRequestId: requester.accessor.get(IAgentLoopService).snapshot().activeRequestId,
+      });
+    }
     const run = await this.subagents.run(
       target.accessor.get(IAgentScopeContext).agentContext,
       { kind: 'prompt', prompt: promptText },
@@ -432,6 +437,7 @@ export class SubagentTool implements ISubagentTool {
         labels: labelsFromAgentMeta(meta),
         forkedFrom: meta.forkedFrom,
         userInputId: meta.userInputId,
+        parentRequestId: meta.parentRequestId,
       },
       signal,
     );

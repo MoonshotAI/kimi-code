@@ -30,7 +30,7 @@ export type TurnTrigger =
   | 'shell_background'
   | 'other';
 
-export type StepReason = 'turn_start' | 'tool_results';
+export type StepReason = 'turn_start' | 'tool_results' | 'compact';
 
 export function agentRoleOf(agentId: string, meta: AgentMeta | undefined): AgentRole {
   if (agentId === MAIN_AGENT_ID) return 'main';
@@ -86,6 +86,7 @@ export function requestMetadataHeaders(metadata: {
   readonly turnTrigger?: TurnTrigger;
   readonly stepReason?: StepReason;
   readonly userInputId?: string;
+  readonly parentRequestId?: string;
 }): Record<string, string> {
   return {
     'X-Msh-Client-Metadata': JSON.stringify({
@@ -93,6 +94,7 @@ export function requestMetadataHeaders(metadata: {
       turn_trigger: metadata.turnTrigger,
       step_reason: metadata.stepReason,
       user_input_id: metadata.userInputId,
+      parent_request_id: metadata.parentRequestId,
     }).replaceAll(
       /[\u007F-\uFFFF]/g,
       (ch) => `\\u${ch.codePointAt(0)!.toString(16).padStart(4, '0')}`,

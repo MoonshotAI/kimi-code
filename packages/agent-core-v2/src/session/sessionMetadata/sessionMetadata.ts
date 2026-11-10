@@ -9,6 +9,7 @@ export interface AgentMeta {
   readonly labels?: Readonly<Record<string, string>>;
   readonly swarmItem?: string;
   readonly userInputId?: string;
+  readonly parentRequestId?: string;
 }
 
 export const SESSION_META_VERSION = 2;

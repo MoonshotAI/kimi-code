@@ -781,11 +781,14 @@ export class AgentLoopRequester implements LoopRequester {
     }
     const metadata = this.scopeContext.meta;
     const turn = source?.type === 'turn' ? source : undefined;
+    const operation = source?.type === 'operation' ? source : undefined;
+    const compact = operation?.requestKind === 'full_compaction';
     const headers = requestMetadataHeaders({
       agentRole: agentRoleOf(this.scopeContext.agentId, metadata),
-      turnTrigger: turn?.turnTrigger,
-      stepReason: turn?.stepReason,
-      userInputId: turn?.userInputId ?? metadata?.userInputId,
+      turnTrigger: turn?.turnTrigger ?? operation?.turnTrigger ?? (compact ? 'user' : undefined),
+      stepReason: turn?.stepReason ?? (compact ? 'compact' : operation?.stepReason),
+      userInputId: turn?.userInputId ?? operation?.userInputId ?? metadata?.userInputId,
+      parentRequestId: metadata?.parentRequestId,
     });
     return request.with({ endpoint: { headers } });
   }

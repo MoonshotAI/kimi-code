@@ -1864,6 +1864,47 @@ describe('AgentLifecycleService', () => {
       child.agentId,
       expect.objectContaining({ userInputId: 'msg_parent_1' }),
     );
+
+    const rebuilt = await svc.create({
+      labels: { parentAgentId: 'main' },
+      userInputId: undefined,
+    });
+    expect(svc.handleOf(rebuilt.agentId)?.accessor.get(IAgentScopeContext)?.meta?.userInputId).toBeUndefined();
+  });
+
+  it('stores an explicit parent request id and does not invent one', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'main' });
+
+    const plain = await svc.create({ labels: { parentAgentId: 'main' } });
+    expect(svc.handleOf(plain.agentId)?.accessor.get(IAgentScopeContext)?.meta?.parentRequestId).toBeUndefined();
+
+    const traced = await svc.create({
+      labels: { parentAgentId: 'main' },
+      parentRequestId: 'trace-step',
+    });
+    expect(svc.handleOf(traced.agentId)?.accessor.get(IAgentScopeContext)?.meta?.parentRequestId).toBe('trace-step');
+  });
+
+  it('stores a user input id passed in for the main agent', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+
+    await svc.create({ agentId: 'main', userInputId: 'msg_prev' });
+
+    expect(svc.handleOf('main')?.accessor.get(IAgentScopeContext)?.meta?.userInputId).toBe('msg_prev');
+  });
+
+  it('noteAgentAttribution updates the live meta', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'main' });
+
+    svc.noteAgentAttribution('main', { userInputId: 'msg_kept' });
+
+    expect(svc.handleOf('main')?.accessor.get(IAgentScopeContext)?.meta?.userInputId).toBe('msg_kept');
+    expect(registerAgent).toHaveBeenLastCalledWith(
+      'main',
+      expect.objectContaining({ userInputId: 'msg_kept' }),
+    );
   });
 
   it('cancelInteractionsForTurn and detachInteractionAgent stay within their session', () => {

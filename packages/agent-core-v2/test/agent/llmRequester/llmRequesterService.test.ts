@@ -417,6 +417,57 @@ describe('AgentLoopRequester request metadata', () => {
       user_input_id: '任务-1🚀',
     });
   });
+
+  it('marks compaction and keeps inherited attribution', () => {
+    const { service } = createService(
+      createRequester({ value: 0 }, undefined, [], undefined, { providerType: 'kimi' }),
+      {
+        metadata: { ...metadata, userInputId: 'msg_parent', parentRequestId: 'trace-parent' },
+      },
+    );
+
+    expect(
+      JSON.parse(
+        metadataHeader(service, { type: 'operation', requestKind: 'full_compaction' }) ?? '{}',
+      ),
+    ).toEqual({
+      agent_role: 'subagent',
+      turn_trigger: 'user',
+      step_reason: 'compact',
+      user_input_id: 'msg_parent',
+      parent_request_id: 'trace-parent',
+    });
+    expect(
+      JSON.parse(
+        metadataHeader(service, {
+          type: 'operation',
+          requestKind: 'full_compaction',
+          turnTrigger: 'subagent_task',
+        }) ?? '{}',
+      ),
+    ).toEqual({
+      agent_role: 'subagent',
+      turn_trigger: 'subagent_task',
+      step_reason: 'compact',
+      user_input_id: 'msg_parent',
+      parent_request_id: 'trace-parent',
+    });
+  });
+
+  it('attaches the parent request id from agent metadata', () => {
+    const { service } = createService(
+      createRequester({ value: 0 }, undefined, [], undefined, { providerType: 'kimi' }),
+      { metadata: { ...metadata, parentRequestId: 'trace-step' } },
+    );
+
+    expect(JSON.parse(metadataHeader(service, source) ?? '{}')).toEqual({
+      agent_role: 'subagent',
+      turn_trigger: 'user',
+      step_reason: 'turn_start',
+      user_input_id: 'msg_user',
+      parent_request_id: 'trace-step',
+    });
+  });
 });
 
 describe('AgentLoopRequester measured anchors', () => {

@@ -224,6 +224,9 @@ export class SessionSwarmService implements ISessionSwarmService {
     const profileName =
       child.accessor.get(IAgentProfileService).data().profileName ?? RESUMED_PROFILE_FALLBACK;
     if (!retryTurn) {
+      this.agentLifecycle.noteAgentAttribution(agentId, {
+        parentRequestId: caller.accessor.get(IAgentLoopService).snapshot().activeRequestId,
+      });
       const resumedModel = child.accessor.get(IAgentProfileService).data().modelAlias;
       emitAgentRunSpawned(caller, agentId, {
         profileName,
@@ -309,7 +312,13 @@ export class SessionSwarmService implements ISessionSwarmService {
   ): Promise<IAgentScopeHandle> {
     await createAgentAwaitingClose(
       this.agentLifecycle,
-      { agentId, labels: labelsFromAgentMeta(meta), forkedFrom: meta.forkedFrom },
+      {
+        agentId,
+        labels: labelsFromAgentMeta(meta),
+        forkedFrom: meta.forkedFrom,
+        userInputId: meta.userInputId,
+        parentRequestId: meta.parentRequestId,
+      },
       signal,
     );
     const rebuilt = this.agentLifecycle.handleOf(agentId);

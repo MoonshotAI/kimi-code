@@ -46,6 +46,10 @@ export function makeAgentScopeContext(input: {
   };
 }
 
+export function replaceAgentMeta(scope: IAgentScopeContext, meta: AgentMeta): void {
+  (scope as { meta?: AgentMeta }).meta = meta;
+}
+
 export function agentContextOfScope(scope: IAgentScopeContext): AgentContext {
   return scope.agentContext;
 }
