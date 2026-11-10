@@ -680,6 +680,19 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(got.body.data.title).toBe('renamed');
   });
 
+  it('still accepts profile updates that carry the never-applied profile fields', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home as string } });
+
+    const updated = await postJson<SessionWire>(`/api/v1/sessions/${created.body.data.id}/profile`, {
+      title: 'renamed',
+      agent_config: { system_prompt: 'be brief', tools: ['Read'], mcp_servers: ['docs'] },
+      permission_rules: [],
+    });
+
+    expect(updated.body.code).toBe(0);
+    expect(updated.body.data.title).toBe('renamed');
+  });
+
   it('returns title-unavailable when generation cannot run', async () => {
     const created = await postJson<SessionWire>('/api/v1/sessions', {
       metadata: { cwd: home as string },
@@ -909,6 +922,17 @@ describe('server-v2 /api/v1/sessions', () => {
     const state = readAgentState(await mainAgentOf(created.body.data.id), false);
     expect(state.plan_mode).toBe(true);
     expect(state.permission_mode).toBe('yolo');
+  });
+
+  it('does not create the main agent for an empty agent_config model', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+      agent_config: { model: '' },
+    });
+
+    expect(created.body.code).toBe(0);
+    const session = getLiveSessionById((server as RunningServer).core.accessor, created.body.data.id)!;
+    expect(session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)).toBeUndefined();
   });
 
   it('creates nothing and announces nothing when its agent_config cannot be applied', async () => {

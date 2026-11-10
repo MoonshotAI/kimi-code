@@ -266,7 +266,8 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
             ? await registry.createOrTouch(workDir)
             : ((await registry.touch(bucket.id)) ?? bucket);
         const { cwd: _cwd, goal: _goal, ...custom }: Record<string, unknown> = body.metadata ?? {};
-        const agentConfig = body.agent_config ?? {};
+        const { model, ...settings } = body.agent_config ?? {};
+        const agentConfig = model ? { ...settings, model } : settings;
         const handle = await core.accessor.get(ISessionManager).create({
           workspaceId: resolved.id,
           workDir,
