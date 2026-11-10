@@ -494,13 +494,32 @@ export class TranscriptService {
     const transcript = entry.store.getAgent(agentId);
     if (transcript === undefined) return;
     const turnOps: TranscriptOperation[] = [];
+    const replacements = new Map<string, TranscriptTurn>();
     for (const item of snapshot.items) {
       if (item.kind !== 'turn' || !ordinals.has(item.ordinal)) continue;
-      turnOps.push(...healTurnOps(item, transcript.getTurn(item.turnId)));
+      const live = transcript.getTurn(item.turnId);
+      if (live !== undefined && turnShapeDiverges(item, live)) {
+        replacements.set(item.turnId, healTurn(item, live));
+      }
+      turnOps.push(...healTurnOps(item, live));
     }
     if (turnOps.length === 0) return;
     const superseded = supersededColdAttachmentIds(snapshot, transcript);
-    const ops: TranscriptOperation[] = [
+    const ops: TranscriptOperation[] = [];
+    if (replacements.size > 0) {
+      const current = transcript.snapshot();
+      ops.push({
+        op: 'reset',
+        agentId,
+        snapshot: {
+          ...current,
+          items: current.items.map((item) =>
+            item.kind === 'turn' ? replacements.get(item.turnId) ?? item : item,
+          ),
+        },
+      });
+    }
+    ops.push(
       ...snapshot.attachments
         .filter((attachment) => !superseded.has(attachment.attachmentId))
         .map((attachment) => ({
@@ -508,7 +527,7 @@ export class TranscriptService {
           attachment,
         })),
       ...turnOps,
-    ];
+    );
     transcript.apply(ops);
     this.dispatchOps(sessionId, { agentId, ops });
   }
@@ -798,35 +817,71 @@ function supersededColdAttachmentIds(
   return superseded;
 }
 
+function turnShapeDiverges(snapshotTurn: TranscriptTurn, liveTurn: TranscriptTurn): boolean {
+  for (const liveStep of liveTurn.steps) {
+    const snapshotStep = snapshotTurn.steps.find((step) => step.stepId === liveStep.stepId);
+    if (snapshotStep === undefined) return true;
+    for (const liveFrame of liveStep.frames) {
+      if (!snapshotStep.frames.some((frame) => frame.frameId === liveFrame.frameId)) return true;
+    }
+  }
+  return false;
+}
+
+function healTurn(snapshotTurn: TranscriptTurn, liveTurn: TranscriptTurn): TranscriptTurn {
+  const { steps, ...header } = snapshotTurn;
+  return {
+    ...header,
+    state: liveTurn.state,
+    triggerPromptId: liveTurn.triggerPromptId ?? header.triggerPromptId,
+    prompt: liveTurn.prompt ?? header.prompt,
+    attachmentIds: liveTurn.attachmentIds ?? header.attachmentIds,
+    startedAt: liveTurn.startedAt ?? header.startedAt,
+    endedAt: liveTurn.endedAt ?? header.endedAt,
+    steps: steps.map((step) => {
+      const liveStep = liveTurn.steps.find((entry) => entry.stepId === step.stepId);
+      if (liveStep === undefined) return step;
+      const frames = step.frames.flatMap((frame) => {
+        const liveFrame = liveStep.frames.find((entry) => entry.frameId === frame.frameId);
+        if (frame.kind === 'tool') {
+          const liveTool = liveFrame?.kind === 'tool' ? liveFrame : undefined;
+          const liveHasOutcome =
+            liveTool !== undefined && (liveTool.output !== undefined || liveTool.error !== undefined);
+          const snapshotHasOutcome = frame.output !== undefined || frame.error !== undefined;
+          if (liveTool !== undefined && (liveHasOutcome || !snapshotHasOutcome)) return [liveTool];
+          if (liveTool === undefined) return [frame];
+          return [{
+            ...frame,
+            display: liveTool.display ?? frame.display,
+            agentRefs: liveTool.agentRefs ?? frame.agentRefs,
+            approvalId: liveTool.approvalId ?? frame.approvalId,
+          }];
+        }
+        if (frame.kind !== 'text' && frame.kind !== 'thinking') {
+          return liveFrame === undefined ? [] : [liveFrame];
+        }
+        if (
+          liveFrame !== undefined &&
+          liveFrame.kind === frame.kind &&
+          (liveFrame.kind === 'text' || liveFrame.kind === 'thinking') &&
+          liveFrame.text.length >= frame.text.length
+        ) {
+          return [liveFrame];
+        }
+        return [frame];
+      });
+      return { ...liveStep, frames };
+    }),
+  };
+}
+
 export function healTurnOps(
   snapshotTurn: TranscriptTurn,
   liveTurn: TranscriptTurn | undefined,
 ): TranscriptOperation[] {
-  const { steps, ...header } = snapshotTurn;
-  const ops: TranscriptOperation[] = [];
-  if (liveTurn === undefined) {
-    ops.push({ op: 'turn.upsert', turn: header });
-    for (const step of steps) {
-      const { frames, ...stepHeader } = step;
-      ops.push({ op: 'step.upsert', turnId: snapshotTurn.turnId, step: stepHeader });
-      for (const frame of frames) {
-        ops.push({ op: 'frame.upsert', turnId: snapshotTurn.turnId, stepId: step.stepId, frame });
-      }
-    }
-    return ops;
-  }
-  ops.push({
-    op: 'turn.upsert',
-    turn: {
-      ...header,
-      state: liveTurn.state,
-      triggerPromptId: liveTurn.triggerPromptId ?? header.triggerPromptId,
-      prompt: liveTurn.prompt ?? header.prompt,
-      attachmentIds: liveTurn.attachmentIds ?? header.attachmentIds,
-      startedAt: liveTurn.startedAt ?? header.startedAt,
-      endedAt: liveTurn.endedAt ?? header.endedAt,
-    },
-  });
+  if (liveTurn === undefined) return snapshotTurnOps(snapshotTurn);
+  const { steps, ...header } = healTurn(snapshotTurn, liveTurn);
+  const ops: TranscriptOperation[] = [{ op: 'turn.upsert', turn: header }];
   for (const step of steps) {
     const liveStep = liveTurn.steps.find((entry) => entry.stepId === step.stepId);
     const { frames, ...stepHeader } = step;
@@ -839,37 +894,7 @@ export function healTurnOps(
     }
     for (const frame of frames) {
       const liveFrame = liveStep.frames.find((entry) => entry.frameId === frame.frameId);
-      if (frame.kind === 'tool') {
-        const liveTool = liveFrame?.kind === 'tool' ? liveFrame : undefined;
-        const liveHasOutcome =
-          liveTool !== undefined && (liveTool.output !== undefined || liveTool.error !== undefined);
-        const snapshotHasOutcome = frame.output !== undefined || frame.error !== undefined;
-        if (liveTool !== undefined && (liveHasOutcome || !snapshotHasOutcome)) continue;
-        ops.push({
-          op: 'frame.upsert',
-          turnId: snapshotTurn.turnId,
-          stepId: step.stepId,
-          frame:
-            liveTool === undefined
-              ? frame
-              : {
-                  ...frame,
-                  display: liveTool.display ?? frame.display,
-                  agentRefs: liveTool.agentRefs ?? frame.agentRefs,
-                  approvalId: liveTool.approvalId ?? frame.approvalId,
-                },
-        });
-        continue;
-      }
-      if (frame.kind !== 'text' && frame.kind !== 'thinking') continue;
-      if (
-        liveFrame !== undefined &&
-        liveFrame.kind === frame.kind &&
-        (liveFrame.kind === 'text' || liveFrame.kind === 'thinking') &&
-        liveFrame.text.length >= frame.text.length
-      ) {
-        continue;
-      }
+      if (frame === liveFrame) continue;
       ops.push({ op: 'frame.upsert', turnId: snapshotTurn.turnId, stepId: step.stepId, frame });
     }
   }
