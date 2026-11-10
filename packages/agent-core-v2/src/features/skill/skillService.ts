@@ -156,10 +156,7 @@ export class AgentSkillService implements IAgentSkillService {
       void this.recordActivation(activation.origin);
     }
     const status = this.loop.snapshot();
-    const steerable =
-      input.steerIfActive === true &&
-      status.state === 'running' &&
-      status.activePromptId !== undefined;
+    const steerable = input.steerIfActive === true && status.activeTurnId !== undefined;
     const { id } = this.loop.submit(
       {
         message: {
