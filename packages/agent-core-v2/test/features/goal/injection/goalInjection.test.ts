@@ -221,18 +221,12 @@ describe('GoalInjection content', () => {
     expect(text).toContain('SetGoalBudget');
   });
 
-  it('omits SetGoalBudget guidance when the tool is disabled', async () => {
-    ctx.get(IAgentProfileService).update({ activeToolNames: ['UpdateGoal'] });
-    const text = (await readGoalReminder(async (goals) => {
-      await goals.createGoal({ objective: 'work for up to 20 turns' });
-    }))!;
-    expect(text).not.toContain('SetGoalBudget');
-    expect(text).toContain('UpdateGoal');
-  });
-
   it('rejects goal creation and resume when UpdateGoal is disabled but keeps cancel available', async () => {
     const profile = ctx.get(IAgentProfileService);
     profile.update({ activeToolNames: [] });
+    await vi.waitFor(() => {
+      expect(ctx.get(IAgentToolPolicyService).isToolActive('UpdateGoal')).toBe(false);
+    });
     await expect(goals.createGoal({ objective: 'work' })).rejects.toThrow('Goal mode requires the UpdateGoal tool');
 
     profile.update({ activeToolNames: ['UpdateGoal', 'SetGoalBudget'] });
@@ -242,6 +236,9 @@ describe('GoalInjection content', () => {
     const created = await goals.createGoal({ objective: 'work' });
     await goals.pauseGoal();
     profile.update({ activeToolNames: [] });
+    await vi.waitFor(() => {
+      expect(ctx.get(IAgentToolPolicyService).isToolActive('UpdateGoal')).toBe(false);
+    });
     await expect(goals.resumeGoal({ continueIfPaused: true })).rejects.toThrow('Goal mode requires the UpdateGoal tool');
     await expect(goals.cancelGoal()).resolves.toMatchObject({ goalId: created.goalId, status: 'paused' });
     expect(goals.getGoal().goal).toBeNull();

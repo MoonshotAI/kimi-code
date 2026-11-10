@@ -23,6 +23,8 @@ import {
   IAgentScopeContext,
   IAgentTaskService,
   IAgentTodoService,
+  IAgentToolPolicyService,
+  IAgentTowerService,
   IEventBus,
   IEventService,
   IModelCatalog,
@@ -1918,6 +1920,28 @@ describe('SessionEventBroadcaster', () => {
       ]);
       expect(JSON.parse(JSON.stringify(frames[2]))).not.toHaveProperty('goal');
       expect(stateFramesOf(offView)).toEqual([]);
+    });
+
+    it('reports current mode tool availability in the initial agent frame', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      main.set(IAgentToolPolicyService, {
+        isToolActive: (name: string) => name !== 'AgentSwarm',
+      });
+      main.set(IAgentTowerService, { isActive: false, toolsAvailable: true });
+      sessions.set('s1', lc);
+      bc = makeBroadcasterForAgents();
+
+      const view = collectingTarget();
+      await bc.subscribe('s1', view.target, ['main']);
+
+      expect(stateFramesOf(view)).toContainEqual(expect.objectContaining({
+        type: 'agent',
+        plan_mode_available: true,
+        swarm_mode_available: false,
+        tower_mode_available: true,
+        goal_mode_available: true,
+      }));
     });
 
     it('pushes todo, goal and permission changes and stays quiet when nothing changed', async () => {

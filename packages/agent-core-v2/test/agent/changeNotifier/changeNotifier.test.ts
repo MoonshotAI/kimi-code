@@ -227,7 +227,6 @@ function createHarness(options: {
       );
       reg.defineInstance(ISessionToolPolicy, {
         _serviceBrand: undefined,
-        defaultTools: () => undefined,
         disabledTools: () => sessionDisabledTools.value,
       } as unknown as ISessionToolPolicy);
       reg.defineInstance(ISessionToolPolicyGate, {

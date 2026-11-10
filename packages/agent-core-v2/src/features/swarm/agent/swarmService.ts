@@ -79,7 +79,7 @@ export class AgentSwarmService extends Service implements IAgentSwarmService {
     if (!this.toolPolicy.isToolActive('AgentSwarm')) {
       throw new Error2(
         ErrorCodes.VALIDATION_FAILED,
-        'Swarm mode requires the AgentSwarm tool; enable it for new sessions before entering swarm mode',
+        'Swarm mode requires the AgentSwarm tool; enable it before entering swarm mode',
       );
     }
     void this.dispatcher.dispatch(new SwarmModeEnter({ agentId: this.agentCtx.agentId, trigger }));

@@ -47,7 +47,7 @@ export function towerEnterFailureMessage(failure: TowerEnterFailure): string {
     case 'feature-not-assembled':
       return 'the tower feature is not assembled in this process; a restart is required';
     case 'tools-disabled':
-      return 'tower mode requires the complete Tower tool set; enable all Tower tools for new sessions before entering tower mode';
+      return 'tower mode requires the complete Tower tool set; enable all Tower tools before entering tower mode';
     case 'owned-by-live-session': {
       const owner =
         failure.ownerTitle === undefined

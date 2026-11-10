@@ -64,6 +64,7 @@ import type {
   ProfileUpdateData,
 } from './profile';
 import { IAgentProfileService, ProfileError, ProfileErrors } from './profile';
+import { TOOLS_SECTION, type ToolsConfig } from '#/agent/toolPolicy/configSection';
 import { isToolActiveComposed, findInactiveToolPatterns, literalToolNames, type InactiveToolPattern } from '#/agent/toolPolicy/evaluate';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { ISessionNotify } from '#/features/notify/sessionNotify';
@@ -200,6 +201,13 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     this._register(
       this.catalog.onDidChange(() => {
         void this.refreshBoundSubagentAllowlist().catch(() => {});
+      }),
+    );
+    this._register(
+      this.config.onDidSectionChange(({ domain }) => {
+        if (domain === TOOLS_SECTION) {
+          this.publishToolPatternWarnings();
+        }
       }),
     );
     this._register(
@@ -840,7 +848,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         },
       );
     }
-    const global = this.sessionToolPolicy.defaultTools();
+    const global = this.config.get<ToolsConfig>(TOOLS_SECTION);
     checks.push(
       { context: 'the global [tools] config', field: 'enabled', patterns: global?.enabled },
       { context: 'the global [tools] config', field: 'disabled', patterns: global?.disabled },
@@ -933,7 +941,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       {
         workspaceDisabledTools: this.toolPolicyGate.disabledTools,
         profile,
-        global: this.sessionToolPolicy.defaultTools(),
+        global: this.config.get<ToolsConfig>(TOOLS_SECTION),
         sessionDisabledTools: this.sessionToolPolicy.disabledTools(),
       },
       name,

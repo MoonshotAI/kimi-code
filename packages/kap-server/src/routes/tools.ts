@@ -6,6 +6,7 @@ import {
   IAgentToolPolicyService,
   getLiveSessionById,
   AgentToolContribution,
+  USER_CONFIGURABLE_MEDIA_TOOLS,
   resumeSessionById,
   Error2,
   type ISessionScopeHandle,
@@ -72,13 +73,14 @@ export function registerToolsRoutes(app: ToolsRouteHost, core: Scope): void {
       operationId: 'listToolCatalog',
     },
     (req, reply) => {
-      const tools = core.instantiation.createInstance<ToolCatalog>(new SyncDescriptor(ToolCatalog)).contributions.items
+      const entries = core.instantiation.createInstance<ToolCatalog>(new SyncDescriptor(ToolCatalog)).contributions.items
         .filter((contribution) => contribution.options.userConfigurable === true)
         .map((contribution) => ({
           name: contribution.options.name,
           source: contribution.options.source ?? 'builtin',
         }))
-        .concat({ name: 'ReadMediaFile', source: 'builtin' })
+        .concat(...USER_CONFIGURABLE_MEDIA_TOOLS);
+      const tools = [...new Map(entries.map((tool) => [tool.name, tool])).values()]
         .toSorted((left, right) => left.name.localeCompare(right.name));
       reply.send(okEnvelope({ tools }, req.id));
     },

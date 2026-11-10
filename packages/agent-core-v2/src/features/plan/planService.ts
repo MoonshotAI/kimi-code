@@ -171,7 +171,7 @@ export class AgentPlanService extends Service implements IAgentPlanService {
     if (!this.toolPolicy.isToolActive('ExitPlanMode')) {
       throw new Error2(
         ErrorCodes.SESSION_PLAN_MODE_INVALID,
-        'Plan mode requires the ExitPlanMode tool; enable it for new sessions before entering plan mode',
+        'Plan mode requires the ExitPlanMode tool; enable it before entering plan mode',
       );
     }
 

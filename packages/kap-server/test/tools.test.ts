@@ -154,6 +154,7 @@ describe('server-v2 /api/v1 tools + mcp', () => {
       expect(tools).toContainEqual({ name: 'ReadMediaFile', source: 'builtin' });
       expect(tools).toContainEqual({ name: 'TowerInit', source: 'builtin' });
       expect(tools).toContainEqual({ name: 'TowerTeardown', source: 'builtin' });
+      expect(new Set(tools.map((tool) => tool.name)).size).toBe(tools.length);
       expect(tools.some((tool) => tool.name === 'select_tools')).toBe(false);
     });
   });
@@ -222,34 +223,37 @@ describe('server-v2 /api/v1 tools + mcp', () => {
       expect(tools.find((t) => t.name === 'Read')).toMatchObject({ active: true });
     });
 
-    it('keeps an existing session on its default snapshot and applies new defaults only to new sessions', async () => {
-      const existingId = await createSession();
-      await ensureMainAgent(existingId);
-      await postJson('/api/v1/config', { tools: { disabled: ['Bash'] } });
+    it('applies global config changes to existing agents, subagents, and new sessions', async () => {
+      try {
+        const existingId = await createSession();
+        await ensureMainAgent(existingId);
+        await postJson('/api/v1/config', { tools: { disabled: ['Bash'] } });
 
-      const existing = await getJson<{ tools: ToolWire[] }>(
-        `/api/v1/tools?session_id=${existingId}`,
-      );
-      expect(listToolsResponseSchema.parse(existing.body.data).tools.find((tool) => tool.name === 'Bash'))
-        .toMatchObject({ active: true });
+        const existing = await getJson<{ tools: ToolWire[] }>(
+          `/api/v1/tools?session_id=${existingId}`,
+        );
+        expect(listToolsResponseSchema.parse(existing.body.data).tools.find((tool) => tool.name === 'Bash'))
+          .toMatchObject({ active: false });
 
-      const existingSession = getLiveSessionById(server!.core.accessor, existingId);
-      if (existingSession === undefined) throw new Error(`session ${existingId} not found`);
-      await existingSession.accessor.get(IAgentLifecycleService).create({});
-      const child = existingSession.accessor.get(IAgentLifecycleService).list().at(-1);
-      const childPolicy = existingSession.accessor.get(IAgentLifecycleService)
-        .handleOf(child!.agentId)!
-        .accessor.get(IAgentToolPolicyService);
-      expect(childPolicy.isToolActive('Bash')).toBe(true);
+        const existingSession = getLiveSessionById(server!.core.accessor, existingId);
+        if (existingSession === undefined) throw new Error(`session ${existingId} not found`);
+        await existingSession.accessor.get(IAgentLifecycleService).create({});
+        const child = existingSession.accessor.get(IAgentLifecycleService).list().at(-1);
+        const childPolicy = existingSession.accessor.get(IAgentLifecycleService)
+          .handleOf(child!.agentId)!
+          .accessor.get(IAgentToolPolicyService);
+        expect(childPolicy.isToolActive('Bash')).toBe(false);
 
-      const createdId = await createSession();
-      await ensureMainAgent(createdId);
-      const created = await getJson<{ tools: ToolWire[] }>(
-        `/api/v1/tools?session_id=${createdId}`,
-      );
-      expect(listToolsResponseSchema.parse(created.body.data).tools.find((tool) => tool.name === 'Bash'))
-        .toMatchObject({ active: false });
-      await postJson('/api/v1/config', { tools: { disabled: [] } });
+        const createdId = await createSession();
+        await ensureMainAgent(createdId);
+        const created = await getJson<{ tools: ToolWire[] }>(
+          `/api/v1/tools?session_id=${createdId}`,
+        );
+        expect(listToolsResponseSchema.parse(created.body.data).tools.find((tool) => tool.name === 'Bash'))
+          .toMatchObject({ active: false });
+      } finally {
+        await postJson('/api/v1/config', { tools: { disabled: [] } });
+      }
     });
 
     it('rejects an empty session_id with 40001', async () => {

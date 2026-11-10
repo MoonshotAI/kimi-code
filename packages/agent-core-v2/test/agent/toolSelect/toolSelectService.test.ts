@@ -1944,23 +1944,6 @@ describe('AgentToolSelectService loadable-tools announcements', () => {
     expect(first).not.toContain(MCP_ALPHA);
   });
 
-  it('does not announce restore-time removal of tools excluded by the session profile', async () => {
-    const h = createHarness();
-    registerUser(h, new EchoTool('TowerInit'), 'deferred');
-    registerUser(h, new EchoTool('TowerSpawn'), 'deferred');
-    await h.sut.prepareForRequest();
-    activeToolNames = new Set(['TowerInit']);
-    expect(await announce(h)).toContain('<tools_added>\nTowerInit\n</tools_added>');
-    const persisted = JSON.stringify(h.ix.get(IAgentStateService).get(toolSelectKey));
-
-    const restored = createHarness();
-    registerUser(restored, new EchoTool('TowerInit'), 'deferred');
-    restored.ix.get(IAgentStateService).set(toolSelectKey, JSON.parse(persisted));
-    restored.contextMemory.history.push(...structuredClone(h.contextMemory.history));
-
-    expect(await announce(restored, 2)).toBeUndefined();
-  });
-
   it('stays silent while the gate is closed', async () => {
     flagEnabled = false;
     const h = createHarness();

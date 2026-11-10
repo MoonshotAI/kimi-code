@@ -286,7 +286,7 @@ function assertGoalDriverAvailable(context: GoalOperationContext): void {
   if (context.runtime.get(IAgentToolPolicyService).isToolActive('UpdateGoal')) return;
   throw new Error2(
     ErrorCodes.VALIDATION_FAILED,
-    'Goal mode requires the UpdateGoal tool; enable it for new sessions before creating or resuming a goal',
+    'Goal mode requires the UpdateGoal tool; enable it before creating or resuming a goal',
   );
 }
 
@@ -759,10 +759,6 @@ function isWaitForAvailable(context: GoalOperationContext): boolean {
   );
 }
 
-function isSetGoalBudgetAvailable(context: GoalOperationContext): boolean {
-  return context.runtime.get(IAgentToolPolicyService).isToolActive('SetGoalBudget');
-}
-
 function launchContinuationTurn(context: GoalOperationContext, goalId: string, stepCapped = false): void {
   if (!isActiveGoal(context, goalId)) return;
   if (context.effects.pendingContinuation !== undefined) return;
@@ -1168,7 +1164,6 @@ function createGoalEffectHandlers(runtime: AgentActorContext<GoalRuntimeState>) 
     injection: {
       getGoal: () => getGoal(context).goal,
       isWaitForEnabled: () => isWaitForAvailable(context),
-      isSetGoalBudgetEnabled: () => isSetGoalBudgetAvailable(context),
     },
     normalize: () => { normalizeAfterReplay(context); },
     closing: (agent: AgentContext) => {

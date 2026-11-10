@@ -547,7 +547,6 @@ describe('SessionSubagentScopeCacheService', () => {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
       onDidChange: Event.None,
-      defaultTools: () => undefined,
       disabledTools: () => [],
       setDisabledTools: () => Promise.resolve(),
     } as unknown as ISessionToolPolicy);
