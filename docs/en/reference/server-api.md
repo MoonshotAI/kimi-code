@@ -417,13 +417,13 @@ On success, `data` is the full updated config in the same shape as `GET /api/v1/
 
 #### `POST /api/v1/client_configs`
 
-Fetches a named client configuration that the Kimi Code service controls remotely — which model or thinking-effort switches ask the user to confirm, and the client upgrade policy. The server fetches it from the Kimi Code service of the account's region, or from `KIMI_CODE_BASE_URL` when that is set, and checks it against the shape it expects for that name.
+Fetches a named client configuration that the Kimi Code service controls remotely — which model or thinking-effort switches ask the user to confirm, and the client upgrade policy. The server fetches it from the Kimi Code service of the account's region, or from `KIMI_CODE_BASE_URL` when that is set, and normalizes it to the shape that name expects.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `name` | body | string | **Required.** `model_switch_confirm`, `effort_switch_confirm`, or `client_upgrade_policy` |
 
-On success, `data` is `{ name, config }`. `config` is `null` for any other name, when the fetch fails, or when the fetched value does not have the expected shape, so the client falls back to its built-in behavior.
+On success, `data` is `{ name, config }`. `config` is `null` for any other name or when the fetch fails, so the client falls back to its built-in behavior. A fetched value never turns into `null`: fields that are missing or malformed take their off defaults, so a malformed `model_switch_confirm`, for example, comes back as `{ enable: false, rules: [] }`.
 
 ### Models and providers
 

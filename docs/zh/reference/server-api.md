@@ -417,13 +417,13 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 #### `POST /api/v1/client_configs`
 
-读取由 Kimi Code 服务远程控制的指定客户端配置——哪些模型或思考强度的切换需要用户确认，以及客户端的升级策略。服务端从账号所在区域的 Kimi Code 服务读取（设置了 `KIMI_CODE_BASE_URL` 时改用该地址），并按该名称预期的结构校验。
+读取由 Kimi Code 服务远程控制的指定客户端配置——哪些模型或思考强度的切换需要用户确认，以及客户端的升级策略。服务端从账号所在区域的 Kimi Code 服务读取（设置了 `KIMI_CODE_BASE_URL` 时改用该地址），并规范化成该名称预期的结构。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `name` | body | string | **必填。** `model_switch_confirm`、`effort_switch_confirm` 或 `client_upgrade_policy` |
 
-成功时，`data` 为 `{ name, config }`。名称不在上述范围内、读取失败或读到的值结构不符时，`config` 为 `null`，客户端回退到内置行为。
+成功时，`data` 为 `{ name, config }`。名称不在上述范围内或读取失败时，`config` 为 `null`，客户端回退到内置行为。读到的值不会变成 `null`：缺失或格式不对的字段取关闭状态的默认值，例如格式不对的 `model_switch_confirm` 会返回 `{ enable: false, rules: [] }`。
 
 ### 模型与供应商
 
