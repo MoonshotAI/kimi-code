@@ -47,10 +47,7 @@ export class AgentPermissionGate extends Service implements IAgentPermissionGate
   }
 
   private async adjudicate(event: BeforeToolExecuteEvent): Promise<void> {
-    const evaluation = await this.policyService.evaluate(
-      event,
-      this.reviewer?.evaluateOptions?.(),
-    );
+    const evaluation = await this.evaluatePolicy(event);
     if (evaluation === undefined) return;
     const deferredReview = this.reviewer?.review(event, evaluation);
     if (deferredReview !== undefined) {
@@ -82,6 +79,24 @@ export class AgentPermissionGate extends Service implements IAgentPermissionGate
     const resolved = await this.toolApproval.resolvePermissionResolution(result, event, policyName);
     if (resolved?.veto !== undefined) {
       event.veto(resolved.veto);
+    }
+  }
+
+  private async evaluatePolicy(
+    event: BeforeToolExecuteEvent,
+  ): Promise<PermissionPolicyEvaluation | undefined> {
+    for (;;) {
+      const mode = this.modeService.mode;
+      const options = this.reviewer?.evaluateOptions?.();
+      const evaluation = await this.policyService.evaluate(event, options);
+      const nextOptions = this.reviewer?.evaluateOptions?.();
+      if (
+        this.modeService.mode === mode &&
+        nextOptions?.includeUnderlying === options?.includeUnderlying &&
+        nextOptions?.skipDangerousCommand === options?.skipDangerousCommand
+      ) {
+        return evaluation;
+      }
     }
   }
 

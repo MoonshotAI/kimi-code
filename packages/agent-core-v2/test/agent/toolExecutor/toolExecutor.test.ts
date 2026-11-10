@@ -235,8 +235,6 @@ function installAutoReview(
   permissions.set(IAgentPermissionPolicyService, new AgentPermissionPolicyService(
     permissions,
     permissions.get(IBootstrapService),
-    permissions.get(IFlagService),
-    permissions.get(IAgentPermissionModeService),
   ));
   const gate = new AgentPermissionGate(
     permissions.get(IAgentPermissionModeService),

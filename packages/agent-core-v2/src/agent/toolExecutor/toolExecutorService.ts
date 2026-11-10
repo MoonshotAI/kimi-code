@@ -369,7 +369,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     options: ToolExecutorExecuteOptions,
   ): OpenedToolCall | undefined {
     if (call.kind === 'rejected') return undefined;
-    const execution = Promise.resolve(call.tool.resolveExecution(call.args));
+    const execution = Promise.resolve().then(() => call.tool.resolveExecution(call.args));
     const event = execution.then((resolved) => {
       if (options.signal.aborted || resolved.isError === true) return undefined;
       return this.beforeExecuteEmitter.beginBeforeExecute(
