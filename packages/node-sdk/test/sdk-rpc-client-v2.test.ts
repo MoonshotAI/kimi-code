@@ -1781,13 +1781,25 @@ key = "${titleOAuthRef.key}"
     await writeFile(join(workDir, 'src', 'app.ts'), 'app');
     await writeFile(join(workDir, 'src', 'index.ts'), 'index');
     await writeFile(join(workDir, 'README.md'), 'readme');
+    await writeFile(join(workDir, '.gitignore'), 'ignored-app.ts\n');
+    await writeFile(join(workDir, 'ignored-app.ts'), 'ignored');
     try {
       const matched = await harness.suggestFiles(workDir, { query: 'app', limit: 20 });
       expect(matched?.items).toContainEqual(
         expect.objectContaining({ kind: 'file', path: 'src/app.ts', name: 'app.ts' }),
       );
+      expect(matched?.items.some((item) => item.path === 'ignored-app.ts')).toBe(false);
       const appItem = matched?.items.find((item) => item.name === 'app.ts');
       expect(appItem?.matchPositions.length).toBeGreaterThan(0);
+
+      const withIgnored = await harness.suggestFiles(workDir, {
+        query: 'app',
+        limit: 20,
+        followGitignore: false,
+      });
+      const paths = withIgnored?.items.map((item) => item.path) ?? [];
+      expect(paths).toContain('ignored-app.ts');
+      expect(paths.indexOf('src/app.ts')).toBeLessThan(paths.indexOf('ignored-app.ts'));
 
       const topLevel = await harness.suggestFiles(workDir, { query: '', limit: 20 });
       expect(topLevel?.items).toContainEqual(expect.objectContaining({ kind: 'directory', name: 'src' }));

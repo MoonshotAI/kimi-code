@@ -737,21 +737,26 @@ describe('event hub', () => {
     const channel = new FakeChannel();
     const klient = createKlientFromChannel(channel);
     const archived: unknown[] = [];
+    const restored: unknown[] = [];
     const catalog: unknown[] = [];
 
     const subA = klient.events.on('session.archived', (event) => archived.push(event));
     const subB = klient.events.on('kosong.changed', (event) => catalog.push(event));
+    const subC = klient.events.on('session.restored', (event) => restored.push(event));
     expect(channel.subscriptions).toHaveLength(1);
     expect(channel.subscriptions[0]?.source).toEqual({ kind: 'stream', name: 'events' });
 
     channel.emit(0, { type: 'event.session.archived', payload: { sessionId: 's1' } });
+    channel.emit(0, { type: 'event.session.restored', payload: { sessionId: 's1', workspaceId: 'wd_1' } });
     channel.emit(0, { type: 'event.model_catalog.changed', payload: { changed: [], unchanged: [], failed: [] } });
     channel.emit(0, { type: 'unrelated.type', payload: {} });
     await tick();
     expect(archived).toEqual([{ sessionId: 's1' }]);
+    expect(restored).toEqual([{ sessionId: 's1' }]);
     expect(catalog).toEqual([{ changed: [], unchanged: [], failed: [] }]);
 
     subA.dispose();
+    subC.dispose();
     expect(channel.subscriptions[0]?.dispose).not.toHaveBeenCalled();
     subB.dispose();
     expect(channel.subscriptions[0]?.dispose).toHaveBeenCalledTimes(1);

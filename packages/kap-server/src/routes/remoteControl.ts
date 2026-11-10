@@ -158,7 +158,7 @@ export function registerRemoteControlRoutes(
         if (error instanceof RemoteControlAlreadyRunningError) {
           opts.telemetry?.track2('remote_control_toggle', { enabled, outcome: 'already_running' });
           reply.send(
-            errEnvelope(ErrorCode.REMOTE_CONTROL_ALREADY_RUNNING, error.message, req.id, undefined, {
+            errEnvelope(ErrorCode.REMOTE_CONTROL_ALREADY_RUNNING, error.message, req.id, {
               pid: error.holder.pid,
               local_origin: error.holder.localOrigin,
               device_id: error.holder.deviceId,

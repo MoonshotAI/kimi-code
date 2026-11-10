@@ -29,6 +29,7 @@ import {
   IEventDispatcher,
   IEventService,
   IEnvironmentService,
+  ISessionActivityView,
   ISessionManager,
   ISessionMetadata,
   ISessionTitleService,
@@ -909,7 +910,7 @@ describe('server-v2 /api/v1/sessions', () => {
     const on = await postJson(`/api/v1/sessions/${id}/profile`, {
       agent_config: { tower_mode: true },
     });
-    expect(on.body.code).toBe(50001);
+    expect(on.body.code).toBe(40935);
     expect(on.body.msg).toContain('the tower experiment is disabled');
     expect(on.body.msg).toContain('KIMI_CODE_EXPERIMENTAL_TOWER=1');
     expect(readAgentState(await mainAgentOf(id), false).tower_mode).toBe(false);
@@ -1592,6 +1593,30 @@ describe('server-v2 /api/v1/sessions', () => {
       expect(response.body.msg).toContain('queued');
     } finally {
       queued.mockRestore();
+    }
+  });
+
+  it('returns 40910 when :compact is requested while a compaction is already running', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+    });
+    const id = created.body.data.id;
+    const session = getLiveSessionById((server as RunningServer).core.accessor, id);
+    if (session === undefined) throw new Error('expected live session');
+    await session.accessor
+      .get(IAgentLifecycleService)
+      .create({ agentId: MAIN_AGENT_ID });
+    const agent = session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
+    const begin = vi
+      .spyOn(agent.accessor.get(IAgentFullCompactionService), 'begin')
+      .mockReturnValue(false);
+
+    try {
+      const response = await postJson<null>(`/api/v1/sessions/${id}:compact`, { instruction: 'keep the plan' });
+      expect(response.body.code).toBe(40910);
+      expect(begin).toHaveBeenCalledWith({ source: 'manual', instruction: 'keep the plan' });
+    } finally {
+      begin.mockRestore();
     }
   });
 
@@ -2484,6 +2509,27 @@ describe('server-v2 /api/v1/sessions', () => {
     const running = await getJson<PageWire>('/api/v1/sessions?busy=true');
     expect(running.body.code).toBe(0);
     expect(running.body.data.items.some((s) => s.id === id)).toBe(false);
+  });
+
+  it('finds a busy session behind newer idle ones when paging by the busy query', async () => {
+    const cwd = home as string;
+    const busy = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const session = getLiveSessionById((server as RunningServer).core.accessor, busy.body.data.id);
+    if (session === undefined) throw new Error('expected live session');
+    const activity = session.accessor.get(ISessionActivityView);
+    const state = vi
+      .spyOn(activity, 'state')
+      .mockReturnValue({ ...activity.state(), busy: true });
+
+    try {
+      const page = await getJson<PageWire>('/api/v1/sessions?busy=true&page_size=1&include_archive=true');
+      expect(page.body.code).toBe(0);
+      expect(page.body.data.items.map((s) => s.id)).toEqual([busy.body.data.id]);
+      expect(page.body.data.has_more).toBe(false);
+    } finally {
+      state.mockRestore();
+    }
   });
 
   it('filters child sessions by the busy query', async () => {

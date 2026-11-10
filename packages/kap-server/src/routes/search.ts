@@ -96,7 +96,7 @@ export function registerSearchRoutes(app: SearchRouteHost, core: Scope): void {
           error instanceof GlobalSearchError &&
           (error.reason === 'invalid_query' || error.reason === 'invalid_page_token')
         ) {
-          reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, error.message, req.id, error.stack));
+          reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, error.message, req.id));
           return;
         }
         requestLog(req)?.error({ err: error }, 'global search request failed');
@@ -105,7 +105,6 @@ export function registerSearchRoutes(app: SearchRouteHost, core: Scope): void {
             ErrorCode.INTERNAL_ERROR,
             error instanceof Error ? error.message : String(error),
             req.id,
-            error instanceof Error ? error.stack : undefined,
           ),
         );
       }

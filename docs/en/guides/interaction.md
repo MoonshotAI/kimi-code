@@ -46,6 +46,7 @@ Active [Agent Skills](../customization/skills.md) are also registered as slash c
 Type `@` to trigger file-path completion; the selected path is inserted in relative form, and the agent loads the file content directly when it reads your message.
 
 - **Where it works**: both git and non-git directories; hidden paths are included, `.git` is excluded
+- **Ignored files**: paths excluded by `.gitignore` are included; non-ignored matches appear first at equal match quality
 - **Folder suggestions**: end with `/`, so you can keep completing paths inside them
 - **Fallback**: while the fast search helper is still downloading, Kimi Code falls back to a basic filesystem scan
 - **Remote sessions**: when the session is bound to a [remote environment](../guides/remote-environment.md), completion candidates are served from the target's filesystem. Paths you type into a prompt also resolve on the target — the agent cannot read your local files by path, while pasted images and videos are unaffected (they travel as binary attachments)

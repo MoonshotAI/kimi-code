@@ -332,7 +332,9 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
       throw new Error2(ErrorCodes.COMPACTION_UNABLE, 'A compaction is already running or queued.');
     }
     if (loop.state === 'idle' && !loop.hasPendingRequests && !loop.paused) {
-      this.begin({ source: 'manual', instruction });
+      if (!this.begin({ source: 'manual', instruction })) {
+        throw new Error2(ErrorCodes.COMPACTION_UNABLE, 'A compaction is already running or queued.');
+      }
       return { acceptedAs: 'compact', promptId: newMessageId() };
     }
     return { acceptedAs: 'queue', promptId: this.loopService.enqueueCompaction(instruction) };
