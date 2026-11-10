@@ -294,7 +294,7 @@ export function createMessageAccumulator(): MessageAccumulator {
   const toolCallIndexMap = new Map<number | string, number>();
   let pending: StreamedMessagePart | null = null;
   let pendingBlock: number | undefined;
-  let deferredThink: ThinkPart | null = null;
+  const deferredThinks: ThinkPart[] = [];
   const open = (part: StreamedMessagePart): number | undefined => {
     pending = structuredClone(part);
     pendingBlock = isContentPart(pending) ? message.content.length : undefined;
@@ -320,10 +320,7 @@ export function createMessageAccumulator(): MessageAccumulator {
       }
       pending = null;
     }
-    if (deferredThink !== null) {
-      message.content.push(deferredThink);
-      deferredThink = null;
-    }
+    message.content.push(...deferredThinks.splice(0));
   };
   return {
     push(part: StreamedMessagePart) {
@@ -344,10 +341,12 @@ export function createMessageAccumulator(): MessageAccumulator {
           return undefined;
         }
       }
-      if (part.type === 'text') deferredThink = null;
+      if (part.type === 'text') deferredThinks.length = 0;
       if (pending === null) return open(part);
       if (pending.type === 'text' && part.type === 'think' && isVacuousContentPart(part)) {
-        deferredThink = structuredClone(part);
+        const sameKey = deferredThinks.findIndex((think) => think.reasoningKey === part.reasoningKey);
+        if (sameKey === -1) deferredThinks.push(structuredClone(part));
+        else deferredThinks[sameKey] = structuredClone(part);
         return undefined;
       }
       if (!mergeInPlace(pending, part)) {

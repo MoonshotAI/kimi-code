@@ -13,11 +13,15 @@ import {
   toLlmStreamErrorMessage,
   toLlmTransportErrorMessage,
 } from '#/llm/protocol/rules/status';
-import type { LlmRemoteErrorMessage } from '#/llm/response';
-import { NO_FINISH, type FinishInfo, type FinishReason } from '#/llm/response';
-import type { StreamedMessagePart, ThinkPart } from '#/llm/message';
+import {
+  NO_FINISH,
+  type FinishInfo,
+  type FinishReason,
+  type LlmRemoteErrorMessage,
+  type TokenUsage,
+} from '#/llm/response';
+import { isVacuousContentPart, type StreamedMessagePart, type ThinkPart } from '#/llm/message';
 import type { DecodeSink, Decoder } from '#/llm/protocol/protocol';
-import type { TokenUsage } from '#/llm/response';
 
 export type RawUsage = {
   prompt_tokens?: number;
@@ -221,6 +225,44 @@ export function createDecoder(
   const seenIndexes = new Set<number | string>();
   let lastActiveIndex: number | string | undefined;
   let seenReasoningContent = false;
+  const emittedThinkKeys = new Set<string>();
+  let textPending = false;
+  let deferredEmptyKey: string | undefined;
+
+  const notePending = (part: StreamedMessagePart): void => {
+    if (part.type === 'text') {
+      textPending = true;
+      return;
+    }
+    if (part.type === 'think' && textPending && isVacuousContentPart(part)) {
+      return;
+    }
+    if (part.type === 'tool_call_part' && part.index !== undefined && textPending) {
+      return;
+    }
+    textPending = false;
+  };
+
+  const emit = (part: StreamedMessagePart): void => {
+    const wasTextPending = textPending;
+    const defersEmpty = part.type === 'think' && wasTextPending && isVacuousContentPart(part);
+    const flushesDeferred =
+      wasTextPending &&
+      !defersEmpty &&
+      part.type !== 'text' &&
+      !(part.type === 'tool_call_part' && part.index !== undefined);
+    const deferredKey = flushesDeferred ? deferredEmptyKey : undefined;
+    notePending(part);
+    sink.onDelta(part);
+    if (part.type === 'text') {
+      deferredEmptyKey = undefined;
+    } else if (defersEmpty) {
+      deferredEmptyKey = part.think.length === 0 ? part.reasoningKey : undefined;
+    } else if (deferredKey !== undefined) {
+      emittedThinkKeys.add(deferredKey);
+      deferredEmptyKey = undefined;
+    }
+  };
 
   const closeActiveToolCall = (): void => {
     if (lastActiveIndex === undefined) return;
@@ -305,8 +347,6 @@ export function createDecoder(
       }
       const delta = chunk.choices?.[0]?.delta;
       if (delta) {
-        const reasoningDetails =
-          reasoningKey === undefined ? extractReasoningDetails(delta) : undefined;
         const reasoningStrings = extractReasoningStrings(delta);
         const detected = reasoningStrings[0];
         if (reasoningKey === undefined && detected !== undefined) {
@@ -316,20 +356,53 @@ export function createDecoder(
           if (reasoning.key === 'reasoning_content') {
             seenReasoningContent = true;
           }
-          sink.onDelta({
+        }
+        const reasoningDetails =
+          reasoningKey === undefined ? extractReasoningDetails(delta) : undefined;
+        const detailParts =
+          reasoningDetails !== undefined
+            ? convertReasoningDetails(reasoningDetails, seenReasoningContent)
+            : [];
+        const chunkHasText = typeof delta.content === 'string' && delta.content.length > 0;
+        const discardedMarkers: ThinkPart[] = [];
+        for (const [index, reasoning] of reasoningStrings.entries()) {
+          const part: ThinkPart = {
             type: 'think',
             think: reasoning.value,
             reasoningKey: reasoning.key,
-          });
+          };
+          const vacuous = isVacuousContentPart(part);
+          if (reasoning.value.length === 0 && emittedThinkKeys.has(reasoning.key)) {
+            continue;
+          }
+          const laterRetains =
+            reasoningStrings.slice(index + 1).some((item) => item.value.trim().length > 0) ||
+            detailParts.length > 0;
+          if (vacuous && textPending && chunkHasText && !laterRetains) {
+            discardedMarkers.push(part);
+            continue;
+          }
+          if (!(vacuous && textPending)) {
+            emittedThinkKeys.add(reasoning.key);
+          }
+          emit(part);
         }
-        if (reasoningDetails !== undefined) {
-          for (const part of convertReasoningDetails(reasoningDetails, seenReasoningContent)) {
-            sink.onDelta(part);
+        for (const part of detailParts) {
+          emit(part);
+        }
+        if (chunkHasText) {
+          emit({ type: 'text', text: delta.content as string });
+        }
+        const survivorsByKey = new Map<string, ThinkPart>();
+        for (const marker of discardedMarkers) {
+          const key = marker.reasoningKey;
+          if (key !== undefined && !emittedThinkKeys.has(key)) {
+            survivorsByKey.set(key, marker);
           }
         }
-        if (typeof delta.content === 'string' && delta.content.length > 0) {
-          sink.onDelta({ type: 'text', text: delta.content });
-        }
+        let pendingSurvivors = [...survivorsByKey.values()];
+        let survivorEmitted = false;
+        let retainsReplay = false;
         for (const toolCall of delta.tool_calls ?? []) {
           const streamIndex = toolCall.index;
           if (
@@ -342,7 +415,22 @@ export function createDecoder(
             lastActiveIndex = streamIndex;
           }
           for (const part of convertStreamToolCall(toolCall)) {
-            sink.onDelta(part);
+            if (pendingSurvivors.length > 0) {
+              for (const survivor of pendingSurvivors) {
+                emit(survivor);
+              }
+              pendingSurvivors = [];
+              survivorEmitted = true;
+            }
+            if (part.type !== 'tool_call_part' || part.index === undefined) {
+              retainsReplay = true;
+            }
+            emit(part);
+          }
+        }
+        if (retainsReplay && survivorEmitted) {
+          for (const survivorKey of survivorsByKey.keys()) {
+            emittedThinkKeys.add(survivorKey);
           }
         }
       }
