@@ -660,6 +660,7 @@ describe('server-v2 /api/v1 prompts', () => {
     try {
       await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
         content: [{ type: 'text', text: 'active' }],
+        model: 'stub',
       });
       await started;
       const pending = call<PromptItemWire>('POST', `/api/v1/sessions/${id}/steer`, {

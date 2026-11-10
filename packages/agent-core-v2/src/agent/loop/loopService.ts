@@ -36,8 +36,6 @@ import { materializePromptDaemonRefs } from '#/agent/media/promptMediaIntake';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import {
   IAgentProfileService,
-  ProfileError,
-  ProfileErrors,
   type ApplyProfileOptions,
   type BindAgentInput,
   type ProfileBindingSnapshot,
@@ -223,7 +221,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this._register(this.dispatcher.hooks.onDidRestore.register('loop.profile', async (_ctx, next) => {
       this.profileAdapter.restore(this.journal.snapshot());
       await this.profileAdapter.afterRestore();
-      await this.ensureDefaultProfile();
       await next();
     }));
     this._register(this.catalog.onDidChange(() => {
@@ -379,7 +376,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     await this.wire.drainPersisted().catch(() => undefined);
     const snapshot = this.journal.snapshot();
     this.profileAdapter.restore(snapshot);
-    await this.ensureDefaultProfile();
     const tools = this.requestFactory.baselineTools();
     const taskHistory = this.instantiation.invokeFunction((accessor) => accessor.get(IAgentTaskHistoryService));
     await taskHistory.reconcile();
@@ -392,17 +388,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       isLive: (taskId) => this.toolExecutor.handler(taskId)?.snapshot().status === 'running',
     });
     this.createLoopFromSnapshot(snapshot, tools, completions, seededMessages);
-  }
-
-  private async ensureDefaultProfile(): Promise<void> {
-    if (this.profileAdapter.bound && this.profileAdapter.data().modelAlias !== undefined) return;
-    const defaultModel = this.config.get<string>('defaultModel');
-    if (defaultModel === undefined || defaultModel === '') return;
-    try {
-      await this.setModel(defaultModel);
-    } catch (error) {
-      if (!(error instanceof ProfileError && error.code === ProfileErrors.codes.MODEL_NOT_CONFIGURED)) throw error;
-    }
   }
 
   private createLoopFromSnapshot(
@@ -535,7 +520,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       await this.wire.drainPersisted().catch(() => undefined);
       const snapshot = this.journal.snapshot();
       this.profileAdapter.restore(snapshot);
-      await this.ensureDefaultProfile();
       const taskHistory = this.instantiation.invokeFunction((accessor) => accessor.get(IAgentTaskHistoryService));
       await taskHistory.reconcile();
       const completions = await restoreTaskCompletions({

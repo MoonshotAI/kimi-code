@@ -59,10 +59,7 @@ describe('Agent resume', () => {
 
     await ctx.restorePersisted();
 
-    expect(persistence.appended).toEqual([
-      expect.objectContaining({ type: 'changeNotifier.snapshot' }),
-      expect.objectContaining({ type: 'profile.bind', modelAlias: MOCK_PROVIDER.model }),
-    ]);
+    expect(persistence.appended).toEqual([]);
     expect(persistence.records.filter((record) => record.type === 'metadata')).toHaveLength(1);
   });
 
@@ -910,8 +907,6 @@ describe('Agent resume', () => {
           reason: 'Paused after agent resume',
           wallClockMs: 2_000,
         }),
-        expect.objectContaining({ type: 'changeNotifier.snapshot' }),
-        expect.objectContaining({ type: 'profile.bind', modelAlias: MOCK_PROVIDER.model }),
       ]);
       expect(persistence.rewritten).toContainEqual(
         expect.objectContaining({
@@ -962,8 +957,6 @@ describe('Agent resume', () => {
           status: 'paused',
           wallClockMs: 3_000,
         }),
-        expect.objectContaining({ type: 'changeNotifier.snapshot' }),
-        expect.objectContaining({ type: 'profile.bind', modelAlias: MOCK_PROVIDER.model }),
       ]);
       expect(persistence.rewritten).toContainEqual(
         expect.objectContaining({

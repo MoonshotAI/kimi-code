@@ -1634,7 +1634,13 @@ export class AgentTestContext {
     if (log instanceof PersistenceAppendLogStore) log.recordRestore(records);
     await log.rewrite(scopeContext.scope(), AGENT_WIRE_RECORD_KEY, records);
     const loop = this.context as IAgentLoopService & { resetLoop(): Promise<void> };
-    this.persistedRestored = this.dispatcher.restore().then(() => loop.resetLoop());
+    const configured = loop.data();
+    this.persistedRestored = this.dispatcher.restore().then(async () => {
+      if (configured.modelAlias !== undefined && loop.data().modelAlias === undefined) {
+        await loop.applyBindingSnapshot(configured);
+      }
+      await loop.resetLoop();
+    });
     await this.persistedRestored;
     this.runtimeStarted = true;
   }

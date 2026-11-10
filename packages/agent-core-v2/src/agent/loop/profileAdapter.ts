@@ -232,12 +232,4 @@ export class AgentLoopProfileAdapter implements EffectiveProfileReader {
     this.profile.afterConfigDispatch({ modelAlias: this.state.profile?.modelAlias }, this.snapshot());
     await this.refreshBoundSubagentAllowlist();
   }
-
-  get bound(): boolean {
-    return this.state.bound;
-  }
-
-  defaultProfile(): ProfileBindingSnapshot {
-    return { ...this.profile.defaultProfile(), profileName: undefined };
-  }
 }

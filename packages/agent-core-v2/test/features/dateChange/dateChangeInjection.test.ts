@@ -126,7 +126,7 @@ describe('AgentDateChangeService', () => {
       variant: 'date_change',
       disclosure: {
         kind: 'date',
-        renderGeneration: 3,
+        renderGeneration: 2,
         localDate: '2026-07-29',
         timeZone: TEST_TIME_ZONE,
       },
@@ -156,7 +156,7 @@ describe('AgentDateChangeService', () => {
     expect(reminders[2]?.origin).toMatchObject({
       disclosure: {
         kind: 'date',
-        renderGeneration: 3,
+        renderGeneration: 2,
         localDate: '2026-07-31',
       },
     });
@@ -348,7 +348,7 @@ describe('AgentDateChangeService', () => {
       variant: 'date_change',
       disclosure: {
         kind: 'date',
-        renderGeneration: 3,
+        renderGeneration: 2,
         localDate: '2026-07-29',
         timeZone: TEST_TIME_ZONE,
       },

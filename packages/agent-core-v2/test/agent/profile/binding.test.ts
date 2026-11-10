@@ -799,7 +799,7 @@ describe('AgentToolPolicyService tool denylist', () => {
     }]);
     ctx = createTestAgent({ persistence: legacy }, hostEnvironmentServices(homeDir));
     await ctx.restorePersisted();
-    expect(legacy.records.filter((record) => record.type === 'profile.bind')).toHaveLength(1);
+    expect(legacy.records.filter((record) => record.type === 'profile.bind')).toHaveLength(0);
   });
 });
 
