@@ -204,6 +204,7 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
           return;
         }
       }
+      if (!this.toolActiveForBoundProfile(profileData, 'Skill')) return;
       this.reminder.notify(skillsChangeText(listing), { variant: SKILLS_CHANGE_VARIANT });
     } catch (error) {
       this.log.warn('skill change notification failed', { error });

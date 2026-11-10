@@ -79,16 +79,15 @@ describe('systemPromptVars', () => {
     expect(vars['role_additional']).toBe('');
   });
 
-  it('keeps skills and the skills section when the Skill tool is off', () => {
+  it('empties skills and the skills section when the Skill tool is off', () => {
     const vars = systemPromptVars({ skills: 'SKILLS' }, { skillActive: false });
 
-    expect(vars['skills']).toBe('SKILLS');
-    expect(vars['skills_section']).toContain('# Skills');
-    expect(vars['skills_section']).toContain('SKILLS');
+    expect(vars['skills']).toBe('');
+    expect(vars['skills_section']).toBe('');
   });
 
-  it('does not use context skillActive to hide the listing', () => {
-    const vars = systemPromptVars({ skills: 'SKILLS', skillActive: false }, { skillActive: true });
+  it('lets a context skillActive override the profile default', () => {
+    const vars = systemPromptVars({ skills: 'SKILLS', skillActive: true }, { skillActive: false });
 
     expect(vars['skills']).toBe('SKILLS');
   });
@@ -243,11 +242,11 @@ describe('renderSystemPromptResult', () => {
     expect(readOnly).toContain('AGENTS');
   });
 
-  it('includes the skills section when the profile disables the Skill tool', () => {
+  it('omits the skills section when the profile disables the Skill tool', () => {
     const prompt = renderSystemPromptResult('', { skills: 'SKILLS' }, { skillActive: false }).text;
 
-    expect(prompt).toContain('# Skills');
-    expect(prompt).toContain('SKILLS');
+    expect(prompt).not.toContain('# Skills');
+    expect(prompt).not.toContain('SKILLS');
   });
 
   it('shows Windows notes only on Windows', () => {
