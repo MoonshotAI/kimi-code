@@ -220,7 +220,7 @@ export class HostProcessService implements IHostProcessService {
     const spawnOptions = buildSpawnOptions(options);
     const target =
       isWindows && options.shell === undefined
-        ? prepareWindowsSpawnTarget(command, args, options.env)
+        ? prepareWindowsSpawnTarget(command, args, options.env, options.cwd)
         : undefined;
     if (target !== undefined) {
       spawnOptions.windowsVerbatimArguments = target.windowsVerbatimArguments;

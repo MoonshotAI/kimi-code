@@ -1,8 +1,10 @@
 import { statSync } from 'node:fs';
-import { delimiter, join } from 'node:path';
+import { delimiter, isAbsolute, join, resolve } from 'node:path';
 
 const BATCH_SCRIPT_EXTENSIONS = ['.cmd', '.bat'];
 const DEFAULT_PATHEXT = ['.COM', '.EXE', '.BAT', '.CMD'];
+const CMD_META_CHARS = /([()\][%!^"`<>&|;, *?])/g;
+const CMD_SHIM = /node_modules[\\/].bin[\\/][^\\/]+\.cmd$/i;
 
 export interface WindowsSpawnTarget {
   readonly command: string;
@@ -14,10 +16,12 @@ export function prepareWindowsSpawnTarget(
   command: string,
   args: readonly string[],
   env?: Record<string, string>,
+  cwd?: string,
 ): WindowsSpawnTarget | undefined {
-  const resolved = resolveBatchScript(command, env);
+  const resolved = resolveBatchScript(command, env, cwd);
   if (resolved === undefined) return undefined;
-  const line = [resolved, ...args].map(escapeCmdToken).join(' ');
+  const doubleEscape = CMD_SHIM.test(resolved);
+  const line = [escapeCommand(resolved), ...args.map((arg) => escapeArgument(arg, doubleEscape))].join(' ');
   return {
     command: envValue(env, 'ComSpec') ?? 'cmd.exe',
     args: ['/d', '/s', '/c', `"${line}"`],
@@ -25,16 +29,27 @@ export function prepareWindowsSpawnTarget(
   };
 }
 
-function resolveBatchScript(command: string, env?: Record<string, string>): string | undefined {
+function resolveBatchScript(command: string, env?: Record<string, string>, cwd?: string): string | undefined {
+  const baseCwd = cwd ?? process.cwd();
   if (command.includes('/') || command.includes('\\')) {
-    return isBatchScript(command) && isFile(command) ? command : undefined;
+    if (!isBatchScript(command)) return undefined;
+    const resolved = isAbsolute(command) ? command : resolve(baseCwd, command);
+    return isFile(resolved) ? resolved : undefined;
   }
-  const pathEnv = envValue(env, 'PATH') ?? '';
-  const extensions = pathExtensions(env);
-  const hasOwnExtension = extensions.some((ext) => command.toLowerCase().endsWith(ext.toLowerCase()));
-  for (const dir of pathEnv.split(delimiter)) {
-    if (dir.length === 0) continue;
-    const names = hasOwnExtension ? [command] : extensions.map((ext) => command + ext.toLowerCase());
+  if (/\.(exe|com)$/i.test(command)) return undefined;
+  const dirs = (envValue(env, 'PATH') ?? '')
+    .split(delimiter)
+    .filter((dir) => dir.length > 0);
+  if (!command.includes('.')) {
+    for (const dir of [baseCwd, ...dirs]) {
+      if (isFile(join(dir, command + '.exe'))) return undefined;
+    }
+  }
+  const batchExts = pathExtensions(env).filter((ext) =>
+    BATCH_SCRIPT_EXTENSIONS.includes(ext.toLowerCase()),
+  );
+  const names = command.includes('.') ? [command] : batchExts.map((ext) => command + ext.toLowerCase());
+  for (const dir of dirs) {
     for (const name of names) {
       const candidate = join(dir, name);
       if (!isFile(candidate)) continue;
@@ -79,7 +94,14 @@ function isFile(path: string): boolean {
   }
 }
 
-function escapeCmdToken(token: string): string {
-  if (token.length > 0 && !/[\s"]/.test(token)) return token;
-  return `"${token.replaceAll(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1')}"`;
+function escapeCommand(arg: string): string {
+  return arg.replace(CMD_META_CHARS, '^$1');
+}
+
+function escapeArgument(arg: string, doubleEscapeMetaChars: boolean): string {
+  let escaped = arg.replaceAll(/(?=(\\+?)?)\1"/g, '$1$1\\"').replace(/(?=(\\+?)?)\1$/, '$1$1');
+  escaped = `"${escaped}"`;
+  escaped = escaped.replace(CMD_META_CHARS, '^$1');
+  if (doubleEscapeMetaChars) escaped = escaped.replace(CMD_META_CHARS, '^$1');
+  return escaped;
 }
