@@ -11,11 +11,17 @@ export interface PermissionPolicyEvaluation {
   readonly underlying?: PermissionPolicyEvaluation;
 }
 
+export interface PermissionPolicyEvaluateOptions {
+  readonly includeUnderlying?: boolean;
+  readonly skipDangerousCommand?: boolean;
+}
+
 export interface IAgentPermissionPolicyService {
   readonly _serviceBrand: undefined;
 
   evaluate(
     context: ResolvedToolExecutionHookContext,
+    options?: PermissionPolicyEvaluateOptions,
   ): Promise<PermissionPolicyEvaluation | undefined>;
 }
 

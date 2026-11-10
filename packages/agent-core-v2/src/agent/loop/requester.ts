@@ -38,7 +38,7 @@ import {
 } from '#/llm-adapter/model/generate';
 import type { ModelOverrides } from '#/llm-adapter/model/model.types';
 import { IModelService } from '#/llm-adapter/model/model';
-import { completionBudgetParams, resolveCompletionBudget } from '#/llm-adapter/model/completion-budget';
+import { resolveCompletionBudgetParams } from '#/llm-adapter/model/completion-budget';
 import { resolveThinkingKeep, type ThinkingConfig } from '#/llm-adapter/model/thinking';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import { IProtocolAdapterRegistry, type Protocol } from '#/llm-adapter/protocol/protocol';
@@ -728,27 +728,22 @@ export class AgentLoopRequester implements LoopRequester {
     const resolved = turnConfig?.resolved ?? this.profile.resolveModelContext();
     const baseParams = turnConfig?.params ?? this.profile.resolveRequestParams();
     const model = this.modelCatalog.get(resolved.modelAlias);
-    const maxCompletionTokensCap =
-      this.config.get<ModelOverrides>('modelOverrides')?.maxCompletionTokens;
     const usedContextTokens =
       overrides.usedContextTokens ??
       (overrides.messages === undefined
         ? this.tokenCounting.get(this.scopeContext.agentContext).size
         : undefined);
-    const budgetParams = completionBudgetParams({
-      budget: resolveCompletionBudget({
-        maxOutputSize: overrides.maxOutputSize ?? resolved.maxOutputSize,
-        maxCompletionTokensCap,
-      }),
+    const budgetParams = resolveCompletionBudgetParams({
+      maxOutputSize: overrides.maxOutputSize ?? resolved.maxOutputSize,
+      maxCompletionTokensCap:
+        this.config.get<ModelOverrides>('modelOverrides')?.maxCompletionTokens,
       capability: resolved.modelCapabilities,
       usedContextTokens,
     });
-    const optedOut = maxCompletionTokensCap !== undefined && maxCompletionTokensCap <= 0;
     const params: ModelRequestParams = {
       ...baseParams,
       ...budgetParams,
       ...(usedContextTokens === undefined ? {} : { usedContextTokens }),
-      ...(optedOut ? { maxCompletionTokens: maxCompletionTokensCap } : {}),
     };
 
     const messages = overrides.messages ?? this.context.get();

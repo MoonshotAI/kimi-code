@@ -69,6 +69,7 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IFlagService } from '#/app/flag/flag';
 import { IGitService } from '#/app/git/git';
 import { IHostEnvironment as HostEnvironmentService } from '#/os/interface/hostEnvironment';
+import { createAutoReviewReviewer } from '#/features/autoReview/autoReviewGate';
 import { IAutoReviewService } from '#/features/autoReview/review';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentPermissionPolicyService } from '#/agent/permissionPolicy/permissionPolicy';
@@ -197,19 +198,25 @@ function installAutoReview(result: import('#/features/autoReview/review').AutoRe
   permissions.set(IAgentPermissionPolicyService, new AgentPermissionPolicyService(
     permissions,
     permissions.get(IBootstrapService),
-    permissions.get(IFlagService),
-    permissions.get(IAgentPermissionModeService),
   ));
-  permissions.set(IAgentPermissionGate, new AgentPermissionGate(
+  const gate = new AgentPermissionGate(
     permissions.get(IAgentPermissionModeService),
     permissions.get(IAgentPermissionRulesService),
     permissions.get(IAgentPermissionPolicyService),
-    permissions.get(IFlagService),
-    permissions.get(IAutoReviewService),
     permissions.get(IAgentToolApprovalService),
     permissions.get(ITelemetryService),
     executor,
-  ));
+  );
+  disposables.add(
+    gate.registerReviewer(
+      createAutoReviewReviewer(
+        permissions.get(IFlagService),
+        permissions.get(IAgentPermissionModeService),
+        () => permissions.get(IAutoReviewService),
+      ),
+    ),
+  );
+  permissions.set(IAgentPermissionGate, gate);
 }
 
 describe('AgentToolExecutorService', () => {

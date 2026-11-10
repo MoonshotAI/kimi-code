@@ -20,13 +20,18 @@ import {
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IFlagService } from '#/app/flag/flag';
-import { autoReviewTrigger, resolveAutoReview } from '#/features/autoReview/autoReviewGate';
 import {
-  IAutoReviewService,
+  autoReviewTrigger,
+  createAutoReviewReviewer,
+  resolveAutoReview,
+} from '#/features/autoReview/autoReviewGate';
+import {
   type AutoReviewResult,
+  type IAutoReviewService,
 } from '#/features/autoReview/review';
 import type { ToolCall } from '#human/message';
+
+import { stubFlag } from '../../app/flag/stubs';
 
 import { stubPermissionModeService } from '../permissionMode/stubs';
 import { stubPermissionPolicyService } from '../permissionPolicy/stubs';
@@ -103,8 +108,6 @@ describe('AgentPermissionGate', () => {
           IAgentPermissionPolicyService,
           stubPermissionPolicyService(() => policyResult),
         );
-        reg.definePartialInstance(IFlagService, { enabled: () => autoReviewEnabled });
-        reg.defineInstance(IAutoReviewService, { _serviceBrand: undefined, review });
         reg.defineInstance(IAgentToolApprovalService, toolApproval);
         reg.defineInstance(ITelemetryService, recordingTelemetry(records));
         reg.defineInstance(IAgentToolExecutorService, executorEvents.executor);
@@ -118,7 +121,17 @@ describe('AgentPermissionGate', () => {
   });
 
   function make(): IAgentPermissionGate {
-    return ix.get(IAgentPermissionGate);
+    const gate = ix.get(IAgentPermissionGate);
+    disposables.add(
+      gate.registerReviewer(
+        createAutoReviewReviewer(
+          stubFlag(() => autoReviewEnabled),
+          stubPermissionModeService(() => mode),
+          () => ({ _serviceBrand: undefined, review }),
+        ),
+      ),
+    );
+    return gate;
   }
 
   it('tracks the policy decision with the reason payload', async () => {

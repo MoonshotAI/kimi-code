@@ -1,10 +1,43 @@
+import type { PermissionGateReviewer } from '#/agent/permissionGate/permissionGate';
+import type { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type { PermissionPolicyEvaluation } from '#/agent/permissionPolicy/permissionPolicy';
 import type { PermissionMode, PermissionPolicyResult } from '#/agent/permissionPolicy/types';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
+import type { IFlagService } from '#/app/flag/flag';
 
-import type { AutoReviewResult } from './review';
+import { AUTO_REVIEW_FLAG_ID } from './flag';
+import type { AutoReviewResult, IAutoReviewService } from './review';
 
 const AUTO_REVIEW_ORIGIN = 'auto-review';
+
+export function createAutoReviewReviewer(
+  flags: IFlagService,
+  modes: IAgentPermissionModeService,
+  reviewService: () => IAutoReviewService,
+): PermissionGateReviewer {
+  return {
+    evaluateOptions: () => {
+      const reviewing = flags.enabled(AUTO_REVIEW_FLAG_ID) && modes.mode !== 'manual';
+      return {
+        includeUnderlying: reviewing,
+        skipDangerousCommand: reviewing && modes.mode === 'yolo',
+      };
+    },
+    review: (context, evaluation) => {
+      const trigger = autoReviewTrigger(flags.enabled(AUTO_REVIEW_FLAG_ID), modes.mode, evaluation);
+      if (trigger === undefined) return undefined;
+      return async () => {
+        const review = await reviewService().review(context, trigger);
+        return resolveAutoReview(
+          context,
+          evaluation,
+          review,
+          flags.enabled(AUTO_REVIEW_FLAG_ID) ? modes.mode : 'manual',
+        );
+      };
+    },
+  };
+}
 
 export function autoReviewTrigger(
   enabled: boolean,

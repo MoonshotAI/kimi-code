@@ -1,20 +1,21 @@
 import { z } from 'zod';
 
 import { Service } from '#/_base/di/service';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
-import { createDeadlineAbortSignal, isAbortError, type DeadlineAbortSignal } from '#/_base/utils/abort';
+import { createDeadlineAbortSignal, type DeadlineAbortSignal } from '#/_base/utils/abort';
 import { readRetryAfterMs, retryBackoffDelay, sleepForRetry } from '#/_base/utils/retry';
 import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
-import { LifecycleScope } from '#/app/scopes';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { Error2, isError2 } from '#/errors';
+import { Error2 } from '#/errors';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
+import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
+import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type { TokenUsage } from '#human/llm-requester/usage';
 import type { AssistantMessage, Message } from '#human/llm/message';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
-import { completionBudgetParams, resolveCompletionBudget } from '#/llm-adapter/model/completion-budget';
+import { resolveCompletionBudgetParams } from '#/llm-adapter/model/completion-budget';
 import { generateModel, type ModelRequestParams } from '#/llm-adapter/model/generate';
 import type { ModelOverrides } from '#/llm-adapter/model/model.types';
 import {
@@ -25,11 +26,8 @@ import {
 } from '#/llm-adapter/model/thinking';
 import {
   PROVIDER_API_ERROR_CODE,
-  PROVIDER_AUTH_ERROR_CODE,
-  PROVIDER_CONNECTION_ERROR_CODE,
-  PROVIDER_OVERLOADED_ERROR_CODE,
-  PROVIDER_RATE_LIMIT_ERROR_CODE,
   classifyApiError,
+  isRetryableGenerateError,
 } from '#/llm-adapter/contract/errors';
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -44,9 +42,11 @@ import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
 import { AutoReviewCompleted, AutoReviewStarted } from './autoReviewEvents';
+import { createAutoReviewReviewer } from './autoReviewGate';
 import REVIEW_POLICY from './auto-review-policy.md?raw';
 import { AUTO_REVIEW_SECTION, type AutoReviewConfig } from './configSection';
 import { buildReviewMessages, extractAuthorization, sameAuthorization } from './context';
+import { AUTO_REVIEW_FLAG_ID } from './flag';
 import { IAutoReviewService, type AutoReviewResult } from './review';
 
 const AUTO_REVIEW_REQUEST_KIND = 'auto_review';
@@ -116,10 +116,13 @@ interface ProjectInstructions {
 
 export class AutoReviewService extends Service implements IAutoReviewService {
   declare readonly _serviceBrand: undefined;
-  private readonly projectInstructions: Promise<ProjectInstructions>;
+  private projectInstructions: Promise<ProjectInstructions> | undefined;
 
   constructor(
     @IConfigService private readonly configService: IConfigService,
+    @IFlagService private readonly flags: IFlagService,
+    @IAgentPermissionModeService private readonly modeService: IAgentPermissionModeService,
+    @IAgentPermissionGate permissionGate: IAgentPermissionGate,
     @IModelCatalog private readonly models: IModelCatalog,
     @IProtocolAdapterRegistry private readonly protocols: IProtocolAdapterRegistry,
     @ISessionUsageService private readonly usage: ISessionUsageService,
@@ -135,13 +138,29 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     @ILogService private readonly log: ILogService,
   ) {
     super();
-    this.projectInstructions = this.instructions.ready.then(() => ({
-      agentsMd: this.instructions.agentsMd,
-      agentsMdPaths: this.instructions.agentsMdPaths === undefined
-        ? undefined
-        : [...this.instructions.agentsMdPaths],
-    }));
-    void this.projectInstructions.catch(() => undefined);
+    if (this.flags.enabled(AUTO_REVIEW_FLAG_ID)) {
+      void this.loadProjectInstructions();
+    }
+    if (typeof permissionGate.registerReviewer === 'function') {
+      this._register(
+        permissionGate.registerReviewer(
+          createAutoReviewReviewer(this.flags, this.modeService, () => this),
+        ),
+      );
+    }
+  }
+
+  private loadProjectInstructions(): Promise<ProjectInstructions> {
+    if (this.projectInstructions === undefined) {
+      this.projectInstructions = this.instructions.ready.then(() => ({
+        agentsMd: this.instructions.agentsMd,
+        agentsMdPaths: this.instructions.agentsMdPaths === undefined
+          ? undefined
+          : [...this.instructions.agentsMdPaths],
+      }));
+      void this.projectInstructions.catch(() => undefined);
+    }
+    return this.projectInstructions;
   }
 
   async review(context: ResolvedToolExecutionHookContext, trigger: string): Promise<AutoReviewResult> {
@@ -197,7 +216,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
   ): Promise<AutoReviewResult> {
     const deadline = createDeadlineAbortSignal(context.signal, timeoutMs);
     try {
-      const projectInstructions = await this.projectInstructions;
+      const projectInstructions = await this.loadProjectInstructions();
       let appended = false;
       for (let attempt = 1; attempt <= MAX_REVIEW_ATTEMPTS; attempt += 1) {
         let outcome: ReviewAttempt;
@@ -295,15 +314,11 @@ export class AutoReviewService extends Service implements IAutoReviewService {
       model.providerType,
     );
     const thinkingEffort = resolveThinkingEffortForModel('off', undefined, model, strict);
-    const maxCompletionTokensCap = overrides?.maxCompletionTokens;
-    const budget = completionBudgetParams({
-      budget: resolveCompletionBudget({
-        maxOutputSize: model.maxOutputSize,
-        maxCompletionTokensCap,
-      }),
+    const budget = resolveCompletionBudgetParams({
+      maxOutputSize: model.maxOutputSize,
+      maxCompletionTokensCap: overrides?.maxCompletionTokens,
       capability: model.capabilities,
     });
-    const optedOut = maxCompletionTokensCap !== undefined && maxCompletionTokensCap <= 0;
     const sampling =
       overrides?.temperature === undefined && overrides?.topP === undefined
         ? undefined
@@ -317,7 +332,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
         thinkingConfig?.keep,
         thinkingEffort,
       ),
-      maxCompletionTokens: optedOut ? maxCompletionTokensCap : budget?.maxCompletionTokens,
+      maxCompletionTokens: budget?.maxCompletionTokens,
       maxContextTokens: budget?.maxContextTokens,
     };
     let message: AssistantMessage | undefined;
@@ -363,7 +378,7 @@ function parseReviewJson(text: string): unknown {
 }
 
 function retryableReview(outcome: ReviewFailure): boolean {
-  if (outcome.error !== undefined) return retryableRequestError(outcome.error);
+  if (outcome.error !== undefined) return isRetryableGenerateError(outcome.error);
   return outcome.reason === 'The reviewer returned an invalid decision.';
 }
 
@@ -371,24 +386,6 @@ function contextOverflow(error: unknown): boolean {
   return classifyApiError(error).kind === 'context_overflow';
 }
 
-function retryableRequestError(error: unknown): boolean {
-  if (isAbortError(error)) return false;
-  if (!isError2(error) || error.code === PROVIDER_AUTH_ERROR_CODE) return false;
-  const statusCode = error.details?.['statusCode'];
-  if (typeof statusCode === 'number') return statusCode === 408 || statusCode === 429 || statusCode >= 500;
-  return error.code === PROVIDER_RATE_LIMIT_ERROR_CODE
-    || error.code === PROVIDER_OVERLOADED_ERROR_CODE
-    || error.code === PROVIDER_CONNECTION_ERROR_CODE;
-}
-
 function authorizationChanged(): AutoReviewResult {
   return { kind: 'failed', reason: 'Authorization changed during review.' };
 }
-
-registerScopedService(
-  LifecycleScope.Agent,
-  IAutoReviewService,
-  AutoReviewService,
-  ScopeActivation.OnScopeCreated,
-  'autoReview',
-);

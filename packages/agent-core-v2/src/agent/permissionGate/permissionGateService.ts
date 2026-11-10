@@ -1,3 +1,4 @@
+import { type IDisposable, toDisposable } from '#/_base/di/lifecycle';
 import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -11,22 +12,18 @@ import { IAgentPermissionRulesService } from '#/agent/permissionRules/permission
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { BeforeToolExecuteEvent } from '#/agent/toolExecutor/toolHooks';
-import { IFlagService } from '#/app/flag/flag';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { autoReviewTrigger, resolveAutoReview } from '#/features/autoReview/autoReviewGate';
-import { AUTO_REVIEW_FLAG_ID } from '#/features/autoReview/flag';
-import { IAutoReviewService } from '#/features/autoReview/review';
 
-import { IAgentPermissionGate } from './permissionGate';
+import { IAgentPermissionGate, type PermissionGateReviewer } from './permissionGate';
 
 export class AgentPermissionGate extends Service implements IAgentPermissionGate {
   declare readonly _serviceBrand: undefined;
+  private reviewer: PermissionGateReviewer | undefined;
+
   constructor(
     @IAgentPermissionModeService private readonly modeService: IAgentPermissionModeService,
     @IAgentPermissionRulesService private readonly rulesService: IAgentPermissionRulesService,
     @IAgentPermissionPolicyService private readonly policyService: IAgentPermissionPolicyService,
-    @IFlagService private readonly flags: IFlagService,
-    @IAutoReviewService private readonly autoReview: IAutoReviewService,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
@@ -42,23 +39,23 @@ export class AgentPermissionGate extends Service implements IAgentPermissionGate
     };
   }
 
+  registerReviewer(reviewer: PermissionGateReviewer): IDisposable {
+    this.reviewer = reviewer;
+    return toDisposable(() => {
+      if (this.reviewer === reviewer) this.reviewer = undefined;
+    });
+  }
+
   private async adjudicate(event: BeforeToolExecuteEvent): Promise<void> {
-    const evaluation = await this.policyService.evaluate(event);
-    if (evaluation === undefined) return;
-    const reviewTrigger = autoReviewTrigger(
-      this.flags.enabled(AUTO_REVIEW_FLAG_ID),
-      this.modeService.mode,
-      evaluation,
+    const evaluation = await this.policyService.evaluate(
+      event,
+      this.reviewer?.evaluateOptions?.(),
     );
-    if (reviewTrigger !== undefined) {
+    if (evaluation === undefined) return;
+    const deferredReview = this.reviewer?.review(event, evaluation);
+    if (deferredReview !== undefined) {
       event.waitUntil(async () => {
-        const review = await this.autoReview.review(event, reviewTrigger);
-        const resolved = resolveAutoReview(
-          event,
-          evaluation,
-          review,
-          this.flags.enabled(AUTO_REVIEW_FLAG_ID) ? this.modeService.mode : 'manual',
-        );
+        const resolved = await deferredReview();
         this.trackPolicyDecision(event, resolved);
         return this.toolApproval.resolvePermissionResolution(
           resolved.result,
