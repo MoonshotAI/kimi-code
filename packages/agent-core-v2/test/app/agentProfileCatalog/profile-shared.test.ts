@@ -62,6 +62,7 @@ describe('systemPromptVars', () => {
     expect(vars['additional_dirs_section']).toContain('/extra');
     expect(vars['skills_section']).toContain('# Skills');
     expect(vars['skills_section']).toContain('SKILLS');
+    expect(vars['skills_section']).toContain('invoke them with the `Skill` tool');
   });
 
   it('renders missing context fields as empty strings', () => {
@@ -85,6 +86,8 @@ describe('systemPromptVars', () => {
     expect(vars['skills']).toBe('SKILLS');
     expect(vars['skills_section']).toContain('# Skills');
     expect(vars['skills_section']).toContain('SKILLS');
+    expect(vars['skills_section']).toContain('use a user-initiated skill command');
+    expect(vars['skills_section']).not.toContain('invoke them with the `Skill` tool');
   });
 
   it('does not use context skillActive to hide the listing', () => {
