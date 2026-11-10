@@ -717,7 +717,8 @@ describe('notify turn handoff', () => {
             if (event.turnId !== 0) return;
             loop.submit(first);
             loop.submit(second);
-            loop.steer(['second', 'first']);
+            loop.sendNow(['second', 'first']);
+            loop.sendNow(['first']);
           },
         },
       ],

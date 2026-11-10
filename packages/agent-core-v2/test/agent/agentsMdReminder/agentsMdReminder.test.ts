@@ -536,7 +536,7 @@ describe('agentsMdReminder re-injection after context loss', () => {
     await fire(h, didCtx('Read', { path: join(subDir, 'index.ts') }));
     expect(agentsMdMessages(h)).toHaveLength(1);
 
-    h.context.replaceHistory([], 'test');
+    h.context.replaceHistory([], 'clear');
     expect(agentsMdMessages(h)).toHaveLength(0);
 
     await fire(h, didCtx('Read', { path: join(subDir, 'other.ts') }));

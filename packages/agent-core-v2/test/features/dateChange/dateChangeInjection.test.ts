@@ -126,7 +126,7 @@ describe('AgentDateChangeService', () => {
       variant: 'date_change',
       disclosure: {
         kind: 'date',
-        renderGeneration: 2,
+        renderGeneration: 3,
         localDate: '2026-07-29',
         timeZone: TEST_TIME_ZONE,
       },
@@ -156,7 +156,7 @@ describe('AgentDateChangeService', () => {
     expect(reminders[2]?.origin).toMatchObject({
       disclosure: {
         kind: 'date',
-        renderGeneration: 2,
+        renderGeneration: 3,
         localDate: '2026-07-31',
       },
     });
@@ -289,21 +289,17 @@ describe('AgentDateChangeService', () => {
       'You are a deterministic test agent.',
       ctx.get(ISessionContext).cwd,
     );
-    appendContext(context,{
-      role: 'user',
-      content: [{ type: 'text', text: 'first turn' }],
-      origin: { kind: 'user' },
-    });
+    ctx.mockNextResponse({ type: 'text', text: 'first answer' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'first turn' }] });
+    await ctx.untilTurnEnd();
     await runWillBeginStepHooks(loop);
     expect(dateReminders(context)).toHaveLength(1);
 
     await ctx.get(IAgentConversationUndoService).undo(1);
     expect(dateReminders(context)).toHaveLength(1);
-    appendContext(context,{
-      role: 'user',
-      content: [{ type: 'text', text: 'replacement turn' }],
-      origin: { kind: 'user' },
-    });
+    ctx.mockNextResponse({ type: 'text', text: 'replacement answer' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'replacement turn' }] });
+    await ctx.untilTurnEnd();
 
     await runWillBeginStepHooks(loop);
 
@@ -316,21 +312,17 @@ describe('AgentDateChangeService', () => {
       'You are a deterministic test agent.',
       ctx.get(ISessionContext).cwd,
     );
-    appendContext(context,{
-      role: 'user',
-      content: [{ type: 'text', text: 'first turn' }],
-      origin: { kind: 'user' },
-    });
+    ctx.mockNextResponse({ type: 'text', text: 'first answer' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'first turn' }] });
+    await ctx.untilTurnEnd();
     await runWillBeginStepHooks(loop);
     expect(dateReminders(context)).toHaveLength(1);
 
     await ctx.get(IAgentConversationUndoService).undo(1);
     expect(dateReminders(context)).toHaveLength(1);
-    appendContext(context,{
-      role: 'user',
-      content: [{ type: 'text', text: 'replacement turn' }],
-      origin: { kind: 'user' },
-    });
+    ctx.mockNextResponse({ type: 'text', text: 'replacement answer' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'replacement turn' }] });
+    await ctx.untilTurnEnd();
 
     await runWillBeginStepHooks(loop);
 
@@ -356,7 +348,7 @@ describe('AgentDateChangeService', () => {
       variant: 'date_change',
       disclosure: {
         kind: 'date',
-        renderGeneration: 2,
+        renderGeneration: 3,
         localDate: '2026-07-29',
         timeZone: TEST_TIME_ZONE,
       },

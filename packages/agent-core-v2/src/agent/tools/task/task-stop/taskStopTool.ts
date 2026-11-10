@@ -29,7 +29,7 @@ export class TaskStopTool implements ITaskStopTool {
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.task_id),
       execute: async () => {
         const handler = this.toolExecutor.handler(args.task_id);
-        const info = handler === undefined ? this.history.getTask(args.task_id) : agentTaskInfo(handler);
+        const info = handler?.snapshot().fields.task === undefined ? this.history.getTask(args.task_id) : agentTaskInfo(handler);
         if (!info) {
           return { isError: true, output: `Task not found: ${args.task_id}` };
         }

@@ -34,7 +34,6 @@ import { emptyUsage, type TokenUsage } from '#human/llm-requester/usage';
 import type { AssistantEntry, HistoryMessage, UserEntry } from '#human/agent/turn';
 import { createUserEntry } from '#human/agent/turn';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import { contextFromHistoryEntry, EMPTY_LOOP_PROMPT } from './history';
 import {
   AssistantDelta,
@@ -50,8 +49,8 @@ import {
   TurnStepStreamReset,
   type TurnInterruptReason,
 } from './turnEvents';
-import { TurnEnded, TurnPrompt } from './turnOps';
 import { AgentErrorEvent } from '#/agent/mcp/mcpEvents';
+import { TurnEnded } from './turnOps';
 import { ErrorCodes, Error2, isError2, toKimiErrorPayload } from '#/errors';
 import type {
   AfterStepContext,
@@ -108,6 +107,7 @@ interface ActiveTurn {
   steps: number;
   gatedSteps: number;
   readonly steeredPromptIds: Set<string>;
+  readonly stepIds: Map<number, string>;
   current: CoreStepState | undefined;
   interruptStep: number | undefined;
   failedStep: MachineFailedStep | undefined;
@@ -156,6 +156,7 @@ export class AgentTurnProjection {
   private readonly entryTurnIds = new WeakMap<HistoryMessage, number>();
   private readonly failedTurnIds = new Set<number>();
   private readonly toolDurations = new Map<string, number>();
+  private readonly toolNotes = new Map<string, string>();
   private readonly ending = new Set<Promise<void>>();
   private historyView: { readonly source: readonly HistoryMessage[]; readonly messages: readonly ContextMessage[] } | undefined;
 
@@ -217,9 +218,17 @@ export class AgentTurnProjection {
 
   private contextForHistory(entry: HistoryMessage, failed = false, answered?: ReadonlySet<string>): ContextMessage {
     const message = liveContextFromHistoryEntry(entry, failed, answered);
-    if (message.role !== 'tool' || message.durationMs !== undefined) return message;
-    const durationMs = this.toolDurations.get(message.toolCallId);
-    return durationMs === undefined ? message : { ...message, durationMs };
+    if (message.role !== 'tool') return message;
+    let projected = message;
+    const note = this.toolNotes.get(message.toolCallId);
+    if (message.note === undefined && note !== undefined) {
+      const content = [...message.content];
+      const last = content.at(-1);
+      if (last?.type === 'text' && last.text === note) content.pop();
+      projected = { ...projected, content, note };
+    }
+    const durationMs = projected.durationMs ?? this.toolDurations.get(message.toolCallId);
+    return durationMs === undefined ? projected : { ...projected, durationMs };
   }
 
   invalidateHistory(): void {
@@ -273,6 +282,7 @@ export class AgentTurnProjection {
     this.options.telemetry.setContext({ request_id: undefined });
     const step = turn.current ?? createStepState(event.step, turn.controller.signal);
     turn.current = step;
+    turn.stepIds.set(step.number, step.uuid);
     turn.interruptStep = event.step;
     EventEmitter.setMaxListeners(MAX_STEP_SIGNAL_LISTENERS, turn.controller.signal);
     return this.runStepStarting(turn, step, event);
@@ -341,6 +351,10 @@ export class AgentTurnProjection {
     }
     const failure = turn.failedStep ?? { number: step.number, uuid: step.uuid, error: event.draft.error };
     turn.failedStep = undefined;
+    if (turn.controller.signal.aborted || isAbortError(failure.error)) {
+      turn.abortReason = turn.controller.signal.aborted ? turn.controller.signal.reason : failure.error;
+      return undefined;
+    }
     const context: LoopErrorContext = {
       turnId: turn.id,
       step: failure.number,
@@ -431,7 +445,7 @@ export class AgentTurnProjection {
     }
   }
 
-  project(event: LoopEmitted, loop: Loop, toolExecutor: IAgentToolExecutorService): void {
+  project(event: LoopEmitted, loop: Loop): void {
     if (event.type === 'turn.started') this.turnTriggers.set(event.turnId, event.trigger);
     if (event.type === 'turn.started' && event.promptOnly === true) this.promptOnlyTurnIds.add(event.turnId);
     if (event.type === 'message.appended') this.entryTurnIds.set(event.entry, event.turnId);
@@ -439,7 +453,7 @@ export class AgentTurnProjection {
       this.failedTurnIds.add(event.turnId);
       this.historyView = undefined;
     }
-    const ending = this.projectNow(event, loop, toolExecutor);
+    const ending = this.projectNow(event, loop);
     if (ending !== undefined) {
       this.ending.add(ending);
       void ending.finally(() => this.ending.delete(ending));
@@ -450,15 +464,7 @@ export class AgentTurnProjection {
     }
   }
 
-  private projectNow(event: LoopEmitted, loop: Loop, toolExecutor: IAgentToolExecutorService): Promise<void> | void {
-    if (event.type === 'message.appended') {
-      void this.options.dispatcher.dispatch(new ContextSpliced({
-        agentId: this.options.scopeContext.agentId,
-        start: Math.max(0, loop.state.messages.length - 1),
-        deleteCount: 0,
-        messages: [this.contextForHistory(event.entry)],
-      }));
-    }
+  private projectNow(event: LoopEmitted, loop: Loop): Promise<void> | void {
     switch (event.type) {
       case 'turn.started': {
         if (event.promptOnly === true) {
@@ -492,6 +498,7 @@ export class AgentTurnProjection {
         if (turn === undefined) return;
         const step = createStepState(event.step, turn.controller.signal);
         turn.current = step;
+        turn.stepIds.set(step.number, step.uuid);
         turn.streamPartCount = 0;
         if (!turn.readyResolved) {
           turn.readyResolved = true;
@@ -626,6 +633,7 @@ export class AgentTurnProjection {
       }
       case 'tool.ended': {
         if (event.result?.durationMs !== undefined) this.toolDurations.set(event.toolCallId, event.result.durationMs);
+        if (event.result?.note !== undefined) this.toolNotes.set(event.toolCallId, event.result.note);
         const turn = this.active;
         const step = turn?.current;
         if (turn === undefined || step === undefined) return;
@@ -643,7 +651,7 @@ export class AgentTurnProjection {
         if (turn === undefined) return;
         const outcome = event.outcome;
         if (outcome.type === 'done' && outcome.cause?.reason === 'steered') {
-          this.emitStepInterrupted(turn.id, event.step, 'steered', undefined, step?.uuid);
+          this.emitStepInterrupted(turn.id, event.step, 'steered', undefined, turn.stepIds.get(event.step));
           turn.interruptStep = undefined;
           turn.current = undefined;
           return;
@@ -705,6 +713,7 @@ export class AgentTurnProjection {
       steps: 0,
       gatedSteps: 0,
       steeredPromptIds: new Set(),
+      stepIds: new Map(),
       current: undefined,
       interruptStep: undefined,
       failedStep: undefined,
@@ -732,14 +741,6 @@ export class AgentTurnProjection {
     active.protocol = protocol;
     this.options.telemetry.setContext({ turn_id: turnId });
     this.options.telemetry.setContext({ thinking_effort: this.thinkingEffort });
-    void this.options.dispatcher.dispatch(new TurnPrompt({
-      agentId: this.options.scopeContext.agentId,
-      input: prompt.message.content,
-      origin: prompt.origin,
-      promptId: prompt.promptId,
-      turnId,
-      trigger: pending.trigger,
-    }));
     turn.state = 'running';
     active.started = this.options.dispatcher.dispatch(new TurnStarted({
       agentId: this.options.scopeContext.agentId,
@@ -965,7 +966,7 @@ export class AgentTurnProjection {
   }
 
   async drain(): Promise<void> {
-    await Promise.all([...this.ending]);
+    await Promise.all(this.ending);
   }
 
   close(reason: unknown): void {

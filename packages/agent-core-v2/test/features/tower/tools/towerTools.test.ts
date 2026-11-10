@@ -205,7 +205,7 @@ beforeEach(async () => {
                 token === IAgentLoopService
                   ? {
                       snapshot: () => ({ state: loop.state }),
-                      submit: (entry: unknown) => {
+                      notify: (entry: unknown) => {
                         const text = (entry as { message: { content: { text: string }[] } })
                           .message.content[0]!.text;
                         loop.submitted.push(text);

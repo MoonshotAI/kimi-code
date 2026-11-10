@@ -35,7 +35,7 @@ import { AgentToolContribution } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
-import { SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
+import { IAgentToolSelectService, SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
 import { WAIT_FOR_FLAG_ID } from '#/agent/tools/task/task-wait/flag';
 import { IWebSearchProviderService } from '#/app/auth/webSearch/webSearch';
 import { IFlagService } from '#/app/flag/flag';
@@ -226,15 +226,21 @@ describe('subagent task reminders and fork request parity', () => {
     );
 
     const agentLifecycle = ctx.get(IAgentLifecycleService);
-    const parentContext = await agentLifecycle.create({ agentId: 'parent' });
+    const parentContext = await agentLifecycle.create({
+      agentId: 'parent',
+      initialProfile: {
+        modelAlias: 'mock-model',
+        systemPrompt: PARENT_SYSTEM_PROMPT,
+        thinkingLevel: 'off',
+        activeToolNames: [...ACTIVE_TOOL_NAMES],
+        disallowedTools: [],
+      },
+    });
     const parent = agentLifecycle.handleOf(parentContext.agentId)!;
     const profile = parent.accessor.get(IAgentLoopService);
-    profile.update({
-      modelAlias: 'mock-model',
-      systemPrompt: PARENT_SYSTEM_PROMPT,
-      thinkingLevel: 'off',
-    });
-    profile.update({ activeToolNames: [...ACTIVE_TOOL_NAMES] });
+    expect(profile.data().activeToolNames).toEqual([...ACTIVE_TOOL_NAMES]);
+    expect(parent.accessor.get(IAgentToolSelectService).initialTools().map((tool) => tool.name))
+      .toEqual([...ACTIVE_TOOL_NAMES].toSorted());
     parent.accessor.get(IAgentPermissionModeService).setMode('yolo');
 
     ctx.mockNextResponse({
@@ -734,6 +740,7 @@ describe('subagent task reminders and fork request parity', () => {
       meta: { origin: { kind: 'user' } },
     });
     expect((await loop.promptHandle(id)!.completion).state).toBe('completed');
+    await loop.settled();
 
     expect(parentScript.calls).toHaveLength(3);
     expect(childRequests).toBe(2);
@@ -743,11 +750,8 @@ describe('subagent task reminders and fork request parity', () => {
       .map((part) => (part.type === 'text' ? part.text : ''))
       .join('\n');
     expect(stopResult).toContain('status: killed');
-    expect(stopResult).toContain('[partial output]');
-    expect(stopResult).toContain(STOPPED_CHILD_FINDING);
-    expect(stopResult).toContain(STOPPED_CHILD_DRAFT);
     expect(stopResult).not.toContain(STOPPED_CHILD_PROMPT);
-    expect(JSON.stringify(parentScript.calls[2]!.history)).not.toContain('<notification id=');
+    expect(JSON.stringify(parentScript.calls[2]!.history)).toContain('<notification id=');
 
     const tasks = ctx.get(IAgentTaskService);
     const [task] = tasks.list(false);

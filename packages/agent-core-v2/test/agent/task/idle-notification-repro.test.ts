@@ -27,7 +27,7 @@ import {
 import {
   createAgentTaskPersistence,
   restoreTaskHistory,
-  startAgentTask,
+  startAgentTaskInLoop,
 } from './stubs';
 
 function notifiedCount(ctx: TestAgentContext): number {
@@ -52,7 +52,7 @@ function mockSubagentRuns(
 }
 
 function startControlledAgent(ctx: TestAgentContext, description: string) {
-  return startAgentTask(ctx, {
+  return startAgentTaskInLoop(ctx, {
     description,
     prompt: description,
     run_in_background: true,
@@ -87,7 +87,6 @@ describe('task notification → main agent (real Agent instance)', () => {
         ['idle-state repro', Promise.resolve({ result: 'background agent finished its job' })],
       ]));
 
-      ctx.mockNextResponse({ type: 'text', text: 'ack from main agent' });
       const turnStarted: TurnStarted[] = [];
       const turnPrompts: TurnPrompt[] = [];
       const subscription = ctx.get(IEventBus).subscribe(TurnStarted, (event) => {
@@ -97,31 +96,33 @@ describe('task notification → main agent (real Agent instance)', () => {
         turnPrompts.push(event);
       });
       const turnEnd = ctx.untilTurnEnd();
-      const handler = startControlledAgent(ctx, 'idle-state repro');
+      const { handler } = await startControlledAgent(ctx, 'idle-state repro');
+      ctx.mockNextResponse({ type: 'text', text: 'ack from main agent' });
       const taskId = handler.taskId;
       await handler;
       await background.wait(taskId);
 
       await vi.waitFor(() => expect(notifiedCount(ctx)).toBe(1), { timeout: 2000 });
       await turnEnd;
+      await loop.settled();
 
-      expect(ctx.llmCalls.length).toBe(1);
+      expect(ctx.llmCalls.length).toBe(2);
       const flatHistoryText = JSON.stringify(ctx.llmCalls.at(-1)!.history);
-      expect(flatHistoryText).toContain('[async tool completed]');
-      expect(flatHistoryText).toContain('status: completed');
+      expect(flatHistoryText).toContain('<notification');
+      expect(flatHistoryText).toContain('task.completed');
       expect(flatHistoryText).toContain(taskId);
-      expect(flatHistoryText).toContain('background agent finished its job');
+      expect(flatHistoryText).toContain('<output-file');
       const notificationTurn = turnStarted.find((event) => event.origin?.kind === 'task');
-      expect(notificationTurn?.prompt).toBeUndefined();
-      expect(notificationTurn?.promptId).toBeUndefined();
+      expect(notificationTurn?.origin).toMatchObject({ kind: 'task', taskId, status: 'completed' });
+      expect(notificationTurn?.prompt).toContain('<notification');
+      expect(notificationTurn?.promptId).toEqual(expect.any(String));
       const notificationPromptText = JSON.stringify(
         turnPrompts.find(
           (event) => event.origin.kind === 'task' && event.turnId === notificationTurn?.turnId,
         )?.input,
       );
-      expect(notificationPromptText).toContain('[async tool completed]');
-      expect(notificationPromptText).toContain(taskId);
-      expect(notificationPromptText).toContain('background agent finished its job');
+      expect(notificationPromptText).toContain('<notification');
+      expect(notificationPromptText).toContain('<output-file');
       subscription.dispose();
       promptSubscription.dispose();
     });
@@ -131,13 +132,13 @@ describe('task notification → main agent (real Agent instance)', () => {
         ['busy-state repro', Promise.resolve({ result: 'busy-state bg result' })],
       ]));
       ctx.mockNextResponse({ type: 'text', text: 'first turn ack' });
-      ctx.mockNextResponse({ type: 'text', text: 'notification ack' });
-      ctx.mockNextResponse({ type: 'text', text: 'drain turn ack' });
 
       const promptPromise = ctx.rpc.prompt({
         input: [{ type: 'text', text: 'kick off a turn' }],
       });
-      const handler = startControlledAgent(ctx, 'busy-state repro');
+      const { handler } = await startControlledAgent(ctx, 'busy-state repro');
+      ctx.mockNextResponse({ type: 'text', text: 'notification ack' });
+      ctx.mockNextResponse({ type: 'text', text: 'drain turn ack' });
       const taskId = handler.taskId;
       await handler;
 
@@ -147,18 +148,19 @@ describe('task notification → main agent (real Agent instance)', () => {
 
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'drain the queue' }] });
       await ctx.untilTurnEnd();
+      await loop.settled();
 
       const delivered = ctx.llmCalls.some((call) => {
         const flat = JSON.stringify(call.history);
-        return flat.includes('[async tool completed]') && flat.includes(taskId);
+        return flat.includes('<notification') && flat.includes(taskId);
       });
       expect(delivered).toBe(true);
 
       const flatContext = JSON.stringify(ctx.contextData());
-      expect(flatContext).toContain('[async tool completed]');
-      expect(flatContext).toContain('status: completed');
+      expect(flatContext).toContain('<notification');
+      expect(flatContext).toContain('task.completed');
       expect(flatContext).toContain(taskId);
-      expect(flatContext).toContain('busy-state bg result');
+      expect(flatContext).toContain('<output-file');
     });
 
     it('IDLE × N: a GROUP of bg agents completes — the first notification launches one turn, the rest fold in', async () => {
@@ -167,22 +169,22 @@ describe('task notification → main agent (real Agent instance)', () => {
         ['group-2', Promise.resolve({ result: 'bg #2 result' })],
         ['group-3', Promise.resolve({ result: 'bg #3 result' })],
       ]));
-      ctx.mockNextResponse({ type: 'text', text: 'ack group 1' });
-      ctx.mockNextResponse({ type: 'text', text: 'ack group 2' });
-      ctx.mockNextResponse({ type: 'text', text: 'ack group 3' });
-      const turnEnd = ctx.untilTurnEnd();
-      const handlers = [
+      const handlers = await Promise.all([
         startControlledAgent(ctx, 'group-1'),
         startControlledAgent(ctx, 'group-2'),
         startControlledAgent(ctx, 'group-3'),
-      ];
-      const taskIds = handlers.map((handler) => handler.taskId);
-      await Promise.all(handlers.map(async (handler) => handler));
+      ]);
+      const turnEnd = ctx.untilTurnEnd();
+      ctx.mockNextResponse({ type: 'text', text: 'ack group 1' });
+      ctx.mockNextResponse({ type: 'text', text: 'ack group 2' });
+      ctx.mockNextResponse({ type: 'text', text: 'ack group 3' });
+      const taskIds = handlers.map(({ handler }) => handler.taskId);
 
       for (const id of taskIds) await background.wait(id);
 
       await vi.waitFor(() => expect(notifiedCount(ctx)).toBe(3), { timeout: 2000 });
       await turnEnd;
+      await loop.settled();
       await vi.waitFor(() => {
         expect(loop.snapshot().state).toBe('idle');
         expect(loop.snapshot().hasPendingRequests).toBe(false);
@@ -190,10 +192,10 @@ describe('task notification → main agent (real Agent instance)', () => {
 
       const flatHistoryText = JSON.stringify(ctx.llmCalls.map((call) => call.history));
       for (const id of taskIds) expect(flatHistoryText).toContain(id);
-      expect(flatHistoryText).toContain('bg #1 result');
-      expect(flatHistoryText).toContain('bg #2 result');
-      expect(flatHistoryText).toContain('bg #3 result');
-      expect(flatHistoryText).toContain('[async tool completed]');
+      const notifications = ctx.context.history().filter((message) => message.origin?.kind === 'task');
+      expect(notifications).toHaveLength(3);
+      expect(JSON.stringify(notifications).match(/<output-file/g)).toHaveLength(3);
+      expect(flatHistoryText).toContain('<notification');
     });
 
     it('RACE: bg completion right after turn end launches its own turn', async () => {
@@ -205,20 +207,21 @@ describe('task notification → main agent (real Agent instance)', () => {
       await ctx.untilTurnEnd();
       expect(ctx.llmCalls.length).toBe(1);
 
-      ctx.mockNextResponse({ type: 'text', text: 'ack from bg notification' });
       const turnEnd = ctx.untilTurnEnd();
-      const handler = startControlledAgent(ctx, 'race-after-turn');
+      const { handler } = await startControlledAgent(ctx, 'race-after-turn');
+      ctx.mockNextResponse({ type: 'text', text: 'ack from bg notification' });
       const taskId = handler.taskId;
       await handler;
       await background.wait(taskId);
       await vi.waitFor(() => expect(notifiedCount(ctx)).toBe(1), { timeout: 2000 });
       await turnEnd;
+      await loop.settled();
 
-      expect(ctx.llmCalls.length).toBe(2);
+      expect(ctx.llmCalls.length).toBe(3);
       const flatHistoryText = JSON.stringify(ctx.llmCalls.at(-1)!.history);
-      expect(flatHistoryText).toContain('[async tool completed]');
+      expect(flatHistoryText).toContain('<notification');
       expect(flatHistoryText).toContain(taskId);
-      expect(flatHistoryText).toContain('post-turn bg result');
+      expect(flatHistoryText).toContain('<output-file');
     });
   });
 
@@ -268,17 +271,17 @@ describe('task notification → main agent (real Agent instance)', () => {
           model: options.plan.model,
           promptText: options.prompt,
         }));
-        vi.spyOn(main.get(ISessionSubagentService), 'run').mockImplementation(async () =>
+        vi.spyOn(main.get(ISessionSubagentService), 'run').mockImplementation(async (_agent, _request, options) =>
           runAgentTurn(
             childHandle,
             { kind: 'prompt', prompt: 'do background work' },
-            { signal: new AbortController().signal },
+            { signal: options.signal },
           )
         );
 
-        main.mockNextResponse({ type: 'text', text: 'ack from main agent' });
         const notificationTurnEnd = main.untilTurnEnd();
-        const handler = startControlledAgent(main, 'kill-order repro');
+        const { handler } = await startControlledAgent(main, 'kill-order repro');
+        main.mockNextResponse({ type: 'text', text: 'ack from main agent' });
         const taskId = handler.taskId;
         await handler;
         await inFlight;
@@ -292,12 +295,12 @@ describe('task notification → main agent (real Agent instance)', () => {
         await vi.waitFor(() => {
           expect(main.llmCalls.length).toBeGreaterThanOrEqual(1);
         }, { timeout: 2000 });
+        await notificationTurnEnd;
+        await main.get(IAgentLoopService).settled();
         const notified = JSON.stringify(main.llmCalls.at(-1)!.history);
         expect(notified).toContain(taskId);
-        expect(notified).toContain('[async tool');
+        expect(notified).toMatch(/task\.killed/);
         expect(childLoop.snapshot().state).toBe('idle');
-
-        await notificationTurnEnd;
       } finally {
         await main.dispose();
         await child.dispose();
@@ -353,35 +356,31 @@ describe('task notification → main agent (real Agent instance)', () => {
       }
     });
 
-    it('RESUME: previous-session lost tasks surface as one unified reminder (no auto-turn)', async () => {
-      const launches: number[] = [];
+    it('RESUME: previous-session lost tasks use ordinary notifications and a real turn', async () => {
+      const launches: TurnStarted[] = [];
       const launchSubscription = ctx.get(IEventBus).subscribe(TurnStarted, (event) => {
-        launches.push(event.turnId);
+        launches.push(event);
       });
+      ctx.mockNextResponse({ type: 'text', text: 'restored notifications acknowledged' });
 
       await restoreTaskHistory(ctx, previousTasks);
+      await loop.settled();
 
       expect(background.getTask('agent-prev0000')?.status).toBe('lost');
-      loop.flushReminders();
-
-      await vi.waitFor(() => {
-        const flatContext = JSON.stringify(ctx.contextData());
-        expect(flatContext).toContain('task_resume_termination');
-        expect(flatContext).toContain('<system-reminder>');
-        expect(flatContext).toContain('agent-prev0000');
-        expect(flatContext).toContain('bash-prev0000');
-      });
-
-      expect(launches).toEqual([]);
-      expect(ctx.llmCalls.length).toBe(0);
+      expect(launches).toHaveLength(2);
+      expect(launches.every((event) => event.origin?.kind === 'task')).toBe(true);
+      expect(ctx.llmCalls.length).toBe(1);
       expect(loop.snapshot().activeTurnId).toBeUndefined();
       launchSubscription.dispose();
 
       const flatContext = JSON.stringify(ctx.contextData());
       expect(flatContext).toContain('<output-file');
       expect(flatContext).not.toContain('previous bash output');
+      expect(flatContext).toContain('agent-prev0000');
+      expect(flatContext).toContain('bash-prev0000');
       expect(flatContext).toMatch(/task\.completed/);
-      expect(flatContext).not.toMatch(/task\.lost/);
+      expect(flatContext).toMatch(/task\.lost/);
+      expect(flatContext).not.toContain('task_resume_termination');
     });
   });
 });

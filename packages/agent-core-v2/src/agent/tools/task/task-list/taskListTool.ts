@@ -38,9 +38,11 @@ export class TaskListTool implements ITaskListTool {
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, listScope),
       execute: async () => {
         const activeOnly = args.active_only ?? true;
-        const tasks = this.toolExecutor.handlers().flatMap((handler) =>
-          handler.snapshot().fields.task === undefined ? [] : [agentTaskInfo(handler)]
-        );
+        const tasks = this.toolExecutor.handlers().flatMap((handler) => {
+          if (handler.snapshot().fields.task === undefined) return [];
+          const info = agentTaskInfo(handler);
+          return activeOnly && TERMINAL_STATUSES.has(info.status) ? [] : [info];
+        });
         const ids = new Set(tasks.map((task) => task.taskId));
         for (const info of this.history.list(false)) {
           if (ids.has(info.taskId)) continue;

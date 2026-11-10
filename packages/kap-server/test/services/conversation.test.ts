@@ -402,7 +402,7 @@ describe('conversation fold', () => {
       turnPrompt(0, 'p1'),
       userMessage('p1', 'work'),
       stepBegin(0, 1, 's1'),
-      userMessage(undefined, notificationXml('a'), { kind: 'task', taskId: 'a' }),
+      userMessage(undefined, notificationXml('a', '\n<output-file path="/tmp/a.log" bytes="123">\nRead output.\n</output-file>'), { kind: 'task', taskId: 'a' }),
       turnEnded(0, 'completed'),
       turnPrompt(1, undefined, { kind: 'task', taskId: 'b' }),
       userMessage(undefined, notificationXml('b'), { kind: 'task', taskId: 'b' }),
@@ -419,6 +419,7 @@ describe('conversation fold', () => {
     expect(state.turns[1]).toMatchObject({ turn_number: 1, status: 'ended' });
     expect(state.turns[2]).toMatchObject({ status: 'ended', outcome: 'completed' });
     expect(state.turns[2]?.items.map((item) => item.item_id)).toEqual(['n-c', 'n-c:1']);
+    expect(state.turns[0]?.items[1]).toMatchObject({ output: { file: '/tmp/a.log', bytes: 123 } });
   });
 
   it('reads the answer of a background question into structured fields', () => {

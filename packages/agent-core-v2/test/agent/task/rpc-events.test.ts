@@ -292,8 +292,11 @@ describe('AgentTaskService — event emission', () => {
 
   it('marks restored running history lost without dispatching task.terminated', async () => {
     const ctx = track(createTestAgent(taskServices()));
-    await restoreTaskHistory(ctx, [agentInfo({ status: 'running', endedAt: null })]);
-    expect(ctx.get(IAgentTaskService).getTask('agent-done0000')?.status).toBe('lost');
+    const running = agentInfo({ status: 'running', endedAt: null });
+    ctx.mockNextResponse({ type: 'text', text: 'lost task acknowledged' });
+    await restoreTaskHistory(ctx, [running]);
+    await drain(ctx, running.taskId);
+    expect(ctx.get(IAgentTaskService).getTask(running.taskId)?.status).toBe('lost');
     expect((await ctx.persistedWireRecords()).filter((record) => record.type === 'task.terminated')).toEqual([]);
   });
 });
@@ -311,7 +314,8 @@ describe('AgentTaskService — notification delivery', () => {
     completion.resolve({ result: 'final agent output' });
     await handler.wait();
     await drain(ctx, handler.taskId);
-    expect(JSON.stringify(taskNotifications(ctx, handler.taskId))).toContain('final agent output');
+    expect(JSON.stringify(taskNotifications(ctx, handler.taskId))).toContain('<output-file');
+    expect(await ctx.get(IAgentTaskService).readOutput(handler.taskId)).toContain('final agent output');
   });
 
   it('inlines the answer in completed question task notifications', async () => {
@@ -356,7 +360,9 @@ describe('AgentTaskService — notification delivery', () => {
 
   it('reports a failed question task with its reason and no answer block', async () => {
     const ctx = track(createTestAgent());
-    const task = await startControlled(ctx, { completion: Promise.reject(new Error('question failed')) });
+    const completion = deferred<never>();
+    const task = await startControlled(ctx, { completion: completion.promise });
+    completion.reject(new Error('question failed'));
     ctx.mockNextResponse({ type: 'text', text: 'notification ack' });
     await task.handler.wait();
     await drain(ctx, task.handler.taskId);
@@ -374,7 +380,8 @@ describe('AgentTaskService — notification delivery', () => {
     sh.finish(0);
     await handler.wait();
     await drain(ctx, handler.taskId);
-    expect(JSON.stringify(taskNotifications(ctx, handler.taskId))).toContain('process output');
+    expect(JSON.stringify(taskNotifications(ctx, handler.taskId))).toContain('<output-file');
+    expect(await ctx.get(IAgentTaskService).readOutput(handler.taskId)).toContain('process output');
   });
 
   it('enqueues stopped process task notifications into the turn flow', async () => {
@@ -570,34 +577,15 @@ describe('AgentTaskService — notification delivery', () => {
   it('does not double-notify newly lost restored agent tasks', async () => {
     const ctx = track(createTestAgent(taskServices()));
     const running = agentInfo({ status: 'running', endedAt: null });
+    ctx.mockNextResponse({ type: 'text', text: 'lost task acknowledged' });
     await restoreTaskHistory(ctx, [running]);
-    await restoreTaskHistory(ctx, [running]);
-    const text = JSON.stringify(ctx.contextData());
-    expect(text).toContain('task_resume_termination');
-    expect(text.match(/agent-done0000/g)).toHaveLength(1);
+    await drain(ctx, running.taskId);
+    await ctx.restore(await ctx.persistedWireRecords());
+    await drain(ctx, running.taskId);
     expect((await ctx.persistedWireRecords()).filter((record) => record.type === 'task.terminated')).toEqual([]);
   });
 
-  it('does not repeat a restored lost-task reminder already present in history', async () => {
-    const ctx = track(createTestAgent(taskServices()));
-    const info = agentInfo({ status: 'lost' });
-    const preceding = [{
-      type: 'context.append_message',
-      message: {
-        role: 'user',
-        content: [{ type: 'text', text: '- agent-done0000 "agent done" (subagent)' }],
-        toolCalls: [],
-        origin: { kind: 'injection', variant: 'task_resume_termination' },
-      },
-    } as unknown as WireRecord];
-    await restoreTaskHistory(ctx, [info], 'main', preceding);
-    await restoreTaskHistory(ctx, [info], 'main', preceding);
-    expect(ctx.contextData().history.filter(
-      (message) => message.origin?.kind === 'injection' && message.origin.variant === 'task_resume_termination',
-    )).toHaveLength(1);
-  });
-
-  it('does not replace a delivered legacy lost-task notification with a reminder', async () => {
+  it('does not repeat a restored lost-task notification already present in history', async () => {
     const ctx = track(createTestAgent(taskServices()));
     const info = agentInfo({ status: 'lost' });
     const preceding = [{
@@ -612,16 +600,34 @@ describe('AgentTaskService — notification delivery', () => {
       },
     } as unknown as WireRecord];
     await restoreTaskHistory(ctx, [info], 'main', preceding);
-    expect(ctx.contextData().history.filter(
-      (message) => message.origin?.kind === 'injection' && message.origin.variant === 'task_resume_termination',
-    )).toEqual([]);
+    await restoreTaskHistory(ctx, [info], 'main', preceding);
     expect(taskNotifications(ctx, info.taskId)).toHaveLength(1);
   });
 
-  it('restores a lost reminder without synthesizing task termination', async () => {
+  it('does not duplicate a delivered legacy lost-task notification', async () => {
     const ctx = track(createTestAgent(taskServices()));
-    await restoreTaskHistory(ctx, [agentInfo({ status: 'running', endedAt: null })]);
-    expect(JSON.stringify(ctx.contextData())).toContain('task_resume_termination');
+    const info = agentInfo({ status: 'lost' });
+    const preceding = [{
+      type: 'context.append_message',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: '<notification>agent done lost.</notification>' }],
+        toolCalls: [],
+        origin: {
+          kind: 'task', taskId: info.taskId, status: 'lost', notificationId: `task:${info.taskId}:lost`,
+        },
+      },
+    } as unknown as WireRecord];
+    await restoreTaskHistory(ctx, [info], 'main', preceding);
+    expect(taskNotifications(ctx, info.taskId)).toHaveLength(1);
+  });
+
+  it('restores a lost notification without synthesizing task termination', async () => {
+    const ctx = track(createTestAgent(taskServices()));
+    const running = agentInfo({ status: 'running', endedAt: null });
+    ctx.mockNextResponse({ type: 'text', text: 'lost task acknowledged' });
+    await restoreTaskHistory(ctx, [running]);
+    await drain(ctx, running.taskId);
     expect((await ctx.persistedWireRecords()).filter((record) => record.type === 'task.terminated')).toEqual([]);
   });
 
@@ -671,7 +677,7 @@ describe('AgentTaskService — agent recovery notification bodies', () => {
       'call-agent',
       emptyOutputSnapshot(),
     );
-    const text = JSON.stringify(entry);
+    const text = entry.message.content.map((part) => part.type === 'text' ? part.text : '').join('');
     expect(text).toContain('agent_id="agent-7"');
     expect(text).toMatch(/Agent\(resume="agent-7"/);
     expect(text).toMatch(/agent_id.*NOT source_id|source_id.*NOT agent_id/);
@@ -683,7 +689,7 @@ describe('AgentTaskService — agent recovery notification bodies', () => {
       'call-agent',
       emptyOutputSnapshot(),
     );
-    const text = JSON.stringify(entry);
+    const text = entry.message.content.map((part) => part.type === 'text' ? part.text : '').join('');
     expect(text).toContain('agent_id="agent-8"');
     expect(text).not.toMatch(/Agent\(resume="agent-8"/);
   });
@@ -691,7 +697,7 @@ describe('AgentTaskService — agent recovery notification bodies', () => {
   it('process task body never mentions resume', () => {
     const info = processInfo({ status: 'failed', exitCode: 1 });
     const entry = createTaskCompletionEntry(info, 'call-process', emptyOutputSnapshot());
-    const text = JSON.stringify(entry);
+    const text = entry.message.content.map((part) => part.type === 'text' ? part.text : '').join('');
     expect(text).not.toContain('agent_id=');
     expect(text).not.toMatch(/Agent\(resume=/);
     expect(text).toContain(`source_id="${info.taskId}"`);

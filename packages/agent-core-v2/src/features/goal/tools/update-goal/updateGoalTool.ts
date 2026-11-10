@@ -39,7 +39,6 @@ export class UpdateGoalTool implements IUpdateGoalTool {
 
     const status = args.status;
     const currentGoal = this.goal.getGoal().goal;
-    const goalIsActive = currentGoal?.status === 'active';
 
     return {
       description: `Setting goal status: ${status}`,
@@ -67,14 +66,14 @@ export class UpdateGoalTool implements IUpdateGoalTool {
           if (completed === null) {
             return { output: 'Goal not completed: no active goal.' };
           }
-          return { output: buildGoalCompletionSummaryPrompt(completed) };
+          return { output: buildGoalCompletionSummaryPrompt(completed), stopTurn: true };
         }
         if (status === 'blocked') {
           const blocked = await this.goal.markBlocked({}, 'model');
           if (blocked === null) {
             return { output: 'Goal not blocked: no active goal.' };
           }
-          return { output: buildGoalBlockedReasonPrompt(blocked) };
+          return { output: buildGoalBlockedReasonPrompt(blocked), stopTurn: true };
         }
         return {
           isError: true,

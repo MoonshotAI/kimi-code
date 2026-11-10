@@ -1,5 +1,5 @@
 import type { HistoryMessage, UserEntry } from '#human/agent/turn';
-import type { ToolCall, ToolDescription } from '#human/llm/message';
+import type { ToolDescription } from '#human/llm/message';
 import type { LlmOutcome } from '#human/llm/response';
 import { createPolicyRegistry, type PolicyRegistry } from '#human/llm/policy/registry';
 import { isToolDetachAck, type ToolExecutionResponse, type ToolResult } from '#/tool/executor';
@@ -619,7 +619,7 @@ class LoopActor implements Loop {
     if (!this.kicking && !this.dispatching) this.schedule();
   }
 
-  private interruptForSteer(): void {
+  private abortRequest(): void {
     const turn = this.turn;
     const step = this.step;
     if (turn === undefined || step === undefined || turn.outcome?.type === 'aborted') return;
@@ -762,12 +762,11 @@ class LoopActor implements Loop {
     return ack;
   }
 
-  notify(entry: UserEntry, options?: { readonly steer?: boolean }): LoopAck<'prompt.notified'> | undefined {
+  notify(entry: UserEntry): LoopAck<'prompt.notified'> | undefined {
     const normalized = normalizeUserEntry(entry);
     this.check({ type: 'input.notify', entry: normalized });
     if (!this.open()) return undefined;
     const ack = this.mailbox.notify(normalized);
-    if (options?.steer === true) this.interruptForSteer();
     this.releaseIntake();
     this.kick();
     return ack;
@@ -785,12 +784,39 @@ class LoopActor implements Loop {
     this.check({ type: 'input.steer', promptIds });
     if (!this.open()) return undefined;
     const ack = this.mailbox.steer(promptIds);
-    if ((ack.entries?.length ?? 0) > 0) {
-      this.interruptForSteer();
-      this.releaseIntake();
-    }
+    if ((ack.entries?.length ?? 0) > 0) this.releaseIntake();
     this.kick();
     return ack;
+  }
+
+  sendNow(entry: UserEntry): LoopAck<'prompt.notified'> | undefined;
+  sendNow(promptIds: readonly string[]): void;
+  sendNow(input: UserEntry | readonly string[]): LoopAck<'prompt.notified'> | undefined | void {
+    const entry = Array.isArray(input) ? undefined : input as UserEntry;
+    if (entry !== undefined) {
+      const normalized = normalizeUserEntry(entry);
+      this.check({ type: 'input.notify', entry: normalized });
+      if (!this.open()) return undefined;
+      const ack = this.mailbox.notify(normalized);
+      this.releaseIntake();
+      this.abortRequest();
+      this.kick();
+      return ack;
+    }
+    const promptIds = input as readonly string[];
+    this.check({ type: 'input.steer', promptIds });
+    if (!this.open()) return;
+    const ids = new Set(promptIds);
+    if (ids.size !== promptIds.length) return;
+    const inbox = this.mailbox.snapshot;
+    const normal = new Set(inbox.normal.map((item) => item.meta?.promptId));
+    const notify = new Set(inbox.notify.map((item) => item.meta?.promptId));
+    if (![...ids].every((id) => normal.has(id) || notify.has(id))) return;
+    const pending = promptIds.filter((id) => normal.has(id));
+    if (pending.length > 0) this.mailbox.steer(pending);
+    this.releaseIntake();
+    this.abortRequest();
+    this.kick();
   }
 
   cancel(promptId: string): LoopAck<'prompt.canceled'> | undefined {

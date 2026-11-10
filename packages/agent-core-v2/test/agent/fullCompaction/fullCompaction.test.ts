@@ -1790,12 +1790,12 @@ describe('FullCompaction', () => {
         i * 1_850,
       );
     }
-    const initialTokens = estimateTokensForMessages(ctx.context.history());
     const completed = ctx.once('compaction.completed');
     ctx.mockNextResponse({ type: 'text', text: 'Auto summary.' });
 
     await ctx.restorePersisted();
     ctx.context.flushReminders();
+    const initialTokens = estimateTokensForMessages(ctx.context.history());
     ctx.get(IAgentFullCompactionService).begin({ source: 'auto', instruction: undefined });
     await completed;
     await ctx.wire.flush();
@@ -1950,8 +1950,12 @@ describe('FullCompaction', () => {
           user: text <compaction-instruction>
 
       call 2:
+        tools: Agent, AgentSwarm, AskUserQuestion, Bash, CreateGoal, CronCreate, CronDelete, CronList, Edit, ExitPlanMode, FetchURL, GetGoal, Glob, Grep, Read, ReadMediaFile, SetGoalBudget, Skill, TaskList, TaskOutput, TaskStop, TodoList, UpdateGoal, WaitFor, Write
         messages:
-          user: text "old user one\\n\\nold user two\\n\\nrecent user three\\n\\nAnswer after compacting"
+          user: text "old user one"
+          user: text "old user two"
+          user: text "recent user three"
+          user: text "Answer after compacting"
           user: text "The conversation so far has been compacted to free up context. What follows is your own working summary of this task — use it to continue your train of thought rather than starting over. Do not redo work it reports as done or re-run checks it reports as passed; check anything it marks as unverified before relying on it. Any user messages earlier in this context are preserved verbatim from the compacted conversation; where a system-reminder note among them marks an omitted middle section, the user messages it replaced are covered by this summary. The summary records which earlier requests were already addressed.\\nAuto compacted summary."
           user: text "<system-reminder>\\nContext compaction is complete — continue the work that was in progress when it began.\\n</system-reminder>"
     `);
@@ -2056,6 +2060,7 @@ describe('FullCompaction', () => {
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    await ctx.restorePersisted();
     ctx.appendUnresolvedToolExchange(0);
     ctx.appendSystemReminder('host note', {
       kind: 'injection',
@@ -2126,6 +2131,7 @@ describe('FullCompaction', () => {
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    await ctx.restorePersisted();
     ctx.appendUnresolvedToolExchange(1);
     ctx.appendSystemReminder('host note', {
       kind: 'injection',
@@ -2588,9 +2594,8 @@ describe('FullCompaction', () => {
       need in the conversation history.",
         ],
         [
-          "user: old user one
-
-      Retry after provider overflow",
+          "user: old user one",
+          "user: Retry after provider overflow",
           "user: The conversation so far has been compacted to free up context. What follows is your own working summary of this task — use it to continue your train of thought rather than starting over. Do not redo work it reports as done or re-run checks it reports as passed; check anything it marks as unverified before relying on it. Any user messages earlier in this context are preserved verbatim from the compacted conversation; where a system-reminder note among them marks an omitted middle section, the user messages it replaced are covered by this summary. The summary records which earlier requests were already addressed.
       Overflow compacted summary.",
           "user: <system-reminder>
@@ -3441,9 +3446,8 @@ describe('FullCompaction', () => {
       need in the conversation history.",
         ],
         [
-          "user: old user one
-
-      xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "user: old user one",
+          "user: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
           "user: The conversation so far has been compacted to free up context. What follows is your own working summary of this task — use it to continue your train of thought rather than starting over. Do not redo work it reports as done or re-run checks it reports as passed; check anything it marks as unverified before relying on it. Any user messages earlier in this context are preserved verbatim from the compacted conversation; where a system-reminder note among them marks an omitted middle section, the user messages it replaced are covered by this summary. The summary records which earlier requests were already addressed.
       Placeholder compacted summary.",
           "user: <system-reminder>
@@ -3619,7 +3623,7 @@ describe('FullCompaction context recovery pointer', () => {
     const ctx = recoveryAgent(appService(IFileSystemStorageService, locatedStorage(JOURNAL_HOME)));
     await ctx.restorePersisted();
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
-    ctx.appendExchange(2, 'doomed user two', 'doomed assistant two', 40);
+    ctx.appendTurnExchange('doomed user two', 'doomed assistant two', 40);
     await ctx.rpc.undoHistory({ count: 1 });
     ctx.appendExchange(3, 'recent user three', 'recent assistant three', 40);
 
@@ -3648,6 +3652,7 @@ describe('FullCompaction context recovery pointer', () => {
 
   it('starts the window after the latest context.clear record', async () => {
     const ctx = recoveryAgent(appService(IFileSystemStorageService, locatedStorage(JOURNAL_HOME)));
+    await ctx.restorePersisted();
     ctx.appendExchange(1, 'discarded user one', 'discarded assistant one', 20);
     ctx.clearContext();
     ctx.appendExchange(2, 'post-clear user two', 'post-clear assistant two', 40);

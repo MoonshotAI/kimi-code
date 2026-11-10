@@ -53,14 +53,6 @@ function createLoopStub(): IAgentLoopService {
   } as unknown as IAgentLoopService;
 }
 
-function createContextStub(): IAgentLoopService {
-  return {
-    _serviceBrand: undefined,
-    get: () => [],
-    splice: () => undefined,
-  } as unknown as IAgentLoopService;
-}
-
 function createTelemetryStub(): ITelemetryService {
   return {
     _serviceBrand: undefined,
@@ -74,6 +66,7 @@ function createToolExecutorStub(): IAgentToolExecutorService {
     onBeforeExecuteTool: Event.None,
     onWillExecuteTool: Event.None,
     hooks: { onDidExecuteTool: hookSlot() },
+    registerLegacyStarting: () => noopDisposable(),
   } as unknown as IAgentToolExecutorService;
 }
 
@@ -120,7 +113,6 @@ function buildHost(key: string): GoalHost {
   ix.stub(ISessionUsageService, {
     onDidRecord: Event.None,
   } as unknown as ISessionUsageService);
-  ix.stub(IAgentLoopService, createContextStub());
   ix.stub(IAgentReminderService, createReminderStub());
   ix.stub(ITelemetryService, createTelemetryStub());
   ix.stub(IAgentToolExecutorService, createToolExecutorStub());

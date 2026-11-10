@@ -302,11 +302,11 @@ describe('GoalInjection content', () => {
     await injectDynamic(ctx, true);
     await injectDynamic(ctx, true);
     expect(lastGoalReminder(context)).toContain('The full audit is in the earlier goal reminder.');
-    compactContext(context,{
+    compactContext(context, {
       summary: 'Earlier goal work.',
       compactedCount: context.history().length,
       tokensBefore: 100,
-    });
+    }, { dispatcher: ctx.dispatcher });
 
     await injectDynamic(ctx, true);
 
@@ -433,6 +433,7 @@ describe('GoalInjection integration', () => {
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Start.' }] });
       await ctx.untilTurnEnd();
       await ctx.untilTurnEnd();
+      await profile.settled();
 
       expect(ctx.llmCalls).toHaveLength(3);
     });

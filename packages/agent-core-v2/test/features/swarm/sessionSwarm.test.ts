@@ -1401,7 +1401,7 @@ describe('SessionSwarmService metadata compatibility', () => {
         callerAgentId: 'main',
         tasks: [resumeSessionTask('agent-abort')],
       }),
-    ).resolves.toMatchObject([{ status: 'failed', agentId: 'agent-abort' }]);
+    ).resolves.toMatchObject([{ status: 'aborted', agentId: 'agent-abort' }]);
 
     expect(
       published
@@ -2001,16 +2001,14 @@ describe('SessionSwarmService metadata compatibility', () => {
         published.push(event);
       });
       const service = ix.get(ISessionSwarmService);
-      const controller = new AbortController();
-
       const running = service.run({
         callerAgentId: 'main',
-        tasks: [{ ...spawnSessionTask('src/a.ts'), signal: controller.signal }],
+        tasks: [spawnSessionTask('src/a.ts')],
       });
       await vi.advanceTimersByTimeAsync(0);
       expect(spawnAgent).toHaveBeenCalledTimes(1);
 
-      controller.abort(userCancellationReason());
+      service.cancel({ callerAgentId: 'main' });
       await expect(running).resolves.toMatchObject([{ status: 'aborted', state: 'not_started' }]);
       expect(published.some((event) => event.type === 'subagent.spawned')).toBe(false);
 
@@ -2259,11 +2257,12 @@ describe('SessionSwarmService metadata compatibility', () => {
     process.on('unhandledRejection', listener);
     try {
       const service = ix.get(ISessionSwarmService);
+      const controller = new AbortController();
       const running = service.run({
         callerAgentId: 'main',
-        tasks: [resumeSessionTask('agent-a')],
+        tasks: [{ ...resumeSessionTask('agent-a'), signal: controller.signal }],
       });
-      service.cancel({ callerAgentId: 'main' });
+      controller.abort(new Error('batch aborted'));
       await expect(running).rejects.toThrow();
       await new Promise((resolve) => setImmediate(resolve));
       expect(rejections).toEqual([]);
@@ -2391,6 +2390,7 @@ function agentHandle(
     systemPrompt: '',
     ...data,
   });
+  Object.assign(profile, { snapshot: () => ({ state: 'idle' }) });
   const permissionMode = {
     _serviceBrand: undefined,
     mode: 'auto',

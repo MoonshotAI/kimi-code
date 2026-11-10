@@ -65,6 +65,7 @@ function deferred<T>(): Deferred<T> {
     resolve = res;
     reject = rej;
   });
+  void promise.catch(() => {});
   return { promise, resolve, reject };
 }
 
@@ -358,7 +359,7 @@ describe('TowerSpawnTool', () => {
   it('rejects non-main callers with the main-agent-only error before any work', async () => {
     ix.stub(IAgentScopeContext, { agentId: 'agent-w1', scope: (subKey?: string) => subKey ?? '' });
 
-    const result = await execute(WORKER_ARGS);
+    const result = await ix.createInstance(TowerSpawnTool).resolveExecution(WORKER_ARGS);
 
     expect(result).toEqual({
       output: 'Tower orchestration tools are only supported by the main agent.',
@@ -543,15 +544,9 @@ describe('TowerSpawnTool', () => {
   );
 
   it.each(['worker', 'reviewer'] as const)(
-    'binds a %s to primary when explicitly requested and reports the actual model',
+    'binds a %s to the caller model when no secondary pool is configured',
     async (kind) => {
-      secondaryModel = {
-        defaultModel: 'cheap/fast',
-        defaultEffort: 'low',
-        models: { 'cheap/fast': 'fast and cheap', 'smart/slow': 'careful and thorough' },
-      };
-
-      const result = await execute(argsFor(kind, 'primary'));
+      const result = await execute(argsFor(kind));
 
       expect(result.isError).toBeUndefined();
       expect(result.output).toContain('model: kimi-code');
@@ -687,7 +682,7 @@ describe('TowerSpawnTool', () => {
     const result = await execute({ ...WORKER_ARGS, model: 'cheap/fast' });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('no [secondary_model] pool is configured');
+    expect(result.output).toContain('Invalid args for tool "TowerSpawn": must NOT have additional property \'model\'');
     await expectNoWorkerSpawnSideEffects();
   });
 

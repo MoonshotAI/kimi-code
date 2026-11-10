@@ -303,7 +303,7 @@ export class SubagentTool implements ISubagentTool {
     const prefix = args.run_in_background === true ? 'Launching background' : 'Launching';
     let stop: ((context: {
       readonly reason: unknown;
-      abandon(result?: ExecutableToolResult): void;
+      readonly abandon: (result?: ExecutableToolResult) => void;
     }) => void) | undefined;
     return {
       description: `${prefix} ${profileNameForDisplay} agent: ${args.description}`,
@@ -473,7 +473,7 @@ export class SubagentTool implements ISubagentTool {
     ctx: ExecutableToolContext,
     setStop: (stop: (context: {
       readonly reason: unknown;
-      abandon(result?: ExecutableToolResult): void;
+      readonly abandon: (result?: ExecutableToolResult) => void;
     }) => void) => void,
   ): Promise<ExecutableToolResult> {
     const { toolCallId, signal, detach, onDetach, write, set, taskId = toolCallId } = ctx;

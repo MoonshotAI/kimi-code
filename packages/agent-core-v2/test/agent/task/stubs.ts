@@ -39,9 +39,11 @@ function ensureActiveTools(ctx: TestAgentContext, names: readonly string[]): voi
 
 export function startBashTask(ctx: TestAgentContext, args: BashInput) {
   ensureActiveTools(ctx, ['Bash', ...TASK_TOOLS]);
+  const toolCallId = `bash-task-${String(++bashTaskSequence)}`;
+  fixtureCalls(ctx).permitted.add(toolCallId);
   return ctx.get(IAgentToolExecutorService).executor.execute({
     type: 'function',
-    id: `bash-task-${String(++bashTaskSequence)}`,
+    id: toolCallId,
     name: 'Bash',
     arguments: JSON.stringify(args),
   }, { turnId: 0 });
@@ -98,7 +100,9 @@ async function startRegisteredTaskInLoop(
     name,
     arguments: JSON.stringify(args),
   });
-  ctx.mockNextResponse({ type: 'text', text: `${name} started` });
+  if (args.run_in_background !== true && args.background !== true) {
+    ctx.mockNextResponse({ type: 'text', text: `${name} started` });
+  }
   await ctx.rpc.prompt({ input: [{ type: 'text', text: `start ${name}` }] });
   const live = await Promise.race([created, ctx.get(IAgentLoopService).settled().then(() => undefined)]);
   if (live === undefined) throw new Error(`${name} did not start`);
@@ -210,6 +214,7 @@ export function createTaskChannel(
     getTask: (taskId: string) => reduced.get(taskId),
     list: (activeOnly: boolean, limit?: number) => reduced.list(activeOnly, limit),
     values: () => reduced.values(),
+    reconcile: async () => {},
   };
   const toolExecutor = {
     executor: raw,
@@ -463,7 +468,7 @@ export async function startControlledTask(
   }, { turnId: 0 });
   channel.handlers.set(handler.taskId, handler);
   for (let attempt = 0; attempt < 50 && handler.snapshot().fields['task'] === undefined; attempt++) {
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await Promise.resolve();
   }
   if (handler.snapshot().fields['task'] === undefined) throw new Error('controlled task fields did not initialize');
   return {

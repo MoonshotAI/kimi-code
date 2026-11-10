@@ -398,6 +398,7 @@ describe('SessionSubagentScopeCacheService', () => {
     } as IAgentMediaToolsRegistrar);
     ix.stub(IAgentToolExecutorService, {
       _serviceBrand: undefined,
+      handlers: () => [],
       onBeforeExecuteTool: () => ({ dispose: () => {} }),
       onWillExecuteTool: () => ({ dispose: () => {} }),
       hooks: {
@@ -413,6 +414,7 @@ describe('SessionSubagentScopeCacheService', () => {
         onDidFinishStep: { register: () => ({ dispose: () => {} }) },
       },
       registerLoopErrorHandler: () => ({ dispose: () => {} }),
+      start: async () => {},
       snapshot: () => ({
         state: 'idle',
         queue: [],
@@ -423,7 +425,9 @@ describe('SessionSubagentScopeCacheService', () => {
       cancel: () => true,
       settled: async () => {},
       tryAcquireQuiescence: () => ({ dispose: () => {} }),
-      close: () => Promise.resolve(),
+      close: async () => {
+        await Promise.all(ix.get(IAgentToolExecutorService).handlers().map(async (handler) => handler.stop()));
+      },
     } as unknown as IAgentLoopService);
     ix.stub(ITelemetryService, {
       _serviceBrand: undefined,
@@ -606,12 +610,10 @@ describe('SessionSubagentScopeCacheService', () => {
   it('defers eviction while the scope has active background tasks', async () => {
     cacheService('1');
     const svc = ix.get(IAgentLifecycleService);
-    ix.stub(IAgentTaskService, {
+    ix.stub(IAgentToolExecutorService, {
       _serviceBrand: undefined,
-      list: (activeOnly?: boolean) => (activeOnly === true ? [{ taskId: 'task-1' }] : []),
-      stopAllOnExit: async () => [],
-      suppressAllTerminalNotifications: async () => {},
-    } as unknown as IAgentTaskService);
+      handlers: () => [{ snapshot: () => ({ status: 'running' }) }],
+    } as unknown as IAgentToolExecutorService);
     await svc.create({ agentId: 'agent-1' });
     await svc.create({ agentId: 'agent-2' });
 
@@ -719,12 +721,13 @@ describe('SessionSubagentScopeCacheService', () => {
     cacheService('1');
     const stopAll = createControlledPromise<never[]>();
     let stopAllCalls = 0;
-    ix.stub(IAgentTaskService, {
+    ix.stub(IAgentToolExecutorService, {
       _serviceBrand: undefined,
-      list: () => [],
-      stopAllOnExit: () => (stopAllCalls++ === 0 ? stopAll : Promise.resolve([])),
-      suppressAllTerminalNotifications: async () => {},
-    } as unknown as IAgentTaskService);
+      handlers: () => [{
+        snapshot: () => ({ status: 'success' }),
+        stop: () => (stopAllCalls++ === 0 ? stopAll : Promise.resolve([])),
+      }],
+    } as unknown as IAgentToolExecutorService);
     const svc = ix.get(IAgentLifecycleService);
     await svc.create({ agentId: 'agent-1' });
     await svc.create({ agentId: 'agent-2' });
@@ -748,12 +751,13 @@ describe('SessionSubagentScopeCacheService', () => {
     cacheService('1');
     const stopAll = createControlledPromise<never[]>();
     let stopAllCalls = 0;
-    ix.stub(IAgentTaskService, {
+    ix.stub(IAgentToolExecutorService, {
       _serviceBrand: undefined,
-      list: () => [],
-      stopAllOnExit: () => (stopAllCalls++ === 0 ? stopAll : Promise.resolve([])),
-      suppressAllTerminalNotifications: async () => {},
-    } as unknown as IAgentTaskService);
+      handlers: () => [{
+        snapshot: () => ({ status: 'success' }),
+        stop: () => (stopAllCalls++ === 0 ? stopAll : Promise.resolve([])),
+      }],
+    } as unknown as IAgentToolExecutorService);
     const svc = ix.get(IAgentLifecycleService);
     await svc.create({ agentId: 'agent-1' });
     await svc.create({ agentId: 'agent-2' });
@@ -776,12 +780,13 @@ describe('SessionSubagentScopeCacheService', () => {
     cacheService('1');
     const stopAll = createControlledPromise<never[]>();
     let stopAllCalls = 0;
-    ix.stub(IAgentTaskService, {
+    ix.stub(IAgentToolExecutorService, {
       _serviceBrand: undefined,
-      list: () => [],
-      stopAllOnExit: () => (stopAllCalls++ === 0 ? stopAll : Promise.resolve([])),
-      suppressAllTerminalNotifications: async () => {},
-    } as unknown as IAgentTaskService);
+      handlers: () => [{
+        snapshot: () => ({ status: 'success' }),
+        stop: () => (stopAllCalls++ === 0 ? stopAll : Promise.resolve([])),
+      }],
+    } as unknown as IAgentToolExecutorService);
     const svc = ix.get(IAgentLifecycleService);
     await svc.create({ agentId: 'agent-1' });
     await svc.create({ agentId: 'agent-2' });
@@ -917,7 +922,9 @@ describe('SessionSubagentScopeCacheService eviction guards', () => {
         get: (serviceId: unknown) =>
           serviceId === IAgentLoopService
             ? ({ _serviceBrand: undefined, snapshot } as unknown as IAgentLoopService)
-            : serviceId === IAgentTaskService
+            : serviceId === IAgentToolExecutorService
+              ? ({ _serviceBrand: undefined, handlers: () => [] } as unknown as IAgentToolExecutorService)
+              : serviceId === IAgentTaskService
               ? ({ _serviceBrand: undefined, list: () => [] } as unknown as IAgentTaskService)
               : serviceId === IEventDispatcher
                 ? ({ _serviceBrand: undefined, flush } as unknown as IEventDispatcher)

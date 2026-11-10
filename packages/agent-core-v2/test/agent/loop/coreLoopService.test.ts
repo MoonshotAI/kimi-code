@@ -696,6 +696,7 @@ describe('core LoopService integration', () => {
               detached.resolve();
               await gate;
               fields();
+              toolCtx.write?.(completionError?.message ?? 'background-result');
               return {
                 output: completionError?.message ?? 'background-result',
                 isError: completionError !== undefined || processInfo.status === 'timed_out' || undefined,
@@ -789,7 +790,6 @@ describe('core LoopService integration', () => {
           (!closeWhileRunning && record.type === 'agent.switched' && record['reason'] === 'undo')
         )).toBe(true);
         if (!closeWhileRunning) {
-          const failed = completionError !== undefined || processInfo.status === 'timed_out';
           const taskPrompt = records.find((record) =>
             record.type === 'turn.prompt' && (record['origin'] as { kind?: string }).kind === 'task'
           );
@@ -800,9 +800,19 @@ describe('core LoopService integration', () => {
             `started:${taskPromptId}`,
             `completed:${taskPromptId}`,
           ]);
-          expect(JSON.stringify(records)).toContain(failed ? '[async tool failed]' : '[async tool completed]');
-          expect(records.some((record) => record.type === 'turn.prompt' && (record['origin'] as { kind?: string }).kind === 'task')).toBe(true);
-          expect(JSON.stringify(subject.llmInputs())).toContain(`task_id=${taskId}`);
+          const recordsText = JSON.stringify(records);
+          const status = completionError === undefined ? processInfo.status : 'failed';
+          expect(recordsText).toContain(`type=\\"task.${status}\\"`);
+          expect(recordsText).toContain('source_kind=\\"background_task\\"');
+          expect(recordsText).toContain('Wall time:');
+          expect(recordsText).toContain('<output-file');
+          expect(recordsText).not.toContain('[async tool');
+          expect(records.some((record) =>
+            record.type === 'turn.prompt' &&
+            (record['origin'] as { kind?: string; taskId?: string }).kind === 'task' &&
+            (record['origin'] as { taskId?: string }).taskId === taskId
+          )).toBe(true);
+          expect(JSON.stringify(subject.llmInputs())).toContain('<output-file');
           expect(JSON.stringify(records)).toContain('async finished');
           if (completionError !== undefined) {
             expect(JSON.stringify(records)).toContain(`task:${taskId}:failed`);

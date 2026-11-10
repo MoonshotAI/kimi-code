@@ -172,7 +172,6 @@ describe('promptWithSkills', () => {
   it('hands off a goal-originated active step to a bundled submission in a new turn', async () => {
     ctx = agentWithSkills();
     await ctx.restorePersisted();
-    ctx.mockNextResponse({ type: 'text', text: 'first reply' });
     ctx.mockNextResponse({ type: 'text', text: 'second reply' });
     const loop = ctx.get(IAgentLoopService);
     const promptLifecycle: string[] = [];
@@ -207,7 +206,7 @@ describe('promptWithSkills', () => {
     await expect(activeHandle.completion).resolves.toMatchObject({ state: 'completed' });
     await loop.settled();
 
-    expect(ctx.llmCalls).toHaveLength(2);
+    expect(ctx.llmCalls).toHaveLength(1);
     const llmInput = JSON.stringify(ctx.llmInputs());
     expect(llmInput).toContain('# Review body');
     expect(llmInput).toContain('ARGUMENTS: src/app.ts');

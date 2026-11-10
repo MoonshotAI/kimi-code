@@ -119,7 +119,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
     }
     let stop: ((context: {
       readonly reason: unknown;
-      abandon(result?: ExecutableToolResult): void;
+      readonly abandon: (result?: ExecutableToolResult) => void;
     }) => void) | undefined;
     return {
       description: `Spawning tower ${args.kind} "${args.name}"`,
@@ -140,7 +140,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
     ctx: ExecutableToolContext,
     setStop: (stop: (context: {
       readonly reason: unknown;
-      abandon(result?: ExecutableToolResult): void;
+      readonly abandon: (result?: ExecutableToolResult) => void;
     }) => void) => void,
   ): Promise<ExecutableToolResult> {
     const { toolCallId, signal, taskId = toolCallId, write, set, detach, onDetach } = ctx;
@@ -506,12 +506,14 @@ export class TowerSpawnTool implements ITowerSpawnTool {
         controller.abort(reason);
       },
     });
+    const completion = mirrored.then((r) => ({ result: r.summary, usage: r.usage }));
+    void completion.catch(() => {});
     return {
       agentId,
       profileName: TOWER_WORKER_PROFILE,
       model: binding?.model,
       thinkingEffort: created.accessor.get(IAgentLoopService).getEffectiveThinkingLevel(),
-      completion: mirrored.then((r) => ({ result: r.summary, usage: r.usage })),
+      completion,
     };
   }
 

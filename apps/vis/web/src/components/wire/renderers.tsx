@@ -1578,6 +1578,12 @@ export const WIRE_RENDERERS: RendererMap = {
     label: 'interrupted',
     headline: (r) => ({ main: <Dim>interruption reminder · turn {r.turnId}</Dim> }),
   },
+
+  'interruptionReminder.requested': {
+    tone: 'meta',
+    label: 'interrupt requested',
+    headline: (r) => ({ main: <Dim>interruption requested · turn {r.turnId}</Dim> }),
+  },
 };
 
 /** Look up a renderer by a runtime `type` string. Returns `undefined` for kinds

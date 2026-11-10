@@ -16,10 +16,11 @@ import type { LoopRequester } from './requesterContract';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { agentTaskInfo } from '#/agent/task/handler';
+import { IAgentTaskHistoryService } from '#/agent/task/taskService';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { TaskStarted, TaskTerminated } from '#/agent/task/taskOps';
 import { TERMINAL_STATUSES } from '#/agent/task/types';
-import { IAgentTaskOutputService, taskNotificationId } from '#/agent/task/taskOutput';
+import { IAgentTaskOutputService } from '#/agent/task/taskOutput';
 import { restoreTaskCompletions } from '#/agent/task/completionRestore';
 import { completionEntry as coreCompletionEntry, type ToolCompletionInput } from './core/tool/outcome';
 import { IConfigService } from '#/app/config/config';
@@ -87,7 +88,6 @@ import {
   type SteerResult,
   type TurnResult,
 } from './loop';
-import { isUserPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
 import { createUserEntry, type HistoryMessage, type UserEntry } from '#human/agent/turn';
 import { TurnCancel, turnKey } from './turnOps';
 import { EMPTY_LOOP_PROMPT, historyEntryFromContext } from './history';
@@ -97,8 +97,6 @@ import {
   type Loop,
   type LoopEmitted,
   type MessageAppendingEvent,
-  type StepStartingEvent,
-  type StepStoppingEvent,
   type TurnStartingEvent,
 } from './core/index';
 import { LoopJournal, type LoopJournalSnapshot } from './journal';
@@ -127,7 +125,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private readonly pendingSubmissions: UserEntry[] = [];
   private readonly pendingReminders: HistoryMessage[] = [];
   private readonly pendingNotifications: UserEntry[] = [];
-  private readonly pendingSteerNotifications = new Set<string>();
+  private readonly pendingSendNowNotifications = new Set<string>();
   private readonly settleWaiters: Array<() => void> = [];
   private quiescenceDepth = 0;
   private historySnapshotDepth = 0;
@@ -179,7 +177,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       prepareOperation: async (options, signal) => {
         if (this.loop === undefined) throw new BugIndicatingError('Agent loop is not started');
         const config = requester.requestConfigSnapshot();
-        const tools = await requester.prepareTools(signal, config.resolved.modelCapabilities, options.tools);
+        const baseline = options.tools ?? this.loop.state.profile.tools;
+        const visible = options.tools === undefined && baseline !== undefined
+          ? requester.operationTools(baseline, config.resolved.modelCapabilities)
+          : baseline;
+        const tools = await requester.prepareTools(signal, config.resolved.modelCapabilities, visible);
         return this.loop.operation((runtime) => requester.coreRequester({ ...options, runtime, tools, config }));
       },
     };
@@ -381,11 +383,15 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.profileAdapter.restore(snapshot);
     await this.ensureDefaultProfile();
     const tools = this.requestFactory.baselineTools();
+    const taskHistory = this.instantiation.invokeFunction((accessor) => accessor.get(IAgentTaskHistoryService));
+    await taskHistory.reconcile();
     const completions = await restoreTaskCompletions({
       wire: this.wire,
       agentId: this.scopeContext.agentId,
       taskOutputs: this.taskOutputs,
       messages: seededMessages ?? snapshot.input.messages ?? [],
+      pending: snapshot.input.inbox?.notify ?? [],
+      isLive: (taskId) => this.toolExecutor.handler(taskId)?.snapshot().status === 'running',
     });
     this.createLoopFromSnapshot(snapshot, tools, completions, seededMessages);
   }
@@ -395,8 +401,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const defaultModel = this.config.get<string>('defaultModel');
     if (defaultModel === undefined || defaultModel === '') return;
     try {
-      const profile = this.profileAdapter.defaultProfile();
-      await this.setProfile({ ...profile, modelAlias: profile.modelAlias ?? defaultModel });
+      await this.setModel(defaultModel);
     } catch (error) {
       if (!(error instanceof ProfileError && error.code === ProfileErrors.codes.MODEL_NOT_CONFIGURED)) throw error;
     }
@@ -412,28 +417,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   ): void {
     this.initialized = true;
     const loop = createLoop({
-      completionEntry: (input: ToolCompletionInput): UserEntry => {
-        const entry = coreCompletionEntry(input.toolCall, input.outcome, input.result);
+      completionEntry: (input: ToolCompletionInput) => {
         const handler = this.toolExecutor.handlerForCall(input.toolCall.id);
-        if (handler?.snapshot().fields.task === undefined) return entry;
-        const current = agentTaskInfo(handler);
-        const status = input.outcome.type === 'aborted'
-          ? 'killed' as const
-          : input.outcome.type === 'failed'
-            ? 'failed' as const
-            : current.status;
-        const notificationId = taskNotificationId(current.taskId, status);
-        const origin: PromptOrigin = { kind: 'task', taskId: current.taskId, status, notificationId };
-        return {
-          ...entry,
-          meta: {
-            ...entry.meta,
-            source: 'async-tool',
-            promptId: notificationId,
-            toolCallId: input.toolCall.id,
-            origin,
-          },
-        };
+        if (handler?.snapshot().fields.task === undefined) {
+          return coreCompletionEntry(input.toolCall, input.outcome, input.result);
+        }
+        return this.taskOutputs.createCompletion(agentTaskInfo(handler), input.toolCall.id);
       },
       createTurnExecution: (input) => {
         const execution = this.requester.createTurnExecution({
@@ -483,7 +472,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     loop.subscribe((event) => {
       const enriched = this.turns.enrich(event, this.toolExecutor);
       this.notifications.project(event);
-      this.turns.project(enriched, loop, this.toolExecutor);
+      this.turns.project(enriched, loop);
       this.projectTaskEvent(enriched);
       this.journal.append(enriched);
       if ((event.type === 'tool.async_ended' || (event.type === 'tool.ended' && !event.detached)) && event.taskId !== undefined) {
@@ -549,11 +538,15 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       const snapshot = this.journal.snapshot();
       this.profileAdapter.restore(snapshot);
       await this.ensureDefaultProfile();
+      const taskHistory = this.instantiation.invokeFunction((accessor) => accessor.get(IAgentTaskHistoryService));
+      await taskHistory.reconcile();
       const completions = await restoreTaskCompletions({
         wire: this.wire,
         agentId: this.scopeContext.agentId,
         taskOutputs: this.taskOutputs,
         messages: seededMessages ?? snapshot.input.messages ?? [],
+        pending: snapshot.input.inbox?.notify ?? [],
+        isLive: (taskId) => this.toolExecutor.handler(taskId)?.snapshot().status === 'running',
       });
       const input = {
         ...snapshot,
@@ -629,7 +622,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const status = this.snapshot();
     const steerable = status.state === 'running';
     const queued = status.state === 'running' || status.paused || status.queue.length > 0;
-    const { id } = steerable ? this.notify(input, { steer: true }) : this.submit(input);
+    const { id } = steerable ? this.sendNow(input) : this.submit(input);
     const handle = this.promptHandle(id)!;
     if (!steerable && queued) {
       return { prompt_id: id, created_at: handle.createdAt, state: 'queued', steered: false };
@@ -701,12 +694,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return this.prompts.handle(id);
   }
 
-  notify(input: LoopNotifyEntry, options?: { readonly steer?: boolean }): LoopSubmitResult;
+  notify(input: LoopNotifyEntry): LoopSubmitResult;
   notify(note?: LoopNotify): LoopNotifyHandle;
-  notify(note: LoopNotify | LoopNotifyEntry = {}, options?: { readonly steer?: boolean }): LoopSubmitResult | LoopNotifyHandle {
+  notify(note: LoopNotify | LoopNotifyEntry = {}): LoopSubmitResult | LoopNotifyHandle {
     if ('meta' in note) {
       const { id, entry } = this.admit(note);
-      this.sendNotification(entry, options?.steer === true);
+      this.sendNotification(entry);
       this.maybeSettle();
       return { id };
     }
@@ -730,6 +723,41 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     };
   }
 
+  sendNow(input: LoopNotifyEntry): LoopSubmitResult;
+  sendNow(promptIds: readonly string[]): Promise<void>;
+  sendNow(input: LoopNotifyEntry | readonly string[]): LoopSubmitResult | Promise<void> {
+    if (Array.isArray(input)) return this.sendNowEntries(input);
+    const entry = input as LoopNotifyEntry;
+    const { id, entry: admitted } = this.admit(entry);
+    this.sendNotification(admitted, true);
+    this.maybeSettle();
+    return { id };
+  }
+
+  private async sendNowEntries(promptIds: readonly string[]): Promise<void> {
+    if (this.disposing) throw abortError('Agent loop disposed');
+    if (promptIds.length === 0) throw new Error2(ErrorCodes.REQUEST_INVALID, 'prompt_ids must not be empty');
+    const loop = this.loop;
+    if (loop?.state.turn === undefined) throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'no active prompt to send now');
+    const activeTurnId = loop.state.turn.id;
+    const normal = new Map(loop.state.inbox.normal.map((entry) => [entry.meta?.promptId, entry] as const));
+    const notify = new Set(loop.state.inbox.notify.map((entry) => entry.meta?.promptId));
+    const ids = new Set(promptIds);
+    if (ids.size !== promptIds.length || ![...ids].every((id) => normal.has(id) || notify.has(id))) {
+      throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are not pending');
+    }
+    for (const id of ids) {
+      const entry = normal.get(id);
+      if (entry !== undefined) await this.materializeDaemonRefs(entry.message);
+    }
+    const pendingNormal = new Set(loop.state.inbox.normal.map((entry) => entry.meta?.promptId));
+    const pendingNotify = new Set(loop.state.inbox.notify.map((entry) => entry.meta?.promptId));
+    if (loop.state.turn?.id !== activeTurnId || ![...ids].every((id) => pendingNormal.has(id) || pendingNotify.has(id))) {
+      throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are no longer pending');
+    }
+    loop.sendNow(promptIds);
+  }
+
   remind(...entries: readonly HistoryMessage[]): void {
     if (this.disposing) throw abortError('Agent loop disposed');
     if (this.loop !== undefined && this.quiescenceDepth === 0) this.loop.remind(...entries);
@@ -743,14 +771,15 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     loop.flushReminders();
   }
 
-  private sendNotification(entry: UserEntry, steer = false): void {
+  private sendNotification(entry: UserEntry, sendNow = false): void {
     if (this.loop !== undefined && this.quiescenceDepth === 0) {
-      this.loop.notify(entry, { steer });
+      if (sendNow) this.loop.sendNow(entry);
+      else this.loop.notify(entry);
       return;
     }
     this.pendingNotifications.push(entry);
     const id = entry.meta?.promptId;
-    if (steer && id !== undefined) this.pendingSteerNotifications.add(id);
+    if (sendNow && id !== undefined) this.pendingSendNowNotifications.add(id);
   }
 
   private dropNotification(id: string): void {
@@ -758,7 +787,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     for (let index = this.pendingNotifications.length - 1; index >= 0; index -= 1) {
       if (this.pendingNotifications[index]!.meta?.promptId === id) this.pendingNotifications.splice(index, 1);
     }
-    this.pendingSteerNotifications.delete(id);
+    this.pendingSendNowNotifications.delete(id);
     this.loop?.cancel(id);
     this.notifications.drop(id);
     this.maybeSettle();
@@ -926,9 +955,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const notify = new Set(loop.state.inbox.notify.map((item) => item.meta?.promptId));
     for (const entry of this.pendingNotifications.splice(0)) {
       const id = entry.meta?.promptId;
-      const steer = id !== undefined && this.pendingSteerNotifications.delete(id);
+      const sendNow = id !== undefined && this.pendingSendNowNotifications.delete(id);
       if (id === undefined || notify.has(id)) continue;
-      loop.notify(entry, { steer });
+      if (sendNow) loop.sendNow(entry);
+      else loop.notify(entry);
     }
     if (this.quiescenceDepth > 0) return;
     if (this.pendingReminders.length > 0) loop.remind(...this.pendingReminders.splice(0));

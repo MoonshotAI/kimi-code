@@ -310,6 +310,10 @@ class FakeLoopService extends StubEffectiveProfileReader implements IAgentLoopSe
     throw new Error('unused in this suite');
   }
 
+  sendNow(): never {
+    throw new Error('unused in this suite');
+  }
+
   remind(): void {}
 
   flushReminders(): void {}
@@ -1610,7 +1614,7 @@ describe('AgentToolSelectService consecutive failures', () => {
     h.sut.load([MCP_GONE]);
     registerMcp(h, new StubMcpTool(MCP_ALPHA));
     h.sut.loadableToolsAnnouncement();
-    h.contextMemory.replaceHistory([], 'test');
+    h.contextMemory.replaceHistory([], 'clear');
     h.sut.loadableToolsAnnouncement();
     const next = h.sut.load([MCP_GONE]);
     expect(next.consecutiveFailures).toBe(2);
@@ -1862,7 +1866,7 @@ describe('AgentToolSelectService loadable-tools announcements', () => {
   it('re-announces an empty set after compaction removes its announcement', async () => {
     const h = createHarness();
     await announce(h);
-    h.contextMemory.replaceHistory([], 'test');
+    h.contextMemory.replaceHistory([], 'clear');
     expect(await announceAfterCompaction(h)).toContain(
       'No tools are currently available for dynamic loading in this session.',
     );
@@ -1979,7 +1983,7 @@ describe('AgentToolSelectService loadable-tools announcements', () => {
     await announce(h);
     expect(await announce(h, 2)).toBeUndefined();
 
-    h.contextMemory.replaceHistory([], 'test');
+    h.contextMemory.replaceHistory([], 'clear');
     const reannounced = await announceAfterCompaction(h);
     expect(reannounced).toContain(`<tools_added>\n${MCP_ALPHA}\n${MCP_BETA}\n</tools_added>`);
   });

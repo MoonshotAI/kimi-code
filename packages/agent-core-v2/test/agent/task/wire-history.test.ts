@@ -67,7 +67,13 @@ describe('AgentTaskService Wire history', () => {
   });
 
   it('projects a restored running task as lost without manufacturing endedAt', async () => {
+    ctx.mockNextResponse({ type: 'text', text: 'restored lost task acknowledged' });
     await restoreTaskHistory(ctx, [processInfo()]);
+    await vi.waitFor(() => {
+      expect(ctx.get(IAgentLoopService).history().filter((message) =>
+        message.origin?.kind === 'task' && message.origin.status === 'lost')).toHaveLength(1);
+    });
+    await ctx.get(IAgentLoopService).settled();
 
     expect(ctx.get(IAgentTaskService).getTask('bash-00000001')).toMatchObject({
       status: 'lost',
@@ -81,8 +87,13 @@ describe('AgentTaskService Wire history', () => {
     ctx.get(IEventBus).subscribe((event) => {
       emitted.push(event.type);
     });
-
+    ctx.mockNextResponse({ type: 'text', text: 'restored lost task acknowledged' });
     await restoreTaskHistory(ctx, [processInfo()]);
+    await vi.waitFor(() => {
+      expect(ctx.get(IAgentLoopService).history().filter((message) =>
+        message.origin?.kind === 'task' && message.origin.status === 'lost')).toHaveLength(1);
+    });
+    await ctx.get(IAgentLoopService).settled();
 
     expect(emitted.filter((type) => type === 'task.terminated')).toEqual([]);
     expect((await ctx.persistedWireRecords()).filter((record) => record.type === 'task.terminated')).toEqual([]);
@@ -282,14 +293,20 @@ describe('AgentTaskService Wire history', () => {
   });
 
   it('keeps repeated restores idempotent without synthesizing terminal records', async () => {
+    ctx.mockNextResponse({ type: 'text', text: 'restored lost task acknowledged' });
     await restoreTaskHistory(ctx, [processInfo()]);
     await vi.waitFor(() => {
-      expect(ctx.get(IAgentTaskService).getTask('bash-00000001')?.status).toBe('lost');
+      expect(ctx.get(IAgentLoopService).history().filter((message) =>
+        message.origin?.kind === 'task' && message.origin.status === 'lost')).toHaveLength(1);
     });
-    await restoreTaskHistory(ctx, [processInfo()]);
+    await ctx.get(IAgentLoopService).settled();
+    await ctx.restore(await ctx.persistedWireRecords());
+    await ctx.get(IAgentLoopService).settled();
 
     expect(ctx.get(IAgentTaskService).list(false)).toHaveLength(1);
     expect(ctx.get(IAgentTaskService).getTask('bash-00000001')?.endedAt).toBeNull();
+    expect(ctx.get(IAgentLoopService).history().filter((message) =>
+      message.origin?.kind === 'task' && message.origin.status === 'lost')).toHaveLength(1);
     expect((await ctx.persistedWireRecords()).filter((record) => record.type === 'task.terminated')).toEqual([]);
   });
 });

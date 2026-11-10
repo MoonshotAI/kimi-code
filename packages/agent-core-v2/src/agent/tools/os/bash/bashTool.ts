@@ -120,7 +120,7 @@ export class BashTool implements IBashTool {
     const preview = args.command.length > 50 ? `${args.command.slice(0, 50)}…` : args.command;
     let stop = ({ abandon }: {
       readonly reason: unknown;
-      abandon(result?: ExecutableToolResult): void;
+      readonly abandon: (result?: ExecutableToolResult) => void;
     }): void => {
       abandon({ isError: true, output: 'Aborted before command started' });
     };
@@ -187,10 +187,10 @@ export class BashTool implements IBashTool {
     expectedGeneration: string | undefined,
     setStop: (stop: (context: {
       readonly reason: unknown;
-      abandon(result?: ExecutableToolResult): void;
+      readonly abandon: (result?: ExecutableToolResult) => void;
     }) => void) => void,
   ): Promise<ExecutableToolResult> {
-    const { signal, toolCallId, onUpdate, onForegroundTaskStart, taskId = toolCallId, write, set, detach, onDetach } = ctx;
+    const { signal, toolCallId, onForegroundTaskStart, taskId = toolCallId, write, set, detach, onDetach } = ctx;
     const validationError = this.validateRunRequest(args, signal);
     if (validationError !== undefined) return validationError;
 
@@ -232,14 +232,13 @@ export class BashTool implements IBashTool {
     let detachScenario: 'foreground_detached' | 'foreground_detached_by_user' = 'foreground_detached_by_user';
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
     let forceHandle: ReturnType<typeof setTimeout> | undefined;
-    const onProcessOutput = (kind: 'stdout' | 'stderr', text: string): void => {
+    const onProcessOutput = (_kind: 'stdout' | 'stderr', text: string): void => {
       outputBytes += Buffer.byteLength(text);
       if (!outputLimitTripped && outputBytes > 16 * 1024 * 1024) {
         outputLimitTripped = true;
         stopReason = outputLimitReason();
         void proc.kill('SIGTERM').catch(() => {});
       }
-      onUpdate?.({ kind, text });
       builder.write(text);
     };
     const forceStop = async (): Promise<void> => {
@@ -300,6 +299,8 @@ export class BashTool implements IBashTool {
       if (scenario !== 'background_started') armTimeout(this.detachTimeoutMs());
     };
     onDetach?.(() => {
+      if (!detached) armTimeout(this.detachTimeoutMs());
+      detached = true;
       const started = this.backgroundStartedResult(
         taskId,
         proc,
@@ -355,7 +356,7 @@ export class BashTool implements IBashTool {
         lease.dispose();
       }
       setFields(status, proc.exitCode);
-      return this.completionResult(taskId, proc, builder, timeoutMs ?? foregroundTimeoutMs, {
+      return await this.completionResult(taskId, proc, builder, timeoutMs ?? foregroundTimeoutMs, {
         status,
         stopReason,
         exitCode: proc.exitCode,
@@ -539,15 +540,6 @@ function closeProcessStdin(proc: IHostProcess): void {
   }
 }
 
-async function killSpawnedProcess(proc: IHostProcess): Promise<void> {
-  try {
-    await proc.kill('SIGTERM');
-  } catch {
-  } finally {
-    await disposeProcess(proc);
-  }
-}
-
 function outputLimitReason(): string {
   return (
     'Output limit exceeded: the command produced more than 16 MiB and was ' +
@@ -597,15 +589,15 @@ async function executeProcess(
     const exitCode = await proc.wait();
     await waitForStreamDrain(streamDrained);
     signal.removeEventListener('abort', requestStop);
-    await disposeProcess(proc);
     if (signal.aborted) throw signal.reason;
     if (exitCode !== 0) throw new ProcessExitError(exitCode);
     return { exitCode };
   } catch (error) {
     await waitForStreamDrainSettled(streamDrained);
     signal.removeEventListener('abort', requestStop);
-    await disposeProcess(proc);
     throw error;
+  } finally {
+    await disposeProcess(proc);
   }
 }
 

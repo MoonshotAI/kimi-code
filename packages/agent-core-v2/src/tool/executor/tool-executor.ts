@@ -31,7 +31,6 @@ import type {
   ToolResult,
   ToolReturn,
   ToolStartingDecision,
-  ToolStoppingContext,
   ToolTimeSpan,
   ToolView,
 } from './types';
@@ -88,12 +87,12 @@ export class ToolExecutor<TContext = unknown> {
     });
     const decide = async <T extends ToolDecision | ToolStartingDecision>(
       phase: ToolPhase,
-      decider?: (
+      decider: (
         context: ToolDecisionContext<unknown, TContext, any>,
       ) => T | void | Promise<T | void>,
     ): Promise<T | void> => {
       control.enter(phase);
-      const decision = await decider?.call(hook, decisionContext());
+      const decision = await decider(decisionContext());
       control.signal.throwIfAborted();
       if (decision === undefined) return;
       if ('reject' in decision) {
@@ -147,13 +146,13 @@ export class ToolExecutor<TContext = unknown> {
             'resolve',
           ));
         }
-        const starting = await decide('starting', hook?.starting);
+        const starting = await decide('starting', (ctx) => hook?.starting?.(ctx));
         if (starting !== undefined && 'args' in starting) {
           const rewritten = await prepare(tool);
           if (rewritten !== undefined) return control.returned(rewritten);
         }
         if (starting === undefined || !('skipPermitting' in starting)) {
-          const permitting = await decide('permitting', hook?.permitting);
+          const permitting = await decide('permitting', (ctx) => hook?.permitting?.(ctx));
           if (permitting !== undefined && 'args' in permitting) {
             const rewritten = await prepare(tool);
             if (rewritten !== undefined) return control.returned(rewritten);
@@ -189,7 +188,7 @@ export class ToolExecutor<TContext = unknown> {
         const error = control.wasStopped()
           ? abortedError(control.call, control.phase, 'stopped', control.stopCause())
           : toToolError(control, thrown);
-        if (isPreExecutionHookError(error)) throw error.data ?? error;
+        if (isPreExecutionHookError(error)) throw preExecutionHookFailure(error);
         return this.fail(control, error);
       }
     };
@@ -230,7 +229,7 @@ export class ToolExecutor<TContext = unknown> {
         return result;
       } catch (thrown) {
         const error = toToolError(control, thrown);
-        if (isPreExecutionHookError(error)) throw error.data ?? error;
+        if (isPreExecutionHookError(error)) throw preExecutionHookFailure(error);
         return control.errorResult(error, [{ type: 'text', text: error.reason }]);
       }
     })();
@@ -695,9 +694,8 @@ class CallControl<TContext> {
         );
       });
     };
-    return {
+    const handler: Omit<AnyHandler, 'then'> = {
       taskId: this.taskId,
-      then: (onfulfilled, onrejected) => returned.then(onfulfilled, onrejected),
       wait,
       stop: (reason) => {
         if (this.outcome === undefined) this.requestStop(reason);
@@ -709,6 +707,7 @@ class CallControl<TContext> {
       fields: () => this.fields(),
       observe: (listener) => this.observe(listener),
     };
+    return Object.assign(returned, handler);
   }
 
   private change(apply: () => void): void {
@@ -722,7 +721,7 @@ class CallControl<TContext> {
   }
 
   private emit(event: ToolHandlerEvent<any, any>): void {
-    for (const listener of [...this.listeners]) {
+    for (const listener of Array.from(this.listeners)) {
       try {
         listener(event);
       } catch {
@@ -732,14 +731,20 @@ class CallControl<TContext> {
   }
 }
 
-class ToolStop {
+class ToolStop extends Error {
   readonly error: ToolError;
   readonly result: ToolReturn | undefined;
 
   constructor(error: ToolError, result?: ToolReturn) {
+    super(error.reason);
+    this.name = 'ToolStop';
     this.error = error;
     this.result = result;
   }
+}
+
+function preExecutionHookFailure(error: ToolError): Error {
+  return error.data instanceof Error ? error.data : new Error(error.reason, { cause: error.data });
 }
 
 function toToolError(

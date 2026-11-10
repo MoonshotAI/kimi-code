@@ -11,6 +11,7 @@ import { usableOutputOf } from '#human/llm/policy/settle';
 import type { LlmModelSpec } from '#human/llm/request';
 import type { LlmOutcome } from '#human/llm/response';
 import type { ToolExecutionHandler, ToolResult } from '#/tool/executor';
+import { errorFromLlmOutcome } from '#/llm-adapter/model/generate';
 import { withAbort, type AbortScope } from '#human/utils/abort';
 import type { LoopInput } from './contract/command';
 import type { LoopAck, LoopEmitted } from './contract/emitted';
@@ -421,7 +422,7 @@ export function draftOutcome(step: StepState): StepOutcome {
   if (llm === undefined) return { type: 'failed' };
   if (llm.type === 'aborted') return { type: 'aborted', reason: llm.reason };
   if (llm.type === 'failed') {
-    return { type: 'failed', error: llm.error.kind === 'syntax' ? llm.error : (llm.rawError ?? llm.error) };
+    return { type: 'failed', error: errorFromLlmOutcome(llm) };
   }
   if (llm.message.toolCalls.length === 0) return { type: 'done' };
   return { type: 'continue' };

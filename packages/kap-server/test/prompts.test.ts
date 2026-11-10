@@ -616,17 +616,53 @@ describe('server-v2 /api/v1 prompts', () => {
     }
   });
 
-  it('honors a client-chosen prompt_id on submit', async () => {
+  it('directly steers a message with a client-chosen prompt_id in one request', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
-
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
-      content: [{ type: 'text', text: 'hello' }],
-      prompt_id: 'submission-1',
+    const loop = getLiveSessionById(server!.core.accessor, id)!
+      .accessor.get(IAgentLifecycleService)
+      .handleOf('main')!
+      .accessor.get(IAgentLoopService);
+    const submit = vi.spyOn(loop, 'submit');
+    const sendNow = vi.spyOn(loop, 'sendNow');
+    let releaseGate!: () => void;
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    const gate = new Promise<void>((resolve) => { releaseGate = resolve; });
+    let armed = true;
+    const hook = loop.hooks.onWillBeginStep.register('prompts-test-steer', async (_ctx, next) => {
+      if (armed) {
+        armed = false;
+        markStarted();
+        await gate;
+      }
+      await next();
     });
-    expect(submitted.body.code).toBe(0);
-    expect(submitted.body.data.prompt_id).toBe('submission-1');
-    expect(submitted.body.data.user_message_id).toBe('submission-1');
+    try {
+      await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+        content: [{ type: 'text', text: 'active' }],
+      });
+      await started;
+      const pending = call<PromptItemWire>('POST', `/api/v1/sessions/${id}/steer`, {
+        content: [{ type: 'text', text: 'direct steer message' }],
+        prompt_id: 'submission-1',
+      });
+      await vi.waitFor(() => expect(sendNow).toHaveBeenCalledWith(
+        expect.objectContaining({ message: expect.objectContaining({ content: [{ type: 'text', text: 'direct steer message' }] }) }),
+      ));
+      releaseGate();
+      const steered = await pending;
+      expect(steered.body.code).toBe(0);
+      expect(steered.body.data.prompt_id).toBe('submission-1');
+      expect(steered.body.data.user_message_id).toBe('submission-1');
+      expect(steered.body.data.status).toBe('running');
+      expect(submit).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => expect(JSON.stringify(loop.history())).toContain('direct steer message'));
+      loop.cancel();
+    } finally {
+      releaseGate();
+      hook.dispose();
+    }
   });
 
   it('reloads a stale session and resubmits under the same prompt_id', async () => {

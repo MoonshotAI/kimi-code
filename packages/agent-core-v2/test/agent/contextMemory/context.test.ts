@@ -333,7 +333,7 @@ describe('Agent context', () => {
     await ctx.untilTurnEnd();
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
       system: <system-prompt>
-      tools: []
+      tools: Agent, AgentSwarm, AskUserQuestion, Bash, CreateGoal, CronCreate, CronDelete, CronList, Edit, ExitPlanMode, FetchURL, GetGoal, Glob, Grep, Read, SetGoalBudget, Skill, TaskList, TaskOutput, TaskStop, TodoList, UpdateGoal, WaitFor, Write
       messages:
         user: text "user before step 1"
         assistant: text "earlier assistant"
@@ -361,7 +361,7 @@ describe('Agent context', () => {
     await ctx.untilTurnEnd();
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
       system: <system-prompt>
-      tools: []
+      tools: Agent, AgentSwarm, AskUserQuestion, Bash, CreateGoal, CronCreate, CronDelete, CronList, Edit, ExitPlanMode, FetchURL, GetGoal, Glob, Grep, Read, SetGoalBudget, Skill, TaskList, TaskOutput, TaskStop, TodoList, UpdateGoal, WaitFor, Write
       messages:
         user: text "<system-reminder>\\nRemember the previous environment.\\n</system-reminder>"
         user: text "<system-reminder>\\nRemember the current environment.\\n</system-reminder>"
@@ -462,7 +462,7 @@ describe('Agent context', () => {
     await ctx.untilTurnEnd();
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
       system: <system-prompt>
-      tools: []
+      tools: Agent, AgentSwarm, AskUserQuestion, Bash, CreateGoal, CronCreate, CronDelete, CronList, Edit, ExitPlanMode, FetchURL, GetGoal, Glob, Grep, Read, SetGoalBudget, Skill, TaskList, TaskOutput, TaskStop, TodoList, UpdateGoal, WaitFor, Write
       messages:
         user: text "fresh prompt"
     `);
@@ -582,7 +582,7 @@ describe('Agent context', () => {
     ctx.appendAssistantTextWithUsage(1, 'answer', 1_000);
     expect(tokenCounting.get().measured).toBe(1_000);
 
-    context.replaceHistory([], 'test');
+    context.replaceHistory([], 'clear');
 
     expect(tokenCounting.get()).toEqual({ size: 0, measured: 0, estimated: 0 });
   });
@@ -735,7 +735,7 @@ describe('Agent context', () => {
       expect(textOf(messages[1]!)).toBe('Actual follow-up from the user');
     });
 
-    it('only merges user-role messages with user origin', () => {
+    it('keeps every user-role message separate', () => {
       const messages = ctx.project([
         userMessage('First real prompt', { kind: 'user' }),
         userMessage('Second real prompt', { kind: 'user' }),
@@ -743,10 +743,11 @@ describe('Agent context', () => {
         userMessage('Third real prompt', { kind: 'user' }),
       ]);
 
-      expect(messages).toHaveLength(3);
-      expect(textOf(messages[0]!)).toBe('First real prompt\n\nSecond real prompt');
-      expect(textOf(messages[1]!)).toBe('No origin prompt');
-      expect(textOf(messages[2]!)).toBe('Third real prompt');
+      expect(messages).toHaveLength(4);
+      expect(textOf(messages[0]!)).toBe('First real prompt');
+      expect(textOf(messages[1]!)).toBe('Second real prompt');
+      expect(textOf(messages[2]!)).toBe('No origin prompt');
+      expect(textOf(messages[3]!)).toBe('Third real prompt');
     });
   });
 

@@ -183,6 +183,8 @@ class FakeAgentTasks implements IAgentTaskHistoryService {
     private readonly bus: FakeAgentBus,
   ) {}
 
+  async reconcile(): Promise<void> {}
+
   getTask(taskId: string): AgentTaskInfo | undefined {
     return this.tasks.get(taskId);
   }

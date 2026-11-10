@@ -225,7 +225,7 @@ describe('Agent token counting', () => {
       compactedCount: 2,
       tokensBefore: 1_000,
       summaryOutputTokens: 500,
-    });
+    }, { dispatcher: ctx.dispatcher });
 
     const history = context.history();
     const kept = estimateTokensForMessages(history.filter((m) => m.origin?.kind !== 'compaction_summary'));
@@ -240,7 +240,7 @@ describe('Agent token counting', () => {
     ctx.appendAssistantTextWithUsage(1, 'answer', 1_000);
     expect(tokenCounting.get().measured).toBe(1_000);
 
-    context.replaceHistory([], 'test');
+    context.replaceHistory([], 'clear');
 
     expect(tokenCounting.get()).toEqual({ size: 0, measured: 0, estimated: 0 });
     expect(tokenCountingState(ctx).anchors).toEqual([
@@ -248,9 +248,10 @@ describe('Agent token counting', () => {
     ]);
   });
 
-  it('keeps estimates and anchors live for internal reads under the measured strategy', () => {
+  it('keeps estimates and anchors live for internal reads under the measured strategy', async () => {
     const measured = createTestAgent({ initialConfig: { tokenCounting: { strategy: 'measured' } } });
     try {
+      await measured.restorePersisted();
       const counting = measured.tokenCounting;
       expect(counting.strategy).toBe('measured');
       expect(counting.estimateText('abcd')).toBeGreaterThan(0);
@@ -269,11 +270,12 @@ describe('Agent token counting', () => {
     }
   });
 
-  it('keeps anchors in internal reads under the estimated strategy', () => {
+  it('keeps anchors in internal reads under the estimated strategy', async () => {
     const estimated = createTestAgent({
       initialConfig: { tokenCounting: { strategy: 'estimated' } },
     });
     try {
+      await estimated.restorePersisted();
       const counting = estimated.tokenCounting;
       expect(counting.strategy).toBe('estimated');
 
@@ -311,9 +313,10 @@ describe('Agent token counting', () => {
     }
   });
 
-  it('statusSize reports the strategy-selected reading', () => {
+  it('statusSize reports the strategy-selected reading', async () => {
     const measured = createTestAgent({ initialConfig: { tokenCounting: { strategy: 'measured' } } });
     try {
+      await measured.restorePersisted();
       const counting = measured.tokenCounting;
       expect(counting.statusSize()).toBe(0);
 
@@ -328,6 +331,7 @@ describe('Agent token counting', () => {
       initialConfig: { tokenCounting: { strategy: 'estimated' } },
     });
     try {
+      await estimated.restorePersisted();
       const counting = estimated.tokenCounting;
       estimated.appendTurnExchange('u1', 'a1', 1_000_000);
       const estimate = estimateTokensForMessages(estimated.get(IAgentLoopService).history());
@@ -403,7 +407,7 @@ describe('Agent token counting', () => {
       compactedCount: 1,
       tokensBefore: 100,
       summaryOutputTokens: 50,
-    });
+    }, { dispatcher: ctx.dispatcher });
 
     const history = context.history();
     const anchors = tokenCountingState(ctx).anchors;

@@ -113,7 +113,6 @@ export function collectLoadedDynamicTools(
             TOOLS_REMOVED_BLOCK,
           );
       for (const name of removed) loaded.delete(name);
-      continue;
     }
     if (!isDynamicToolSchemaMessage(message)) continue;
     for (const tool of message.tools ?? []) loaded.set(tool.name, tool);

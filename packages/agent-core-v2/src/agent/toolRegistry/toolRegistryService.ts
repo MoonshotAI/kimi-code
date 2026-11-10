@@ -96,7 +96,7 @@ export class AgentToolRegistryService implements IAgentToolRegistryService {
   }
 
   private emit(change: ToolRegistryChange): void {
-    for (const listener of [...this.listeners]) listener(change);
+    for (const listener of Array.from(this.listeners)) listener(change);
   }
 
   private registration(entry: ToolEntry): ToolRegistration {

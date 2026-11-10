@@ -5,7 +5,7 @@ import type { IWireService } from '#/wire/wire';
 import { normalizeLegacyTurnSteerRecords } from '#/wire/human';
 import type { PartsTransformer, WireRecord } from '#/wire/record';
 import type { IEventDispatcher } from '#/state/eventDispatcher';
-import { ContextAppendLoopEvent, ContextAppendMessage } from '#/agent/contextMemory/contextEvents';
+import { ContextAppendLoopEvent, ContextAppendMessage, ContextClear } from '#/agent/contextMemory/contextEvents';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import type { ProfileBindingSnapshot } from '#/agent/profile/profile';
 import {
@@ -29,6 +29,7 @@ import {
 } from '#human/agent/turn';
 
 import { contextFromHistoryEntry, historyFromContext } from './history';
+import { TurnPrompt } from './turnOps';
 import type {
   LoopEmitted,
   LoopInput,
@@ -129,7 +130,19 @@ export function restoreLoopJournal(records: readonly WireRecord[]): LoopJournalS
     const count = record['count'];
     if (typeof count !== 'number') continue;
     const result = cutTurnUndo(wireLinesOf(contextRecords), new Set(), count);
-    if (result.cut !== undefined) contextRecords.splice(result.cut.index);
+    if (result.cut === undefined) continue;
+    const removed = contextRecords.splice(result.cut.index);
+    const survivingPromptIds = new Set(contextRecords.flatMap((entry) => {
+      if (entry.type !== 'turn.prompt' || typeof entry['promptId'] !== 'string') return [];
+      return [entry['promptId']];
+    }));
+    for (const entry of removed) {
+      if (entry.type !== 'context.append_message') continue;
+      const message = entry['message'] as ContextMessage;
+      const origin = message.origin;
+      if (origin?.kind !== 'injection') continue;
+      if (origin.ownerPromptId === undefined || survivingPromptIds.has(origin.ownerPromptId)) contextRecords.push(entry);
+    }
   }
 
   let context: readonly ContextMessage[] = [];
@@ -429,6 +442,7 @@ export class LoopJournal {
       case 'turn.ended': {
         this.writeTurnPrompt();
         this.turn = undefined;
+        if (this.dispatcher !== undefined) return;
         const record: WireRecord = {
           type: 'turn.ended',
           agentId: this.agentId,
@@ -546,22 +560,39 @@ export class LoopJournal {
     const turn = this.turn;
     if (turn === undefined || turn.prompted) return;
     const prompt = entry ?? turn.entry;
-    this.write({
-      type: 'turn.prompt',
-      agentId: this.agentId,
-      input: prompt?.message.content ?? [],
-      origin: prompt === undefined ? { kind: 'user' } : origin(prompt),
-      promptId: prompt?.meta?.promptId,
-      turnId: this.turnId,
-      trigger: turn.trigger,
-    });
+    const input = prompt?.message.content ?? [];
+    const promptOrigin: PromptOrigin = prompt === undefined ? { kind: 'user' } : origin(prompt);
+    if (this.dispatcher === undefined) {
+      this.write({
+        type: 'turn.prompt',
+        agentId: this.agentId,
+        input,
+        origin: promptOrigin,
+        promptId: prompt?.meta?.promptId,
+        turnId: this.turnId,
+        trigger: turn.trigger,
+      });
+    } else {
+      void this.dispatcher.dispatch(new TurnPrompt({
+        agentId: this.agentId,
+        input,
+        origin: promptOrigin,
+        promptId: prompt?.meta?.promptId,
+        turnId: this.turnId,
+        trigger: turn.trigger,
+      }));
+    }
     turn.prompted = true;
   }
 
   private turnId = 0;
 
   private settleContext(messages: readonly HistoryMessage[], reason: string | undefined): void {
-    if (reason === 'compaction' || reason === 'clear' || reason === 'context.clear') return;
+    if (reason === 'compaction') return;
+    if (reason === 'clear' || reason === 'context.clear') {
+      this.write({ type: 'context.clear', agentId: this.agentId });
+      return;
+    }
     if (reason !== 'fork') throw new Error(`Unsupported Loop context replacement reason: ${reason ?? 'unknown'}`);
     for (const entry of messages) {
       this.write({
@@ -583,6 +614,10 @@ export class LoopJournal {
         agentId: this.agentId,
         message: record['message'] as ContextMessage,
       }, timed.time));
+      return;
+    }
+    if (timed.type === 'context.clear' && this.dispatcher !== undefined) {
+      void this.dispatcher.dispatch(new ContextClear({ agentId: this.agentId }, timed.time));
       return;
     }
     this.wire.append(timed, dehydrateLoopJournalRecord);

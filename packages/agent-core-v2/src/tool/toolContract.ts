@@ -23,6 +23,8 @@ export interface ExecutableToolSuccessResult {
   readonly note?: string;
   readonly spill?: ToolResultSpill;
   readonly spillExempt?: true;
+  readonly stopTurn?: boolean;
+  readonly stopTurnReason?: string;
 }
 
 export interface ExecutableToolErrorResult {
@@ -75,7 +77,7 @@ export interface RunnableToolExecution {
   readonly execute: (ctx: ExecutableToolContext) => Promise<ExecutableToolResult>;
   readonly stopping?: (context: {
     readonly reason: unknown;
-    abandon(result?: ExecutableToolResult): void;
+    readonly abandon: (result?: ExecutableToolResult) => void;
   }) => void;
 }
 

@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentTaskService, type AgentTaskInfo } from '#/agent/task/task';
 import { AgentTaskService } from '#/agent/task/taskService';
-import { isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
+import { userCancellationReason } from '#/_base/utils/abort';
 import type { IHostProcess } from '#/os/interface/hostProcess';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import type { AgentRunHandle } from '#/session/subagent/subagent';
@@ -245,42 +245,38 @@ describe('AgentTaskService', () => {
     expect((await fixture.manager.wait(task.handler.taskId))?.status).toBe('completed');
   });
 
-  it('stops foreground tasks from their register-time signal', async () => {
+  it('stops foreground tasks through their handler', async () => {
     const fixture = createAgentTaskService();
-    const controller = new AbortController();
-    const task = await controlled(fixture, { detached: false, signal: controller.signal });
-    controller.abort(userCancellationReason());
+    const task = await controlled(fixture, { detached: false });
+    await fixture.manager.stop(task.handler.taskId, userCancellationReason().message);
     expect((await fixture.manager.wait(task.handler.taskId))?.status).toBe('killed');
   });
 
-  it('keeps a detached process task running when the register-time signal aborts', async () => {
+  it('keeps a detached process task running when a wait times out', async () => {
     const fixture = createAgentTaskService();
-    const controller = new AbortController();
-    const task = await controlled(fixture, { detached: false, signal: controller.signal });
+    const task = await controlled(fixture, { detached: false });
     fixture.manager.detach(task.handler.taskId);
-    controller.abort(userCancellationReason());
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(fixture.manager.getTask(task.handler.taskId)?.status).toBe('running');
+    expect((await fixture.manager.wait(task.handler.taskId, 0))?.status).toBe('running');
     task.resolve('');
   });
 
-  it('forwards foreground signal abort reasons to agent task controllers', async () => {
+  it('forwards foreground stop reasons to agent task controllers', async () => {
     const fixture = createAgentTaskService();
-    const controller = new AbortController();
-    const task = await controlled(fixture, { detached: false, signal: controller.signal });
+    const task = await controlled(fixture, { detached: false });
     const reason = userCancellationReason();
-    controller.abort(reason);
+    await task.handler.stop(reason);
     await fixture.manager.wait(task.handler.taskId);
-    expect(isUserCancellation(task.handler.snapshot().stopReason)).toBe(true);
+    expect(task.handler.snapshot().stopReason).toBe(reason.message);
   });
 
-  it('does not forward register-time signal aborts to a detached agent task', async () => {
+  it('does not stop a detached agent task when a wait is cancelled', async () => {
     const fixture = createAgentTaskService();
-    const controller = new AbortController();
-    const task = await controlled(fixture, { detached: false, signal: controller.signal });
+    const task = await controlled(fixture, { detached: false });
     fixture.manager.detach(task.handler.taskId);
+    const controller = new AbortController();
+    const waiting = fixture.manager.wait(task.handler.taskId, undefined, controller.signal);
     controller.abort(userCancellationReason());
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await expect(waiting).rejects.toThrow();
     expect(task.handler.snapshot().stopReason).toBeUndefined();
     task.resolve('');
   });
@@ -529,12 +525,12 @@ describe('AgentTaskService', () => {
   it('escalates a wall-clock timeout to SIGKILL when the process ignores SIGTERM', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const pending = sigtermIgnoringProcess();
-    const ctx = processContext(pending.proc, { bashTaskTimeoutS: 0, killGracePeriodMs: 10 });
+    const ctx = processContext(pending.proc, { killGracePeriodMs: 10 });
     try {
-      const handler = startBashTask(ctx, { command: 'sleep', description: 'demo', run_in_background: true });
+      const handler = startBashTask(ctx, { command: 'sleep', description: 'demo', run_in_background: true, timeout: 1 });
       await handler;
       const terminal = handler.wait();
-      await vi.advanceTimersByTimeAsync(10);
+      await vi.advanceTimersByTimeAsync(1_500);
       await terminal;
       expect(pending.killSpy).toHaveBeenCalledWith('SIGKILL');
       expect(ctx.get(IAgentTaskService).getTask(handler.taskId)?.status).toBe('timed_out');
@@ -544,12 +540,16 @@ describe('AgentTaskService', () => {
   });
 
   it('reports timed_out when a timed-out process exits to SIGTERM within the grace window', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const pending = pendingProcess(143);
-    const ctx = processContext(pending.proc, { bashTaskTimeoutS: 0, killGracePeriodMs: 100 });
+    const ctx = processContext(pending.proc, { killGracePeriodMs: 100 });
     try {
-      const handler = startBashTask(ctx, { command: 'sleep', description: 'demo', run_in_background: true });
+      const handler = startBashTask(ctx, { command: 'sleep', description: 'demo', run_in_background: true, timeout: 1 });
       await handler;
-      expect((await ctx.get(IAgentTaskService).wait(handler.taskId))?.status).toBe('timed_out');
+      const terminal = handler.wait();
+      await vi.advanceTimersByTimeAsync(1_250);
+      await terminal;
+      expect(ctx.get(IAgentTaskService).getTask(handler.taskId)?.status).toBe('timed_out');
     } finally {
       await ctx.dispose();
     }
@@ -558,13 +558,13 @@ describe('AgentTaskService', () => {
   it('applies the SIGTERM grace + SIGKILL escalation to a detachTimeout deadline', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const pending = sigtermIgnoringProcess();
-    const ctx = processContext(pending.proc, { bashTaskTimeoutS: 0, killGracePeriodMs: 10 });
+    const ctx = processContext(pending.proc, { bashTaskTimeoutS: 1, killGracePeriodMs: 10 });
     try {
       const handler = startBashTask(ctx, { command: 'sleep', description: 'demo', run_in_background: false });
       await vi.waitFor(() => expect(handler.snapshot().fields['task']).toBeDefined());
       handler.detach();
       const terminal = handler.wait();
-      await vi.advanceTimersByTimeAsync(10);
+      await vi.advanceTimersByTimeAsync(1_500);
       await terminal;
       expect(pending.killSpy).toHaveBeenCalledWith('SIGKILL');
     } finally {
@@ -576,7 +576,7 @@ describe('AgentTaskService', () => {
     const pending = pendingProcess();
     const ctx = processContext(pending.proc);
     try {
-      const handler = startBashTask(ctx, { command: 'sleep', description: 'demo', run_in_background: false, timeout: 0 });
+      const handler = startBashTask(ctx, { command: 'sleep', description: 'demo', run_in_background: false, timeout: 1 });
       expect(await handler).toMatchObject({ detached: true });
       expect(ctx.get(IAgentTaskService).getTask(handler.taskId)?.status).toBe('running');
       await ctx.get(IAgentTaskService).stop(handler.taskId);
@@ -589,7 +589,7 @@ describe('AgentTaskService', () => {
     const pending = pendingProcess();
     const ctx = processContext(pending.proc, { bashAutoBackgroundOnTimeout: false });
     try {
-      const handler = startBashTask(ctx, { command: 'sleep', description: 'demo', run_in_background: false, timeout: 0 });
+      const handler = startBashTask(ctx, { command: 'sleep', description: 'demo', run_in_background: false, timeout: 1 });
       await handler.wait();
       expect(ctx.get(IAgentTaskService).getTask(handler.taskId)?.status).toBe('timed_out');
     } finally {

@@ -59,13 +59,16 @@ describe('Agent resume', () => {
 
     await ctx.restorePersisted();
 
-    expect(persistence.appended).toEqual([]);
+    expect(persistence.appended).toEqual([
+      expect.objectContaining({ type: 'changeNotifier.snapshot' }),
+      expect.objectContaining({ type: 'profile.bind', modelAlias: MOCK_PROVIDER.model }),
+    ]);
     expect(persistence.records.filter((record) => record.type === 'metadata')).toHaveLength(1);
   });
 
   it('does not reconstruct an event-point interruption after restore', async () => {
     const persistence = new RecordingAgentPersistence([
-      resumeConfigRecord(),
+      resumeProfileRecord(),
       {
         type: 'context.append_message',
         message: {
@@ -131,7 +134,7 @@ describe('Agent resume', () => {
 
   it('resumes a journal that stops mid-turn without any turn-closing record', async () => {
     const persistence = new RecordingAgentPersistence([
-      resumeConfigRecord(),
+      resumeProfileRecord(),
       contextAppendRecord(0, [{ role: 'user', text: 'dangling turn', origin: { kind: 'user' } }]),
       turnPromptRecord(0, { kind: 'user' }),
       {
@@ -165,7 +168,7 @@ describe('Agent resume', () => {
 
   it('closes a restored open tool call with an interrupted result before the next prompt', async () => {
     const persistence = new RecordingAgentPersistence([
-      resumeConfigRecord(),
+      resumeProfileRecord(),
       contextAppendRecord(0, [{ role: 'user', text: 'Run lookup', origin: { kind: 'user' } }]),
       turnPromptRecord(0, { kind: 'user' }),
       {
@@ -217,7 +220,7 @@ describe('Agent resume', () => {
 
   it('does not reconcile a legacy interruption whose delivery was recorded', async () => {
     const persistence = new RecordingAgentPersistence([
-      resumeConfigRecord(),
+      resumeProfileRecord(),
       {
         type: 'context.append_message',
         message: {
@@ -252,7 +255,7 @@ describe('Agent resume', () => {
   });
 
   it('persists prompt terminal events as durable records so replays can reconcile the queue', async () => {
-    const persistence = new RecordingAgentPersistence([resumeConfigRecord()]);
+    const persistence = new RecordingAgentPersistence([resumeProfileRecord()]);
     const ctx = testAgent({ persistence, autoConfigure: false });
 
     try {
@@ -284,7 +287,7 @@ describe('Agent resume', () => {
     await ctx.restorePersisted();
     const plan = await ctx.get(IAgentPlanService).status();
     expect(plan?.path).toContain('resume-plan');
-    expect(ctx.newEvents()).toMatchInlineSnapshot(`[]`);
+    expect(ctx.newEvents()).toMatchInlineSnapshot(`[emit] agent.status.updated   { "time": "<time>", "agentId": "main", "model": "mock-model", "thinkingEffort": "off", "maxContextTokens": 1000000 }`);
     expect(ctx.llmCalls).toHaveLength(0);
     expect(execWithEnv).not.toHaveBeenCalled();
     expect(persistence.appended).toEqual([]);
@@ -414,7 +417,7 @@ describe('Agent resume', () => {
 
   it('restores a cancelled queued-turn gap before allocating the next turn', async () => {
     const persistence = new RecordingAgentPersistence([
-      resumeConfigRecord(),
+      resumeProfileRecord(),
       {
         type: 'turn.prompt',
         input: [{ type: 'text', text: 'Historical prompt' }],
@@ -460,7 +463,7 @@ describe('Agent resume', () => {
 
   it('projects restored pending tool results before later user messages', async () => {
     const persistence = new RecordingAgentPersistence([
-      resumeConfigRecord(),
+      resumeProfileRecord(),
       {
         type: 'context.append_message',
         message: {
@@ -906,6 +909,8 @@ describe('Agent resume', () => {
           reason: 'Paused after agent resume',
           wallClockMs: 2_000,
         }),
+        expect.objectContaining({ type: 'changeNotifier.snapshot' }),
+        expect.objectContaining({ type: 'profile.bind', modelAlias: MOCK_PROVIDER.model }),
       ]);
       expect(persistence.rewritten).toContainEqual(
         expect.objectContaining({
@@ -956,6 +961,8 @@ describe('Agent resume', () => {
           status: 'paused',
           wallClockMs: 3_000,
         }),
+        expect.objectContaining({ type: 'changeNotifier.snapshot' }),
+        expect.objectContaining({ type: 'profile.bind', modelAlias: MOCK_PROVIDER.model }),
       ]);
       expect(persistence.rewritten).toContainEqual(
         expect.objectContaining({
@@ -1209,13 +1216,7 @@ function resumeHistory(): WireRecord[] {
       protocol_version: '1.4',
       created_at: 1,
     },
-    {
-      type: 'config.update',
-      cwd: process.cwd(),
-      modelAlias: MOCK_PROVIDER.model,
-      systemPrompt: DEFAULT_TEST_SYSTEM_PROMPT,
-      thinkingLevel: 'off',
-    },
+    resumeProfileRecord(),
     {
       type: 'tools.set_active_tools',
       names: ['Bash'],
@@ -1329,7 +1330,7 @@ function resumeHistory(): WireRecord[] {
 
 function resumeDeferredSystemReminderHistory(): WireRecord[] {
   return [
-    resumeConfigRecord(),
+    resumeProfileRecord(),
     {
       type: 'context.append_message',
       message: {
@@ -1405,13 +1406,13 @@ function resumeDeferredSystemReminderHistory(): WireRecord[] {
   ] as unknown as WireRecord[];
 }
 
-function resumeConfigRecord(): WireRecord {
+function resumeProfileRecord(): WireRecord {
   return {
-    type: 'config.update',
-    cwd: process.cwd(),
+    type: 'profile.bind',
     modelAlias: MOCK_PROVIDER.model,
     systemPrompt: DEFAULT_TEST_SYSTEM_PROMPT,
-    thinkingLevel: 'off',
+    thinkingEffort: 'off',
+    disallowedTools: [],
   } as unknown as WireRecord;
 }
 
@@ -1506,7 +1507,7 @@ function loopEventsForTurn(turnId: string, responseText: string): WireRecord[] {
 
 function multiTurnResumeHistory(): WireRecord[] {
   return [
-    resumeConfigRecord(),
+    resumeProfileRecord(),
     ...canonicalPromptedTurn(0, 'First historical prompt', 'First historical response.', 0),
     ...canonicalPromptedTurn(1, 'Second historical prompt', 'Second historical response.', 2),
   ];
@@ -1514,7 +1515,7 @@ function multiTurnResumeHistory(): WireRecord[] {
 
 function goalContinuationResumeHistory(): WireRecord[] {
   return [
-    resumeConfigRecord(),
+    resumeProfileRecord(),
     ...canonicalPromptedTurn(0, 'Goal prompt', 'Starting the goal.', 0),
     ...canonicalContinuationTurn(1, 'Continuation turn one.', 2),
     ...canonicalContinuationTurn(2, 'Continuation turn two.', 3),

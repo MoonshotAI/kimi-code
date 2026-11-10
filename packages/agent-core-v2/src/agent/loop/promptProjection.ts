@@ -401,10 +401,6 @@ function projectionFromEntry(entry: UserEntry): ActivePrompt {
   };
 }
 
-function projectionState(projection: PromptProjection & { readonly state?: PromptState }): PromptState {
-  return projection.state ?? 'pending';
-}
-
 export function promptHistoryEntry(event: { readonly entry: HistoryMessage }): UserEntry | undefined {
   return event.entry.message.role === 'user' ? event.entry as UserEntry : undefined;
 }

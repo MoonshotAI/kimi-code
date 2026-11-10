@@ -356,9 +356,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     if (permissionMode !== undefined && !hasRestoredPermissionMode) {
       handle.accessor.get(IAgentPermissionModeService).setMode(permissionMode);
     }
-    const rules = this.config.get<PermissionConfig | undefined>(PERMISSION_SECTION)?.rules;
-    if (rules === undefined || rules.length === 0) return initialProfile;
-    handle.accessor.get(IAgentPermissionRulesService).addRules(rules);
     return initialProfile;
   }
 
@@ -564,7 +561,11 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     try {
       await handle.accessor.get(IEventDispatcher).flush().catch(onUnexpectedError);
       managed.killSpace();
-      await managed.handle.dispose();
+      try {
+        await managed.handle.dispose();
+      } catch (error) {
+        stopError ??= error instanceof Error ? error : new Error(String(error));
+      }
     } finally {
       releaseQuiescence?.();
     }

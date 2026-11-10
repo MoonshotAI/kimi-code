@@ -340,6 +340,7 @@ describe('AgentRecords persistence metadata', () => {
     expect(persistence.records.map((record) => record.type)).toEqual([
       'metadata',
       'context.append_message',
+      'changeNotifier.snapshot',
       'profile.bind',
     ]);
     expect(persistence.records[0]).toMatchObject({
@@ -523,7 +524,7 @@ describe('AgentRecords persistence metadata', () => {
       'forked',
     ]);
     expect(ctx.get(IAgentGoalService).getGoal().goal).toBeNull();
-    expect(context.history()).toHaveLength(0);
+    expect(context.history()).toHaveLength(1);
     context.flushReminders();
     const reminder = context.history().at(-1);
     expect(reminder?.origin).toEqual({
@@ -554,7 +555,7 @@ describe('AgentRecords persistence metadata', () => {
       goalId: 'fork-goal',
       objective: 'fork work',
     });
-    expect(context.history()).toHaveLength(0);
+    expect(context.history()).toHaveLength(1);
     context.flushReminders();
     expect(context.history().at(-1)?.origin).toEqual({
       kind: 'injection',

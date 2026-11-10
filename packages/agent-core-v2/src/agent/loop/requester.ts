@@ -134,6 +134,12 @@ export class AgentLoopRequestFactory {
     return this.toolSelect.initialTools();
   }
 
+  operationTools(baseline: readonly Tool[], capabilities: ProfileModelContext['modelCapabilities']): readonly Tool[] {
+    const disclosure = this.toolSelect.enabled(capabilities);
+    const active = new Set(this.toolSelect.defaultTools(disclosure).map((tool) => tool.name));
+    return baseline.filter((tool) => active.has(tool.name));
+  }
+
   async prepareTools(
     signal: AbortSignal,
     capabilities: ProfileModelContext['modelCapabilities'],

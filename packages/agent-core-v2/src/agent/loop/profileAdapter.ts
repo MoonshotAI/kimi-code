@@ -123,7 +123,6 @@ export class AgentLoopProfileAdapter implements EffectiveProfileReader {
     });
     const dispatched = this.dispatcher.dispatch(event);
     this.state = { profile: reduceLoopProfileBind(this.state.profile, event), bound: true };
-    this.activeToolNamesOverlay = undefined;
     this.systemPromptChanged(this.getSystemPrompt());
     this.profile.afterConfigDispatch({
       modelAlias: profile.modelAlias,
@@ -224,7 +223,6 @@ export class AgentLoopProfileAdapter implements EffectiveProfileReader {
 
   restore(snapshot: LoopJournalSnapshot): void {
     this.state = { profile: snapshot.profile, bound: snapshot.profileBound };
-    this.activeToolNamesOverlay = undefined;
   }
 
   async afterRestore(): Promise<void> {

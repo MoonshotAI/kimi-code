@@ -583,8 +583,8 @@ describe('AgentGoalService', () => {
       await vi.waitFor(() => expect(promptLifecycle).toContain(`completed:${activePromptId}`));
 
       expect(result).toMatchObject({ turn_id: 1, state: 'running', steered: true });
-      expect(ctx.llmCalls).toHaveLength(2);
-      expect(JSON.stringify(ctx.llmCalls[1])).toContain('steer during goal');
+      expect(ctx.llmCalls).toHaveLength(1);
+      expect(JSON.stringify(ctx.llmCalls[0])).toContain('steer during goal');
       expect(continuationTurnIds).toEqual([0]);
       expect(endedTurnIds).toEqual([0, 1]);
       expect(endedTurnReasons).toEqual(['completed', 'completed']);
@@ -612,10 +612,12 @@ describe('AgentGoalService', () => {
     });
 
     it('cancelGoal discards the goal and throws when missing', async () => {
+      await ctx.restorePersisted();
       await goals.createGoal({ objective: 'work' });
       const removed = await goals.cancelGoal();
       expect(removed.status).toBe('active');
       expect(goals.getGoal()).toEqual({ goal: null });
+      context.flushReminders();
       const reminder = context.history().at(-1);
       expect(reminder?.origin).toEqual({
         kind: 'injection',
@@ -2600,7 +2602,7 @@ describe('AgentGoalService goal outcome tool result flow', () => {
       await ctx.get(IAgentLoopService).settled();
 
       expect(ctx.llmCalls).toHaveLength(2);
-      expect(startedTurnIds).toHaveLength(1);
+      expect(startedTurnIds).toHaveLength(2);
       expect(events).toContainEqual(
         expect.objectContaining({
           event: 'turn.ended',
@@ -2686,6 +2688,7 @@ describe('AgentGoalService fork boundaries', () => {
     ]);
 
     expect(goals.getGoal().goal).toBeNull();
+    context.flushReminders();
     const reminder = context.history().at(-1);
     expect(reminder?.origin).toEqual({
       kind: 'injection',
@@ -2744,6 +2747,7 @@ describe('AgentGoalService WaitFor regression', () => {
       installControlledTask(ctx);
       await ctx.restorePersisted();
       const controlled = await startControlledTaskInLoop(ctx, { description: 'bg work' });
+      const baselineLlmCalls = ctx.llmCalls.length;
       await ctx.rpc.createGoal({ objective: 'finish bounded work' });
 
       const continuationTurnIds: number[] = [];
@@ -2769,7 +2773,7 @@ describe('AgentGoalService WaitFor regression', () => {
       ctx.mockNextResponse({ type: 'text', text: 'done' });
 
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start work' }] });
-      await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(1));
+      await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(baselineLlmCalls + 1));
       await new Promise((resolve) => setTimeout(resolve, 20));
 
       expect(continuationTurnIds).toEqual([]);
@@ -2777,7 +2781,7 @@ describe('AgentGoalService WaitFor regression', () => {
       controlled.resolve('done');
 
       await vi.waitFor(() => expect(continuationTurnIds).toHaveLength(1));
-      await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(4));
+      await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(baselineLlmCalls + 4));
     } finally {
       await ctx.dispose();
     }
@@ -2828,6 +2832,12 @@ describe('AgentGoalService WaitFor background scenarios', () => {
     });
   }
 
+  async function expectBackgroundOutput(ctx: TestAgentContext, output: string): Promise<void> {
+    const tasks = ctx.get(IAgentTaskService).list(false);
+    expect(tasks).toHaveLength(1);
+    expect(await ctx.get(IAgentTaskService).readOutput(tasks[0]!.taskId)).toContain(output);
+  }
+
   function watchTurns(ctx: TestAgentContext): {
     continuationTurnIds: number[];
     endedReasons: string[];
@@ -2846,7 +2856,7 @@ describe('AgentGoalService WaitFor background scenarios', () => {
     return { continuationTurnIds, endedReasons };
   }
 
-  it('dispatches a background bash task, waits for it, and completes the goal in one turn', async () => {
+  it('dispatches a background bash task, waits for it, and completes the goal without a goal continuation', async () => {
     const sh = controllableSpawn();
     const ctx = createTestAgent(
       execEnvServices({ processRunner: { spawn: sh.spawn } }),
@@ -2891,15 +2901,16 @@ describe('AgentGoalService WaitFor background scenarios', () => {
       expect(continuationTurnIds).toEqual([]);
       const history = JSON.stringify(ctx.llmCalls[2]?.history);
       expect(history).toContain('wait_status: completed');
-      expect(history).toContain('BG-OUTPUT');
+      expect(history).toContain('<output-file');
+      await expectBackgroundOutput(ctx, 'BG-OUTPUT');
       expect((await ctx.rpc.getGoal({})).goal).toBeNull();
-      expect(endedReasons).toEqual(['completed']);
+      expect(endedReasons).toEqual(['completed', 'completed', 'completed']);
     } finally {
       await ctx.dispose();
     }
   });
 
-  it('waits for a dispatched controlled background task and completes the goal in one turn', async () => {
+  it('waits for a dispatched controlled background task and completes the goal without a goal continuation', async () => {
     const ctx = createTestAgent();
     try {
       ctx.configure();
@@ -2908,6 +2919,7 @@ describe('AgentGoalService WaitFor background scenarios', () => {
       const controlled = await startControlledTaskInLoop(ctx, {
         description: 'investigate flaky test',
       });
+      const baselineLlmCalls = ctx.llmCalls.length;
       await ctx.rpc.createGoal({ objective: 'finish bounded work' });
       const { continuationTurnIds, endedReasons } = watchTurns(ctx);
 
@@ -2926,21 +2938,21 @@ describe('AgentGoalService WaitFor background scenarios', () => {
       ctx.mockNextResponse({ type: 'text', text: 'done' });
 
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start work' }] });
-      await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(1));
+      await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(baselineLlmCalls + 1));
       await waitForToolExecution(ctx, 'wait_1');
 
       expect(continuationTurnIds).toEqual([]);
 
       controlled.resolve('SUBAGENT-FINDINGS: the test is order-dependent');
 
-      await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(3));
+      await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(baselineLlmCalls + 3));
       expect(continuationTurnIds).toEqual([]);
-      const history = JSON.stringify(ctx.llmCalls[1]?.history);
+      const history = JSON.stringify(ctx.llmCalls[baselineLlmCalls + 1]?.history);
       expect(history).toContain('wait_status: completed');
       expect(history).toContain('kind: question');
       expect(history).toContain('SUBAGENT-FINDINGS');
       expect((await ctx.rpc.getGoal({})).goal).toBeNull();
-      expect(endedReasons).toEqual(['completed']);
+      expect(endedReasons).toEqual(['completed', 'completed', 'completed']);
     } finally {
       await ctx.dispose();
     }
@@ -3000,9 +3012,10 @@ describe('AgentGoalService WaitFor background scenarios', () => {
       expect(continuationTurnIds).toEqual([]);
       const completedHistory = JSON.stringify(ctx.llmCalls[3]?.history);
       expect(completedHistory).toContain('wait_status: completed');
-      expect(completedHistory).toContain('BG-OUTPUT');
+      expect(completedHistory).toContain('<output-file');
+      await expectBackgroundOutput(ctx, 'BG-OUTPUT');
       expect((await ctx.rpc.getGoal({})).goal).toBeNull();
-      expect(endedReasons).toEqual(['completed']);
+      expect(endedReasons).toEqual(['completed', 'completed', 'completed']);
     } finally {
       await ctx.dispose();
     }
@@ -3054,10 +3067,11 @@ describe('AgentGoalService WaitFor background scenarios', () => {
       await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(13), { timeout: 5000 });
 
       expect(continuationTurnIds).toHaveLength(9);
-      expect(endedReasons).toEqual(Array<string>(10).fill('completed'));
+      expect(endedReasons).toEqual(Array<string>(12).fill('completed'));
       const waitResultHistory = JSON.stringify(ctx.llmCalls[3]?.history);
       expect(waitResultHistory).toContain('wait_status: completed');
-      expect(waitResultHistory).toContain('BG-OUTPUT');
+      expect(waitResultHistory).toContain('<output-file');
+      await expectBackgroundOutput(ctx, 'BG-OUTPUT');
       expect((await ctx.rpc.getGoal({})).goal).toBeNull();
     } finally {
       await ctx.dispose();

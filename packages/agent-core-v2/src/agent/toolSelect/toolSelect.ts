@@ -82,6 +82,7 @@ export interface IAgentToolSelectService {
   loadableToolsAnnouncement(
     lastDisclosure?: ToolSelectAnnouncementDisclosure,
   ): ToolSelectAnnouncement | undefined;
+
 }
 
 export const IAgentToolSelectService: ServiceIdentifier<IAgentToolSelectService> =

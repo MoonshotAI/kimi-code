@@ -47,6 +47,7 @@ import { IAgentPlanService, type PlanData } from '#/features/plan/plan';
 import { IAgentProfileService, type AgentConfigData } from '#/agent/profile/profile';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import type {
+  LoopNotifyEntry,
   PromptLaunchResult,
   PromptPayload,
   SteerResult,
@@ -54,7 +55,6 @@ import type {
 import type { AgentCommandInfo } from '#/agent/command/agentCommand';
 import { IAgentCommandService } from '#/agent/command/agentCommand';
 import type { AgentContextData } from '#/agent/contextMemory/types';
-import { ContextClear } from '#/agent/contextMemory/contextEvents';
 import type { CreateGoalInput, GoalSnapshot, GoalToolResult } from '#/features/goal/types';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import type { RunShellCommandInput, RunShellCommandResult } from '#/agent/shellCommand/shellCommand';
@@ -1498,6 +1498,7 @@ export class AgentTestContext {
 
     if (options.autoStart !== false && persistence.records.length === 0) {
       const restoreAfterWrites = () => {
+        if (this.closed) return;
         this.persistedRestored ??= this.wire.flush().then(() => this.dispatcher.restore());
         return this.restorePersisted();
       };
@@ -1508,11 +1509,17 @@ export class AgentTestContext {
         return result;
       }) as IAgentLoopService['submit'];
       const notify = loop.notify.bind(loop);
-      loop.notify = ((input: Parameters<IAgentLoopService['notify']>[0]) => {
+      loop.notify = ((input: LoopNotifyEntry) => {
         const result = notify(input);
         void Promise.resolve().then(restoreAfterWrites);
         return result;
       }) as IAgentLoopService['notify'];
+      const sendNow = loop.sendNow.bind(loop);
+      loop.sendNow = ((input: LoopNotifyEntry | readonly string[]) => {
+        const result = sendNow(input as LoopNotifyEntry);
+        void Promise.resolve().then(restoreAfterWrites);
+        return result;
+      }) as IAgentLoopService['sendNow'];
       const remind = loop.remind.bind(loop);
       loop.remind = (...entries: readonly import('#human/agent/turn').HistoryMessage[]) => {
         remind(...entries);
@@ -1603,16 +1610,25 @@ export class AgentTestContext {
   }
 
   private persistedRestored: Promise<void> | undefined;
+  private starting: Promise<void> | undefined;
 
-  async restorePersisted(): Promise<void> {
+  restorePersisted(): Promise<void> {
+    if (this.runtimeStarted || this.closed) return Promise.resolve();
+    this.starting ??= this.startPersisted();
+    return this.starting;
+  }
+
+  private async startPersisted(): Promise<void> {
     this.persistedRestored ??= this.dispatcher.restore();
     await this.persistedRestored;
     await this.context.start();
+    if (this.context.snapshot().state === 'idle') this.context.flushReminders();
+    this.runtimeStarted = true;
   }
 
   private async restoreRecordsOnly(records: readonly WireRecord[]): Promise<void> {
     await this.persistedRestored;
-    this.context.flushReminders();
+    if (this.context.snapshot().state === 'idle') this.context.flushReminders();
     const scopeContext = this.get(IAgentScopeContext);
     const log = this.get(IAppendLogStore);
     if (log instanceof PersistenceAppendLogStore) log.recordRestore(records);
@@ -1853,7 +1869,6 @@ export class AgentTestContext {
       trigger: 'normal',
     });
     void this.dispatcher.dispatch(prompt);
-    this.wire.appendRecord(prompt.serialize());
     this.appendMessage({
       role: 'user',
       content: [{ type: 'text', text }],
@@ -1890,7 +1905,6 @@ export class AgentTestContext {
     drainPrompts(loop);
     if (loop.history().length === 0) return;
     const accepted = loop.replaceHistory([], 'clear', () => {
-      void this.dispatcher.dispatch(new ContextClear({ agentId: 'main' }));
       this.get(ISessionTokenCountingService).rebase(this.agentContext, {
         length: 0,
         tokens: 0,
@@ -2118,7 +2132,7 @@ export class AgentTestContext {
     await this.waitForSessionMetadata();
     await this.drainWirePersistence();
     const configSnapshot = structuredClone(this.get(IConfigService).getAll() as KimiConfig);
-    let wireHistory = await this.wireHistory();
+    let wireHistory = (await this.wireHistory()).filter((record) => record['agentId'] === undefined || record['agentId'] === 'main');
     let resumedThroughRecord = wireHistory.length;
     const resumed = createTestAgent(
       { autoConfigure: false, cwd: this.cwd },
@@ -2135,7 +2149,7 @@ export class AgentTestContext {
       await resumed.waitForSessionMetadata();
       for (let i = 0; i < 5; i += 1) {
         await this.drainWirePersistence();
-        wireHistory = await this.wireHistory();
+        wireHistory = (await this.wireHistory()).filter((record) => record['agentId'] === undefined || record['agentId'] === 'main');
         if (wireHistory.length === resumedThroughRecord) break;
         const nextRecords = wireHistory.slice(resumedThroughRecord);
         resumedThroughRecord = wireHistory.length;
@@ -2195,6 +2209,7 @@ export class AgentTestContext {
   async close(_reason = 'Agent runtime test closed'): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    await this.starting?.catch(() => undefined);
     await this.persistedRestored?.catch(() => undefined);
     for (const disposable of this.disposables.splice(0)) {
       disposable.dispose();
@@ -2291,15 +2306,13 @@ export class AgentTestContext {
   }
 
   private createPromiseAgentApi(): PromiseAgentAPI {
-    const owner = this;
     const adapters = this.createRpcPassthroughAdapters();
     return new Proxy(adapters, {
-      get(proxyTarget, property, receiver) {
+      get: (proxyTarget, property, receiver) => {
         const value = Reflect.get(proxyTarget, property, receiver) as unknown;
         if (typeof value !== 'function') return value;
         return async (payload: unknown) => {
-          await owner.restorePersisted();
-          owner.context.flushReminders();
+          await this.restorePersisted();
           try {
             return await value(payload);
           } catch (error) {

@@ -54,6 +54,7 @@ function restoredTaskService(
     getTask: (taskId) => reduced.get(taskId),
     list: (activeOnly, limit) => reduced.list(activeOnly, limit),
     values: () => reduced.values(),
+    reconcile: async () => {},
   };
   return {
     history,

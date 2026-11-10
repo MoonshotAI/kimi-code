@@ -205,6 +205,7 @@ export async function mirrorAgentRun(
   const dispatcher = requester.accessor.get(IEventDispatcher);
   const subagents = requester.accessor.get(ISessionSubagentService);
   const agentLifecycle = requester.accessor.get(IAgentLifecycleService);
+  void run.completion.catch(() => {});
   if (options.deferStarted !== true) {
     void dispatcher?.dispatch(new SubagentStarted({ subagentId: run.agentId }));
   }

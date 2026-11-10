@@ -72,7 +72,7 @@ export class TaskOutputTool implements ITaskOutputTool {
 
   private async execute(args: TaskOutputInput): Promise<ExecutableToolResult> {
     const handler = this.toolExecutor.handler(args.task_id);
-    const current = handler === undefined ? this.history.getTask(args.task_id) : agentTaskInfo(handler);
+    const current = handler?.snapshot().fields.task === undefined ? this.history.getTask(args.task_id) : agentTaskInfo(handler);
     if (!current) {
       return { isError: true, output: `Task not found: ${args.task_id}` };
     }

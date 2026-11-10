@@ -135,6 +135,7 @@ function fakeTaskFields(info: AgentTaskInfo): AgentTaskFields {
   const base = {
     description: info.description,
     timeoutMs: info.timeoutMs,
+    timedOut: info.status === 'timed_out' || undefined,
     stopReason: info.stopReason,
   };
   switch (info.kind) {
@@ -260,7 +261,7 @@ class FakeTaskService implements IAgentTaskService {
         stopReason: info.stopReason,
       };
     };
-    return {
+    const handler: Omit<AgentToolExecutionHandler, 'then'> = {
       taskId: entry.info.taskId,
       snapshot,
       fields: () => ({ task: fakeTaskFields(entry.info) }),
@@ -289,8 +290,8 @@ class FakeTaskService implements IAgentTaskService {
         return ack;
       },
       observe: () => () => {},
-      then: (onfulfilled, onrejected) => Promise.resolve(fakeToolResult(entry.info)).then(onfulfilled, onrejected),
     };
+    return Object.assign(Promise.resolve().then(() => fakeToolResult(entry.info)), handler);
   }
 
   handlers(): readonly AgentToolExecutionHandler[] {
@@ -1328,6 +1329,7 @@ describe('WaitForTool (harness)', () => {
       await ctx.restorePersisted();
       const tasks = ctx.get(IAgentTaskService);
       const controlled = await startControlledTaskInLoop(ctx, { description: 'background work' });
+      const baselineLlmCalls = ctx.llmCalls.length;
       const taskId = controlled.handler.taskId;
       ctx.mockNextResponse(
         { type: 'function', id: 'list-before-wait', name: 'TaskList', arguments: '{}' },
@@ -1344,10 +1346,12 @@ describe('WaitForTool (harness)', () => {
       await ctx.rpc.steer({ input: [{ type: 'text', text: 'Handle this new request first.' }] });
 
       await vi.waitFor(() => {
-        expect(ctx.llmCalls).toHaveLength(2);
+        expect(ctx.llmCalls).toHaveLength(baselineLlmCalls + 2);
       }, { timeout: 1_000 });
-      const history = ctx.llmCalls[1]!.history;
-      expect(history.filter((message) => message.role === 'tool')).toMatchObject([
+      const history = ctx.llmCalls[baselineLlmCalls + 1]!.history;
+      expect(history.filter((message) =>
+        message.role === 'tool' && (message.toolCallId === 'list-before-wait' || message.toolCallId === 'wait-for-task')
+      )).toMatchObject([
         { toolCallId: 'list-before-wait', content: [{ type: 'text', text: expect.stringContaining(taskId) }] },
         { toolCallId: 'wait-for-task', content: [{ type: 'text', text: expect.stringContaining('wait_status: interrupted') }] },
       ]);
@@ -1400,8 +1404,12 @@ describe('WaitForTool (harness)', () => {
         await ctx.rpc.steer({ input: [{ type: 'text', text: 'Keep the background task running.' }] });
       };
       if (timing === 'before-request') {
+        let steered = false;
         ctx.get(IAgentLoopService).hooks.onWillBeginStep.register('steer-before-request', async (event, next) => {
-          if (event.step === 1) void steer();
+          if (event.step === 1 && !steered) {
+            steered = true;
+            void steer();
+          }
           await next();
         });
       } else {
@@ -1417,21 +1425,31 @@ describe('WaitForTool (harness)', () => {
       });
 
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Wait for the background work.' }] });
-      await waitingAgain;
+      if (timing === 'before-request') {
+        controlled.resolve('');
+        await ctx.get(IAgentLoopService).settled();
+      } else {
+        await waitingAgain;
+      }
 
-      expect(ctx.llmCalls[1]?.history.filter((message) => message.role === 'tool')).toMatchObject([
-        { toolCallId: 'wait-specific', content: [{ text: expect.stringContaining('wait_status: interrupted') }] },
-        { toolCallId: 'wait-any', content: [{ text: expect.stringContaining('wait_status: interrupted') }] },
+      const resumed = ctx.llmCalls.find((call) =>
+        call.history.some((entry) => entry.role === 'tool' && entry.toolCallId === 'wait-specific') &&
+        call.history.some((entry) => entry.role === 'user' && entry.content.some((part) => part.type === 'text' && part.text === 'Keep the background task running.')),
+      );
+      const specificStatus = timing === 'before-request' ? 'completed' : 'interrupted';
+      const anyStatus = timing === 'before-request' ? 'no_tasks' : 'interrupted';
+      expect(resumed?.history.filter((message) => message.role === 'tool' && (message.toolCallId === 'wait-specific' || message.toolCallId === 'wait-any'))).toMatchObject([
+        { toolCallId: 'wait-specific', content: [{ text: expect.stringContaining(`wait_status: ${specificStatus}`) }] },
+        { toolCallId: 'wait-any', content: [{ text: expect.stringContaining(`wait_status: ${anyStatus}`) }] },
       ]);
-      expect(ctx.llmCalls[1]?.history.at(-1)).toMatchObject({
-        role: 'user',
-        content: [{ text: 'Check this message before waiting again.\n\nKeep the background task running.' }],
-      });
-      expect(tasks.getTask(taskId)?.status).toBe('running');
-      controlled.resolve('');
+      expect(resumed?.history.filter((message) => message.role === 'user').slice(-2)).toMatchObject([
+        { role: 'user', content: [{ text: 'Check this message before waiting again.' }] },
+        { role: 'user', content: [{ text: 'Keep the background task running.' }] },
+      ]);
+      expect(tasks.getTask(taskId)?.status).toBe(timing === 'before-request' ? 'completed' : 'running');
+      if (timing === 'before-tool') controlled.resolve('');
       await ctx.get(IAgentLoopService).settled();
-      expect(ctx.llmCalls).toHaveLength(3);
-      expect(ctx.llmCalls[2]?.history.find((message) => message.role === 'tool' && message.toolCallId === 'wait-again')).toMatchObject({
+      expect(ctx.llmCalls.at(-1)?.history.find((message) => message.role === 'tool' && message.toolCallId === 'wait-again')).toMatchObject({
         content: [{ text: expect.stringContaining('wait_status: completed') }],
       });
       expect(taskNotifications(ctx, taskId)).toHaveLength(1);
@@ -1508,8 +1526,8 @@ describe('WaitForTool (harness)', () => {
         ...context('cancelled-wait', { timeout: 90, task_id: taskId }, cancelled.signal),
         steerSignal: steered.signal,
       });
+      cancelled.abort(new Error('Aborted'));
       steered.abort();
-      cancelled.abort();
 
       await expect(pending).rejects.toThrow('Aborted');
       expect(tasks.getTask(taskId)?.status).toBe('running');

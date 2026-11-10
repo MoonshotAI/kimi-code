@@ -17,7 +17,7 @@ import type { WireRecord } from '#/wire/record';
 import { normalizeLegacyTurnSteerRecords } from '#/wire/human';
 import { computeForkLine, parseTree, restorableChain } from '#/wire/tree/index';
 import { fromPersistentWireRecord, toPersistentWireRecord } from '#/wire/wireService';
-import { recordingWireLog, registerTestAgentWire, stubAgentWire } from '../../wire/stubs';
+import { recordingWireLog, registerTestAgentWire, registerTestEventDispatcher, stubAgentWire } from '../../wire/stubs';
 
 function prompt(id: string, text = id): UserEntry {
   return createUserEntry(createUserMessage(text), { source: 'input', promptId: id });
@@ -184,8 +184,9 @@ describe('loop journal restore', () => {
     const persisted: WireRecord[] = [];
     const ix = new TestInstantiationService();
     try {
-      const wire = registerTestAgentWire(ix, 'wire/loop-journal', { log: recordingWireLog(persisted) });
-      const journal = new LoopJournal(wire, 'main');
+      const wire = registerTestAgentWire(ix, 'wire/loop-journal', { log: recordingWireLog(persisted), agentId: 'main' });
+      const dispatcher = registerTestEventDispatcher(ix);
+      const journal = new LoopJournal(wire, 'main', dispatcher);
       const entry: UserEntry = {
         message: {
           role: 'user',

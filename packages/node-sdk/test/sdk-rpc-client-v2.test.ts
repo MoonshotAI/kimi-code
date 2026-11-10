@@ -327,16 +327,19 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     {
       name: 'a valid default next to an invalid entry',
       config: '[environments]\ndefault = "good"\n\n[environments.good]\ntype = "ssh"\nhost = "example.com"\ndefault_cwd = "/remote/work"\n\n[environments.bad]\ntype = "ssh"\n',
+      allowsExplicitLocal: true,
     },
     {
       name: 'an invalid default reference',
       config: '[environments]\ndefault = "missing"\n',
+      allowsExplicitLocal: true,
     },
     {
       name: 'malformed TOML',
       config: '[environments\n',
+      allowsExplicitLocal: false,
     },
-  ])('rejects implicit local creation with $name and allows explicit local', async ({ config }) => {
+  ])('validates implicit and explicit local creation with $name', async ({ config, allowsExplicitLocal }) => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', 'false');
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-invalid-env-work-'));
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-invalid-env-home-'));
@@ -354,8 +357,13 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     });
     try {
       await expect(harness.createSession({ workDir })).rejects.toMatchObject({ code: 'config.invalid' });
-      const local = await client.engineAccessor.get(ISessionManager).create({ workDir, environmentId: 'local' });
-      expect(local.id).not.toBe('');
+      const localCreation = client.engineAccessor.get(ISessionManager).create({ workDir, environmentId: 'local' });
+      if (allowsExplicitLocal) {
+        const local = await localCreation;
+        expect(local.id).not.toBe('');
+      } else {
+        await expect(localCreation).rejects.toMatchObject({ code: 'config.invalid' });
+      }
     } finally {
       await harness.close();
       vi.unstubAllEnvs();
@@ -438,6 +446,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
 
       await writeFile(remoteAgentsMd, 'remote v2');
       await harness.reloadSession({ id: session.id });
+      main().accessor.get(IAgentLoopService).flushReminders();
       expect(changeMessages()).toHaveLength(1);
       const message = changeMessages()[0]!;
       expect(message).toContain(`- ${remoteAgentsMd}\n`);
@@ -2418,12 +2427,14 @@ key = "${titleOAuthRef.key}"
 
       await client.reloadSession({ sessionId: 'ses_dirs_reload' });
       expect(reloadDirs).toHaveBeenCalledTimes(1);
-      const context = () =>
-        getLiveSessionById(client.engineAccessor, 'ses_dirs_reload')!
+      const context = () => {
+        const loop = getLiveSessionById(client.engineAccessor, 'ses_dirs_reload')!
           .accessor.get(IAgentLifecycleService)
           .handleOf('main')!
-          .accessor.get(IAgentLoopService)
-          .history();
+          .accessor.get(IAgentLoopService);
+        loop.flushReminders();
+        return loop.history();
+      };
       const dirsReminders = () =>
         context().filter(
           (message) =>

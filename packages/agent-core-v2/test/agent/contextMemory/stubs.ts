@@ -1,6 +1,6 @@
 import type { ServiceRegistration } from '#/_base/di/test';
 import { buildContextCompactionShape, type ContextCompactionShape, type ContextCompactionShapeInput } from '#/agent/contextMemory/compactionHandoff';
-import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
+import { ContextApplyCompaction, ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { contextFromHistoryEntry, historyFromContext } from '#/agent/loop/history';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -8,6 +8,8 @@ import { IEventBus, type ISessionEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { IWireService } from '#/wire/wire';
 import type { HistoryMessage } from '#human/agent/turn';
+import type { IEventDispatcher } from '#/state/eventDispatcher';
+import { TokenCountingRebased } from '#/agent/tokenCounting/tokenCountingOps';
 
 import { stubAgentWire } from '../../wire/stubs';
 import { stubAgentContext } from '../agentContext/stubs';
@@ -21,11 +23,21 @@ export function appendContext(loop: IAgentLoopService, ...messages: readonly Con
 export function compactContext(
   loop: IAgentLoopService,
   input: ContextCompactionShapeInput,
+  effects?: { readonly dispatcher: IEventDispatcher },
 ): Omit<ContextCompactionShape, 'messages'> {
   const shape = buildContextCompactionShape(loop.history(), input);
-  loop.replaceHistory(historyFromContext(shape.messages), 'compaction');
   const { messages: _messages, ...result } = shape;
   void _messages;
+  loop.replaceHistory(historyFromContext(shape.messages), 'compaction', () => {
+    if (effects === undefined) return;
+    void effects.dispatcher.dispatch(new ContextApplyCompaction({ agentId: 'main', ...result }));
+    void effects.dispatcher.dispatch(new TokenCountingRebased({
+      agentId: 'main',
+      length: shape.messages.length,
+      tokens: result.tokensAfter,
+      measured: false,
+    }));
+  });
   return result;
 }
 

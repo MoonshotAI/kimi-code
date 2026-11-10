@@ -10,6 +10,7 @@ export function toolEntry(toolCall: ToolCall, result: ToolResult | ToolDetachAck
   return createToolEntry(createToolMessage(toolCall.id, result.content), {
     source: 'tool',
     isError: failed ? true : undefined,
+    stopTurn: 'stopTurn' in result && result.stopTurn === true ? true : undefined,
     detached,
   });
 }

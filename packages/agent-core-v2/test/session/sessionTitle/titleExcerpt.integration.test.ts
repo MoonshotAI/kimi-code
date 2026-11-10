@@ -9,8 +9,9 @@ import { createTestAgent, type TestAgentContext } from '../../harness';
 describe('title excerpts over the real context memory', () => {
   let ctx: TestAgentContext;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     ctx = createTestAgent();
+    await ctx.restorePersisted();
   });
 
   afterEach(async () => {

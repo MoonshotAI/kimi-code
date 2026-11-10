@@ -372,6 +372,16 @@ describe('AgentLifecycleService', () => {
         return { dispose: () => {} };
       },
       onWillExecuteTool: () => ({ dispose: () => {} }),
+      registerLegacyStarting: () => {
+        beforeExecuteListeners += 1;
+        return { dispose: () => {} };
+      },
+      registerHook: (hook: { afterExecute?: unknown }) => {
+        beforeExecuteListeners += 1;
+        if (hook.afterExecute !== undefined) didExecuteHookIds.push('toolDedupe');
+        return { dispose: () => {} };
+      },
+      handlers: () => [{ snapshot: () => ({ status: 'success' }), stop: stopAllOnExit }],
       hooks: {
         onDidExecuteTool: {
           register: (id: string) => {
@@ -399,6 +409,7 @@ describe('AgentLifecycleService', () => {
       }
     });
     const loopHistory: ContextMessage[] = [];
+    let closePromise: Promise<void> | undefined;
     let loopProfile: ProfileBindingSnapshot = { thinkingLevel: 'off', systemPrompt: '' };
     loopProfileSequence = [];
     const loopStub = {
@@ -464,7 +475,11 @@ describe('AgentLifecycleService', () => {
       cancel: loopCancel,
       settled: loopSettled,
       tryAcquireQuiescence: vi.fn(() => ({ dispose: vi.fn() })),
-      close: vi.fn(() => Promise.resolve()),
+      close: vi.fn(() => closePromise ??= (async () => {
+        for (const handler of ix.get(IAgentToolExecutorService).handlers()) {
+          await handler.stop('Session closed');
+        }
+      })()),
     };
     loopStart = loopStub.start;
     loopSetProfile = loopStub.setProfile;
@@ -827,10 +842,6 @@ describe('AgentLifecycleService', () => {
 
     expect(stopAllOnExit).toHaveBeenCalledWith('Session closed');
     expect(loopSettled).toHaveBeenCalled();
-    expect(suppressAllTerminalNotifications).toHaveBeenCalledOnce();
-    expect(suppressAllTerminalNotifications.mock.invocationCallOrder[0]).toBeLessThan(
-      loopSettled.mock.invocationCallOrder[0]!,
-    );
     expect(stopAllOnExit.mock.invocationCallOrder[0]).toBeGreaterThan(
       loopSettled.mock.invocationCallOrder[0]!,
     );

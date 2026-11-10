@@ -70,7 +70,7 @@ export type StubLoop = IAgentLoopService & {
   startTurn(): StubTurn;
   resetLoop(): Promise<void>;
   settleActive(result?: TurnResult): void;
-  drainNextBatch(context?: IAgentLoopService): { readonly driver: { readonly kind: string } } | undefined;
+  drainNextBatch(context?: IAgentLoopService, kinds?: readonly string[]): { readonly driver: { readonly kind: string } } | undefined;
   flushReminders(): void;
 };
 const turnControllers = new WeakMap<Turn, AbortController>();
@@ -250,6 +250,10 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
         },
       };
     }) as unknown as StubLoop['notify'],
+    sendNow: ((input: LoopNotifyEntry | readonly string[]) => {
+      if (Array.isArray(input)) return Promise.resolve();
+      return stub.submit(input as LoopNotifyEntry);
+    }) as unknown as StubLoop['sendNow'],
     snapshot() {
       return {
         state: active !== undefined ? 'running' : 'idle',
@@ -274,19 +278,26 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
     settled: () => Promise.resolve(),
     retry: async () => { throw new Error('retry is not supported by this stub'); },
     close: () => Promise.resolve(),
-    drainNextBatch(context) {
-      const batch = pending.splice(0);
+    drainNextBatch(context, kinds) {
+      const batch = kinds === undefined
+        ? pending.splice(0)
+        : pending.filter((entry) => {
+            if (!kinds.includes(entry.kind)) return false;
+            const index = pending.indexOf(entry);
+            if (index >= 0) pending.splice(index, 1);
+            return true;
+          });
       if (batch.length === 0) return undefined;
       for (const entry of batch) {
         entry.onConsume?.();
         if (context !== undefined && entry.message !== undefined && entry.message.content.length > 0) {
-          context.replaceHistory(historyFromContext([...context.history(), entry.message]), 'test');
+          context.replaceHistory(historyFromContext([...context.history(), entry.message]), 'fork');
         }
       }
       return { driver: { kind: batch[0]!.kind } };
     },
     flushReminders() {
-      stub.drainNextBatch(stub);
+      stub.drainNextBatch(stub, ['message']);
     },
   };
   return stub;

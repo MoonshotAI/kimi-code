@@ -1,5 +1,4 @@
 import { Disposable } from '#/_base/di/lifecycle';
-import { resolveAgentTaskConfig } from '#/agent/task/configSection';
 import { IConfigService } from '#/app/config/config';
 import {
   ITowerRateLimitService,

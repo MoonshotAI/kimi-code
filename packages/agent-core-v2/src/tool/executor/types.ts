@@ -46,7 +46,7 @@ export interface ToolResult {
 }
 
 export type ToolReturn =
-  | { readonly content: ContentPart[]; readonly outcome?: 'success' }
+  | { readonly content: ContentPart[]; readonly outcome?: 'success'; readonly stopTurn?: boolean; readonly stopTurnReason?: string }
   | {
       readonly content: ContentPart[];
       readonly outcome: 'failed';
@@ -154,7 +154,7 @@ export interface ToolExecuteContext<
 export interface ToolStoppingContext<TFields extends object = object, TPrepared = unknown>
   extends ToolView<TFields, TPrepared> {
   readonly reason: unknown;
-  abandon(result?: ToolReturn): void;
+  readonly abandon: (result?: ToolReturn) => void;
 }
 
 export interface AfterExecuteHookContext<TArgs = unknown, TContext = unknown, TPrepared = unknown>

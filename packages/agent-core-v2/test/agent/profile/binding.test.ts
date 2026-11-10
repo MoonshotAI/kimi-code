@@ -306,7 +306,9 @@ describe('AgentProfileService.bind', () => {
     });
     await ctx.get(IWireService).flush();
 
-    const records = persistence.records.slice(start).filter((record) => record.type === 'profile.bind');
+    const records = persistence.records.slice(start).filter(
+      (record) => record.type === 'profile.bind' && record['thinkingEffort'] === 'on',
+    );
     expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({
       type: 'profile.bind',

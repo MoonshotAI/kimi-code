@@ -10,12 +10,14 @@ export async function restoreTaskCompletions(options: {
   readonly agentId: string;
   readonly taskOutputs: IAgentTaskOutputService;
   readonly messages: readonly HistoryMessage[];
+  readonly pending?: readonly HistoryMessage[];
+  readonly isLive?: (taskId: string) => boolean;
 }): Promise<readonly UserEntry[]> {
   const { journal, restorable } = await options.wire.readRestoreChains();
   const history = new AgentTaskService(options.agentId);
   history.restore(journal);
   const delivered = new Set<string>();
-  for (const entry of options.messages) {
+  for (const entry of [...options.messages, ...options.pending ?? []]) {
     const origin = contextFromHistoryEntry(entry).origin;
     if (origin?.kind === 'task') delivered.add(`${origin.taskId}\0${origin.status}\0${origin.notificationId}`);
   }
@@ -29,11 +31,12 @@ export async function restoreTaskCompletions(options: {
   }
   const completions: UserEntry[] = [];
   for (const info of history.list(false)) {
-    if (info.status === 'lost' || !TERMINAL_STATUSES.has(info.status)) continue;
+    if (!TERMINAL_STATUSES.has(info.status)) continue;
+    if (info.status === 'lost' && options.isLive?.(info.taskId) === true) continue;
     if (info.detached === false || info.terminalNotificationSuppressed === true) continue;
     const notificationId = `task:${info.taskId}:${info.status}`;
     if (delivered.has(`${info.taskId}\0${info.status}\0${notificationId}`)) continue;
-    const toolCallId = info.kind === 'question' ? info.toolCallId : info.parentToolCallId;
+    const toolCallId = info.kind === 'question' ? info.toolCallId ?? info.taskId : info.parentToolCallId ?? info.taskId;
     if (toolCallId === undefined) continue;
     completions.push(await options.taskOutputs.createCompletion(info, toolCallId));
   }

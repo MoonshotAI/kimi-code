@@ -1,7 +1,7 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import type { TokenUsage } from '#human/llm-requester/usage';
 import { Error2, ErrorCodes } from '#/errors';
-import { linkAbortSignal } from '#/_base/utils/abort';
+import { linkAbortSignal, userCancellationReason } from '#/_base/utils/abort';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
@@ -159,7 +159,7 @@ export class SessionSwarmService implements ISessionSwarmService {
   }
 
   cancel({ callerAgentId }: { readonly callerAgentId: string }): void {
-    this.inFlight.get(callerAgentId)?.abort();
+    this.inFlight.get(callerAgentId)?.abort(userCancellationReason());
   }
 
   private dispatchSubagentEvent(callerAgentId: string, event: Event2): void {
@@ -193,6 +193,13 @@ export class SessionSwarmService implements ISessionSwarmService {
       modelSource: plan.modelSource,
     });
     const child = this.requireHandle(spawned.agentId, 'Agent instance');
+    try {
+      options.signal.throwIfAborted();
+    } catch (error) {
+      terminalize(spawned.agentId, runStartTerminalEvent(spawned.agentId, error, options.signal));
+      await this.agentLifecycle.remove(agentContextOf(child)).catch(() => undefined);
+      throw error;
+    }
     return this.observe(
       caller,
       child,

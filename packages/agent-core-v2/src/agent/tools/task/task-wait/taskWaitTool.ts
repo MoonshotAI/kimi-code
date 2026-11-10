@@ -260,7 +260,7 @@ export class WaitForTool implements IWaitForTool {
 
   private getTask(taskId: string): AgentTaskInfo | undefined {
     const handler = this.toolExecutor.handler(taskId);
-    return handler === undefined ? this.history.getTask(taskId) : agentTaskInfo(handler);
+    return handler?.snapshot().fields.task === undefined ? this.history.getTask(taskId) : agentTaskInfo(handler);
   }
 
   private async waitTask(
@@ -275,7 +275,7 @@ export class WaitForTool implements IWaitForTool {
     } catch (error) {
       if (!(error instanceof ToolTimeoutError)) throw error;
     }
-    return agentTaskInfo(handler);
+    return handler.snapshot().fields.task === undefined ? this.history.getTask(taskId) : agentTaskInfo(handler);
   }
 
   private async waitAny(
