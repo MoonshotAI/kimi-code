@@ -381,7 +381,7 @@ function applyLegacyToolResult(
   time: number,
 ): void {
   const found = findToolCall(state, message.toolCallId);
-  if (found !== undefined) finishToolCall(state, found, message.content, message.isError === true, time);
+  if (found !== undefined) finishToolCall(state, found, message.content, message.isError === true, message.note, time);
 }
 
 function applyLoopEvent(state: ConversationState, event: LoopRecordedEvent | undefined, time: number): void {
@@ -434,7 +434,9 @@ function applyLoopEvent(state: ConversationState, event: LoopRecordedEvent | und
     }
     case 'tool.result': {
       const found = findToolCall(state, event.toolCallId);
-      if (found !== undefined) finishToolCall(state, found, event.result.output, event.result.isError === true, time);
+      if (found !== undefined) {
+        finishToolCall(state, found, event.result.output, event.result.isError === true, event.result.note, time);
+      }
       return;
     }
   }
@@ -822,10 +824,11 @@ function finishToolCall(
   found: { turn: ConversationTurn; item: ToolCallItem },
   output: string | readonly ContentPart[],
   isError: boolean,
+  note: string | undefined,
   time: number,
 ): void {
   const cancelled = state.provisionalEnds[found.turn.turn_id]?.outcome === 'interrupted';
-  endToolCall(found.item, output, !isError ? 'completed' : cancelled ? 'interrupted' : 'failed', time);
+  endToolCall(found.item, output, !isError ? 'completed' : cancelled ? 'interrupted' : 'failed', note, time);
   refreshTool(state, found.item);
 }
 
