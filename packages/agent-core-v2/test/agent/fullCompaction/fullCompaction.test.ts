@@ -4787,10 +4787,10 @@ describe('FullCompaction prompt-cache prefix', () => {
       const ctx = await runFirstTurn(toolSelect, loadSchema, media);
       const loopCalls = ctx.llmCalls.length;
       const lastLoopCall = ctx.llmCalls.at(-1)!;
-      const announced = lastLoopCall.history.some((message) =>
-        messageText(message).includes('<tools_added>'),
+      const progressive = lastLoopCall.history.some((message) =>
+        messageText(message).includes('Use the select_tools tool'),
       );
-      expect(announced).toBe(toolSelect);
+      expect(progressive).toBe(toolSelect);
       expect(
         lastLoopCall.history.some((message) => message.role === 'system' && message.tools !== undefined),
       ).toBe(loadSchema);

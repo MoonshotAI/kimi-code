@@ -245,6 +245,12 @@ class LoopMailbox {
     return entries;
   }
 
+  drainNotify(): UserEntry[] {
+    const entries = this.notifyEntries;
+    this.notifyEntries = [];
+    return entries;
+  }
+
   clearReminders(): void {
     this.reminders = [];
   }
@@ -1327,9 +1333,20 @@ class LoopActor implements Loop {
 
   private finishSteeredStep(turn: LiveTurn, step: StepState): boolean {
     if (!step.steerRequested || turn.outcome?.type === 'aborted') return false;
+    const steered = this.mailbox.drainNotify();
     step.outcome = { type: 'done', cause: STEERED };
-    this.finalizeStep(turn, step);
-    this.post({ type: 'turn.finish', turn });
+    if (turn.promptOnly !== true) {
+      this.record({ type: 'step.ended', turnId: turn.id, step: turn.step, outcome: step.outcome });
+    }
+    this.step = undefined;
+    if (steered.length === 0) {
+      turn.outcome = step.outcome;
+      turn.phase = 'finished';
+      this.post({ type: 'turn.finish', turn });
+      return true;
+    }
+    turn.pending.push(...steered.map((entry) => ({ kind: 'notify' as const, entry })));
+    this.post({ type: 'turn.append', turn });
     return true;
   }
 

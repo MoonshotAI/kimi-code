@@ -744,14 +744,19 @@ describe('conversation contract e2e', () => {
       name: 'Bash',
       arguments: JSON.stringify({ command: "printf '  VITE ready\\n'", description: 'npm run dev', run_in_background: true }),
     }, { turnId: 0 });
+    console.error('S9_BEFORE_HANDLER', handler.taskId);
     await handler;
+    console.error('S9_AFTER_HANDLER', handler.snapshot().phase, handler.snapshot().detached);
     const taskId = handler.taskId;
     const sink = main.accessor.get(IAgentTaskOutputService).open(taskId);
     const isOutput = (frame: any): boolean => frame.type === 'task.output';
 
     const first = await openFrameSocket(server!);
+    console.error('S9_BEFORE_WATCH');
     first.send({ type: 'task.watch', request_id: 'r1', session_id: sid, agent_id: MAIN_AGENT_ID, task_id: taskId });
-    expect(await first.next((f) => f.type === 'response')).toMatchObject({ request_id: 'r1', code: 0 });
+    const response = await first.next((f) => f.type === 'response');
+    console.error('S9_RESPONSE', JSON.stringify(response).slice(0, 400));
+    expect(response).toMatchObject({ request_id: 'r1', code: 0 });
     expect(await first.next(isOutput)).toMatchObject({
       agent_id: MAIN_AGENT_ID,
       task_id: taskId,

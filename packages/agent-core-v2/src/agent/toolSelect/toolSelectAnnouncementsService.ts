@@ -17,7 +17,6 @@ export class AgentToolSelectAnnouncementsService extends Service implements IAge
     super();
     this._register(
       reminder.register(LOADABLE_TOOLS_VARIANT, async ({ lastDisclosure, signal }) => {
-        if (!toolSelect.featureEnabled()) return undefined;
         await toolSelect.prepareCatalog(signal);
         return toolSelect.loadableToolsAnnouncement(
           isToolSelectAnnouncementDisclosure(lastDisclosure) ? lastDisclosure : undefined,

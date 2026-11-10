@@ -359,7 +359,7 @@ describe('TowerSpawnTool', () => {
   it('rejects non-main callers with the main-agent-only error before any work', async () => {
     ix.stub(IAgentScopeContext, { agentId: 'agent-w1', scope: (subKey?: string) => subKey ?? '' });
 
-    const result = await ix.createInstance(TowerSpawnTool).resolveExecution(WORKER_ARGS);
+    const result = ix.createInstance(TowerSpawnTool).resolveExecution(WORKER_ARGS);
 
     expect(result).toEqual({
       output: 'Tower orchestration tools are only supported by the main agent.',

@@ -310,7 +310,7 @@ function applyMessage(state: ConversationState, message: ContextMessage | undefi
   const inTurn = origin !== undefined && 'inTurn' in origin && origin.inTurn === true;
   if (inTurn || (steered && state.pendingPrompt === undefined && open !== undefined)) {
     const turn = open ?? addTurn(state, time);
-    if (isUndoAnchorOrigin(message.origin)) {
+    if (!steered && isUndoAnchorOrigin(message.origin)) {
       state.anchors.push({ turnId: turn.turn_id, itemCount: turn.items.length, stepCount: state.steps[turn.turn_id]?.length ?? 0 });
     }
     turn.items.push(userMessage(message.id ?? nextItemId(turn), 'steer', message.id, message, time));

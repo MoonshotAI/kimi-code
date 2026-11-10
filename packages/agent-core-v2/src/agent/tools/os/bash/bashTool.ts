@@ -593,8 +593,9 @@ async function executeProcess(
     if (exitCode !== 0) throw new ProcessExitError(exitCode);
     return { exitCode };
   } catch (error) {
-    await waitForStreamDrainSettled(streamDrained);
     signal.removeEventListener('abort', requestStop);
+    await disposeProcess(proc);
+    await waitForStreamDrainSettled(streamDrained);
     throw error;
   } finally {
     await disposeProcess(proc);

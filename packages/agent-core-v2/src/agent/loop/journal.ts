@@ -29,7 +29,7 @@ import {
 } from '#human/agent/turn';
 
 import { contextFromHistoryEntry, historyFromContext } from './history';
-import { TurnPrompt } from './turnOps';
+import { TurnPrompt, TurnSteer } from './turnOps';
 import type {
   LoopEmitted,
   LoopInput,
@@ -477,6 +477,11 @@ export class LoopJournal {
   }
 
   private appendMessage(event: Extract<LoopEmitted, { type: 'message.appended' }>): void {
+    const openingPromptId = this.turn?.entry?.meta?.promptId;
+    const appendedPromptId = event.source === 'notify' ? (event.entry as UserEntry).meta?.promptId : undefined;
+    const steeredIntoOpenTurn = event.source === 'notify'
+      && this.turn?.prompted === true
+      && appendedPromptId !== openingPromptId;
     if (event.source === 'normal' || event.source === 'notify') {
       this.writeTurnPrompt(event.entry as UserEntry);
     } else {
@@ -535,6 +540,7 @@ export class LoopJournal {
       });
       return;
     }
+    if (steeredIntoOpenTurn) this.writeTurnSteer(event.entry as UserEntry);
     this.write({
       type: 'context.append_message',
       agentId: this.agentId,
@@ -583,6 +589,34 @@ export class LoopJournal {
       }));
     }
     turn.prompted = true;
+  }
+
+  private writeTurnSteer(entry: UserEntry): void {
+    const turn = this.turn;
+    if (turn === undefined || !turn.prompted) return;
+    const promptOrigin = origin(entry);
+    if (promptOrigin.kind !== 'user') return;
+    const promptId = entry.meta?.promptId;
+    if (this.dispatcher === undefined) {
+      this.write({
+        type: 'turn.steer',
+        agentId: this.agentId,
+        input: entry.message.content,
+        origin: promptOrigin,
+        messageId: promptId,
+        promptIds: promptId === undefined ? undefined : [promptId],
+        turnId: this.turnId,
+      });
+      return;
+    }
+    void this.dispatcher.dispatch(new TurnSteer({
+      agentId: this.agentId,
+      input: entry.message.content,
+      origin: promptOrigin,
+      messageId: promptId,
+      promptIds: promptId === undefined ? undefined : [promptId],
+      turnId: this.turnId,
+    }));
   }
 
   private turnId = 0;

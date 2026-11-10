@@ -1593,6 +1593,8 @@ describe('WaitForTool (harness)', () => {
       const taskBControlled = await startControlledTaskInLoop(ctx, { description: 'late comer' });
       const taskB = taskBControlled.handler.taskId;
       taskBControlled.write('B-OUT\n');
+      ctx.mockNextResponse({ type: 'text', text: 'notification ack' });
+      ctx.mockNextResponse({ type: 'text', text: 'notification ack' });
       taskBControlled.resolve('');
       await waitForTerminal(tasks, taskB);
 
@@ -1616,6 +1618,11 @@ describe('WaitForTool (harness)', () => {
       expect(output).not.toContain('[completed_during_wait]');
       await ctx.persistedWireRecords();
       expect(ctx.allEvents.some((event) => event.event === 'task.waitDelivered')).toBe(false);
+      await vi.waitFor(() => {
+        expect(taskNotifications(ctx, taskA)).toHaveLength(1);
+        expect(taskNotifications(ctx, taskB)).toHaveLength(1);
+      });
+      await ctx.get(IAgentLoopService).settled();
       expect(taskNotifications(ctx, taskA)).toHaveLength(1);
       expect(taskNotifications(ctx, taskB)).toHaveLength(1);
     } finally {

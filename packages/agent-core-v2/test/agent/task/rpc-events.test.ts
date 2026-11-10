@@ -1,5 +1,6 @@
 import { PassThrough, Readable } from 'node:stream';
 import type { Writable } from 'node:stream';
+import { join } from 'pathe';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -8,6 +9,7 @@ import { type AgentTaskInfo, IAgentTaskService } from '#/agent/task/task';
 import { ContextAppendMessage } from '#/agent/contextMemory/contextEvents';
 import { IEventBus } from '#/app/event/eventBus';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { ErrorCodes } from '#/errors';
 import { ITaskStopTool } from '#/agent/tools/task/task-stop/task-stop';
@@ -482,11 +484,24 @@ describe('AgentTaskService — notification delivery', () => {
 
   it('replays restored terminal process task notifications when undelivered', async () => {
     const ctx = track(createTestAgent(taskServices()));
+    const outputPath = join(
+      ctx.get(ISessionContext).sessionDir,
+      'agents',
+      ctx.get(IAgentScopeContext).agentId,
+      'tasks',
+      'bash-done0000',
+      'output.log',
+    );
+    await ctx.get(IAgentTaskOutputService).appendTaskOutput('bash-done0000', 'restored shell output');
     ctx.mockNextResponse({ type: 'text', text: 'restored process ack' });
     await restoreTaskHistory(ctx, [processInfo()]);
     await ctx.get(IAgentLoopService).settled();
+    const text = JSON.stringify(taskNotifications(ctx, 'bash-done0000'));
     expect(taskNotifications(ctx, 'bash-done0000')).toHaveLength(1);
-    expect(JSON.stringify(taskNotifications(ctx, 'bash-done0000'))).toContain('output-file');
+    expect(text).toContain('Background process completed');
+    expect(text).toContain('<output-file');
+    expect(text).toContain(outputPath);
+    expect(text).not.toContain('restored shell output');
   });
 
   it('references persisted output without inlining a restored process output tail', async () => {
