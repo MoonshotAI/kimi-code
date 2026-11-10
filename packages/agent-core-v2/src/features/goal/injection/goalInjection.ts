@@ -15,6 +15,7 @@ import GOAL_PAUSED_REMINDER from './goal-paused-reminder.md?raw';
 export interface GoalInjectionOptions {
   readonly getGoal: () => GoalSnapshot | null;
   readonly isWaitForEnabled?: () => boolean;
+  readonly isSetGoalBudgetEnabled?: () => boolean;
 }
 
 interface GoalReminderDisclosure {
@@ -25,6 +26,7 @@ interface GoalReminderDisclosure {
   readonly active: boolean;
   readonly budgetBand: 'within' | 'nearing';
   readonly waitForEnabled: boolean;
+  readonly setGoalBudgetEnabled: boolean;
 }
 
 export const GOAL_WAIT_FOR_GUIDANCE =
@@ -49,17 +51,22 @@ export class GoalInjection extends Service {
     const goal = this.options.getGoal();
     if (goal === null) return undefined;
     const waitForEnabled = this.options.isWaitForEnabled?.() === true;
-    const disclosure = goalDisclosure(goal, waitForEnabled);
+    const setGoalBudgetEnabled = this.options.isSetGoalBudgetEnabled?.() !== false;
+    const disclosure = goalDisclosure(goal, waitForEnabled, setGoalBudgetEnabled);
     const full =
       goal.status !== 'active' || needsFullGoalReminder(injection, disclosure, this.context.get());
     return {
-      content: buildGoalReminder(goal, waitForEnabled, full),
+      content: buildGoalReminder(goal, waitForEnabled, setGoalBudgetEnabled, full),
       disclosure,
     };
   }
 }
 
-function goalDisclosure(goal: GoalSnapshot, waitForEnabled: boolean): GoalReminderDisclosure {
+function goalDisclosure(
+  goal: GoalSnapshot,
+  waitForEnabled: boolean,
+  setGoalBudgetEnabled: boolean,
+): GoalReminderDisclosure {
   return {
     status: goal.status,
     goalId: goal.goalId,
@@ -68,6 +75,7 @@ function goalDisclosure(goal: GoalSnapshot, waitForEnabled: boolean): GoalRemind
     active: goal.status === 'active',
     budgetBand: isNearingBudget(goal) ? 'nearing' : 'within',
     waitForEnabled,
+    setGoalBudgetEnabled,
   };
 }
 
@@ -86,7 +94,8 @@ function needsFullGoalReminder(
     previous.objective !== goal.objective ||
     previous.completionCriterion !== goal.completionCriterion ||
     previous.budgetBand !== goal.budgetBand ||
-    previous.waitForEnabled !== goal.waitForEnabled
+    previous.waitForEnabled !== goal.waitForEnabled ||
+    previous.setGoalBudgetEnabled !== goal.setGoalBudgetEnabled
   ) {
     return true;
   }
@@ -98,7 +107,17 @@ const BUDGET_GUIDANCE_NEARING =
 const BUDGET_GUIDANCE_WITHIN =
   'Budget guidance: you are within budget. Make steady, focused progress toward the objective.';
 
-function buildGoalReminder(goal: GoalSnapshot, waitForEnabled: boolean, full: boolean): string {
+const SET_GOAL_BUDGET_FULL_GUIDANCE =
+  'Before doing any goal work, check the objective and latest request for a clear hard budget limit. If one is present and the current goal does not already record that limit, call SetGoalBudget first. Do not invent budgets. If a requested budget is not reasonable, do not set it; tell the user it is not reasonable.\n\n';
+const SET_GOAL_BUDGET_SPARSE_GUIDANCE =
+  'If the latest request has an unrecorded hard budget, call SetGoalBudget first. ';
+
+function buildGoalReminder(
+  goal: GoalSnapshot,
+  waitForEnabled: boolean,
+  setGoalBudgetEnabled: boolean,
+  full: boolean,
+): string {
   if (goal.status === 'blocked') {
     return renderPrompt(GOAL_BLOCKED_REMINDER, {
       reason_suffix: reasonSuffix(goal),
@@ -121,6 +140,9 @@ function buildGoalReminder(goal: GoalSnapshot, waitForEnabled: boolean, full: bo
     progress: `${goal.turnsUsed} continuation turns, ${goal.tokensUsed} tokens, ${formatElapsed(goal.wallClockMs)} elapsed`,
     budgets_block: budgets.length > 0 ? `Budgets: ${budgets}.\n` : '',
     budget_guidance: isNearingBudget(goal) ? BUDGET_GUIDANCE_NEARING : BUDGET_GUIDANCE_WITHIN,
+    set_goal_budget_guidance: setGoalBudgetEnabled
+      ? full ? SET_GOAL_BUDGET_FULL_GUIDANCE : SET_GOAL_BUDGET_SPARSE_GUIDANCE
+      : '',
     wait_for_guidance: waitForEnabled ? ` ${GOAL_WAIT_FOR_GUIDANCE}` : '',
   });
 }

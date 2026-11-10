@@ -28,7 +28,6 @@ import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { loadAgentsMdForRoots, splitAgentsMdFiles, type LoadedAgentsMd } from '#/agent/profile/context';
 import { resolveSubagentModelPool, type SubagentModelPool } from '#/session/subagent/configSection';
 import { isToolActiveComposed } from '#/agent/toolPolicy/evaluate';
-import { TOOLS_SECTION, type ToolsConfig } from '#/agent/toolPolicy/configSection';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import { workspaceRootKey } from '#/_base/utils/workdir-slug';
@@ -205,7 +204,6 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
           return;
         }
       }
-      if (!this.toolActiveForBoundProfile(profileData, 'Skill')) return;
       this.reminder.notify(skillsChangeText(listing), { variant: SKILLS_CHANGE_VARIANT });
     } catch (error) {
       this.log.warn('skill change notification failed', { error });
@@ -221,7 +219,7 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
           tools: profileData.activeToolNames,
           disallowedTools: profileData.disallowedTools,
         },
-        global: this.config.get<ToolsConfig>(TOOLS_SECTION),
+        global: this.sessionToolPolicy.defaultTools(),
         sessionDisabledTools: this.sessionToolPolicy.disabledTools(),
       },
       name,

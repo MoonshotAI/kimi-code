@@ -429,6 +429,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     if (this.agentCtx.agentId !== 'main') return { entered: false, reason: 'not-main-agent' };
     if (!this.flags.enabled(TOWER_FLAG_ID)) return { entered: false, reason: 'experiment-off' };
     if (!isTowerFeatureAssembled(this.flags)) return { entered: false, reason: 'feature-not-assembled' };
+    if (!this.toolsAvailable) return { entered: false, reason: 'tools-disabled' };
     const owner = await this.resolveTowerOwner();
     if (owner !== undefined && owner !== this.sessionCtx.sessionId) {
       const ownerHandle = this.sessions.get(owner);
@@ -572,6 +573,18 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       isTowerFeatureAssembled(this.flags) &&
       this.agentState.get(towerKey)
     );
+  }
+
+  get toolsAvailable(): boolean {
+    const profile = this.profile.data();
+    const activeToolNames = profile.activeToolNames === undefined
+      ? undefined
+      : [...new Set([...profile.activeToolNames, ...TOWER_FLAG_VETO_TOOLS])];
+    return [...TOWER_FLAG_VETO_TOOLS].every((name) =>
+      this.toolPolicy.isToolActiveForProfile(
+        { tools: activeToolNames, disallowedTools: profile.disallowedTools },
+        name,
+      ));
   }
 
   private readonly branchLeases = new Set<string>();

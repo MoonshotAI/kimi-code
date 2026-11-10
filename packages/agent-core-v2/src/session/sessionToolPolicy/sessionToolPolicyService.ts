@@ -6,21 +6,33 @@ import { defineState } from '#/state/state';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionStateService } from '#/session/state/sessionState';
+import { IConfigService } from '#/app/config/config';
+import { TOOLS_SECTION } from '#/agent/toolPolicy/configSection';
 
 import {
   ISessionToolPolicy,
+  type SessionDefaultToolPolicy,
   type SessionToolPolicyChangedEvent,
 } from './sessionToolPolicy';
 
 interface SessionToolPolicyState {
   readonly disabledTools: readonly string[];
+  readonly defaultTools: SessionDefaultToolPolicy | null;
 }
 
 export const sessionToolPolicyStateKey = defineState<SessionToolPolicyState>('sessionToolPolicy.state', () => ({
   disabledTools: [],
+  defaultTools: null,
 }));
 
 const STATE_KEY = 'state.json';
+
+function snapshotDefaultTools(configured: SessionDefaultToolPolicy | undefined): SessionDefaultToolPolicy | null {
+  return configured === undefined ? null : {
+    enabled: configured.enabled === undefined ? undefined : [...configured.enabled],
+    disabled: configured.disabled === undefined ? undefined : [...configured.disabled],
+  };
+}
 
 export class SessionToolPolicyService extends Disposable implements ISessionToolPolicy {
   declare readonly _serviceBrand: undefined;
@@ -37,9 +49,14 @@ export class SessionToolPolicyService extends Disposable implements ISessionTool
     @ISessionStateService private readonly states: ISessionStateService,
     @ISessionContext sessionContext: ISessionContext,
     @IAtomicDocumentStore private readonly store: IAtomicDocumentStore,
+    @IConfigService private readonly config: IConfigService,
   ) {
     super();
     this.states.contributeState(sessionToolPolicyStateKey);
+    this.state = {
+      disabledTools: [],
+      defaultTools: snapshotDefaultTools(this.config.get<SessionDefaultToolPolicy | undefined>(TOOLS_SECTION)),
+    };
     this.scope = sessionContext.scope('tool-policy');
     this.onDidChange = this.changeEmitter.event;
     this.ready = this.load();
@@ -51,6 +68,10 @@ export class SessionToolPolicyService extends Disposable implements ISessionTool
 
   private set state(value: SessionToolPolicyState) {
     this.states.set(sessionToolPolicyStateKey, value);
+  }
+
+  defaultTools(): SessionDefaultToolPolicy | undefined {
+    return this.state.defaultTools ?? undefined;
   }
 
   disabledTools(): readonly string[] {
@@ -65,9 +86,15 @@ export class SessionToolPolicyService extends Disposable implements ISessionTool
 
   private async load(): Promise<void> {
     const stored = await this.store.get<SessionToolPolicyState>(this.scope, STATE_KEY);
-    if (stored !== undefined) {
-      this.state = { disabledTools: [...new Set(stored.disabledTools)] };
+    const disabledTools = [...new Set(stored?.disabledTools ?? [])];
+    if (stored !== undefined && 'defaultTools' in stored) {
+      this.state = { disabledTools, defaultTools: stored.defaultTools };
+      return;
     }
+    const configured = this.config.get<SessionDefaultToolPolicy | undefined>(TOOLS_SECTION);
+    const nextState = { disabledTools, defaultTools: snapshotDefaultTools(configured) };
+    await this.store.set(this.scope, STATE_KEY, nextState);
+    this.state = nextState;
   }
 
   private async replace(names: readonly string[]): Promise<void> {
@@ -79,7 +106,7 @@ export class SessionToolPolicyService extends Disposable implements ISessionTool
     ) {
       return;
     }
-    const nextState = { disabledTools };
+    const nextState = { disabledTools, defaultTools: this.state.defaultTools };
     await this.store.set(this.scope, STATE_KEY, nextState);
     this.state = nextState;
     await this.changeEmitter.fireAsync({}, new AbortController().signal);

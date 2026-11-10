@@ -902,6 +902,10 @@ export interface SessionStateSnapshot {
   // src/session/sessionToolPolicy/sessionToolPolicyService.ts
   'sessionToolPolicy.state': /* SessionToolPolicyState — packages/agent-core-v2/src/session/sessionToolPolicy/sessionToolPolicyService.ts */ {
     readonly disabledTools: readonly string[];
+    readonly defaultTools: /* SessionDefaultToolPolicy — packages/agent-core-v2/src/session/sessionToolPolicy/sessionToolPolicy.ts */ {
+      readonly enabled?: readonly string[];
+      readonly disabled?: readonly string[];
+    } | null;
   };
   // src/session/workspaceContext/workspaceContextService.ts
   'workspaceContext.additionalDirs': string[];

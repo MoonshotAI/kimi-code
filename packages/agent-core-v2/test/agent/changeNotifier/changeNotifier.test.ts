@@ -227,6 +227,7 @@ function createHarness(options: {
       );
       reg.defineInstance(ISessionToolPolicy, {
         _serviceBrand: undefined,
+        defaultTools: () => undefined,
         disabledTools: () => sessionDisabledTools.value,
       } as unknown as ISessionToolPolicy);
       reg.defineInstance(ISessionToolPolicyGate, {
@@ -815,7 +816,7 @@ describe('notifySkillChanges', () => {
     expect(h.reminders[1]?.variant).toBe('skills_change');
   });
 
-  it('advances beliefs without reminding while the Skill tool is disabled', async () => {
+  it('continues delivering skill reminders while the Skill tool is disabled', async () => {
     const h = createHarness({
       profile: makeProfileData({
         profileName: 'default',
@@ -828,33 +829,30 @@ describe('notifySkillChanges', () => {
     h.sessionDisabledTools.value = ['Skill'];
     h.skillListing.value = LISTING_AB;
     await h.notifier.notifySkillChanges();
-    expect(h.reminders).toHaveLength(0);
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.content).toContain('skill-b');
 
     h.sessionDisabledTools.value = [];
     await h.notifier.notifySkillChanges();
-    expect(h.reminders).toHaveLength(0);
+    expect(h.reminders).toHaveLength(1);
 
     h.skillListing.value = LISTING_A;
     await h.notifier.notifySkillChanges();
-    expect(h.reminders).toHaveLength(1);
-    expect(h.reminders[0]?.content).toContain('skill-a');
+    expect(h.reminders).toHaveLength(2);
+    expect(h.reminders[1]?.content).toContain('skill-a');
   });
 
-  it('gates the skill reminder with the persisted binding policy', async () => {
+  it('delivers skill reminders independently of the binding tool policy', async () => {
     const profileData = makeProfileData({ profileName: 'default', activeToolNames: ['Read'] });
     const h = createHarness({ profile: profileData });
     h.skillListing.value = LISTING_A;
     await h.notifier.notifySkillChanges();
-    expect(h.reminders).toHaveLength(0);
-
-    (profileData as { activeToolNames?: readonly string[] }).activeToolNames = ['Skill'];
-    await h.notifier.notifySkillChanges();
-    expect(h.reminders).toHaveLength(0);
+    expect(h.reminders).toHaveLength(1);
 
     h.skillListing.value = LISTING_AB;
     await h.notifier.notifySkillChanges();
-    expect(h.reminders).toHaveLength(1);
-    expect(h.reminders[0]?.variant).toBe('skills_change');
+    expect(h.reminders).toHaveLength(2);
+    expect(h.reminders[1]?.variant).toBe('skills_change');
   });
 
   it('detects a truncated skill listing before the first check of a legacy session', async () => {

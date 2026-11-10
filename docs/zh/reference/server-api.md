@@ -365,6 +365,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `background` | object | 后台任务运行参数 |
 | `subagent` | object | subagent 配置 |
 | `secondary_model` | object | subagent 的次级模型池 |
+| `tools` | object | 新会话的默认工具允许列表与禁止列表 |
 | `experimental` | object | 实验开关 id → 是否启用 |
 | `telemetry` | boolean | 是否启用匿名遥测 |
 | `auto_session_title` | boolean | 是否允许客户端自动生成会话标题 |
@@ -399,6 +400,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `background` | body | object | 后台任务运行参数 |
 | `subagent` | body | object | subagent 配置 |
 | `secondary_model` | body | object | subagent 的次级模型池 |
+| `tools` | body | object | 新会话的默认工具允许列表与禁止列表 |
 | `experimental` | body | object | 实验开关 id → 是否启用 |
 | `telemetry` | body | boolean | 是否启用匿名遥测 |
 | `auto_session_title` | body | boolean | 是否允许客户端自动生成会话标题 |
@@ -1258,6 +1260,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `GET /api/v1/workspaces/{workspace_id}/skills` | 无会话的工作区技能目录 |
 | `POST /api/v1/sessions/{session_id}/skills/{skill_name}:activate` | 激活技能（开启一个轮次） |
 | `GET /api/v1/tools` | 列出当前生效 agent 的工具 |
+| `GET /api/v1/tools/catalog` | 列出用户可配置的内置工具 |
 | `GET /api/v1/mcp/servers` | 列出 MCP 服务 |
 | `POST /api/v1/mcp/servers/{mcp_server_id}:restart` | 重启 MCP 服务 |
 
@@ -1316,6 +1319,12 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `session_id` | query | string | 要查看其 main agent 的会话。默认最近创建的会话 |
 
 成功时 `data` 为 `{ tools }`，每项为 `{ name, description, input_schema, source, mcp_server_id?, active? }`：`source` 为 `builtin` / `skill` / `mcp`；`mcp_server_id` 仅 MCP 工具携带（从 `mcp__<server>__<tool>` 名称解析）；`active` 报告工具策略的判定结果。`input_schema` 目前恒为 `null`。
+
+#### `GET /api/v1/tools/catalog`
+
+列出可供用户配置的内置工具。目录来自静态工具 contribution 元数据，在创建任何会话前即可使用；不会创建或恢复会话、连接 MCP 服务，也不包含 MCP 服务或各个 Skill 动态提供的工具。`select_tools` 等内部编排工具不会出现在目录中。
+
+成功时 `data` 为 `{ tools }`，按名称排序，每项为 `{ name, source }`。当前目录的 `source` 均为 `builtin`。
 
 #### `GET /api/v1/mcp/servers`
 
@@ -2391,7 +2400,7 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 
 Agent 自身的状态由另外四种平铺帧同步，每帧都携带完整的值，客户端整份替换本地副本；和任务帧一样不回放。连接开始接收某个 agent 时（规则同 `task.list`），先收到当前的 `agent`、`usage`（该 agent 有模型上下文时）、`goal`（仅主 agent）与 `todo` 帧，之后每当某个值变化就再收到对应的帧；已列出、之后才加入会话的 agent 也会用这几种帧通告自己。订阅会话时如果主 agent 还不存在，服务端会先创建它，所以订阅之后总能收到主 agent 的这几种帧。四种帧都是 `{ type, session_id, agent_id, event_created_at, ... }`：
 
-- `agent`：`{ status: "idle" | "running", compacting, model?, thinking?, permission_mode?, plan_mode, swarm_mode, tower_mode }`。agent 处理某一轮时 `status` 为 `running`，不处理时为 `idle`。正在压缩该 agent 的上下文时 `compacting` 为 `true`，无论是否在某一轮之中。正在运行的轮次以及模型请求失败后的重试状态随对话帧下发。`compacting` 和三个模式字段都是布尔值。
+- `agent`：`{ status: "idle" | "running", compacting, model?, thinking?, permission_mode?, plan_mode, swarm_mode, tower_mode, plan_mode_available, swarm_mode_available, tower_mode_available, goal_mode_available }`。agent 处理某一轮时 `status` 为 `running`，不处理时为 `idle`。正在压缩该 agent 的上下文时 `compacting` 为 `true`，无论是否在某一轮之中。正在运行的轮次以及模型请求失败后的重试状态随对话帧下发。三个模式字段表示对应模式是否已开启；四个可用性字段分别表示会话的工具快照是否允许进入 Plan 模式（`ExitPlanMode`）、Swarm 模式（`AgentSwarm`）、Tower 模式（完整 Tower 工具集）或自主目标工作（`UpdateGoal`）。这些模式与可用性字段都是布尔值。
 - `usage`：`{ context_tokens, max_context_tokens? }`。只有最新值有意义，因此上下文增长期间服务端每秒最多发送几次。
 - `goal`：`{ goal? }`，会话没有目标时省略 `goal`，否则为 `{ objective, status: "active" | "paused" | "blocked" | "complete", completion_criterion?, turns_used, tokens_used, wall_clock_ms }`。
 - `todo`：`{ items: [{ title, status: "pending" | "in_progress" | "done" }] }`，取自 agent 的待办存储，因此会跟随撤销回退，重启后也能恢复。

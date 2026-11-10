@@ -6,6 +6,7 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentGoalService } from '#/features/goal/goalService';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 
 import { runWillBeginStepHooks, type StubLoop } from '../../../agent/loop/stubs';
 import {
@@ -218,6 +219,32 @@ describe('GoalInjection content', () => {
       await goals.createGoal({ objective: 'work for up to 20 turns' });
     }))!;
     expect(text).toContain('SetGoalBudget');
+  });
+
+  it('omits SetGoalBudget guidance when the tool is disabled', async () => {
+    ctx.get(IAgentProfileService).update({ activeToolNames: ['UpdateGoal'] });
+    const text = (await readGoalReminder(async (goals) => {
+      await goals.createGoal({ objective: 'work for up to 20 turns' });
+    }))!;
+    expect(text).not.toContain('SetGoalBudget');
+    expect(text).toContain('UpdateGoal');
+  });
+
+  it('rejects goal creation and resume when UpdateGoal is disabled but keeps cancel available', async () => {
+    const profile = ctx.get(IAgentProfileService);
+    profile.update({ activeToolNames: [] });
+    await expect(goals.createGoal({ objective: 'work' })).rejects.toThrow('Goal mode requires the UpdateGoal tool');
+
+    profile.update({ activeToolNames: ['UpdateGoal', 'SetGoalBudget'] });
+    await vi.waitFor(() => {
+      expect(ctx.get(IAgentToolPolicyService).isToolActive('UpdateGoal')).toBe(true);
+    });
+    const created = await goals.createGoal({ objective: 'work' });
+    await goals.pauseGoal();
+    profile.update({ activeToolNames: [] });
+    await expect(goals.resumeGoal({ continueIfPaused: true })).rejects.toThrow('Goal mode requires the UpdateGoal tool');
+    await expect(goals.cancelGoal()).resolves.toMatchObject({ goalId: created.goalId, status: 'paused' });
+    expect(goals.getGoal().goal).toBeNull();
   });
 
   it('renders compact reminder text without template-tag blank lines', async () => {

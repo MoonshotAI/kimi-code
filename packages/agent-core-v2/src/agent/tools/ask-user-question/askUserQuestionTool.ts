@@ -263,6 +263,7 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
 registerAgentToolService(IAskUserQuestionTool, AskUserQuestionTool, {
   name: 'AskUserQuestion',
   domain: 'questionTools',
+  userConfigurable: true,
 });
 
 function questionDescription(questions: AskUserQuestionInput['questions']): string {

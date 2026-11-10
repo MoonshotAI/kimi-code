@@ -318,7 +318,9 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     const currentNames = new Set(current.map((tool) => tool.name));
     const active = this.activeTools('initial');
     const activeNames = new Set(active.map((tool) => tool.name));
-    const removed = current.filter((tool) => !activeNames.has(tool.name));
+    const removed = current.filter(
+      (tool) => !activeNames.has(tool.name) && this.toolPolicy.isToolActive(tool.name, tool.source),
+    );
     const added = active.flatMap((tool) =>
       currentNames.has(tool.name) ? [] : [{ ...tool, origin: 'runtime' as const }]);
     if (added.length > 0 || removed.length > 0) {

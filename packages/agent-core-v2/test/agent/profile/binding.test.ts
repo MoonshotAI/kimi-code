@@ -748,16 +748,15 @@ describe('AgentToolPolicyService global [tools] config', () => {
     expect(svc.isToolActive('Read')).toBe(true);
   });
 
-  it('fingerprints live global allowlist and denylist changes', async () => {
+  it('keeps the policy fingerprint stable across global allowlist and denylist changes', async () => {
     const svc = await bindWithToolsConfig({});
     const initial = svc.getPolicyFingerprint();
     await ctx.get(IConfigService).replace(TOOLS_SECTION, { enabled: ['Read'] }, ConfigTarget.Memory);
-    const allowed = svc.getPolicyFingerprint();
-    expect(allowed).not.toBe(initial);
+    expect(svc.getPolicyFingerprint()).toBe(initial);
     await ctx.get(IConfigService).replace(
       TOOLS_SECTION, { enabled: ['Read'], disabled: ['UnregisteredTool'] }, ConfigTarget.Memory,
     );
-    expect(svc.getPolicyFingerprint()).not.toBe(allowed);
+    expect(svc.getPolicyFingerprint()).toBe(initial);
   });
 
   it('matches globally disabled mcp tools by glob', async () => {
@@ -919,12 +918,71 @@ describe('AgentToolPolicyService.setSessionDisabledTools', () => {
     expect(resumed.toolPolicy.isToolActive('Write')).toBe(false);
   });
 
+  it('restores the default tools snapshot instead of the latest global config', async () => {
+    const persistence = new InMemoryWireRecordPersistence();
+    const atomicDocuments = createAtomicDocumentStore();
+    const documentServices = appService(IAtomicDocumentStore, atomicDocuments);
+    ctx = createTestAgent(
+      { persistence, initialConfig: { tools: { disabled: ['Bash'] } } },
+      documentServices,
+      hostEnvironmentServices(homeDir),
+    );
+    await ctx.get(IAgentProfileService).bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+    await ctx.get(IWireService).flush();
+    await ctx.dispose();
+
+    ctx = createTestAgent(
+      { persistence, initialConfig: { tools: { enabled: ['Read'], disabled: ['Write'] } } },
+      documentServices,
+      hostEnvironmentServices(homeDir),
+    );
+    await ctx.restorePersisted();
+    const resumed = profileServices(ctx);
+
+    expect(resumed.toolPolicy.isToolActive('Bash')).toBe(false);
+    expect(resumed.toolPolicy.isToolActive('Write')).toBe(true);
+    expect(resumed.toolPolicy.isToolActive('Read')).toBe(true);
+    expect(ctx.get(ISessionToolPolicy).defaultTools()).toEqual({ disabled: ['Bash'] });
+  });
+
+  it('initializes the default tools snapshot once for a legacy session state', async () => {
+    const atomicDocuments = createAtomicDocumentStore();
+    const documentServices = appService(IAtomicDocumentStore, atomicDocuments);
+    const scope = 'sessions/test-workspace/test-session/tool-policy';
+    await atomicDocuments.set(scope, 'state.json', { disabledTools: ['Edit'] });
+    ctx = createTestAgent(
+      { initialConfig: { tools: { disabled: ['Bash'] } } },
+      documentServices,
+      hostEnvironmentServices(homeDir),
+    );
+    await ctx.restorePersisted();
+    expect(ctx.get(IAgentToolPolicyService).isToolActive('Bash')).toBe(false);
+    expect(ctx.get(IAgentToolPolicyService).isToolActive('Edit')).toBe(false);
+    await ctx.dispose();
+
+    ctx = createTestAgent(
+      { initialConfig: { tools: { disabled: ['Write'] } } },
+      documentServices,
+      hostEnvironmentServices(homeDir),
+    );
+    await ctx.restorePersisted();
+
+    expect(ctx.get(IAgentToolPolicyService).isToolActive('Bash')).toBe(false);
+    expect(ctx.get(IAgentToolPolicyService).isToolActive('Write')).toBe(true);
+    expect(ctx.get(IAgentToolPolicyService).isToolActive('Edit')).toBe(false);
+    expect(await atomicDocuments.get(scope, 'state.json')).toEqual({
+      disabledTools: ['Edit'],
+      defaultTools: { enabled: undefined, disabled: ['Bash'] },
+    });
+  });
+
   it('retries persistence after a failed session denylist replacement', async () => {
     const atomicDocuments = createAtomicDocumentStore();
     const persist = atomicDocuments.set.bind(atomicDocuments);
     let attempts = 0;
     atomicDocuments.set = async (...args) => {
-      if (args[0].endsWith('/tool-policy')) {
+      const state = args[2] as { disabledTools: readonly string[] };
+      if (args[0].endsWith('/tool-policy') && state.disabledTools.includes('Bash')) {
         attempts += 1;
         if (attempts === 1) throw new Error('disk full');
       }
@@ -970,7 +1028,7 @@ describe('AgentToolPolicyService.setSessionDisabledTools', () => {
     expect(profile.getSystemPrompt()).toBe(before);
   });
 
-  it('omits the skill listing when global tools disable Skill', async () => {
+  it('keeps the skill listing when global tools disable Skill', async () => {
     const skillMarker = 'global-policy-skill-marker';
     ctx = createTestAgent(
       { initialConfig: { tools: { disabled: ['Skill'] } } },
@@ -989,10 +1047,10 @@ describe('AgentToolPolicyService.setSessionDisabledTools', () => {
     await profile.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
 
     expect(toolPolicy.isToolActive('Skill')).toBe(false);
-    expect(profile.getSystemPrompt()).not.toContain(skillMarker);
+    expect(profile.getSystemPrompt()).toContain(skillMarker);
   });
 
-  it('keeps the skill listing frozen when global tool policy changes at runtime', async () => {
+  it('keeps the skill listing and active policy frozen when global tool policy changes at runtime', async () => {
     const skillMarker = 'live-global-policy-skill-marker';
     ctx = createTestAgent(
       hostEnvironmentServices(homeDir),
@@ -1015,7 +1073,7 @@ describe('AgentToolPolicyService.setSessionDisabledTools', () => {
       .get(IConfigService)
       .replace(TOOLS_SECTION, { disabled: ['Skill'] }, ConfigTarget.Memory);
 
-    expect(toolPolicy.isToolActive('Skill')).toBe(false);
+    expect(toolPolicy.isToolActive('Skill')).toBe(true);
     expect(profile.getSystemPrompt()).toBe(before);
   });
 });

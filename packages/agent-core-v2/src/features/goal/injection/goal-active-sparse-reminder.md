@@ -8,4 +8,4 @@ Status: ${status}
 Progress: ${progress}.
 ${budgets_block}${budget_guidance}
 
-Do useful work toward the goal this turn. If the latest request has an unrecorded hard budget, call SetGoalBudget first. End normally with work remaining; call UpdateGoal `complete` only when every requirement and validation has passed, or `blocked` for a genuine impasse after the required audit, or immediately for an impossible, unsafe, or contradictory objective. The full audit is in the earlier goal reminder.${wait_for_guidance}
+Do useful work toward the goal this turn. ${set_goal_budget_guidance}End normally with work remaining; call UpdateGoal `complete` only when every requirement and validation has passed, or `blocked` for a genuine impasse after the required audit, or immediately for an impossible, unsafe, or contradictory objective. The full audit is in the earlier goal reminder.${wait_for_guidance}

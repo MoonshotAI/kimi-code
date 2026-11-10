@@ -416,12 +416,12 @@ This section is read by the `agent-core-v2` engine, which powers every Kimi Code
 
 ## `tools`
 
-`tools` is the global tool switch: it applies to every agent in all sessions and intersects with each agent's own `tools` / `disallowedTools` policy.
+`tools` sets the default tool policy for new sessions and intersects with each agent's own `tools` / `disallowedTools` policy. The complete section is captured when a session is created and shared by its main agent and subagents. Editing this section later does not change existing sessions, including sessions restored from disk; only sessions created afterwards use the new values.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `enabled` | `array<string>` | — | Global allowlist: when non-empty, only the listed tools are available; omitting the field or setting an empty array imposes no constraint |
-| `disabled` | `array<string>` | — | Global denylist, applied after `enabled` |
+| `enabled` | `array<string>` | — | Default allowlist for new sessions: when non-empty, only the listed tools are available; omitting the field or setting an empty array imposes no constraint |
+| `disabled` | `array<string>` | — | Default denylist for new sessions, applied after `enabled` |
 
 Name matching follows the same rules as the same-named fields in an agent file: built-in tools match by exact name (such as `Read`), and MCP tools match with globs (such as `mcp__github__*`). Three entry shapes never match anything and are reported with a warning: a wildcard outside an `mcp__` pattern (`enabled = ["*"]` disables every tool, `disabled = ["*"]` disables none), an `mcp__` literal missing the tool segment (`mcp__github`; use `mcp__github__*` for a whole server), and a name no registered or built-in tool has (matching is case-sensitive).
 

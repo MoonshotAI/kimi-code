@@ -5,6 +5,7 @@ import {
   IAgentToolRegistryService,
   IAgentToolPolicyService,
   getLiveSessionById,
+  AgentToolContribution,
   resumeSessionById,
   Error2,
   type ISessionScopeHandle,
@@ -13,12 +14,16 @@ import {
   type ToolSource,
 } from '@moonshot-ai/agent-core-v2';
 
+import type { CollectionView } from '@moonshot-ai/agent-core-v2/_base/di/collection';
+import { SyncDescriptor } from '@moonshot-ai/agent-core-v2/_base/di/descriptors';
+
 import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent } from '../transport/mainAgent';
 import { ErrorCode } from '../protocol/error-codes';
 import {
   listMcpServersResponseSchema,
+  listToolCatalogResponseSchema,
   listToolsQuerySchema,
   listToolsResponseSchema,
   restartMcpServerResultSchema,
@@ -50,7 +55,40 @@ interface ToolsRouteHost {
   ): unknown;
 }
 
+class ToolCatalog {
+  constructor(
+    @AgentToolContribution readonly contributions: CollectionView<AgentToolContribution>,
+  ) {}
+}
+
 export function registerToolsRoutes(app: ToolsRouteHost, core: Scope): void {
+  const listToolCatalogRoute = defineRoute(
+    {
+      method: 'GET',
+      path: '/tools/catalog',
+      success: { data: listToolCatalogResponseSchema },
+      description: 'List user-configurable builtin tools',
+      tags: ['tools'],
+      operationId: 'listToolCatalog',
+    },
+    (req, reply) => {
+      const tools = core.instantiation.createInstance<ToolCatalog>(new SyncDescriptor(ToolCatalog)).contributions.items
+        .filter((contribution) => contribution.options.userConfigurable === true)
+        .map((contribution) => ({
+          name: contribution.options.name,
+          source: contribution.options.source ?? 'builtin',
+        }))
+        .concat({ name: 'ReadMediaFile', source: 'builtin' })
+        .toSorted((left, right) => left.name.localeCompare(right.name));
+      reply.send(okEnvelope({ tools }, req.id));
+    },
+  );
+  app.get(
+    listToolCatalogRoute.path,
+    listToolCatalogRoute.options,
+    listToolCatalogRoute.handler as Parameters<ToolsRouteHost['get']>[2],
+  );
+
   const listToolsRoute = defineRoute(
     {
       method: 'GET',

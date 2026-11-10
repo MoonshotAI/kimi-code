@@ -5,6 +5,7 @@ import {
   IAgentProfileService,
   IAgentStateService,
   IAgentSwarmService,
+  IAgentToolPolicyService,
   IAgentTodoService,
   IAgentTowerService,
   planKey,
@@ -22,6 +23,7 @@ import { readLegacyStatus } from '../../../services/legacyStatus/legacyStatus';
 
 export function readAgentState(handle: IAgentScopeHandle, running: boolean): AgentState {
   const profile = optionalService(handle, IAgentProfileService);
+  const toolPolicy = optionalService(handle, IAgentToolPolicyService);
   const model = profile?.getModel() ?? '';
   return {
     status: running ? 'running' : 'idle',
@@ -32,6 +34,10 @@ export function readAgentState(handle: IAgentScopeHandle, running: boolean): Age
     plan_mode: planActive(handle),
     swarm_mode: optionalService(handle, IAgentSwarmService)?.isActive === true,
     tower_mode: optionalService(handle, IAgentTowerService)?.isActive === true,
+    plan_mode_available: toolPolicy?.isToolActive('ExitPlanMode') === true,
+    swarm_mode_available: toolPolicy?.isToolActive('AgentSwarm') === true,
+    tower_mode_available: optionalService(handle, IAgentTowerService)?.toolsAvailable === true,
+    goal_mode_available: toolPolicy?.isToolActive('UpdateGoal') === true,
   };
 }
 

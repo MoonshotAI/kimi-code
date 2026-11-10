@@ -230,6 +230,7 @@ function buildHost(key: string): {
     _serviceBrand: undefined,
     ready: Promise.resolve(),
     onDidChange: () => ({ dispose: () => {} }),
+    defaultTools: () => undefined,
     disabledTools: () => [],
     setDisabledTools: () => Promise.resolve(),
   });

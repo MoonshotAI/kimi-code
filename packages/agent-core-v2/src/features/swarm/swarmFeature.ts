@@ -21,7 +21,7 @@ export class SwarmFeature extends Feature {
     this.contributeService(LifecycleScope.Session, ISessionSwarmService, SessionSwarmService, {
       activation: ScopeActivation.OnScopeCreated,
     });
-    this.contributeTool(IAgentSwarmTool, AgentSwarmTool, { name: 'AgentSwarm', domain: 'swarm' });
+    this.contributeTool(IAgentSwarmTool, AgentSwarmTool, { name: 'AgentSwarm', domain: 'swarm', userConfigurable: true });
   }
 }
 

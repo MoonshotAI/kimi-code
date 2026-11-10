@@ -282,8 +282,17 @@ function isObjectiveEditedSinceTurnStart(context: GoalOperationContext, turnId: 
   return revision !== undefined && revision !== context.effects.objectiveRevision;
 }
 
+function assertGoalDriverAvailable(context: GoalOperationContext): void {
+  if (context.runtime.get(IAgentToolPolicyService).isToolActive('UpdateGoal')) return;
+  throw new Error2(
+    ErrorCodes.VALIDATION_FAILED,
+    'Goal mode requires the UpdateGoal tool; enable it for new sessions before creating or resuming a goal',
+  );
+}
+
 async function createGoal(context: GoalOperationContext, input: CreateGoalInput, actor: GoalActor = 'user'): Promise<GoalSnapshot> {
   assertSupportedAgent(context);
+  assertGoalDriverAvailable(context);
   const objective = validateObjective(context, input.objective);
   prepareForGoalCreation(context, input.replace === true);
   const wallClockResumedAt = Date.now();
@@ -377,6 +386,7 @@ async function resumeGoal(context: GoalOperationContext, input: ResumeGoalInput 
   assertSupportedAgent(context);
   const state = requireState(context);
   if (state.status === 'active') return toSnapshot(context, state);
+  assertGoalDriverAvailable(context);
   if (state.status !== 'paused' && state.status !== 'blocked') {
     throw new Error2(
       ErrorCodes.GOAL_NOT_RESUMABLE,
@@ -747,6 +757,10 @@ function isWaitForAvailable(context: GoalOperationContext): boolean {
     context.runtime.get(IAgentToolRegistryService).resolve('WaitFor') !== undefined &&
     context.runtime.get(IAgentToolPolicyService).isToolActive('WaitFor')
   );
+}
+
+function isSetGoalBudgetAvailable(context: GoalOperationContext): boolean {
+  return context.runtime.get(IAgentToolPolicyService).isToolActive('SetGoalBudget');
 }
 
 function launchContinuationTurn(context: GoalOperationContext, goalId: string, stepCapped = false): void {
@@ -1154,6 +1168,7 @@ function createGoalEffectHandlers(runtime: AgentActorContext<GoalRuntimeState>) 
     injection: {
       getGoal: () => getGoal(context).goal,
       isWaitForEnabled: () => isWaitForAvailable(context),
+      isSetGoalBudgetEnabled: () => isSetGoalBudgetAvailable(context),
     },
     normalize: () => { normalizeAfterReplay(context); },
     closing: (agent: AgentContext) => {
