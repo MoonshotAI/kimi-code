@@ -1,4 +1,5 @@
 import {
+  CHILD_SESSION_KIND_KEY,
   ErrorCodes,
   IAgentChangeNotifierService,
   IAgentGoalService,
@@ -24,6 +25,7 @@ import {
   ISessionManager,
   IWorkspaceInstanceManager,
   IWorkspaceService,
+  PARENT_SESSION_ID_KEY,
   closeSessionById,
   ensureMainAgent as ensureMainAgentContext,
   getLiveSessionById,
@@ -265,7 +267,13 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
           bucket === undefined
             ? await registry.createOrTouch(workDir)
             : ((await registry.touch(bucket.id)) ?? bucket);
-        const { cwd: _cwd, goal: _goal, ...custom }: Record<string, unknown> = body.metadata ?? {};
+        const {
+          cwd: _cwd,
+          goal: _goal,
+          [PARENT_SESSION_ID_KEY]: _parentSessionId,
+          [CHILD_SESSION_KIND_KEY]: _childSessionKind,
+          ...custom
+        }: Record<string, unknown> = body.metadata ?? {};
         const agentConfig = body.agent_config ?? {};
         const { model, tower_base: _towerBase, ...settings } = agentConfig;
         const appliesAgentConfig = Boolean(model) || Object.keys(settings).length > 0;

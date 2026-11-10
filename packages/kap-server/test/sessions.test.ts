@@ -938,6 +938,22 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(created.body.data.metadata).toMatchObject({ cwd, source: 'composer' });
   });
 
+  it('drops the child-link metadata keys when creating an ordinary session', async () => {
+    const cwd = home as string;
+    const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const parentId = parent.body.data.id;
+
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd, parent_session_id: parentId, child_session_kind: 'child' },
+    });
+
+    expect(created.body.code).toBe(0);
+    expect(created.body.data.metadata).not.toHaveProperty('parent_session_id');
+    expect(created.body.data.metadata).not.toHaveProperty('child_session_kind');
+    const children = await getJson<PageWire>(`/api/v1/sessions/${parentId}/children`);
+    expect(children.body.data.items.some((s) => s.id === created.body.data.id)).toBe(false);
+  });
+
   it('rejects enabling tower_mode before creating anything', async () => {
     const listed = async (): Promise<string[]> =>
       (await getJson<PageWire>('/api/v1/sessions')).body.data.items.map((session) => session.id);

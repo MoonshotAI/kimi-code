@@ -669,7 +669,7 @@ Creates a session and returns it. The target directory comes from `workspace_id`
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `workspace_id` | body | string | **Required** when `metadata.cwd` is absent. Registered workspace id; the session is created at that workspace's root |
-| `metadata` | body | object | Custom metadata. `metadata.cwd` is the working directory and is **required** when `workspace_id` is absent; with both given, it must equal the workspace root. Other keys are kept as the session's custom metadata, except the reserved `goal` key, which is dropped |
+| `metadata` | body | object | Custom metadata. `metadata.cwd` is the working directory and is **required** when `workspace_id` is absent; with both given, it must equal the workspace root. Other keys are kept as the session's custom metadata, except the reserved keys `goal`, `parent_session_id`, and `child_session_kind`, which are dropped |
 | `title` | body | string | Initial title (at least 1 character); the session is untitled otherwise |
 | `agent_config` | body | object | Partial main-agent config, with the same fields as `POST /api/v1/sessions/{session_id}/profile`, applied before the session is returned. When it cannot be applied, the session is not created and the error is returned. `tower_mode: true` is rejected (`40001`): entering Tower mode changes the repository and cannot be undone if creation fails, so enable it through `POST /api/v1/sessions/{session_id}/profile` once the session exists |
 
