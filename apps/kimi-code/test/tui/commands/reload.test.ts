@@ -26,6 +26,10 @@ const originalKimiCodeHome = process.env['KIMI_CODE_HOME'];
 
 beforeEach(() => {
   vi.stubEnv('KIMI_CODE_TUI_FULL_SCREEN', '');
+  vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '');
+  vi.stubEnv('TERM', 'xterm-256color');
+  vi.stubEnv('TERMUX_VERSION', '');
+  vi.stubEnv('TMUX', '');
 });
 
 afterEach(async () => {
@@ -215,6 +219,17 @@ auto_install = false
   it('does not notice when tui_mode matches the running UI mode', async () => {
     await writeTuiConfig('theme = "dark"\n');
     const host = makeHost();
+
+    await handleReloadTuiCommand(host);
+
+    expect(host.showNotice).not.toHaveBeenCalled();
+  });
+
+  it('does not notice when tui_mode is unset and experimental flag keeps fullscreen active', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '1');
+    await writeTuiConfig('theme = "dark"\n');
+    const host = makeHost();
+    (host.state as { ui: { mode: string } }).ui.mode = 'fullscreen';
 
     await handleReloadTuiCommand(host);
 

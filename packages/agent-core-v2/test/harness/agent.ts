@@ -158,6 +158,7 @@ import {
   IAgentPermissionGate,
   IAgentPermissionModeService,
   IAgentPermissionRulesService,
+  IProjectPermissionRulesService,
   IHostFileSystem,
   IHostProcessService,
   ISessionBtwService,
@@ -177,6 +178,7 @@ import {
   ISessionUsageService,
   ISessionWorkspaceContext,
   IWorkspaceStateService,
+  IWorkspaceTrust,
   LifecycleScope,
   AgentMcpService,
   AgentPermissionGate,
@@ -1312,6 +1314,9 @@ export class AgentTestContext {
               cwd: this.cwd,
               fs: undefined as never,
             });
+            reg.definePartialInstance(IWorkspaceTrust, {
+              get: async () => false,
+            });
             reg.defineInstance(
               IWorkspaceStateService,
               new WorkspaceStateService(this.root.accessor.get(IAppStateService)),
@@ -1412,6 +1417,12 @@ export class AgentTestContext {
               IAgentPermissionRulesService,
               new SyncDescriptor(AgentPermissionRulesService),
             );
+            reg.defineInstance(IProjectPermissionRulesService, {
+              _serviceBrand: undefined,
+              ready: Promise.resolve(),
+              rules: [],
+              appendRules: () => Promise.resolve(),
+            });
             reg.defineDescriptor(
               IAgentPermissionGate,
               new SyncDescriptor(AgentPermissionGate),
@@ -2399,6 +2410,7 @@ function createPermissionRulesStub(
     },
     addRules: (nextRules) => {
       rules = [...rules, ...nextRules];
+      return Promise.resolve();
     },
     recordApprovalResult: () => { },
   };
@@ -2592,6 +2604,7 @@ function configService(readConfig: () => KimiConfig): IConfigService {
     onDidChangeConfiguration: () => ({ dispose: () => { } }),
     onDidSectionChange: sectionEmitter.event,
     get: <T>(domain: string) => valueFor(domain) as T,
+    assertValid: () => {},
     inspect: (domain: string) => {
       const value = (effectiveConfig() as Record<string, unknown>)[domain];
       return {
