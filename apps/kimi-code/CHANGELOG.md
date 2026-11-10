@@ -1,5 +1,11 @@
 # @moonshot-ai/kimi-code
 
+## 2.5.3
+
+### Patch Changes
+
+- [#4762](https://github.com/MoonshotAI/kimi-code/pull/4762) [`e1912c8`](https://github.com/MoonshotAI/kimi-code/commit/e1912c801391c91d917be56a66c1e2e2e12ad2f0) Thanks [@sailist](https://github.com/sailist)! - Make steering interrupt active model requests and continue in the same turn, and add POST /api/v1/sessions/{session_id}/steer for one-request message steering.
+
 ## 2.5.2
 
 ### Patch Changes
