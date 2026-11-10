@@ -203,6 +203,7 @@ export const toolCallItemSchema = z.object({
   error: z.string().optional(),
   note: z.string().optional(),
   progress: toolProgressSchema.optional(),
+  task_id: z.string().optional(),
   interaction_id: z.string().optional(),
   agent_refs: z.array(agentRefSchema).optional(),
   started_at: isoDateTimeSchema,

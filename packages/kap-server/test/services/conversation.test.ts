@@ -14,6 +14,8 @@ import { ContextAppendLoopEvent, ContextAppendMessage, ContextClear } from '@moo
 import type { LoopRecordedEvent } from '@moonshot-ai/agent-core-v2/agent/contextMemory/loopEventFold';
 import { AssistantDelta, ThinkingDelta, ToolCallDelta } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import { TurnEnded, TurnPrompt } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
+import { TaskStarted } from '@moonshot-ai/agent-core-v2/agent/task/taskOps';
+import type { AgentTaskInfo } from '@moonshot-ai/agent-core-v2/agent/task/types';
 import { AgentStateService } from '@moonshot-ai/agent-core-v2/agent/state/agentStateService';
 import { ToolProgress } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
 import { EventBusService } from '@moonshot-ai/agent-core-v2/app/event/eventBusService';
@@ -713,6 +715,28 @@ describe('conversation fold', () => {
     expect(items[2]).not.toHaveProperty('note', expect.anything());
   });
 
+  it('links each tool call to the task it runs as', () => {
+    const state = fold([
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'start the server, audit, and ask'),
+      stepBegin(0, 1, 's1'),
+      toolCall(0, 1, 's1', 'Bash_0', 'Bash', { command: 'npm run dev', run_in_background: true }),
+      record('task.started', { info: { kind: 'process', taskId: 'bash-k3f9', parentToolCallId: 'Bash_0' } }),
+      toolCall(0, 1, 's1', 'Agent_1', 'Agent', { prompt: 'audit the docs' }),
+      record('task.started', { info: { kind: 'agent', taskId: 'agent-1', parentToolCallId: 'Agent_1' } }),
+      toolCall(0, 1, 's1', 'Ask_2', 'AskUserQuestion', { questions: [] }),
+      record('task.started', { info: { kind: 'question', taskId: 'question-1', toolCallId: 'Ask_2' } }),
+      record('task.started', { info: { kind: 'process', taskId: 'bash-other', parentToolCallId: 'Bash_9' } }),
+      toolResult('Bash_0', 'task_id: bash-k3f9\nstatus: running'),
+    ]);
+
+    const byId = new Map((state.turns[0]?.items ?? []).map((item) => [item.item_id, item]));
+    expect(byId.get('Bash_0')).toMatchObject({ task_id: 'bash-k3f9', outcome: 'completed' });
+    expect(byId.get('Agent_1')).toMatchObject({ task_id: 'agent-1' });
+    expect(byId.get('Ask_2')).toMatchObject({ task_id: 'question-1' });
+    expect([...byId.keys()]).not.toContain('Bash_9');
+  });
+
   it('keeps a running turn open while ownerless messages land beside it', () => {
     const state = fold([
       turnPrompt(0, 'p1'),
@@ -1068,6 +1092,18 @@ describe('conversation feed', () => {
     expect(ended.map((item) => item.item_id)).toEqual(['s1:0', 's1:1']);
     expect(ended[0]).toMatchObject({ type: 'reasoning', duration_ms: 1_500 });
     h.dispatcher.dispose();
+  });
+
+  it('announces the task a running tool call starts', async () => {
+    const h = feedHarness([]);
+    await runningTurn(h);
+    await h.dispatcher.dispatch(loopEvent({ type: 'tool.call', stepUuid: 's1', toolCallId: 'call-1', name: 'Bash', args: { command: 'npm test' }, turnId: '0', step: 1 }));
+    await flushed();
+    const info = { kind: 'process', taskId: 'bash-p81', parentToolCallId: 'call-1' } as unknown as AgentTaskInfo;
+    await h.dispatcher.dispatch(new TaskStarted({ agentId: 'main', info }));
+    await flushed();
+
+    expect(h.events.at(-1)).toMatchObject({ type: 'item.updated', item_id: 'call-1', set: { task_id: 'bash-p81' } });
   });
 
   it('streams a tool call through its stages, input, output and progress', async () => {

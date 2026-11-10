@@ -189,6 +189,9 @@ export function applyConversationRecord(state: ConversationState, record: WireRe
     case 'subagent.spawned':
       applySubagentSpawned(state, record);
       return;
+    case 'task.started':
+      applyTaskStarted(state, record);
+      return;
     case 'full_compaction.begin':
       state.compaction = {
         trigger: record['source'] === 'manual' ? 'manual' : 'auto',
@@ -590,6 +593,17 @@ function applySubagentSpawned(state: ConversationState, record: WireRecord): voi
   const found = findToolCall(state, toolCallId);
   if (found === undefined) return;
   found.item.agent_refs = [...(found.item.agent_refs ?? []).filter((existing) => existing.agent_id !== agentId), ref];
+}
+
+function applyTaskStarted(state: ConversationState, record: WireRecord): void {
+  const info = record['info'] as
+    | { readonly taskId?: unknown; readonly parentToolCallId?: unknown; readonly toolCallId?: unknown }
+    | undefined;
+  const taskId = stringField(info?.taskId);
+  const toolCallId = stringField(info?.parentToolCallId) ?? stringField(info?.toolCallId);
+  if (taskId === undefined || toolCallId === undefined) return;
+  const found = findToolCall(state, toolCallId);
+  if (found !== undefined) found.item.task_id = taskId;
 }
 
 function applyCompactionSummary(state: ConversationState, record: WireRecord, time: number): void {
