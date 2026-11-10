@@ -3718,12 +3718,12 @@ describe('bindSessionTranscript', () => {
       );
       await service.whenReady('s1');
 
+      bus.emit(ev({ type: 'turn.step.started', turnId: 0, step: 2 }));
+      bus.emit(ev({ type: 'assistant.delta', turnId: 0, delta: 'live-only answer' }));
       bus.emit(ev({ type: 'turn.ended', turnId: 0, reason: 'completed' }));
-      await waitFor(() =>
-        batches.some((batch) => batch.some((op) => op.op === 'step.upsert' && op.turnId === 't0')),
-      );
-      const healBatch = batches.find((batch) =>
-        batch.some((op) => op.op === 'step.upsert' && op.turnId === 't0'),
+      await waitFor(() => store?.getAgent('main')?.getTurn('t0')?.steps.length === 1);
+      const healBatch = batches.findLast((batch) =>
+        batch.some((op) => op.op === 'turn.upsert' && op.turn.turnId === 't0'),
       )!;
       expect(healBatch.find((op) => op.op === 'turn.upsert')).toMatchObject({
         turn: { attachmentIds: ['t0.att1'] },
@@ -3740,6 +3740,7 @@ describe('bindSessionTranscript', () => {
         state: 'completed',
         attachmentIds: ['t0.att1'],
       });
+      expect(agent?.getTurn('t0')?.steps.map((step) => step.stepId)).toEqual(['t0.1']);
       expect(agent?.getAttachment('t0.att1')).toBeDefined();
       expect(agent?.getAttachment('att_1')).toBeUndefined();
       service.dropSession('s1');
