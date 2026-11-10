@@ -164,23 +164,69 @@ describe('server-v2 /api/v1 fs routes', () => {
     expect(body.data.size).toBe(11);
   });
 
-  it('downloads Unicode filenames with a safe content disposition', async () => {
-    const filename = '趋势图_20260929_20261028.png';
-    const relative = `分析数据/stat/${filename}`;
-    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-    await mkdir(join(work!, '分析数据/stat'), { recursive: true });
+  it.each([
+    {
+      name: 'keeps a plain ASCII filename compatible',
+      filename: 'plain report.pdf',
+      directory: 'docs',
+      mime: 'application/pdf',
+      fallback: 'plain report.pdf',
+      encoded: undefined,
+      bytes: new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37, 0x0a]),
+    },
+    {
+      name: 'downloads a Unicode PDF from a Unicode directory',
+      filename: '报告 （终版） 😀.pdf',
+      directory: '分析数据/归档',
+      mime: 'application/pdf',
+      fallback: '__ ____ __.pdf',
+      encoded: encodeURIComponent('报告 （终版） 😀.pdf'),
+      bytes: new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37, 0x0a]),
+    },
+    {
+      name: 'downloads a Unicode PNG with full-width punctuation and an emoji',
+      filename: '趋势图 （全角） 😀.png',
+      directory: '分析数据/stat',
+      mime: 'image/png',
+      fallback: '___ ____ __.png',
+      encoded: encodeURIComponent('趋势图 （全角） 😀.png'),
+      bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    },
+    {
+      name: 'escapes quotes and backslashes',
+      filename: 'quote"back\\slash.png',
+      directory: 'docs',
+      mime: 'image/png',
+      fallback: 'quote\\"back\\\\slash.png',
+      encoded: 'quote%22back%5Cslash.png',
+      bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    },
+    {
+      name: 'removes CR and LF from the plain filename parameter',
+      filename: 'line\r\nbreak.pdf',
+      directory: 'docs',
+      mime: 'application/pdf',
+      fallback: 'line__break.pdf',
+      encoded: 'line%0D%0Abreak.pdf',
+      bytes: new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37, 0x0a]),
+    },
+  ])('$name', async ({ filename, directory, mime, fallback, encoded, bytes }) => {
+    const relative = `${directory}/${filename}`;
+    await mkdir(join(work!, directory), { recursive: true });
     await writeFile(join(work!, relative), bytes);
     const id = await createSession();
-    const encoded = relative.split('/').map(encodeURIComponent).join('/');
-    const response = await fetch(`${base}/api/v1/sessions/${id}/fs/${encoded}:download?allow_external_symlinks=true`, {
+    const path = relative.split('/').map(encodeURIComponent).join('/');
+    const response = await fetch(`${base}/api/v1/sessions/${id}/fs/${path}:download?allow_external_symlinks=true`, {
       headers: authHeaders(server as RunningServer),
     } as never);
     expect(response.status).toBe(200);
-    expect(response.headers.get('content-type')).toBe('image/png');
+    expect(response.headers.get('content-type')).toBe(mime);
     const disposition = response.headers.get('content-disposition') ?? '';
-    expect(disposition).not.toContain(filename);
-    expect(disposition).toMatch(/^attachment; filename="[\x20-\x7e]*";/);
-    expect(disposition).toContain(`filename*=UTF-8''${encodeURIComponent(filename)}`);
+    const filenameStar = encoded === undefined ? '' : `; filename*=UTF-8''${encoded}`;
+    expect(disposition).toBe(`attachment; filename="${fallback}"${filenameStar}`);
+    expect(disposition).toMatch(/^[\x20-\x7E]+$/);
+    expect(disposition).not.toContain('\r');
+    expect(disposition).not.toContain('\n');
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
   });
 
