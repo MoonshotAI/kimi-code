@@ -339,12 +339,9 @@ export class LoopJournal {
       }
       case 'turn.started':
         this.turnId = event.turnId;
+        if (event.trigger === 'normal') this.normal.shift();
         this.turn = {
-          entry: event.entry ?? (event.trigger === 'normal'
-            ? this.normal.shift()
-            : event.trigger === 'notify'
-              ? this.notify[0]
-              : undefined),
+          entry: event.entry,
           trigger: event.trigger,
           prompted: false,
         };

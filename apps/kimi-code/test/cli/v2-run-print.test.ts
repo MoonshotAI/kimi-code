@@ -190,9 +190,6 @@ function makeFakeHarness(toolUpdates = false) {
       IAgentProfileService,
       {
         bind: vi.fn(async () => {}),
-        setModel: vi.fn(async () => ({ model: 'k2' })),
-        getModel: () => 'k2',
-        data: () => ({ profileName: profileState.profileName }),
       },
     ],
     [IAgentPermissionModeService, { mode: 'auto', setMode: vi.fn() }],
@@ -217,13 +214,16 @@ function makeFakeHarness(toolUpdates = false) {
         }),
       },
     ],
-    [IAgentTaskService, { list: vi.fn(() => []), stopAllOnExit: vi.fn(async () => []) }],
+    [IAgentTaskService, { list: vi.fn(() => []), stop: vi.fn(async () => {}) }],
     [IAgentCronService, { getNextFireTime: vi.fn(() => null) }],
     [IAgentGoalService, goal],
     [IEventDispatcher, { flush: vi.fn(async () => {}) }],
     [
       IAgentLoopService,
       {
+        setModel: vi.fn(async () => ({ model: 'k2' })),
+        getModel: () => 'k2',
+        data: () => ({ profileName: profileState.profileName }),
         submit: vi.fn(() => {
           // Emit a native assistant delta on the main agent bus, then complete.
           for (const listener of [...eventListeners]) {
@@ -737,10 +737,12 @@ describe('runV2Print', () => {
 
     const profile = agentServices.get(IAgentProfileService) as {
       bind: ReturnType<typeof vi.fn>;
+    };
+    const loop = agentServices.get(IAgentLoopService) as {
       setModel: ReturnType<typeof vi.fn>;
     };
     expect(profile.bind).not.toHaveBeenCalled();
-    expect(profile.setModel).not.toHaveBeenCalled();
+    expect(loop.setModel).not.toHaveBeenCalled();
   });
 
   it('switches the model when resuming with the already-bound profile and an explicit model', async () => {
@@ -763,10 +765,12 @@ describe('runV2Print', () => {
 
     const profile = agentServices.get(IAgentProfileService) as {
       bind: ReturnType<typeof vi.fn>;
+    };
+    const loop = agentServices.get(IAgentLoopService) as {
       setModel: ReturnType<typeof vi.fn>;
     };
     expect(profile.bind).not.toHaveBeenCalled();
-    expect(profile.setModel).toHaveBeenCalledWith('new-model');
+    expect(loop.setModel).toHaveBeenCalledWith('new-model');
   });
 
   it('skips default_plan_mode for a new print session and says so on stderr', async () => {
@@ -970,7 +974,7 @@ describe('runV2Print', () => {
     const { app, appServices, agentServices } = makeFakeHarness();
 
     // The resumed session's stored model differs from the configured default.
-    const profile = agentServices.get(IAgentProfileService) as { getModel: () => string };
+    const profile = agentServices.get(IAgentLoopService) as { getModel: () => string };
     profile.getModel = () => 'resumed-model';
     const index = appServices.get(ISessionIndex) as { get: ReturnType<typeof vi.fn> };
     index.get.mockResolvedValue({ id: 'ses_1', cwd: process.cwd() });
@@ -1116,11 +1120,12 @@ describe('runV2Print', () => {
     const guardDispose = vi.fn();
     loop.tryAcquireQuiescence = vi.fn(() => ({ dispose: guardDispose }));
     const taskService = agentServices.get(IAgentTaskService) as {
-      stopAllOnExit: ReturnType<typeof vi.fn>;
+      list: ReturnType<typeof vi.fn>;
+      stop: ReturnType<typeof vi.fn>;
     };
-    taskService.stopAllOnExit = vi.fn(async () => {
+    taskService.list = vi.fn(() => [{ taskId: 'task-1' }]);
+    taskService.stop = vi.fn(async () => {
       if (!order.includes('stop')) order.push('stop');
-      return [];
     });
     const dispatcher = agentServices.get(IEventDispatcher) as {
       flush: ReturnType<typeof vi.fn>;

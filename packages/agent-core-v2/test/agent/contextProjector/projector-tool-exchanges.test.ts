@@ -71,11 +71,11 @@ function reminder(text: string): ContextMessage {
   };
 }
 
-function assistant(text: string, toolCallIds: readonly string[] = []): ContextMessage {
+function assistant(text: string, toolCallIds: readonly string[] = [], toolName = 'Lookup'): ContextMessage {
   return {
     role: 'assistant',
     content: text === '' ? [] : [{ type: 'text', text }],
-    toolCalls: toolCallIds.map((id) => ({ type: 'function', id, name: 'Lookup', arguments: '{}' })),
+    toolCalls: toolCallIds.map((id) => ({ type: 'function', id, name: toolName, arguments: '{}' })),
   };
 }
 
@@ -149,12 +149,18 @@ describe('projector tool-exchange normalization', () => {
     expect(project(history)).toHaveLength(4);
     const timed = project([
       user('go'),
-      assistant('', ['c1']),
+      assistant('', ['c1'], 'Bash'),
       { ...toolResult('c1', 'one'), durationMs: 42 },
     ]);
     expect(timed.at(-1)?.content).toEqual([
       { type: 'text', text: 'Wall time: 0.042 seconds\none' },
     ]);
+    const untimed = project([
+      user('go'),
+      assistant('', ['c1']),
+      { ...toolResult('c1', 'one'), durationMs: 42 },
+    ]);
+    expect(untimed.at(-1)?.content).toEqual([{ type: 'text', text: 'one' }]);
   });
 
   it('synthesizes a result for a trailing unanswered call', () => {

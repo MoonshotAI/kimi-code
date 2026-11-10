@@ -40,6 +40,8 @@ import type {
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { executeLegacyTool, type LegacyExecutionResult } from '../toolExecutor/execute';
 import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
+import { IAgentTaskOutputService } from '#/agent/task/taskOutput';
+import { memoryOutputStore } from '#/tool/executor';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { DYNAMIC_TOOL_SCHEMA_VARIANT, LOADABLE_TOOLS_VARIANT } from '#/agent/toolSelect/dynamicTools';
@@ -514,6 +516,7 @@ function createExecutorHarness(): ExecutorHarness {
       }
       reg.defineInstance(IAgentScopeContext, scope);
       reg.define(IAgentToolExecutorService, AgentToolExecutorService);
+      reg.defineInstance(IAgentTaskOutputService, { open: memoryOutputStore().open } as unknown as IAgentTaskOutputService);
       registerToolResultTruncationServices(reg);
     },
     strict: true,

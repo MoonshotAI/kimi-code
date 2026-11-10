@@ -176,6 +176,8 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
   private readonly replayFreshKeys = new Set<ReplayableStateKey<any>>();
   private readonly replayFreshAttachments = new Set<ParticipantAttachment>();
   private readonly replayMutableStates = new Map<ReplayableStateKey<any>, any>();
+  private readonly preRestoreProjectedKeys = new Set<ReplayableStateKey<any>>();
+  private readonly preRestoreProjectedAttachments = new Set<ParticipantAttachment>();
   private folded: FoldedEventStateRegistry;
 
   private activeModelDefs = new Map<string, AgentModelDefinition<any, any>>();
@@ -685,6 +687,10 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     for (const p of preparedParticipants) {
       this.commitParticipant(p.attachment, p.ctx, p.next);
     }
+    if (this.restorePhase === 'new' && (event.constructor as Event2Class).durable) {
+      for (const p of prepared) this.preRestoreProjectedKeys.add(p.key);
+      for (const p of preparedParticipants) this.preRestoreProjectedAttachments.add(p.attachment);
+    }
     if (silent) return;
     const cls = event.constructor as Event2Class;
     if (cls.durable) {
@@ -791,8 +797,8 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
       if (rerun) {
         await this.wire.flush();
         this.notifyWillReplay();
-        this.resetReplayState();
       }
+      this.resetReplayState(!rerun);
       await this.replayRecords();
       this.freezeReplayedStates();
       await this.rehydrateStates();
@@ -859,16 +865,23 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     }
   }
 
-  private resetReplayState(): void {
+  private resetReplayState(initial: boolean): void {
     this.replayMutableStates.clear();
     for (const key of this.agentState.replayableKeys()) {
-      this.agentState.set(key, key.initial());
+      if (!initial || this.preRestoreProjectedKeys.has(key)) this.agentState.set(key, key.initial());
     }
     for (const attachment of this.participantAttachments.values()) {
+      if (initial && !this.preRestoreProjectedAttachments.has(attachment)) continue;
       attachment.commit(attachment.initial);
       attachment.meta.checkpoints.length = 0;
     }
-    this.metas.clear();
+    if (!initial) {
+      this.metas.clear();
+      return;
+    }
+    for (const key of this.preRestoreProjectedKeys) this.metas.delete(key);
+    this.preRestoreProjectedKeys.clear();
+    this.preRestoreProjectedAttachments.clear();
   }
 
   private async replayRecords(): Promise<void> {

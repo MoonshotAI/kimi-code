@@ -10,7 +10,7 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentLoopService, type AfterStepContext, type Turn } from '#/agent/loop/loop';
+import { IAgentLoopService, type AfterStepContext } from '#/agent/loop/loop';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import type { ExecutableTool, ExecutableToolContext, ExecutableToolResult, ToolExecution, ToolResult } from '#/tool/toolContract';
@@ -23,6 +23,8 @@ import {
 } from '#/agent/toolDedupe/toolDedupeService';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
+import { IAgentTaskOutputService } from '#/agent/task/taskOutput';
+import { memoryOutputStore } from '#/tool/executor';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { registerLogServices } from '../../_base/log/stubs';
@@ -97,6 +99,7 @@ function createHarness(
       reg.defineInstance(IAgentStateService, new AgentStateService());
       reg.define(IAgentToolRegistryService, AgentToolRegistryService);
       reg.define(IAgentToolExecutorService, AgentToolExecutorService);
+      reg.defineInstance(IAgentTaskOutputService, { open: memoryOutputStore().open } as unknown as IAgentTaskOutputService);
       registerToolResultTruncationServices(reg);
       reg.define(IAgentToolDedupeService, AgentToolDedupeService);
       registerLogServices(reg);
@@ -857,8 +860,8 @@ describe('AgentToolDedupeService', () => {
       }
       ctx.mockNextResponse({ type: 'text', text: 'Handoff: the bash call keeps failing validation.' });
 
-      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Repeat the bad call' }] });
-      const turn = (ctx.get(IAgentLoopService) as unknown as { active?: { turn: Turn } }).active?.turn;
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Repeat the bad call' }], promptId: 'repeat-breaker' });
+      const turn = await ctx.get(IAgentLoopService).promptHandle('repeat-breaker')!.launched;
       await ctx.untilTurnEnd();
 
       expect(exec).not.toHaveBeenCalled();
@@ -885,8 +888,8 @@ describe('AgentToolDedupeService', () => {
       }
       ctx.mockNextResponse({ type: 'text', text: 'must never be generated' });
 
-      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Repeat the bad call' }] });
-      const turn = (ctx.get(IAgentLoopService) as unknown as { active?: { turn: Turn } }).active?.turn;
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Repeat the bad call' }], promptId: 'repeat-breaker' });
+      const turn = await ctx.get(IAgentLoopService).promptHandle('repeat-breaker')!.launched;
       await ctx.untilTurnEnd();
 
       expect(exec).not.toHaveBeenCalled();
@@ -906,8 +909,8 @@ describe('AgentToolDedupeService', () => {
       }
       ctx.mockNextResponse({ type: 'text', text: 'must never be generated' });
 
-      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Repeat the bad call' }] });
-      const turn = (ctx.get(IAgentLoopService) as unknown as { active?: { turn: Turn } }).active?.turn;
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Repeat the bad call' }], promptId: 'repeat-breaker' });
+      const turn = await ctx.get(IAgentLoopService).promptHandle('repeat-breaker')!.launched;
       await ctx.untilTurnEnd();
 
       expect(exec).not.toHaveBeenCalled();

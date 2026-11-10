@@ -107,7 +107,7 @@ describe('loop journal restore', () => {
     const first = prompt('p1');
     const second = prompt('p2');
     journal.append({ type: 'prompt.submitted', entry: prompt('active') });
-    journal.append({ type: 'turn.started', turnId: 0, trigger: 'normal' });
+    journal.append({ type: 'turn.started', turnId: 0, trigger: 'normal', entry: prompt('active') });
     journal.append({ type: 'message.appended', turnId: 0, step: 0, source: 'normal', entry: prompt('active') });
     journal.append({ type: 'prompt.submitted', entry: first });
     journal.append({ type: 'prompt.submitted', entry: second });
@@ -116,7 +116,7 @@ describe('loop journal restore', () => {
     journal.append({ type: 'turn.started', turnId: 1, trigger: 'notify', promptOnly: true, entry: first });
     journal.append({ type: 'message.appended', turnId: 1, step: 0, source: 'notify', entry: first });
     journal.append({ type: 'turn.ended', turnId: 1, outcome: { type: 'done' } });
-    journal.append({ type: 'turn.started', turnId: 2, trigger: 'notify' });
+    journal.append({ type: 'turn.started', turnId: 2, trigger: 'notify', entry: second });
     journal.append({ type: 'message.appended', turnId: 2, step: 0, source: 'notify', entry: second });
     journal.append({ type: 'turn.ended', turnId: 2, outcome: { type: 'done' } });
 

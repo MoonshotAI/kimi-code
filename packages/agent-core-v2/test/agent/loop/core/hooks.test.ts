@@ -687,6 +687,11 @@ describe('notify turn handoff', () => {
       [1, 1],
       [2, 1],
     ]);
+    expect(events.filter((event) => event.type === 'turn.started').map((event) => event.entry?.message)).toEqual([
+      prompt('work').message,
+      prompt('new input').message,
+      prompt('after reset').message,
+    ]);
     await loop.close();
   });
 

@@ -6,7 +6,6 @@ import type { TokenUsage } from '#human/llm-requester/usage';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import type { ContextMessage, ContextMessageTiming } from './types';
-import { shouldRenderWallTime } from './toolResultRender';
 import { isVacuousContentPart } from './vacuousContent';
 
 const TOOL_INTERRUPTED_ON_RESUME_OUTPUT =
@@ -213,7 +212,6 @@ function createLoopEventFoldWithState(
         }
         case 'tool.result': {
           if (!pending.has(event.toolCallId)) return;
-          const toolName = pending.get(event.toolCallId)!;
           pending.delete(event.toolCallId);
           const output = event.result.output;
           sink.pushToolMessage(
@@ -224,7 +222,7 @@ function createLoopEventFoldWithState(
               ),
               isError: event.result.isError,
               note: event.result.note,
-              durationMs: shouldRenderWallTime(toolName) ? event.result.durationMs : undefined,
+              durationMs: event.result.durationMs,
             },
             time,
           );

@@ -34,6 +34,8 @@ import type {
 } from '#/tool/toolContract';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
+import { IAgentTaskOutputService } from '#/agent/task/taskOutput';
+import { memoryOutputStore } from '#/tool/executor';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
@@ -133,6 +135,7 @@ function createHarness(
         });
         reg.define(IAgentToolRegistryService, AgentToolRegistryService);
         reg.define(IAgentToolExecutorService, AgentToolExecutorService);
+        reg.defineInstance(IAgentTaskOutputService, { open: memoryOutputStore().open } as unknown as IAgentTaskOutputService);
         reg.definePartialInstance(IFileSystemStorageService, {
           write: async () => {},
         });

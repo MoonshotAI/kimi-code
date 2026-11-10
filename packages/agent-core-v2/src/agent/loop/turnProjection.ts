@@ -155,6 +155,7 @@ export class AgentTurnProjection {
   private readonly turnTriggers = new Map<number, TurnTrigger>();
   private readonly entryTurnIds = new WeakMap<HistoryMessage, number>();
   private readonly failedTurnIds = new Set<number>();
+  private readonly toolDurations = new Map<string, number>();
   private readonly ending = new Set<Promise<void>>();
   private historyView: { readonly source: readonly HistoryMessage[]; readonly messages: readonly ContextMessage[] } | undefined;
 
@@ -208,10 +209,17 @@ export class AgentTurnProjection {
       const turnId = this.entryTurnIds.get(entry);
       const failed = turnId !== undefined && this.failedTurnIds.has(turnId);
       if (!failed && previous?.source[index] === entry) return previous.messages[index]!;
-      return liveContextFromHistoryEntry(entry, failed, turnId === undefined ? undefined : answered.get(turnId));
+      return this.contextForHistory(entry, failed, turnId === undefined ? undefined : answered.get(turnId));
     });
     this.historyView = { source, messages };
     return messages;
+  }
+
+  private contextForHistory(entry: HistoryMessage, failed = false, answered?: ReadonlySet<string>): ContextMessage {
+    const message = liveContextFromHistoryEntry(entry, failed, answered);
+    if (message.role !== 'tool' || message.durationMs !== undefined) return message;
+    const durationMs = this.toolDurations.get(message.toolCallId);
+    return durationMs === undefined ? message : { ...message, durationMs };
   }
 
   invalidateHistory(): void {
@@ -448,7 +456,7 @@ export class AgentTurnProjection {
         agentId: this.options.scopeContext.agentId,
         start: Math.max(0, loop.state.messages.length - 1),
         deleteCount: 0,
-        messages: [liveContextFromHistoryEntry(event.entry)],
+        messages: [this.contextForHistory(event.entry)],
       }));
     }
     switch (event.type) {
@@ -617,6 +625,7 @@ export class AgentTurnProjection {
         return;
       }
       case 'tool.ended': {
+        if (event.result?.durationMs !== undefined) this.toolDurations.set(event.toolCallId, event.result.durationMs);
         const turn = this.active;
         const step = turn?.current;
         if (turn === undefined || step === undefined) return;

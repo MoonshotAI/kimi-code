@@ -1030,9 +1030,7 @@ class LoopActor implements Loop {
       turnId: turn.id,
       trigger: turn.trigger,
       promptOnly: turn.promptOnly,
-      entry: turn.promptOnly === true
-        ? turn.pending.find((item): item is Extract<QueuedItem, { kind: 'normal' | 'notify' }> => item.kind !== 'remind')?.entry
-        : undefined,
+      entry: turn.pending.find((item): item is Extract<QueuedItem, { kind: 'normal' | 'notify' }> => item.kind !== 'remind')?.entry,
     });
   }
 

@@ -216,8 +216,15 @@ describe('AgentTaskService Wire history', () => {
     expect(JSON.stringify(records)).not.toContain('[async tool completed]');
   });
 
-  it('does not restore a terminal notification already present in Loop history', async () => {
+  it('does not restore terminal notifications already delivered by Loop history or WaitFor', async () => {
     const completed = processInfo({ status: 'completed', endedAt: 200, exitCode: 0 });
+    const waitCompleted = processInfo({
+      taskId: 'bash-00000002',
+      parentToolCallId: 'tool-call-2',
+      status: 'completed',
+      endedAt: 201,
+      exitCode: 0,
+    });
     const origin = {
       kind: 'task',
       taskId: completed.taskId,
@@ -234,7 +241,12 @@ describe('AgentTaskService Wire history', () => {
           origin,
         },
       },
-      ...taskHistoryRecords([completed]),
+      ...taskHistoryRecords([completed, waitCompleted]),
+      {
+        type: 'task.waitDelivered',
+        agentId: 'main',
+        keys: [`${waitCompleted.taskId}\0completed\0task:${waitCompleted.taskId}:completed`],
+      },
     ];
 
     await ctx.restore(records);
@@ -242,7 +254,9 @@ describe('AgentTaskService Wire history', () => {
 
     const origins = ctx.get(IAgentLoopService).history().map((message) => message.origin);
     expect(origins.filter((candidate) => candidate?.kind === 'task' && candidate.taskId === completed.taskId)).toHaveLength(1);
+    expect(origins.some((candidate) => candidate?.kind === 'task' && candidate.taskId === waitCompleted.taskId)).toBe(false);
     expect(ctx.allEvents.filter((event) => event.event === 'task.notified')).toHaveLength(0);
+    expect((await ctx.persistedWireRecords()).filter((record) => record.type === 'task.waitDelivered')).toHaveLength(1);
   });
 
   it('reads restored output exclusively from output.log', async () => {

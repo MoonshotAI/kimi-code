@@ -11,13 +11,21 @@ export async function restoreTaskCompletions(options: {
   readonly taskOutputs: IAgentTaskOutputService;
   readonly messages: readonly HistoryMessage[];
 }): Promise<readonly UserEntry[]> {
-  const { journal } = await options.wire.readRestoreChains();
+  const { journal, restorable } = await options.wire.readRestoreChains();
   const history = new AgentTaskService(options.agentId);
   history.restore(journal);
   const delivered = new Set<string>();
   for (const entry of options.messages) {
     const origin = contextFromHistoryEntry(entry).origin;
     if (origin?.kind === 'task') delivered.add(`${origin.taskId}\0${origin.status}\0${origin.notificationId}`);
+  }
+  for (const record of restorable) {
+    if (record.type !== 'task.waitDelivered' || record['agentId'] !== options.agentId) continue;
+    const keys = record['keys'];
+    if (!Array.isArray(keys)) continue;
+    for (const key of keys) {
+      if (typeof key === 'string') delivered.add(key);
+    }
   }
   const completions: UserEntry[] = [];
   for (const info of history.list(false)) {

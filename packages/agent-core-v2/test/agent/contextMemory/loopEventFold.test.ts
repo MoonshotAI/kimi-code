@@ -67,6 +67,7 @@ describe('loop-event fold parity', () => {
           content: [{ type: 'text', text: 'other result' }],
           toolCallId: 'c2',
           isError: false,
+          durationMs: 7,
         },
       ]),
     );

@@ -1,5 +1,5 @@
 import { ErrorCodes, Error2 } from '#/errors';
-import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
+import { renderToolResultForModel, shouldRenderWallTime } from '#/agent/contextMemory/toolResultRender';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
 import type { ContentPart, Message } from '#human/llm/message';
@@ -124,6 +124,7 @@ function pairBlocks(
 ): Block[] {
   const blocks: Block[] = [];
   const openCalls = new Map<string, { exchange: Exchange; pending: PendingCall }>();
+  const toolNames = new Map<string, string>();
 
   const markForeignBetween = (): void => {
     for (const { pending } of openCalls.values()) pending.foreignBetween = true;
@@ -131,6 +132,9 @@ function pairBlocks(
 
   for (const [index, message] of history.entries()) {
     if (message.partial === true) continue;
+    if (message.role === 'assistant') {
+      for (const call of message.toolCalls) toolNames.set(call.id, call.name);
+    }
     if (message.role === 'tool' && !layout.sizing) {
       if (message.toolCallId === undefined) continue;
       const open = openCalls.get(message.toolCallId);
@@ -140,14 +144,14 @@ function pairBlocks(
         continue;
       }
       openCalls.delete(message.toolCallId);
-      open.pending.result = { source: message, content: projectedContent(message, onAnomaly) };
+      open.pending.result = { source: message, content: projectedContent(message, toolNames, onAnomaly) };
       if (open.pending.foreignBetween) {
         onAnomaly?.({ kind: 'tool_result_reordered', toolCallId: message.toolCallId });
       }
       continue;
     }
 
-    const content = projectedContent(message, onAnomaly);
+    const content = projectedContent(message, toolNames, onAnomaly);
     const toolCalls = message.role === 'assistant' ? message.toolCalls : [];
     if (toolCalls.length === 0 && !hasDeclaredTools(message)) {
       if (content.length === 0) continue;
@@ -329,14 +333,21 @@ function appendMergeContent(group: MergeState, content: readonly ContentPart[]):
   if (text.length > 0) group.texts.push(text);
 }
 
-function projectedContent(source: ContextMessage, onAnomaly?: OnAnomaly): ContentPart[] {
+function projectedContent(
+  source: ContextMessage,
+  toolNames: ReadonlyMap<string, string>,
+  onAnomaly?: OnAnomaly,
+): ContentPart[] {
+  const toolName = source.role === 'tool' && source.toolCallId !== undefined
+    ? toolNames.get(source.toolCallId)
+    : undefined;
   const content =
     source.role === 'tool'
       ? renderToolResultForModel({
           output: outputFromToolContent(source.content),
           isError: source.isError,
           note: source.note,
-          durationMs: source.durationMs,
+          durationMs: toolName !== undefined && shouldRenderWallTime(toolName) ? source.durationMs : undefined,
         })
       : source.content;
   return cleanContent(source, content, onAnomaly);

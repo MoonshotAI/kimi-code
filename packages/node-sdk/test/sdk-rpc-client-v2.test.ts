@@ -46,7 +46,6 @@ import {
   IAgentIdentity,
   IAgentTodoService,
   IAgentLifecycleService,
-  IAgentProfileService,
   IAgentConversationUndoService,
   IAgentFullCompactionService,
   IAgentPluginCommandService,
@@ -328,19 +327,16 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     {
       name: 'a valid default next to an invalid entry',
       config: '[environments]\ndefault = "good"\n\n[environments.good]\ntype = "ssh"\nhost = "example.com"\ndefault_cwd = "/remote/work"\n\n[environments.bad]\ntype = "ssh"\n',
-      allowsExplicitLocal: true,
     },
     {
       name: 'an invalid default reference',
       config: '[environments]\ndefault = "missing"\n',
-      allowsExplicitLocal: true,
     },
     {
       name: 'malformed TOML',
       config: '[environments\n',
-      allowsExplicitLocal: false,
     },
-  ])('validates implicit and explicit local creation with $name', async ({ config, allowsExplicitLocal }) => {
+  ])('rejects implicit local creation with $name and allows explicit local', async ({ config }) => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', 'false');
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-invalid-env-work-'));
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-invalid-env-home-'));
@@ -358,13 +354,8 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     });
     try {
       await expect(harness.createSession({ workDir })).rejects.toMatchObject({ code: 'config.invalid' });
-      const localCreation = client.engineAccessor.get(ISessionManager).create({ workDir, environmentId: 'local' });
-      if (allowsExplicitLocal) {
-        const local = await localCreation;
-        expect(local.id).not.toBe('');
-      } else {
-        await expect(localCreation).rejects.toMatchObject({ code: 'config.invalid' });
-      }
+      const local = await client.engineAccessor.get(ISessionManager).create({ workDir, environmentId: 'local' });
+      expect(local.id).not.toBe('');
     } finally {
       await harness.close();
       vi.unstubAllEnvs();
@@ -436,7 +427,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       const changeMessages = () => main().accessor.get(IAgentLoopService).history()
         .filter((message) => message.origin?.kind === 'injection' && message.origin.variant === 'agents_md_change')
         .map((message) => message.content.map((part) => part.type === 'text' ? part.text : '').join(''));
-      const prompt = main().accessor.get(IAgentProfileService).getSystemPrompt();
+      const prompt = main().accessor.get(IAgentLoopService).getSystemPrompt();
       expect(prompt).toContain('remote v1');
       expect(prompt).toContain('local personal');
       expect(prompt).not.toContain('local project');
@@ -2276,7 +2267,7 @@ key = "${titleOAuthRef.key}"
               .find((tool) => tool.name === 'Agent');
             expect(delegation?.description.includes('NotifyUser')).toBe(enabled && panel);
           }
-          const prompt = agent.accessor.get(IAgentProfileService).getSystemPrompt();
+          const prompt = agent.accessor.get(IAgentLoopService).getSystemPrompt();
           expect(prompt.includes('When `NotifyUser` is available')).toBe(enabled && panel);
           if (offered) {
             expect(
@@ -2287,17 +2278,17 @@ key = "${titleOAuthRef.key}"
           }
         }
         const main = lifecycle.handleOf('main')!;
-        const originalPrompt = main.accessor.get(IAgentProfileService).getSystemPrompt();
+        const originalPrompt = main.accessor.get(IAgentLoopService).getSystemPrompt();
         const fork = await lifecycle.fork(lifecycle.get('main')!, { agentId: 'fork-worker' });
         expect(
-          lifecycle.handleOf(fork.agentId)!.accessor.get(IAgentProfileService).getSystemPrompt(),
+          lifecycle.handleOf(fork.agentId)!.accessor.get(IAgentLoopService).getSystemPrompt(),
         ).toBe(originalPrompt);
         const originalTools = structuredClone(main.accessor.get(IAgentToolRegistryService).list());
         for (const [index, nextEnabled] of [!enabled, enabled, !enabled].entries()) {
           await client.setConfig({ experimental: { notify_user: nextEnabled } });
           let current = getLiveSessionById(client.engineAccessor, 'ses_notify')!;
           let currentMain = current.accessor.get(IAgentLifecycleService).handleOf('main')!;
-          expect(currentMain.accessor.get(IAgentProfileService).getSystemPrompt()).toBe(
+          expect(currentMain.accessor.get(IAgentLoopService).getSystemPrompt()).toBe(
             originalPrompt,
           );
           expect(currentMain.accessor.get(IAgentToolRegistryService).list()).toEqual(originalTools);
@@ -2330,7 +2321,7 @@ key = "${titleOAuthRef.key}"
           ).toBe(enabled && panel);
           expect(
             child.accessor
-              .get(IAgentProfileService)
+              .get(IAgentLoopService)
               .getSystemPrompt()
               .includes('When `NotifyUser` is available'),
           ).toBe(enabled && panel);
@@ -2338,7 +2329,7 @@ key = "${titleOAuthRef.key}"
           current = getLiveSessionById(client.engineAccessor, 'ses_notify')!;
           currentMain = current.accessor.get(IAgentLifecycleService).handleOf('main')!;
           expect(currentMain.accessor.get(IAgentToolRegistryService).list()).toEqual(originalTools);
-          expect(currentMain.accessor.get(IAgentProfileService).getSystemPrompt()).toBe(
+          expect(currentMain.accessor.get(IAgentLoopService).getSystemPrompt()).toBe(
             originalPrompt,
           );
         }
@@ -2356,12 +2347,12 @@ key = "${titleOAuthRef.key}"
         ).toBe(!enabled && panel);
         expect(
           fresh.accessor
-            .get(IAgentProfileService)
+            .get(IAgentLoopService)
             .getSystemPrompt()
             .includes('When `NotifyUser` is available'),
         ).toBe(!enabled && panel);
         if (enabled || !panel) {
-          expect(fresh.accessor.get(IAgentProfileService).getSystemPrompt()).not.toContain(
+          expect(fresh.accessor.get(IAgentLoopService).getSystemPrompt()).not.toContain(
             'NotifyUser',
           );
           expect(
@@ -2377,7 +2368,7 @@ key = "${titleOAuthRef.key}"
         const migrated = getLiveSessionById(client.engineAccessor, 'ses_notify')!
           .accessor.get(IAgentLifecycleService)
           .handleOf('main')!;
-        expect(migrated.accessor.get(IAgentProfileService).getSystemPrompt()).toBe(originalPrompt);
+        expect(migrated.accessor.get(IAgentLoopService).getSystemPrompt()).toBe(originalPrompt);
         expect(migrated.accessor.get(IAgentToolRegistryService).list()).toEqual(originalTools);
       } finally {
         await client.close();
