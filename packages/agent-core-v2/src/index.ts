@@ -234,6 +234,8 @@ export * from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 export * from '#/app/agentProfileCatalog/builtinAgentProfileLoaderService';
 export * from '#/app/agentProfileCatalog/profile-shared';
 export * from '#/app/agentProfileCatalog/promptPrefix';
+export * from '#/app/agentProfileManagement/userAgentProfileManagement';
+export * from '#/app/agentProfileManagement/userAgentProfileManagementService';
 export {
   registerAgentProfile,
   getAgentProfileContributions,
