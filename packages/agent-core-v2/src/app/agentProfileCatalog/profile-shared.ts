@@ -147,8 +147,7 @@ export function systemPromptVars(
 ): Record<string, string> {
   const shellName = context.shellName ?? '';
   const shellPath = context.shellPath ?? '';
-  const skillActive = context.skillActive ?? options.skillActive;
-  const skills = skillActive ? (context.skills ?? '') : '';
+  const skills = context.skills ?? '';
   const pluginSections = context.pluginSections ?? '';
   const additionalDirsInfo = context.additionalDirsInfo ?? '';
   const agentsMd = context.agentsMd ?? '';
