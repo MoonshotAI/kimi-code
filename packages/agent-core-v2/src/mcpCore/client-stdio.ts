@@ -77,8 +77,9 @@ export class StdioMcpClient implements MCPClient {
         buildRequestOptions(this.startupTimeoutMs, undefined),
       );
     } catch (error) {
+      const transportError = this.lastTransportError;
       await this.closeStartedClient();
-      throw classifyStdioStartupError(error);
+      throw classifyStdioStartupError(error, transportError);
     }
     if (this.closed) {
       await this.closeStartedClient();
@@ -359,8 +360,12 @@ export function mergeStdioEnv(
 
 const permanentSpawnErrnos = new Set(['ENOENT', 'EACCES', 'ENOEXEC', 'ENOTDIR', 'EISDIR']);
 
-function classifyStdioStartupError(error: unknown): unknown {
+function classifyStdioStartupError(error: unknown, transportError?: Error): unknown {
   if (!(error instanceof HostProcessError) || error.code !== HostProcessErrorCode.SpawnFailed) {
+    const code = (transportError as NodeJS.ErrnoException | undefined)?.code;
+    if (transportError !== undefined && typeof code === 'string' && permanentSpawnErrnos.has(code)) {
+      return new McpClassifiedStartupError('config', transportError.message, { cause: transportError });
+    }
     return error;
   }
   const cause = error.cause as { readonly code?: unknown } | undefined;
