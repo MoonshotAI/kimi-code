@@ -17,6 +17,7 @@ import type { InitializedLlmRequester } from '#/llm-adapter/model/generate';
 import { runWithCredentialRecovery } from '#/llm-adapter/model/credential-recovery';
 import {
   imageUploaderFor,
+  mediaAcceptsInlineMime,
   mediaAcceptsMime,
   mediaAcceptsSource,
   mediaCredentialProvider,
@@ -42,12 +43,7 @@ import {
 import { ISessionMediaStore } from './sessionMediaStore';
 import { IAgentMediaResolverService } from './mediaResolver';
 import { createVideoUploader } from './registerMediaTools';
-import {
-  inlineVideoPart,
-  inlineVideoSupportedForProtocol,
-  isMediaUploadAuthError,
-  isVideoUploadUnsupportedError,
-} from './videoUpload';
+import { inlineVideoPart, isMediaUploadAuthError } from './videoUpload';
 
 const VIDEO_CACHE_SCOPE = 'video-upload-cache';
 const IMAGE_CACHE_SCOPE = 'image-upload-cache';
@@ -113,6 +109,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
   >();
   private imageMemoBytes = 0;
   private readonly imageUploadUnsupported = new Set<string>();
+  private readonly videoUploadUnavailable = new Set<string>();
 
   async resolve(
     messages: readonly Message[],
@@ -194,9 +191,12 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     const pending = new Map<string, number>();
     for (const entry of entries) {
       if (dropped.has(entry.key)) {
-        await this.replaceWithMediaTag(out, entry);
-        changed = true;
-        continue;
+        if (entry.bytes > 0) {
+          await this.replaceWithMediaTag(out, entry);
+          changed = true;
+          continue;
+        }
+        dropped.delete(entry.key);
       }
       pending.set(entry.key, (pending.get(entry.key) ?? 0) + entry.bytes);
     }
@@ -454,6 +454,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     const cacheKey = uploadSupported && supportsLlmUpload(request, 'video')
       ? `${ref.fileId}\0${providerKey}\0${model.protocol}\0${model.baseUrl ?? ''}\0${await accountHashFor(model)}`
       : `${ref.fileId}\0${providerKey}`;
+    const uploadStateKey = `${model.id}\0${model.protocol}\0${model.baseUrl ?? ''}\0${await accountHashFor(model)}`;
 
     const memoed = this.resolved.get(cacheKey);
     if (memoed !== undefined && (memoed.type === 'text' || mediaAcceptsSource(support, memoed))) {
@@ -465,6 +466,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       model,
       request,
       cacheKey,
+      uploadStateKey,
       support,
       signal,
     );
@@ -486,6 +488,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     model: Model,
     request: InitializedLlmRequester,
     cacheKey: string,
+    uploadStateKey: string,
     support: MediaKindSupport,
     signal: AbortSignal | undefined,
   ): Promise<{ part: ContentPart; memoize: boolean }> {
@@ -515,22 +518,23 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     const mimeType = fileType.mimeType;
 
     const inlineSupported =
-      inlineVideoSupportedForProtocol(model.protocol) && support.sources.includes('inline');
+      support.sources.includes('inline') && mediaAcceptsInlineMime(support, mimeType);
     const uploadSupported = support.sources.includes('file') || support.sources.includes('url');
-    const uploader = uploadSupported
-      ? createVideoUploader(videoUploaderFor(model, request), {
-          client: this.telemetry,
-          props: {
-            model: model.name,
-            provider_type: model.providerType ?? model.protocol,
-            protocol: model.protocol,
-          },
-        })
-      : undefined;
+    const uploader =
+      uploadSupported && !this.videoUploadUnavailable.has(uploadStateKey)
+        ? createVideoUploader(videoUploaderFor(model, request), {
+            client: this.telemetry,
+            props: {
+              model: model.name,
+              provider_type: model.providerType ?? model.protocol,
+              protocol: model.protocol,
+            },
+          })
+        : undefined;
     if (uploader === undefined) {
       return {
         part: inlineSupported ? inlineVideoPart(bytes, mimeType) : videoTag(tagPath),
-        memoize: true,
+        memoize: !inlineSupported,
       };
     }
 
@@ -541,6 +545,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
         signal,
       );
       if (!mediaAcceptsSource(support, uploaded)) {
+        this.videoUploadUnavailable.add(uploadStateKey);
         this.telemetry.track2('media_resolve_fallback', {
           kind: 'video',
           reason: 'upload_failed',
@@ -548,7 +553,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
         });
         return {
           part: inlineSupported ? inlineVideoPart(bytes, mimeType) : videoTag(tagPath),
-          memoize: true,
+          memoize: !inlineSupported,
         };
       }
       const llmFileId = mediaFileIdOf(uploaded) ?? msFileIdFromUrl(mediaUrlOf(uploaded));
@@ -557,18 +562,16 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     } catch (error) {
       if (signal?.aborted) throw error;
       if (isMediaUploadAuthError(error)) throw error;
+      this.videoUploadUnavailable.add(uploadStateKey);
       this.telemetry.track2('media_resolve_fallback', {
         kind: 'video',
         reason: 'upload_failed',
         model: model.name,
       });
-      if (isVideoUploadUnsupportedError(error)) {
-        return {
-          part: inlineSupported ? inlineVideoPart(bytes, mimeType) : videoTag(tagPath),
-          memoize: true,
-        };
-      }
-      return { part: videoTag(tagPath), memoize: false };
+      return {
+        part: inlineSupported ? inlineVideoPart(bytes, mimeType) : videoTag(tagPath),
+        memoize: !inlineSupported,
+      };
     }
   }
 

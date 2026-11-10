@@ -15,6 +15,7 @@ export type MediaPosition = 'content' | 'tool_result';
 
 export interface MediaKindSupport {
   readonly mimes: ReadonlySet<string> | 'any';
+  readonly inlineMimes?: ReadonlySet<string>;
   readonly sources: readonly ('url' | 'inline' | 'file')[];
   readonly url?: (url: string) => boolean;
   readonly inToolResult: 'native' | 'relocate' | 'unsupported';
@@ -37,6 +38,10 @@ export function mediaSupportAt(
 
 export function acceptsMime(spec: MediaKindSupport, mimeType: string): boolean {
   return spec.mimes === 'any' || spec.mimes.has(mimeType);
+}
+
+export function acceptsInlineMime(spec: MediaKindSupport, mimeType: string): boolean {
+  return spec.inlineMimes === undefined ? acceptsMime(spec, mimeType) : spec.inlineMimes.has(mimeType);
 }
 
 export function acceptsSource(spec: MediaKindSupport, part: MediaPart): boolean {

@@ -390,7 +390,12 @@ function flatten(native: AnthropicNativeModule, module: AnthropicModule): Reques
 export const anthropicMedia: MediaSupport = {
   kinds: {
     image: { mimes: 'any', sources: ['url', 'inline', 'file'], inToolResult: 'native' },
-    video: { mimes: 'any', sources: ['url', 'inline', 'file'], inToolResult: 'native' },
+    video: {
+      mimes: 'any',
+      inlineMimes: SUPPORTED_B64_VIDEO_TYPES,
+      sources: ['url', 'inline', 'file'],
+      inToolResult: 'native',
+    },
     audio: { mimes: 'any', sources: ['url', 'inline', 'file'], inToolResult: 'native' },
   },
 };
