@@ -159,7 +159,14 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
     },
     async (req: RouteRequest, reply: RouteReply) => {
       if (!(await enabled(req, reply))) return;
-      const bridge = new SshKapBridge(toEntry(req.body as z.infer<typeof wireEntrySchema>));
+      let entry: HostEntry;
+      try {
+        entry = toEntry(req.body as z.infer<typeof wireEntrySchema>);
+      } catch (error) {
+        reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, error instanceof Error ? error.message : String(error), req.id));
+        return;
+      }
+      const bridge = new SshKapBridge(entry);
       try {
         const probe = await bridge.probe();
         reply.send(okEnvelope({ connected: true, remote_version: probe.version }, req.id));

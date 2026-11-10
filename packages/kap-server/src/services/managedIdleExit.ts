@@ -57,7 +57,7 @@ export class ManagedIdleExit {
     for (const handle of this.sessions.list()) {
       await this.sessions.closeIfIdle(handle.id, 0);
     }
-    if (this.sessions.list().length > 0) {
+    if (this.connections.size() > 0 || this.sessions.list().length > 0) {
       this.idleSince = this.now();
       return;
     }

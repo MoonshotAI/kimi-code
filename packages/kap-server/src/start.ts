@@ -550,11 +550,13 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       devices: remoteControlDevices,
       homeDir,
       staticEnableError:
-        exposureClass !== 'loopback'
-          ? 'Remote Control requires a loopback host.'
-          : opts.disableAuth === true
-            ? 'Remote Control cannot be combined with --dangerous-bypass-auth.'
-            : undefined,
+        opts.socketPath !== undefined
+          ? 'Remote Control requires a TCP listener.'
+          : exposureClass !== 'loopback'
+            ? 'Remote Control requires a loopback host.'
+            : opts.disableAuth === true
+              ? 'Remote Control cannot be combined with --dangerous-bypass-auth.'
+              : undefined,
     },
     onShutdown: requestClose,
     drainIdleSessions,

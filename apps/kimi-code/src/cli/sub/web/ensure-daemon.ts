@@ -150,11 +150,21 @@ async function findOrStart(deps: EnsureDaemonDeps): Promise<EnsureDaemonResult> 
         `a kimi server of version ${existing.version} is still running work on this host; retry after it finishes`,
       );
     }
+    let closed = false;
     for (let attempt = 0; attempt < START_MAX_ATTEMPTS; attempt += 1) {
       const probe = await deps.connectSocket(socketPath);
-      if (probe === undefined) break;
+      if (probe === undefined) {
+        closed = true;
+        break;
+      }
       probe.close();
       await deps.wait(POLL_INTERVAL_MS);
+    }
+    if (!closed) {
+      throw new EnsureDaemonError(
+        'start_timeout',
+        'the previous kimi server did not shut down in time',
+      );
     }
   }
   const logPath = join(deps.homeDir, 'server', LOG_FILE);
