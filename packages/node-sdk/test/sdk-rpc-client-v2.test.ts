@@ -329,16 +329,19 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     {
       name: 'a valid default next to an invalid entry',
       config: '[environments]\ndefault = "good"\n\n[environments.good]\ntype = "ssh"\nhost = "example.com"\ndefault_cwd = "/remote/work"\n\n[environments.bad]\ntype = "ssh"\n',
+      allowsExplicitLocal: true,
     },
     {
       name: 'an invalid default reference',
       config: '[environments]\ndefault = "missing"\n',
+      allowsExplicitLocal: true,
     },
     {
       name: 'malformed TOML',
       config: '[environments\n',
+      allowsExplicitLocal: false,
     },
-  ])('rejects implicit local creation with $name and allows explicit local', async ({ config }) => {
+  ])('validates implicit and explicit local creation with $name', async ({ config, allowsExplicitLocal }) => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', 'false');
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-invalid-env-work-'));
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-invalid-env-home-'));
@@ -356,8 +359,13 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     });
     try {
       await expect(harness.createSession({ workDir })).rejects.toMatchObject({ code: 'config.invalid' });
-      const local = await client.engineAccessor.get(ISessionManager).create({ workDir, environmentId: 'local' });
-      expect(local.id).not.toBe('');
+      const localCreation = client.engineAccessor.get(ISessionManager).create({ workDir, environmentId: 'local' });
+      if (allowsExplicitLocal) {
+        const local = await localCreation;
+        expect(local.id).not.toBe('');
+      } else {
+        await expect(localCreation).rejects.toMatchObject({ code: 'config.invalid' });
+      }
     } finally {
       await harness.close();
       vi.unstubAllEnvs();
@@ -1773,13 +1781,25 @@ key = "${titleOAuthRef.key}"
     await writeFile(join(workDir, 'src', 'app.ts'), 'app');
     await writeFile(join(workDir, 'src', 'index.ts'), 'index');
     await writeFile(join(workDir, 'README.md'), 'readme');
+    await writeFile(join(workDir, '.gitignore'), 'ignored-app.ts\n');
+    await writeFile(join(workDir, 'ignored-app.ts'), 'ignored');
     try {
       const matched = await harness.suggestFiles(workDir, { query: 'app', limit: 20 });
       expect(matched?.items).toContainEqual(
         expect.objectContaining({ kind: 'file', path: 'src/app.ts', name: 'app.ts' }),
       );
+      expect(matched?.items.some((item) => item.path === 'ignored-app.ts')).toBe(false);
       const appItem = matched?.items.find((item) => item.name === 'app.ts');
       expect(appItem?.matchPositions.length).toBeGreaterThan(0);
+
+      const withIgnored = await harness.suggestFiles(workDir, {
+        query: 'app',
+        limit: 20,
+        followGitignore: false,
+      });
+      const paths = withIgnored?.items.map((item) => item.path) ?? [];
+      expect(paths).toContain('ignored-app.ts');
+      expect(paths.indexOf('src/app.ts')).toBeLessThan(paths.indexOf('ignored-app.ts'));
 
       const topLevel = await harness.suggestFiles(workDir, { query: '', limit: 20 });
       expect(topLevel?.items).toContainEqual(expect.objectContaining({ kind: 'directory', name: 'src' }));

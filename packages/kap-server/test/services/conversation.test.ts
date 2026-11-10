@@ -201,7 +201,7 @@ describe('conversation fold', () => {
     ]);
   });
 
-  it('keeps the visible text, attachments, skills and client metadata of a user message and no server paths', () => {
+  it('keeps visible user content and skill paths while hiding attachment server paths', () => {
     const fileId = 'f_0a1b2c3d-0000-4000-8000-000000000001';
     const state = fold([
       turnPrompt(0, 'p1'),
@@ -240,10 +240,11 @@ describe('conversation fold', () => {
         { kind: 'file', name: 'local.txt', media_type: 'text/plain', size: 9, ordinal: 2 },
         { kind: 'video', file_id: fileId, ordinal: 3 },
       ],
-      skills: [{ name: 'review', args: '--deep' }],
+      skills: [{ name: 'review', path: '/home/example/skills/review', args: '--deep' }],
       metadata: { display_text: 'check this diff' },
     });
-    expect(JSON.stringify(opener)).not.toContain('/home/example');
+    expect(JSON.stringify(opener)).not.toContain('/home/example/notes.md');
+    expect(JSON.stringify(opener)).not.toContain('/home/example/local.txt');
   });
 
   it('maps engine origins to protocol origins and gives system-triggered inputs no prompt ids', () => {
@@ -287,7 +288,7 @@ describe('conversation fold', () => {
 
     const openers = state.turns.map((turn) => turn.items[0]);
     expect(openers.map((item) => (item?.type === 'user_message' ? [item.origin, item.prompt_ids, item.text] : []))).toEqual([
-      [{ kind: 'skill', name: 'commit', args: '-m wip' }, ['k1'], 'User activated the skill'],
+      [{ kind: 'skill', name: 'commit', path: '/home/example/skills/commit', args: '-m wip' }, ['k1'], 'User activated the skill'],
       [{ kind: 'plugin_command', plugin_id: 'example-plugin', command: 'deploy', args: 'staging' }, ['c1'], 'Plugin command'],
       [{ kind: 'retry' }, [], ''],
       [{ kind: 'goal' }, [], ''],
@@ -642,6 +643,46 @@ describe('conversation fold', () => {
 
     expect(state.turns).toHaveLength(2);
     expect(shape(state.turns[1])).toEqual(['opener:second', 'steer:more']);
+  });
+
+  it('ends the tool calls a stop cuts short as interrupted and keeps earlier results as they were', () => {
+    const state = fold([
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'run them'),
+      stepBegin(0, 1, 's1'),
+      toolCall(0, 1, 's1', 'Read_0', 'Read', { path: 'a.ts' }),
+      toolCall(0, 1, 's1', 'Read_1', 'Read', { path: 'missing.ts' }),
+      toolCall(0, 1, 's1', 'Bash_2', 'Bash', { command: 'sleep 60' }),
+      toolCall(0, 1, 's1', 'Bash_3', 'Bash', { command: 'make' }),
+      toolResult('Read_0', 'file body'),
+      toolResult('Read_1', 'file not found', true),
+      record('turn.cancel', { turnId: 0, target: 'active', reason: 'user' }),
+      toolResult('Bash_2', 'Interrupted by user', true),
+      toolResult('Bash_3', 'The user manually interrupted "Bash".', true),
+      turnEnded(0, 'cancelled'),
+    ]);
+
+    const items = state.turns[0]?.items ?? [];
+    expect(state.turns[0]).toMatchObject({ outcome: 'interrupted' });
+    expect(items[1]).toMatchObject({ item_id: 'Read_0', outcome: 'completed', output: 'file body' });
+    expect(items[2]).toMatchObject({ item_id: 'Read_1', outcome: 'failed', error: 'file not found' });
+    expect(items[3]).toMatchObject({ item_id: 'Bash_2', outcome: 'interrupted', error: 'Interrupted by user' });
+    expect(items[4]).toMatchObject({ item_id: 'Bash_3', outcome: 'interrupted' });
+    expect(items[3]).not.toHaveProperty('output', expect.anything());
+  });
+
+  it('keeps tool errors failed when the step failed instead of being stopped', () => {
+    const state = fold([
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'run it'),
+      stepBegin(0, 1, 's1'),
+      toolCall(0, 1, 's1', 'Bash_0', 'Bash', { command: 'make' }),
+      record('turn.step.interrupted', { turnId: 0, step: 1, stepId: 's1', reason: 'error' }),
+      toolResult('Bash_0', 'Tool "Bash" was aborted', true),
+      turnEnded(0, 'failed', { error: { name: 'ProviderError', message: 'boom' } }),
+    ]);
+
+    expect(state.turns[0]?.items[1]).toMatchObject({ item_id: 'Bash_0', outcome: 'failed' });
   });
 
   it('keeps a running turn open while ownerless messages land beside it', () => {

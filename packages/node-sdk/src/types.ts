@@ -222,6 +222,7 @@ export interface WorkspaceTrustInfoOptions {
 export interface SuggestFilesInput {
   readonly query: string;
   readonly limit?: number;
+  readonly followGitignore?: boolean;
   /** Complete against this live session's working directory, on the environment the session runs on. */
   readonly sessionId?: string;
 }
@@ -288,6 +289,7 @@ export type PromptInput = readonly PromptPart[];
 
 export interface PromptSkillActivation {
   readonly name: string;
+  readonly path?: string;
   readonly args?: string;
 }
 

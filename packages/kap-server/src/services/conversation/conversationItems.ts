@@ -104,7 +104,7 @@ export function userMessageItem(
     text: text.join('\n'),
     attachments,
     skills: origin?.kind === 'user'
-      ? (origin.skillActivations ?? []).map(({ skillName, skillArgs }) => ({ name: skillName, args: skillArgs }))
+      ? (origin.skillActivations ?? []).map(({ skillName, skillPath, skillArgs }) => ({ name: skillName, path: skillPath, args: skillArgs }))
       : [],
     metadata: origin?.kind === 'user' || origin?.kind === 'skill_activation' ? origin.clientMetadata?.[0] : undefined,
   };
@@ -155,13 +155,19 @@ export function isPlanTool(name: string): boolean {
   return name === EXIT_PLAN_MODE;
 }
 
-export function endToolCall(item: ToolCallItem, output: string | readonly ContentPart[], isError: boolean, time: number): void {
+export function endToolCall(
+  item: ToolCallItem,
+  output: string | readonly ContentPart[],
+  outcome: 'completed' | 'failed' | 'interrupted',
+  time: number,
+): void {
   const text = resultText(output);
-  const media = isError || typeof output === 'string' ? [] : output.filter(isMediaPart).map(mediaOf);
+  const completed = outcome === 'completed';
+  const media = !completed || typeof output === 'string' ? [] : output.filter(isMediaPart).map(mediaOf);
   item.status = 'ended';
-  item.outcome = isError ? 'failed' : 'completed';
-  item.output = isError ? undefined : text;
-  item.error = isError ? text : undefined;
+  item.outcome = outcome;
+  item.output = completed ? text : undefined;
+  item.error = completed ? undefined : text;
   item.media = media.length === 0 ? undefined : media;
   item.ended_at = isoTime(time);
 }
@@ -329,7 +335,7 @@ function originOf(origin: PromptOrigin | undefined): UserMessageOrigin {
     case 'user':
       return { kind: 'user' };
     case 'skill_activation':
-      return { kind: 'skill', name: origin.skillName, args: origin.skillArgs };
+      return { kind: 'skill', name: origin.skillName, path: origin.skillPath, args: origin.skillArgs };
     case 'plugin_command':
       return { kind: 'plugin_command', plugin_id: origin.pluginId, command: origin.commandName, args: origin.commandArgs };
     case 'cron_job':

@@ -153,7 +153,8 @@ export class Program {
         userAgentProfiles: generation.userAgentProfiles,
         pluginAgentProfiles: generation.pluginAgentProfiles,
         mcp: generation.mcp,
-        acquireWorkdir: (environmentId, cwd) => generation.workdirs.acquire(environmentId, cwd),
+        trust: generation.trust,
+        acquireWorkdir: (environmentId, cwd, followsPrimary) => generation.workdirs.acquire(environmentId, cwd, followsPrimary),
         onDispose: release,
       });
     } catch (error) {
@@ -162,11 +163,11 @@ export class Program {
     }
   }
 
-  async acquireWorkdir(environmentId: string, cwd: string): Promise<ProgramWorkdir> {
+  async acquireWorkdir(environmentId: string, cwd: string, followsPrimary = environmentId === LOCAL_ENVIRONMENT_ID): Promise<ProgramWorkdir> {
     const generation = this.requireGeneration();
     const lease = await this.environments.acquireWhenReady({ environmentId }, ['fs']);
     try {
-      return await generation.workdirs.acquire(environmentId, cwd);
+      return await generation.workdirs.acquire(environmentId, cwd, followsPrimary);
     } finally {
       lease.dispose();
     }
@@ -289,19 +290,19 @@ export class Program {
     try {
       const hostFs = environment.fs!;
       const skillDiscovery = new EnvironmentSkillDiscovery(this.dependencies.log, hostFs);
-      const explicitSkills = new ExplicitFileSkillSource(skillDiscovery, this.context, this.dependencies.bootstrap, hostFs);
-      const extraSkills = own(new ExtraFileSkillSource(skillDiscovery, this.dependencies.config, this.context, this.dependencies.bootstrap, hostFs));
+      const explicitSkills = own(new ExplicitFileSkillSource(skillDiscovery, this.context, this.dependencies.bootstrap, hostFs, this.dependencies.log));
+      const extraSkills = own(new ExtraFileSkillSource(skillDiscovery, this.dependencies.config, this.context, this.dependencies.bootstrap, hostFs, this.dependencies.log));
       const pluginSkills = new PluginSkillSource(skillDiscovery, this.dependencies.plugins);
       const userAgentProfiles = own(new UserAgentProfileLoaderService(this.dependencies.bootstrap, hostFs, this.dependencies.log, this.dependencies.builtinAgentProfiles, this.context, this.dependencies.agentProfiles));
       const pluginAgentProfiles = own(new PluginAgentProfileLoaderService(this.dependencies.plugins, hostFs, this.dependencies.log, userAgentProfiles, this.context, this.dependencies.agentProfiles));
-      const explicitAgentProfiles = own(new ExplicitAgentProfileLoaderService(this.context, this.dependencies.bootstrap, hostFs, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
-      const extraAgentProfiles = own(new ExtraAgentProfileLoaderService(this.dependencies.config, this.context, this.dependencies.bootstrap, hostFs, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
       const harness: ProgramHarness = { userAgentProfiles, explicitSkills, extraSkills, pluginSkills };
       const workdirs = new ProgramWorkdirs(this.environments, this.context, this.dependencies, harness, own);
       const root = workdirs.root;
-      const trust = own(new WorkspaceTrustService(this.context, this.dependencies.trustStore, root.state, this.dependencies.config));
-      const mcpConfig = own(new WorkspaceMcpConfigService(this.context, this.dependencies.bootstrap, this.dependencies.plugins, this.dependencies.log, this.dependencies.config, hostFs, trust, this.dependencies.configStore, this.dependencies.oauth));
-      const mcp = new WorkspaceMcpService(this.context, this.environments, mcpConfig, this.dependencies.oauth, this.dependencies.log, this.dependencies.telemetry, this.dependencies.identity, this.dependencies.sessionManager);
+      const explicitAgentProfiles = own(new ExplicitAgentProfileLoaderService(this.context, root.dirs, this.dependencies.bootstrap, hostFs, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
+      const extraAgentProfiles = own(new ExtraAgentProfileLoaderService(this.dependencies.config, this.context, root.dirs, this.dependencies.bootstrap, hostFs, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
+      const trust = own(new WorkspaceTrustService(root.dirs, this.dependencies.trustStore, root.state, this.dependencies.config));
+      const mcpConfig = own(new WorkspaceMcpConfigService(root.dirs, this.dependencies.bootstrap, this.dependencies.plugins, this.dependencies.log, this.dependencies.config, hostFs, trust, this.dependencies.configStore, this.dependencies.oauth));
+      const mcp = new WorkspaceMcpService(this.context, root.dirs, this.environments, mcpConfig, this.dependencies.oauth, this.dependencies.log, this.dependencies.telemetry, this.dependencies.identity, this.dependencies.sessionManager);
       disposables.push({ dispose: () => mcp.disposeAsync() });
       const trustDisclosure = new WorkspaceTrustDisclosureService(this.context, hostFs, this.dependencies.bootstrap, this.dependencies.config, root.localConfig, root.dirs, trust, root.skills, root.agentProfiles, this.dependencies.agentProfiles, root.instructions, this.dependencies.log);
       own(workdirs);

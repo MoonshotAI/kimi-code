@@ -39,6 +39,7 @@ import {
   fsStatRequestSchema,
   fsSuggestRequestSchema,
   fsSuggestResponseSchema,
+  type FsSuggestRequest,
 } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
 import type { EnvironmentCapability, EnvironmentLease } from '@moonshot-ai/agent-core-v2/environment/environment';
 import { z } from 'zod';
@@ -50,7 +51,9 @@ import {
   openInAppCommandFor,
   revealFileCommandFor,
 } from '../lib/fileLaunch';
+import { buildContentDisposition } from '../lib/contentDisposition';
 import { parseRangeHeader, pickHeader } from '../lib/httpRange';
+import { sendRawError } from '../lib/rawError';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
@@ -61,13 +64,25 @@ import {
 } from '../protocol/rest-fs';
 import { sendEnvironmentError } from './environment';
 
+interface FsPostReply {
+  send(payload: unknown): unknown;
+  hijack?(): FsPostReply;
+  getHeader?(name: string): string | number | readonly string[] | undefined;
+  raw?: {
+    writeHead(status: number, headers: Record<string, string | number | readonly string[]>): unknown;
+    write(chunk: string): boolean;
+    end(): unknown;
+    on(event: 'close', listener: () => void): unknown;
+  };
+}
+
 interface FsRouteHost {
   post(
     path: string,
     options: { preHandler: unknown[]; schema?: Record<string, unknown> },
     handler: (
       req: { id: string; body: unknown; params: unknown },
-      reply: { send(payload: unknown): unknown },
+      reply: FsPostReply,
     ) => Promise<void> | void,
   ): unknown;
   get(
@@ -108,10 +123,12 @@ const workspaceFsSearchBodySchema = fsSearchRequestSchema.extend({
 
 const workspaceFsSuggestBodySchema = fsSuggestRequestSchema.extend({
   workspace: z.string().min(1),
+  stream: z.boolean().default(false),
 });
 
 const rootFsSuggestBodySchema = fsSuggestRequestSchema.extend({
   roots: z.array(z.string().min(1)).min(1).max(32),
+  stream: z.boolean().default(false),
 });
 
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
@@ -162,8 +179,8 @@ function acquireLocalRootedFs(
   try {
     const hostFs = lease.environment.fs!;
     const context = { workspaceId, cwd: roots.workDir };
-    const git = new WorkspaceGitService(context, { current: core.accessor.get(IGitService), onDidChange: Event.None as Event<void> });
-    const fs = new WorkspaceFsService(context, { additionalDirs: roots.additionalDirs }, hostFs, environments, core.accessor.get(ITelemetryService), git);
+    const git = new WorkspaceGitService({ primary: roots.workDir }, { current: core.accessor.get(IGitService), onDidChange: Event.None as Event<void> });
+    const fs = new WorkspaceFsService(context, { primary: roots.workDir, additionalDirs: roots.additionalDirs }, hostFs, environments, core.accessor.get(ITelemetryService), git);
     return { fs, hostFs, lease, environmentId: LOCAL_ENVIRONMENT_ID };
   } catch (error) {
     lease.dispose();
@@ -187,6 +204,64 @@ async function resolveWorkspaceFs(
     }
   }
   return acquireLocalRootedFs(core, ws.id, { workDir: ws.root, additionalDirs: ws.additionalDirs }, required);
+}
+
+async function sendSuggestStream(
+  scope: FsScope,
+  request: FsSuggestRequest,
+  reply: FsPostReply,
+  requestId: string,
+): Promise<void> {
+  if (reply.hijack === undefined || reply.raw === undefined) throw new Error('streaming replies are unavailable');
+  reply.hijack();
+  const raw = reply.raw;
+  const corsHeaders: Record<string, string | number | readonly string[]> = {};
+  for (const name of [
+    'Access-Control-Allow-Origin',
+    'Access-Control-Allow-Methods',
+    'Access-Control-Allow-Headers',
+    'Vary',
+  ]) {
+    const value = reply.getHeader?.(name);
+    if (value !== undefined) corsHeaders[name] = value;
+  }
+  raw.writeHead(200, {
+    ...corsHeaders,
+    'Content-Type': 'application/x-ndjson; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    'X-Accel-Buffering': 'no',
+  });
+  const controller = new AbortController();
+  let finished = false;
+  raw.on('close', () => {
+    if (!finished) controller.abort();
+  });
+  const write = (phase: string, data: unknown): void => {
+    raw.write(`${JSON.stringify(okEnvelope({ phase, ...data as object }, requestId))}\n`);
+  };
+  try {
+    if (scope.fs.suggestStream === undefined) {
+      write('final', await scope.fs.suggest(request));
+    } else {
+      for await (const event of scope.fs.suggestStream(request, controller.signal)) {
+        write(event.phase, event.response);
+      }
+    }
+  } catch (error) {
+    const wasAborted = controller.signal.aborted;
+    controller.abort();
+    if (!wasAborted) {
+      write('error', {
+        error: {
+          code: isError2(error) ? error.code : ErrorCode.INTERNAL_ERROR,
+          message: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  } finally {
+    finished = true;
+    raw.end();
+  }
 }
 
 export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
@@ -443,7 +518,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       operationId: 'workspaceFsSuggest',
     },
     async (req, reply) => {
-      const { workspace, ...suggestRequest } = req.body;
+      const { workspace, stream, ...suggestRequest } = req.body;
       let environmentFs: FsScope | undefined;
       try {
         environmentFs = await resolveWorkspaceFs(core, workspace, ['fs']);
@@ -457,8 +532,12 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
           );
           return;
         }
-        const data = await environmentFs.fs.suggest(suggestRequest);
-        reply.send(okEnvelope(data, req.id));
+        if (stream) {
+          await sendSuggestStream(environmentFs, suggestRequest, reply, req.id);
+        } else {
+          const data = await environmentFs.fs.suggest(suggestRequest);
+          reply.send(okEnvelope(data, req.id));
+        }
       } catch (error) {
         sendMappedError(reply, req, error);
       } finally {
@@ -490,7 +569,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       operationId: 'fsSuggest',
     },
     async (req, reply) => {
-      const { roots, ...suggestRequest } = req.body;
+      const { roots, stream, ...suggestRequest } = req.body;
       for (const root of roots) {
         if (!isAbsolute(root)) {
           reply.send(
@@ -518,8 +597,12 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
             });
           }
         }
-        const data = await environmentFs.fs.suggest(suggestRequest);
-        reply.send(okEnvelope(data, req.id));
+        if (stream) {
+          await sendSuggestStream(environmentFs, suggestRequest, reply, req.id);
+        } else {
+          const data = await environmentFs.fs.suggest(suggestRequest);
+          reply.send(okEnvelope(data, req.id));
+        }
       } catch (error) {
         sendMappedError(reply, req, error);
       } finally {
@@ -541,6 +624,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       rawResponse: {
         200: { type: 'string', format: 'binary' },
       },
+      rawErrorStatus: true,
       errors: {
         [ErrorCode.VALIDATION_FAILED]: {},
         [ErrorCode.SESSION_NOT_FOUND]: {},
@@ -560,20 +644,28 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
 
       const DOWNLOAD_SUFFIX = ':download';
       if (!wildcard.endsWith(DOWNLOAD_SUFFIX)) {
-        reply.send(
+        sendRawError(
+          reply as FsDownloadReply,
           errEnvelope(ErrorCode.VALIDATION_FAILED, `unsupported action: ${wildcard}`, req.id),
         );
         return;
       }
       const relPath = wildcard.slice(0, -DOWNLOAD_SUFFIX.length);
       if (relPath.length === 0) {
-        reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, 'path is empty', req.id));
+        sendRawError(reply as FsDownloadReply, errEnvelope(ErrorCode.VALIDATION_FAILED, 'path is empty', req.id));
         return;
       }
 
-      const session = await resumeSessionById(core.accessor, session_id);
+      let session: Awaited<ReturnType<typeof resumeSessionById>>;
+      try {
+        session = await resumeSessionById(core.accessor, session_id);
+      } catch (error) {
+        sendMappedError(reply, req, error, true);
+        return;
+      }
       if (session === undefined) {
-        reply.send(
+        sendRawError(
+          reply as FsDownloadReply,
           errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${session_id} does not exist`, req.id),
         );
         return;
@@ -589,7 +681,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
         );
       } catch (error) {
         environmentFs?.lease.dispose();
-        sendMappedError(reply, req, error);
+        sendMappedError(reply, req, error, true);
         return;
       }
 
@@ -605,10 +697,8 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
 
       r.header('etag', resolved.etag);
       r.header('last-modified', resolved.modifiedAt.toUTCString());
-      r.header(
-        'content-disposition',
-        `attachment; filename="${sanitizeFilename(resolved.relative)}"`,
-      );
+      const base = resolved.relative.split('/').at(-1) ?? resolved.relative;
+      r.header('content-disposition', buildContentDisposition(base, resolved.mime, 'attachment'));
       r.type(resolved.mime);
 
       const rangeHeader = pickHeader(headers, 'range');
@@ -690,7 +780,7 @@ export function createEnvironmentReadStream(
 }
 
 type Req = { id: string; body: unknown };
-type Reply = { send(payload: unknown): unknown };
+type Reply = FsPostReply;
 
 async function handleList(fs: IWorkspaceFsService, req: Req, reply: Reply): Promise<void> {
   const parsed = fsListRequestSchema.safeParse(req.body ?? {});
@@ -876,41 +966,50 @@ async function handleOpenIn(fs: IWorkspaceFsService, sessionId: string, req: Req
   reply.send(okEnvelope({ opened: true as const }, req.id));
 }
 
-function sendMappedError(reply: Reply, req: { id: string }, err: unknown): void {
+export function sendMappedError(reply: Reply, req: { id: string }, err: unknown, rawResponse = false): void {
+  if (rawResponse) {
+    const rawReply = reply as FsDownloadReply;
+    reply = {
+      send: (payload) => sendRawError(rawReply, payload as { code: ErrorCode }),
+    };
+  }
   const requestId = req.id;
   const log = requestLog(req);
   if (sendEnvironmentError(reply, requestId, err)) return;
   if (isError2(err)) {
     switch (err.code) {
       case ErrorCodes.FS_PATH_ESCAPES:
-        reply.send(errEnvelope(ErrorCode.FS_PATH_ESCAPES_SESSION, err.message, requestId, err.stack));
+        reply.send(errEnvelope(ErrorCode.FS_PATH_ESCAPES_SESSION, err.message, requestId));
         return;
       case ErrorCodes.FS_PATH_NOT_FOUND:
-        reply.send(errEnvelope(ErrorCode.FS_PATH_NOT_FOUND, err.message, requestId, err.stack));
+        reply.send(errEnvelope(ErrorCode.FS_PATH_NOT_FOUND, err.message, requestId));
         return;
       case ErrorCodes.FS_IS_DIRECTORY:
-        reply.send(errEnvelope(ErrorCode.FS_IS_DIRECTORY, err.message, requestId, err.stack));
+        reply.send(errEnvelope(ErrorCode.FS_IS_DIRECTORY, err.message, requestId));
         return;
       case ErrorCodes.FS_ALREADY_EXISTS:
-        reply.send(errEnvelope(ErrorCode.FS_ALREADY_EXISTS, err.message, requestId, err.stack));
+        reply.send(errEnvelope(ErrorCode.FS_ALREADY_EXISTS, err.message, requestId));
         return;
       case ErrorCodes.FS_IS_BINARY:
-        reply.send(errEnvelope(ErrorCode.FS_IS_BINARY, err.message, requestId, err.stack));
+        reply.send(errEnvelope(ErrorCode.FS_IS_BINARY, err.message, requestId));
         return;
       case ErrorCodes.FS_TOO_LARGE:
-        reply.send(errEnvelope(ErrorCode.FS_TOO_LARGE, err.message, requestId, err.stack));
+        reply.send(errEnvelope(ErrorCode.FS_TOO_LARGE, err.message, requestId));
         return;
       case ErrorCodes.FS_TOO_MANY_RESULTS:
-        reply.send(errEnvelope(ErrorCode.FS_TOO_MANY_RESULTS, err.message, requestId, err.stack));
+        reply.send(errEnvelope(ErrorCode.FS_TOO_MANY_RESULTS, err.message, requestId));
         return;
       case ErrorCodes.FS_GREP_TIMEOUT:
-        reply.send(errEnvelope(ErrorCode.FS_GREP_TIMEOUT, err.message, requestId, err.stack));
+        reply.send(errEnvelope(ErrorCode.FS_GREP_TIMEOUT, err.message, requestId));
         return;
       case ErrorCodes.FS_GIT_UNAVAILABLE:
-        reply.send(errEnvelope(ErrorCode.FS_GIT_UNAVAILABLE, err.message, requestId, err.stack));
+        reply.send(errEnvelope(ErrorCode.FS_GIT_UNAVAILABLE, err.message, requestId));
         return;
       case ErrorCodes.SESSION_NOT_FOUND:
-        reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId, err.stack));
+        reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId));
+        return;
+      case ErrorCodes.CONFIG_INVALID:
+        reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, err.message, requestId, err.stack));
         return;
       case ErrorCodes.WIRE_VERSION_TOO_LOW:
         reply.send(
@@ -918,23 +1017,22 @@ function sendMappedError(reply: Reply, req: { id: string }, err: unknown): void 
             ErrorCode.WIRE_VERSION_TOO_LOW,
             err.message,
             requestId,
-            err.stack,
             err.details,
           ),
         );
         return;
       case ErrorCodes.OS_FS_NOT_FOUND:
       case ErrorCodes.OS_FS_NOT_DIRECTORY:
-        reply.send(errEnvelope(ErrorCode.FS_PATH_NOT_FOUND, err.message, requestId, err.stack));
+        reply.send(errEnvelope(ErrorCode.FS_PATH_NOT_FOUND, err.message, requestId));
         return;
       case ErrorCodes.OS_FS_IS_DIRECTORY:
-        reply.send(errEnvelope(ErrorCode.FS_IS_DIRECTORY, err.message, requestId, err.stack));
+        reply.send(errEnvelope(ErrorCode.FS_IS_DIRECTORY, err.message, requestId));
         return;
       case ErrorCodes.OS_FS_ALREADY_EXISTS:
-        reply.send(errEnvelope(ErrorCode.FS_ALREADY_EXISTS, err.message, requestId, err.stack));
+        reply.send(errEnvelope(ErrorCode.FS_ALREADY_EXISTS, err.message, requestId));
         return;
       case ErrorCodes.OS_FS_PERMISSION_DENIED:
-        reply.send(errEnvelope(ErrorCode.FS_PERMISSION_DENIED, err.message, requestId, err.stack));
+        reply.send(errEnvelope(ErrorCode.FS_PERMISSION_DENIED, err.message, requestId));
         return;
     }
   }
@@ -944,7 +1042,6 @@ function sendMappedError(reply: Reply, req: { id: string }, err: unknown): void 
       ErrorCode.INTERNAL_ERROR,
       err instanceof Error ? err.message : String(err),
       requestId,
-      err instanceof Error ? err.stack : undefined,
     ),
   );
 }
@@ -977,10 +1074,4 @@ function buildValidationEnvelope(
     request_id: requestId,
     details,
   };
-}
-
-function sanitizeFilename(rel: string): string {
-  const segs = rel.split('/');
-  const base = segs.at(-1) ?? rel;
-  return base.replaceAll('"', '\\"');
 }

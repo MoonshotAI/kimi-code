@@ -783,7 +783,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const parsed = fsSuggestRequestSchema.safeParse({
       query: input.query,
       limit: input.limit ?? 50,
-      follow_gitignore: true,
+      follow_gitignore: input.followGitignore ?? true,
       show_hidden: false,
     });
     if (!parsed.success) {
@@ -2504,7 +2504,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const agent = await this.agentScope(input.sessionId);
     await agent.accessor
       .get(IAgentSkillService)
-      .activate({ name: input.name, args: input.args });
+      .activate({ name: input.name, path: input.path, args: input.args });
   }
 
   /**

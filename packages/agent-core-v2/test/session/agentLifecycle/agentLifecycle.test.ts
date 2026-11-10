@@ -19,6 +19,11 @@ import { SessionMediaStoreService } from '#/agent/media/sessionMediaStoreService
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import '#/agent/permissionMode/permissionModeService';
+import { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
+import '#/agent/permissionRules/permissionRulesService';
+import { PERMISSION_SECTION } from '#/agent/permissionRules/configSection';
+import { IProjectPermissionRulesService } from '#/agent/permissionRules/projectPermissionRules';
+
 import {
   permissionModeConfiguredKey,
   permissionModeKey,
@@ -95,6 +100,7 @@ import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkdir } from '#/session/workdir/workdir';
+import { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
 import { ISessionMetadata, type AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { createWireMetadataRecord, type WireRecord } from '#/wire/record';
 import { IWireService } from '#/wire/wire';
@@ -118,6 +124,7 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import '#/agent/toolActivation/toolActivationService';
 import { IAgentMediaToolsRegistrar } from '#/agent/media/mediaTools';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { EnvironmentBinding } from '#/environment/environment';
 import { EnvironmentError } from '#/environment/environmentRegistry';
@@ -300,11 +307,19 @@ describe('AgentLifecycleService', () => {
       workspaceId: 'ws_test',
       sessionDir: '/tmp/kimi-agentLifecycle-test',
       metaScope: 'test',
+      cwd: '/tmp/kimi-agentLifecycle-work',
       scope: (subKey?: string) =>
         subKey === undefined || subKey === ''
           ? 'sessions/ws_test/sess_test'
           : `sessions/ws_test/sess_test/${subKey}`,
     } as unknown as ISessionContext);
+    ix.stub(ISessionWorkspaceInfo, {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      primaryByWorkspace: {},
+      additionalDirs: [],
+      onDidChange: Event.None,
+    } as ISessionWorkspaceInfo);
     ix.stub(IEnvironmentService, {
       onDidChange: () => ({ dispose: () => {} }),
       _serviceBrand: undefined,
@@ -320,6 +335,15 @@ describe('AgentLifecycleService', () => {
       environmentId: 'local',
       fs: undefined,
     } as unknown as ISessionWorkdir);
+    ix.stub(IWorkspaceTrust, {
+      get: async () => false,
+    } as unknown as IWorkspaceTrust);
+    ix.stub(IProjectPermissionRulesService, {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      rules: [],
+      appendRules: async () => {},
+    });
     ix.stub(IWorkspaceInstanceManager, {
       _serviceBrand: undefined,
       onDidChange: () => ({ dispose: () => {} }),
@@ -356,6 +380,7 @@ describe('AgentLifecycleService', () => {
     ix.stub(IProviderDiscoveryService, stubProviderDiscovery());
     ix.stub(IConfigService, {
       ready: Promise.resolve(),
+      assertValid: () => {},
       get: (() => undefined) as IConfigService['get'],
       onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
     } as unknown as IConfigService);
@@ -1043,6 +1068,7 @@ describe('AgentLifecycleService', () => {
   it('applies the configured permission mode when the Agent has no persisted mode', async () => {
     ix.stub(IConfigService, {
       ready: Promise.resolve(),
+      assertValid: () => {},
       get: (() => 'auto') as IConfigService['get'],
       onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
     } as unknown as IConfigService);
@@ -1053,6 +1079,58 @@ describe('AgentLifecycleService', () => {
     expect(svc.handleOf('main')!.accessor.get(IAgentStateService).get(permissionModeKey)).toBe('auto');
   });
 
+  it('loads configured permission rules into a new Agent', async () => {
+    const rule = { decision: 'deny', scope: 'user', pattern: 'Read(/secret.txt)' };
+    ix.stub(IConfigService, {
+      ready: Promise.resolve(),
+      assertValid: () => {},
+      get: ((section: unknown) =>
+        section === PERMISSION_SECTION ? { rules: [rule] } : undefined) as IConfigService['get'],
+      onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
+    } as unknown as IConfigService);
+
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'main' });
+
+    expect(svc.handleOf('main')!.accessor.get(IAgentPermissionRulesService).rules).toEqual([rule]);
+  });
+
+  it('loads configured permission rules into a subagent', async () => {
+    const rule = { decision: 'deny', scope: 'user', pattern: 'Bash(curl *)' };
+    ix.stub(IConfigService, {
+      ready: Promise.resolve(),
+      assertValid: () => {},
+      get: ((section: unknown) =>
+        section === PERMISSION_SECTION ? { rules: [rule] } : undefined) as IConfigService['get'],
+      onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
+    } as unknown as IConfigService);
+
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'agent-1' });
+
+    expect(svc.handleOf('agent-1')!.accessor.get(IAgentPermissionRulesService).rules).toEqual([rule]);
+  });
+
+  it('loads the current permission rules when restoring an Agent', async () => {
+    const rule = { decision: 'deny', scope: 'user', pattern: 'Bash(curl *)' };
+    ix.stub(IAppendLogStore, recordingAppendLog([
+      createWireMetadataRecord(1),
+      { type: 'permission.set_mode', mode: 'manual', time: 2 },
+    ]).store);
+    ix.stub(IConfigService, {
+      ready: Promise.resolve(),
+      assertValid: () => {},
+      get: ((section: unknown) =>
+        section === PERMISSION_SECTION ? { rules: [rule] } : 'manual') as IConfigService['get'],
+      onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
+    } as unknown as IConfigService);
+
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'main' });
+
+    expect(svc.handleOf('main')!.accessor.get(IAgentPermissionRulesService).rules).toEqual([rule]);
+  });
+
   it('keeps the restored permission mode instead of overwriting it with the default', async () => {
     ix.stub(IAppendLogStore, recordingAppendLog([
       createWireMetadataRecord(1),
@@ -1060,6 +1138,7 @@ describe('AgentLifecycleService', () => {
     ]).store);
     ix.stub(IConfigService, {
       ready: Promise.resolve(),
+      assertValid: () => {},
       get: (() => 'auto') as IConfigService['get'],
       onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
     } as unknown as IConfigService);
@@ -1221,6 +1300,7 @@ describe('AgentLifecycleService', () => {
     ]).store);
     ix.stub(IConfigService, {
       ready: Promise.resolve(),
+      assertValid: () => {},
       get: ((section: unknown) =>
         section === CRON_SECTION ? { disabled: true } : undefined) as IConfigService['get'],
       onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],

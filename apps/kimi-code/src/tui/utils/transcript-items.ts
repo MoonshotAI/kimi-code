@@ -15,13 +15,16 @@ import {
 } from '#/tui/components/messages/tool-renderers/chip';
 import { parseWaitForOutput } from '#/tui/components/messages/tool-renderers/wait-for';
 import {
+  DENSITY,
   transcriptGroupingActive,
-  type TranscriptGroupTools,
+  type ToolFolding,
   type TranscriptPresentationOptions,
 } from '#/tui/config';
-import type { ToolResultBlockData } from '#/tui/types';
+import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 import { FOREGROUND_BASH_HINT_DELAY_MS } from '#/tui/constant/rendering';
+import { STREAMING_ARGS_PREVIEW_MAX_CHARS, UNNAMED_TOOL_CALL_NAME } from '#/tui/constant/streaming';
 import { decodeMcpToolName } from '#/tui/utils/mcp-tool-name';
+import { isToolCallId, type ToolCallId } from '#/tui/utils/turn-timeline';
 import { isReadonlyBash } from '#/utils/readonly-bash';
 
 export interface OutcomeCounts {
@@ -52,7 +55,12 @@ export type SummaryEvent =
   | { readonly kind: 'other'; readonly outcome: OutcomeCounts }
   | { readonly kind: 'silent'; readonly outcome: OutcomeCounts };
 
-export type FoldClass = 'thinking' | 'explore' | 'all';
+type FoldClass = 'thinking' | 'explore' | 'all';
+
+export type FoldTraits =
+  | { readonly kind: FoldClass }
+  | { readonly kind: 'command'; readonly argsComplete: boolean; readonly readonly: boolean }
+  | { readonly kind: 'unnamed' };
 
 export interface ItemLabel {
   readonly verb: string;
@@ -65,7 +73,7 @@ export type ItemStat =
   | { readonly kind: 'note'; readonly text: string };
 
 export type ItemStatus =
-  | { readonly kind: 'running'; readonly startedAtMs: number }
+  | { readonly kind: 'running' }
   | { readonly kind: 'failed' }
   | { readonly kind: 'interrupted' }
   | { readonly kind: 'done'; readonly stat?: ItemStat };
@@ -77,7 +85,8 @@ export interface LogicalTranscriptItem {
   readonly sourceIndex: number;
   readonly projectionVersion: number;
   readonly family: 'thinking' | 'tool';
-  readonly foldClass: FoldClass;
+  readonly fold: FoldTraits;
+  readonly callId?: ToolCallId;
   readonly current: boolean;
   readonly event: SummaryEvent;
   readonly label: ItemLabel;
@@ -110,7 +119,7 @@ export type TranscriptItem =
 
 interface ItemInspection {
   readonly version: number;
-  readonly groupTools: TranscriptGroupTools;
+  readonly folding: ToolFolding;
   readonly items: readonly TranscriptItem[];
 }
 
@@ -133,8 +142,8 @@ const TOOL_PROFILES: Readonly<Record<string, ToolProfile>> = {
   ReadMediaFile: { foldClass: 'explore', event: 'read' },
   Grep: { foldClass: 'explore', event: 'search' },
   Glob: { foldClass: 'explore', event: 'search' },
-  FetchURL: { foldClass: 'all', event: 'fetch' },
-  WebSearch: { foldClass: 'all', event: 'webSearch' },
+  FetchURL: { foldClass: 'explore', event: 'fetch' },
+  WebSearch: { foldClass: 'explore', event: 'webSearch' },
   Skill: { foldClass: 'explore', event: 'skill' },
   TaskList: { foldClass: 'explore', event: 'query' },
   GetGoal: { foldClass: 'explore', event: 'query' },
@@ -244,16 +253,17 @@ export class TranscriptItemInspector {
     if (!transcriptGroupingActive(options)) {
       return children.map((child, index) => boundary(child, index));
     }
-    return children.flatMap((child, index) => this.cached(child, index, options.groupTools));
+    const { folding } = DENSITY[options.toolCallDensity];
+    return children.flatMap((child, index) => this.cached(child, index, folding));
   }
 
   private cached(
     component: Component,
     sourceIndex: number,
-    groupTools: TranscriptGroupTools,
+    folding: ToolFolding,
   ): readonly TranscriptItem[] {
     if (component instanceof UserMessageComponent) return [boundary(component, sourceIndex, 'text')];
-    if (groupTools !== 'off' && component instanceof SkillActivationComponent && component.loadedByModel) {
+    if (folding !== 'none' && component instanceof SkillActivationComponent && component.loadedByModel) {
       return [transparent(component, sourceIndex)];
     }
     if (
@@ -268,7 +278,7 @@ export class TranscriptItemInspector {
     }
     const version = transcriptProjectionVersion(component);
     const cached = this.cache.get(component);
-    if (cached?.version === version && cached.groupTools === groupTools) {
+    if (cached?.version === version && cached.folding === folding) {
       return cached.items.map((item) => ({ ...item, sourceIndex }));
     }
     let items: readonly TranscriptItem[];
@@ -281,12 +291,12 @@ export class TranscriptItemInspector {
     else if (component instanceof ToolCallComponent) {
       const role = TOOL_BOUNDARY_ROLES[component.toolCallView.name];
       items = role === undefined
-        ? [this.inspectTool(component, sourceIndex, groupTools)]
+        ? [this.inspectTool(component, sourceIndex)]
         : [boundary(component, sourceIndex, role)];
     }
-    else if (component instanceof ReadGroupComponent) items = this.inspectReadGroup(component, sourceIndex, groupTools);
+    else if (component instanceof ReadGroupComponent) items = this.inspectReadGroup(component, sourceIndex, folding);
     else items = [boundary(component, sourceIndex, 'card')];
-    this.cache.set(component, { version, groupTools, items });
+    this.cache.set(component, { version, folding, items });
     return items.map((item) => ({ ...item, sourceIndex }));
   }
 
@@ -300,7 +310,7 @@ export class TranscriptItemInspector {
       sourceIndex,
       projectionVersion: component.transcriptProjectionVersion,
       family: 'thinking',
-      foldClass: 'thinking',
+      fold: { kind: 'thinking' },
       current: elapsed === undefined,
       event: { kind: 'thought', durationMs },
       label: {
@@ -308,27 +318,15 @@ export class TranscriptItemInspector {
         rowVerb: 'Thought',
         subject: durationMs === undefined ? undefined : `for ${formatDuration(durationMs)}`,
       },
-      status: elapsed === undefined
-        ? { kind: 'running', startedAtMs: component.startedAtMs }
-        : { kind: 'done' },
+      status: elapsed === undefined ? { kind: 'running' } : { kind: 'done' },
     };
   }
 
-  private inspectTool(
-    component: ToolCallComponent,
-    sourceIndex: number,
-    groupTools: TranscriptGroupTools,
-  ): LogicalTranscriptItem {
+  private inspectTool(component: ToolCallComponent, sourceIndex: number): LogicalTranscriptItem {
     const profile = this.profileFor(component);
     const outcome = this.inspectOutcome(component);
     const current = this.isCurrent(component);
     const toolCall = component.toolCallView;
-    let foldClass = profile.foldClass;
-    if (toolCall.name === 'Bash' && toolCall.streamingArguments === undefined && groupTools === 'explore') {
-      foldClass = isReadonlyBash(typeof toolCall.args['command'] === 'string' ? toolCall.args['command'] : '')
-        ? 'explore'
-        : 'all';
-    }
     const event = this.inspectEvent(component, profile, outcome);
     return {
       kind: 'logical',
@@ -337,23 +335,22 @@ export class TranscriptItemInspector {
       sourceIndex,
       projectionVersion: component.transcriptProjectionVersion,
       family: profile.foldClass === 'thinking' ? 'thinking' : 'tool',
-      foldClass,
+      fold: foldTraits(toolCall, profile),
+      callId: isToolCallId(toolCall.id) ? toolCall.id : undefined,
       current,
       event,
       label: toolLabel(component),
-      status: current
-        ? { kind: 'running', startedAtMs: component.startedAtMs }
-        : finishedStatus(outcome, toolStat(component, event)),
+      status: current ? { kind: 'running' } : finishedStatus(outcome, toolStat(component, event)),
     };
   }
 
   private inspectReadGroup(
     component: ReadGroupComponent,
     sourceIndex: number,
-    groupTools: TranscriptGroupTools,
+    folding: ToolFolding,
   ): readonly TranscriptItem[] {
     const tools = component.getToolComponents();
-    if (groupTools !== 'off') return tools.map((tool) => this.inspectTool(tool, sourceIndex, groupTools));
+    if (folding !== 'none') return tools.map((tool) => this.inspectTool(tool, sourceIndex));
     const first = tools[0];
     const outcome = combineOutcomes(tools.map((tool) => this.inspectOutcome(tool)));
     const path = first?.getReadSnapshot().filePath ?? first?.toolCallView.id ?? '';
@@ -365,13 +362,11 @@ export class TranscriptItemInspector {
       sourceIndex,
       projectionVersion: component.transcriptProjectionVersion,
       family: 'tool',
-      foldClass: 'explore',
+      fold: { kind: 'explore' },
       current: running !== undefined,
       event: { kind: 'read', path, outcome },
       label: { verb: 'Read', rowVerb: 'Read', subject: nonEmpty(path) },
-      status: running === undefined
-        ? finishedStatus(outcome, undefined)
-        : { kind: 'running', startedAtMs: running.startedAtMs },
+      status: running === undefined ? finishedStatus(outcome, undefined) : { kind: 'running' },
     }];
   }
 
@@ -448,6 +443,31 @@ export function formatDuration(ms: number): string {
   const seconds = Math.max(1, Math.round(ms / 1000));
   if (seconds < 60) return `${String(seconds)}s`;
   return `${String(Math.floor(seconds / 60))}m ${String(seconds % 60)}s`;
+}
+
+function foldTraits(toolCall: Readonly<ToolCallBlockData>, profile: ToolProfile): FoldTraits {
+  const argsComplete = argumentsComplete(toolCall.streamingArguments);
+  if (profile.event === 'command') {
+    const command = toolCall.args['command'];
+    return {
+      kind: 'command',
+      argsComplete,
+      readonly: argsComplete && isReadonlyBash(typeof command === 'string' ? command : ''),
+    };
+  }
+  if (!argsComplete && toolCall.name === UNNAMED_TOOL_CALL_NAME) return { kind: 'unnamed' };
+  return { kind: profile.foldClass };
+}
+
+function argumentsComplete(streamed: string | undefined): boolean {
+  if (streamed === undefined) return true;
+  if (streamed.length > STREAMING_ARGS_PREVIEW_MAX_CHARS || !streamed.trimEnd().endsWith('}')) return false;
+  try {
+    const parsed: unknown = JSON.parse(streamed);
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed);
+  } catch {
+    return false;
+  }
 }
 
 function finishedStatus(outcome: OutcomeCounts, stat: ItemStat | undefined): ItemStatus {

@@ -6,11 +6,12 @@ import { CompactionComponent } from '../components/dialogs/compaction';
 import { ReadGroupComponent } from '../components/messages/read-group';
 import { ThinkingComponent } from '../components/messages/thinking';
 import { ToolCallComponent } from '../components/messages/tool-call';
-import { STREAMING_UI_FLUSH_MS } from '../constant/streaming';
+import { STREAMING_UI_FLUSH_MS, UNNAMED_TOOL_CALL_NAME } from '../constant/streaming';
 import { hasDispose } from '../utils/component-capabilities';
 import { appendStreamingArgsPreview, parseStreamingArgs } from '../utils/event-payload';
 import { notifyTerminalOnce } from '../utils/terminal-notification';
 import { nextTranscriptId } from '../utils/transcript-id';
+import { TurnTimeline } from '../utils/turn-timeline';
 import type {
   AppState,
   Elapsed,
@@ -76,6 +77,8 @@ export class StreamingUIController {
     solo?: ToolCallComponent;
     group?: ReadGroupComponent;
   } | null = null;
+
+  readonly timeline = new TurnTimeline();
 
   constructor(private readonly host: StreamingUIHost) {}
 
@@ -358,7 +361,7 @@ export class StreamingUIController {
   ): void {
     const existing = this._streamingToolCallArguments.get(id);
     const argumentsText = appendStreamingArgsPreview(existing?.argumentsText, argumentsPart);
-    const name = eventName ?? existing?.name ?? this._activeToolCalls.get(id)?.name ?? 'Tool';
+    const name = eventName ?? existing?.name ?? this._activeToolCalls.get(id)?.name ?? UNNAMED_TOOL_CALL_NAME;
     const startedAtMs = existing?.startedAtMs ?? Date.now();
     this._streamingToolCallArguments.set(id, { name, argumentsText, startedAtMs });
     this.pendingToolCallFlushIds.add(id);
@@ -370,7 +373,7 @@ export class StreamingUIController {
     const streaming = this._streamingToolCallArguments.get(id);
     if (streaming === undefined) return undefined;
     return {
-      name: streaming.name ?? this._activeToolCalls.get(id)?.name ?? 'Tool',
+      name: streaming.name ?? this._activeToolCalls.get(id)?.name ?? UNNAMED_TOOL_CALL_NAME,
       args: parseStreamingArgs(streaming.argumentsText),
       argumentsText: streaming.argumentsText,
       startedAtMs: streaming.startedAtMs,
@@ -576,6 +579,7 @@ export class StreamingUIController {
   }
 
   finalizeTurn(sendQueued: (item: QueuedMessage) => void): void {
+    this.timeline.turnEnded();
     const { state } = this.host;
     if (state.appState.streamingPhase === 'idle') return;
     this.host.deferUserMessages = false;
@@ -792,7 +796,7 @@ export class StreamingUIController {
     if (streaming === undefined) return;
     const toolCall: ToolCallBlockData = {
       id,
-      name: streaming.name ?? this._activeToolCalls.get(id)?.name ?? 'Tool',
+      name: streaming.name ?? this._activeToolCalls.get(id)?.name ?? UNNAMED_TOOL_CALL_NAME,
       args: parseStreamingArgs(streaming.argumentsText),
       streamingArguments: streaming.argumentsText,
       streamingStartedAtMs: streaming.startedAtMs,

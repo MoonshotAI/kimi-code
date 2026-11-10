@@ -244,7 +244,7 @@ function sameFinishedForm(left: FinishedThinkingForm, right: FinishedThinkingFor
 function openedTitle(title: string, width: number): string {
   const dim = (text: string): string => currentTheme.fg('textDim', text);
   return renderHeaderContent({
-    head: `${dim(STATUS_BULLET.trimEnd())} `,
+    head: '  ',
     flex: { text: title, style: dim, keep: 'head' },
     tail: '',
   }, width);

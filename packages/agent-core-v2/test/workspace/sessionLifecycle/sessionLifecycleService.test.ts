@@ -53,7 +53,7 @@ describe('SessionLifecycleService', () => {
         undefined,
         { workspaceId: 'wm_test', persistenceScope: 'sessions/wm_test' },
         { homeDir: '/home' },
-        { ready },
+        { ready, assertValid: () => {}, get: () => undefined },
         undefined,
         undefined,
         undefined,
@@ -108,5 +108,17 @@ describe('SessionLifecycleService', () => {
       service.dispose();
       createScopedChildHandleMock.mockReset();
     }
+  });
+
+  it('keeps remote resume cwd independent from the local primary', () => {
+    const service = Object.assign(Object.create(SessionLifecycleService.prototype), {
+      workspaceContext: { workspaceId: 'workspace', meta: { root: '/new-primary' } },
+    }) as unknown as {
+      sessionWorkDir(fallbackCwd: string, environment: { environmentId: string; cwd?: string } | undefined): string;
+    };
+
+    expect(service.sessionWorkDir('/local-anchor', { environmentId: 'ssh-dev', cwd: '/srv/app' })).toBe('/local-anchor');
+    expect(service.sessionWorkDir('/old', undefined)).toBe('/new-primary');
+    expect(service.sessionWorkDir('/old', { environmentId: 'local', cwd: '/explicit' })).toBe('/explicit');
   });
 });

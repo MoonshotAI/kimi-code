@@ -29,7 +29,7 @@ describe('update preference commands', () => {
           editorCommand: null,
           notifications: { enabled: true, condition: 'unfocused' as const },
           upgrade: { autoInstall: true },
-          transcript: { groupTools: 'auto' as const, groupThinking: true as const },
+          transcript: { toolCallDensity: 'compact' as const, thinking: 'grouped' as const },
         },
         theme: { palette: darkColors },
       },
@@ -44,6 +44,7 @@ describe('update preference commands', () => {
       theme: 'auto',
       editorCommand: null,
       disablePasteBurst: false,
+      copyOnSelect: true,
       renderLatex: true,
       cacheExpiryHint: true,
       autoSessionTitle: true,
@@ -51,7 +52,7 @@ describe('update preference commands', () => {
       upgrade: { autoInstall: false },
       statusLine: { items: null, command: null },
       markdown: { mermaid: 'final' },
-      transcript: { groupTools: 'auto', groupThinking: true },
+      transcript: { toolCallDensity: 'compact', thinking: 'grouped' },
     });
     expect(setAppState).toHaveBeenCalledWith({ upgrade: { autoInstall: false } });
     expect(track).toHaveBeenCalledWith('upgrade_preference_changed', { auto_install: false });
@@ -66,6 +67,7 @@ describe('update preference commands', () => {
           theme: 'auto' as const,
           editorCommand: null,
           renderLatex: false,
+          copyOnSelect: false,
           autoSessionTitle: false,
           notifications: { enabled: true, condition: 'unfocused' as const },
           upgrade: { autoInstall: true },
@@ -80,7 +82,11 @@ describe('update preference commands', () => {
     await applyUpdatePreferenceChoice(host, false);
 
     expect(mocks.saveTuiConfig).toHaveBeenCalledWith(
-      expect.objectContaining({ renderLatex: false, autoSessionTitle: false }),
+      expect.objectContaining({
+        renderLatex: false,
+        copyOnSelect: false,
+        autoSessionTitle: false,
+      }),
     );
   });
 });

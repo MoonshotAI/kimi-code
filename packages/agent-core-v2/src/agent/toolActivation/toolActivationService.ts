@@ -37,7 +37,6 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
         void this.activate();
       }),
     );
-    this._register(this.environment.onDidChange(() => this.refreshEnvironmentRecords()));
     this._register(
       this.contributions.onDidChange((change) => {
         this.activateRecords(change.added);
@@ -80,24 +79,6 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
         this._register(registration);
       }
     });
-  }
-
-  private refreshEnvironmentRecords(): void {
-    for (const record of this.contributions.items) {
-      if (!this.environmentAllows(record)) this.deactivateRecord(record);
-    }
-    this.activateRecords(this.contributions.items);
-  }
-
-  private environmentAllows(record: AgentToolContribution): boolean {
-    const required = record.options.requiredEnvironmentCapabilities;
-    if (required === undefined) return true;
-    if (this.environment.isAvailable(required)) return true;
-    try {
-      return typeof this.environment.inspect().connect === 'function';
-    } catch {
-      return false;
-    }
   }
 
   private deactivateRecord(record: AgentToolContribution): void {

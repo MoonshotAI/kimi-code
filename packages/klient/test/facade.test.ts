@@ -322,7 +322,7 @@ describe('agent skill routing', () => {
       await expect(
         agent.promptWithSkills({
           input: [{ type: 'text', text: 'Review this change.' }],
-          skills: [{ name: 'review', args: 'src/app.ts' }],
+          skills: [{ name: 'review', path: '/work/B/review/SKILL.md', args: 'src/app.ts' }],
           steerIfActive,
         }),
       ).resolves.toEqual({
@@ -337,7 +337,7 @@ describe('agent skill routing', () => {
         args: [
           {
             input: [{ type: 'text', text: 'Review this change.' }],
-            skills: [{ name: 'review', args: 'src/app.ts' }],
+            skills: [{ name: 'review', path: '/work/B/review/SKILL.md', args: 'src/app.ts' }],
             steerIfActive,
           },
         ],
@@ -357,6 +357,7 @@ describe('session skills routing', () => {
         description: 'review changes',
         path: '/skills/review/SKILL.md',
         source: 'project',
+        workspaceDir: '/work/B',
       },
     ];
     channel.result = summaries;
@@ -392,14 +393,14 @@ describe('session skills routing', () => {
     const agent = klient.session('s1').agent('main');
 
     channel.result = { turn_id: 3 };
-    await expect(agent.activateSkill({ name: 'review', args: 'src/app.ts' })).resolves.toEqual({
+    await expect(agent.activateSkill({ name: 'review', path: '/work/B/review/SKILL.md', args: 'src/app.ts' })).resolves.toEqual({
       turn_id: 3,
     });
     expect(channel.calls[0]).toEqual({
       scope: { sessionId: 's1', agentId: 'main' },
       service: 'agentSkillService',
       method: 'activate',
-      args: [{ name: 'review', args: 'src/app.ts' }],
+      args: [{ name: 'review', path: '/work/B/review/SKILL.md', args: 'src/app.ts' }],
     });
   });
 
@@ -736,21 +737,26 @@ describe('event hub', () => {
     const channel = new FakeChannel();
     const klient = createKlientFromChannel(channel);
     const archived: unknown[] = [];
+    const restored: unknown[] = [];
     const catalog: unknown[] = [];
 
     const subA = klient.events.on('session.archived', (event) => archived.push(event));
     const subB = klient.events.on('kosong.changed', (event) => catalog.push(event));
+    const subC = klient.events.on('session.restored', (event) => restored.push(event));
     expect(channel.subscriptions).toHaveLength(1);
     expect(channel.subscriptions[0]?.source).toEqual({ kind: 'stream', name: 'events' });
 
     channel.emit(0, { type: 'event.session.archived', payload: { sessionId: 's1' } });
+    channel.emit(0, { type: 'event.session.restored', payload: { sessionId: 's1', workspaceId: 'wd_1' } });
     channel.emit(0, { type: 'event.model_catalog.changed', payload: { changed: [], unchanged: [], failed: [] } });
     channel.emit(0, { type: 'unrelated.type', payload: {} });
     await tick();
     expect(archived).toEqual([{ sessionId: 's1' }]);
+    expect(restored).toEqual([{ sessionId: 's1' }]);
     expect(catalog).toEqual([{ changed: [], unchanged: [], failed: [] }]);
 
     subA.dispose();
+    subC.dispose();
     expect(channel.subscriptions[0]?.dispose).not.toHaveBeenCalled();
     subB.dispose();
     expect(channel.subscriptions[0]?.dispose).toHaveBeenCalledTimes(1);

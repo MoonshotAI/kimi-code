@@ -367,14 +367,10 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
             const cwd = summary.cwd ?? roots.get(summary.workspaceId);
             if (cwd === undefined) continue;
             if (raw.exclude_empty === true && (summary.lastPrompt ?? '').length === 0) continue;
-            if (archivedOnly) {
-              if (!summary.archived) continue;
-              const facts = resolveSessionFacts(core, summary.id);
-              if (raw.busy !== undefined && facts.busy !== raw.busy) continue;
-              collected.push({ summary, cwd, facts });
-            } else {
-              collected.push({ summary, cwd });
-            }
+            if (archivedOnly && !summary.archived) continue;
+            const facts = raw.busy === undefined ? undefined : resolveSessionFacts(core, summary.id);
+            if (facts !== undefined && facts.busy !== raw.busy) continue;
+            collected.push({ summary, cwd, facts });
           }
           if (exhausted || page.nextCursor === undefined) break;
           before = page.nextCursor;
@@ -410,13 +406,9 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
 
       const pageSize = raw.page_size ?? DEFAULT_SESSION_LIST_PAGE_SIZE;
       const { visible, hasMore } = await collect(pageSize);
-      const projected = visible.map(({ summary, cwd, facts }) =>
+      const items = visible.map(({ summary, cwd, facts }) =>
         toWireSession(summary, cwd, facts ?? resolveSessionFacts(core, summary.id)),
       );
-      const items =
-        raw.busy !== undefined && !archivedOnly
-          ? projected.filter((session) => session.busy === raw.busy)
-          : projected;
       reply.send(okEnvelope({ items, has_more: hasMore }, req.id));
     },
   );
@@ -526,6 +518,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.TOWER_MODE_INVALID]: {},
         ...sessionConflictErrors,
       },
       description: 'Update session profile (title, metadata, agent_config)',
@@ -985,9 +978,15 @@ async function compactSessionAction(
   const { core, req, reply, id, body } = ctx;
   await reloadOnStale(core.accessor, id, async () => {
     const agent = await resolveMainAgent(core, id);
-    agent.accessor
+    const started = agent.accessor
       .get(IAgentFullCompactionService)
       .begin({ source: 'manual', instruction: normalizeOptional(body.instruction) });
+    if (!started) {
+      throw new Error2(
+        ErrorCodes.COMPACTION_UNABLE,
+        'A compaction is already running. Wait for it to finish, then retry.',
+      );
+    }
   });
   requestLog(req)?.info({ session_id: id, action: 'compact' }, 'session action completed');
   reply.send(okEnvelope({}, req.id));

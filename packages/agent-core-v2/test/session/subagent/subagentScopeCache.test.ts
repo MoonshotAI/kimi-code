@@ -73,6 +73,7 @@ import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkdir } from '#/session/workdir/workdir';
+import { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
@@ -97,6 +98,7 @@ import {
 import { SessionSubagentScopeCacheService } from '#/session/subagent/subagentScopeCacheService';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
@@ -361,11 +363,19 @@ describe('SessionSubagentScopeCacheService', () => {
       workspaceId: 'ws_test',
       sessionDir: '/tmp/kimi-subagentScopeCache-test',
       metaScope: 'test',
+      cwd: '/tmp/kimi-subagentScopeCache-work',
       scope: (subKey?: string) =>
         subKey === undefined || subKey === ''
           ? 'sessions/ws_test/sess_test'
           : `sessions/ws_test/sess_test/${subKey}`,
     } as unknown as ISessionContext);
+    ix.stub(ISessionWorkspaceInfo, {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      primaryByWorkspace: {},
+      additionalDirs: [],
+      onDidChange: Event.None,
+    } as ISessionWorkspaceInfo);
     ix.stub(IEnvironmentService, {
       onDidChange: () => ({ dispose: () => {} }),
       _serviceBrand: undefined,
@@ -381,6 +391,9 @@ describe('SessionSubagentScopeCacheService', () => {
       environmentId: 'local',
       fs: undefined,
     } as unknown as ISessionWorkdir);
+    ix.stub(IWorkspaceTrust, {
+      get: async () => false,
+    } as unknown as IWorkspaceTrust);
     ix.stub(IWorkspaceInstanceManager, {
       _serviceBrand: undefined,
       onDidChange: () => ({ dispose: () => {} }),

@@ -742,11 +742,11 @@ function sendMappedError(
 ): boolean {
   if (!isError2(err)) return false;
   if (err.code === 'provider.not_found') {
-    reply.send(errEnvelope(ErrorCode.PROVIDER_NOT_FOUND, err.message, requestId, err.stack));
+    reply.send(errEnvelope(ErrorCode.PROVIDER_NOT_FOUND, err.message, requestId));
     return true;
   }
   if (err.code === 'model.not_found') {
-    reply.send(errEnvelope(ErrorCode.MODEL_NOT_FOUND, err.message, requestId, err.stack));
+    reply.send(errEnvelope(ErrorCode.MODEL_NOT_FOUND, err.message, requestId));
     return true;
   }
   return false;
@@ -768,7 +768,7 @@ function sendModelsDevImportError(
   if (!isError2(err)) return false;
   const numeric = MODELS_DEV_IMPORT_ERROR_CODES[err.code];
   if (numeric === undefined) return false;
-  reply.send(errEnvelope(numeric, err.message, requestId, err.stack));
+  reply.send(errEnvelope(numeric, err.message, requestId));
   return true;
 }
 

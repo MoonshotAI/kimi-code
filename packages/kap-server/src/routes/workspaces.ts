@@ -474,7 +474,7 @@ async function resolveTrust(
     );
     return undefined;
   }
-  return core.accessor.get(IWorkspaceTrustStore).forRoot(ws.root);
+  return core.accessor.get(IWorkspaceTrustStore).forRoots([ws.root, ...ws.additionalDirs]);
 }
 
 export async function toWireWorkspace(core: Scope, ws: Workspace): Promise<WorkspaceWire> {
@@ -497,7 +497,6 @@ function buildDuplicateDirEnvelope(index: number, dir: string, requestId: string
     ErrorCode.WORKSPACE_DUPLICATE_DIR,
     `Duplicate source folder: ${directory}`,
     requestId,
-    undefined,
     [{ path: `additional_dirs.${index}`, directory }],
   );
 }

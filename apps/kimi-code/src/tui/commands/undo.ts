@@ -188,7 +188,7 @@ async function showUndoSelector(host: SlashCommandHost): Promise<void> {
       onSelect: (choice) => {
         void undoByCount(host, choice.count).then((undone) => {
           if (undone) {
-            host.restoreInputText(choice.input);
+            host.restoreInputText(choice.input, choice.inlineSkillActivations);
             return;
           }
           host.restoreEditor();
@@ -296,6 +296,7 @@ function createUndoChoices(
     id: entry.id,
     count: anchors.length - index,
     input: formatUndoChoiceInput(entry),
+    inlineSkillActivations: entry.inlineSkillActivations,
     label: formatUndoChoiceLabel(entry),
   }));
 }

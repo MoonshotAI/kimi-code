@@ -1161,7 +1161,7 @@ async function discoverPluginSkills(
 ): Promise<SkillDiscoveryResult> {
   const dirs = manifest?.skills ?? [];
   if (dirs.length === 0) {
-    return { skills: [], skipped: [], scannedRoots: [], scannedDirectories: [] };
+    return { skills: [], variants: [], skipped: [], scannedRoots: [], scannedDirectories: [] };
   }
   const roots: SkillRoot[] = dirs.map((dir) => ({
     path: dir,

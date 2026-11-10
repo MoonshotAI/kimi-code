@@ -137,7 +137,7 @@ async function assertActivatableSkills(
 ): Promise<void> {
   await catalog.ready;
   for (const skill of skills) {
-    const definition = catalog.catalog.getSkill(skill.name);
+    const definition = catalog.catalog.getSkill(skill.name, skill.path);
     if (definition === undefined) {
       throw new Error2(ErrorCodes.SKILL_NOT_FOUND, `Skill "${skill.name}" was not found`);
     }

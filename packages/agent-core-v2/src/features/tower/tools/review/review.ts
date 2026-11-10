@@ -21,6 +21,10 @@ export const TowerReviewToolInputSchema = z
       .optional()
       .describe('Checklist items you verified (e.g. "tests pass", "no secrets")'),
     decision: z.string().describe('The reasoning behind your verdict'),
+    acceptance_tip: z
+      .string()
+      .optional()
+      .describe('Required for tower-recorded artifact acceptance: the completion tip shown in the acceptance-request the human approved'),
   })
   .strict();
 

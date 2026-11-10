@@ -51,7 +51,7 @@ The HTTP status is almost always 200; the business outcome lives in `code`. Exce
 | Provider created, provider catalog imported | 201 |
 | Provider deleted | 204 |
 | Binary/streaming endpoints | 206 (Range) / 304 (ETag unchanged) where supported — capabilities differ per endpoint, see [Binary and streaming endpoints](#binary-and-streaming-endpoints) |
-| `GET /api/v1/files/{file_id}` download errors | real 404 / 500 (still carrying an envelope body) |
+| `GET /api/v1/files/{file_id}`, `/api/v1/fs:content`, and session `:download` errors | real 4xx / 500 (still carrying an envelope body) |
 
 The 201 responses still carry the standard envelope (`code` 0) — only the status line follows the REST convention for resource creation. A 204 response has no body by definition, so a successful delete is reported by the status code itself.
 
@@ -65,7 +65,7 @@ Error codes are grouped by band:
 | `400xx` | Bad request | `40001` validation failed (`details` lists each field), `40003` provider is OAuth-managed, `40006` duplicate workspace source folder |
 | `401xx` | Auth and readiness | `40101` unauthorized, `40110` no provider configured, `40113` model not resolved |
 | `404xx` | Not found | `40401` session, `40408` MCP server, `40409` file path |
-| `409xx` | State conflict | `40901` session busy, `40902` approval already resolved, `40922` page conditions mismatch `page_token`, `40931` session occupied by another client, `40932` session updated by another client |
+| `409xx` | State conflict | `40901` session busy, `40902` approval already resolved, `40922` page conditions mismatch `page_token`, `40931` session occupied by another client, `40932` session updated by another client, `40935` Tower mode cannot be entered |
 | `410xx` | Expired | `41001` approval timed out, `41002` question timed out, `41003` temporary file expired |
 | `413xx` | Size or boundary exceeded | `41302` file read over 10 MB, `41304` path escapes the session directory |
 | `429xx` | Rate limited | `42901` auth-failure ban, `42902` too many fs watches |
@@ -833,7 +833,7 @@ On success, `data` is `{ archived: true }`.
 
 #### `POST /api/v1/sessions/{session_id}:restore`
 
-Un-archives the session and resumes it.
+Un-archives the session and resumes it. When the session was archived, the server broadcasts the global `event.session.restored` event.
 
 On success, `data` is [the session object](#the-session-object) with `archived: false`.
 
@@ -1070,7 +1070,7 @@ Submits a user prompt to the session. Media references are validated first, then
 | `content` | body | array | **Required.** Non-empty array of content parts; variants below |
 | `agent_id` | body | string | Target agent. Default the main agent |
 | `prompt_id` | body | string | Client-chosen prompt id that makes the submission idempotent, also with `skills`: sending the same request again with the same id returns the result of the first submission, waiting for it while it is still being processed, and does not submit again; reusing the id for a different request fails `40927` |
-| `skills` | body | array | Bundled skill activations, at least 1 entry of `{ name, args? }`; every skill must exist and be user-activatable |
+| `skills` | body | array | Bundled skill activations, at least 1 entry of `{ name, path?, args? }`; every skill must exist and be user-activatable. `path` selects a same-name variant from the session catalog |
 | `profile` | body | string | Agent profile to bind before submitting |
 | `model` | body | string | Model alias to switch the agent to |
 | `thinking` | body | string | Thinking-mode effort level |
@@ -1269,7 +1269,7 @@ Lists the skills available to one session, merged from every source (built-in, p
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
 
-On success, `data` is `{ skills }` where each item is a skill descriptor `{ name, description, path, source, type?, disable_model_invocation? }`: `source` is `project` / `user` / `extra` / `builtin`, `type` classifies the skill (only user-activatable types can be activated), and `disable_model_invocation` hides the skill from the model.
+On success, `data` is `{ skills }` where each item is a skill descriptor `{ name, description, path, source, workspace_dir?, type?, disable_model_invocation? }`: `source` is `project` / `user` / `extra` / `builtin`, `type` classifies the skill (only user-activatable types can be activated), and `disable_model_invocation` hides the skill from the model. `workspace_dir` is the project root for project skills and is omitted for other sources. Same-name skills can appear as multiple variants with distinct `path` values.
 
 - `40401`: session not found (or not activated)
 
@@ -1293,6 +1293,7 @@ Activates a skill in the session — the REST analogue of the `/<skill>` slash c
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
 | `skill_name` | path | string | **Required.** Name of the skill to activate |
+| `path` | body | string | Optional exact `SKILL.md` path from the session catalog, used to select a same-name variant. Must match an entry returned by the catalog |
 | `args` | body | string | Free-form arguments handed to the skill, like the text after a slash command |
 | `prompt_id` | body | string | Client-chosen id of the activation message; it shows up in the `prompt_ids` of the conversation's `user_message` item. Like a prompt submission, sending the same request again with the same id returns the first result without activating again |
 | `attachments` | body | array | Media parts attached to the activation. Image and video parts carry a `source` object whose `kind` is `url` / `base64` / `file` / `session_media` (same shapes as the prompt content parts); file parts carry the top-level `file_id`, `name`, `media_type`, and `size` |
@@ -1547,6 +1548,8 @@ On success, `data` is [the workspace object](#the-workspace-object).
 
 Promotes a source folder in the workspace's dir set to the primary directory. The swap is atomic: the path becomes the new `root` and the previous primary moves into `additional_dirs`; the workspace id and session bucket are unchanged, and all sessions are kept. After the swap, additional directories coming from the previous primary's `local.toml` are no longer merged (`local.toml` follows the primary directory).
 
+For existing sessions on the local environment without an explicit `environmentCwd`, subsequent default tool working directories and relative paths follow the new primary. Explicit `environmentCwd` and remote environment bindings keep their configured directory. Additional directories expand allowed access but are not candidate roots for relative paths; use absolute paths or an explicit cwd to access them. Tools remain registered during the swap, and the workspace's existing trust decision is preserved across restarts.
+
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `workspace_id` | path | string | **Required.** Workspace id |
@@ -1608,7 +1611,7 @@ On success, `data` is `{ trusted: true }`.
 
 #### `POST /api/v1/workspaces/{workspace_id}/untrust`
 
-Revokes the persisted workspace trust record. Unless a process or config override keeps the workspace trusted, its project-level MCP config unloads.
+Revokes the persisted workspace trust records associated with the current dir set. Unless a process or config override keeps the workspace trusted, its project-level MCP config unloads.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -1752,9 +1755,9 @@ Fuzzy-searches file and directory names across the session workspace. An empty `
 | `limit` | body | integer | Maximum hits, 1–200. Default `50` |
 | `include_globs` | body | string[] | Only paths matching one of these globs |
 | `exclude_globs` | body | string[] | Skip paths matching these globs |
-| `follow_gitignore` | body | boolean | Skip gitignored paths. Default `true` |
+| `follow_gitignore` | body | boolean | Skip gitignored paths when `true`. Default `false` |
 
-On success, `data` is `{ items, truncated }` where each item is `{ path, name, kind, score, match_positions }` — `kind` is `file` / `directory` / `symlink`, `score` is the fuzzy-match score between 0 and 1, and `match_positions` lists the matched character offsets. Hits sort by score (ties by path), and `truncated` reports that hits beyond `limit` were dropped.
+On success, `data` is `{ items, truncated }` where each item is `{ path, name, kind, score, match_positions }` — `kind` is `file` / `directory` / `symlink`, `score` is the fuzzy-match score between 0 and 1, and `match_positions` lists the matched character offsets. Hits prioritize match quality and place ignored hits after non-ignored hits of equal quality. Including ignored hits may require a supplemental scan; `truncated` reports that hits beyond `limit` were dropped.
 
 - `40001`: body validation failure
 - `40401`: neither a session nor a resolvable workspace with that reference
@@ -1966,7 +1969,7 @@ The session-less form of `fs:search`: the workspace travels in the body instead 
 | `limit` | body | integer | Maximum hits, 1–200. Default `50` |
 | `include_globs` | body | string[] | Only paths matching one of these globs |
 | `exclude_globs` | body | string[] | Skip paths matching these globs |
-| `follow_gitignore` | body | boolean | Skip gitignored paths. Default `true` |
+| `follow_gitignore` | body | boolean | Skip gitignored paths when `true`. Default `false` |
 
 On success, `data` is `{ items, truncated }` with the same hit shape and ordering as `fs:search`.
 
@@ -1981,13 +1984,16 @@ Suggests file and directory completion candidates in a workspace without a sessi
 | --- | --- | --- | --- |
 | `workspace` | body | string | **Required.** Registered workspace id or absolute root (registered on the spot) |
 | `query` | body | string | **Required.** Partial path text to complete |
-| `limit` | body | integer | Maximum candidates, 1–200. Default `50` |
-| `follow_gitignore` | body | boolean | Skip gitignored paths. Default `true` |
-| `show_hidden` | body | boolean | Include dotfiles. Default `false` |
+| `limit` | body | integer | Maximum candidates, 1–200. Default `50`; fd-backed searches return at most `20` |
+| `follow_gitignore` | body | boolean | Skip gitignored paths when `true`. Default `false` |
+| `show_hidden` | body | boolean | Include dotfiles. Default `false`; fd-backed searches always include them |
+| `stream` | body | boolean | Return NDJSON preview/final events when `true`. Default `false` |
 | `include_globs` | body | string[] | Only paths matching one of these globs |
 | `exclude_globs` | body | string[] | Skip paths matching these globs |
 
-On success, `data` is `{ items, truncated }` where each item is `{ path, name, kind, score, match_positions }`, the same hit shape as `fs:search`.
+On success, `data` is `{ items, truncated }` where each item is `{ path, name, kind, score, match_positions }`, the same hit shape as `fs:search`. Candidates prioritize match quality and place ignored candidates after non-ignored candidates of equal quality. When fd is available, searches use the local `@`-completion strategy: hidden paths are always included, each root scans at most 100 entries per pass, and at most 20 items are returned. Matches beyond the scan cap may be omitted. Including ignored candidates may require a supplemental `--no-ignore-vcs` scan; the ripgrep/Node fallback applies when fd is unavailable.
+
+With `stream:true`, the response is NDJSON instead of a single JSON object. Each envelope's `data` includes `phase` (`preview`, `final`, or `error`) and the same result fields. A preview contains ordinary fd candidates with `truncated:true`; the final result replaces it after the ignored scan. Closing the connection cancels the search.
 
 - `40001`: body validation failure
 - `40410`: workspace not found and not a usable absolute path
@@ -2378,10 +2384,10 @@ On success, `task.watch`, `task.stop`, and `task.background` carry the task's cu
 
 Global events are envelopes `{ "type", "session_id"?, "timestamp", "payload" }`, where `type` is the event type itself; session frames are flat `{ "type", "session_id", "agent_id", ... }`. Two delivery scopes:
 
-- **Global events**: sent to every established connection, no subscription needed — `session.meta.updated`, `event.session.created`, `event.session.archived`, `event.session.work_changed`, `event.session.status_changed`, `event.workspace.*`, `event.config.*`, `event.model_catalog.*`.
+- **Global events**: sent to every established connection, no subscription needed — `session.meta.updated`, `event.session.created`, `event.session.archived`, `event.session.restored`, `event.session.work_changed`, `event.session.status_changed`, `event.workspace.*`, `event.config.*`, `event.model_catalog.*`.
 - **Session frames**: sent only to connections subscribed to that session with `subscribe`, and only for the agents they receive — `turns`, `turns.removed`, `turns.failed`, `turn.*`, `item.*`, and `notice` (see [Conversation protocol](#conversation-protocol)), `task.list`, `task`, `agent`, `usage`, `goal`, `todo`; `interaction` frames go to every subscriber of the session. `task.output` goes only to connections watching that task with `task.watch`.
 
-Three global lifecycle events keep a cross-workspace overview fresh without polling per workspace. `event.session.archived` fires on both the live and the cold archive path; its envelope `session_id` is the global watermark `__global__` and the real session id rides in the payload: `{ "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." }` (payload keys `workspace_id` / `sessionId`). `event.workspace.created` / `updated` carry the full workspace object (`{ id, root, name, created_at, last_opened_at, session_count }` — an `updated` also fires when a session creation touches the workspace), and `event.workspace.deleted` carries `{ "workspace_id", "root" }`. These events only cover changes made inside this server process; changes from other processes (for example a CLI writing to the same home) surface through the index reconciliation (about a minute), so overview clients should keep a low-frequency fallback poll. There is no session-deleted event.
+Several global lifecycle events keep a cross-workspace overview fresh without polling per workspace. `event.session.archived` fires on both the live and the cold archive path; its envelope `session_id` is the global watermark `__global__` and the real session id rides in the payload: `{ "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." }` (payload keys `workspace_id` / `sessionId`). `event.session.restored` fires when an archived session is restored, on the same paths and with the same envelope and payload keys. `event.workspace.created` / `updated` carry the full workspace object (`{ id, root, name, created_at, last_opened_at, session_count }` — an `updated` also fires when a session creation touches the workspace), and `event.workspace.deleted` carries `{ "workspace_id", "root" }`. These events only cover changes made inside this server process; changes from other processes (for example a CLI writing to the same home) surface through the index reconciliation (about a minute), so overview clients should keep a low-frequency fallback poll. There is no session-deleted event.
 
 Each agent's running tasks — shell commands in the foreground and background, subagents (swarm members included), and other asynchronous work — are synced by two flat frames, `task.list` and `task`, never replayed like `interaction`. When a connection starts receiving an agent's tasks (an agent listed in `subscribe`'s `agent_ids` that it was not receiving yet), it first gets `{ type: "task.list", session_id, agent_id, tasks }`, where `tasks` is every task the agent is running right now and replaces the client's list; after that it gets `{ type: "task", session_id, agent_id, event_created_at, ...task state }` on every change. An agent listed before it joins the session starts directly with `task` frames. The task state is `{ task_id, kind: "shell" | "subagent" | "other", status: "running" | "ended", outcome?, phase?, detached, description?, child_agent_id?, parent_tool_call_id?, swarm_index?, command?, started_at?, ended_at?, result_summary?, error?, state_reason?, model?, thinking? }`, and every frame carries the full state. `detached` means the tool call that started the task no longer waits for it, so it runs in the background; `outcome` (ended tasks only) is `completed` / `failed` / `timed_out` / `killed` / `lost`; `phase` (running subagents only) is `working` / `suspended`, with the reason in `state_reason`; `child_agent_id` is a subagent task's agent id; `swarm_index` is a swarm member's position in its swarm; `command` is a shell task's command. When a task ends, its last `task` frame (`status: "ended"`) is sent and it no longer appears in `task.list`: the outcome of an ended task lives in the session history (tool results and task notifications), and `task.watch` on it replies with its exact final state. Tasks are independent of turns: undoing turns does not touch tasks. Task output streams separately as `{ type: "task.output", session_id, agent_id, task_id, offset, text }`, where `offset` is the UTF-8 byte offset of `text` in the task's output.
 
@@ -2410,7 +2416,7 @@ A turn is `{ turn_id, ordinal, kind, status, outcome?, end_reason?, error?, retr
 
 Every item has `{ item_id, type, step_index?, status, outcome?, created_at, debug? }`. Items keep the order they appeared in, and an ended item has the `outcome` `completed` unless noted below. When the server runs with `KIMI_CODE_DEBUG=1`, the last item of each ended step carries `debug`: `{ finish_reason?, usage?, timing? }` for the model request of that step, where `timing` holds `first_token_ms`, `stream_ms`, `request_build_ms`, `server_first_token_ms`, `server_decode_ms`, `client_consume_ms`, and `client_blocked_ms` when measured; the item arrives again as `item.ended` once the step ends.
 
-- `user_message`: `{ prompt_ids, placement: "opener" | "steer", origin, text, attachments, skills, metadata? }`. `prompt_ids` lists the prompt ids the input carries — including the `prompt_id` of a bundled skill submission or a skill activation — so a client can retire its optimistic bubble; it is empty for inputs the system triggered. `origin` is `{ kind: "user" }`, `{ kind: "skill", name, args? }`, `{ kind: "plugin_command", plugin_id, command, args? }`, `{ kind: "cron", job_id, schedule, recurring, coalesced_count, stale }`, `{ kind: "hook", hook_event }`, `{ kind: "goal" }` for a goal continuation, `{ kind: "retry" }`, or `{ kind: "system" }`. `text` joins the visible text parts with newlines, without bundled skill instructions, prompt hook output, the notices that point the model at attached files, or image compression notes; it is empty for retries and internal triggers. `attachments` lists the files and media of the input in order as `{ kind: "image" | "video" | "audio" | "file", file_id?, url?, name?, media_type?, size?, ordinal }`: uploaded files carry `file_id`, inline and remote media carry `url`, media the server stored is sent as a `data:` URL in pages, and a file attached by a server-local path carries only its `name`, `media_type` and `size`. `skills` lists the skills activated with the input as `{ name, args? }`, and `metadata` echoes the `metadata` sent with the prompt. A CLI shell command (`!`) and its output arrive as raw text in a `user_message` with `origin: { kind: "system" }`, each in its own ended turn.
+- `user_message`: `{ prompt_ids, placement: "opener" | "steer", origin, text, attachments, skills, metadata? }`. `prompt_ids` lists the prompt ids the input carries — including the `prompt_id` of a bundled skill submission or a skill activation — so a client can retire its optimistic bubble; it is empty for inputs the system triggered. `origin` is `{ kind: "user" }`, `{ kind: "skill", name, path?, args? }`, `{ kind: "plugin_command", plugin_id, command, args? }`, `{ kind: "cron", job_id, schedule, recurring, coalesced_count, stale }`, `{ kind: "hook", hook_event }`, `{ kind: "goal" }` for a goal continuation, `{ kind: "retry" }`, or `{ kind: "system" }`. `text` joins the visible text parts with newlines, without bundled skill instructions, prompt hook output, the notices that point the model at attached files, or image compression notes; it is empty for retries and internal triggers. `attachments` lists the files and media of the input in order as `{ kind: "image" | "video" | "audio" | "file", file_id?, url?, name?, media_type?, size?, ordinal }`: uploaded files carry `file_id`, inline and remote media carry `url`, media the server stored is sent as a `data:` URL in pages, and a file attached by a server-local path carries only its `name`, `media_type` and `size`. `skills` lists the skills activated with the input as `{ name, path?, args? }`, and `metadata` echoes the `metadata` sent with the prompt. A CLI shell command (`!`) and its output arrive as raw text in a `user_message` with `origin: { kind: "system" }`, each in its own ended turn.
 - `assistant_message`: `{ text }`.
 - `reasoning`: `{ text, started_at, duration_ms? }`; `duration_ms` is how long the reasoning streamed, present once the item has ended. Hidden reasoning is never sent.
 - `tool_call`: `{ item_id: tool call id, name, stage?, input?, input_text?, display?, output?, media?, error?, progress?, interaction_id?, agent_refs?, started_at, ended_at? }`. While the call runs, `stage` is `input` while the model streams the arguments (`input_text` holds them as text), `awaiting_approval` while its approval is pending, and `executing` otherwise; `output` streams the tool's live output and `progress` is `{ percent?, status?, custom_kind?, custom_data? }`. Once ended, `output` is the text of the result and `media` lists its images, videos, and audio as `{ kind, file_id?, url?, media_type? }`; the `outcome` is `failed`, with `error` instead of `output`, when the result is an error, and `interrupted` when the turn ended before a result. `interaction_id` links the approval or question raised for the call, whose content comes with the `interaction` frames, and `agent_refs` lists the subagents the call started as `{ agent_id, role: "child" | "member", swarm_index?, task_id? }`. `ExitPlanMode` calls carry the `display` `{ kind: "plan_review", plan, path?, options: [{ label, description }], review: { state: "pending" | "approved" | "rejected" | "cancelled", selected_option?, feedback? } }`.
@@ -2442,7 +2448,7 @@ The following endpoints stream binary bodies instead of a JSON payload. Their HT
 | `GET /api/v1/fs:content` | Raw bytes of any host file (gated only by the token — be careful when exposing the port) | Yes | Yes |
 | `POST /api/v1/sessions/{session_id}/export` | Export the session with diagnostics (zip stream) | No | No |
 
-Error semantics differ as well: `GET /api/v1/files/{file_id}` answers lookup and storage failures with real 404 / 500 statuses (parameter validation still uses the HTTP 200 envelope), while the other three report every failure through the standard [response envelope](#response-envelope) — clients must keep checking the envelope `code` on those endpoints.
+Error semantics differ as well: `GET /api/v1/files/{file_id}`, `GET /api/v1/fs:content`, and session `:download` answer failures with real 4xx / 500 statuses and the same [response envelope](#response-envelope). Session export reports errors with an HTTP 200 envelope. Ordinary JSON RPC endpoints keep the almost-always-200 convention, so clients must check the envelope `code` on those endpoints.
 
 ## Next steps
 

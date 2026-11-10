@@ -16,6 +16,8 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
+import { resolveEffectiveWorkspaceRoots, type EffectiveWorkspaceRoots } from '#/session/workspaceContext/workspaceRoots';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
@@ -86,6 +88,7 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
     @IAgentReminderService private readonly reminder: IAgentReminderService,
     @IAgentStateService private readonly states: IAgentStateService,
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
+    @IAgentEnvironmentBindingService private readonly environmentBinding: IAgentEnvironmentBindingService,
     @IHostFileSystem private readonly localFs: IHostFileSystem,
     @IHostEnvironment private readonly localEnvironment: IHostEnvironment,
     @IConfigService private readonly config: IConfigService,
@@ -202,7 +205,6 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
           return;
         }
       }
-      if (!this.toolActiveForBoundProfile(profileData, 'Skill')) return;
       this.reminder.notify(skillsChangeText(listing), { variant: SKILLS_CHANGE_VARIANT });
     } catch (error) {
       this.log.warn('skill change notification failed', { error });
@@ -379,9 +381,23 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
         additionalDirs,
       );
       if (changes.primary.length + changes.added.length + changes.removed.length === 0) return;
-      this.reminder.notify(workspaceDirsChangeText(changes, this.sessionContext.cwd), {
-        variant: WORKSPACE_DIRS_CHANGE_VARIANT,
-      });
+      let host;
+      try {
+        host = this.environment.inspect().host;
+      } catch {
+        host = undefined;
+      }
+      const binding = this.environmentBinding.current;
+      const roots = resolveEffectiveWorkspaceRoots(
+        this.sessionContext,
+        binding,
+        this.workspaceInfo,
+        host,
+      );
+      this.reminder.notify(
+        workspaceDirsChangeText(changes, roots, this.sessionContext.workspaceId, binding.cwd !== undefined),
+        { variant: WORKSPACE_DIRS_CHANGE_VARIANT },
+      );
     } catch (error) {
       this.log.warn('workspace directory change notification failed', { error });
     }
@@ -678,7 +694,12 @@ function diffWorkspaceDirs(
   };
 }
 
-function workspaceDirsChangeText(changes: WorkspaceDirsChanges, cwd: string): string {
+function workspaceDirsChangeText(
+  changes: WorkspaceDirsChanges,
+  roots: EffectiveWorkspaceRoots,
+  workspaceId: string,
+  explicitCwd: boolean,
+): string {
   const lines = ['Project directory configuration changed.'];
   for (const change of changes.primary) {
     lines.push(
@@ -689,7 +710,15 @@ function workspaceDirsChangeText(changes: WorkspaceDirsChanges, cwd: string): st
   if (changes.removed.length > 0) {
     lines.push(`Removed directories: ${changes.removed.join(', ')}.`);
   }
-  lines.push(`Session cwd remains ${cwd}.`);
+  const primaryChange = changes.primary.find((change) => change.workspaceId === workspaceId);
+  if (roots.followsPrimary && primaryChange !== undefined) {
+    lines.push(`Default working directory: ${primaryChange.from} -> ${primaryChange.to}.`);
+  } else if (explicitCwd) {
+    lines.push(`Explicit session cwd remains ${roots.workDir}.`);
+  } else {
+    lines.push(`Default working directory: ${roots.workDir}.`);
+  }
+  lines.push(`Effective directories: ${[roots.workDir, ...roots.additionalDirs].join(', ')}.`);
   lines.push(
     'The updated directory set is already effective for subsequent tool calls and supersedes earlier directory information.',
   );

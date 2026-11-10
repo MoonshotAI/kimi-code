@@ -133,7 +133,7 @@ describe('ThinkingComponent', () => {
     const finished = component.render(80);
     expect(finished.map((line) => strip(line).trimEnd())).toEqual([
       '',
-      '● Thought for 5s',
+      '  Thought for 5s',
       '  line1',
       '  line2',
       '  line3',

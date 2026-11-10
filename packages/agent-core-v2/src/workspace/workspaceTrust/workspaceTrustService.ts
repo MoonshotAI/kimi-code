@@ -3,7 +3,7 @@ import { Emitter } from '#/_base/event';
 import { IConfigService } from '#/app/config/config';
 import { defineState } from '#/state/state';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
-import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
+import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 
 import { workspaceTrustRequired } from './configSection';
 import { IWorkspaceTrust, type WorkspaceTrustChange } from './workspaceTrust';
@@ -23,23 +23,45 @@ export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust
   declare readonly _serviceBrand: undefined;
 
   private initialization?: Promise<void>;
-  private readonly inner: IWorkspaceTrustEntry;
+  private inner: IWorkspaceTrustEntry;
+  private innerSubscription?: { dispose(): void };
   private readonly changeEmitter = this._register(new Emitter<WorkspaceTrustChange>());
   readonly onDidChange = this.changeEmitter.event;
 
   constructor(
-    @IWorkspaceContext workspace: IWorkspaceContext,
-    @IWorkspaceTrustStore trustStore: IWorkspaceTrustStore,
+    @IWorkspaceDirs private readonly dirs: IWorkspaceDirs,
+    @IWorkspaceTrustStore private readonly trustStore: IWorkspaceTrustStore,
     @IWorkspaceStateService private readonly states: IWorkspaceStateService,
     @IConfigService private readonly config: IConfigService,
   ) {
     super();
     this.states.contributeState(workspaceTrustTrustedKey);
-    this.inner = trustStore.forRoot(workspace.cwd);
-    this._register(this.inner.onDidChange((change) => {
+    this.inner = this.bindTrust();
+    this._register({ dispose: () => this.innerSubscription?.dispose() });
+    this._register(this.dirs.onDidChange(() => this.rebindTrust()));
+  }
+
+  private bindTrust(onDidChange?: () => void): IWorkspaceTrustEntry {
+    this.innerSubscription?.dispose();
+    const inner = this.trustStore.forRoots([this.dirs.primary, ...this.dirs.additionalDirs]);
+    this.innerSubscription = inner.onDidChange((change) => {
+      onDidChange?.();
       this.trusted = change.trusted;
       this.changeEmitter.fire(change);
-    }));
+    });
+    return inner;
+  }
+
+  private rebindTrust(): void {
+    const previous = this.trusted;
+    let notified = false;
+    this.inner = this.bindTrust(() => {
+      notified = true;
+    });
+    this.initialization = undefined;
+    void this.ready.then(() => {
+      if (!notified && previous !== this.trusted) this.changeEmitter.fire({ trusted: this.trusted });
+    }).catch(() => {});
   }
 
   get ready(): Promise<void> {
