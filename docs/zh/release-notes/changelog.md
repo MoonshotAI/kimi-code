@@ -6,6 +6,17 @@ outline: 2
 
 本页记录 Kimi Code CLI 每个版本的变更内容。
 
+## 2.5.3（2026-11-10）
+
+### 新功能
+
+- 支持 steering 中断当前模型请求并在同一轮继续，新增 `POST /api/v1/sessions/{session_id}/steer`，可通过一次请求发送 steering 消息。
+
+### 修复
+
+- Web：优化交互体验并修复已知问题。
+- 修复 Windows 上配置为 `npx` 等脚本命令的 stdio MCP 服务器无法启动的问题。
+
 ## 2.5.2（2026-11-06）
 
 ### 修复
