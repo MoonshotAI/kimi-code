@@ -2,7 +2,7 @@ import type { KimiConfig } from '@moonshot-ai/kimi-code-sdk';
 import { TuiAltScreen } from '@moonshot-ai/pi-tui';
 
 import { currentTheme, lightColors } from '#/tui/theme';
-import { DEFAULT_MARKDOWN_CONFIG, loadTuiConfig, type TuiConfig } from '../config';
+import { DEFAULT_MARKDOWN_CONFIG, loadTuiConfig, resolveTuiMode, type TuiConfig } from '../config';
 import { TUI_MODE_RESTART_NOTICE } from '../constant/kimi-tui';
 import { setMarkdownMermaidMode, setMarkdownRenderLatex } from '../utils/markdown-options';
 import type { SlashCommandHost } from './dispatch';
@@ -91,7 +91,7 @@ export async function applyReloadedTuiConfig(
   if (host.state.ui instanceof TuiAltScreen) {
     host.state.ui.setCopyOnSelect(config.copyOnSelect !== false);
   }
-  if ((config.tuiMode ?? 'regular') !== host.state.ui.mode) {
+  if (resolveTuiMode(config.tuiMode).mode !== host.state.ui.mode) {
     host.showNotice(TUI_MODE_RESTART_NOTICE);
   }
 }

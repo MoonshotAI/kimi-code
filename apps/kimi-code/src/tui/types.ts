@@ -421,6 +421,7 @@ export type TUIStartupState = 'pending' | 'ready' | 'picker';
 export interface KimiTUIOptions {
   initialAppState: AppState;
   startup: TUIStartupOptions;
+  resolvedTuiMode?: TuiMode;
 }
 
 export interface PendingExit {
