@@ -167,6 +167,7 @@ describe('server-v2 /api/v1 fs routes', () => {
   it.each([
     {
       name: 'keeps a plain ASCII filename compatible',
+      posixOnly: false,
       filename: 'plain report.pdf',
       directory: 'docs',
       mime: 'application/pdf',
@@ -176,6 +177,7 @@ describe('server-v2 /api/v1 fs routes', () => {
     },
     {
       name: 'downloads a Unicode PDF from a Unicode directory',
+      posixOnly: false,
       filename: '报告 （终版） 😀.pdf',
       directory: '分析数据/归档',
       mime: 'application/pdf',
@@ -185,6 +187,7 @@ describe('server-v2 /api/v1 fs routes', () => {
     },
     {
       name: 'downloads a Unicode PNG with full-width punctuation and an emoji',
+      posixOnly: false,
       filename: '趋势图 （全角） 😀.png',
       directory: '分析数据/stat',
       mime: 'image/png',
@@ -194,6 +197,7 @@ describe('server-v2 /api/v1 fs routes', () => {
     },
     {
       name: 'escapes quotes and backslashes',
+      posixOnly: true,
       filename: 'quote"back\\slash.png',
       directory: 'docs',
       mime: 'image/png',
@@ -203,6 +207,7 @@ describe('server-v2 /api/v1 fs routes', () => {
     },
     {
       name: 'removes CR and LF from the plain filename parameter',
+      posixOnly: true,
       filename: 'line\r\nbreak.pdf',
       directory: 'docs',
       mime: 'application/pdf',
@@ -210,7 +215,7 @@ describe('server-v2 /api/v1 fs routes', () => {
       encoded: 'line%0D%0Abreak.pdf',
       bytes: new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37, 0x0a]),
     },
-  ])('$name', async ({ filename, directory, mime, fallback, encoded, bytes }) => {
+  ].filter(({ posixOnly }) => !posixOnly || process.platform !== 'win32'))('$name', async ({ filename, directory, mime, fallback, encoded, bytes }) => {
     const relative = `${directory}/${filename}`;
     await mkdir(join(work!, directory), { recursive: true });
     await writeFile(join(work!, relative), bytes);
@@ -224,7 +229,7 @@ describe('server-v2 /api/v1 fs routes', () => {
     const disposition = response.headers.get('content-disposition') ?? '';
     const filenameStar = encoded === undefined ? '' : `; filename*=UTF-8''${encoded}`;
     expect(disposition).toBe(`attachment; filename="${fallback}"${filenameStar}`);
-    expect(disposition).toMatch(/^[\x20-\x7E]+$/);
+    expect(disposition).toMatch(/^[\u0020-\u007E]+$/);
     expect(disposition).not.toContain('\r');
     expect(disposition).not.toContain('\n');
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
