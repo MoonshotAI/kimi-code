@@ -10,6 +10,7 @@ import { DependencyGraph } from './dependencyGraph';
 import { CascadeConflictError, CyclicDependencyError } from './errors';
 import {
   bindServiceUnit,
+  disposeServiceComposition,
   isServiceRecipe,
   pushConstructionFrame,
   popConstructionFrame,
@@ -36,6 +37,7 @@ import { Emitter } from '../event';
 import { Ledger, type LedgerEntry } from '../lifecycle/ledger';
 import type { Disposer } from '../lifecycle/disposer';
 import { ServiceCollection } from './serviceCollection';
+import { createUnit, currentUnit, mountRoot, type UnitNode } from '../composition-api/runtime';
 
 const enum TraceType {
   None = 0,
@@ -198,7 +200,7 @@ export class InstantiationService implements IInstantiationService {
           this._cascadeResolving = false;
         }
       },
-      retire: (token) => this._retireUnit(token),
+      prepareRetire: (token) => this._prepareRetireUnit(token),
       applyProvide: (token, descriptor, config) => {
         this._services.set(token, descriptor, { config });
         return this._services.uidOf(token)!;
@@ -359,9 +361,6 @@ export class InstantiationService implements IInstantiationService {
         appliedUid ??= newUid;
       }
     });
-    const release = (): void => {
-      availability.dispose();
-    };
     const change: CascadeChange =
       instanceOrDescriptor instanceof SyncDescriptor
         ? {
@@ -379,6 +378,12 @@ export class InstantiationService implements IInstantiationService {
             config: options?.config,
             reason: `provide ${String(id)}`,
           };
+    const release = (): void => {
+      availability.dispose();
+      if (appliedUid === undefined) {
+        this.cascade.cancel(change);
+      }
+    };
     this.cascade.submit(change).catch(onUnexpectedError);
     return {
       uid: () => {
@@ -428,7 +433,7 @@ export class InstantiationService implements IInstantiationService {
     }
   }
 
-  private _retireUnit<T>(id: ServiceIdentifier<T>): void | Promise<void> {
+  private _prepareRetireUnit<T>(id: ServiceIdentifier<T>): (() => void | Promise<void>) | undefined {
     const instance = this._services.get(id);
     if (instance === undefined || instance instanceof SyncDescriptor) {
       return undefined;
@@ -442,7 +447,15 @@ export class InstantiationService implements IInstantiationService {
     const serviceInstance = instance as object;
     this._edgeNodes.delete(serviceInstance);
     this._tree.graph.removeInstance(serviceInstance);
-    return entry.dispose();
+    return () => entry.dispose();
+  }
+
+  private _disposeService(instance: Partial<IDisposable>): void | Promise<void> {
+    const out = instance.dispose?.() as unknown as void | Promise<void>;
+    if (isServiceRecipe(instance.constructor)) {
+      return disposeServiceComposition(instance as unknown as UnitInternals) ?? out;
+    }
+    return out;
   }
 
   private _nextUnitUid = 0;
@@ -486,6 +499,33 @@ export class InstantiationService implements IInstantiationService {
       }
     });
     return found;
+  }
+
+  private _compositionRootNode: UnitNode | undefined;
+
+  compositionRootNode(): UnitNode {
+    if (this._compositionRootNode === undefined) {
+      let node: UnitNode | undefined;
+      const recipe = createUnit(`di:${this.debugLabel ?? 'root'}`, () => {
+        node = currentUnit();
+        node.own(node.listen('unit.error', (event) => {
+          onUnexpectedError(event['error']);
+        }));
+      });
+      const parent = this._parent?.compositionRootNode();
+      if (parent === undefined) {
+        mountRoot(recipe);
+      } else {
+        parent.mount(recipe, undefined);
+      }
+      if (node === undefined) {
+        throw new Error(`failed to mount composition root '${this.debugLabel ?? 'root'}'`);
+      }
+      const root = node;
+      this._compositionRootNode = root;
+      this.anchorKernelFinalizer(() => root.dispose(), `composition:${this.debugLabel ?? 'root'}`);
+    }
+    return this._compositionRootNode;
   }
 
   anchorKernelEntry(disposer: Disposer, label: string): LedgerEntry {
@@ -549,9 +589,24 @@ export class InstantiationService implements IInstantiationService {
           providerBook,
           value,
         ),
-      constructService: <T>(ctor: new (...args: any[]) => T, config: unknown): T => {
+      compositionRootNode: () => this.compositionRootNode(),
+      failService: (id, instance, reason) => {
+        if (id === undefined) {
+          return this._disposeService(instance);
+        }
+        if (this._services.get(id) === instance) {
+          return this.cascade.fail(id, reason);
+        }
+      },
+      disposeService: (instance) => this._disposeService(instance),
+      constructService: <T>(
+        ctor: new (...args: any[]) => T,
+        config: unknown,
+        onDidFail?: (reason: unknown) => void,
+      ): T => {
         return this._createInstance(ctor, [], Trace.traceCreation(this._enableTracing, ctor), {
           config,
+          onDidFail,
         });
       },
     };
@@ -708,6 +763,7 @@ export class InstantiationService implements IInstantiationService {
   private _createInstance<T>(ctor: any, args: unknown[], _trace: Trace, unit?: {
     id?: ServiceIdentifier<any>;
     config?: unknown;
+    onDidFail?: (reason: unknown) => void;
   }): T {
     const serviceDependencies = _util.getServiceDependencies(ctor).toSorted((a, b) => a.index - b.index);
     const serviceArgs: unknown[] = [];
@@ -755,6 +811,7 @@ export class InstantiationService implements IInstantiationService {
       config: unit?.config,
       token: unit?.id,
       host: this._getFiberHost(),
+      onDidFail: unit?.onDidFail,
     };
     pushConstructionFrame(frame);
     let instance: T;
@@ -947,8 +1004,7 @@ export class InstantiationService implements IInstantiationService {
         this._instanceEntries.delete(result);
         this.dependencyGraph.removeInstance(result as object);
         if (isDisposable(result)) {
-          const out = result.dispose() as unknown as void | Promise<void>;
-          return out;
+          return this._disposeService(result);
         }
         return undefined;
       }, `service:${String(id)}`);

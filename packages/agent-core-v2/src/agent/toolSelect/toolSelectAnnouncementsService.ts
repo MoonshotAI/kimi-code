@@ -1,3 +1,5 @@
+import { onScopeDispose } from '@vue/reactivity';
+
 import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -11,19 +13,23 @@ export class AgentToolSelectAnnouncementsService extends Service implements IAge
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IAgentToolSelectService toolSelect: IAgentToolSelectService,
-    @IAgentReminderService reminder: IAgentReminderService,
+    @IAgentToolSelectService private readonly toolSelect: IAgentToolSelectService,
+    @IAgentReminderService private readonly reminder: IAgentReminderService,
   ) {
     super();
-    this._register(
-      reminder.register(LOADABLE_TOOLS_VARIANT, async ({ lastDisclosure, signal }) => {
-        if (!toolSelect.featureEnabled()) return undefined;
-        await toolSelect.prepareForRequest(signal);
-        return toolSelect.loadableToolsAnnouncement(
-          isToolSelectAnnouncementDisclosure(lastDisclosure) ? lastDisclosure : undefined,
-        );
-      }),
-    );
+  }
+
+  override setup(): void {
+    const registration = this.reminder.register(LOADABLE_TOOLS_VARIANT, async ({ lastDisclosure, signal }) => {
+      if (!this.toolSelect.featureEnabled()) return undefined;
+      await this.toolSelect.prepareForRequest(signal);
+      return this.toolSelect.loadableToolsAnnouncement(
+        isToolSelectAnnouncementDisclosure(lastDisclosure) ? lastDisclosure : undefined,
+      );
+    });
+    onScopeDispose(() => {
+      registration.dispose();
+    });
   }
 }
 

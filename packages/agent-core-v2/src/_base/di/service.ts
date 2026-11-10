@@ -45,6 +45,8 @@ export abstract class Service extends Disposable implements Fiber, UnitInternals
     this.name = (this.constructor as any).name || 'anonymous';
   }
 
+  setup(): void {}
+
   provide<T>(
     id: ServiceIdentifier<T>,
     recipe: ServiceClassRecipe,

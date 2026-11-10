@@ -12,7 +12,7 @@ import type { ServiceIdentifier } from './instantiation';
 
 export type UnitState = 'Pending' | 'Activating' | 'Active' | 'Unloading' | 'Failed';
 
-export type CascadeAction = 'provide' | 'unprovide' | 'update';
+export type CascadeAction = 'provide' | 'unprovide' | 'update' | 'fail';
 
 export type UnitActivation = 'eager' | 'ondemand';
 
@@ -23,6 +23,8 @@ export interface CascadeChange {
   readonly instance?: unknown;
   readonly activation?: UnitActivation;
   readonly config?: unknown;
+  readonly error?: unknown;
+  readonly retirement?: () => void | Promise<void>;
   readonly reason: string;
 }
 
@@ -69,7 +71,7 @@ export interface CascadeHost {
   ownerScopeOf(token: ServiceIdentifier<any>): object | undefined;
   isMaterialized(token: ServiceIdentifier<any>): boolean;
   materialize(token: ServiceIdentifier<any>): unknown;
-  retire(token: ServiceIdentifier<any>): void | Promise<void>;
+  prepareRetire(token: ServiceIdentifier<any>): (() => void | Promise<void>) | undefined;
   applyProvide(
     token: ServiceIdentifier<any>,
     descriptor: SyncDescriptor<unknown>,
@@ -295,6 +297,40 @@ export class CascadeEngine {
     });
   }
 
+  fail(token: ServiceIdentifier<any>, error: unknown): Promise<void> {
+    if (this._disposed) {
+      return Promise.resolve();
+    }
+    this._setUnitState(token, this._unitFor(token), 'Failed', error);
+    const retirement = this._host.prepareRetire(token);
+    return this.submit({
+      action: 'fail',
+      token,
+      error,
+      retirement,
+      reason: `fail ${String(token)}`,
+    });
+  }
+
+  cancel(change: CascadeChange): void {
+    const remaining: QueuedRequest[] = [];
+    let cancelled = false;
+    for (const request of this._tree.queue) {
+      if (request.engine === this && request.change === change) {
+        request.resolve();
+        cancelled = true;
+      } else {
+        remaining.push(request);
+      }
+    }
+    if (!cancelled) {
+      return;
+    }
+    this._tree.queue.length = 0;
+    this._tree.queue.push(...remaining);
+    this._pump();
+  }
+
   update(token: ServiceIdentifier<any>, reason?: string): Promise<void> {
     return this.submit({
       action: 'update',
@@ -414,16 +450,41 @@ export class CascadeEngine {
     tornDown: string[],
     parkAsPending: boolean,
   ): void | Promise<void> {
-    if (this._disposed || !this._host.isMaterialized(token)) {
+    const retirement = this._prepareForCascade(token, tornDown, parkAsPending);
+    return retirement?.();
+  }
+
+  private _prepareForCascade(
+    token: ServiceIdentifier<any>,
+    tornDown: string[],
+    parkAsPending: boolean,
+    failure?: CascadeChange,
+  ): (() => void | Promise<void>) | undefined {
+    if (this._disposed) {
       return undefined;
     }
-    this._setUnitState(token, this._unitFor(token), 'Unloading', undefined);
-    const out = this._host.retire(token);
+    let retirement: (() => void | Promise<void>) | undefined;
+    if (failure === undefined) {
+      if (!this._host.isMaterialized(token)) {
+        return undefined;
+      }
+      this._setUnitState(token, this._unitFor(token), 'Unloading', undefined);
+      retirement = this._host.prepareRetire(token);
+      if (retirement === undefined) {
+        return undefined;
+      }
+    } else {
+      retirement = failure.retirement;
+      this._setUnitState(token, this._unitFor(token), 'Failed', failure.error);
+    }
+    if (retirement === undefined) {
+      return undefined;
+    }
     tornDown.push(this._label({ scope: this._scope, token }));
-    if (parkAsPending) {
+    if (failure === undefined && parkAsPending) {
       this._markPending(token, undefined, true);
     }
-    return out;
+    return retirement;
   }
 
   _recheckForCascade(rebuilt: string[], failed: string[]): void {
@@ -455,6 +516,9 @@ export class CascadeEngine {
         break;
       case 'update':
         this._markPending(change.token, undefined, true);
+        break;
+      case 'fail':
+        this._setUnitState(change.token, this._unitFor(change.token), 'Failed', change.error);
         break;
     }
   }
@@ -580,6 +644,36 @@ export class CascadeEngine {
     const failed: string[] = [];
 
     const teardownOrder = this._tree.graph.reverseTopoOrder(affected);
+    const hasFailure = changes.some(({ change }) => change.action === 'fail');
+    const prepared = new Map<ScopedToken, () => void | Promise<void>>();
+    if (hasFailure) {
+      for (const ref of teardownOrder) {
+        const owner = engineOf(ref);
+        if (owner === undefined || owner._disposed) {
+          continue;
+        }
+        const removed = changes.some(
+          ({ engine, change }) =>
+            engine === owner && change.token === ref.token && change.action === 'unprovide',
+        );
+        const failure = changes.find(
+          ({ engine, change }) =>
+            engine === owner && change.token === ref.token && change.action === 'fail',
+        );
+        const retirement = owner._prepareForCascade(
+          ref.token,
+          tornDown,
+          !removed,
+          failure?.change,
+        );
+        if (retirement !== undefined) {
+          prepared.set(ref, retirement);
+        }
+        if (failure !== undefined) {
+          failed.push(owner._label(ref));
+        }
+      }
+    }
     let index = 0;
     const step = (): void | Promise<void> => {
       while (index < teardownOrder.length) {
@@ -593,7 +687,9 @@ export class CascadeEngine {
           ({ engine, change }) =>
             engine === owner && change.token === ref.token && change.action === 'unprovide',
         );
-        const out = owner._teardownForCascade(ref.token, tornDown, !removed);
+        const out = hasFailure
+          ? prepared.get(ref)?.()
+          : owner._teardownForCascade(ref.token, tornDown, !removed);
         if (isPromiseLike(out)) {
           return Promise.resolve(out).then(step);
         }
@@ -789,10 +885,25 @@ function engineOf(ref: ScopedToken): CascadeEngine | undefined {
 }
 
 function mergeBatch(batch: QueuedRequest[]): QueuedRequest[] {
-  const byKey = new Map<string, QueuedRequest>();
+  const merged: QueuedRequest[] = [];
+  let segment: QueuedRequest[] = [];
+  const flush = (): void => {
+    const byKey = new Map<string, QueuedRequest>();
+    for (const request of segment) {
+      const key = `${request.engine._mergeKey()}:${request.change.token.toString()}`;
+      byKey.set(key, request);
+    }
+    merged.push(...byKey.values());
+    segment = [];
+  };
   for (const request of batch) {
-    const key = `${request.engine._mergeKey()}:${request.change.token.toString()}`;
-    byKey.set(key, request);
+    if (request.change.action === 'fail') {
+      flush();
+      merged.push(request);
+    } else {
+      segment.push(request);
+    }
   }
-  return [...byKey.values()];
+  flush();
+  return merged;
 }
