@@ -1,8 +1,5 @@
 import type { AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
 
-export const BTW_AGENT_LABEL = 'btw';
-export const TOWER_WORKER_PROFILE = 'tower-worker';
-
 export function subagentLabels(
   parentAgentId: string,
   options: { readonly swarmItem?: string } = {},

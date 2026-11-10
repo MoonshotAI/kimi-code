@@ -46,7 +46,8 @@ import { getProviderDefinition } from '#/llm-adapter/provider/provider-definitio
 import type { ApiErrorEvent, CacheBreakDetectedEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { agentRoleOf, requestMetadataHeaders } from './requestMetadata';
+import { ISessionRequestAttributionService } from '#/session/requestAttribution/requestAttribution';
+import { RequestMetadataTracker, requestMetadataHeaders } from './requestMetadata';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { WarningIssued } from '#/agent/profile/profileOps';
 
@@ -179,6 +180,7 @@ export const llmRequesterEmittedThinkingEffortWarningsKey = defineState<Set<stri
 );
 export class AgentLoopRequester implements LoopRequester {
   private readonly projector: AgentLoopProjector;
+  private readonly requestMetadata: RequestMetadataTracker;
   private mediaPolicyFactory: AgentMediaPolicyFactory | undefined;
 
   constructor(
@@ -197,8 +199,11 @@ export class AgentLoopRequester implements LoopRequester {
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
+    @ISessionRequestAttributionService
+    private readonly attribution: ISessionRequestAttributionService,
   ) {
     this.projector = new AgentLoopProjector(log, telemetry, states);
+    this.requestMetadata = new RequestMetadataTracker(scopeContext, dispatcher, attribution);
     this.states.contributeState(llmRequestTraceKey);
     this.states.contributeState(llmRequesterLastConfigLogSignatureKey);
     this.states.contributeState(llmRequesterTurnConfigsKey);
@@ -276,6 +281,7 @@ export class AgentLoopRequester implements LoopRequester {
       trace.set(requestId);
       if (overrides.source?.type === 'turn') {
         this.telemetry.setContext({ request_id: requestId });
+        this.attribution?.noteActiveRequest(this.scopeContext.agentId, requestId);
       }
     };
     setRequestId(undefined);
@@ -779,18 +785,9 @@ export class AgentLoopRequester implements LoopRequester {
     if (getProviderDefinition(model.providerType, model.protocol)?.requestMetadata !== true) {
       return request;
     }
-    const metadata = this.scopeContext.meta;
-    const turn = source?.type === 'turn' ? source : undefined;
-    const operation = source?.type === 'operation' ? source : undefined;
-    const compact = operation?.requestKind === 'full_compaction';
-    const headers = requestMetadataHeaders({
-      agentRole: agentRoleOf(this.scopeContext.agentId, metadata),
-      turnTrigger: turn?.turnTrigger ?? operation?.turnTrigger ?? (compact ? 'user' : undefined),
-      stepReason: turn?.stepReason ?? (compact ? 'compact' : operation?.stepReason),
-      userInputId: turn?.userInputId ?? operation?.userInputId ?? metadata?.userInputId,
-      parentRequestId: metadata?.parentRequestId,
+    return request.with({
+      endpoint: { headers: requestMetadataHeaders(this.requestMetadata.resolve(source)) },
     });
-    return request.with({ endpoint: { headers } });
   }
 
   private resolveTurnConfig(source: AgentLLMRequestSource | undefined): TurnRequestConfig | undefined {

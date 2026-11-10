@@ -1,7 +1,4 @@
 import { createDecorator } from "#/_base/di/instantiation";
-import { TOWER_WORKER_PROFILE } from '#/session/agentLifecycle/subagentMetadata';
-
-export { TOWER_WORKER_PROFILE };
 
 export const TOWER_TOOL_NAMES = [
   'TowerPlan',
@@ -16,6 +13,8 @@ export const TOWER_TOOL_NAMES = [
   'TowerMission',
   'TowerStatus',
 ] as const;
+
+export const TOWER_WORKER_PROFILE = 'tower-worker';
 
 export function hasPinnedPermissionMode(profileName: string | undefined): boolean {
   return profileName === TOWER_WORKER_PROFILE;

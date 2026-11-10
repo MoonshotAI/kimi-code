@@ -32,7 +32,6 @@ import {
   type ExecutableToolResult,
   type ToolExecution,
 } from '#/tool/toolContract';
-import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { subagentLabels } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -413,7 +412,6 @@ export class TowerSpawnTool implements ITowerSpawnTool {
           thinking: resolveSubagentThinking(this.config, model, binding?.thinking),
         },
         labels: subagentLabels(this.callerAgentId),
-        parentRequestId: requester.accessor.get(IAgentLoopService).snapshot().activeRequestId,
       });
     } catch (error) {
       throw binding === undefined

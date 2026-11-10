@@ -5,9 +5,12 @@ import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { AgentLoopRequester, KIMI_CODE_INFINITE_RETRY_ENV } from '#/agent/loop/requester';
 import type { AgentLLMRequestSource } from '#/agent/loop/requesterContract';
+import { TurnEnded, TurnPrompt } from '#/agent/loop/turnOps';
+import { ISessionRequestAttributionService } from '#/session/requestAttribution/requestAttribution';
+import { SessionRequestAttributionService } from '#/session/requestAttribution/requestAttributionService';
 import { createAgentMediaPolicy } from '#/agent/loop/mediaPolicy';
 import { createMachineRequester } from '#/agent/loop/machine/requester';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -207,6 +210,8 @@ function createService(
     readonly modelAlias?: () => string;
     readonly prefixRevision?: () => number;
     readonly metadata?: AgentMeta;
+    readonly parentUserInputId?: string;
+    readonly parentRequestId?: string;
   } = {},
 ) {
   const ix = disposables.add(new TestInstantiationService());
@@ -321,6 +326,14 @@ function createService(
       }),
     );
   }
+  const attribution = new SessionRequestAttributionService();
+  if (options.parentUserInputId !== undefined) {
+    attribution.noteUserInput('main', options.parentUserInputId);
+  }
+  if (options.parentRequestId !== undefined) {
+    attribution.noteActiveRequest('main', options.parentRequestId);
+  }
+  ix.set(ISessionRequestAttributionService, attribution);
   registerTestEventDispatcher(ix);
   ix.set(IAgentStateService, new AgentStateService());
   const service = ix.createInstance(AgentLoopRequester);
@@ -344,21 +357,37 @@ describe('AgentLoopRequester request metadata', () => {
     type: 'sub',
     labels: { parentAgentId: 'main', profileName: 'coder' },
   };
-  const source = {
-    type: 'turn' as const,
+  const source: AgentLLMRequestSource = {
+    type: 'turn',
     turnId: 1,
     step: 1,
-    turnTrigger: 'user' as const,
-    stepReason: 'turn_start' as const,
-    userInputId: 'msg_user',
   };
 
-  it('attaches the internal metadata header only when the provider declares it', () => {
+  async function startTurn(
+    dispatcher: IEventDispatcher,
+    origin: PromptOrigin = { kind: 'user' },
+    promptId?: string,
+    turnId = 1,
+  ): Promise<void> {
+    await dispatcher.dispatch(
+      new TurnPrompt({
+        agentId: 'test-agent',
+        turnId,
+        origin,
+        promptId,
+        input: [],
+      }),
+    );
+  }
+
+  it('attaches the internal metadata header only when the provider declares it', async () => {
     const declared = createService(
       createRequester({ value: 0 }, undefined, [], undefined, { providerType: 'kimi' }),
       { metadata },
     );
     const other = createService(createRequester(), { metadata });
+    await startTurn(declared.dispatcher, { kind: 'user' }, 'msg_user');
+    await startTurn(other.dispatcher, { kind: 'user' }, 'msg_user');
 
     expect(JSON.parse(metadataHeader(declared.service, source) ?? '{}')).toEqual({
       agent_role: 'subagent',
@@ -369,13 +398,15 @@ describe('AgentLoopRequester request metadata', () => {
     expect(metadataHeader(other.service, source)).toBeUndefined();
   });
 
-  it('uses the agent user input id when the turn has none of its own', () => {
+  it('uses the agent user input id when the turn has none of its own', async () => {
     const inherited = createService(
       createRequester({ value: 0 }, undefined, [], undefined, { providerType: 'kimi' }),
       {
-        metadata: { ...metadata, userInputId: 'msg_parent' },
+        metadata,
+        parentUserInputId: 'msg_parent',
       },
     );
+    await startTurn(inherited.dispatcher, { kind: 'system_trigger', name: 'subagent' }, 'sub_1', 2);
 
     expect(
       JSON.parse(
@@ -383,6 +414,8 @@ describe('AgentLoopRequester request metadata', () => {
       ),
     ).toEqual({
       agent_role: 'subagent',
+      turn_trigger: 'subagent_task',
+      step_reason: 'turn_start',
       user_input_id: 'msg_parent',
     });
   });
@@ -396,15 +429,13 @@ describe('AgentLoopRequester request metadata', () => {
     expect(JSON.parse(metadataHeader(service) ?? '{}')).toEqual({ agent_role: 'subagent' });
   });
 
-  it('escapes non-ASCII user input ids so the header is a valid HTTP ByteString', () => {
-    const { service } = createService(
+  it('escapes non-ASCII user input ids so the header is a valid HTTP ByteString', async () => {
+    const { service, dispatcher } = createService(
       createRequester({ value: 0 }, undefined, [], undefined, { providerType: 'kimi' }),
       { metadata },
     );
-    const header = metadataHeader(service, {
-      ...source,
-      userInputId: '任务-1🚀',
-    });
+    await startTurn(dispatcher, { kind: 'user' }, '任务-1🚀');
+    const header = metadataHeader(service, source);
 
     expect(header).toBeDefined();
     expect(new Headers({ 'X-Msh-Client-Metadata': header! }).get('X-Msh-Client-Metadata')).toBe(
@@ -418,14 +449,35 @@ describe('AgentLoopRequester request metadata', () => {
     });
   });
 
-  it('marks compaction and keeps inherited attribution', () => {
-    const { service } = createService(
+  it('marks compaction and keeps inherited attribution', async () => {
+    const { service, dispatcher } = createService(
       createRequester({ value: 0 }, undefined, [], undefined, { providerType: 'kimi' }),
       {
-        metadata: { ...metadata, userInputId: 'msg_parent', parentRequestId: 'trace-parent' },
+        metadata,
+        parentUserInputId: 'msg_parent',
+        parentRequestId: 'trace-parent',
       },
     );
 
+    await startTurn(dispatcher, { kind: 'system_trigger', name: 'subagent' }, 'sub_1');
+    expect(
+      JSON.parse(
+        metadataHeader(service, {
+          type: 'operation',
+          turnId: 1,
+          requestKind: 'full_compaction',
+        }) ?? '{}',
+      ),
+    ).toEqual({
+      agent_role: 'subagent',
+      turn_trigger: 'subagent_task',
+      step_reason: 'compact',
+      user_input_id: 'msg_parent',
+      parent_request_id: 'trace-parent',
+    });
+    await dispatcher.dispatch(
+      new TurnEnded({ agentId: 'test-agent', turnId: 1, reason: 'completed' }),
+    );
     expect(
       JSON.parse(
         metadataHeader(service, { type: 'operation', requestKind: 'full_compaction' }) ?? '{}',
@@ -437,32 +489,30 @@ describe('AgentLoopRequester request metadata', () => {
       user_input_id: 'msg_parent',
       parent_request_id: 'trace-parent',
     });
-    expect(
-      JSON.parse(
-        metadataHeader(service, {
-          type: 'operation',
-          requestKind: 'full_compaction',
-          turnTrigger: 'subagent_task',
-        }) ?? '{}',
-      ),
-    ).toEqual({
-      agent_role: 'subagent',
-      turn_trigger: 'subagent_task',
-      step_reason: 'compact',
-      user_input_id: 'msg_parent',
-      parent_request_id: 'trace-parent',
-    });
   });
 
-  it('attaches the parent request id from agent metadata', () => {
-    const { service } = createService(
+  it('takes the parent request id only from a dispatched subagent task', async () => {
+    const { service, dispatcher } = createService(
       createRequester({ value: 0 }, undefined, [], undefined, { providerType: 'kimi' }),
-      { metadata: { ...metadata, parentRequestId: 'trace-step' } },
+      {
+        metadata,
+        parentRequestId: 'trace-step',
+      },
     );
-
+    await startTurn(dispatcher, { kind: 'user' }, 'msg_user');
     expect(JSON.parse(metadataHeader(service, source) ?? '{}')).toEqual({
       agent_role: 'subagent',
       turn_trigger: 'user',
+      step_reason: 'turn_start',
+      user_input_id: 'msg_user',
+    });
+
+    await startTurn(dispatcher, { kind: 'system_trigger', name: 'subagent' }, 'sub_1', 2);
+    expect(
+      JSON.parse(metadataHeader(service, { type: 'turn', turnId: 2, step: 1 }) ?? '{}'),
+    ).toEqual({
+      agent_role: 'subagent',
+      turn_trigger: 'subagent_task',
       step_reason: 'turn_start',
       user_input_id: 'msg_user',
       parent_request_id: 'trace-step',
@@ -1662,6 +1712,32 @@ describe('AgentLoopRequester request id', () => {
 
     expect(finish.requestId).toBe('trace-req-1');
     expect(request.trace.requestId).toBe('trace-req-1');
+  });
+
+  it('publishes the turn request id for child agents until the turn ends', async () => {
+    const { service, dispatcher } = createService(createTracedRequester('trace-req-1'), {
+      metadata: { type: 'main' },
+    });
+    const attribution = service['attribution'] as ISessionRequestAttributionService;
+    await dispatcher.dispatch(
+      new TurnPrompt({
+        agentId: 'test-agent',
+        turnId: 1,
+        origin: { kind: 'user' },
+        promptId: 'msg_user',
+        input: [],
+      }),
+    );
+    await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
+
+    expect(attribution.of('test-agent')).toEqual({
+      userInputId: 'msg_user',
+      activeRequestId: 'trace-req-1',
+    });
+    await dispatcher.dispatch(
+      new TurnEnded({ agentId: 'test-agent', turnId: 1, reason: 'completed' }),
+    );
+    expect(attribution.of('test-agent')).toEqual({ userInputId: 'msg_user' });
   });
 
   it('reports an absent trace before a request that returns none', async () => {

@@ -488,10 +488,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     try {
       const agents = handle.accessor.get(IAgentLifecycleService);
       if (agents.get(MAIN_AGENT_ID) === undefined) {
-        await agents.create({
-          agentId: MAIN_AGENT_ID,
-          userInputId: persisted?.agents?.[MAIN_AGENT_ID]?.userInputId,
-        });
+        await agents.create({ agentId: MAIN_AGENT_ID });
       }
       await this.announceCreated({ sessionId, handle, source });
     } catch (error) {

@@ -21,20 +21,12 @@ export interface CreateAgentOptions {
   readonly environmentCwd?: string;
   readonly forkedFrom?: string;
   readonly labels?: Readonly<Record<string, string>>;
-  readonly userInputId?: string;
-  readonly parentRequestId?: string;
 }
 
 export interface ForkAgentOptions {
   readonly agentId?: string;
   readonly binding?: Partial<BindAgentInput>;
   readonly labels?: Readonly<Record<string, string>>;
-  readonly parentRequestId?: string;
-}
-
-export interface AgentAttributionPatch {
-  readonly userInputId?: string;
-  readonly parentRequestId?: string;
 }
 
 export interface AgentListFilter {
@@ -52,8 +44,6 @@ export interface IAgentLifecycleService {
   create(opts?: CreateAgentOptions): Promise<AgentContext>;
 
   fork(source: AgentContext, opts?: ForkAgentOptions): Promise<AgentContext>;
-
-  noteAgentAttribution(agentId: string, patch: AgentAttributionPatch): void;
 
   get(agentId: string): AgentContext | undefined;
   list(filter?: AgentListFilter): readonly AgentContext[];

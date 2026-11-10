@@ -37,14 +37,12 @@ import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
 import { markInTurnOrigin } from '#/agent/contextMemory/conversationTime';
 import { newMessageId } from '#/agent/contextMemory/messageId';
 import { type ContextMessage, type PromptOrigin } from '#/agent/contextMemory/types';
-import { turnTriggerOf, userInputIdOf, type StepReason } from './requestMetadata';
 import { gateImageFormatParts } from '#/agent/media/image-compress';
 import { daemonFileRefFromPart } from '#/agent/media/mediaRef';
 import { materializePromptDaemonRefs } from '#/agent/media/promptMediaIntake';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IFileService } from '#/app/file/fileService';
 import { IPluginService } from '#/app/plugin/plugin';
@@ -177,7 +175,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     @IConfigService private readonly config: IConfigService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
-    @IAgentLifecycleService private readonly lifecycle: IAgentLifecycleService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentStateService private readonly states: IAgentStateService,
     @IWireService private readonly wire: IWireService,
@@ -243,18 +240,14 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       toolTurnId: () => this.active?.id,
       steerSignal: () => this.active?.steerController.signal,
       remind: (message) => this.remind({ message }),
-      source: () => {
-        const active = this.active;
-        if (active === undefined) return undefined;
-        return {
-          type: 'turn',
-          turnId: active.id,
-          step: active.gatedSteps,
-          turnTrigger: turnTriggerOf(active.prompt.origin),
-          stepReason: active.stepReason,
-          userInputId: userInputIdOf(active.prompt.origin, active.prompt.promptId),
-        };
-      },
+      source: () =>
+        this.active === undefined
+          ? undefined
+          : {
+              type: 'turn',
+              turnId: this.active.id,
+              step: this.active.gatedSteps,
+            },
       gate: (signal) => this.gate(signal),
       promptGate: (queueItemId, message) => this.runPromptGate(queueItemId, message),
       onTrace: (trace) => {
@@ -558,12 +551,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       activeTurnId: this.active?.id,
       activePromptId:
         this.active !== undefined && this.active.prompt.tracked ? this.active.prompt.id : undefined,
-      activeUserInputId:
-        this.active === undefined
-          ? undefined
-          : userInputIdOf(this.active.prompt.origin, this.active.prompt.promptId),
-      activeTurnTrigger:
-        this.active === undefined ? undefined : turnTriggerOf(this.active.prompt.origin),
       queue,
       notificationCount: engineSnapshot?.notificationCount ?? 0,
       paused: engineSnapshot?.paused ?? false,
@@ -583,12 +570,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
             },
       activeRequestId: this.activeRequestTrace?.requestId,
     };
-  }
-
-  private rememberUserInput(prompt: ActivePrompt): void {
-    const userInputId = userInputIdOf(prompt.origin, prompt.promptId);
-    if (userInputId === undefined) return;
-    this.lifecycle.noteAgentAttribution(this.scopeContext.agentId, { userInputId });
   }
 
   private settlePromptLaunched(waiter: PromptWaiter, active: ActiveTurn): void {
@@ -1080,11 +1061,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       turn.maxStepsError = createMaxStepsExceededError(maxSteps);
       return { type: 'fail' };
     }
-    if (turn.keepStepReason) {
-      turn.keepStepReason = false;
-    } else {
-      turn.stepReason = turn.steps === 0 ? 'turn_start' : 'tool_results';
-    }
     turn.steps = stepOrdinal;
     turn.gatedSteps = stepOrdinal;
     const step: MachineStepState = {
@@ -1309,8 +1285,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       startedAt: Date.now(),
       steps: 0,
       gatedSteps: 0,
-      stepReason: 'turn_start',
-      keepStepReason: false,
       nudgeCursor: this.nudgeCursor,
       current: undefined,
       interruptStep: undefined,
@@ -1331,7 +1305,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       protocol: undefined,
     };
     this.active = active;
-    this.rememberUserInput(active.prompt);
     this.armTurnWatch(active);
     active.readyResolved = true;
     ready.resolve();
@@ -1764,9 +1737,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       }
       case 'recovering': {
         const turn = this.active;
+        const step = turn?.current;
         if (turn === undefined) return;
-        turn.keepStepReason = true;
-        const step = turn.current;
         if (step !== undefined) {
           this.closeFailedMachineStep(turn, step, 'error');
         }
@@ -1775,9 +1747,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       }
       case 'retrying': {
         const turn = this.active;
+        const step = turn?.current;
         if (turn === undefined) return;
-        turn.keepStepReason = true;
-        const step = turn.current;
         if (step !== undefined) {
           this.closeFailedMachineStep(turn, step, 'error');
         }
@@ -2168,7 +2139,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           turn.interruptStep = undefined;
           if (turn.retryRequested) {
             turn.retryRequested = false;
-            turn.keepStepReason = true;
             await this.machineEngine().resetHistory(historyFromContext(this.context.get()));
             this.machineEngine().notify(createUserEntry(EMPTY_MACHINE_PROMPT));
           }
@@ -2474,8 +2444,6 @@ interface ActiveTurn {
   readonly startedAt: number;
   steps: number;
   gatedSteps: number;
-  stepReason: StepReason;
-  keepStepReason: boolean;
   nudgeCursor: number;
   current: MachineStepState | undefined;
   interruptStep: number | undefined;

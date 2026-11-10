@@ -27,15 +27,11 @@ import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkdir } from '#/session/workdir/workdir';
 import { ISessionMetadata, type AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
-import {
-  subagentParentAgentId,
-  withSubagentProfile,
-} from '#/session/agentLifecycle/subagentMetadata';
+import { withSubagentProfile } from '#/session/agentLifecycle/subagentMetadata';
 import {
   agentContextOf,
   IAgentScopeContext,
   makeAgentScopeContext,
-  replaceAgentMeta,
 } from '#/agent/scopeContext/scopeContext';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import {
@@ -258,10 +254,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     const agentScope = this.ctx.scope(`agents/${agentId}`);
     const agentHomedir = join(this.bootstrap.homeDir, agentScope);
     const generation = ++this.nextLifecycleGeneration;
-    const parentAgentId =
-      agentId === 'main'
-        ? undefined
-        : (subagentParentAgentId({ labels: opts.labels }) ?? opts.forkedFrom ?? 'main');
     const meta: AgentMeta = {
       homedir: agentHomedir,
       type: agentId === 'main' ? 'main' : 'sub',
@@ -271,13 +263,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         opts.labels,
         agentId === 'main' ? undefined : opts.binding?.profile,
       ),
-      userInputId:
-        agentId === 'main'
-          ? opts.userInputId
-          : 'userInputId' in opts
-            ? opts.userInputId
-            : this.userInputIdOfAgent(parentAgentId),
-      parentRequestId: agentId === 'main' ? undefined : opts.parentRequestId,
     };
     const scopeContext = makeAgentScopeContext({
       agentId,
@@ -467,7 +452,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       environmentCwd: sourceBinding.cwd,
       forkedFrom: source.id,
       labels: withSubagentProfile(opts?.labels, override?.profile ?? sourceData.profileName),
-      parentRequestId: opts?.parentRequestId,
     });
     const child = this.requireManaged(childContext).handle;
 
@@ -523,33 +507,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     const managed = this.roster.get(agentId);
     if (managed === undefined || managed.closing || !managed.active) return undefined;
     return managed.handle;
-  }
-
-  noteAgentAttribution(
-    agentId: string,
-    patch: { readonly userInputId?: string; readonly parentRequestId?: string },
-  ): void {
-    const scope = this.handleOf(agentId)?.accessor.get(IAgentScopeContext);
-    const current = scope?.meta;
-    if (scope === undefined || current === undefined) return;
-    const next: AgentMeta = {
-      ...current,
-      userInputId: patch.userInputId ?? current.userInputId,
-      parentRequestId: patch.parentRequestId ?? current.parentRequestId,
-    };
-    if (next.userInputId === current.userInputId && next.parentRequestId === current.parentRequestId) return;
-    replaceAgentMeta(scope, next);
-    void this.sessionMetadata.registerAgent(agentId, next);
-  }
-
-  private userInputIdOfAgent(agentId: string | undefined): string | undefined {
-    if (agentId === undefined) return undefined;
-    const handle = this.handleOf(agentId);
-    if (handle === undefined) return undefined;
-    return (
-      handle.accessor.get(IAgentLoopService)?.snapshot?.().activeUserInputId ??
-      handle.accessor.get(IAgentScopeContext)?.meta?.userInputId
-    );
   }
 
   adopt(handle: IAgentScopeHandle): AgentContext {

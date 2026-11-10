@@ -273,7 +273,6 @@ describe('AgentLifecycleService', () => {
   let stopAllOnExit: ReturnType<typeof vi.fn>;
   let suppressAllTerminalNotifications: ReturnType<typeof vi.fn>;
   let loopActiveTurnId: number | undefined;
-  let loopActiveUserInputId: string | undefined;
   let loopPendingPromptIds: string[];
   let loopCancel: ReturnType<typeof vi.fn<IAgentLoopService['cancel']>>;
   let loopSettled: ReturnType<typeof vi.fn<IAgentLoopService['settled']>>;
@@ -410,7 +409,6 @@ describe('AgentLifecycleService', () => {
       },
     } as unknown as IAgentToolExecutorService);
     loopActiveTurnId = undefined;
-    loopActiveUserInputId = undefined;
     loopPendingPromptIds = [];
     loopCancel = vi.fn<IAgentLoopService['cancel']>((target) => {
       if (target?.promptId !== undefined) {
@@ -438,7 +436,6 @@ describe('AgentLifecycleService', () => {
         state: loopActiveTurnId === undefined ? 'idle' : 'running',
         activeTurnId: loopActiveTurnId,
         activePromptId: undefined,
-        activeUserInputId: loopActiveUserInputId,
         queue: loopPendingPromptIds.map((promptId) => ({
           message: { role: 'user', content: [] },
           meta: { promptId },
@@ -1848,63 +1845,6 @@ describe('AgentLifecycleService', () => {
 
     expect(second).toBe(first);
     expect(registerAgent).toHaveBeenCalledTimes(1);
-  });
-
-  it('propagates the parent active user input id into child scope context and session metadata', async () => {
-    const svc = ix.get(IAgentLifecycleService);
-    await svc.create({ agentId: 'main' });
-    loopActiveTurnId = 1;
-    loopActiveUserInputId = 'msg_parent_1';
-
-    const child = await svc.create({ labels: { parentAgentId: 'main' } });
-    const handle = svc.handleOf(child.agentId);
-
-    expect(handle?.accessor.get(IAgentScopeContext)?.meta?.userInputId).toBe('msg_parent_1');
-    expect(registerAgent).toHaveBeenLastCalledWith(
-      child.agentId,
-      expect.objectContaining({ userInputId: 'msg_parent_1' }),
-    );
-
-    const rebuilt = await svc.create({
-      labels: { parentAgentId: 'main' },
-      userInputId: undefined,
-    });
-    expect(svc.handleOf(rebuilt.agentId)?.accessor.get(IAgentScopeContext)?.meta?.userInputId).toBeUndefined();
-  });
-
-  it('stores an explicit parent request id and does not invent one', async () => {
-    const svc = ix.get(IAgentLifecycleService);
-    await svc.create({ agentId: 'main' });
-
-    const plain = await svc.create({ labels: { parentAgentId: 'main' } });
-    expect(svc.handleOf(plain.agentId)?.accessor.get(IAgentScopeContext)?.meta?.parentRequestId).toBeUndefined();
-
-    const traced = await svc.create({
-      labels: { parentAgentId: 'main' },
-      parentRequestId: 'trace-step',
-    });
-    expect(svc.handleOf(traced.agentId)?.accessor.get(IAgentScopeContext)?.meta?.parentRequestId).toBe('trace-step');
-  });
-
-  it('stores a user input id passed in for the main agent', async () => {
-    const svc = ix.get(IAgentLifecycleService);
-
-    await svc.create({ agentId: 'main', userInputId: 'msg_prev' });
-
-    expect(svc.handleOf('main')?.accessor.get(IAgentScopeContext)?.meta?.userInputId).toBe('msg_prev');
-  });
-
-  it('noteAgentAttribution updates the live meta', async () => {
-    const svc = ix.get(IAgentLifecycleService);
-    await svc.create({ agentId: 'main' });
-
-    svc.noteAgentAttribution('main', { userInputId: 'msg_kept' });
-
-    expect(svc.handleOf('main')?.accessor.get(IAgentScopeContext)?.meta?.userInputId).toBe('msg_kept');
-    expect(registerAgent).toHaveBeenLastCalledWith(
-      'main',
-      expect.objectContaining({ userInputId: 'msg_kept' }),
-    );
   });
 
   it('cancelInteractionsForTurn and detachInteractionAgent stay within their session', () => {

@@ -8,6 +8,7 @@ import type { IDisposable } from '#/_base/di/lifecycle';
 import { Event } from '#/_base/event';
 import { IAgentProfileService } from '#/index';
 import type { LoopRequester } from '#/agent/loop/requesterContract';
+import type { RequestMetadataTracker } from '#/agent/loop/requestMetadata';
 import type { ModelRequestTiming } from '#/llm-adapter/model/generate';
 import { APIProviderRateLimitError, APIStatusError } from '#/llm-adapter/contract/errors';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
@@ -56,6 +57,21 @@ import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/st
 import { submitPromptTurn } from './stubs';
 
 type GenerateFn = NonNullable<TestAgentOptions['generate']>;
+
+function trackStepReasons(ctx: TestAgentContext): readonly (string | undefined)[] {
+  const reasons: (string | undefined)[] = [];
+  const wrapped = (
+    ctx.get(IAgentLoopService) as unknown as {
+      requester: LoopRequester & { inner?: { requestMetadata: RequestMetadataTracker } };
+    }
+  ).requester;
+  const start = wrapped.start.bind(wrapped);
+  vi.spyOn(wrapped, 'start').mockImplementation((overrides, onPart, signal) => {
+    reasons.push(wrapped.inner?.requestMetadata.resolve(overrides?.source).stepReason);
+    return start(overrides, onPart, signal);
+  });
+  return reasons;
+}
 
 describe('Agent loop', () => {
   let ctx: TestAgentContext;
@@ -312,10 +328,7 @@ describe('Agent loop', () => {
         return undefined;
       },
     });
-    const start = vi.spyOn(
-      (ctx.get(IAgentLoopService) as unknown as { requester: LoopRequester }).requester,
-      'start',
-    );
+    const reasons = trackStepReasons(ctx);
 
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
     await ctx.untilTurnEnd();
@@ -323,11 +336,7 @@ describe('Agent loop', () => {
     expect(seenErrors).toEqual([
       { step: 1, message: 'Unexpected generate call #1' },
     ]);
-    expect(
-      start.mock.calls.map(([overrides]) =>
-        overrides?.source?.type === 'turn' ? overrides.source.stepReason : undefined,
-      ),
-    ).toEqual(['turn_start', 'turn_start']);
+    expect(reasons).toEqual(['turn_start', 'turn_start']);
     expect(ctx.allEvents).toContainEqual(
       expect.objectContaining({
         event: 'turn.ended',
@@ -801,10 +810,7 @@ describe('Agent loop', () => {
       }
       await next();
     });
-    const start = vi.spyOn(
-      (ctx.get(IAgentLoopService) as unknown as { requester: LoopRequester }).requester,
-      'start',
-    );
+    const reasons = trackStepReasons(ctx);
 
     ctx.mockNextResponse({ type: 'function', id: 'call-lookup', name: 'Lookup', arguments: '{}' });
     ctx.mockNextProviderResponse({ error: new APIProviderRateLimitError('slow down', null, 1) });
@@ -824,9 +830,6 @@ describe('Agent loop', () => {
     });
     await ctx.untilTurnEnd();
 
-    const reasons = start.mock.calls.map(([overrides]) =>
-      overrides?.source?.type === 'turn' ? overrides.source.stepReason : undefined,
-    );
     expect(reasons).toEqual(['turn_start', 'tool_results', 'tool_results', 'tool_results', 'turn_start']);
   });
 

@@ -8,7 +8,6 @@ import type { TokenUsage } from '#human/llm-requester/usage';
 import type { Hooks } from '#/hooks';
 import type { UserEntry } from '#human/agent/turn';
 import type { LoopRequester } from './requesterContract';
-import type { TurnTrigger } from './requestMetadata';
 import { LoopErrors } from './errors';
 import type {
   MachineEngine,
@@ -37,8 +36,6 @@ export interface LoopSnapshot {
   readonly state: 'idle' | 'running';
   readonly activeTurnId?: number;
   readonly activePromptId?: string;
-  readonly activeUserInputId?: string;
-  readonly activeTurnTrigger?: TurnTrigger;
   readonly queue: readonly UserEntry[];
   readonly notificationCount: number;
   readonly paused: boolean;
