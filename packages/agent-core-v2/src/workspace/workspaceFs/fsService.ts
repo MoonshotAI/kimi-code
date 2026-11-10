@@ -825,7 +825,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
         }
       }
       if (req.query === '') {
-        return this.suggestTopLevel(req, roots);
+        return await this.suggestTopLevel(req, roots);
       }
       if (queryLower.includes('/') && pathSegments.length === 0) {
         return { items: [], truncated: false };
