@@ -39,6 +39,7 @@ import {
   fsStatRequestSchema,
   fsSuggestRequestSchema,
   fsSuggestResponseSchema,
+  type FsSuggestRequest,
 } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
 import type { EnvironmentCapability, EnvironmentLease } from '@moonshot-ai/agent-core-v2/environment/environment';
 import { z } from 'zod';
@@ -61,13 +62,25 @@ import {
 } from '../protocol/rest-fs';
 import { sendEnvironmentError } from './environment';
 
+interface FsPostReply {
+  send(payload: unknown): unknown;
+  hijack?(): FsPostReply;
+  getHeader?(name: string): string | number | readonly string[] | undefined;
+  raw?: {
+    writeHead(status: number, headers: Record<string, string | number | readonly string[]>): unknown;
+    write(chunk: string): boolean;
+    end(): unknown;
+    on(event: 'close', listener: () => void): unknown;
+  };
+}
+
 interface FsRouteHost {
   post(
     path: string,
     options: { preHandler: unknown[]; schema?: Record<string, unknown> },
     handler: (
       req: { id: string; body: unknown; params: unknown },
-      reply: { send(payload: unknown): unknown },
+      reply: FsPostReply,
     ) => Promise<void> | void,
   ): unknown;
   get(
@@ -108,10 +121,12 @@ const workspaceFsSearchBodySchema = fsSearchRequestSchema.extend({
 
 const workspaceFsSuggestBodySchema = fsSuggestRequestSchema.extend({
   workspace: z.string().min(1),
+  stream: z.boolean().default(false),
 });
 
 const rootFsSuggestBodySchema = fsSuggestRequestSchema.extend({
   roots: z.array(z.string().min(1)).min(1).max(32),
+  stream: z.boolean().default(false),
 });
 
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
@@ -187,6 +202,64 @@ async function resolveWorkspaceFs(
     }
   }
   return acquireLocalRootedFs(core, ws.id, { workDir: ws.root, additionalDirs: ws.additionalDirs }, required);
+}
+
+async function sendSuggestStream(
+  scope: FsScope,
+  request: FsSuggestRequest,
+  reply: FsPostReply,
+  requestId: string,
+): Promise<void> {
+  if (reply.hijack === undefined || reply.raw === undefined) throw new Error('streaming replies are unavailable');
+  reply.hijack();
+  const raw = reply.raw;
+  const corsHeaders: Record<string, string | number | readonly string[]> = {};
+  for (const name of [
+    'Access-Control-Allow-Origin',
+    'Access-Control-Allow-Methods',
+    'Access-Control-Allow-Headers',
+    'Vary',
+  ]) {
+    const value = reply.getHeader?.(name);
+    if (value !== undefined) corsHeaders[name] = value;
+  }
+  raw.writeHead(200, {
+    ...corsHeaders,
+    'Content-Type': 'application/x-ndjson; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    'X-Accel-Buffering': 'no',
+  });
+  const controller = new AbortController();
+  let finished = false;
+  raw.on('close', () => {
+    if (!finished) controller.abort();
+  });
+  const write = (phase: string, data: unknown): void => {
+    raw.write(`${JSON.stringify(okEnvelope({ phase, ...data as object }, requestId))}\n`);
+  };
+  try {
+    if (scope.fs.suggestStream === undefined) {
+      write('final', await scope.fs.suggest(request));
+    } else {
+      for await (const event of scope.fs.suggestStream(request, controller.signal)) {
+        write(event.phase, event.response);
+      }
+    }
+  } catch (error) {
+    const wasAborted = controller.signal.aborted;
+    controller.abort();
+    if (!wasAborted) {
+      write('error', {
+        error: {
+          code: isError2(error) ? error.code : ErrorCode.INTERNAL_ERROR,
+          message: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  } finally {
+    finished = true;
+    raw.end();
+  }
 }
 
 export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
@@ -443,7 +516,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       operationId: 'workspaceFsSuggest',
     },
     async (req, reply) => {
-      const { workspace, ...suggestRequest } = req.body;
+      const { workspace, stream, ...suggestRequest } = req.body;
       let environmentFs: FsScope | undefined;
       try {
         environmentFs = await resolveWorkspaceFs(core, workspace, ['fs']);
@@ -457,8 +530,12 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
           );
           return;
         }
-        const data = await environmentFs.fs.suggest(suggestRequest);
-        reply.send(okEnvelope(data, req.id));
+        if (stream) {
+          await sendSuggestStream(environmentFs, suggestRequest, reply, req.id);
+        } else {
+          const data = await environmentFs.fs.suggest(suggestRequest);
+          reply.send(okEnvelope(data, req.id));
+        }
       } catch (error) {
         sendMappedError(reply, req, error);
       } finally {
@@ -490,7 +567,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       operationId: 'fsSuggest',
     },
     async (req, reply) => {
-      const { roots, ...suggestRequest } = req.body;
+      const { roots, stream, ...suggestRequest } = req.body;
       for (const root of roots) {
         if (!isAbsolute(root)) {
           reply.send(
@@ -518,8 +595,12 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
             });
           }
         }
-        const data = await environmentFs.fs.suggest(suggestRequest);
-        reply.send(okEnvelope(data, req.id));
+        if (stream) {
+          await sendSuggestStream(environmentFs, suggestRequest, reply, req.id);
+        } else {
+          const data = await environmentFs.fs.suggest(suggestRequest);
+          reply.send(okEnvelope(data, req.id));
+        }
       } catch (error) {
         sendMappedError(reply, req, error);
       } finally {
@@ -691,7 +772,7 @@ export function createEnvironmentReadStream(
 }
 
 type Req = { id: string; body: unknown };
-type Reply = { send(payload: unknown): unknown };
+type Reply = FsPostReply;
 
 async function handleList(fs: IWorkspaceFsService, req: Req, reply: Reply): Promise<void> {
   const parsed = fsListRequestSchema.safeParse(req.body ?? {});

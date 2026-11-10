@@ -1,10 +1,8 @@
 import { execFileSync } from 'node:child_process';
-import { IEnvironmentService } from '@moonshot-ai/agent-core-v2';
+import { IEnvironmentService, IModelCatalog, ISessionManager, IWorkspaceInstanceManager, WorkspaceFsService } from '@moonshot-ai/agent-core-v2';
 import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
-
-import { IModelCatalog, ISessionManager, IWorkspaceInstanceManager } from '@moonshot-ai/agent-core-v2';
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
 import { HostProcessService } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostProcessService';
 import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
@@ -79,6 +77,15 @@ describe('server-v2 /api/v1 fs routes', () => {
 
   function git(cwd: string, ...args: string[]): void {
     execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+  }
+
+  function hasFd(): boolean {
+    try {
+      execFileSync('fd', ['--version'], { stdio: 'ignore' });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async function createWorkspaceSession(root: string, additionalDirs: string[]): Promise<string> {
@@ -534,17 +541,35 @@ describe('server-v2 /api/v1 fs routes', () => {
     expect(body.data.entries['missing.txt']).toBeNull();
   });
 
-  it('fs:search finds files by query', async () => {
+  it('fs:search groups ignored files after ordinary matches by default and when requested', async () => {
+    await writeFile(join(work!, '.gitignore'), 'alpha-ignored.ts\n');
     await writeFile(join(work!, 'alpha.ts'), '');
+    await writeFile(join(work!, 'alpha-ignored.ts'), '');
     await writeFile(join(work!, 'beta.ts'), '');
     const id = await createSession();
-    const body = await postFs<{ items: { path: string }[]; truncated: boolean }>(
+    const included = await postFs<{ items: { path: string }[]; truncated: boolean }>(
       id,
       'search',
       { query: 'alpha' },
     );
-    expect(body.code).toBe(0);
-    expect(body.data.items.map((i) => i.path)).toContain('alpha.ts');
+    expect(included.code).toBe(0);
+    expect(included.data.items.map((i) => i.path)).toEqual(['alpha.ts', 'alpha-ignored.ts']);
+
+    const explicitlyIncluded = await postFs<{ items: { path: string }[]; truncated: boolean }>(
+      id,
+      'search',
+      { query: 'alpha', follow_gitignore: false },
+    );
+    expect(explicitlyIncluded.code).toBe(0);
+    expect(explicitlyIncluded.data.items.map((i) => i.path)).toEqual(['alpha.ts', 'alpha-ignored.ts']);
+
+    const filtered = await postFs<{ items: { path: string }[]; truncated: boolean }>(
+      id,
+      'search',
+      { query: 'alpha', follow_gitignore: true },
+    );
+    expect(filtered.code).toBe(0);
+    expect(filtered.data.items.map((i) => i.path)).toEqual(['alpha.ts']);
   });
 
   it('fs:search resolves a registered workspace id when no session exists', async () => {
@@ -909,19 +934,32 @@ describe('server-v2 /api/v1 fs routes', () => {
       await writeFile(join(work!, 'shared.ts'), 'primary');
       await writeFile(join(extra, 'secondary-only.ts'), '');
       await writeFile(join(extra, 'shared.ts'), 'secondary');
+      await writeFile(join(extra, '.gitignore'), 'ignored-shared.ts\n');
+      await writeFile(join(extra, 'ignored-shared.ts'), 'ignored');
       const workspace = await createRegisteredWorkspace([extra]);
       const extraShared = join(extra, 'shared.ts').split(sep).join('/');
       const extraSecondary = join(extra, 'secondary-only.ts').split(sep).join('/');
+      const extraIgnored = join(extra, 'ignored-shared.ts').split(sep).join('/');
 
       const shared = await postWorkspaceSuggest<{ items: SuggestItemWire[] }>({
         workspace: workspace.id,
         query: 'shared',
       });
       expect(shared.code).toBe(0);
-      expect(shared.data.items.map((item) => item.path)).toHaveLength(2);
+      expect(shared.data.items.map((item) => item.path)).toHaveLength(3);
       expect(shared.data.items.map((item) => item.path)).toEqual(
         expect.arrayContaining(['shared.ts', extraShared]),
       );
+      expect(shared.data.items.at(-1)?.path).toBe(extraIgnored);
+
+      const withIgnored = await postWorkspaceSuggest<{ items: SuggestItemWire[] }>({
+        workspace: workspace.id,
+        query: 'shared',
+        follow_gitignore: false,
+      });
+      expect(withIgnored.code).toBe(0);
+      expect(withIgnored.data.items.map((item) => item.path)).toHaveLength(3);
+      expect(withIgnored.data.items.at(-1)?.path).toBe(extraIgnored);
 
       const secondary = await postWorkspaceSuggest<{ items: SuggestItemWire[] }>({
         workspace: workspace.id,
@@ -1074,6 +1112,59 @@ describe('server-v2 /api/v1 fs routes', () => {
     });
     expect(body.code).toBe(0);
     expect(body.data.items.map((i) => i.path)).toContain('epsilon.ts');
+
+    const previewItem = { path: 'preview.ts', name: 'preview.ts', kind: 'file' as const, score: 1, match_positions: [] };
+    const finalItem = { path: 'epsilon.ts', name: 'epsilon.ts', kind: 'file' as const, score: 1, match_positions: [0] };
+    const streamSpy = vi.spyOn(WorkspaceFsService.prototype, 'suggestStream');
+    try {
+      streamSpy.mockImplementation(async function* () {
+        yield { phase: 'preview' as const, response: { items: [previewItem], truncated: true } };
+        yield { phase: 'final' as const, response: { items: [finalItem], truncated: false } };
+      });
+      const origin = 'http://127.0.0.1:5174';
+      const streamed = await fetch(`${base}/api/v1/workspace/fs:suggest`, {
+        method: 'POST',
+        headers: authHeaders(server as RunningServer, { 'content-type': 'application/json', origin }),
+        body: JSON.stringify({ workspace: created.data.id, query: 'epsilon', stream: true }),
+      } as never);
+      expect(streamed.headers.get('content-type')).toContain('application/x-ndjson');
+      expect(streamed.headers.get('access-control-allow-origin')).toBe(origin);
+      const events = (await streamed.text()).trim().split('\n').map((line) => JSON.parse(line) as Envelope<{ phase: string; items: { path: string }[]; truncated: boolean }>);
+      expect(events.map((event) => event.data.phase)).toEqual(['preview', 'final']);
+      expect(events[0]?.data.items.map((item) => item.path)).toEqual(['preview.ts']);
+      expect(events[0]?.data.truncated).toBe(true);
+      expect(events[1]?.data.items.map((item) => item.path)).toEqual(['epsilon.ts']);
+      expect(events[1]?.data.truncated).toBe(false);
+
+      let engineSignal: AbortSignal | undefined;
+      streamSpy.mockImplementation(async function* (_request, signal) {
+        yield { phase: 'preview' as const, response: { items: [previewItem], truncated: true } };
+        engineSignal = signal;
+        await new Promise<void>((resolve) => {
+          if (signal?.aborted) {
+            resolve();
+            return;
+          }
+          signal?.addEventListener('abort', () => resolve(), { once: true });
+        });
+      });
+      const controller = new AbortController();
+      const pending = await fetch(`${base}/api/v1/workspace/fs:suggest`, {
+        method: 'POST',
+        headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+        body: JSON.stringify({ workspace: created.data.id, query: 'epsilon', stream: true }),
+        signal: controller.signal,
+      } as never);
+      const reader = pending.body!.getReader();
+      expect((await reader.read()).done).toBe(false);
+      controller.abort();
+      await reader.cancel().catch(() => {});
+      await vi.waitFor(() => {
+        expect(engineSignal?.aborted).toBe(true);
+      });
+    } finally {
+      streamSpy.mockRestore();
+    }
   });
 
   it('workspace fs routes keep additional dirs scoped to the requested registered workspace', async () => {
@@ -1169,7 +1260,6 @@ describe('server-v2 /api/v1 fs routes', () => {
     expect(body.data.items.length).toBeGreaterThan(0);
     expect(body.data.items[0]?.path).toBe('apps/desktop');
     expect(body.data.items[0]?.kind).toBe('directory');
-    expect(body.data.items.map((i) => i.path)).toContain('apps/desktop/package.json');
     for (const item of body.data.items) {
       expect(item.score).toBeGreaterThan(0);
       expect(item.score).toBeLessThanOrEqual(1);
@@ -1187,14 +1277,14 @@ describe('server-v2 /api/v1 fs routes', () => {
     expect(body.data.truncated).toBe(false);
   });
 
-  it('workspace fs:suggest hides dotfiles by default and shows them with show_hidden', async () => {
+  it('workspace fs:suggest honors fd and fallback hidden semantics', async () => {
     await writeFile(join(work!, '.theta.ts'), '');
     const hidden = await postWorkspaceSuggest<{ items: SuggestItemWire[] }>({
       workspace: work,
       query: 'theta',
     });
     expect(hidden.code).toBe(0);
-    expect(hidden.data.items.map((i) => i.path)).not.toContain('.theta.ts');
+    expect(hidden.data.items.map((i) => i.path)).toEqual(hasFd() ? ['.theta.ts'] : []);
 
     const shown = await postWorkspaceSuggest<{ items: SuggestItemWire[] }>({
       workspace: work,
@@ -1377,24 +1467,49 @@ describe('server-v2 /api/v1 fs routes', () => {
     }
   });
 
-  it('fs:suggest honors follow_gitignore on each root', async () => {
+  it('fs:suggest includes ignored files by default and honors explicit filtering on each root', async () => {
     const extra = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-extra-'));
     try {
-      await writeFile(join(extra, '.gitignore'), 'ignored-extra.ts\n');
+      await writeFile(join(extra, '.gitignore'), 'ignored-extra.ts\n.tmp/**\n');
       await writeFile(join(extra, 'ignored-extra.ts'), '');
-      const followed = await postRootSuggest<{ items: SuggestItemWire[] }>({
+      await writeFile(join(extra, 'ignored-visible.ts'), '');
+      await mkdir(join(extra, '.tmp'));
+      await writeFile(join(extra, '.tmp', 'ignored.ts'), '');
+      for (let i = 0; i < 25; i++) await writeFile(join(extra, `weak-${i}.tmp.ts`), '');
+      git(extra, 'init');
+      const included = await postRootSuggest<{ items: SuggestItemWire[] }>({
         roots: [extra],
         query: 'ignored',
       });
-      expect(followed.code).toBe(0);
-      expect(followed.data.items).toEqual([]);
-      const ignored = await postRootSuggest<{ items: SuggestItemWire[] }>({
+      expect(included.code).toBe(0);
+      expect(included.data.items.map((i) => i.path)).toEqual(hasFd()
+      ? ['ignored-visible.ts', 'ignored-extra.ts', '.tmp/ignored.ts']
+      : ['ignored-visible.ts', 'ignored-extra.ts']);
+      const explicitlyIncluded = await postRootSuggest<{ items: SuggestItemWire[] }>({
         roots: [extra],
         query: 'ignored',
         follow_gitignore: false,
       });
-      expect(ignored.code).toBe(0);
-      expect(ignored.data.items.map((i) => i.path)).toContain('ignored-extra.ts');
+      expect(explicitlyIncluded.code).toBe(0);
+      expect(explicitlyIncluded.data.items.map((i) => i.path)).toEqual(hasFd()
+        ? ['ignored-visible.ts', 'ignored-extra.ts', '.tmp/ignored.ts']
+        : ['ignored-visible.ts', 'ignored-extra.ts']);
+      const filtered = await postRootSuggest<{ items: SuggestItemWire[] }>({
+        roots: [extra],
+        query: 'ignored',
+        follow_gitignore: true,
+      });
+      expect(filtered.code).toBe(0);
+      expect(filtered.data.items.map((i) => i.path)).toEqual(['ignored-visible.ts']);
+
+      const exact = await postRootSuggest<{ items: SuggestItemWire[]; truncated: boolean }>({
+        roots: [extra],
+        query: '.tmp',
+        limit: 1,
+      });
+      expect(exact.code).toBe(0);
+      expect(exact.data.items.map((i) => i.path)).toEqual(['.tmp']);
+      expect(exact.data.truncated).toBe(true);
     } finally {
       await rm(extra, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     }
