@@ -1,6 +1,8 @@
-import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
+import { spawn as nodeSpawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import { stat } from 'node:fs/promises';
 import type { Readable, Writable } from 'node:stream';
+
+import spawn from 'cross-spawn';
 
 import { BufferedReadable } from '#/_base/execEnv/bufferedReadable';
 
@@ -11,8 +13,6 @@ import {
   type HostProcessOptions,
   type IHostProcess,
 } from '#/os/interface/hostProcess';
-
-import { prepareWindowsSpawnTarget } from './windowsCommand';
 
 const isWindows: boolean = process.platform === 'win32';
 const TASKKILL_TIMEOUT_MS = 5_000;
@@ -135,7 +135,7 @@ class HostProcess implements IHostProcess {
 
     if (isWindows) {
       const taskkillArgs = ['/T', '/F', '/PID', String(this.pid)];
-      const killer = spawn('taskkill', taskkillArgs, {
+      const killer = nodeSpawn('taskkill', taskkillArgs, {
         stdio: 'ignore',
         windowsHide: true,
       });
@@ -218,16 +218,9 @@ export class HostProcessService implements IHostProcessService {
       }
     }
     const spawnOptions = buildSpawnOptions(options);
-    const target =
-      isWindows && options.shell === undefined
-        ? prepareWindowsSpawnTarget(command, args, options.env, options.cwd)
-        : undefined;
-    if (target !== undefined) {
-      spawnOptions.windowsVerbatimArguments = target.windowsVerbatimArguments;
-    }
     let child: ChildProcess;
     try {
-      child = spawn(target?.command ?? command, [...(target?.args ?? args)], spawnOptions);
+      child = spawn(command, [...args], spawnOptions);
       await waitForSpawn(child);
     } catch (error) {
       throw spawnFailedError(command, args, options.cwd, error);
