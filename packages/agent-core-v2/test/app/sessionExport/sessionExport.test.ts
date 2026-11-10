@@ -997,7 +997,6 @@ function stubSessionMetadata(meta: SessionMeta): ISessionMetadata {
     _serviceBrand: undefined,
     ready: Promise.resolve(),
     onDidChangeMetadata: noopEvent,
-    current: () => meta,
     read: async () => meta,
     update: async () => {},
     applyPromptMetadata: async () => false,

@@ -27,7 +27,10 @@ import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkdir } from '#/session/workdir/workdir';
 import { ISessionMetadata, type AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
-import { withSubagentProfile } from '#/session/agentLifecycle/subagentMetadata';
+import {
+  subagentParentAgentId,
+  withSubagentProfile,
+} from '#/session/agentLifecycle/subagentMetadata';
 import {
   agentContextOf,
   IAgentScopeContext,
@@ -254,10 +257,29 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     const agentScope = this.ctx.scope(`agents/${agentId}`);
     const agentHomedir = join(this.bootstrap.homeDir, agentScope);
     const generation = ++this.nextLifecycleGeneration;
+    const parentAgentId =
+      agentId === 'main'
+        ? undefined
+        : (subagentParentAgentId({ labels: opts.labels }) ?? opts.forkedFrom ?? 'main');
+    const meta: AgentMeta = {
+      homedir: agentHomedir,
+      type: agentId === 'main' ? 'main' : 'sub',
+      parentAgentId: agentId === 'main' ? undefined : 'main',
+      forkedFrom: opts.forkedFrom,
+      labels: withSubagentProfile(
+        opts.labels,
+        agentId === 'main' ? undefined : opts.binding?.profile,
+      ),
+      userInputId:
+        agentId === 'main'
+          ? undefined
+          : (opts.userInputId ?? this.userInputIdOfAgent(parentAgentId)),
+    };
     const scopeContext = makeAgentScopeContext({
       agentId,
       agentScope,
       forkedFrom: opts.forkedFrom,
+      meta,
       generation,
     });
     const agent = scopeContext.agentContext;
@@ -338,17 +360,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       stage = 'seal';
       await handle.accessor.get(IWireService).seal();
       stage = 'register';
-      const meta: AgentMeta = {
-        homedir: agentHomedir,
-        type: agentId === 'main' ? 'main' : 'sub',
-        parentAgentId: agentId === 'main' ? undefined : 'main',
-        forkedFrom: opts.forkedFrom,
-        labels: withSubagentProfile(
-          opts.labels,
-          agentId === 'main' ? undefined : opts.binding?.profile,
-        ),
-        userInputId: agentId === 'main' ? undefined : opts.userInputId,
-      };
       await this.sessionMetadata.registerAgent(agentId, meta);
       this.onDidCreateEmitter.fire(agent);
       didCreate = true;
@@ -452,7 +463,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       environmentCwd: sourceBinding.cwd,
       forkedFrom: source.id,
       labels: withSubagentProfile(opts?.labels, override?.profile ?? sourceData.profileName),
-      userInputId: opts?.userInputId,
     });
     const child = this.requireManaged(childContext).handle;
 
@@ -508,6 +518,16 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     const managed = this.roster.get(agentId);
     if (managed === undefined || managed.closing || !managed.active) return undefined;
     return managed.handle;
+  }
+
+  private userInputIdOfAgent(agentId: string | undefined): string | undefined {
+    if (agentId === undefined) return undefined;
+    const handle = this.handleOf(agentId);
+    if (handle === undefined) return undefined;
+    return (
+      handle.accessor.get(IAgentLoopService)?.snapshot?.().activeUserInputId ??
+      handle.accessor.get(IAgentScopeContext)?.meta?.userInputId
+    );
   }
 
   adopt(handle: IAgentScopeHandle): AgentContext {

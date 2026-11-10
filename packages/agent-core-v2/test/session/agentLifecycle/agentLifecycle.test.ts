@@ -273,6 +273,7 @@ describe('AgentLifecycleService', () => {
   let stopAllOnExit: ReturnType<typeof vi.fn>;
   let suppressAllTerminalNotifications: ReturnType<typeof vi.fn>;
   let loopActiveTurnId: number | undefined;
+  let loopActiveUserInputId: string | undefined;
   let loopPendingPromptIds: string[];
   let loopCancel: ReturnType<typeof vi.fn<IAgentLoopService['cancel']>>;
   let loopSettled: ReturnType<typeof vi.fn<IAgentLoopService['settled']>>;
@@ -409,6 +410,7 @@ describe('AgentLifecycleService', () => {
       },
     } as unknown as IAgentToolExecutorService);
     loopActiveTurnId = undefined;
+    loopActiveUserInputId = undefined;
     loopPendingPromptIds = [];
     loopCancel = vi.fn<IAgentLoopService['cancel']>((target) => {
       if (target?.promptId !== undefined) {
@@ -436,6 +438,7 @@ describe('AgentLifecycleService', () => {
         state: loopActiveTurnId === undefined ? 'idle' : 'running',
         activeTurnId: loopActiveTurnId,
         activePromptId: undefined,
+        activeUserInputId: loopActiveUserInputId,
         queue: loopPendingPromptIds.map((promptId) => ({
           message: { role: 'user', content: [] },
           meta: { promptId },
@@ -451,7 +454,6 @@ describe('AgentLifecycleService', () => {
       tryAcquireQuiescence: vi.fn(() => ({ dispose: vi.fn() })),
       buildAttachBundle: () => stubAttachBundle(),
       attachEngine: () => stubAttachEngine(),
-      currentUserInputId: () => undefined,
     } as unknown as IAgentLoopService);
     ix.stub(ITelemetryService, {
       _serviceBrand: undefined,
@@ -1846,6 +1848,22 @@ describe('AgentLifecycleService', () => {
 
     expect(second).toBe(first);
     expect(registerAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it('propagates the parent active user input id into child scope context and session metadata', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'main' });
+    loopActiveTurnId = 1;
+    loopActiveUserInputId = 'msg_parent_1';
+
+    const child = await svc.create({ labels: { parentAgentId: 'main' } });
+    const handle = svc.handleOf(child.agentId);
+
+    expect(handle?.accessor.get(IAgentScopeContext)?.meta?.userInputId).toBe('msg_parent_1');
+    expect(registerAgent).toHaveBeenLastCalledWith(
+      child.agentId,
+      expect.objectContaining({ userInputId: 'msg_parent_1' }),
+    );
   });
 
   it('cancelInteractionsForTurn and detachInteractionAgent stay within their session', () => {

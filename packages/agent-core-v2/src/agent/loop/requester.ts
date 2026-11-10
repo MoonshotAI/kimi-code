@@ -46,10 +46,7 @@ import { getProviderDefinition } from '#/llm-adapter/provider/provider-definitio
 import type { ApiErrorEvent, CacheBreakDetectedEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { contentsOf } from '#human/llm/requester';
-import { mergeHeaders } from '#human/llm/endpoint';
-import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
-import { agentRoleOf } from './requestMetadata';
+import { agentRoleOf, requestMetadataHeaders } from './requestMetadata';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { WarningIssued } from '#/agent/profile/profileOps';
 
@@ -198,7 +195,6 @@ export class AgentLoopRequester implements LoopRequester {
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
-    @ISessionMetadata private readonly sessionMetadata: ISessionMetadata,
     @IAgentStateService private readonly states: IAgentStateService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
   ) {
@@ -780,20 +776,18 @@ export class AgentLoopRequester implements LoopRequester {
     source: AgentLLMRequestSource | undefined,
   ): InitializedLlmRequester {
     if (model.providerType === undefined) return request;
-    const encode = getProviderDefinition(model.providerType, model.protocol)?.requestMetadataHeaders;
-    if (encode === undefined) return request;
-    const metadata = this.sessionMetadata.current()?.agents?.[this.scopeContext.agentId];
+    if (getProviderDefinition(model.providerType, model.protocol)?.requestMetadata !== true) {
+      return request;
+    }
+    const metadata = this.scopeContext.meta;
     const turn = source?.type === 'turn' ? source : undefined;
-    const header = encode({
+    const headers = requestMetadataHeaders({
       agentRole: agentRoleOf(this.scopeContext.agentId, metadata),
       turnTrigger: turn?.turnTrigger,
       stepReason: turn?.stepReason,
       userInputId: turn?.userInputId ?? metadata?.userInputId,
     });
-    const endpoint = contentsOf(request).endpoint;
-    return request.with({
-      endpoint: { headers: mergeHeaders(endpoint?.headers, header) },
-    });
+    return request.with({ endpoint: { headers } });
   }
 
   private resolveTurnConfig(source: AgentLLMRequestSource | undefined): TurnRequestConfig | undefined {

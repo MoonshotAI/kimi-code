@@ -542,12 +542,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return this.engine?.snapshot().paused ?? false;
   }
 
-  currentUserInputId(): string | undefined {
-    const active = this.active;
-    if (active === undefined) return undefined;
-    return userInputIdOf(active.prompt.origin, active.prompt.promptId);
-  }
-
   snapshot(): LoopSnapshot {
     const engine = this.engine;
     const engineSnapshot = engine?.snapshot();
@@ -562,6 +556,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       activeTurnId: this.active?.id,
       activePromptId:
         this.active !== undefined && this.active.prompt.tracked ? this.active.prompt.id : undefined,
+      activeUserInputId:
+        this.active === undefined
+          ? undefined
+          : userInputIdOf(this.active.prompt.origin, this.active.prompt.promptId),
       queue,
       notificationCount: engineSnapshot?.notificationCount ?? 0,
       paused: engineSnapshot?.paused ?? false,

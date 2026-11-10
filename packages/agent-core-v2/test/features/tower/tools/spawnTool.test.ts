@@ -9,7 +9,6 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vite
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
-import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
@@ -178,8 +177,6 @@ describe('TowerSpawnTool', () => {
         get: (id: unknown) =>
           id === (IEventBus as unknown)
             ? ix.get(IEventBus)
-            : id === (IAgentLoopService as unknown)
-              ? { currentUserInputId: () => undefined }
             : id === (IAgentLifecycleService as unknown)
               ? { list: () => [], handleOf: () => undefined }
               : undefined,

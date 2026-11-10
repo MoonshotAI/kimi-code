@@ -2,12 +2,14 @@ import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiatio
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { AgentSpaceImpl } from '#/agent/agentContext/agentSpace';
+import type { AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
 
 export interface IAgentScopeContext {
   readonly _serviceBrand: undefined;
 
   readonly agentId: string;
   readonly forkedFrom?: string;
+  readonly meta?: AgentMeta;
   readonly agentContext: AgentContext;
   scope(subKey?: string): string;
 }
@@ -19,6 +21,7 @@ export function makeAgentScopeContext(input: {
   readonly agentId: string;
   readonly agentScope: string;
   readonly forkedFrom?: string;
+  readonly meta?: AgentMeta;
   readonly generation?: number;
 }): IAgentScopeContext {
   const { agentScope } = input;
@@ -33,6 +36,7 @@ export function makeAgentScopeContext(input: {
     _serviceBrand: undefined,
     agentId: input.agentId,
     forkedFrom: input.forkedFrom,
+    meta: input.meta,
     agentContext,
     scope: (subKey?: string): string => {
       if (subKey === undefined || subKey === '') return agentScope;

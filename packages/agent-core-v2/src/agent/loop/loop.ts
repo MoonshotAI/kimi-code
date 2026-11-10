@@ -36,6 +36,7 @@ export interface LoopSnapshot {
   readonly state: 'idle' | 'running';
   readonly activeTurnId?: number;
   readonly activePromptId?: string;
+  readonly activeUserInputId?: string;
   readonly queue: readonly UserEntry[];
   readonly notificationCount: number;
   readonly paused: boolean;
@@ -223,8 +224,6 @@ export interface IAgentLoopService {
   cancel(target?: LoopCancelTarget, reason?: unknown): boolean;
 
   snapshot(): LoopSnapshot;
-
-  currentUserInputId(): string | undefined;
 
   settled(): Promise<void>;
 

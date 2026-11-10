@@ -427,7 +427,12 @@ export class SubagentTool implements ISubagentTool {
   ): Promise<IAgentScopeHandle> {
     await createAgentAwaitingClose(
       this.agentLifecycle,
-      { agentId, labels: labelsFromAgentMeta(meta), forkedFrom: meta.forkedFrom },
+      {
+        agentId,
+        labels: labelsFromAgentMeta(meta),
+        forkedFrom: meta.forkedFrom,
+        userInputId: meta.userInputId,
+      },
       signal,
     );
     const rebuilt = this.agentLifecycle.handleOf(agentId);

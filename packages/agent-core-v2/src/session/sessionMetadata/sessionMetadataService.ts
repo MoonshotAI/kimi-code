@@ -82,10 +82,6 @@ export class SessionMetadata extends Service implements ISessionMetadata {
     this.states.set(sessionMetadataDataKey, value);
   }
 
-  current(): SessionMeta | undefined {
-    return this.states.has(sessionMetadataDataKey) ? this.data : undefined;
-  }
-
   async read(): Promise<SessionMeta> {
     await this.ready;
     return this.data;

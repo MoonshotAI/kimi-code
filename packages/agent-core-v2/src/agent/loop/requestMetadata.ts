@@ -1,10 +1,10 @@
-import { BTW_AGENT_LABEL } from '#/features/btw/btw';
-import { TOWER_WORKER_PROFILE } from '#/features/tower/tower';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import {
+  BTW_AGENT_LABEL,
   isSubagentMeta,
   subagentProfileName,
   subagentSwarmItem,
+  TOWER_WORKER_PROFILE,
 } from '#/session/agentLifecycle/subagentMetadata';
 import type { AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
@@ -79,4 +79,23 @@ export function userInputIdOf(
   if (origin.kind === 'skill_activation' && origin.trigger === 'user-slash') return promptId;
   if (origin.kind === 'plugin_command') return promptId;
   return undefined;
+}
+
+export function requestMetadataHeaders(metadata: {
+  readonly agentRole: AgentRole;
+  readonly turnTrigger?: TurnTrigger;
+  readonly stepReason?: StepReason;
+  readonly userInputId?: string;
+}): Record<string, string> {
+  return {
+    'X-Msh-Client-Metadata': JSON.stringify({
+      agent_role: metadata.agentRole,
+      turn_trigger: metadata.turnTrigger,
+      step_reason: metadata.stepReason,
+      user_input_id: metadata.userInputId,
+    }).replaceAll(
+      /[\u007F-\uFFFF]/g,
+      (ch) => `\\u${ch.codePointAt(0)!.toString(16).padStart(4, '0')}`,
+    ),
+  };
 }

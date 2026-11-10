@@ -81,10 +81,6 @@ class FakeSessionMetadata implements ISessionMetadata {
     };
   }
 
-  current(): SessionMeta | undefined {
-    return this.meta;
-  }
-
   read(): Promise<SessionMeta> {
     return Promise.resolve(this.meta);
   }

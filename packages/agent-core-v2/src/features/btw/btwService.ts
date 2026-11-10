@@ -5,7 +5,6 @@ import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ErrorCodes, Error2 } from '#/errors';
-import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 
 import {
@@ -46,10 +45,7 @@ export class SessionBtwService extends Disposable implements ISessionBtwService 
     }
     const childContext = await this.agentLifecycle.fork(
       main.accessor.get(IAgentScopeContext).agentContext,
-      {
-        labels: { [BTW_AGENT_LABEL]: 'true' },
-        userInputId: main.accessor.get(IAgentLoopService).currentUserInputId(),
-      },
+      { labels: { [BTW_AGENT_LABEL]: 'true' } },
     );
     const child = this.agentLifecycle.handleOf(childContext.agentId)!;
     child.accessor

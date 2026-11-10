@@ -25,13 +25,9 @@ import type { LlmRequester } from '#human/llm-requester/requester';
 import { createActor, emit, setup } from '#human/xstate2';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
-import {
-  ISessionMetadata,
-  type SessionMeta,
-  type SessionMetadataChangedEvent,
-} from '#/session/sessionMetadata/sessionMetadata';
-import { Event } from '#/_base/event';
+import type { AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { shapeUnsupportedDynamicToolContext } from '#/agent/toolSelect/dynamicTools';
@@ -148,16 +144,6 @@ function metadataHeader(
   ];
 }
 
-function emptySessionMeta(): SessionMeta {
-  return {
-    id: 'test-session',
-    createdAt: 0,
-    updatedAt: 0,
-    archived: false,
-    agents: {},
-  };
-}
-
 function createRequester(
   calls: { value: number } = { value: 0 },
   firstCallError?: Error | null,
@@ -220,7 +206,7 @@ function createService(
     readonly env?: Record<string, string>;
     readonly modelAlias?: () => string;
     readonly prefixRevision?: () => number;
-    readonly metadata?: SessionMeta;
+    readonly metadata?: AgentMeta;
   } = {},
 ) {
   const ix = disposables.add(new TestInstantiationService());
@@ -324,21 +310,19 @@ function createService(
     log: recordingWireLog(records),
     eventBus,
   });
+  if (options.metadata !== undefined) {
+    ix.stub(
+      IAgentScopeContext,
+      makeAgentScopeContext({
+        agentId: 'test-agent',
+        agentScope: 'wire/llm-requester',
+        meta: options.metadata,
+        generation: 0,
+      }),
+    );
+  }
   registerTestEventDispatcher(ix);
   ix.set(IAgentStateService, new AgentStateService());
-  const metadataStub: Partial<ISessionMetadata> = {
-    ready: Promise.resolve(),
-    onDidChangeMetadata: Event.None as Event<SessionMetadataChangedEvent>,
-    current: () => options.metadata,
-    read: async () => options.metadata ?? emptySessionMeta(),
-    update: async () => {},
-    applyPromptMetadata: async () => false,
-    setTitle: async () => {},
-    setGeneratedTitleIfUncustomized: async () => false,
-    setArchived: async () => {},
-    registerAgent: async () => {},
-  };
-  ix.stub(ISessionMetadata, metadataStub);
   const service = ix.createInstance(AgentLoopRequester);
   service.registerMediaPolicy((model, request) =>
     createAgentMediaPolicy(mediaResolver, model, request),
@@ -356,17 +340,9 @@ function createService(
 }
 
 describe('AgentLoopRequester request metadata', () => {
-  const metadata: SessionMeta = {
-    id: 'test-session',
-    createdAt: 0,
-    updatedAt: 0,
-    archived: false,
-    agents: {
-      'test-agent': {
-        type: 'sub',
-        labels: { parentAgentId: 'main', profileName: 'coder' },
-      },
-    },
+  const metadata: AgentMeta = {
+    type: 'sub',
+    labels: { parentAgentId: 'main', profileName: 'coder' },
   };
   const source = {
     type: 'turn' as const,
@@ -397,12 +373,7 @@ describe('AgentLoopRequester request metadata', () => {
     const inherited = createService(
       createRequester({ value: 0 }, undefined, [], undefined, { providerType: 'kimi' }),
       {
-        metadata: {
-          ...metadata,
-          agents: {
-            'test-agent': { ...metadata.agents?.['test-agent'], userInputId: 'msg_parent' },
-          },
-        },
+        metadata: { ...metadata, userInputId: 'msg_parent' },
       },
     );
 

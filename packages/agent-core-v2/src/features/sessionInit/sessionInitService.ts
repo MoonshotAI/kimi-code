@@ -10,7 +10,6 @@ import { EnvironmentError } from '#/environment/environmentRegistry';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ErrorCodes, Error2 } from '#/errors';
-import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
@@ -60,7 +59,6 @@ export class SessionInitService implements ISessionInitService {
           thinking: own.thinkingLevel,
         },
         labels: INIT_LABELS,
-        userInputId: main.accessor.get(IAgentLoopService).currentUserInputId(),
       });
       const child = this.agentLifecycle.handleOf(childContext.agentId)!;
       child.accessor.get(IAgentPermissionModeService).setMode(permissionMode);
