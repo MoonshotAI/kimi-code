@@ -367,14 +367,10 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
             const cwd = summary.cwd ?? roots.get(summary.workspaceId);
             if (cwd === undefined) continue;
             if (raw.exclude_empty === true && (summary.lastPrompt ?? '').length === 0) continue;
-            if (archivedOnly) {
-              if (!summary.archived) continue;
-              const facts = resolveSessionFacts(core, summary.id);
-              if (raw.busy !== undefined && facts.busy !== raw.busy) continue;
-              collected.push({ summary, cwd, facts });
-            } else {
-              collected.push({ summary, cwd });
-            }
+            if (archivedOnly && !summary.archived) continue;
+            const facts = raw.busy === undefined ? undefined : resolveSessionFacts(core, summary.id);
+            if (facts !== undefined && facts.busy !== raw.busy) continue;
+            collected.push({ summary, cwd, facts });
           }
           if (exhausted || page.nextCursor === undefined) break;
           before = page.nextCursor;
@@ -410,13 +406,9 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
 
       const pageSize = raw.page_size ?? DEFAULT_SESSION_LIST_PAGE_SIZE;
       const { visible, hasMore } = await collect(pageSize);
-      const projected = visible.map(({ summary, cwd, facts }) =>
+      const items = visible.map(({ summary, cwd, facts }) =>
         toWireSession(summary, cwd, facts ?? resolveSessionFacts(core, summary.id)),
       );
-      const items =
-        raw.busy !== undefined && !archivedOnly
-          ? projected.filter((session) => session.busy === raw.busy)
-          : projected;
       reply.send(okEnvelope({ items, has_more: hasMore }, req.id));
     },
   );
