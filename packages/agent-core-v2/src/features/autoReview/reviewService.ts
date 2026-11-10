@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { ref, type LiveRef } from '#/_base/di/instantiation';
 import { Service } from '#/_base/di/service';
 import { ILogService } from '#/_base/log/log';
-import { createDeadlineAbortSignal, type DeadlineAbortSignal } from '#/_base/utils/abort';
+import { abortable, createDeadlineAbortSignal, type DeadlineAbortSignal } from '#/_base/utils/abort';
 import { readRetryAfterMs, retryBackoffDelay, sleepForRetry } from '#/_base/utils/retry';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
@@ -321,7 +321,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     const history = this.context.get();
     const authorization = this.currentAuthorization(history);
     const cwd = this.workspace.workDir;
-    const gitStatus = await this.readGitStatus(cwd, context);
+    const gitStatus = await abortable(this.readGitStatus(cwd, context), deadline.signal);
     const message = await this.requestModel(
       modelAlias,
       buildReviewMessages(

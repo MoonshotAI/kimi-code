@@ -219,7 +219,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       for (let index = 0; index < preflighted.length; index += 1) {
         const call = preflighted[index]!;
         if (stopBatch) {
-          void opened[index]!.event.then(
+          void opened[index]?.event.then(
             (event) => {
               this.beforeExecuteEmitter.cancelReview(event);
             },

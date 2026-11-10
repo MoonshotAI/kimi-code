@@ -705,9 +705,10 @@ describe('AgentToolExecutorService', () => {
     const results = await execute([
       toolCall('call_first', 'first', {}),
       toolCall('call_second', 'second', {}),
+      toolCall('call_unknown', 'unknown', {}),
     ]);
 
-    expect(results).toHaveLength(2);
+    expect(results).toHaveLength(3);
     expect(results).toEqual(expect.arrayContaining([
       expect.objectContaining({ output: 'first result', stopBatchAfterThis: true }),
       expect.objectContaining({
