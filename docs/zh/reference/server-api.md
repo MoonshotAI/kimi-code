@@ -1097,6 +1097,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | --- | --- |
 | `GET /api/v1/sessions/{session_id}/prompts` | 进行中与排队中的提示词 |
 | `POST /api/v1/sessions/{session_id}/prompts` | 提交提示词（内容块数组，可带模型 / 权限模式覆盖） |
+| `POST /api/v1/sessions/{session_id}/steer` | 直接把消息内容插入进行中的轮次 |
 | `POST /api/v1/sessions/{session_id}/prompts:steer` | 把排队的提示词插入进行中的轮次 |
 | `POST /api/v1/sessions/{session_id}/prompts/{prompt_id}:abort` | 中止运行中的提示词 |
 | `POST /api/v1/sessions/{session_id}/prompts/{prompt_id}:steer` | 插入单条排队的提示词 |
@@ -1152,6 +1153,12 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 - `40415`：某个 `skills` 条目指向未知的 Skill
 - `40912`：Skill 存在但无法由用户激活
 - `40927`：`prompt_id` 已被另一个请求使用
+
+#### `POST /api/v1/sessions/{session_id}/steer`
+
+直接把消息内容插入进行中的轮次，只需一次请求，无需先提交再按 id steer。请求体字段与 `POST /api/v1/sessions/{session_id}/prompts` 相同，包括 `content`、`agent_id`、`prompt_id`、`skills`、`profile`、`model`、`thinking`、`permission_mode` 和 `disabled_tools`。媒体引用与打包 Skill 也复用提示词提交的校验和准备流程。
+
+成功时，`data` 与 `POST /api/v1/sessions/{session_id}/prompts` 返回的被接受提示词结构相同。错误也与提示词提交一致，包括校验、媒体、档案、环境和幂等错误。
 
 #### `POST /api/v1/sessions/{session_id}/prompts:steer`
 
