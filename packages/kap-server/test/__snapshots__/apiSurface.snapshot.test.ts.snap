@@ -134,6 +134,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
+      "/api/v1/global-agents-md",
+    ],
+    [
+      "GET",
       "/api/v1/gui/store/getItem",
     ],
     [
@@ -567,6 +571,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "PUT",
       "/api/v1/agent-profiles/{name}",
+    ],
+    [
+      "PUT",
+      "/api/v1/global-agents-md",
     ],
     [
       "PUT",
