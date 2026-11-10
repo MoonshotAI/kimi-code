@@ -1239,15 +1239,34 @@ describe('agent machine llm retry', () => {
 });
 
 describe('agent machine input.steer', () => {
-  it('promotes queued prompts into the current turn and merges multi-id steers in FIFO order', async () => {
-    const requester = createStubRequester([
-      createAssistantMessage([], [toolCall('call-1', 'slow_tool')]),
-      createAssistantMessage([{ type: 'text', text: 'done' }]),
-    ]);
+  it('promotes queued prompts without interrupting tool-call streaming or running tools', async () => {
+    let call = 0;
+    const signals: AbortSignal[] = [];
+    let completeToolCall: (() => void) | undefined;
+    const requester: LlmRequester = {
+      generate: (_config, _content, { signal, onEvent }) => {
+        call += 1;
+        signals.push(signal);
+        if (call === 1) {
+          onEvent?.({ type: 'llm.streaming.part', part: toolCall('call-1', 'slow_tool', '{') });
+          return new Promise<void>((resolve) => {
+            completeToolCall = () => {
+              onEvent?.({ type: 'llm.streaming.part', part: { type: 'tool_call_part', argumentsPart: '}' } });
+              streamMessage(createAssistantMessage([]), onEvent);
+              resolve();
+            };
+          });
+        }
+        streamMessage(createAssistantMessage([{ type: 'text', text: 'done' }]), onEvent);
+        return Promise.resolve();
+      },
+    };
     let resolveTool: ((result: ToolResult) => void) | undefined;
+    let toolSignal: AbortSignal | undefined;
     const tools = stubTools(
-      () =>
+      ({ signal }) =>
         new Promise((resolve) => {
+          toolSignal = signal;
           resolveTool = resolve;
         }),
       'slow_tool',
@@ -1264,7 +1283,7 @@ describe('agent machine input.steer', () => {
     actor.send({ type: 'input.submit', entry: { message: createUserMessage('hi') } });
 
     await vi.waitFor(() => {
-      expect(resolveTool).toBeDefined();
+      expect(completeToolCall).toBeDefined();
     });
     actor.send({ type: 'input.submit', entry: { message: createUserMessage('steer me'), meta: { promptId: 'p1' } } });
     await vi.waitFor(() => {
@@ -1290,7 +1309,14 @@ describe('agent machine input.steer', () => {
       userMessageId: 'p1',
       origin: { kind: 'user', inTurn: true },
     });
+    expect(signals[0]?.aborted).toBe(false);
+    expect(call).toBe(1);
+    expect(resolveTool).toBeUndefined();
 
+    completeToolCall?.();
+    await vi.waitFor(() => {
+      expect(resolveTool).toBeDefined();
+    });
     actor.send({
       type: 'input.submit',
       entry: {
@@ -1320,6 +1346,9 @@ describe('agent machine input.steer', () => {
       { type: 'text', text: 'p2 body' },
       { type: 'text', text: 'third' },
     ]);
+    expect(toolSignal?.aborted).toBe(false);
+    expect(signals[0]?.aborted).toBe(false);
+    expect(call).toBe(1);
 
     resolveTool?.({ content: [{ type: 'text', text: 'slow' }] });
     await waitFor(
@@ -1336,6 +1365,7 @@ describe('agent machine input.steer', () => {
       'user:SKILLBLOCK\np2 body\nthird',
       'assistant:done',
     ]);
+    expect(call).toBe(2);
   });
 });
 
@@ -1664,12 +1694,16 @@ describe('agent machine input.abort', () => {
     ]);
   });
 
-  it('starts a new turn for queued prompts and notifications after abort', async () => {
+  it('interrupts an in-flight llm request on steer and continues the same turn', async () => {
     let call = 0;
+    const signals: AbortSignal[] = [];
     const requester: LlmRequester = {
       generate: (_config, _content, { signal, onEvent }) => {
         call += 1;
+        signals.push(signal);
         if (call === 1) {
+          onEvent?.({ type: 'llm.streaming.part', part: { type: 'think', think: 'partial thought' } });
+          onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'partial text' } });
           return new Promise((resolve) => {
             signal.addEventListener('abort', () => {
               onEvent?.({
@@ -1687,27 +1721,37 @@ describe('agent machine input.abort', () => {
     const tools: ToolDefinition[] = [];
     const store = await testStore();
     const actor = createTestAgent(store, requester, tools);
+    const turnStarts: number[] = [];
+    const aborted: unknown[] = [];
+    actor.on('turn.started', (event) => turnStarts.push(event.turnId));
+    actor.on('turn.aborted', (event) => aborted.push(event));
     actor.start();
     actor.send({ type: 'input.submit', entry: { message: createUserMessage('hi') } });
 
     await vi.waitFor(() => {
       expect(call).toBe(1);
     });
-    actor.send({ type: 'input.submit', entry: { message: createUserMessage('queued'), meta: { promptId: 'p1' } } });
     actor.send({ type: 'input.submit', entry: { message: createUserMessage('steered'), meta: { promptId: 'p2' } } });
     actor.send({ type: 'input.steer', id: 'p2' });
-    actor.send({ type: 'input.abort' });
     await waitFor(
       actor,
       (s) => s.matches('idle') && store.getState().history.length === 4,
       { timeout: 5000 },
     );
 
+    expect(signals[0]?.aborted).toBe(true);
+    expect(turnStarts).toEqual([0]);
+    expect(aborted).toHaveLength(0);
     expect(rolesAndTexts(store.getState().history)).toEqual([
       'user:hi',
+      'assistant:partial text',
       'user:steered',
-      'user:queued',
       'assistant:second',
+    ]);
+    const salvaged = store.getState().history[1]?.message;
+    expect(salvaged?.role === 'assistant' && salvaged.content).toEqual([
+      { type: 'think', think: 'partial thought' },
+      { type: 'text', text: 'partial text' },
     ]);
   });
 

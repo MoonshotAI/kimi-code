@@ -163,7 +163,7 @@ describe('promptWithSkills', () => {
     await promptPromise;
     await ctx.untilTurnEnd();
 
-    expect(ctx.llmCalls).toHaveLength(2);
+    expect(ctx.llmCalls).toHaveLength(1);
     const llmInput = JSON.stringify(ctx.llmInputs());
     expect(llmInput).toContain('# Review body');
     expect(llmInput).toContain('ARGUMENTS: src/app.ts');

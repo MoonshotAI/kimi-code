@@ -54,7 +54,7 @@ export class AgentPromptChannel implements IAgentPromptChannel {
     this.telemetry.track2('input_steer', { parts: payload.input.length });
     await this.updateMetadata(promptMetadataTextFromContentParts(payload.input));
     const status = this.loop.snapshot();
-    const steerable = status.state === 'running' && status.activePromptId !== undefined;
+    const steerable = status.activeTurnId !== undefined;
     const { id } = this.loop.submit(
       {
         message: { role: 'user', content: [...payload.input] },
