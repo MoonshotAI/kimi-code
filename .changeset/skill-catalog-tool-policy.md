@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Keep the skill catalog and catalog updates visible when the `Skill` tool is disabled.
+Fix the skill catalog being omitted from the system prompt when the `Skill` tool is disabled.
