@@ -10,7 +10,7 @@ This page documents the changes in each Kimi Code CLI release.
 
 ### Features
 
-- Make steering interrupt active model requests and continue in the same turn, and add `POST /api/v1/sessions/{session_id}/steer` for one-request message steering.
+- Make steering interrupt active model requests and continue in the same turn.
 
 ### Bug Fixes
 

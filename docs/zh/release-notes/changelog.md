@@ -10,7 +10,7 @@ outline: 2
 
 ### 新功能
 
-- 支持 steering 中断当前模型请求并在同一轮继续，新增 `POST /api/v1/sessions/{session_id}/steer`，可通过一次请求发送 steering 消息。
+- 支持 steering 中断当前模型请求并在同一轮继续。
 
 ### 修复
 
