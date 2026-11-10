@@ -1,17 +1,20 @@
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createConnection } from 'node:net';
-import { Duplex } from 'node:stream';
+import { Duplex, Writable } from 'node:stream';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import Fastify from 'fastify';
+import { IBootstrapService, IConfigService, IFlagService } from '@moonshot-ai/agent-core-v2';
 import { describe, expect, it, vi } from 'vitest';
-import { WebSocketServer, type WebSocket as NodeWebSocket } from 'ws';
+import WebSocketClient, { WebSocketServer, type WebSocket as NodeWebSocket } from 'ws';
 
 import { HOST_PROTOCOL_VERSION } from '../src/services/hosts/hostProtocol';
-import { matchHostProxyPath, registerHostProxyRoutes, upstreamHeaders } from '../src/services/hosts/hostProxy';
+import { matchHostProxyPath, proxyHostWebSocket, registerHostProxyRoutes, upstreamHeaders } from '../src/services/hosts/hostProxy';
+import { HostBridgeManager } from '../src/services/hosts/hostBridgeManager';
 import { hostsSectionSchema, isValidHostId } from '../src/services/hosts/hostsConfig';
+import { registerHostsRoutes } from '../src/routes/hosts';
 import {
   HostConnectError,
   SshKapBridge,
@@ -229,6 +232,7 @@ done
           session.openWebSocket('/api/v1/ws', {
             onMessage: (data) => messages.push(data),
             onClose: () => resolve(),
+            onBackpressure() {},
           });
         });
         expect(messages).toEqual(['hello']);
@@ -277,6 +281,165 @@ done
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('host WebSocket backpressure', () => {
+  function replaceSshStdin(bridge: SshKapBridge): { stdin: Writable; killed: ReturnType<typeof vi.fn> } {
+    const session = (bridge as unknown as { sessionValue: { child: { stdin: Writable; kill(): void } } }).sessionValue;
+    const stdin = new Writable({
+      highWaterMark: 1,
+      write(_chunk, _encoding, _callback) {},
+    });
+    Object.defineProperty(session.child, 'stdin', { value: stdin });
+    const killed = vi.fn();
+    session.child.kill = killed as unknown as () => void;
+    return { stdin, killed };
+  }
+
+  it('pauses a client while ssh is blocked and resumes after drain', async () => {
+    const app = Fastify();
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    const address = app.server.address();
+    if (address === null || typeof address === 'string') throw new Error('missing test server address');
+    const received: string[] = [];
+    let blocked = false;
+    let release!: () => void;
+    const drain = new Promise<void>((resolve) => { release = resolve; });
+    const session = {
+      version: '1.0.0',
+      request: async () => { throw new Error('unexpected HTTP request'); },
+      openWebSocket: (_path: string, handlers: { onMessage(data: string): void; onBackpressure(blocked: boolean): void }) => ({
+        send: (data: string) => {
+          received.push(data);
+          if (blocked) {
+            handlers.onBackpressure(true);
+            void drain.then(() => {
+              handlers.onBackpressure(false);
+            });
+          }
+        },
+        close() {},
+      }),
+    };
+    app.server.on('upgrade', (req, upgradeSocket, head) => {
+      void proxyHostWebSocket({ session: () => session } as never, { hostId: 'dev', path: '/api/v1/ws' }, req, upgradeSocket, head);
+    });
+    const ws = new WebSocketClient(`ws://127.0.0.1:${address.port}/api/v1/hosts/dev/proxy/api/v1/ws`);
+    try {
+      await new Promise<void>((resolve) => ws.once('open', resolve));
+      blocked = true;
+      ws.send('first');
+      await vi.waitFor(() => {
+        expect(received).toEqual(['first']);
+      });
+      ws.send('second');
+      await new Promise<void>((resolve) => setTimeout(resolve, 20));
+      expect(received).toEqual(['first']);
+      release();
+      await vi.waitFor(() => {
+        expect(received).toEqual(['first', 'second']);
+      });
+    } finally {
+      ws.terminate();
+      await app.close();
+    }
+  });
+
+  it('closes the host session after sustained backpressure without more client messages', async () => {
+    vi.useFakeTimers();
+    const dir = mkdtempSync(join(tmpdir(), 'kimi-blocked-ssh-'));
+    try {
+      const ssh = join(dir, 'ssh');
+      writeFileSync(ssh, `#!/bin/sh
+echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"version":"1.2.3"}'
+exec sleep 30
+`);
+      chmodSync(ssh, 0o755);
+      const bridge = new SshKapBridge({ host: 'dev' }, { sshProgram: ssh });
+      const session = await bridge.connect();
+      const { killed } = replaceSshStdin(bridge);
+      session.openWebSocket('/api/v1/ws', {
+        onMessage() {},
+        onBackpressure() {},
+        onClose() {},
+      });
+      await vi.advanceTimersByTimeAsync(WS_BACKPRESSURE_TIMEOUT_MS + 100);
+      expect(killed).toHaveBeenCalledOnce();
+      bridge.dispose();
+    } finally {
+      vi.useRealTimers();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('closes the host session when the ssh send buffer exceeds its limit', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kimi-buffered-ssh-'));
+    try {
+      const ssh = join(dir, 'ssh');
+      writeFileSync(ssh, `#!/bin/sh
+echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"version":"1.2.3"}'
+exec sleep 30
+`);
+      chmodSync(ssh, 0o755);
+      const bridge = new SshKapBridge({ host: 'dev' }, { sshProgram: ssh });
+      const session = await bridge.connect();
+      const { stdin, killed } = replaceSshStdin(bridge);
+      stdin.write('x'.repeat(HOST_RPC_MAX_BODY_BYTES));
+      session.openWebSocket('/api/v1/ws', {
+        onMessage() {},
+        onBackpressure() {},
+        onClose() {},
+      });
+      expect(killed).toHaveBeenCalledOnce();
+      bridge.dispose();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('host connection', () => {
+  it('reports a disabled host as disconnected instead of pending', async () => {
+    const config = {
+      ready: Promise.resolve(),
+      get: <T,>() => ({ dev: { host: 'dev-box', enabled: false } }) as T,
+      onDidSectionChange: () => ({ dispose() {} }),
+    };
+    const manager = new HostBridgeManager(config, { warn() {} });
+    const flag = { enabled: () => true };
+    const core = {
+      accessor: {
+        get: (service: unknown) => {
+          if (service === IConfigService) return config;
+          if (service === IFlagService) return flag;
+          if (service === IBootstrapService) return { osHomeDir: '/tmp' };
+          throw new Error(`unexpected service ${String(service)}`);
+        },
+      },
+    };
+    let connect!: (req: unknown, reply: { send(payload: unknown): void }) => Promise<void>;
+    const host = {
+      get() {},
+      put() {},
+      delete() {},
+      post(path: string, _options: unknown, handler: typeof connect) {
+        if (path === '/hosts::connect') connect = handler;
+      },
+    };
+    registerHostsRoutes(host as never, core as never, manager);
+    let payload!: { data: Record<string, unknown> };
+    await connect(
+      { id: 'request', body: { id: 'dev' } },
+      { send: (value: { data: Record<string, unknown> }) => { payload = value; } },
+    );
+    expect(payload.data).toMatchObject({
+      id: 'dev',
+      enabled: false,
+      status: 'disconnected',
+      connect_error: 'host "dev" is disabled',
+    });
+    manager.close();
   });
 });
 

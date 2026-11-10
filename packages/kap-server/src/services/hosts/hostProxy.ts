@@ -172,7 +172,11 @@ function rawDataToString(data: RawData): string {
   return Buffer.from(data as ArrayBuffer).toString('utf8');
 }
 
-const proxyWss = new WebSocketServer({ noServer: true, handleProtocols: selectWsBearerProtocol });
+const proxyWss = new WebSocketServer({
+  noServer: true,
+  handleProtocols: selectWsBearerProtocol,
+  maxPayload: HOST_RPC_MAX_BODY_BYTES,
+});
 
 export async function proxyHostWebSocket(
   manager: HostBridgeManager,
@@ -202,6 +206,12 @@ export async function proxyHostWebSocket(
           ws.close(code ?? 1000, reason);
         } catch {
           ws.terminate();
+        }
+      },
+      onBackpressure: (blocked) => {
+        if (!closed) {
+          if (blocked) ws.pause();
+          else ws.resume();
         }
       },
     });

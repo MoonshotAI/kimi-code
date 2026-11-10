@@ -3,7 +3,7 @@ import type { IncomingHttpHeaders, OutgoingHttpHeaders } from 'node:http';
 import { createInterface } from 'node:readline';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import type { RpcFrame } from '../../transport/stdioRpc';
+import { HOST_RPC_MAX_BODY_BYTES, WS_BACKPRESSURE_TIMEOUT_MS, type RpcFrame } from '../../transport/stdioRpc';
 import { HOST_PROTOCOL_VERSION } from './hostProtocol';
 import type { HostEntry } from './hostsConfig';
 
@@ -43,6 +43,7 @@ export interface HostHttpResponse {
 export interface HostWsHandlers {
   onMessage(data: string): void;
   onClose(code?: number, reason?: string): void;
+  onBackpressure(blocked: boolean): void;
 }
 
 export interface HostWsSession {
@@ -231,11 +232,22 @@ class ActiveHostSession implements HostSession {
     }
   >();
   private readonly wsChannels = new Map<string, HostWsHandlers>();
+  private readonly pausedWs = new Set<string>();
+  private blocked = false;
+  private blockedTimer?: ReturnType<typeof setTimeout>;
 
   constructor(
     readonly version: string,
     private readonly child: ChildProcess,
-  ) {}
+  ) {
+    child.stdin?.on('drain', () => {
+      this.blocked = false;
+      if (this.blockedTimer !== undefined) clearTimeout(this.blockedTimer);
+      this.blockedTimer = undefined;
+      for (const id of this.pausedWs) this.wsChannels.get(id)?.onBackpressure(false);
+      this.pausedWs.clear();
+    });
+  }
 
   request(req: HostHttpRequest): Promise<HostHttpResponse> {
     if (this.closed) {
@@ -283,11 +295,12 @@ class ActiveHostSession implements HostSession {
     return {
       send: (data) => {
         if (!this.closed && this.wsChannels.has(id)) {
-          this.write({ type: 'ws.msg', id, data });
+          this.write({ type: 'ws.msg', id, data }, id);
         }
       },
       close: (code, reason) => {
-        if (this.wsChannels.delete(id) && !this.closed) {
+        if (this.wsChannels.delete(id)) {
+          this.pausedWs.delete(id);
           this.write({ type: 'ws.close', id, code, reason });
         }
       },
@@ -317,12 +330,15 @@ class ActiveHostSession implements HostSession {
     if (frame.type === 'ws.close') {
       const handlers = this.wsChannels.get(frame.id);
       this.wsChannels.delete(frame.id);
+      this.pausedWs.delete(frame.id);
       handlers?.onClose(frame.code, frame.reason);
     }
   }
 
   failAll(): boolean {
     this.closed = true;
+    if (this.blockedTimer !== undefined) clearTimeout(this.blockedTimer);
+    this.blockedTimer = undefined;
     const hadActive = this.pendingHttp.size > 0 || this.wsChannels.size > 0;
     const error = new HostConnectError('connection_refused', 'host connection closed');
     for (const pending of this.pendingHttp.values()) {
@@ -335,6 +351,7 @@ class ActiveHostSession implements HostSession {
     this.pendingHttp.clear();
     for (const handlers of this.wsChannels.values()) handlers.onClose(1001, 'host connection closed');
     this.wsChannels.clear();
+    this.pausedWs.clear();
     return hadActive;
   }
 
@@ -343,9 +360,25 @@ class ActiveHostSession implements HostSession {
     this.child.kill();
   }
 
-  private write(frame: RpcFrame): void {
-    if (!this.closed && this.child.stdin !== null && !this.child.stdin.destroyed) {
-      this.child.stdin.write(`${JSON.stringify(frame)}\n`);
+  private write(frame: RpcFrame, wsId?: string): void {
+    const stdin = this.child.stdin;
+    if (this.closed || stdin === null || stdin.destroyed) return;
+    const blocked = !stdin.write(`${JSON.stringify(frame)}\n`);
+    if (stdin.writableLength > HOST_RPC_MAX_BODY_BYTES) {
+      this.child.kill();
+      return;
+    }
+    if (!blocked) return;
+    if (!this.blocked) {
+      this.blocked = true;
+      this.blockedTimer = setTimeout(() => {
+        if (this.blocked) this.child.kill();
+      }, WS_BACKPRESSURE_TIMEOUT_MS);
+      this.blockedTimer.unref?.();
+    }
+    if (wsId !== undefined && !this.pausedWs.has(wsId)) {
+      this.pausedWs.add(wsId);
+      this.wsChannels.get(wsId)?.onBackpressure(true);
     }
   }
 }

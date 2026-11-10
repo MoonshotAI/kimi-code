@@ -200,12 +200,28 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
     async (req: RouteRequest, reply: RouteReply) => {
       if (!(await enabled(req, reply))) return;
       const { id } = req.body as z.infer<typeof connectBodySchema>;
-      await manager.connect(id).catch(() => undefined);
+      const error = await manager.connect(id).then(
+        () => undefined,
+        (error: unknown) => (error instanceof Error ? error : new Error('host connection failed')),
+      );
       const info = manager.list().find((candidate) => candidate.id === id);
+      if (info === undefined) {
+        reply.send(errEnvelope(ErrorCode.ENVIRONMENT_NOT_FOUND, `host "${id}" is not configured`, req.id));
+        return;
+      }
+      const snapshot = toResponse(info);
       reply.send(
-        info === undefined
-          ? errEnvelope(ErrorCode.ENVIRONMENT_NOT_FOUND, `host "${id}" is not configured`, req.id)
-          : okEnvelope(toResponse(info), req.id),
+        okEnvelope(
+          error !== undefined && snapshot.status === 'pending'
+            ? {
+                ...snapshot,
+                status: 'disconnected',
+                connect_error: error.message,
+                connect_failure: error instanceof HostConnectError ? error.failure : 'unknown',
+              }
+            : snapshot,
+          req.id,
+        ),
       );
     },
   );
