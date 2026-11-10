@@ -7,12 +7,12 @@ import type {
 import type {
   PermissionData
 } from '#/agent/permissionPolicy/types';
-import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
+import type { BeforeToolExecuteEvent } from '#/agent/toolExecutor/toolHooks';
 
 export interface PermissionGateReviewer {
   evaluateOptions?(): PermissionPolicyEvaluateOptions | undefined;
   review(
-    context: ResolvedToolExecutionHookContext,
+    context: BeforeToolExecuteEvent,
     evaluation: PermissionPolicyEvaluation,
   ): (() => Promise<PermissionPolicyEvaluation>) | undefined;
 }

@@ -26,8 +26,17 @@ export function createAutoReviewReviewer(
     review: (context, evaluation) => {
       const trigger = autoReviewTrigger(flags.enabled(AUTO_REVIEW_FLAG_ID), modes.mode, evaluation);
       if (trigger === undefined) return undefined;
+      let pending: Promise<AutoReviewResult> | undefined;
+      const start = (): Promise<AutoReviewResult> => {
+        pending ??= reviewService().review(context, trigger, context.reviewSignal);
+        void pending.catch(() => undefined);
+        return pending;
+      };
+      context.deferReview(() => {
+        void start();
+      });
       return async () => {
-        const review = await reviewService().review(context, trigger);
+        const review = await start();
         return resolveAutoReview(
           context,
           evaluation,

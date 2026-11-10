@@ -284,7 +284,7 @@ describe('AgentPermissionGate', () => {
 
     await executorEvents.fireBeforeExecute(makeContext('Bash'));
 
-    expect(review).toHaveBeenCalledWith(expect.anything(), 'sensitive-file-access-ask');
+    expect(review).toHaveBeenCalledWith(expect.anything(), 'sensitive-file-access-ask', expect.any(AbortSignal));
     expect(resolvePermissionResolution).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'ask' }),
       expect.anything(),
@@ -351,7 +351,11 @@ describe('AgentPermissionGate', () => {
 
     await executorEvents.fireBeforeExecute(ctx);
 
-    expect(review).toHaveBeenCalledWith(expect.objectContaining({ toolCall: ctx.toolCall }), 'fallback-ask');
+    expect(review).toHaveBeenCalledWith(
+      expect.objectContaining({ toolCall: ctx.toolCall }),
+      'fallback-ask',
+      expect.any(AbortSignal),
+    );
   });
 
   it('does not review when another listener vetoes or finally allows', async () => {

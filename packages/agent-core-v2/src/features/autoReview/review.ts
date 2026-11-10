@@ -11,7 +11,11 @@ export type AutoReviewResult =
 
 export interface IAutoReviewService {
   readonly _serviceBrand: undefined;
-  review(context: ResolvedToolExecutionHookContext, trigger: string): Promise<AutoReviewResult>;
+  review(
+    context: ResolvedToolExecutionHookContext,
+    trigger: string,
+    signal?: AbortSignal,
+  ): Promise<AutoReviewResult>;
 }
 
 export const IAutoReviewService = createDecorator<IAutoReviewService>('autoReviewService');

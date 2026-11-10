@@ -16,6 +16,15 @@ import type {
 
 type PendingVetoFactory = () => Promise<BeforeExecuteDecision | undefined>;
 
+export type BegunBeforeExecute =
+  | { readonly status: 'absent' }
+  | { readonly status: 'decided'; readonly decision: BeforeExecuteDecision | undefined }
+  | {
+      readonly status: 'pending';
+      settle(): Promise<BeforeExecuteDecision | undefined>;
+      cancel(): void;
+    };
+
 export function denyToolExecution(reason: string): ExecutableToolResult {
   return { output: reason, isError: true };
 }
@@ -34,6 +43,8 @@ export class BeforeToolExecuteEventImpl implements BeforeToolExecuteEvent {
   private _finalAllowed = false;
   private _passMetadata: unknown;
   private readonly _pendingVetos: PendingVetoFactory[] = [];
+  private readonly _reviewStarts: Array<() => void> = [];
+  private readonly _reviewAbort = new AbortController();
   private _open = true;
 
   constructor(context: ResolvedToolExecutionHookContext) {
@@ -45,6 +56,14 @@ export class BeforeToolExecuteEventImpl implements BeforeToolExecuteEvent {
     this.tool = context.tool;
     this.args = context.args;
     this.execution = context.execution;
+  }
+
+  get reviewSignal(): AbortSignal {
+    return AbortSignal.any([this.signal, this._reviewAbort.signal]);
+  }
+
+  cancelReview(): void {
+    this._reviewAbort.abort();
   }
 
   veto(result: ExecutableToolResult): void {
@@ -65,6 +84,16 @@ export class BeforeToolExecuteEventImpl implements BeforeToolExecuteEvent {
   waitUntil(factory: PendingVetoFactory): void {
     this.assertOpen('waitUntil');
     this._pendingVetos.push(factory);
+  }
+
+  deferReview(start: () => void): void {
+    this.assertOpen('deferReview');
+    this._reviewStarts.push(start);
+  }
+
+  startDeferredReviews(): void {
+    for (const start of this._reviewStarts) start();
+    this._reviewStarts.length = 0;
   }
 
   get vetoResult(): ExecutableToolResult | undefined {
@@ -98,18 +127,47 @@ export class BeforeToolExecuteEmitter extends Emitter<BeforeToolExecuteEvent> {
   async fireBeforeExecute(
     context: ResolvedToolExecutionHookContext,
   ): Promise<BeforeExecuteDecision | undefined> {
+    const begun = await this.beginBeforeExecute(context);
+    if (begun.status === 'absent') return undefined;
+    if (begun.status === 'decided') return begun.decision;
+    return begun.settle();
+  }
+
+  async beginBeforeExecute(
+    context: ResolvedToolExecutionHookContext,
+  ): Promise<BegunBeforeExecute> {
     if (this.isDisposed || this._listeners === undefined || this._listeners.size === 0) {
-      return undefined;
+      return { status: 'absent' };
     }
 
     const event = new BeforeToolExecuteEventImpl(context);
     for (const entry of Array.from(this._listeners)) {
       await entry.listener.call(entry.thisArg, event);
-      if (event.finalAllowed) return undefined;
-      if (event.vetoResult !== undefined) return { veto: event.vetoResult };
+      if (event.finalAllowed) {
+        event.cancelReview();
+        event.closeRegistration();
+        return { status: 'decided', decision: undefined };
+      }
+      if (event.vetoResult !== undefined) {
+        event.cancelReview();
+        event.closeRegistration();
+        return { status: 'decided', decision: { veto: event.vetoResult } };
+      }
     }
     event.closeRegistration();
+    event.startDeferredReviews();
+    return {
+      status: 'pending',
+      settle: () => this.settleBeforeExecute(event),
+      cancel: () => {
+        event.cancelReview();
+      },
+    };
+  }
 
+  private async settleBeforeExecute(
+    event: BeforeToolExecuteEventImpl,
+  ): Promise<BeforeExecuteDecision | undefined> {
     let passMetadata = event.passMetadata;
     for (const factory of event.pendingVetos) {
       const decision = await factory();

@@ -58,6 +58,7 @@ import { IAutoReviewService, type AutoReviewResult } from './review';
 
 const AUTO_REVIEW_REQUEST_KIND = 'auto_review';
 const MAX_REVIEW_ATTEMPTS = 3;
+const MAX_CONCURRENT_REVIEWS = 4;
 
 type ReviewAttempt = AutoReviewResult | { readonly kind: 'appended' } | ReviewFailure;
 
@@ -124,6 +125,8 @@ interface ProjectInstructions {
 export class AutoReviewService extends Service implements IAutoReviewService {
   declare readonly _serviceBrand: undefined;
   private projectInstructions: Promise<ProjectInstructions> | undefined;
+  private activeReviews = 0;
+  private readonly reviewSlots: Array<() => void> = [];
 
   constructor(
     @IConfigService private readonly configService: IConfigService,
@@ -171,7 +174,11 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     return this.projectInstructions;
   }
 
-  async review(context: ResolvedToolExecutionHookContext, trigger: string): Promise<AutoReviewResult> {
+  async review(
+    context: ResolvedToolExecutionHookContext,
+    trigger: string,
+    signal: AbortSignal = context.signal,
+  ): Promise<AutoReviewResult> {
     const startedAt = Date.now();
     void this.dispatcher.dispatch(new AutoReviewStarted({
       agentId: this.scopeContext.agentId,
@@ -184,7 +191,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
       config?.model ??
       resolveSubagentModelPool(this.configService)?.defaultModel ??
       this.profile.resolveModelContext().modelAlias;
-    const result = await this.reviewWithDeadline(context, modelAlias, config?.timeoutMs ?? 30000);
+    const result = await this.reviewWithDeadline(context, modelAlias, config?.timeoutMs ?? 30000, signal);
     void this.dispatcher.dispatch(new AutoReviewCompleted({
       agentId: this.scopeContext.agentId,
       turnId: context.turnId,
@@ -221,10 +228,14 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     context: ResolvedToolExecutionHookContext,
     modelAlias: string,
     timeoutMs: number,
+    signal: AbortSignal,
   ): Promise<AutoReviewResult> {
-    const deadline = createDeadlineAbortSignal(context.signal, timeoutMs);
+    const deadline = createDeadlineAbortSignal(signal, timeoutMs);
+    let acquired = false;
     try {
       const projectInstructions = await this.loadProjectInstructions();
+      await this.acquireReview(deadline.signal);
+      acquired = true;
       let appended = false;
       for (let attempt = 1; attempt <= MAX_REVIEW_ATTEMPTS; attempt += 1) {
         let outcome: ReviewAttempt;
@@ -236,9 +247,8 @@ export class AutoReviewService extends Service implements IAutoReviewService {
             this.compaction.begin({ source: 'auto' });
             return { kind: 'failed', reason: 'The review context exceeded the model window.' };
           }
-          outcome = deadline.signal.aborted
-            ? { kind: 'failed', reason: 'Review timed out.' }
-            : { kind: 'failed', reason: error instanceof Error ? error.message : String(error), error };
+          if (deadline.signal.aborted) return this.deadlineFailure(deadline);
+          outcome = { kind: 'failed', reason: error instanceof Error ? error.message : String(error), error };
         }
         if (outcome.kind === 'appended') {
           if (appended) return authorizationChanged();
@@ -252,21 +262,58 @@ export class AutoReviewService extends Service implements IAutoReviewService {
           readRetryAfterMs('error' in outcome ? outcome.error : undefined) ?? retryBackoffDelay(attempt - 1),
           deadline.remainingMs(),
         );
-        if (delayMs <= 0 || deadline.signal.aborted) return { kind: 'failed', reason: 'Review timed out.' };
+        if (delayMs <= 0 || deadline.signal.aborted) return this.deadlineFailure(deadline);
         await sleepForRetry(delayMs, deadline.signal);
       }
       return { kind: 'failed', reason: 'Review timed out.' };
     } catch (error) {
       context.signal.throwIfAborted();
+      if (deadline.signal.aborted) return this.deadlineFailure(deadline);
       return {
         kind: 'failed',
-        reason: deadline.signal.aborted
-          ? 'Review timed out.'
-          : error instanceof Error ? error.message : String(error),
+        reason: error instanceof Error ? error.message : String(error),
       };
     } finally {
+      if (acquired) this.releaseReview();
       deadline.clear();
     }
+  }
+
+  private deadlineFailure(deadline: DeadlineAbortSignal): AutoReviewResult {
+    return {
+      kind: 'failed',
+      reason: deadline.timedOut() ? 'Review timed out.' : 'Review cancelled.',
+    };
+  }
+
+  private acquireReview(signal: AbortSignal): Promise<void> {
+    if (signal.aborted) return Promise.reject(signal.reason);
+    if (this.activeReviews < MAX_CONCURRENT_REVIEWS) {
+      this.activeReviews += 1;
+      return Promise.resolve();
+    }
+    return new Promise((resolve, reject) => {
+      const grant = () => {
+        signal.removeEventListener('abort', onAbort);
+        resolve();
+      };
+      const onAbort = () => {
+        const index = this.reviewSlots.indexOf(grant);
+        if (index >= 0) this.reviewSlots.splice(index, 1);
+        reject(signal.reason);
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      this.reviewSlots.push(grant);
+    });
+  }
+
+  private releaseReview(): void {
+    const next = this.reviewSlots.shift();
+    if (next !== undefined) {
+      next();
+      return;
+    }
+    this.activeReviews -= 1;
   }
 
   private async reviewOnce(

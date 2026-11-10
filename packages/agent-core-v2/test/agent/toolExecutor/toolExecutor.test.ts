@@ -169,13 +169,49 @@ describe('AgentToolExecutorService auto review', () => {
     expect(result).not.toMatchObject({ isError: true });
     expect(tool.calls).toHaveLength(1);
   });
+
+  it('starts every review in a batch before waiting for the first decision', async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const release = deferred<import('#/features/autoReview/review').AutoReviewResult>();
+    installAutoReview(async () => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      try {
+        return await release.promise;
+      } finally {
+        inFlight -= 1;
+      }
+    });
+    const tool = new TestTool('Write');
+    registry.register(tool);
+
+    const pending = execute([
+      toolCall('call_a', 'Write', { path: 'outside-a.txt' }),
+      toolCall('call_b', 'Write', { path: 'outside-b.txt' }),
+    ]);
+    await vi.waitFor(() => {
+      expect(maxInFlight).toBe(2);
+    });
+    release.resolve({ kind: 'decision', decision: { risk: 'high', decision: 'deny' } });
+
+    const results = await pending;
+    expect(results).toHaveLength(2);
+    expect(tool.calls).toHaveLength(0);
+  });
 });
 
-function installAutoReview(result: import('#/features/autoReview/review').AutoReviewResult): void {
+function installAutoReview(
+  result:
+    | import('#/features/autoReview/review').AutoReviewResult
+    | (() => Promise<import('#/features/autoReview/review').AutoReviewResult>),
+): void {
   const permissions = disposables.add(new TestInstantiationService(undefined, false, ix));
   permissions.stub(IAgentPermissionModeService, stubPermissionModeService(() => 'auto'));
   permissions.stub(IFlagService, { enabled: () => true });
-  permissions.stub(IAutoReviewService, { review: async () => result });
+  permissions.stub(IAutoReviewService, {
+    review: typeof result === 'function' ? result : async () => result,
+  });
   permissions.stub(IBootstrapService, stubBootstrap('/tmp', {}, { nonInteractive: true }));
   permissions.stub(IConfigService, { get: (() => undefined) as IConfigService['get'] });
   permissions.stub(IAgentPermissionRulesService, { rules: [], sessionApprovalRulePatterns: [] });
@@ -220,6 +256,38 @@ function installAutoReview(result: import('#/features/autoReview/review').AutoRe
 }
 
 describe('AgentToolExecutorService', () => {
+  it('does not settle a later call after an earlier call stops the batch', async () => {
+    const first = deferred();
+    const settled: string[] = [];
+    let opened = 0;
+    executor.onBeforeExecuteTool((event) => {
+      opened += 1;
+      event.waitUntil(async () => {
+        if (event.toolCall.id === 'first') await first.promise;
+        settled.push(event.toolCall.id);
+        if (event.toolCall.id !== 'first') return undefined;
+        return { veto: { output: 'stop', isError: true, stopTurn: true, stopBatchAfterThis: true } };
+      });
+    });
+    const tool = new TestTool('echo');
+    registry.register(tool);
+
+    const pending = execute([
+      toolCall('first', 'echo', { text: 'a' }),
+      toolCall('second', 'echo', { text: 'b' }),
+    ]);
+    await vi.waitFor(() => {
+      expect(opened).toBe(2);
+    });
+    expect(settled).toEqual([]);
+    first.resolve();
+
+    const results = await pending;
+    expect(settled).toEqual(['first']);
+    expect(results[1]).toMatchObject({ isError: true, output: expect.stringContaining('skipped') });
+    expect(tool.calls).toHaveLength(0);
+  });
+
   it('resolves by interface and routes a successful tool call through execute', async () => {
     const tool = new TestTool('echo');
     registry.register(tool);

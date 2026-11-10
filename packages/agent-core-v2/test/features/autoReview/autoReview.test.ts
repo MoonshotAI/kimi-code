@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
@@ -600,6 +600,37 @@ describe('AutoReviewService', () => {
     }, undefined, true, undefined, 1000));
     expect(result).toMatchObject({ kind: 'failed', reason: 'Review timed out.' });
     expect(requests).toHaveLength(1);
+  });
+
+  it('keeps at most four review requests in flight and cancels one still waiting', async () => {
+    let release: () => void = () => {};
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const reviewer = service(async () => {
+      await hold;
+      return response;
+    });
+    const running = Array.from({ length: 4 }, (_, index) => reviewer.review(
+      reviewContext({ id: `run_${index}`, toolName: 'Bash', args: { command: 'pwd' }, tool: bashTool }),
+      'fallback-ask',
+    ));
+    await vi.waitFor(() => {
+      expect(requests).toHaveLength(4);
+    });
+    const reviewAbort = new AbortController();
+    const queued = reviewer.review(
+      reviewContext({ id: 'queued', toolName: 'Bash', args: { command: 'pwd' }, tool: bashTool }),
+      'fallback-ask',
+      reviewAbort.signal,
+    );
+    reviewAbort.abort();
+
+    await expect(queued).resolves.toMatchObject({ kind: 'failed', reason: 'Review cancelled.' });
+    expect(requests).toHaveLength(4);
+    release();
+    await Promise.all(running);
+    expect(requests).toHaveLength(4);
   });
 
   it('propagates user cancellation', async () => {
