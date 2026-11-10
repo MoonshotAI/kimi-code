@@ -486,6 +486,7 @@ describe('AgentReminderService', () => {
       return undefined;
     });
     loop = ctx.get(IAgentLoopService) as StubLoop;
+    await loop.start();
     await vi.waitFor(async () => {
       await runInjectionStep();
       expect(calls).toBeGreaterThan(0);

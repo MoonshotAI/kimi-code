@@ -191,7 +191,13 @@ describe('AgentTaskService Wire history', () => {
 
   it('lists live tasks as active and includes lost tasks only in full history', async () => {
     installControlledTask(ctx);
+    ctx.mockNextResponse({ type: 'text', text: 'restored lost task acknowledged' });
     await restoreTaskHistory(ctx, [processInfo()]);
+    await vi.waitFor(() => {
+      expect(ctx.get(IAgentLoopService).history().filter((message) =>
+        message.origin?.kind === 'task' && message.origin.status === 'lost')).toHaveLength(1);
+    });
+    await ctx.get(IAgentLoopService).settled();
     const tasks = ctx.get(IAgentTaskService);
     const controlled = await startControlledTaskInLoop(ctx, { description: 'live process' });
     const liveId = controlled.handler.taskId;

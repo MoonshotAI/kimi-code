@@ -443,7 +443,10 @@ class CallControl<TContext> {
 
   write(text: string): number | undefined {
     if (text.length === 0 || this.frozen) return undefined;
-    return this.outputLog().append(text);
+    const log = this.outputLog();
+    const offset = log.append(text);
+    if (offset !== undefined && log.onAppend === undefined) this.emit({ type: 'output', offset, text });
+    return offset;
   }
 
   private outputLog(): ToolOutput {

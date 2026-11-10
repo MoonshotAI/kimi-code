@@ -139,7 +139,8 @@ describe('loop record', () => {
     const closed = fold([...records, ...live]);
     expect(closed.unfinished).toBeUndefined();
     expect(closed.turns.at(-1)).toMatchObject({ turnId: 2, outcome: { type: 'aborted', reason: { reason: 'closed' } } });
-    expect(closed.messages.slice(-2).map((entry) => entry.message.role)).toEqual(['tool', 'tool']);
+    expect(closed.messages.slice(-3).map((entry) => entry.message.role)).toEqual(['tool', 'tool', 'user']);
+    expect(extractText(closed.messages.at(-1)!.message)).toBe('reentrant close');
     expect(closed.notify.map((entry) => extractText(entry.message))).toEqual([
       '[async tool aborted] bg (tool_call_id=call-bg)',
     ]);

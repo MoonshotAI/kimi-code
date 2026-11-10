@@ -148,6 +148,7 @@ export function restoreLoopJournal(records: readonly WireRecord[]): LoopJournalS
   let context: readonly ContextMessage[] = [];
   let profile: ProfileBindingSnapshot | undefined;
   let profileBound = false;
+  let requestingStep: LoopRecordedEvent | undefined;
   for (const record of contextRecords) {
     switch (record.type) {
       case 'profile.bind':
@@ -166,17 +167,22 @@ export function restoreLoopJournal(records: readonly WireRecord[]): LoopJournalS
       case 'context.append_message':
         context = foldAppendMessage(context, record['message'] as ContextMessage);
         break;
-      case 'context.append_loop_event':
-        context = foldLoopEvent(context, record['event'] as LoopRecordedEvent);
+      case 'context.append_loop_event': {
+        const event = record['event'] as LoopRecordedEvent;
+        requestingStep = event.type === 'step.begin' ? event : undefined;
+        context = foldLoopEvent(context, event);
         break;
+      }
       case 'context.apply_compaction':
         context = applyContextCompactionRecord(
           context,
           record as unknown as Parameters<typeof applyContextCompactionRecord>[1],
         );
+        if (requestingStep !== undefined) context = foldLoopEvent(context, requestingStep);
         break;
       case 'context.clear':
         context = [];
+        requestingStep = undefined;
         break;
     }
   }
@@ -308,6 +314,7 @@ export class LoopJournal {
   private readonly steps = new Map<string, StepJournal>();
   private readonly toolCallUuids = new Map<string, string>();
   private turn: PendingTurn | undefined;
+  private requestingStep: { readonly turnId: number; readonly step: number } | undefined;
 
   constructor(
     private readonly wire: IWireService,
@@ -361,15 +368,20 @@ export class LoopJournal {
         };
         this.writeTurnPrompt();
         return;
-      case 'step.started': {
+      case 'step.started':
         this.writeTurnPrompt();
-        const step = {
+        this.steps.set(stepKey(event.turnId, event.step), {
           uuid: randomUUID(),
           streamedBlocks: new Map(),
           started: false,
-        };
-        this.steps.set(stepKey(event.turnId, event.step), step);
-        this.ensureStepStarted(event.turnId, event.step, step);
+        });
+        this.requestingStep = { turnId: event.turnId, step: event.step };
+        return;
+      case 'llm.started': {
+        const requesting = this.requestingStep;
+        if (requesting === undefined) return;
+        const step = this.steps.get(stepKey(requesting.turnId, requesting.step));
+        if (step !== undefined) this.ensureStepStarted(requesting.turnId, requesting.step, step);
         return;
       }
       case 'message.appended':
@@ -416,6 +428,7 @@ export class LoopJournal {
         this.writeTurnPrompt();
         const key = stepKey(event.turnId, event.step);
         const step = this.steps.get(key);
+        this.requestingStep = undefined;
         if (step === undefined) return;
         const assistant = step.assistant;
         if (step.started || assistant !== undefined) {

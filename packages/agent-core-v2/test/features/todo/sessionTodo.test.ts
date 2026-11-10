@@ -206,10 +206,11 @@ describe('AgentTodoService', () => {
     const subTodo = lifecycle.handleOf(sub.agentId)!.accessor.get(IAgentTodoService);
     const subReminder = lifecycle.handleOf(sub.agentId)!.accessor.get(IAgentReminderService);
     const subMemory = lifecycle.handleOf(sub.agentId)!.accessor.get(IAgentLoopService);
+    const remindersBeforeSubTodo = reminderCount(subMemory);
     await subTodo.replace([{ title: 'sub task', status: 'pending' }]);
     appendAssistantTurns(subMemory, 10);
     await subReminder.reconcileWhenIdle(TODO_LIST_REMINDER_VARIANT);
-    expect(reminderCount(subMemory)).toBe(0);
+    expect(reminderCount(subMemory)).toBe(remindersBeforeSubTodo);
     await lifecycle.remove(sub);
   });
 

@@ -207,6 +207,14 @@ class OutputHandle implements ToolOutput {
   }
 
   append(chunk: string): number | undefined {
+    if (this.closing !== undefined) {
+      this.localError ??= 'Tool output is closed';
+      return undefined;
+    }
+    if (!this.writer) {
+      this.localError ??= 'Tool output is already open for writing';
+      return undefined;
+    }
     return this.body.append(chunk);
   }
 

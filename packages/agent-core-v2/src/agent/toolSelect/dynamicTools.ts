@@ -69,12 +69,16 @@ export function shapeUnsupportedDynamicToolContext(
       const removed = disclosure?.kind === 'delta'
         ? disclosure.removed.map((tool) => tool.name)
         : matchToolNameBlocks(text, TOOLS_REMOVED_BLOCK);
-      const { tools: _tools, ...rest } = message;
-      void _tools;
-      out.push({
-        ...rest,
-        content: [{ type: 'text', text: wrapSystemReminder(renderRuntimeToolChangeReminder(added, removed)) }],
-      });
+      const content: ContextMessage['content'] = [
+        { type: 'text', text: wrapSystemReminder(renderRuntimeToolChangeReminder(added, removed)) },
+      ];
+      if (message.role === 'system') {
+        const { tools: _tools, ...rest } = message;
+        void _tools;
+        out.push({ ...rest, content });
+      } else {
+        out.push({ ...message, content });
+      }
       continue;
     }
     if (isDynamicToolSchemaMessage(message)) {

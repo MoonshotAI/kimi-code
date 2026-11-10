@@ -221,7 +221,6 @@ export class AgentTaskRequestService extends Service implements IAgentTaskServic
   }
 
   async getOutputSnapshot(taskId: string, maxPreviewBytes: number): Promise<AgentTaskOutputSnapshot> {
-    if (this.getTask(taskId) === undefined) return emptyOutputSnapshot();
     const live = this.toolExecutor.handler(taskId)?.output(maxPreviewBytes);
     if (live !== undefined) {
       return {

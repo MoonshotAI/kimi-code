@@ -511,6 +511,7 @@ export async function startControlledTaskInLoop(
   options: ControlledTaskOptions = {},
 ): Promise<ControlledTask> {
   installControlledTask(ctx);
+  ensureActiveTools(ctx, [CONTROLLED_TASK_TOOL, ...TASK_TOOLS]);
   const completion = controlledCompletion(options);
   const controller = new AbortController();
   const toolCallId = `controlled-${String(++controlledTaskSequence)}`;
