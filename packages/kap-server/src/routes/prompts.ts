@@ -533,6 +533,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope, convers
         [ErrorCode.VALIDATION_FAILED]: {},
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.PROMPT_NOT_FOUND]: {},
+        ...sessionConflictErrors,
       },
       description: 'Move a queued prompt before another queued prompt or to the end of the queue',
       tags: ['prompts'],
