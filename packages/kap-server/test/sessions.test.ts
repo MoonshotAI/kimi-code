@@ -1926,13 +1926,6 @@ describe('server-v2 /api/v1/sessions', () => {
       turnId: 0,
     }));
     const wire = agent.accessor.get(IWireService);
-    wire.append({
-      type: 'turn.prompt',
-      agentId: MAIN_AGENT_ID,
-      input: [{ type: 'text', text: 'original prompt' }],
-      origin: { kind: 'user' },
-      turnId: 0,
-    });
     await agent.accessor.get(IEventDispatcher).dispatch(new ContextAppendMessage({
       agentId: MAIN_AGENT_ID,
       message: { role: 'user', content: [{ type: 'text', text: 'original prompt' }], origin: { kind: 'user' } },
@@ -1941,13 +1934,6 @@ describe('server-v2 /api/v1/sessions', () => {
       agentId: MAIN_AGENT_ID,
       message: { role: 'assistant', content: [{ type: 'text', text: 'answer before steer' }], toolCalls: [] },
     }));
-    wire.append({
-      type: 'turn.steer',
-      agentId: MAIN_AGENT_ID,
-      input: [{ type: 'text', text: 'steered prompt' }],
-      origin: { kind: 'user' },
-      turnId: 0,
-    });
     await agent.accessor.get(IEventDispatcher).dispatch(new TurnSteer({
       agentId: MAIN_AGENT_ID,
       input: [{ type: 'text', text: 'steered prompt' }],
@@ -1962,13 +1948,6 @@ describe('server-v2 /api/v1/sessions', () => {
       agentId: MAIN_AGENT_ID,
       message: { role: 'assistant', content: [{ type: 'text', text: 'answer after steer' }], toolCalls: [] },
     }));
-    wire.append({
-      type: 'turn.steer',
-      agentId: MAIN_AGENT_ID,
-      input: [{ type: 'text', text: 'second steer' }],
-      origin: { kind: 'user' },
-      turnId: 0,
-    });
     await agent.accessor.get(IEventDispatcher).dispatch(new TurnSteer({
       agentId: MAIN_AGENT_ID,
       input: [{ type: 'text', text: 'second steer' }],

@@ -534,19 +534,20 @@ describe('conversation contract e2e', () => {
       await rest(server!, base, `/api/v1/sessions/${sid}/prompts/${steer.prompt_id}:steer`, { method: 'POST', body: {} });
       await idle(server!, base, sid);
       const before = await getTurns(server!, base, sid);
-      expect(before.turns).toHaveLength(1);
-      expect(JSON.stringify(before.turns)).toContain('answer after steer');
-      const steerItem = before.turns[0].items.find((item: any) => item.type === 'user_message' && item.placement === 'steer');
+      expect(before.turns).toHaveLength(2);
+      expect(JSON.stringify(before.turns[1])).toContain('answer after steer');
+      const steerItem = before.turns[1].items.find((item: any) => item.type === 'user_message' && item.placement === 'opener');
       expect(steerItem?.prompt_ids).toContain(steer.prompt_id);
+      const turnIds = before.turns.map((turn) => turn.turn_id);
       await until('steer reaches subscriber', () => JSON.stringify(channel.turns()).includes('answer after steer'));
       expect(channel.turns()).toEqual(before.turns);
 
       const pages = channel.conversation.filter((frame) => frame.type === 'turns').length;
       const undone = await rest<{ removed_turn_ids: string[] }>(server!, base, `/api/v1/sessions/${sid}:undo`, { method: 'POST', body: { turn_id: before.turns[0].turn_id } });
-      expect(undone.removed_turn_ids).toEqual([before.turns[0].turn_id]);
+      expect(undone.removed_turn_ids).toEqual(turnIds);
       expect((await getTurns(server!, base, sid)).turns).toEqual([]);
       await until('removal reaches subscriber', () => channel.conversation.some((frame) => frame.type === 'turns.removed'));
-      expect(channel.conversation.find((frame) => frame.type === 'turns.removed').turn_ids).toEqual([before.turns[0].turn_id]);
+      expect(channel.conversation.find((frame) => frame.type === 'turns.removed').turn_ids).toEqual(turnIds);
       expect(channel.conversation.filter((frame) => frame.type === 'turns').length).toBe(pages);
       expect(channel.turns()).toEqual([]);
       const reconnected = await subscribeConversation(server!, sid);
