@@ -1,32 +1,24 @@
-/**
- * `subagent` domain — helper that runs one prompt (or retry) turn on
- * an agent and distills a summary from its context once the turn ends.
- *
- * Not a Service: `runAgentTurn` is a pure function that borrows
- * `IAgentPromptService`, `IAgentContextMemoryService`, `IAgentUsageService`,
- * and `IEventBus` from the target agent's scope. It has no notion of a caller:
- * it emits no record signals, runs no hooks, and tracks no telemetry.
- *
- * The lifecycle is imperative — the caller awaits the returned `completion`
- * promise. Turn hooks are not used because there is exactly one observer (the
- * caller who requested the run); a hook indirection would only obscure the
- * flow.
- */
-
-import { APIProviderRateLimitError, isProviderRateLimitError } from '#/kosong/contract/errors';
-import { type TokenUsage } from '#/kosong/contract/usage';
+import { APIProviderRateLimitError, isProviderRateLimitError } from '#/llm-adapter/contract/errors';
 
 import { linkAbortSignal, userCancellationReason } from '#/_base/utils/abort';
+import type { IDisposable } from '#/_base/di/lifecycle';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
+import { codePointBoundaryStart } from '#/_base/text/code-points';
+import { IEventBus } from '#/app/event/eventBus';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { Error2, ErrorCodes, toKimiErrorPayload, type KimiErrorPayload } from '#/errors';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
-import { IAgentLoopService, type Turn, type TurnResult } from '#/agent/loop/loop';
-import { IAgentUsageService } from '#/agent/usage/usage';
-import type { AgentProfileSummaryPolicy } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import {
+  IAgentLoopService,
+  isMaxStepsExceededError,
+  type Turn,
+  type TurnResult,
+} from '#/agent/loop/loop';
+import { AssistantDelta, TurnStepRetrying, TurnStepStarted } from '#/agent/loop/turnEvents';
+import { agentContextOf } from '#/agent/scopeContext/scopeContext';
+import { ISessionUsageService } from '#/session/usage/sessionUsage';
 
-import type { AgentRunHandle, AgentRunRequest } from './subagent';
+import type { AgentRunCompletion, AgentRunHandle, AgentRunRequest } from './subagent';
 
 export const AGENT_RUN_PROMPT_ORIGIN: PromptOrigin = {
   kind: 'system_trigger',
@@ -36,8 +28,12 @@ export const AGENT_RUN_PROMPT_ORIGIN: PromptOrigin = {
 const SUBAGENT_MAX_TOKENS_ERROR =
   'Subagent turn failed before completing its final summary: reason=max_tokens';
 
+const PARTIAL_OUTPUT_MAX_CHARS = 32 * 1024;
+const PARTIAL_OUTPUT_TRUNCATED_MARKER = '[earlier text truncated]';
+
+type CompletedTurnResult = Extract<TurnResult, { readonly type: 'completed' }>;
+
 export interface RunAgentTurnOptions {
-  readonly summaryPolicy?: AgentProfileSummaryPolicy;
   readonly signal: AbortSignal;
   readonly onReady?: () => void;
 }
@@ -48,56 +44,61 @@ export async function runAgentTurn(
   options: RunAgentTurnOptions,
 ): Promise<AgentRunHandle> {
   options.signal.throwIfAborted();
-  const promptService = target.accessor.get(IAgentPromptService);
-  const turn =
-    request.kind === 'prompt'
-      ? await (await promptService.enqueue({ message: {
-          role: 'user',
-          content: [{ type: 'text', text: request.prompt }],
-          toolCalls: [],
-          origin: AGENT_RUN_PROMPT_ORIGIN,
-        } })).launched
-      : await promptService.retry();
-  if (turn === undefined) throw new Error2(ErrorCodes.INTERNAL, 'Agent turn could not be started');
+  const loop = target.accessor.get(IAgentLoopService);
+  const { id } = request.kind === 'prompt'
+    ? loop.submit({
+        message: { role: 'user', content: [{ type: 'text', text: request.prompt }] },
+        meta: { origin: AGENT_RUN_PROMPT_ORIGIN, tracked: true },
+      })
+    : loop.submit({
+        message: { role: 'user', content: [] },
+        meta: { origin: { kind: 'retry' } },
+      });
+  const output = collectRunOutput(target.accessor.get(IEventBus));
+  const turn = await loop.promptHandle(id)?.launched;
+  if (turn === undefined) {
+    output.dispose();
+    throw new Error2(ErrorCodes.INTERNAL, 'Agent turn could not be started');
+  }
+  output.bind(turn.id);
 
   if (options.onReady !== undefined) {
     void turn.ready.then(() => options.onReady?.()).catch(() => {});
   }
 
-  const completion = awaitRun(target, turn, options);
-  return { agentId: target.id, turn, completion };
+  const completion = awaitRun(target, turn, options).finally(() => {
+    output.dispose();
+  });
+  return { agentId: target.id, turn, completion, partialOutput: () => output.text() };
 }
 
 async function awaitRun(
   target: IAgentScopeHandle,
   turn: Turn,
   options: RunAgentTurnOptions,
-): Promise<{ summary: string; usage?: TokenUsage }> {
+): Promise<AgentRunCompletion> {
   const controller = new AbortController();
   const unlink = linkAbortSignal(options.signal, controller);
-  const loop = target.accessor.get(IAgentLoopService);
-  const cancelTurn = (turnToCancel: Turn, reason: unknown): void => {
-    loop.cancel(turnToCancel.id, reason);
+  const cancelTurn = (reason: unknown): void => {
+    turn.cancel(reason);
   };
-  let turnRef: Turn = turn;
   try {
-    const result = await awaitTurn(turnRef, controller, cancelTurn);
-    classifyTurnResult(result);
-    const summary = await distillSummary(
-      target,
-      controller,
-      options.summaryPolicy,
-      (t) => {
-        turnRef = t;
-      },
-      cancelTurn,
-    );
-    const usage = target.accessor.get(IAgentUsageService)?.status().total;
-    return { summary, usage };
+    const result = classifyTurnResult(await awaitTurn(turn, controller, cancelTurn));
+    const summary = latestAssistantText(target.accessor.get(IAgentContextMemoryService).get());
+    const stopReason = result.stopReason;
+    if (summary.trim().length === 0) {
+      throw new Error2(
+        ErrorCodes.AGENT_NO_FINAL_MESSAGE,
+        noFinalMessageError(stopReason),
+        stopReason === undefined ? undefined : { details: { stopReason } },
+      );
+    }
+    const usage = target.accessor.get(ISessionUsageService)?.status(agentContextOf(target)).total;
+    return { summary, usage, stopReason };
   } finally {
     unlink();
     if (controller.signal.aborted) {
-      cancelTurn(turnRef, controller.signal.reason);
+      cancelTurn(controller.signal.reason);
     }
   }
 }
@@ -105,10 +106,10 @@ async function awaitRun(
 async function awaitTurn(
   turn: Turn,
   controller: AbortController,
-  cancelTurn: (turn: Turn, reason: unknown) => void,
+  cancelTurn: (reason: unknown) => void,
 ): Promise<TurnResult> {
   const cancelOnAbort = (): void => {
-    cancelTurn(turn, controller.signal.reason);
+    cancelTurn(controller.signal.reason);
   };
   controller.signal.addEventListener('abort', cancelOnAbort, { once: true });
   try {
@@ -123,48 +124,13 @@ async function awaitTurn(
   }
 }
 
-async function distillSummary(
-  target: IAgentScopeHandle,
-  controller: AbortController,
-  policy: AgentProfileSummaryPolicy | undefined,
-  setTurn: (turn: Turn) => void,
-  cancelTurn: (turn: Turn, reason: unknown) => void,
-): Promise<string> {
-  const memory = target.accessor.get(IAgentContextMemoryService);
-  let summary = latestAssistantText(memory.get());
-  if (policy === undefined) return summary;
-  if (isSummaryAdequate(summary, policy)) return summary;
-
-  const promptService = target.accessor.get(IAgentPromptService);
-  for (let attempt = 0; attempt < policy.retries; attempt++) {
-    const turn = await (await promptService.enqueue({ message: {
-      role: 'user',
-      content: [{ type: 'text', text: policy.continuationPrompt }],
-      toolCalls: [],
-      origin: AGENT_RUN_PROMPT_ORIGIN,
-    } })).launched;
-    if (turn === undefined) break;
-    setTurn(turn);
-    const result = await awaitTurn(turn, controller, cancelTurn);
-    classifyTurnResult(result);
-    const continued = latestAssistantText(memory.get());
-    if (continued.trim().length > 0) summary = continued;
-    if (isSummaryAdequate(summary, policy)) break;
-  }
-  return summary;
-}
-
-function isSummaryAdequate(summary: string, policy: AgentProfileSummaryPolicy): boolean {
-  return summary.trim().length >= policy.minChars;
-}
-
-function classifyTurnResult(result: TurnResult): void {
+function classifyTurnResult(result: TurnResult): CompletedTurnResult {
   switch (result.type) {
     case 'completed':
       if (result.truncated) {
         throw new Error2(ErrorCodes.AGENT_MAX_TOKENS_EXCEEDED, SUBAGENT_MAX_TOKENS_ERROR);
       }
-      return;
+      return result;
     case 'failed': {
       const error = result.error;
       if (isProviderRateLimitError(error)) throw error;
@@ -172,11 +138,29 @@ function classifyTurnResult(result: TurnResult): void {
       if (payload.code === ErrorCodes.PROVIDER_RATE_LIMIT) {
         throw providerRateLimitErrorFromPayload(payload);
       }
+      if (isMaxStepsExceededError(error)) {
+        throw maxStepsErrorFromPayload(payload);
+      }
       throw toRunError(error);
     }
     case 'cancelled':
       throw toRunError(result.reason ?? userCancellationReason());
   }
+}
+
+function noFinalMessageError(stopReason: string | undefined): string {
+  const base = 'Subagent turn ended without a final message';
+  return stopReason === undefined ? `${base}.` : `${base} (stop reason: ${stopReason}).`;
+}
+
+function maxStepsErrorFromPayload(payload: KimiErrorPayload): Error2 {
+  const maxSteps = payload.details?.['maxSteps'];
+  const cap = typeof maxSteps === 'number' ? ` (maxSteps=${String(maxSteps)})` : '';
+  return new Error2(
+    ErrorCodes.LOOP_MAX_STEPS_EXCEEDED,
+    `Subagent hit the per-turn step cap${cap} before finishing its handoff.`,
+    typeof maxSteps === 'number' ? { details: { maxSteps } } : undefined,
+  );
 }
 
 function toRunError(error: unknown): Error {
@@ -193,7 +177,10 @@ function stringifyRunError(value: unknown): string {
 function providerRateLimitErrorFromPayload(error: KimiErrorPayload): APIProviderRateLimitError {
   const requestId =
     typeof error.details?.['requestId'] === 'string' ? error.details['requestId'] : null;
-  return new APIProviderRateLimitError(error.message, requestId);
+  const statusCode = error.details?.['statusCode'];
+  return new APIProviderRateLimitError(error.message, requestId, null, null, {
+    statusCode: typeof statusCode === 'number' ? statusCode : undefined,
+  });
 }
 
 function latestAssistantText(messages: readonly ContextMessage[]): string {
@@ -211,4 +198,102 @@ function contentText(content: ContextMessage['content']): string {
     .filter((part): part is Extract<(typeof content)[number], { type: 'text' }> => part.type === 'text')
     .map((part) => part.text)
     .join('');
+}
+
+interface RunOutputCollector extends IDisposable {
+  bind(turnId: number | undefined): void;
+  text(): string;
+}
+
+function collectRunOutput(bus: IEventBus): RunOutputCollector {
+  const turns = new Map<number, RunText>();
+  let bound = false;
+  let boundTurnId: number | undefined;
+  const textOf = (turnId: number): RunText | undefined => {
+    if (bound && turnId !== boundTurnId) return undefined;
+    let text = turns.get(turnId);
+    if (text === undefined) {
+      text = new RunText();
+      turns.set(turnId, text);
+    }
+    return text;
+  };
+  const subscriptions = [
+    bus.subscribe(TurnStepStarted, (event) => {
+      textOf(event.turnId)?.startStep();
+    }),
+    bus.subscribe(AssistantDelta, (event) => {
+      textOf(event.turnId)?.append(event.delta);
+    }),
+    bus.subscribe(TurnStepRetrying, (event) => {
+      textOf(event.turnId)?.discardStep();
+    }),
+  ];
+  return {
+    bind(turnId) {
+      bound = true;
+      boundTurnId = turnId;
+      for (const id of turns.keys()) {
+        if (id !== turnId) turns.delete(id);
+      }
+    },
+    text() {
+      return boundTurnId === undefined ? '' : (turns.get(boundTurnId)?.render() ?? '');
+    },
+    dispose() {
+      for (const subscription of subscriptions.splice(0)) subscription.dispose();
+    },
+  };
+}
+
+class RunText {
+  private readonly steps: string[] = [];
+  private length = 0;
+  private truncated = false;
+
+  startStep(): void {
+    this.steps.push('');
+  }
+
+  append(delta: string): void {
+    if (this.steps.length === 0) this.steps.push('');
+    this.steps[this.steps.length - 1] += delta;
+    this.length += delta.length;
+    if (this.length > PARTIAL_OUTPUT_MAX_CHARS * 2) {
+      this.dropHead(this.length - PARTIAL_OUTPUT_MAX_CHARS);
+    }
+  }
+
+  discardStep(): void {
+    const last = this.steps.length - 1;
+    if (last < 0) return;
+    this.length -= this.steps[last]!.length;
+    this.steps[last] = '';
+  }
+
+  render(): string {
+    const text = this.steps
+      .map((step) => step.trim())
+      .filter((step) => step.length > 0)
+      .join('\n\n');
+    const start = codePointBoundaryStart(text, Math.max(0, text.length - PARTIAL_OUTPUT_MAX_CHARS));
+    const kept = text.slice(start);
+    if (kept.length === 0 || (!this.truncated && start === 0)) return kept;
+    return `${PARTIAL_OUTPUT_TRUNCATED_MARKER}\n${kept}`;
+  }
+
+  private dropHead(excess: number): void {
+    this.truncated = true;
+    let remaining = excess;
+    while (this.steps.length > 1 && this.steps[0]!.length <= remaining) {
+      const dropped = this.steps.shift()!;
+      remaining -= dropped.length;
+      this.length -= dropped.length;
+    }
+    if (remaining === 0) return;
+    const first = this.steps[0]!;
+    const start = codePointBoundaryStart(first, Math.min(remaining, first.length));
+    this.steps[0] = first.slice(start);
+    this.length -= start;
+  }
 }

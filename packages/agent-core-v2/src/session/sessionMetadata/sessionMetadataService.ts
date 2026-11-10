@@ -1,64 +1,18 @@
-/**
- * `sessionMetadata` domain — `ISessionMetadata` implementation.
- *
- * Persists the session metadata document (`state.json`) through the `storage`
- * access-pattern store (`IAtomicDocumentStore`), rooted at the `metaScope`
- * namespace from `sessionContext`. Loads the existing document on
- * construction (creating it on first run), and logs through `log`. The
- * plain-data state (`data`) is registered into `sessionState`
- * (`ISessionStateService`) and read/written through it. The
- * document always carries the `agents` / `custom` maps — seeded at creation,
- * backfilled and persisted on load for documents written before the seeding
- * existed (without touching `updatedAt`, so a format heal never reorders
- * session listings) — and `archived` always reads back as a boolean:
- * documents written before the flag existed (including v1-engine documents,
- * which never carry it) normalize to not-archived at load. `updatedAt` tracks content activity only: management
- * writes (rename via `setTitle`, archive/restore via `setArchived`, the
- * generated-title write-back) keep the persisted value through
- * `touchUpdatedAt: false`, an explicit `patch.updatedAt` always wins (fork
- * restores the source's recency), and agent registration is a structural
- * write that never touches it — neither when resume materializes a cold
- * session's agents, nor when a runtime subagent registers mid-turn (the
- * turn's own submit/end moments carry recency). The canonical title state
- * is `titleKind`; every persist additionally double-writes the v1-readable
- * `isCustomTitle` marker derived from it, and on load an explicit
- * `isCustomTitle: true` outranks a stale `titleKind` (a v1 rename spreads
- * the original document, so the two can disagree) while a `false` marker
- * never downgrades a modern generated/custom state. The generated-title
- * write path (`setGeneratedTitleIfUncustomized`) serializes through the same
- * update queue as everything else and re-checks the title kind inside the
- * queued write, so a custom title set while a generation was in flight is
- * never overwritten — unless the caller passes `force` (explicit
- * regeneration, last writer wins). Bound at Session scope.
- *
- * Read-model mirroring (flag `persistence_minidb_readmodel`): after a metadata
- * update is persisted, the fresh summary is recorded into the App-scoped
- * `ISessionIndexMirror` — a bounded, coalescing queue that flushes to the
- * `IQueryStore` read model off the user completion path. The mutation
- * completes with the authoritative `state.json` write; it never waits on the
- * derived store (no mirror flush, no query-store lock), and a mirror failure
- * is logged and swallowed — the read model heals by reconciliation, the
- * session lifecycle never sees it. First-time creation in
- * `load()` records too — a new session must appear in listings immediately
- * (the mirror's pending queue feeds the index's read-your-writes merge);
- * loading an *existing* document (session resume) stays silent. Queued writes
- * are tracked in a module-level pending set, drained through
- * `drainSessionMetadataWrites()` by hosts before the sessions root may be
- * torn down (the query-store/mirror drain pattern); a patch still queued
- * when the scope is disposed is dropped rather than written into a teardown.
- */
-
 import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import { ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { buildSessionSummary } from '#/app/sessionIndex/sessionIndexSource';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionStateService } from '#/session/state/sessionState';
+import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
+import { resolveEffectiveWorkspaceRoots } from '#/session/workspaceContext/workspaceRoots';
+import { LOCAL_ENVIRONMENT_ID, type EnvironmentBinding } from '#/environment/environment';
 
 import {
   ISessionMetadata,
@@ -69,6 +23,7 @@ import {
   type SessionMetaPatch,
   type SessionTitleKind,
 } from './sessionMetadata';
+import { isUntitled } from './promptMetadata';
 
 const META_KEY = 'state.json';
 
@@ -95,6 +50,7 @@ export class SessionMetadata extends Service implements ISessionMetadata {
   );
   private readonly scope: string;
   private updateQueue: Promise<void> = Promise.resolve();
+  private refreshBeforeWrite = true;
 
   constructor(
     @ISessionStateService private readonly states: ISessionStateService,
@@ -102,6 +58,8 @@ export class SessionMetadata extends Service implements ISessionMetadata {
     @IAtomicDocumentStore private readonly store: IAtomicDocumentStore,
     @ILogService private readonly log: ILogService,
     @ISessionIndexMirror private readonly mirror: ISessionIndexMirror,
+    @ISessionLockService private readonly sessionLocks: ISessionLockService,
+    @ISessionWorkspaceInfo private readonly workspaceInfo: ISessionWorkspaceInfo,
   ) {
     super();
     this._register({
@@ -109,7 +67,17 @@ export class SessionMetadata extends Service implements ISessionMetadata {
         this.disposed = true;
       },
     });
-    this.states.register(sessionMetadataDataKey);
+    this._register(
+      this.sessionLocks.onDidHold((event) => {
+        if (event.sessionId === this.ctx.sessionId) this.refreshBeforeWrite = true;
+      }),
+    );
+    this.states.contributeState(sessionMetadataDataKey);
+    this._register(
+      this.workspaceInfo.onDidChange(() => {
+        if (this.states.get(sessionMetadataDataKey) !== undefined) this.mirrorToReadModel();
+      }),
+    );
     this.scope = ctx.metaScope;
     this.onDidChangeMetadata = this._onDidChangeMetadata.event;
     this.ready = this.load();
@@ -133,26 +101,44 @@ export class SessionMetadata extends Service implements ISessionMetadata {
     opts?: { readonly touchUpdatedAt?: boolean },
   ): Promise<void> {
     return this.enqueueUpdate(async () => {
+      if (!(await this.prepareWrite())) return;
       await this.applyUpdate(patch, opts);
     });
+  }
+
+  private async prepareWrite(): Promise<boolean> {
+    await this.ready;
+    if (this.disposed) return false;
+    this.sessionLocks.hold(this.ctx.sessionId);
+    if (this.refreshBeforeWrite) {
+      this.refreshBeforeWrite = false;
+      const existing = await this.store.get<SessionMeta>(this.scope, META_KEY);
+      if (existing !== undefined) {
+        this.data = normalizeSessionMeta(existing, this.ctx.sessionId);
+      }
+    }
+    return !this.disposed;
   }
 
   private async applyUpdate(
     patch: SessionMetaPatch,
     opts?: { readonly touchUpdatedAt?: boolean },
   ): Promise<boolean> {
-    await this.ready;
-    if (this.disposed) return false;
-    const updatedAt =
-      patch.updatedAt ?? (opts?.touchUpdatedAt === false ? this.data.updatedAt : Date.now());
-    this.data = { ...this.data, ...patch, updatedAt };
-    await this.store.set(this.scope, META_KEY, encodeSessionMeta(this.data));
-    if (this.disposed) return false;
-    this.mirrorToReadModel();
-    this._onDidChangeMetadata.fire({
-      changed: Object.keys(patch) as (keyof SessionMeta)[],
-    });
-    return true;
+    const lease = this.sessionLocks.lease(this.ctx.sessionId);
+    try {
+      const updatedAt =
+        patch.updatedAt ?? (opts?.touchUpdatedAt === false ? this.data.updatedAt : Date.now());
+      this.data = { ...this.data, ...patch, updatedAt };
+      await this.store.set(this.scope, META_KEY, encodeSessionMeta(this.data));
+      if (this.disposed) return false;
+      this.mirrorToReadModel();
+      this._onDidChangeMetadata.fire({
+        changed: Object.keys(patch) as (keyof SessionMeta)[],
+      });
+      return true;
+    } finally {
+      lease.release();
+    }
   }
 
   async setTitle(title: string): Promise<void> {
@@ -164,9 +150,20 @@ export class SessionMetadata extends Service implements ISessionMetadata {
     opts?: { force?: boolean },
   ): Promise<boolean> {
     return this.enqueueUpdate(async () => {
-      await this.ready;
+      if (!(await this.prepareWrite())) return false;
       if (opts?.force !== true && this.data.titleKind === 'custom') return false;
       return this.applyUpdate({ title, titleKind: 'generated' }, { touchUpdatedAt: false });
+    });
+  }
+
+  async applyPromptMetadata(lastPrompt: string, title: string): Promise<boolean> {
+    return this.enqueueUpdate(async () => {
+      if (!(await this.prepareWrite())) return false;
+      const applyTitle = this.data.titleKind !== 'custom' && isUntitled(this.data.title);
+      const patch: SessionMetaPatch = applyTitle
+        ? { lastPrompt, title, titleKind: 'replaceable' }
+        : { lastPrompt };
+      return (await this.applyUpdate(patch)) && applyTitle;
     });
   }
 
@@ -182,8 +179,18 @@ export class SessionMetadata extends Service implements ISessionMetadata {
       await this.ready;
       const existing = this.data.agents?.[agentId];
       if (existing !== undefined && agentMetaEquals(existing, meta)) return;
-      const agents = { ...this.data.agents, [agentId]: meta };
-      await this.applyUpdate({ agents }, { touchUpdatedAt: false });
+      if (!this.sessionLocks.tryHold(this.ctx.sessionId)) {
+        this.log.warn(
+          'session metadata agent registration skipped; session is in use by another client',
+          { sessionId: this.ctx.sessionId, agentId },
+        );
+        return;
+      }
+      if (!(await this.prepareWrite())) return;
+      await this.applyUpdate(
+        { agents: { ...this.data.agents, [agentId]: meta } },
+        { touchUpdatedAt: false },
+      );
     });
   }
 
@@ -199,13 +206,26 @@ export class SessionMetadata extends Service implements ISessionMetadata {
     return run;
   }
 
+  get effectiveCwd(): string {
+    if (this.data.environmentId !== undefined && this.data.environmentId !== LOCAL_ENVIRONMENT_ID) {
+      return this.ctx.cwd;
+    }
+    const binding: EnvironmentBinding = {
+      environmentId: this.data.environmentId ?? LOCAL_ENVIRONMENT_ID,
+      cwd: this.data.environmentCwd,
+    };
+    return resolveEffectiveWorkspaceRoots(this.ctx, binding, this.workspaceInfo).workDir;
+  }
+
   private mirrorToReadModel(): void {
     try {
       this.mirror.record(
         buildSessionSummary({
           id: this.data.id,
           workspaceId: this.ctx.workspaceId,
-          cwd: this.ctx.cwd,
+          cwd: this.effectiveCwd,
+          environmentId: this.data.environmentId,
+          environmentCwd: this.data.environmentCwd,
           title: this.data.title,
           lastPrompt: this.data.lastPrompt,
           createdAt: this.data.createdAt,
@@ -217,9 +237,6 @@ export class SessionMetadata extends Service implements ISessionMetadata {
         }),
       );
     } catch (error) {
-      // The authoritative document is already durable at this point; a mirror
-      // failure only degrades the read model (reconciliation heals it) and
-      // must never fail the session mutation itself.
       this.log.warn('session index mirror record failed; the read model heals by reconciliation', {
         sessionId: this.ctx.sessionId,
         error: error instanceof Error ? error.message : String(error),
@@ -241,7 +258,9 @@ export class SessionMetadata extends Service implements ISessionMetadata {
           agents: this.data.agents ?? {},
           custom: this.data.custom ?? {},
         };
-        await this.store.set(this.scope, META_KEY, encodeSessionMeta(this.data));
+        if (this.sessionLocks.tryHold(this.ctx.sessionId)) {
+          await this.store.set(this.scope, META_KEY, encodeSessionMeta(this.data));
+        }
       }
       return;
     }
@@ -256,7 +275,9 @@ export class SessionMetadata extends Service implements ISessionMetadata {
       agents: {},
       custom: {},
     };
-    await this.store.set(this.scope, META_KEY, encodeSessionMeta(this.data));
+    if (this.sessionLocks.tryHold(this.ctx.sessionId)) {
+      await this.store.set(this.scope, META_KEY, encodeSessionMeta(this.data));
+    }
     this.mirrorToReadModel();
     this.log.debug('session metadata created', { sessionId: this.ctx.sessionId });
   }
@@ -345,7 +366,7 @@ function isSessionTitleKind(value: unknown): value is SessionTitleKind {
 
 type PersistedSessionMeta = SessionMeta & { readonly isCustomTitle: boolean };
 
-function encodeSessionMeta(meta: SessionMeta): PersistedSessionMeta {
+export function encodeSessionMeta(meta: SessionMeta): PersistedSessionMeta {
   return { ...meta, isCustomTitle: meta.titleKind === 'custom' };
 }
 

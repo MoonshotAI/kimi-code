@@ -1,25 +1,3 @@
-/**
- * `di` domain — the `Service` base class for L3 unit recipes.
- *
- * Extending `Service` turns a class into a unit recipe with the five `Fiber`
- * capabilities (`this.provide` / `effect` / `on` / `get` / `ref`). The class
- * follows the two-phase construction protocol: inside the constructor — when
- * the container builds the instance under a matching `ConstructionFrame` —
- * capability calls do not run immediately; they are buffered as
- * `BufferedOp`s and answered with `PendingFiberHandle`s, then flushed
- * against the real `FiberRuntime` by `bindServiceUnit` right after
- * construction (`fiber.ts`). Reads (`get` / `ref`) are forbidden during this
- * phase — declare dependencies as constructor parameters instead (构造期只写
- * 不读). A `Service` created by manual `new` never gets a bound runtime, and
- * its capability calls throw `FiberProtocolError`.
- *
- * The `SERVICE_MARK` prototype marker (set below) lets the container
- * recognize `Service`-derived class recipes and drive them through this
- * protocol; services whose members collide with the `Service` vocabulary
- * keep `extends Disposable` and use the function/object recipe forms
- * instead.
- */
-
 import type { Emitter } from '../event';
 import type { EffectBody } from '../lifecycle/disposer';
 import type { Ledger } from '../lifecycle/ledger';
@@ -56,7 +34,6 @@ export abstract class Service extends Disposable implements Fiber, UnitInternals
     const frame = currentConstruction();
     if (
       frame !== undefined &&
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       frame.ctor === (new.target as unknown as new (...args: any[]) => any)
     ) {
       this.__unitBuffer = [];
@@ -65,7 +42,6 @@ export abstract class Service extends Disposable implements Fiber, UnitInternals
       this.__unitBuffer = null;
       this.config = undefined;
     }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     this.name = (this.constructor as any).name || 'anonymous';
   }
 
@@ -78,9 +54,7 @@ export abstract class Service extends Disposable implements Fiber, UnitInternals
   provide(recipe: ServiceRecipe, opts?: FiberProvideOptions): FiberHandle;
   provide<T>(token: CollectionToken<T>, value: T): FiberHandle;
   provide(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     first: any,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     second?: any,
     third?: FiberProvideOptions,
   ): FiberHandle {
@@ -105,7 +79,6 @@ export abstract class Service extends Disposable implements Fiber, UnitInternals
     return this._runtime().effect(body, label);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   on(event: string | Emitter<any>, handler: (e: any) => void): FiberHandle {
     const label = typeof event === 'string' ? `on:${event}` : 'on:emitter';
     if (this.__unitBuffer !== null) {
@@ -154,7 +127,6 @@ export abstract class Service extends Disposable implements Fiber, UnitInternals
     return this.__unitRuntime;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private _pendingName(first: any): string {
     if (typeof first === 'function') {
       return (first as RecipeStatics).name ?? String(first);

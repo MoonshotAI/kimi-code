@@ -1,97 +1,43 @@
-/**
- * `mcp` domain — `IAgentMcpService` implementation.
- *
- * Mirrors the workspace-level shared MCP connection manager's server set
- * into the agent's tool registry (the manager arrives through the seeded
- * `ISessionMcpHandle` — one manager per workspace handler, shared by every
- * session and agent): registers qualified tools for connected servers,
- * keeps them registered across reconnects, keeps them registered (with
- * calls short-circuited to a removal notice) when the server is tombstoned
- * as `removed`, swaps in the OAuth tool for
- * `needs-auth` servers, journals tool discoveries on the wire (queued until
- * restore finishes), and publishes `mcp.server.status` / `tool.list.updated`
- * events. Only the session's baseline servers take part
- * (`ISessionMcpHandle.isBaselineServer`, checked on every replayed and
- * live status change): a server that appears mid-session — a plugin
- * install or a config edit — is ignored here, so its tools, status events,
- * and discoveries never reach a live agent; it joins on the next session
- * materialization (`/new`, `/reload`, resume), while a tombstoned baseline
- * server reconnecting under the same name (a re-enabled plugin) registers
- * again. Sessions and agents construct without awaiting the manager's
- * initial connect; each LLM step instead waits for it through a `loop`
- * onWillBeginStep hook (a no-op once settled), with the per-execution
- * `toolExecutor` onWillExecuteTool wait as the backstop. The plain-data state (`mcpToolsByServer`, `discoveryWritesReady`)
- * is registered into `agentState` (`IAgentStateService`) and read/written
- * through it; `mcpTools` stays a plain instance field (its values hold
- * disposable resource handles, not plain data), as does `pendingDiscoveries`
- * (a closure queue of deferred discovery writes). Bound at Agent scope.
- */
-
 import { createHash } from 'node:crypto';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { defineState } from '#/_base/state/stateRegistry';
-import type { Tool as KosongTool } from '#/kosong/contract/tool';
+import { defineState } from '#/state/state';
+import type { ToolDescription as KosongTool } from '#human/llm/message';
 
 import { type IDisposable } from "#/_base/di/lifecycle";
 import { Service } from "#/_base/di/service";
-import type { KimiErrorPayload } from '#/_base/errors/serialize';
+import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { ErrorCodes, makeErrorPayload } from "#/errors";
 import { abortable } from '#/_base/utils/abort';
+import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { IEventBus } from '#/app/event/eventBus';
+import { environmentTempTarget, IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { sessionMediaOriginalsDir } from '#/agent/media/image-originals';
+import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { createMcpAuthTool } from '#/agent/mcp/tools/auth';
 import { createMcpTool } from '#/agent/mcp/tools/mcp';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import type { McpServerEntry } from '#/mcpCore/connection-manager';
 import { IAgentMcpService } from './mcp';
 import { qualifyMcpToolName } from '#/mcpCore/tool-naming';
 import type { MCPClient, MCPToolDefinition } from '#/mcpCore/types';
-import { IWireService } from '#/wire/wire';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import {
-  McpDiscoveryModel,
-  mcpToolsDiscovered,
+  mcpDiscoveryKey,
+  McpToolsDiscovered,
   type McpToolCollision,
 } from './mcpDiscoveryOps';
-
-export interface ErrorEvent extends KimiErrorPayload {
-  readonly type: 'error';
-}
-
-export interface McpServerStatusPayload {
-  readonly name: string;
-  readonly transport: 'stdio' | 'http' | 'sse';
-  readonly status: 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth' | 'removed';
-  readonly toolCount: number;
-  readonly error?: string;
-}
-
-export interface McpServerStatusEvent {
-  readonly type: 'mcp.server.status';
-  readonly server: McpServerStatusPayload;
-}
-
-export type ToolListUpdatedReason = 'mcp.connected' | 'mcp.disconnected' | 'mcp.failed';
-
-export interface ToolListUpdatedEvent {
-  readonly type: 'tool.list.updated';
-  readonly reason: ToolListUpdatedReason;
-  readonly serverName: string;
-}
-
-declare module '#/app/event/eventBus' {
-  interface DomainEventMap {
-    'mcp.server.status': McpServerStatusEvent;
-    'tool.list.updated': ToolListUpdatedEvent;
-    error: ErrorEvent;
-  }
-}
+import {
+  mcpFailureKey,
+  McpServerFailed,
+  McpServerFailureResolved,
+  type McpServerFailureResolution,
+} from './mcpFailureOps';
+import { AgentErrorEvent, McpServerStatus, ToolListUpdated } from './mcpEvents';
 
 interface McpToolRegistration {
   readonly disposable: IDisposable;
@@ -110,22 +56,29 @@ export const mcpDiscoveryWritesReadyKey = defineState<boolean>(
 export class AgentMcpService extends Service implements IAgentMcpService {
   declare readonly _serviceBrand: undefined;
   private readonly mcpTools = new Map<string, McpToolRegistration>();
-  private readonly pendingDiscoveries: Array<() => void> = [];
+  private readonly pendingMcpTools = new Map<string, McpToolRegistration>();
+  private readonly pendingDiscoveries: Array<() => Promise<void> | void> = [];
+  private readonly failedServerEpisodes = new Set<string>();
+  private failureWriteTail: Promise<void> = Promise.resolve();
 
   constructor(
     @ISessionMcpHandle private readonly mcpHandle: ISessionMcpHandle,
-    @ISessionContext private readonly sessionContext: ISessionContext,
     @IAgentToolRegistryService private readonly registry: IAgentToolRegistryService,
-    @IEventBus private readonly eventBus: IEventBus,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IAgentLoopService loop: IAgentLoopService,
-    @IWireService private readonly wire: IWireService,
+    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
+    @IAgentProfileService private readonly profile: IAgentProfileService,
+    @ISessionMediaStore private readonly attachmentStore: ISessionMediaStore,
+    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
   ) {
     super();
-    this.states.register(mcpMcpToolsByServerKey);
-    this.states.register(mcpDiscoveryWritesReadyKey);
+    this.states.contributeState(mcpDiscoveryKey);
+    this.states.contributeState(mcpFailureKey);
+    this.states.contributeState(mcpMcpToolsByServerKey);
+    this.states.contributeState(mcpDiscoveryWritesReadyKey);
     this.attachMcpTools();
     loop.hooks.onWillBeginStep.register('mcp', async (ctx, next) => {
       await this.waitForInitialLoad(ctx.signal);
@@ -137,8 +90,8 @@ export class AgentMcpService extends Service implements IAgentMcpService {
       }),
     );
     this._register(
-      this.wire.hooks.onDidRestore.register('mcp', async (_ctx, next) => {
-        this.flushPendingDiscoveries();
+      this.dispatcher.hooks.onDidRestore.register('mcp', async (_ctx, next) => {
+        await this.flushPendingDiscoveries();
         await next();
       }),
     );
@@ -227,37 +180,101 @@ export class AgentMcpService extends Service implements IAgentMcpService {
 
   private handleMcpServerStatusChange(entry: McpServerEntry): void {
     if (!this.mcpHandle.isBaselineServer(entry.name)) return;
-    this.eventBus.publish({
-      type: 'mcp.server.status',
-      server: {
-        name: entry.name,
-        transport: entry.transport,
-        status: entry.status,
-        toolCount: entry.toolCount,
-        error: entry.error,
-      },
-    });
+    void this.dispatcher.dispatch(
+      new McpServerStatus({
+        agentId: this.scopeContext.agentId,
+        server: {
+          name: entry.name,
+          transport: entry.transport,
+          status: entry.status,
+          toolCount: entry.toolCount,
+          error: entry.error,
+          nextRetryAt: entry.nextRetryAt,
+        },
+      }),
+    );
     if (entry.status === 'connected') {
+      this.resolveServerFailure(entry, 'recovered');
       this.registerConnectedMcpServer(entry);
       return;
     }
     if (entry.status === 'needs-auth') {
+      this.resolveServerFailure(entry, 'needs-auth');
       this.registerNeedsAuthMcpServer(entry);
       return;
     }
-    if (entry.status === 'failed' || entry.status === 'pending' || entry.status === 'removed') {
+    if (entry.status === 'failed') {
+      this.recordServerFailure(entry);
+      return;
+    }
+    if (entry.status === 'pending') {
+      return;
+    }
+    if (entry.status === 'removed') {
+      this.resolveServerFailure(entry, 'removed');
       return;
     }
     if (entry.status === 'disabled') {
+      this.resolveServerFailure(entry, 'disabled');
       const removed = this.unregisterMcpServer(entry.name);
       if (removed) {
-        this.eventBus.publish({
-          type: 'tool.list.updated',
-          reason: 'mcp.disconnected',
-          serverName: entry.name,
-        });
+        void this.dispatcher.dispatch(
+          new ToolListUpdated({
+            agentId: this.scopeContext.agentId,
+            reason: 'mcp.disconnected',
+            serverName: entry.name,
+          }),
+        );
       }
     }
+  }
+
+  private recordServerFailure(entry: McpServerEntry): void {
+    if (this.failedServerEpisodes.has(entry.name)) return;
+    this.failedServerEpisodes.add(entry.name);
+    this.enqueueFailureWrite(async () => {
+      if (this.states.get(mcpFailureKey).open.includes(entry.name)) return;
+      await this.dispatcher.dispatch(
+        new McpServerFailed({
+          agentId: this.scopeContext.agentId,
+          serverName: entry.name,
+          transport: entry.transport,
+          error: entry.error,
+        }),
+      );
+    });
+  }
+
+  private resolveServerFailure(
+    entry: McpServerEntry,
+    resolution: McpServerFailureResolution,
+  ): void {
+    this.failedServerEpisodes.delete(entry.name);
+    this.enqueueFailureWrite(async () => {
+      if (!this.states.get(mcpFailureKey).open.includes(entry.name)) return;
+      await this.dispatcher.dispatch(
+        new McpServerFailureResolved({
+          agentId: this.scopeContext.agentId,
+          serverName: entry.name,
+          transport: entry.transport,
+          resolution,
+        }),
+      );
+    });
+  }
+
+  private enqueueFailureWrite(work: () => Promise<void>): void {
+    const run = async (): Promise<void> => {
+      if (!this.discoveryWritesReady) {
+        this.pendingDiscoveries.push(work);
+        return;
+      }
+      await work();
+    };
+    this.failureWriteTail = this.failureWriteTail.then(run, run);
+    void this.failureWriteTail.catch((error) => {
+      onUnexpectedError(error);
+    });
   }
 
   private registerConnectedMcpServer(entry: McpServerEntry): void {
@@ -268,14 +285,17 @@ export class AgentMcpService extends Service implements IAgentMcpService {
       resolved.client,
       resolved.tools,
       resolved.enabledNames,
+      resolved.deferred,
     );
     this.emitMcpToolCollisions(entry.name, result.collisions);
     this.recordDiscovery(entry.name, resolved.rawTools, resolved.enabledNames, result.collisions);
-    this.eventBus.publish({
-      type: 'tool.list.updated',
-      reason: 'mcp.connected',
-      serverName: entry.name,
-    });
+    void this.dispatcher.dispatch(
+      new ToolListUpdated({
+        agentId: this.scopeContext.agentId,
+        reason: 'mcp.connected',
+        serverName: entry.name,
+      }),
+    );
   }
 
   private registerNeedsAuthMcpServer(entry: McpServerEntry): void {
@@ -289,14 +309,22 @@ export class AgentMcpService extends Service implements IAgentMcpService {
       oauthService,
       reconnect: (signal) => this.reconnect(entry.name, signal),
     });
-    const disposable = this._register(this.registry.register(tool, { source: 'mcp' }));
+    const deferred = this.mcpHandle.connectionManager.deferredOf(entry.name);
+    const disposable = this._register(
+      this.registry.register(tool, {
+        source: 'mcp',
+        disclosure: deferred ? 'deferred' : 'inline',
+      }),
+    );
     this.mcpTools.set(tool.name, { disposable, serverName: entry.name });
     this.mcpToolsByServer.set(entry.name, [tool.name]);
-    this.eventBus.publish({
-      type: 'tool.list.updated',
-      reason: 'mcp.connected',
-      serverName: entry.name,
-    });
+    void this.dispatcher.dispatch(
+      new ToolListUpdated({
+        agentId: this.scopeContext.agentId,
+        reason: 'mcp.connected',
+        serverName: entry.name,
+      }),
+    );
   }
 
   private registerMcpServer(
@@ -304,11 +332,11 @@ export class AgentMcpService extends Service implements IAgentMcpService {
     client: MCPClient,
     tools: readonly KosongTool[],
     enabledTools: ReadonlySet<string>,
+    deferred: boolean,
   ): {
     readonly registered: readonly string[];
     readonly collisions: readonly McpToolCollision[];
   } {
-    this.unregisterMcpServer(serverName);
     const qualifiedNames: string[] = [];
     const collisions: McpToolCollision[] = [];
     const seenInThisCall = new Map<string, string>();
@@ -325,29 +353,54 @@ export class AgentMcpService extends Service implements IAgentMcpService {
         continue;
       }
       const existingEntry = this.mcpTools.get(qualified);
-      if (existingEntry !== undefined) {
+      const pendingEntry = this.pendingMcpTools.get(qualified);
+      const collision = existingEntry ?? pendingEntry;
+      if (collision !== undefined && collision.serverName !== serverName) {
         collisions.push({
           qualified,
           toolName: tool.name,
-          collidesWith: { kind: 'other_server', serverName: existingEntry.serverName },
+          collidesWith: { kind: 'other_server', serverName: collision.serverName },
         });
         continue;
       }
       seenInThisCall.set(qualified, tool.name);
-      const disposable = this._register(
+      const registration = this._register(
         this.registry.register(
           createMcpTool(qualified, tool, client, {
-            originalsDir: sessionMediaOriginalsDir(this.sessionContext.sessionDir),
+            serverName,
+            attachmentStore: this.attachmentStore,
+            originals: () => environmentTempTarget(this.environment, 'original-images'),
             telemetry: this.telemetry,
+            providerType: () => this.profile.getModelProviderType(),
             reconnect: (signal) => this.reconnectForToolCall(serverName, client, signal),
             isRemoved: () =>
               this.mcpHandle.connectionManager.get(serverName)?.status === 'removed',
+            onUnauthorized: (error, failedClient) =>
+              this.mcpHandle.connectionManager.markNeedsAuth(serverName, error, failedClient),
           }),
-          { source: 'mcp' },
+          { source: 'mcp', disclosure: deferred ? 'deferred' : 'inline' },
         ),
       );
-      this.mcpTools.set(qualified, { disposable, serverName });
+      if (registration.status !== 'pending') {
+        existingEntry?.disposable.dispose();
+        pendingEntry?.disposable.dispose();
+        this.mcpTools.set(qualified, { disposable: registration, serverName });
+        this.pendingMcpTools.delete(qualified);
+      } else {
+        pendingEntry?.disposable.dispose();
+        this.pendingMcpTools.set(qualified, { disposable: registration, serverName });
+      }
       qualifiedNames.push(qualified);
+    }
+    for (const [name, entry] of this.mcpTools) {
+      if (entry.serverName !== serverName || seenInThisCall.has(name)) continue;
+      entry.disposable.dispose();
+      this.mcpTools.delete(name);
+    }
+    for (const [name, entry] of this.pendingMcpTools) {
+      if (entry.serverName !== serverName || seenInThisCall.has(name)) continue;
+      entry.disposable.dispose();
+      this.pendingMcpTools.delete(name);
     }
     this.mcpToolsByServer.set(serverName, qualifiedNames);
     return { registered: qualifiedNames, collisions };
@@ -357,9 +410,10 @@ export class AgentMcpService extends Service implements IAgentMcpService {
     const names = this.mcpToolsByServer.get(serverName);
     if (names === undefined) return false;
     for (const name of names) {
-      const entry = this.mcpTools.get(name);
-      entry?.disposable.dispose();
+      this.mcpTools.get(name)?.disposable.dispose();
+      this.pendingMcpTools.get(name)?.disposable.dispose();
       this.mcpTools.delete(name);
+      this.pendingMcpTools.delete(name);
     }
     this.mcpToolsByServer.delete(serverName);
     return true;
@@ -377,9 +431,10 @@ export class AgentMcpService extends Service implements IAgentMcpService {
         .update(JSON.stringify({ tools: rawTools, enabledNames: enabledNamesSnapshot, collisions }))
         .digest('hex');
       const key = `${serverName}\n${hash}`;
-      if (this.wire.getModel(McpDiscoveryModel).seen.includes(key)) return;
-      this.wire.dispatch(
-        mcpToolsDiscovered({
+      if (this.states.get(mcpDiscoveryKey).seen.includes(key)) return;
+      void this.dispatcher.dispatch(
+        new McpToolsDiscovered({
+          agentId: this.scopeContext.agentId,
           serverName,
           hash,
           tools: rawTools,
@@ -395,12 +450,19 @@ export class AgentMcpService extends Service implements IAgentMcpService {
     work();
   }
 
-  private flushPendingDiscoveries(): void {
+  private flushPendingDiscoveries(): Promise<void> {
     this.discoveryWritesReady = true;
     const pending = this.pendingDiscoveries.splice(0);
-    for (const work of pending) {
-      work();
-    }
+    const flush = async (): Promise<void> => {
+      for (const work of pending) {
+        await work();
+      }
+    };
+    this.failureWriteTail = this.failureWriteTail.then(flush, flush);
+    void this.failureWriteTail.catch((error) => {
+      onUnexpectedError(error);
+    });
+    return this.failureWriteTail;
   }
 
   private emitMcpToolCollisions(
@@ -415,16 +477,18 @@ export class AgentMcpService extends Service implements IAgentMcpService {
           : `"${collision.toolName}" -> ${collision.qualified} (collides with server "${collision.collidesWith.serverName}")`,
       )
       .join('; ');
-    this.eventBus.publish({
-      type: 'error',
-      ...makeErrorPayload(
-        ErrorCodes.MCP_TOOL_NAME_COLLISION,
-        `MCP server "${serverName}" registered ${collisions.length} tool name` +
-          `${collisions.length === 1 ? '' : 's'} ` +
-          `that collide with existing qualified names; the losing tools were dropped: ${summary}`,
-        { details: { serverName, collisions: collisions as readonly unknown[] } },
-      ),
-    });
+    void this.dispatcher.dispatch(
+      new AgentErrorEvent({
+        ...makeErrorPayload(
+          ErrorCodes.MCP_TOOL_NAME_COLLISION,
+          `MCP server "${serverName}" registered ${collisions.length} tool name` +
+            `${collisions.length === 1 ? '' : 's'} ` +
+            `that collide with existing qualified names; the losing tools were dropped: ${summary}`,
+          { details: { serverName, collisions: collisions as readonly unknown[] } },
+        ),
+        agentId: this.scopeContext.agentId,
+      }),
+    );
   }
 }
 

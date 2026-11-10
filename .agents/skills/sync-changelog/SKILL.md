@@ -126,7 +126,12 @@ Public-text rule: do not copy real internal endpoints, key names, account names,
 
 ### 4. Merge, Deduplicate, And Classify Entries
 
-Before classifying, merge related entries and drop redundant ones from the user-facing changelog:
+First, count the stripped upstream entries in the version range being synced. The count decides how much curation happens before the human review checkpoint:
+
+- **10 entries or fewer: list everything and let the user decide.** Classify every entry into its section and list them all — do not fold, merge, or drop entries on your own, and do not write a catch-all line. At the human review checkpoint (step 8), present the full list with advisory notes (which entries look low-signal under the two gates below, and why) so the user decides what stays, what merges, and what folds.
+- **More than 10 entries: curate first, then review.** Merge related entries and fold low-signal ones into the catch-all line before writing the page, using the rules below. The reviewer still owns the final cutoff — surface the borderline calls instead of resolving them silently.
+
+The rules below are the shared curation standard: they drive the curator's fold/merge decisions when there are more than 10 entries, and they drive the advisory notes when there are 10 or fewer.
 
 - **Curate for end users: collapse low-signal entries into one catch-all line.** The docs changelog is the only curated, user-facing outlet; the full entry list always remains in the upstream package changelog, so hiding detail here loses nothing. Apply two gates to every candidate entry. Gate 1, the reader-action test: **after reading this, is there something the reader must do, or something they must re-evaluate?** Gate 2, the channel test: **is the changelog the only channel that can deliver this?** The changelog is the channel of last resort — when the product itself surfaces the information in context, at the moment of need, to exactly the affected users, the entry is redundant no matter how real the improvement is. "Surfaced" means pushed into the user's path, not merely present on screen: an event-triggered card, prompt, or post-install screen forces the encounter, while a toggle, menu item, command, or settings page only waits to be found. Users do not explore — a capability that lives only in ambient UI is effectively undiscoverable, so the changelog must announce it. What in-product surfacing cannot deliver: hidden controls (env vars, config keys, opt-out flags nobody would find unprompted), invalidations of existing habits or expectations (in-product discovery comes as confusion), and capabilities users would not know to seek. An entry that fails either gate folds. Anchor both gates to the changelog's reader, never to the bug's victim: someone who hit a loud failure does not need the changelog to confirm the fix — the product working again is the notification — and a reader who never hit it gets nothing from the entry.
   - `Features`: keep when users would try it or must react to it — new capabilities create demand readers did not know to seek. Collapse only behavior that takes effect solely behind an experimental flag.
@@ -324,7 +329,7 @@ Check:
 - Each version has the same section set and order on both pages.
 - Each section has the same number of entries on both pages.
 - Within each section, the most valuable, obvious, and larger entries appear before smaller or narrower entries.
-- Low-signal entries were collapsed into the single catch-all line, placed last under `Bug Fixes` — or under `Polish` when nothing folded is a fix (both the reader-action test and the channel test applied); the catch-all wording matches what was folded and never claims fixes that did not happen; section sizes stay within the density defaults (about 2 Polish, 3 Bug Fixes) unless extra qualifying entries were deliberately kept and flagged for review. The catch-all line ends with the upstream changelog pointer (file link, no version anchor).
+- Entry count decided the curation level: a version range with 10 or fewer upstream entries lists everything classified, with no catch-all line (fold/merge decisions deferred to the review checkpoint); with more than 10, low-signal entries were collapsed into the single catch-all line, placed last under `Bug Fixes` — or under `Polish` when nothing folded is a fix (both the reader-action test and the channel test applied); the catch-all wording matches what was folded and never claims fixes that did not happen; section sizes stay within the density defaults (about 2 Polish, 3 Bug Fixes) unless extra qualifying entries were deliberately kept and flagged for review. The catch-all line ends with the upstream changelog pointer (file link, no version anchor).
 - PR links and commit hashes were stripped.
 - No `Thanks ...!` credit remains (remove it every time).
 - Real internal identifiers were replaced with neutral placeholders.
@@ -353,7 +358,7 @@ If the user chooses review:
    git diff docs/en/release-notes/changelog.md docs/zh/release-notes/changelog.md
    ```
 
-2. Summarize synced versions, section counts, and anything that needed manual classification. List every entry folded into a catch-all line (short titles, one line each), any section that exceeds the density defaults, and every borderline call flagged during curation — the reviewer cannot own a cutoff they cannot see.
+2. Summarize synced versions, section counts, and anything that needed manual classification. When the synced version range had 10 or fewer upstream entries and everything was listed, present the full entry list with advisory notes (which entries look low-signal and why) and ask the user to decide what stays, what merges, and what folds. When entries were folded into a catch-all line (more than 10 upstream entries), list every folded entry (short titles, one line each), any section that exceeds the density defaults, and every borderline call flagged during curation — the reviewer cannot own a cutoff they cannot see.
 3. Tell the user to reply when they are done reviewing, or to ask for edits.
 4. Do **not** commit, push, or open a PR until the user explicitly says review is complete, or asks to proceed.
 
@@ -434,6 +439,7 @@ Return the PR URL to the user when done.
 - Never edit upstream `apps/kimi-code/CHANGELOG.md`.
 - Do not backfill unreleased `.changeset/*.md` drafts into the docs site.
 - If upstream wording is wrong, leave upstream alone and fix it in a future changeset.
+- A version range with 10 or fewer upstream entries is listed in full; fold/merge/drop decisions belong to the user at the review checkpoint, not the curator.
 - Always sync on a `docs/changelog-sync-*` branch and open a PR; never push changelog docs sync directly to `main`.
 - Wait for the human review checkpoint before committing, pushing, or opening a PR.
 
@@ -446,7 +452,8 @@ Return the PR URL to the user when done.
 | Leaving the `Thanks ...!` credit in docs | Remove it every time, including the multi-author form |
 | Leaving near-duplicate micro-tweaks as separate bullets | Merge small tweaks to the same surface into one higher-level entry (e.g. composer height + font → composer's default styling) |
 | Listing many narrow fixes to the same surface as separate bullets | When three or more fixes target the same UI area or the same class of problem, merge them into one higher-level fix entry; keep genuinely distinct or high-value fixes standalone |
-| Listing low-signal fixes or internal changes as standalone bullets | Collapse them into the single catch-all line (`Fix several known issues.`) placed last under Bug Fixes; treat the section-size defaults (about 2 Polish, 3 Bug Fixes) as a density guard, not a quota |
+| Listing low-signal fixes or internal changes as standalone bullets when curating (>10 entries) | Collapse them into the single catch-all line (`Fix several known issues.`) placed last under Bug Fixes; treat the section-size defaults (about 2 Polish, 3 Bug Fixes) as a density guard, not a quota |
+| Folding, merging, or dropping entries on your own when the version range has 10 or fewer upstream entries | List everything classified, with no catch-all line, and let the user decide at the review checkpoint |
 | Folding a qualifying entry just to hit the section-size default | The defaults are density guards; keep entries that genuinely pass the reader-action test and flag the overflow for the human reviewer |
 | Keeping a fix because it was severe or hard-won | Severity makes the announcement redundant — the fix itself notifies whoever was hit; keep only behavior-change fixes and retrospective notices with a concrete, locatable action |
 | Keeping an improvement the product surfaces in context (recovery cards, post-install guidance, progress displays) | The product is the better channel — right users, moment of need; fold it (channel test) |

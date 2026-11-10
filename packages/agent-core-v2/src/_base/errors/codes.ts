@@ -1,12 +1,3 @@
-/**
- * `errors` domain (cross-cutting) — error-code contract, runtime registry, and
- * metadata backing serialization.
- *
- * Owns the `ErrorDomain` contract every business domain uses to contribute its
- * codes, the registry (`registerErrorDomain` / `errorInfo` / `isErrorCode`),
- * and the domain-independent core codes (`internal`, `not_implemented`).
- */
-
 export interface ErrorInfo {
   readonly title: string;
   readonly retryable: boolean;

@@ -4,11 +4,6 @@ import { openInAppCommandFor, revealFileCommandFor } from '../src/lib/fileLaunch
 
 describe('fileLaunch', () => {
   describe('win32 explorer /select, quoting', () => {
-    // explorer.exe parses its RAW command line (not argv). Node's default
-    // spawn quoting renders a `/select,` argument with spaces as
-    // `"/select,\"C:\...\""`, which explorer rejects — it then silently opens
-    // the Documents folder. The argument must quote only the path, and the
-    // launch must bypass Node's quoting via windowsVerbatimArguments.
     it('revealFileCommandFor quotes only the path and uses verbatim arguments', () => {
       const cmd = revealFileCommandFor('C:\\some dir\\sub\\file.txt', 'win32');
       expect(cmd.command).toBe('explorer.exe');

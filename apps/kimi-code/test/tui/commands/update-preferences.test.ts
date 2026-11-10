@@ -29,6 +29,7 @@ describe('update preference commands', () => {
           editorCommand: null,
           notifications: { enabled: true, condition: 'unfocused' as const },
           upgrade: { autoInstall: true },
+          transcript: { toolCallDensity: 'compact' as const, thinking: 'grouped' as const },
         },
         theme: { palette: darkColors },
       },
@@ -43,18 +44,22 @@ describe('update preference commands', () => {
       theme: 'auto',
       editorCommand: null,
       disablePasteBurst: false,
+      copyOnSelect: true,
       renderLatex: true,
       cacheExpiryHint: true,
+      autoSessionTitle: true,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: false },
       statusLine: { items: null, command: null },
+      markdown: { mermaid: 'final' },
+      transcript: { toolCallDensity: 'compact', thinking: 'grouped' },
     });
     expect(setAppState).toHaveBeenCalledWith({ upgrade: { autoInstall: false } });
     expect(track).toHaveBeenCalledWith('upgrade_preference_changed', { auto_install: false });
     expect(showStatus).toHaveBeenCalledWith('Automatic updates disabled.');
   });
 
-  it('preserves a render_latex opt-out when saving an unrelated preference', async () => {
+  it('preserves rendering and automatic title opt-outs when saving another preference', async () => {
     mocks.saveTuiConfig.mockClear();
     const host = {
       state: {
@@ -62,6 +67,8 @@ describe('update preference commands', () => {
           theme: 'auto' as const,
           editorCommand: null,
           renderLatex: false,
+          copyOnSelect: false,
+          autoSessionTitle: false,
           notifications: { enabled: true, condition: 'unfocused' as const },
           upgrade: { autoInstall: true },
         },
@@ -75,7 +82,11 @@ describe('update preference commands', () => {
     await applyUpdatePreferenceChoice(host, false);
 
     expect(mocks.saveTuiConfig).toHaveBeenCalledWith(
-      expect.objectContaining({ renderLatex: false }),
+      expect.objectContaining({
+        renderLatex: false,
+        copyOnSelect: false,
+        autoSessionTitle: false,
+      }),
     );
   });
 });

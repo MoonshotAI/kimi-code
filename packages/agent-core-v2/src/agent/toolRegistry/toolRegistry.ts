@@ -1,11 +1,3 @@
-/**
- * `toolRegistry` domain — `IAgentToolRegistryService` contract.
- *
- * Per-agent registry of the tools an agent can resolve and run: `register` /
- * `unregister` / `list` / `resolve`, plus `onRegistered` / `onUnregistered`
- * hooks. Bound at Agent scope.
- */
-
 import { createDecorator } from '#/_base/di/instantiation';
 import { type IDisposable } from '#/_base/di/lifecycle';
 import type {
@@ -25,11 +17,16 @@ export interface ToolReference {
   readonly source: ToolSource;
 }
 
+export interface ToolRegistration extends IDisposable {
+  readonly status?: 'active' | 'pending';
+}
+
 export interface IAgentToolRegistryService {
   readonly _serviceBrand: undefined;
 
-  register(tool: ExecutableTool, options?: ToolRegistrationOptions): IDisposable;
+  register(tool: ExecutableTool, options?: ToolRegistrationOptions): ToolRegistration;
   list(): readonly ToolInfo[];
+  listLive?(): readonly ToolInfo[];
   listReferences(): readonly ToolReference[];
   resolve(name: string): ExecutableTool | undefined;
 }

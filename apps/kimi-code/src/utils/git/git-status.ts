@@ -1,21 +1,27 @@
 /**
- * Cached git branch + working-tree status for the footer/statusline.
+ * Cached git branch and working-tree status for the footer, read through the
+ * engine so a remote-bound session reports the repository on its own host.
  *
- * Branch name refreshes every 5s, porcelain status every 15s. Branch
- * and status reads stay synchronous with short timeouts. Pull request
- * lookup uses an async cache so a slow `gh pr view` never blocks
- * footer rendering.
+ * getStatus() only reads the cache. The first read, refresh(), a HEAD change,
+ * and a read past the 30s status TTL schedule a refresh. The read starts on a
+ * later turn, not on the caller's stack, and not when the cache is
+ * constructed. A local work tree has its HEAD polled every 2 seconds; a remote
+ * one refreshes on refresh() and the TTL only. Pull request lookup stays async
+ * and never blocks a read.
  */
 
-import { execFile, spawnSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { join } from 'node:path';
+
+import { FSWatcher } from 'chokidar';
+import type { GitPullRequest, GitStatusSummary } from '@moonshot-ai/kimi-code-sdk';
 
 import { resolveCommandPath } from '#/utils/process/resolve-command';
 
-const BRANCH_TTL_MS = 5_000;
-const STATUS_TTL_MS = 15_000;
+const STATUS_TTL_MS = 30_000;
+const HEAD_POLL_INTERVAL_MS = 2_000;
 const PULL_REQUEST_TTL_MS = 60_000;
-const SPAWN_TIMEOUT_MS = 500;
-const PR_SPAWN_TIMEOUT_MS = 5_000;
+const SPAWN_TIMEOUT_MS = 2_000;
 
 export interface GitStatus {
   readonly branch: string;
@@ -32,26 +38,27 @@ export interface PullRequestInfo {
   readonly url: string;
 }
 
+export interface GitStatusSource {
+  status(): Promise<GitStatusSummary | null>;
+  pullRequest(): Promise<GitPullRequest | null>;
+  /** Local work tree whose HEAD is polled for branch switches; unset for a remote one. */
+  readonly localWorkDir?: string;
+}
+
 export interface GitStatusCache {
-  /** Returns current status, or `null` when workDir is not a git repo. */
+  /** Returns the last status, or `null` when it is not available yet or this is not a git repo. */
   getStatus(): GitStatus | null;
+  /** Refresh now, ignoring the status TTL. No-op when a refresh is already running; one follow-up runs after it. */
+  refresh(): void;
+  dispose(): void;
 }
 
 export interface GitStatusCacheOptions {
   readonly onChange?: () => void;
 }
 
-interface BranchState {
-  value: string | null;
-  fetchedAt: number;
-}
-
 interface StatusState {
-  dirty: boolean;
-  ahead: number;
-  behind: number;
-  diffAdded: number;
-  diffDeleted: number;
+  summary: GitStatusSummary | null;
   fetchedAt: number;
 }
 
@@ -63,26 +70,18 @@ interface PullRequestState {
   requestId: number;
 }
 
-const AHEAD_BEHIND_RE = /\[(?:ahead (\d+))?(?:, )?(?:behind (\d+))?\]/;
-
 export function createGitStatusCache(
-  workDir: string,
+  source: GitStatusSource,
   options: GitStatusCacheOptions = {},
 ): GitStatusCache {
-  // This cache is constructed before the workspace trust gate, so the git
-  // binary must be resolved through PATH to an absolute path — a bare name
-  // would let cmd.exe pick up a `git.exe` planted in the workspace.
-  const git = resolveCommandPath('git', workDir);
-  const isRepo = git !== undefined && detectGitRepo(git, workDir);
-  let branch: BranchState = { value: null, fetchedAt: 0 };
-  let status: StatusState = {
-    dirty: false,
-    ahead: 0,
-    behind: 0,
-    diffAdded: 0,
-    diffDeleted: 0,
-    fetchedAt: 0,
-  };
+  let disposed = false;
+  let inFlight = false;
+  let pendingForce = false;
+  let refreshQueued = false;
+  let queuedForce = false;
+  let headWatchRequested = false;
+  let headWatcher: FSWatcher | null = null;
+  let status: StatusState = { summary: null, fetchedAt: 0 };
   let pullRequest: PullRequestState = {
     value: null,
     branch: null,
@@ -91,32 +90,132 @@ export function createGitStatusCache(
     requestId: 0,
   };
 
-  return {
+  const cache: GitStatusCache = {
     getStatus: () => {
-      if (!isRepo || git === undefined) return null;
-
+      if (disposed) return null;
       const now = Date.now();
-      if (now - branch.fetchedAt >= BRANCH_TTL_MS) {
-        branch = { value: readBranch(git, workDir), fetchedAt: now };
-      }
-      if (branch.value === null) return null;
-
       if (now - status.fetchedAt >= STATUS_TTL_MS) {
-        status = { ...readStatus(git, workDir), fetchedAt: now };
+        requestRefresh(false);
       }
-      refreshPullRequestIfNeeded(branch.value, now);
-
-      return {
-        branch: branch.value,
-        dirty: status.dirty,
-        ahead: status.ahead,
-        behind: status.behind,
-        diffAdded: status.diffAdded,
-        diffDeleted: status.diffDeleted,
-        pullRequest: pullRequest.branch === branch.value ? pullRequest.value : null,
-      };
+      const branch = currentBranch();
+      if (branch !== null) {
+        refreshPullRequestIfNeeded(branch, now);
+      }
+      return currentStatus();
+    },
+    refresh: () => {
+      requestRefresh(true);
+    },
+    dispose: () => {
+      disposed = true;
+      inFlight = false;
+      pendingForce = false;
+      refreshQueued = false;
+      queuedForce = false;
+      const watcher = headWatcher;
+      headWatcher = null;
+      if (watcher !== null) {
+        void watcher.close().catch(() => undefined);
+      }
     },
   };
+
+  return cache;
+
+  function requestRefresh(force: boolean): void {
+    if (force) queuedForce = true;
+    if (refreshQueued) return;
+    refreshQueued = true;
+    queueMicrotask(() => {
+      refreshQueued = false;
+      const runForce = queuedForce;
+      queuedForce = false;
+      void runRefresh(runForce);
+    });
+  }
+
+  async function runRefresh(force: boolean): Promise<void> {
+    if (disposed) return;
+    if (inFlight) {
+      if (force) pendingForce = true;
+      return;
+    }
+    if (!force && Date.now() - status.fetchedAt < STATUS_TTL_MS) return;
+
+    inFlight = true;
+    try {
+      if (!headWatchRequested && source.localWorkDir !== undefined) {
+        headWatchRequested = true;
+        void watchLocalHead(source.localWorkDir);
+      }
+      let summary: GitStatusSummary | null;
+      try {
+        summary = await source.status();
+      } catch {
+        status = { ...status, fetchedAt: Date.now() };
+        return;
+      }
+      if (disposed) return;
+      const changed = !sameSummary(status.summary, summary);
+      status = { summary, fetchedAt: Date.now() };
+      if (changed) options.onChange?.();
+      const branch = currentBranch();
+      if (branch !== null) refreshPullRequestIfNeeded(branch, Date.now());
+    } finally {
+      if (!disposed) {
+        inFlight = false;
+        if (pendingForce) {
+          pendingForce = false;
+          void runRefresh(true);
+        }
+      }
+    }
+  }
+
+  async function watchLocalHead(workDir: string): Promise<void> {
+    const gitDir = await probeGitDir(workDir);
+    if (disposed || gitDir === null) return;
+    try {
+      const watcher = new FSWatcher({
+        ignoreInitial: true,
+        persistent: false,
+        usePolling: true,
+        interval: HEAD_POLL_INTERVAL_MS,
+        ignorePermissionErrors: true,
+      });
+      const onHead = (): void => {
+        requestRefresh(true);
+      };
+      watcher.on('add', onHead);
+      watcher.on('change', onHead);
+      watcher.on('unlink', onHead);
+      watcher.on('error', () => undefined);
+      watcher.add(join(gitDir, 'HEAD'));
+      headWatcher = watcher;
+    } catch {
+      // Turn end and the status TTL still refresh if watching is unavailable.
+    }
+  }
+
+  function currentBranch(): string | null {
+    const branch = status.summary?.branch;
+    return branch === undefined || branch === '' ? null : branch;
+  }
+
+  function currentStatus(): GitStatus | null {
+    const summary = status.summary;
+    const branch = currentBranch();
+    if (summary === null || branch === null) return null;
+    return {
+      branch,
+      dirty: summary.dirty,
+      ahead: summary.ahead,
+      behind: summary.behind,
+      diffAdded: summary.additions,
+      diffDeleted: summary.deletions,
+      pullRequest: pullRequest.branch === branch ? pullRequest.value : null,
+    };
+  }
 
   function refreshPullRequestIfNeeded(branchName: string, now: number): void {
     if (pullRequest.pendingBranch === branchName) return;
@@ -132,8 +231,8 @@ export function createGitStatusCache(
       requestId,
     };
 
-    void readPullRequest(workDir).then((value) => {
-      if (pullRequest.requestId !== requestId) return;
+    void readPullRequest().then((value) => {
+      if (disposed || pullRequest.requestId !== requestId) return;
 
       const previous = pullRequest.branch === branchName ? pullRequest.value : null;
       const changed = !samePullRequest(previous, value);
@@ -147,140 +246,29 @@ export function createGitStatusCache(
       if (changed) options.onChange?.();
     });
   }
-}
 
-function detectGitRepo(git: string, workDir: string): boolean {
-  try {
-    const result = spawnSync(git, ['-C', workDir, 'rev-parse', '--is-inside-work-tree'], {
-      encoding: 'utf8',
-      timeout: SPAWN_TIMEOUT_MS,
-    });
-    return result.status === 0 && result.stdout.trim() === 'true';
-  } catch {
-    return false;
-  }
-}
-
-function readBranch(git: string, workDir: string): string | null {
-  try {
-    const result = spawnSync(git, ['-C', workDir, 'branch', '--show-current'], {
-      encoding: 'utf8',
-      timeout: SPAWN_TIMEOUT_MS,
-    });
-    if (result.status !== 0) return null;
-    const name = result.stdout.trim();
-    return name.length > 0 ? name : null;
-  } catch {
-    return null;
-  }
-}
-
-function readStatus(
-  git: string,
-  workDir: string,
-): {
-  dirty: boolean;
-  ahead: number;
-  behind: number;
-  diffAdded: number;
-  diffDeleted: number;
-} {
-  try {
-    const result = spawnSync(git, ['-C', workDir, 'status', '--porcelain', '-b'], {
-      encoding: 'utf8',
-      timeout: SPAWN_TIMEOUT_MS,
-      maxBuffer: 4 * 1024 * 1024,
-    });
-    if (result.status !== 0) {
-      return { dirty: false, ahead: 0, behind: 0, diffAdded: 0, diffDeleted: 0 };
+  async function readPullRequest(): Promise<PullRequestInfo | null> {
+    try {
+      const found = await source.pullRequest();
+      return found === null ? null : { number: found.number, url: found.url };
+    } catch {
+      return null;
     }
-
-    let dirty = false;
-    let ahead = 0;
-    let behind = 0;
-    for (const line of result.stdout.split('\n')) {
-      if (line.startsWith('## ')) {
-        const m = AHEAD_BEHIND_RE.exec(line);
-        if (m) {
-          ahead = Number.parseInt(m[1] ?? '0', 10) || 0;
-          behind = Number.parseInt(m[2] ?? '0', 10) || 0;
-        }
-      } else if (line.trim().length > 0) {
-        dirty = true;
-      }
-    }
-    const diff = dirty ? readDiffStats(git, workDir) : { added: 0, deleted: 0 };
-    return {
-      dirty,
-      ahead,
-      behind,
-      diffAdded: diff.added,
-      diffDeleted: diff.deleted,
-    };
-  } catch {
-    return { dirty: false, ahead: 0, behind: 0, diffAdded: 0, diffDeleted: 0 };
   }
 }
 
-function readDiffStats(git: string, workDir: string): { added: number; deleted: number } {
-  try {
-    const result = spawnSync(git, ['-C', workDir, 'diff', '--numstat', 'HEAD', '--'], {
-      encoding: 'utf8',
-      timeout: SPAWN_TIMEOUT_MS,
-      maxBuffer: 4 * 1024 * 1024,
-    });
-    if (result.status !== 0) return { added: 0, deleted: 0 };
-
-    let added = 0;
-    let deleted = 0;
-    for (const line of result.stdout.split('\n')) {
-      if (!line) continue;
-      const [addedText, deletedText] = line.split('\t');
-      added += parseDiffNumstatCount(addedText);
-      deleted += parseDiffNumstatCount(deletedText);
-    }
-    return { added, deleted };
-  } catch {
-    return { added: 0, deleted: 0 };
-  }
-}
-
-function parseDiffNumstatCount(value: string | undefined): number {
-  if (value === undefined || value === '-') return 0;
-  const n = Number.parseInt(value, 10);
-  return Number.isFinite(n) && n > 0 ? n : 0;
-}
-
-function readPullRequest(workDir: string): Promise<PullRequestInfo | null> {
+function probeGitDir(workDir: string): Promise<string | null> {
+  const git = resolveCommandPath('git', workDir);
+  if (git === undefined) return Promise.resolve(null);
   return new Promise((resolve) => {
-    // Resolve gh through PATH as well — this runs with cwd = workDir, where a
-    // planted `gh.exe` would otherwise be picked up by cmd.exe on Windows.
-    const gh = resolveCommandPath('gh', workDir);
-    if (gh === undefined) {
-      resolve(null);
-      return;
-    }
     try {
       execFile(
-        gh,
-        ['pr', 'view', '--json', 'number,url'],
-        {
-          cwd: workDir,
-          encoding: 'utf8',
-          env: {
-            ...process.env,
-            GH_NO_UPDATE_NOTIFIER: '1',
-            GH_PROMPT_DISABLED: '1',
-          },
-          timeout: PR_SPAWN_TIMEOUT_MS,
-          maxBuffer: 256 * 1024,
-        },
+        git,
+        ['-C', workDir, 'rev-parse', '--absolute-git-dir'],
+        { encoding: 'utf8', timeout: SPAWN_TIMEOUT_MS },
         (error, stdout) => {
-          if (error !== null) {
-            resolve(null);
-            return;
-          }
-          resolve(parsePullRequest(stdout));
+          const gitDir = typeof stdout === 'string' ? stdout.trim() : '';
+          resolve(error === null && gitDir.length > 0 ? gitDir : null);
         },
       );
     } catch {
@@ -289,24 +277,21 @@ function readPullRequest(workDir: string): Promise<PullRequestInfo | null> {
   });
 }
 
+function sameSummary(a: GitStatusSummary | null, b: GitStatusSummary | null): boolean {
+  if (a === null || b === null) return a === b;
+  return (
+    a.branch === b.branch &&
+    a.dirty === b.dirty &&
+    a.ahead === b.ahead &&
+    a.behind === b.behind &&
+    a.additions === b.additions &&
+    a.deletions === b.deletions
+  );
+}
+
 function samePullRequest(a: PullRequestInfo | null, b: PullRequestInfo | null): boolean {
   if (a === null || b === null) return a === b;
   return a.number === b.number && a.url === b.url;
-}
-
-function parsePullRequest(stdout: string): PullRequestInfo | null {
-  try {
-    const raw = JSON.parse(stdout) as unknown;
-    if (typeof raw !== 'object' || raw === null) return null;
-    const record = raw as Record<string, unknown>;
-    const number = record['number'];
-    const url = record['url'];
-    if (typeof number !== 'number' || !Number.isInteger(number) || number <= 0) return null;
-    if (typeof url !== 'string' || !isSafeHttpUrl(url)) return null;
-    return { number, url };
-  } catch {
-    return null;
-  }
 }
 
 function isSafeHttpUrl(value: string): boolean {

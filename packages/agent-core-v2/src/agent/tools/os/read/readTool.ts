@@ -1,33 +1,27 @@
-/**
- * `tools` domain — `ReadTool` implementation.
- *
- * Streams the file through `IHostFileSystem.readLines`, enforces the
- * line/byte budgets from the contract, normalizes line endings for display
- * (pure CRLF shown as LF, mixed or lone carriage returns made visible as
- * `\r`), refuses binary / media files up front, and composes the `<system>`
- * finish note on the `note` side channel. UTF-16 LE/BE text (with a BOM or
- * the zero-byte parity heuristic) is decoded whole via `readBytes` and
- * transcoded to UTF-8, bounded by `TRANSCODE_MAX_BYTES`.
- *
- * Path safety goes through the shared path access resolver used by
- * Read/Write/Edit. Read access flows through the os `hostFs` domain
- * (`IHostFileSystem`); path semantics (home expansion, path class) come from
- * the `hostEnvironment` domain; the workspace and skill roots come from
- * `ISessionWorkspaceContext` / `ISessionSkillCatalog`.
- *
- * Ported from v1. The
- * optional `scanTextFile` / `readLineRange` / `readTailLines` fast-paths are
- * intentionally dropped: `IHostFileSystem` streams through `readLines` only.
- * Bound at Agent scope; self-registers via `registerAgentToolService(...)` at module
- * load.
- */
+import * as posixPath from 'node:path/posix';
+import * as win32Path from 'node:path/win32';
 
-import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
-import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
+import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { isTaskOutputFilePath } from '#/agent/task/persist';
+import { type HostFileHead, IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { isHostFsNotDirectory, isHostFsNotFound } from '#/os/interface/hostFsErrors';
+import { acquireOrWhenReady, IAgentEnvironmentService, pinnedGeneration } from '#/agent/environmentBinding/agentEnvironment';
+import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
+import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentPlanService, type PlanFileTarget } from '#/features/plan/plan';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
+import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { isDaemonFileUrl } from '#/agent/media/mediaRef';
+import { attachmentFileSource, environmentFileSource, withAttachmentLocation, type FileReadSource } from '#/agent/tools/fileReadSource';
+import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { unwrapErrorCause } from '#/_base/errors/errors';
-import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { IConfigService } from '#/app/config/config';
+import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
+import { countTokenChars, tokensForCharCounts, type TokenCharCounts } from '#/llm-adapter/contract/tokens';
 import {
   ToolAccesses,
   type ExecutableToolResult,
@@ -40,19 +34,20 @@ import {
 } from '#/tool/path-access';
 import { MEDIA_SNIFF_BYTES, detectFileType } from '#/agent/media/file-type';
 import { toInputJsonSchema } from '#/tool/input-schema';
-import { literalRulePattern, matchesPathRuleSubject } from '#/tool/rule-match';
+import { literalRulePattern, matchesGlobRuleSubject, matchesPathRuleSubject } from '#/tool/rule-match';
 import { makeCarriageReturnsVisible, splitLinesKeepingTerminator, type LineEndingStyle } from '#/_base/text/line-endings';
-import { decodeUtfText, detectTextEncoding, type UtfTextEncoding } from '#/_base/text/encoding';
+import { detectTextEncoding, type UtfTextEncoding } from '#/_base/text/encoding';
 import { renderPrompt } from '#/_base/utils/render-prompt';
 import {
+  DEFAULT_MAX_CHARS,
+  DEFAULT_MAX_CHARS_LIMIT,
   IReadTool,
-  MAX_BYTES,
-  MAX_LINE_LENGTH,
-  MAX_LINES,
   ReadInputSchema,
   TRANSCODE_MAX_BYTES,
   type ReadInput,
 } from './read';
+import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
+import { READ_SECTION, type ReadConfig } from './configSection';
 import readDescriptionTemplate from './read.md?raw';
 
 interface LineEndingFlags {
@@ -66,32 +61,79 @@ interface ReadLineEntry {
   readonly rawContent: string;
 }
 
-interface RenderedLine {
-  readonly line: string;
-  readonly wasTruncated: boolean;
+interface ReadTailEntry extends ReadLineEntry {
+  readonly minChars: number;
 }
 
-interface FinishReadResultInput {
-  readonly renderedLines: readonly string[];
-  readonly truncatedLineNumbers: readonly number[];
-  readonly maxLinesReached: boolean;
-  readonly maxBytesReached: boolean;
-  readonly lineEndingStyle: LineEndingStyle;
-  readonly startLine: number;
-  readonly totalLines: number;
-  readonly requestedLines: number;
+interface ReadRequest {
+  readonly args: ReadInput;
+  readonly maxChars: number;
+  readonly tokenLimit: number;
+  readonly maxCharsLimit: number;
   readonly detectedEncoding?: UtfTextEncoding;
+  readonly lossyDecoding: boolean;
+  readonly eventLog: boolean;
 }
 
-function truncateLine(line: string, maxLength: number): string {
-  if (line.length <= maxLength) return line;
-  const marker = '...';
-  const target = Math.max(maxLength, marker.length);
-  return line.slice(0, target - marker.length) + marker;
+interface ReadPage {
+  readonly request: ReadRequest;
+  readonly renderedLines: readonly string[];
+  readonly startLine: number;
+  readonly rangeStart: number;
+  readonly rangeEnd: number;
+  readonly totalLines: number;
+  readonly fromTail: boolean;
+  readonly lineEndingStyle: LineEndingStyle;
 }
 
 function stripTrailingLf(line: string): string {
   return line.endsWith('\n') ? line.slice(0, -1) : line;
+}
+
+function splitsSurrogatePair(text: string, offset: number): boolean {
+  // oxlint-disable-next-line unicorn/prefer-code-point -- raw UTF-16 halves are the point here
+  const previous = text.charCodeAt(offset - 1);
+  // oxlint-disable-next-line unicorn/prefer-code-point -- raw UTF-16 halves are the point here
+  const next = text.charCodeAt(offset);
+  return previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff;
+}
+
+function cutForTokens(text: string, end: number, overflow: number): number {
+  let index = end;
+  let removed = 0;
+  while (index > 0 && removed < overflow) {
+    const code = text.codePointAt(index - 1)!;
+    index -= code >= 0xdc00 && code <= 0xdfff && index > 1 ? 2 : 1;
+    removed += code <= 127 ? 0.25 : 1;
+  }
+  return index;
+}
+
+const RANGE_STATUS_TOKENS = 256;
+
+function rangeTooLarge(page: ReadPage, lineCounts: readonly TokenCharCounts[], tokenLimit: number): ExecutableToolResult {
+  const indexes = page.renderedLines.map((_, index) => index);
+  if (page.fromTail) indexes.reverse();
+  let ascii = 0;
+  let nonAscii = 0;
+  let fit = 0;
+  for (const index of indexes) {
+    const counts = lineCounts[index]!;
+    ascii += counts.ascii + (fit > 0 ? 1 : 0);
+    nonAscii += counts.nonAscii;
+    if (tokensForCharCounts({ ascii, nonAscii }) > tokenLimit - RANGE_STATUS_TOKENS) break;
+    fit += 1;
+  }
+  const lines = Math.max(1, fit);
+  const suggestion = {
+    path: page.request.args.path,
+    line_offset: page.fromTail ? page.rangeEnd - lines + 1 : page.rangeStart,
+    n_lines: lines,
+  };
+  return {
+    isError: true,
+    output: `Lines ${String(page.rangeStart)}-${String(page.rangeEnd)} are more than one Read can return (about ${String(tokenLimit)} estimated tokens). Read at most ${String(lines)} lines at a time, for example ${JSON.stringify(suggestion)}, or find the section with Grep.`,
+  };
 }
 
 function updateLineEndingFlags(flags: LineEndingFlags, text: string): void {
@@ -116,64 +158,14 @@ function lineEndingStyleFromFlags(flags: LineEndingFlags): LineEndingStyle {
   return 'lf';
 }
 
-function renderLine(entry: ReadLineEntry, lineEndingStyle: LineEndingStyle): RenderedLine {
+function renderLine(entry: ReadLineEntry, lineEndingStyle: LineEndingStyle): string {
   const modelContent =
     lineEndingStyle === 'crlf' && entry.rawContent.endsWith('\r')
       ? entry.rawContent.slice(0, -1)
       : entry.rawContent;
-  const truncated = truncateLine(modelContent, MAX_LINE_LENGTH);
   const renderedContent =
-    lineEndingStyle === 'mixed' ? makeCarriageReturnsVisible(truncated) : truncated;
-  return {
-    line: `${String(entry.lineNo)}\t${renderedContent}`,
-    wasTruncated: truncated !== modelContent,
-  };
-}
-
-function renderedLineBytes(renderedLine: string, isFirst: boolean): number {
-  return (isFirst ? 0 : 1) + Buffer.byteLength(renderedLine, 'utf8');
-}
-
-function renderEntries(
-  entries: readonly ReadLineEntry[],
-  lineEndingStyle: LineEndingStyle,
-): {
-  renderedLines: string[];
-  truncatedLineNumbers: number[];
-  maxBytesReached: boolean;
-} {
-  const renderedLines: string[] = [];
-  const truncatedLineNumbers: number[] = [];
-  let bytes = 0;
-  let maxBytesReached = false;
-
-  for (const entry of entries) {
-    const rendered = renderLine(entry, lineEndingStyle);
-    const lineBytes = renderedLineBytes(rendered.line, renderedLines.length === 0);
-    if (renderedLines.length > 0 && bytes + lineBytes > MAX_BYTES) {
-      maxBytesReached = true;
-      break;
-    }
-
-    if (rendered.wasTruncated) {
-      truncatedLineNumbers.push(entry.lineNo);
-    }
-    renderedLines.push(rendered.line);
-    bytes += lineBytes;
-    if (bytes >= MAX_BYTES) {
-      maxBytesReached = true;
-      break;
-    }
-  }
-
-  return { renderedLines, truncatedLineNumbers, maxBytesReached };
-}
-
-function isFileNotFoundError(error: unknown): boolean {
-  const unwrapped = unwrapErrorCause(error);
-  if (typeof unwrapped !== 'object' || unwrapped === null) return false;
-  const code = (unwrapped as { code?: unknown })['code'];
-  return code === 'ENOENT' || code === 'ENOTDIR';
+    lineEndingStyle === 'mixed' ? makeCarriageReturnsVisible(modelContent) : modelContent;
+  return `${String(entry.lineNo)}\t${renderedContent}`;
 }
 
 function isTextDecodeError(error: unknown): boolean {
@@ -204,157 +196,263 @@ async function* decodedLines(lines: readonly string[]): AsyncGenerator<string> {
   yield* lines;
 }
 
+const READ_MEDIA_FILE_TOOL_NAME = 'ReadMediaFile';
+
 function notReadableFileOutput(path: string): string {
-  return (
-    `"${path}" is not readable as UTF-8 text. ` +
-    'If it is an image or video, use ReadMediaFile. ' +
-    'For other binary formats, use Bash or an MCP tool if available.'
-  );
+  return `"${path}" is not readable as UTF-8 text. Only text files can be read.`;
 }
 
 function notUtf8DecodableFileOutput(path: string): string {
   return (
     `"${path}" is not valid UTF-8 or UTF-16 text. ` +
     'Only UTF-8 and UTF-16 text files can be read; ' +
-    'for other encodings (e.g. GBK), convert the file to UTF-8 first (e.g. `iconv` via Bash).'
+    'for other encodings (e.g. GBK), convert the file to UTF-8 first (e.g. with `iconv`).'
   );
 }
-
-const READ_DESCRIPTION = renderPrompt(readDescriptionTemplate, {
-  MAX_LINES,
-  MAX_BYTES_KB: MAX_BYTES / 1024,
-  MAX_LINE_LENGTH,
-});
 
 export class ReadTool implements IReadTool {
   declare readonly _serviceBrand: undefined;
   readonly name = 'Read' as const;
-  readonly description = READ_DESCRIPTION;
+  get description(): string {
+    const limits = this.limits();
+    return renderPrompt(readDescriptionTemplate, {
+      DEFAULT_MAX_CHARS: limits.defaultMaxChars,
+      MAX_CHARS: limits.maxChars,
+    });
+  }
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ReadInputSchema);
   constructor(
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
+    @IAgentToolResultTruncationService private readonly resultTruncation: IAgentToolResultTruncationService,
+    @IConfigService private readonly config: IConfigService,
+    @IAgentProfileService private readonly profile: IAgentProfileService,
+    @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
+    @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
+    @ISessionMediaStore private readonly attachmentStore?: ISessionMediaStore,
+    @IAgentPlanService private readonly planService?: IAgentPlanService,
+    @IHostFileSystem private readonly hostFs?: IHostFileSystem,
+    @IHostEnvironment private readonly hostEnvironment?: IHostEnvironment,
+    @ISessionContext private readonly session?: ISessionContext,
+    @IAgentScopeContext private readonly agent?: IAgentScopeContext,
   ) {}
 
-  private workspaceConfig(view: RuntimeWorkspaceView): WorkspaceConfig {
+  private limits(): { defaultMaxChars: number; maxChars: number } {
+    const section = this.config.get<ReadConfig | undefined>(READ_SECTION);
+    const maxChars = section?.maxChars ?? DEFAULT_MAX_CHARS_LIMIT;
+    return {
+      defaultMaxChars: Math.min(section?.defaultMaxChars ?? DEFAULT_MAX_CHARS, maxChars),
+      maxChars,
+    };
+  }
+
+  private workspaceConfig(view: EnvironmentWorkspaceView): WorkspaceConfig {
     return { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
   }
 
-  resolveExecution(args: ReadInput): ToolExecution {
-    const inspected = inspectAgentRuntime(this.runtime);
-    const view = new RuntimeWorkspaceView(inspected, {
-      workDir: this.workspaceCtx.workDir,
-      additionalDirs: [...this.workspaceCtx.additionalDirs, ...this.skillCatalog.catalog.getSkillRoots()],
-    });
-    const env = { _serviceBrand: undefined, ...inspected.environment, ready: Promise.resolve() };
-    const workspace = this.workspaceConfig(view);
-    const path = resolvePathAccessPath(args.path, {
-      env,
-      workspace,
-      operation: 'read',
-    });
+  async resolveExecution(args: ReadInput): Promise<ToolExecution> {
+    if (args.column_offset !== undefined && (args.line_offset ?? 1) < 0) {
+      return { isError: true, output: 'column_offset is only supported for forward reads. Use a positive line_offset or the forward Next Read arguments.' };
+    }
+    if (isDaemonFileUrl(args.path)) return this.attachmentExecution(args);
+    const planTarget = await this.planService?.resolveFile(args.path, 'read');
+    if (planTarget !== undefined) return this.localArtifactExecution(args, planTarget, true);
+    const artifactTarget = this.localOutputTarget(args.path);
+    if (artifactTarget !== undefined) return this.localArtifactExecution(args, artifactTarget, false);
+    const resolutionLease = await acquireOrWhenReady(this.environment, ['fs']);
+    try {
+      const inspected = resolutionLease.environment;
+      const expectedGeneration = pinnedGeneration(inspected);
+      const view = new EnvironmentWorkspaceView(inspected, {
+        workDir: this.workspaceCtx.workDir,
+        additionalDirs: [...this.workspaceCtx.additionalDirs, ...this.skillCatalog.catalog.getSkillRoots()],
+      });
+      const env = { _serviceBrand: undefined, ...view.host, ready: Promise.resolve() };
+      const workspace = this.workspaceConfig(view);
+      const path = resolvePathAccessPath(args.path, {
+        env,
+        shellPathBridge: view.shellPathBridge,
+        workspace,
+        operation: 'read',
+      });
+      return {
+        accesses: ToolAccesses.readFile(path),
+        description: `Reading ${args.path}`,
+        display: { kind: 'file_io', operation: 'read', path },
+        approvalRule: literalRulePattern(this.name, path),
+        matchesRule: (ruleArgs) =>
+          matchesPathRuleSubject(ruleArgs, path, {
+            cwd: workspace.workspaceDir,
+            pathClass: env.pathClass,
+            homeDir: env.homeDir,
+          }),
+        execute: async () => {
+          const lease = await acquireOrWhenReady(this.environment, ['fs']);
+          try {
+            if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
+              return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
+            }
+            const eventLog = this.resultTruncation.isWireJournalPath(path);
+            const result = await this.execution(environmentFileSource(lease.environment.fs!, path), args, eventLog);
+            return { ...result, spillExempt: true };
+          } finally {
+            lease.dispose();
+          }
+        },
+      };
+    } finally {
+      resolutionLease.dispose();
+    }
+  }
+
+  private localOutputTarget(path: string): PlanFileTarget | undefined {
+    if (this.hostFs === undefined || this.hostEnvironment === undefined || path.includes('\0')) return undefined;
+    const environmentPath = this.hostEnvironment.pathClass === 'win32' ? win32Path : posixPath;
+    if (!environmentPath.isAbsolute(path)) return undefined;
+    const normalized = environmentPath.normalize(path);
+    const taskOutput = this.session !== undefined && this.agent !== undefined && (
+      isTaskOutputFilePath(normalized, environmentPath.join(this.session.sessionDir, 'agents', this.agent.agentId), environmentPath) ||
+      (this.agent.agentId === 'main' && isTaskOutputFilePath(normalized, this.session.sessionDir, environmentPath))
+    );
+    if (!taskOutput && !this.resultTruncation.isSpillFilePath(normalized)) return undefined;
+    return { fs: this.hostFs, path: normalized, environmentPath: { ...environmentPath, separator: environmentPath.sep, delimiter: environmentPath.delimiter }, pathClass: this.hostEnvironment.pathClass };
+  }
+
+  private localArtifactExecution(args: ReadInput, target: PlanFileTarget, planFile: boolean): ToolExecution {
+    const { path } = target;
     return {
       accesses: ToolAccesses.readFile(path),
       description: `Reading ${args.path}`,
       display: { kind: 'file_io', operation: 'read', path },
       approvalRule: literalRulePattern(this.name, path),
-      matchesRule: (ruleArgs) =>
-        matchesPathRuleSubject(ruleArgs, path, {
-          cwd: workspace.workspaceDir,
-          pathClass: env.pathClass,
-          homeDir: env.homeDir,
-        }),
+      matchesRule: (ruleArgs) => matchesPathRuleSubject(ruleArgs, path, {
+        cwd: target.environmentPath.dirname(path), pathClass: target.pathClass,
+      }),
       execute: async () => {
-        const lease = this.runtime.acquire(['fs']);
-        try {
-          if (lease.runtime.identity.generation !== inspected.identity.generation) {
-            return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };
-          }
-          return await this.execution(lease.runtime.fs!, args, path);
-        } finally {
-          lease.dispose();
+        if (planFile && (await this.planService?.resolveFile(path, 'read'))?.path !== path) {
+          return { isError: true, output: 'The active plan changed before execution. Retry the tool call.' };
         }
+        return { ...await this.execution(environmentFileSource(target.fs, path), args, false), spillExempt: true };
       },
     };
   }
 
-  private async execution(fs: IHostFileSystem, args: ReadInput, safePath: string): Promise<ExecutableToolResult> {
+  private async attachmentExecution(args: ReadInput): Promise<ToolExecution> {
+    const source = await attachmentFileSource(args.path, this.attachmentStore);
+    return {
+      accesses: ToolAccesses.readFile(source.localPath ?? args.path),
+      description: `Reading ${args.path}`,
+      display: { kind: 'file_io', operation: 'read', path: source.localPath ?? args.path },
+      approvalRule: literalRulePattern(this.name, args.path),
+      matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.path),
+      execute: async () => ({
+        ...withAttachmentLocation(await this.execution(source, args, false), source),
+        spillExempt: true,
+      }),
+    };
+  }
+
+  private async execution(
+    source: FileReadSource,
+    args: ReadInput,
+    eventLog: boolean,
+  ): Promise<ExecutableToolResult> {
     try {
-      let stat: Awaited<ReturnType<IHostFileSystem['stat']>>;
+      let head: HostFileHead;
       try {
-        stat = await fs.stat(safePath);
+        head = await source.readHead(MEDIA_SNIFF_BYTES);
       } catch (error) {
-        if (isFileNotFoundError(error)) {
+        if (isHostFsNotFound(error) || isHostFsNotDirectory(error)) {
           return { isError: true, output: `"${args.path}" does not exist.` };
         }
         throw error;
       }
+      const { stat, bytes: header } = head;
       if (!stat.isFile) {
         return { isError: true, output: `"${args.path}" is not a file.` };
       }
 
-      const header = await fs.readBytes(safePath, MEDIA_SNIFF_BYTES);
-      const fileType = detectFileType(safePath, header);
+      const fileType = detectFileType(source.name, header);
       if (fileType.kind === 'image' || fileType.kind === 'video') {
+        const kind = fileType.kind;
+        const article = kind === 'image' ? 'an' : 'a';
+        const capabilities = this.profile.getModelCapabilities();
+        const supported = kind === 'image' ? capabilities.image_in : capabilities.video_in;
+        if (!supported) {
+          return {
+            isError: true,
+            output: `"${args.path}" is ${article} ${kind} file. The current model does not support ${kind} input (missing ${kind}_in capability), so this agent cannot view it. Only text files can be read.`,
+          };
+        }
+        const mediaToolAvailable =
+          this.toolRegistry.resolve(READ_MEDIA_FILE_TOOL_NAME) !== undefined &&
+          this.toolPolicy.isToolActive(READ_MEDIA_FILE_TOOL_NAME);
         return {
           isError: true,
-          output: `"${args.path}" is a ${fileType.kind} file. Use ReadMediaFile to read image or video files.`,
+          output: mediaToolAvailable
+            ? `"${args.path}" is ${article} ${kind} file. Only text files can be read; use ReadMediaFile for image and video files.`
+            : `"${args.path}" is ${article} ${kind} file. Only text files can be read.`,
         };
       }
 
-      // A BOM marks UTF-16 even when the header carries no NUL bytes (e.g.
-      // CJK-only content reads as printable ASCII), so detect the encoding
-      // before falling through to the strict UTF-8 text path.
       const detection = detectTextEncoding(header);
-      let lines: AsyncIterable<string>;
+      let readLines: () => AsyncIterable<string>;
       let detectedEncoding: UtfTextEncoding | undefined;
+      let lossyDecoding = false;
       if (!detection.seemsBinary && detection.encoding !== 'utf-8') {
-        // UTF-16 LE/BE text (BOM or zero-byte parity heuristic): decode the
-        // whole file and transcode to UTF-8 for display.
         if (stat.size > TRANSCODE_MAX_BYTES) {
           return {
             isError: true,
             output:
               `"${args.path}" is ${encodingDisplayName(detection.encoding)} text but too large to transcode ` +
               `(${String(stat.size)} bytes > ${String(TRANSCODE_MAX_BYTES)}). ` +
-              'Convert it to UTF-8 first (e.g. `iconv` via Bash).',
+              'Convert it to UTF-8 first (e.g. with `iconv`).',
           };
         }
-        const decoded = decodeUtfText(await fs.readBytes(safePath), detection.encoding);
+        const bytes = await source.readBytes();
+        let decoded: string;
+        try {
+          decoded = new TextDecoder(detection.encoding, { fatal: true }).decode(bytes);
+        } catch (error) {
+          if (!isTextDecodeError(error)) throw error;
+          decoded = new TextDecoder(detection.encoding, { fatal: false }).decode(bytes);
+          lossyDecoding = true;
+        }
         detectedEncoding = detection.encoding;
-        lines = decodedLines(splitLinesKeepingTerminator(decoded));
+        const decodedContent = splitLinesKeepingTerminator(decoded);
+        readLines = () => decodedLines(decodedContent);
       } else if (fileType.kind === 'unknown') {
         return {
           isError: true,
           output: notReadableFileOutput(args.path),
         };
       } else {
-        lines = fs.readLines(safePath, { errors: 'strict' });
+        readLines = () => source.readLines();
       }
 
-      const lineOffset = args.line_offset ?? 1;
-      const requestedLines = args.n_lines ?? MAX_LINES;
-      const effectiveLimit = Math.min(requestedLines, MAX_LINES);
-
-      if (lineOffset < 0) {
-        return await this.readTail(
-          args.path,
-          lines,
-          lineOffset,
-          effectiveLimit,
-          requestedLines,
-          detectedEncoding,
-        );
-      }
-      return await this.readForward(
-        args.path,
-        lines,
-        lineOffset,
-        effectiveLimit,
-        requestedLines,
+      const limits = this.limits();
+      const request: ReadRequest = {
+        args,
+        maxChars: Math.min(args.max_chars ?? limits.defaultMaxChars, limits.maxChars),
+        tokenLimit: Math.ceil(limits.maxChars / 4),
+        maxCharsLimit: limits.maxChars,
         detectedEncoding,
-      );
+        lossyDecoding,
+        eventLog,
+      };
+      const lineOffset = args.line_offset ?? 1;
+      if (lineOffset >= 0) return await this.readForward(readLines(), request);
+      const rereadsFile = detectedEncoding === undefined && (args.n_lines ?? Infinity) < -lineOffset;
+      const result = await this.readTail(readLines, request);
+      if (!result.isError && rereadsFile) {
+        const currentStat = await source.stat();
+        if (!currentStat.isFile || currentStat.size !== stat.size ||
+          currentStat.mtimeMs !== stat.mtimeMs || currentStat.ino !== stat.ino) {
+          return { isError: true, output: 'File changed while reading its tail. Retry Read with the updated file.' };
+        }
+      }
+      return result;
     } catch (error) {
       if (isTextDecodeError(error)) {
         return { isError: true, output: notUtf8DecodableFileOutput(args.path) };
@@ -367,202 +465,283 @@ export class ReadTool implements IReadTool {
   }
 
   private async readForward(
-    displayPath: string,
     lines: AsyncIterable<string>,
-    lineOffset: number,
-    effectiveLimit: number,
-    requestedLines: number,
-    detectedEncoding?: UtfTextEncoding,
+    request: ReadRequest,
   ): Promise<ExecutableToolResult> {
+    const { args, maxChars } = request;
+    const lineOffset = args.line_offset ?? 1;
+    const columnOffset = args.column_offset ?? 0;
+    const requestedLines = args.n_lines ?? Infinity;
     const selectedEntries: ReadLineEntry[] = [];
     const flags: LineEndingFlags = { hasCrLf: false, hasLf: false, hasLoneCr: false };
     let currentLineNo = 0;
-    let maxLinesReached = false;
     let collectionClosed = false;
+    let minimumChars = 0;
 
     for await (const rawLine of lines) {
       if (containsNulByte(rawLine)) {
-        return { isError: true, output: notReadableFileOutput(displayPath) };
+        return { isError: true, output: notReadableFileOutput(args.path) };
       }
       currentLineNo += 1;
       updateLineEndingFlags(flags, rawLine);
-      if (collectionClosed) {
-        if (effectiveLimit >= MAX_LINES && currentLineNo >= lineOffset) {
-          maxLinesReached = true;
-        }
+      if (collectionClosed) continue;
+      if (currentLineNo < lineOffset) continue;
+      if (selectedEntries.length >= requestedLines) {
+        collectionClosed = true;
         continue;
       }
-      if (currentLineNo < lineOffset) continue;
-      if (selectedEntries.length >= effectiveLimit) {
-        if (effectiveLimit >= MAX_LINES) {
-          maxLinesReached = true;
-        }
+      const rawContent = stripTrailingLf(rawLine);
+      const lineChars = String(currentLineNo).length + 1 + Math.max(
+        0,
+        rawContent.length - (rawContent.endsWith('\r') ? 1 : 0) -
+          (currentLineNo === lineOffset ? columnOffset : 0),
+      ) + (selectedEntries.length === 0 ? 0 : 1);
+      if (minimumChars + lineChars > maxChars && selectedEntries.length > 0) {
         collectionClosed = true;
         continue;
       }
       selectedEntries.push({
         lineNo: currentLineNo,
-        rawContent: stripTrailingLf(rawLine),
+        rawContent,
       });
-      if (selectedEntries.length >= effectiveLimit) {
+      minimumChars += lineChars;
+      if (selectedEntries.length >= requestedLines || minimumChars >= maxChars) {
         collectionClosed = true;
       }
     }
 
     const lineEndingStyle = lineEndingStyleFromFlags(flags);
-    const rendered = renderEntries(selectedEntries, lineEndingStyle);
-
-    return this.finishReadResult({
-      renderedLines: rendered.renderedLines,
-      truncatedLineNumbers: rendered.truncatedLineNumbers,
-      maxLinesReached,
-      maxBytesReached: rendered.maxBytesReached,
-      lineEndingStyle,
-      startLine: selectedEntries.length > 0 ? lineOffset : 0,
+    const renderedLines = selectedEntries.map((entry) => renderLine(entry, lineEndingStyle));
+    const firstLine = renderedLines[0];
+    if (columnOffset > 0) {
+      const prefix = `${String(lineOffset)}\t`;
+      const text = firstLine?.slice(prefix.length);
+      if (text === undefined || columnOffset > text.length) {
+        return { isError: true, output: `column_offset=${String(columnOffset)} is past the end of the starting line ${String(lineOffset)}. Read the line from column 0 to inspect its current contents.` };
+      }
+      if (splitsSurrogatePair(text, columnOffset)) {
+        return { isError: true, output: `column_offset=${String(columnOffset)} splits a Unicode character in line ${String(lineOffset)}. Use a character boundary or the Next Read arguments.` };
+      }
+      renderedLines[0] = prefix + text.slice(columnOffset);
+    }
+    return this.finishPage({
+      request,
+      renderedLines,
+      startLine: lineOffset,
+      rangeStart: lineOffset,
+      rangeEnd: Math.min(currentLineNo, lineOffset + requestedLines - 1),
       totalLines: currentLineNo,
-      requestedLines,
-      detectedEncoding,
+      fromTail: false,
+      lineEndingStyle,
     });
+  }
+
+  private finishPage(page: ReadPage): ExecutableToolResult {
+    const { args, maxChars, tokenLimit, maxCharsLimit, eventLog, detectedEncoding, lossyDecoding } = page.request;
+    let first = 0;
+    let end = page.renderedLines.length;
+    let contentChars = page.renderedLines.reduce((sum, line) => sum + line.length + 1, -1);
+    const lineCounts = page.renderedLines.map(countTokenChars);
+    let contentAscii = lineCounts.reduce((sum, counts) => sum + counts.ascii, 0);
+    let contentNonAscii = lineCounts.reduce((sum, counts) => sum + counts.nonAscii, 0);
+    const firstColumn = page.fromTail ? 0 : args.column_offset ?? 0;
+    const firstPrefix = `${String(page.startLine)}\t`;
+    const firstText = page.renderedLines[0]?.slice(firstPrefix.length) ?? '';
+    let fragmentEnd: number | undefined;
+
+    while (true) {
+      const count = end - first;
+      const startLine = page.startLine + first;
+      const endLine = page.startLine + end - 1;
+      const lineIncomplete = fragmentEnd !== undefined;
+      const complete = page.rangeStart > page.rangeEnd ||
+        (count > 0 && startLine === page.rangeStart && endLine === page.rangeEnd && !lineIncomplete);
+      const summary = [
+        count > 0
+          ? `${String(count)} ${count === 1 ? 'line' : 'lines'} read from file starting from line ${String(startLine)}.`
+          : 'No lines read from file.',
+        `Total lines in file: ${String(page.totalLines)}.`,
+        complete ? 'Requested range complete.' : 'Character limit reached.',
+        `Effective max_chars: ${String(maxChars)}.`,
+      ];
+      if (!lineIncomplete && ((count > 0 && endLine === page.totalLines) || page.rangeStart > page.totalLines)) {
+        summary.push('End of file reached.');
+      }
+      const notices: string[] = [];
+      if (count > 0 && !page.fromTail && (firstColumn > 0 || fragmentEnd !== undefined)) {
+        notices.push(`Line ${String(startLine)} fragment: columns [${String(firstColumn)}, ${String(firstColumn + (fragmentEnd ?? firstText.length))}) of ${String(firstColumn + firstText.length)}. ${lineIncomplete ? 'Line continues.' : 'Line complete.'}`);
+      }
+      if (args.max_chars !== undefined && args.max_chars > maxCharsLimit) {
+        notices.push(`Requested max_chars=${String(args.max_chars)} was capped at the configured maximum ${String(maxCharsLimit)}.`);
+      }
+      if (!complete && (count > 0 || page.fromTail)) {
+        const nextStart = page.fromTail ? page.rangeStart : lineIncomplete ? startLine : endLine + 1;
+        const nextEnd = page.fromTail && count > 0 ? startLine - 1 : page.rangeEnd;
+        const next = {
+          path: args.path,
+          line_offset: nextStart,
+          column_offset: fragmentEnd !== undefined ? firstColumn + fragmentEnd : undefined,
+          n_lines: page.fromTail || args.n_lines !== undefined ? nextEnd - nextStart + 1 : undefined,
+          max_chars: maxChars,
+        };
+        notices.push(`Next Read: ${JSON.stringify(next)}`);
+        if (count > 0) {
+          notices.push('If the answer may be further on, continue with Next Read or find the section with Grep instead of answering from this page alone.');
+        }
+      }
+      if (eventLog) {
+        notices.push('Kimi Code agent event log: read one record at a time (n_lines=1); follow Next Read for the rest of a longer record or extract fields with Bash.');
+      }
+      if (page.lineEndingStyle === 'mixed') {
+        notices.push('Mixed or lone carriage-return line endings are shown as \\r. Use exact \\r\\n or \\r escapes in Edit.old_string for those lines.');
+      }
+      if (detectedEncoding !== undefined) {
+        notices.push(`Detected file encoding: ${encodingDisplayName(detectedEncoding)}; content transcoded to UTF-8 for display. Edit and Write expect UTF-8 — convert the file's encoding first (e.g. \`iconv\` via Bash).`);
+      }
+      if (lossyDecoding) {
+        notices.push('Lossy UTF-16 decoding: malformed sequences were replaced with U+FFFD. The decoded text may differ from the original file.');
+      }
+      const wholeFile = complete && count > 0 && firstColumn === 0 && startLine === 1 && endLine === page.totalLines;
+      const note = wholeFile && notices.length === 0
+        ? undefined
+        : `<system>${[...summary, ...notices].join(' ')}</system>`;
+      const renderedChars = count === 0
+        ? renderToolResultForModel({ output: '', note }).reduce(
+          (sum, part) => sum + (part.type === 'text' ? part.text.length : 0),
+          0,
+        )
+        : contentChars + (note === undefined ? 0 : 1 + note.length);
+      const noteCounts = note === undefined ? undefined : countTokenChars(note);
+      const overTokens = count === 0 ? 0 : tokensForCharCounts({
+        ascii: contentAscii + count - 1 + (noteCounts === undefined ? 0 : 1 + noteCounts.ascii),
+        nonAscii: contentNonAscii + (noteCounts?.nonAscii ?? 0),
+      }) - tokenLimit;
+      if (
+        renderedChars <= maxChars && overTokens > 0 && count > 1 &&
+        firstColumn === 0 && (args.n_lines !== undefined || page.fromTail)
+      ) {
+        return rangeTooLarge(page, lineCounts, tokenLimit);
+      }
+      if (renderedChars <= maxChars && overTokens <= 0 && (complete || count > 0)) {
+        return {
+          output: fragmentEnd !== undefined
+            ? firstPrefix + firstText.slice(0, fragmentEnd)
+            : page.renderedLines.slice(first, end).join('\n'),
+          note,
+          truncated: complete ? undefined : true,
+        };
+      }
+      if (count === 1 && !page.fromTail) {
+        const previousEnd = fragmentEnd ?? firstText.length;
+        fragmentEnd = Math.min(previousEnd - 1, previousEnd - (renderedChars - maxChars));
+        if (overTokens > 0) fragmentEnd = Math.min(fragmentEnd, cutForTokens(firstText, previousEnd, overTokens));
+        if (splitsSurrogatePair(firstText, fragmentEnd)) fragmentEnd -= 1;
+        if (fragmentEnd <= 0) {
+          return { isError: true, output: `max_chars=${String(maxChars)} is too small for file text and the Read status. Increase max_chars.` };
+        }
+        contentChars = firstPrefix.length + fragmentEnd;
+        ({ ascii: contentAscii, nonAscii: contentNonAscii } = countTokenChars(firstPrefix + firstText.slice(0, fragmentEnd)));
+        continue;
+      }
+      if (count === 0) {
+        if (!complete) {
+          const recovery: ExecutableToolResult = {
+            isError: true,
+            output: 'No complete line fits. Continue with the forward Next Read.',
+            note,
+            truncated: true,
+          };
+          const recoveryChars = renderToolResultForModel(recovery).reduce(
+            (sum, part) => sum + (part.type === 'text' ? part.text.length : 0),
+            0,
+          );
+          if (recoveryChars <= maxChars) return recovery;
+        }
+        return { isError: true, output: `max_chars=${String(maxChars)} is too small for the Read status. Increase max_chars.` };
+      }
+      let remainingTokens = renderedChars <= maxChars && overTokens > 0 ? overTokens : 0;
+      do {
+        const dropped = page.fromTail ? first++ : --end;
+        const counts = lineCounts[dropped]!;
+        contentChars -= page.renderedLines[dropped]!.length + 1;
+        contentAscii -= counts.ascii;
+        contentNonAscii -= counts.nonAscii;
+        remainingTokens -= counts.nonAscii + (counts.ascii + 1) / 4;
+      } while (remainingTokens > 0 && end - first > (page.fromTail ? 0 : 1));
+    }
   }
 
   private async readTail(
-    displayPath: string,
-    lines: AsyncIterable<string>,
-    lineOffset: number,
-    effectiveLimit: number,
-    requestedLines: number,
-    detectedEncoding?: UtfTextEncoding,
+    readLines: () => AsyncIterable<string>,
+    request: ReadRequest,
   ): Promise<ExecutableToolResult> {
-    const tailCount = Math.abs(lineOffset);
-    const entries: ReadLineEntry[] = [];
-    const flags: LineEndingFlags = { hasCrLf: false, hasLf: false, hasLoneCr: false };
-    let currentLineNo = 0;
-
-    for await (const rawLine of lines) {
-      if (containsNulByte(rawLine)) {
-        return { isError: true, output: notReadableFileOutput(displayPath) };
+    const { args, maxChars } = request;
+    const lineOffset = args.line_offset ?? 1;
+    const requestedLines = args.n_lines ?? Infinity;
+    const tailCount = -lineOffset;
+    const singlePass = requestedLines >= tailCount;
+    let entries: (ReadTailEntry | undefined)[] = [];
+    let first = 0;
+    let chars = 0;
+    const retainLine = (rawLine: string, lineNo: number): void => {
+      const rawContent = stripTrailingLf(rawLine);
+      const minChars = String(lineNo).length + 2 + rawContent.length - (rawContent.endsWith('\r') ? 1 : 0);
+      entries.push({ lineNo, rawContent, minChars });
+      chars += minChars;
+      while (first < entries.length && (chars - 1 > maxChars || entries.length - first > tailCount)) {
+        chars -= entries[first]!.minChars;
+        entries[first++] = undefined;
       }
-      currentLineNo += 1;
-      updateLineEndingFlags(flags, rawLine);
-      entries.push({
-        lineNo: currentLineNo,
-        rawContent: stripTrailingLf(rawLine),
-      });
-      if (entries.length > tailCount) {
-        entries.shift();
+      if (first > 1024 && first >= entries.length / 2) {
+        entries = entries.slice(first);
+        first = 0;
       }
-    }
-
-    return this.finishTailEntries({
-      entries,
-      lineEndingFlags: flags,
-      effectiveLimit,
-      totalLines: currentLineNo,
-      requestedLines,
-      detectedEncoding,
-    });
-  }
-
-  private finishTailEntries(input: {
-    entries: readonly ReadLineEntry[];
-    lineEndingFlags: LineEndingFlags;
-    effectiveLimit: number;
-    totalLines: number;
-    requestedLines: number;
-    detectedEncoding?: UtfTextEncoding;
-  }): ExecutableToolResult {
-    const lineEndingStyle = lineEndingStyleFromFlags(input.lineEndingFlags);
-    let renderedCandidates = input.entries.slice(0, input.effectiveLimit).map((entry) => {
-      return { entry, rendered: renderLine(entry, lineEndingStyle) };
-    });
-
-    let totalBytes = 0;
-    for (const [index, candidate] of renderedCandidates.entries()) {
-      totalBytes += renderedLineBytes(candidate.rendered.line, index === 0);
-    }
-
-    let maxBytesReached = false;
-    if (totalBytes > MAX_BYTES) {
-      maxBytesReached = true;
-      const kept: typeof renderedCandidates = [];
-      let bytes = 0;
-      for (let i = renderedCandidates.length - 1; i >= 0; i -= 1) {
-        const candidate = renderedCandidates[i];
-        if (candidate === undefined) continue;
-        const lineBytes = renderedLineBytes(candidate.rendered.line, kept.length === 0);
-        if (bytes + lineBytes > MAX_BYTES) break;
-        kept.unshift(candidate);
-        bytes += lineBytes;
-      }
-      renderedCandidates = kept;
-    }
-
-    const renderedLines: string[] = [];
-    const truncatedLineNumbers: number[] = [];
-    for (const candidate of renderedCandidates) {
-      renderedLines.push(candidate.rendered.line);
-      if (candidate.rendered.wasTruncated) {
-        truncatedLineNumbers.push(candidate.entry.lineNo);
-      }
-    }
-
-    return this.finishReadResult({
-      renderedLines,
-      truncatedLineNumbers,
-      maxLinesReached: false,
-      maxBytesReached,
-      lineEndingStyle,
-      startLine: renderedCandidates[0]?.entry.lineNo ?? 0,
-      totalLines: input.totalLines,
-      requestedLines: input.requestedLines,
-      detectedEncoding: input.detectedEncoding,
-    });
-  }
-
-  private finishReadResult(input: FinishReadResultInput): ExecutableToolResult {
-    return {
-      output: input.renderedLines.join('\n'),
-      note: `<system>${this.finishMessage(input)}</system>`,
     };
+    const flags: LineEndingFlags = { hasCrLf: false, hasLf: false, hasLoneCr: false };
+    let totalLines = 0;
+    for await (const rawLine of readLines()) {
+      if (containsNulByte(rawLine)) {
+        return { isError: true, output: notReadableFileOutput(args.path) };
+      }
+      totalLines += 1;
+      updateLineEndingFlags(flags, rawLine);
+      if (singlePass) retainLine(rawLine, totalLines);
+    }
+
+    const rangeStart = Math.max(1, totalLines + lineOffset + 1);
+    const rangeEnd = Math.min(totalLines, rangeStart + requestedLines - 1);
+    const lineEndingStyle = lineEndingStyleFromFlags(flags);
+    if (!singlePass) {
+      let currentLine = 0;
+      for await (const rawLine of readLines()) {
+        currentLine += 1;
+        if (currentLine > rangeEnd) break;
+        if (currentLine < rangeStart) continue;
+        if (containsNulByte(rawLine)) {
+          return { isError: true, output: notReadableFileOutput(args.path) };
+        }
+        retainLine(rawLine, currentLine);
+      }
+      if (currentLine < rangeEnd || currentLine > totalLines) {
+        return { isError: true, output: 'File changed while reading its tail. Retry Read with the updated file.' };
+      }
+    }
+    const selected = entries.slice(first).map((entry) => renderLine(entry!, lineEndingStyle));
+    return this.finishPage({
+      request,
+      renderedLines: selected,
+      startLine: rangeEnd - selected.length + 1,
+      rangeStart,
+      rangeEnd,
+      totalLines,
+      fromTail: true,
+      lineEndingStyle,
+    });
   }
 
-  private finishMessage(input: FinishReadResultInput): string {
-    const lineCount = input.renderedLines.length;
-    const lineWord = lineCount === 1 ? 'line' : 'lines';
-    const parts =
-      lineCount > 0
-        ? [
-            `${String(lineCount)} ${lineWord} read from file starting from line ${String(input.startLine)}.`,
-          ]
-        : ['No lines read from file.'];
-
-    parts.push(`Total lines in file: ${String(input.totalLines)}.`);
-    if (input.maxLinesReached) {
-      parts.push(`Max ${String(MAX_LINES)} lines reached.`);
-    } else if (input.maxBytesReached) {
-      parts.push(`Max ${String(MAX_BYTES)} bytes reached.`);
-    } else if (lineCount < input.requestedLines) {
-      parts.push('End of file reached.');
-    }
-    if (input.truncatedLineNumbers.length > 0) {
-      parts.push(`Lines [${input.truncatedLineNumbers.join(', ')}] were truncated.`);
-    }
-    if (input.lineEndingStyle === 'mixed') {
-      parts.push(
-        'Mixed or lone carriage-return line endings are shown as \\r. Use exact \\r\\n or \\r escapes in Edit.old_string for those lines.',
-      );
-    }
-    if (input.detectedEncoding !== undefined) {
-      parts.push(
-        `Detected file encoding: ${encodingDisplayName(input.detectedEncoding)}; content transcoded to UTF-8 for display. Edit and Write expect UTF-8 — convert the file's encoding first (e.g. \`iconv\` via Bash).`,
-      );
-    }
-    return parts.join(' ');
-  }
 }
 
 registerAgentToolService(IReadTool, ReadTool, {
   name: 'Read',
   domain: 'os/backends',
-  requiredRuntimeCapabilities: ['fs'],
 });

@@ -1,24 +1,7 @@
-/**
- * Scenario: the agent blob service offloads large inline media (data URIs) into
- * content-addressed blobs and loads them back on read.
- *
- * Responsibilities asserted:
- *  - sub-threshold data URIs pass through unchanged (and keep the same array ref)
- *  - large data URIs become `blobref:` URLs and are persisted under the agent scope
- *  - offload is non-mutating, idempotent, and handles every media container
- *  - load restores blobrefs, leaves other URLs alone, and substitutes a
- *    placeholder when the blob is missing
- *  - content-addressing deduplicates identical payloads and isolates per agent
- *
- * Wiring: real `BlobStoreService` over the in-memory storage backend, with the
- * service resolved through the DI scope tree — no stubbed boundary, no real fs.
- *
- * Run: `pnpm test -- test/blob/agentBlobService.test.ts`
- */
-
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import type { ContentPart } from '#/kosong/contract/message';
+import type { ContentPart } from '#human/llm/message';
+import { mediaUrlOf } from '#human/llm/protocol/kit/media';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { type ServiceIdentifier } from '#/_base/di/instantiation';
 import { LifecycleScope } from '#/app/scopes';
@@ -51,11 +34,13 @@ function videoPart(url: string): ContentPart {
 }
 
 function imageUrl(part: ContentPart): string {
-  return (part as { imageUrl: { url: string } }).imageUrl.url;
+  if (part.type !== 'image_url') throw new Error('expected image part');
+  return mediaUrlOf(part);
 }
 
 function videoUrl(part: ContentPart): string {
-  return (part as { videoUrl: { url: string } }).videoUrl.url;
+  if (part.type !== 'video_url') throw new Error('expected video part');
+  return mediaUrlOf(part);
 }
 
 describe('agent blob service (offload/load of inline media)', () => {
@@ -125,15 +110,16 @@ describe('agent blob service (offload/load of inline media)', () => {
   it('offload does not mutate the input array or its media objects', async () => {
     const svc = service();
     const uri = dataUri('image/png', LARGE);
-    const inner = { url: uri };
-    const part = { type: 'image_url', imageUrl: inner } as ContentPart;
+    const inner = { url: uri } as const;
+    const part: ContentPart = { type: 'image_url', imageUrl: inner };
     const parts = [part];
 
     const out = await svc.offloadParts(parts);
 
     expect(out).not.toBe(parts);
     expect(out[0]).not.toBe(part);
-    expect((out[0]! as { imageUrl: { url: string } }).imageUrl).not.toBe(inner);
+    expect(out[0]!.type).toBe('image_url');
+    expect(out[0]!.type === 'image_url' && out[0]!.imageUrl).not.toBe(inner);
     expect(inner.url).toBe(uri);
   });
 

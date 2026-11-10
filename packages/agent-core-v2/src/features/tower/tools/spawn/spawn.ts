@@ -1,12 +1,3 @@
-/**
- * `tools` domain — `ITowerSpawnTool` contract (the `TowerSpawn` tool).
- *
- * Public contract of the tower's worker/reviewer launcher: the input schema
- * (verbatim port of v1 — worker spawns require `mission_id`, reviewer spawns
- * require `review_target`) and the `ITowerSpawnTool` DI decorator. Bound at
- * Agent scope.
- */
-
 import { z } from 'zod';
 
 import { createDecorator } from '#/_base/di/instantiation';
@@ -22,6 +13,12 @@ export const TowerSpawnToolInputSchema = z
     kind: z
       .enum(['worker', 'reviewer'])
       .describe('workers execute a mission in their worktree; reviewers review one branch'),
+    model: z
+      .string()
+      .optional()
+      .describe(
+        'Model for this new spawn: one of the aliases listed under "Available models" in this tool description. Pass this only when the user explicitly requests a model; when omitted, the subagent binds the pool default, or inherits the tower model when no pool is configured.',
+      ),
     mission_id: z
       .string()
       .optional()

@@ -1,10 +1,3 @@
-/**
- * `sessionIndex` test stubs — capturing no-op `ISessionIndexMirror` for unit
- * tests.
- *
- * Lives under `test/` (not `src/`). Import from a relative path.
- */
-
 import {
   ISessionIndexMirror,
   type SessionSummary,

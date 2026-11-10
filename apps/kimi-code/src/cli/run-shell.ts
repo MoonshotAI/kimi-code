@@ -1,10 +1,8 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
 
 import {
   createKimiHarness,
-  createKimiHarnessV2,
   flushDiagnosticLogsSync,
   log,
   type KimiHarness,
@@ -19,10 +17,10 @@ import {
   withTelemetryContext,
 } from '@moonshot-ai/kimi-telemetry';
 
-import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE } from '#/constant/app';
-import { detectPendingMigration } from '#/migration/index';
+import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE, TUI_HOST_UI_CAPABILITIES } from '#/constant/app';
+import { detectPendingMigration, resolveLegacySourceHome, sameLegacyPath } from '#/migration/index';
 import type { TuiConfig } from '#/tui/config';
-import { loadTuiConfig, TuiConfigParseError } from '#/tui/config';
+import { loadTuiConfig, resolveTuiMode, TuiConfigParseError } from '#/tui/config';
 import { CHROME_GUTTER } from '#/tui/constant/rendering';
 import { KimiTUI } from '#/tui/index';
 import { startupTrace } from '#/utils/startup-trace';
@@ -33,9 +31,9 @@ import { resolveCommandPath } from '#/utils/process/resolve-command';
 
 import type { CLIOptions } from './options';
 import { resolveAgentProfileSelection } from './agent-selection';
-import { isKimiV2Enabled } from './experimental-v2';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
-import { createKimiCodeHostIdentity } from './version';
+import { detectNativeInstall } from './update/source';
+import { createKimiCodeHostIdentity } from './host-identity';
 
 export async function runShell(
   opts: CLIOptions,
@@ -65,10 +63,14 @@ export async function runShell(
     withContext: withTelemetryContext,
     setContext: setTelemetryContext,
   };
+  let tui!: KimiTUI;
   const harnessOptions: KimiHarnessOptions = {
     homeDir: telemetryBootstrap.homeDir,
     identity: createKimiCodeHostIdentity(version),
     skillDirs: opts.skillsDirs,
+    // The TUI renders the mid-turn update panel; declaring it here is what
+    // makes the engine offer NotifyUser to this process and to no other host.
+    uiCapabilities: TUI_HOST_UI_CAPABILITIES,
     telemetry: telemetryClient,
     onOAuthRefresh: (outcome) => {
       if (outcome.success) {
@@ -80,15 +82,18 @@ export async function runShell(
         reason: outcome.reason,
       });
     },
+    sshPassword: {
+      prompt: (environmentId) => tui.promptSshPassword(environmentId),
+      // ssh runs this as SSH_ASKPASS; `src/main.ts` recognises the askpass
+      // environment before argv, so re-entering this binary (SEA) or this
+      // script under the same node flags (npm / tsx dev) lands in the helper.
+      askpassCommand: detectNativeInstall()
+        ? [process.execPath]
+        : [process.execPath, ...process.execArgv, process.argv[1]!],
+    },
     sessionStartedProperties: { yolo: opts.yolo, auto: opts.auto, plan: opts.plan, afk: false },
   };
-  // The agent-core-v2 route is the default (same engine gate as `kimi -p`):
-  // the harness is the SDK's v2-backed client, so the whole TUI runs on the
-  // agent-core-v2 engine unless the legacy flag is set.
-  const engineV2 = isKimiV2Enabled();
-  const harness = engineV2
-    ? createKimiHarnessV2(harnessOptions)
-    : createKimiHarness(harnessOptions);
+  const harness = createKimiHarness(harnessOptions);
   startupTrace('harness:created');
   log.info('kimi-code starting', {
     version,
@@ -99,13 +104,25 @@ export async function runShell(
   });
 
   await harness.ensureConfigFile();
-  const migrationPlan = await detectPendingMigration({
-    sourceHome: join(homedir(), '.kimi'),
-    targetHome: harness.homeDir,
-    ignoreMarker: runOptions.migrateOnly,
-  });
+  const legacySource = resolveLegacySourceHome(process.env, homedir(), process.cwd());
+  const sourceIsTarget = sameLegacyPath(legacySource.sourceHome, harness.homeDir);
+  if (sourceIsTarget) {
+    process.stderr.write(
+      `  KIMI_SHARE_DIR (${legacySource.sourceHome}) points at the Kimi Code home; legacy migration is disabled. Unset it or point it at the kimi-cli data directory to migrate.\n`,
+    );
+  }
+  const migrationPlan = sourceIsTarget
+    ? null
+    : await detectPendingMigration({
+        sourceHome: legacySource.sourceHome,
+        skillsSourceHome: legacySource.skillsSourceHome,
+        targetHome: harness.homeDir,
+        ignoreMarker: runOptions.migrateOnly,
+      });
   if (runOptions.migrateOnly === true && migrationPlan === null) {
-    process.stdout.write('  Nothing to migrate from ~/.kimi/.\n');
+    if (!sourceIsTarget) {
+      process.stdout.write(`  Nothing to migrate from ${legacySource.sourceHome}.\n`);
+    }
     await harness.close();
     return;
   }
@@ -118,17 +135,19 @@ export async function runShell(
   // Resolve --agent/--agent-file once for the startup session; validateOptions
   // has already rejected them alongside --session/--continue.
   const agentProfile = await resolveAgentProfileSelection(opts, workDir);
-  const tui = new KimiTUI(harness, {
+  const tuiModeResolution = resolveTuiMode(tuiConfig.tuiMode);
+  tui = new KimiTUI(harness, {
     cliOptions: opts,
     agentProfile,
     additionalDirs: opts.addDirs?.length ? opts.addDirs : undefined,
     tuiConfig,
+    resolvedTuiMode: tuiModeResolution.mode,
     version,
     workDir,
     startupNotice: configWarning,
     migrationPlan,
     migrateOnly: runOptions.migrateOnly,
-    engineV2,
+    telemetryDisabled: config.telemetry === false,
   });
 
   initializeCliTelemetry({
@@ -231,8 +250,15 @@ export async function runShell(
     const sessionId = tui.getCurrentSessionId();
     const hasContent = tui.hasSessionContent();
     setCrashPhase('shutdown');
-    trackLifecycle('exit', { duration_ms: Date.now() - startedAt, tui_mode: tui.state.ui.mode });
-    await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
+    trackLifecycle('exit', {
+      duration_ms: Date.now() - startedAt,
+      tui_mode: tui.state.ui.mode,
+      tui_mode_config: tuiModeResolution.config,
+      tui_mode_fallback: tuiModeResolution.fallback,
+    });
+    try {
+      await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
+    } catch {}
     const gutter = ' '.repeat(CHROME_GUTTER);
     process.stdout.write(`${gutter}Bye!\n`);
     const hints: string[] = [];
@@ -270,12 +296,21 @@ export async function runShell(
       init_ms: initMs,
       mcp_ms: mcpMs,
       tui_mode: tui.state.ui.mode,
+      tui_mode_config: tuiModeResolution.config,
+      tui_mode_fallback: tuiModeResolution.fallback,
     });
   } catch (error) {
     removeCrashHandlers();
     setCrashPhase('shutdown');
-    trackLifecycle('exit', { duration_ms: Date.now() - startedAt, tui_mode: tui.state.ui.mode });
-    await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
+    trackLifecycle('exit', {
+      duration_ms: Date.now() - startedAt,
+      tui_mode: tui.state.ui.mode,
+      tui_mode_config: tuiModeResolution.config,
+      tui_mode_fallback: tuiModeResolution.fallback,
+    });
+    try {
+      await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
+    } catch {}
     await harness.close();
     throw error;
   }

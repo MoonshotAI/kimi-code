@@ -1,15 +1,3 @@
-/**
- * `_base.lifecycle` — `Ledger`: an ordered book of rollbackable registrations.
- *
- * A Ledger records entries (disposers, effects, child ledgers) in registration
- * order and tears them down in strict reverse order, awaiting each entry
- * serially — never in parallel. Rollback is uninterruptible: a failing entry
- * is logged (with its label) and teardown continues. Registering into a
- * disposing/disposed ledger throws immediately.
- *
- * The Ledger knows nothing about DI; scopes and containers build on top of it.
- */
-
 import { onUnexpectedError } from '../errors/unexpectedError';
 import {
   isAsyncIterable,
@@ -75,6 +63,11 @@ export class Ledger {
   register(disposer: Disposer, label: string = 'disposer'): LedgerEntry {
     this._assertActive('register');
     return this._push({ label, kind: 'disposer', active: true, run: disposer });
+  }
+
+  registerFinalizer(disposer: Disposer, label: string = 'finalizer'): LedgerEntry {
+    this._assertActive('registerFinalizer');
+    return this._push({ label, kind: 'disposer', active: true, run: disposer }, true);
   }
 
   effect(body: EffectBody, label: string = 'effect'): LedgerEntry {
@@ -163,11 +156,15 @@ export class Ledger {
     return infos;
   }
 
-  private _push(record: EntryRecord): LedgerEntry {
+  private _push(record: EntryRecord, front = false): LedgerEntry {
     if (Ledger.captureStacks) {
       record.stack = new Error('Ledger registration').stack;
     }
-    this._records.push(record);
+    if (front) {
+      this._records.unshift(record);
+    } else {
+      this._records.push(record);
+    }
     return {
       label: record.label,
       get disposed() {

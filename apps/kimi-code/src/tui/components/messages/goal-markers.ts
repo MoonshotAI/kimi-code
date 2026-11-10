@@ -54,6 +54,18 @@ export class GoalMarkerComponent implements Component {
     this.expanded = expanded;
   }
 
+  hasHiddenContent(): boolean {
+    return this.expandable && this.detail !== undefined && this.detail.length > 0;
+  }
+
+  isExpanded(): boolean {
+    return this.expanded;
+  }
+
+  omitsExpandHint(): boolean {
+    return true;
+  }
+
   render(width: number): string[] {
     const dot = currentTheme.fg(this.accentToken, this.marker);
     const head = currentTheme.fg(this.textToken, this.headline);

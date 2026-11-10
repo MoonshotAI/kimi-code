@@ -1,4 +1,5 @@
 import { ErrorCodes, KimiError } from '@moonshot-ai/kimi-code-sdk';
+import { visibleWidth } from '@moonshot-ai/pi-tui';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -18,6 +19,7 @@ import {
 } from '#/tui/goal-queue-store';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
 import { getBuiltInPalette } from '#/tui/theme';
+import { PERMISSION_MODE_DESCRIPTIONS } from '#/tui/utils/permission-mode';
 
 vi.mock('#/tui/goal-queue-store', () => ({
   appendGoalQueueItem: vi.fn(async () => ({
@@ -84,6 +86,7 @@ function makeHost(
     hasSession?: boolean;
     streaming?: boolean;
     permissionMode?: 'manual' | 'auto' | 'yolo';
+    fullscreen?: boolean;
   } = {},
 ) {
   const session = {
@@ -108,6 +111,10 @@ function makeHost(
         isCompacting: false,
       },
       editor: { getText: vi.fn(() => '') },
+      dockContainer: overrides.fullscreen === true ? {} : undefined,
+      activeDialog: null,
+      livePane: { pendingApproval: null, pendingQuestion: null },
+      notifyPanel: { setPrompt: vi.fn() },
       transcriptContainer,
       ui: { requestRender: vi.fn() },
       theme: { palette: getBuiltInPalette('dark') },
@@ -358,8 +365,33 @@ describe('handleGoalCommand', () => {
     expect(s.createGoal).not.toHaveBeenCalled();
     expect(manualHost.sendNormalUserInput).not.toHaveBeenCalled();
     const text = stripAnsi(mountedPicker(manualHost).render(80).join('\n'));
-    expect(text).toContain('Manual mode is not suitable for unattended goal work');
+    expect(text.replaceAll(/\s+/g, ' ')).toContain(
+      'Always Ask mode asks you before Kimi Code runs commands, edits files, or takes other risky actions, and is not suitable for unattended goal work.',
+    );
     expect(text).toContain('Return to the input box with your goal command');
+  });
+
+  it('docks the local goal start prompt in fullscreen with only the selected description', async () => {
+    const { host: manualHost } = makeHost({ permissionMode: 'manual', fullscreen: true });
+
+    await handleGoalCommand(manualHost, 'Ship feature X');
+
+    const text = stripAnsi(mountedPicker(manualHost).render(80).join('\n'));
+    expect(text).toContain('Best if you want Kimi Code to keep working while you are away');
+    expect(text).not.toContain('Tools and plan changes are approved automatically');
+    expect(text).not.toContain('Keep approvals on. Kimi Code will ask before risky actions');
+  });
+
+  it('keeps the goal permission notice within narrow terminal widths', async () => {
+    const { host: manualHost } = makeHost({ permissionMode: 'manual' });
+    await handleGoalCommand(manualHost, 'Ship feature X');
+    const picker = mountedPicker(manualHost);
+
+    for (const width of [1, 2, 4, 10, 20]) {
+      for (const row of picker.render(width)) {
+        expect(visibleWidth(row)).toBeLessThanOrEqual(width);
+      }
+    }
   });
 
   it('defaults to Auto when confirming a Manual-mode goal start', async () => {
@@ -375,6 +407,8 @@ describe('handleGoalCommand', () => {
     });
     expect(s.setPermission).toHaveBeenCalledWith('auto');
     expect(manualHost.setAppState).toHaveBeenCalledWith({ permissionMode: 'auto' });
+    expect(manualHost.showNotice).toHaveBeenCalledWith('Permission mode: Never Ask');
+    expect(manualHost.showStatus).toHaveBeenCalledWith(PERMISSION_MODE_DESCRIPTIONS.auto, 'warning');
     expect(manualHost.sendNormalUserInput).toHaveBeenCalledWith('Ship feature X');
   });
 
@@ -393,6 +427,8 @@ describe('handleGoalCommand', () => {
       );
     });
     expect(s.setPermission).not.toHaveBeenCalled();
+    expect(manualHost.showNotice).not.toHaveBeenCalled();
+    expect(manualHost.showStatus).not.toHaveBeenCalledWith(PERMISSION_MODE_DESCRIPTIONS.auto, 'warning');
     expect(manualHost.sendNormalUserInput).toHaveBeenCalledWith('Ship feature X');
   });
 
@@ -411,6 +447,8 @@ describe('handleGoalCommand', () => {
     });
     expect(s.setPermission).toHaveBeenCalledWith('yolo');
     expect(manualHost.setAppState).toHaveBeenCalledWith({ permissionMode: 'yolo' });
+    expect(manualHost.showNotice).toHaveBeenCalledWith('Permission mode: Ask When Needed');
+    expect(manualHost.showStatus).toHaveBeenCalledWith(PERMISSION_MODE_DESCRIPTIONS.yolo, 'warning');
   });
 
   it('restores the previous permission mode when the goal fails to start', async () => {
@@ -430,6 +468,10 @@ describe('handleGoalCommand', () => {
     });
     expect(s.setPermission).toHaveBeenCalledWith('yolo');
     expect(manualHost.setAppState).toHaveBeenLastCalledWith({ permissionMode: 'manual' });
+    // The permissive-mode notice is deferred until the goal starts, so a failed
+    // start leaves no stale notice behind.
+    expect(manualHost.showNotice).not.toHaveBeenCalled();
+    expect(manualHost.showStatus).not.toHaveBeenCalledWith(PERMISSION_MODE_DESCRIPTIONS.yolo, 'warning');
   });
 
   it('returns the command to the input box when a Manual-mode goal start is cancelled', async () => {
@@ -466,9 +508,11 @@ describe('handleGoalCommand', () => {
     expect(s.createGoal).not.toHaveBeenCalled();
     expect(yoloHost.sendNormalUserInput).not.toHaveBeenCalled();
     const text = stripAnsi(mountedPicker(yoloHost).render(80).join('\n'));
-    expect(text).toContain('YOLO mode can still stop for questions');
-    expect(text).toContain('Keep YOLO and start');
-    expect(text).not.toContain('Start in Manual');
+    expect(text.replaceAll(/\s+/g, ' ')).toContain(
+      'Ask When Needed mode approves tools automatically, but can still stop for questions.',
+    );
+    expect(text).toContain('Keep Ask When Needed and start');
+    expect(text).not.toContain('Start in Always Ask');
   });
 
   it('defaults to Auto when confirming a YOLO-mode goal start', async () => {
@@ -824,7 +868,6 @@ describe('dispatchInput /goal integration', () => {
   it('restores the input when the post-creation busy re-check rejects /goal', async () => {
     const { host, session } = makeHost({ hasSession: false });
     Object.assign(host, {
-      engineV2: true,
       // A first prompt starts a turn while the lazy session creation awaits.
       ensureSession: vi.fn(async () => {
         host.state.appState.streamingPhase = 'thinking';
@@ -846,7 +889,6 @@ describe('dispatchInput /goal integration', () => {
   it('does not restore over a draft typed while lazy session creation was pending', async () => {
     const { host, session } = makeHost({ hasSession: false });
     Object.assign(host, {
-      engineV2: true,
       ensureSession: vi.fn(async () => {
         host.state.appState.streamingPhase = 'thinking';
         // The user kept typing after submitting /goal.
@@ -869,14 +911,13 @@ describe('dispatchInput /goal integration', () => {
   it('restores the input when lazy session creation fails before /goal runs', async () => {
     const { host, session } = makeHost({ hasSession: false });
     Object.assign(host, {
-      engineV2: true,
       ensureSession: vi.fn(async () => undefined),
     });
 
     dispatchInput(host, '/goal Ship feature X');
 
     await vi.waitFor(() => {
-      expect(host.restoreInputText).toHaveBeenCalledWith('/goal Ship feature X');
+      expect(host.restoreInputText).toHaveBeenCalledWith('/goal Ship feature X', []);
     });
     expect(session.createGoal).not.toHaveBeenCalled();
   });
@@ -884,7 +925,6 @@ describe('dispatchInput /goal integration', () => {
   it('does not restore when an editor-replacement panel opened during creation', async () => {
     const { host, session } = makeHost({ hasSession: false });
     Object.assign(host, {
-      engineV2: true,
       ensureSession: vi.fn(async () => {
         // The user opened a panel (e.g. /help) while creation was pending.
         Object.assign(host.state, { editorReplacementMounted: true });

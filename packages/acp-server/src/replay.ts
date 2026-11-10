@@ -20,7 +20,8 @@
  */
 
 import type { SessionNotification } from '@agentclientprotocol/sdk';
-import type { ContentPart, ContextMessage, ToolCall } from '@moonshot-ai/agent-core-v2';
+import type { ContextMessage } from '@moonshot-ai/agent-core-v2';
+import type { ContentPart, ToolCall } from '@moonshot-ai/agent-core-v2/human/llm/message';
 
 import {
   assistantDeltaToSessionUpdate,
@@ -97,7 +98,7 @@ function assistantContentPartToUpdate(
       delta: part.text,
     });
   }
-  if (part.type === 'think' && part.think) {
+  if (part.type === 'think' && part.think && part.hidden !== true) {
     return thinkingDeltaToSessionUpdate(sessionId, {
       type: 'thinking.delta',
       turnId,
@@ -124,7 +125,7 @@ function syntheticToolCall(
 }
 
 function toolMessageToUpdate(
-  message: ContextMessage,
+  message: Extract<ContextMessage, { role: 'tool' }>,
   sessionId: string,
   toolCallTurnIds: ReadonlyMap<string, number>,
 ): SessionNotification | null {

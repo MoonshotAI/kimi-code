@@ -1,12 +1,3 @@
-/**
- * `agentLifecycle` domain — builtin agent profile contributions.
- *
- * Registers the default `agent` profile plus the `coder` / `explore` task-agent
- * profiles. Each profile is self-contained: its structured `renderSystemPrompt`
- * merges the shared base template with its own role text at call time, so a
- * child agent no longer inherits the parent's prompt through a runtime overlay.
- */
-
 import { collectGitContext } from './gitContext';
 import { registerAgentProfile } from '#/app/agentProfileCatalog/contribution';
 import {
@@ -16,7 +7,6 @@ import {
 } from '#/app/agentProfileCatalog/profile-shared';
 
 import EXPLORE_ROLE from './explore-overlay.md?raw';
-import SUMMARY_CONTINUATION_PROMPT from './summary-continuation.md?raw';
 
 const AGENT_TOOLS = [
   'Read',
@@ -28,6 +18,7 @@ const AGENT_TOOLS = [
   'TaskList',
   'TaskOutput',
   'TaskStop',
+  'WaitFor',
   'CronCreate',
   'CronList',
   'CronDelete',
@@ -39,26 +30,25 @@ const AGENT_TOOLS = [
   'AgentSwarm',
   'FetchURL',
   'AskUserQuestion',
-  'EnterPlanMode',
+  'NotifyUser',
   'ExitPlanMode',
   'CreateGoal',
   'GetGoal',
   'SetGoalBudget',
   'UpdateGoal',
-  // TowerInit stays in the default allowlist so the main agent can enter
-  // tower mode; the rest of the Tower* set is activated by TowerInit.
   'TowerInit',
+  'TowerStatus',
+  'TowerTeardown',
   'mcp__*',
 ] as const;
 
 const CODER_TOOLS = [
+  'NotifyUser',
   'Bash',
   'CronCreate',
   'CronDelete',
   'CronList',
   'Edit',
-  'EnterPlanMode',
-  'ExitPlanMode',
   'Glob',
   'Grep',
   'Read',
@@ -68,6 +58,7 @@ const CODER_TOOLS = [
   'TaskOutput',
   'TaskStop',
   'TodoList',
+  'WaitFor',
   'WebSearch',
   'FetchURL',
   'Write',
@@ -75,6 +66,7 @@ const CODER_TOOLS = [
 ] as const;
 
 const EXPLORE_TOOLS = [
+  'NotifyUser',
   'Bash',
   'Read',
   'ReadMediaFile',
@@ -86,22 +78,17 @@ const EXPLORE_TOOLS = [
 
 const CODER_ROLE =
   `${TASK_AGENT_ROLE_PREFIX}\n\n` +
-  'Your final message is the entire handoff — the parent sees nothing else from your run. ' +
+  'Your final message is the entire handoff. ' +
   'Make it technically complete: what you changed and why, the path of every file you touched, ' +
   'how you verified the change (tests or commands run, with results), and anything left undone ' +
-  'or worth follow-up. A final message of only a sentence or two is treated as too brief and ' +
-  'sent back to you for expansion, costing an extra turn.';
-
-const DEFAULT_SUMMARY_POLICY = {
-  minChars: 200,
-  continuationPrompt: SUMMARY_CONTINUATION_PROMPT,
-  retries: 1,
-} as const;
+  'or worth follow-up. If you are stopped before finishing, the parent receives only what ' +
+  'you have written so far, so keep the handoff current.';
 
 registerAgentProfile({
   name: 'agent',
   description: 'Default agent',
   tools: AGENT_TOOLS,
+  subagents: ['coder', 'explore', 'plan'],
   renderSystemPrompt: (context) =>
     renderSystemPromptResult('', context, { skillActive: skillActiveFor(AGENT_TOOLS) }),
 });
@@ -115,17 +102,19 @@ registerAgentProfile({
   tools: CODER_TOOLS,
   renderSystemPrompt: (context) =>
     renderSystemPromptResult(CODER_ROLE, context, { skillActive: skillActiveFor(CODER_TOOLS) }),
-  summaryPolicy: DEFAULT_SUMMARY_POLICY,
 });
 
 registerAgentProfile({
   name: 'explore',
   description: 'Fast codebase exploration with prompt-enforced read-only behavior.',
   whenToUse:
-    'Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns (e.g. "src/**/*.yaml"), search code for keywords (e.g. "database connection"), or answer questions about the codebase (e.g. "how does the auth module work?"). When calling this agent, specify the desired thoroughness level: "quick" for basic searches, "medium" for moderate exploration, or "thorough" for comprehensive analysis across multiple locations and naming conventions. Use this agent for any read-only exploration that will clearly require more than 3 search queries. Prefer launching multiple explore agents concurrently when investigating independent questions.',
+    'Fast agent specialized for exploring codebases: it finds files by patterns (e.g. "src/**/*.yaml"), searches code for keywords (e.g. "database connection"), and answers questions about the codebase (e.g. "how does the auth module work?"). When calling this agent, specify the desired thoroughness level: "quick" for basic searches, "medium" for moderate exploration, or "thorough" for comprehensive analysis across multiple locations and naming conventions.',
   tools: EXPLORE_TOOLS,
   renderSystemPrompt: (context) =>
-    renderSystemPromptResult(EXPLORE_ROLE, context, { skillActive: skillActiveFor(EXPLORE_TOOLS) }),
+    renderSystemPromptResult(`${TASK_AGENT_ROLE_PREFIX}\n\n${EXPLORE_ROLE.trim()}`, context, {
+      skillActive: skillActiveFor(EXPLORE_TOOLS),
+      readOnly: true,
+    }),
   promptPrefix: async ({ cwd, process, log }) => {
     try {
       return await collectGitContext(process, cwd, log);
@@ -133,5 +122,4 @@ registerAgentProfile({
       return '';
     }
   },
-  summaryPolicy: DEFAULT_SUMMARY_POLICY,
 });

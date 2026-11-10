@@ -249,9 +249,9 @@ export class ShardLockPool {
         this.stats.writerOpens++;
         try {
           await this.opts.applyDefs(handle.db);
-        } catch (e) {
+        } catch (error) {
           await handle.close().catch(() => {});
-          throw e;
+          throw error;
         }
         const entry: WriterEntry = {
           handle,
@@ -269,17 +269,21 @@ export class ShardLockPool {
               entry.retire = true;
               return;
             }
+            if (!this.writerOps.enter()) return;
             if (this.writers.get(shardId) === entry) this.writers.delete(shardId);
-            void entry.handle.close().catch(() => {});
+            void entry.handle
+              .close()
+              .catch(() => {})
+              .finally(() => this.writerOps.leave());
           }, this.opts.lockHoldMs);
           timer.unref();
         }
         this.writers.set(shardId, entry);
         return entry;
-      } catch (e) {
+      } catch (error) {
         // Apply-time failures (e.g. a unique index that does not backfill) are
         // permanent; only lock contention is retried, until the deadline.
-        if (!(e instanceof LockError) || Date.now() + delay > deadline) throw e;
+        if (!(error instanceof LockError) || Date.now() + delay > deadline) throw error;
         this.stats.lockWaits++;
         await sleep(delay + Math.floor(Math.random() * delay));
         delay = Math.min(delay * 2, 250);
@@ -372,8 +376,8 @@ export class ShardLockPool {
         };
         this.readers.set(shardId, entry);
         return entry;
-      } catch (e) {
-        lastErr = e;
+      } catch (error) {
+        lastErr = error;
         await sleep(25);
       }
     }

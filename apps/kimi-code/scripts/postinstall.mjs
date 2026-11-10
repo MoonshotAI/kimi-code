@@ -37,9 +37,10 @@
  *   - `./postinstall/migrate.mjs` — legacy detection,
  *     `kimi`-vs-`kimi-legacy` classification, the rename / unlink
  *     primitives.
+ *   - `./postinstall/takeover.mjs` — the plan → execute → verify
+ *     state machine this orchestrator drives.
  *   - `./postinstall/ui.mjs` — `notify()` (with `/dev/tty` fallback),
- *     ANSI styling, the fixed-width box, and the five outcome
- *     renderers.
+ *     ANSI styling, the fixed-width box, and the outcome renderers.
  *
  * ## Workflow
  *
@@ -60,41 +61,26 @@
  *      shell can't be probed). Sharing one probe keeps detection
  *      and reachability symmetric and avoids running `$SHELL -l`
  *      twice.
- *   5. Detect EVERY previous Python `kimi-cli` shim on the detection
- *      PATH (`detectLegacyShims`). Returns `[]` for fresh-install /
- *      no-op. Multiple results happen when the user has installed
- *      `kimi-cli` through more than one Python tool (uv + pipx, or
- *      sudo-pip + pip-user). PATH order is preserved.
- *   6. Pre-flight classify each shim (`classifyShim`) — pure
- *      filesystem inspection, no writes. Each shim ends up
- *      `renameable`, `consolidate`, `delete-only`, or `blocked`.
- *   7. Decide abort vs proceed against the WHOLE set:
- *      `findFirstResolvableKimi` walks PATH treating the actionable
- *      shims as gone and reports what wins:
- *        - `own` → proceed to execute.
- *        - `blocked-legacy` → a legacy we can't remove still wins.
- *          Surface `logMigrationBlocked` with sudo / admin
- *          instructions; touch nothing.
- *        - `foreign` → some `kimi` we don't recognize (a user's own
- *          file) wins. Surface `logForeignKimiInTheWay` asking the
- *          user to delete or rename their own file; touch nothing.
- *        - `none` → no `kimi` on PATH at all (our shim's bin dir
- *          isn't in the shell's PATH). Surface
- *          `logNewCliNotOnPath`; touch nothing.
- *   8. Execute. The FIRST classification in PATH order that we can
- *      touch becomes `kimi-legacy` (preserves what `kimi` referred
- *      to before this install). Each subsequent shim is `unlink`ed —
- *      keeping it as a dormant duplicate adds no value. If the
- *      first shim's `kimi-legacy` target is already user-managed,
- *      we delete `kimi` anyway (still achieves takeover) and tell
- *      the user we couldn't preserve a fallback. Extension is
- *      preserved on Windows (`kimi.exe` → `kimi-legacy.exe`).
- *   9. One end-of-orchestration notice (`logMigrationDone`)
- *      summarizes every action — renames, consolidates,
- *      delete-only, deletes, and harmless blocked leftovers. The
- *      takeover-success line only fires on this path because Step 7
- *      already certified it.
- *  10. The manager completes the install with its usual summary.
+ *   5. `planTakeover`: detect EVERY previous Python `kimi-cli` shim
+ *      on the detection PATH, pre-flight classify each (no writes),
+ *      and simulate PATH resolution with the actionable shims gone:
+ *        - `own` wins → proceed.
+ *        - a blocked legacy still wins → `logMigrationBlocked`.
+ *        - a foreign `kimi` wins → `logForeignKimiInTheWay`.
+ *        - nothing resolves → `logNewCliNotOnPath`.
+ *      The abort branches touch NOTHING.
+ *   6. `executeTakeover`: the FIRST shim in PATH order that can be
+ *      preserved becomes `kimi-legacy`; each subsequent shim is
+ *      `unlink`ed. A failed preserve attempt does not promote the
+ *      next shim to deletion — it gets its own preserve attempt, so
+ *      a usable legacy fallback survives whenever one is possible.
+ *   7. `verifyTakeover`: walk the reachability PATH as it actually
+ *      is AFTER execution. Only `{ kind: 'own' }` renders the
+ *      success box (`logMigrationDone`); anything else renders
+ *      `logMigrationIncomplete` — what changed, what still blocks,
+ *      and how to finish by hand. The pre-flight simulation in
+ *      step 5 is never reported as proof of success.
+ *   8. The manager completes the install with its usual summary.
  *      This script always exits 0; any uncaught error is swallowed
  *      by the top-level `catch` so the install never fails because
  *      of the migration.
@@ -102,21 +88,20 @@
 
 import {
   detectPackageManager,
-  findFirstResolvableKimi,
   isGlobalInstall,
   ownPackageRoot,
   postinstallPaths,
 } from './postinstall/reach.mjs';
 import {
-  classifyShim,
-  deleteShim,
-  detectLegacyShims,
-  renameInPlace,
-} from './postinstall/migrate.mjs';
+  executeTakeover,
+  planTakeover,
+  verifyTakeover,
+} from './postinstall/takeover.mjs';
 import {
   logForeignKimiInTheWay,
   logMigrationBlocked,
   logMigrationDone,
+  logMigrationIncomplete,
   logNewCliNotOnPath,
   notify,
 } from './postinstall/ui.mjs';
@@ -143,124 +128,45 @@ async function main() {
   // installer's env).
   const paths = await postinstallPaths();
 
-  // Step 4: detect EVERY previous Python `kimi-cli` shim on the
-  // detection PATH. A user with both `uv tool install` and `pipx
-  // install` would have two; we must address all of them or the
-  // survivor still shadows the new CLI.
-  const detections = await detectLegacyShims(ownRoot, paths.detection);
-  if (detections.length === 0) return;
-
-  // Step 5: pre-flight classify every shim WITHOUT touching the
-  // filesystem yet. The orchestrator decides abort-or-proceed against
-  // the whole set rather than discovering mid-loop that we got partway
-  // and have to backtrack.
-  const classifications = await Promise.all(
-    detections.map(async (detection) => {
-      const c = await classifyShim(detection.shimPath);
-      return { ...c, detection };
-    }),
-  );
-
-  // Step 6: figure out what wins PATH resolution once every shim we
-  // CAN touch is treated as gone. Three possible blockers:
-  //   - a legacy shim we couldn't classify as actionable (sudo/admin
-  //     needed)
-  //   - an unrelated `kimi` we don't recognize (a user's own wrapper
-  //     script — they own the decision)
-  //   - nothing resolves (our shim isn't on PATH at all)
-  // For each we render a different notice and touch NOTHING. The
-  // common-case fourth result is "our shim wins" — we proceed.
-  const actionable = classifications.filter((c) => c.kind !== 'blocked');
-  const blocked = classifications.filter((c) => c.kind === 'blocked');
-  const actionableShimPaths = actionable.map((c) => c.shimPath);
-  const allDetectedShimPaths = classifications.map((c) => c.shimPath);
-
-  const blocker = await findFirstResolvableKimi(
+  // Step 4: plan against the whole detected shim set without writing.
+  const plan = await planTakeover(
     ownRoot,
+    paths.detection,
     paths.reachability,
-    actionableShimPaths,
-    allDetectedShimPaths,
+    process.platform,
   );
-  if (blocker.kind !== 'own') {
-    if (blocker.kind === 'blocked-legacy') {
-      logMigrationBlocked(blocked, actionable, pm);
-    } else if (blocker.kind === 'foreign') {
-      logForeignKimiInTheWay(blocker.path, pm);
-    } else {
-      // 'none' — our shim isn't on PATH at all.
-      logNewCliNotOnPath(detections[0], pm);
-    }
+  if (plan.kind === 'noop') return;
+  if (plan.kind === 'blocked') {
+    logMigrationBlocked(plan.blocked, plan.actionable, pm);
+    return;
+  }
+  if (plan.kind === 'foreign') {
+    logForeignKimiInTheWay(plan.path, pm);
+    return;
+  }
+  if (plan.kind === 'not-on-path') {
+    logNewCliNotOnPath(plan.detection, pm);
     return;
   }
 
-  // Step 7: execute. The FIRST classification in PATH order that
-  // we can touch becomes `kimi-legacy` (preserves what the user's
-  // `kimi` used to refer to). Every subsequent shim is just
-  // deleted — keeping it as a dormant duplicate adds no value.
-  const renames = [];
-  const consolidates = [];
-  const skippedForeignTarget = [];
-  const deletes = [];
-  const errors = [];
-  let preservedFirst = false;
+  // Step 5: execute (preserve the first preservable shim as
+  // `kimi-legacy`, delete the rest).
+  const outcomes = await executeTakeover(plan.classifications);
 
-  for (const c of classifications) {
-    if (c.kind === 'blocked') continue; // already established harmless
-
-    if (!preservedFirst) {
-      preservedFirst = true;
-      if (c.kind === 'renameable') {
-        const r = await renameInPlace(c.shimPath, c.target);
-        if (r.success) {
-          renames.push(c);
-        } else {
-          errors.push({ ...c, ...r });
-        }
-        continue;
-      }
-      if (c.kind === 'consolidate') {
-        const r = await deleteShim(c.shimPath);
-        if (r.success) {
-          consolidates.push(c);
-        } else {
-          errors.push({ ...c, ...r });
-        }
-        continue;
-      }
-      if (c.kind === 'delete-only') {
-        const r = await deleteShim(c.shimPath);
-        if (r.success) {
-          skippedForeignTarget.push(c);
-        } else {
-          errors.push({ ...c, ...r });
-        }
-        continue;
-      }
-    } else {
-      // Not the first actionable shim. Just delete it.
-      const r = await deleteShim(c.shimPath);
-      if (r.success) {
-        deletes.push(c);
-      } else {
-        errors.push({ ...c, ...r });
-      }
-    }
-  }
-
-  // Step 8: one notice summarizing everything that happened. The
-  // takeover-success language is only emitted when we know it's true
-  // (we already passed the reachability gate above).
-  logMigrationDone(
-    {
-      renames,
-      consolidates,
-      skippedForeignTarget,
-      deletes,
-      blockedHarmless: blocked,
-      errors,
-    },
-    pm,
+  // Step 6: post-execution verification — the ONLY ground for a
+  // success claim. If reality diverged from the step-4 simulation
+  // (a rename failed, a new shim appeared), report it honestly.
+  const verify = await verifyTakeover(
+    ownRoot,
+    paths.reachability,
+    plan.classifications.map((c) => c.shimPath),
+    process.platform,
   );
+  if (verify.kind === 'own') {
+    logMigrationDone({ ...outcomes, blockedHarmless: plan.blocked }, pm);
+    return;
+  }
+  logMigrationIncomplete({ outcomes, verify, blocked: plan.blocked }, pm);
 }
 
 main().catch((err) => {

@@ -11,6 +11,7 @@ export type ApprovalScope = z.infer<typeof approvalScopeSchema>;
 export const approvalRequestSchema = z.object({
   approval_id: z.string().min(1),
   session_id: z.string().min(1),
+  agent_id: z.string().min(1),
   turn_id: z.number().int().nonnegative().optional(),
   tool_call_id: z.string().min(1),
   tool_name: z.string().min(1),

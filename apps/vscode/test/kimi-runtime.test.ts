@@ -14,25 +14,33 @@ import type {
   PermissionMode,
   PromptInput,
   QuestionHandler,
+  RefreshProviderModelsResponse,
   ResumeSessionInput,
   Session,
   SessionStatus,
   SessionSummary,
   ThinkingEffort,
 } from "@moonshot-ai/kimi-code-sdk";
-import { describe, expect, it, vi } from "vitest";
+import { setTelemetryContext, track, withTelemetryContext } from "@moonshot-ai/kimi-telemetry";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Events } from "../shared/bridge";
 import { KimiRuntime, type OpenSessionOptions } from "../src/runtime/kimi-runtime";
+import { startModelCatalogRefresh } from "../src/runtime/model-catalog-refresh";
 
 const sdkFactories = vi.hoisted(() => {
-  const v1Harness = { homeDir: "/tmp/kimi-runtime-v1-home", close: vi.fn(async () => undefined) };
-  const v2Harness = { homeDir: "/tmp/kimi-runtime-v2-home", close: vi.fn(async () => undefined) };
+  const harness = {
+    homeDir: "/tmp/kimi-runtime-home",
+    close: vi.fn(async () => undefined),
+    getConfig: vi.fn(async () => ({
+      providers: {},
+      modelCatalog: { refreshOnStart: false, refreshIntervalMs: 0 },
+    })),
+    refreshProviderModels: vi.fn(async () => ({ changed: [], unchanged: [], failed: [] })),
+  };
   return {
-    v1Harness,
-    v2Harness,
-    createKimiHarness: vi.fn(() => v1Harness),
-    createKimiHarnessV2: vi.fn(() => v2Harness),
+    harness,
+    createKimiHarness: vi.fn(() => harness),
   };
 });
 
@@ -41,7 +49,6 @@ vi.mock("@moonshot-ai/kimi-code-sdk", async (importOriginal) => {
   return {
     ...original,
     createKimiHarness: sdkFactories.createKimiHarness,
-    createKimiHarnessV2: sdkFactories.createKimiHarnessV2,
   };
 });
 
@@ -164,6 +171,8 @@ interface FakeHarnessBoundary {
   readonly resumeInputs: ResumeSessionInput[];
   readonly closeSessionIds: string[];
   readonly deleteSessionIds: string[];
+  readonly getConfig: ReturnType<typeof vi.fn>;
+  readonly refreshProviderModels: ReturnType<typeof vi.fn>;
   readonly closeCount: () => number;
   readonly sessions: Map<string, FakeSessionBoundary>;
   addSession(
@@ -196,7 +205,15 @@ function createFakeHarness(
     return boundary;
   };
 
+  const getConfig = vi.fn(async () => ({
+    providers: {},
+    modelCatalog: { refreshOnStart: false, refreshIntervalMs: 0 },
+  }));
+  const refreshProviderModels = vi.fn(async () => ({ changed: [], unchanged: [], failed: [] }));
+
   const harness = {
+    getConfig,
+    refreshProviderModels,
     async createSession(options: CreateSessionOptions) {
       createInputs.push(options);
       creates += 1;
@@ -234,6 +251,8 @@ function createFakeHarness(
     resumeInputs,
     closeSessionIds,
     deleteSessionIds,
+    getConfig,
+    refreshProviderModels,
     closeCount: () => closes,
     sessions,
     addSession,
@@ -265,16 +284,237 @@ function createRuntime(
   return { runtime, sdk };
 }
 
+const EMPTY_REFRESH_RESULT: RefreshProviderModelsResponse = {
+  changed: [],
+  unchanged: [],
+  failed: [],
+};
+
+const CHANGED_REFRESH_RESULT: RefreshProviderModelsResponse = {
+  changed: [{ provider_id: "managed:kimi-code", provider_name: "Kimi Code", added: 1, removed: 0 }],
+  unchanged: [],
+  failed: [],
+};
+
+describe("Model catalog refresh", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("refreshes on start and every six hours, then broadcasts changes until disposal", async () => {
+    const sdk = createFakeHarness();
+    sdk.getConfig.mockResolvedValue({ providers: {} });
+    sdk.refreshProviderModels.mockResolvedValue(CHANGED_REFRESH_RESULT);
+    const broadcast = vi.fn();
+    const runtime = new KimiRuntime({
+      version: "test",
+      harness: sdk.harness,
+      broadcast,
+      captureBaseline: () => undefined,
+      log: () => undefined,
+    });
+
+    await vi.waitFor(() => {
+      expect(sdk.refreshProviderModels).toHaveBeenCalledTimes(1);
+    });
+    expect(sdk.refreshProviderModels).toHaveBeenCalledWith({ scope: "all" });
+    expect(broadcast).toHaveBeenCalledWith(Events.ModelCatalogChanged, {});
+
+    await vi.advanceTimersByTimeAsync(6 * 60 * 60 * 1000);
+    expect(sdk.refreshProviderModels).toHaveBeenCalledTimes(2);
+    expect(broadcast).toHaveBeenCalledTimes(2);
+
+    await runtime.dispose();
+    await runtime.dispose();
+    await vi.advanceTimersByTimeAsync(6 * 60 * 60 * 1000);
+    expect(sdk.refreshProviderModels).toHaveBeenCalledTimes(2);
+    expect(broadcast).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses the configured interval and startup policy", async () => {
+    const sdk = createFakeHarness();
+    sdk.getConfig.mockResolvedValue({
+      providers: {},
+      modelCatalog: { refreshOnStart: false, refreshIntervalMs: 1000 },
+    });
+    const onChanged = vi.fn();
+    const dispose = startModelCatalogRefresh({
+      harness: sdk.harness,
+      onChanged,
+      log: () => undefined,
+      env: {},
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sdk.refreshProviderModels).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(999);
+    expect(sdk.refreshProviderModels).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(sdk.refreshProviderModels).toHaveBeenCalledTimes(1);
+    expect(onChanged).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it("lets env override config and disables the interval at zero", async () => {
+    const sdk = createFakeHarness();
+    sdk.getConfig.mockResolvedValue({
+      providers: {},
+      modelCatalog: { refreshOnStart: false, refreshIntervalMs: 1000 },
+    });
+    const dispose = startModelCatalogRefresh({
+      harness: sdk.harness,
+      onChanged: () => undefined,
+      log: () => undefined,
+      env: {
+        KIMI_CODE_MODEL_CATALOG_REFRESH_ON_START: "yes",
+        KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS: "0",
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(sdk.refreshProviderModels).toHaveBeenCalledTimes(1);
+    });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(sdk.refreshProviderModels).toHaveBeenCalledTimes(1);
+    dispose();
+  });
+
+  it("logs partial failures and exceptions without suppressing changes or later ticks", async () => {
+    const sdk = createFakeHarness();
+    const failed = [{ provider: "managed:kimi-code", reason: "partial failure" }];
+    const error = new Error("network down");
+    sdk.getConfig.mockResolvedValue({ providers: {} });
+    sdk.refreshProviderModels
+      .mockResolvedValueOnce({ ...CHANGED_REFRESH_RESULT, failed })
+      .mockRejectedValueOnce(error)
+      .mockResolvedValue(EMPTY_REFRESH_RESULT);
+    const onChanged = vi.fn();
+    const log = vi.fn();
+    const dispose = startModelCatalogRefresh({
+      harness: sdk.harness,
+      onChanged,
+      log,
+      env: { KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS: "1000" },
+    });
+
+    await vi.waitFor(() => {
+      expect(onChanged).toHaveBeenCalledTimes(1);
+    });
+    expect(log).toHaveBeenCalledWith(expect.any(String), failed);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(log).toHaveBeenCalledWith(expect.any(String), error);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(sdk.refreshProviderModels).toHaveBeenCalledTimes(3);
+    expect(onChanged).toHaveBeenCalledTimes(1);
+    dispose();
+  });
+
+  it("skips interval ticks while a refresh is in flight", async () => {
+    const sdk = createFakeHarness();
+    sdk.getConfig.mockResolvedValue({
+      providers: {},
+      modelCatalog: { refreshOnStart: false, refreshIntervalMs: 1000 },
+    });
+    let resolveRefresh!: (result: RefreshProviderModelsResponse) => void;
+    sdk.refreshProviderModels.mockReturnValue(new Promise((resolve) => {
+      resolveRefresh = resolve;
+    }));
+    const dispose = startModelCatalogRefresh({
+      harness: sdk.harness,
+      onChanged: () => undefined,
+      log: () => undefined,
+      env: {},
+    });
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(sdk.refreshProviderModels).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(sdk.refreshProviderModels).toHaveBeenCalledTimes(1);
+    resolveRefresh(EMPTY_REFRESH_RESULT);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(sdk.refreshProviderModels).toHaveBeenCalledTimes(2);
+    dispose();
+  });
+
+  it("falls back when an interval exceeds the Node timer limit", async () => {
+    const sdk = createFakeHarness();
+    sdk.getConfig.mockResolvedValue({
+      providers: {},
+      modelCatalog: { refreshOnStart: false, refreshIntervalMs: 1000 },
+    });
+    const dispose = startModelCatalogRefresh({
+      harness: sdk.harness,
+      onChanged: () => undefined,
+      log: () => undefined,
+      env: { KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS: "2147483648" },
+    });
+
+    await vi.advanceTimersByTimeAsync(999);
+    expect(sdk.refreshProviderModels).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(sdk.refreshProviderModels).toHaveBeenCalledTimes(1);
+    dispose();
+  });
+
+  it("does not start after disposal while config is pending", async () => {
+    const sdk = createFakeHarness();
+    let resolveConfig!: (config: { providers: Record<string, never> }) => void;
+    sdk.getConfig.mockReturnValue(new Promise((resolve) => {
+      resolveConfig = resolve;
+    }));
+    const dispose = startModelCatalogRefresh({
+      harness: sdk.harness,
+      onChanged: () => undefined,
+      log: () => undefined,
+      env: {},
+    });
+
+    dispose();
+    resolveConfig({ providers: {} });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sdk.refreshProviderModels).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("suppresses an in-flight change notification after disposal", async () => {
+    const sdk = createFakeHarness();
+    sdk.getConfig.mockResolvedValue({ providers: {} });
+    let resolveRefresh!: (result: RefreshProviderModelsResponse) => void;
+    sdk.refreshProviderModels.mockReturnValue(new Promise((resolve) => {
+      resolveRefresh = resolve;
+    }));
+    const onChanged = vi.fn();
+    const dispose = startModelCatalogRefresh({
+      harness: sdk.harness,
+      onChanged,
+      log: () => undefined,
+      env: {},
+    });
+
+    await vi.waitFor(() => {
+      expect(sdk.refreshProviderModels).toHaveBeenCalledTimes(1);
+    });
+    dispose();
+    resolveRefresh(CHANGED_REFRESH_RESULT);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onChanged).not.toHaveBeenCalled();
+  });
+});
+
 describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
-  it("creates the v2 harness by default and the v1 harness for rollback", async () => {
-    const defaults = new KimiRuntime({
+  it("creates the harness through the SDK factory when none is injected", async () => {
+    const runtime = new KimiRuntime({
       version: "0.6.0",
       broadcast: () => undefined,
       captureBaseline: () => undefined,
       log: () => undefined,
     });
-    expect(sdkFactories.createKimiHarnessV2).toHaveBeenCalledOnce();
-    expect(sdkFactories.createKimiHarnessV2).toHaveBeenCalledWith({
+    expect(sdkFactories.createKimiHarness).toHaveBeenCalledOnce();
+    expect(sdkFactories.createKimiHarness).toHaveBeenCalledWith({
       homeDir: undefined,
       identity: {
         productName: "kimi-code-vscode",
@@ -282,21 +522,14 @@ describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
         platform: "kimi_code_vscode",
       },
       uiMode: "vscode",
+      telemetry: {
+        track,
+        withContext: withTelemetryContext,
+        setContext: setTelemetryContext,
+      },
     });
-    expect(sdkFactories.createKimiHarness).not.toHaveBeenCalled();
-    expect(defaults.harness).toBe(sdkFactories.v2Harness as unknown as KimiHarness);
-    await defaults.dispose();
-
-    const rollback = new KimiRuntime({
-      version: "0.6.0",
-      useAgentCoreV1: true,
-      broadcast: () => undefined,
-      captureBaseline: () => undefined,
-      log: () => undefined,
-    });
-    expect(sdkFactories.createKimiHarness).toHaveBeenCalledOnce();
-    expect(rollback.harness).toBe(sdkFactories.v1Harness as unknown as KimiHarness);
-    await rollback.dispose();
+    expect(runtime.harness).toBe(sdkFactories.harness as unknown as KimiHarness);
+    await runtime.dispose();
   });
 
   it("forwards the requested settings when creating an SDK session", async () => {
@@ -396,6 +629,91 @@ describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
     expect(boundary.handlerInstallations).toEqual({ approval: 1, question: 1 });
   });
 
+  it("does not double-wrap the SDK session when two opens race for it", async () => {
+    const sdk = createFakeHarness();
+    const broadcasts: { event: string; data: unknown; webviewId?: string }[] = [];
+    const runtime = new KimiRuntime({
+      version: "0.6.0",
+      harness: sdk.harness,
+      broadcast: (event, data, webviewId) => {
+        broadcasts.push({ event, data, webviewId });
+      },
+      captureBaseline: () => undefined,
+      log: () => undefined,
+    });
+    const boundary = sdk.addSession("saved-1", "/workspace");
+
+    const [first, second] = await Promise.all([
+      runtime.openSession(openOptions({ sessionId: "saved-1" })),
+      runtime.openSession(openOptions({ sessionId: "saved-1" })),
+    ]);
+
+    expect(second).toBe(first);
+    expect(boundary.subscriptionCount()).toBe(1);
+
+    boundary.emit({
+      type: "assistant.delta",
+      sessionId: "saved-1",
+      agentId: "main",
+      turnId: 1,
+      delta: "Hello",
+    });
+
+    const parts = broadcasts.filter(
+      ({ data }) => (data as { type?: string }).type === "ContentPart",
+    );
+    expect(parts).toHaveLength(1);
+  });
+
+  it("coalesces two concurrent new-session opens for one view onto one session", async () => {
+    const { runtime, sdk } = createRuntime();
+
+    const [first, second] = await Promise.all([
+      runtime.openSession(openOptions()),
+      runtime.openSession(openOptions()),
+    ]);
+
+    expect(second).toBe(first);
+    expect(sdk.createInputs).toHaveLength(1);
+    expect(first.subscribers).toEqual(["view-1"]);
+  });
+
+  it("does not double-wrap the SDK session when two attaches race for it", async () => {
+    const sdk = createFakeHarness();
+    const broadcasts: { event: string; data: unknown; webviewId?: string }[] = [];
+    const runtime = new KimiRuntime({
+      version: "0.6.0",
+      harness: sdk.harness,
+      broadcast: (event, data, webviewId) => {
+        broadcasts.push({ event, data, webviewId });
+      },
+      captureBaseline: () => undefined,
+      log: () => undefined,
+    });
+    const boundary = sdk.addSession("saved-1", "/workspace");
+
+    const [first, second] = await Promise.all([
+      runtime.attachResumedSession("view-1", boundary.session),
+      runtime.attachResumedSession("view-1", boundary.session),
+    ]);
+
+    expect(second).toBe(first);
+    expect(boundary.subscriptionCount()).toBe(1);
+
+    boundary.emit({
+      type: "assistant.delta",
+      sessionId: "saved-1",
+      agentId: "main",
+      turnId: 1,
+      delta: "Hello",
+    });
+
+    const parts = broadcasts.filter(
+      ({ data }) => (data as { type?: string }).type === "ContentPart",
+    );
+    expect(parts).toHaveLength(1);
+  });
+
   it("preserves the resumed session's model instead of reapplying the configured default", async () => {
     const { runtime, sdk } = createRuntime();
     const session = sdk.addSession("saved-1", "/workspace", { model: "old-model" });
@@ -440,7 +758,12 @@ describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
       event: Events.StreamEvent,
       data: {
         type: "StatusUpdate",
-        payload: { model: "kimi-test", thinking_effort: "max", plan_mode: true },
+        payload: {
+          model: "kimi-test",
+          thinking_effort: "max",
+          plan_mode: true,
+          context_usage: 0,
+        },
         _sessionId: "saved-1",
       },
       webviewId: "view-1",

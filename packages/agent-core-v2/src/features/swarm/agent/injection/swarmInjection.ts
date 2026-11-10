@@ -1,17 +1,9 @@
-/**
- * `swarm` domain — swarm-mode context injection.
- *
- * Registers swarm-mode guidance through `contextInjector` and reads
- * `contextMemory` for restored legacy state. Used by the Agent-scoped swarm
- * service.
- */
-
 import { Disposable } from '#/_base/di/lifecycle';
-import {
-  IAgentContextInjectorService,
-  type ContextInjectionContext,
-  type ContextInjectionResult,
-} from '#/agent/contextInjector/contextInjector';
+import type { IAgentReminderService } from '#/features/reminder/reminderService';
+import type {
+  ContextInjectionContext,
+  ContextInjectionResult,
+} from '#/features/reminder/types';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 
 import SWARM_MODE_ENTER_REMINDER from '../enter-reminder.md?raw';
@@ -33,7 +25,7 @@ export interface SwarmInjectionOptions {
 export class SwarmInjection extends Disposable {
   constructor(
     private readonly options: SwarmInjectionOptions,
-    @IAgentContextInjectorService injector: IAgentContextInjectorService,
+    injector: IAgentReminderService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
   ) {
     super();

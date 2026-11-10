@@ -12,7 +12,7 @@ import {
 } from "#/tui/constant/terminal";
 import type { TUIState } from "#/tui/tui-state";
 import type { ResolvedTheme } from "#/tui/theme/colors";
-import { parseOsc11BackgroundTheme } from "#/tui/theme/terminal-background";
+import { parseOsc11Background, parseOsc11BackgroundTheme } from "#/tui/theme/terminal-background";
 
 export {
   DISABLE_TERMINAL_THEME_REPORTING,
@@ -47,12 +47,13 @@ export function handleTerminalThemeInput(
   terminal: Pick<TUIState["terminal"], "write">,
   onTheme: (theme: ResolvedTheme) => void,
   inputState: TerminalThemeInputState = createTerminalThemeInputState(),
+  onBackground?: (background: string) => void,
 ): TerminalThemeInputResult {
   let remaining = data;
 
   if (inputState.osc11Buffer !== "") {
     const candidate = `${inputState.osc11Buffer}${data}`;
-    const stripped = stripOsc11Reports(candidate, onTheme);
+    const stripped = stripOsc11Reports(candidate, onTheme, onBackground);
     if (stripped !== candidate) {
       inputState.osc11Buffer = "";
       return resultFromRemaining(stripped);
@@ -63,7 +64,7 @@ export function handleTerminalThemeInput(
     return { consume: true };
   }
 
-  remaining = stripOsc11Reports(remaining, onTheme);
+  remaining = stripOsc11Reports(remaining, onTheme, onBackground);
   remaining = stripTerminalThemeReports(remaining, terminal);
 
   const partialOsc11Start = findPartialOsc11Start(remaining);
@@ -77,13 +78,19 @@ export function handleTerminalThemeInput(
   return undefined;
 }
 
-function stripOsc11Reports(data: string, onTheme: (theme: ResolvedTheme) => void): string {
+function stripOsc11Reports(
+  data: string,
+  onTheme: (theme: ResolvedTheme) => void,
+  onBackground?: (background: string) => void,
+): string {
   let remaining = data;
 
   for (;;) {
     const match = OSC11_RESPONSE.exec(remaining);
     if (match === null) return remaining;
 
+    const background = parseOsc11Background(match[0]);
+    if (background !== null) onBackground?.(background);
     const theme = parseOsc11BackgroundTheme(match[0]);
     if (theme !== null) onTheme(theme);
 
@@ -137,10 +144,11 @@ function resultFromRemaining(data: string): TerminalThemeInputResult {
 export function installTerminalThemeTracking(
   state: Pick<TUIState, "terminal" | "ui">,
   onTheme: (theme: ResolvedTheme) => void,
+  onBackground?: (background: string) => void,
 ): () => void {
   const inputState = createTerminalThemeInputState();
   const disposeInputListener = state.ui.addInputListener((data) =>
-    handleTerminalThemeInput(data, state.terminal, onTheme, inputState),
+    handleTerminalThemeInput(data, state.terminal, onTheme, inputState, onBackground),
   );
   state.terminal.write(ENABLE_TERMINAL_THEME_REPORTING);
   state.terminal.write(OSC11_QUERY);

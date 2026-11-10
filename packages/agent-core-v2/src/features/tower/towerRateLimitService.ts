@@ -1,20 +1,6 @@
-/**
- * `tower` domain — `ITowerRateLimitService` implementation.
- *
- * The tower face of the provider-concurrency capacity machine, process-wide
- * like v1's `towerRateLimiter` singleton: an inflight acquire/release
- * counter, a short spawn pause after each 429 (lifted early by the next
- * success), and a recovery ceiling (`TOWER_MAX_BUDGET`). The underlying
- * algorithm is the one proven in `SubagentBatch`: uncapped until the first
- * provider 429, then capacity snaps to (what was actually running − 1),
- * shrinks by one per subsequent 429 (throttled so a burst is one episode),
- * and recovers +1 per quiet window without 429s. NOTE: nothing feeds
- * `reportRateLimited` / `reportSuccess` yet — v2 has no retry funnel
- * (v1's `chatWithRetry`) to report 429s and successes through; that
- * integration is pending. Bound at App scope.
- */
-
 import { Disposable } from '#/_base/di/lifecycle';
+import { resolveAgentTaskConfig } from '#/agent/task/configSection';
+import { IConfigService } from '#/app/config/config';
 import {
   ITowerRateLimitService,
   type TowerRateLimitSnapshot,
@@ -22,10 +8,8 @@ import {
 
 export const RATE_LIMIT_CAPACITY_SHRINK_INTERVAL_MS = 2_000;
 export const RATE_LIMIT_CAPACITY_RECOVERY_INTERVAL_MS = 180_000;
-/** Tower-only: how long new spawns stay paused after a 429 episode. */
 export const TOWER_SPAWN_PAUSE_MS = 60_000;
-/** Tower-only: ceiling the capacity may recover to. */
-export const TOWER_MAX_BUDGET = 16;
+export const TOWER_DEFAULT_MAX_RUNNING_AGENTS = 256;
 
 export class RateLimitCapacityGovernor {
   private capacity = Number.POSITIVE_INFINITY;
@@ -96,7 +80,10 @@ export class TowerRateLimitService extends Disposable implements ITowerRateLimit
   private inflight = 0;
   private blockedUntil: number | null = null;
 
-  constructor(now: () => number = Date.now) {
+  constructor(
+    @IConfigService private readonly config: IConfigService,
+    now: () => number = Date.now,
+  ) {
     super();
     this.now = now;
     this.governor = new RateLimitCapacityGovernor(this.now);
@@ -114,7 +101,11 @@ export class TowerRateLimitService extends Disposable implements ITowerRateLimit
 
   budget(): number {
     this.governor.maybeRecover();
-    return Math.max(1, Math.min(TOWER_MAX_BUDGET, this.governor.getCapacity()));
+    const maxRunningTasks = resolveAgentTaskConfig(this.config)?.maxRunningTasks;
+    return Math.max(
+      1,
+      Math.min(this.governor.getCapacity(), maxRunningTasks ?? TOWER_DEFAULT_MAX_RUNNING_AGENTS),
+    );
   }
 
   acquire(): { readonly ok: true } | { readonly ok: false; readonly reason: string } {
@@ -162,4 +153,3 @@ export class TowerRateLimitService extends Disposable implements ITowerRateLimit
     this.blockedUntil = null;
   }
 }
-

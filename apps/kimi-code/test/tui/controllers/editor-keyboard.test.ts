@@ -1,23 +1,37 @@
+import { Text, TuiAltScreen, TuiMainScreen } from '@moonshot-ai/pi-tui';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { DOUBLE_ESC_WINDOW_MS, NO_ACTIVE_SESSION_MESSAGE } from '#/tui/constant/kimi-tui';
+import { CTRL_C_HINT, DOUBLE_ESC_WINDOW_MS } from '#/tui/constant/kimi-tui';
 import {
   EditorKeyboardController,
   type EditorKeyboardHost,
 } from '#/tui/controllers/editor-keyboard';
-import type { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
+import { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
+
+import { VirtualTerminal } from '../../../../../packages/pi-tui/test/virtual-terminal';
 
 interface Harness {
   readonly host: EditorKeyboardHost;
   readonly editor: Record<string, ((...args: never[]) => unknown) | undefined>;
+  readonly controller: EditorKeyboardController;
   readonly openUndoSelector: ReturnType<typeof vi.fn>;
   readonly cancelRunningShellCommand: ReturnType<typeof vi.fn>;
   readonly cancelCompaction: ReturnType<typeof vi.fn>;
   readonly btwCancelRunning: ReturnType<typeof vi.fn>;
   readonly btwCloseOrCancel: ReturnType<typeof vi.fn>;
+  readonly footerHint: ReturnType<typeof vi.fn>;
+  readonly stop: ReturnType<typeof vi.fn>;
+  readonly survey: {
+    readonly handlePreInput: ReturnType<typeof vi.fn<(data: string) => boolean>>;
+    readonly handleSubmit: ReturnType<typeof vi.fn<(text: string) => boolean>>;
+    readonly handleEditorChange: ReturnType<typeof vi.fn<(text: string) => void>>;
+    readonly notifyDisplaced: ReturnType<typeof vi.fn<() => void>>;
+  };
 }
 
-function createHarness(options: { streamingPhase?: string; isCompacting?: boolean } = {}): Harness {
+function createHarness(
+  options: { streamingPhase?: string; isCompacting?: boolean; ui?: TuiAltScreen | TuiMainScreen } = {},
+): Harness {
   const editor: Record<string, ((...args: never[]) => unknown) | undefined> = {
     setHistoryFilter: vi.fn() as unknown as (...args: never[]) => unknown,
     setInputMode: vi.fn() as unknown as (...args: never[]) => unknown,
@@ -29,6 +43,14 @@ function createHarness(options: { streamingPhase?: string; isCompacting?: boolea
   const cancelCompaction = vi.fn(async () => {});
   const btwCancelRunning = vi.fn(() => false);
   const btwCloseOrCancel = vi.fn(() => false);
+  const footerHint = vi.fn();
+  const stop = vi.fn();
+  const survey = {
+    handlePreInput: vi.fn<(data: string) => boolean>(() => false),
+    handleSubmit: vi.fn<(text: string) => boolean>(() => false),
+    handleEditorChange: vi.fn<(text: string) => void>(() => {}),
+    notifyDisplaced: vi.fn<() => void>(() => {}),
+  };
   const session = { cancel: vi.fn(async () => {}), cancelCompaction };
 
   const host = {
@@ -38,16 +60,23 @@ function createHarness(options: { streamingPhase?: string; isCompacting?: boolea
       appState: {
         streamingPhase: options.streamingPhase ?? 'idle',
         isCompacting: options.isCompacting ?? false,
+        editorCommand: null,
       },
-      footer: { setTransientHint: vi.fn() },
-      ui: { requestRender: vi.fn() },
+      footer: { setTransientHint: footerHint },
+      ui: options.ui ?? { requestRender: vi.fn() },
     },
     session,
     btwPanelController: { cancelRunning: btwCancelRunning, closeOrCancel: btwCloseOrCancel },
+    surveyController: survey,
     openUndoSelector,
     cancelRunningShellCommand,
     updateEditorBorderHighlight: vi.fn(),
     updateGoalLengthWarning: vi.fn(),
+    handleUserInput: vi.fn(),
+    track: vi.fn(),
+    openExternalEditor: vi.fn(),
+    showError: vi.fn(),
+    stop,
   } as unknown as EditorKeyboardHost;
 
   const controller = new EditorKeyboardController(
@@ -59,11 +88,15 @@ function createHarness(options: { streamingPhase?: string; isCompacting?: boolea
   return {
     host,
     editor,
+    controller,
     openUndoSelector,
     cancelRunningShellCommand,
     cancelCompaction,
     btwCancelRunning,
     btwCloseOrCancel,
+    footerHint,
+    stop,
+    survey,
   };
 }
 
@@ -76,6 +109,12 @@ function pressEscape(editor: Harness['editor']): void {
 function pressCtrlC(editor: Harness['editor']): void {
   const handler = editor['onCtrlC'];
   if (handler === undefined) throw new Error('onCtrlC handler not installed');
+  (handler as () => void)();
+}
+
+function pressCtrlD(editor: Harness['editor']): void {
+  const handler = editor['onCtrlD'];
+  if (handler === undefined) throw new Error('onCtrlD handler not installed');
   (handler as () => void)();
 }
 
@@ -208,6 +247,49 @@ describe('EditorKeyboardController btw panel priority', () => {
     expect(btwCancelRunning).toHaveBeenCalledOnce();
     expect(btwCloseOrCancel).toHaveBeenCalledOnce();
     expect(cancelCompaction).toHaveBeenCalledOnce();
+  });
+});
+
+describe('EditorKeyboardController disposal', () => {
+  it('consumes every key after dispose so shutdown feedback is not clobbered', () => {
+    const { editor, controller, footerHint, stop } = createHarness();
+
+    pressCtrlC(editor);
+    expect(footerHint).toHaveBeenCalledWith(CTRL_C_HINT);
+
+    controller.dispose();
+    footerHint.mockClear();
+
+    const onPreInput = editor['onPreInput'];
+    if (onPreInput === undefined) throw new Error('onPreInput handler not installed');
+    expect((onPreInput as (data: string) => boolean)('\u0003')).toBe(true);
+    expect((onPreInput as (data: string) => boolean)('\u001B')).toBe(true);
+    expect((onPreInput as (data: string) => boolean)('a')).toBe(true);
+
+    expect(stop).not.toHaveBeenCalled();
+    expect(footerHint).not.toHaveBeenCalled();
+  });
+});
+
+describe('EditorKeyboardController skill variant selection', () => {
+  it('defers cleanup on empty input until after the submit callback', async () => {
+    const { host, editor } = createHarness();
+    const path = '/work/B/review/SKILL.md';
+    const selected = new Map([['skill:review', path]]);
+    const submitted: Array<string | undefined> = [];
+    host.retainSkillVariantSelection = (text) => {
+      if (text === '') selected.clear();
+    };
+    host.handleUserInput = vi.fn(() => {
+      submitted.push(selected.get('skill:review'));
+    });
+
+    (editor['onChange'] as unknown as (text: string) => void)('');
+    (editor['onSubmit'] as unknown as (text: string) => void)('/skill:review');
+
+    expect(submitted).toEqual([path]);
+    await Promise.resolve();
+    expect(selected.size).toBe(0);
   });
 });
 
@@ -384,7 +466,7 @@ describe('EditorKeyboardController input changes', () => {
 });
 
 describe('EditorKeyboardController Shift-Tab plan toggle', () => {
-  function createShiftTabHarness(options: { sessionless?: boolean; engineV2?: boolean } = {}) {
+  function createShiftTabHarness(options: { sessionless?: boolean } = {}) {
     const editor: Record<string, ((...args: never[]) => unknown) | undefined> = {
       setHistoryFilter: vi.fn() as unknown as (...args: never[]) => unknown,
     };
@@ -401,7 +483,6 @@ describe('EditorKeyboardController Shift-Tab plan toggle', () => {
         ui: { requestRender: vi.fn() },
       },
       session: options.sessionless ? undefined : { cancel: vi.fn(async () => {}) },
-      engineV2: options.engineV2 ?? false,
       ensureSession,
       handlePlanToggle,
       track,
@@ -423,21 +504,9 @@ describe('EditorKeyboardController Shift-Tab plan toggle', () => {
     expect(handlePlanToggle).toHaveBeenCalledWith(true);
   });
 
-  it('reports no active session on v1 when session-less', () => {
-    const { onShiftTab, showError, handlePlanToggle } = createShiftTabHarness({
-      sessionless: true,
-    });
-
-    onShiftTab();
-
-    expect(showError).toHaveBeenCalledWith(NO_ACTIVE_SESSION_MESSAGE);
-    expect(handlePlanToggle).not.toHaveBeenCalled();
-  });
-
   it('lazy-creates the session before toggling on v2 when session-less', async () => {
     const { onShiftTab, ensureSession, handlePlanToggle, track } = createShiftTabHarness({
       sessionless: true,
-      engineV2: true,
     });
 
     onShiftTab();
@@ -453,7 +522,6 @@ describe('EditorKeyboardController Shift-Tab plan toggle', () => {
   it('does not toggle when the lazy creation fails on v2', async () => {
     const { onShiftTab, ensureSession, handlePlanToggle } = createShiftTabHarness({
       sessionless: true,
-      engineV2: true,
     });
     ensureSession.mockResolvedValue(undefined);
 
@@ -464,21 +532,16 @@ describe('EditorKeyboardController Shift-Tab plan toggle', () => {
   });
 });
 
-/**
- * Ctrl-S steering of the TUI queue: plain-text items steer as messages,
- * slash-skill items fire as real activations into the running turn (never as
- * literal text), grouped inline-skill submissions stay queued for the drain
- * path, bash items stay queued — all in queue order.
- */
 describe('EditorKeyboardController Ctrl-S steering', () => {
   function createCtrlSHarness(options: {
     editorText: string;
     queued: Array<Record<string, unknown>>;
-    engineV2?: boolean;
     skillCommandMap?: Map<string, string>;
+    pluginCommandMap?: Map<string, string>;
+    skillVariantPathForCommand?: (commandName: string, tokenStart: number) => string | undefined;
+    steering?: boolean;
   }) {
-    const steerMessage = vi.fn();
-    const steerSkillActivation = vi.fn();
+    const steerQueuedMessagesIntoRunningTurn = vi.fn();
     const updateQueueDisplay = vi.fn();
     const setText = vi.fn();
     const editor: Record<string, ((...args: never[]) => unknown) | undefined> = {
@@ -498,10 +561,11 @@ describe('EditorKeyboardController Ctrl-S steering', () => {
         ui: { requestRender: vi.fn() },
       },
       session: { id: 's1' },
-      engineV2: options.engineV2 ?? false,
       skillCommandMap: options.skillCommandMap ?? new Map(),
-      steerMessage,
-      steerSkillActivation,
+      pluginCommandMap: options.pluginCommandMap ?? new Map(),
+      skillVariantPathForCommand: options.skillVariantPathForCommand,
+      steerQueuedMessagesIntoRunningTurn,
+      isSteeringQueuedMessages: vi.fn(() => options.steering ?? false),
       updateQueueDisplay,
       validateMediaCapabilities: vi.fn(() => true),
       showError: vi.fn(),
@@ -511,10 +575,7 @@ describe('EditorKeyboardController Ctrl-S steering', () => {
         closeOrCancel: vi.fn(() => false),
       },
     } as unknown as EditorKeyboardHost;
-    const controller = new EditorKeyboardController(
-      host,
-      undefined as unknown as ImageAttachmentStore,
-    );
+    const controller = new EditorKeyboardController(host, new ImageAttachmentStore());
     controller.install();
     const onCtrlS = editor['onCtrlS'];
     if (onCtrlS === undefined) throw new Error('onCtrlS handler not installed');
@@ -522,130 +583,340 @@ describe('EditorKeyboardController Ctrl-S steering', () => {
       host,
       editor,
       setText,
-      steerMessage,
-      steerSkillActivation,
+      steerQueuedMessagesIntoRunningTurn,
       updateQueueDisplay,
       onCtrlS: onCtrlS as () => void,
     };
   }
 
-  it('steers text as a message, skill items as activations, and keeps bash queued', () => {
-    const { host, steerMessage, steerSkillActivation, updateQueueDisplay, onCtrlS } =
-      createCtrlSHarness({
-        editorText: '',
-        queued: [
-          { text: 'queued text', agentId: 'main' },
-          {
-            text: '/tower status',
-            agentId: 'main',
-            mode: 'skill',
-            skillName: 'tower',
-            skillArgs: 'status',
-          },
-          { text: '!ls', agentId: 'main', mode: 'bash' },
-        ],
-      });
-
-    onCtrlS();
-
-    expect(steerMessage).toHaveBeenCalledWith(host.session, [
-      { text: 'queued text', parts: undefined, imageAttachmentIds: undefined },
-    ]);
-    expect(steerSkillActivation).toHaveBeenCalledWith(host.session, 'tower', 'status');
-    expect(host.state.queuedMessages).toEqual([{ text: '!ls', agentId: 'main', mode: 'bash' }]);
-    expect(updateQueueDisplay).toHaveBeenCalled();
-  });
-
-  it('steers plain queued messages but keeps grouped inline-skill submissions queued', () => {
-    const { host, steerMessage, updateQueueDisplay, onCtrlS } = createCtrlSHarness({
-      editorText: '',
-      queued: [
-        { text: 'plain note', agentId: 'main' },
-        {
-          text: 'check /skill:review',
-          agentId: 'main',
-          inlineSkillActivations: [{ skillName: 'review' }],
-        },
-      ],
-    });
-
-    onCtrlS();
-
-    expect(steerMessage).toHaveBeenCalledWith(host.session, [
-      { text: 'plain note', parts: undefined, imageAttachmentIds: undefined },
-    ]);
-    expect(host.state.queuedMessages).toEqual([
-      {
-        text: 'check /skill:review',
-        agentId: 'main',
-        inlineSkillActivations: [{ skillName: 'review' }],
-      },
-    ]);
-    expect(updateQueueDisplay).toHaveBeenCalled();
-  });
-
-  it('stops steering at the first bundle so later messages keep FIFO order', () => {
-    const { host, steerMessage, onCtrlS } = createCtrlSHarness({
-      editorText: '',
-      queued: [
-        { text: 'earlier note', agentId: 'main' },
-        {
-          text: 'check /skill:review',
-          agentId: 'main',
-          inlineSkillActivations: [{ skillName: 'review' }],
-        },
-        { text: 'later note', agentId: 'main' },
-      ],
-    });
-
-    onCtrlS();
-
-    expect(steerMessage).toHaveBeenCalledWith(host.session, [
-      { text: 'earlier note', parts: undefined, imageAttachmentIds: undefined },
-    ]);
-    expect(host.state.queuedMessages).toEqual([
+  it('leaves queued inputs owned by the coordinator until dispatch succeeds', () => {
+    const queued = [
+      { text: 'earlier note', agentId: 'main' },
       {
         text: 'check /skill:review',
         agentId: 'main',
         inlineSkillActivations: [{ skillName: 'review' }],
       },
       { text: 'later note', agentId: 'main' },
-    ]);
+      { text: '!ls', agentId: 'main', mode: 'bash' },
+    ];
+    const { host, steerQueuedMessagesIntoRunningTurn, updateQueueDisplay, onCtrlS } =
+      createCtrlSHarness({ editorText: '', queued });
+
+    onCtrlS();
+
+    expect(steerQueuedMessagesIntoRunningTurn).toHaveBeenCalledWith(true);
+    expect(host.state.queuedMessages).toEqual(queued);
+    expect(updateQueueDisplay).toHaveBeenCalled();
   });
 
-  it('steers nothing when a bundle leads the queue', () => {
-    const { host, steerMessage, onCtrlS } = createCtrlSHarness({
-      editorText: '',
-      queued: [
-        {
-          text: 'check /skill:review',
-          agentId: 'main',
-          inlineSkillActivations: [{ skillName: 'review' }],
-        },
-        { text: 'later note', agentId: 'main' },
-      ],
+  it('ignores Ctrl-S while a queue steer is still in flight', () => {
+    const queued = [
+      { text: 'already steering', agentId: 'main' },
+      { text: 'later text', agentId: 'main' },
+    ];
+    const { host, setText, steerQueuedMessagesIntoRunningTurn, onCtrlS } = createCtrlSHarness({
+      editorText: 'draft',
+      queued,
+      steering: true,
     });
 
     onCtrlS();
 
-    expect(steerMessage).not.toHaveBeenCalled();
-    expect(host.state.queuedMessages).toHaveLength(2);
+    expect(steerQueuedMessagesIntoRunningTurn).not.toHaveBeenCalled();
+    expect(setText).not.toHaveBeenCalled();
+    expect(host.state.queuedMessages).toEqual(queued);
   });
 
-  it('leaves an editor draft with inline skill tokens in the editor for the grouped path', () => {
-    const { host, setText, steerMessage, onCtrlS } = createCtrlSHarness({
-      editorText: 'check /skill:review',
-      queued: [{ text: 'plain note', agentId: 'main' }],
-      engineV2: true,
+  it('includes the draft after a leading grouped skill input', () => {
+    const queued = {
+      text: 'check /skill:review',
+      agentId: 'main',
+      inlineSkillActivations: [{ skillName: 'review' }],
+    };
+    const { host, setText, steerQueuedMessagesIntoRunningTurn, onCtrlS } = createCtrlSHarness({
+      editorText: 'later note',
+      queued: [queued],
+    });
+
+    onCtrlS();
+
+    expect(steerQueuedMessagesIntoRunningTurn).toHaveBeenCalledWith(true);
+    expect(host.state.queuedMessages).toEqual([queued, { text: 'later note' }]);
+    expect(setText).toHaveBeenCalledWith('');
+  });
+
+  it.each([
+    ['/skill:review src/app.ts', [{ skillName: 'review', path: undefined, start: 0, args: 'src/app.ts' }]],
+    ['check /skill:review', [{ skillName: 'review', path: undefined, start: 6 }]],
+    ['/skill:review check /skill:review', [{
+      skillName: 'review',
+      path: undefined,
+      start: 0,
+      occurrences: [
+        { commandName: 'skill:review', start: 0 },
+        { commandName: 'skill:review', start: 20 },
+      ],
+    }]],
+  ])('parses skill draft %s before asking the coordinator to steer', (text, activations) => {
+    const { host, setText, steerQueuedMessagesIntoRunningTurn, onCtrlS } = createCtrlSHarness({
+      editorText: text,
+      queued: [],
       skillCommandMap: new Map([['skill:review', 'review']]),
     });
 
     onCtrlS();
 
-    expect(steerMessage).toHaveBeenCalledWith(host.session, [
-      { text: 'plain note', parts: undefined, imageAttachmentIds: undefined },
+    expect(steerQueuedMessagesIntoRunningTurn).toHaveBeenCalledWith(true);
+    expect(host.state.queuedMessages).toEqual([
+      { text, inlineSkillActivations: activations },
     ]);
-    expect(setText).not.toHaveBeenCalled();
-    expect(host.state.queuedMessages).toEqual([]);
+    expect(setText).toHaveBeenCalledWith('');
+  });
+
+  it('preserves selected variant paths for multi-skill drafts', () => {
+    const text = '/skill:review /skill:review';
+    const { host, onCtrlS } = createCtrlSHarness({
+      editorText: text,
+      queued: [],
+      skillCommandMap: new Map([['skill:review', 'review']]),
+      skillVariantPathForCommand: (_commandName, start) => `/work/${start === 0 ? 'A' : 'B'}/review/SKILL.md`,
+    });
+
+    onCtrlS();
+
+    expect(host.state.queuedMessages).toEqual([
+      {
+        text,
+        inlineSkillActivations: [
+          { skillName: 'review', path: '/work/A/review/SKILL.md', start: 0 },
+          { skillName: 'review', path: '/work/B/review/SKILL.md', start: 14 },
+        ],
+      },
+    ]);
+  });
+
+});
+
+describe('EditorKeyboardController survey wiring', () => {
+  it('clears the pending undo-escape sequence only when the survey consumes Escape', () => {
+    const { editor, openUndoSelector, survey } = createHarness();
+    const onPreInput = editor['onPreInput'] as unknown as (data: string) => boolean;
+
+    pressEscape(editor);
+    survey.handlePreInput.mockReturnValueOnce(true);
+    onPreInput('\u001B');
+    pressEscape(editor);
+    expect(openUndoSelector).not.toHaveBeenCalled();
+
+    pressEscape(editor);
+    pressEscape(editor);
+    expect(openUndoSelector).toHaveBeenCalledOnce();
+  });
+
+  it('clears a pending exit when Escape arrives through the survey pre-input hook', () => {
+    const { host, editor } = createHarness();
+    const onPreInput = editor['onPreInput'] as unknown as (data: string) => boolean;
+
+    pressCtrlD(editor);
+    onPreInput('\u001B');
+    pressCtrlD(editor);
+
+    expect(host.stop).not.toHaveBeenCalled();
+  });
+
+  it('routes raw keys to the survey pre-input hook first', () => {
+    const { editor, survey } = createHarness();
+    const onPreInput = editor['onPreInput'] as unknown as (data: string) => boolean;
+
+    survey.handlePreInput.mockReturnValueOnce(true);
+    expect(onPreInput('\u001B[D')).toBe(true);
+    expect(survey.handlePreInput).toHaveBeenCalledWith('\u001B[D');
+
+    survey.handlePreInput.mockReturnValueOnce(false);
+    expect(onPreInput('x')).toBe(false);
+  });
+
+  it('forwards editor text changes to the survey', () => {
+    const { editor, survey } = createHarness();
+    const onChange = editor['onChange'] as unknown as (text: string) => void;
+
+    onChange('1');
+
+    expect(survey.handleEditorChange).toHaveBeenCalledWith('1');
+  });
+
+  it('lets the survey intercept a submit instead of sending it', () => {
+    const { host, editor, survey } = createHarness();
+    const onSubmit = editor['onSubmit'] as unknown as (text: string) => void;
+
+    survey.handleSubmit.mockReturnValueOnce(true);
+    onSubmit('1');
+
+    expect(survey.handleSubmit).toHaveBeenCalledWith('1');
+    expect(host.handleUserInput).not.toHaveBeenCalled();
+  });
+
+  it('sends the submit when the survey passes it through', () => {
+    const { host, editor, survey } = createHarness();
+    const onSubmit = editor['onSubmit'] as unknown as (text: string) => void;
+
+    survey.handleSubmit.mockReturnValueOnce(false);
+    onSubmit('hello');
+
+    expect(host.handleUserInput).toHaveBeenCalledWith('hello');
+  });
+
+  it('displaces the survey when the external editor opens', () => {
+    vi.stubEnv('VISUAL', '');
+    vi.stubEnv('EDITOR', '');
+    try {
+      const { editor, survey } = createHarness();
+      const onOpenExternalEditor = editor['onOpenExternalEditor'] as unknown as () => void;
+
+      onOpenExternalEditor();
+
+      expect(survey.notifyDisplaced).toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
+describe('EditorKeyboardController fullscreen selection copy', () => {
+  async function mountSelectedTranscript(copyOnSelect = false): Promise<{
+    harness: Harness;
+    ui: TuiAltScreen;
+    vt: VirtualTerminal;
+    copySelection: ReturnType<typeof vi.fn<(text: string) => Promise<boolean | string>>>;
+    passedThrough: ReturnType<typeof vi.fn>;
+  }> {
+    const copySelection = vi.fn<(text: string) => Promise<boolean | string>>(async () => true);
+    const vt = new VirtualTerminal(20, 6);
+    const ui = new TuiAltScreen(vt, undefined, undefined, { copyOnSelect, copySelection });
+    ui.addChild(new Text('hello world', 0, 0));
+    ui.start();
+    await vt.waitForRender();
+    const harness = createHarness({ ui });
+    const passedThrough = vi.fn(() => undefined);
+    ui.addInputListener(passedThrough);
+    vt.sendInput('\u001B[<0;1;1M');
+    vt.sendInput('\u001B[<32;5;1M');
+    vt.sendInput('\u001B[<0;5;1m');
+    await vt.waitForRender();
+    return { harness, ui, vt, copySelection, passedThrough };
+  }
+
+  it.each([
+    ['Ctrl+C', '\u0003'],
+    ['Ctrl+C under the kitty protocol', '\u001B[99;5u'],
+    ['Ctrl+C with Caps Lock on', '\u001B[67;69u'],
+    ['Ctrl+Shift+C', '\u001B[99;6u'],
+    ['Cmd+C', '\u001B[99;9u'],
+  ])('copies the selection on %s, clears it, and swallows the key', async (_name, key) => {
+    const { ui, vt, copySelection, passedThrough } = await mountSelectedTranscript();
+    expect(copySelection).not.toHaveBeenCalled();
+
+    vt.sendInput(key);
+
+    expect(copySelection).toHaveBeenCalledWith('hello');
+    expect(ui.hasActiveSelection()).toBe(false);
+    expect(passedThrough).not.toHaveBeenCalled();
+
+    vt.sendInput(key);
+    expect(copySelection).toHaveBeenCalledOnce();
+    expect(passedThrough).toHaveBeenCalledWith(key);
+    ui.stop();
+  });
+
+  it('copies again a highlight that copy on select already copied', async () => {
+    const { ui, vt, copySelection, passedThrough } = await mountSelectedTranscript(true);
+    expect(copySelection).toHaveBeenCalledOnce();
+
+    vt.sendInput('\u0003');
+
+    expect(copySelection).toHaveBeenCalledTimes(2);
+    expect(copySelection).toHaveBeenLastCalledWith('hello');
+    expect(ui.hasActiveSelection()).toBe(false);
+    expect(passedThrough).not.toHaveBeenCalled();
+    ui.stop();
+  });
+
+  it('ignores the key release that follows a copy key', async () => {
+    const { ui, vt, copySelection } = await mountSelectedTranscript();
+
+    vt.sendInput('\u001B[99;9:3u');
+
+    expect(copySelection).not.toHaveBeenCalled();
+    expect(ui.hasActiveSelection()).toBe(true);
+    ui.stop();
+  });
+
+  it('swallows the auto-repeat of a held copy key until it is released', async () => {
+    const { ui, vt, copySelection, passedThrough } = await mountSelectedTranscript();
+
+    vt.sendInput('\u001B[99;5u');
+    vt.sendInput('\u001B[99;5:2u');
+    vt.sendInput('\u001B[99;5:2u');
+
+    expect(copySelection).toHaveBeenCalledOnce();
+    expect(passedThrough).not.toHaveBeenCalled();
+
+    vt.sendInput('\u001B[99;5:3u');
+    vt.sendInput('\u001B[99;5u');
+    vt.sendInput('\u001B[99;5:2u');
+
+    expect(passedThrough.mock.calls).toEqual([['\u001B[99;5:3u'], ['\u001B[99;5u'], ['\u001B[99;5:2u']]);
+    ui.stop();
+  });
+
+  it('breaks a pending Ctrl+C exit so the next Ctrl+C does not quit', async () => {
+    const { harness, ui, vt } = await mountSelectedTranscript();
+    const onCtrlC = harness.editor['onCtrlC'] as unknown as () => void;
+
+    onCtrlC();
+    expect(harness.footerHint).toHaveBeenLastCalledWith(CTRL_C_HINT);
+    vt.sendInput('\u0003');
+    expect(harness.footerHint).toHaveBeenLastCalledWith(null);
+    onCtrlC();
+
+    expect(harness.stop).not.toHaveBeenCalled();
+    ui.stop();
+  });
+
+  it('breaks a pending double-Esc so the next Esc does not open the undo selector', async () => {
+    const { harness, ui, vt } = await mountSelectedTranscript();
+
+    pressEscape(harness.editor);
+    vt.sendInput('\u0003');
+    pressEscape(harness.editor);
+
+    expect(harness.openUndoSelector).not.toHaveBeenCalled();
+    ui.stop();
+  });
+
+  it('leaves Ctrl+C to the app in regular mode', async () => {
+    const vt = new VirtualTerminal(20, 6);
+    const ui = new TuiMainScreen(vt);
+    ui.start();
+    await vt.waitForRender();
+    createHarness({ ui });
+    const passedThrough = vi.fn(() => undefined);
+    ui.addInputListener(passedThrough);
+
+    vt.sendInput('\u0003');
+
+    expect(passedThrough).toHaveBeenCalledWith('\u0003');
+    ui.stop();
+  });
+
+  it('stops copying once the controller is disposed', async () => {
+    const { harness, ui, vt, copySelection } = await mountSelectedTranscript();
+
+    harness.controller.dispose();
+    vt.sendInput('\u0003');
+
+    expect(copySelection).not.toHaveBeenCalled();
+    ui.stop();
   });
 });

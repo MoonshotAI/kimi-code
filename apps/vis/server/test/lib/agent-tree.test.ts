@@ -6,6 +6,7 @@ function info(overrides: Partial<AgentInfo> & Pick<AgentInfo, 'agentId'>): Agent
   return {
     type: 'sub',
     parentAgentId: null,
+    profileName: null,
     homedir: `/tmp/${overrides.agentId}`,
     wireExists: true,
     wireRecordCount: 0,
@@ -41,7 +42,7 @@ describe('agent-tree', () => {
       info({ agentId: 'agent-0', type: 'sub', parentAgentId: 'does-not-exist' }),
     ]);
     expect(tree).toHaveLength(2);
-    const ids = tree.map((n) => n.agentId).sort();
+    const ids = tree.map((n) => n.agentId).toSorted();
     expect(ids).toEqual(['agent-0', 'main']);
     // orphan is still a root, no children attached anywhere
     const orphan = tree.find((n) => n.agentId === 'agent-0')!;
@@ -60,7 +61,7 @@ describe('agent-tree', () => {
   it('orders agents by numeric suffix, main first (agent-2 before agent-10)', () => {
     const mk = (id: string): AgentInfo => ({
       agentId: id, type: id === 'main' ? 'main' : 'sub', parentAgentId: id === 'main' ? null : 'main',
-      homedir: '', wireExists: true, wireRecordCount: 0, wireProtocolVersion: null, swarmItem: null,
+      profileName: null, homedir: '', wireExists: true, wireRecordCount: 0, wireProtocolVersion: null, swarmItem: null,
     });
     const tree = buildAgentTree([mk('main'), mk('agent-10'), mk('agent-2')]);
     const order = [tree[0]!.agentId, ...tree[0]!.children.map((c) => c.agentId)];
@@ -82,9 +83,9 @@ describe('agent-tree', () => {
     // non-agent-N id by localeCompare. Sorting any permutation must yield the
     // same order; the OLD comparator was intransitive and order-dependent here.
     const forward = ['agent-2', 'agent-1a', 'agent-10'];
-    const reverse = [...forward].reverse();
+    const reverse = [...forward].toReversed();
     const expected = ['agent-2', 'agent-10', 'agent-1a'];
-    expect([...forward].sort(compareAgentIds)).toEqual(expected);
-    expect([...reverse].sort(compareAgentIds)).toEqual(expected);
+    expect([...forward].toSorted(compareAgentIds)).toEqual(expected);
+    expect([...reverse].toSorted(compareAgentIds)).toEqual(expected);
   });
 });

@@ -1,11 +1,44 @@
-import chalk from 'chalk';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-import { FooterComponent } from '#/tui/components/chrome/footer';
+import chalk from 'chalk';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { buildWeightedTips, FooterComponent } from '#/tui/components/chrome/footer';
+import { ALL_TIPS, TRANSCRIPT_GROUPING_TIP } from '#/tui/constant/tips';
+import { BRAILLE_SPINNER_INTERVAL_MS } from '#/tui/constant/rendering';
 import { setRainbowDance, type RainbowDanceController } from '#/tui/easter-eggs/dance';
 import { currentTheme, darkColors, lightColors } from '#/tui/theme';
 import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
 import type { AppState } from '#/tui/types';
+
+const gitStatusMocks = vi.hoisted(() => ({
+  createGitStatusCache: vi.fn(),
+}));
+
+vi.mock('#/utils/git/git-status', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('#/utils/git/git-status')>();
+  return { ...actual, createGitStatusCache: gitStatusMocks.createGitStatusCache };
+});
+
+beforeEach(() => {
+  gitStatusMocks.createGitStatusCache.mockClear();
+  gitStatusMocks.createGitStatusCache.mockImplementation(() => ({
+    getStatus: vi.fn(() => null),
+    refresh: vi.fn(),
+    dispose: vi.fn(),
+  }));
+});
+
+const gitSource = {
+  status: async () => null,
+  pullRequest: async () => null,
+};
+
+function plainText(text: string): string {
+  return text.replaceAll(/\[[0-9;]*m/g, '');
+}
 
 const TRUECOLOR_PATTERN = /\[38;2;(\d+);(\d+);(\d+)m/g;
 
@@ -52,16 +85,91 @@ const appState: AppState = {
   planMode: false,
   inputMode: 'prompt',
   swarmMode: false,
+  towerMode: false,
   theme: 'dark',
   editorCommand: null,
   notifications: { enabled: true, condition: 'unfocused' },
   upgrade: { autoInstall: true },
+  transcript: { toolCallDensity: 'compact', thinking: 'grouped' },
   availableModels: {},
   availableProviders: {},
   mcpServersSummary: null,
 };
 
 describe('FooterComponent', () => {
+  it('asks the git cache to refresh and disposes it with the footer', () => {
+    const refresh = vi.fn();
+    const dispose = vi.fn();
+    gitStatusMocks.createGitStatusCache.mockImplementation(() => ({
+      getStatus: () => null,
+      refresh,
+      dispose,
+    }));
+    const footer = new FooterComponent(appState);
+    footer.refreshGitStatus();
+    expect(gitStatusMocks.createGitStatusCache).not.toHaveBeenCalled();
+    footer.setGitBinding((state) => ({ key: state.sessionId, source: gitSource }));
+    footer.refreshGitStatus();
+    expect(refresh).toHaveBeenCalledTimes(1);
+    footer.dispose();
+    expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the git cache through a disconnect and refreshes it once the environment is ready again', () => {
+    const refresh = vi.fn();
+    const dispose = vi.fn();
+    gitStatusMocks.createGitStatusCache.mockImplementation(() => ({ getStatus: () => null, refresh, dispose }));
+    const remote = (status: 'ready' | 'disconnected'): AppState => ({
+      ...appState,
+      environment: { environmentId: 'dev-box', type: 'ssh', status },
+    });
+    const footer = new FooterComponent(remote('ready'));
+    footer.setGitBinding((state) => ({ key: state.sessionId, source: gitSource }));
+
+    footer.setState(remote('disconnected'));
+    expect(dispose).not.toHaveBeenCalled();
+    expect(refresh).not.toHaveBeenCalled();
+
+    footer.setState(remote('ready'));
+    expect(refresh).toHaveBeenCalledTimes(1);
+    footer.setState(remote('ready'));
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(gitStatusMocks.createGitStatusCache).toHaveBeenCalledTimes(1);
+    footer.dispose();
+  });
+
+  it('keeps the git cache for the same binding key and replaces it on a new one', () => {
+    const dispose = vi.fn();
+    gitStatusMocks.createGitStatusCache.mockImplementation(() => ({
+      getStatus: () => ({
+        branch: 'main',
+        dirty: false,
+        ahead: 0,
+        behind: 0,
+        diffAdded: 0,
+        diffDeleted: 0,
+        pullRequest: null,
+      }),
+      refresh: vi.fn(),
+      dispose,
+    }));
+    const footer = new FooterComponent(appState);
+    footer.setGitBinding((state) => (state.sessionId === 'none' ? null : { key: state.sessionId, source: gitSource }));
+    expect(plainText(footer.render(160)[0] ?? '')).toContain('main');
+
+    footer.setState({ ...appState, model: 'other' });
+    expect(gitStatusMocks.createGitStatusCache).toHaveBeenCalledTimes(1);
+
+    footer.setState({ ...appState, sessionId: 'ses-2' });
+    expect(gitStatusMocks.createGitStatusCache).toHaveBeenCalledTimes(2);
+    expect(dispose).toHaveBeenCalledTimes(1);
+
+    footer.setState({ ...appState, sessionId: 'none' });
+    expect(dispose).toHaveBeenCalledTimes(2);
+    expect(plainText(footer.render(160)[0] ?? '')).not.toContain('main');
+    footer.dispose();
+  });
+
   const previousChalkLevel = chalk.level;
 
   beforeEach(() => {
@@ -144,6 +252,14 @@ describe('FooterComponent', () => {
     expect(rendered).toContain('thinking');
     expect(rendered).not.toContain('thinking:high');
   });
+
+  it('shows the tower mode chip only when tower mode is on', () => {
+    const on = new FooterComponent({ ...appState, towerMode: true });
+    expect(on.render(120).join('\n')).toContain('tower');
+
+    const off = new FooterComponent(appState);
+    expect(off.render(120).join('\n')).not.toContain('tower');
+  });
 });
 
 describe('FooterComponent overrides', () => {
@@ -221,5 +337,221 @@ describe('FooterComponent line-2 hints', () => {
     footer.setWarningHint(null);
 
     expect(stripAnsi(footer.render(120)[1] ?? '')).not.toContain('Goal objective is too long');
+  });
+});
+
+describe('FooterComponent ctrl+o hint', () => {
+  function plain(text: string): string {
+    return text.replaceAll(/\[[0-9;]*m/g, '');
+  }
+  function line1(footer: FooterComponent, width = 160): string {
+    return plain(footer.render(width)[0] ?? '');
+  }
+
+  it('shows no hint while there is no tool output to toggle', () => {
+    const footer = new FooterComponent(appState);
+    footer.setExpandHintProvider(() => null);
+    expect(line1(footer)).not.toContain('ctrl+o');
+    footer.dispose();
+  });
+
+  it('offers expand while collapsed output exists and collapse once it is shown', () => {
+    const footer = new FooterComponent(appState);
+    let hint: 'expand' | 'collapse' | null = 'expand';
+    footer.setExpandHintProvider(() => hint);
+    expect(line1(footer)).toContain('ctrl+o expand');
+    hint = 'collapse';
+    expect(line1(footer)).toContain('ctrl+o collapse');
+    footer.dispose();
+  });
+
+  it('keeps the hint and drops the rotating tip when only one of them fits', () => {
+    // Same left-hand slots without the tips: measures the space the hint competes for.
+    const noTips = new FooterComponent({
+      ...appState,
+      statusLine: { items: ['mode', 'model', 'cwd'], command: null },
+    });
+    const leftWidth = plain(noTips.render(200)[0] ?? '').trimEnd().length;
+    noTips.dispose();
+
+    const footer = new FooterComponent(appState);
+    footer.setExpandHintProvider(() => 'expand');
+    const narrow = line1(footer, leftWidth + 2 + 'ctrl+o expand'.length);
+    expect(narrow.endsWith('ctrl+o expand')).toBe(true);
+    expect(narrow).not.toContain(' | ');
+    footer.dispose();
+  });
+});
+
+describe('FooterComponent ctrl+o hint with a status_line command', () => {
+  it('moves the hint to line 2 when a command owns line 1', async () => {
+    const footer = new FooterComponent({
+      ...appState,
+      statusLine: { items: null, command: 'printf "my-custom-status"' },
+    });
+    footer.setExpandHintProvider(() => 'expand');
+    footer.render(120);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    const [line1, line2] = footer.render(120).map((line) => line.replaceAll(/\[[0-9;]*m/g, ''));
+    expect(line1).toContain('my-custom-status');
+    expect(line1).not.toContain('ctrl+o');
+    expect(line2).toContain('ctrl+o expand');
+    expect(line2).toContain('context:');
+    footer.dispose();
+  });
+});
+
+describe('transcript grouping tip', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('appears only when the running fullscreen UI has settings that create groups', () => {
+    const rotation = buildWeightedTips([...ALL_TIPS, TRANSCRIPT_GROUPING_TIP]);
+    const index = rotation.findIndex((tip) => tip.text === TRANSCRIPT_GROUPING_TIP.text);
+    expect(index).toBeGreaterThanOrEqual(0);
+    vi.setSystemTime(index * 10_000);
+
+    const fullscreenFooter = (state: AppState) => new FooterComponent(state, undefined, true);
+    const fullscreenState = { ...appState, tuiMode: 'fullscreen' as const };
+    const grouping = fullscreenFooter(fullscreenState);
+    expect(grouping.render(240)[0]).toContain(TRANSCRIPT_GROUPING_TIP.text);
+    grouping.dispose();
+
+    const toolGroups = fullscreenFooter({
+      ...fullscreenState,
+      transcript: { toolCallDensity: 'detailed', thinking: 'ungrouped' },
+    });
+    expect(toolGroups.render(240)[0]).toContain(TRANSCRIPT_GROUPING_TIP.text);
+    toolGroups.dispose();
+
+    const noGroups = fullscreenFooter({
+      ...fullscreenState,
+      transcript: { toolCallDensity: 'ungrouped', thinking: 'ungrouped' },
+    });
+    expect(noGroups.render(240)[0]).not.toContain(TRANSCRIPT_GROUPING_TIP.text);
+    noGroups.dispose();
+
+    const thoughtGroups = fullscreenFooter({
+      ...fullscreenState,
+      transcript: { toolCallDensity: 'ungrouped', thinking: 'grouped' },
+    });
+    expect(thoughtGroups.render(240)[0]).toContain(TRANSCRIPT_GROUPING_TIP.text);
+    thoughtGroups.dispose();
+
+    const regularMode = new FooterComponent({ ...appState, tuiMode: 'regular' });
+    expect(regularMode.render(240)[0]).not.toContain(TRANSCRIPT_GROUPING_TIP.text);
+    regularMode.dispose();
+
+    const switchedToFullscreen = new FooterComponent({ ...appState, tuiMode: 'regular' });
+    switchedToFullscreen.setState({ ...appState, tuiMode: 'fullscreen' });
+    expect(switchedToFullscreen.render(240)[0]).not.toContain(TRANSCRIPT_GROUPING_TIP.text);
+    switchedToFullscreen.dispose();
+
+    const switchedToRegular = fullscreenFooter(fullscreenState);
+    switchedToRegular.setState({ ...fullscreenState, tuiMode: 'regular' });
+    expect(switchedToRegular.render(240)[0]).toContain(TRANSCRIPT_GROUPING_TIP.text);
+    switchedToRegular.dispose();
+  });
+});
+
+describe('FooterComponent ctrl+o hint beside an inline tips slot', () => {
+  function plain(text: string): string {
+    return text.replaceAll(/\[[0-9;]*m/g, '');
+  }
+
+  it('drops the inline tip when the hint would not fit beside it', () => {
+    const noTips = new FooterComponent({
+      ...appState,
+      statusLine: { items: ['mode', 'model', 'cwd'], command: null },
+    });
+    const leftWidth = plain(noTips.render(200)[0] ?? '').trimEnd().length;
+    noTips.dispose();
+
+    const footer = new FooterComponent({
+      ...appState,
+      statusLine: { items: ['mode', 'tips', 'model', 'cwd'], command: null },
+    });
+    footer.setExpandHintProvider(() => 'expand');
+    const width = leftWidth + 2 + 'ctrl+o expand'.length;
+    const line1 = plain(footer.render(width)[0] ?? '');
+    expect(line1.endsWith('ctrl+o expand')).toBe(true);
+    expect(line1.length).toBeLessThanOrEqual(width);
+    footer.dispose();
+  });
+});
+
+describe('FooterComponent environment slot', () => {
+  const ERROR = '38;2;232;84;84'; // colors.error #E85454
+  let repoDir: string;
+  const previousChalkLevel = chalk.level;
+
+  beforeEach(() => {
+    chalk.level = 3;
+  });
+
+  afterEach(() => {
+    chalk.level = previousChalkLevel;
+    vi.useRealTimers();
+  });
+
+  function plain(text: string): string {
+    return text.replaceAll(/\[[0-9;]*m/g, '');
+  }
+
+  function line1(footer: FooterComponent, width = 160): string {
+    return plain(footer.render(width)[0] ?? '');
+  }
+
+  beforeEach(() => {
+    repoDir = mkdtempSync(join(tmpdir(), 'kimi-footer-environment-'));
+  });
+
+  afterEach(() => {
+    rmSync(repoDir, { recursive: true, force: true });
+  });
+
+  function footerWith(environment: AppState['environment']): FooterComponent {
+    return new FooterComponent({ ...appState, workDir: repoDir, environment });
+  }
+
+  it('renders the remote identifier ahead of the cwd without a type prefix', () => {
+    const ssh = footerWith({ environmentId: 'dev-box', type: 'ssh', status: 'ready' });
+    const sshRendered = line1(ssh);
+    expect(sshRendered).toContain('dev-box');
+    expect(sshRendered.indexOf('dev-box')).toBeLessThan(sshRendered.indexOf('kimi-footer-environment'));
+    ssh.dispose();
+
+    const command = footerWith({ environmentId: 'kimi-dev', type: 'command', status: 'ready' });
+    const commandRendered = line1(command);
+    expect(commandRendered).toContain('kimi-dev');
+    expect(commandRendered).not.toContain('command:kimi-dev');
+    expect(commandRendered).not.toContain('command:');
+    command.dispose();
+  });
+
+  it('renders a disconnected remote identifier in the error color', () => {
+    const footer = footerWith({ environmentId: 'dev-box', type: 'ssh', status: 'disconnected' });
+    const rendered = footer.render(160)[0] ?? '';
+    expect(rendered).toContain('dev-box');
+    expect(rendered).toContain(ERROR);
+    footer.dispose();
+  });
+
+  it('leaves no spinner timer running after dispose', () => {
+    vi.useFakeTimers();
+    const onRefresh = vi.fn();
+    const footer = new FooterComponent(
+      {
+        ...appState,
+        workDir: repoDir,
+        environment: { environmentId: 'dev-box', type: 'ssh', status: 'connecting' },
+      },
+      onRefresh,
+    );
+    footer.dispose();
+    vi.advanceTimersByTime(BRAILLE_SPINNER_INTERVAL_MS * 5);
+    expect(onRefresh).not.toHaveBeenCalled();
   });
 });

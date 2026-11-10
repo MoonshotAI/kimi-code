@@ -1,13 +1,5 @@
-/**
- *   GET  /v1/plugins
- *   GET  /v1/plugins/marketplace
- *   POST /v1/plugins
- *   POST /v1/plugins/{plugin_id}:{enable,disable,remove}
- */
-
 import { z } from 'zod';
 
-/** GitHub provenance for github-sourced plugins (domain PluginGithubMetadata). */
 export const pluginGithubMetadataSchema = z.object({
   owner: z.string(),
   repo: z.string(),
@@ -21,6 +13,9 @@ export const pluginGithubMetadataSchema = z.object({
 export const pluginSummarySchema = z.object({
   id: z.string(),
   displayName: z.string(),
+  description: z.string().optional(),
+  shortDescription: z.string().optional(),
+  longDescription: z.string().optional(),
   version: z.string().optional(),
   enabled: z.boolean(),
   state: z.enum(['ok', 'error']),
@@ -31,46 +26,134 @@ export const pluginSummarySchema = z.object({
   commandCount: z.number(),
   hasErrors: z.boolean(),
   source: z.enum(['local-path', 'zip-url', 'github']),
+  origin: z.enum(['marketplace', 'custom', 'unknown']),
+  catalogId: z.string().optional(),
+  installedAt: z.string(),
   originalSource: z.string().optional(),
   github: pluginGithubMetadataSchema.optional(),
 });
 export type PluginSummaryWire = z.infer<typeof pluginSummarySchema>;
+
+export const pluginMcpServerInfoSchema = z.object({
+  name: z.string(),
+  displayName: z.string().optional(),
+  description: z.string().optional(),
+  iconUrl: z.string().optional(),
+  runtimeName: z.string(),
+  enabled: z.boolean(),
+  transport: z.enum(['stdio', 'http', 'sse']),
+  command: z.string().optional(),
+  args: z.array(z.string()).optional(),
+  cwd: z.string().optional(),
+  url: z.string().optional(),
+  envKeys: z.array(z.string()).optional(),
+  headerKeys: z.array(z.string()).optional(),
+});
+
+export const pluginSkillInfoSchema = z.object({
+  name: z.string(),
+  displayName: z.string().optional(),
+  description: z.string().optional(),
+});
+
+export const pluginCapabilitiesSchema = z.object({
+  skills: z.array(pluginSkillInfoSchema),
+  mcpServers: z.array(pluginMcpServerInfoSchema),
+});
+
+export const pluginInfoSchema = pluginSummarySchema.extend({
+  root: z.string(),
+  updatedAt: z.string().optional(),
+  manifestKind: z.enum(['kimi-plugin-root', 'kimi-plugin-dir']).optional(),
+  manifestPath: z.string().optional(),
+  skills: z.array(pluginSkillInfoSchema),
+  mcpServers: z.array(pluginMcpServerInfoSchema),
+  shadowedManifestPath: z.string().optional(),
+  diagnostics: z.array(
+    z.object({ severity: z.enum(['error', 'warn', 'info']), message: z.string() }),
+  ),
+});
+
+export const pluginInfoQuerySchema = z.object({
+  locale: z.string().min(1).optional(),
+});
+
+const pluginArchiveSha256Schema = z.string().regex(/^[A-Fa-f0-9]{64}$/).optional();
+
+export const previewPluginRequestSchema = z
+  .object({
+    marketplaceId: z.string().min(1),
+    expectedVersion: z.string().min(1).optional(),
+    expectedSha256: pluginArchiveSha256Schema,
+    locale: z.string().min(1).optional(),
+  })
+  .strict();
 
 export const listPluginsResponseSchema = z.object({
   plugins: z.array(pluginSummarySchema),
 });
 export type ListPluginsResponse = z.infer<typeof listPluginsResponseSchema>;
 
-export const installPluginRequestSchema = z.object({
-  /** local path, https zip URL, or GitHub repo URL — same semantics as the CLI. */
-  source: z.string().min(1),
-});
+export const installPluginRequestSchema = z.union([
+  z.object({ source: z.string().min(1) }).strict(),
+  z
+    .object({
+      marketplaceId: z.string().min(1),
+      expectedVersion: z.string().min(1).optional(),
+      expectedSha256: pluginArchiveSha256Schema,
+    })
+    .strict(),
+]);
 export type InstallPluginRequest = z.infer<typeof installPluginRequestSchema>;
+
+export const pluginMarketplaceLocalizedTextSchema = z.object({
+  displayName: z.string().optional(),
+  cliDescription: z.string().optional(),
+  longDescription: z.string().optional(),
+  shortDescription: z.string().optional(),
+});
+
+export const pluginMarketplaceLocaleSchema = z.record(
+  z.string(),
+  z.union([z.string(), pluginMarketplaceLocalizedTextSchema]).optional(),
+);
+
+export const pluginMarketplaceDistributionSchema = z.object({
+  category: z.enum(['official', 'third_party']),
+  region: z.string().optional(),
+  defaultInstall: z.boolean().optional(),
+  weight: z.number().optional(),
+  userLevel: z.unknown().optional(),
+});
 
 export const pluginMarketplaceEntrySchema = z.object({
   id: z.string(),
+  classification: z.enum(['official', 'third_party']),
   tier: z.enum(['official', 'curated', 'third-party']),
   displayName: z.string(),
   description: z.string().optional(),
+  shortDescription: z.string().optional(),
+  longDescription: z.string().optional(),
   homepage: z.string().optional(),
   keywords: z.array(z.string()).optional(),
-  /** Catalog-declared version; absent for entries that track a moving source. */
   version: z.string().optional(),
   source: z.string(),
-  /** Present when the plugin is installed locally (detected on demand). */
+  iconUrl: z.string().optional(),
+  sha256sum: z.string().optional(),
+  filename: z.string().optional(),
+  cliDescription: z.string().optional(),
+  locale: pluginMarketplaceLocaleSchema.optional(),
+  defaultLocale: z.string().optional(),
+  platforms: z.array(z.enum(['darwin', 'win32', 'linux', 'cloud'])).optional(),
+  distribution: pluginMarketplaceDistributionSchema.optional(),
+  billing: z.unknown().optional(),
   installed: z
     .object({
       version: z.string().optional(),
       enabled: z.boolean(),
     })
     .optional(),
-  /** True only when both versions are valid semver and catalog > installed. */
   updateAvailable: z.boolean().optional(),
-  /**
-   * Set when the entry is a built-in capability's wiring plugin — install it
-   * through `/capabilities/{capabilityId}:install` (binary runtime + wiring);
-   * a plain plugin install sets up the wiring layer only.
-   */
   capabilityId: z.string().optional(),
 });
 export type PluginMarketplaceEntryWire = z.infer<typeof pluginMarketplaceEntrySchema>;

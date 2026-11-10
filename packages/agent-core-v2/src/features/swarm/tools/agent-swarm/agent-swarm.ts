@@ -1,13 +1,3 @@
-/**
- * `swarm` domain — `IAgentSwarmTool` contract (the `AgentSwarm` tool).
- *
- * Public contract of the `AgentSwarm` collaboration tool: the input zod
- * schema the model-facing parameters are derived from, the tool-owned
- * constants the schema is built around (prompt template placeholder, maximum
- * subagent count), and the `IAgentSwarmTool` DI decorator used to resolve the
- * implementation through the container. Bound at Agent scope.
- */
-
 import { z } from 'zod';
 
 import { createDecorator } from '#/_base/di/instantiation';
@@ -46,6 +36,12 @@ export const AgentSwarmToolInputSchema = z
       .describe(
         `Values used to fill ${PROMPT_TEMPLATE_PLACEHOLDER}. Each item launches one new subagent.`,
       ),
+    fork: z
+      .boolean()
+      .optional()
+      .describe(
+        'Start every item-spawned subagent with a snapshot of your completed conversation history, inheriting your current agent type, model, and tool set.',
+      ),
     resume_agent_ids: z
       .record(z.string().trim().min(1), z.string().trim().min(1))
       .optional()
@@ -56,13 +52,12 @@ export const AgentSwarmToolInputSchema = z
       .string()
       .optional()
       .describe(
-        'Which model to run the item-spawned subagents on: one of the aliases listed under "Available models" in this tool description, or "primary" for the main model you are running on (for hard, quality-sensitive tasks). When omitted, the configured default model is used. Resumed subagents always keep their own model.',
+        'Which model to run the item-spawned subagents on: one of the aliases listed under "Available models" in this tool description. When omitted, the configured default model is used. Resumed subagents always keep their own model.',
       ),
   })
   .strict();
 
 export type AgentSwarmToolInput = z.infer<typeof AgentSwarmToolInputSchema>;
-
 
 export interface IAgentSwarmTool extends AgentTool<AgentSwarmToolInput> { readonly _serviceBrand: undefined }
 export const IAgentSwarmTool = createDecorator<IAgentSwarmTool>('agentSwarmTool');

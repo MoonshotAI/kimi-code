@@ -1,9 +1,12 @@
 import type { KimiConfig } from '@moonshot-ai/kimi-code-sdk';
+import { TuiAltScreen } from '@moonshot-ai/pi-tui';
 
 import { currentTheme, lightColors } from '#/tui/theme';
-import { loadTuiConfig, type TuiConfig } from '../config';
-import { setMarkdownRenderLatex } from '../utils/markdown-options';
+import { DEFAULT_MARKDOWN_CONFIG, loadTuiConfig, resolveTuiMode, type TuiConfig } from '../config';
+import { TUI_MODE_RESTART_NOTICE } from '../constant/kimi-tui';
+import { setMarkdownMermaidMode, setMarkdownRenderLatex } from '../utils/markdown-options';
 import type { SlashCommandHost } from './dispatch';
+import { applyTranscriptPresentation } from './config';
 import { setExperimentalFeatures } from './experimental-flags';
 
 export async function handleReloadTuiCommand(host: SlashCommandHost): Promise<void> {
@@ -21,14 +24,16 @@ export async function handleReloadCommand(host: SlashCommandHost): Promise<void>
   const session = host.session;
 
   if (session !== undefined) {
-    await session.reloadSession({ forcePluginSessionStartReminder: true });
-    await host.reloadCurrentSessionView(session, 'Session reloaded.');
+    const reloadedSession = await host.harness.reloadSession({
+      id: session.id,
+      forcePluginSessionStartReminder: true,
+    });
+    await host.reloadCurrentSessionView(reloadedSession, 'Session reloaded.');
   }
 
   const config = await host.harness.getConfig({ reload: true });
   setExperimentalFeatures(await host.harness.getExperimentalFeatures());
-  const sessionlessV2 = session === undefined && host.engineV2;
-  if (sessionlessV2) {
+  if (session === undefined) {
     // Session-less v2: rebuild the workspace-level dynamic commands too, so
     // skill/plugin changes apply before the first session exists.
     await host.refreshSkillCommands();
@@ -36,17 +41,18 @@ export async function handleReloadCommand(host: SlashCommandHost): Promise<void>
   }
   host.refreshSlashCommandAutocomplete();
   applyRuntimeConfig(host, config);
+  host.setAppState({
+    disableFeedbackSurvey: config.disableFeedbackSurvey ?? tuiConfig.disableFeedbackSurvey,
+  });
   await applyReloadedTuiConfig(host, tuiConfig);
 
   if (session === undefined) {
     // Still session-less on the v2 engine: refresh the lazy defaults too, so
     // defaults edited externally (config.toml, a newly added default model)
     // reach the first lazy-created session instead of staying stale.
-    if (sessionlessV2) {
-      await host.hydrateLazyConfigDefaults();
-    }
+    await host.hydrateLazyConfigDefaults();
     host.showStatus(
-      'Runtime and TUI config reloaded; no active session.',
+      'Environment and TUI config reloaded; no active session.',
       'success',
     );
   }
@@ -60,6 +66,7 @@ export async function applyReloadedTuiConfig(
   // transcript components, which rebuild their Markdown children and copy the
   // options at construction — so the new value must be live by then.
   setMarkdownRenderLatex(config.renderLatex ?? true);
+  setMarkdownMermaidMode(config.markdown?.mermaid ?? DEFAULT_MARKDOWN_CONFIG.mermaid);
   const resolved = config.theme === 'auto'
     ? (currentTheme.palette === lightColors ? 'light' : 'dark')
     : undefined;
@@ -67,14 +74,26 @@ export async function applyReloadedTuiConfig(
   host.refreshTerminalThemeTracking();
   host.setAppState({
     editorCommand: config.editorCommand,
+    tuiMode: config.tuiMode,
     disablePasteBurst: config.disablePasteBurst,
+    copyOnSelect: config.copyOnSelect,
     renderLatex: config.renderLatex,
     cacheExpiryHint: config.cacheExpiryHint,
+    autoSessionTitle: config.autoSessionTitle,
     notifications: config.notifications,
     upgrade: config.upgrade,
     statusLine: config.statusLine,
+    markdown: config.markdown,
+    transcript: config.transcript,
   });
+  applyTranscriptPresentation(host);
   host.state.editor.setDisablePasteBurst(config.disablePasteBurst);
+  if (host.state.ui instanceof TuiAltScreen) {
+    host.state.ui.setCopyOnSelect(config.copyOnSelect !== false);
+  }
+  if (resolveTuiMode(config.tuiMode).mode !== host.state.ui.mode) {
+    host.showNotice(TUI_MODE_RESTART_NOTICE);
+  }
 }
 
 function applyRuntimeConfig(host: SlashCommandHost, config: KimiConfig): void {

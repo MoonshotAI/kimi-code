@@ -1,15 +1,5 @@
-/**
- * `task` domain — Agent-scope task manager contract.
- *
- * Defines the Agent-scoped task manager surface used for both foreground and
- * detached work. Task execution adapters implement the generic `AgentTask`
- * contract; this service owns registration,
- * output retention, persistence, detach/stop/wait, terminal notifications,
- * and session-close task teardown with a `keepAliveOnExit` opt-out.
- * Bound at Agent scope.
- */
-
 import { createDecorator } from '#/_base/di/instantiation';
+import type { Event } from '#/_base/event';
 import type { ITaskHandle } from '#/app/task/task';
 import type {
   AgentTask,
@@ -40,8 +30,20 @@ export interface AgentTaskOutputSnapshot {
   readonly preview: string;
 }
 
+export interface AgentTaskOutputChunk {
+  readonly taskId: string;
+  readonly offset: number;
+  readonly text: string;
+}
+
+export interface AgentTaskOutputTail {
+  readonly offset: number;
+  readonly data: Uint8Array;
+}
+
 export interface RegisterAgentTaskOptions {
   readonly detached?: boolean;
+  readonly detachable?: boolean;
   readonly timeoutMs?: number;
   readonly detachTimeoutMs?: number;
   readonly autoBackgroundOnTimeout?: boolean;
@@ -68,6 +70,7 @@ export interface IAgentTaskEntry {
 }
 
 export interface AgentTaskNotificationContext {
+  readonly agentId: string;
   readonly notificationType: string;
   readonly title: string;
   readonly body: string;
@@ -76,12 +79,21 @@ export interface AgentTaskNotificationContext {
   readonly sourceId: string;
 }
 
+export interface AgentTaskWaitDelivery {
+  readonly taskId: string;
+  readonly status: AgentTaskStatus;
+}
+
 export interface IAgentTaskService {
   readonly _serviceBrand: undefined;
+
+  readonly onDidAppendOutput: Event<AgentTaskOutputChunk>;
+  readonly onDidChangeTask: Event<AgentTaskInfo>;
 
   track(handle: ITaskHandle, options: AgentTaskTrackOptions): IAgentTaskEntry;
   registerTask(task: AgentTask, options?: RegisterAgentTaskOptions): string;
   getTask(taskId: string): AgentTaskInfo | undefined;
+  refresh(taskId: string): void;
   list(activeOnly?: boolean, limit?: number): readonly AgentTaskInfo[];
   persistOutput(taskId: string): void;
   getOutputSnapshot(
@@ -89,7 +101,10 @@ export interface IAgentTaskService {
     maxPreviewBytes: number,
   ): Promise<AgentTaskOutputSnapshot>;
   readOutput(taskId: string, tail?: number): Promise<string>;
+  readOutputTail(taskId: string, maxBytes: number): Promise<AgentTaskOutputTail>;
   suppressTerminalNotification(taskId: string): Promise<void>;
+  suppressAllTerminalNotifications(): Promise<void>;
+  markTasksDeliveredViaWait(tasks: readonly AgentTaskWaitDelivery[]): void;
   detach(taskId: string): AgentTaskInfo | undefined;
   stop(taskId: string, reason?: string): Promise<AgentTaskInfo | undefined>;
   stopByUser(taskId: string): Promise<AgentTaskInfo | undefined>;

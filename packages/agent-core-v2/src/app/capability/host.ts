@@ -1,15 +1,3 @@
-/**
- * Shared host helpers for capability entries: process execution with
- * captured output, and streaming downloads with progress reporting.
- *
- * `runCommand` never throws for an expected failure — a spawn failure or a
- * non-zero exit resolves into the result (`code: -1` for spawn failures),
- * while a timeout kills the process and rejects. `downloadToFile` bounds
- * both the response-header wait (fetch abort signal) and stream inactivity
- * (a watchdog reset per chunk, 30s by default), so a stalled CDN connection
- * fails the background install instead of wedging it.
- */
-
 import { createWriteStream } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';

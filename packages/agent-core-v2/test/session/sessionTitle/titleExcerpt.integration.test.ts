@@ -1,12 +1,3 @@
-/**
- * Scenario: the title excerpts read through the REAL context memory — loop
- * events fold into assistant messages, tool calls and thinking stay out of
- * the excerpt, and the turn's final text wins. Wiring: harness agent (real
- * contextMemory + prompt queue) with the real AgentTitlePromptSourceService.
- * Run: pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/session/sessionTitle/titleExcerpt.integration.test.ts
- */
-
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
@@ -30,7 +21,6 @@ describe('title excerpts over the real context memory', () => {
     context.append({
       role: 'user',
       content: [{ type: 'text', text: '帮我部署这个服务' }],
-      toolCalls: [],
       origin: { kind: 'user' },
     });
     context.appendLoopEvent({ type: 'step.begin', uuid: 's1' });
@@ -71,9 +61,7 @@ describe('title excerpts over the real context memory', () => {
       assistant: '部署完成，服务在 8080 端口',
     });
     await expect(source.digestExcerpt()).resolves.toEqual({
-      firstUser: '帮我部署这个服务',
-      lastUser: undefined,
-      assistant: '部署完成，服务在 8080 端口',
+      turns: [{ user: '帮我部署这个服务', assistant: '部署完成，服务在 8080 端口' }],
     });
   });
 
@@ -82,7 +70,6 @@ describe('title excerpts over the real context memory', () => {
     context.append({
       role: 'user',
       content: [{ type: 'text', text: '刚发的问题' }],
-      toolCalls: [],
       origin: { kind: 'user' },
     });
 
@@ -101,7 +88,6 @@ describe('title excerpts over the real context memory', () => {
         { type: 'text', text: 'User activated the skill "security". Follow the loaded skill instructions.' },
         { type: 'text', text: '检查这次改动的正确性' },
       ],
-      toolCalls: [],
       origin: {
         kind: 'user',
         skillActivations: [

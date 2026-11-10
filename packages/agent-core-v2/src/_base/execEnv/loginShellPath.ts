@@ -1,26 +1,3 @@
-/**
- * `_base/execEnv` — login-shell PATH probe.
- *
- * Enriches `process.env.PATH` with entries from the user's login shell. When
- * kimi-code is launched from a context that skipped the user's shell profile
- * (GUI launchers, non-login parent shells), `process.env.PATH` misses entries
- * like `/opt/homebrew/bin`, so commands spawned by the Bash tool can't find
- * tools the user has in their interactive shell (e.g. `gh`). We run the user's
- * login shell once (`$SHELL -l -c /usr/bin/env`), extract its PATH, and append
- * the entries the current PATH lacks. Existing entries keep their order and
- * priority; failures (no resolvable shell, hung or broken profile) silently
- * leave PATH untouched.
- *
- * launchd/daemon launches can leave `$SHELL` unset or blank, so the probe falls
- * back to the OS account's login shell from the user database before giving up.
- *
- * The probe is a pure function of injected deps so the suite runs identically
- * on any host. Windows is skipped: the problem is specific to POSIX
- * login-shell profiles.
- *
- * Kept as a pure helper with no DI dependencies.
- */
-
 import { userInfo } from 'node:os';
 
 import { execFileText } from './environmentProbe';

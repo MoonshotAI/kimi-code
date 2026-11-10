@@ -1,48 +1,3 @@
-/**
- * `kosongConfig` domain — `IProviderDiscoveryService` implementation.
- *
- * Owns the all-provider model refresh: delegates to the shared OAuth
- * orchestrator (managed OAuth + open platforms + custom registries), writes
- * the discovered providers/models into config through ONE atomic
- * `replaceSections` transition (the persistence bridge then syncs them into
- * kosong's in-memory registries), and publishes `event.model_catalog.changed`
- * on change. Bound at App scope.
- *
- * Custom registries are third-party endpoints, so the refresh User-Agent
- * carries the configured custom identity's product token, matching what chat
- * requests send.
- *
- * `modelSource: 'static'` short-circuits refresh: a provider whose effective
- * model source is `static` (config-declared, or declared by its vendor
- * definition) serves its models from the static `[models.*]` section, so
- * discovery must not touch it. A statically-sourced target of a scoped
- * refresh answers `unchanged` without any network I/O; for an unscoped
- * refresh the static entries are hidden from the orchestrator's config view
- * and merged back verbatim on every write, so the orchestrator can neither
- * refresh them nor drop them (or a default model pointing at them).
- *
- * Two write-path details preserve the legacy semantics exactly:
- *  - The orchestrator's two-phase host contract (removeProvider, then
- *    setConfig) is absorbed into a single atomic write: the removal is
- *    computed in memory only (`shapeWithoutProvider`), because the patch's
- *    full providers/models records already express it. The runtime
- *    registries therefore never pass through a halfway-removed state — that
- *    intermediate state was the source of the "provider/model not
- *    configured" startup race against profile binding.
- *    A write that replaces the models table also folds the
- *    `[secondary_model]` subagent pool through `cascadeSubagentModelPool`
- *    into the same transition, so a refresh that drops an alias can never
- *    leave a dangling pool for the session-start validation to trip on.
- *  - The env-synthesized `__kimi_env__` slice is never written to config:
- *    it lives in the effective overlay, and the bridge's event-driven sync
- *    carries it into the registries on its own. `defaultModel` / `thinking`
- *    also go through config (like the OAuth flows), since the env overlay
- *    may pin the runtime default and only the config effective view knows.
- *
- * Credential detection goes through the provider-definition registry, not a
- * per-protocol env table.
- */
-
 import {
   refreshProviderModels,
   type ManagedKimiConfigShape,
@@ -51,22 +6,25 @@ import {
   type RefreshResult,
 } from '@moonshot-ai/kimi-code-oauth';
 import { LifecycleScope } from '#/app/scopes';
+import { Disposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Emitter, type Event } from '#/_base/event';
 import { Error2 } from '#/_base/errors/errors';
 import { IOAuthService } from '#/app/auth/auth';
 import { AuthErrors } from '#/app/auth/errors';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IConfigService } from '#/app/config/config';
 import { IEventService } from '#/app/event/event';
-import { ModelCatalogErrors } from '#/kosong/model/errors';
-import { type ModelRecord } from '#/kosong/model/model';
+import { ModelCatalogErrors } from '#/llm-adapter/model/errors';
+import { type ModelRecord } from '#/llm-adapter/model/model';
+import { effectiveModelConfig } from '#/llm-adapter/model/model-auth';
 import {
   IProviderService,
   type ModelSource,
   type OAuthRef,
   type ProviderConfig,
-} from '#/kosong/provider/provider';
-import { getProviderDefinition } from '#/kosong/provider/providerDefinition';
+} from '#/llm-adapter/provider/provider';
+import { getProviderDefinition } from '#/llm-adapter/provider/provider-definition';
 
 import {
   DEFAULT_MODEL_SECTION,
@@ -75,14 +33,11 @@ import {
   THINKING_SECTION,
 } from './configSection';
 import {
-  SECONDARY_MODEL_SECTION,
-  cascadeSubagentModelPool,
-  type SecondaryModelConfig,
-} from '#/session/subagent/configSection';
-import {
   IProviderDiscoveryService,
+  ModelCatalogChanged,
   type RefreshProviderModelsOptions,
   type RefreshProviderModelsResponse,
+  type RetiredModel,
 } from './discovery';
 
 interface StaticExclusion {
@@ -94,10 +49,14 @@ interface StaticExclusion {
 
 const EMPTY_EXCLUSION: StaticExclusion = { providers: {}, models: {} };
 
-export class ProviderDiscoveryService implements IProviderDiscoveryService {
+export class ProviderDiscoveryService extends Disposable implements IProviderDiscoveryService {
   declare readonly _serviceBrand: undefined;
 
+  private readonly _onDidRetireModel = this._register(new Emitter<RetiredModel>());
+  readonly onDidRetireModel: Event<RetiredModel> = this._onDidRetireModel.event;
+
   private refreshChain: Promise<unknown> = Promise.resolve();
+  private readonly retiredModels = new Map<string, string>();
 
   constructor(
     @IProviderService private readonly providerService: IProviderService,
@@ -105,7 +64,9 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
     @IOAuthService private readonly oauth: IOAuthService,
     @IEventService private readonly events: IEventService,
     @IAgentIdentity private readonly identity: IAgentIdentity,
-  ) {}
+  ) {
+    super();
+  }
 
   refreshProviderModels(
     options: RefreshProviderModelsOptions = {},
@@ -116,6 +77,13 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
       () => undefined,
     );
     return run;
+  }
+
+  retiredModelReplacement(alias: string): string | undefined {
+    const models = this.config.get<Readonly<Record<string, ModelRecord>>>(MODELS_SECTION) ?? {};
+    if (alias in models) return undefined;
+    const replacement = this.retiredModels.get(alias);
+    return replacement !== undefined && replacement in models ? replacement : undefined;
   }
 
   private async doRefreshProviderModels(
@@ -141,9 +109,17 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
       scope: options.scope,
       providerId: options.providerId,
     });
+    const retired = result.retiredDefault;
+    if (retired !== undefined) {
+      for (const [alias, replacement] of this.retiredModels) {
+        if (replacement === retired.from) this.retiredModels.set(alias, retired.to);
+      }
+      this.retiredModels.set(retired.from, retired.to);
+      this._onDidRetireModel.fire({ from: retired.from, to: retired.to });
+    }
     const response = mapRefreshResult(result);
     if (response.changed.length > 0) {
-      this.events.publish({ type: 'event.model_catalog.changed', payload: response });
+      this.events.publish(new ModelCatalogChanged({ payload: response }));
     }
     return response;
   }
@@ -208,9 +184,15 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
     const defaultModel = this.config.inspect<string>(DEFAULT_MODEL_SECTION).userValue;
     const thinking =
       this.config.inspect<ManagedKimiConfigShape['thinking']>(THINKING_SECTION).userValue;
+    const visibleModels = withoutKeys(models, exclusion.models);
+    const excludedDefaultModel = exclusion.defaultModel;
+    const excludedDefaultRecord =
+      excludedDefaultModel !== undefined ? models[excludedDefaultModel] : undefined;
     return {
       providers: withoutKeys(providers, exclusion.providers) as ManagedKimiConfigShape['providers'],
-      models: withoutKeys(models, exclusion.models) as ManagedKimiConfigShape['models'],
+      models: (excludedDefaultModel !== undefined && excludedDefaultRecord !== undefined
+        ? { ...visibleModels, [excludedDefaultModel]: excludedDefaultRecord }
+        : visibleModels) as ManagedKimiConfigShape['models'],
       defaultModel,
       thinking: thinking === undefined ? undefined : { ...thinking },
     };
@@ -263,16 +245,6 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
     if ('thinking' in patch) {
       sections[THINKING_SECTION] = restoreDefault ? exclusion.thinking : patch.thinking;
     }
-    const nextModels = sections[MODELS_SECTION] as Record<string, ModelRecord> | undefined;
-    if (nextModels !== undefined) {
-      const cascadedPool = cascadeSubagentModelPool(
-        this.config.inspect<SecondaryModelConfig>(SECONDARY_MODEL_SECTION).userValue,
-        nextModels,
-      );
-      if (cascadedPool !== undefined) {
-        sections[SECONDARY_MODEL_SECTION] = cascadedPool ?? undefined;
-      }
-    }
     await this.config.replaceSections(sections);
     return {
       providers:
@@ -324,6 +296,9 @@ function withoutKeys<T>(
 }
 
 function mapRefreshResult(result: RefreshResult): RefreshProviderModelsResponse {
+  const retired = result.retiredDefault;
+  const retiredModel =
+    retired === undefined ? undefined : effectiveModelConfig(retired.fromModel as ModelRecord);
   return {
     changed: result.changed.map((change) => ({
       provider_id: change.providerId,
@@ -336,6 +311,14 @@ function mapRefreshResult(result: RefreshResult): RefreshProviderModelsResponse 
       provider: failure.provider,
       reason: failure.reason,
     })),
+    retired_default:
+      retired === undefined
+        ? undefined
+        : {
+            from: retired.from,
+            to: retired.to,
+            from_display_name: retiredModel?.displayName ?? retiredModel?.model ?? retired.from,
+          },
   };
 }
 

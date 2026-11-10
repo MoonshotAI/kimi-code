@@ -1,26 +1,32 @@
-import {
-  ErrorCodes,
-  KimiError,
-  type AgentContextData,
-  type KimiErrorCode,
-  type SwarmModeTrigger,
-} from '@moonshot-ai/agent-core';
+import type { SwarmModeTrigger } from '@moonshot-ai/agent-core-v2/features/swarm/agent/swarm';
 
-import { type ApprovalHandler, type Event, type QuestionHandler } from '#/events';
+import type { AgentContextData } from '#/context';
+import { ErrorCodes, KimiError, type KimiErrorCode } from '#/errors';
+
+import {
+  type ApprovalHandler,
+  type Event,
+  type QuestionHandler,
+  type StaleReloadHandler,
+} from '#/events';
 import type { SDKRpcClientBase } from '#/rpc';
 import type {
   AddAdditionalDirOptions,
   AddAdditionalDirResult,
   AgentCommandInfo,
-  AgentRuntimeBinding,
+  AgentEnvironmentBinding,
   BackgroundTaskInfo,
+  CapabilityInstallOptions,
   CapabilityStatus,
   CompactOptions,
   CreateGoalInput,
+  EditGoalObjectiveInput,
   GetCronTasksResult,
   GoalSnapshot,
   GoalToolResult,
+  InstallPluginInput,
   JsonObject,
+  McpServerConfig,
   McpServerInfo,
   McpStartupMetrics,
   PermissionMode,
@@ -28,6 +34,7 @@ import type {
   PluginSummary,
   PromptInput,
   PromptSkillActivation,
+  PromptSubmissionResult,
   ReloadSessionOptions,
   ReloadSummary,
   ResumedSessionState,
@@ -35,10 +42,14 @@ import type {
   SessionPlan,
   SessionStatus,
   SessionSummary,
+  SessionEnvironmentsInfo,
+  SessionEnvironmentState,
+  SessionTodoItem,
   SessionUsage,
   SkillSummary,
   PluginCommandDef,
   ThinkingEffort,
+  UploadFileOptions,
   Unsubscribe,
 } from '#/types';
 
@@ -62,7 +73,7 @@ export interface SessionOptions {
 interface CapabilityRpcSurface {
   listCapabilities(): Promise<readonly CapabilityStatus[]>;
   getCapability(id: string): Promise<CapabilityStatus>;
-  installCapability(id: string): Promise<CapabilityStatus>;
+  installCapability(id: string, options?: CapabilityInstallOptions): Promise<CapabilityStatus>;
 }
 
 export function capabilityRpc(rpc: SDKRpcClientBase): CapabilityRpcSurface {
@@ -136,30 +147,48 @@ export class Session {
     this.rpc.setQuestionHandler(this.id, handler);
   }
 
-  async prompt(input: string | PromptInput): Promise<void> {
+  /**
+   * When another client has updated this session, calls that start a run
+   * (prompt, steer, compact, …) reload the session from disk and retry once;
+   * `undoHistory` reloads and still rejects with `session.stale`. The handler
+   * runs after the reload, before the retry, so the host can refresh its view.
+   */
+  setStaleReloadHandler(handler: StaleReloadHandler | undefined): void {
     this.ensureOpen();
-    await this.rpc.prompt({
-      sessionId: this.id,
-      input: normalizePromptInput(input),
+    if (handler === undefined) {
+      this.rpc.setStaleReloadHandler(this.id, undefined);
+      return;
+    }
+    this.rpc.setStaleReloadHandler(this.id, async (summary) => {
+      this.summary = summary;
+      this.resumeState = resumeStateFromSummary(summary);
+      await handler();
     });
   }
 
-  /**
-   * Submit one prompt with one or more skill activations bundled into the
-   * same user message: the skills are validated up front (an unknown name
-   * rejects the whole submission), rendered ahead of the prompt in the same
-   * turn, and the bundle undoes as a single anchor. Requires the
-   * agent-core-v2 engine.
-   */
+  async prompt(input: string | PromptInput, options?: { promptId?: string }): Promise<void> {
+    this.ensureOpen();
+    if (options?.promptId !== undefined && options.promptId.length === 0) {
+      throw new TypeError('promptId must not be empty');
+    }
+    await this.rpc.prompt({
+      sessionId: this.id,
+      input: normalizePromptInput(input),
+      promptId: options?.promptId,
+    });
+  }
+
   async promptWithSkills(
     input: string | PromptInput,
     skills: readonly PromptSkillActivation[],
-  ): Promise<void> {
+    options?: { readonly steerIfActive?: boolean },
+  ): Promise<PromptSubmissionResult> {
     this.ensureOpen();
-    await this.rpc.promptWithSkills({
+    return this.rpc.promptWithSkills({
       sessionId: this.id,
       input: normalizePromptInput(input),
       skills,
+      steerIfActive: options?.steerIfActive,
     });
   }
 
@@ -184,9 +213,9 @@ export class Session {
     return this.rpc.cancelShellCommand({ sessionId: this.id, commandId });
   }
 
-  async steer(input: string | PromptInput): Promise<void> {
+  async steer(input: string | PromptInput): Promise<PromptSubmissionResult> {
     this.ensureOpen();
-    await this.rpc.steer({
+    return this.rpc.steer({
       sessionId: this.id,
       input: normalizePromptInput(input),
     });
@@ -249,19 +278,33 @@ export class Session {
     await this.rpc.setModel({ sessionId: this.id, model: normalized });
   }
 
-  async getRuntime(): Promise<AgentRuntimeBinding> {
+  async attachFile(data: Uint8Array, options: Pick<UploadFileOptions, 'name' | 'mimeType'>): Promise<string> {
     this.ensureOpen();
-    return this.rpc.getRuntime({ sessionId: this.id });
+    return this.rpc.attachFile({ sessionId: this.id, data, options });
   }
 
-  async switchRuntime(runtimeId: string): Promise<AgentRuntimeBinding> {
+  async getEnvironment(): Promise<AgentEnvironmentBinding> {
     this.ensureOpen();
-    const normalized = normalizeRequiredString(
-      runtimeId,
-      'Session runtime cannot be empty',
-      ErrorCodes.REQUEST_INVALID,
-    );
-    return this.rpc.switchRuntime({ sessionId: this.id, runtimeId: normalized });
+    return this.rpc.getEnvironment({ sessionId: this.id });
+  }
+
+  /**
+   * List the environments available to this session: `local` plus every
+   * declared environment, with its type and connection status.
+   */
+  async listEnvironments(): Promise<SessionEnvironmentsInfo> {
+    this.ensureOpen();
+    return this.rpc.listEnvironments({ sessionId: this.id });
+  }
+
+  /**
+   * The main agent's environment binding together with that environment's type
+   * and connection status. An environment that is no longer registered reports
+   * `disposed`.
+   */
+  async getEnvironmentState(): Promise<SessionEnvironmentState> {
+    this.ensureOpen();
+    return this.rpc.getEnvironmentState({ sessionId: this.id });
   }
 
   async setThinking(effort: ThinkingEffort): Promise<void> {
@@ -335,6 +378,28 @@ export class Session {
     }
   }
 
+  async setTowerMode(enabled: boolean, base?: string): Promise<void> {
+    this.ensureOpen();
+    if (typeof enabled !== 'boolean') {
+      throw new KimiError(
+        ErrorCodes.REQUEST_INVALID,
+        'Session tower mode must be a boolean',
+      );
+    }
+    if (base !== undefined && typeof base !== 'string') {
+      throw new KimiError(
+        ErrorCodes.REQUEST_INVALID,
+        'Session tower mode base must be a string',
+      );
+    }
+    await this.rpc.setTowerMode({ sessionId: this.id, enabled, base });
+  }
+
+  async getTowerStatus(): Promise<string> {
+    this.ensureOpen();
+    return this.rpc.getTowerStatus({ sessionId: this.id });
+  }
+
   async getPlan(): Promise<SessionPlan> {
     this.ensureOpen();
     return this.rpc.getPlan({ sessionId: this.id });
@@ -362,6 +427,21 @@ export class Session {
   async undoHistory(count: number = 1): Promise<void> {
     this.ensureOpen();
     await this.rpc.undoHistory({ sessionId: this.id, count });
+  }
+
+  /**
+   * Evicts another process's lock on this session so the next call that
+   * fails with `session.occupied` can be retried. If that process is still
+   * running, both processes write to the session until it goes idle.
+   */
+  async takeOverLock(): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.takeOverSessionLock({ sessionId: this.id });
+  }
+
+  async getTodos(): Promise<readonly SessionTodoItem[]> {
+    this.ensureOpen();
+    return this.rpc.getTodos({ sessionId: this.id });
   }
 
   /** Clear this session's model context without creating a new session. */
@@ -533,6 +613,11 @@ export class Session {
     return this.rpc.getGoal({ sessionId: this.id });
   }
 
+  async editGoalObjective(input: EditGoalObjectiveInput): Promise<GoalSnapshot> {
+    this.ensureOpen();
+    return this.rpc.editGoalObjective({ sessionId: this.id, ...input });
+  }
+
   async pauseGoal(): Promise<GoalSnapshot> {
     this.ensureOpen();
     return this.rpc.pauseGoal({ sessionId: this.id });
@@ -568,9 +653,33 @@ export class Session {
     return this.rpc.getMcpStartupMetrics({ sessionId: this.id });
   }
 
-  async reconnectMcpServer(name: string): Promise<void> {
+  /**
+   * Connect an MCP server in this live session. `persist: true` also writes
+   * the user-level `mcp.json` (the entry becomes a mutable `global` one);
+   * otherwise it stays a session-local `caller` entry.
+   */
+  async addMcpServer(
+    server: McpServerConfig,
+    options: { readonly persist?: boolean } = {},
+  ): Promise<McpServerInfo> {
     this.ensureOpen();
-    await this.rpc.reconnectMcpServer({ sessionId: this.id, name });
+    return this.rpc.addSessionMcpServer({
+      sessionId: this.id,
+      server,
+      persist: options.persist,
+    });
+  }
+
+  /**
+   * Reconnect a server. Without `config` the session re-resolves the current
+   * effective config from the unified registry (file edits and plugin
+   * enable/disable land here). With `config`, the entry is replaced with the
+   * given full config — a plugin-contributed server rejects this because its
+   * config is read-only, owned by the plugin manifest.
+   */
+  async reconnectMcpServer(name: string, config?: McpServerConfig): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.reconnectMcpServer({ sessionId: this.id, name, config });
   }
 
   async listPlugins(): Promise<readonly PluginSummary[]> {
@@ -578,9 +687,9 @@ export class Session {
     return this.rpc.listPlugins();
   }
 
-  async installPlugin(source: string): Promise<PluginSummary> {
+  async installPlugin(input: string | InstallPluginInput): Promise<PluginSummary> {
     this.ensureOpen();
-    return this.rpc.installPlugin(source);
+    return this.rpc.installPlugin(input);
   }
 
   async setPluginEnabled(id: string, enabled: boolean): Promise<void> {
@@ -604,9 +713,9 @@ export class Session {
    * Start an idempotent capability install (binary runtime + wiring) in the
    * background; poll `getCapability` for progress.
    */
-  async installCapability(id: string): Promise<CapabilityStatus> {
+  async installCapability(id: string, options?: CapabilityInstallOptions): Promise<CapabilityStatus> {
     this.ensureOpen();
-    return capabilityRpc(this.rpc).installCapability(id);
+    return capabilityRpc(this.rpc).installCapability(id, options);
   }
 
   async setPluginMcpServerEnabled(
@@ -633,7 +742,11 @@ export class Session {
     return this.rpc.getPluginInfo(id);
   }
 
-  async activateSkill(name: string, args?: string | undefined): Promise<void> {
+  async activateSkill(
+    name: string,
+    args?: string | undefined,
+    options?: { readonly path?: string },
+  ): Promise<void> {
     this.ensureOpen();
     const skillName = normalizeRequiredString(
       name,
@@ -644,6 +757,7 @@ export class Session {
     await this.rpc.activateSkill({
       sessionId: this.id,
       name: skillName,
+      path: options?.path,
       ...(skillArgs !== undefined ? { args: skillArgs } : {}),
     });
   }

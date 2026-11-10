@@ -1,8 +1,3 @@
-/**
- * Resolve and install proxy configuration for outbound `fetch` and spawned
- * child processes (HTTP/HTTPS and SOCKS, honoring `NO_PROXY`).
- */
-
 import {
   Agent,
   buildConnector,

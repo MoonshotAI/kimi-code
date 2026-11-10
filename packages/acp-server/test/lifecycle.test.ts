@@ -77,8 +77,9 @@ describe('acp-server session lifecycle', () => {
     }
   });
 
-  async function boot(): Promise<TestClient> {
+  async function boot(configToml?: string): Promise<TestClient> {
     homeDir = await mkdtemp(join(tmpdir(), 'acp-lifecycle-'));
+    if (configToml !== undefined) await writeFile(join(homeDir, 'config.toml'), configToml, 'utf-8');
     client = await createTestClient({ homeDir });
     await client.send('initialize', { protocolVersion: 1, clientCapabilities: {} });
     return client;
@@ -93,14 +94,18 @@ describe('acp-server session lifecycle', () => {
     c: TestClient,
     sessionId: string,
   ): Promise<readonly { readonly name: string; readonly status: string; readonly error?: string }[]> {
-    await c.server.core.accessor
+    const lease = await c.server.core.accessor
       .get(IWorkspaceInstanceManager)
-      .getOrCreate({ root: homeDir! });
-    const handle = c.server.core.accessor.get(ISessionManager).get(sessionId);
-    expect(handle).toBeDefined();
-    const mcp = handle!.accessor.get(ISessionMcpHandle);
-    await mcp.ready;
-    return mcp.connectionManager.list();
+      .acquire({ root: homeDir! });
+    try {
+      const handle = c.server.core.accessor.get(ISessionManager).get(sessionId);
+      expect(handle).toBeDefined();
+      const mcp = handle!.accessor.get(ISessionMcpHandle);
+      await mcp.ready;
+      return mcp.connectionManager.list();
+    } finally {
+      lease.dispose();
+    }
   }
 
   it(
@@ -116,6 +121,18 @@ describe('acp-server session lifecycle', () => {
         sessions: { sessionId: string }[];
       };
       expect(listed.sessions.some((s) => s.sessionId === created.sessionId)).toBe(true);
+    },
+    30_000,
+  );
+
+  it(
+    'session/new bypasses an invalid configured environment default',
+    async () => {
+      const c = await boot('[environments]\ndefault = "missing"\n');
+      const created = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as {
+        sessionId: string;
+      };
+      expect(created.sessionId).toMatch(/^session_/);
     },
     30_000,
   );
@@ -291,10 +308,10 @@ describe('acp-server session lifecycle', () => {
   );
 
   it(
-    'session/new rejects stdio MCP servers without runtime identity',
+    'session/new connects ACP mcpServers as ephemeral session servers',
     async () => {
       const c = await boot();
-      await expect(c.send('session/new', {
+      const created = (await c.send('session/new', {
         cwd: homeDir,
         mcpServers: [
           {
@@ -304,16 +321,19 @@ describe('acp-server session lifecycle', () => {
             env: [{ name: 'KIMI_TEST_MCP_START_DELAY_MS', value: '0' }],
           },
         ],
-      })).rejects.toThrow('ACP stdio MCP server mock does not declare a runtime identity');
+      })) as { sessionId: string };
+      expect(created.sessionId).toMatch(/^session_/);
 
       // Engine-side assertion: the session scope's MCP handle is the overlay
       // view and the converted server ended up connected under its ACP name.
+      const entries = await sessionMcpEntries(c, created.sessionId);
+      expect(entries.find((e) => e.name === 'mock')?.status).toBe('connected');
     },
     30_000,
   );
 
   it(
-    'session/load rejects stdio MCP servers without runtime identity',
+    'session/load forwards mcpServers to the re-materialized session',
     async () => {
       const c = await boot();
       const created = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as {
@@ -321,13 +341,40 @@ describe('acp-server session lifecycle', () => {
       };
       await c.send('session/close', { sessionId: created.sessionId });
 
-      await expect(c.send('session/load', {
+      await c.send('session/load', {
         sessionId: created.sessionId,
         cwd: homeDir,
         mcpServers: [
           { name: 'mock', command: process.execPath, args: [STDIO_MCP_FIXTURE], env: [] },
         ],
-      })).rejects.toThrow('ACP stdio MCP server mock does not declare a runtime identity');
+      });
+
+      const entries = await sessionMcpEntries(c, created.sessionId);
+      expect(entries.find((e) => e.name === 'mock')?.status).toBe('connected');
+    },
+    30_000,
+  );
+
+  it(
+    'session/load succeeds after the host process restarts',
+    async () => {
+      const c = await boot();
+      const created = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as {
+        sessionId: string;
+      };
+      await c.close();
+      client = undefined;
+
+      const restarted = await createTestClient({ homeDir: homeDir! });
+      client = restarted;
+      await restarted.send('initialize', { protocolVersion: 1, clientCapabilities: {} });
+
+      const loaded = (await restarted.send('session/load', {
+        sessionId: created.sessionId,
+        cwd: homeDir,
+        mcpServers: [],
+      })) as { configOptions?: unknown[] };
+      expect(Array.isArray(loaded.configOptions)).toBe(true);
     },
     30_000,
   );
@@ -348,12 +395,16 @@ describe('acp-server session lifecycle', () => {
 
       // The workspace handler merges create-time dirs into its
       // (ephemeral) additional-dir set.
-      const workspace = await c.server.core.accessor
+      const lease = await c.server.core.accessor
         .get(IWorkspaceInstanceManager)
-        .getOrCreate({ root: homeDir! });
-      const dirs = workspace.program.dirs;
-      await dirs.ready;
-      expect(dirs.additionalDirs).toContain(extraDir);
+        .acquire({ root: homeDir! });
+      try {
+        const dirs = lease.instance.program.dirs;
+        await dirs.ready;
+        expect(dirs.additionalDirs).toContain(extraDir);
+      } finally {
+        lease.dispose();
+      }
     },
     30_000,
   );

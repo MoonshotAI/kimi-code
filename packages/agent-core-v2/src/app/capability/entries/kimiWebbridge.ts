@@ -1,27 +1,15 @@
-/**
- * `kimi-webbridge` capability entry (macOS / Linux / Windows).
- *
- * Layers: daemon binary (`~/.kimi-webbridge/bin/`, local HTTP daemon on
- * 127.0.0.1:10086) + agent wiring (the official `kimi-webbridge` plugin —
- * skills only, installed through `IPluginService`) + browser extension
- * (soft gate, user installs from the webstore or the manual zip).
- *
- * A running daemon is left untouched (start-if-down only, Kimi Work
- * coexistence). Reinstall replaces the on-disk binary from the latest
- * channel, which takes effect the next time the daemon starts. Installs
- * are detect-first and idempotent: only unsatisfied layers are redone,
- * setup re-enables a previously disabled wiring plugin, the binary step
- * requires the executable bit on POSIX (an interrupted install reads as
- * missing and re-downloads). Legacy standalone skill copies are moved into
- * a Kimi Code backup after the managed plugin has been refreshed, so plugin
- * updates become authoritative without deleting user files.
- */
-
 import { constants } from 'node:fs';
 import { access, chmod, mkdir, mkdtemp, rename, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+import {
+  kimiCdnContentUrl,
+  kimiRegionProfile,
+  resolveKimiRegion,
+} from '@moonshot-ai/kimi-code-oauth';
+
+import { installResolvedMarketplacePlugin } from '../../plugin/pluginService';
 import { downloadToFile, runCommand } from '../host';
 import type {
   CapabilityDetectResult,
@@ -31,10 +19,10 @@ import type {
 } from '../types';
 import type { CapabilityEntryContext } from './context';
 
-const PLUGIN_ID = 'kimi-webbridge';
-const PLUGIN_ZIP_URL =
-  'https://code.kimi.com/kimi-code/plugins/official/kimi-webbridge.zip';
-const BINARY_CDN_BASE = 'https://cdn.kimi.com/webbridge/latest/releases';
+const PLUGIN_ID = 'kimi-browser-extension';
+const LEGACY_PLUGIN_ID = 'kimi-webbridge';
+const PLUGIN_ZIP_PATH = 'plugins/official/kimi-webbridge.zip';
+const BINARY_CDN_PATH = 'webbridge/latest/releases';
 const DEFAULT_DAEMON_BASE_URL = 'http://127.0.0.1:10086';
 const STATUS_TIMEOUT_MS = 1_500;
 const START_TIMEOUT_MS = 30_000;
@@ -152,7 +140,9 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
     });
 
     const installed = await ctx.plugins.listPlugins();
-    const plugin = installed.find((p) => p.id === PLUGIN_ID);
+    const plugin =
+      installed.find((p) => p.id === PLUGIN_ID) ??
+      installed.find((p) => p.id === LEGACY_PLUGIN_ID);
     const mcpGap =
       plugin !== undefined && plugin.enabledMcpServerCount < plugin.mcpServerCount
         ? `mcp ${plugin.enabledMcpServerCount}/${plugin.mcpServerCount} enabled`
@@ -212,6 +202,31 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
       throw new Error(`kimi-webbridge is not supported on ${ctx.platform}/${ctx.arch}`);
     }
 
+    const defaultCatalog = await ctx.marketplace.isDefaultMarketplace().catch(() => false);
+    const marketplace = defaultCatalog
+      ? await ctx.marketplace.listMarketplace().catch(() => undefined)
+      : undefined;
+    const entry = marketplace?.plugins.find((candidate) => candidate.id === PLUGIN_ID);
+    if (marketplace !== undefined && entry === undefined) {
+      throw new Error(`Marketplace plugin "${PLUGIN_ID}" was not found in the current catalog`);
+    }
+    const resolved = marketplace === undefined
+      ? {
+          source: `${kimiRegionProfile((await ctx.resolveRegion?.()) ?? resolveKimiRegion()).cdnBase}/${PLUGIN_ZIP_PATH}`,
+          version: undefined,
+          sha256sum: undefined,
+          catalogId: PLUGIN_ID,
+          marketplaceSource: undefined,
+          origin: 'marketplace' as const,
+          expectedPluginId: PLUGIN_ID,
+          fetchImpl: fetch,
+        }
+      : await ctx.marketplace.resolveInstall(PLUGIN_ID, entry!.version, entry!.sha256sum);
+    const installed = await ctx.plugins.listPlugins();
+    const migrateFrom = installed.some((plugin) => plugin.id === LEGACY_PLUGIN_ID)
+      ? LEGACY_PLUGIN_ID
+      : undefined;
+
     const before = await detect();
     const stepStates = new Map(before.steps.map((step) => [step.id, step.state]));
     const readyBefore = before.steps
@@ -236,7 +251,16 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
     }
 
     report('skill');
-    const summary = await ctx.plugins.installPlugin({ source: PLUGIN_ZIP_URL });
+    const summary = await installResolvedMarketplacePlugin(
+      ctx.plugins,
+      {
+        marketplaceId: PLUGIN_ID,
+        expectedVersion: resolved.version,
+        migrateFrom,
+      },
+      resolved,
+      LEGACY_PLUGIN_ID,
+    );
     if (!summary.enabled) {
       await ctx.plugins.setPluginEnabled({ id: PLUGIN_ID, enabled: true });
     }
@@ -261,7 +285,7 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
     asset: string,
   ): Promise<void> {
     report('download', 0);
-    const url = `${BINARY_CDN_BASE}/${asset}`;
+    const url = kimiCdnContentUrl(`${BINARY_CDN_PATH}/${asset}`);
     const staging = path.join(
       tmpdir(),
       `kimi-webbridge-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ctx.platform === 'win32' ? '.exe' : ''}`,
@@ -289,7 +313,7 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
   return {
     id: 'kimi-webbridge',
     pluginId: PLUGIN_ID,
-    displayName: 'Kimi WebBridge',
+    displayName: 'Kimi Browser Extension',
     description:
       'Control your real browser (with your login sessions) — navigate, click, type, read pages, and screenshot any website.',
     supported,

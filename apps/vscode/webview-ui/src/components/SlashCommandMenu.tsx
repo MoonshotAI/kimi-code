@@ -44,10 +44,21 @@ function highlightMatch(text: string, query: string): React.ReactNode {
 
 export function SlashCommandMenu({ commands, query, selectedIndex, onSelect, onHover }: SlashCommandMenuProps) {
   const selectedRef = useRef<HTMLButtonElement>(null);
+  const hoverSelectionRef = useRef<number | null>(null);
 
   useEffect(() => {
+    if (hoverSelectionRef.current === selectedIndex) {
+      hoverSelectionRef.current = null;
+      return;
+    }
+    hoverSelectionRef.current = null;
     selectedRef.current?.scrollIntoView({ block: "nearest" });
   }, [selectedIndex]);
+
+  const handleHover = (index: number) => {
+    hoverSelectionRef.current = index;
+    onHover(index);
+  };
 
   if (commands.length === 0) {
     return <div className="rounded-md border bg-popover shadow-md p-3 text-xs text-muted-foreground text-center">No commands found</div>;
@@ -61,7 +72,7 @@ export function SlashCommandMenu({ commands, query, selectedIndex, onSelect, onH
             key={cmd.name}
             ref={idx === selectedIndex ? selectedRef : null}
             onClick={() => onSelect(cmd.name)}
-            onMouseEnter={() => onHover(idx)}
+            onMouseMove={() => handleHover(idx)}
             className={cn("w-full px-2 py-1.5 text-left flex items-center justify-between gap-3", idx === selectedIndex ? "bg-accent" : "hover:bg-accent/50")}
           >
             <span className="text-xs shrink-0">{highlightMatch(`/${cmd.name}`, query)}</span>

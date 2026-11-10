@@ -1,37 +1,29 @@
-/**
- * `permissionMode` domain — `IAgentPermissionModeService` implementation.
- *
- * Holds the agent's permission mode (`manual` / `yolo` / `auto`) in the `wire`
- * `PermissionModeModel`, mutating it only through the `permission.set_mode` Op
- * (`wire.dispatch(setMode({ mode }))`) and reading it through `wire.getModel`.
- * `setMode` emits `onDidChangeMode` after an actual change, and mode-aware
- * reminders are registered through the permission-mode injection helper.
- * `setModeAndBroadcast` is the user-facing entry: on top of `setMode` it
- * broadcasts the mode to every agent of the session through `agentLifecycle`
- * (main agent only) and tracks the `yolo_toggle` / `afk_toggle` transitions
- * through `telemetry`. Bound at Agent scope.
- */
-
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
-import { IInstantiationService } from '#/_base/di/instantiation';
 import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
+import { parseBooleanEnv } from '#/_base/utils/env';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { PermissionModeInjection } from '#/agent/permissionMode/injection/permissionModeInjection';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import {
   IAgentLifecycleService,
   MAIN_AGENT_ID,
 } from '#/session/agentLifecycle/agentLifecycle';
-import { IWireService } from '#/wire/wire';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IAgentPermissionModeService, type PermissionModeChangedContext } from './permissionMode';
 import {
-  PermissionModeConfiguredModel,
-  PermissionModeModel,
-  setMode,
+  permissionModeConfiguredKey,
+  permissionModeKey,
+  PermissionSetMode,
 } from './permissionModeOps';
+
+export const PERMISSION_MODE_REMINDER_ENV = 'KIMI_CODE_PERMISSION_MODE_REMINDER';
 
 export class AgentPermissionModeService extends Service implements IAgentPermissionModeService {
   declare readonly _serviceBrand: undefined;
@@ -40,25 +32,36 @@ export class AgentPermissionModeService extends Service implements IAgentPermiss
   readonly onDidChangeMode: Event<PermissionModeChangedContext> = this._onDidChangeMode.event;
 
   constructor(
-    @IWireService private readonly wire: IWireService,
-    @IInstantiationService instantiation: IInstantiationService,
+    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
+    @IAgentReminderService reminder: IAgentReminderService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    @IAgentStateService private readonly agentState: IAgentStateService,
+    @IBootstrapService bootstrap: IBootstrapService,
   ) {
     super();
-    this._register(instantiation.createInstance(PermissionModeInjection, this));
+    this.agentState.contributeState(permissionModeKey);
+    this.agentState.contributeState(permissionModeConfiguredKey);
+    if (parseBooleanEnv(bootstrap.getEnv(PERMISSION_MODE_REMINDER_ENV)) !== false) {
+      this._register(new PermissionModeInjection(this, reminder, this.agentState));
+    }
   }
 
   get mode(): PermissionMode {
-    return this.wire.getModel(PermissionModeModel);
+    return this.agentState.get(permissionModeKey);
   }
 
   setMode(mode: PermissionMode): void {
     const previousMode = this.mode;
     const changed = mode !== previousMode;
-    if (!changed && this.wire.getModel(PermissionModeConfiguredModel)) return;
-    this.wire.dispatch(setMode({ mode }));
+    if (!changed && this.agentState.get(permissionModeConfiguredKey)) return;
+    void this.dispatcher.dispatch(
+      new PermissionSetMode({ agentId: this.scopeContext.agentId, mode }),
+    );
+    void this.dispatcher.dispatch(
+      new AgentStatusUpdated({ agentId: this.scopeContext.agentId, permission: mode }),
+    );
     if (changed) this._onDidChangeMode.fire({ mode, previousMode });
   }
 

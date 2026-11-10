@@ -1,12 +1,4 @@
-/**
- * Scenario: Agent task document/output persistence and legacy-root compatibility.
- *
- * Constructs the plain `AgentTaskPersistence` helper over real node-fs storage
- * resolved by interface, covering primary writes, local-first reads, the
- * previous v2 session-root fallback, and exact output paths. Run with
- * `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run test/agent/task/persist.test.ts`.
- */
-
+import { createMapFs } from '../../features/plan/stubs';
 import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
@@ -20,6 +12,8 @@ import {
   AgentTaskPersistence,
   type AgentTaskInfo,
 } from '#/agent/task/task';
+import type { AgentTaskSpillTarget } from '#/agent/task/persist';
+import { recordingAppendFs } from './stubs';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -84,6 +78,10 @@ describe('AgentTaskPersistence', () => {
     return { dir: join(sessionDir, SESSION_SCOPE), scope: SESSION_SCOPE };
   }
 
+  function spillPersistence(target: () => AgentTaskSpillTarget | undefined): AgentTaskPersistence {
+    return new AgentTaskPersistence(join(sessionDir, AGENT_SCOPE), AGENT_SCOPE, docs, bytes, undefined, target);
+  }
+
   it('round-trips a task via write/read', async () => {
     await persistence.writeTask(sample());
     const loaded = await persistence.readTask('bash-11111111');
@@ -133,7 +131,6 @@ describe('AgentTaskPersistence', () => {
   it('writeTask creates tasks dir with mode 0700', async () => {
     await persistence.writeTask(sample());
     const st = await stat(join(sessionDir, SESSION_SCOPE, 'tasks'));
-    // eslint-disable-next-line no-bitwise
     expect(st.mode & 0o777).toBe(0o700);
   });
 
@@ -286,6 +283,74 @@ describe('AgentTaskPersistence', () => {
         truncated: false,
         preview: '',
       });
+    });
+  });
+
+  describe('environment spill mirror', () => {
+    it('mirrors appended output into the spill target and reports the spill path', async () => {
+      const writes: { path: string; data: string }[] = [];
+      const fs = recordingAppendFs(writes);
+      const spill = spillPersistence(() => ({ fs, dir: '/remote/tmp/kimi-code/task-output' }));
+
+      await spill.appendTaskOutput('bash-mirror01', 'chunk-one');
+      await spill.appendTaskOutput('bash-mirror01', 'chunk-two');
+
+      expect(writes).toEqual([
+        { path: '/remote/tmp/kimi-code/task-output/bash-mirror01.log', data: 'chunk-one' },
+        { path: '/remote/tmp/kimi-code/task-output/bash-mirror01.log', data: 'chunk-two' },
+      ]);
+      const snapshot = await spill.readTaskOutputSnapshot('bash-mirror01', 100);
+      expect(snapshot?.outputPath).toBe('/remote/tmp/kimi-code/task-output/bash-mirror01.log');
+      expect(snapshot?.outputSizeBytes).toBe('chunk-onechunk-two'.length);
+    });
+
+    it('isolates failures by task and repairs a missing chunk before advertising the mirror', async () => {
+      const files = new Map<string, string>();
+      let failedTask: string | undefined;
+      const fs = createMapFs(files);
+      const write = fs.writeText;
+      const append = fs.appendText;
+      fs.writeText = async (path, data) => {
+        if (path.includes(failedTask ?? '\0')) throw new Error('offline');
+        await write(path, data);
+      };
+      fs.appendText = async (path, data) => {
+        if (path.includes(failedTask ?? '\0')) throw new Error('offline');
+        await append(path, data);
+      };
+      const target = { fs, dir: '/remote/task-output' };
+      const spill = spillPersistence(() => target);
+      const a = 'bash-00000001';
+      const b = 'bash-00000002';
+      await spill.appendTaskOutput(a, 'a');
+      failedTask = a;
+      await spill.appendTaskOutput(a, 'b');
+      await spill.appendTaskOutput(b, 'other');
+      expect((await spill.readTaskOutputSnapshot(a, 100))?.outputPath).toBe(spill.taskOutputFile(a));
+      expect((await spill.readTaskOutputSnapshot(b, 100))?.outputPath).toBe(`${target.dir}/${b}.log`);
+      expect(files.get(`${target.dir}/${a}.log`)).toBe('a');
+      failedTask = undefined;
+      await spill.appendTaskOutput(a, 'c');
+      expect(files.get(`${target.dir}/${a}.log`)).toBe('abc');
+      expect((await spill.readTaskOutputSnapshot(a, 100))?.outputPath).toBe(`${target.dir}/${a}.log`);
+    });
+
+    it('serializes concurrent appends and snapshot repair for each task', async () => {
+      const files = new Map<string, string>();
+      const fs = createMapFs(files);
+      const write = fs.writeText;
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      fs.writeText = async (path, data) => { await gate; await write(path, data); };
+      const spill = spillPersistence(() => ({ fs, dir: '/remote/task-output' }));
+      const first = spill.appendTaskOutput('bash-concur01', 'a');
+      const second = spill.appendTaskOutput('bash-concur01', 'b');
+      const snapshot = spill.readTaskOutputSnapshot('bash-concur01', 100);
+      release();
+      await Promise.all([first, second]);
+      const result = await snapshot;
+      expect(result?.preview).toBe('ab');
+      expect(files.get(result!.outputPath)).toBe('ab');
     });
   });
 });

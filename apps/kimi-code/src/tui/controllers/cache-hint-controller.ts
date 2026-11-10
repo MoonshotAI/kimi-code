@@ -7,7 +7,7 @@
  */
 
 import type { Component, Focusable } from '@moonshot-ai/pi-tui';
-import type { KimiHarness, Session, TokenUsage } from '@moonshot-ai/kimi-code-sdk';
+import type { KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
 
 import { getCacheHintConfig, peekCacheHintConfig } from '#/utils/cache-hint-config';
 import { currentTuiConfig } from '../commands/config';
@@ -20,19 +20,24 @@ import { MAIN_AGENT_ID } from '../constant/kimi-tui';
 import type { AppState, InlineSkillActivation } from '../types';
 import type { TUIState } from '../tui-state';
 import { evaluateCacheHint } from '../utils/cache-hint';
+import { rebaseInlineSkillActivations } from '../utils/inline-skill-tokens';
 import { formatErrorMessage } from '../utils/event-payload';
-import type { ExtractionResult } from '../utils/image-placeholder';
+import {
+  makeSessionExtractionResendable,
+  type ExtractionResult,
+} from '../utils/image-placeholder';
 
 /** A swallowed submit: the raw text plus its media extraction (done before
  *  the dialog so pasted attachments survive a later store clear). */
 interface StashedSubmit {
   readonly text: string;
   readonly extraction?: ExtractionResult;
+  /** Session that owned any daemon refs inside {@link extraction}. */
+  readonly sessionId: string;
   readonly inlineSkillActivations?: readonly InlineSkillActivation[];
 }
 
 export interface CacheHintHost {
-  readonly engineV2: boolean;
   readonly harness: KimiHarness;
   readonly session: Session | undefined;
   readonly state: TUIState;
@@ -40,7 +45,13 @@ export interface CacheHintHost {
   setAppState(patch: Partial<AppState>): void;
   mountEditorReplacement(panel: Component & Focusable): void;
   restoreEditor(): void;
-  restoreInputText(text: string): void;
+  restoreInputText(text: string, inlineSkillActivations?: readonly InlineSkillActivation[]): void;
+  /**
+   * A stashed submission going back to the editor releases its extraction's
+   * staged media with queue-recall semantics (consume retains, retire staged
+   * copies, rebase videos) — without this the retains/copies would leak.
+   */
+  recallStashedMedia(extraction: ExtractionResult | undefined): void;
   showError(message: string): void;
   createNewSession(): Promise<void>;
   sendNormalUserInput(text: string, preExtracted?: ExtractionResult): Promise<void>;
@@ -52,18 +63,6 @@ export interface CacheHintHost {
 }
 
 type HintDecision = { readonly idleSeconds: number; readonly totalTokens: number };
-
-/** Cache-break detection: a step's cache read dropping under 95% of the
- *  previous step's by more than this many tokens counts as a break. */
-const CACHE_BREAK_MIN_DROP_TOKENS = 2000;
-const CACHE_BREAK_DROP_RATIO = 0.95;
-
-interface CacheBreakBaseline {
-  readonly model: string;
-  readonly effort: string;
-  readonly usage: TokenUsage;
-  readonly time: number;
-}
 
 export class CacheHintController {
   /** Latest in-process LLM round-trip time (turn begin / turn end). */
@@ -84,72 +83,11 @@ export class CacheHintController {
   /** Inputs restored this cycle — chained restores append (newline-joined)
    *  instead of overwriting the editor. */
   private restoredTexts: string[] = [];
+  private restoredActivations: InlineSkillActivation[] = [];
   /** Resume scenario fires at most once per session per TUI instance. */
   private readonly resumedSessions = new Set<string>();
-  /** Last measured main-loop step usage for cache-break detection. */
-  private breakBaseline: CacheBreakBaseline | undefined;
 
   constructor(private readonly host: CacheHintHost) {}
-
-  /**
-   * Cache-break detection (client-side, main loop): feed each completed
-   * step's usage. A step whose cache read drops sharply below the previous
-   * one is reported as `cache_break_detected` with both usages, both
-   * model/effort values, the drop ratio, and the interval — a mid-session
-   * model/effort switch busts the cache key, and that cause is exactly what
-   * the report should carry. Unmeasured (missing/all-zero) usage is skipped
-   * without touching the baseline; compaction resets it (the drop there is
-   * expected).
-   *
-   * Also doubles as the cache-activity signal: a completed step is a real
-   * provider round trip, so the server-side cache was just refreshed —
-   * unlike a bare turn begin, whose prompt may still fail before any model
-   * request.
-   */
-  noteStepUsage(usage: TokenUsage | undefined): void {
-    this.recordActivity();
-    if (usage === undefined) return;
-    if (
-      usage.inputOther === 0 &&
-      usage.output === 0 &&
-      usage.inputCacheRead === 0 &&
-      usage.inputCacheCreation === 0
-    ) {
-      return;
-    }
-    const model = this.host.state.appState.model;
-    const effort = this.host.state.appState.thinkingEffort;
-    const now = Date.now();
-    const prev = this.breakBaseline;
-    this.breakBaseline = { model, effort, usage, time: now };
-    if (prev === undefined) return;
-    const prevRead = prev.usage.inputCacheRead;
-    const currRead = usage.inputCacheRead;
-    if (currRead >= prevRead * CACHE_BREAK_DROP_RATIO) return;
-    if (prevRead - currRead <= CACHE_BREAK_MIN_DROP_TOKENS) return;
-    this.host.track('cache_break_detected', {
-      prev_model: prev.model,
-      curr_model: model,
-      prev_effort: prev.effort,
-      curr_effort: effort,
-      prev_input_cache_read: prevRead,
-      curr_input_cache_read: currRead,
-      prev_input_other: prev.usage.inputOther,
-      curr_input_other: usage.inputOther,
-      prev_output: prev.usage.output,
-      curr_output: usage.output,
-      prev_input_cache_creation: prev.usage.inputCacheCreation,
-      curr_input_cache_creation: usage.inputCacheCreation,
-      cache_read_drop_ratio: (prevRead - currRead) / prevRead,
-      interval_ms: now - prev.time,
-    });
-  }
-
-  /** Compaction legitimately shrinks the cached prefix — reset the baseline.
-   *  Also used when the context is cut by other means (e.g. /undo). */
-  resetCacheBreakBaseline(): void {
-    this.breakBaseline = undefined;
-  }
 
   recordActivity(): void {
     this.lastActivityAt = Date.now();
@@ -166,6 +104,7 @@ export class CacheHintController {
     this.triggerFetchAttempted = false;
     this.lastDialogRestored = false;
     this.restoredTexts = [];
+    this.restoredActivations = [];
   }
 
   /** Session switch / create: the new session has no in-process baseline. */
@@ -175,7 +114,7 @@ export class CacheHintController {
     this.triggerFetchAttempted = false;
     this.lastDialogRestored = false;
     this.restoredTexts = [];
-    this.breakBaseline = undefined;
+    this.restoredActivations = [];
   }
 
   /** Background warm-up on session creation; never blocks, never throws. */
@@ -187,7 +126,7 @@ export class CacheHintController {
   async maybeShowOnResume(): Promise<void> {
     const { host } = this;
     const session = host.session;
-    if (!host.engineV2 || session === undefined) return;
+    if (session === undefined) return;
     if (this.resumedSessions.has(session.id)) return;
     const main = session.getResumeState()?.agents[MAIN_AGENT_ID];
     let lastActiveAt = 0;
@@ -227,6 +166,10 @@ export class CacheHintController {
       dismissed: host.state.appState.cacheExpiryHint === false,
     });
     if (decision.kind === 'skip') return;
+    // Another dialog (e.g. the model migration prompt) already owns the editor
+    // area: never replace it under the user's keystrokes. The seeded baseline
+    // leaves this cycle to the idle-submit path, which hints on the first prompt.
+    if (host.state.editorReplacementMounted) return;
     this.resumedSessions.add(session.id);
     // The resume dialog also covers this idle cycle: the first submit right
     // after it must not be intercepted again.
@@ -248,7 +191,7 @@ export class CacheHintController {
     inlineSkillActivations?: readonly InlineSkillActivation[],
   ): boolean {
     const { host } = this;
-    if (!host.engineV2 || host.session === undefined) return false;
+    if (host.session === undefined) return false;
     // A stashed message being released re-enters the send path here — never
     // re-intercept it (that would start a second fetch loop).
     if (this.releasingStashed) return false;
@@ -263,7 +206,7 @@ export class CacheHintController {
     // Coarse floor: configured cache durations are 10min+, so anything
     // fresher than a minute can never hint.
     if (Date.now() - this.lastActivityAt < 60_000) return false;
-    const stash: StashedSubmit = { text, extraction, inlineSkillActivations };
+    const stash: StashedSubmit = { text, extraction, sessionId: host.session.id, inlineSkillActivations };
     const cached = peekCacheHintConfig();
     if (cached !== undefined) {
       const decision = evaluateCacheHint({
@@ -305,7 +248,7 @@ export class CacheHintController {
     // would reorder the conversation.
     if (this.idlePrompted) {
       if (this.lastDialogRestored) {
-        this.restoreStashedInput(stash.text);
+        this.restoreStashedInput(stash);
       } else {
         await this.releaseStashed(stash);
       }
@@ -316,7 +259,7 @@ export class CacheHintController {
     // meanwhile, never send the stashed text into the wrong session — hand it
     // back to the editor instead.
     if (host.session?.id !== sessionId) {
-      this.restoreStashedInput(stash.text);
+      this.restoreStashedInput(stash);
       return;
     }
     // If a foreground operation (turn, /compact, …) started meanwhile, don't
@@ -359,23 +302,51 @@ export class CacheHintController {
   }
 
   private async releaseToSendPath(stash: StashedSubmit): Promise<void> {
+    // A reset cleared the store, so register snapshot originals in the new
+    // session and rebuild image parts before returning to the send path.
+    let extraction = stash.extraction;
+    if (extraction !== undefined && this.host.state.appState.sessionId !== stash.sessionId) {
+      const session = this.host.session;
+      if (session === undefined) {
+        this.restoreStashedInput(stash);
+        return;
+      }
+      try {
+        extraction = await makeSessionExtractionResendable(extraction, session);
+      } catch (error) {
+        this.host.showError(`Failed to prepare media attachment: ${formatErrorMessage(error)}. Paste the image again before retrying.`);
+        this.restoreStashedInput(stash);
+        return;
+      }
+      if (this.host.session !== session) {
+        this.restoreStashedInput(stash);
+        return;
+      }
+    }
     if (stash.inlineSkillActivations !== undefined && stash.inlineSkillActivations.length > 0) {
-      await this.host.sendInlineSkillUserInput(
-        stash.text,
-        stash.inlineSkillActivations,
-        stash.extraction,
-      );
+      await this.host.sendInlineSkillUserInput(stash.text, stash.inlineSkillActivations, extraction);
       return;
     }
-    await this.host.sendNormalUserInput(stash.text, stash.extraction);
+    await this.host.sendNormalUserInput(stash.text, extraction);
   }
 
   /** Restore a stashed input to the editor, appending to anything already
-   *  restored this cycle so earlier text is not overwritten. */
-  private restoreStashedInput(text: string | undefined): void {
-    if (text === undefined) return;
-    this.restoredTexts.push(text);
-    this.host.restoreInputText(this.restoredTexts.join('\n'));
+   *  restored this cycle so earlier text is not overwritten, and release the
+   *  stash's staged media with recall semantics — the restored draft still
+   *  references its attachments, so retains are consumed (the next submit
+   *  re-retains) and staged copies retire instead of leaking. */
+  private restoreStashedInput(stash: StashedSubmit | undefined): void {
+    if (stash === undefined) return;
+    const offset = this.restoredTexts.length === 0 ? 0 : this.restoredTexts.join('\n').length + 1;
+    if (stash.inlineSkillActivations !== undefined) {
+      this.restoredActivations.push(...rebaseInlineSkillActivations(stash.inlineSkillActivations, offset));
+    }
+    this.restoredTexts.push(stash.text);
+    this.host.restoreInputText(
+      this.restoredTexts.join('\n'),
+      this.restoredActivations.length === 0 ? undefined : this.restoredActivations,
+    );
+    this.host.recallStashedMedia(stash.extraction);
   }
 
   private upstreamModelId(): string | undefined {
@@ -441,7 +412,7 @@ export class CacheHintController {
     const { host } = this;
     const restoreInput = () => {
       this.lastDialogRestored = true;
-      this.restoreStashedInput(stashed?.text);
+      this.restoreStashedInput(stashed);
     };
     switch (action) {
       case 'dismiss':
@@ -492,7 +463,7 @@ export class CacheHintController {
         break;
     }
     this.lastDialogRestored = false;
-    if (stashed !== undefined) await this.releaseToSendPath(stashed);
+    if (stashed !== undefined) await this.releaseStashed(stashed);
   }
 
   /** Bounded wait for the engine to flip `isCompacting` after a compact RPC. */

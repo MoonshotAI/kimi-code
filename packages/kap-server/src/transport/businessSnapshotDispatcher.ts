@@ -2,14 +2,14 @@ import {
   Error2,
   ErrorCodes,
   IAgentLifecycleService,
-  IAgentRuntimeBindingService,
-  IAgentRuntimeService,
+  IAgentEnvironmentBindingService,
+  IAgentEnvironmentService,
   ISessionContext,
   IWorkspaceInstanceManager,
   getLiveSessionById,
-  snapshotAgentRuntimeBinding,
+  snapshotAgentEnvironmentBinding,
   snapshotSessionWorkspaceAssociation,
-  type AgentRuntimeBindingSnapshot,
+  type AgentEnvironmentBindingSnapshot,
   type Scope,
   type SessionWorkspaceAssociationSnapshot,
   type WorkspaceInstanceSnapshot,
@@ -26,7 +26,12 @@ export async function workspaceSnapshot(
   core: Scope,
   workspaceId: string,
 ): Promise<WorkspaceInstanceSnapshot> {
-  return (await core.accessor.get(IWorkspaceInstanceManager).getOrCreate({ workspaceId })).snapshot();
+  const lease = await core.accessor.get(IWorkspaceInstanceManager).acquire({ workspaceId });
+  try {
+    return lease.instance.snapshot();
+  } finally {
+    lease.dispose();
+  }
 }
 
 export function sessionWorkspaceAssociation(
@@ -40,26 +45,26 @@ export function sessionWorkspaceAssociation(
   return snapshotSessionWorkspaceAssociation(session.accessor.get(ISessionContext));
 }
 
-export async function agentRuntimeBindingSnapshot(
+export async function agentEnvironmentBindingSnapshot(
   core: Scope,
   sessionId: string,
   agentId: string,
-): Promise<AgentRuntimeBindingSnapshot> {
+): Promise<AgentEnvironmentBindingSnapshot> {
   const session = getLiveSessionById(core.accessor, sessionId);
   if (session === undefined) {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} not found`);
   }
   const agent = agentId === MAIN_AGENT_ID
     ? await ensureMainAgent(session)
-    : session.accessor.get(IAgentLifecycleService).get(agentId);
+    : session.accessor.get(IAgentLifecycleService).handleOf(agentId);
   if (agent === undefined) {
     throw new Error2(
       ErrorCodes.AGENT_NOT_FOUND,
       `agent ${agentId} not found in session ${sessionId}`,
     );
   }
-  return snapshotAgentRuntimeBinding(
-    agent.accessor.get(IAgentRuntimeBindingService),
-    agent.accessor.get(IAgentRuntimeService),
+  return snapshotAgentEnvironmentBinding(
+    agent.accessor.get(IAgentEnvironmentBindingService),
+    agent.accessor.get(IAgentEnvironmentService),
   );
 }

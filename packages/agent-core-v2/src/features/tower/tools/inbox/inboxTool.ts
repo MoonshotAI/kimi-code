@@ -1,12 +1,3 @@
-/**
- * `tools` domain — `TowerInboxTool` implementation (the `TowerInbox` tool).
- *
- * Reads the inbox through the protocol `TowerStore` rooted at the session
- * cwd (`sessionContext`), resolving the caller's roster identity from the
- * agent scope (`scopeContext`). Registered for every agent — visibility is
- * controlled by profile tool lists. Bound at Agent scope.
- */
-
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { toInputJsonSchema } from '#/tool/input-schema';
@@ -38,10 +29,18 @@ export class TowerInboxTool implements ITowerInboxTool {
           const store = newTowerStore(this.sessionContext);
           const state = await store.load();
           const caller = callerName(this.scopeContext.agentId, store, state);
-          const items = await store.readInbox(caller, args.limit ?? DEFAULT_LIMIT);
+          const limit = args.limit ?? DEFAULT_LIMIT;
+          const items =
+            args.include_read === true
+              ? await store.readInbox(caller, limit)
+              : await store.readUnreadInbox(caller, limit);
           if (items.length === 0) {
-            return { output: `inbox empty for ${caller}` };
+            return { output: `inbox empty for ${caller}; 0 unread message(s) remaining` };
           }
+          const remaining = await store.ackInbox(
+            caller,
+            items.map((item) => item.messageId),
+          );
           const sections = items.map((item) =>
             [
               `file: ${item.file}`,
@@ -60,6 +59,8 @@ export class TowerInboxTool implements ITowerInboxTool {
               `${String(items.length)} message(s) for ${caller} (newest first):`,
               '',
               sections.join('\n\n---\n\n'),
+              '',
+              `${String(remaining)} unread message(s) remaining`,
             ].join('\n'),
           };
         }),

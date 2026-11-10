@@ -1,17 +1,39 @@
-/**
- * `wire` domain — the persisted journal record language.
- *
- * A `WireRecord` is the flat JSONL representation of one persisted Op. The
- * first line of an Agent journal is a `WireMetadataRecord`; metadata is a
- * journal envelope, not an Op, so it never enters the model reducer registry.
- * This module owns only pure encoding and decoding.
- */
+import type { Message } from '#/llm-adapter/contract/message';
+import type { ContextMessageTiming, PromptOrigin } from '#/agent/contextMemory/types';
+import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
+import type { TokenUsage } from '#human/llm-requester/usage';
 
-import type { Op } from '#/wire/op';
+import {
+  assertWireReaderVersion,
+  WIRE_MIN_READER_VERSION,
+  WIRE_PROTOCOL_VERSION,
+} from './migration/migration';
 
-import { WIRE_PROTOCOL_VERSION } from './migration/migration';
+export type PersistentContextMessage = Message & {
+  readonly id?: string;
+  readonly providerMessageId?: string;
+  readonly origin?: PromptOrigin | undefined;
+  readonly isError?: boolean;
+  readonly toolCallDisplays?: Record<string, ToolInputDisplay>;
+  readonly note?: string;
+  readonly usage?: TokenUsage;
+  readonly llmTiming?: ContextMessageTiming;
+  readonly durationMs?: number;
+};
 
 export const AGENT_WIRE_RECORD_KEY = 'wire.jsonl';
+
+export type PartsTransformer = (parts: readonly unknown[]) => Promise<readonly unknown[]>;
+
+export type RecordDehydrator = (
+  record: WireRecord,
+  transform: PartsTransformer,
+) => WireRecord | Promise<WireRecord>;
+
+export interface WireLineRange {
+  readonly start: number;
+  readonly end: number;
+}
 
 export interface WireRecord {
   readonly type: string;
@@ -22,6 +44,7 @@ export interface WireRecord {
 export interface WireMetadataRecord extends WireRecord {
   readonly type: 'metadata';
   readonly protocol_version: string;
+  readonly min_protocol_version?: string;
   readonly created_at: number;
 }
 
@@ -39,30 +62,26 @@ export function createWireMetadataRecord(now = Date.now()): WireMetadataRecord {
     type: 'metadata',
     protocol_version: WIRE_PROTOCOL_VERSION,
     created_at: now,
+    min_protocol_version: WIRE_MIN_READER_VERSION,
   };
 }
 
 export function isWireMetadataRecord(record: WireRecord): record is WireMetadataRecord {
+  const minReaderVersion = record['min_protocol_version'];
   return (
     record.type === 'metadata' &&
     typeof record['protocol_version'] === 'string' &&
-    typeof record['created_at'] === 'number'
+    typeof record['created_at'] === 'number' &&
+    (minReaderVersion === undefined ||
+      (typeof minReaderVersion === 'string' && /^\d+(\.\d+)*$/.test(minReaderVersion)))
   );
 }
 
-export function opToWireRecord(op: Op, now = Date.now()): WireRecord {
-  const payload = op.payload;
-  const record: Record<string, unknown> =
-    payload !== null && typeof payload === 'object' && !Array.isArray(payload)
-      ? { type: op.type, ...(payload as Record<string, unknown>) }
-      : { type: op.type, payload };
-  if (record['time'] === undefined) record['time'] = now;
-  return record as WireRecord;
-}
-
-export function wireRecordToPayload(record: WireRecord): unknown {
-  const { type: _type, time: _time, ...payload } = record;
-  return Object.keys(payload).length === 1 && 'payload' in payload
-    ? payload['payload']
-    : payload;
+export function assertWireRecordsReaderVersion(records: readonly WireRecord[]): void {
+  const first = records[0];
+  if (first?.type !== 'metadata') return;
+  if (!isWireMetadataRecord(first)) {
+    throw new Error('Agent wire metadata is malformed');
+  }
+  assertWireReaderVersion(first.min_protocol_version);
 }

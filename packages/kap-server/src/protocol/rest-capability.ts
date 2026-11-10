@@ -1,9 +1,3 @@
-/**
- *   GET  /v1/capabilities
- *   GET  /v1/capabilities/{capability_id}
- *   POST /v1/capabilities/{capability_id}:install
- */
-
 import { z } from 'zod';
 
 export const capabilityStepSchema = z.object({
@@ -20,6 +14,11 @@ export const capabilityInstallProgressSchema = z.object({
   percent: z.number().min(0).max(100).optional(),
   error: z.string().optional(),
   note: z.string().optional(),
+  confirmationRequired: z.literal('stop-processes').optional(),
+});
+
+export const capabilityInstallOptionsSchema = z.object({
+  stopRunningProcesses: z.boolean().optional(),
 });
 export type CapabilityInstallProgressWire = z.infer<typeof capabilityInstallProgressSchema>;
 

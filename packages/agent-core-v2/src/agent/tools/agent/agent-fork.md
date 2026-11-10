@@ -1,0 +1,1 @@
+Context forking: pass `fork: true` to start with a snapshot of your completed conversation history, inheriting your current agent type, model, and tool set.

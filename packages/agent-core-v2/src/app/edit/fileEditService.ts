@@ -1,12 +1,3 @@
-/**
- * `edit` domain — `IFileEditService` implementation.
- *
- * Reads the file through the os `hostFs` domain (`IHostFileSystem`), runs the
- * pure edit logic (`TextModel` + `EditService`), and writes the re-materialized
- * content back. Maps host-level failures (e.g. `EISDIR`) to the domain-neutral
- * `FileEditResult`; it owns no tool-facing message. Bound at App scope.
- */
-
 import { LifecycleScope } from '#/app/scopes';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -28,7 +19,7 @@ export class FileEditService implements IFileEditService {
 
   async edit(input: FileEditInput, fs: IHostFileSystem = this.fs): Promise<FileEditResult> {
     try {
-      const raw = await fs.readText(input.path, { errors: 'strict' });
+      const raw = await fs.readText(input.path, { errors: 'strict', preserveBOM: true });
       const model = new TextModel(raw);
       const result = this.editor.apply(model, {
         path: input.displayPath,

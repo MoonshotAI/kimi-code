@@ -1,5 +1,63 @@
 # @moonshot-ai/kimi-code-sdk
 
+## 0.23.0
+
+### Minor Changes
+
+- [#4525](https://github.com/MoonshotAI/kimi-code/pull/4525) [`8019337`](https://github.com/MoonshotAI/kimi-code/commit/80193374ebb47973a97d21d0b4ce4c27128eee82) Thanks [@liruifengv](https://github.com/liruifengv)! - Add structured plugin marketplace installs and marketplace helpers to the SDK.
+
+## 0.22.0
+
+### Minor Changes
+
+- [#4347](https://github.com/MoonshotAI/kimi-code/pull/4347) [`b3c6e0a`](https://github.com/MoonshotAI/kimi-code/commit/b3c6e0a75a3b1716a360a75eed7194be9b97c176) Thanks [@Grapedge](https://github.com/Grapedge)! - Expose agent IDs in approval and question requests.
+
+## 0.21.1
+
+### Patch Changes
+
+- [#4242](https://github.com/MoonshotAI/kimi-code/pull/4242) [`c1459a6`](https://github.com/MoonshotAI/kimi-code/commit/c1459a61845056832b85a0a220ee11a2bc5132f8) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Run hooks such as `PreToolUse` and `Stop` in the session's project directory, as documented, instead of the directory the server was started from.
+
+## 0.21.0
+
+### Minor Changes
+
+- [#4184](https://github.com/MoonshotAI/kimi-code/pull/4184) [`cbd7540`](https://github.com/MoonshotAI/kimi-code/commit/cbd754049a114ee36d1b27675c82819e4963c692) Thanks [@7Sageer](https://github.com/7Sageer)! - Remove the `kaos` / `persistenceKaos` session options and the `createSessionWithKaos` / `resumeSessionWithKaos` client methods, which were already ignored at runtime.
+
+- [#4156](https://github.com/MoonshotAI/kimi-code/pull/4156) [`e5b4b88`](https://github.com/MoonshotAI/kimi-code/commit/e5b4b88ba93d5a27aa9a36cf847eed4f1aa39c48) Thanks [@Grapedge](https://github.com/Grapedge)! - Add cumulative main-agent user-turn counts to session recovery snapshots.
+
+## 0.20.0
+
+### Minor Changes
+
+- [#3453](https://github.com/MoonshotAI/kimi-code/pull/3453) [`411572e`](https://github.com/MoonshotAI/kimi-code/commit/411572e166edee8581ba9c5a7f1bbf6c8b405606) Thanks [@Grapedge](https://github.com/Grapedge)! - Add `suggestFiles(workDir, { query, limit })` to `KimiHarness`: session-less fuzzy file suggestions from the agent-core-v2 workspace fs service, `undefined` on the v1 engine.
+
+## 0.19.2
+
+### Patch Changes
+
+- [#3098](https://github.com/MoonshotAI/kimi-code/pull/3098) [`75550c5`](https://github.com/MoonshotAI/kimi-code/commit/75550c5686cb867c0cb34bc515997d5e6305fc94) Thanks [@LCZcn96](https://github.com/LCZcn96)! - Restore live context-window usage updates after switching to the v2 engine.
+
+- [#3002](https://github.com/MoonshotAI/kimi-code/pull/3002) [`d723cc4`](https://github.com/MoonshotAI/kimi-code/commit/d723cc47ee43e5ca3c3c4ec2473f205d44acede2) Thanks [@7Sageer](https://github.com/7Sageer)! - Add an optional `cwd` parameter to the global MCP management methods; `verify: false` on the global MCP authorization-status listing now returns a fully offline classification instead of behaving like an omitted `verify`.
+
+## 0.19.1
+
+### Patch Changes
+
+- [#2862](https://github.com/MoonshotAI/kimi-code/pull/2862) [`3d77620`](https://github.com/MoonshotAI/kimi-code/commit/3d7762003a4a35cbeb8571d471c6898a006152e6) Thanks [@liruifengv](https://github.com/liruifengv)! - Add an optional region parameter to the auth login API for selecting the OAuth login endpoint (.com or .ai deployment).
+
+## 0.19.0
+
+### Minor Changes
+
+- [#2593](https://github.com/MoonshotAI/kimi-code/pull/2593) [`d833a1a`](https://github.com/MoonshotAI/kimi-code/commit/d833a1a893c4d69d96af542f40557442992085e0) Thanks [@7Sageer](https://github.com/7Sageer)! - Daemon file references no longer persist a materialization path; the display path is derived from the session media store at read time.
+
+- [#2934](https://github.com/MoonshotAI/kimi-code/pull/2934) [`61591bc`](https://github.com/MoonshotAI/kimi-code/commit/61591bce09f4467aa1664cb8ecb6aa6904b7accd) Thanks [@chengluyu](https://github.com/chengluyu)! - Add `session.promptWithSkills(input, skills)` to submit one prompt with multiple skill activations in a single turn (v2 engine only).
+
+- [#2593](https://github.com/MoonshotAI/kimi-code/pull/2593) [`d833a1a`](https://github.com/MoonshotAI/kimi-code/commit/d833a1a893c4d69d96af542f40557442992085e0) Thanks [@7Sageer](https://github.com/7Sageer)! - Add `uploadFile` for uploading media and referencing it from prompts, and an optional `promptId` on prompt submissions. Both require the v2 harness.
+
+- [#3026](https://github.com/MoonshotAI/kimi-code/pull/3026) [`13857f3`](https://github.com/MoonshotAI/kimi-code/commit/13857f383200881aa77dc972a8963ba421eeb2b6) Thanks [@bj456736](https://github.com/bj456736)! - Unify the MCP management surface behind a source-tagged registry, covering plugin-declared servers in `listMcpServers` and adding `getMcpServer`, `testMcpServerConfig`, runtime `addMcpServer`, `inspectAppMcpServers`, and an `oauth-expired` auth state.
+
 ## 0.18.0
 
 ### Minor Changes

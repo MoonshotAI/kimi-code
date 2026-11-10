@@ -18,12 +18,13 @@ import {
   _clearAgentToolContributionsForTests,
   AgentToolContribution,
   getAgentToolContributions,
-  registerAgentToolService,
+  overrideAgentToolService,
 } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
+import { IOAuthService } from '#/app/auth/auth';
 import type { PathClass } from '#/_base/execEnv/environmentProbe';
 import {
   PathSecurityError,
@@ -33,7 +34,7 @@ import {
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem, type HostFileStat } from '#/os/interface/hostFileSystem';
 import { IHostProcessService, type IHostProcess } from '#/os/interface/hostProcess';
-import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import { Event } from '#/_base/event';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -43,10 +44,11 @@ import {
   IGrepTool,
 } from '#/agent/tools/os/grep/grep';
 import { GrepTool as ProductionGrepTool } from '#/agent/tools/os/grep/grepTool';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import { FakeRuntime } from '#/runtime/fakeRuntime';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { ensureRgPath } from '#/os/backends/node-local/tools/rgLocator';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
+import { stubAgentEnvironment } from '../../../../environment/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../../../app/telemetry/stubs';
 import { registerStateServices } from '../../../../state/stubs';
 
@@ -152,12 +154,14 @@ function createTestFs(kaos: FakeKaos): IHostFileSystem {
     writeText: () => notImplemented('writeText'),
     appendText: () => notImplemented('appendText'),
     readBytes: () => notImplemented('readBytes'),
+    readFileHead: () => notImplemented('readFileHead'),
     writeBytes: () => notImplemented('writeBytes'),
     readLines: () => notImplemented('readLines'),
     createExclusive: () => notImplemented('createExclusive'),
     stat: (path) => kaos.stat(path),
     lstat: (path) => kaos.stat(path),
     readdir: () => notImplemented('readdir'),
+    walk: () => notImplemented('walk'),
     mkdir: () => notImplemented('mkdir'),
     remove: () => notImplemented('remove'),
     realpath: () => notImplemented('realpath'),
@@ -179,25 +183,22 @@ class GrepTool extends ProductionGrepTool {
   ) {
     const environment = createTestEnv(kaos);
     const backend = Object.assign(
-      new FakeRuntime(
-        { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
+      new FakeEnvironment(
+        { environmentId: 'local', generation: 'test' },
         { capabilities: ['fs', 'process'], pathClass: environment.pathClass },
       ),
       {
         process: createTestProcessService(kaos),
         fs: createTestFs(kaos),
-        environment,
+        host: environment,
       },
     );
-    const runtime: IAgentRuntimeService = {
-      _serviceBrand: undefined,
-      onDidChange: () => ({ dispose: () => {} }),
-      isAvailable: () => true,
-      inspect: () => backend,
-      acquire: () => ({ runtime: backend, track: (resource) => resource, dispose: () => {} }),
-    };
+    const environmentService = stubAgentEnvironment(backend, {
+      workDir: workspaceConfig.workspaceDir,
+      additionalDirs: workspaceConfig.additionalDirs,
+    });
     super(
-      runtime,
+      environmentService,
       stubWorkspaceContext(workspaceConfig.workspaceDir, workspaceConfig.additionalDirs),
       telemetry,
     );
@@ -320,7 +321,7 @@ describe('GrepTool', () => {
     const disposables = new DisposableStore();
     try {
       _clearAgentToolContributionsForTests();
-      registerAgentToolService(IGrepTool, ProductionGrepTool, {
+      overrideAgentToolService(IGrepTool, ProductionGrepTool, {
         name: 'Grep',
         source: 'user',
         disclosure: 'deferred',
@@ -337,22 +338,20 @@ describe('GrepTool', () => {
           const processService = createTestProcessService(kaos);
           const fs = createTestFs(kaos);
           reg.defineInstance(IHostEnvironment, environment);
-          const runtime = Object.assign(
-            new FakeRuntime(
-              { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
+          const backend = Object.assign(
+            new FakeEnvironment(
+              { environmentId: 'local', generation: 'test' },
               { capabilities: ['fs', 'process'], pathClass: environment.pathClass },
             ),
-            { process: processService, fs, environment },
+            { process: processService, fs, host: environment },
           );
-          reg.defineInstance(IAgentRuntimeService, {
-            _serviceBrand: undefined,
-            onDidChange: () => ({ dispose: () => {} }),
-            isAvailable: () => true,
-            inspect: () => runtime,
-            acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
-          });
+          reg.defineInstance(IAgentEnvironmentService, stubAgentEnvironment(backend));
           reg.defineInstance(ISessionWorkspaceContext, stubWorkspaceContext('/workspace'));
           reg.defineInstance(ITelemetryService, noopTelemetryService);
+          reg.definePartialInstance(IOAuthService, {
+            getRegion: () => 'mainland-cn',
+            getRegionAsync: async () => 'mainland-cn',
+          });
           reg.defineInstance(ISessionSkillCatalog, {
             _serviceBrand: undefined,
             catalog: { getSkillRoots: () => [] },
@@ -386,7 +385,7 @@ describe('GrepTool', () => {
       disposables.dispose();
       _clearAgentToolContributionsForTests();
       for (const contribution of savedContributions) {
-        registerAgentToolService(contribution.id, contribution.ctor, contribution.options);
+        overrideAgentToolService(contribution.id, contribution.ctor, contribution.options);
       }
     }
   });
@@ -395,18 +394,10 @@ describe('GrepTool', () => {
     const tool = new GrepTool(createFakeKaos(), workspace);
 
     expect(tool.name).toBe('Grep');
-    expect(tool.description).toContain('unknown content or unknown file locations');
-    expect(tool.description).toContain('Do not use shell `grep` or `rg` directly');
     expect(tool.parameters).toMatchObject({
       type: 'object',
       properties: {
-        pattern: {
-          type: 'string',
-          description: expect.stringContaining('Regular expression'),
-        },
-        path: {
-          description: expect.stringContaining('Use Read instead'),
-        },
+        pattern: { type: 'string' },
       },
     });
     expect(GrepInputSchema.safeParse({ pattern: 'needle' }).success).toBe(true);
@@ -467,79 +458,6 @@ describe('GrepTool', () => {
           `${name} description should be non-empty`,
         ).toBeGreaterThan(0);
       }
-    });
-
-    it('notes that context flags require content output mode', () => {
-      const tool = new GrepTool(createFakeKaos(), workspace);
-      const params = tool.parameters as {
-        properties: Record<string, { description?: string }>;
-      };
-      for (const name of ['-A', '-B', '-C', '-n']) {
-        expect(params.properties[name]?.description).toContain('content');
-      }
-    });
-
-    it('mentions count_matches in the output_mode description', () => {
-      const tool = new GrepTool(createFakeKaos(), workspace);
-      const params = tool.parameters as {
-        properties: Record<string, { description?: string }>;
-      };
-      expect(params.properties['output_mode']?.description).toContain('count_matches');
-      expect(params.properties['output_mode']?.description).toContain('per-file');
-    });
-
-    it('documents that files_with_matches is ordered most-recently-modified first', () => {
-      const tool = new GrepTool(createFakeKaos(), workspace);
-      const params = tool.parameters as {
-        properties: Record<string, { description?: string }>;
-      };
-      expect(params.properties['output_mode']?.description).toContain('most-recently-modified');
-    });
-
-    it('does not present an absolute path as a hard requirement for path', () => {
-      const tool = new GrepTool(createFakeKaos(), workspace);
-      const params = tool.parameters as {
-        properties: Record<string, { description?: string }>;
-      };
-      const description = params.properties['path']?.description ?? '';
-      expect(description).not.toMatch(/^Absolute path/);
-      expect(description.toLowerCase()).toContain('relative');
-    });
-
-    it('guides type as the more efficient filter over glob', () => {
-      const tool = new GrepTool(createFakeKaos(), workspace);
-      const params = tool.parameters as {
-        properties: Record<string, { description?: string }>;
-      };
-      const description = params.properties['type']?.description ?? '';
-      expect(description).toContain('glob');
-      expect(description).toContain('efficient');
-    });
-
-    it('describes include_ignored as covering all ignore files, not just .gitignore', () => {
-      const tool = new GrepTool(createFakeKaos(), workspace);
-      const params = tool.parameters as {
-        properties: Record<string, { description?: string }>;
-      };
-      const description = params.properties['include_ignored']?.description ?? '';
-      expect(description).toContain('.gitignore');
-      expect(description).toContain('.ignore');
-      expect(description).toContain('.rgignore');
-    });
-  });
-
-  describe('prompt content', () => {
-    it('explains ripgrep regex syntax and brace escaping', () => {
-      const tool = new GrepTool(createFakeKaos(), workspace);
-      expect(tool.description).toContain('ripgrep');
-      expect(tool.description).toContain('\\{');
-    });
-
-    it('explains hidden files, include_ignored, and sensitive-file behavior', () => {
-      const tool = new GrepTool(createFakeKaos(), workspace);
-      expect(tool.description).toContain('include_ignored');
-      expect(tool.description.toLowerCase()).toContain('hidden file');
-      expect(tool.description).toContain('.env');
     });
   });
 
@@ -1379,7 +1297,7 @@ describe('GrepTool', () => {
     const result = await resultPromise;
 
     expect(toolContentString(result)).toBe(
-      ['src/a.ts', 'Grep timed out after 20s; partial results returned'].join('\n'),
+      ['src/a.ts', 'Grep timed out after 20s; partial results returned. Narrow the path, glob, or pattern and retry for complete results.'].join('\n'),
     );
     expect(proc.kill).toHaveBeenCalledWith('SIGTERM');
   });
@@ -1395,7 +1313,7 @@ describe('GrepTool', () => {
     const result = await resultPromise;
 
     expect(toolContentString(result)).toBe(
-      ['src/a.ts', 'Grep timed out after 20s; partial results returned'].join('\n'),
+      ['src/a.ts', 'Grep timed out after 20s; partial results returned. Narrow the path, glob, or pattern and retry for complete results.'].join('\n'),
     );
   });
 
@@ -1411,7 +1329,7 @@ describe('GrepTool', () => {
     const result = await resultPromise;
 
     expect(toolContentString(result)).toBe(
-      ['src/a.ts', 'Grep timed out after 20s; partial results returned'].join('\n'),
+      ['src/a.ts', 'Grep timed out after 20s; partial results returned. Narrow the path, glob, or pattern and retry for complete results.'].join('\n'),
     );
   });
 
@@ -1430,7 +1348,7 @@ describe('GrepTool', () => {
     const result = await resultPromise;
 
     expect(toolContentString(result)).toBe(
-      ['src/a.ts:1:hit', 'Grep timed out after 20s; partial results returned'].join('\n'),
+      ['src/a.ts:1:hit', 'Grep timed out after 20s; partial results returned. Narrow the path, glob, or pattern and retry for complete results.'].join('\n'),
     );
   });
 
@@ -1460,19 +1378,19 @@ describe('GrepTool', () => {
         'src/b.ts:2:hit',
         '--',
         'src/c.ts:3:hit',
-        'Grep timed out after 20s; partial results returned',
+        'Grep timed out after 20s; partial results returned. Narrow the path, glob, or pattern and retry for complete results.',
       ].join('\n'),
     );
   });
 
-  it('drops incomplete trailing stdout lines after buffer truncation', async () => {
+  it('drops incomplete trailing stdout lines after cap-initiated termination', async () => {
     const maxOutputBytes = 10 * 1024 * 1024;
     const completeLine = '/workspace/src/a.ts:1:hit';
     const displayedCompleteLine = 'src/a.ts:1:hit';
     const partialLine = '/workspace/src/partial.ts:2:hit';
     const stdout = `${completeLine}\n${partialLine}${'x'.repeat(maxOutputBytes)}`;
     const tool = new GrepTool(
-      createFakeKaos({ exec: vi.fn().mockResolvedValue(processWithOutput(stdout)) }),
+      createFakeKaos({ exec: vi.fn().mockResolvedValue(processWithOutput(stdout, '', -1)) }),
       { workspaceDir: '/workspace', additionalDirs: [] },
     );
 
@@ -1481,9 +1399,28 @@ describe('GrepTool', () => {
     expect(toolContentString(result)).toBe(
       [
         displayedCompleteLine,
-        '[stdout truncated at 10485760 bytes; incomplete trailing line omitted]',
+        '[Output truncated at 10485760 bytes of rg output — the result set is incomplete. Narrow the pattern, path, or glob filters and re-run to recover complete results.]',
       ].join('\n'),
     );
+  });
+
+  it('marks pagination totals as partial when rg output hit the byte cap', async () => {
+    const line = (i: number) => `/workspace/src/f${String(i)}.ts:1:${'x'.repeat(11_000)}`;
+    const stdout = `${Array.from({ length: 1000 }, (_, i) => line(i)).join('\n')}\n`;
+    const tool = new GrepTool(
+      createFakeKaos({ exec: vi.fn().mockResolvedValue(processWithOutput(stdout)) }),
+      { workspaceDir: '/workspace', additionalDirs: [] },
+    );
+
+    const result = await executeTool(tool,
+      context({ pattern: 'hit', output_mode: 'content', head_limit: 2 }),
+    );
+
+    const output = toolContentString(result);
+    expect(output).toMatch(
+      /Results truncated to 2 lines \(total: \d+ of a partial result set\)\. Use offset=2 to see more\./,
+    );
+    expect(output).toContain('the result set is incomplete');
   });
 
   it('summarizes count output across all non-sensitive results', async () => {
@@ -1548,7 +1485,7 @@ describe('GrepTool', () => {
     );
   });
 
-  it('keeps the count summary ahead of the body so the char cap cannot drop it', async () => {
+  it('keeps the count summary as the first line so a later char cap cannot drop it', async () => {
     const fileCount = 5000;
     const stdout =
       Array.from({ length: fileCount }, (_, i) => `/workspace/f${String(i)}.txt:3`).join('\n') + '\n';
@@ -1563,9 +1500,8 @@ describe('GrepTool', () => {
 
     const output = toolContentString(result);
     const summary = `Found ${String(fileCount * 3)} total occurrences across ${String(fileCount)} files.`;
-    expect(output).toContain(summary);
-    expect(output).toContain('[...truncated]');
-    expect(output.indexOf(summary)).toBeLessThan(output.indexOf('[...truncated]'));
+    expect(output.startsWith(summary)).toBe(true);
+    expect(output).toContain(`f${String(fileCount - 1)}.txt:3`);
   });
 
   it('does not add a zero count summary when every count result is sensitive', async () => {
@@ -1707,22 +1643,17 @@ describe('GrepTool', () => {
     vi.mocked(ensureRgPath).mockImplementationOnce((_probe, { signal: locatorSignal } = {}) => {
       expect(locatorSignal).toBe(controller.signal);
       return new Promise((_resolve, reject) => {
-        const rejectAbort = (): void => {
+        queueMicrotask(() => {
           const error = new Error('Aborted');
           error.name = 'AbortError';
+          controller.abort();
           reject(error);
-        };
-        if (locatorSignal?.aborted === true) {
-          rejectAbort();
-          return;
-        }
-        locatorSignal?.addEventListener('abort', rejectAbort, { once: true });
+        });
       });
     });
     const tool = new GrepTool(createFakeKaos({ exec }), workspace);
 
     const resultPromise = executeTool(tool, context({ pattern: 'hit' }, controller.signal));
-    controller.abort();
     const result = await Promise.race([
       resultPromise,
       new Promise<'timed out'>((resolve) => {
@@ -1822,7 +1753,7 @@ describe('GrepTool', () => {
 
   it('truncates extremely long rg output with a byte-level safety cap message', async () => {
     const longLine = '/workspace/big.txt:1:' + 'x'.repeat(100);
-    const stdout = `${Array.from({ length: 5000 }, () => longLine).join('\n')}\n`;
+    const stdout = `${Array.from({ length: 100_000 }, () => longLine).join('\n')}\n`;
     const exec = vi.fn().mockResolvedValue(processWithOutput(stdout));
     const tool = new GrepTool(createFakeKaos({ exec }), workspace);
 
@@ -1830,7 +1761,8 @@ describe('GrepTool', () => {
       context({ pattern: 'match', output_mode: 'content', head_limit: 0 }),
     );
 
-    expect(result.output).toContain('Output is truncated');
+    expect(result.output).toContain('the result set is incomplete');
+    expect(result.output).toContain('Narrow the pattern, path, or glob filters');
   });
 
   it('matches a pattern spanning a newline when multiline is set', async () => {
@@ -2162,16 +2094,6 @@ describe('GrepTool', () => {
     expect(output).not.toContain('leaked');
     expect(output).toContain('Filtered');
     expect(output).toContain('my-project/.env');
-  });
-
-  it('locks the grep description to ripgrep-tip phrasing about hidden files and include_ignored', () => {
-    const tool = new GrepTool(createFakeKaos(), workspace);
-
-    expect(tool.description).toContain('ripgrep');
-    expect(tool.description).toContain('Hidden files');
-    expect(tool.description).toContain('include_ignored');
-    expect(tool.description).toMatch(/sensitive/i);
-    expect(tool.description).toMatch(/ALWAYS use Grep tool instead of running `grep` or `rg`/);
   });
 
   it('aborts and kills ripgrep after the process has spawned', async () => {

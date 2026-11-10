@@ -5,6 +5,7 @@ import {
   type CacheHintHost,
 } from '#/tui/controllers/cache-hint-controller';
 import type { CacheHintConfig } from '#/utils/cache-hint-config';
+import type { ExtractionResult } from '#/tui/utils/image-placeholder';
 
 const peekMock = vi.fn<() => CacheHintConfig | undefined>(() => undefined);
 const getMock = vi.fn(async (): Promise<CacheHintConfig | undefined> => undefined);
@@ -30,6 +31,7 @@ function makeHost(
 ) {
   const state = {
     activeDialog: null as string | null,
+    editorReplacementMounted: false,
     appState: {
       model: 'k2',
       availableModels: { k2: { model: 'kimi-k2', provider: 'managed:kimi-code' } },
@@ -43,7 +45,6 @@ function makeHost(
     },
   };
   const host: CacheHintHost = {
-    engineV2: true,
     harness: { auth: { getCachedAccessToken: vi.fn(async () => 'tok') } } as never,
     session: (overrides.session ?? { id: 's1' }) as never,
     state: state as never,
@@ -52,6 +53,7 @@ function makeHost(
     mountEditorReplacement: vi.fn(),
     restoreEditor: vi.fn(),
     restoreInputText: vi.fn(),
+    recallStashedMedia: vi.fn(),
     showError: vi.fn(),
     createNewSession: vi.fn(async () => {
       if (overrides.createNewSessionFails !== true) state.appState.sessionId = 's2';
@@ -79,6 +81,23 @@ function resumeSession(replayTimes: number[], tokenCount: number, updatedAt = 0)
 
 async function flush(times = 20): Promise<void> {
   for (let i = 0; i < times; i++) await new Promise((r) => setImmediate(r));
+}
+
+function uploadedExtraction(fileId: string, byte: number): ExtractionResult {
+  const path = `/tmp/${fileId}.png`;
+  return {
+    parts: [
+      { type: 'text', text: `<image path="${path}"></image>` },
+      {
+        type: 'image_url',
+        imageUrl: { url: `kimi-file://${fileId}?path=${encodeURIComponent(path)}` },
+      },
+    ],
+    hasMedia: true,
+    imageAttachmentIds: [1],
+    videoAttachmentIds: [],
+    imageSnapshots: [{ bytes: new Uint8Array([byte]), mime: 'image/png', width: 640, height: 480 }],
+  };
 }
 
 beforeEach(() => {
@@ -225,7 +244,104 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
 
     // Nothing was sent; both inputs are back in the editor, newline-joined.
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
-    expect(host.restoreInputText).toHaveBeenLastCalledWith('hello\nworld');
+    expect(host.restoreInputText).toHaveBeenLastCalledWith('hello\nworld', undefined);
+  });
+
+  it('rebases every activation when restoring chained skill drafts', async () => {
+    getMock.mockResolvedValue(CONFIG);
+    const { host } = makeHost();
+    const controller = new CacheHintController(host);
+    controller.recordActivity();
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1200_000);
+    const first = [{
+      skillName: 'review',
+      path: '/work/B/review/SKILL.md',
+      start: 0,
+      occurrences: [{ commandName: 'skill:review', start: 0 }],
+    }];
+    const second = [{
+      skillName: 'review',
+      path: '/work/A/review/SKILL.md',
+      start: 0,
+      occurrences: [{ commandName: 'skill:review', start: 0 }],
+    }];
+
+    expect(controller.maybeInterceptOnSubmit('/skill:review', undefined, first)).toBe(true);
+    expect(controller.maybeInterceptOnSubmit('/skill:review', undefined, second)).toBe(true);
+    await vi.waitFor(() => {
+      expect(host.mountEditorReplacement).toHaveBeenCalled();
+    });
+    vi.restoreAllMocks();
+    const dialog = (host.mountEditorReplacement as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
+      handleInput: (data: string) => void;
+    };
+    dialog.handleInput('');
+    await flush();
+
+    expect(host.restoreInputText).toHaveBeenLastCalledWith('/skill:review\n/skill:review', [
+      {
+        skillName: 'review',
+        path: '/work/B/review/SKILL.md',
+        start: 0,
+        occurrences: [{ commandName: 'skill:review', start: 0 }],
+      },
+      {
+        skillName: 'review',
+        path: '/work/A/review/SKILL.md',
+        start: 14,
+        occurrences: [{ commandName: 'skill:review', start: 14 }],
+      },
+    ]);
+  });
+
+  it('returns a stashed skill draft with its selected variant activations', async () => {
+    getMock.mockResolvedValue(CONFIG);
+    const { host } = makeHost();
+    const controller = new CacheHintController(host);
+    controller.recordActivity();
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1200_000);
+    const activations = [{ skillName: 'review', path: '/work/B/review/SKILL.md' }];
+
+    expect(controller.maybeInterceptOnSubmit('/skill:review', undefined, activations)).toBe(true);
+    await vi.waitFor(() => {
+      expect(host.mountEditorReplacement).toHaveBeenCalled();
+    });
+    vi.restoreAllMocks();
+    const dialog = (host.mountEditorReplacement as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
+      handleInput: (data: string) => void;
+    };
+    dialog.handleInput('\u001B');
+    await flush();
+
+    expect(host.restoreInputText).toHaveBeenLastCalledWith('/skill:review', activations);
+  });
+
+  it('releases stashed media with recall semantics when the dialog is dismissed', async () => {
+    getMock.mockResolvedValue(CONFIG);
+    const { host } = makeHost();
+    const controller = new CacheHintController(host);
+    controller.recordActivity();
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1200_000);
+    const extraction = uploadedExtraction('file-1', 1);
+
+    expect(controller.maybeInterceptOnSubmit('describe [image #1 (1×1)]', extraction)).toBe(true);
+    await vi.waitFor(() => {
+      expect(host.mountEditorReplacement).toHaveBeenCalled();
+    });
+    vi.restoreAllMocks();
+
+    const dialog = (host.mountEditorReplacement as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
+      handleInput: (data: string) => void;
+    };
+    dialog.handleInput('\u001B'); // dismiss
+    await flush();
+
+    // Nothing was sent; the draft is back in the editor and the stash's
+    // retains go through recall — without this the retain count never
+    // returns to zero and the upload can never be lease-deleted.
+    expect(host.sendNormalUserInput).not.toHaveBeenCalled();
+    expect(host.restoreInputText).toHaveBeenCalledWith('describe [image #1 (1×1)]', undefined);
+    expect(host.recallStashedMedia).toHaveBeenCalledWith(extraction);
   });
 
   it('hands the stashed input back when the session switched during the fetch', async () => {
@@ -238,7 +354,7 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     await flush();
     vi.restoreAllMocks();
 
-    expect(host.restoreInputText).toHaveBeenCalledWith('hello');
+    expect(host.restoreInputText).toHaveBeenCalledWith('hello', undefined);
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
 
@@ -335,7 +451,7 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     };
     dialog.handleInput('\u001B');
     await flush();
-    expect(host.restoreInputText).toHaveBeenCalledWith('hello');
+    expect(host.restoreInputText).toHaveBeenCalledWith('hello', undefined);
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
 
@@ -382,6 +498,106 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     expect(host.sendNormalUserInput).toHaveBeenCalledWith('hello', undefined);
   });
 
+  it('resends an uploaded image inline after starting a new session', async () => {
+    peekMock.mockReturnValue(CONFIG);
+    const { host } = makeHost();
+    const controller = new CacheHintController(host);
+    controller.recordActivity();
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1200_000);
+    const extraction = uploadedExtraction('file-1', 1);
+
+    controller.maybeInterceptOnSubmit('describe [image #1 (1×1)]', extraction);
+    vi.restoreAllMocks();
+
+    const dialog = (host.mountEditorReplacement as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
+      handleInput: (data: string) => void;
+    };
+    dialog.handleInput('\u001B[B');
+    dialog.handleInput('\r');
+    await flush();
+
+    const resend = vi.mocked(host.sendNormalUserInput).mock.calls[0]?.[1];
+    expect(resend?.imageAttachmentIds).toEqual([]);
+    expect(resend?.parts).toContainEqual({
+      type: 'image_url',
+      imageUrl: { url: 'data:image/png;base64,AQ==' },
+    });
+  });
+
+  it.each([false, true])('registers stashed originals in the new session and handles failures (%s)', async (fails) => {
+    peekMock.mockReturnValue(CONFIG);
+    const attachFile = fails
+      ? vi.fn().mockRejectedValue(new Error('disk full'))
+      : vi.fn().mockResolvedValue('kimi-file://f_original');
+    const { host, state } = makeHost();
+    vi.mocked(host.createNewSession).mockImplementation(async () => {
+      state.appState.sessionId = 's2';
+      (host as unknown as { session: unknown }).session = { id: 's2', attachFile };
+    });
+    const controller = new CacheHintController(host);
+    controller.recordActivity();
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1200_000);
+    const extraction = uploadedExtraction('file-1', 1);
+    extraction.imageSnapshots = [{
+      ...extraction.imageSnapshots[0]!,
+      original: { bytes: new Uint8Array([9]), width: 1280, height: 960, mime: 'image/png' },
+    }];
+    controller.maybeInterceptOnSubmit('describe image', extraction);
+    vi.restoreAllMocks();
+    const dialog = vi.mocked(host.mountEditorReplacement).mock.calls[0]![0] as unknown as {
+      handleInput(data: string): void;
+    };
+    dialog.handleInput('\u001B[B');
+    dialog.handleInput('\r');
+    await flush();
+    expect(attachFile).toHaveBeenCalledWith(new Uint8Array([9]), { name: 'original.png', mimeType: 'image/png' });
+    if (fails) {
+      expect(host.sendNormalUserInput).not.toHaveBeenCalled();
+      expect(host.showError).toHaveBeenCalledWith(expect.stringContaining('disk full'));
+      expect(host.restoreInputText).toHaveBeenCalledWith('describe image', undefined);
+    } else {
+      expect(vi.mocked(host.sendNormalUserInput).mock.calls[0]?.[1]?.parts).toContainEqual({
+        type: 'text', text: expect.stringContaining('kimi-file://f_original'),
+      });
+    }
+  });
+
+  it('resends every chained uploaded image inline after starting a new session', async () => {
+    getMock.mockResolvedValue(CONFIG);
+    const { host } = makeHost();
+    const controller = new CacheHintController(host);
+    controller.recordActivity();
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1200_000);
+
+    expect(controller.maybeInterceptOnSubmit('first', uploadedExtraction('file-1', 1))).toBe(true);
+    expect(controller.maybeInterceptOnSubmit('second', uploadedExtraction('file-2', 2))).toBe(true);
+    await vi.waitFor(() => {
+      expect(host.mountEditorReplacement).toHaveBeenCalled();
+    });
+    vi.restoreAllMocks();
+
+    const dialog = (host.mountEditorReplacement as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
+      handleInput: (data: string) => void;
+    };
+    dialog.handleInput('\u001B[B');
+    dialog.handleInput('\r');
+    await flush();
+
+    const sendCalls = (
+      host.sendNormalUserInput as unknown as {
+        mock: { calls: Array<[string, ExtractionResult | undefined]> };
+      }
+    ).mock.calls;
+    const imageUrls = sendCalls.map(([, extraction]) => {
+      const imagePart = extraction?.parts.find((part) => part.type === 'image_url');
+      return imagePart?.type === 'image_url' ? imagePart.imageUrl.url : undefined;
+    });
+    expect(imageUrls).toEqual([
+      'data:image/png;base64,AQ==',
+      'data:image/png;base64,Ag==',
+    ]);
+  });
+
   it('keeps the input when new-session creation fails', async () => {
     peekMock.mockReturnValue(CONFIG);
     const { host, state } = makeHost({ createNewSessionFails: true });
@@ -398,106 +614,8 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     dialog.handleInput('\r');
     await flush();
     expect(state.appState.sessionId).toBe('s1');
-    expect(host.restoreInputText).toHaveBeenCalledWith('hello');
+    expect(host.restoreInputText).toHaveBeenCalledWith('hello', undefined);
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
-  });
-});
-
-describe('CacheHintController cache-break detection', () => {
-  const u = (inputCacheRead: number) => ({
-    inputOther: 100,
-    output: 50,
-    inputCacheRead,
-    inputCacheCreation: 0,
-  });
-
-  it('does not judge the first measured step', () => {
-    const { host } = makeHost();
-    const controller = new CacheHintController(host);
-    controller.noteStepUsage(u(10000));
-    expect(host.track).not.toHaveBeenCalled();
-  });
-
-  it('records cache activity on a completed step, even one without usage', () => {
-    peekMock.mockReturnValue(CONFIG);
-    const { host } = makeHost();
-    const controller = new CacheHintController(host);
-    controller.recordActivity();
-    // 20 min later a step completes — the provider round trip refreshed the
-    // server-side cache…
-    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1200_000);
-    controller.noteStepUsage(undefined);
-    // …so a submit right after is fresh and must not be intercepted.
-    expect(controller.maybeInterceptOnSubmit('hello')).toBe(false);
-    vi.restoreAllMocks();
-  });
-
-  it('reports a drop beyond the ratio and token gates with both usages', () => {
-    const { host } = makeHost();
-    const controller = new CacheHintController(host);
-    controller.noteStepUsage(u(10000));
-    controller.noteStepUsage(u(7000));
-
-    expect(host.track).toHaveBeenCalledWith(
-      'cache_break_detected',
-      expect.objectContaining({
-        prev_model: 'k2',
-        curr_model: 'k2',
-        prev_input_cache_read: 10000,
-        curr_input_cache_read: 7000,
-        cache_read_drop_ratio: 0.3,
-      }),
-    );
-  });
-
-  it('stays quiet within the ratio gate or under the token threshold', () => {
-    const a = makeHost();
-    const controllerA = new CacheHintController(a.host);
-    controllerA.noteStepUsage(u(100000));
-    controllerA.noteStepUsage(u(96000)); // 4% drop — inside the ratio gate
-    expect(a.host.track).not.toHaveBeenCalled();
-
-    const b = makeHost();
-    const controllerB = new CacheHintController(b.host);
-    controllerB.noteStepUsage(u(4000));
-    controllerB.noteStepUsage(u(2500)); // drop 1500 ≤ 2000 — under the token threshold
-    expect(b.host.track).not.toHaveBeenCalled();
-  });
-
-  it('skips unmeasured usage without touching the baseline', () => {
-    const { host } = makeHost();
-    const controller = new CacheHintController(host);
-    controller.noteStepUsage(u(10000));
-    controller.noteStepUsage(undefined);
-    controller.noteStepUsage({ inputOther: 0, output: 0, inputCacheRead: 0, inputCacheCreation: 0 });
-    controller.noteStepUsage(u(5000));
-    expect(host.track).toHaveBeenCalledWith(
-      'cache_break_detected',
-      expect.objectContaining({ prev_input_cache_read: 10000, curr_input_cache_read: 5000 }),
-    );
-  });
-
-  it('resets the baseline on compaction, but records a mid-session model/effort switch', () => {
-    const { host, state } = makeHost();
-    const controller = new CacheHintController(host);
-    controller.noteStepUsage(u(10000));
-    controller.resetCacheBreakBaseline();
-    controller.noteStepUsage(u(100)); // post-compaction drop is expected
-    expect(host.track).not.toHaveBeenCalled();
-
-    // A model switch busts the cache key — that drop IS the signal to record.
-    controller.noteStepUsage(u(10000));
-    state.appState.model = 'other-model';
-    controller.noteStepUsage(u(100));
-    expect(host.track).toHaveBeenCalledWith(
-      'cache_break_detected',
-      expect.objectContaining({
-        prev_model: 'k2',
-        curr_model: 'other-model',
-        prev_input_cache_read: 10000,
-        curr_input_cache_read: 100,
-      }),
-    );
   });
 });
 
@@ -679,5 +797,25 @@ describe('CacheHintController scenario 1 (resume)', () => {
       expect.objectContaining({ scene: 'idle' }),
     );
     vi.restoreAllMocks();
+  });
+
+  it('yields to a dialog that already owns the editor and hints on the first idle submit', async () => {
+    getMock.mockResolvedValue(CONFIG);
+    peekMock.mockReturnValue(CONFIG);
+    const session = resumeSession([Date.now() - 1200_000], 150000);
+    const { host, state } = makeHost({ session });
+    state.editorReplacementMounted = true;
+    const controller = new CacheHintController(host);
+
+    await controller.maybeShowOnResume();
+    expect(host.mountEditorReplacement).not.toHaveBeenCalled();
+
+    state.editorReplacementMounted = false;
+    expect(controller.maybeInterceptOnSubmit('hello')).toBe(true);
+    expect(host.mountEditorReplacement).toHaveBeenCalledOnce();
+    expect(host.track).toHaveBeenCalledWith(
+      'cache_hint_shown',
+      expect.objectContaining({ scene: 'idle' }),
+    );
   });
 });

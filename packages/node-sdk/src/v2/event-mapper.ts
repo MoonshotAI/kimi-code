@@ -1,43 +1,64 @@
 /**
  * v2 → v1 event translation for the SDK event channel (pure mapping layer).
  *
- * The v2 engine's per-agent `IEventBus` publishes `DomainEvent`s whose
- * payloads are already v1-protocol-shaped — the same shapes the v1 core emits
- * through `Agent.emitEvent` (the run-v2-print runner renders them untranslated
- * for the same reason). What the bus does not carry is the
+ * The v2 engine's per-agent `IEventBus` publishes `DomainEvent`s. This module
+ * projects their payloads into the v1 protocol shape and restores the
  * `sessionId` / `agentId` stamping: the bus is per-agent, so the engine-side
  * consumer knows both (kap-server's broadcaster stamps them the same way).
- * This module restores the stamping and reconciles the two streams' type
+ * It also reconciles the two streams' type
  * sets: v2-only types are dropped (the v1 `Event` union is closed), the task
  * lifecycle pair is renamed back to the legacy spelling, and the one
  * v1-visible fact the v2 engine publishes on the process-global
  * `IEventService` (`session.meta.updated`) is unwrapped from its
  * `{type, payload}` envelope.
  */
-import type { Event } from '@moonshot-ai/agent-core';
-import type { DomainEvent } from '@moonshot-ai/agent-core-v2';
+import type { Event } from '@moonshot-ai/agent-core-v2/events';
+import type { Event2 } from '@moonshot-ai/agent-core-v2';
+import { fromCorePart } from '@moonshot-ai/agent-core-v2/human/message';
+
+function isCoreMediaPart(part: unknown): part is Parameters<typeof fromCorePart>[0] {
+  if (typeof part !== 'object' || part === null || !('type' in part) || !('source' in part)) {
+    return false;
+  }
+  if (part.type !== 'image_url' && part.type !== 'audio_url' && part.type !== 'video_url') {
+    return false;
+  }
+  const source = part.source;
+  if (typeof source !== 'object' || source === null || !('kind' in source)) return false;
+  return (
+    source.kind === 'url' ||
+    source.kind === 'inline' ||
+    source.kind === 'file' ||
+    source.kind === 'store'
+  );
+}
+
+function projectToolResultOutput(output: unknown): unknown {
+  if (!Array.isArray(output)) return output;
+  return output.map((part) => (isCoreMediaPart(part) ? fromCorePart(part) : part));
+}
 
 /**
  * DomainEvent types the v1 SDK event stream never carries:
- * - v2-internal facts with no v1 protocol counterpart: `agent.activity.updated`
- *   (kap-server folds it into the `agent.status.updated` phase slice at the WS
- *   edge), `context.spliced`, `task.notified`, `plan.revision`, and the
- *   `permission.approval.*` pair (v1 surfaces approvals through the
- *   `requestApproval` callback, never as events).
- * - `prompt.*`: the v2 prompt service publishes them on the agent bus, but in
- *   v1 they are synthesized by the daemon services layer onto the global
- *   `IEventService` — the in-process SDK client never sees them.
+ * - v2-internal facts with no v1 protocol counterpart: `context.spliced`,
+ *   `task.notified`, `plan.revision`, and the `permission.approval.*` pair
+ *   (v1 surfaces approvals through the `requestApproval` callback, never as
+ *   events).
+ * - `prompt.*` other than `prompt.completed`: the v2 prompt service publishes
+ *   them on the agent bus, but in v1 they are synthesized by the daemon
+ *   services layer onto the global `IEventService` — the in-process SDK client
+ *   never sees them. `prompt.completed(blocked|failed)` remains visible because
+ *   a pre-turn rejection has no `turn.ended` counterpart that could settle the UI.
  */
 const DROPPED_DOMAIN_EVENT_TYPES: ReadonlySet<string> = new Set([
-  'agent.activity.updated',
   'context.spliced',
   'task.notified',
   'plan.revision',
   'permission.approval.requested',
   'permission.approval.resolved',
   'prompt.submitted',
-  'prompt.completed',
   'prompt.aborted',
+  'prompt.started',
   'prompt.steered',
 ]);
 
@@ -56,18 +77,36 @@ const RENAMED_DOMAIN_EVENT_TYPES: Readonly<Record<string, string>> = {
  * Translate one agent-bus event into the v1 `Event` shape (payload plus the
  * `sessionId` / `agentId` stamping), or `undefined` when the type has no
  * place in the v1 stream (see {@link DROPPED_DOMAIN_EVENT_TYPES}). The cast
- * only bridges the two packages' type declarations — every type not dropped
- * or renamed carries a payload that is field-identical with its v1 protocol
- * counterpart.
+ * only bridges the two packages' type declarations after media payloads have
+ * been projected back to their public legacy shape.
  */
 export function translateDomainEvent(
-  event: DomainEvent,
+  event: Event2<any>,
   sessionId: string,
   agentId: string,
 ): Event | undefined {
+  if (event.type === 'prompt.completed') {
+    const reason = (event as { readonly reason?: string }).reason;
+    if (reason !== 'blocked' && reason !== 'failed') return undefined;
+  }
   if (DROPPED_DOMAIN_EVENT_TYPES.has(event.type)) return undefined;
   const type = RENAMED_DOMAIN_EVENT_TYPES[event.type] ?? event.type;
-  return { ...event, type, sessionId, agentId } as unknown as Event;
+  if (event.type === 'turn.started') {
+    const { promptAttachments: _internal, ...publicFields } = event as Event2<any> & {
+      promptAttachments?: unknown;
+    };
+    return Object.assign({}, publicFields, { type, sessionId, agentId }) as unknown as Event;
+  }
+  if (event.type === 'tool.result') {
+    const output = (event as { readonly output?: unknown }).output;
+    return Object.assign({}, event, {
+      output: projectToolResultOutput(output),
+      type,
+      sessionId,
+      agentId,
+    }) as unknown as Event;
+  }
+  return Object.assign({}, event, { type, sessionId, agentId }) as unknown as Event;
 }
 
 /**
@@ -78,12 +117,10 @@ export function translateDomainEvent(
  * other global-bus type is a daemon/WS-edge event the in-process v1 client
  * never saw.
  */
-export function translateGlobalEvent(event: {
-  readonly type: string;
-  readonly payload: unknown;
-}): Event | undefined {
-  if (event.type !== 'session.meta.updated' || typeof event.payload !== 'object') {
+export function translateGlobalEvent(event: Event2<any>): Event | undefined {
+  const payload = (event as { readonly payload?: unknown }).payload;
+  if (event.type !== 'session.meta.updated' || typeof payload !== 'object') {
     return undefined;
   }
-  return { type: event.type, ...event.payload } as unknown as Event;
+  return { type: event.type, ...payload } as unknown as Event;
 }

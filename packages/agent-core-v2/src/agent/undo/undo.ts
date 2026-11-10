@@ -1,10 +1,3 @@
-/**
- * `undo` domain — Agent-scoped conversation undo contract.
- *
- * Defines the availability and idle-only execution surface shared by every
- * undo entry point. Bound at Agent scope.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
 export interface UndoAvailability {

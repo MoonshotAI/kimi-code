@@ -1,13 +1,3 @@
-/**
- * `tools` domain — `TowerMissionTool` implementation (the `TowerMission`
- * tool).
- *
- * Reads and patches missions through the protocol `TowerStore` rooted at the
- * session cwd (`sessionContext`), resolving the caller's roster identity
- * from the agent scope (`scopeContext`). Registered for every agent —
- * visibility is controlled by profile tool lists. Bound at Agent scope.
- */
-
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -44,6 +34,7 @@ export class TowerMissionTool implements ITowerMissionTool {
       args.blocker !== undefined ||
       args.clear_blockers !== undefined ||
       args.task_done !== undefined ||
+      args.task_drop !== undefined ||
       args.scope !== undefined;
     return {
       description: hasPatch
@@ -72,11 +63,15 @@ export class TowerMissionTool implements ITowerMissionTool {
             blocker: args.blocker,
             clearBlockers: args.clear_blockers,
             taskDone: args.task_done,
+            taskDrop:
+              args.task_drop === undefined
+                ? undefined
+                : { text: args.task_drop, reason: args.task_drop_reason },
             scope: args.scope,
           });
           return {
             output: [
-              `mission ${mission.id} updated — status: ${mission.status}, open tasks: ${String(mission.tasks.filter((t) => !t.done).length)}, blockers: ${String(mission.blockers.length)}`,
+              `mission ${mission.id} updated — status: ${mission.status}, open tasks: ${String(mission.tasks.filter((t) => !t.done && t.dropped !== true).length)}, blockers: ${String(mission.blockers.length)}`,
               '',
               await renderMission(store, mission),
             ].join('\n'),

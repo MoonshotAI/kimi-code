@@ -1,11 +1,3 @@
-/**
- * `debug` domain — `IDebugLedgerService` implementation.
- *
- * Read-only introspection over the kernel's debug accessors (`children` /
- * `servicesSnapshot` / `unitsSnapshot` / `ledger.entries`); no kernel state is
- * mutated. Bound at App scope; the injected container is the tree root.
- */
-
 import { IInstantiationService } from '#/_base/di/instantiation';
 import type { InstantiationService } from '#/_base/di/instantiationService';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';

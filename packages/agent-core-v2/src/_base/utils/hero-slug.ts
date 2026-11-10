@@ -1,7 +1,3 @@
-/**
- * Hero-name slug generator for readable, memorable identifiers.
- */
-
 import { randomInt } from 'node:crypto';
 
 export const HERO_NAMES = [

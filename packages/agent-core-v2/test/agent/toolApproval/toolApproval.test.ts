@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { DisposableStore } from '#/_base/di/lifecycle';
+import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
 import type { TestInstantiationService } from '#/_base/di/test';
 import { UserCancellationError } from '#/_base/utils/abort';
@@ -16,17 +16,26 @@ import {
 } from '#/agent/permissionRules/permissionRules';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
-import { AgentToolApprovalService } from '#/agent/toolApproval/toolApprovalService';
+import {
+  AgentToolApprovalService,
+  PermissionApprovalRequested,
+  PermissionApprovalResolved,
+} from '#/agent/toolApproval/toolApprovalService';
+import { IBootstrapService, type HostArgs } from '#/app/bootstrap/bootstrap';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
+import type { Event2 } from '#/app/event/event2';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import type { ToolCall } from '#/kosong/contract/message';
+import { OrderedHookSlot } from '#/hooks';
+import type { ToolCall } from '#human/message';
 import {
-  ISessionApprovalService,
   type ApprovalRequest,
   type ApprovalResponse,
-} from '#/session/approval/approval';
+} from '#/agent/interaction/approval';
+import { INTERACTION_TAG_SESSION_ID } from '#/human/interaction/interaction';
+import { interactions } from '#/human/interaction/facade';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import { stubPermissionModeService } from '../permissionMode/stubs';
@@ -39,7 +48,7 @@ interface ContextOptions {
   readonly display?: ToolInputDisplay;
   readonly description?: string;
   readonly approvalRule?: string;
-  readonly traceId?: string;
+  readonly requestId?: string;
   readonly signal?: AbortSignal;
 }
 
@@ -57,7 +66,7 @@ function makeContext(
   return {
     turnId: 1,
     signal: options.signal ?? new AbortController().signal,
-    trace: options.traceId === undefined ? undefined : { traceId: options.traceId },
+    trace: options.requestId === undefined ? undefined : { requestId: options.requestId },
     toolCall,
     toolCalls: [toolCall],
     args,
@@ -83,6 +92,7 @@ describe('AgentToolApprovalService', () => {
   let records: TelemetryRecord[];
   let recorded: PermissionApprovalResultRecord[];
   let eventBus: IEventBus;
+  let hostArgs: HostArgs;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -90,8 +100,14 @@ describe('AgentToolApprovalService', () => {
     mode = 'manual';
     records = [];
     recorded = [];
+    hostArgs = { requestHeaders: {} };
     ix = createServices(disposables, {
       additionalServices: (reg) => {
+        reg.definePartialInstance(IBootstrapService, {
+          get args() {
+            return hostArgs;
+          },
+        });
         reg.defineInstance(
           IAgentScopeContext,
           makeAgentScopeContext({ agentId: 'main', agentScope: 'main' }),
@@ -101,7 +117,7 @@ describe('AgentToolApprovalService', () => {
           _serviceBrand: undefined,
           rules: [],
           sessionApprovalRulePatterns: [],
-          addRules: () => {},
+          addRules: () => Promise.resolve(),
           recordApprovalResult: (record) => {
             recorded.push(record);
           },
@@ -116,13 +132,23 @@ describe('AgentToolApprovalService', () => {
         }));
         reg.defineInstance(ITelemetryService, recordingTelemetry(records));
         reg.defineInstance(IEventBus, eventBus);
+        const dispatcher: IEventDispatcher = {
+          _serviceBrand: undefined,
+          hooks: { onDidRestore: new OrderedHookSlot() },
+          dispatch: async (event: Event2) => {
+            eventBus.publish(event, ix.get(IAgentScopeContext).agentContext);
+          },
+        } as unknown as IEventDispatcher;
+        reg.defineInstance(IEventDispatcher, dispatcher);
         reg.define(IAgentToolApprovalService, AgentToolApprovalService);
       },
       strict: true,
     });
+    (eventBus as EventBusService).activateAgent(ix.get(IAgentScopeContext).agentContext);
   });
   afterEach(() => {
     disposables.dispose();
+    interactions.purgeSession('test-session');
   });
 
   function make(): IAgentToolApprovalService {
@@ -133,13 +159,24 @@ describe('AgentToolApprovalService', () => {
     request: (approval: ApprovalRequest) => Promise<ApprovalResponse>,
   ): ReturnType<typeof vi.fn<(approval: ApprovalRequest) => Promise<ApprovalResponse>>> {
     const requestSpy = vi.fn(request);
-    ix.set(ISessionApprovalService, {
-      _serviceBrand: undefined,
-      request: requestSpy,
-      enqueue: (approval) => ({ ...approval, id: approval.id ?? 'approval-1' }),
-      decide: () => {},
-      listPending: () => [],
-    });
+    const seen = new Set<string>();
+    disposables.add(
+      toDisposable(
+        interactions.onDidChangePending(() => {
+          for (const pending of interactions.findAll({
+            kind: 'approval',
+            resolved: false,
+            tags: { [INTERACTION_TAG_SESSION_ID]: 'test-session' },
+          })) {
+            if (seen.has(pending.id)) continue;
+            seen.add(pending.id);
+            void requestSpy(pending.payload as ApprovalRequest).then((response) => {
+              interactions.respond(pending.id, response);
+            });
+          }
+        }),
+      ),
+    );
     return requestSpy;
   }
 
@@ -149,8 +186,8 @@ describe('AgentToolApprovalService', () => {
   } {
     const requested = vi.fn();
     const resolved = vi.fn();
-    disposables.add(eventBus.subscribe('permission.approval.requested', requested));
-    disposables.add(eventBus.subscribe('permission.approval.resolved', resolved));
+    disposables.add(eventBus.subscribe(PermissionApprovalRequested, requested));
+    disposables.add(eventBus.subscribe(PermissionApprovalResolved, resolved));
     return { requested, resolved };
   }
 
@@ -159,6 +196,7 @@ describe('AgentToolApprovalService', () => {
       IAgentScopeContext,
       makeAgentScopeContext({ agentId: 'sub-1', agentScope: 'sub-1' }),
     );
+    (eventBus as EventBusService).activateAgent(ix.get(IAgentScopeContext).agentContext);
   }
 
   describe('resolvePermissionResolution', () => {
@@ -230,44 +268,9 @@ describe('AgentToolApprovalService', () => {
         veto: { output: 'Plan review handled.' },
       });
     });
-
-    it('runs the ask round-trip for ask resolutions', async () => {
-      useBroker(async () => ({ decision: 'approved' }));
-      const svc = make();
-      await expect(
-        svc.resolvePermissionResolution(ask(), makeContext('Bash'), 'p'),
-      ).resolves.toBeUndefined();
-    });
   });
 
   describe('requestToolApproval', () => {
-    it('auto-approves when no approval broker is registered', async () => {
-      const events = subscribeApprovalEvents();
-      const svc = make();
-
-      await expect(
-        svc.requestToolApproval(makeContext('Bash', { command: 'printf hi' }), ask(), 'fallback-ask'),
-      ).resolves.toBeUndefined();
-
-      expect(events.requested).not.toHaveBeenCalled();
-      expect(events.resolved).not.toHaveBeenCalled();
-      expect(recorded).toHaveLength(1);
-      expect(recorded[0]).toMatchObject({
-        toolName: 'Bash',
-        sessionApprovalRule: undefined,
-        result: { decision: 'approved' },
-      });
-      expect(records).toContainEqual({
-        event: 'permission_approval_result',
-        properties: expect.objectContaining({
-          policy_name: 'fallback-ask',
-          tool_name: 'Bash',
-          result: 'approved',
-          session_cache_written: false,
-        }),
-      });
-    });
-
     it('publishes approval events around the broker round-trip', async () => {
       const events = subscribeApprovalEvents();
       const request = useBroker(async () => ({
@@ -281,40 +284,44 @@ describe('AgentToolApprovalService', () => {
       ).resolves.toBeUndefined();
 
       expect(request).toHaveBeenCalledTimes(1);
-      expect(events.requested).toHaveBeenCalledWith({
-        type: 'permission.approval.requested',
-        id: expect.stringMatching(/^approval_/),
-        sessionId: 'test-session',
-        agentId: 'main',
-        turnId: 1,
-        toolCallId: 'call-Bash',
-        toolName: 'Bash',
-        action: 'Approve Bash',
-        toolInput: { command: 'printf first' },
-        display: {
-          kind: 'generic',
-          summary: 'Approve Bash',
-          detail: { command: 'printf first' },
-        },
-      });
-      expect(events.resolved).toHaveBeenCalledWith({
-        type: 'permission.approval.resolved',
-        id: expect.stringMatching(/^approval_/),
-        sessionId: 'test-session',
-        agentId: 'main',
-        turnId: 1,
-        toolCallId: 'call-Bash',
-        toolName: 'Bash',
-        action: 'Approve Bash',
-        toolInput: { command: 'printf first' },
-        display: {
-          kind: 'generic',
-          summary: 'Approve Bash',
-          detail: { command: 'printf first' },
-        },
-        decision: 'approved',
-        selectedLabel: 'Approve once',
-      });
+      expect(events.requested).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'permission.approval.requested',
+          id: expect.stringMatching(/^approval_/),
+          sessionId: 'test-session',
+          agentId: 'main',
+          turnId: 1,
+          toolCallId: 'call-Bash',
+          toolName: 'Bash',
+          action: 'Approve Bash',
+          toolInput: { command: 'printf first' },
+          display: {
+            kind: 'generic',
+            summary: 'Approve Bash',
+            detail: { command: 'printf first' },
+          },
+        }),
+      );
+      expect(events.resolved).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'permission.approval.resolved',
+          id: expect.stringMatching(/^approval_/),
+          sessionId: 'test-session',
+          agentId: 'main',
+          turnId: 1,
+          toolCallId: 'call-Bash',
+          toolName: 'Bash',
+          action: 'Approve Bash',
+          toolInput: { command: 'printf first' },
+          display: {
+            kind: 'generic',
+            summary: 'Approve Bash',
+            detail: { command: 'printf first' },
+          },
+          decision: 'approved',
+          selectedLabel: 'Approve once',
+        }),
+      );
     });
 
     it('uses the execution description and display when provided', async () => {
@@ -519,14 +526,18 @@ describe('AgentToolApprovalService', () => {
     it('tracks approval transport errors before rethrowing', async () => {
       const events = subscribeApprovalEvents();
       const error = new Error('approval transport closed');
-      useBroker(async () => {
-        throw error;
-      });
+      useBroker(() => new Promise<ApprovalResponse>(() => {}));
       const svc = make();
+      const controller = new AbortController();
 
-      await expect(
-        svc.requestToolApproval(makeContext('ExitPlanMode'), ask(), 'exit-plan-mode-review-ask'),
-      ).rejects.toThrow('approval transport closed');
+      const promise = svc.requestToolApproval(
+        makeContext('ExitPlanMode', {}, { signal: controller.signal }),
+        ask(),
+        'exit-plan-mode-review-ask',
+      );
+      const expectation = expect(promise).rejects.toThrow('approval transport closed');
+      controller.abort(error);
+      await expectation;
 
       expect(records).toContainEqual({
         event: 'permission_approval_result',
@@ -546,18 +557,18 @@ describe('AgentToolApprovalService', () => {
     });
 
     it('folds resolveError continuations into the result instead of rethrowing', async () => {
-      useBroker(async () => {
-        throw new Error('approval transport closed');
-      });
+      useBroker(() => new Promise<ApprovalResponse>(() => {}));
       const svc = make();
+      const controller = new AbortController();
 
-      await expect(
-        svc.requestToolApproval(
-          makeContext('ExitPlanMode'),
-          ask({ resolveError: () => ({ kind: 'deny', message: 'review unavailable' }) }),
-          'exit-plan-mode-review-ask',
-        ),
-      ).resolves.toEqual({
+      const promise = svc.requestToolApproval(
+        makeContext('ExitPlanMode', {}, { signal: controller.signal }),
+        ask({ resolveError: () => ({ kind: 'deny', message: 'review unavailable' }) }),
+        'exit-plan-mode-review-ask',
+      );
+      controller.abort(new Error('approval transport closed'));
+
+      await expect(promise).resolves.toEqual({
         veto: { output: 'review unavailable', isError: true },
       });
     });
@@ -583,12 +594,58 @@ describe('AgentToolApprovalService', () => {
       expect(recorded).toEqual([]);
     });
 
+    it('denies at once without asking anyone when the host is non-interactive', async () => {
+      hostArgs = { ...hostArgs, nonInteractive: true };
+      const events = subscribeApprovalEvents();
+      const broker = useBroker(async () => ({ decision: 'approved' }));
+      const svc = make();
+
+      await expect(svc.requestToolApproval(makeContext('Bash'), ask(), 'fallback-ask')).resolves.toEqual({
+        veto: {
+          output: 'Tool "Bash" needs approval, but nobody can approve it in a non-interactive run.',
+          isError: true,
+        },
+      });
+      expect(broker).not.toHaveBeenCalled();
+      expect(events.requested).not.toHaveBeenCalled();
+      expect(
+        interactions.findAll({
+          kind: 'approval',
+          resolved: false,
+          tags: { [INTERACTION_TAG_SESSION_ID]: 'test-session' },
+        }),
+      ).toEqual([]);
+      expect(records).toEqual([]);
+      expect(recorded).toEqual([]);
+    });
+
+    it('uses the non-interactive resolution of the caller and keeps subagent guidance', async () => {
+      hostArgs = { ...hostArgs, nonInteractive: true };
+      useSubagentScope();
+      const broker = useBroker(async () => ({ decision: 'approved' }));
+      const svc = make();
+
+      await expect(
+        svc.requestToolApproval(
+          makeContext('ExitPlanMode'),
+          ask({
+            resolveApproval: () => ({ kind: 'result', result: { output: 'approved' } }),
+            resolveNonInteractive: () => ({ kind: 'deny', message: 'review unavailable' }),
+          }),
+          'exit-plan-mode-review-ask',
+        ),
+      ).resolves.toEqual({
+        veto: { output: `review unavailable ${RETRY_GUIDANCE}`, isError: true },
+      });
+      expect(broker).not.toHaveBeenCalled();
+    });
+
     it('merges the request trace id into approval result telemetry', async () => {
       useBroker(async () => ({ decision: 'approved' }));
       const svc = make();
 
       await svc.requestToolApproval(
-        makeContext('bash', {}, { traceId: 'trace-approval-1' }),
+        makeContext('bash', {}, { requestId: 'trace-approval-1' }),
         ask(),
         'fallback-ask',
       );
@@ -598,7 +655,7 @@ describe('AgentToolApprovalService', () => {
         properties: expect.objectContaining({
           tool_name: 'bash',
           result: 'approved',
-          trace_id: 'trace-approval-1',
+          request_id: 'trace-approval-1',
         }),
       });
     });

@@ -1,50 +1,56 @@
-/**
- * `btw` domain — `ISessionBtwService` implementation.
- *
- * Forks the main agent into a side-question child: inherits profile/context via
- * `IAgentLifecycleService.fork`, then disables tool calls via an
- * `onBeforeExecuteTool` veto listener (blocks every tool call with the
- * `toolApproval.formatDenyMessage`-formatted TOOL_CALL_DISABLED_MESSAGE) and
- * appends the side-channel reminder through the child's `systemReminder`.
- * Contributed at Session scope by `BtwFeature` (`features/btw/btwFeature`) —
- * `fork('main')` is a session-level operation, so the service injects the
- * session's `IAgentLifecycleService` directly rather than resolving it through
- * the main agent's accessor. Callers materialize the main agent first; forking
- * a missing source throws.
- */
-
-import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
+import { Disposable } from '#/_base/di/lifecycle';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { ErrorCodes, Error2 } from '#/errors';
+import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 
-import { ISessionBtwService, SIDE_QUESTION_SYSTEM_REMINDER, TOOL_CALL_DISABLED_MESSAGE } from './btw';
+import {
+  BTW_AGENT_LABEL,
+  BTW_READONLY_TOOLS,
+  ISessionBtwService,
+  SIDE_QUESTION_SYSTEM_REMINDER,
+  TOOL_CALL_DISABLED_MESSAGE,
+} from './btw';
 
-export class SessionBtwService implements ISessionBtwService {
+export class SessionBtwService extends Disposable implements ISessionBtwService {
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IAgentLifecycleService private readonly lifecycle: IAgentLifecycleService,
-  ) {}
+    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
+  ) {
+    super();
+    this._register(
+      this.agentLifecycle.onDidCreateScope(({ meta, handle }) => {
+        if (meta?.labels?.[BTW_AGENT_LABEL] !== 'true') return;
+        const reason =
+          handle.accessor.get(IAgentToolApprovalService)?.formatDenyMessage(
+            TOOL_CALL_DISABLED_MESSAGE,
+          ) ?? TOOL_CALL_DISABLED_MESSAGE;
+        handle.accessor.get(IAgentToolExecutorService)?.onBeforeExecuteTool((event) => {
+          if (!BTW_READONLY_TOOLS.has(event.toolCall.name)) {
+            event.veto(denyToolExecution(reason));
+          }
+        });
+      }),
+    );
+  }
 
   async start(): Promise<string> {
-    const child = await this.lifecycle.fork('main');
+    const main = this.agentLifecycle.handleOf(MAIN_AGENT_ID);
+    if (main === undefined) {
+      throw new Error2(ErrorCodes.AGENT_NOT_FOUND, 'Main agent was not found');
+    }
+    const childContext = await this.agentLifecycle.fork(
+      main.accessor.get(IAgentScopeContext).agentContext,
+      { labels: { [BTW_AGENT_LABEL]: 'true' } },
+    );
+    const child = this.agentLifecycle.handleOf(childContext.agentId)!;
     child.accessor
-      .get(IAgentSystemReminderService)
-      ?.appendSystemReminder(SIDE_QUESTION_SYSTEM_REMINDER, {
-        kind: 'injection',
-        variant: 'btw',
-      });
-    const reason =
-      child.accessor.get(IAgentToolApprovalService)?.formatDenyMessage(
-        TOOL_CALL_DISABLED_MESSAGE,
-      ) ?? TOOL_CALL_DISABLED_MESSAGE;
-    child.accessor
-      .get(IAgentToolExecutorService)
-      ?.onBeforeExecuteTool((event) => {
-        event.veto(denyToolExecution(reason));
-      });
-    return child.id;
+      .get(IAgentReminderService)
+      .notify(SIDE_QUESTION_SYSTEM_REMINDER, { variant: 'btw' });
+    return childContext.agentId;
   }
 }

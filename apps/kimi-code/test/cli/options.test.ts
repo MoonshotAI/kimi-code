@@ -5,7 +5,7 @@
  * Run: pnpm -C apps/kimi-code exec vitest run test/cli/options.test.ts
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createProgram } from '#/cli/commands';
 import type { CLIOptions } from '#/cli/options';
@@ -51,6 +51,7 @@ describe('CLI options parsing', () => {
       expect(opts.agent).toBeUndefined();
       expect(opts.agentFiles).toEqual([]);
       expect(opts.addDirs).toEqual([]);
+      expect(opts.environment).toBeUndefined();
     });
   });
 
@@ -501,14 +502,34 @@ describe('CLI options parsing', () => {
       expect(validateOptions(parse(['--agent-file', 'a.md']), {}).uiMode).toBe('shell');
     });
 
-    it('accepts the flags in prompt mode on the default v2 engine', () => {
+    it('accepts the flags in prompt mode', () => {
       const opts = parse(['-p', 'hi', '--agent-file', 'a.md']);
       expect(validateOptions(opts, {}).uiMode).toBe('print');
     });
 
-    it('accepts the flags in prompt mode with the legacy engine flag', () => {
+    it('accepts --agent in prompt mode', () => {
       const opts = parse(['-p', 'hi', '--agent', 'reviewer']);
-      expect(validateOptions(opts, { KIMI_CODE_LEGACY_FLAG: '1' }).uiMode).toBe('print');
+      expect(validateOptions(opts, {}).uiMode).toBe('print');
+    });
+  });
+
+  describe('--environment', () => {
+    it.each([
+      ['--session', 'ses_123'],
+      ['--continue'],
+    ])('rejects --environment with %s', (...resumeArgs: string[]) => {
+      const opts = parse(['--environment', 'dev-box', ...resumeArgs]);
+      expect(() => validateOptions(opts)).toThrow(OptionConflictError);
+      expect(() => validateOptions(opts)).toThrow(
+        'Cannot combine --environment with --session/--continue',
+      );
+    });
+  });
+
+  describe('--environment-cwd', () => {
+    it('requires --environment', () => {
+      const opts = parse(['--environment-cwd', '/remote/work']);
+      expect(() => validateOptions(opts)).toThrow('--environment-cwd requires --environment.');
     });
   });
 
@@ -524,7 +545,7 @@ describe('CLI options parsing', () => {
 
   describe('sub-commands', () => {
     it('routes upgrade without calling the main action', () => {
-      let upgradeCalls = 0;
+      const upgradeYes: boolean[] = [];
       const program = createProgram(
         '0.0.0',
         () => {
@@ -532,8 +553,8 @@ describe('CLI options parsing', () => {
         },
         () => {},
         () => {},
-        () => {
-          upgradeCalls += 1;
+        (yes) => {
+          upgradeYes.push(yes);
         },
       );
       program.exitOverride();
@@ -544,11 +565,11 @@ describe('CLI options parsing', () => {
 
       program.parse(['node', 'kimi', 'upgrade']);
 
-      expect(upgradeCalls).toBe(1);
+      expect(upgradeYes).toEqual([false]);
     });
 
     it('routes update alias to the upgrade handler', () => {
-      let upgradeCalls = 0;
+      const upgradeYes: boolean[] = [];
       const program = createProgram(
         '0.0.0',
         () => {
@@ -556,8 +577,8 @@ describe('CLI options parsing', () => {
         },
         () => {},
         () => {},
-        () => {
-          upgradeCalls += 1;
+        (yes) => {
+          upgradeYes.push(yes);
         },
       );
       program.exitOverride();
@@ -566,9 +587,9 @@ describe('CLI options parsing', () => {
         writeErr: () => {},
       });
 
-      program.parse(['node', 'kimi', 'update']);
+      program.parse(['node', 'kimi', 'update', '-y']);
 
-      expect(upgradeCalls).toBe(1);
+      expect(upgradeYes).toEqual([true]);
     });
 
     it('registers the visible sub-commands', () => {
@@ -578,18 +599,24 @@ describe('CLI options parsing', () => {
         () => {},
       );
       const commandNames: string[] = program.commands
-        .filter((command) => !command.name().startsWith('__'))
+        .filter((command) => !command.name().startsWith('__') && !(command as unknown as { _hidden?: boolean })._hidden)
         .map((command) => command.name());
       expect(commandNames).toEqual([
         'export',
+        'fork',
         'provider',
+        'session',
         'acp',
         'web',
         'server',
+        'rc',
         'login',
         'doctor',
         'vis',
+        'install-desktop',
+        'app',
         'migrate',
+        'import-sessions',
         'upgrade',
       ]);
     });

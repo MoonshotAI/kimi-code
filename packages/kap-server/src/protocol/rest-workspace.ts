@@ -1,13 +1,3 @@
-/**
- *   GET    /v1/workspaces
- *   POST   /v1/workspaces
- *   PATCH  /v1/workspaces/{workspace_id}
- *   DELETE /v1/workspaces/{workspace_id}
- *   GET    /v1/workspaces/{workspace_id}/trust
- *   POST   /v1/workspaces/{workspace_id}/trust
- *   POST   /v1/workspaces/{workspace_id}/untrust
- */
-
 import { z } from 'zod';
 
 import {
@@ -48,3 +38,21 @@ export const workspaceTrustResponseSchema = z.object({
   trusted: z.boolean(),
 });
 export type WorkspaceTrustResponse = z.infer<typeof workspaceTrustResponseSchema>;
+
+export const setPrimaryRequestSchema = z.object({
+  path: z.string().min(1),
+});
+export type SetPrimaryRequest = z.infer<typeof setPrimaryRequestSchema>;
+
+export const setPrimaryResponseSchema = workspaceSchema;
+export type SetPrimaryResponse = z.infer<typeof setPrimaryResponseSchema>;
+
+export const projectConfigDirsQuerySchema = z.object({
+  root: z.string().min(1),
+});
+export type ProjectConfigDirsQuery = z.infer<typeof projectConfigDirsQuerySchema>;
+
+export const projectConfigDirsResponseSchema = z.object({
+  additional_dirs: z.array(z.string()),
+});
+export type ProjectConfigDirsResponse = z.infer<typeof projectConfigDirsResponseSchema>;

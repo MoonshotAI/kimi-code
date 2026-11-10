@@ -7,7 +7,6 @@
  * production state.
  */
 
-import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { arch, hostname, release, type } from 'node:os';
@@ -186,13 +185,17 @@ function deviceModel(): string {
   return `${os} ${version} ${osArch}`.trim();
 }
 
+/**
+ * The file `sw_vers -productVersion` reads. Parsing it directly avoids spawning
+ * a child process on every startup.
+ */
+const MACOS_SYSTEM_VERSION_PLIST = '/System/Library/CoreServices/SystemVersion.plist';
+
 function macOsProductVersion(): string | undefined {
   try {
-    const version = execFileSync('/usr/bin/sw_vers', ['-productVersion'], {
-      encoding: 'utf-8',
-      timeout: 1000,
-    }).trim();
-    return version.length > 0 ? version : undefined;
+    const plist = readFileSync(MACOS_SYSTEM_VERSION_PLIST, 'utf-8');
+    const version = /<key>ProductVersion<\/key>\s*<string>([^<]*)<\/string>/.exec(plist)?.[1]?.trim();
+    return version !== undefined && version.length > 0 ? version : undefined;
   } catch {
     return undefined;
   }

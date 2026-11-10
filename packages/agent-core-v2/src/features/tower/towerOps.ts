@@ -1,36 +1,67 @@
-/**
- * `tower` domain — wire Model (`TowerModel`) and the `tower_mode.enter` /
- * `tower_mode.exit` Ops (`towerEnter` / `towerExit`) for the agent's tower
- * mode.
- *
- * Declares tower mode as a boolean wire Model plus the two Ops that set and
- * clear it — v1's `tower_mode.*` records carry no payload, so replaying a
- * legacy session restores the flag through these Ops with no dedicated
- * restore path. Each Op's `toEvent` publishes the `towerMode` slice of
- * `agent.status.updated` on the live path.
- */
-
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { z } from 'zod';
 
-import { defineModel } from '#/wire/model';
+import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
+import { AgentEvent2, Event2 } from '#/app/event/event2';
+import { defineState } from '#/state/state';
 
-export const TowerModel = defineModel<boolean>('tower', () => false);
+const towerModeEnterSchema = z.object({
+  agentId: z.string(),
+  sessionId: z.string().optional(),
+});
 
-declare module '#/wire/types' {
-  interface PersistedOpMap {
-    'tower_mode.enter': typeof towerEnter;
-    'tower_mode.exit': typeof towerExit;
-  }
+export class TowerModeEnter extends AgentEvent2<z.infer<typeof towerModeEnterSchema>> {
+  static override readonly type = 'tower_mode.enter';
+  static override readonly durable = true;
+  static override readonly schema = towerModeEnterSchema;
+}
+export interface TowerModeEnter {
+  readonly agentId: string;
+  readonly sessionId?: string;
 }
 
-export const towerEnter = TowerModel.defineOp('tower_mode.enter', {
-  schema: z.object({}),
-  apply: () => true,
-  toEvent: () => ({ type: 'agent.status.updated' as const, towerMode: true }),
-});
+const towerModeExitSchema = z.object({ agentId: z.string() });
 
-export const towerExit = TowerModel.defineOp('tower_mode.exit', {
-  schema: z.object({}),
-  apply: () => false,
-  toEvent: () => ({ type: 'agent.status.updated' as const, towerMode: false }),
-});
+export class TowerModeExit extends AgentEvent2<z.infer<typeof towerModeExitSchema>> {
+  static override readonly type = 'tower_mode.exit';
+  static override readonly durable = true;
+  static override readonly schema = towerModeExitSchema;
+}
+export interface TowerModeExit {
+  readonly agentId: string;
+}
+
+export interface TowerInboxSentPayload {
+  readonly from: string;
+  readonly to: string;
+  readonly subject: string;
+  readonly messageId?: string;
+  readonly file?: string;
+  readonly sentAt?: string;
+  readonly missionId?: string;
+}
+
+export class TowerInboxSent extends Event2<TowerInboxSentPayload> {
+  static override readonly type = 'tower.inbox.sent';
+  static override readonly observable = true;
+}
+export interface TowerInboxSent extends TowerInboxSentPayload {}
+
+export const towerKey = defineState('tower', () => false).replayable({
+  schema: z.boolean(),
+})
+  .on(TowerModeEnter, (_s, e, ctx) => {
+    ctx.emit(new AgentStatusUpdated({ agentId: e.agentId, towerMode: true }));
+    return true;
+  })
+  .on(TowerModeExit, (_s, e, ctx) => {
+    ctx.emit(new AgentStatusUpdated({ agentId: e.agentId, towerMode: false }));
+    return false;
+  });
+
+export const towerOwnerKey = defineState('tower.owner', () => undefined as string | undefined)
+  .replayable({
+    schema: z.string().optional(),
+  })
+  .on(TowerModeEnter, (_s, e) => e.sessionId)
+  .on(TowerModeExit, () => undefined);

@@ -1,25 +1,3 @@
-/**
- * `agentIdentity` domain — resolved identity contract.
- *
- * The identity the agent uses for itself, resolved from the `[identity]`
- * config section over the host's declared display name and frozen for the
- * life of the process: the identity is announced outward (MCP initialize,
- * OAuth registration, provider request logs) and cannot be re-announced, so
- * restart-to-change is the one coherent semantic — and consumers may bake the
- * snapshot into caches, prompts, and connections with no invalidation
- * obligations. `resolved()` awaits the freeze; `current()` throws before it,
- * so an early materialization fails loudly instead of caching a pre-config
- * value. Bound at App scope.
- *
- * The snapshot carries finished products, never raw material for call sites
- * to compose: the prompt display name, the protocol slug (`undefined` on
- * either means no custom identity — consumers keep their built-in behavior),
- * and the outbound `User-Agent` projections, which rewrite only the product
- * token of what the host already sends (the key located case-insensitively,
- * the host's spelling kept) — except toward directories this process chooses
- * to call, where a header is always presented.
- */
-
 import { replaceUserAgentProduct } from '@moonshot-ai/kimi-code-oauth';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

@@ -1,11 +1,3 @@
-/**
- * `blobStore` domain — `IBlobStore` implementation.
- *
- * Delegates to the `IFileSystemStorageService` backend with atomic writes. Bound at App
- * scope; child scopes (Session, Agent) inherit the same instance and use
- * scope strings to namespace their data.
- */
-
 import { LifecycleScope } from '#/app/scopes';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -34,8 +26,7 @@ export class BlobStoreService implements IBlobStore {
   }
 
   async has(scope: string, key: string): Promise<boolean> {
-    const keys = await this.storage.list(scope, key);
-    return keys.includes(key);
+    return (await this.storage.size(scope, key)) !== undefined;
   }
 
   async delete(scope: string, key: string): Promise<void> {

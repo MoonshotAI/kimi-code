@@ -1,11 +1,3 @@
-/**
- * `config` domain — record-level config-section diffing.
- *
- * `diffRecords` computes the added/removed/changed keys between two snapshots
- * of a record-shaped config section, `deepEqual` is the value comparison it
- * uses. Pure functions.
- */
-
 export interface RecordDiff {
   readonly added: readonly string[];
   readonly removed: readonly string[];

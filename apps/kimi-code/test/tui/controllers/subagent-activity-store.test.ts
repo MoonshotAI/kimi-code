@@ -62,6 +62,25 @@ describe('SubagentActivityStore', () => {
     expect(record?.version).toBeGreaterThan(0);
   });
 
+  it('shows a status progress update as the live output tail', () => {
+    const store = new SubagentActivityStore();
+    store.ensureRecord(spawn());
+    store.applyEvent(
+      ev({ type: 'tool.call.started', turnId: 1, toolCallId: 't1', name: 'WaitFor', args: { timeout: 600 } }),
+    );
+    store.applyEvent(
+      ev({
+        type: 'tool.progress',
+        turnId: 1,
+        toolCallId: 't1',
+        update: { kind: 'status', text: 'Waiting 10s / 600s · 1 background task still running', replace: true },
+      }),
+    );
+
+    const call = store.get('agent-1')?.steps[0]?.toolCalls[0];
+    expect(call?.liveOutputTail).toBe('Waiting 10s / 600s · 1 background task still running');
+  });
+
   it('creates a call from streaming deltas and replaces args on start', () => {
     const store = new SubagentActivityStore();
     store.ensureRecord(spawn());

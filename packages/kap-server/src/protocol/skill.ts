@@ -8,8 +8,9 @@ export const skillDescriptorSchema = z.object({
   description: z.string(),
   path: z.string(),
   source: skillSourceSchema,
+  workspace_dir: z.string().optional(),
   type: z.string().optional(),
-  /** `true` when the skill is user-slash only (model must not auto-invoke). */
   disable_model_invocation: z.boolean().optional(),
+  scopes: z.array(z.enum(['tui', 'web'])).optional(),
 });
 export type SkillDescriptor = z.infer<typeof skillDescriptorSchema>;

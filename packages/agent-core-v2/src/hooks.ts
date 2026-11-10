@@ -1,9 +1,3 @@
-/**
- * `hooks` domain (cross-cutting) — ordered chain-of-responsibility hook slots.
- *
- * Provides typed extension points with repeatable chaining and isolated context
- * forks. Bound as utility infrastructure, not a scoped Service.
- */
 import { toDisposable, type IDisposable } from "#/_base/di/lifecycle";
 import { BugIndicatingError } from "#/errors";
 

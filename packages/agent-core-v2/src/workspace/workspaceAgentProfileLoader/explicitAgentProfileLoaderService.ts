@@ -1,12 +1,3 @@
-/**
- * `workspaceAgentProfileLoader` domain — `IExplicitAgentProfileLoader` implementation.
- *
- * Loads the runtime-selected agent files through `hostFs`, resolving paths
- * against the workspace root (`workspaceContext`) and `bootstrap`.
- * Bound at Workspace scope.
- */
-
-
 import { ILogService } from '#/_base/log/log';
 import type { AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { parseAgentFileText } from '#/workspace/workspaceAgentProfileLoader/internal/agentFile';
@@ -22,6 +13,7 @@ import { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
+import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 
 import { IExplicitAgentProfileLoader } from './explicitAgentProfileLoader';
 
@@ -37,6 +29,7 @@ export class ExplicitAgentProfileLoaderService
 
   constructor(
     @IWorkspaceContext private readonly workspace: IWorkspaceContext,
+    @IWorkspaceDirs private readonly dirs: IWorkspaceDirs,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @ILogService log: ILogService,
@@ -44,6 +37,13 @@ export class ExplicitAgentProfileLoaderService
     registry?: IAgentProfileRegistry,
   ) {
     super(log, registry);
+    this._register(
+      this.dirs.onDidChange(() => {
+        void this.reload().catch((error) => {
+          this.log.warn(`agent profile loader "explicit" primary reload failed: ${String(error)}`);
+        });
+      }),
+    );
     this.start();
   }
 
@@ -55,7 +55,7 @@ export class ExplicitAgentProfileLoaderService
     const files = this.bootstrap.args.agentFiles ?? [];
     const profiles: AgentProfile[] = [];
     for (const file of files) {
-      const filePath = resolveAgentPath(file, this.workspace.cwd, this.bootstrap.osHomeDir);
+      const filePath = resolveAgentPath(file, this.dirs.primary, this.bootstrap.osHomeDir);
       const text = await this.fs.readText(filePath);
       profiles.push(
         agentProfileFromFile(

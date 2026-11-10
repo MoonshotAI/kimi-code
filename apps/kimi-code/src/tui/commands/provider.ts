@@ -1,27 +1,24 @@
 import {
-  applyCustomRegistryEntries,
-  fetchCustomRegistry,
-  type CustomRegistrySource,
-  type ManagedKimiConfigShape,
-} from '@moonshot-ai/kimi-code-oauth';
-import {
   applyCatalogProvider,
-  cascadeSubagentModelPool,
   catalogProviderModels,
   CatalogFetchError,
+  RegistryImportError,
+  type ImportCustomRegistryResult,
   DEFAULT_CATALOG_URL,
   resolveCatalogImport,
-  SECONDARY_DERIVED_MODEL_ALIAS,
   type Catalog,
+  type RefreshProviderModelsResponse,
   type ThinkingEffort,
 } from '@moonshot-ai/kimi-code-sdk';
 
-import { createKimiCodeUserAgent } from '#/cli/version';
+import { createKimiCodeUserAgent } from '#/cli/host-identity';
 import { fetchCatalogOrBuiltIn } from '#/utils/catalog-fetch';
+import { refreshKimiRegion } from '#/utils/region';
 import { ChoicePickerComponent } from '../components/dialogs/choice-picker';
 import {
   CustomRegistryImportDialogComponent,
   type CustomRegistryImportResult,
+  type CustomRegistryImportValue,
 } from '../components/dialogs/custom-registry-import';
 import {
   ProviderManagerComponent,
@@ -31,7 +28,7 @@ import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model
 import { DEFAULT_OAUTH_PROVIDER_NAME } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
 import { thinkingEffortToConfig } from '../utils/thinking-config';
-import { effectiveModelForHost } from './config';
+import { effectiveModelForHost } from '../utils/model-switch';
 import {
   promptApiKey,
   promptBaseUrl,
@@ -43,10 +40,81 @@ import type { SlashCommandHost } from './dispatch';
 // /provider command
 // ---------------------------------------------------------------------------
 
-export async function handleProviderCommand(host: SlashCommandHost): Promise<void> {
+export async function handleProviderCommand(host: SlashCommandHost, rawArgs = ''): Promise<void> {
+  const args = rawArgs.trim().split(/\s+/).filter((part) => part.length > 0);
+  if (args[0] === 'refresh') {
+    if (args.length > 2) {
+      host.showError('Usage: /provider [refresh [providerId]]');
+      return;
+    }
+    await handleProviderRefresh(host, args[1]);
+    return;
+  }
+  if (args.length > 0) {
+    host.showError('Usage: /provider [refresh [providerId]]');
+    return;
+  }
   const options = buildProviderManagerOptions(host);
   const component = new ProviderManagerComponent(options);
   host.mountEditorReplacement(component);
+}
+
+async function handleProviderRefresh(
+  host: SlashCommandHost,
+  providerId: string | undefined,
+): Promise<void> {
+  const spinner = host.showProgressSpinner(
+    providerId === undefined
+      ? 'Refreshing models for all providers…'
+      : `Refreshing models for ${providerId}…`,
+  );
+  let result: RefreshProviderModelsResponse;
+  try {
+    result = await host.authFlow.refreshProviderModels(
+      providerId === undefined ? undefined : { providerId },
+    );
+  } catch (error) {
+    spinner.stop({ ok: false, label: 'Refresh failed.' });
+    host.showError(`Failed to refresh models: ${formatErrorMessage(error)}`);
+    return;
+  }
+  spinner.stop({ ok: true, label: 'Refresh finished.' });
+  reportProviderRefresh(host, result);
+  if (result.retired_default !== undefined) {
+    await host.modelMigration.retire(result.retired_default);
+  }
+}
+
+function reportProviderRefresh(
+  host: SlashCommandHost,
+  result: RefreshProviderModelsResponse,
+): void {
+  for (const change of result.changed) {
+    if (change.added === 0 && change.removed === 0) {
+      // Metadata-only refresh: display name, capabilities, or upgrade info changed.
+      host.showStatus(`${change.provider_name}: model metadata updated.`);
+      continue;
+    }
+    const parts: string[] = [];
+    if (change.added > 0) parts.push(`+${change.added}`);
+    if (change.removed > 0) parts.push(`-${change.removed}`);
+    // A removed alias can break agents bound to it on their next turn, so
+    // removals surface as a warning rather than a plain status.
+    const total = change.added + change.removed;
+    host.showStatus(
+      `${change.provider_name}: ${parts.join(' / ')} model${total === 1 ? '' : 's'}.`,
+      change.removed > 0 ? 'warning' : undefined,
+    );
+  }
+  for (const failure of result.failed) {
+    host.showStatus(`Skipped refreshing ${failure.provider}: ${failure.reason}`, 'warning');
+  }
+  if (result.changed.length === 0 && result.failed.length === 0) {
+    const count = result.unchanged.length;
+    host.showStatus(
+      `No model changes (${count} provider${count === 1 ? '' : 's'} up to date).`,
+    );
+  }
 }
 
 function buildProviderManagerOptions(host: SlashCommandHost): ProviderManagerOptions {
@@ -89,8 +157,11 @@ async function handleProviderManagerDeleteSource(
 async function handleProviderDelete(host: SlashCommandHost, providerId: string): Promise<void> {
   if (providerId === DEFAULT_OAUTH_PROVIDER_NAME) {
     await host.harness.auth.logout(DEFAULT_OAUTH_PROVIDER_NAME);
+    // Drop the process-wide region cache with the credential: derived
+    // endpoints (updates, marketplace, site links, telemetry) must fall back
+    // to the marker/default profile, not the logged-out region.
+    refreshKimiRegion();
     await host.authFlow.refreshConfigAfterLogout();
-    await host.authFlow.clearActiveSessionAfterLogout();
     return;
   }
 
@@ -99,7 +170,6 @@ async function handleProviderDelete(host: SlashCommandHost, providerId: string):
   const config = await host.harness.removeProvider(providerId);
   if (activeProvider === providerId) {
     await host.authFlow.refreshConfigAfterLogout();
-    await host.authFlow.clearActiveSessionAfterLogout();
   } else {
     host.setAppState({
       availableProviders: config.providers ?? {},
@@ -233,10 +303,6 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
   // entered. The model selector that follows is just a convenience to pick the
   // default model; ESC leaves the provider in place without a default selection.
   const existingConfig = await host.harness.getConfig();
-  const poolSnapshot =
-    existingConfig.providers[providerId] !== undefined
-      ? existingConfig.secondaryModel
-      : undefined;
   if (existingConfig.providers[providerId] !== undefined) {
     await host.harness.removeProvider(providerId);
   }
@@ -257,16 +323,6 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
     models: config.models,
   });
 
-  // removeProvider cascaded the subagent pool against a model table where
-  // every `${providerId}/...` alias was absent; restore the entries that
-  // survived the re-add (aliases the catalog genuinely dropped stay dropped).
-  if (poolSnapshot !== undefined) {
-    const restored = cascadeSubagentModelPool(poolSnapshot, config.models ?? {});
-    if (restored !== null) {
-      await host.harness.setConfig({ secondaryModel: restored ?? poolSnapshot });
-    }
-  }
-
   await host.authFlow.refreshConfigAfterLogin();
   host.track('connect', { provider: providerId, method: 'catalog' });
   host.showStatus(`Provider added: ${entry.name ?? providerId}`);
@@ -276,19 +332,14 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
     );
   }
 
-  // Build a merged model dictionary that includes existing models plus the
-  // newly-persisted provider's models, so the tabbed selector shows every
+  // The config's model table already holds the newly-persisted provider's
+  // models next to the existing ones, so the tabbed selector shows every
   // provider's tab (the new provider's tab starts active via initialTabId).
-  // The v1 runtime may carry the synthesized `__secondary__` derived entry —
-  // never selectable in a picker.
   const stateModels = await host.harness.getConfig().then((c) => c.models ?? {});
-  const mergedModels = { ...stateModels };
-  delete mergedModels[SECONDARY_DERIVED_MODEL_ALIAS];
-
   const selector = new TabbedModelSelectorComponent({
-    models: mergedModels,
+    models: stateModels,
     currentValue: host.state.appState.model,
-    selectedValue: Object.keys(mergedModels).find((a) => a.startsWith(`${providerId}/`)),
+    selectedValue: Object.keys(stateModels).find((a) => a.startsWith(`${providerId}/`)),
     currentThinkingEffort: host.state.appState.thinkingEffort,
     initialTabId: providerId,
     onSelect: ({ alias, thinking }) => {
@@ -304,7 +355,7 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
   host.mountEditorReplacement(selector);
 }
 
-async function setDefaultModel(
+export async function setDefaultModel(
   host: SlashCommandHost,
   alias: string,
   effort: ThinkingEffort,
@@ -312,17 +363,45 @@ async function setDefaultModel(
   // Resolve efforts the same way the /model path does (effectiveModelForHost
   // applies overrides and the protocol-profile inference): catalog entries for
   // e.g. Anthropic models declare no support_efforts on the alias, and without
-  // the inference a top-tier pick would slip through as a persisted effort.
+  // the inference an above-default pick would slip through as a persisted effort.
   const model = host.state.appState.availableModels[alias];
+  const thinking = thinkingEffortToConfig(
+    effort,
+    model === undefined ? undefined : effectiveModelForHost(host, model),
+  );
+  if (host.session === undefined) {
+    // A first prompt may still be inside lazy creation: wait it out so the
+    // pick lands on the new session instead of racing its assembly (same
+    // coordination as the /model path).
+    await host.waitForSessionAssembly();
+  }
   await host.harness.setConfig({
     defaultModel: alias,
-    thinking: thinkingEffortToConfig(
-      effort,
-      model === undefined ? undefined : effectiveModelForHost(host, model).supportEfforts,
-    ),
+    thinking,
   });
-  await host.authFlow.refreshConfigAfterLogin();
-  host.track('model_switch', { model: alias });
+  // Whether activation made the engine emit model_switch (it reached a live
+  // session AND changed the bound alias — both engines track only an actual
+  // change). Recorded at activation time rather than snapshotted at entry: a
+  // lazy session can come live while the config writes above are pending; a
+  // session created BY activation (v1) or a same-alias rebind does not count
+  // — both bind the model without an engine event.
+  const refreshed = await host.authFlow.refreshConfigAfterLogin(effort);
+  // A mounted confirmation gate owns the whole switch — including the picked
+  // effort — so the follow-up activation must not fire under the open dialog.
+  const gateOwnsSwitch = refreshed === 'gated';
+  let engineTrackedSwitch = refreshed === 'gated' ? true : refreshed;
+  // refreshConfigAfterLogin reactivates from the persisted config, so a pick
+  // the gate keeps session-only never reaches the runtime — apply it after
+  // the refresh, or the persisted value would clobber it.
+  if (!gateOwnsSwitch && thinking.effort === undefined && effort !== 'off' && effort !== 'on') {
+    engineTrackedSwitch =
+      (await host.authFlow.activateModelAfterLogin(alias, effort)) || engineTrackedSwitch;
+  }
+  // When the engine never emitted (no live session, or the alias was already
+  // bound), the TUI stays the sole producer for the pick.
+  if (!engineTrackedSwitch) {
+    host.track('model_switch', { model: alias });
+  }
   host.showStatus(`Default model set to ${alias} with thinking ${effort}.`);
 }
 
@@ -330,55 +409,53 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
   const value = await promptCustomRegistryImport(host);
   if (value === undefined) return false;
 
-  const source: CustomRegistrySource = {
-    kind: 'apiJson',
-    url: value.url,
-    apiKey: value.apiKey,
-  };
-
-  let entries: Awaited<ReturnType<typeof fetchCustomRegistry>>;
+  let result: ImportCustomRegistryResult;
   try {
-    entries = await fetchCustomRegistry(source, { userAgent: createKimiCodeUserAgent() });
+    result = await host.harness.importCustomRegistry({
+      url: value.url,
+      apiKey: value.apiKey,
+      setDefaultWhenUnset: false,
+    });
   } catch (error) {
-    host.showError(`Failed to import registry: ${formatErrorMessage(error)}`);
+    if (error instanceof RegistryImportError && error.phase === 'empty') {
+      host.showStatus('Registry contained no providers.');
+      return false;
+    }
+    const phase =
+      error instanceof RegistryImportError && error.phase === 'fetch' ? 'import' : 'apply';
+    host.showError(`Failed to ${phase} registry: ${formatErrorMessage(error)}`);
+    if (
+      value.apiKey === undefined &&
+      error instanceof RegistryImportError &&
+      (error.status === 401 || error.status === 403)
+    ) {
+      host.showStatus('This registry requires authentication — paste its Bearer token.', 'warning');
+    }
     return false;
   }
-
-  const addedProviderIds = Object.values(entries).map((entry) => entry.id);
   try {
-    const config = await host.harness.getConfig();
-    applyCustomRegistryEntries(
-      config as unknown as ManagedKimiConfigShape,
-      entries,
-      source,
-    );
-    await host.harness.setConfig({
-      providers: config.providers,
-      models: config.models,
-    });
     await host.authFlow.refreshConfigAfterLogin();
   } catch (error) {
     host.showError(`Failed to apply registry: ${formatErrorMessage(error)}`);
     return false;
   }
-
+  const addedProviderIds = result.providers.map((provider) => provider.id);
   const count = addedProviderIds.length;
-  if (count === 0) {
-    host.showStatus('Registry contained no providers.');
-    return false;
-  }
   host.showStatus(
     count === 1
       ? 'Imported 1 provider from registry.'
       : `Imported ${String(count)} providers from registry.`,
     'success',
   );
+  for (const [id, envName] of Object.entries(result.credentialEnv)) {
+    host.showStatus(
+      `provider "${id}" declares credential env var "${envName}" — set api_key_env in config.toml to use it`,
+    );
+  }
 
   // Offer the model selector so the user can pick a default, just like the
-  // catalog (known-provider) flow. Copy without the v1-synthesized
-  // `__secondary__` derived entry — never selectable in a picker.
-  const stateModels = { ...(await host.harness.getConfig().then((c) => c.models ?? {})) };
-  delete stateModels[SECONDARY_DERIVED_MODEL_ALIAS];
+  // catalog (known-provider) flow.
+  const stateModels = await host.harness.getConfig().then((c) => c.models ?? {});
   const firstNewAlias = Object.keys(stateModels).find((a) =>
     addedProviderIds.some((pid) => a.startsWith(`${pid}/`)),
   );
@@ -407,7 +484,7 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
 
 function promptCustomRegistryImport(
   host: SlashCommandHost,
-): Promise<{ readonly url: string; readonly apiKey: string } | undefined> {
+): Promise<CustomRegistryImportValue | undefined> {
   return new Promise((resolve) => {
     const dialog = new CustomRegistryImportDialogComponent(
       (result: CustomRegistryImportResult) => {

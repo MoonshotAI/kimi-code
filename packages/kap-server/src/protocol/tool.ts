@@ -9,9 +9,6 @@ export const toolDescriptorSchema = z.object({
   input_schema: z.unknown(),
   source: toolSourceSchema,
   mcp_server_id: z.string().min(1).optional(),
-  // v2 extension beyond the v1 wire shape: effective availability after the
-  // profile / global `[tools]` config / session denylist gates. Optional so
-  // the legacy v1 projection (no gate concept) still satisfies the schema.
   active: z.boolean().optional(),
 });
 export type ToolDescriptor = z.infer<typeof toolDescriptorSchema>;
@@ -34,5 +31,6 @@ export const mcpServerSchema = z.object({
   status: mcpServerStatusSchema,
   last_error: z.string().optional(),
   tool_count: z.number().int().nonnegative(),
+  next_retry_at: z.number().optional(),
 });
 export type McpServer = z.infer<typeof mcpServerSchema>;

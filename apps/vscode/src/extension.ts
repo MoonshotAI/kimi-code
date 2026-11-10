@@ -9,6 +9,7 @@ import {
   type LegacyMigrationRunResult,
 } from "./migration";
 import { updateLoginContext } from "./utils/context";
+import { activateExtensionTelemetry, deactivateExtensionTelemetry } from "./telemetry";
 
 let outputChannel: vscode.OutputChannel | undefined;
 let provider: KimiWebviewProvider | undefined;
@@ -19,7 +20,9 @@ const LEGACY_WARNING_NOTICE_KEY = "kimi.legacyMigration.warningNotice.v1";
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   outputChannel = vscode.window.createOutputChannel("Kimi Code");
   const remoteInfo = vscode.env.remoteName ? ` (remote: ${vscode.env.remoteName})` : "";
-  log(`Kimi Code ${VSCodeSettings.getExtensionConfig().version} activating${remoteInfo}`);
+  const version = VSCodeSettings.getExtensionConfig().version;
+  log(`Kimi Code ${version} activating${remoteInfo}`);
+  context.subscriptions.push(activateExtensionTelemetry({ version, log }));
 
   provider = new KimiWebviewProvider(
     context.extensionUri,
@@ -143,8 +146,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
 export async function deactivate(): Promise<void> {
   log("Kimi Code deactivating");
-  await provider?.shutdown();
-  provider = undefined;
+  try {
+    await provider?.shutdown();
+  } finally {
+    provider = undefined;
+    await deactivateExtensionTelemetry();
+  }
 }
 
 function log(message: string): void {

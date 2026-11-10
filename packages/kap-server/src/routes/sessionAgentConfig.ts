@@ -1,15 +1,3 @@
-/**
- * `agent_config` patch dispatch for `POST /sessions/{session_id}/profile`.
- *
- * The `agent_config` body field is a wire-to-native translation, not a v1-only
- * projection, so it lives at the server edge alongside the other routes that
- * call the native v2 services directly (`fork` / `compact` / `undo` / `abort`)
- * instead of inside `ISessionLegacyService`. The helper resumes the session
- * (cold-load if needed), resolves its main agent, and fans each present field
- * out to the owning Agent-scope service, preserving the per-field
- * apply-only-when-set semantics and the plan/swarm idempotency guards.
- */
-
 import {
   ErrorCodes,
   Error2,
@@ -18,7 +6,9 @@ import {
   IAgentPlanService,
   IAgentProfileService,
   IAgentSwarmService,
+  IAgentTowerService,
   resumeSessionById,
+  towerEnterFailureMessage,
   type PermissionMode,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
@@ -64,8 +54,24 @@ export async function applySessionAgentConfig(
       else swarm.exit();
     }
   }
+  if (agentConfig.tower_mode !== undefined) {
+    const tower = agent.accessor.get(IAgentTowerService);
+    if (agentConfig.tower_mode) {
+      const result = await tower.enter(agentConfig.tower_base);
+      if (!result.entered) {
+        throw new Error2(
+          ErrorCodes.SESSION_TOWER_MODE_INVALID,
+          towerEnterFailureMessage(result),
+        );
+      }
+    } else {
+      await tower.exit();
+    }
+  }
   if (agentConfig.goal_objective !== undefined) {
-    await agent.accessor.get(IAgentGoalService).createGoal({ objective: agentConfig.goal_objective });
+    await agent.accessor
+      .get(IAgentGoalService)
+      .createGoal({ objective: agentConfig.goal_objective });
   }
   if (agentConfig.goal_control !== undefined) {
     const goal = agent.accessor.get(IAgentGoalService);

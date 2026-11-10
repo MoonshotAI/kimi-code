@@ -2,8 +2,6 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import type { Session } from '@moonshot-ai/kimi-code-sdk';
-
 import { detectInstallSource } from '#/cli/update/source';
 import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
 import { detectShellEnvironment } from '#/utils/process/shell-env';
@@ -13,6 +11,7 @@ import { LLM_NOT_SET_MESSAGE, NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi
 import { isAbortError } from '../utils/errors';
 import { formatErrorMessage } from '../utils/event-payload';
 import { buildExportMarkdown } from '../utils/export-markdown';
+import { sessionWorkDir } from '../utils/session-work-dir';
 import type { SlashCommandHost } from './dispatch';
 
 // ---------------------------------------------------------------------------
@@ -33,10 +32,6 @@ export async function handleTitleCommand(host: SlashCommandHost, args: string): 
 
   let session = host.session;
   if (session === undefined) {
-    if (!host.engineV2) {
-      host.showError(NO_ACTIVE_SESSION_MESSAGE);
-      return;
-    }
     // Setting a title needs a live session; lazy-create it on first use (the
     // bare read-only form above works session-less).
     session = await host.ensureSession();
@@ -62,18 +57,14 @@ export async function handleForkCommand(host: SlashCommandHost, args: string): P
     return;
   }
 
-  const sourceTitle = forkSourceTitle(host, session);
   try {
-    const forked = await host.harness.forkSession({
-      id: session.id,
-      title: `Fork: ${sourceTitle}`,
-    });
+    const forked = await host.harness.forkSession({ id: session.id });
     const forkId = forked.id;
     try {
       await forked.close();
     } catch (error) {
       const msg = formatErrorMessage(error);
-      host.showError(`Session forked (${forkId}), but failed to release its runtime: ${msg}`);
+      host.showError(`Session forked (${forkId}), but failed to release its environment: ${msg}`);
       return;
     }
     // Stay in the source session: switching to the fork would close the
@@ -115,15 +106,6 @@ function forkResumeCommand(workDir: string, forkId: string): string {
   return `${changeDir} && kimi --resume ${quoteShellArg(forkId)}`;
 }
 
-function forkSourceTitle(host: SlashCommandHost, session: Session): string {
-  const currentTitle = host.state.appState.sessionTitle?.trim();
-  if (currentTitle !== undefined && currentTitle.length > 0) return currentTitle;
-
-  const summaryTitle =
-    typeof session.summary?.title === 'string' ? session.summary.title.trim() : '';
-  return summaryTitle.length > 0 ? summaryTitle : session.id;
-}
-
 export async function handleExportMdCommand(host: SlashCommandHost, args: string): Promise<void> {
   const session = host.session;
   if (session === undefined) {
@@ -151,7 +133,7 @@ export async function handleExportMdCommand(host: SlashCommandHost, args: string
 
     const md = buildExportMarkdown({
       sessionId: session.id,
-      workDir: host.state.appState.workDir,
+      workDir: sessionWorkDir(host.state.appState),
       history: context.history,
       tokenCount: context.tokenCount,
       now,
@@ -206,11 +188,13 @@ export async function handleInitCommand(host: SlashCommandHost): Promise<void> {
   try {
     await session.init();
     host.track('init_complete');
+    host.streamingUI.timeline.turnEnded('completed');
     host.streamingUI.finalizeTurn((item) => {
       host.sendQueuedMessage(session, item);
     });
   } catch (error) {
     if (isAbortError(error)) {
+      host.streamingUI.timeline.turnEnded();
       host.setAppState({ streamingPhase: 'idle' });
       host.resetLivePane();
       return;

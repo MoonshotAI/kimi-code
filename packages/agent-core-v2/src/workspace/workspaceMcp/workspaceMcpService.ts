@@ -1,70 +1,25 @@
-/**
- * `workspaceMcp` domain — `IWorkspaceMcpService` implementation.
- *
- * Owns the handler-wide `McpConnectionManager` (built at construction,
- * shared by every session of the workspace). This service drives the
- * initial connect from the config domain's snapshot, applies its reconciled
- * change events incrementally (serialized on a mutation tail, always after
- * the initial connect settles — removals tombstone the server via
- * `markRemoved` so live sessions keep the tool registrations but fail calls
- * with a removal notice, while new sessions never see them), feeds the
- * manager's global timeout defaults
- * from the config domain's tunables at each (re)connect, and reports
- * connection telemetry for the initial load. Every session handle it hands
- * out (`sessionHandle` / `sessionOverlay`) captures a server baseline — the
- * names present when the session materializes, open to additions until the
- * initial connect settles, then closed — so servers that appear mid-session
- * (a plugin install or a config edit, which always land after the initial
- * connect via the mutation tail) never reach the live sessions' tool
- * registries; the next session materialization (`/new`, `/reload`, resume)
- * captures a fresh baseline. It also builds per-session
- * overlays (`sessionOverlay`): a session-owned manager for a session's
- * ephemeral (caller-injected, never persisted) servers — baseline members
- * by construction — presented through a
- * `MergedMcpConnectionView` over the shared manager. Overlay activation is
- * event-driven: this service subscribes to the session lifecycle's
- * `onWillCreateSession`, and a session created with an
- * `ISessionEphemeralMcpServers` seed gets its overlay created there — the
- * merged handle contributed as the session's `ISessionMcpHandle` (replacing
- * the seed adapter's workspace projection), the overlay's shutdown attached
- * to the session's teardown, so the session lifecycle never depends on MCP.
- * The overlay's stdio cwd is read from the session's own `ISessionContext`.
- * An overlay handle's
- * baseline still freezes on the workspace manager's initial load — never on
- * the overlay's own connect — so a slow ephemeral connect cannot reopen the
- * window for mid-session workspace additions.
- * An outright initial-load or change-apply failure is logged (per-server
- * failures are status entries). The manager (and its stdio child processes,
- * whose cwd is the handler root) lives as long as the handler — i.e. the
- * process — so a stateful stdio server is shared by concurrent sessions of
- * the workspace rather than owned by one session. Bound at Workspace scope.
- *
- * The client name announced to MCP servers — on initialize and on OAuth
- * dynamic registration — is the identity snapshot's slug. Every manager it
- * builds, the shared one and each session overlay, gates its connects on
- * `identity.resolved()`, so the callback handed to the managers always reads
- * the frozen snapshot: a connection (and the OAuth provider a remote server
- * materializes, cached on the shared service) can never carry a pre-config
- * name.
- */
-
-import { Disposable } from '#/_base/di/lifecycle';
 import { ref, type LiveRef } from '#/_base/di/instantiation';
+import { Disposable } from '#/_base/di/lifecycle';
 import { ILogService } from '#/_base/log/log';
-
-import { McpConnectionManager, type McpConnectionView } from '#/mcpCore/connection-manager';
-import type { McpServerConfig } from '#/mcpCore/config-schema';
-import { McpOAuthService } from '#/mcpCore/oauth/service';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
-import { IMcpOAuthStore } from '#/app/mcpConfig/oauthStore';
-import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { IMcpOAuthService } from '#/app/mcpConfig/oauthService';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
+import type { McpServerConfig } from '#/mcpCore/config-schema';
+import {
+  McpConnectionManager,
+  type McpConnectionView,
+  type McpServerEntry,
+} from '#/mcpCore/connection-manager';
+import type { McpOAuthEvent, McpOAuthService } from '#/mcpCore/oauth/service';
+import { canonicalMcpOAuthResource } from '#/mcpCore/oauth/store';
 import { ISessionEphemeralMcpServers } from '#/session/mcp/ephemeralMcpServers';
 import { MergedMcpConnectionView } from '#/session/mcp/mergedConnectionView';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
-import { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
+import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 import {
   IWorkspaceMcpConfigService,
   type McpServersChange,
@@ -81,19 +36,21 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
 
   private readonly manager: McpConnectionManager;
   private readonly oauthService: McpOAuthService;
-  private readonly stdioCwd: string;
   private readonly workspaceId: string;
+  private appliedPrimary?: string;
   readonly ready: Promise<void>;
   private mutationTail: Promise<void> = Promise.resolve();
   private readonly resolveClientName = (): string | undefined => this.identity.current().slug;
   private readonly sessionLifecycle: LiveRef<ISessionManager>;
   private sessionLifecycleAttached = false;
+  private shutdown?: Promise<void>;
 
   constructor(
     @IWorkspaceContext workspace: IWorkspaceContext,
-    @IRuntimeResolver private readonly runtimeResolver: IRuntimeResolver,
+    @IWorkspaceDirs private readonly dirs: IWorkspaceDirs,
+    @IEnvironmentService private readonly environmentResolver: EnvironmentResolver,
     @IWorkspaceMcpConfigService private readonly mcpConfig: IWorkspaceMcpConfigService,
-    @IMcpOAuthStore oauthStore: IMcpOAuthStore,
+    @IMcpOAuthService oauthService: McpOAuthService,
     @ILogService private readonly log: ILogService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentIdentity private readonly identity: IAgentIdentity,
@@ -101,33 +58,63 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
   ) {
     super();
     this.sessionLifecycle = sessionLifecycle;
-    this.stdioCwd = workspace.cwd;
     this.workspaceId = workspace.workspaceId;
-    this.oauthService = new McpOAuthService({
-      store: oauthStore,
-      resolveClientName: this.resolveClientName,
-    });
+    this.oauthService = oauthService;
     this.manager = new McpConnectionManager({
       log: this.log,
       oauthService: this.oauthService,
-      stdioCwd: this.stdioCwd,
-      runtimeResolver: this.runtimeResolver,
-      workspaceId: workspace.workspaceId,
-      runtimeId: 'local',
-      resolveDefaultTimeouts: () => this.mcpConfig.tunables(),
+      stdioCwd: () => this.dirs.primary,
+      environmentResolver: this.environmentResolver,
+      environmentId: 'local',
+      reconnectRetryEnabled: true,
+      resolveDefaults: () => this.mcpConfig.tunables(),
       resolveClientName: this.resolveClientName,
     });
-    this._register({ dispose: () => void this.manager.shutdown() });
     this._register(
       this.mcpConfig.onDidChange((change) => {
-        this.scheduleApply(change);
+        change.waitUntil(this.scheduleApply(change));
       }),
     );
+    this._register(
+      this.mcpConfig.onDidChangeTunables(() => {
+        this.manager.rescheduleRetries();
+      }),
+    );
+    this._register(
+      this.dirs.onDidChange(() => {
+        this.schedulePrimaryRebind();
+      }),
+    );
+    this._register({ dispose: this.oauthEventSubscription(this.manager) });
     this.attachSessionLifecycle();
     this._register(sessionLifecycle.onDidChange(() => this.attachSessionLifecycle()));
     this.ready = this.initialize().catch((error: unknown) => {
       this.log.error('mcp initial load failed', { error });
     });
+  }
+
+  override dispose(): void {
+    void this.disposeAsync().catch((error) => {
+      this.log.error('mcp disposal failed', { error });
+    });
+  }
+
+  disposeAsync(): Promise<void> {
+    this.shutdown ??= (async () => {
+      let disposalError: unknown;
+      try {
+        super.dispose();
+      } catch (error) {
+        disposalError = error;
+      }
+      await this.manager.shutdown();
+      if (disposalError !== undefined) {
+        throw disposalError instanceof Error
+          ? disposalError
+          : new Error('MCP disposal failed', { cause: disposalError });
+      }
+    })();
+    return this.shutdown;
   }
 
   private attachSessionLifecycle(): void {
@@ -137,11 +124,13 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
     this.sessionLifecycleAttached = true;
     this._register(
       lifecycle.onWillCreateSession((event) => {
-        if (event.readSeed(ISessionContext).workspaceId !== this.workspaceId) return;
+        const context = event.readSeed(ISessionContext);
+        if (context.workspaceId !== this.workspaceId) return;
         const servers = event.readSeed(ISessionEphemeralMcpServers);
         if (Object.keys(servers).length === 0) return;
         const overlay = this.sessionOverlay(servers, {
-          stdioCwd: event.readSeed(ISessionContext).cwd,
+          stdioCwd: this.dirs.primary,
+          sessionId: context.sessionId,
         });
         event.contributeSeed(ISessionMcpHandle, overlay.handle);
         event.onSessionDispose(() => {
@@ -171,12 +160,13 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
     const sessionManager = new McpConnectionManager({
       log: this.log,
       oauthService: this.oauthService,
-      stdioCwd: opts?.stdioCwd ?? this.stdioCwd,
-      runtimeResolver: this.runtimeResolver,
-      workspaceId: this.workspaceId,
-      runtimeId: 'local',
-      requireStdioRuntimeId: true,
-      resolveDefaultTimeouts: () => this.mcpConfig.tunables(),
+      stdioCwd: opts?.stdioCwd ?? (() => this.dirs.primary),
+      environmentResolver: this.environmentResolver,
+      environmentId: 'local',
+      requireStdioEnvironmentId: true,
+      reconnectRetryEnabled: true,
+      sessionId: opts?.sessionId,
+      resolveDefaults: () => this.mcpConfig.tunables(),
       resolveClientName: this.resolveClientName,
     });
     const connect = Promise.all([this.mcpConfig.ready, this.identity.resolved()])
@@ -184,6 +174,7 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
       .catch((error: unknown) => {
         this.log.error('session mcp overlay initial load failed', { error });
       });
+    const unsubscribeOAuth = this.oauthEventSubscription(sessionManager);
     const view = new MergedMcpConnectionView(
       this.manager,
       sessionManager,
@@ -195,16 +186,71 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
         _serviceBrand: undefined,
         ready,
         connectionManager: view,
-        // The baseline's lazy window tracks only the workspace manager's
-        // initial load: freezing on the combined `ready` would keep it open
-        // while a slow ephemeral server connects, and a workspace server
-        // added in that window (plugin install, config edit) would leak into
-        // the live session through the merged view. Overlay names are known
-        // at construction, so they need no window at all.
         isBaselineServer: this.sessionBaseline(this.manager, this.ready, Object.keys(servers)),
       },
-      shutdown: () => sessionManager.shutdown(),
+      shutdown: () => {
+        unsubscribeOAuth();
+        return sessionManager.shutdown();
+      },
     };
+  }
+
+  private oauthEventSubscription(manager: McpConnectionManager): () => void {
+    return this.oauthService.onEvent((event) => {
+      void this.handleMcpOAuthEvent(manager, event).catch((error: unknown) => {
+        this.log.warn(`mcp oauth event handling failed: ${String(error)}`);
+      });
+    });
+  }
+
+  private async handleMcpOAuthEvent(
+    manager: McpConnectionManager,
+    event: McpOAuthEvent,
+  ): Promise<void> {
+    if (event.type === 'tokens-invalidated' && event.scope !== 'tokens' && event.scope !== 'all') {
+      return;
+    }
+    const entry = manager.get(event.serverName);
+    if (entry === undefined) return;
+    const serverUrl = manager.getRemoteServerUrl(event.serverName);
+    if (serverUrl === undefined || canonicalMcpOAuthResource(serverUrl) !== event.serverUrl) return;
+    if (event.type === 'tokens-invalidated') {
+      this.oauthService.forgetProvider(event.serverName, event.serverUrl);
+      if (entry.status === 'needs-auth') return;
+    }
+    if (entry.status === 'disabled' || entry.status === 'removed') return;
+    if (entry.status === 'pending') {
+      await new Promise<void>((resolve, reject) => {
+        let unsubscribe = (): void => {};
+        let settled = false;
+        const reconnect = (next: McpServerEntry | undefined): void => {
+          if (settled) return;
+          if (next !== undefined && (next.name !== event.serverName || next.status === 'pending')) {
+            return;
+          }
+          settled = true;
+          unsubscribe();
+          if (next === undefined || next.status === 'disabled' || next.status === 'removed') {
+            resolve();
+            return;
+          }
+          void manager.reconnectAfterCurrent(event.serverName).then(resolve, reject);
+        };
+        unsubscribe = manager.onStatusChange(reconnect);
+        if (settled) unsubscribe();
+        else reconnect(manager.get(event.serverName));
+      });
+      return;
+    }
+    if (
+      event.type === 'tokens-saved' &&
+      entry.status !== 'needs-auth' &&
+      entry.status !== 'failed'
+    ) {
+      return;
+    }
+    if (event.type === 'refresh-failed' && entry.status !== 'connected') return;
+    await manager.reconnectAndJoin(event.serverName);
   }
 
   private sessionBaseline(
@@ -212,24 +258,33 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
     ready: Promise<void>,
     extra?: readonly string[],
   ): (name: string) => boolean {
-    const baseline = new Set<string>(extra);
-    for (const entry of view.list()) {
-      baseline.add(entry.name);
-    }
+    let baseline: Set<string> | undefined;
     let frozen = false;
+    const snapshot = (): Set<string> => {
+      if (baseline === undefined) {
+        baseline = new Set<string>(extra);
+        for (const entry of view.list()) {
+          baseline.add(entry.name);
+        }
+      }
+      return baseline;
+    };
     void ready.then(
       () => {
+        snapshot();
         frozen = true;
       },
       () => {
+        snapshot();
         frozen = true;
       },
     );
     return (name) => {
-      if (baseline.has(name)) return true;
+      const names = snapshot();
+      if (names.has(name)) return true;
       if (frozen) return false;
       if (view.get(name) === undefined) return false;
-      baseline.add(name);
+      names.add(name);
       return true;
     };
   }
@@ -240,17 +295,43 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
     return tail;
   }
 
+  private schedulePrimaryRebind(): void {
+    void this.ready
+      .then(() =>
+        this.mutate(async () => {
+          const primary = this.dirs.primary;
+          if (primary === this.appliedPrimary) return;
+          for (const [name, config] of Object.entries(this.mcpConfig.servers())) {
+            if (config.transport !== 'stdio' || config.cwd !== undefined || config.enabled === false) {
+              continue;
+            }
+            if (this.manager.get(name) === undefined) continue;
+            try {
+              await this.manager.reconnect(name);
+            } catch (error) {
+              this.log.warn(`mcp primary reconnect failed for ${name}: ${String(error)}`);
+            }
+          }
+          this.appliedPrimary = primary;
+        }),
+      )
+      .catch((error) => {
+        this.log.warn(`mcp primary reconnect failed: ${String(error)}`);
+      });
+  }
+
   private async initialize(): Promise<void> {
     await this.mcpConfig.ready;
     await this.identity.resolved();
+    this.appliedPrimary = this.dirs.primary;
     const servers = this.mcpConfig.servers();
     if (Object.keys(servers).length === 0) return;
     await this.manager.connectAll(servers);
     this.trackMcpInitialLoad();
   }
 
-  private scheduleApply(change: McpServersChange): void {
-    void this.ready
+  private scheduleApply(change: McpServersChange): Promise<void> {
+    return this.ready
       .then(() => this.mutate(() => this.apply(change)))
       .catch((error) => {
         this.log.warn(`mcp server change apply failed: ${String(error)}`);
@@ -288,4 +369,3 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
     }
   }
 }
-

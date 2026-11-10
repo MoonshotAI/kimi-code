@@ -1,13 +1,16 @@
 import { resetCapabilitiesCache, setCapabilities, visibleWidth } from '@moonshot-ai/pi-tui';
+import chalk from 'chalk';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { UserMessageComponent } from '#/tui/components/messages/user-message';
+import {
+  UserMessageComponent,
+  userMessageLineHeights,
+} from '#/tui/components/messages/user-message';
+import { currentTheme, darkColors, lightColors } from '#/tui/theme';
 import type { ImageAttachment } from '#/tui/utils/image-attachment-store';
 
 function stripAnsi(text: string): string {
-  return text
-    .replaceAll(/\u001B\[[0-9;]*m/g, '')
-    .replaceAll(/\u001B\]133;[ABC]\u0007/g, '');
+  return text.replaceAll(/\u001B\[[0-9;]*m/g, '').replaceAll(/\u001B\]133;[ABC]\u0007/g, '');
 }
 
 describe('UserMessageComponent', () => {
@@ -18,10 +21,7 @@ describe('UserMessageComponent', () => {
   it('renders video placeholders as plain text, not inline image escapes', () => {
     setCapabilities({ images: null, trueColor: true, hyperlinks: true });
 
-    const component = new UserMessageComponent(
-      'please inspect [video #1 sample.mov]',
-      [],
-    );
+    const component = new UserMessageComponent('please inspect [video #1 sample.mov]', []);
 
     const out = stripAnsi(component.render(80).join('\n'));
 
@@ -96,13 +96,13 @@ describe('UserMessageComponent', () => {
     setCapabilities({ images: null, trueColor: true, hyperlinks: true });
 
     const withBullet = stripAnsi(new UserMessageComponent('hello', []).render(80).join('\n'));
-    expect(withBullet).toContain('✨');
+    expect(withBullet).toContain('❯');
     expect(withBullet).toContain('hello');
 
     const lines = new UserMessageComponent('$ ls', [], '').render(80).map(stripAnsi);
     const contentLine = lines.find((l) => l.includes('$ ls'));
     expect(contentLine).toBeDefined();
-    expect(stripAnsi(lines.join('\n'))).not.toContain('✨');
+    expect(stripAnsi(lines.join('\n'))).not.toContain('❯');
     // The `$` sits at the leading column where the bullet used to be.
     expect(contentLine?.startsWith('$ ls')).toBe(true);
   });
@@ -113,9 +113,138 @@ describe('UserMessageComponent', () => {
 
     const lines = component.render(80);
     expect(lines[0]).toMatch(/^\u001B\]133;A\u0007/);
-    expect(lines[lines.length - 1]).toMatch(/^\u001B\]133;B\u0007\u001B\]133;C\u0007/);
+    expect(lines.at(-1)).toMatch(/^\u001B\]133;B\u0007\u001B\]133;C\u0007/);
 
     const cached = component.render(80);
     expect(cached[0]).toBe(lines[0]);
+  });
+
+  describe('bullet', () => {
+    it('renders ❯ as the default bullet', () => {
+      setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+
+      const rendered = stripAnsi(new UserMessageComponent('hello', []).render(80).join('\n'));
+      expect(rendered).toContain('❯');
+    });
+
+    it('indents continuation lines by the marker width', () => {
+      setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+
+      const wrapped = new UserMessageComponent('word '.repeat(40).trim(), [])
+        .render(20)
+        .map(stripAnsi)
+        .filter((line) => line.includes('word'));
+      expect(wrapped[0]?.startsWith('❯ ')).toBe(true);
+      expect(wrapped[1]?.startsWith('  word')).toBe(true);
+    });
+
+  });
+
+  describe('skillNames', () => {
+    function withChalkLevel(run: () => void): void {
+      const previousLevel = chalk.level;
+      chalk.level = 3;
+      try {
+        run();
+      } finally {
+        chalk.level = previousLevel;
+      }
+    }
+
+    afterEach(() => {
+      currentTheme.setPalette(darkColors);
+    });
+
+    it('highlights only the listed skill tokens and keeps the text verbatim', () => {
+      setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+      withChalkLevel(() => {
+        const component = new UserMessageComponent(
+          'please /skill:review this and /skill:security too /unknown https://example.com/a',
+          [],
+          undefined,
+          ['review', 'security'],
+        );
+
+        const lines = component.render(120);
+        const joined = lines.join('\n');
+        expect(stripAnsi(joined)).toContain(
+          'please /skill:review this and /skill:security too /unknown https://example.com/a',
+        );
+        expect(joined).toContain(currentTheme.boldFg('primary', '/skill:review'));
+        expect(joined).toContain(currentTheme.boldFg('primary', '/skill:security'));
+        expect(joined).not.toContain(currentTheme.boldFg('primary', '/unknown'));
+        expect(joined).toContain(currentTheme.boldFg('roleUser', 'please '));
+      });
+    });
+
+    it('highlights a leading skill command and bare-name aliases', () => {
+      setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+      withChalkLevel(() => {
+        const leading = new UserMessageComponent('/skill:review src/app.ts', [], undefined, [
+          'review',
+        ]).render(80);
+        expect(leading.join('\n')).toContain(currentTheme.boldFg('primary', '/skill:review'));
+        expect(stripAnsi(leading.join('\n'))).toContain('/skill:review src/app.ts');
+
+        const alias = new UserMessageComponent('please /commit this', [], undefined, [
+          'commit',
+        ]).render(80);
+        expect(alias.join('\n')).toContain(currentTheme.boldFg('primary', '/commit'));
+      });
+    });
+
+    it('renders no highlight when skill names are absent or unmatched', () => {
+      setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+      withChalkLevel(() => {
+        const plain = new UserMessageComponent('please /skill:review this', []).render(80);
+        expect(plain.join('\n')).not.toContain(currentTheme.boldFg('primary', '/skill:review'));
+
+        const unmatched = new UserMessageComponent('please /skill:review this', [], undefined, [
+          'security',
+        ]).render(80);
+        expect(unmatched.join('\n')).not.toContain(currentTheme.boldFg('primary', '/skill:review'));
+      });
+    });
+
+    it('re-dyes the highlight from the current theme after a switch', () => {
+      setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+      withChalkLevel(() => {
+        const component = new UserMessageComponent('please /skill:review this', [], undefined, [
+          'review',
+        ]);
+        const dark = component.render(80).join('\n');
+        expect(dark).toContain(chalk.hex(darkColors.primary).bold('/skill:review'));
+
+        currentTheme.setPalette(lightColors);
+        component.invalidate();
+        const light = component.render(80).join('\n');
+        expect(light).toContain(chalk.hex(lightColors.primary).bold('/skill:review'));
+        expect(stripAnsi(light)).toContain('please /skill:review this');
+      });
+    });
+  });
+});
+
+describe('userMessageLineHeights', () => {
+  it('counts one visual row per short logical line', () => {
+    expect(userMessageLineHeights('one\ntwo\nthree', 80)).toEqual([1, 1, 1]);
+  });
+
+  it('skips leading blank lines, matching the rendered content offset', () => {
+    expect(userMessageLineHeights('\n\none\ntwo', 80)).toEqual([1, 1]);
+  });
+
+  it('counts wrapped rows for long logical lines at the bullet-adjusted width', () => {
+    // Width 12 minus the 2-cell bullet leaves 10 columns for text.
+    expect(userMessageLineHeights('a'.repeat(25), 12)).toEqual([3]);
+  });
+
+  it('expands tabs like the Text component does before wrapping', () => {
+    expect(userMessageLineHeights('\t' + 'a'.repeat(8), 12)).toEqual([2]);
+  });
+
+  it('honours an explicit bullet when measuring the content width', () => {
+    expect(userMessageLineHeights('a'.repeat(11), 12, '')).toEqual([1]);
+    expect(userMessageLineHeights('a'.repeat(11), 12)).toEqual([2]);
   });
 });

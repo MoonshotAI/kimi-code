@@ -1,5 +1,5 @@
-import { accessSync, constants, statSync } from 'node:fs';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { accessSync, constants, realpathSync, statSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, parse, relative, resolve } from 'node:path';
 
 // cmd.exe / CreateProcess search the current directory before PATH, so on
 // Windows a bare command name can execute a binary planted in the workspace
@@ -40,9 +40,20 @@ function isExecutableFile(candidate: string, platform: NodeJS.Platform): boolean
   }
 }
 
+function physicalPath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return resolve(path);
+  }
+}
+
 function isInsideCwd(candidate: string, cwd: string, platform: NodeJS.Platform): boolean {
-  let resolvedCandidate = resolve(candidate);
-  let resolvedCwd = resolve(cwd);
+  // Compare physical paths: process.cwd() has symlinks resolved, while a PATH
+  // entry may reach the same workspace through a symlinked alias.
+  let resolvedCandidate = join(physicalPath(dirname(resolve(candidate))), basename(candidate));
+  let resolvedCwd = physicalPath(cwd);
+  if (resolvedCwd === parse(resolvedCwd).root) return false;
   if (platform === 'win32') {
     resolvedCandidate = resolvedCandidate.toLowerCase();
     resolvedCwd = resolvedCwd.toLowerCase();
@@ -71,7 +82,7 @@ export function resolveCommandPath(command: string, cwd: string = process.cwd())
     for (const name of names) {
       const candidate = join(dir, name);
       if (!isExecutableFile(candidate, platform)) continue;
-      if (isInsideCwd(candidate, cwd, platform)) return undefined;
+      if (isInsideCwd(candidate, cwd, platform)) continue;
       return resolve(candidate);
     }
   }

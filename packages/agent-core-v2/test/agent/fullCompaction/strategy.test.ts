@@ -1,7 +1,7 @@
-import { type Message } from '#/kosong/contract/message';
+import { type Message } from '#human/llm/message';
 import { describe, expect, it } from 'vitest';
 
-import { estimateTokensForMessages } from '#/kosong/contract/tokens';
+import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
 import { DefaultCompactionStrategy } from '#/agent/fullCompaction/strategy';
 
 describe('DefaultCompactionStrategy', () => {
@@ -84,8 +84,8 @@ describe('DefaultCompactionStrategy', () => {
           { type: 'function', id: 'call_b', name: 'Lookup', arguments: '{}' },
         ],
       },
-      { role: 'tool', content: [{ type: 'text', text: 'a' }], toolCalls: [], toolCallId: 'call_a' },
-      { role: 'tool', content: [{ type: 'text', text: 'b' }], toolCalls: [], toolCallId: 'call_b' },
+      { role: 'tool', content: [{ type: 'text', text: 'a' }], toolCallId: 'call_a' },
+      { role: 'tool', content: [{ type: 'text', text: 'b' }], toolCallId: 'call_b' },
       textMessage('user', 'next prompt'),
     ];
 
@@ -147,9 +147,6 @@ describe('DefaultCompactionStrategy', () => {
       textMessage('assistant', 'pending assistant'),
     ];
 
-    // Message sizes are invisible: exactly the last `maxRecentMessages`
-    // messages stay recent and the compacted prefix is never shrunk to fit
-    // the window — the real estimator would shrink it from 4 to 2 here.
     expect(zeroed.computeCompactCount(messages, 'auto')).toBe(4);
     expect(testCompactionStrategy(1_000).computeCompactCount(messages, 'auto')).toBe(2);
   });
@@ -210,9 +207,7 @@ function overflowOnlyCompactionStrategy(maxSize: number = 14): DefaultCompaction
 }
 
 function textMessage(role: 'user' | 'assistant', text: string): Message {
-  return {
-    role,
-    content: [{ type: 'text', text }],
-    toolCalls: [],
-  };
+  return role === 'assistant'
+    ? { role, content: [{ type: 'text', text }], toolCalls: [] }
+    : { role, content: [{ type: 'text', text }] };
 }

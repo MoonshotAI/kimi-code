@@ -1,28 +1,7 @@
-/**
- * `kosongConfig` domain — config-section declarations for kosong.
- *
- * The persistence wrapper for kosong's provider/model registries and the
- * thinking / model-catalog preferences: declares every
- * kosong-owned section constant and its zod schema, plus the env bindings /
- * write-path strips and the snake_case ↔ camelCase TOML transforms. Where
- * kosong owns a pure type (`providers` / `models` / `thinking`), the schema
- * is re-derived from it and pinned by an `AssertExact` assertion (schema ≡
- * type at compile time); `modelCatalog` has no
- * kosong-side type — its derives from the local schema. Self-registered
- * at module load via `registerConfigSection`.
- *
- * `ProviderTypeSchema` is deliberately free-form text: vendor identity is
- * NOT enumerated at parse time. Validation happens at resolve time against
- * kosong's provider-definition registry, which is what allows external
- * packages to register new vendors without touching this schema.
- *
- * Side-effect module: production imports it for the registration side
- * effects; tests import it on demand.
- */
-
 import { z } from 'zod';
 
 import {
+  type ConfigDiagnostic,
   type ConfigStripEnv,
   envBindings,
 } from '#/app/config/config';
@@ -37,11 +16,15 @@ import {
   transformPlainObject,
 } from '#/app/config/toml';
 import { type AssertExact, type Equal } from '#/_base/utils/typeEquality';
-import type { ModelOverride, ModelRecord, ModelsSection } from '#/kosong/model/model';
-import type { ThinkingConfig } from '#/kosong/model/thinking';
-import type { OAuthRef, ProviderConfig, ProvidersSection } from '#/kosong/provider/provider';
-import { ProtocolSchema } from '#/kosong/protocol/protocol';
-
+import {
+  modelUpgradeSchema,
+  type ModelOverride,
+  type ModelRecord,
+  type ModelsSection,
+} from '#/llm-adapter/model/model';
+import type { ThinkingConfig } from '#/llm-adapter/model/thinking';
+import type { OAuthRef, ProviderConfig, ProvidersSection } from '#/llm-adapter/provider/provider';
+import { ProtocolSchema } from '#/llm-adapter/protocol/protocol';
 
 export const PROVIDERS_SECTION = 'providers';
 
@@ -70,6 +53,7 @@ export const ProviderConfigSchema = z.object({
 
   type: ProviderTypeSchema.optional(),
   apiKey: z.string().optional(),
+  apiKeyEnv: z.string().optional(),
   oauth: OAuthRefSchema.optional(),
   env: StringRecordSchema.optional(),
   source: z.record(z.string(), z.unknown()).optional(),
@@ -140,6 +124,9 @@ function providerEntryToToml(
   rawProvider: unknown,
 ): Record<string, unknown> {
   const out = cloneRecord(rawProvider);
+  for (const key of PROVIDER_CREDENTIAL_FIELDS) {
+    if (provider[key] === undefined) delete out[camelToSnake(key)];
+  }
   for (const [key, value] of Object.entries(provider)) {
     if (key === 'oauth' && isPlainObject(value)) {
       out[camelToSnake(key)] = plainObjectToToml(value, undefined);
@@ -152,6 +139,8 @@ function providerEntryToToml(
   return out;
 }
 
+const PROVIDER_CREDENTIAL_FIELDS = ['apiKey', 'oauth', 'apiKeyEnv'] as const;
+
 registerConfigSection(PROVIDERS_SECTION, ProvidersSectionSchema, {
   defaultValue: {},
   env: providersEnvBindings,
@@ -159,7 +148,6 @@ registerConfigSection(PROVIDERS_SECTION, ProvidersSectionSchema, {
   fromToml: providersFromToml,
   toToml: providersToToml,
 });
-
 
 export const MODELS_SECTION = 'models';
 
@@ -190,6 +178,7 @@ const ModelBaseSchema = z.object({
   supportEfforts: z.array(z.string()).optional(),
   defaultEffort: z.string().optional(),
   offEffort: z.string().optional(),
+  upgrade: modelUpgradeSchema.optional(),
 });
 
 export const ModelOverrideSchema = ModelBaseSchema.omit({
@@ -203,6 +192,7 @@ export const ModelOverrideSchema = ModelBaseSchema.omit({
   provider: true,
   model: true,
   betaApi: true,
+  upgrade: true,
 }).partial();
 
 export const ModelRecordSchema = ModelBaseSchema.extend({
@@ -219,6 +209,54 @@ type _AssertModelsSection = AssertExact<
   Equal<z.infer<typeof ModelsSectionSchema>, ModelsSection>
 >;
 
+const MODEL_OBJECT_FIELDS = new Set(
+  Object.entries(ModelRecordSchema.shape)
+    .filter(([, field]) => unwrapWrapperSchema(field as z.ZodTypeAny) instanceof z.ZodObject)
+    .map(([key]) => camelToSnake(key)),
+);
+
+function unwrapWrapperSchema(schema: z.ZodTypeAny): z.ZodTypeAny {
+  let current = schema;
+  while (
+    current instanceof z.ZodOptional ||
+    current instanceof z.ZodNullable ||
+    current instanceof z.ZodDefault
+  ) {
+    current = current.unwrap() as z.ZodTypeAny;
+  }
+  return current;
+}
+
+function collectMalformedModelEntries(rawModels: unknown): ConfigDiagnostic[] {
+  if (!isPlainObject(rawModels)) return [];
+  const diagnostics: ConfigDiagnostic[] = [];
+  for (const [alias, entry] of Object.entries(rawModels)) {
+    if (!isPlainObject(entry)) continue;
+    if (entry['model'] !== undefined || entry['name'] !== undefined) continue;
+    diagnostics.push({
+      domain: MODELS_SECTION,
+      severity: 'warning',
+      message: malformedModelMessage(alias, entry),
+    });
+  }
+  return diagnostics;
+}
+
+function malformedModelMessage(alias: string, entry: Record<string, unknown>): string {
+  const base = `[models] entry '${alias}' is missing the 'model' field and cannot be used as a model`;
+  const dottedAlias = dottedAliasSuffix(alias, entry);
+  if (dottedAlias === undefined) return `${base}.`;
+  return `${base}; if the alias contains dots, quote the table name (e.g. [models."${dottedAlias}"]).`;
+}
+
+function dottedAliasSuffix(alias: string, entry: Record<string, unknown>): string | undefined {
+  for (const [key, value] of Object.entries(entry)) {
+    if (MODEL_OBJECT_FIELDS.has(key) || !isPlainObject(value)) continue;
+    return dottedAliasSuffix(`${alias}.${key}`, value) ?? `${alias}.${key}`;
+  }
+  return undefined;
+}
+
 export const modelsFromToml = (rawSnake: unknown): unknown => {
   if (!isPlainObject(rawSnake)) return rawSnake;
   const out: Record<string, unknown> = {};
@@ -230,6 +268,9 @@ export const modelsFromToml = (rawSnake: unknown): unknown => {
     const converted = transformPlainObject(entry);
     if (isPlainObject(converted['overrides'])) {
       converted['overrides'] = transformPlainObject(converted['overrides']);
+    }
+    if (isPlainObject(converted['upgrade'])) {
+      converted['upgrade'] = transformPlainObject(converted['upgrade']);
     }
     out[id] = converted;
   }
@@ -246,11 +287,14 @@ export const modelsToToml = (value: unknown, rawSnake: unknown): unknown => {
       continue;
     }
     const merged = cloneRecord(rawSub[id]);
+    if (!Object.hasOwn(entry, 'upgrade')) delete merged['upgrade'];
     for (const [key, field] of Object.entries(entry)) {
       if (key === 'capabilities' && Array.isArray(field)) {
         merged[camelToSnake(key)] = [...field];
       } else if (key === 'overrides' && isPlainObject(field)) {
         merged['overrides'] = modelOverridesToToml(field, merged['overrides']);
+      } else if (key === 'upgrade') {
+        merged['upgrade'] = isPlainObject(field) ? plainObjectToToml(field, undefined) : undefined;
       } else {
         setDefined(merged, camelToSnake(key), field);
       }
@@ -279,8 +323,8 @@ registerConfigSection(MODELS_SECTION, ModelsSectionSchema, {
   defaultValue: {},
   fromToml: modelsFromToml,
   toToml: modelsToToml,
+  collectDiagnostics: collectMalformedModelEntries,
 });
-
 
 export const THINKING_SECTION = 'thinking';
 

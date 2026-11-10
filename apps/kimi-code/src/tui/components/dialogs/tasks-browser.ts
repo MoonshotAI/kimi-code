@@ -22,12 +22,17 @@ import {
   visibleWidth,
   type Focusable,
 } from '@moonshot-ai/pi-tui';
-import type { BackgroundTaskInfo, BackgroundTaskStatus } from '@moonshot-ai/kimi-code-sdk';
+import type {
+  BackgroundTaskInfo,
+  BackgroundTaskStatus,
+  ModelAlias,
+} from '@moonshot-ai/kimi-code-sdk';
 
 import { SELECT_POINTER } from '@/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import { printableChar } from '@/tui/utils/printable-key';
 import { sanitizeShellOutput } from '#/tui/utils/shell-output';
+import { modelDisplayName } from './model-selector';
 
 const ELLIPSIS = '…';
 
@@ -40,6 +45,9 @@ export interface TasksBrowserProps {
   readonly tailOutput: string | undefined;
   readonly tailLoading: boolean;
   readonly flashMessage: string | undefined;
+  /** Model catalog from the app config, used to resolve task model aliases
+   *  to display names (same mapping as the other subagent surfaces). */
+  readonly availableModels: Record<string, ModelAlias>;
   readonly onSelect: (taskId: string) => void;
   readonly onToggleFilter: () => void;
   readonly onRefresh: () => void;
@@ -453,15 +461,17 @@ export class TasksBrowserApp extends Container implements Focusable {
     }
 
     this.adjustScroll(innerHeight);
-    const start = this.listScroll;
-    const window = this.sortedVisible.slice(start, start + innerHeight);
 
     const innerWidth = width - 2;
-    const lines: string[] = [];
-    for (const [vi, task] of window.entries()) {
-      const index = start + vi;
-      lines.push(this.renderListRow(task, index === this.selectedIndex, innerWidth));
+    const allLines: string[] = [];
+    for (const [index, task] of this.sortedVisible.entries()) {
+      allLines.push(this.renderListRow(task, index === this.selectedIndex, innerWidth));
+      const modelText = this.agentModelText(task);
+      if (modelText !== undefined) {
+        allLines.push(this.renderModelRow(modelText, innerWidth));
+      }
     }
+    const lines = allLines.slice(this.listScroll, this.listScroll + innerHeight);
     while (lines.length < innerHeight) lines.push('');
 
     return this.renderFrame(title, lines, width, height);
@@ -499,17 +509,46 @@ export class TasksBrowserApp extends Container implements Focusable {
     return fitExactly(`${prefix} ${currentTheme.fg('text', desc)}`, innerWidth);
   }
 
+  /** Secondary line under an agent task's row: the model it runs on, resolved
+   *  through the model catalog like the other subagent surfaces. */
+  private agentModelText(task: BackgroundTaskInfo): string | undefined {
+    if (task.kind !== 'agent' || task.model === undefined) return undefined;
+    const name = modelDisplayName(task.model, this.props.availableModels[task.model]);
+    return name.length === 0 ? undefined : name;
+  }
+
+  private renderModelRow(text: string, innerWidth: number): string {
+    const indent = '  ';
+    const clipped = truncateToWidth(text, Math.max(0, innerWidth - indent.length), ELLIPSIS);
+    return indent + currentTheme.fg('textMuted', clipped);
+  }
+
+  // Agent tasks with a bound model take two lines (row + model line), so
+  // scrolling is tracked in rendered lines rather than task indices.
+  private taskLineStarts(): { starts: number[]; total: number } {
+    const starts: number[] = [];
+    let total = 0;
+    for (const task of this.sortedVisible) {
+      starts.push(total);
+      total += this.agentModelText(task) === undefined ? 1 : 2;
+    }
+    return { starts, total };
+  }
+
   private adjustScroll(visibleRows: number): void {
     if (visibleRows <= 0) {
       this.listScroll = 0;
       return;
     }
-    if (this.selectedIndex < this.listScroll) {
-      this.listScroll = this.selectedIndex;
-    } else if (this.selectedIndex >= this.listScroll + visibleRows) {
-      this.listScroll = this.selectedIndex - visibleRows + 1;
+    const { starts, total } = this.taskLineStarts();
+    const selectedStart = starts[this.selectedIndex] ?? 0;
+    const selectedEnd = (starts[this.selectedIndex + 1] ?? total) - 1;
+    if (selectedStart < this.listScroll) {
+      this.listScroll = selectedStart;
+    } else if (selectedEnd >= this.listScroll + visibleRows) {
+      this.listScroll = selectedEnd - visibleRows + 1;
     }
-    const maxScroll = Math.max(0, this.sortedVisible.length - visibleRows);
+    const maxScroll = Math.max(0, total - visibleRows);
     if (this.listScroll < 0) this.listScroll = 0;
     if (this.listScroll > maxScroll) this.listScroll = maxScroll;
   }
@@ -560,7 +599,7 @@ export class TasksBrowserApp extends Container implements Focusable {
       lines.push(`${label('Agent type:')}${value(task.subagentType)}`);
     }
     if (task.kind === 'agent' && task.model !== undefined) {
-      lines.push(`${label('Model:')}${value(task.model)}`);
+      lines.push(`${label('Model:')}${value(this.agentModelText(task) ?? task.model)}`);
     }
     if (task.kind === 'agent' && task.thinkingEffort !== undefined) {
       lines.push(`${label('Effort:')}${value(task.thinkingEffort)}`);

@@ -13,10 +13,12 @@ export const KIMI_CODE_PROVIDER_NAME = 'managed:kimi-code';
 export const KIMI_CODE_OAUTH_KEY = 'oauth/kimi-code';
 const KIMI_CODE_SCOPED_OAUTH_KEY_PREFIX = 'oauth/kimi-code-env-';
 
-export type ManagedKimiCodeProtocol = 'kimi' | 'anthropic';
+export type ManagedKimiCodeProtocol = 'kimi' | 'anthropic' | 'openai_responses';
 
 export function parseModelProtocol(value: unknown): ManagedKimiCodeProtocol | undefined {
-  return value === 'anthropic' ? 'anthropic' : undefined;
+  if (value === 'anthropic') return 'anthropic';
+  if (value === 'response') return 'openai_responses';
+  return undefined;
 }
 
 /**
@@ -35,6 +37,7 @@ export interface ManagedKimiCodeModelInfo {
   readonly supportsImageIn: boolean;
   readonly supportsVideoIn: boolean;
   readonly supportsToolUse?: boolean;
+  readonly supportsDynamicTools?: boolean;
   readonly supportsThinkingType?: SupportsThinkingType;
   readonly supportEfforts?: readonly string[];
   readonly defaultEffort?: string;
@@ -131,6 +134,7 @@ export interface ManagedKimiProviderConfig {
   type: ManagedKimiCodeProtocol;
   baseUrl?: string | undefined;
   apiKey?: string | undefined;
+  apiKeyEnv?: string;
   oauth?: ManagedKimiOAuthRef | undefined;
   readonly [key: string]: unknown;
 }
@@ -228,8 +232,8 @@ interface SelectedDefaultModel {
 
 function capabilitiesForModel(model: ManagedKimiCodeModelInfo): string[] | undefined {
   const caps = new Set<string>();
-  // supports_thinking_type is the full three-state declaration and wins over
-  // the legacy supports_reasoning boolean; absent (older servers) falls back.
+  // supportsThinkingType is the full three-state declaration and wins over
+  // the supportsReasoning boolean; absent falls back to the boolean.
   switch (model.supportsThinkingType) {
     case 'only':
       caps.add('thinking');
@@ -247,6 +251,7 @@ function capabilitiesForModel(model: ManagedKimiCodeModelInfo): string[] | undef
   if (model.supportsImageIn) caps.add('image_in');
   if (model.supportsVideoIn) caps.add('video_in');
   if (model.supportsToolUse ?? true) caps.add('tool_use');
+  if (model.supportsDynamicTools === true) caps.add('dynamically_loaded_tools');
   return caps.size > 0 ? [...caps] : undefined;
 }
 
@@ -312,9 +317,9 @@ export function kimiCodeEnvOAuthHost(env: ManagedKimiEnv = process.env): string 
 }
 
 // Base URLs that share the default `oauth/kimi-code` credential slot.
-const SHARED_DEFAULT_BASE_URLS: readonly string[] = [
+const SHARED_DEFAULT_BASE_URLS: ReadonlySet<string> = new Set([
   normalizeEndpoint(DEFAULT_KIMI_CODE_BASE_URL),
-];
+]);
 
 export function resolveKimiCodeOAuthKey(options: {
   readonly oauthHost?: string | undefined;
@@ -324,7 +329,7 @@ export function resolveKimiCodeOAuthKey(options: {
   const baseUrl = defaultBaseUrl(options.baseUrl);
   const defaultOauthHost = normalizeEndpoint(DEFAULT_KIMI_CODE_OAUTH_HOST);
 
-  if (oauthHost === defaultOauthHost && SHARED_DEFAULT_BASE_URLS.includes(baseUrl)) {
+  if (oauthHost === defaultOauthHost && SHARED_DEFAULT_BASE_URLS.has(baseUrl)) {
     return KIMI_CODE_OAUTH_KEY;
   }
 
@@ -416,9 +421,11 @@ function toModelInfo(item: unknown): ManagedKimiCodeModelInfo | undefined {
   if (!isRecord(item) || typeof item['id'] !== 'string' || item['id'].length === 0) {
     return undefined;
   }
-  const contextLength = Number(item['context_length']);
+  const rawLimit = item['limit'];
+  const limit = isRecord(rawLimit) ? rawLimit : undefined;
+  const contextLength = Number(limit?.['context']);
   if (!Number.isInteger(contextLength) || contextLength <= 0) {
-    throw new Error(`Kimi Code model "${item['id']}" must include a positive context_length.`);
+    throw new Error(`Kimi Code model "${item['id']}" must include a positive limit.context.`);
   }
   const displayName = item['display_name'];
   const normalizedDisplayName =
@@ -426,21 +433,78 @@ function toModelInfo(item: unknown): ManagedKimiCodeModelInfo | undefined {
   const supportsToolUse = Object.hasOwn(item, 'supports_tool_use')
     ? Boolean(item['supports_tool_use'])
     : true;
-  // Effort levels come from the nested `think_efforts` object
-  // ({ support, valid_efforts, default_effort }) returned by /models.
-  const thinkEfforts = parseThinkEfforts(item['think_efforts']);
+  const rawModalities = item['modalities'];
+  const inputModalities = isRecord(rawModalities)
+    ? parseStringArray(rawModalities['input'])
+    : undefined;
+  const reasoning = parseModelReasoning(item['reasoning']);
+  const rawTools = item['tools'];
+  const supportsDynamicTools = isRecord(rawTools) && rawTools['dynamic_load'] === true;
   return {
     id: item['id'],
     contextLength,
-    supportsReasoning: Boolean(item['supports_reasoning']),
-    supportsImageIn: Boolean(item['supports_image_in']),
-    supportsVideoIn: Boolean(item['supports_video_in']),
+    supportsReasoning: reasoning.supportsReasoning,
+    supportsImageIn: inputModalities?.includes('image') ?? false,
+    supportsVideoIn: inputModalities?.includes('video') ?? false,
     supportsToolUse,
-    supportsThinkingType: parseSupportsThinkingType(item['supports_thinking_type']),
-    supportEfforts: thinkEfforts.supportEfforts,
-    defaultEffort: thinkEfforts.defaultEffort,
+    supportsDynamicTools,
+    supportsThinkingType: reasoning.supportsThinkingType,
+    supportEfforts: reasoning.supportEfforts,
+    defaultEffort: reasoning.defaultEffort,
     displayName: normalizedDisplayName,
     protocol: parseModelProtocol(item['protocol']),
+  };
+}
+
+/**
+ * Parse the unified `reasoning` object from `/models`:
+ *   { "type": "only", "effort": { "valid": ["low", "high", "max"], "default": "max" } }
+ * A missing object and `type: "none"` both mean the model cannot think and map
+ * to the internal 'no' state so a stale thinking default gets cleared;
+ * `undefined` is reserved for a present object whose type is unrecognized.
+ * The effort block is absent on models without adjustable effort; a default
+ * that is not listed in `valid` is dropped.
+ */
+function parseModelReasoning(value: unknown): {
+  supportsReasoning: boolean;
+  supportsThinkingType: SupportsThinkingType | undefined;
+  supportEfforts: readonly string[] | undefined;
+  defaultEffort: string | undefined;
+} {
+  if (!isRecord(value)) {
+    return {
+      supportsReasoning: false,
+      supportsThinkingType: 'no',
+      supportEfforts: undefined,
+      defaultEffort: undefined,
+    };
+  }
+  // The unified schema names the non-thinking state 'none'; the internal
+  // three-state keeps the legacy 'no'.
+  const rawType = value['type'];
+  const supportsThinkingType: SupportsThinkingType | undefined =
+    rawType === 'only' || rawType === 'both'
+      ? rawType
+      : rawType === 'none'
+        ? 'no'
+        : undefined;
+  const rawEffort = value['effort'];
+  const effort = isRecord(rawEffort) ? rawEffort : undefined;
+  const supportEfforts = effort !== undefined ? parseStringArray(effort['valid']) : undefined;
+  const rawDefault = effort?.['default'];
+  const parsedDefault =
+    typeof rawDefault === 'string' && rawDefault.length > 0 ? rawDefault : undefined;
+  const defaultEffort =
+    parsedDefault !== undefined &&
+    supportEfforts !== undefined &&
+    !supportEfforts.includes(parsedDefault)
+      ? undefined
+      : parsedDefault;
+  return {
+    supportsReasoning: supportsThinkingType !== undefined && supportsThinkingType !== 'no',
+    supportsThinkingType,
+    supportEfforts,
+    defaultEffort,
   };
 }
 
@@ -825,7 +889,7 @@ export function clearManagedKimiCodeConfig(
 
 function assertPositiveContextLength(model: ManagedKimiCodeModelInfo): void {
   if (!Number.isInteger(model.contextLength) || model.contextLength <= 0) {
-    throw new Error(`Kimi Code model "${model.id}" must include a positive context_length.`);
+    throw new Error(`Kimi Code model "${model.id}" must include a positive limit.context.`);
   }
 }
 

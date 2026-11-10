@@ -1,7 +1,3 @@
-/**
- * XML escaping helpers for content, attribute values, and tag delimiters.
- */
-
 export function escapeXml(input: string): string {
   return input
     .replaceAll('&', '&amp;')

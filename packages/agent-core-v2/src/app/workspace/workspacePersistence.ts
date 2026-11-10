@@ -1,51 +1,56 @@
-/**
- * `workspace` domain — `IWorkspacePersistence` contract.
- *
- * Domain-specific persistence Store for the known-workspaces catalog. It hides
- * the on-disk document layout (`<homeDir>/workspaces.json`, the v1-compatible
- * `{ version, workspaces: { [id]: entry }, deleted_workspace_ids: string[] }`
- * shape) and its serialization concerns (ISO ↔ epoch-ms, record ↔ array)
- * from the workspace service. The generic `IAtomicDocumentStore` it builds on stays
- * schema-agnostic.
- *
- * `deleted_workspace_ids` is the soft-delete tombstone list: ids the user
- * explicitly removed. Tombstoned entries are absent from `workspaces`, but
- * their ids must survive load/save round-trips so the session-index merge
- * never resurrects them.
- *
- * `load()` returns `undefined` to mean "no usable catalog" so the workspace
- * service can trigger a one-shot rebuild from the legacy session index; an
- * empty catalog is a valid, already-materialized state and must NOT trigger a
- * rebuild.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import type { Event } from '#/_base/event';
 
 import type { Workspace } from './workspace';
 
 export interface PersistedWorkspaceEntry {
   readonly root: string;
   readonly name: string;
+  readonly kind?: string;
+  readonly additional_dirs?: readonly string[];
   readonly created_at: string;
   readonly last_opened_at: string;
 }
 
 export interface PersistedWorkspaceFile {
-  readonly version: number;
+  readonly version?: number;
   readonly workspaces: Record<string, PersistedWorkspaceEntry>;
   readonly deleted_workspace_ids: string[];
+  readonly idempotency_keys?: Record<string, string>;
+}
+
+export interface PersistedWorkspaceMigration {
+  readonly source_file: string;
+  readonly source_version?: number;
+  readonly source_sha256: string;
+  readonly migrated_at: string;
+}
+
+export interface PersistedProjectsFile {
+  readonly schema_version: number;
+  readonly projects: Record<string, PersistedWorkspaceEntry>;
+  readonly deleted_project_ids: string[];
+  readonly idempotency_keys?: Record<string, string>;
+  readonly migration?: PersistedWorkspaceMigration;
 }
 
 export interface WorkspaceCatalog {
   readonly workspaces: readonly Workspace[];
   readonly deletedIds: readonly string[];
+  readonly idempotencyKeys?: Readonly<Record<string, string>>;
 }
+
+export type WorkspaceCatalogMutator = (
+  current: WorkspaceCatalog,
+) => WorkspaceCatalog | Promise<WorkspaceCatalog>;
 
 export interface IWorkspacePersistence {
   readonly _serviceBrand: undefined;
 
+  readonly onDidChange: Event<void>;
+
   load(): Promise<WorkspaceCatalog | undefined>;
-  save(catalog: WorkspaceCatalog): Promise<void>;
+  update(mutator: WorkspaceCatalogMutator): Promise<void>;
 }
 
 export const IWorkspacePersistence: ServiceIdentifier<IWorkspacePersistence> =

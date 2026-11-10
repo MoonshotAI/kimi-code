@@ -1,16 +1,3 @@
-/**
- * `plan` domain — ExitPlanMode plan review.
- *
- * Owns the user-facing review that intercepts an `ExitPlanMode` call carrying
- * a non-empty `plan_review` display: emits `plan_submitted` / `plan_resolved`
- * through `telemetry`, drives the approval round-trip through `toolApproval`
- * (origin `exit-plan-mode-review-ask`, matching the legacy permission
- * policy's telemetry), and folds every approval outcome (approve with or
- * without a selected option, Revise with feedback, Reject and Exit, dismiss)
- * into a synthetic tool result, exiting plan mode through `plan` when the
- * outcome deactivates it.
- */
-
 import type {
   ApprovalResponse,
   PermissionPolicyResolution,
@@ -28,6 +15,9 @@ import type { IAgentPlanService } from './plan';
 
 type PlanReviewDisplay = Extract<ToolInputDisplay, { kind: 'plan_review' }>;
 type PlanReviewOption = NonNullable<PlanReviewDisplay['options']>[number];
+
+const PLAN_REVIEW_NON_INTERACTIVE_MESSAGE =
+  'Nobody can review this plan in a non-interactive run, so plan mode stays active for the rest of this run and you cannot edit files other than the plan file.';
 
 export class ExitPlanModeReview {
   constructor(
@@ -53,6 +43,7 @@ export class ExitPlanModeReview {
           has_options: display.options !== undefined,
         },
         resolveApproval: (result) => this.approvalResult(result, display),
+        resolveNonInteractive: () => ({ kind: 'deny', message: PLAN_REVIEW_NON_INTERACTIVE_MESSAGE }),
       },
       'exit-plan-mode-review-ask',
     );

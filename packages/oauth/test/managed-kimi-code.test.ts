@@ -25,18 +25,14 @@ function makeModelsResponse(): Response {
       data: [
         {
           id: 'kimi-for-coding',
-          context_length: 262144,
-          supports_reasoning: true,
-          supports_image_in: true,
-          supports_video_in: true,
+          limit: { context: 262144 },
+          modalities: { input: ['text', 'image', 'video'], output: ['text'] },
+          reasoning: { type: 'both' },
           display_name: 'Kimi for Coding',
         },
         {
           id: 'kimi-k2.5',
-          context_length: 250000,
-          supports_reasoning: false,
-          supports_image_in: false,
-          supports_video_in: false,
+          limit: { context: 250000 },
           supports_tool_use: false,
         },
       ],
@@ -670,12 +666,12 @@ describe('provisionManagedKimiCodeConfig', () => {
     });
   });
 
-  it('rejects managed models that do not include a positive context_length', async () => {
+  it('rejects managed models that do not include a positive limit.context', async () => {
     const fetchImpl = vi.fn(
       async () =>
         new Response(
           JSON.stringify({
-            data: [{ id: 'kimi-for-coding', supports_reasoning: true }],
+            data: [{ id: 'kimi-for-coding', reasoning: { type: 'only' } }],
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         ),
@@ -686,7 +682,7 @@ describe('provisionManagedKimiCodeConfig', () => {
         accessToken: 'oauth-access-token',
         fetchImpl,
       }),
-    ).rejects.toThrow(/positive context_length/);
+    ).rejects.toThrow(/positive limit\.context/);
   });
 
   it('surfaces API error messages from model listing failures', async () => {
@@ -841,33 +837,28 @@ describe('provisionManagedKimiCodeConfig', () => {
   });
 });
 
-describe('supports_thinking_type', () => {
-  function makeThinkingTypeModelsResponse(): Response {
+describe('reasoning', () => {
+  function makeReasoningModelsResponse(): Response {
     return new Response(
       JSON.stringify({
         data: [
           {
             id: 'kimi-for-coding',
-            context_length: 262144,
-            supports_reasoning: true,
-            supports_image_in: true,
-            supports_video_in: true,
-            supports_thinking_type: 'only',
+            limit: { context: 262144 },
+            modalities: { input: ['text', 'image', 'video'], output: ['text'] },
+            reasoning: { type: 'only' },
+            tools: { dynamic_load: true },
             display_name: 'Kimi For Coding',
           },
           {
-            // 'no' is the authoritative declaration and overrides the legacy
-            // supports_reasoning boolean.
             id: 'kimi-plain',
-            context_length: 128000,
-            supports_reasoning: true,
-            supports_thinking_type: 'no',
+            limit: { context: 128000 },
+            reasoning: { type: 'none' },
           },
           {
             id: 'kimi-toggle',
-            context_length: 128000,
-            supports_reasoning: true,
-            supports_thinking_type: 'both',
+            limit: { context: 128000 },
+            reasoning: { type: 'both' },
           },
         ],
       }),
@@ -875,23 +866,28 @@ describe('supports_thinking_type', () => {
     );
   }
 
-  it('parses supports_thinking_type from the models endpoint', async () => {
+  it('parses reasoning.type and tools.dynamic_load from the models endpoint', async () => {
     const models = await fetchManagedKimiCodeModels({
       accessToken: 'oauth-access-token',
-      fetchImpl: vi.fn(async () => makeThinkingTypeModelsResponse()) as unknown as typeof fetch,
+      fetchImpl: vi.fn(async () => makeReasoningModelsResponse()) as unknown as typeof fetch,
     });
 
     expect(models[0]?.supportsThinkingType).toBe('only');
+    expect(models[0]?.supportsReasoning).toBe(true);
     expect(models[1]?.supportsThinkingType).toBe('no');
+    expect(models[1]?.supportsReasoning).toBe(false);
     expect(models[2]?.supportsThinkingType).toBe('both');
+    expect(models[0]?.supportsDynamicTools).toBe(true);
+    expect(models[1]?.supportsDynamicTools).toBe(false);
   });
 
-  it('leaves supportsThinkingType undefined when the field is absent or invalid', async () => {
+  it('maps absent reasoning to no and leaves unknown reasoning types undefined', async () => {
     const absent = await fetchManagedKimiCodeModels({
       accessToken: 'oauth-access-token',
       fetchImpl: vi.fn(async () => makeModelsResponse()) as unknown as typeof fetch,
     });
-    expect(absent[0]?.supportsThinkingType).toBeUndefined();
+    expect(absent[1]?.supportsThinkingType).toBe('no');
+    expect(absent[1]?.supportsReasoning).toBe(false);
 
     const invalid = await fetchManagedKimiCodeModels({
       accessToken: 'oauth-access-token',
@@ -902,9 +898,8 @@ describe('supports_thinking_type', () => {
               data: [
                 {
                   id: 'kimi-for-coding',
-                  context_length: 262144,
-                  supports_reasoning: true,
-                  supports_thinking_type: 'maybe',
+                  limit: { context: 262144 },
+                  reasoning: { type: 'maybe' },
                 },
               ],
             }),
@@ -915,12 +910,12 @@ describe('supports_thinking_type', () => {
     expect(invalid[0]?.supportsThinkingType).toBeUndefined();
   });
 
-  it('maps the three states onto capabilities, overriding supports_reasoning', async () => {
+  it('maps the three states onto capabilities', async () => {
     const config: ManagedKimiConfigShape = { providers: {} };
 
     await provisionManagedKimiCodeConfig({
       accessToken: 'oauth-access-token',
-      fetchImpl: vi.fn(async () => makeThinkingTypeModelsResponse()) as unknown as typeof fetch,
+      fetchImpl: vi.fn(async () => makeReasoningModelsResponse()) as unknown as typeof fetch,
       adapter: {
         read: () => config,
         write: vi.fn(),
@@ -928,15 +923,16 @@ describe('supports_thinking_type', () => {
       },
     });
 
-    // 'only' → thinking locked on.
+    // 'only' → thinking locked on; tools.dynamic_load adds dynamically_loaded_tools.
     expect(config.models?.['kimi-code/kimi-for-coding']?.capabilities).toEqual([
       'thinking',
       'always_thinking',
       'image_in',
       'video_in',
       'tool_use',
+      'dynamically_loaded_tools',
     ]);
-    // 'no' → no thinking capability despite supports_reasoning=true.
+    // 'none' → no thinking capability.
     expect(config.models?.['kimi-code/kimi-plain']?.capabilities).toEqual(['tool_use']);
     // 'both' → plain toggleable thinking.
     expect(config.models?.['kimi-code/kimi-toggle']?.capabilities).toEqual([
@@ -950,7 +946,7 @@ describe('supports_thinking_type', () => {
 
     const result = await provisionManagedKimiCodeConfig({
       accessToken: 'oauth-access-token',
-      fetchImpl: vi.fn(async () => makeThinkingTypeModelsResponse()) as unknown as typeof fetch,
+      fetchImpl: vi.fn(async () => makeReasoningModelsResponse()) as unknown as typeof fetch,
       adapter: {
         read: () => config,
         write: vi.fn(),
@@ -985,7 +981,7 @@ describe('supports_thinking_type', () => {
 
     const result = await provisionManagedKimiCodeConfig({
       accessToken: 'oauth-access-token',
-      fetchImpl: vi.fn(async () => makeThinkingTypeModelsResponse()) as unknown as typeof fetch,
+      fetchImpl: vi.fn(async () => makeReasoningModelsResponse()) as unknown as typeof fetch,
       preserveDefaultModel: true,
       adapter: {
         read: () => config,
@@ -1021,7 +1017,7 @@ describe('supports_thinking_type', () => {
 
     const result = await provisionManagedKimiCodeConfig({
       accessToken: 'oauth-access-token',
-      fetchImpl: vi.fn(async () => makeThinkingTypeModelsResponse()) as unknown as typeof fetch,
+      fetchImpl: vi.fn(async () => makeReasoningModelsResponse()) as unknown as typeof fetch,
       preserveDefaultModel: true,
       adapter: {
         read: () => config,
@@ -1031,6 +1027,44 @@ describe('supports_thinking_type', () => {
     });
 
     expect(result.defaultModel).toBe('kimi-code/kimi-plain');
+    expect(result.defaultThinking).toBe(false);
+    expect(config.thinking?.enabled).toBe(false);
+  });
+
+  it('forces default thinking off when the preserved default omits reasoning', async () => {
+    const config: ManagedKimiConfigShape = {
+      providers: {
+        [KIMI_CODE_PROVIDER_NAME]: {
+          type: 'kimi',
+          apiKey: '',
+        },
+      },
+      defaultModel: 'kimi-code/kimi-k2.5',
+      thinking: { enabled: true },
+      models: {
+        'kimi-code/kimi-k2.5': {
+          provider: KIMI_CODE_PROVIDER_NAME,
+          model: 'kimi-k2.5',
+          maxContextSize: 250000,
+          capabilities: ['thinking'],
+        },
+      },
+    };
+
+    const result = await provisionManagedKimiCodeConfig({
+      accessToken: 'oauth-access-token',
+      fetchImpl: vi.fn(async () => makeModelsResponse()) as unknown as typeof fetch,
+      preserveDefaultModel: true,
+      adapter: {
+        read: () => config,
+        write: vi.fn(),
+        apply: applyManagedKimiCodeConfig,
+      },
+    });
+
+    // kimi-k2.5 has no reasoning object in the response — the stale
+    // thinking.enabled must not survive the refresh.
+    expect(result.defaultModel).toBe('kimi-code/kimi-k2.5');
     expect(result.defaultThinking).toBe(false);
     expect(config.thinking?.enabled).toBe(false);
   });
@@ -1056,7 +1090,7 @@ describe('supports_thinking_type', () => {
 
     const result = await provisionManagedKimiCodeConfig({
       accessToken: 'oauth-access-token',
-      fetchImpl: vi.fn(async () => makeThinkingTypeModelsResponse()) as unknown as typeof fetch,
+      fetchImpl: vi.fn(async () => makeReasoningModelsResponse()) as unknown as typeof fetch,
       preserveDefaultModel: true,
       adapter: {
         read: () => config,
@@ -1071,29 +1105,25 @@ describe('supports_thinking_type', () => {
   });
 });
 
-describe('support_efforts / default_effort', () => {
+describe('reasoning.effort', () => {
   function makeEffortModelsResponse(): Response {
     return new Response(
       JSON.stringify({
         data: [
           {
             id: 'kimi-for-coding',
-            context_length: 262144,
-            supports_reasoning: true,
-            supports_thinking_type: 'both',
-            think_efforts: {
-              support: true,
-              valid_efforts: ['low', 'high', 'max'],
-              default_effort: 'high',
+            limit: { context: 262144 },
+            reasoning: {
+              type: 'both',
+              effort: { valid: ['low', 'high', 'max'], default: 'high' },
             },
             display_name: 'Kimi For Coding',
           },
           {
             // Empty / non-string entries are filtered; absent fields stay undefined.
             id: 'kimi-plain',
-            context_length: 128000,
-            supports_reasoning: true,
-            think_efforts: { support: true, valid_efforts: ['low', '', 42] },
+            limit: { context: 128000 },
+            reasoning: { type: 'only', effort: { valid: ['low', '', 42] } },
           },
         ],
       }),
@@ -1101,7 +1131,7 @@ describe('support_efforts / default_effort', () => {
     );
   }
 
-  it('parses think_efforts from the models endpoint', async () => {
+  it('parses reasoning.effort from the models endpoint', async () => {
     const models = await fetchManagedKimiCodeModels({
       accessToken: 'oauth-access-token',
       fetchImpl: vi.fn(async () => makeEffortModelsResponse()) as unknown as typeof fetch,
@@ -1109,12 +1139,12 @@ describe('support_efforts / default_effort', () => {
 
     expect(models[0]?.supportEfforts).toEqual(['low', 'high', 'max']);
     expect(models[0]?.defaultEffort).toBe('high');
-    // The empty string and number are filtered out of valid_efforts.
+    // The empty string and number are filtered out of effort.valid.
     expect(models[1]?.supportEfforts).toEqual(['low']);
     expect(models[1]?.defaultEffort).toBeUndefined();
   });
 
-  it('ignores think_efforts entirely when support is not true', async () => {
+  it('drops effort.default when it is not listed in effort.valid', async () => {
     const models = await fetchManagedKimiCodeModels({
       accessToken: 'oauth-access-token',
       fetchImpl: async () =>
@@ -1122,13 +1152,11 @@ describe('support_efforts / default_effort', () => {
           JSON.stringify({
             data: [
               {
-                id: 'kimi-no-effort',
-                context_length: 128000,
-                supports_reasoning: true,
-                think_efforts: {
-                  support: false,
-                  valid_efforts: ['low', 'high'],
-                  default_effort: 'high',
+                id: 'kimi-bad-default',
+                limit: { context: 128000 },
+                reasoning: {
+                  type: 'only',
+                  effort: { valid: ['low', 'high'], default: 'max' },
                 },
               },
             ],
@@ -1137,15 +1165,13 @@ describe('support_efforts / default_effort', () => {
         ),
     });
 
-    // support !== true gates the whole object — valid_efforts / default_effort
-    // are ignored.
-    expect(models[0]?.supportEfforts).toBeUndefined();
+    expect(models[0]?.supportEfforts).toEqual(['low', 'high']);
     expect(models[0]?.defaultEffort).toBeUndefined();
   });
 
-  it('ignores legacy flat fields even when think_efforts is absent', async () => {
-    // The legacy support_efforts / default_effort fields are no longer read;
-    // only the nested think_efforts object is honored.
+  it('ignores legacy effort fields even when reasoning.effort is absent', async () => {
+    // The legacy think_efforts / support_efforts / default_effort fields are no
+    // longer read; only the nested reasoning.effort object is honored.
     const models = await fetchManagedKimiCodeModels({
       accessToken: 'oauth-access-token',
       fetchImpl: async () =>
@@ -1154,10 +1180,13 @@ describe('support_efforts / default_effort', () => {
             data: [
               {
                 id: 'kimi-k2',
-                context_length: 128000,
-                supports_reasoning: true,
-                support_efforts: ['low', 'high'],
-                default_effort: 'high',
+                limit: { context: 128000 },
+                reasoning: { type: 'both' },
+                think_efforts: {
+                  support: true,
+                  valid_efforts: ['low', 'high'],
+                  default_effort: 'high',
+                },
               },
             ],
           }),
@@ -1386,7 +1415,7 @@ describe('applyManagedApiKeyProviderModels', () => {
         [makeModelInfo('bad', { contextLength: 0 })],
         'my-kimi/',
       );
-    }).toThrow('context_length');
+    }).toThrow('limit.context');
   });
 });
 
@@ -1412,7 +1441,7 @@ describe('managed protocol routing', () => {
       async () =>
         new Response(
           JSON.stringify({
-            data: [{ id: 'kimi-for-coding', context_length: 262144, protocol: 'anthropic' }],
+            data: [{ id: 'kimi-for-coding', limit: { context: 262144 }, protocol: 'anthropic' }],
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         ),
@@ -1421,6 +1450,40 @@ describe('managed protocol routing', () => {
     const models = await fetchManagedKimiCodeModels({ accessToken: 't', fetchImpl });
     expect(models).toHaveLength(1);
     expect(models[0]?.protocol).toBe('anthropic');
+  });
+
+  it('maps the server "response" protocol value to openai_responses', async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            data: [{ id: 'k3', limit: { context: 1048576 }, protocol: 'response' }],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    ) as unknown as typeof fetch;
+
+    const models = await fetchManagedKimiCodeModels({ accessToken: 't', fetchImpl });
+    expect(models).toHaveLength(1);
+    expect(models[0]?.protocol).toBe('openai_responses');
+  });
+
+  it('records openai_responses protocol without anthropic routing fields', () => {
+    const config: ManagedKimiConfigShape = { providers: {} };
+    applyManagedKimiCodeConfig(config, {
+      baseUrl: KIMI_BASE_URL,
+      models: [makeModelInfo('k3', { protocol: 'openai_responses', supportsReasoning: true })],
+    });
+
+    expect(config.providers[KIMI_CODE_PROVIDER_NAME]).toMatchObject({
+      type: 'kimi',
+      baseUrl: KIMI_BASE_URL,
+      apiKey: '',
+    });
+    const alias = config.models?.['kimi-code/k3'];
+    expect(alias?.protocol).toBe('openai_responses');
+    expect(alias?.betaApi).toBeUndefined();
+    expect(alias?.adaptiveThinking).toBeUndefined();
   });
 
   it('keeps the provider on the kimi REST base and records the model protocol when anthropic', () => {

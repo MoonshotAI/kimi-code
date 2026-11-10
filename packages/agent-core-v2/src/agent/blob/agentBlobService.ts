@@ -1,11 +1,4 @@
-/**
- * `blob` domain — `IAgentBlobService` contract.
- *
- * Offloads large inline media payloads to content-addressed blob storage and
- * loads them back on read. Bound at Agent scope.
- */
-
-import type { ContentPart } from '#/kosong/contract/message';
+import type { ContentPart } from '#human/llm/message';
 
 import { createDecorator } from "#/_base/di/instantiation";
 

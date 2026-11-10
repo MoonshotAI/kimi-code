@@ -1,13 +1,3 @@
-/**
- * Scenario: agent-file parsing primitives — frontmatter validation, defaults,
- * and the AgentFileDefinition → AgentProfile factory (template substitution,
- * `${base_prompt}`, `${plugin_sections}`, tool pass-through, explicit override
- * intent).
- * Pure-function level, no IO.
- * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/workspace/workspaceAgentProfileLoader/agentFile.test.ts`.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import { AgentFileParseError, parseAgentFileText } from '#/workspace/workspaceAgentProfileLoader/internal/agentFile';
@@ -155,7 +145,7 @@ describe('parseAgentFileText', () => {
   it('treats a lone "*" subagents field as all subagent types', () => {
     const def = parse('---\nname: solo\ndescription: d\nsubagents: "*"\n---\n\nbody\n');
 
-    expect(def.subagents).toBeUndefined();
+    expect(def.subagents).toEqual(['*']);
   });
 
   it('rejects a non-string, non-list subagents field', () => {
@@ -193,10 +183,7 @@ describe('agentProfileFromFile', () => {
   };
   const basePrompt = (): SystemPromptRenderResult => ({
     text: 'BASE_PROMPT',
-    environment: {
-      cwd: '',
-      date: { disclosed: false },
-    },
+    environment: { cwd: '' },
   });
 
   it('returns a plain body verbatim and injects no unreferenced context', () => {
@@ -259,25 +246,13 @@ describe('agentProfileFromFile', () => {
       { ...base, prompt: 'extra instructions\n\n${base_prompt}' },
       (): SystemPromptRenderResult => ({
         text: 'BASE_PROMPT',
-        environment: {
-          cwd: '/work',
-          date: {
-            disclosed: true,
-            value: { localDate: '2026-07-29', timeZone: 'Asia/Shanghai' },
-          },
-        },
+        environment: { cwd: '/work' },
       }),
     );
 
     const rendered = profile.renderSystemPrompt({ cwd: '/work' });
     expect(rendered.text).toBe('extra instructions\n\nBASE_PROMPT');
-    expect(rendered.environment).toEqual({
-      cwd: '/work',
-      date: {
-        disclosed: true,
-        value: { localDate: '2026-07-29', timeZone: 'Asia/Shanghai' },
-      },
-    });
+    expect(rendered.environment).toEqual({ cwd: '/work' });
   });
 
   it('places plugin instructions where ${plugin_sections} is referenced', () => {

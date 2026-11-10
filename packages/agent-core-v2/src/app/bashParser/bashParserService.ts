@@ -1,17 +1,3 @@
-/**
- * `bashParser` domain — `IBashParserService` implementation.
- *
- * Thin adapter over the pure `@moonshot-ai/tree-sitter-bash` package: runs
- * its budgeted `parse` and snapshots the returned tree into the wire-safe
- * `BashSyntaxNode` DTO (source-ordered children including anonymous tokens,
- * `parent` links dropped). The snapshot is iterative (explicit stack): a
- * long left-associative chain (e.g. `$((1+1+...))` with thousands of
- * operands) produces a tree
- * thousands of levels deep, and a recursive walk would overflow the call
- * stack and throw `RangeError`, breaking the never-throws contract. Owns no
- * state and injects no services. Bound at App scope.
- */
-
 import { parse } from '@moonshot-ai/tree-sitter-bash';
 import type { SyntaxNode } from '@moonshot-ai/tree-sitter-bash';
 import { LifecycleScope } from '#/app/scopes';

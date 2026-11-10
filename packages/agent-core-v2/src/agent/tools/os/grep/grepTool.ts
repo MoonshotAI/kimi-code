@@ -1,54 +1,22 @@
-/**
- * `tools` domain — `GrepTool` implementation, content search via ripgrep.
- *
- * Shells out to `rg` through the host process service. The ripgrep binary
- * resolution and subprocess plumbing are shared with the Glob tool.
- *
- * Collaborators injected via constructor:
- *   - `processService` — `IHostProcessService`, spawns the rg subprocess
- *   - `fs`             — `IHostFileSystem`, mtime stat used to order
- *                        files_with_matches results (most recent first)
- *   - `env`            — `IHostEnvironment`, path class for display
- *                        relativization
- *   - `workspaceCtx`   — `ISessionWorkspaceContext`, workspace roots for path
- *                        safety and display
- *   - `telemetry`      — `ITelemetryService`, rg fallback outcome tracking
- *   - `skillCatalog`   — `ISessionSkillCatalog` (optional), extends the
- *                        workspace with skill roots
- *
- * Path safety is enforced before any host I/O. Explicit absolute paths outside
- * the workspace are allowed; relative paths that escape the workspace are
- * rejected.
- *
- * Output is bounded and post-processed before it reaches the model:
- *   - timeout and ambient abort both terminate the rg subprocess;
- *   - stdout/stderr are capped while streams continue draining;
- *   - hidden files are searched, but VCS metadata and common sensitive glob
- *     patterns are prefiltered where possible;
- *   - parsed path records are filtered again after rg returns, using the active
- *     backend path class.
- *
- * Bound at Agent scope; self-registers via `registerAgentToolService(...)` at module
- * load.
- */
-
 import { normalize } from 'pathe';
 
-import { ToolResultBuilder } from '#/tool/result-builder';
+import { ToolOutputAccumulator } from '#/tool/output-accumulator';
 import {
   ToolAccesses,
   type ExecutableToolResult,
   type ToolExecution,
 } from '#/tool/toolContract';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { IOAuthService } from '#/app/auth/auth';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { isHostFsNotFound } from '#/os/interface/hostFsErrors';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
-import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
-import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
-import { unwrapErrorCause } from '#/_base/errors/errors';
-import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { acquireOrWhenReady, IAgentEnvironmentService, pinnedGeneration } from '#/agent/environmentBinding/agentEnvironment';
+import type { Environment } from '#/environment/environment';
+import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
+import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
   resolvePathAccessPath,
@@ -102,59 +70,68 @@ export class GrepTool implements IGrepTool {
   readonly description = GREP_DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(GrepInputSchema);
   constructor(
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
+    @IOAuthService private readonly auth?: IOAuthService,
   ) {}
 
-  private workspace(view: RuntimeWorkspaceView): WorkspaceConfig {
+  private workspace(view: EnvironmentWorkspaceView): WorkspaceConfig {
     return { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
   }
 
-  resolveExecution(args: GrepInput): ToolExecution {
-    const inspected = inspectAgentRuntime(this.runtime);
-    const view = new RuntimeWorkspaceView(inspected, {
-      workDir: this.workspaceCtx.workDir,
-      additionalDirs: [
-        ...this.workspaceCtx.additionalDirs,
-        ...(this.skillCatalog?.catalog.getSkillRoots() ?? []),
-      ],
-    });
-    const env = { _serviceBrand: undefined, ...inspected.environment, ready: Promise.resolve() };
-    const workspace = this.workspace(view);
-    let path: string | undefined;
-    if (args.path !== undefined) {
-      path = resolvePathAccessPath(args.path, {
-        env,
-        workspace,
-        operation: 'search',
-        policy: { guardMode: 'absolute-outside-allowed', checkSensitive: false },
+  async resolveExecution(args: GrepInput): Promise<ToolExecution> {
+    const resolutionLease = await acquireOrWhenReady(this.environment, ['fs']);
+    try {
+      const inspected = resolutionLease.environment;
+      const expectedGeneration = pinnedGeneration(inspected);
+      const view = new EnvironmentWorkspaceView(inspected, {
+        workDir: this.workspaceCtx.workDir,
+        additionalDirs: [
+          ...this.workspaceCtx.additionalDirs,
+          ...(this.skillCatalog?.catalog.getSkillRoots() ?? []),
+        ],
       });
-    }
-    const searchPaths = [path ?? workspace.workspaceDir];
-    const searchPath = args.path ?? workspace.workspaceDir;
-    return {
-      accesses: ToolAccesses.searchTree(searchPaths[0]!),
-      description: `Searching for '${args.pattern}' in ${searchPath}`,
-      display: { kind: 'file_io', operation: 'grep', path: searchPaths[0]! },
-      approvalRule: literalRulePattern(this.name, args.pattern),
-      matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.pattern),
-      execute: async ({ signal }) => {
-        const lease = this.runtime.acquire(['fs', 'process']);
-        try {
-          if (lease.runtime.identity.generation !== inspected.identity.generation) {
-            return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };
+      const env = { _serviceBrand: undefined, ...view.host, ready: Promise.resolve() };
+      const workspace = this.workspace(view);
+      let path: string | undefined;
+      if (args.path !== undefined) {
+        path = resolvePathAccessPath(args.path, {
+          env,
+          shellPathBridge: view.shellPathBridge,
+          workspace,
+          operation: 'search',
+          policy: { guardMode: 'absolute-outside-allowed', checkSensitive: false },
+        });
+      }
+      const searchPaths = [path ?? workspace.workspaceDir];
+      const searchPath = args.path ?? workspace.workspaceDir;
+      return {
+        accesses: ToolAccesses.searchTree(searchPaths[0]!),
+        description: `Searching for '${args.pattern}' in ${searchPath}`,
+        display: { kind: 'file_io', operation: 'grep', path: searchPaths[0]! },
+        approvalRule: literalRulePattern(this.name, args.pattern),
+        matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.pattern),
+        execute: async ({ signal }) => {
+          const lease = await acquireOrWhenReady(this.environment, ['fs', 'process']);
+          try {
+            if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
+              return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
+            }
+            return await this.execution(lease.environment, lease.environment.process!, lease.environment.fs!, env, workspace, args, signal, searchPaths);
+          } finally {
+            lease.dispose();
           }
-          return await this.execution(lease.runtime.process!, lease.runtime.fs!, env, workspace, args, signal, searchPaths);
-        } finally {
-          lease.dispose();
-        }
-      },
-    };
+        },
+      };
+    } finally {
+      resolutionLease.dispose();
+    }
   }
 
   private async execution(
+    environment: Environment,
     processService: IHostProcessService,
     fs: IHostFileSystem,
     env: IHostEnvironment,
@@ -170,9 +147,11 @@ export class GrepTool implements IGrepTool {
     const pathClass = env.pathClass;
     let rgPath: string;
     try {
-      const resolution = await ensureRgPath(this.createRgProbe(processService), {
+      const resolution = await ensureRgPath(this.createRgProbe(processService, workspace.workspaceDir), {
         signal,
         allowCachedFallback: true,
+        environment,
+        resolveRegion: () => this.auth?.getRegion(),
       });
       rgPath = resolution.path;
       if (resolution.source !== 'system-path') {
@@ -186,7 +165,7 @@ export class GrepTool implements IGrepTool {
         return { isError: true, output: 'Grep aborted' };
       }
       this.telemetry.track2('grep_tool_rg_fallback', { outcome: 'failed' });
-      return { isError: true, output: rgUnavailableMessage(error) };
+      return { isError: true, output: rgUnavailableMessage(error, environment) };
     }
 
     let runResult: RunRgResult;
@@ -213,13 +192,13 @@ export class GrepTool implements IGrepTool {
         runResult = retryRun;
       }
     } catch (error) {
-      return { isError: true, output: formatSpawnError(error) };
+      return { isError: true, output: formatSpawnError(error, environment) };
     }
 
     const { exitCode, stderrText, bufferTruncated, stderrTruncated, timedOut } = runResult;
     let { stdoutText } = runResult;
 
-    if (exitCode !== 0 && exitCode !== 1 && !timedOut) {
+    if (exitCode !== 0 && exitCode !== 1 && !timedOut && !bufferTruncated) {
       return {
         isError: true,
         output: formatRipgrepError(exitCode, stderrText, stderrTruncated),
@@ -280,7 +259,10 @@ export class GrepTool implements IGrepTool {
     if (paginationTruncated) {
       const total = afterOffset.length + offset;
       const nextOffset = offset + headLimit;
-      const paginationNotice = `Results truncated to ${String(headLimit)} lines (total: ${String(total)}). Use offset=${String(nextOffset)} to see more.`;
+      const paginationNotice =
+        bufferTruncated || timedOut
+          ? `Results truncated to ${String(headLimit)} lines (total: ${String(total)} of a partial result set). Use offset=${String(nextOffset)} to see more.`
+          : `Results truncated to ${String(headLimit)} lines (total: ${String(total)}). Use offset=${String(nextOffset)} to see more.`;
       if (mode === 'count_matches') {
         headerLines.push(paginationNotice);
       } else {
@@ -289,12 +271,12 @@ export class GrepTool implements IGrepTool {
     }
     if (bufferTruncated) {
       messages.push(
-        `[stdout truncated at ${String(MAX_OUTPUT_BYTES)} bytes; incomplete trailing line omitted]`,
+        `[Output truncated at ${String(MAX_OUTPUT_BYTES)} bytes of rg output — the result set is incomplete. Narrow the pattern, path, or glob filters and re-run to recover complete results.]`,
       );
     }
     if (timedOut) {
       messages.push(
-        `Grep timed out after ${String(DEFAULT_TIMEOUT_MS / 1000)}s; partial results returned`,
+        `Grep timed out after ${String(DEFAULT_TIMEOUT_MS / 1000)}s; partial results returned. Narrow the path, glob, or pattern and retry for complete results.`,
       );
     }
 
@@ -321,17 +303,17 @@ export class GrepTool implements IGrepTool {
         : visibleBody;
     const combined = [...headerLines, body, ...messages].filter((part) => part !== '').join('\n');
 
-    const builder = new ToolResultBuilder();
+    const builder = new ToolOutputAccumulator();
     builder.write(combined);
     return builder.ok();
   }
 
-  private createRgProbe(processService: IHostProcessService): RgProbe {
+  private createRgProbe(processService: IHostProcessService, cwd: string): RgProbe {
     return {
       exec: async (args) => {
         const [command, ...rest] = args;
         if (command === undefined) return { exitCode: -1 };
-        const proc = await processService.spawn(command, rest);
+        const proc = await processService.spawn(command, rest, { cwd });
         try {
           proc.stdin.end();
         } catch {
@@ -379,24 +361,15 @@ export class GrepTool implements IGrepTool {
 registerAgentToolService(IGrepTool, GrepTool, {
   name: 'Grep',
   domain: 'os/backends',
-  requiredRuntimeCapabilities: ['fs', 'process'],
+  requiredEnvironmentCapabilities: ['fs', 'process'],
 });
 
-function formatSpawnError(error: unknown): string {
-  return errorCode(error) === 'ENOENT'
-    ? rgUnavailableMessage(error)
+function formatSpawnError(error: unknown, environment: Environment): string {
+  return isHostFsNotFound(error)
+    ? rgUnavailableMessage(error, environment)
     : error instanceof Error
       ? error.message
       : String(error);
-}
-
-function errorCode(error: unknown): string | undefined {
-  const unwrapped = unwrapErrorCause(error);
-  if (unwrapped !== null && typeof unwrapped === 'object' && 'code' in unwrapped) {
-    const code = (unwrapped as { code?: unknown }).code;
-    return typeof code === 'string' ? code : undefined;
-  }
-  return undefined;
 }
 
 type GrepMode = 'content' | 'files_with_matches' | 'count_matches';

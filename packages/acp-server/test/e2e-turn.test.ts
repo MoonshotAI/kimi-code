@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { getLiveSessionById, IAgentLifecycleService, IEventBus } from '@moonshot-ai/agent-core-v2';
+import { ToolProgress } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { mapPromptLaunchError } from '../src/session';
@@ -56,9 +57,12 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     c.onRequest('terminal/release', () => ({}));
   }
 
-  async function boot(clientCapabilities: Record<string, unknown> = {}): Promise<TestClient> {
+  async function boot(
+    clientCapabilities: Record<string, unknown> = {},
+    imageInput = false,
+  ): Promise<TestClient> {
     homeDir = await mkdtemp(join(tmpdir(), 'acp-e2e-turn-'));
-    await writeFakeModelConfig(homeDir);
+    await writeFakeModelConfig(homeDir, imageInput ? { image: true } : undefined);
     scripted = createScriptedProvider();
     client = await createTestClient({ homeDir, extraSeeds: [scripted.seed] });
     await client.send('initialize', { protocolVersion: 1, clientCapabilities });
@@ -406,8 +410,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
   }, 30_000);
 
   it('streams tool-call args deltas: lazy pending CREATE → cumulative update → started upgrade → completed', async () => {
-    const c = await boot({ terminal: true });
-    // Args stream in two fragments; the merge yields the full command.
+    const c = await boot({ terminal: true }, true);
     scripted!.mockNextResponse(
       { type: 'function', id: 'call_1', name: 'Bash', arguments: '{"command":"ec' },
       { type: 'tool_call_part', argumentsPart: 'ho delta_stream"}' },
@@ -422,12 +425,11 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     };
     await c.waitForSessionUpdate('available_commands_update', 10_000);
 
-    const promptPromise = c.send('session/prompt', {
+    const bashResult = (await c.send('session/prompt', {
       sessionId: created.sessionId,
-      prompt: [{ type: 'text', text: 'run echo' }],
-    });
-    const result = (await promptPromise) as { stopReason: string };
-    expect(result.stopReason).toBe('end_turn');
+      prompt: [{ type: 'text', text: 'run the command' }],
+    })) as { stopReason: string };
+    expect(bashResult.stopReason).toBe('end_turn');
 
     type ToolCallWire = {
       sessionUpdate?: string;
@@ -436,7 +438,8 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
       title?: string;
       kind?: string;
       rawInput?: unknown;
-      content?: Array<{ content?: { text?: string } }>;
+      rawOutput?: unknown;
+      content?: Array<{ type?: string; content?: { type?: string; text?: string } }>;
     };
     const updates = c
       .sessionUpdates()
@@ -466,11 +469,74 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     expect(updates[2]?.kind).toBe('execute');
     expect(updates[2]?.rawInput).toEqual({ command: 'echo delta_stream' });
 
-    // 4. Result → terminal completed update carrying the command output.
-    const terminal = updates.at(-1);
+    // 4. Result → terminal completed update.
+    expect(updates.at(-1)?.sessionUpdate).toBe('tool_call_update');
+    expect(updates.at(-1)?.status).toBe('completed');
+    expect(JSON.stringify(scripted!.callHistory()[1])).toContain('delta_stream');
+
+    const mediaCallOffset = scripted!.callHistory().length;
+    const mediaPath = join(homeDir!, 'picture.png');
+    await writeFile(mediaPath, Buffer.from(solidPngBase64(1, 1), 'base64'));
+    const args = JSON.stringify({ path: mediaPath });
+    const splitAt = 12;
+    scripted!.mockNextResponse(
+      { type: 'function', id: 'call_media', name: 'ReadMediaFile', arguments: args.slice(0, splitAt) },
+      { type: 'tool_call_part', argumentsPart: args.slice(splitAt) },
+    );
+    scripted!.mockNextText('done');
+
+    const mediaResult = (await c.send('session/prompt', {
+      sessionId: created.sessionId,
+      prompt: [{ type: 'text', text: 'read the picture' }],
+    })) as { stopReason: string };
+    expect(mediaResult.stopReason).toBe('end_turn');
+
+    const mediaUpdates = c
+      .sessionUpdates()
+      .map((m) => (m.params as { update?: ToolCallWire }).update)
+      .filter((u) => u?.toolCallId?.endsWith(':call_media'));
+    expect(mediaUpdates[0]?.sessionUpdate).toBe('tool_call');
+    expect(mediaUpdates[0]?.status).toBe('pending');
+    expect(mediaUpdates[0]?.title).toBe('ReadMediaFile');
+    expect(mediaUpdates[0]?.kind).toBe('other');
+    expect(mediaUpdates[0]?.rawInput).toBeUndefined();
+    expect(textOf(mediaUpdates[0])).toBe(args.slice(0, splitAt));
+    expect(mediaUpdates[1]?.sessionUpdate).toBe('tool_call_update');
+    expect(mediaUpdates[1]?.status).toBe('in_progress');
+    expect(textOf(mediaUpdates[1])).toBe(args);
+    expect(mediaUpdates[2]?.sessionUpdate).toBe('tool_call_update');
+    expect(mediaUpdates[2]?.status).toBe('in_progress');
+    expect(mediaUpdates[2]?.kind).toBe('other');
+    expect(mediaUpdates[2]?.rawInput).toEqual({ path: mediaPath });
+
+    const terminal = mediaUpdates.at(-1);
     expect(terminal?.sessionUpdate).toBe('tool_call_update');
     expect(terminal?.status).toBe('completed');
-    expect(JSON.stringify(scripted!.callHistory()[1])).toContain('delta_stream');
+    expect(terminal?.rawOutput).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'image_url',
+          imageUrl: expect.objectContaining({ url: expect.any(String) }),
+        }),
+      ]),
+    );
+    expect(JSON.stringify(terminal?.rawOutput)).not.toContain('"source"');
+    expect(JSON.stringify(scripted!.callHistory()[mediaCallOffset + 1])).toContain('picture.png');
+
+    const beforeLoad = c.sessionUpdates().length;
+    await c.send('session/load', { sessionId: created.sessionId, cwd: homeDir, mcpServers: [] });
+    const replayedUpdates = c
+      .sessionUpdates()
+      .slice(beforeLoad)
+      .map((m) => (m.params as { update?: ToolCallWire }).update)
+      .filter((u) => u?.toolCallId?.endsWith(':call_media') && u.status === 'completed');
+    expect(replayedUpdates).toHaveLength(1);
+    expect(replayedUpdates[0]?.content).toEqual(
+      expect.arrayContaining([
+        { type: 'content', content: { type: 'text', text: '[image_url]' } },
+      ]),
+    );
+    expect(JSON.stringify(replayedUpdates)).not.toContain('"source"');
   }, 30_000);
 
   it('refreshes the tool card title on a status progress update and drops other progress kinds', async () => {
@@ -505,21 +571,25 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     const wireId = (create.params as { update?: { toolCallId?: string } }).update?.toolCallId;
     const turnId = Number(wireId?.split(':')[0]);
     const session = getLiveSessionById(c.server.core.accessor, created.sessionId);
-    const agentHandle = session?.accessor.get(IAgentLifecycleService).get('main');
+    const agentHandle = session?.accessor.get(IAgentLifecycleService).handleOf('main');
     const bus = agentHandle?.accessor.get(IEventBus);
     expect(bus).toBeDefined();
-    bus!.publish({
-      type: 'tool.progress',
-      turnId,
-      toolCallId: 'call_1',
-      update: { kind: 'stdout', text: 'raw-stdout-bytes' },
-    });
-    bus!.publish({
-      type: 'tool.progress',
-      turnId,
-      toolCallId: 'call_1',
-      update: { kind: 'status', text: 'Still working…' },
-    });
+    bus!.publish(
+      new ToolProgress({
+        agentId: 'main',
+        turnId,
+        toolCallId: 'call_1',
+        update: { kind: 'stdout', text: 'raw-stdout-bytes' },
+      }),
+    );
+    bus!.publish(
+      new ToolProgress({
+        agentId: 'main',
+        turnId,
+        toolCallId: 'call_1',
+        update: { kind: 'status', text: 'Still working…' },
+      }),
+    );
 
     const result = (await promptPromise) as { stopReason: string };
     expect(result.stopReason).toBe('end_turn');
@@ -986,7 +1056,7 @@ describe('acp-server terminal reverse-RPC (clientCapabilities.terminal)', () => 
     expect(JSON.stringify(secondCall)).toContain('hello_from_terminal');
   }, 30_000);
 
-  it('rejects Bash without falling back when the client does not advertise terminal capability', async () => {
+  it('falls back to local execution when the client does not advertise the capability', async () => {
     const c = await boot({});
     const terminals = fakeTerminalClient(c, 'should_not_be_used\n');
     scriptBashTurn('echo hello_from_bash');
@@ -994,7 +1064,7 @@ describe('acp-server terminal reverse-RPC (clientCapabilities.terminal)', () => 
     const { stopReason } = await runPrompt(c);
     expect(stopReason).toBe('end_turn');
 
-    // No terminal reverse-RPC at all — behavior identical to today.
+    // No terminal reverse-RPC at all — the command ran locally.
     expect(terminals).toHaveLength(0);
     const terminalRpcs = c.received.filter(
       (m) => typeof m.method === 'string' && m.method.startsWith('terminal/'),
@@ -1004,7 +1074,6 @@ describe('acp-server terminal reverse-RPC (clientCapabilities.terminal)', () => 
     // The tool card carries the textual output, exactly as before.
     const completed = toolCallUpdates(c).find((u) => u.status === 'completed');
     const text = completed?.content?.map((entry) => entry.content?.text ?? '').join('\n') ?? '';
-    expect(text).not.toContain('hello_from_bash');
-    expect(JSON.stringify(scripted!.callHistory()[1])).toContain('ACP terminal capability is unavailable');
+    expect(text).toContain('hello_from_bash');
   }, 30_000);
 });

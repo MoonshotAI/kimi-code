@@ -1,55 +1,27 @@
-/**
- * `kimi-cu` capability entry (macOS and Windows).
- *
- * Both platforms share the same product capability and plugin wiring flow.
- * macOS adds KimiCU.app + launchd + TCC permissions; Windows uses the
- * official signed runtime installer and its built-in `doctor` command.
- *
- * The macOS path replicates the official `setup_macos.sh` step-for-step
- * (stop old processes → ditto into /Applications → register service →
- * request permissions) with structured progress and errors instead of a
- * shell pipe. Elevation when /Applications is not writable goes through
- * `osascript ... with administrator privileges` (native auth dialog).
- * Installs are detect-first and idempotent: setup always refreshes the wiring
- * plugin, only unsatisfied runtime layers are redone, and setup re-enables a
- * previously disabled wiring plugin (and its
- * MCP servers), the app step requires an executable binary with bundle
- * metadata, the archive is staged and unpacked before the old service is
- * stopped, and cleanup of old processes is best-effort — a wedged old
- * binary turns CLI probes into failed steps or is skipped past, never
- * blocking the replacement.
- * The Windows path downloads and runs the official `setup_windows.ps1`, so
- * its signature verification, rollback, and agent autostart stay upstream.
- * It selects a trusted PowerShell installation that satisfies the script's
- * command requirements before changing plugin wiring.
- */
-
 import { constants } from 'node:fs';
 import { access, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+import { kimiCdnContentUrl } from '@moonshot-ai/kimi-code-oauth';
+
+import { Error2 } from '#/errors';
+
+import { installResolvedMarketplacePlugin } from '../../plugin/pluginService';
+import { CapabilityErrors } from '../errors';
 import { downloadToFile, runCommand } from '../host';
 import type {
   CapabilityDetectResult,
   CapabilityEntry,
   CapabilityInstallReporter,
+  CapabilityInstallOptions,
   CapabilityStep,
 } from '../types';
 import type { CapabilityEntryContext } from './context';
+import { findWindowsCuProcesses, manageWindowsCuProcesses } from './windowsCuProcesses';
 
-const MAC_PLUGIN = {
-  id: 'kimi-cu',
-  zipUrl: 'https://cdn.kimi.com/kimi-computer-use/latest/kimi-cu-plugin.zip',
-} as const;
-const WINDOWS_PLUGIN = {
-  id: 'kimi-cu-win',
-  zipUrl:
-    'https://cdn.kimi.com/kimi-computer-use-windows/latest/kimi-cu-win-plugin.zip',
-} as const;
-const APP_ZIP_URL = 'https://cdn.kimi.com/kimi-computer-use/latest/KimiCU.app.zip';
-const WINDOWS_SETUP_URL =
-  'https://cdn.kimi.com/kimi-computer-use-windows/latest/setup_windows.ps1';
+const MAC_PLUGIN_ID = 'kimi-cu';
+const WINDOWS_PLUGIN_ID = 'kimi-cu-win';
 const APP_BUNDLE = 'KimiCU.app';
 const LAUNCHD_LABEL = 'ai.kimi.cu.service';
 const COMMAND_TIMEOUT_MS = 30_000;
@@ -78,6 +50,20 @@ const WINDOWS_DOCTOR_SCRIPT =
 interface PluginLayerConfig {
   readonly id: string;
   readonly zipUrl: string;
+}
+
+function macPlugin(): PluginLayerConfig {
+  return {
+    id: MAC_PLUGIN_ID,
+    zipUrl: kimiCdnContentUrl('kimi-computer-use/latest/kimi-cu-plugin.zip'),
+  };
+}
+
+function windowsPlugin(): PluginLayerConfig {
+  return {
+    id: WINDOWS_PLUGIN_ID,
+    zipUrl: kimiCdnContentUrl('kimi-computer-use-windows/latest/kimi-cu-win-plugin.zip'),
+  };
 }
 
 interface PermissionStatus {
@@ -198,7 +184,34 @@ async function installPluginLayer(
   ctx: CapabilityEntryContext,
   config: PluginLayerConfig,
 ): Promise<void> {
-  const summary = await ctx.plugins.installPlugin({ source: config.zipUrl });
+  const defaultCatalog = await ctx.marketplace.isDefaultMarketplace().catch(() => false);
+  const marketplace = defaultCatalog
+    ? await ctx.marketplace.listMarketplace().catch(() => undefined)
+    : undefined;
+  const entry = marketplace?.plugins.find((candidate) => candidate.id === config.id);
+  if (marketplace !== undefined && entry === undefined) {
+    throw new Error(`Marketplace plugin "${config.id}" was not found in the current catalog`);
+  }
+  if (marketplace !== undefined && entry?.version === undefined) {
+    throw new Error(`Marketplace plugin "${config.id}" has no version in the current catalog`);
+  }
+  const summary = marketplace === undefined
+    ? await installResolvedMarketplacePlugin(
+        ctx.plugins,
+        { marketplaceId: config.id },
+        {
+          source: config.zipUrl,
+          catalogId: config.id,
+          origin: 'marketplace',
+          expectedPluginId: config.id,
+          fetchImpl: fetch,
+        },
+      )
+    : await ctx.plugins.installPlugin({
+        marketplaceId: config.id,
+        expectedVersion: entry!.version,
+        expectedSha256: entry!.sha256sum,
+      });
   if (!summary.enabled) {
     await ctx.plugins.setPluginEnabled({ id: config.id, enabled: true });
   }
@@ -328,7 +341,7 @@ function createMacKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry {
   async function detect(): Promise<CapabilityDetectResult> {
     const steps: CapabilityStep[] = [];
 
-    const plugin = await detectPluginLayer(ctx, MAC_PLUGIN);
+    const plugin = await detectPluginLayer(ctx, macPlugin());
     steps.push(plugin.step);
 
     if ((await legacyMcpFile()) !== undefined) {
@@ -363,7 +376,11 @@ function createMacKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry {
       permissionsProbeError = errorMessage(error);
     }
     if (permissionsProbeError !== undefined) {
-      steps.push({ id: 'permissions', state: 'failed', detail: permissionsProbeError });
+      steps.push(
+        { id: 'permissions', state: 'failed', detail: permissionsProbeError },
+        { id: 'permissions.accessibility', state: 'failed', detail: permissionsProbeError },
+        { id: 'permissions.screenRecording', state: 'failed', detail: permissionsProbeError },
+      );
     } else {
       const granted =
         permissions !== undefined && permissions.accessibility && permissions.screenRecording;
@@ -373,14 +390,24 @@ function createMacKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry {
             ...(permissions.accessibility ? [] : ['accessibility']),
             ...(permissions.screenRecording ? [] : ['screenRecording']),
           ].join(',');
-      steps.push({
-        id: 'permissions',
-        state: granted ? 'ok' : 'missing',
-        detail:
-          granted || missingPermissions === undefined || missingPermissions.length === 0
-            ? undefined
-            : missingPermissions,
-      });
+      steps.push(
+        {
+          id: 'permissions',
+          state: granted ? 'ok' : 'missing',
+          detail:
+            granted || missingPermissions === undefined || missingPermissions.length === 0
+              ? undefined
+              : missingPermissions,
+        },
+        {
+          id: 'permissions.accessibility',
+          state: permissions?.accessibility === true ? 'ok' : 'missing',
+        },
+        {
+          id: 'permissions.screenRecording',
+          state: permissions?.screenRecording === true ? 'ok' : 'missing',
+        },
+      );
     }
 
     return {
@@ -401,9 +428,6 @@ function createMacKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry {
       await bestEffort(appBin, ['uninstall']);
     }
     await bestEffort('launchctl', ['bootout', `gui/${uid}/${LAUNCHD_LABEL}`]);
-    // Keep connected MCP frontends alive while the app bundle is replaced.
-    // Their work is delegated to the service below; killing them makes the
-    // client report an installation-driven restart as an unexpected failure.
     for (const mode of ['service', 'overlay']) {
       await bestEffort('pkill', ['-f', `${APP_BUNDLE}/Contents/MacOS/kimi-cu[[:space:]]+${mode}`]);
     }
@@ -446,11 +470,8 @@ function createMacKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry {
       .every((step) => step.state === 'ok');
 
     report('plugin');
-    await installPluginLayer(ctx, MAC_PLUGIN);
+    await installPluginLayer(ctx, macPlugin());
 
-    // A read-only or concurrently edited user config must not block the app
-    // installation. Detection keeps the duplicate as an optional warning so
-    // clients can record it in logs and a later install can retry migration.
     if (await removeLegacyMcpRegistration(legacyMcpBefore).catch(() => false)) {
       report('mcp-config');
     }
@@ -462,7 +483,7 @@ function createMacKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry {
         report('download', 0);
         const zipPath = path.join(workDir, 'KimiCU.app.zip');
         await downloadToFile(
-          APP_ZIP_URL,
+          kimiCdnContentUrl('kimi-computer-use/latest/KimiCU.app.zip'),
           zipPath,
           (percent) => {
             report('download', percent);
@@ -505,7 +526,10 @@ function createMacKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry {
       }
     }
 
-    if (stepStates.get('permissions') !== 'ok') {
+    if (
+      stepStates.get('permissions.accessibility') !== 'ok' ||
+      stepStates.get('permissions.screenRecording') !== 'ok'
+    ) {
       report('permissions');
       await runCommand(
         ctx.hostProcess,
@@ -519,7 +543,7 @@ function createMacKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry {
 
   return {
     id: 'kimi-cu',
-    pluginId: MAC_PLUGIN.id,
+    pluginId: MAC_PLUGIN_ID,
     displayName: 'Kimi Computer Use',
     description:
       'macOS GUI automation in the background — read app UIs and click, type, scroll, and drag without taking over your mouse or foregrounding apps.',
@@ -622,7 +646,7 @@ function createWindowsKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
 
   async function detect(): Promise<CapabilityDetectResult> {
     const [plugin, runtime] = await Promise.all([
-      detectPluginLayer(ctx, WINDOWS_PLUGIN),
+      detectPluginLayer(ctx, windowsPlugin()),
       detectRuntimeStep(),
     ]);
     return {
@@ -648,7 +672,7 @@ function createWindowsKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
     if (installPlugin) {
       report('plugin');
       try {
-        await installPluginLayer(ctx, WINDOWS_PLUGIN);
+        await installPluginLayer(ctx, windowsPlugin());
       } catch (error) {
         if (
           typeof error !== 'object' ||
@@ -659,7 +683,7 @@ function createWindowsKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
           throw error;
         }
         throw new Error(
-          'Kimi Computer Use plugin files are still in use by the current Kimi Code process. Restart Kimi Code, then install again.',
+          'Kimi Computer Use plugin files are still in use. Close other applications using the plugin, then install again.',
           { cause: error },
         );
       }
@@ -671,7 +695,7 @@ function createWindowsKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
         const setupPath = path.join(workDir, 'setup_windows.ps1');
         report('download', 0);
         await downloadToFile(
-          WINDOWS_SETUP_URL,
+          kimiCdnContentUrl('kimi-computer-use-windows/latest/setup_windows.ps1'),
           setupPath,
           (percent) => {
             report('download', percent);
@@ -716,13 +740,33 @@ function createWindowsKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
 
   return {
     id: 'kimi-cu',
-    pluginId: WINDOWS_PLUGIN.id,
+    pluginId: WINDOWS_PLUGIN_ID,
     displayName: 'Kimi Computer Use for Windows',
     description:
       'Windows GUI automation — read app UIs and click, type, scroll, and drag in desktop apps.',
     supported,
     detect,
-    install,
+    install: async (report, options: CapabilityInstallOptions = {}) => {
+      if (!supported) return install(report);
+      const { powershell, count } = await findWindowsCuProcesses(ctx, [powershellPath, powershell7Path]);
+      function checkProcessConsent(count: number): number {
+        if (count > 0 && options.stopRunningProcesses !== true) {
+          throw new Error2(
+            CapabilityErrors.codes.CAPABILITY_PROCESSES_RUNNING,
+            'Kimi Computer Use processes must be stopped before installation',
+          );
+        }
+        return count;
+      }
+      checkProcessConsent(count);
+      return ctx.plugins.withMcpServersSuspended(WINDOWS_PLUGIN_ID, async () => {
+        if (checkProcessConsent(await manageWindowsCuProcesses(ctx, powershell, false)) > 0) {
+          report('stop-processes');
+          await manageWindowsCuProcesses(ctx, powershell, true);
+        }
+        return install(report);
+      });
+    },
   };
 }
 

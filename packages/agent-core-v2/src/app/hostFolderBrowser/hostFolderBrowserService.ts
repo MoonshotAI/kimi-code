@@ -1,12 +1,3 @@
-/**
- * `hostFolderBrowser` domain — `IHostFolderBrowser` implementation.
- *
- * Browses the real local filesystem through `node:fs/promises` and derives
- * `recent_roots` from the process-wide `IWorkspaceService`. Bound at App
- * scope. Preserves the legacy wire behaviour: realpath resolution,
- * directory-only entries, dot-last sorting, and `parent` resolution.
- */
-
 import { readdir, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
@@ -38,15 +29,15 @@ export class HostFolderBrowser implements IHostFolderBrowser {
     let realTarget: string;
     try {
       realTarget = await realpath(target);
-    } catch (err) {
-      throw mapFsError(err, target);
+    } catch (error) {
+      throw mapFsError(error, target);
     }
 
     let dirents;
     try {
       dirents = await readdir(realTarget, { withFileTypes: true });
-    } catch (err) {
-      throw mapFsError(err, realTarget);
+    } catch (error) {
+      throw mapFsError(error, realTarget);
     }
 
     const entries: FsBrowseEntry[] = dirents

@@ -11,7 +11,7 @@ import {
   type ContextMessage,
   type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -47,23 +47,12 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
   let base: string;
   let seeds: ScopeSeed | undefined;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-messages-'));
-    // Seed a stub IModelCatalog so the agent scope can instantiate if a
-    // transitive service needs it; IContextMemory itself does not.
     const modelCatalog: IModelCatalog = {
       _serviceBrand: undefined,
       get: () => {
         throw new Error('modelCatalog.get not exercised in this test');
-      },
-      getRequester: () => {
-        throw new Error('modelCatalog.getRequester not exercised in this test');
-      },
-      inspect: () => {
-        throw new Error('modelCatalog.inspect not exercised in this test');
-      },
-      ping: () => {
-        throw new Error('modelCatalog.ping not exercised in this test');
       },
       findByName: () => [],
       listModels: async () => [],
@@ -91,7 +80,7 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
     base = `http://127.0.0.1:${server.port}`;
   }
 
-  afterEach(async () => {
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -120,23 +109,19 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
     return body.data.id;
   }
 
-  // The main agent scope is not created automatically on session creation
-  // (server-v2 gap G10); create it here, then append messages directly into
-  // its IContextMemory to bypass the LLM loop.
   async function seedMainAgentMessages(
     sessionId: string,
     messages: readonly ContextMessage[],
   ): Promise<void> {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
-    let agent = session.accessor.get(IAgentLifecycleService).get('main');
+    let agent = session.accessor.get(IAgentLifecycleService).handleOf('main');
     if (agent === undefined) {
-      agent = await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
+      await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
+      agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
     }
     if (messages.length > 0) {
       agent.accessor.get(IAgentContextMemoryService).append(...messages);
-      // Flush the wire log so the temp home is quiescent before afterEach rm's
-      // it (macOS can ENOTEMPTY an rmdir while an append is still in flight).
       await agent.accessor.get(IWireService).flush();
     }
   }
@@ -160,13 +145,13 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
   it('lists spliced messages newest-first with stable ids and mapped content', async () => {
     const id = await createSession();
     await seedMainAgentMessages(id, [
-      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+      { role: 'user', content: [{ type: 'text', text: 'hi' }] },
       {
         role: 'assistant',
         content: [{ type: 'text', text: 'running' }],
         toolCalls: [{ type: 'function', id: 'call_1', name: 'Bash', arguments: '{"cmd":"ls"}' }],
       },
-      { role: 'tool', content: [{ type: 'text', text: 'file.txt' }], toolCalls: [], toolCallId: 'call_1' },
+      { role: 'tool', content: [{ type: 'text', text: 'file.txt' }], toolCallId: 'call_1' },
     ]);
 
     const { body } = await getJson<PageWire>(`/api/v1/sessions/${id}/messages`);
@@ -176,7 +161,6 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
     expect(body.data.items.every((m) => MSG_ID.test(m.id))).toBe(true);
     expect(body.data.items.every((m) => m.session_id === id)).toBe(true);
 
-    // newest first → tool, assistant, user.
     const [tool, assistant, user] = body.data.items;
 
     expect(user).toMatchObject({
@@ -206,7 +190,7 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
   it('gets a single message by id and 404s for an unknown message', async () => {
     const id = await createSession();
     await seedMainAgentMessages(id, [
-      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+      { role: 'user', content: [{ type: 'text', text: 'hi' }] },
       { role: 'assistant', content: [{ type: 'text', text: 'hello' }], toolCalls: [] },
     ]);
 
@@ -233,7 +217,7 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
   it('returns 40403 for a message id not present in the session', async () => {
     const id = await createSession();
     await seedMainAgentMessages(id, [
-      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+      { role: 'user', content: [{ type: 'text', text: 'hi' }] },
     ]);
     const { body } = await getJson<null>(
       `/api/v1/sessions/${id}/messages/msg_00NOT_IN_SESSION00`,
@@ -252,28 +236,24 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
   it('paginates with page_size and before_id / after_id cursors', async () => {
     const id = await createSession();
     await seedMainAgentMessages(id, [
-      { role: 'user', content: [{ type: 'text', text: 'm0' }], toolCalls: [] },
-      { role: 'user', content: [{ type: 'text', text: 'm1' }], toolCalls: [] },
-      { role: 'user', content: [{ type: 'text', text: 'm2' }], toolCalls: [] },
+      { role: 'user', content: [{ type: 'text', text: 'm0' }] },
+      { role: 'user', content: [{ type: 'text', text: 'm1' }] },
+      { role: 'user', content: [{ type: 'text', text: 'm2' }] },
     ]);
     const all = await getJson<PageWire>(`/api/v1/sessions/${id}/messages?page_size=100`);
-    // newest first → [m2, m1, m0]
     const idsDesc = all.body.data.items.map((m) => m.id);
     expect(idsDesc).toHaveLength(3);
 
-    // page_size=1 → newest only, more available.
     const first = await getJson<PageWire>(`/api/v1/sessions/${id}/messages?page_size=1`);
     expect(first.body.data.items.map((m) => m.id)).toEqual([idsDesc[0]]);
     expect(first.body.data.has_more).toBe(true);
 
-    // before_id = newest → the two older entries.
     const older = await getJson<PageWire>(
       `/api/v1/sessions/${id}/messages?before_id=${idsDesc[0]}`,
     );
     expect(older.body.data.items.map((m) => m.id)).toEqual([idsDesc[1], idsDesc[2]]);
     expect(older.body.data.has_more).toBe(false);
 
-    // after_id = oldest → the two newer entries.
     const newer = await getJson<PageWire>(
       `/api/v1/sessions/${id}/messages?after_id=${idsDesc[2]}`,
     );
@@ -284,9 +264,9 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
   it('filters the page by role after pagination', async () => {
     const id = await createSession();
     await seedMainAgentMessages(id, [
-      { role: 'user', content: [{ type: 'text', text: 'q' }], toolCalls: [] },
+      { role: 'user', content: [{ type: 'text', text: 'q' }] },
       { role: 'assistant', content: [{ type: 'text', text: 'a' }], toolCalls: [] },
-      { role: 'user', content: [{ type: 'text', text: 'q2' }], toolCalls: [] },
+      { role: 'user', content: [{ type: 'text', text: 'q2' }] },
     ]);
     const { body } = await getJson<PageWire>(`/api/v1/sessions/${id}/messages?role=user`);
     expect(body.code).toBe(0);
@@ -295,22 +275,23 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
     expect(body.data.items.every((m) => MSG_ID.test(m.id))).toBe(true);
   });
 
-  // Regression for the cold-session gap: a persisted (non-live) session must
-  // return its full wire transcript — including the pre-compaction prefix —
-  // instead of an empty page / 40403. We seed the wire log through the live
-  // agent (append + a compaction fold + flush), then restart the whole server
-  // on the same home so the session is genuinely cold on the read path.
   it('reads the persisted full transcript for a cold session', async () => {
     const id = await createSession();
     const session = getLiveSessionById(server!.core.accessor, id);
     if (session === undefined) throw new Error(`session ${id} not found`);
-    const agent = await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
+    await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
+    const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
     const ctx = agent.accessor.get(IAgentContextMemoryService);
-    // Three messages, then a compaction that folds the prefix into a summary.
     ctx.append(
-      { role: 'user', content: [{ type: 'text', text: 'm0' }], toolCalls: [] },
+      { role: 'user', content: [{ type: 'text', text: 'm0' }] },
       { role: 'assistant', content: [{ type: 'text', text: 'm1' }], toolCalls: [] },
-      { role: 'user', content: [{ type: 'text', text: 'm2' }], toolCalls: [] },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'm2' },
+          { type: 'image_url', imageUrl: { url: 'data:image/png;base64,QUJD' } },
+        ],
+      },
     );
     ctx.applyCompaction({
       summary: 'summary',
@@ -320,37 +301,34 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
     });
     await agent.accessor.get(IWireService).flush();
 
-    // The live read already serves the full transcript (pre-compaction prefix
-    // + summary), matching v1's `/messages`. Capture the summary id so we can
-    // assert it survives the restart unchanged.
     const livePage = await getJson<PageWire>(`/api/v1/sessions/${id}/messages?page_size=100`);
     expect(livePage.body.data.items).toHaveLength(4);
     const liveSummaryId = livePage.body.data.items[0]!.id;
 
-    // Restart the server on the same homeDir → the session is cold for the next
-    // read (mirrors a session carried over from a prior process).
     await server!.close();
     server = undefined;
     await boot();
 
-    // Full transcript preserved (pre-compaction m0/m1/m2 + summary), newest first.
     const { body } = await getJson<PageWire>(`/api/v1/sessions/${id}/messages?page_size=100`);
     expect(body.code).toBe(0);
     expect(body.data.items).toHaveLength(4);
     expect(body.data.items.every((m) => MSG_ID.test(m.id))).toBe(true);
 
-    // newest first → summary, m2, m1, m0.
     const [summary, _m2, maybeM1] = body.data.items;
     if (maybeM1 === undefined) throw new Error('expected m1 message');
     const m1 = maybeM1;
-    // The summary id derivation is stable across live reads and restore.
     expect(summary!.id).toBe(liveSummaryId);
     expect(summary).toMatchObject({
       role: 'user',
       metadata: { origin: { kind: 'compaction_summary' } },
     });
+    expect(_m2?.content).toContainEqual(
+      expect.objectContaining({
+        type: 'image',
+        source: { kind: 'url', url: 'data:image/png;base64,QUJD' },
+      }),
+    );
 
-    // get returns a specific message for a cold session …
     const got = await getJson<MessageWire>(`/api/v1/sessions/${id}/messages/${m1.id}`);
     expect(got.body.code).toBe(0);
     expect(got.body.data).toMatchObject({
@@ -359,7 +337,6 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
       content: [{ type: 'text', text: 'm1' }],
     });
 
-    // … and 40403 for an unknown message id in the same cold session.
     const missing = await getJson<null>(`/api/v1/sessions/${id}/messages/msg_does_not_exist`);
     expect(missing.body.code).toBe(40403);
   });

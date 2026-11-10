@@ -9,6 +9,15 @@ describe('mediaUrlPartToText', () => {
     );
   });
 
+  it('renders an internal daemon file reference as a bare placeholder', () => {
+    // `kimi-file://…?path=…` resolves nowhere for the user and carries the
+    // materialization path — never render the wire form.
+    expect(
+      mediaUrlPartToText('image', 'kimi-file://f_1?path=%2FUsers%2Falice%2Fmedia%2Ff_1.png'),
+    ).toBe('[image]');
+    expect(mediaUrlPartToText('video', 'kimi-file://f_2')).toBe('[video]');
+  });
+
   it('summarizes base64 data URLs without returning the payload', () => {
     expect(mediaUrlPartToText('image', 'data:image/png;base64,qrs=')).toBe(
       '[image image/png, 2 B]',

@@ -1,11 +1,3 @@
-/**
- * `sessionExport` domain — export zip writer.
- *
- * Collects the session directory's regular files and writes a diagnostic zip
- * archive with a generated manifest plus optional extra entries. This module
- * owns the byte packaging detail; callers provide already-resolved paths.
- */
-
 import { createWriteStream } from 'node:fs';
 import { mkdir, mkdtemp, readdir, rename, rm, stat } from 'node:fs/promises';
 import { Readable } from 'node:stream';

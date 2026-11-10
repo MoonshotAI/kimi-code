@@ -3,6 +3,10 @@ import { describe, expect, it, vi } from "vitest";
 import type { TUIState } from "#/tui/kimi-tui";
 import { darkColors, lightColors } from "#/tui/theme/colors";
 import { getBuiltInPalette } from "#/tui/theme";
+import { deriveHoverBackground } from "#/tui/theme/hover-color";
+import { colorDistance, mixColors } from "#/tui/theme/color-mix";
+import { Theme } from "#/tui/theme/theme";
+import { parseOsc11Background } from "#/tui/theme/terminal-background";
 import {
   DISABLE_TERMINAL_THEME_REPORTING,
   ENABLE_TERMINAL_THEME_REPORTING,
@@ -21,6 +25,12 @@ const DARK_OSC11_REPORT = "\u001B]11;rgb:2828/2c2c/3434\u0007";
 const LIGHT_OSC11_REPORT = "\u001B]11;rgb:fafa/fbfb/fcfc\u0007";
 
 describe("terminal theme tracking", () => {
+  it("parses exact background colors independently from the theme", () => {
+    expect(parseOsc11Background(DARK_OSC11_REPORT)).toBe("#282C34");
+    expect(parseOsc11Background(LIGHT_OSC11_REPORT)).toBe("#FAFBFC");
+    expect(parseOsc11Background("not a color report")).toBeNull();
+  });
+
   it("recognizes terminal theme reports as change notifications", () => {
     expect(hasTerminalThemeReport(TERMINAL_THEME_DARK)).toBe(true);
     expect(hasTerminalThemeReport(TERMINAL_THEME_LIGHT)).toBe(true);
@@ -74,6 +84,24 @@ describe("terminal theme tracking", () => {
     expect(handleTerminalThemeInput("]", terminal, onTheme)).toBeUndefined();
     expect(onTheme).toHaveBeenCalledTimes(2);
     expect(terminal.write).not.toHaveBeenCalled();
+  });
+
+  it("forwards exact background colors without changing theme consumers", () => {
+    const terminal = { write: vi.fn() };
+    const onTheme = vi.fn();
+    const onBackground = vi.fn();
+
+    expect(
+      handleTerminalThemeInput(
+        DARK_OSC11_REPORT,
+        terminal,
+        onTheme,
+        createTerminalThemeInputState(),
+        onBackground,
+      ),
+    ).toEqual({ consume: true });
+    expect(onTheme).toHaveBeenCalledWith("dark");
+    expect(onBackground).toHaveBeenCalledWith("#282C34");
   });
 
   it("strips OSC 11 background reports without dropping coalesced input", () => {
@@ -158,6 +186,42 @@ describe("terminal theme tracking", () => {
 
     expect(removeInputListener).toHaveBeenCalledOnce();
     expect(state.terminal.write).toHaveBeenCalledWith(DISABLE_TERMINAL_THEME_REPORTING);
+  });
+});
+
+describe("terminal hover colors", () => {
+  it.each([
+    ["#000000", "#F5F5F5", "#111111"],
+    ["#282C34", "#F5F5F5", "#33373F"],
+    ["#FAFBFC", "#1A1A1A", "#ECEDEE"],
+    ["#FFFFFF", "#1A1A1A", "#F1F1F1"],
+  ])("derives a subtle hover from %s", (background, foreground, expected) => {
+    expect(deriveHoverBackground(background, foreground)).toBe(expected);
+  });
+
+  it("reduces the lightness shift when needed to preserve text contrast", () => {
+    expect(deriveHoverBackground("#888888", "#1A1A1A")).toBe("#838383");
+  });
+});
+
+describe('transcript group colors', () => {
+  it('mixes existing colors and measures their distance', () => {
+    expect(mixColors('#000000', '#FFFFFF', 0.45)).toBe('#737373');
+    expect(mixColors('#454545', '#FFFFFF', 0.35)).toBe('#868686');
+    expect(mixColors('#454545', '#FFFFFF', 0.65)).toBe('#bebebe');
+    expect(colorDistance('#888888', '#1E1E1E')).toBeCloseTo(183.60, 2);
+  });
+
+  it('uses the detected background and falls back from the palette brightness', () => {
+    const light = new Theme(lightColors);
+    expect(light.terminalBackground()).toBe('#FFFFFF');
+    light.setTerminalBackground('#FAFBFC');
+    expect(light.terminalBackground()).toBe('#FAFBFC');
+
+    const dark = new Theme(darkColors);
+    expect(dark.terminalBackground()).toBe('#000000');
+    dark.setTerminalBackground('#1E1E1E');
+    expect(dark.terminalBackground()).toBe('#1E1E1E');
   });
 });
 

@@ -4,6 +4,8 @@
 
 import {
   Editor,
+  FAKE_CURSOR_END,
+  FAKE_CURSOR_START,
   isKeyRelease,
   matchesKey,
   Key,
@@ -118,6 +120,9 @@ interface CustomEditorOptions {
   disablePasteBurst?: boolean;
 }
 
+// pi-tui's fake cursor: the grapheme under the caret in reverse video.
+const BLOCK_CURSOR = /\u001B\[7m(.*?)\u001B\[0m/u;
+
 export class CustomEditor extends Editor {
   public onEscape?: () => void;
   /**
@@ -125,6 +130,7 @@ export class CustomEditor extends Editor {
    * double-Esc so only two consecutive Escape presses trigger the shortcut.
    */
   public onNonEscapeInput?: () => void;
+  public onPreInput?: (data: string) => boolean;
   public onCtrlD?: () => void;
   public onCtrlC?: () => void;
   public onToggleToolExpand?: () => void;
@@ -132,8 +138,8 @@ export class CustomEditor extends Editor {
   public onCtrlS?: () => void;
   /** Return `true` to consume Ctrl+B; return `false`/`undefined` to fall through to the editor default (cursor-left). */
   public onCtrlB?: () => boolean;
-  /** Return `true` to consume Ctrl+T (the todo list had overflow to toggle); return `false`/`undefined` to fall through to the editor default. */
-  public onToggleTodoExpand?: () => boolean;
+  /** Return true to consume Ctrl+N (the Updates panel took keyboard focus); otherwise use the editor bindings. */
+  public onPageNotify?: () => boolean;
   public onUndo?: () => void;
   public onTextPaste?: () => void;
   /**
@@ -150,18 +156,23 @@ export class CustomEditor extends Editor {
   public onInputModeChange?: (mode: 'prompt' | 'bash') => void;
   public connectedAbove = false;
   public borderHighlighted = false;
+  /** Terminal window focus, tracked separately from this component's keyboard focus. */
+  public terminalFocused = true;
   /**
    * Called when the user triggers "paste image" (Ctrl-V on Unix,
    * Alt-V on Windows — Ctrl-V is terminal-reserved there). Return
    * `true` to consume the key (image was read and handled); return
    * `false` to let the key fall through to the normal paste path.
-   * The callback may be async; pi-tui awaits it before dispatching
-   * the next keystroke.
+   * The callback may be async; CustomEditor queues subsequent keystrokes until
+   * it settles before dispatching them.
    */
   public onPasteImage?: () => Promise<boolean>;
 
   private consumingPaste = false;
   private consumeBuffer = '';
+  /** Serialize paste callbacks so Enter/typing cannot overtake an image paste. */
+  private pasteInFlight = false;
+  private readonly pasteInputQueue: string[] = [];
   private argumentHints: ReadonlyMap<string, string> = new Map();
   private skillCommandNames: ReadonlySet<string> = new Set();
 
@@ -253,7 +264,7 @@ export class CustomEditor extends Editor {
     return false;
   }
 
-  private hasAutocompleteActivity(): boolean {
+  public hasAutocompleteActivity(): boolean {
     const autocomplete = this as unknown as AutocompleteInternals;
     return (
       this.isShowingAutocomplete() ||
@@ -329,14 +340,30 @@ export class CustomEditor extends Editor {
         lines[firstContentIdx] = withPrompt;
       }
     }
+    // While another component holds the keyboard or the terminal window is
+    // inactive, the editor looks inactive: no block cursor (pi-tui draws it
+    // focused or not), and the whole box fades.
+    const inactive = !this.focused || !this.terminalFocused;
     // `this.borderColor` is pi-tui's per-render paint function. The host may
     // overwrite it (e.g. plan-mode / slash-context highlight via
     // `editor.borderColor = chalk.hex(primary)`), so we route corners and
     // side bars through the same hook to stay in sync.
-    return wrapWithSideBorders(lines, (s) => this.borderColor(s), {
-      connectedAbove: this.connectedAbove && !this.borderHighlighted,
-      label: isBash ? ` ${currentTheme.boldFg('shellMode', '! shell mode')} ` : undefined,
-    });
+    const framed = wrapWithSideBorders(
+      inactive
+        ? lines.map((line) =>
+            line
+              .replace(BLOCK_CURSOR, '$1')
+              .replaceAll(FAKE_CURSOR_START, '')
+              .replaceAll(FAKE_CURSOR_END, ''),
+          )
+        : lines,
+      (s: string) => this.borderColor(s),
+      {
+        connectedAbove: this.connectedAbove && !this.borderHighlighted,
+        label: isBash ? ` ${currentTheme.boldFg('shellMode', '! shell mode')} ` : undefined,
+      },
+    );
+    return inactive ? framed.map((line) => currentTheme.fade(line)) : framed;
   }
 
   private computeArgumentHint(): string | undefined {
@@ -363,10 +390,24 @@ export class CustomEditor extends Editor {
       return;
     }
 
+    // Clipboard reads are asynchronous. Queue every key received while a
+    // paste callback is in flight and replay it once the callback settles
+    // (clipboard read + placeholder insert — compression and the daemon
+    // upload continue in the background off this path), so Enter cannot
+    // submit a draft that is still missing the pasted image.
+    if (this.pasteInFlight) {
+      this.pasteInputQueue.push(normalized);
+      return;
+    }
+
     // Any input other than a lone Escape breaks a pending double-Esc sequence,
     // so the shortcut only fires for two consecutive Escape presses.
     if (!matchesKey(normalized, Key.escape)) {
       this.onNonEscapeInput?.();
+    }
+
+    if (this.onPreInput?.(normalized) === true) {
+      return;
     }
 
     // When a paste marker was just expanded, discard the trailing bracketed
@@ -406,17 +447,21 @@ export class CustomEditor extends Editor {
           this.onTextPaste?.();
           super.handleInput.call(this, normalized);
         };
-        void handler().then(
-          (handled) => {
+        this.pasteInFlight = true;
+        void handler()
+          .then((handled) => {
             if (!handled) pasteAsText();
-          },
-          () => {
+          })
+          .catch(() => {
             // A rejecting image-paste handler must not leak an unhandled
             // rejection (the CLI turns those into a silent exit) — treat it
             // the same as "no image available" and fall back to text paste.
             pasteAsText();
-          },
-        );
+          })
+          .finally(() => {
+            this.pasteInFlight = false;
+            this.flushPasteInputQueue();
+          });
         return;
       }
     }
@@ -455,10 +500,10 @@ export class CustomEditor extends Editor {
       if (this.onCtrlB?.() === true) return;
     }
 
-    if (matchesKey(normalized, Key.ctrl('t'))) {
-      // Only consume the key when the todo list actually has overflow to
-      // expand/collapse; otherwise fall through to the editor default.
-      if (this.onToggleTodoExpand?.() === true) return;
+    if (matchesKey(normalized, Key.ctrl('n'))) {
+      // Only consume the key when the Updates panel took focus; otherwise
+      // fall through to the editor default.
+      if (this.onPageNotify?.() === true) return;
     }
 
     if (matchesKey(normalized, 'shift+tab')) {
@@ -539,6 +584,14 @@ export class CustomEditor extends Editor {
     }
 
     this.reopenAutocompleteAfterInput();
+  }
+
+  private flushPasteInputQueue(): void {
+    if (this.pasteInFlight) return;
+    const next = this.pasteInputQueue.shift();
+    if (next === undefined) return;
+    this.handleInput(next);
+    if (!this.pasteInFlight) this.flushPasteInputQueue();
   }
 
   private reopenAutocompleteAfterInput(): void {

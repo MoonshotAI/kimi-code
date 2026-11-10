@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 
 import {
   formatTokenCount,
+  quotaUsageRows,
   renderProgressBar,
   ratioSeverity,
   safeUsageRatio,
@@ -132,5 +133,57 @@ describe('ratioSeverity', () => {
   it('red at or above 0.85', () => {
     expect(ratioSeverity(0.85)).toBe('danger');
     expect(ratioSeverity(1)).toBe('danger');
+  });
+});
+
+describe('quotaUsageRows', () => {
+  it('renders one row per window the backend served, in payload order', () => {
+    const rows = quotaUsageRows({
+      usages: {
+        limit5h: { usedRatio: 0.3, resetAt: '2026-09-11T18:00:00Z' },
+        limit7d: { usedRatio: 0.2, resetAt: '2026-09-17T00:00:00Z' },
+        monthTotal: { usedRatio: 0.4, resetAt: '2026-10-01T00:00:00Z' },
+        monthCode: { usedRatio: 0.25 },
+      },
+      extraUsage: null,
+    });
+    expect(rows).toEqual([
+      { name: '5h limit', usedRatio: 0.3, resetAt: '2026-09-11T18:00:00Z', breakdown: undefined },
+      { name: 'Weekly limit', usedRatio: 0.2, resetAt: '2026-09-17T00:00:00Z', breakdown: undefined },
+      {
+        name: 'Monthly limit',
+        usedRatio: 0.4,
+        resetAt: '2026-10-01T00:00:00Z',
+        breakdown: { kimiRatio: 0.15, codeRatio: 0.25 },
+      },
+    ]);
+  });
+
+  it('skips entries the backend omitted', () => {
+    expect(quotaUsageRows({ usages: {}, extraUsage: null })).toEqual([]);
+    expect(
+      quotaUsageRows({
+        usages: { monthTotal: { usedRatio: 0.4 } },
+        extraUsage: null,
+      }),
+    ).toEqual([
+      {
+        name: 'Monthly limit',
+        usedRatio: 0.4,
+        resetAt: undefined,
+        breakdown: { kimiRatio: 0.4, codeRatio: 0 },
+      },
+    ]);
+  });
+
+  it('clamps the kimi share against float noise and over-100 code shares', () => {
+    const rows = quotaUsageRows({
+      usages: {
+        monthTotal: { usedRatio: 0.2 },
+        monthCode: { usedRatio: 0.25 },
+      },
+      extraUsage: null,
+    });
+    expect(rows[0]?.breakdown).toEqual({ kimiRatio: 0, codeRatio: 0.25 });
   });
 });

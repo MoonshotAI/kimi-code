@@ -1,19 +1,3 @@
-/**
- * `agentProfileCatalog` domain — `IAgentProfileRegistry` impl: the fold of
- * the agent-profile contribution point.
- *
- * App-scope singleton projecting the live `AgentProfileContribution`
- * collection view: storage keys encode the (sourceId, workspaceKey) pair so a
- * workspace-local source id (`workspace`, `extra`, `explicit`) coexists
- * across handlers, while global sources (`builtin`) appear once; a later
- * record for the same pair shadows the earlier one (the old
- * re-register-replaces semantics). The fold is pure storage — merging, name
- * dedup, and override rules live in the Session-scope catalog projection.
- * Change events reproduce the old registry's exactly: a pair fires only when
- * its winning record actually changes, so a reload's record swap fires once
- * while a shadowed record's withdrawal stays silent.
- */
-
 import { type CollectionChange, type CollectionView } from '#/_base/di/collection';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { Service } from '#/_base/di/service';
@@ -32,13 +16,13 @@ import type {
 } from './agentProfileRegistry';
 import { IAgentProfileRegistry as IAgentProfileRegistryDecorator } from './agentProfileRegistry';
 
-function encodeKey(sourceId: string, workspaceKey: string | undefined): string {
-  return JSON.stringify([sourceId, workspaceKey ?? null]);
+function encodeKey(sourceId: string, workspaceKey: string | undefined, contextKey: string | undefined): string {
+  return JSON.stringify([sourceId, workspaceKey ?? null, contextKey ?? null]);
 }
 
 function decodeKey(key: string): AgentProfileRegistryChange {
-  const [sourceId, workspaceKey] = JSON.parse(key) as [string, string | null];
-  return { sourceId, workspaceKey: workspaceKey ?? undefined };
+  const [sourceId, workspaceKey, contextKey] = JSON.parse(key) as [string, string | null, string | null];
+  return { sourceId, workspaceKey: workspaceKey ?? undefined, contextKey: contextKey ?? undefined };
 }
 
 export class AgentProfileRegistryService
@@ -71,10 +55,11 @@ export class AgentProfileRegistryService
   entries(): readonly AgentProfileRegistration[] {
     const entries = new Map<string, AgentProfileRegistration>();
     for (const record of this.folded.values()) {
-      entries.set(encodeKey(record.sourceId, record.workspaceKey), {
+      entries.set(encodeKey(record.sourceId, record.workspaceKey, record.contextKey), {
         sourceId: record.sourceId,
         priority: record.priority ?? 0,
         workspaceKey: record.workspaceKey,
+        contextKey: record.contextKey,
         contribution: record.contribution,
       });
     }
@@ -83,7 +68,7 @@ export class AgentProfileRegistryService
   }
 
   register(registration: AgentProfileRegistration): IDisposable {
-    const key = encodeKey(registration.sourceId, registration.workspaceKey);
+    const key = encodeKey(registration.sourceId, registration.workspaceKey, registration.contextKey);
     this.direct.set(key, registration);
     this.onDidChangeEmitter.fire(decodeKey(key));
     let active = true;
@@ -101,7 +86,7 @@ export class AgentProfileRegistryService
     const previous = this.folded;
     const affected = new Set<string>();
     for (const record of [...change.removed, ...change.added]) {
-      affected.add(encodeKey(record.sourceId, record.workspaceKey));
+      affected.add(encodeKey(record.sourceId, record.workspaceKey, record.contextKey));
     }
     this.refold();
     for (const key of affected) {
@@ -114,7 +99,7 @@ export class AgentProfileRegistryService
   private refold(): void {
     const next = new Map<string, AgentProfileContributionRecord>();
     for (const record of this.view.records) {
-      next.set(encodeKey(record.value.sourceId, record.value.workspaceKey), record.value);
+      next.set(encodeKey(record.value.sourceId, record.value.workspaceKey, record.value.contextKey), record.value);
     }
     this.folded = next;
   }

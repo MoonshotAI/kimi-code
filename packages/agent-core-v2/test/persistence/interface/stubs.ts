@@ -1,9 +1,3 @@
-/**
- * `persistence` test stubs — minimal no-op `IQueryStore` for unit tests.
- *
- * Lives under `test/` (not `src/`). Import from a relative path.
- */
-
 import {
   IQueryStore,
   type Checkpoint,
@@ -27,6 +21,7 @@ export function stubQueryStore(): IQueryStore {
     dropCollection: async (_c: string) => {},
     getCheckpoint: async (_s: string) => undefined as Checkpoint | undefined,
     setCheckpoint: async (_s: string, _c: Checkpoint) => {},
+    storeEpoch: () => 0,
     close: async () => {},
   };
 }

@@ -33,9 +33,22 @@ export function normalizeContentPart(part: unknown): NormalizedContentPart {
     case 'video':
       return convertMediaPart('video', 'video_url', 'videoUrl', p);
 
+    case 'image_url':
+      return convertMediaPart('image', 'image_url', 'imageUrl', asMediaRecord(p['image_url']));
+    case 'audio_url':
+      return convertMediaPart('audio', 'audio_url', 'audioUrl', asMediaRecord(p['audio_url']));
+    case 'video_url':
+      return convertMediaPart('video', 'video_url', 'videoUrl', asMediaRecord(p['video_url']));
+
     default:
       return { type: 'text', text: `[unsupported content: ${JSON.stringify(part)}]` };
   }
+}
+
+function asMediaRecord(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
 /** Safely coerce an unknown value to string for text fields. Avoids

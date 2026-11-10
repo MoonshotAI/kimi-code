@@ -11,7 +11,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { ErrorCode } from '@moonshot-ai/protocol';
+import { ErrorCode } from '@moonshot-ai/kap-server/protocol/error-codes';
 
 import { DaemonClient, EnvelopeError } from '../harness/index.js';
 import { fetchWithReport } from '../harness/report.js';
@@ -119,8 +119,7 @@ describeLive('legacy: image file prompts', () => {
       } catch (error) {
         if (
           error instanceof EnvelopeError &&
-          (error.code === ErrorCode.PROMPT_ALREADY_COMPLETED ||
-            error.code === ErrorCode.PROMPT_NOT_FOUND)
+          error.code === ErrorCode.PROMPT_NOT_FOUND
         ) {
           log('prompt already terminal before abort', { prompt_id: submit.prompt_id });
         } else {

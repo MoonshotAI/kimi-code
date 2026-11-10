@@ -1,30 +1,7 @@
-/**
- * `swarm` domain — `AgentSwarmTool` implementation (the `AgentSwarm`
- * tool).
- *
- * Launches a batch of child agents (an ordinary Agent scope each) through the
- * session swarm coordinator (`ISessionSwarmService`) and renders the
- * per-subagent XML result. Reads persisted swarm item labels through the
- * Session-scoped coordinator so later `resume_agent_ids` calls relabel
- * resumed subagents like v1. When the caller has a model bound, the tool
- * resolves the explicit tool `model` choice up front via
- * `resolveSubagentBinding` (against `IConfigService`, `IFlagService`,
- * `ISessionAgentProfileCatalog`, and the caller's `IAgentProfileService`) and
- * threads it through the swarm tasks; otherwise binding is left to the
- * service, which keeps its own "no model bound" check and inherit-caller
- * fallback. The advertised `model` parameter lists the configured
- * `[secondary_model.models]` pool via `buildSubagentModelDescriptions`; the
- * pool is gated behind the `secondary-model` experiment, so while it is off
- * (or under `[secondary_model].force`) the parameter is not advertised at
- * all. Swarm mode is
- * entered through `IAgentSwarmService`; the caller's agent id comes from
- * `IAgentScopeContext`. Pure tool — owns no scoped state. Bound at Agent
- * scope — contributed by `SwarmFeature` (`features/swarm/swarmFeature`).
- */
-
 import {
   ToolAccesses,
   type ExecutableToolContext,
+  type ExecutableToolErrorResult,
   type ExecutableToolResult,
   type ToolExecution,
 } from '#/tool/toolContract';
@@ -33,19 +10,22 @@ import { toInputJsonSchema } from '#/tool/input-schema';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
 import { ISessionSwarmService, type SessionSwarmTask } from '#/features/swarm/session/sessionSwarm';
-import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import {
-  subagentAllowlistFor,
-  subagentTypeNotAllowedMessage,
-} from '#/app/agentProfileCatalog/profile-shared';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
+import { resolveSwarmTimeoutMs } from '#/features/swarm/configSection';
+import { ISessionSubagentService } from '#/session/subagent/subagent';
 import {
-  buildSubagentModelDescriptions,
+  FORK_EXPERIMENTAL_UNAVAILABLE,
+  FORK_WITH_RESUME_UNAVAILABLE,
+  forkIncompatibility,
+  type SubagentSpawnPlan,
+} from '#/session/subagent/spawn';
+import { SUBAGENT_FORK_FLAG_ID } from '#/session/subagent/flag';
+import {
+  buildSubagentModelSummary,
   exposesSubagentModelChoice,
-  resolveSubagentBinding,
-  resolveSubagentTimeoutMs,
+  stripSubagentForkParameter,
   stripSubagentModelParameter,
 } from '#/session/subagent/configSection';
 import {
@@ -56,8 +36,15 @@ import {
   type AgentSwarmToolInput,
 } from './agent-swarm';
 import AGENT_SWARM_DESCRIPTION from './agent-swarm.md?raw';
+import AGENT_SWARM_FORK_DESCRIPTION from './agent-swarm-fork.md?raw';
 
 const DEFAULT_SUBAGENT_TYPE = 'coder';
+
+const SWARM_MODE_OFF_RESULT: ExecutableToolErrorResult = {
+  output:
+    'Swarm mode is off, so AgentSwarm did not run and no subagents were started. Only the user can turn swarm mode on; do not call AgentSwarm again until they do. If the user asked for a swarm, tell them swarm mode is off and that they can turn it on with /swarm, or run /swarm <task> to start the task as a swarm. Otherwise, continue without AgentSwarm and do not mention swarm mode.',
+  isError: true,
+};
 
 const AGENT_SWARM_PARAMETERS = toInputJsonSchema(AgentSwarmToolInputSchema);
 const AGENT_SWARM_PARAMETERS_NO_MODEL = stripSubagentModelParameter(AGENT_SWARM_PARAMETERS);
@@ -85,6 +72,7 @@ interface SwarmRunResult {
   readonly status: 'completed' | 'failed' | 'aborted';
   readonly state?: 'started' | 'not_started';
   readonly result?: string;
+  readonly stopReason?: string;
   readonly error?: string;
 }
 
@@ -93,9 +81,12 @@ export class AgentSwarmTool implements IAgentSwarmTool {
   readonly name = 'AgentSwarm' as const;
 
   get parameters(): Record<string, unknown> {
-    return exposesSubagentModelChoice(this.config, this.flags)
+    const parameters = exposesSubagentModelChoice(this.config)
       ? AGENT_SWARM_PARAMETERS
       : AGENT_SWARM_PARAMETERS_NO_MODEL;
+    return this.flags.enabled(SUBAGENT_FORK_FLAG_ID)
+      ? parameters
+      : stripSubagentForkParameter(parameters);
   }
 
   private readonly callerAgentId: string;
@@ -106,24 +97,23 @@ export class AgentSwarmTool implements IAgentSwarmTool {
     @IAgentSwarmService private readonly swarmMode: IAgentSwarmService,
     @IConfigService private readonly config: IConfigService,
     @IFlagService private readonly flags: IFlagService,
-    @ISessionAgentProfileCatalog private readonly catalog: ISessionAgentProfileCatalog,
+    @ISessionSubagentService private readonly subagents: ISessionSubagentService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
   ) {
     this.callerAgentId = scopeContext.agentId;
   }
 
   get description(): string {
-    const modelLines = buildSubagentModelDescriptions(
-      this.config,
-      this.flags,
-      this.profile.data().modelAlias,
-    );
-    return modelLines === undefined
-      ? AGENT_SWARM_DESCRIPTION
-      : `${AGENT_SWARM_DESCRIPTION}\n\n${modelLines}`;
+    let description = AGENT_SWARM_DESCRIPTION;
+    if (this.flags.enabled(SUBAGENT_FORK_FLAG_ID)) {
+      description += `\n\n${AGENT_SWARM_FORK_DESCRIPTION}`;
+    }
+    const modelLines = buildSubagentModelSummary(this.config);
+    return modelLines === undefined ? description : `${description}\n\n${modelLines}`;
   }
 
   resolveExecution(args: AgentSwarmToolInput): ToolExecution {
+    if (!this.swarmMode.isActive) return SWARM_MODE_OFF_RESULT;
     const agentCount = (args.items?.length ?? 0) + Object.keys(args.resume_agent_ids ?? {}).length;
     return {
       accesses: ToolAccesses.all(),
@@ -142,8 +132,8 @@ export class AgentSwarmTool implements IAgentSwarmTool {
     args: AgentSwarmToolInput,
     context: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
+    if (!this.swarmMode.isActive) return SWARM_MODE_OFF_RESULT;
     try {
-      this.swarmMode.enter('tool');
       const result = await this.runSwarm(args, context.signal, context.toolCallId);
       return {
         output: result,
@@ -161,36 +151,33 @@ export class AgentSwarmTool implements IAgentSwarmTool {
     signal: AbortSignal,
     toolCallId: string,
   ): Promise<string> {
-    const profileName = normalizeOptionalString(args.subagent_type) ?? DEFAULT_SUBAGENT_TYPE;
-    let binding: { model: string; thinking?: string } | undefined;
-    if ((args.items?.length ?? 0) > 0) {
-      await this.catalog.ready;
-      const own = this.profile.data();
-      const allowlist = subagentAllowlistFor(this.catalog, own);
-      if (allowlist !== undefined && !allowlist.includes(profileName)) {
-        throw new Error2(
-          ErrorCodes.AGENT_TYPE_NOT_ALLOWED,
-          subagentTypeNotAllowedMessage(profileName, allowlist),
-          { details: { profileName, allowlist } },
-        );
-      }
-      const targetProfile = this.catalog.get(profileName);
-      if (targetProfile === undefined) {
-        throw new Error2(ErrorCodes.PROFILE_UNKNOWN, `Unknown agent type: "${profileName}"`, {
-          details: { profileName },
-        });
-      }
-      if (own.modelAlias !== undefined) {
-        const resolved = resolveSubagentBinding(
-          this.config,
-          this.flags,
-          { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
-          args.model,
-        );
-        binding = { model: resolved.model, thinking: resolved.thinking };
-      }
+    const fork = args.fork === true;
+    if (fork && !this.flags.enabled(SUBAGENT_FORK_FLAG_ID)) {
+      throw new Error2(ErrorCodes.VALIDATION_FAILED, FORK_EXPERIMENTAL_UNAVAILABLE);
     }
-    const timeoutMs = resolveSubagentTimeoutMs(this.config);
+    if (fork && Object.keys(args.resume_agent_ids ?? {}).length > 0) {
+      throw new Error2(ErrorCodes.VALIDATION_FAILED, FORK_WITH_RESUME_UNAVAILABLE);
+    }
+    let plan: SubagentSpawnPlan | undefined;
+    if ((args.items?.length ?? 0) > 0) {
+      if (fork) {
+        const incompatible = forkIncompatibility(
+          { subagent_type: args.subagent_type, model: args.model },
+          this.profile.data(),
+        );
+        if (incompatible !== undefined) {
+          throw new Error2(ErrorCodes.VALIDATION_FAILED, incompatible);
+        }
+      }
+      plan = await this.subagents.planSpawn({
+        callerAgentId: this.callerAgentId,
+        profileName: args.subagent_type,
+        model: args.model,
+        fork,
+      });
+    }
+    const profileName = plan?.profileName ?? DEFAULT_SUBAGENT_TYPE;
+    const timeoutMs = resolveSwarmTimeoutMs(this.config);
     const specs = await createAgentSwarmSpecs(args, (agentId) =>
       this.swarmService.getSwarmItem({ callerAgentId: this.callerAgentId, agentId }),
     );
@@ -218,7 +205,7 @@ export class AgentSwarmTool implements IAgentSwarmTool {
       return {
         ...common,
         kind: 'spawn' as const,
-        binding,
+        plan: plan!,
       };
     });
     const results = await this.swarmService.run({
@@ -226,7 +213,7 @@ export class AgentSwarmTool implements IAgentSwarmTool {
       tasks,
     });
     return renderSwarmResults(
-      results.map(({ task, ...result }) => ({ spec: task.data as AgentSwarmSpec, ...result })),
+      results.map(({ task, ...result }) => ({ spec: task.data, ...result })),
     );
   }
 }
@@ -319,7 +306,7 @@ function renderSwarmResults(results: readonly SwarmRunResult[]): string {
   const failed = results.filter((result) => result.status === 'failed').length;
   const aborted = results.filter((result) => result.status === 'aborted').length;
   const shouldRenderResumeHint =
-    results.some((result) => result.status !== 'completed') &&
+    results.some((result) => result.status !== 'completed' || result.stopReason !== undefined) &&
     results.some((result) => result.agentId !== undefined);
   const lines = [
     '<agent_swarm_result>',
@@ -337,9 +324,11 @@ function renderSwarmResults(results: readonly SwarmRunResult[]): string {
     const mode = result.spec.kind === 'resume' ? ' mode="resume"' : '';
     const item = result.spec.item === undefined ? '' : ` item="${escapeXmlAttribute(result.spec.item)}"`;
     const state = result.state === undefined ? '' : ` state="${result.state}"`;
+    const stopReason =
+      result.stopReason === undefined ? '' : ` stop_reason="${escapeXmlAttribute(result.stopReason)}"`;
     const body = result.status === 'completed' ? (result.result ?? '') : (result.error ?? 'unknown error');
     lines.push(
-      `<subagent${mode}${agentId}${item}${state} outcome="${result.status}">${body}</subagent>`,
+      `<subagent${mode}${agentId}${item}${state} outcome="${result.status}"${stopReason}>${body}</subagent>`,
     );
   }
 

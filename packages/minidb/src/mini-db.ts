@@ -35,6 +35,7 @@ import { GenerationBuilder, TEXT_BUILD_WORKER_MIN_DOCS, GEN_BUILD_WAL_DELTA_BYTE
 import type { GenBuildOp } from './generation-builder.js';
 import { WalGroupTracker } from './wal-group.js';
 import { WritePath } from './write-path.js';
+import { withWindowsEpermRetry } from './rename-replace.js';
 import { openMiniDb, closeMiniDb, renewMiniDbLock, openOrRebuildMiniDb } from './lifecycle.js';
 import { IndexAdmin } from './index-admin.js';
 import { ReadPath } from './read-path.js';
@@ -221,6 +222,7 @@ export class MiniDb<V = unknown> {
   genBuildKickFailureBackoffMs = 300_000;
   private lastGenBuildKickAt = 0;
   private lastGenBuildFailureAt = 0;
+  lastGenBuildError: unknown = null;
   /** Abort handle / mutation queue / single-flight guard / status of the
    *  generation build all live in the GenerationBuilder facet (declared
    *  below); these views keep the open / write / close paths' call sites
@@ -360,8 +362,12 @@ export class MiniDb<V = unknown> {
     ensureOpen: () => this.ensureOpen(),
     ensureWritable: () => this.ensureWritable(),
     boundedTextBuild: (name, ti, def, checkpoint) => this.boundedTextBuild(name, ti, def, checkpoint),
-    noteBuildFailure: () => {
+    noteBuildFailure: (err) => {
       this.lastGenBuildFailureAt = Date.now();
+      if (err !== undefined) this.lastGenBuildError = err;
+    },
+    noteBuildSuccess: () => {
+      this.lastGenBuildError = null;
     },
   });
 
@@ -643,8 +649,8 @@ export class MiniDb<V = unknown> {
         const snapAnchor = fsSync.statSync(path.join(this.dir, SNAPSHOT_FILE));
         snapshotDev = snapAnchor.dev;
         snapshotIno = snapAnchor.ino;
-      } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       }
       const checkpoint: TextBuildCheckpoint = {
         walOffset: walAnchor.size,
@@ -826,8 +832,8 @@ export class MiniDb<V = unknown> {
           const snapAnchor = fsSync.statSync(path.join(this.dir, SNAPSHOT_FILE));
           snapDev = snapAnchor.dev;
           snapIno = snapAnchor.ino;
-        } catch (e) {
-          if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
         }
       } else {
         sealedOffset = checkpoint.walOffset;
@@ -836,9 +842,9 @@ export class MiniDb<V = unknown> {
         snapDev = checkpoint.snapshotDev;
         snapIno = checkpoint.snapshotIno;
       }
-    } catch (e) {
+    } catch (error) {
       ti.abortRebase();
-      throw e;
+      throw error;
     }
 
     // In-place builds land artifacts in a per-index tmp dir inside the db
@@ -941,9 +947,9 @@ export class MiniDb<V = unknown> {
       });
       if (!handle.inline) this.stats.textWorkerBuilds++;
       return handle.inline ? 'inline' : 'worker';
-    } catch (e) {
+    } catch (error) {
       ti.abortRebase();
-      throw e;
+      throw error;
     } finally {
       slotRelease?.();
       if (tmpDir !== null) {
@@ -1000,7 +1006,7 @@ export class MiniDb<V = unknown> {
     this.access.delete(k);
     this.dt.del(k);
     this.compound.remove(k);
-    if (this.indexes.size) this.indexes.remove(k, undefined);
+    if (this.indexes.size > 0) this.indexes.remove(k, undefined);
     for (const ti of this.text.values()) ti.remove(k);
   }
 
@@ -1087,10 +1093,12 @@ export class MiniDb<V = unknown> {
       // offset belongs to the old file's coordinate system and truncating to
       // it would zero-extend the new file. The new file never carried the
       // un-acked tail, so skipping the truncate is the correct recovery.
-      const st = await fs.stat(this.walPath);
-      if (poison.failedAtOffset <= st.size) await fs.truncate(this.walPath, poison.failedAtOffset);
-    } catch (err) {
-      this.writeDisabled = err;
+      await withWindowsEpermRetry(async () => {
+        const st = await fs.stat(this.walPath);
+        if (poison.failedAtOffset <= st.size) await fs.truncate(this.walPath, poison.failedAtOffset);
+      });
+    } catch (error) {
+      this.writeDisabled = error;
       return;
     }
     await this.wal.refreshSize();
@@ -1170,7 +1178,7 @@ export class MiniDb<V = unknown> {
     return this.store.size;
   }
   async mset(entries: readonly (readonly [string, V])[]): Promise<void> {
-    if (!entries.length) return;
+    if (entries.length === 0) return;
     await this.batch(entries.map(([key, value]) => ({ op: 'set' as const, key, value })));
   }
   mget(keys: readonly string[]): (V | undefined)[] {
@@ -1349,9 +1357,9 @@ export class MiniDb<V = unknown> {
     } else {
       try {
         const existing = await fs.readdir(destDir);
-        if (existing.length) throw new Error(`restore destination is not empty: ${destDir}`);
-      } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+        if (existing.length > 0) throw new Error(`restore destination is not empty: ${destDir}`);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       }
     }
     await fs.mkdir(destDir, { recursive: true });

@@ -1,32 +1,36 @@
-import type { Kaos } from '@moonshot-ai/kaos';
-import {
-  ErrorCodes,
-  KimiError,
-  ImageLimits,
-  withTelemetryContext,
-  type ExperimentalFeatureState,
-} from '@moonshot-ai/agent-core';
+import { ErrorCodes, KimiError } from '#/errors';
+import type { ExperimentalFeatureState } from '#/flag';
+import type { ImageLimits } from '#/image';
+import { withTelemetryContext } from '#/telemetry';
 
 import { capabilityRpc, Session } from '#/session';
 import type { KimiAuthFacade } from '#/auth';
-import type { SDKRpcClientBase } from '#/rpc';
+import type { ConfigSectionChange, SDKRpcClientBase } from '#/rpc';
 import type {
   AuthenticateMcpServerOptions,
+  AppMcpServerInspection,
+  CapabilityInstallOptions,
   CapabilityStatus,
   ConfigDiagnostics,
   CreateSessionOptions,
   ExportSessionInput,
   ExportSessionResult,
+  FileMeta,
   ForkSessionInput,
   GenerateSessionTitleInput,
   GetConfigOptions,
+  ImportCustomRegistryOptions,
+  ImportCustomRegistryResult,
   GlobalMcpServerAuthStatus,
+  InstallPluginInput,
   KimiConfig,
   KimiConfigPatch,
   KimiHostIdentity,
   ListSessionsOptions,
+  McpManagedServerInfo,
   McpServerConfig,
   McpServerInfo,
+  McpServerLocator,
   McpTestResult,
   PluginCommandDef,
   PluginInfo,
@@ -35,17 +39,27 @@ import type {
   RenameSessionInput,
   ResumeSessionInput,
   ReloadSessionInput,
+  RefreshProviderModelsOptions,
+  RefreshProviderModelsResponse,
   SessionSummary,
   SessionSummaryPage,
   SkillSummary,
+  GitPullRequest,
+  GitQueryInput,
+  GitStatusSummary,
+  SuggestFilesInput,
+  SuggestFilesResult,
   TelemetryClient,
   TelemetryContextPatch,
   TelemetryProperties,
   TestMcpServerOptions,
+  Unsubscribe,
+  UploadFileOptions,
   WorkspaceTrustInfo,
+  WorkspaceTrustInfoOptions,
 } from '#/types';
 
-export interface KimiHarnessRuntimeOptions {
+export interface KimiHarnessEnvironmentOptions {
   readonly identity?: KimiHostIdentity;
   readonly uiMode?: string;
   readonly homeDir: string;
@@ -56,13 +70,18 @@ export interface KimiHarnessRuntimeOptions {
   readonly onClose: () => void | Promise<void>;
   readonly sessionStartedProperties?: TelemetryProperties;
   /**
-   * Owner-scoped [image] limits for prompt-ingestion compression in the
-   * client process (paste-time, ACP prompt conversion). In-process cores
-   * (SDKRpcClient) hand over their core's instance; daemon-client hosts
-   * leave it undefined and ingestion falls back to env/built-in defaults.
+   * Per-emission companion to `sessionStartedProperties`: evaluated at every
+   * `session_started` call, so values that can change over the process
+   * lifetime (e.g. experimental flag state) stay current. Its keys are
+   * engine-owned: they win over both the static and the per-call
+   * session-scoped properties, and lose only to the canonical harness fields.
    */
+  readonly sessionStartedDynamicProperties?: () => TelemetryProperties;
   readonly imageLimits?: ImageLimits | undefined;
 }
+
+/** @deprecated Use {@link KimiHarnessEnvironmentOptions}. */
+export type KimiHarnessRuntimeOptions = KimiHarnessEnvironmentOptions;
 
 export class KimiHarness {
   readonly homeDir: string;
@@ -77,6 +96,7 @@ export class KimiHarness {
   private readonly ensureConfigFileImpl: () => Promise<void>;
   private readonly closeImpl: () => void | Promise<void>;
   private readonly sessionStartedProperties: TelemetryProperties;
+  private readonly sessionStartedDynamicProperties: (() => TelemetryProperties) | undefined;
 
   /**
    * Ingestion-side [image] limits owned by this harness's core; undefined for
@@ -86,7 +106,7 @@ export class KimiHarness {
 
   constructor(
     private readonly rpc: SDKRpcClientBase,
-    options: KimiHarnessRuntimeOptions,
+    options: KimiHarnessEnvironmentOptions,
   ) {
     this.identity = options.identity;
     this.uiMode = options.uiMode ?? DEFAULT_SESSION_STARTED_UI_MODE;
@@ -97,6 +117,7 @@ export class KimiHarness {
     this.ensureConfigFileImpl = options.ensureConfigFile;
     this.closeImpl = options.onClose;
     this.sessionStartedProperties = options.sessionStartedProperties ?? {};
+    this.sessionStartedDynamicProperties = options.sessionStartedDynamicProperties;
     this.imageLimits = options.imageLimits;
   }
 
@@ -116,16 +137,25 @@ export class KimiHarness {
     this.telemetry.track(event, properties);
   }
 
+  trackWithContext(
+    event: string,
+    properties: TelemetryProperties | undefined,
+    context: TelemetryContextPatch,
+  ): void {
+    withTelemetryContext(this.telemetry, context).track(event, properties);
+  }
+
   setTelemetryContext(patch: TelemetryContextPatch): void {
     this.telemetry.setContext?.(patch);
   }
 
+  async resolveSessionEnvironment(options: Pick<CreateSessionOptions, 'workDir' | 'environmentId' | 'environmentCwd'>) {
+    return this.rpc.resolveSessionEnvironment(options);
+  }
+
   async createSession(options: CreateSessionOptions): Promise<Session> {
-    const { planMode, kaos, persistenceKaos, sessionStartedProperties, ...coreOptions } = options;
-    const summary =
-      kaos === undefined && persistenceKaos === undefined
-        ? await this.rpc.createSession(coreOptions)
-        : await this.rpc.createSessionWithKaos(coreOptions, kaos ?? persistenceKaos as Kaos, persistenceKaos);
+    const { planMode, sessionStartedProperties, ...coreOptions } = stripLegacyKaosOptions(options);
+    const summary = await this.rpc.createSession(coreOptions);
     const session = new Session({
       id: summary.id,
       workDir: summary.workDir,
@@ -150,18 +180,14 @@ export class KimiHarness {
     const id = normalizeSessionId(input.id);
     const active = this.activeSessions.get(id);
     const {
-      kaos,
-      persistenceKaos,
       sessionStartedProperties: _sessionStartedProperties,
       ...resumeInput
-    } = input;
+    } = stripLegacyKaosOptions(input);
     // A session whose close is in flight (`isClosed` but not yet unmapped)
     // is not a valid resume target — fall through and re-resume fresh, which
     // the engine serializes behind that close.
     if (active !== undefined && !active.isClosed) {
-      if (kaos !== undefined || persistenceKaos !== undefined) {
-        await this.rpc.resumeSessionWithKaos({ ...resumeInput, id }, kaos ?? persistenceKaos as Kaos, persistenceKaos);
-      } else if (input.agentProfile !== undefined) {
+      if (input.agentProfile !== undefined) {
         await this.rpc.resumeSession({ ...resumeInput, id });
       }
       return active;
@@ -169,7 +195,7 @@ export class KimiHarness {
 
     // Coalesce concurrent resumes of the same id onto one facade, keyed by
     // the full input so a caller with different options (dirs, replay,
-    // profile, kaos) never has them silently dropped; without this,
+    // profile) never has them silently dropped; without this,
     // parallel identical callers each build their own Session over the
     // shared engine handle, and one facade's close kills the engine handle
     // under the other.
@@ -186,11 +212,8 @@ export class KimiHarness {
   }
 
   private async doResumeSession(input: ResumeSessionInput, id: string): Promise<Session> {
-    const { kaos, persistenceKaos, sessionStartedProperties, ...resumeInput } = input;
-    const summary =
-      kaos === undefined && persistenceKaos === undefined
-        ? await this.rpc.resumeSession({ ...resumeInput, id })
-        : await this.rpc.resumeSessionWithKaos({ ...resumeInput, id }, kaos ?? persistenceKaos as Kaos, persistenceKaos);
+    const { sessionStartedProperties, ...resumeInput } = stripLegacyKaosOptions(input);
+    const summary = await this.rpc.resumeSession({ ...resumeInput, id });
     const session = new Session({
       id: summary.id,
       workDir: summary.workDir,
@@ -322,6 +345,37 @@ export class KimiHarness {
     return this.rpc.listWorkspaceSkills(workDir);
   }
 
+  async getWorkspaceAdditionalDirs(workDir: string): Promise<readonly string[]> {
+    return this.rpc.getWorkspaceAdditionalDirs(workDir);
+  }
+
+  /**
+   * File suggestions for @ mention-style completion under `workDir`, no
+   * session required. `undefined` on the v1 engine, which has no equivalent
+   * capability; callers fall back to their own file search there.
+   */
+  async suggestFiles(workDir: string, input: SuggestFilesInput): Promise<SuggestFilesResult | undefined> {
+    return this.rpc.suggestFiles(workDir, input);
+  }
+
+  /**
+   * Git working-tree summary of `workDir` on this machine, or of a live
+   * session's working directory on the environment it runs on. `null` when
+   * the directory is not inside a git work tree or git is unavailable there.
+   */
+  async getGitStatus(workDir: string, input: GitQueryInput = {}): Promise<GitStatusSummary | null> {
+    return this.rpc.getGitStatus(workDir, input);
+  }
+
+  /**
+   * Pull request of the current branch, resolved the same way as
+   * {@link getGitStatus}. `null` when there is none, the HEAD is detached,
+   * or `gh` is unavailable.
+   */
+  async getGitPullRequest(workDir: string, input: GitQueryInput = {}): Promise<GitPullRequest | null> {
+    return this.rpc.getGitPullRequest(workDir, input);
+  }
+
   /**
    * App-global plugin command list, no session required. Empty on the v1
    * engine, which only exposes plugin commands through a live session.
@@ -342,15 +396,15 @@ export class KimiHarness {
 
   /**
    * Workspace-level MCP server list, no session required. The v2 engine owns
-   * one shared connection set per workspace handler, so `/mcp` is inspectable
+   * one shared connection set per workspace `Program`, so `/mcp` is inspectable
    * before the first session exists; empty on the v1 engine.
    */
   async listWorkspaceMcpServers(workDir: string): Promise<readonly McpServerInfo[]> {
     return this.rpc.listWorkspaceMcpServers(workDir);
   }
 
-  async installPlugin(source: string): Promise<PluginSummary> {
-    return this.rpc.installPlugin(source);
+  async installPlugin(input: string | InstallPluginInput): Promise<PluginSummary> {
+    return this.rpc.installPlugin(input);
   }
 
   async setPluginEnabled(id: string, enabled: boolean): Promise<void> {
@@ -387,8 +441,8 @@ export class KimiHarness {
     return capabilityRpc(this.rpc).getCapability(id);
   }
 
-  async installCapability(id: string): Promise<CapabilityStatus> {
-    return capabilityRpc(this.rpc).installCapability(id);
+  async installCapability(id: string, options?: CapabilityInstallOptions): Promise<CapabilityStatus> {
+    return capabilityRpc(this.rpc).installCapability(id, options);
   }
 
   /**
@@ -396,8 +450,11 @@ export class KimiHarness {
    * always-trusted workspace). Querying may register the workDir as a
    * workspace, which session creation would do anyway.
    */
-  async getWorkspaceTrustInfo(workDir: string): Promise<WorkspaceTrustInfo> {
-    return this.rpc.getWorkspaceTrustInfo(workDir);
+  async getWorkspaceTrustInfo(
+    workDir: string,
+    options?: WorkspaceTrustInfoOptions,
+  ): Promise<WorkspaceTrustInfo> {
+    return this.rpc.getWorkspaceTrustInfo(workDir, options);
   }
 
   /** Mark `workDir` as trusted; project-level MCP servers connect live afterwards. */
@@ -414,8 +471,26 @@ export class KimiHarness {
     return this.rpc.getConfigDiagnostics();
   }
 
+  onConfigSectionChanged(listener: (change: ConfigSectionChange) => void): Unsubscribe {
+    return this.rpc.onConfigSectionChanged(listener);
+  }
+
   async getExperimentalFeatures(): Promise<readonly ExperimentalFeatureState[]> {
     return this.rpc.getExperimentalFeatures();
+  }
+
+  /**
+   * Upload media bytes to the engine's file store; pair the returned meta
+   * with `buildDaemonFileUrl` to reference the file from a prompt.
+   * agent-core-v2 only — the v1 engine throws `not_implemented`.
+   */
+  async uploadFile(data: Uint8Array, options: UploadFileOptions): Promise<FileMeta> {
+    return this.rpc.uploadFile(data, options);
+  }
+
+  /** Delete a daemon upload owned by a client-side staging operation. */
+  async deleteFile(fileId: string): Promise<void> {
+    return this.rpc.deleteFile(fileId);
   }
 
   async ensureConfigFile(): Promise<void> {
@@ -430,50 +505,83 @@ export class KimiHarness {
     return this.rpc.removeProvider(providerId);
   }
 
-  /**
-   * Whether several config sections can be persisted as ONE atomic write
-   * (see {@link replaceConfigSections}). False on the v1 harness.
-   */
-  supportsAtomicSectionReplace(): boolean {
-    return this.rpc.supportsAtomicSectionReplace();
+  async importCustomRegistry(
+    options: ImportCustomRegistryOptions,
+  ): Promise<ImportCustomRegistryResult> {
+    return this.rpc.importCustomRegistry(options);
+  }
+
+  async refreshProviderModels(
+    options?: RefreshProviderModelsOptions,
+  ): Promise<RefreshProviderModelsResponse> {
+    return this.rpc.refreshProviderModels(options);
   }
 
   /**
-   * Replace several top-level config sections in ONE atomic write: a section
-   * mapped to `undefined` is cleared, absent sections are left untouched.
-   * Replace semantics (unlike {@link setConfig}'s deep-merge), so staged
-   * removals are expressed by the written record itself.
+   * The unified MCP management view: user-level `<KIMI_CODE_HOME>/mcp.json`
+   * entries (mutable), plus read-only project-layer entries when `cwd` is
+   * given and plugin-contributed entries — each tagged with its `source`,
+   * `origin`, and `mutable` flag.
    */
-  async replaceConfigSections(sections: Record<string, unknown>): Promise<void> {
-    return this.rpc.replaceConfigSections(sections);
+  async listMcpServers(
+    options: { readonly cwd?: string } = {},
+  ): Promise<readonly McpManagedServerInfo[]> {
+    return this.rpc.listGlobalMcpServers(options);
   }
 
-  /** User-global MCP entries from `<KIMI_CODE_HOME>/mcp.json` only. */
-  async listMcpServers(): Promise<readonly McpServerConfig[]> {
-    return this.rpc.listGlobalMcpServers();
+  /** One entry of the unified MCP management view, resolved by name. */
+  async getMcpServer(
+    name: string,
+    options: { readonly cwd?: string } = {},
+  ): Promise<McpManagedServerInfo> {
+    return this.rpc.getGlobalMcpServer(name, options);
   }
 
-  async listMcpServerAuthStatuses(): Promise<readonly GlobalMcpServerAuthStatus[]> {
-    return this.rpc.listGlobalMcpServerAuthStatuses();
+  async listMcpServerAuthStatuses(
+    options: { readonly cwd?: string; readonly verify?: boolean } = {},
+  ): Promise<readonly GlobalMcpServerAuthStatus[]> {
+    return this.rpc.listGlobalMcpServerAuthStatuses(options);
   }
 
-  async addMcpServer(server: McpServerConfig): Promise<readonly McpServerConfig[]> {
-    return this.rpc.addGlobalMcpServer(server);
+  /**
+   * The app-level MCP catalog (global + plugin entries) with live
+   * authorization state: OAuth candidates are probed with a real connection,
+   * so a stored-but-rejected grant surfaces as `oauth-expired` and an
+   * unreachable one as `unavailable`.
+   */
+  async inspectAppMcpServers(
+    targets?: readonly McpServerLocator[],
+    options: { readonly cwd?: string } = {},
+  ): Promise<readonly AppMcpServerInspection[]> {
+    return this.rpc.inspectAppMcpServers(targets, options);
   }
 
-  async updateMcpServer(server: McpServerConfig): Promise<readonly McpServerConfig[]> {
-    return this.rpc.updateGlobalMcpServer(server);
+  async addMcpServer(
+    server: McpServerConfig,
+    options: { readonly cwd?: string } = {},
+  ): Promise<readonly McpManagedServerInfo[]> {
+    return this.rpc.addGlobalMcpServer(server, options);
   }
 
-  async removeMcpServer(name: string): Promise<readonly McpServerConfig[]> {
-    return this.rpc.removeGlobalMcpServer(name);
+  async updateMcpServer(
+    server: McpServerConfig,
+    options: { readonly cwd?: string } = {},
+  ): Promise<readonly McpManagedServerInfo[]> {
+    return this.rpc.updateGlobalMcpServer(server, options);
+  }
+
+  async removeMcpServer(
+    name: string,
+    options: { readonly cwd?: string } = {},
+  ): Promise<readonly McpManagedServerInfo[]> {
+    return this.rpc.removeGlobalMcpServer(name, options);
   }
 
   async authenticateMcpServer(
     name: string,
     options: AuthenticateMcpServerOptions,
   ): Promise<void> {
-    const started = await this.rpc.beginGlobalMcpServerAuth(name);
+    const started = await this.rpc.beginGlobalMcpServerAuth(name, { cwd: options.cwd });
     if (started.status === 'already-authorized') return;
     try {
       const opened = await options.onAuthorizationUrl(started.authorizationUrl);
@@ -490,8 +598,45 @@ export class KimiHarness {
     }
   }
 
-  async resetMcpServerAuth(name: string): Promise<void> {
-    return this.rpc.resetGlobalMcpServerAuth(name);
+  async resetMcpServerAuth(
+    name: string,
+    options: { readonly cwd?: string } = {},
+  ): Promise<void> {
+    return this.rpc.resetGlobalMcpServerAuth(name, options);
+  }
+
+  /**
+   * The locator-addressed variant of {@link authenticateMcpServer}: plugin
+   * servers are addressed by `pluginId` + manifest-local `serverName`, so the
+   * flow works even when the runtime name collides with a global entry.
+   */
+  async authenticateAppMcpServer(
+    locator: McpServerLocator,
+    options: AuthenticateMcpServerOptions,
+  ): Promise<void> {
+    const started = await this.rpc.beginMcpServerAuth(locator, { cwd: options.cwd });
+    if (started.status === 'already-authorized') return;
+    try {
+      const opened = await options.onAuthorizationUrl(started.authorizationUrl);
+      if (opened === false) {
+        throw new KimiError(ErrorCodes.REQUEST_INVALID, 'MCP OAuth authorization was cancelled');
+      }
+      await this.rpc.completeMcpServerAuth(
+        { flowId: started.flowId, timeoutMs: options.timeoutMs },
+        options.signal,
+      );
+    } catch (error) {
+      await this.rpc.cancelMcpServerAuth(started.flowId).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  /** The locator-addressed variant of {@link resetMcpServerAuth}. */
+  async resetAppMcpServerAuth(
+    locator: McpServerLocator,
+    options: { readonly cwd?: string } = {},
+  ): Promise<void> {
+    return this.rpc.resetMcpServerAuth(locator, options);
   }
 
   async testMcpServer(
@@ -499,6 +644,17 @@ export class KimiHarness {
     options: TestMcpServerOptions = {},
   ): Promise<McpTestResult> {
     return this.rpc.testGlobalMcpServer(name, options);
+  }
+
+  /**
+   * Probe a full inline MCP server config without saving it first — the
+   * config counterpart of {@link testMcpServer}.
+   */
+  async testMcpServerConfig(
+    server: McpServerConfig,
+    options: TestMcpServerOptions = {},
+  ): Promise<McpTestResult> {
+    return this.rpc.testGlobalMcpServerConfig(server, options);
   }
 
   async close(): Promise<void> {
@@ -518,15 +674,15 @@ export class KimiHarness {
     withTelemetryContext(this.telemetry, { sessionId: eventSessionId }).track('session_started', {
       ...this.sessionStartedProperties,
       ...sessionScoped,
+      ...this.sessionStartedDynamicProperties?.(),
       // Canonical fields are owned by the harness and must win over any
       // caller-supplied sessionStartedProperties that happen to share a key.
-      // `client_id` is always null here: a single-process host has no
-      // per-connection client id (that concept only exists for daemon clients,
-      // see core-impl.ts). Kept as an explicit key so both producers share the
-      // same session_started schema.
-      client_id: null,
-      client_name: this.identity?.productName ?? null,
-      client_version: this.identity?.version ?? null,
+      // A single-process host has no per-connection client id, so `client_id`
+      // stays empty; empty strings (unlike null) survive payload flattening,
+      // keeping the client-attribution keys present on every row.
+      client_id: '',
+      client_name: this.identity?.productName ?? '',
+      client_version: this.identity?.version ?? '',
       ui_mode: this.uiMode,
       resumed,
     });
@@ -536,13 +692,20 @@ export class KimiHarness {
 const DEFAULT_SESSION_STARTED_UI_MODE = 'shell';
 
 function resumeCoalesceKey(id: string, input: ResumeSessionInput): string {
-  const { kaos, persistenceKaos, ...rest } = input;
-  return JSON.stringify({
-    ...rest,
-    id,
-    kaos: kaos !== undefined,
-    persistenceKaos: persistenceKaos !== undefined,
-  });
+  return JSON.stringify({ ...stripLegacyKaosOptions(input), id });
+}
+
+function stripLegacyKaosOptions<T extends object>(input: T): T {
+  // JavaScript hosts may still pass the removed kaos options; keep them out of
+  // forwarded RPC inputs and serialized keys — custom implementations can hold
+  // circular runtime handles.
+  const { kaos, persistenceKaos, ...rest } = input as T & {
+    kaos?: unknown;
+    persistenceKaos?: unknown;
+  };
+  void kaos;
+  void persistenceKaos;
+  return rest as T;
 }
 
 function normalizeSessionId(value: string): string {

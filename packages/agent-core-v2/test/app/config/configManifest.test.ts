@@ -1,11 +1,3 @@
-/**
- * Scenario: the checked-in config-section manifest matches the live registry.
- *
- * Rebuilds `docs/config-manifest.toml` from the actual `registerConfigSection` /
- * `registerConfigOverlay` contributions and fails when the file is stale.
- * Regenerate with `pnpm --filter @moonshot-ai/agent-core-v2 gen:config-manifest`.
- */
-
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 

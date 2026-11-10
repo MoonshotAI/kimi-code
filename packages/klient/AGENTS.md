@@ -28,8 +28,10 @@ The facade only covers services that behave identically on both transports
 (the in-process dispatcher mirrors the server's scope resolution, including
 `main`-agent materialization via `ensureMainAgent`). onWill/hook-style
 interception is not wire-exposable
-(engine hooks are in-process `OrderedHookSlot`s); file upload and the
-terminal surface are v1-only and live in the legacy suites.
+(engine hooks are in-process `OrderedHookSlot`s); the terminal surface is
+v1-only and lives in the legacy suites. File upload IS on the facade
+(`global.files`): bytes cross the wire base64-encoded and the dispatcher
+adapts the engine's `IFileService` streams in both directions.
 
 ## Testing
 
@@ -66,8 +68,8 @@ terminal surface are v1-only and live in the legacy suites.
   cross-workspace conflicts.
 - `pnpm --filter @moonshot-ai/klient typecheck` / `pnpm smoke` (in-process
   smoke over the memory transport; see `examples/smoke.ts`).
-- `pnpm --filter @moonshot-ai/klient smoke:boundary` — ModelRequester boundary
-  probe: pings every model configured in the real `~/.kimi-code/config.toml`
+- `pnpm --filter @moonshot-ai/klient smoke:boundary` — core requester boundary
+  probe: direct-generates every model configured in the real `~/.kimi-code/config.toml`
   through the in-process engine, then drives deterministic failure modes
   against a local stub to show which errors the ChatProvider layer wraps and
   which the requester owns (see `examples/model-requester-boundary.ts`).

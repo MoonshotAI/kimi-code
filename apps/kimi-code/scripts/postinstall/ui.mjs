@@ -407,6 +407,97 @@ export function logForeignKimiInTheWay(foreignPath, pm) {
 }
 
 /**
+ * A takeover that was executed but did NOT hold up under post-execution
+ * verification: `kimi` still resolves to a legacy/foreign file (or to
+ * nothing at all). The heading must not claim success — list what was
+ * actually changed, what still blocks resolution, and how to finish
+ * the job by hand.
+ */
+export function logMigrationIncomplete(input, pm) {
+  const { outcomes, verify } = input;
+  const { renames, consolidates, skippedForeignTarget, deletes, errors } = outcomes;
+  const isWindows = process.platform === 'win32';
+  const reinstallCmd = pmGlobalInstallCommand(pm, '@moonshot-ai/kimi-code');
+
+  const lines = [warningHeading('Couldn\'t finish switching to the new kimi'), ''];
+
+  if (verify.kind === 'blocked-legacy') {
+    lines.push(
+      pad('   Typing `kimi` still runs the old version. This file is in'),
+      pad('   the way and we couldn\'t change it:'),
+      pathInBox(verify.shim),
+      '',
+    );
+  } else if (verify.kind === 'foreign') {
+    lines.push(
+      pad('   Typing `kimi` runs a file we don\'t recognize (not the new'),
+      pad('   CLI, not the old one). It\'s still in the way:'),
+      pathInBox(verify.path),
+      '',
+    );
+  } else {
+    lines.push(
+      pad('   Typing `kimi` currently finds nothing at all — the old'),
+      pad('   shim was removed but the new one isn\'t reachable yet.'),
+      '',
+    );
+  }
+
+  const changed = [
+    ...renames.map((c) => c.shimPath + '  ->  ' + c.target),
+    ...consolidates.map((c) => c.shimPath + '  (removed; kimi-legacy kept)'),
+    ...skippedForeignTarget.map((c) => c.shimPath + '  (removed)'),
+    ...deletes.map((c) => c.shimPath + '  (removed)'),
+  ];
+  if (changed.length > 0) {
+    lines.push(pad('   Changes already made:'));
+    for (const line of changed) lines.push(pathInBox(line));
+    lines.push('');
+  }
+
+  if (errors.length > 0) {
+    lines.push(pad('   Changes that didn\'t go through:'));
+    for (const e of errors) {
+      lines.push(pathInBox(e.shimPath + '  (' + (e.message ?? e.code ?? 'error') + ')'));
+    }
+    lines.push('');
+  }
+
+  if (verify.kind === 'blocked-legacy') {
+    const c = verify;
+    lines.push(pad('   Delete it yourself, then install again:'));
+    if (isWindows) {
+      lines.push(pathInBox('Remove-Item ' + quotePowerShellPath(c.shim)));
+    } else {
+      lines.push(pathInBox('rm ' + quotePosixPath(c.shim)));
+      lines.push(pad('   (use sudo if it\'s in a system directory)'));
+    }
+    lines.push(pathInBox(reinstallCmd), '');
+  } else if (verify.kind === 'foreign') {
+    lines.push(
+      pad('   Delete or rename that file, then install again:'),
+      pathInBox(reinstallCmd),
+      '',
+    );
+  } else {
+    lines.push(
+      pad('   Open a new terminal and check `which kimi`. If it finds'),
+      pad('   nothing, reinstall to restore a working shim:'),
+      pathInBox(reinstallCmd),
+      '',
+    );
+  }
+
+  if (renames.length > 0 || consolidates.length > 0) {
+    lines.push(
+      pad('   The old version is still available as `kimi-legacy`.'),
+    );
+  }
+
+  emit(renderBox(lines));
+}
+
+/**
  * The legacy `kimi` was found, but the directory where the package
  * manager placed the new `kimi` shim is not on the user's PATH.
  * Renaming the legacy shim now would leave the user with NO reachable

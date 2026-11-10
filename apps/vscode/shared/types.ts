@@ -17,6 +17,8 @@ export interface ProjectFile {
   path: string;
   name: string;
   isDirectory: boolean;
+  /** Matched-character offsets into `path`, for mention-style highlighting. */
+  matchPositions?: number[];
 }
 
 export interface FileChange {
@@ -66,6 +68,7 @@ export type UIStreamEvent =
 
 export interface LoginStatus {
   loggedIn: boolean;
+  siteBase: string;
 }
 
 export type { QuestionRequest, QuestionItem, QuestionOption, QuestionResponse } from "./legacy-sdk";

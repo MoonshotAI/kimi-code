@@ -1,13 +1,4 @@
-/**
- * `FileProjectLocalConfigService` — node-fs backend for `IProjectLocalConfigService`.
- *
- * Discovers project roots, parses and writes project-local
- * `.kimi-code/local.toml`, resolves additional directories with
- * v1-compatible OS-home expansion through `bootstrap`, and accesses the local
- * filesystem through `hostFs`. Works purely by path (project-root discovery
- * via the nearest `.git` ancestor); it never touches the workspace catalog or
- * a `workspaceId`. Bound at App scope.
- */
+import { randomUUID } from 'node:crypto';
 
 import { dirname, isAbsolute, join, normalize, resolve } from 'pathe';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
@@ -18,9 +9,11 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import {
   IProjectLocalConfigService,
   type ProjectAdditionalDirsLoadResult,
+  type ProjectPermissionRulesLoadResult,
 } from '#/app/projectLocalConfig/projectLocalConfig';
 import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { OsFsErrors } from '#/os/interface/hostFsErrors';
 import { StorageError, StorageErrors, toStorageIoError } from '#/persistence/interface/storage';
 
 const ProjectLocalTomlSchema = z.object({
@@ -33,17 +26,15 @@ const ProjectLocalTomlSchema = z.object({
 
 type ProjectLocalToml = z.infer<typeof ProjectLocalTomlSchema>;
 
-interface ProjectLocalTomlFile {
-  readonly raw: Record<string, unknown>;
-  readonly parsed: ProjectLocalToml;
-}
+const permissionWriteTails = new Map<string, Promise<void>>();
 
 export class FileProjectLocalConfigService implements IProjectLocalConfigService {
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IBootstrapService private readonly bootstrap: IBootstrapService,
+    @IBootstrapService bootstrap: IBootstrapService,
     @IHostFileSystem private readonly fs: IHostFileSystem,
+    private readonly homeDir = bootstrap.osHomeDir,
   ) {}
 
   async readAdditionalDirs(workDir: string): Promise<ProjectAdditionalDirsLoadResult> {
@@ -67,33 +58,66 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
     return this.resolveAdditionalDirsInternal(baseDir, additionalDirs);
   }
 
-  async appendAdditionalDir(
-    workDir: string,
-    inputPath: string,
-  ): Promise<ProjectAdditionalDirsLoadResult> {
+  async readPermissionRules(workDir: string): Promise<ProjectPermissionRulesLoadResult> {
     const projectRoot = await this.findProjectRoot(workDir);
     const configPath = this.getProjectLocalConfigPath(projectRoot);
-    const additionalDir = await this.resolveAdditionalDir(workDir, inputPath);
-    const file = (await this.readProjectLocalToml(configPath)) ?? { raw: {}, parsed: {} };
-    const fileAdditionalDirs = file.parsed.workspace?.additional_dir ?? [];
-    const fileExistingDirs = this.resolveExistingAdditionalDirs(projectRoot, fileAdditionalDirs);
+    const file = await this.readProjectLocalToml(configPath);
+    return { projectRoot, configPath, rules: readRawPermissionRules(file?.raw) };
+  }
 
-    if (this.hasSameAdditionalDir(fileExistingDirs, additionalDir)) {
-      return { projectRoot, configPath, additionalDirs: fileExistingDirs };
+  async appendPermissionRules(
+    workDir: string,
+    rules: readonly unknown[],
+  ): Promise<ProjectPermissionRulesLoadResult> {
+    const projectRoot = await this.findProjectRoot(workDir);
+    const configPath = this.getProjectLocalConfigPath(projectRoot);
+    return enqueuePermissionWrite(configPath, async () => {
+      await this.assertNoSymlinks(projectRoot, configPath);
+      const file = (await this.readProjectLocalToml(configPath)) ?? { raw: {}, parsed: {} };
+      const existing = readRawPermissionRules(file.raw);
+      const permission = cloneRecord(file.raw['permission']);
+      permission['rules'] = [...existing, ...rules];
+      file.raw['permission'] = permission;
+
+      if (this.fs.rename === undefined) {
+        throw new Error2(
+          ErrorCodes.CONFIG_INVALID,
+          'Project local config filesystem does not support atomic replacement',
+        );
+      }
+      const tempPath = `${configPath}.tmp.${process.pid}.${randomUUID()}`;
+      let renamed = false;
+      try {
+        await this.fs.mkdir(dirname(configPath), { recursive: true });
+        await this.fs.writeText(tempPath, `${stringifyToml(file.raw)}\n`);
+        await this.fs.rename(tempPath, configPath);
+        renamed = true;
+      } catch (error: unknown) {
+        throw toStorageIoError(error, { path: configPath, op: 'write' });
+      } finally {
+        if (!renamed) await this.fs.remove(tempPath).catch(() => undefined);
+      }
+
+      return { projectRoot, configPath, rules: permission['rules'] as unknown[] };
+    });
+  }
+
+  private async assertNoSymlinks(projectRoot: string, configPath: string): Promise<void> {
+    for (const path of [projectRoot, dirname(configPath), configPath]) {
+      let stat: Awaited<ReturnType<IHostFileSystem['lstat']>>;
+      try {
+        stat = await this.fs.lstat(path);
+      } catch (error: unknown) {
+        if (isPathMissing(error)) continue;
+        throw toStorageIoError(error, { path, op: 'stat' });
+      }
+      if (stat.isSymbolicLink === true) {
+        throw new Error2(
+          ErrorCodes.CONFIG_INVALID,
+          `Refusing to write project permission rules through symlink ${path}`,
+        );
+      }
     }
-
-    const workspace = cloneRecord(file.raw['workspace']);
-    workspace['additional_dir'] = [...fileExistingDirs, additionalDir];
-    file.raw['workspace'] = workspace;
-
-    try {
-      await this.fs.mkdir(dirname(configPath), { recursive: true });
-      await this.fs.writeText(configPath, `${stringifyToml(file.raw)}\n`);
-    } catch (error: unknown) {
-      throw toStorageIoError(error, { path: configPath, op: 'write' });
-    }
-
-    return { projectRoot, configPath, additionalDirs: [...fileExistingDirs, additionalDir] };
   }
 
   private getProjectLocalConfigPath(projectRoot: string): string {
@@ -114,7 +138,7 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
 
   private async readProjectLocalToml(
     configPath: string,
-  ): Promise<ProjectLocalTomlFile | undefined> {
+  ): Promise<{ raw: Record<string, unknown>; parsed: ProjectLocalToml } | undefined> {
     let text: string;
     try {
       text = await this.fs.readText(configPath);
@@ -146,7 +170,7 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
       );
     }
 
-    return { raw: cloneRecord(raw), parsed: parseProjectLocalToml(raw) };
+    return { raw, parsed: parseProjectLocalToml(raw) };
   }
 
   private async resolveAdditionalDirsInternal(
@@ -157,21 +181,6 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
 
     for (const additionalDir of normalizeAdditionalDirs(additionalDirs)) {
       const resolvedDir = await this.resolveAdditionalDir(baseDir, additionalDir);
-      if (this.hasSameAdditionalDir(resolvedDirs, resolvedDir)) continue;
-      resolvedDirs.push(resolvedDir);
-    }
-
-    return resolvedDirs;
-  }
-
-  private resolveExistingAdditionalDirs(
-    projectRoot: string,
-    additionalDirs: readonly string[],
-  ): string[] {
-    const resolvedDirs: string[] = [];
-
-    for (const additionalDir of normalizeAdditionalDirs(additionalDirs)) {
-      const resolvedDir = this.resolvePath(projectRoot, additionalDir);
       if (this.hasSameAdditionalDir(resolvedDirs, resolvedDir)) continue;
       resolvedDirs.push(resolvedDir);
     }
@@ -195,9 +204,9 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
   }
 
   private expandHome(value: string): string {
-    if (value === '~') return this.bootstrap.osHomeDir;
-    if (value.startsWith('~/')) return join(this.bootstrap.osHomeDir, value.slice(2));
-    return value;
+    if (this.homeDir.length === 0 || (value !== '~' && !value.startsWith('~/'))) return value;
+    if (value === '~') return this.homeDir;
+    return join(this.homeDir, value.slice(2));
   }
 
   private hasSameAdditionalDir(dirs: readonly string[], target: string): boolean {
@@ -213,7 +222,7 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
       if (isPathMissing(error)) {
         throw new Error2(
           ErrorCodes.CONFIG_INVALID,
-          'workspace.additional_dir must exist and be a directory',
+          `workspace.additional_dir must exist and be a directory: ${filePath}`,
         );
       }
       throw toStorageIoError(error, { path: filePath, op: 'stat' });
@@ -222,7 +231,7 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
     if (!stat.isDirectory) {
       throw new Error2(
         ErrorCodes.CONFIG_INVALID,
-        'workspace.additional_dir must exist and be a directory',
+        `workspace.additional_dir must exist and be a directory: ${filePath}`,
       );
     }
   }
@@ -260,10 +269,7 @@ function normalizeAdditionalDirInput(additionalDir: string): string {
   }
   const trimmed = additionalDir.trim();
   if (trimmed.length === 0) {
-    throw new Error2(
-      ErrorCodes.CONFIG_INVALID,
-      'workspace.additional_dir must exist and be a directory',
-    );
+    throw new Error2(ErrorCodes.CONFIG_INVALID, 'workspace.additional_dir must not be empty');
   }
   return normalize(trimmed);
 }
@@ -290,9 +296,33 @@ function describeProjectLocalValidationError(error: z.ZodError): string {
   return `Invalid project local config: ${error.message}`;
 }
 
+function enqueuePermissionWrite<T>(configPath: string, work: () => Promise<T>): Promise<T> {
+  const previous = permissionWriteTails.get(configPath) ?? Promise.resolve();
+  const run = previous.then(work, work);
+  permissionWriteTails.set(configPath, run.then(
+    () => undefined,
+    () => undefined,
+  ));
+  return run;
+}
+
 function cloneRecord(value: unknown): Record<string, unknown> {
   if (!isPlainObject(value)) return {};
   return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+}
+
+function readRawPermissionRules(raw: Record<string, unknown> | undefined): unknown[] {
+  const permission = raw?.['permission'];
+  if (permission === undefined) return [];
+  if (!isPlainObject(permission)) {
+    throw new Error2(ErrorCodes.CONFIG_INVALID, 'permission must be a table');
+  }
+  const rules = permission['rules'];
+  if (rules === undefined) return [];
+  if (!Array.isArray(rules)) {
+    throw new Error2(ErrorCodes.CONFIG_INVALID, 'permission.rules must be an array');
+  }
+  return [...rules];
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -301,7 +331,12 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 function isPathMissing(error: unknown): boolean {
   const code = getErrorCode(unwrapErrorCause(error));
-  return code === 'ENOENT' || code === 'ENOTDIR';
+  return (
+    code === 'ENOENT' ||
+    code === 'ENOTDIR' ||
+    code === OsFsErrors.codes.OS_FS_NOT_FOUND ||
+    code === OsFsErrors.codes.OS_FS_NOT_DIRECTORY
+  );
 }
 
 function getErrorCode(error: unknown): unknown {

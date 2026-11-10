@@ -1,10 +1,3 @@
-/**
- * `workspaceAgentProfileLoader` domain — agent-root resolution primitives.
- *
- * Resolves user, project, and configured discovery roots through the `hostFs`
- * filesystem boundary. Pure path probes; no scoped state.
- */
-
 import { join } from 'pathe';
 
 import { findUpwardRoot } from '#/_base/utils/paths';

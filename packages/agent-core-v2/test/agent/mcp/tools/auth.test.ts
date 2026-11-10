@@ -47,6 +47,7 @@ describe('createMcpAuthTool', () => {
   it('returns the authorization URL via status updates and final output on success', async () => {
     let reconnectCalls = 0;
     const oauthService = fakeOAuthService(async () => ({
+      waitId: 'auth-wait',
       authorizationUrl: new URL('https://example.com/authorize?state=abc'),
       complete: async () => undefined,
       cancel: async () => undefined,
@@ -66,11 +67,10 @@ describe('createMcpAuthTool', () => {
       (u) => u.kind === 'custom' && u.customKind === MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE,
     );
     expect(authUpdate?.customData).toMatchObject({
+      waitId: 'auth-wait',
       serverName: 'notion',
       authorizationUrl: 'https://example.com/authorize?state=abc',
     });
-    // The deadline is absolute (now + wait timeout), so hosts never mirror
-    // the engine-side constant.
     const { expiresAt } = authUpdate?.customData as { expiresAt?: number };
     expect(expiresAt).toBeGreaterThan(Date.now());
     expect(expiresAt).toBeLessThanOrEqual(Date.now() + 15 * 60 * 1000);
@@ -108,6 +108,7 @@ describe('createMcpAuthTool', () => {
 
   it('returns isError and surfaces the URL when complete rejects', async () => {
     const oauthService = fakeOAuthService(async () => ({
+      waitId: 'auth-wait',
       authorizationUrl: new URL('https://example.com/authorize?state=abc'),
       complete: async () => {
         throw new Error('OAuth callback timed out');
@@ -126,6 +127,7 @@ describe('createMcpAuthTool', () => {
 
   it('returns isError when reconnect after success fails', async () => {
     const oauthService = fakeOAuthService(async () => ({
+      waitId: 'auth-wait',
       authorizationUrl: new URL('https://example.com/authorize?state=abc'),
       complete: async () => undefined,
       cancel: async () => undefined,

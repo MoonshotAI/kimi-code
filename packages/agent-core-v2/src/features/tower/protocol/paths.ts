@@ -1,8 +1,3 @@
-/**
- * `tower` domain (protocol) — workspace layout and file naming. Every comms
- * file name is built here — agents never construct paths by hand.
- */
-
 export const TOWER_ROOT = '.tower';
 export const COMMS_DIR = `${TOWER_ROOT}/comms`;
 export const INBOX_DIR = `${COMMS_DIR}/inbox`;
@@ -19,7 +14,10 @@ export const MISSIONS_INDEX = `${COMMS_DIR}/MISSIONS.md`;
 export const TOWER_NAME = 'tower';
 export const BROADCAST_NAME = 'all';
 
-/** Local YYYYMMDD, used at the start of inbox/finding file names. */
+export function isReservedTowerAgentName(name: string): boolean {
+  return name === TOWER_NAME || name === BROADCAST_NAME;
+}
+
 export function dateStamp(now = new Date()): string {
   const y = now.getFullYear();
   const m = String(now.getMonth() + 1).padStart(2, '0');
@@ -27,16 +25,11 @@ export function dateStamp(now = new Date()): string {
   return `${y}${m}${d}`;
 }
 
-/** `YYYY-MM-DD` for review frontmatter. */
 export function dateDash(now = new Date()): string {
   const stamp = dateStamp(now);
   return `${stamp.slice(0, 4)}-${stamp.slice(4, 6)}-${stamp.slice(6, 8)}`;
 }
 
-/**
- * Filesystem-safe slug: lowercase, alnum runs joined by `-`. CJK and other
- * non-ASCII letters are dropped so names stay greppable everywhere.
- */
 export function slugify(text: string, maxLength = 60): string {
   const slug = text
     .toLowerCase()
@@ -47,7 +40,10 @@ export function slugify(text: string, maxLength = 60): string {
   return slug.length > 0 ? slug : 'item';
 }
 
-/** Branch/PR targets become filename segments: `feat/x` → `feat-x`, `#12` → `pr12`. */
+export function hasNonAsciiCharacters(text: string): boolean {
+  return /[^\u0020-\u007E]/.test(text);
+}
+
 export function targetSlug(target: string): string {
   const cleaned = target.trim().replace(/^#/, 'pr');
   return slugify(cleaned.replaceAll(/[/#]+/g, '-'));

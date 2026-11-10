@@ -1,19 +1,3 @@
-/**
- * `_base/contribution` domain — generic source-keyed contribution
- * registry.
- *
- * The storage half of the Contribution / Registry / Catalog extension-point
- * pattern: a *contribution* is a plain data structure offered by an outer
- * contributor (a loader, a plugin, a code module); the *registry* stores at
- * most one contribution per `sourceId` — re-registering the same `sourceId`
- * replaces the previous entry, which is the only dedup this layer performs.
- * Content-level dedup (e.g. by item name), ordering, and merge rules are the
- * Catalog's projection job, never the registry's. `register` returns a handle
- * whose `dispose` unregisters — but only the entry it registered, so a stale
- * handle can never evict a newer re-registration. Every mutation fires
- * `onDidChange` with the affected `sourceId` so catalogs can re-project.
- */
-
 import { Disposable, type IDisposable } from '../di/lifecycle';
 import { Emitter, type Event } from '../event';
 
@@ -27,7 +11,6 @@ export interface RegisterContributionOptions {
   readonly priority?: number;
 }
 
-// NOTE: stays Disposable — its own 'get' collides with the Fiber
 export class ContributionRegistry<T> extends Disposable {
   private readonly registrations = new Map<string, ContributionRegistration<T>>();
   private readonly onDidChangeEmitter = this._register(new Emitter<string>());
