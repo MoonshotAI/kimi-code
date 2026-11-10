@@ -65,7 +65,7 @@ export type Session = z.infer<typeof sessionSchema>;
 export const sessionCreateSchema = z
   .object({
     title: z.string().min(1).optional(),
-    metadata: sessionMetadataSchema.optional(),
+    metadata: sessionMetadataSchema.partial().optional(),
     agent_config: sessionAgentConfigPartialSchema.optional(),
     workspace_id: workspaceIdSchema.optional(),
     environment_id: z.string().min(1).optional(),
@@ -77,6 +77,17 @@ export const sessionCreateSchema = z
         code: 'custom',
         message: 'environment_cwd requires environment_id',
         path: ['environment_cwd'],
+      });
+    }
+    const agentConfig = value.agent_config;
+    if (
+      agentConfig?.tower_mode === true &&
+      (agentConfig.goal_objective !== undefined || agentConfig.goal_control !== undefined)
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'tower_mode cannot be combined with goal_objective or goal_control',
+        path: ['agent_config', 'tower_mode'],
       });
     }
   });

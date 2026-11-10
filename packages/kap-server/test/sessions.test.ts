@@ -924,6 +924,33 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(state.permission_mode).toBe('yolo');
   });
 
+  it('keeps custom metadata for a session created by workspace_id alone', async () => {
+    const cwd = home as string;
+    const first = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      workspace_id: first.body.data.workspace_id,
+      metadata: { source: 'composer' },
+    });
+
+    expect(created.body.code).toBe(0);
+    expect(created.body.data.metadata).toMatchObject({ cwd, source: 'composer' });
+  });
+
+  it('rejects tower_mode combined with goal settings before creating anything', async () => {
+    const listed = async (): Promise<string[]> =>
+      (await getJson<PageWire>('/api/v1/sessions')).body.data.items.map((session) => session.id);
+    const before = await listed();
+
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+      agent_config: { tower_mode: true, goal_objective: 'ship the release' },
+    });
+
+    expect(created.body.code).toBe(40001);
+    expect(await listed()).toEqual(before);
+  });
+
   it.each([{ model: '' }, { tower_base: 'main' }])(
     'does not create the main agent for agent_config %o, which has nothing to apply',
     async (agentConfig) => {

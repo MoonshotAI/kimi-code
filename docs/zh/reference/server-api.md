@@ -671,7 +671,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `workspace_id` | body | string | 未提供 `metadata.cwd` 时**必填**。已注册的工作区 id；会话创建于该工作区的根目录 |
 | `metadata` | body | object | 自定义元数据。`metadata.cwd` 为工作目录，未提供 `workspace_id` 时**必填**；两者同时提供时必须等于工作区根目录。其他键保存为会话的自定义元数据；保留键 `goal` 会被丢弃 |
 | `title` | body | string | 初始标题（至少 1 个字符）；否则会话无标题 |
-| `agent_config` | body | object | main agent 的部分配置，字段与 `POST /api/v1/sessions/{session_id}/profile` 相同，在返回会话之前应用。无法应用时不创建会话，直接返回错误 |
+| `agent_config` | body | object | main agent 的部分配置，字段与 `POST /api/v1/sessions/{session_id}/profile` 相同，在返回会话之前应用。无法应用时不创建会话，直接返回错误。`tower_mode: true` 不能与 `goal_objective` 或 `goal_control` 同时出现（返回 `40001`），因为 Tower 模式与目标互斥 |
 
 成功时，`data` 为新会话的 [session 对象](#session-对象)。
 

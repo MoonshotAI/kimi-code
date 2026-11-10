@@ -671,7 +671,7 @@ Creates a session and returns it. The target directory comes from `workspace_id`
 | `workspace_id` | body | string | **Required** when `metadata.cwd` is absent. Registered workspace id; the session is created at that workspace's root |
 | `metadata` | body | object | Custom metadata. `metadata.cwd` is the working directory and is **required** when `workspace_id` is absent; with both given, it must equal the workspace root. Other keys are kept as the session's custom metadata, except the reserved `goal` key, which is dropped |
 | `title` | body | string | Initial title (at least 1 character); the session is untitled otherwise |
-| `agent_config` | body | object | Partial main-agent config, with the same fields as `POST /api/v1/sessions/{session_id}/profile`, applied before the session is returned. When it cannot be applied, the session is not created and the error is returned |
+| `agent_config` | body | object | Partial main-agent config, with the same fields as `POST /api/v1/sessions/{session_id}/profile`, applied before the session is returned. When it cannot be applied, the session is not created and the error is returned. `tower_mode: true` cannot be combined with `goal_objective` or `goal_control` (`40001`), because Tower mode and goals are mutually exclusive |
 
 On success, `data` is [the session object](#the-session-object) of the new session.
 
