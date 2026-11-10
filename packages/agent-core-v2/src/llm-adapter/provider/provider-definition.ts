@@ -203,7 +203,7 @@ registerProviderDefinition({
 
 function kimiRequestMetadataHeaders(metadata: RequestMetadata): Record<string, string> {
   return {
-    'X-Msh-Internal-Metadata': JSON.stringify({
+    'X-Msh-Client-Metadata': JSON.stringify({
       agent_role: metadata.agentRole,
       turn_trigger: metadata.turnTrigger,
       step_reason: metadata.stepReason,

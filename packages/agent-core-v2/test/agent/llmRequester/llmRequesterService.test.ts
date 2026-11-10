@@ -144,7 +144,7 @@ function metadataHeader(
 ): string | undefined {
   const resolved = service['resolveRequest']({ source });
   return resolved.request.request({ content: { messages: [] } }).endpoint?.headers?.[
-    'X-Msh-Internal-Metadata'
+    'X-Msh-Client-Metadata'
   ];
 }
 
