@@ -328,4 +328,23 @@ describe('HostProcessService on Windows', () => {
       await rm(binDir, { recursive: true, force: true });
     }
   });
+
+  it('prefers a .com executable in a later PATH directory over a batch script in an earlier one', async () => {
+    const shimDir = await mkdtemp(nativeJoin(tmpdir(), 'kimi-spawn-shim-'));
+    const binDir = await mkdtemp(nativeJoin(tmpdir(), 'kimi-spawn-bin-'));
+    try {
+      await writeFile(nativeJoin(shimDir, 'dual-tool.cmd'), '@echo off\r\n');
+      await writeFile(nativeJoin(binDir, 'dual-tool.com'), '');
+      const { HostProcessService: WindowsHostProcessService } = await import(
+        '#/os/backends/node-local/hostProcessService'
+      );
+      await new WindowsHostProcessService().spawn('dual-tool', [], {
+        env: { PATH: shimDir + delimiter + binDir, ComSpec: 'cmd.exe' },
+      });
+      expect(spawnedCommands).toEqual(['dual-tool']);
+    } finally {
+      await rm(shimDir, { recursive: true, force: true });
+      await rm(binDir, { recursive: true, force: true });
+    }
+  });
 });

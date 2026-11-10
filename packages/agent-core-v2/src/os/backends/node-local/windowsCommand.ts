@@ -42,7 +42,7 @@ function resolveBatchScript(command: string, env?: Record<string, string>, cwd?:
     .filter((dir) => dir.length > 0);
   if (!command.includes('.')) {
     for (const dir of [baseCwd, ...dirs]) {
-      if (isFile(join(dir, command + '.exe'))) return undefined;
+      if (isFile(join(dir, command + '.exe')) || isFile(join(dir, command + '.com'))) return undefined;
     }
   }
   const batchExts = pathExtensions(env).filter((ext) =>
