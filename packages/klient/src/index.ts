@@ -93,6 +93,7 @@ export type {
   KlientEventName,
   KlientEventPayloads,
   SessionArchivedPayload,
+  SessionRestoredPayload,
   SessionMetaUpdatedPayload,
 } from './contract/global/events.js';
 export type { SessionEventPayloads } from './contract/session/events.js';

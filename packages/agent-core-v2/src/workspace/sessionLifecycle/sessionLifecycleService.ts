@@ -105,7 +105,7 @@ import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
 import { PLUGIN_SKILL_SOURCE_ID } from '#/features/skill/catalog/skillSource';
 
 import { agentScopeOf, sessionDirOf, sessionScopeOf } from './internal/addressing';
-import { SessionArchived, SessionDeleted } from './sessionLifecycleEvents';
+import { SessionArchived, SessionDeleted, SessionRestored } from './sessionLifecycleEvents';
 import {
   assertForkTurnIndex,
   sliceMainRecordsForRunningFork,
@@ -582,7 +582,16 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   ): Promise<ISessionScopeHandle | undefined> {
     const handle = await this.resume(sessionId, opts);
     if (handle === undefined) return undefined;
-    await handle.accessor.get(ISessionMetadata).setArchived(false);
+    const metadata = handle.accessor.get(ISessionMetadata);
+    const wasArchived = (await metadata.read()).archived;
+    await metadata.setArchived(false);
+    if (wasArchived) {
+      this.event.publish(
+        new SessionRestored({
+          payload: { sessionId, workspaceId: this.workspaceContext.workspaceId },
+        }),
+      );
+    }
     return handle;
   }
 
