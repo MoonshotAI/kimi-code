@@ -1,6 +1,9 @@
 import { IInstantiationService } from "#/_base/di/instantiation";
 import { Service } from "#/_base/di/service";
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IFlagService } from '#/app/flag/flag';
+import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { AUTO_REVIEW_FLAG_ID } from '#/features/autoReview/flag';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { AutoModeApprovePermissionPolicyService } from '#/agent/permissionPolicy/policies/auto-mode-approve';
 import { AutoModeAskUserQuestionDenyPermissionPolicyService } from '#/agent/permissionPolicy/policies/auto-mode-ask-user-question-deny';
@@ -34,6 +37,8 @@ export class AgentPermissionPolicyService
   constructor(
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @IBootstrapService bootstrap: IBootstrapService,
+    @IFlagService private readonly flags: IFlagService,
+    @IAgentPermissionModeService private readonly modes: IAgentPermissionModeService,
   ) {
     super();
     this.policies = [
@@ -58,12 +63,42 @@ export class AgentPermissionPolicyService
   async evaluate(
     context: ResolvedToolExecutionHookContext,
   ): Promise<PermissionPolicyEvaluation | undefined> {
-    for (const policy of this.policies) {
-      const result = await policy.evaluate(context);
-      if (result !== undefined) return { policyName: policy.name, result };
+    for (;;) {
+      const mode = this.modes.mode;
+      const reviewing = this.flags.enabled(AUTO_REVIEW_FLAG_ID) && mode !== 'manual';
+      const evaluation = await evaluatePolicies(this.policies, context, {
+        reviewing,
+        skipDangerousCommand: reviewing && mode === 'yolo',
+      });
+      const currentMode = this.modes.mode;
+      if (
+        currentMode === mode &&
+        (this.flags.enabled(AUTO_REVIEW_FLAG_ID) && currentMode !== 'manual') === reviewing
+      ) {
+        return evaluation;
+      }
     }
-    return undefined;
   }
+}
+
+async function evaluatePolicies(
+  policies: readonly PermissionPolicy[],
+  context: ResolvedToolExecutionHookContext,
+  options: { readonly reviewing: boolean; readonly skipDangerousCommand: boolean },
+): Promise<PermissionPolicyEvaluation | undefined> {
+  let modeHit: PermissionPolicyEvaluation | undefined;
+  for (const policy of policies) {
+    if (options.skipDangerousCommand && policy.name === 'dangerous-command-ask') continue;
+    const result = await policy.evaluate(context);
+    if (result === undefined) continue;
+    const evaluation = { policyName: policy.name, result };
+    if (options.reviewing && policy.modeApproval === true) {
+      modeHit = evaluation;
+      continue;
+    }
+    return modeHit === undefined ? evaluation : { ...modeHit, underlying: evaluation };
+  }
+  return modeHit;
 }
 
 registerScopedService(

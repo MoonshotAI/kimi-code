@@ -794,6 +794,9 @@ function dispatchNativeEvent(
       }
       return;
     }
+    case 'auto_review.started':
+    case 'auto_review.decision':
+      return;
   }
 }
 

@@ -9158,6 +9158,51 @@ capabilities = ["image_in", "video_in"]
     }
   });
 
+  describe('Auto Review progress on the tool card', () => {
+    const PROGRESS_TEXT = 'Auto Review in progress';
+
+    async function startReview(): Promise<{ driver: MessageDriver; emit: (event: object) => void }> {
+      const { driver } = await makeDriver();
+      driver.streamingUI.setTurnId('1');
+      driver.streamingUI.setStep(1);
+      const sendQueued = vi.fn();
+      const emit = (event: object): void => {
+        driver.sessionEventHandler.handleEvent(
+          { agentId: 'main', sessionId: 'ses-1', turnId: 1, toolCallId: 'call_bash', ...event } as Event,
+          sendQueued,
+        );
+      };
+      emit({ type: 'tool.call.delta', name: 'Bash', argumentsPart: '{"command":"echo hi"}' });
+      emit({ type: 'auto_review.started', toolName: 'Bash' });
+      return { driver, emit };
+    }
+
+    it('shows the status until the decision arrives', async () => {
+      const { driver, emit } = await startReview();
+      expect(stripSgr(renderTranscript(driver))).toContain(PROGRESS_TEXT);
+
+      emit({
+        type: 'auto_review.decision',
+        toolName: 'Bash',
+        triggerPolicy: 'fallback-ask',
+        model: 'review-model',
+        decision: 'allow',
+        risk: 'low',
+        durationMs: 1,
+      });
+
+      expect(stripSgr(renderTranscript(driver))).not.toContain(PROGRESS_TEXT);
+    });
+
+    it('clears the status when a cancelled turn ends without a decision', async () => {
+      const { driver, emit } = await startReview();
+
+      emit({ type: 'turn.ended', reason: 'cancelled' });
+
+      expect(stripSgr(renderTranscript(driver))).not.toContain(PROGRESS_TEXT);
+    });
+  });
+
   it('cancels manual compaction from the editor', async () => {
     const { driver, session } = await makeDriver();
     driver.sessionEventHandler.handleEvent(

@@ -8,6 +8,7 @@ import type { PermissionPolicyResult } from './types';
 export interface PermissionPolicyEvaluation {
   readonly policyName: string;
   readonly result: PermissionPolicyResult;
+  readonly underlying?: PermissionPolicyEvaluation;
 }
 
 export interface IAgentPermissionPolicyService {
