@@ -125,7 +125,10 @@ export function deriveGroupView(input: GroupViewInput, now: Instant): GroupView 
   const [first, ...rest] = input.members;
   const state = (item: LogicalTranscriptItem): MemberState => memberState(item, timeline, now);
   const members: NonEmpty<MemberState> = [state(first), ...rest.map(state)];
-  const title = deriveTitle(members, now);
+  const reviewing = [...input.members, ...input.pending].some((item) => item.autoReviewing);
+  const title: GroupTitleView = reviewing
+    ? { kind: 'summary', text: 'Auto Review in progress…', added: 0, removed: 0, failed: 0, interrupted: 0 }
+    : deriveTitle(members, now);
   const owned = input.last && ownsLiveTurn(input, members, now);
   let tail = input.last ? BLANK : undefined;
   if (owned) tail = deriveTail(input, members, now);

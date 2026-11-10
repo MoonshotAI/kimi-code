@@ -9161,8 +9161,17 @@ capabilities = ["image_in", "video_in"]
   describe('Auto Review progress on the tool card', () => {
     const PROGRESS_TEXT = 'Auto Review in progress';
 
-    async function startReview(): Promise<{ driver: MessageDriver; emit: (event: object) => void }> {
-      const { driver } = await makeDriver();
+    async function startReview(fullscreen = false): Promise<{ driver: MessageDriver; emit: (event: object) => void }> {
+      const base = makeStartupInput();
+      const { driver } = await makeDriver(makeSession(), {}, fullscreen
+        ? { ...base, tuiConfig: { ...base.tuiConfig, tuiMode: 'fullscreen' } }
+        : base);
+      if (fullscreen) {
+        const session = makeSession();
+        await driver.setSession(session);
+        await driver.syncRuntimeState(session);
+        driver.streamingUI.timeline.turnStarted();
+      }
       driver.streamingUI.setTurnId('1');
       driver.streamingUI.setStep(1);
       const sendQueued = vi.fn();
@@ -9172,7 +9181,7 @@ capabilities = ["image_in", "video_in"]
           sendQueued,
         );
       };
-      emit({ type: 'tool.call.delta', name: 'Bash', argumentsPart: '{"command":"echo hi"}' });
+      emit({ type: 'tool.call.started', name: 'Bash', args: { command: 'echo hi' } });
       emit({ type: 'auto_review.started', toolName: 'Bash' });
       return { driver, emit };
     }
@@ -9196,6 +9205,34 @@ capabilities = ["image_in", "video_in"]
 
     it('clears the status when a cancelled turn ends without a decision', async () => {
       const { driver, emit } = await startReview();
+
+      emit({ type: 'turn.ended', reason: 'cancelled' });
+
+      expect(stripSgr(renderTranscript(driver))).not.toContain(PROGRESS_TEXT);
+    });
+
+    it('shows the status in fullscreen while expanded or collapsed', async () => {
+      const { driver, emit } = await startReview(true);
+      expect(stripSgr(renderTranscript(driver))).toContain(PROGRESS_TEXT);
+
+      driver.toggleToolOutputExpansion();
+      expect(stripSgr(renderTranscript(driver))).toContain(PROGRESS_TEXT);
+
+      emit({
+        type: 'auto_review.decision',
+        toolName: 'Bash',
+        triggerPolicy: 'fallback-ask',
+        model: 'review-model',
+        decision: 'allow',
+        risk: 'low',
+        durationMs: 1,
+      });
+      expect(stripSgr(renderTranscript(driver))).not.toContain(PROGRESS_TEXT);
+    });
+
+    it('clears the fullscreen status when a cancelled turn ends without a decision', async () => {
+      const { driver, emit } = await startReview(true);
+      expect(stripSgr(renderTranscript(driver))).toContain(PROGRESS_TEXT);
 
       emit({ type: 'turn.ended', reason: 'cancelled' });
 
