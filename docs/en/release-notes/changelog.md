@@ -10,7 +10,7 @@ This page documents the changes in each Kimi Code CLI release.
 
 ### Features
 
-- Make steering interrupt active model requests and continue in the same turn.
+- Improve steer interruption logic.
 
 ### Bug Fixes
 
