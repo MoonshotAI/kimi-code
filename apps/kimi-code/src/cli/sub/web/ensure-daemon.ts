@@ -161,13 +161,16 @@ async function findOrStart(deps: EnsureDaemonDeps): Promise<EnsureDaemonResult> 
   const live = (await deps.listLive()).filter(
     (instance) => isLoopbackHost(instance.host) && instance.port > 0,
   );
-  const reusable = live
-    .filter((instance) => instance.serverVersion === deps.version)
-    .toSorted((a, b) => Number(b.managedBy !== undefined) - Number(a.managedBy !== undefined));
+  const reusable = live.filter(
+    (instance) =>
+      instance.serverVersion === deps.version && instance.managedBy === ENSURE_DAEMON_MANAGED_BY,
+  );
   for (const instance of reusable) {
     if (await deps.isHealthy(instanceOrigin(instance))) return toResult(deps, instance);
   }
   await retireOutdatedManaged(deps, live);
+  // sshd keeps the socket of a dead forward, and a stale one makes the next `ssh -R` fail.
+  await rm(agentSocketPath(deps), { force: true });
   const logPath = join(deps.homeDir, 'server', LOG_FILE);
   const pid = deps.spawnServer(logPath, agentSocketPath(deps));
   return toResult(deps, await waitForSpawned(deps, pid, logPath));
@@ -176,8 +179,6 @@ async function findOrStart(deps: EnsureDaemonDeps): Promise<EnsureDaemonResult> 
 export async function ensureDaemon(deps: EnsureDaemonDeps): Promise<EnsureDaemonResult> {
   const release = await acquireLock(join(deps.homeDir, 'server', LOCK_FILE), (ms) => deps.wait(ms));
   try {
-    // sshd keeps the socket of a dead forward, and a stale one makes the next `ssh -R` fail.
-    await rm(agentSocketPath(deps), { force: true });
     return await findOrStart(deps);
   } finally {
     await release();

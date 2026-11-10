@@ -1,13 +1,10 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
-
 import { IBootstrapService, IConfigService, IHostFileSystem, IFlagService, type Scope } from '@moonshot-ai/agent-core-v2';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
-import type { HostBridgeManager, HostInfo } from '../services/hosts/hostBridgeManager';
+import { toHostSnapshot, type HostBridgeManager, type HostInfo } from '../services/hosts/hostBridgeManager';
 import {
   HOSTS_SECTION,
   SSH_FULL_REMOTE_FLAG_ID,
@@ -53,7 +50,6 @@ const hostResponseSchema = wireEntrySchema.extend({
 
 const hostParamsSchema = z.object({ id: z.string() });
 const connectBodySchema = z.object({ id: z.string() });
-const projectsBodySchema = z.object({ projects: z.array(z.record(z.string(), z.unknown())) });
 const testResultSchema = z.object({
   connected: z.boolean(),
   remote_version: z.string().optional(),
@@ -72,44 +68,12 @@ function toEntry(wire: z.infer<typeof wireEntrySchema>): HostEntry {
 }
 
 function toResponse(info: HostInfo): z.infer<typeof hostResponseSchema> {
-  return {
-    id: info.id,
-    host: info.entry.host,
-    identity_file: info.entry.identityFile,
-    remote_bin: info.entry.remoteBin,
-    name: info.entry.name,
-    enabled: info.entry.enabled,
-    status: info.bridge?.status ?? 'pending',
-    remote_version: info.bridge?.remoteVersion,
-    connect_error: info.bridge?.error,
-    connect_failure: info.bridge?.failure,
-  };
-}
-
-function projectsCachePath(homeDir: string): string {
-  return join(homeDir, 'server', 'host-projects.json');
-}
-
-async function readProjectsCache(homeDir: string): Promise<Record<string, unknown[]>> {
-  try {
-    return JSON.parse(await readFile(projectsCachePath(homeDir), 'utf8')) as Record<string, unknown[]>;
-  } catch {
-    return {};
-  }
-}
-
-async function writeProjectsCache(homeDir: string, cache: Record<string, unknown[]>): Promise<void> {
-  const path = projectsCachePath(homeDir);
-  await mkdir(dirname(path), { recursive: true });
-  const temp = `${path}.${process.pid}.tmp`;
-  await writeFile(temp, JSON.stringify(cache), { mode: 0o600 });
-  await rename(temp, path);
+  return toHostSnapshot(info);
 }
 
 export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: HostBridgeManager): void {
   const config = core.accessor.get(IConfigService);
   const bootstrap = core.accessor.get(IBootstrapService);
-  let projectsWrite: Promise<unknown> = Promise.resolve();
 
   const enabled = async (req: RouteRequest, reply: RouteReply): Promise<boolean> => {
     await config.ready;
@@ -175,21 +139,6 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
     },
   );
   app.get(sshHostsRoute.path, sshHostsRoute.options, sshHostsRoute.handler as never);
-
-  const projectsRoute = defineRoute(
-    {
-      method: 'GET',
-      path: '/hosts::projects',
-      success: { data: z.object({ projects: z.record(z.string(), z.array(z.unknown())) }) },
-      description: 'Read the last known projects of every host, for display while disconnected',
-      tags: ['hosts'],
-    },
-    async (req: RouteRequest, reply: RouteReply) => {
-      if (!(await enabled(req, reply))) return;
-      reply.send(okEnvelope({ projects: await readProjectsCache(bootstrap.homeDir) }, req.id));
-    },
-  );
-  app.get(projectsRoute.path, projectsRoute.options, projectsRoute.handler as never);
 
   const testRoute = defineRoute(
     {
@@ -283,7 +232,7 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
       path: '/hosts/{id}',
       params: hostParamsSchema,
       success: { data: z.object({ ok: z.literal(true) }) },
-      description: 'Remove a host and its cached projects',
+      description: 'Remove a host',
       tags: ['hosts'],
     },
     async (req: RouteRequest, reply: RouteReply) => {
@@ -291,36 +240,8 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
       const { id } = req.params as z.infer<typeof hostParamsSchema>;
       const { [id]: _removed, ...rest } = manager.section();
       await config.replace(HOSTS_SECTION, rest);
-      projectsWrite = projectsWrite.catch(() => undefined).then(async () => {
-        const { [id]: _cached, ...cache } = await readProjectsCache(bootstrap.homeDir);
-        await writeProjectsCache(bootstrap.homeDir, cache);
-      });
-      await projectsWrite;
       reply.send(okEnvelope({ ok: true as const }, req.id));
     },
   );
   app.delete(deleteRoute.path, deleteRoute.options, deleteRoute.handler as never);
-
-  const putProjectsRoute = defineRoute(
-    {
-      method: 'PUT',
-      path: '/hosts/{id}/projects',
-      params: hostParamsSchema,
-      body: projectsBodySchema,
-      success: { data: z.object({ ok: z.literal(true) }) },
-      description: 'Store the last known projects of a host',
-      tags: ['hosts'],
-    },
-    async (req: RouteRequest, reply: RouteReply) => {
-      if (!(await enabled(req, reply))) return;
-      const { id } = req.params as z.infer<typeof hostParamsSchema>;
-      const { projects } = req.body as z.infer<typeof projectsBodySchema>;
-      projectsWrite = projectsWrite.catch(() => undefined).then(async () => {
-        await writeProjectsCache(bootstrap.homeDir, { ...(await readProjectsCache(bootstrap.homeDir)), [id]: projects });
-      });
-      await projectsWrite;
-      reply.send(okEnvelope({ ok: true as const }, req.id));
-    },
-  );
-  app.put(putProjectsRoute.path, putProjectsRoute.options, putProjectsRoute.handler as never);
 }

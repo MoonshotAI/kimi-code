@@ -76,6 +76,8 @@ const VERSION_TIMEOUT_MS = 20_000;
 const TUNNEL_READY_ATTEMPTS = 75;
 const TUNNEL_POLL_MS = 200;
 const MAX_RECONNECT_DELAY_MS = 30_000;
+const LOCAL_BIND_ATTEMPTS = 3;
+const LOCAL_BIND_FAILURE = /Address already in use|cannot listen to port/i;
 const RETRYABLE: ReadonlySet<HostConnectFailure> = new Set([
   'connection_refused',
   'host_unreachable',
@@ -110,6 +112,7 @@ export function classifySshFailure(stderr: string, exitCode: number | null): Hos
   if (/Could not resolve hostname|Name or service not known|nodename nor servname/i.test(stderr)) return 'host_not_found';
   if (/Host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED/i.test(stderr)) return 'host_key_changed';
   if (/Permission denied|Too many authentication failures/i.test(stderr)) return 'authentication_failed';
+  if (LOCAL_BIND_FAILURE.test(stderr)) return 'unknown';
   if (/forwarding failed|administratively prohibited/i.test(stderr)) return 'port_forwarding_denied';
   if (/Connection refused/i.test(stderr)) return 'connection_refused';
   if (/No route to host|Network is unreachable/i.test(stderr)) return 'host_unreachable';
@@ -207,7 +210,10 @@ export class SshKapBridge {
   private endpointValue: HostEndpoint | undefined;
   private connecting: Promise<HostEndpoint> | undefined;
   private tunnel: ChildProcess | undefined;
+  private readonly children = new Set<ChildProcess>();
   private disposed = false;
+  private reconnecting = false;
+  private reconnectGeneration = 0;
   private agentForwardBlocked = false;
   private readonly sshProgram: string;
   private readonly env: NodeJS.ProcessEnv;
@@ -252,9 +258,11 @@ export class SshKapBridge {
 
   dispose(): void {
     this.disposed = true;
+    this.reconnectGeneration += 1;
     this.endpointValue = undefined;
     this.tunnel?.kill();
     this.tunnel = undefined;
+    for (const child of this.children) child.kill();
   }
 
   async probe(): Promise<RemoteProbe> {
@@ -278,8 +286,13 @@ export class SshKapBridge {
     this.update('connecting');
     try {
       const bootstrap = await this.bootstrap();
+      if (this.disposed) throw new HostConnectError('unknown', 'host bridge disposed');
       this.remoteVersionValue = bootstrap.version;
       const endpoint = await this.openTunnel(bootstrap);
+      if (this.disposed) {
+        this.tunnel?.kill();
+        throw new HostConnectError('unknown', 'host bridge disposed');
+      }
       this.endpointValue = endpoint;
       this.update('ready');
       return endpoint;
@@ -287,6 +300,7 @@ export class SshKapBridge {
       const failure = error instanceof HostConnectError ? error.failure : 'unknown';
       const message = error instanceof Error ? error.message : String(error);
       this.endpointValue = undefined;
+      if (this.disposed) throw error instanceof HostConnectError ? error : new HostConnectError(failure, message);
       if (error instanceof HostConnectError && error.remoteVersion !== undefined) {
         this.remoteVersionValue = error.remoteVersion;
       }
@@ -325,9 +339,12 @@ export class SshKapBridge {
     return ['-R', `${bootstrap.agentSocket}:${localSocket}`];
   }
 
-  private async openTunnel(bootstrap: BootstrapResult): Promise<HostEndpoint> {
+  private async openTunnel(bootstrap: BootstrapResult, bindAttempt = 0): Promise<HostEndpoint> {
+    if (this.disposed) throw new HostConnectError('unknown', 'host bridge disposed');
     const localPort = await this.allocatePort();
+    if (this.disposed) throw new HostConnectError('unknown', 'host bridge disposed');
     const agentArgs = await this.agentForwardArgs(bootstrap);
+    if (this.disposed) throw new HostConnectError('unknown', 'host bridge disposed');
     const args = [
       '-N',
       '-T',
@@ -341,6 +358,11 @@ export class SshKapBridge {
       this.entry.host,
     ];
     const child = spawn(this.sshProgram, args, { stdio: ['ignore', 'ignore', 'pipe'], env: this.env });
+    this.track(child);
+    if (this.disposed) {
+      child.kill();
+      throw new HostConnectError('unknown', 'host bridge disposed');
+    }
     let stderr = '';
     let exited = false;
     let exitCode: number | null = null;
@@ -364,7 +386,10 @@ export class SshKapBridge {
       await sleep(TUNNEL_POLL_MS);
     }
     child.kill();
-    if (exited && agentArgs.length > 0 && /forwarding failed/i.test(stderr)) {
+    if (exited && LOCAL_BIND_FAILURE.test(stderr) && bindAttempt + 1 < LOCAL_BIND_ATTEMPTS) {
+      return this.openTunnel(bootstrap, bindAttempt + 1);
+    }
+    if (exited && agentArgs.length > 0 && /forwarding failed/i.test(stderr) && !LOCAL_BIND_FAILURE.test(stderr)) {
       this.agentForwardBlocked = true;
       this.options.logger?.warn({ host: this.entry.host }, 'ssh agent forwarding rejected; continuing without it');
       return this.openTunnel(bootstrap);
@@ -385,15 +410,26 @@ export class SshKapBridge {
   }
 
   private async reconnect(): Promise<void> {
-    for (let delay = 1000; !this.disposed; delay = Math.min(delay * 2, MAX_RECONNECT_DELAY_MS)) {
-      await sleep(delay);
-      if (this.disposed) return;
-      try {
-        await this.connect();
-        return;
-      } catch (error) {
-        if (error instanceof HostConnectError && !RETRYABLE.has(error.failure)) return;
+    if (this.reconnecting || this.disposed) return;
+    this.reconnecting = true;
+    const generation = this.reconnectGeneration;
+    try {
+      for (
+        let delay = 1000;
+        !this.disposed && generation === this.reconnectGeneration;
+        delay = Math.min(delay * 2, MAX_RECONNECT_DELAY_MS)
+      ) {
+        await sleep(delay);
+        if (this.disposed || generation !== this.reconnectGeneration) return;
+        try {
+          await this.connect();
+          return;
+        } catch (error) {
+          if (error instanceof HostConnectError && !RETRYABLE.has(error.failure)) return;
+        }
       }
+    } finally {
+      if (generation === this.reconnectGeneration) this.reconnecting = false;
     }
   }
 
@@ -413,9 +449,21 @@ export class SshKapBridge {
     );
   }
 
+  private track(child: ChildProcess): void {
+    if (this.disposed) {
+      child.kill();
+      return;
+    }
+    this.children.add(child);
+    child.on('close', () => {
+      this.children.delete(child);
+    });
+  }
+
   private collect(args: readonly string[], timeoutMs: number): Promise<SshResult> {
     return new Promise((resolve) => {
       const child = spawn(this.sshProgram, args, { stdio: ['ignore', 'pipe', 'pipe'], env: this.env });
+      this.track(child);
       let stdout = '';
       let stderr = '';
       const timer = setTimeout(() => {

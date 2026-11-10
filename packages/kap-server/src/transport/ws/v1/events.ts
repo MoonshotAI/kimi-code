@@ -105,6 +105,24 @@ export interface CapabilityChangedEvent {
   };
 }
 
+export interface HostChangedHost {
+  readonly id: string;
+  readonly host: string;
+  readonly identity_file?: string;
+  readonly remote_bin?: string;
+  readonly name?: string;
+  readonly enabled?: boolean;
+  readonly status: 'pending' | 'connecting' | 'ready' | 'disconnected';
+  readonly remote_version?: string;
+  readonly connect_error?: string;
+  readonly connect_failure?: string;
+}
+
+export interface HostChangedEvent {
+  readonly type: 'event.host.changed';
+  readonly hosts: readonly HostChangedHost[];
+}
+
 export type PushEvent =
   | SessionMetaUpdatedEvent
   | SessionCreatedEvent
@@ -118,6 +136,7 @@ export type PushEvent =
   | ConfigWarningEvent
   | ModelCatalogChangedEvent
   | PluginChangedEvent
-  | CapabilityChangedEvent;
+  | CapabilityChangedEvent
+  | HostChangedEvent;
 
 export type Event = PushEvent & { agentId: string; sessionId: string; readonly time?: number };

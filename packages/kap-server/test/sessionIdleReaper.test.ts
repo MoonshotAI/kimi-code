@@ -86,11 +86,18 @@ describe('SessionIdleReaper', () => {
 });
 
 describe('ManagedIdleExit', () => {
-  function setup(state: { sessions: number; connections: number }) {
+  function setup(
+    state: { sessions: number; connections: number },
+    closeIfIdle: (id: string) => Promise<boolean> = async () => false,
+  ) {
     let now = 0;
     const onIdle = vi.fn();
     const exit = new ManagedIdleExit(
-      { list: () => Array.from({ length: state.sessions }, () => ({}) as ISessionScopeHandle) },
+      {
+        list: () =>
+          Array.from({ length: state.sessions }, (_, index) => ({ id: `s${index}` }) as ISessionScopeHandle),
+        closeIfIdle,
+      },
       { size: () => state.connections },
       1000,
       onIdle,
@@ -99,32 +106,45 @@ describe('ManagedIdleExit', () => {
     return { exit, onIdle, advance: (ms: number) => (now += ms) };
   }
 
-  it('fires once after the idle window with no sessions and no connections', () => {
+  it('fires once after the idle window with no sessions and no connections', async () => {
     const { exit, onIdle, advance } = setup({ sessions: 0, connections: 0 });
     advance(999);
-    exit.sweep();
+    await exit.sweep();
     expect(onIdle).not.toHaveBeenCalled();
     advance(1);
-    exit.sweep();
-    exit.sweep();
+    await exit.sweep();
+    await exit.sweep();
     expect(onIdle).toHaveBeenCalledTimes(1);
   });
 
-  it('restarts the idle window while a session or connection is live', () => {
+  it('restarts the idle window while a session or connection is live', async () => {
     const state = { sessions: 1, connections: 0 };
     const { exit, onIdle, advance } = setup(state);
     advance(5000);
-    exit.sweep();
+    await exit.sweep();
     state.sessions = 0;
     state.connections = 1;
     advance(5000);
-    exit.sweep();
+    await exit.sweep();
     state.connections = 0;
     advance(999);
-    exit.sweep();
+    await exit.sweep();
     expect(onIdle).not.toHaveBeenCalled();
     advance(1);
-    exit.sweep();
+    await exit.sweep();
+    expect(onIdle).toHaveBeenCalledTimes(1);
+  });
+
+  it('unloads idle sessions before measuring the idle window', async () => {
+    const state = { sessions: 1, connections: 0 };
+    const { exit, onIdle, advance } = setup(state, async () => {
+      state.sessions = 0;
+      return true;
+    });
+    await exit.sweep();
+    expect(onIdle).not.toHaveBeenCalled();
+    advance(1000);
+    await exit.sweep();
     expect(onIdle).toHaveBeenCalledTimes(1);
   });
 });

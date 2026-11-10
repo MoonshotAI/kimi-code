@@ -88,7 +88,7 @@ import {
 import { createServerSessionRating } from './services/sessionRating';
 import { ConversationService } from './services/conversation/conversationService';
 import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
-import { HostBridgeManager } from './services/hosts/hostBridgeManager';
+import { HostBridgeManager, hostSnapshots } from './services/hosts/hostBridgeManager';
 import { matchHostProxyPath, proxyHostWebSocket, registerHostProxyRoutes } from './services/hosts/hostProxy';
 import { SSH_FULL_REMOTE_FLAG_ID } from './services/hosts/hostsConfig';
 import { DEFAULT_MANAGED_IDLE_EXIT_MS, ManagedIdleExit } from './services/managedIdleExit';
@@ -377,7 +377,11 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     capabilityInstallSubscription.dispose();
     authFailureLimiter?.dispose();
     modelCatalogRefreshScheduler.dispose();
-    managedIdleExit?.close();
+    if (hostNotifyTimer !== undefined) {
+      clearTimeout(hostNotifyTimer);
+      hostNotifyTimer = undefined;
+    }
+    await managedIdleExit?.close();
     hostBridges.close();
     await sessionIdleReaper.close();
     try {
@@ -413,7 +417,9 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   };
 
   const connectionRegistry = new ConnectionRegistry();
-  const hostBridges = new HostBridgeManager(core.accessor.get(IConfigService), logger);
+  let notifyHosts = (): void => {};
+  let hostNotifyTimer: ReturnType<typeof setTimeout> | undefined;
+  const hostBridges = new HostBridgeManager(core.accessor.get(IConfigService), logger, () => notifyHosts());
   const hostProxyEnabled = (): boolean => core.accessor.get(IFlagService).enabled(SSH_FULL_REMOTE_FLAG_ID);
   const requestClose = (): void => {
     void close().catch((error: unknown) => logger.error({ err: error }, 'server close failed'));
@@ -441,6 +447,15 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     logger,
     conversations,
   });
+  notifyHosts = () => {
+    if (!hostProxyEnabled()) return;
+    if (hostNotifyTimer !== undefined) clearTimeout(hostNotifyTimer);
+    hostNotifyTimer = setTimeout(() => {
+      hostNotifyTimer = undefined;
+      broadcaster.publishHostChanged(hostSnapshots(hostBridges));
+    }, 10);
+    hostNotifyTimer.unref?.();
+  };
 
   const configService = core.accessor.get(IConfigService);
   const publishConfigWarnings = (diagnostics: readonly ConfigDiagnostic[]): void => {

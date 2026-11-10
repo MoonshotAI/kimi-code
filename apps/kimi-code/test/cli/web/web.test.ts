@@ -1291,6 +1291,36 @@ describe('`kimi web ensure-daemon`', () => {
     expect(deps.spawnServer).not.toHaveBeenCalled();
   });
 
+  it('does not reuse an unmanaged instance of the same version', async () => {
+    let started = false;
+    const deps = makeDeps({
+      listLive: async () => [
+        instance({ pid: 1, port: 1111 }),
+        ...(started ? [instance({ pid: 4321, port: 3333, managedBy: 'ensure-daemon' })] : []),
+      ],
+      spawnServer: vi.fn(() => {
+        started = true;
+        return 4321;
+      }),
+    });
+
+    await expect(ensureDaemon(deps)).resolves.toMatchObject({ port: 3333, pid: 4321 });
+    expect(deps.spawnServer).toHaveBeenCalled();
+  });
+
+  it('keeps the agent socket when reusing a managed instance', async () => {
+    const agentSocket = join(homeDir, 'server', 'forwarded-ssh-agent.sock');
+    mkdirSync(join(homeDir, 'server'), { recursive: true });
+    writeFileSync(agentSocket, 'live');
+    const deps = makeDeps({
+      listLive: async () => [instance({ managedBy: 'ensure-daemon' })],
+    });
+
+    await ensureDaemon(deps);
+    expect(existsSync(agentSocket)).toBe(true);
+    expect(deps.spawnServer).not.toHaveBeenCalled();
+  });
+
   it('clears a stale agent socket and points a new server at it', async () => {
     const agentSocket = join(homeDir, 'server', 'forwarded-ssh-agent.sock');
     mkdirSync(join(homeDir, 'server'), { recursive: true });
@@ -1312,13 +1342,17 @@ describe('`kimi web ensure-daemon`', () => {
 
   it('releases the lock after a failure and clears a lock left by a dead process', async () => {
     const lockPath = join(homeDir, 'server', 'ensure-daemon.lock');
-    await expect(ensureDaemon(makeDeps({ readToken: () => undefined, listLive: async () => [instance({})] }))).rejects.toMatchObject({
+    await expect(
+      ensureDaemon(makeDeps({ readToken: () => undefined, listLive: async () => [instance({ managedBy: 'ensure-daemon' })] })),
+    ).rejects.toMatchObject({
       code: 'token_unavailable',
     });
     expect(existsSync(lockPath)).toBe(false);
 
     writeFileSync(lockPath, '999999999');
-    await expect(ensureDaemon(makeDeps({ listLive: async () => [instance({})] }))).resolves.toMatchObject({
+    await expect(
+      ensureDaemon(makeDeps({ listLive: async () => [instance({ managedBy: 'ensure-daemon' })] })),
+    ).resolves.toMatchObject({
       port: 40000,
     });
     expect(existsSync(lockPath)).toBe(false);

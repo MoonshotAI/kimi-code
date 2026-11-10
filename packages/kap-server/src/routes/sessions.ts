@@ -274,6 +274,9 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
         if (typeof body.title === 'string') {
           await handle.accessor.get(ISessionMetadata).setTitle(body.title);
         }
+        if (body.agent_config !== undefined) {
+          await applySessionAgentConfig(core, handle.id, body.agent_config);
+        }
         const meta = await handle.accessor.get(ISessionMetadata).read();
         const session = toWireSession(
           { ...meta, workspaceId: resolved.id },

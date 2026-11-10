@@ -1,5 +1,6 @@
 import { request, type IncomingHttpHeaders, type IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 
@@ -30,7 +31,13 @@ export interface HostProxyTarget {
 export function matchHostProxyPath(url: string): HostProxyTarget | undefined {
   const match = PROXY_PATH.exec(url);
   if (match === null) return undefined;
-  return { hostId: decodeURIComponent(match[1]!), path: `${match[2] ?? '/'}${match[3] ?? ''}` };
+  let hostId: string;
+  try {
+    hostId = decodeURIComponent(match[1]!);
+  } catch {
+    return undefined;
+  }
+  return { hostId, path: `${match[2] ?? '/'}${match[3] ?? ''}` };
 }
 
 export function upstreamHeaders(headers: IncomingHttpHeaders, endpoint: HostEndpoint): IncomingHttpHeaders {
@@ -90,7 +97,9 @@ async function proxyHttp(
         ...localHeaders,
         ...responseHeaders(response),
       } as IncomingHttpHeaders);
-      response.pipe(reply.raw);
+      void pipeline(response, reply.raw).catch((error: unknown) => {
+        reply.raw.destroy(error instanceof Error ? error : new Error(String(error)));
+      });
     },
   );
   upstream.on('error', (error) => {
