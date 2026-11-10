@@ -954,6 +954,20 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(children.body.data.items.some((s) => s.id === created.body.data.id)).toBe(false);
   });
 
+  it('reports an unknown creation model as a validation error and creates nothing', async () => {
+    const listed = async (): Promise<string[]> =>
+      (await getJson<PageWire>('/api/v1/sessions')).body.data.items.map((session) => session.id);
+    const before = await listed();
+
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+      agent_config: { model: 'no-such-model' },
+    });
+
+    expect(created.body.code).toBe(40001);
+    expect(await listed()).toEqual(before);
+  });
+
   it('rejects enabling tower_mode before creating anything', async () => {
     const listed = async (): Promise<string[]> =>
       (await getJson<PageWire>('/api/v1/sessions')).body.data.items.map((session) => session.id);

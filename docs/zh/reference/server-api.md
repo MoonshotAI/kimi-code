@@ -675,7 +675,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 成功时，`data` 为新会话的 [session 对象](#session-对象)。
 
-- `40001`：`workspace_id` 与 `metadata.cwd` 都未提供，`metadata.cwd` 与工作区根目录不一致，或 `agent_config` 设置了 `tower_mode: true`（`details` 会列出该字段）
+- `40001`：`workspace_id` 与 `metadata.cwd` 都未提供，`metadata.cwd` 与工作区根目录不一致，或 `agent_config` 设置了 `tower_mode: true`（`details` 会列出该字段）；`agent_config.model` 未配置，或模型不支持 `agent_config.thinking` 时也返回此码
 - `40409`：工作目录不存在或不是目录
 - `40410`：没有以该 `workspace_id` 注册的工作区
 - `40913`–`40918`、`40920`：`agent_config` 因目标相关错误无法应用
