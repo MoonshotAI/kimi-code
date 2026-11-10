@@ -924,16 +924,19 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(state.permission_mode).toBe('yolo');
   });
 
-  it('does not create the main agent for an empty agent_config model', async () => {
-    const created = await postJson<SessionWire>('/api/v1/sessions', {
-      metadata: { cwd: home as string },
-      agent_config: { model: '' },
-    });
+  it.each([{ model: '' }, { tower_base: 'main' }])(
+    'does not create the main agent for agent_config %o, which has nothing to apply',
+    async (agentConfig) => {
+      const created = await postJson<SessionWire>('/api/v1/sessions', {
+        metadata: { cwd: home as string },
+        agent_config: agentConfig,
+      });
 
-    expect(created.body.code).toBe(0);
-    const session = getLiveSessionById((server as RunningServer).core.accessor, created.body.data.id)!;
-    expect(session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)).toBeUndefined();
-  });
+      expect(created.body.code).toBe(0);
+      const session = getLiveSessionById((server as RunningServer).core.accessor, created.body.data.id)!;
+      expect(session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)).toBeUndefined();
+    },
+  );
 
   it('creates nothing and announces nothing when its agent_config cannot be applied', async () => {
     const cwd = home as string;

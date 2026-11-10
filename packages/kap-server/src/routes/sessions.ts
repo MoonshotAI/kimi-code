@@ -266,8 +266,9 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
             ? await registry.createOrTouch(workDir)
             : ((await registry.touch(bucket.id)) ?? bucket);
         const { cwd: _cwd, goal: _goal, ...custom }: Record<string, unknown> = body.metadata ?? {};
-        const { model, ...settings } = body.agent_config ?? {};
-        const agentConfig = model ? { ...settings, model } : settings;
+        const agentConfig = body.agent_config ?? {};
+        const { model, tower_base: _towerBase, ...settings } = agentConfig;
+        const appliesAgentConfig = Boolean(model) || Object.keys(settings).length > 0;
         const handle = await core.accessor.get(ISessionManager).create({
           workspaceId: resolved.id,
           workDir,
@@ -278,7 +279,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
             if (Object.keys(custom).length > 0) {
               await session.accessor.get(ISessionMetadata).update({ custom });
             }
-            if (Object.keys(agentConfig).length > 0) await applyAgentConfigToSession(session, agentConfig);
+            if (appliesAgentConfig) await applyAgentConfigToSession(session, agentConfig);
           },
         });
         const metadata = handle.accessor.get(ISessionMetadata);
