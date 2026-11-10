@@ -258,7 +258,18 @@ class EnvironmentStdioTransport implements Transport {
   }
 
   async exitError(): Promise<Error | undefined> {
-    return this.exitErrorPromise;
+    const promise = this.exitErrorPromise;
+    if (promise === undefined) return undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<undefined>((resolve) => {
+      timer = setTimeout(() => resolve(undefined), 1_000);
+      timer.unref?.();
+    });
+    try {
+      return await Promise.race([promise, timeout]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
   }
 
   dispose(): Promise<void> {

@@ -616,6 +616,47 @@ describe('StdioMcpClient', () => {
       return true;
     });
   });
+
+  it('does not hang when the process outlives its closed stdout', async () => {
+    const stdout = new PassThrough();
+    stdout.end();
+    const fakeProc: IHostProcess = {
+      _serviceBrand: undefined,
+      pid: 4242,
+      exitCode: null,
+      stdin: new PassThrough(),
+      stdout,
+      stderr: new PassThrough(),
+      wait: () => new Promise<number>(() => {}),
+      kill: async () => {},
+      dispose: () => {},
+    };
+    const processService: IHostProcessService = {
+      _serviceBrand: undefined,
+      spawn: () => Promise.resolve(fakeProc),
+    };
+    const environment = Object.assign(
+      new FakeEnvironment(
+        { environmentId: 'local', generation: 'test' },
+        { capabilities: ['process'] },
+      ),
+      { process: processService },
+    );
+    const client = new StdioMcpClient(
+      { transport: 'stdio', command: 'fake', args: [] },
+      {
+        environmentResolver: {
+          _serviceBrand: undefined,
+          inspect: () => environment,
+          acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }),
+          acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }),
+        },
+        environmentId: 'local',
+        defaultCwd: process.cwd(),
+      },
+    );
+    await expect(client.connect()).rejects.toThrow(/Connection closed/);
+  }, 10000);
 });
 
 describe('mergeStdioEnv', () => {
