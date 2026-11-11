@@ -7,7 +7,7 @@ import { anthropicProtocol } from '#human/llm/builtin/protocol/anthropic/index';
 const LIVE_REGION = 'us-west-2';
 const LIVE_MODEL = 'global.moonshotai.kimi-k3.1';
 const LIVE_RESPONSES_MODEL = 'global.openai.gpt-6.1-terra';
-const LIVE_ANTHROPIC_MODEL = 'global.anthropic.claude-sonnet-5-5';
+const LIVE_ANTHROPIC_MODEL = 'global.anthropic.claude-sonnet-4-6';
 
 const OPT_IN = process.env['KIMI_BEDROCK_LIVE_TEST'] === '1';
 
