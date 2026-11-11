@@ -29,6 +29,7 @@ const KIMI_TO_PROTOCOL: Record<string, ErrorCode> = {
   [ErrorCodes.TURN_NOT_FOUND]: ErrorCode.TURN_NOT_FOUND,
   [ErrorCodes.REQUEST_INVALID]: ErrorCode.VALIDATION_FAILED,
   [ErrorCodes.CONFIG_INVALID]: ErrorCode.VALIDATION_FAILED,
+  [ErrorCodes.MODEL_CONFIG_INVALID]: ErrorCode.VALIDATION_FAILED,
   [ErrorCodes.NOT_IMPLEMENTED]: ErrorCode.INTERNAL_ERROR,
   [ErrorCodes.PROMPT_NOT_FOUND]: ErrorCode.PROMPT_NOT_FOUND,
   [ErrorCodes.FS_PATH_NOT_FOUND]: ErrorCode.FS_PATH_NOT_FOUND,

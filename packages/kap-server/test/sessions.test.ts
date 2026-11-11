@@ -29,6 +29,7 @@ import {
   IEventService,
   IEnvironmentService,
   ISessionActivityView,
+  ISessionIndexMirror,
   ISessionManager,
   ISessionMetadata,
   ISessionTitleService,
@@ -680,6 +681,19 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(got.body.data.title).toBe('renamed');
   });
 
+  it('still accepts profile updates that carry the never-applied profile fields', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home as string } });
+
+    const updated = await postJson<SessionWire>(`/api/v1/sessions/${created.body.data.id}/profile`, {
+      title: 'renamed',
+      agent_config: { system_prompt: 'be brief', tools: ['Read'], mcp_servers: ['docs'] },
+      permission_rules: [],
+    });
+
+    expect(updated.body.code).toBe(0);
+    expect(updated.body.data.title).toBe('renamed');
+  });
+
   it('returns title-unavailable when generation cannot run', async () => {
     const created = await postJson<SessionWire>('/api/v1/sessions', {
       metadata: { cwd: home as string },
@@ -895,6 +909,117 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(after.plan_mode).toBe(true);
     expect(after.swarm_mode).toBe(true);
     expect(after.permission_mode).toBe('yolo');
+  });
+
+  it('applies agent_config and keeps custom metadata when creating a session', async () => {
+    const cwd = home as string;
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd, source: 'composer' },
+      agent_config: { plan_mode: true, permission_mode: 'yolo' },
+    });
+
+    expect(created.body.code).toBe(0);
+    expect(created.body.data.metadata).toMatchObject({ cwd, source: 'composer' });
+    const state = readAgentState(await mainAgentOf(created.body.data.id), false);
+    expect(state.plan_mode).toBe(true);
+    expect(state.permission_mode).toBe('yolo');
+  });
+
+  it('keeps custom metadata for a session created by workspace_id alone', async () => {
+    const cwd = home as string;
+    const first = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      workspace_id: first.body.data.workspace_id,
+      metadata: { source: 'composer' },
+    });
+
+    expect(created.body.code).toBe(0);
+    expect(created.body.data.metadata).toMatchObject({ cwd, source: 'composer' });
+  });
+
+  it('drops the child-link metadata keys when creating an ordinary session', async () => {
+    const cwd = home as string;
+    const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const parentId = parent.body.data.id;
+
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd, parent_session_id: parentId, child_session_kind: 'child' },
+    });
+
+    expect(created.body.code).toBe(0);
+    expect(created.body.data.metadata).not.toHaveProperty('parent_session_id');
+    expect(created.body.data.metadata).not.toHaveProperty('child_session_kind');
+    const children = await getJson<PageWire>(`/api/v1/sessions/${parentId}/children`);
+    expect(children.body.data.items.some((s) => s.id === created.body.data.id)).toBe(false);
+  });
+
+  it('reports an unknown creation model as a validation error and creates nothing', async () => {
+    const listed = async (): Promise<string[]> =>
+      (await getJson<PageWire>('/api/v1/sessions')).body.data.items.map((session) => session.id);
+    const before = await listed();
+
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+      agent_config: { model: 'no-such-model' },
+    });
+
+    expect(created.body.code).toBe(40001);
+    expect(await listed()).toEqual(before);
+  });
+
+  it('rejects enabling tower_mode before creating anything', async () => {
+    const listed = async (): Promise<string[]> =>
+      (await getJson<PageWire>('/api/v1/sessions')).body.data.items.map((session) => session.id);
+    const before = await listed();
+
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+      agent_config: { tower_mode: true, tower_base: 'release' },
+    });
+
+    expect(created.body.code).toBe(40001);
+    expect(await listed()).toEqual(before);
+  });
+
+  it.each([{ model: '' }, { tower_base: 'main' }])(
+    'does not create the main agent for agent_config %o, which has nothing to apply',
+    async (agentConfig) => {
+      const created = await postJson<SessionWire>('/api/v1/sessions', {
+        metadata: { cwd: home as string },
+        agent_config: agentConfig,
+      });
+
+      expect(created.body.code).toBe(0);
+      const session = getLiveSessionById((server as RunningServer).core.accessor, created.body.data.id)!;
+      expect(session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)).toBeUndefined();
+    },
+  );
+
+  it('creates nothing and announces nothing when its agent_config cannot be applied', async () => {
+    const cwd = home as string;
+    const listed = async (): Promise<string[]> =>
+      (await getJson<PageWire>('/api/v1/sessions')).body.data.items.map((session) => session.id);
+    const before = await listed();
+    const announced: string[] = [];
+    const subscription = (server as RunningServer).core.accessor
+      .get(IEventService)
+      .subscribe((event) => announced.push(event.type));
+
+    try {
+      const created = await postJson<SessionWire>('/api/v1/sessions', {
+        metadata: { cwd },
+        agent_config: { goal_control: 'pause' },
+      });
+
+      expect(created.body.code).toBe(40914);
+      expect(await listed()).toEqual(before);
+      expect(announced.filter((type) => type.startsWith('event.session.'))).toEqual([]);
+      const index = (server as RunningServer).core.accessor.get(ISessionIndexMirror);
+      expect(index.pending().filter((summary) => !before.includes(summary.id))).toEqual([]);
+    } finally {
+      subscription.dispose();
+    }
   });
 
   it('rejects tower_mode agent_config when the tower feature is unavailable', async () => {
