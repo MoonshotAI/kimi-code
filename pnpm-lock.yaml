@@ -139,9 +139,6 @@ importers:
       '@types/yazl':
         specifier: ^2.4.6
         version: 2.4.6
-      better-sqlite3:
-        specifier: ^13.0.3
-        version: 13.0.3
       chalk:
         specifier: ^5.4.1
         version: 5.6.2
@@ -182,6 +179,9 @@ importers:
       '@mariozechner/clipboard':
         specifier: ^0.3.9
         version: 0.3.9
+      better-sqlite3:
+        specifier: ^13.0.3
+        version: 13.0.3
 
   apps/vis:
     devDependencies:
@@ -763,6 +763,10 @@ importers:
       openai:
         specifier: ^6.34.0
         version: 6.34.0(ws@8.20.0)(zod@4.3.6)
+    optionalDependencies:
+      better-sqlite3:
+        specifier: ^13.0.3
+        version: 13.0.3
 
   packages/oauth:
     dependencies:
