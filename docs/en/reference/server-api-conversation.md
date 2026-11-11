@@ -20,7 +20,7 @@ Any well-formed inbound frame counts as client activity, including frame types t
 
 To avoid disconnecting healthy connections, the server also does the following. Clients do not need to do anything:
 
-- **System time does not matter**: the server times heartbeats on a monotonic clock, so changing the system time or waking the machine from sleep does not make a connection time out.
+- **System time does not matter**: the server times heartbeats on a monotonic clock (a clock that only moves forward and is not affected by changes to the system time), so changing the system time or waking the machine from sleep does not make a connection time out.
 - **Restart the clock after the server itself stalls**: while the server process is stalled it cannot send `ping`, so the client has nothing to answer. When the server resumes and finds more than 12.5 seconds (1.25 times the default interval) between two checks, it treats this as its own stall: instead of disconnecting, it sends a new `ping` and gives the client another 20 seconds to answer.
 - **Read messages that already arrived before disconnecting**: a `pong` the client sent while the server was stalled may not have been read yet. Before disconnecting, the server processes messages that have already arrived and checks again; if the client answered, the connection stays open.
 
