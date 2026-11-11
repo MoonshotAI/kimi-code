@@ -105,6 +105,13 @@ function plain(lines: readonly string[]): string {
   return lines.join('\n').replaceAll(/\u001B\[[0-9;]*m/g, '');
 }
 
+function glyphColors(line: string): string[] {
+  return [...line.matchAll(/\u001B\[38;2;(\d+);(\d+);(\d+)m([^\u001B]*)/g)].flatMap(([, red, green, blue, text = '']) => {
+    const color = `#${[red, green, blue].map((channel) => Number(channel).toString(16).padStart(2, '0')).join('')}`;
+    return Array.from(text, () => color);
+  });
+}
+
 interface GroupView {
   readonly title: string;
   readonly expanded: boolean;
@@ -644,35 +651,44 @@ describe('TranscriptGroupComponent', () => {
     for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(70);
   });
 
-  it('sweeps a highlight with fake time and stops requesting frames after the turn ends and the fade', () => {
+  it('sweeps a light title on its running gray, then fades it back to textDim and stops requesting frames', () => {
     chalk.level = 3;
     vi.useFakeTimers();
-    const { container, requestRender } = makeContainer();
-    container.addChild(thought());
-    container.addChild(tool('Read', { path: '/work/a.ts' }));
-    container.addChild(runningTool('Grep'));
-    const timeline = liveTurn(container);
+    const previousPalette = currentTheme.palette;
+    currentTheme.setPalette(lightColors);
+    currentTheme.setTerminalBackground('#FFFFFF');
+    try {
+      const { container, requestRender } = makeContainer();
+      container.addChild(thought());
+      container.addChild(tool('Read', { path: '/work/a.ts' }));
+      container.addChild(runningTool('Grep'));
+      const timeline = liveTurn(container);
 
-    const initial = container.render(80);
-    expect(plain(initial)).toContain('  Thought for 3s');
-    expect(plain(initial)).not.toContain('●');
-    requestRender.mockClear();
-    vi.advanceTimersByTime(ANIMATION_FRAME_INTERVAL_MS);
-    const next = container.render(80);
-    expect(requestRender).toHaveBeenCalledTimes(1);
-    expect(next).not.toEqual(initial);
+      const initial = container.render(80);
+      expect(plain(initial)).toContain('  Thought for 3s');
+      expect(plain(initial)).not.toContain('●');
+      expect(new Set(glyphColors(initial[1] ?? ''))).toEqual(new Set(['#767676']));
+      requestRender.mockClear();
+      vi.advanceTimersByTime(1_200);
+      const next = container.render(80);
+      expect(requestRender).toHaveBeenCalled();
+      expect(next).not.toEqual(initial);
 
-    timeline.turnEnded();
-    container.render(80);
-    for (let frame = 0; frame < 40; frame++) {
-      vi.advanceTimersByTime(50);
+      timeline.turnEnded();
       container.render(80);
+      for (let frame = 0; frame < 40; frame++) {
+        vi.advanceTimersByTime(50);
+        container.render(80);
+      }
+      requestRender.mockClear();
+      vi.advanceTimersByTime(1_000);
+      expect(requestRender).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+      expect(new Set(glyphColors(container.render(80)[1] ?? ''))).toEqual(new Set([lightColors.textDim.toLowerCase()]));
+      container.clear();
+    } finally {
+      currentTheme.setPalette(previousPalette);
     }
-    requestRender.mockClear();
-    vi.advanceTimersByTime(1_000);
-    expect(requestRender).not.toHaveBeenCalled();
-    expect(vi.getTimerCount()).toBe(0);
-    container.clear();
   });
 
   it('fades the highlight in and out by elapsed time whatever the animation frame length', () => {
@@ -684,7 +700,7 @@ describe('TranscriptGroupComponent', () => {
       for (let frame = frameMs; frame < time; frame += frameMs) frames.add(frame);
       if (turnEndsAt < time) frames.add(turnEndsAt);
       const sweep = new TitleSweep();
-      sweep.start(0);
+      sweep.start(0, false);
       for (const frame of [...frames].toSorted((left, right) => left - right)) {
         sweep.advance(frame, 20, frame <= turnEndsAt);
       }
@@ -695,6 +711,138 @@ describe('TranscriptGroupComponent', () => {
       const levels = [120, 50, 33].map((frameMs) => intensityAt(time, frameMs));
       expect(Math.max(...levels) - Math.min(...levels), `${String(time)} ms`).toBeLessThanOrEqual(0.02);
     }
+  });
+
+  it('fades the highlight out within a second of the turn ending on slow animation frames', () => {
+    const fadeOutTime = (frameMs: number): number => {
+      const sweep = new TitleSweep();
+      sweep.start(0, true);
+      let time = 0;
+      while (sweep.intensity > 0) {
+        time += frameMs;
+        sweep.advance(time, 20, false);
+      }
+      return time;
+    };
+
+    expect(fadeOutTime(1_000)).toBe(1_000);
+    expect(fadeOutTime(500)).toBe(1_000);
+    expect(fadeOutTime(120)).toBe(1_080);
+  });
+
+  it.each([
+    { theme: 'dark', palette: darkColors, background: '#000000', rest: darkColors.textDim.toLowerCase() },
+    { theme: 'dark', palette: darkColors, background: '#1E1E1E', rest: darkColors.textDim.toLowerCase() },
+    { theme: 'light', palette: lightColors, background: '#FFFFFF', rest: '#767676' },
+    { theme: 'light', palette: lightColors, background: '#F0F0F0', rest: '#6d6d6d' },
+    { theme: 'custom light', palette: { ...lightColors, text: '#333333' }, background: '#FFFFFF', rest: '#767676' },
+  ])('lights a running $theme title on $background from its rest color up to text', ({ palette, background, rest }) => {
+    chalk.level = 3;
+    const previousPalette = currentTheme.palette;
+    currentTheme.setPalette(palette);
+    currentTheme.setTerminalBackground(background);
+    try {
+      const title = 'Read 3 files, ran 2 commands';
+      const sweep = new TitleSweep();
+      sweep.start(0, true);
+      const colorsAt = (time: number): string[] => {
+        sweep.advance(time, 2 + title.length, true);
+        return glyphColors(sweep.painter()(title, 2));
+      };
+
+      expect(colorsAt(0)).toEqual(Array.from(title, () => rest));
+      const crossing = colorsAt(1_000);
+      expect(crossing[2]).toBe(palette.text.toLowerCase());
+      expect(new Set(crossing.slice(0, 7))).not.toContain(rest);
+      expect(crossing.slice(8)).toEqual(Array.from(title.slice(8), () => rest));
+    } finally {
+      currentTheme.setPalette(previousPalette);
+    }
+  });
+
+  function sweptFramesOverSixSeconds(changeTitleAt?: number) {
+    chalk.level = 3;
+    vi.useFakeTimers();
+    const frames = manualFrames();
+    const { container, requestRender } = makeContainer(options(), frames);
+    container.addChild(tool('Read', { path: '/work/a.ts' }));
+    workingTurn(container);
+    container.render(100);
+    const swept: number[] = [];
+    let redrawsWhileWaiting = 0;
+    for (let elapsed = ANIMATION_FRAME_INTERVAL_MS; elapsed <= 6_480; elapsed += ANIMATION_FRAME_INTERVAL_MS) {
+      vi.advanceTimersByTime(ANIMATION_FRAME_INTERVAL_MS);
+      if (elapsed === changeTitleAt) container.addChild(tool('Read', { path: '/work/b.ts' }));
+      requestRender.mockClear();
+      frames.run(performance.now());
+      if (elapsed >= 2_400 && elapsed < 4_600) redrawsWhileWaiting += requestRender.mock.calls.length;
+      if (new Set(glyphColors(container.render(100)[1] ?? '')).size > 1) swept.push(elapsed);
+    }
+    const title = onlyGroup(container, 100).title;
+    container.clear();
+    return { swept, redrawsWhileWaiting, title };
+  }
+
+  it('waits 600 ms before the first sweep and holds the rest color until the next 4-second cycle', () => {
+    const { swept, redrawsWhileWaiting, title } = sweptFramesOverSixSeconds();
+
+    expect(title).toBe('  Read a.ts');
+    expect(swept.some((at) => at < 2_200)).toBe(true);
+    expect(swept.some((at) => at > 4_600)).toBe(true);
+    expect(swept.filter((at) => at <= 600 || (at >= 2_200 && at <= 4_600) || at >= 6_200)).toEqual([]);
+    expect(redrawsWhileWaiting).toBe(0);
+  });
+
+  it('keeps the sweep rhythm when the title changes in the middle of a sweep', () => {
+    const { swept, redrawsWhileWaiting, title } = sweptFramesOverSixSeconds(1_200);
+
+    expect(title).toBe('  Read 2 files');
+    expect(swept.some((at) => at < 1_200)).toBe(true);
+    expect(swept.some((at) => at > 1_200 && at < 2_200)).toBe(true);
+    expect(swept.some((at) => at > 4_600)).toBe(true);
+    expect(swept.filter((at) => at <= 600 || (at >= 2_200 && at <= 4_600) || at >= 6_200)).toEqual([]);
+    expect(redrawsWhileWaiting).toBe(0);
+  });
+
+  it('sweeps every line of an opened multi-line title and keeps it still between sweeps', () => {
+    chalk.level = 3;
+    vi.useFakeTimers();
+    const frames = manualFrames();
+    const { container } = makeContainer(options({ toolCallDensity: 'compact' }), frames);
+    const heredoc = tool('Bash', { command: "cat <<'EOF' > notes.txt\nhello from the second line\nEOF" }, {
+      tool_call_id: 'bash-multi-line-sweep',
+      output: 'written',
+      is_error: false,
+    });
+    container.addChild(heredoc);
+    workingTurn(container);
+    container.toggleGroup(heredoc);
+    const titleColors = (): string[] => {
+      const rendered = container.render(100);
+      const lines = plain(rendered).split('\n').map((line) => line.trimEnd());
+      const start = lines.findIndex((line) => line.startsWith('● $ '));
+      return rendered.slice(start, lines.indexOf('', start)).map((line) => glyphColors(line).join(' '));
+    };
+    container.render(100);
+    let still: string[] = [];
+    const sweptLines = new Set<number>();
+    const moving: number[] = [];
+    for (let elapsed = ANIMATION_FRAME_INTERVAL_MS; elapsed <= 6_480; elapsed += ANIMATION_FRAME_INTERVAL_MS) {
+      vi.advanceTimersByTime(ANIMATION_FRAME_INTERVAL_MS);
+      frames.run(performance.now());
+      const colors = titleColors();
+      if (elapsed === 480) still = colors;
+      if (elapsed <= 480) continue;
+      for (const [index, line] of colors.entries()) {
+        if (line !== still[index]) sweptLines.add(index);
+      }
+      if (colors.join('\n') !== still.join('\n')) moving.push(elapsed);
+    }
+    container.clear();
+
+    expect(still).toHaveLength(3);
+    expect([...sweptLines].toSorted()).toEqual([0, 1, 2]);
+    expect(moving.filter((at) => at <= 600 || (at >= 2_200 && at <= 4_600) || at >= 6_200)).toEqual([]);
   });
 
   function sweepFrames(container: TranscriptContainer, requestRender: ReturnType<typeof vi.fn>) {
@@ -773,30 +921,6 @@ describe('TranscriptGroupComponent', () => {
     expect(plain(container.render(100))).toContain('echo a second line');
 
     sweepFrames(container, requestRender);
-    container.clear();
-  });
-
-  it('pauses after the highlight leaves the summary before restarting', () => {
-    chalk.level = 3;
-    vi.useFakeTimers();
-    vi.setSystemTime(100_000);
-    const { container } = makeContainer();
-    container.addChild(tool('Read'));
-    liveTurn(container);
-    container.render(100);
-
-    for (let frame = 0; frame < 13; frame++) {
-      vi.advanceTimersByTime(50);
-      container.render(100);
-    }
-    const dimFirst = `  ${chalk.hex(currentTheme.color('textDim'))('R')}`;
-    expect(container.render(100)[1]?.startsWith(dimFirst)).toBe(true);
-
-    for (let frame = 0; frame < 7; frame++) {
-      vi.advanceTimersByTime(50);
-      container.render(100);
-    }
-    expect(container.render(100)[1]?.startsWith(dimFirst)).toBe(false);
     container.clear();
   });
 
