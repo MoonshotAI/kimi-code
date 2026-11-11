@@ -6,15 +6,14 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService, type LoopSnapshot } from '#/agent/loop/loop';
 import { turnKey } from '#/agent/loop/turnOps';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
-import { errorFromLlmOutcome, type ModelRequestTiming } from '#/llm-adapter/model/generate';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IFlagService } from '#/app/flag/flag';
 import type { PredictionGeneratedEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentPlanService } from '#/features/plan/plan';
-import { createUserMessage } from '#human/llm/message';
-import type { LlmOutcome } from '#human/llm/response';
-import type { TokenUsage } from '#human/llm-requester/usage';
+import { createUserMessage } from '@moonshot-ai/core/llm/message';
+import type { LlmOutcome, LlmTiming } from '@moonshot-ai/core/llm/response';
+import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import {
   ISessionActivityView,
@@ -62,7 +61,7 @@ interface ActivePrediction {
   predictionChars?: number;
   usage?: TokenUsage;
   requestId?: string;
-  timing?: ModelRequestTiming;
+  timing?: LlmTiming;
   cancelReason?: PromptPredictionCancelReason;
 }
 
@@ -159,7 +158,10 @@ export class SessionPromptPredictionService extends Disposable implements ISessi
         },
         { signal: active.deadline.signal },
       ), active.deadline.signal);
-      if (outcome.type !== 'done') throw errorFromLlmOutcome(outcome);
+      if (outcome.type === 'failed') throw outcome.error;
+      if (outcome.type === 'aborted') {
+        throw outcome.reason ?? new DOMException('The operation was aborted.', 'AbortError');
+      }
       active.usage = outcome.usage;
       active.requestId = outcome.requestId ?? trace?.requestId;
       active.timing = outcome.timing;
