@@ -13,6 +13,7 @@ import type { LlmErrorClassifier } from '#human/llm-requester/requester';
 import type { LlmRequester } from '#human/llm/requester';
 import { kimiRequesters } from '#human/llm/builtin/provider/kimi/index';
 import { classifyKimiQuotaError } from '#human/llm/builtin/provider/kimi/errors';
+import { bedrockModelCapability } from '#human/llm/builtin/provider/bedrock/routing';
 
 import type { Protocol } from '../protocol/protocol';
 import type { ModelSource } from './provider';
@@ -196,18 +197,21 @@ registerProviderDefinition({
   id: 'bedrock',
   baseProtocol: 'anthropic',
   endpoint: bedrockEndpoint,
+  capability: bedrockModelCapability,
 });
 
 registerProviderDefinition({
   id: 'bedrock',
   baseProtocol: 'openai',
   endpoint: bedrockEndpoint,
+  capability: bedrockModelCapability,
 });
 
 registerProviderDefinition({
   id: 'bedrock',
   baseProtocol: 'openai_responses',
   endpoint: bedrockEndpoint,
+  capability: bedrockModelCapability,
 });
 
 registerProviderDefinition({

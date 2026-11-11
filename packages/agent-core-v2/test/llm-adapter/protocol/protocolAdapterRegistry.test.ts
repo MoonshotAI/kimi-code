@@ -168,6 +168,24 @@ describe('resolveCapability', () => {
     );
     expect(registry.resolveCapability('openai', 'gpt-4o', 'kimi').image_in).toBe(true);
   });
+
+  it('bedrock strips geo and vendor prefixes so claude capabilities match the direct vendor', () => {
+    for (const bare of ['claude-sonnet-4-6', 'claude-3-5-sonnet', 'claude-opus-4-1']) {
+      const direct = registry.resolveCapability('anthropic', bare, 'anthropic');
+      expect(registry.resolveCapability('anthropic', `anthropic.${bare}`, 'bedrock')).toEqual(
+        direct,
+      );
+      expect(registry.resolveCapability('anthropic', `global.anthropic.${bare}`, 'bedrock')).toEqual(
+        direct,
+      );
+      expect(registry.resolveCapability('anthropic', `us.anthropic.${bare}`, 'bedrock')).toEqual(
+        direct,
+      );
+    }
+    expect(
+      registry.resolveCapability('anthropic', 'global.anthropic.claude-sonnet-4-6', 'bedrock'),
+    ).toMatchObject({ image_in: true, thinking: true, tool_use: true });
+  });
 });
 
 describe('request gateway routes', () => {

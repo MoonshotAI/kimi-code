@@ -1,3 +1,8 @@
+import { getAnthropicModelCapability } from '#/llm/builtin/protocol/anthropic/capability';
+import { getOpenAILegacyModelCapability } from '#/llm/builtin/protocol/openai/capability';
+import { getOpenAIResponsesModelCapability } from '#/llm/builtin/protocol/openai-responses/capability';
+import type { ModelCapability } from '#/llm-requester/capability';
+
 export type BedrockWireProtocol = 'anthropic' | 'openai' | 'openai_responses';
 
 const GEO_INFERENCE_PROFILE_PREFIX_RE = /^(?:[a-z]{2}|apac|global)$/;
@@ -8,6 +13,26 @@ export function stripBedrockInferenceProfilePrefix(model: string): string {
   return GEO_INFERENCE_PROFILE_PREFIX_RE.test(model.slice(0, separator))
     ? model.slice(separator + 1)
     : model;
+}
+
+function stripBedrockVendorNamespace(model: string): string {
+  const separator = model.indexOf('.');
+  return separator <= 0 ? model : model.slice(separator + 1);
+}
+
+export function bedrockModelCapability(model: string): ModelCapability | undefined {
+  const withoutGeo = stripBedrockInferenceProfilePrefix(model);
+  const vendorModel = stripBedrockVendorNamespace(withoutGeo);
+  switch (inferBedrockProtocol(withoutGeo)) {
+    case 'anthropic':
+      return getAnthropicModelCapability(vendorModel);
+    case 'openai':
+      return getOpenAILegacyModelCapability(vendorModel);
+    case 'openai_responses':
+      return getOpenAIResponsesModelCapability(vendorModel);
+    default:
+      return undefined;
+  }
 }
 
 export function bedrockWireProtocolOf(value: string | undefined): BedrockWireProtocol | undefined {
