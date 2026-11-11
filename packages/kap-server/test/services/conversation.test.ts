@@ -124,6 +124,12 @@ describe('conversation fold', () => {
       contentPart(0, 1, 's1', { type: 'text', text: 'answer' }, 2),
       toolCall(0, 1, 's1', 'call-1', 'Bash', { command: 'ls' }),
       toolResult('call-1', 'a\nb'),
+      stepEnd(0, 1, 's1', {
+        finishReason: 'tool_use',
+        usage: { inputOther: 3, output: 2, inputCacheCreation: 1, raw: { provider: 'example' } },
+        llmFirstTokenLatencyMs: 40,
+        llmServerDecodeMs: 7,
+      }),
       record('turn.step.retrying', {
         turnId: 0,
         step: 1,
@@ -142,12 +148,6 @@ describe('conversation fold', () => {
     applyConversationRecord(state, record('turn.step.started', { turnId: 0, step: 1, stepId: 's1' }));
     expect(state.turns[0]?.retry).toBeUndefined();
     for (const entry of [
-      stepEnd(0, 1, 's1', {
-        finishReason: 'tool_use',
-        usage: { inputOther: 3, output: 2, inputCacheCreation: 1, raw: { provider: 'example' } },
-        llmFirstTokenLatencyMs: 40,
-        llmServerDecodeMs: 7,
-      }),
       stepBegin(0, 2, 's2'),
       stepEnd(0, 2, 's2', { finishReason: 'end_turn', usage: { inputOther: 5, output: 1, inputCacheRead: 4, inputCacheCreation: 0 } }),
       turnEnded(0, 'completed', { durationMs: 120 }),
