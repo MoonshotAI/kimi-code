@@ -27,7 +27,7 @@ export function waitEvent<E>(listen: (handler: (event: E) => void) => () => void
       return;
     }
     unsubscribe = listen((event) => {
-      if (opts?.match !== undefined && !event.test(opts)) return;
+      if (opts?.match !== undefined && !opts.match(event)) return;
       cleanup();
       resolve(event);
     });
