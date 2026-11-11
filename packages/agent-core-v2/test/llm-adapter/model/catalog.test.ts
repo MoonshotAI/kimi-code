@@ -1003,6 +1003,7 @@ describe('wire projection (pure)', () => {
       toProtocolProvider('p1', provider, models, 'a', {
         hasApiKey: true,
         hasOAuthToken: false,
+        supportsAmbientCredential: false,
         hasCredentialConflict: false,
       }),
     ).toEqual({
@@ -1024,13 +1025,19 @@ describe('wire projection (pure)', () => {
         },
         models,
         'a',
-        { hasApiKey: true, hasOAuthToken: true, hasCredentialConflict: true },
+        {
+          hasApiKey: true,
+          hasOAuthToken: true,
+          supportsAmbientCredential: false,
+          hasCredentialConflict: true,
+        },
       ),
     ).toMatchObject({ status: 'error', has_api_key: true });
     expect(
       toProtocolProvider('p1', { ...provider, defaultModel: 'own' }, models, 'a', {
         hasApiKey: false,
         hasOAuthToken: false,
+        supportsAmbientCredential: false,
         hasCredentialConflict: false,
       }).default_model,
     ).toBe('own');
@@ -1038,9 +1045,22 @@ describe('wire projection (pure)', () => {
       toProtocolProvider('p1', { ...provider, type: undefined }, models, undefined, {
         hasApiKey: false,
         hasOAuthToken: false,
+        supportsAmbientCredential: false,
         hasCredentialConflict: false,
       }),
     ).toMatchObject({ type: 'openai', status: 'unconfigured', default_model: undefined });
+  });
+
+  it('toProtocolProvider reports an ambient-credential provider as connected', () => {
+    const models: Record<string, ModelRecord> = { a: { provider: 'p1', model: 'm-a' } };
+    expect(
+      toProtocolProvider('p1', { type: 'bedrock' }, models, 'a', {
+        hasApiKey: false,
+        hasOAuthToken: false,
+        supportsAmbientCredential: true,
+        hasCredentialConflict: false,
+      }),
+    ).toMatchObject({ status: 'connected' });
   });
 });
 
@@ -1337,6 +1357,26 @@ describe('ModelCatalog enumeration', () => {
     try {
       const [provider] = await catalog.listProviders();
       expect(provider).toMatchObject({ id: 'acme', has_api_key: false, status: 'connected' });
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('marks an ambient bedrock provider connected while a keyed non-bedrock one stays unconfigured without a key', async () => {
+    const { host, catalog } = createHost({
+      providers: {
+        ambient: { type: 'bedrock', env: { AWS_REGION: 'us-east-1' } },
+        keyed: { type: 'bedrock', env: { AWS_REGION: 'us-east-1', AWS_BEARER_TOKEN_BEDROCK: 'tok' } },
+        plain: { type: 'openai' },
+      },
+      models: {},
+    });
+    try {
+      const providers = await catalog.listProviders();
+      const byId = Object.fromEntries(providers.map((p) => [p.id, p]));
+      expect(byId['ambient']).toMatchObject({ has_api_key: false, status: 'connected' });
+      expect(byId['keyed']).toMatchObject({ has_api_key: true, status: 'connected' });
+      expect(byId['plain']).toMatchObject({ has_api_key: false, status: 'unconfigured' });
     } finally {
       host.dispose();
     }

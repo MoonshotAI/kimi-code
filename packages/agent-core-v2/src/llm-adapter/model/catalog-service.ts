@@ -210,9 +210,12 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
     provider: CatalogProviderInfo,
   ): Promise<ProviderCredentialState> {
     const declared = declaredProviderCredential(provider, providerId);
+    const hasApiKey = hasConfiguredApiKey(provider);
+    const hasOAuthToken = await this.hasCachedToken(providerId, provider);
     return {
-      hasApiKey: hasConfiguredApiKey(provider),
-      hasOAuthToken: await this.hasCachedToken(providerId, provider),
+      hasApiKey,
+      hasOAuthToken,
+      supportsAmbientCredential: provider.type === 'bedrock' && !hasApiKey && !hasOAuthToken,
       hasCredentialConflict: declared.kind === 'conflict',
     };
   }
