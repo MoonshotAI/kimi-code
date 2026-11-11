@@ -75,8 +75,8 @@ export function registerMessagesRoutes(app: MessageRouteHost, core: Scope): void
         const { session_id } = req.params;
         const page = await listMessages(core, session_id, req.query);
         reply.send(okEnvelope(page, req.id));
-      } catch (err) {
-        sendMappedError(reply, req, err);
+      } catch (error) {
+        sendMappedError(reply, req, error);
       }
     },
   );
@@ -106,8 +106,8 @@ export function registerMessagesRoutes(app: MessageRouteHost, core: Scope): void
         const { session_id, message_id } = req.params;
         const message = await getMessage(core, session_id, message_id);
         reply.send(okEnvelope(message, req.id));
-      } catch (err) {
-        sendMappedError(reply, req, err);
+      } catch (error) {
+        sendMappedError(reply, req, error);
       }
     },
   );
@@ -125,11 +125,11 @@ function sendMappedError(
 ): void {
   const requestId = req.id;
   if (err instanceof SessionNotFoundError) {
-    reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId, err.stack));
+    reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId));
     return;
   }
   if (err instanceof MessageNotFoundError) {
-    reply.send(errEnvelope(ErrorCode.MESSAGE_NOT_FOUND, err.message, requestId, err.stack));
+    reply.send(errEnvelope(ErrorCode.MESSAGE_NOT_FOUND, err.message, requestId));
     return;
   }
   sendSessionMappedError(reply, req, err);

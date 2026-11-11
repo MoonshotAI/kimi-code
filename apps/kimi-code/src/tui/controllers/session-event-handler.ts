@@ -21,7 +21,7 @@ import type {
   ThinkingDeltaEvent,
   ToolCallDeltaEvent,
   ToolCallStartedEvent,
-  ToolProgressEvent,
+  ToolUpdatedEvent,
   ToolResultEvent,
   TurnEndedEvent,
   TurnStartedEvent,
@@ -195,6 +195,7 @@ export class SessionEventHandler {
   private queuedGoalPromotionInFlight = false;
   private queuedGoalPromotionTimer: ReturnType<typeof setTimeout> | undefined;
   private stepRetryAttemptTimer: ReturnType<typeof setTimeout> | undefined;
+  private readonly toolStatuses = new Map<string, string>();
 
   resetRuntimeState(): void {
     this.backgroundTasks.clear();
@@ -202,6 +203,7 @@ export class SessionEventHandler {
     this.backgroundTaskTerminalEntries.clear();
     this.subAgentEventHandler.resetRuntimeState();
     this.notifications.reset();
+    this.toolStatuses.clear();
     this.seenSkillActivationIds.clear();
     this.renderedPluginCommandActivationIds.clear();
     this.renderedMcpServerStatusKeys.clear();
@@ -244,8 +246,8 @@ export class SessionEventHandler {
     host.sessionEventUnsubscribe = session.onEvent((event) => {
       if (host.aborted) return;
       if (event.sessionId !== sessionId) return;
-      if (event.type === 'tool.progress') {
-        mcpOAuthOpener.handleToolProgress(event);
+      if (event.type === 'tool.updated') {
+        mcpOAuthOpener.handleToolUpdated(event);
       }
       this.handleEvent(event, sendQueued);
     });
@@ -317,7 +319,7 @@ export class SessionEventHandler {
       case 'turn.step.interrupted': this.handleStepInterrupted(event); break;
       case 'turn.step.completed': this.handleStepCompleted(event); break;
       case 'turn.step.retrying': this.handleStepRetrying(event); break;
-      case 'tool.progress': this.handleToolProgress(event); break;
+      case 'tool.updated': this.handleToolUpdated(event); break;
       case 'shell.output': this.host.handleShellOutput(event); break;
       case 'shell.started': this.host.handleShellStarted(event); break;
       case 'assistant.delta': this.handleAssistantDelta(event); break;
@@ -592,7 +594,7 @@ export class SessionEventHandler {
     this.host.streamingUI.resetToolUi();
     this.host.streamingUI.finalizeLiveTextBuffers('idle');
     const reason = event.reason;
-    if (reason === 'error') return;
+    if (reason === 'error' || reason === 'steered') return;
     if (reason === 'aborted' || reason === undefined || reason === '') {
       this.markActiveAgentSwarmsCancelled();
       if (event.message === undefined || event.message === '') {
@@ -737,28 +739,28 @@ export class SessionEventHandler {
     streamingUI.scheduleFlush();
   }
 
-  private handleToolProgress(event: ToolProgressEvent): void {
+  private handleToolUpdated(event: ToolUpdatedEvent): void {
     // Input queued before the wait began would otherwise sit until the wait
     // returns; steering it now ends the wait so the model reads it first.
-    if (this.host.streamingUI.markWaitForRunning(event.toolCallId)) {
+    if (event.fields['wait'] !== undefined && this.host.streamingUI.markWaitForRunning(event.toolCallId)) {
       this.host.steerQueuedMessagesIntoRunningTurn();
     }
-    const text = event.update.text;
-    if (text === undefined || text.length === 0) return;
     const tc = this.host.streamingUI.getToolComponent(event.toolCallId);
     if (tc === undefined) return;
-    if (event.update.kind === 'status') {
-      tc.appendProgress(text, { replace: event.update.replace === true });
+    if (event.output !== undefined) {
+      if (event.output.text.length > 0) tc.appendLiveOutput(event.output.text);
       return;
     }
-    if (event.update.kind === 'stdout' || event.update.kind === 'stderr') {
-      tc.appendLiveOutput(text);
-    }
+    const status = event.fields['status'];
+    if (typeof status !== 'string' || status.length === 0 || this.toolStatuses.get(event.toolCallId) === status) return;
+    this.toolStatuses.set(event.toolCallId, status);
+    tc.appendProgress(status, { replace: event.fields['statusReplace'] === true });
   }
 
   private handleToolResult(event: ToolResultEvent): void {
     const { streamingUI } = this.host;
     if (isToolCallId(event.toolCallId)) streamingUI.timeline.callResult(event.toolCallId);
+    this.toolStatuses.delete(event.toolCallId);
     this.host.surveyController.notifyToolCallEnded(event.toolCallId);
     streamingUI.flushNow();
     this.clearStepRetry();

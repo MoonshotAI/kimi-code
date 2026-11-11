@@ -556,13 +556,14 @@ export class SessionEventBroadcaster {
       }));
       return;
     }
-    if (event.type === 'event.session.archived') {
-      const payload = sessionArchivedPayload(corePayload);
+    if (event.type === 'event.session.archived' || event.type === 'event.session.restored') {
+      const payload = sessionLifecyclePayload(corePayload);
       if (payload === undefined) return;
+      const type = event.type;
       this.enqueueGlobal(
-        event.type,
+        type,
         () => ({
-          type: 'event.session.archived',
+          type,
           workspace_id: payload.workspaceId,
           agentId: 'main',
           sessionId: payload.sessionId,
@@ -572,7 +573,7 @@ export class SessionEventBroadcaster {
       return;
     }
     if (event.type === 'event.session.deleted') {
-      const payload = sessionDeletedPayload(corePayload);
+      const payload = sessionLifecyclePayload(corePayload);
       if (payload === undefined) return;
       this.enqueueGlobal(
         event.type,
@@ -892,21 +893,7 @@ function sessionCreatedPayload(
   return { sessionId, session };
 }
 
-function sessionArchivedPayload(
-  payload: unknown,
-): { sessionId: string; workspaceId: string } | undefined {
-  if (typeof payload !== 'object' || payload === null) return undefined;
-  const candidate = payload as { sessionId?: unknown; workspaceId?: unknown };
-  if (typeof candidate.sessionId !== 'string' || candidate.sessionId.length === 0) {
-    return undefined;
-  }
-  if (typeof candidate.workspaceId !== 'string' || candidate.workspaceId.length === 0) {
-    return undefined;
-  }
-  return { sessionId: candidate.sessionId, workspaceId: candidate.workspaceId };
-}
-
-function sessionDeletedPayload(
+function sessionLifecyclePayload(
   payload: unknown,
 ): { sessionId: string; workspaceId: string } | undefined {
   if (typeof payload !== 'object' || payload === null) return undefined;

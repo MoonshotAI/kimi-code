@@ -36,7 +36,7 @@ export class BeforeToolExecuteEventImpl implements BeforeToolExecuteEvent {
   private _finalAllowed = false;
   private _passMetadata: unknown;
   private readonly _pendingVetos: PendingVetoFactory[] = [];
-  private readonly _reviewStarts: Array<() => void> = [];
+  private readonly _reviewStarts: Array<() => unknown> = [];
   private readonly _reviewAbort = new AbortController();
   private _open = true;
 
@@ -79,14 +79,13 @@ export class BeforeToolExecuteEventImpl implements BeforeToolExecuteEvent {
     this._pendingVetos.push(factory);
   }
 
-  deferReview(start: () => void): void {
+  deferReview(start: () => unknown): void {
     this.assertOpen('deferReview');
     this._reviewStarts.push(start);
   }
 
   startDeferredReviews(): void {
-    for (const start of this._reviewStarts) start();
-    this._reviewStarts.length = 0;
+    for (const start of this._reviewStarts.splice(0)) start();
   }
 
   get vetoResult(): ExecutableToolResult | undefined {
@@ -128,7 +127,11 @@ export class BeforeToolExecuteEmitter extends Emitter<BeforeToolExecuteEvent> {
       : await this.beginBeforeExecute(context);
     if (event === undefined || event.finalAllowed) return undefined;
     if (event.vetoResult !== undefined) return { veto: event.vetoResult };
-    return this.settleBeforeExecute(event);
+    try {
+      return await this.settleBeforeExecute(event);
+    } finally {
+      event.cancelReview();
+    }
   }
 
   async beginBeforeExecute(

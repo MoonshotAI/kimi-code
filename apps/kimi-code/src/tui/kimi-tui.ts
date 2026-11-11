@@ -641,6 +641,7 @@ export class KimiTUI {
             const result = await this.harness.suggestFiles(this.state.appState.workDir, {
               query,
               sessionId: session.id,
+              followGitignore: false,
             });
             return result?.items;
           };
@@ -3043,12 +3044,10 @@ export class KimiTUI {
       'user',
     );
     const currentTurnId = this.streamingUI.getTurnContext().turnId;
-    // Skill steers may not merge into the current turn: an untracked active
-    // turn (e.g. a goal continuation) has no steerable prompt, so the engine
-    // queues the submission — and binding the lease here would release its
-    // media when that unrelated turn ends. Leave skill leases unclaimed so
-    // the submission's own turn.started claims them; a merged steer simply
-    // retires its media at session close instead.
+    // Skill steers always hand off to the turn that consumes the bundled
+    // entry. Leave skill leases unclaimed by the previous turn so that turn's
+    // completion cannot release the media; the consuming turn.started claims
+    // them instead. Ordinary steers keep the existing binding behavior.
     if (currentTurnId !== undefined && prepared === undefined) this.staging.bindToTurn(stagingLease, currentTurnId);
     const dispatch = (items: readonly SteerInputItem[]) => {
       const payload = combineSteerInput(items);

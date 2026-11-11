@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPlanService } from '#/features/plan/plan';
@@ -24,19 +23,19 @@ async function injectDynamic(ctx: TestAgentContext): Promise<void> {
 
 function appendAssistantTurn(
   ctx: TestAgentContext,
-  context: IAgentContextMemoryService,
+  context: IAgentLoopService,
   text: string,
 ): void {
-  ctx.appendAssistantTurn(context.get().length, text);
+  ctx.appendAssistantTurn(context.history().length, text);
 }
 
-function planReminderMessages(context: IAgentContextMemoryService): readonly ContextMessage[] {
-  return context.get().filter((message) => {
+function planReminderMessages(context: IAgentLoopService): readonly ContextMessage[] {
+  return context.history().filter((message) => {
     return message.origin?.kind === 'injection' && message.origin.variant === 'plan_mode';
   });
 }
 
-function lastPlanReminder(context: IAgentContextMemoryService): string {
+function lastPlanReminder(context: IAgentLoopService): string {
   const message = planReminderMessages(context).at(-1);
   if (message === undefined) return '';
   return message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
@@ -44,7 +43,7 @@ function lastPlanReminder(context: IAgentContextMemoryService): string {
 
 describe('PlanModeService dynamic injection content', () => {
   let ctx: TestAgentContext;
-  let context: IAgentContextMemoryService;
+  let context: IAgentLoopService;
   let plan: IAgentPlanService;
   let readText: (path: string) => Promise<string>;
 
@@ -59,7 +58,7 @@ describe('PlanModeService dynamic injection content', () => {
         }),
       }),
     );
-    context = ctx.get(IAgentContextMemoryService);
+    context = ctx.get(IAgentLoopService);
     plan = ctx.get(IAgentPlanService);
     await ctx.restorePersisted();
   });
@@ -121,7 +120,7 @@ describe('PlanModeService dynamic injection content', () => {
     await injectDynamic(ctx);
 
     expect(planReminderMessages(context)).toHaveLength(0);
-    expect(context.get()).toHaveLength(0);
+    expect(context.history()).toHaveLength(0);
   });
 
   it('injects a reentry reminder when restored plan mode already has plan content', async () => {
@@ -139,7 +138,7 @@ describe('PlanModeService dynamic injection content', () => {
 
 describe('PlanModeService dynamic injection cadence', () => {
   let ctx: TestAgentContext;
-  let context: IAgentContextMemoryService;
+  let context: IAgentLoopService;
   let plan: IAgentPlanService;
 
   beforeEach(async () => {
@@ -152,7 +151,7 @@ describe('PlanModeService dynamic injection cadence', () => {
         }),
       }),
     );
-    context = ctx.get(IAgentContextMemoryService);
+    context = ctx.get(IAgentLoopService);
     plan = ctx.get(IAgentPlanService);
     await ctx.restorePersisted();
   });

@@ -1,6 +1,8 @@
-import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
+import { spawn as nodeSpawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import { stat } from 'node:fs/promises';
 import type { Readable, Writable } from 'node:stream';
+
+import spawn from 'cross-spawn';
 
 import { BufferedReadable } from '#/_base/execEnv/bufferedReadable';
 
@@ -53,6 +55,23 @@ function waitForSpawn(child: ChildProcess): Promise<void> {
     child.once('spawn', onSpawn);
     child.once('error', onError);
   });
+}
+
+function spawnFailedError(
+  command: string,
+  args: readonly string[],
+  cwd: string | undefined,
+  error: unknown,
+): HostProcessError {
+  const err = error as NodeJS.ErrnoException;
+  return new HostProcessError(
+    HostProcessErrorCode.SpawnFailed,
+    `Failed to spawn "${command}": ${err.message}`,
+    {
+      details: { command, args: [...args], cwd, errno: err.code },
+      cause: error,
+    },
+  );
 }
 
 class HostProcess implements IHostProcess {
@@ -116,7 +135,7 @@ class HostProcess implements IHostProcess {
 
     if (isWindows) {
       const taskkillArgs = ['/T', '/F', '/PID', String(this.pid)];
-      const killer = spawn('taskkill', taskkillArgs, {
+      const killer = nodeSpawn('taskkill', taskkillArgs, {
         stdio: 'ignore',
         windowsHide: true,
       });
@@ -199,19 +218,13 @@ export class HostProcessService implements IHostProcessService {
       }
     }
     const spawnOptions = buildSpawnOptions(options);
-    const child = spawn(command, args as string[], spawnOptions);
+    const spawnImpl = isWindows && options.shell === undefined ? spawn : nodeSpawn;
+    let child: ChildProcess;
     try {
+      child = spawnImpl(command, [...args], spawnOptions);
       await waitForSpawn(child);
     } catch (error) {
-      const err = error as NodeJS.ErrnoException;
-      throw new HostProcessError(
-        HostProcessErrorCode.SpawnFailed,
-        `Failed to spawn "${command}": ${err.message}`,
-        {
-          details: { command, args: [...args], cwd: options.cwd, errno: err.code },
-          cause: error,
-        },
-      );
+      throw spawnFailedError(command, args, options.cwd, error);
     }
     return new HostProcess(child, options.mergeStderr ?? false);
   }

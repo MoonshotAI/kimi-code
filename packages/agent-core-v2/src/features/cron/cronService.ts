@@ -192,13 +192,13 @@ function deliverFire(
   };
   const buffered = runtime.get(IAgentLoopService).snapshot().state === 'running';
   try {
-    runtime.get(IAgentLoopService).submit(
-      {
-        message: { role: 'user', content: [{ type: 'text', text: renderCronFireXml(origin, task.prompt) }] },
-        meta: { origin },
+    runtime.get(IAgentLoopService).notify({
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: renderCronFireXml(origin, task.prompt) }],
+        origin,
       },
-      { steerIfActive: true },
-    );
+    });
   } catch (error) {
     debugLog(runtime, `steer threw for task ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
     return Promise.resolve(false);
@@ -563,13 +563,9 @@ export class AgentCronService extends AgentActorService<CronModelState> implemen
   ): Turn | undefined {
     if (tasks.length === 0) return undefined;
     const origin: CronMissedOrigin = { kind: 'cron_missed', count: tasks.length };
-    this.actor.get(IAgentLoopService).submit(
-      {
-        message: { role: 'user', content: [...renderMissedNotification(tasks)] },
-        meta: { origin },
-      },
-      { steerIfActive: true },
-    );
+    this.actor.get(IAgentLoopService).notify({
+      message: { role: 'user', content: [...renderMissedNotification(tasks)], origin },
+    });
     telemetryOf(this.actor).track2(CRON_MISSED, { count: tasks.length });
     return undefined;
   }

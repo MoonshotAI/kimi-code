@@ -347,12 +347,11 @@ const PLUGIN_ERROR_MAP: Readonly<Record<string, ErrorCode>> = {
 function mapPluginError(error: unknown, requestId: string) {
   const mapped = isError2(error) ? PLUGIN_ERROR_MAP[error.code] : undefined;
   if (mapped !== undefined && isError2(error)) {
-    return errEnvelope(mapped, error.message, requestId, error.stack);
+    return errEnvelope(mapped, error.message, requestId);
   }
   return errEnvelope(
     ErrorCode.INTERNAL_ERROR,
     error instanceof Error ? error.message : String(error),
     requestId,
-    error instanceof Error ? error.stack : undefined,
   );
 }

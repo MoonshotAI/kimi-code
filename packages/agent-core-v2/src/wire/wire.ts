@@ -20,6 +20,8 @@ export interface IWireService extends IAgentJournal {
   readRestorable(): AsyncIterable<WireRecord>;
   readRestoreChains(): Promise<WireRestoreChains>;
   readHumanChain(): readonly WireLine[];
+  readLoopChain(): readonly WireLine[];
+  readHumanJournal(): readonly WireLine[];
   flush(): Promise<void>;
   drainPersisted(): Promise<void>;
   lineCount(): number;

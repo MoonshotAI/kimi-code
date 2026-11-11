@@ -1,5 +1,15 @@
 # @moonshot-ai/kimi-code
 
+## 2.5.3
+
+### Patch Changes
+
+- [#4762](https://github.com/MoonshotAI/kimi-code/pull/4762) [`e1912c8`](https://github.com/MoonshotAI/kimi-code/commit/e1912c801391c91d917be56a66c1e2e2e12ad2f0) Thanks [@sailist](https://github.com/sailist)! - Make steering interrupt active model requests and continue in the same turn, and add POST /api/v1/sessions/{session_id}/steer for one-request message steering.
+
+- [#4808](https://github.com/MoonshotAI/kimi-code/pull/4808) [`e3c3a12`](https://github.com/MoonshotAI/kimi-code/commit/e3c3a1205ea2fdf1de2067a3b00dd6dececea29c) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Improved interactions and fixed known bugs.
+
+- [#4804](https://github.com/MoonshotAI/kimi-code/pull/4804) [`c50a55b`](https://github.com/MoonshotAI/kimi-code/commit/c50a55bf44ddb6855ec49013e7810e0072376a15) Thanks [@liruifengv](https://github.com/liruifengv)! - Fix stdio MCP servers configured with script commands such as npx failing to start on Windows.
+
 ## 2.5.2
 
 ### Patch Changes

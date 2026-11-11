@@ -2,10 +2,9 @@
   description = "Kimi Code CLI";
 
   inputs = {
-    # Pinned to the 25.11 release channel because nixpkgs-unstable currently
-    # ships nodejs_24 = 24.14.1, which trips the >= 24.15.0 floor that the
-    # native SEA build enforces (see apps/kimi-code/scripts/native/build.mjs).
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
+    # nixos-unstable provides fetchPnpmDeps fetcherVersion 5. The nodejsFor
+    # check below enforces the native SEA build's >= 24.15.0 Node.js floor.
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
   };
 
   outputs =
@@ -50,7 +49,7 @@
       pnpmFor =
         pkgs:
         pkgs.pnpm_10.override {
-          nodejs = nodejsFor pkgs;
+          nodejs-slim = nodejsFor pkgs;
         };
 
       # -------------------------------------------------------------------
@@ -153,8 +152,8 @@
             pnpmDeps = pkgs.fetchPnpmDeps {
               inherit (finalAttrs) pname version src pnpmWorkspaces;
               inherit pnpm;
-              fetcherVersion = 3;
-              hash = "sha256-S7kwWgHbN5ZH4xIH7W/9sbOXi7/JhaitX/ONsLmRr9E=";
+              fetcherVersion = 5;
+              hash = "sha256-Jo/qTBS8SwKNTmSnwTjxBjlwmJ6GpnfyzB6r0iiihSY=";
             };
 
             nativeBuildInputs = [

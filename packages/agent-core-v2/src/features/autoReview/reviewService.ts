@@ -36,7 +36,7 @@ import {
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
@@ -131,7 +131,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     @ISessionUsageService private readonly usage: ISessionUsageService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
-    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
+    @IAgentLoopService private readonly loop: IAgentLoopService,
     @IAgentFullCompactionService private readonly compaction: IAgentFullCompactionService,
     @ISessionContext private readonly session: ISessionContext,
     @ISessionInstructionsProvider private readonly instructions: ISessionInstructionsProvider,
@@ -318,7 +318,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     projectInstructions: ProjectInstructions,
     deadline: DeadlineAbortSignal,
   ): Promise<ReviewAttempt> {
-    const history = this.context.get();
+    const history = this.loop.history();
     const authorization = this.currentAuthorization(history);
     const cwd = this.workspace.workDir;
     const gitStatus = await abortable(this.readGitStatus(cwd, context), deadline.signal);
@@ -353,7 +353,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     return { kind: 'decision', decision: parsed.data };
   }
 
-  private currentAuthorization(history: readonly ContextMessage[] = this.context.get()): ReviewText[] {
+  private currentAuthorization(history: readonly ContextMessage[] = this.loop.history()): ReviewText[] {
     const local = extractAuthorization(history);
     if (
       this.scopeContext.agentId === MAIN_AGENT_ID ||
@@ -364,7 +364,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     const main = this.agentLifecycle.handleOf(MAIN_AGENT_ID);
     if (main === undefined) return local;
     const inherited = extractAuthorization(
-      main.accessor.get(IAgentContextMemoryService).get(),
+      main.accessor.get(IAgentLoopService).history(),
     ).filter((entry) => entry.role === 'human-instruction');
     return inherited.length === 0 ? local : [...inherited, ...local];
   }

@@ -81,7 +81,7 @@ export function createMcpAuthTool(options: CreateMcpAuthToolOptions): Executable
 
     const urlText = flow.authorizationUrl.toString();
     const waitTimeoutMs = timeoutMs ?? DEFAULT_AUTH_TIMEOUT_MS;
-    const customData: McpOAuthAuthorizationUrlUpdateData = {
+    const authorization: McpOAuthAuthorizationUrlUpdateData = {
       waitId: flow.waitId,
       serverName,
       authorizationUrl: urlText,
@@ -89,8 +89,7 @@ export function createMcpAuthTool(options: CreateMcpAuthToolOptions): Executable
     };
     onUpdate?.({
       kind: 'custom',
-      customKind: MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE,
-      customData,
+      fields: { [MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE]: authorization },
     });
     onUpdate?.({
       kind: 'status',

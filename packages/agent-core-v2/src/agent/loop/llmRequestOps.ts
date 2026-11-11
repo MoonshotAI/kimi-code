@@ -1,14 +1,29 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 
 import { AgentEvent2 } from '#/app/event/event2';
 import type { ThinkingEffort } from '#human/llm-requester/thinking';
+import type { ToolDescription } from '#human/llm/message';
 import { defineState } from '#/state/state';
 
 export interface LlmRequestToolSchema {
   readonly name: string;
   readonly description: string;
   readonly parameters: Record<string, unknown>;
+}
+
+export function llmToolsSnapshotPayload(tools: readonly ToolDescription[]): {
+  readonly hash: string;
+  readonly tools: readonly LlmRequestToolSchema[];
+} {
+  const visible = tools
+    .filter((tool) => tool.deferred !== true)
+    .map(({ name, description, parameters }) => ({ name, description, parameters }));
+  return {
+    hash: createHash('sha256').update(JSON.stringify(visible)).digest('hex'),
+    tools: visible,
+  };
 }
 
 export interface LlmRequestTraceState {

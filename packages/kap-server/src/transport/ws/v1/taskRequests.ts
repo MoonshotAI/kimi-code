@@ -1,13 +1,17 @@
 import {
   getOrRestoreAgent,
-  IAgentTaskService,
+  IAgentTaskHistoryService,
+  IAgentTaskOutputService,
+  IAgentToolExecutorService,
   resumeSessionById,
   type AgentTaskOutputChunk,
   type AgentTaskOutputTail,
   type IDisposable,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
+import { agentTaskInfo } from '@moonshot-ai/agent-core-v2/agent/task/handler';
 import type { AgentTaskInfo } from '@moonshot-ai/agent-core-v2/agent/task/types';
+import { userCancellationReason } from '@moonshot-ai/agent-core-v2/_base/utils/abort';
 
 import { ErrorCode } from '../../../protocol/error-codes';
 import {
@@ -23,10 +27,16 @@ import {
 import { ensureMainAgent, MAIN_AGENT_ID } from '../../mainAgent';
 import { toTaskState } from './taskState';
 
+interface TaskChannel {
+  readonly executor: IAgentToolExecutorService;
+  readonly history: IAgentTaskHistoryService;
+  readonly outputs: IAgentTaskOutputService;
+}
+
 export type TaskSourceResult =
   | { readonly kind: 'session_not_found' }
   | { readonly kind: 'task_not_found' }
-  | { readonly kind: 'found'; readonly tasks: IAgentTaskService };
+  | { readonly kind: 'found'; readonly channel: TaskChannel };
 
 export type TaskSource = (
   sessionId: string,
@@ -42,10 +52,21 @@ export function createTaskSource(core: Scope): TaskSource {
       agentId === MAIN_AGENT_ID
         ? await ensureMainAgent(session)
         : await getOrRestoreAgent(session, agentId);
-    const tasks = agent?.accessor.get(IAgentTaskService);
-    if (tasks?.getTask(taskId) === undefined) return { kind: 'task_not_found' };
-    return { kind: 'found', tasks };
+    if (agent === undefined) return { kind: 'task_not_found' };
+    const channel = {
+      executor: agent.accessor.get(IAgentToolExecutorService),
+      history: agent.accessor.get(IAgentTaskHistoryService),
+      outputs: agent.accessor.get(IAgentTaskOutputService),
+    };
+    if (taskInfo(channel, taskId) === undefined) return { kind: 'task_not_found' };
+    return { kind: 'found', channel };
   };
+}
+
+function taskInfo(channel: TaskChannel, taskId: string): AgentTaskInfo | undefined {
+  const handler = channel.executor.handler(taskId);
+  if (handler?.snapshot().fields.task !== undefined) return agentTaskInfo(handler);
+  return channel.history.getTask(taskId);
 }
 
 export interface TaskRequestSink {
@@ -83,7 +104,12 @@ export class TaskRequests {
     const stop = taskStopMessageSchema.safeParse(frame);
     if (stop.success) {
       this.enqueue(watchKey(stop.data), () =>
-        this.command(requestId, stop.data, async (tasks, taskId) => tasks.stopByUser(taskId)),
+        this.command(requestId, stop.data, async ({ executor }, taskId) => {
+          const handler = executor.handler(taskId);
+          if (handler === undefined) return undefined;
+          await handler.stop(userCancellationReason().message);
+          return agentTaskInfo(handler);
+        }),
       );
       return;
     }
@@ -93,7 +119,11 @@ export class TaskRequests {
         this.command(
           requestId,
           background.data,
-          async (tasks, taskId) => tasks.detach(taskId),
+          async ({ executor }, taskId) => {
+            const handler = executor.handler(taskId);
+            handler?.detach();
+            return handler === undefined ? undefined : agentTaskInfo(handler);
+          },
           (info) =>
             info.status === 'running' && info.detached === false
               ? { code: ErrorCode.TASK_NOT_DETACHABLE, msg: 'task cannot be moved to the background' }
@@ -159,21 +189,28 @@ export class TaskRequests {
           text: chunk.text,
         });
       };
-      this.watches.set(
-        key,
-        resolved.tasks.onDidAppendOutput((chunk) => {
-          if (chunk.taskId !== taskId) return;
-          if (live) forward(chunk);
-          else pending.push(chunk);
-        }),
-      );
+      const handler = resolved.channel.executor.handler(taskId);
+      const unobserve = handler?.observe((event) => {
+        if (event.type !== 'output') return;
+        const chunk = { taskId, offset: event.offset, text: event.text };
+        if (live) forward(chunk);
+        else pending.push(chunk);
+      });
+      this.watches.set(key, { dispose: unobserve ?? (() => {}) });
 
       let tail: AgentTaskOutputTail;
       try {
-        tail = await resolved.tasks.readOutputTail(
+        const persisted = await resolved.channel.outputs.readTaskOutputTail(
           taskId,
           request.tail_bytes ?? TASK_OUTPUT_DEFAULT_TAIL_BYTES,
         );
+        if (persisted !== undefined) {
+          tail = persisted;
+        } else {
+          const output = handler?.output(request.tail_bytes ?? TASK_OUTPUT_DEFAULT_TAIL_BYTES);
+          const data = Buffer.from(output?.preview ?? '', 'utf-8');
+          tail = { offset: (output?.totalBytes ?? 0) - data.byteLength, data };
+        }
       } catch {
         fail(ErrorCode.PERSISTENCE_FAILURE, 'task output unavailable');
         return;
@@ -181,7 +218,7 @@ export class TaskRequests {
       if (this.disposed) return;
 
       const first = firstChunk(tail.offset, tail.data, request.since_offset);
-      const info = resolved.tasks.getTask(taskId);
+      const info = taskInfo(resolved.channel, taskId);
       this.sink.respond(requestId, ErrorCode.SUCCESS, undefined, info === undefined ? undefined : toTaskState(info));
       forward(first);
       for (const chunk of pending) {
@@ -197,7 +234,7 @@ export class TaskRequests {
   private async command(
     requestId: string,
     request: TaskAddress,
-    run: (tasks: IAgentTaskService, taskId: string) => Promise<AgentTaskInfo | undefined>,
+    run: (channel: TaskChannel, taskId: string) => Promise<AgentTaskInfo | undefined>,
     refuse?: (info: AgentTaskInfo) => { readonly code: number; readonly msg: string } | undefined,
   ): Promise<void> {
     if (this.disposed) return;
@@ -211,7 +248,7 @@ export class TaskRequests {
         this.sink.respond(requestId, ErrorCode.TASK_NOT_FOUND, 'task not found');
         return;
       }
-      const info = (await run(resolved.tasks, request.task_id)) ?? resolved.tasks.getTask(request.task_id);
+      const info = (await run(resolved.channel, request.task_id)) ?? taskInfo(resolved.channel, request.task_id);
       const state = info === undefined ? undefined : toTaskState(info);
       const refusal = info === undefined ? undefined : refuse?.(info);
       if (refusal !== undefined) {

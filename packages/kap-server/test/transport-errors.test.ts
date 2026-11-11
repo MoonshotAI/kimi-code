@@ -2,7 +2,7 @@ import { Error2, ErrorCodes } from '@moonshot-ai/agent-core-v2';
 import { ErrorCode } from '../src/protocol/error-codes';
 import { describe, expect, it } from 'vitest';
 
-import { mapError } from '../src/transport/errors';
+import { mapDebugError, mapError } from '../src/transport/errors';
 import { installErrorHandler } from '../src/error-handler';
 
 describe('ErrorCode', () => {
@@ -24,6 +24,11 @@ describe('/api/v1/debug transport mapError', () => {
     [ErrorCodes.CONFIG_INVALID, ErrorCode.VALIDATION_FAILED],
     [ErrorCodes.GOAL_UNSUPPORTED_AGENT, ErrorCode.GOAL_UNSUPPORTED_AGENT],
     [ErrorCodes.PROMPT_ID_CONFLICT, ErrorCode.PROMPT_ID_CONFLICT],
+    [ErrorCodes.SESSION_TOWER_MODE_INVALID, ErrorCode.TOWER_MODE_INVALID],
+    [ErrorCodes.MODEL_CONFIG_INVALID, ErrorCode.VALIDATION_FAILED],
+    [ErrorCodes.AUTH_PROVISIONING_REQUIRED, ErrorCode.AUTH_PROVISIONING_REQUIRED],
+    [ErrorCodes.AUTH_TOKEN_MISSING, ErrorCode.AUTH_TOKEN_MISSING],
+    [ErrorCodes.AUTH_MODEL_NOT_RESOLVED, ErrorCode.AUTH_MODEL_NOT_RESOLVED],
   ])('maps domain code %s to its wire equivalent', (code, wire) => {
     const env = mapError(new Error2(code, 'boom'), 'req-1');
     expect(env.code).toBe(wire);
@@ -44,6 +49,26 @@ describe('/api/v1/debug transport mapError', () => {
     expect(incompatible.code).toBe(ErrorCode.WIRE_VERSION_TOO_LOW);
     expect(incompatible.msg).toBe('upgrade');
     expect(incompatible.details).toEqual(versionDetails);
+  });
+
+  it('keeps the provider and model details of auth readiness errors', () => {
+    const missing = mapError(
+      new Error2(ErrorCodes.AUTH_TOKEN_MISSING, 'no key', { details: { provider_id: 'example' } }),
+      'req-1',
+    );
+    expect(missing.details).toEqual({ provider_id: 'example' });
+    const unresolved = mapError(
+      new Error2(ErrorCodes.AUTH_MODEL_NOT_RESOLVED, 'no model', { details: { model_id: 'm1' } }),
+      'req-1',
+    );
+    expect(unresolved.details).toEqual({ model_id: 'm1' });
+  });
+
+  it('never sends the server stack trace, except to debug callers', () => {
+    const error = new Error2(ErrorCodes.OS_FS_UNKNOWN, 'boom');
+    expect(mapError(error, 'req-1')).not.toHaveProperty('stack', expect.anything());
+    expect(mapError(new Error('plain'), 'req-1')).not.toHaveProperty('stack', expect.anything());
+    expect(mapDebugError(error, 'req-1').stack).toBe(error.stack);
   });
 
   it('falls back to INTERNAL_ERROR for coded errors without a wire equivalent', () => {
@@ -88,7 +113,9 @@ describe('installErrorHandler (catch-all)', () => {
     expect(incompatible.details).toEqual(details);
   });
 
-  it('keeps unknown exceptions at INTERNAL_ERROR', () => {
-    expect(run(new Error('boom')).code).toBe(ErrorCode.INTERNAL_ERROR);
+  it('keeps unknown exceptions at INTERNAL_ERROR without the stack trace', () => {
+    const env = run(new Error('boom'));
+    expect(env.code).toBe(ErrorCode.INTERNAL_ERROR);
+    expect(env).not.toHaveProperty('stack', expect.anything());
   });
 });

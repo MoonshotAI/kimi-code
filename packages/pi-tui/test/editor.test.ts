@@ -2761,37 +2761,82 @@ describe("Editor component", () => {
 			assert.strictEqual(editor.isShowingAutocomplete(), false);
 		});
 
-		it("debounces @ autocomplete while typing", async () => {
+		it("previews appended queries without replacing the trailing authoritative search", async (t) => {
+			t.mock.timers.enable({ apis: ["setTimeout"] });
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
-			let suggestionCalls = 0;
-
+			const requests: string[] = [];
+			let releaseAx: (() => void) | undefined;
 			const mockProvider: AutocompleteProvider = {
-				getSuggestions: async (lines, _cursorLine, cursorCol) => {
-					suggestionCalls += 1;
-					const text = (lines[0] || "").slice(0, cursorCol);
+				autocompleteDebounceMs: 80,
+				getAutocompletePreview: ({ previous, lines, cursorLine, cursorCol }) => {
+					const prefix = (lines[cursorLine] || "").slice(0, cursorCol);
+					if (!prefix.startsWith(previous.suggestions.prefix)) return null;
 					return {
-						items: [{ value: "@main.ts", label: "main.ts" }],
-						prefix: text,
+						prefix,
+						items: previous.suggestions.items.filter((item) => item.value.startsWith(prefix)),
 					};
+				},
+				getSuggestions: async (lines, _cursorLine, cursorCol) => {
+					const text = (lines[0] || "").slice(0, cursorCol);
+					requests.push(text);
+					if (text === "@ax") {
+						return await new Promise<{ items: { value: string; label: string }[]; prefix: string }>((resolve) => {
+							releaseAx = () => resolve({ items: [{ value: "@ax-old", label: "ax-old" }], prefix: text });
+						});
+					}
+					if (text === "@ax/") {
+						return { items: [{ value: "@ax/axis", label: "axis" }], prefix: text };
+					}
+					const values = text === "@al" ? ["@albatross", "@alpha"] : ["@alpha", "@atom"];
+					return { items: values.map((value) => ({ value, label: value.slice(1) })), prefix: text };
 				},
 				applyCompletion,
 			};
+			const rendered = () => editor.render(80).map((line) => stripVTControlCharacters(line)).join("\n");
 
 			editor.setAutocompleteProvider(mockProvider);
-
 			editor.handleInput("@");
-			editor.handleInput("m");
-			editor.handleInput("a");
-			editor.handleInput("i");
-
-			assert.strictEqual(suggestionCalls, 0);
-			assert.strictEqual(editor.isShowingAutocomplete(), false);
-
-			await new Promise((resolve) => setTimeout(resolve, 50));
 			await flushAutocomplete();
+			assert.deepStrictEqual(requests, ["@"]);
 
-			assert.strictEqual(suggestionCalls, 1);
+			editor.handleInput("a");
+			t.mock.timers.tick(79);
+			await flushAutocomplete();
+			assert.deepStrictEqual(requests, ["@"]);
+			t.mock.timers.tick(1);
+			await flushAutocomplete();
+			assert.deepStrictEqual(requests, ["@", "@a"]);
+
+			editor.handleInput("l");
+			assert.ok(rendered().includes("alpha"));
+			assert.ok(!rendered().includes("atom"));
+			t.mock.timers.tick(80);
+			await flushAutocomplete();
+			assert.deepStrictEqual(requests, ["@", "@a", "@al"]);
+			assert.ok(rendered().includes("albatross"));
+
+			editor.handleInput("\x7f");
+			t.mock.timers.tick(80);
+			await flushAutocomplete();
+			assert.deepStrictEqual(requests, ["@", "@a", "@al", "@a"]);
+			assert.ok(!rendered().includes("albatross"));
+
+			editor.handleInput("x");
 			assert.strictEqual(editor.isShowingAutocomplete(), true);
+			assert.ok(!rendered().includes("alpha"));
+			assert.ok(!rendered().includes("atom"));
+			t.mock.timers.tick(80);
+			await flushAutocomplete();
+			assert.deepStrictEqual(requests, ["@", "@a", "@al", "@a", "@ax"]);
+
+			editor.handleInput("/");
+			t.mock.timers.tick(80);
+			releaseAx?.();
+			await flushAutocomplete();
+			await flushAutocomplete();
+			assert.deepStrictEqual(requests, ["@", "@a", "@al", "@a", "@ax", "@ax/"]);
+			assert.ok(rendered().includes("axis"));
+			assert.ok(!rendered().includes("ax-old"));
 		});
 
 		it("re-queries the autocomplete picker when the cursor moves back into the command name", async () => {
@@ -2938,41 +2983,48 @@ describe("Editor component", () => {
 			assert.strictEqual(editor.isShowingAutocomplete(), false);
 		});
 
-		it("aborts active @ autocomplete when typing continues", async () => {
+		it("aborts stale requests without letting their late responses replace newer results", async (t) => {
+			t.mock.timers.enable({ apis: ["setTimeout"] });
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 			let aborts = 0;
-
+			let releaseOld: ((suggestions: { items: { value: string; label: string }[]; prefix: string }) => void) | undefined;
+			const requests: string[] = [];
 			const mockProvider: AutocompleteProvider = {
-				getSuggestions: async (_lines, _cursorLine, _cursorCol, options) => {
-					return await new Promise((resolve) => {
-						const timeout = setTimeout(() => {
-							resolve({ items: [{ value: "@main.ts", label: "main.ts" }], prefix: "@main" });
-						}, 500);
-						options.signal.addEventListener(
-							"abort",
-							() => {
-								aborts += 1;
-								clearTimeout(timeout);
-								resolve(null);
-							},
-							{ once: true },
-						);
-					});
+				autocompleteDebounceMs: 80,
+				getSuggestions: async (lines, _cursorLine, cursorCol, options) => {
+					const text = (lines[0] || "").slice(0, cursorCol);
+					requests.push(text);
+					if (text === "@a") {
+						return await new Promise((resolve) => {
+							releaseOld = resolve;
+							options.signal.addEventListener("abort", () => { aborts += 1; }, { once: true });
+						});
+					}
+					const value = text === "@ab" ? "@ab-new" : "@initial";
+					return { items: [{ value, label: value.slice(1) }], prefix: text };
 				},
 				applyCompletion,
 			};
 
 			editor.setAutocompleteProvider(mockProvider);
-
 			editor.handleInput("@");
-			editor.handleInput("m");
+			await flushAutocomplete();
 			editor.handleInput("a");
-			editor.handleInput("i");
-			await new Promise((resolve) => setTimeout(resolve, 250));
-			editor.handleInput("n");
-			await new Promise((resolve) => setTimeout(resolve, 50));
+			t.mock.timers.tick(80);
+			await flushAutocomplete();
+			assert.deepStrictEqual(requests, ["@", "@a"]);
+
+			editor.handleInput("b");
+			t.mock.timers.tick(80);
+			releaseOld?.({ items: [{ value: "@a-old", label: "a-old" }], prefix: "@a" });
+			await flushAutocomplete();
+			await flushAutocomplete();
 
 			assert.strictEqual(aborts, 1);
+			assert.deepStrictEqual(requests, ["@", "@a", "@ab"]);
+			const output = editor.render(80).map((line) => stripVTControlCharacters(line)).join("\n");
+			assert.ok(output.includes("ab-new"));
+			assert.ok(!output.includes("a-old"));
 		});
 
 		it("hides autocomplete when backspacing slash command to empty", async () => {

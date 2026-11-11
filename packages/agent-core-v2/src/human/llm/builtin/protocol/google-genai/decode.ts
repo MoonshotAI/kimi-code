@@ -2,6 +2,7 @@ import { ApiError as RawGoogleGenAISDKApiError } from '@google/genai';
 
 import {
   isTransientHttpStatus,
+  isUnreachableConnection,
   toLlmStatusErrorMessage,
   toLlmStreamErrorMessage,
 } from '#/llm/protocol/rules/status';
@@ -219,7 +220,7 @@ export function decodeError(error: unknown, source?: 'stream'): LlmRemoteErrorMe
       return { kind: 'timeout', message: msg, retryable: true };
     }
     if (NETWORK_RE.test(msg) || (error instanceof TypeError && msg.includes('fetch'))) {
-      return { kind: 'connection', message: msg, retryable: true };
+      return { kind: 'connection', message: msg, retryable: !isUnreachableConnection(error) };
     }
     const code = (error as { code?: number }).code;
     if (typeof code === 'number') {

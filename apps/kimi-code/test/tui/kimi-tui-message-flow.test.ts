@@ -5501,7 +5501,7 @@ command = "vim"
     expect(harness.deleteFile).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps a skill steer media lease unclaimed by an untracked turn it cannot merge into', async () => {
+  it('keeps a skill steer media lease unclaimed by the previous turn until the consuming turn handoff', async () => {
     process.env['KIMI_CODE_HOME'] = await makeTempHome();
     const session = makeSession({
       listSkills: vi.fn(async () => [
@@ -7322,18 +7322,25 @@ command = "vim"
   });
 
   function waitForEvent(
-    type: 'tool.call.started' | 'tool.progress' | 'tool.result',
+    type: 'tool.call.started' | 'tool.updated' | 'tool.result',
     extra: Record<string, unknown> = {},
   ): Event {
     const base = { agentId: 'main', sessionId: 'ses-1', turnId: 1, toolCallId: 'call_wait' };
     if (type === 'tool.call.started') {
       return { type, ...base, name: 'WaitFor', args: { timeout: 60 }, ...extra } as Event;
     }
-    if (type === 'tool.progress') {
+    if (type === 'tool.updated') {
       return {
         type,
         ...base,
-        update: { kind: 'status', text: 'Waiting 0s / 1m · 1 background task still running', replace: true },
+        taskId: 'task-wait',
+        status: 'running',
+        detached: false,
+        fields: {
+          status: 'Waiting 0s / 1m · 1 background task still running',
+          statusReplace: true,
+          wait: { elapsedS: 0, timeoutS: 60, runningCount: 1 },
+        },
         ...extra,
       } as Event;
     }
@@ -7342,7 +7349,7 @@ command = "vim"
 
   function startWaitFor(driver: MessageDriver, extra: Record<string, unknown> = {}): void {
     driver.sessionEventHandler.handleEvent(waitForEvent('tool.call.started', extra), () => {});
-    driver.sessionEventHandler.handleEvent(waitForEvent('tool.progress', extra), () => {});
+    driver.sessionEventHandler.handleEvent(waitForEvent('tool.updated', extra), () => {});
   }
 
   function pendingSteer(): { session: ReturnType<typeof makeSession>; resolve: () => void; reject: (error: Error) => void } {
@@ -8086,7 +8093,7 @@ capabilities = ["image_in", "video_in"]
         } as Event,
         sendQueued,
       );
-      await vi.runAllTimersAsync();
+      await vi.advanceTimersByTimeAsync(0);
 
       expect(sendQueued).toHaveBeenCalledWith({ text: 'next' });
       expect(driver.state.queuedMessages).toEqual([]);
@@ -9300,6 +9307,10 @@ capabilities = ["image_in", "video_in"]
     try {
       const { driver } = await makeDriver();
       const sendQueued = vi.fn();
+      const onAnimationFrame = () => {
+        setTimeout(onAnimationFrame, 120);
+      };
+      setTimeout(onAnimationFrame, 120);
       driver.sessionEventHandler.handleEvent(
         {
           type: 'compaction.started',
@@ -9319,7 +9330,7 @@ capabilities = ["image_in", "video_in"]
         } as Event,
         sendQueued,
       );
-      await vi.runAllTimersAsync();
+      await vi.advanceTimersByTimeAsync(0);
 
       expect(driver.state.appState.isCompacting).toBe(false);
       expect(driver.state.appState.streamingPhase).toBe('idle');
@@ -10928,8 +10939,24 @@ capabilities = ["image_in", "video_in"]
     expect(transcript).not.toContain('Interrupted by user');
   });
 
-  it('keeps unmessaged aborted events compatible with user interruptions', async () => {
+  it('distinguishes steered steps from user interruptions', async () => {
     const { driver } = await makeDriver();
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.step.interrupted',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        step: 1,
+        reason: 'steered',
+      } as Event,
+      vi.fn(),
+    );
+
+    const steeredTranscript = stripSgr(renderTranscript(driver));
+    expect(steeredTranscript).not.toContain('step interrupted (steered)');
+    expect(steeredTranscript).not.toContain('Interrupted by user');
 
     driver.sessionEventHandler.handleEvent(
       {
@@ -14814,7 +14841,14 @@ describe('activity bar Ctrl+B hint', () => {
         ? [{ type: 'tool.call.delta', name: 'Bash', argumentsPart: JSON.stringify({ command }) }]
         : [
             { type: 'tool.call.started', name: 'Bash', args: { command } },
-            { type: 'tool.progress', update: { kind: 'stdout', text: 'out-1\nout-2\nout-3\n' } },
+            {
+              type: 'tool.updated',
+              taskId: 'task-slow',
+              status: 'running',
+              detached: false,
+              fields: {},
+              output: { offset: 0, text: 'out-1\nout-2\nout-3\n' },
+            },
           ];
       for (const event of events) emitSlowBash(driver, event);
       vi.advanceTimersByTime(9_999);

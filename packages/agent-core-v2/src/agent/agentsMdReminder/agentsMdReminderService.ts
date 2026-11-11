@@ -26,7 +26,8 @@ import {
   extractAgentsMdPathsFromSystemPrompt,
   loadAgentsMdDetailed,
 } from '#/agent/profile/context';
-import { profileKey } from '#/agent/profile/profileOps';
+import { IInstantiationService } from '#/_base/di/instantiation';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import type {
@@ -35,6 +36,7 @@ import type {
 } from '#/features/reminder/types';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { legacyDidExecuteContext } from '#/agent/toolExecutor/legacyHooks';
 import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
@@ -83,6 +85,7 @@ export class AgentAgentsMdReminderService
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @ISessionInstructionsProvider private readonly instructions: ISessionInstructionsProvider,
     @ILogService private readonly log: ILogService,
+    @IInstantiationService private readonly instantiation: IInstantiationService,
   ) {
     super();
     this.states.contributeState(agentsMdReminderKnownKey);
@@ -100,18 +103,18 @@ export class AgentAgentsMdReminderService
     );
     this._register(
       this.dispatcher.hooks.onDidRestore.register('agentsMdReminder', async (_ctx, next) => {
-        const profile = this.states.get(profileKey);
+        const profile = this.instantiation.invokeFunction((accessor) => accessor.get(IAgentLoopService)).data();
         const paths =
           profile.agentsMdPaths ?? extractAgentsMdPathsFromSystemPrompt(profile.systemPrompt);
         this.seedInjected(paths, this.sessionContext.cwd);
         await next();
       }),
     );
-    const handler = async (ctx: ToolDidExecuteContext, next: () => Promise<void>): Promise<void> => {
-      await this.probeAndRemind(ctx);
-      await next();
-    };
-    this._register(toolExecutor.hooks.onDidExecuteTool.register('agentsMdReminder', handler));
+    this._register(toolExecutor.registerHook({
+      afterExecute: async (context) => {
+        await this.probeAndRemind(legacyDidExecuteContext(context));
+      },
+    }));
   }
 
   seedInjected(paths: readonly string[], cwd: string): void {

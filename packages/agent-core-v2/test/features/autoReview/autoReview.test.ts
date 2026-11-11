@@ -4,7 +4,7 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
 import { ILogService } from '#/_base/log/log';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { userPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
@@ -186,7 +186,7 @@ describe('AutoReviewService', () => {
         reg.definePartialInstance(IAgentProfileService, {
           resolveModelContext: () => ({ modelAlias: 'main-model' }) as ReturnType<IAgentProfileService['resolveModelContext']>,
         });
-        reg.definePartialInstance(IAgentContextMemoryService, { get: () => history });
+        reg.definePartialInstance(IAgentLoopService, { history: () => history });
         reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId, agentScope: '' }));
         reg.definePartialInstance(IAgentLifecycleService, {
           handleOf: (id) =>
@@ -195,7 +195,7 @@ describe('AutoReviewService', () => {
                   id: 'main',
                   kind: 'agent',
                   accessor: {
-                    get: () => ({ get: () => mainHistory ?? [] }),
+                    get: () => ({ history: () => mainHistory ?? [] }),
                   },
                   dispose: () => {},
                 } as unknown as ReturnType<IAgentLifecycleService['handleOf']>)

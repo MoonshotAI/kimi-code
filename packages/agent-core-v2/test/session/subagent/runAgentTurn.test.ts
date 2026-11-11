@@ -6,7 +6,6 @@ import { userCancellationReason } from '#/_base/utils/abort';
 import { IEventBus } from '#/app/event/eventBus';
 import type { Event2 } from '#/app/event/event2';
 import { LifecycleScope } from '#/app/scopes';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import {
   createMaxStepsExceededError,
@@ -115,6 +114,7 @@ function handleWith(
   turn: Turn | Promise<Turn>,
   messages: readonly ContextMessage[],
   events = new EventBusStub(),
+  retry?: () => Promise<TurnResult>,
 ): { readonly handle: IAgentScopeHandle; readonly prompts: unknown[] } {
   const prompts: unknown[] = [];
   const services = new Map<unknown, unknown>([
@@ -126,10 +126,12 @@ function handleWith(
           return { id: 'p' };
         },
         promptHandle: () => ({ launched: Promise.resolve(turn) }),
+        retry,
         cancel: () => true,
+        get: () => messages,
+        history: () => messages,
       },
     ],
-    [IAgentContextMemoryService, { get: () => messages }],
     [IEventBus, events.bus],
   ]);
   const handle: IAgentScopeHandle = {
@@ -236,15 +238,30 @@ describe('runAgentTurn', () => {
       }),
       { statusCode: 429 },
     );
-    const { handle } = handleWith(makeTurn({ type: 'failed', steps: 1, error: failure }), [
-      assistant('partial work'),
-    ]);
-
-    const run = await runAgentTurn(handle, { kind: 'prompt', prompt: 'find it' }, { signal });
+    const events = new EventBusStub();
+    const { handle, prompts } = handleWith(
+      makeTurn({ type: 'completed', steps: 1, truncated: false }),
+      [assistant('partial work')],
+      events,
+      async () => ({ type: 'failed', steps: 1, error: failure }),
+    );
+    let ready = false;
+    const run = await runAgentTurn(handle, { kind: 'retry' }, {
+      signal,
+      onReady: () => {
+        ready = true;
+      },
+    });
+    events.emit(stepStarted(1, 'step-retry'));
+    events.emit(delta(1, 'partial work'));
     const error = await rejection(run.completion);
 
     expect(error).toBe(failure);
     expect(error).toMatchObject({ statusCode: 429 });
+    expect(prompts).toHaveLength(0);
+    expect(run.turn).toBeUndefined();
+    expect(ready).toBe(true);
+    expect(run.partialOutput()).toBe('partial work');
   });
 });
 

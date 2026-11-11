@@ -29,7 +29,7 @@ export class AgentPermissionGate extends Service implements IAgentPermissionGate
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
   ) {
     super();
-    this._register(toolExecutor.onBeforeExecuteTool((event) => this.adjudicate(event)));
+    this._register(toolExecutor.registerLegacyStarting((event) => this.adjudicate(event)));
   }
 
   data(): PermissionData {

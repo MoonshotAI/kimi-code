@@ -169,7 +169,7 @@ describe('AgentPermissionGate', () => {
     resolvePermissionResolution.mockResolvedValue(blocked);
     make();
     const later = vi.fn();
-    executorEvents.executor.onBeforeExecuteTool(later);
+    executorEvents.executor.registerLegacyStarting(later);
     const ctx = makeContext('bash');
 
     const decision = await executorEvents.fireBeforeExecute(ctx);
@@ -237,7 +237,7 @@ describe('AgentPermissionGate', () => {
     policyResult = { policyName: 'p', result: { kind: 'ask' } };
     const blocked: BeforeExecuteDecision = { veto: { output: 'hook denied', isError: true } };
     make();
-    executorEvents.executor.onBeforeExecuteTool((event) => {
+    executorEvents.executor.registerLegacyStarting((event) => {
       event.veto(blocked.veto!);
     });
 
@@ -362,7 +362,7 @@ describe('AgentPermissionGate', () => {
     reviewModeApprovals();
     make();
     let outcome: 'veto' | 'allow' = 'veto';
-    executorEvents.executor.onBeforeExecuteTool((event) => {
+    executorEvents.executor.registerLegacyStarting((event) => {
       if (outcome === 'veto') event.veto({ output: 'hook denied', isError: true });
       else event.allow();
     });

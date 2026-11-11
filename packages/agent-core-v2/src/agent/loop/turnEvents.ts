@@ -95,15 +95,6 @@ export function turnPromptAttachments(
   return attachments.length > 0 ? attachments : undefined;
 }
 
-export function isDisplayablePromptOrigin(origin: PromptOrigin): boolean {
-  if (origin.kind === 'user') return true;
-  if (origin.kind === 'system_trigger' && origin.name === 'subagent') return true;
-  return (
-    (origin.kind === 'skill_activation' || origin.kind === 'plugin_command') &&
-    origin.trigger === 'user-slash'
-  );
-}
-
 export interface TurnStepStartedPayload {
   readonly agentId: string;
   readonly turnId: number;
@@ -161,7 +152,7 @@ const turnStepInterruptedSchema = z.object({
 
 export class TurnStepInterrupted extends AgentEvent2<TurnStepInterruptedPayload> {
   static override readonly type = 'turn.step.interrupted';
-  static override readonly durable = true;
+  static override readonly durable = false;
   static override readonly observable = true;
   static override readonly schema = turnStepInterruptedSchema;
 }
@@ -197,7 +188,7 @@ const turnStepRetryingSchema = z.object({
 
 export class TurnStepRetrying extends AgentEvent2<TurnStepRetryingPayload> {
   static override readonly type = 'turn.step.retrying';
-  static override readonly durable = true;
+  static override readonly durable = false;
   static override readonly observable = true;
   static override readonly schema = turnStepRetryingSchema;
 }
