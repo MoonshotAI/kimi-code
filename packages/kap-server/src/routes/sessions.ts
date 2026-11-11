@@ -1,4 +1,5 @@
 import {
+  CHILD_SESSION_KIND_KEY,
   ErrorCodes,
   IAgentChangeNotifierService,
   IAgentGoalService,
@@ -24,6 +25,7 @@ import {
   ISessionManager,
   IWorkspaceInstanceManager,
   IWorkspaceService,
+  PARENT_SESSION_ID_KEY,
   closeSessionById,
   ensureMainAgent as ensureMainAgentContext,
   getLiveSessionById,
@@ -85,7 +87,7 @@ import {
   sendMappedError as sendSessionMappedError,
   sessionConflictErrors,
 } from './sessionErrors';
-import { applySessionAgentConfig } from './sessionAgentConfig';
+import { agentConfigErrors, applyAgentConfigToSession, applySessionAgentConfig } from './sessionAgentConfig';
 import { updateSessionProfile } from './sessionProfile';
 
 interface SessionRouteHost {
@@ -206,6 +208,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
         [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
         [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
+        ...agentConfigErrors,
       },
       description: 'Create a new session',
       tags: ['sessions'],
@@ -264,21 +267,37 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
           bucket === undefined
             ? await registry.createOrTouch(workDir)
             : ((await registry.touch(bucket.id)) ?? bucket);
+        const {
+          cwd: _cwd,
+          goal: _goal,
+          [PARENT_SESSION_ID_KEY]: _parentSessionId,
+          [CHILD_SESSION_KIND_KEY]: _childSessionKind,
+          ...custom
+        }: Record<string, unknown> = body.metadata ?? {};
+        const agentConfig = body.agent_config ?? {};
+        const { model, tower_base: _towerBase, ...settings } = agentConfig;
+        const appliesAgentConfig = Boolean(model) || Object.keys(settings).length > 0;
         const handle = await core.accessor.get(ISessionManager).create({
           workspaceId: resolved.id,
           workDir,
           environmentId: body.environment_id,
           environmentCwd: body.environment_cwd,
           ensureMainAgent: body.environment_id !== undefined && body.environment_id !== 'local',
+          prepare: async (session) => {
+            if (Object.keys(custom).length > 0) {
+              await session.accessor.get(ISessionMetadata).update({ custom });
+            }
+            if (appliesAgentConfig) await applyAgentConfigToSession(session, agentConfig);
+          },
         });
-        if (typeof body.title === 'string') {
-          await handle.accessor.get(ISessionMetadata).setTitle(body.title);
-        }
-        const meta = await handle.accessor.get(ISessionMetadata).read();
+        const metadata = handle.accessor.get(ISessionMetadata);
+        if (typeof body.title === 'string') await metadata.setTitle(body.title);
+        const meta = await metadata.read();
+        const sessionId = meta.id;
         const session = toWireSession(
           { ...meta, workspaceId: resolved.id },
           resolved.root,
-          { busy: false, mainTurnActive: false, pendingInteraction: 'none' },
+          resolveSessionFacts(core, sessionId),
         );
         core.accessor.get(IEventService).publish(
           new SessionCreated({ payload: { agentId: 'main', sessionId: session.id, session } }),
@@ -367,14 +386,10 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
             const cwd = summary.cwd ?? roots.get(summary.workspaceId);
             if (cwd === undefined) continue;
             if (raw.exclude_empty === true && (summary.lastPrompt ?? '').length === 0) continue;
-            if (archivedOnly) {
-              if (!summary.archived) continue;
-              const facts = resolveSessionFacts(core, summary.id);
-              if (raw.busy !== undefined && facts.busy !== raw.busy) continue;
-              collected.push({ summary, cwd, facts });
-            } else {
-              collected.push({ summary, cwd });
-            }
+            if (archivedOnly && !summary.archived) continue;
+            const facts = raw.busy === undefined ? undefined : resolveSessionFacts(core, summary.id);
+            if (facts !== undefined && facts.busy !== raw.busy) continue;
+            collected.push({ summary, cwd, facts });
           }
           if (exhausted || page.nextCursor === undefined) break;
           before = page.nextCursor;
@@ -410,13 +425,9 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
 
       const pageSize = raw.page_size ?? DEFAULT_SESSION_LIST_PAGE_SIZE;
       const { visible, hasMore } = await collect(pageSize);
-      const projected = visible.map(({ summary, cwd, facts }) =>
+      const items = visible.map(({ summary, cwd, facts }) =>
         toWireSession(summary, cwd, facts ?? resolveSessionFacts(core, summary.id)),
       );
-      const items =
-        raw.busy !== undefined && !archivedOnly
-          ? projected.filter((session) => session.busy === raw.busy)
-          : projected;
       reply.send(okEnvelope({ items, has_more: hasMore }, req.id));
     },
   );
@@ -526,6 +537,8 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.TOWER_MODE_INVALID]: {},
+        ...agentConfigErrors,
         ...sessionConflictErrors,
       },
       description: 'Update session profile (title, metadata, agent_config)',
@@ -985,9 +998,15 @@ async function compactSessionAction(
   const { core, req, reply, id, body } = ctx;
   await reloadOnStale(core.accessor, id, async () => {
     const agent = await resolveMainAgent(core, id);
-    agent.accessor
+    const started = agent.accessor
       .get(IAgentFullCompactionService)
       .begin({ source: 'manual', instruction: normalizeOptional(body.instruction) });
+    if (!started) {
+      throw new Error2(
+        ErrorCodes.COMPACTION_UNABLE,
+        'A compaction is already running. Wait for it to finish, then retry.',
+      );
+    }
   });
   requestLog(req)?.info({ session_id: id, action: 'compact' }, 'session action completed');
   reply.send(okEnvelope({}, req.id));

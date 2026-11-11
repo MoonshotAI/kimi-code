@@ -189,6 +189,9 @@ export function applyConversationRecord(state: ConversationState, record: WireRe
     case 'subagent.spawned':
       applySubagentSpawned(state, record);
       return;
+    case 'task.started':
+      applyTaskStarted(state, record);
+      return;
     case 'full_compaction.begin':
       state.compaction = {
         trigger: record['source'] === 'manual' ? 'manual' : 'auto',
@@ -381,7 +384,7 @@ function applyLegacyToolResult(
   time: number,
 ): void {
   const found = findToolCall(state, message.toolCallId);
-  if (found !== undefined) finishToolCall(state, found.item, message.content, message.isError === true, time);
+  if (found !== undefined) finishToolCall(state, found, message.content, message.isError === true, message.note, time);
 }
 
 function applyLoopEvent(state: ConversationState, event: LoopRecordedEvent | undefined, time: number): void {
@@ -434,7 +437,9 @@ function applyLoopEvent(state: ConversationState, event: LoopRecordedEvent | und
     }
     case 'tool.result': {
       const found = findToolCall(state, event.toolCallId);
-      if (found !== undefined) finishToolCall(state, found.item, event.result.output, event.result.isError === true, time);
+      if (found !== undefined) {
+        finishToolCall(state, found, event.result.output, event.result.isError === true, event.result.note, time);
+      }
       return;
     }
   }
@@ -588,6 +593,17 @@ function applySubagentSpawned(state: ConversationState, record: WireRecord): voi
   const found = findToolCall(state, toolCallId);
   if (found === undefined) return;
   found.item.agent_refs = [...(found.item.agent_refs ?? []).filter((existing) => existing.agent_id !== agentId), ref];
+}
+
+function applyTaskStarted(state: ConversationState, record: WireRecord): void {
+  const info = record['info'] as
+    | { readonly taskId?: unknown; readonly parentToolCallId?: unknown; readonly toolCallId?: unknown }
+    | undefined;
+  const taskId = stringField(info?.taskId);
+  const toolCallId = stringField(info?.parentToolCallId) ?? stringField(info?.toolCallId);
+  if (taskId === undefined || toolCallId === undefined) return;
+  const found = findToolCall(state, toolCallId);
+  if (found !== undefined) found.item.task_id = taskId;
 }
 
 function applyCompactionSummary(state: ConversationState, record: WireRecord, time: number): void {
@@ -819,13 +835,15 @@ function upsertToolCall(state: ConversationState, turn: ConversationTurn, fresh:
 
 function finishToolCall(
   state: ConversationState,
-  item: ToolCallItem,
+  found: { turn: ConversationTurn; item: ToolCallItem },
   output: string | readonly ContentPart[],
   isError: boolean,
+  note: string | undefined,
   time: number,
 ): void {
-  endToolCall(item, output, isError, time);
-  refreshTool(state, item);
+  const cancelled = state.provisionalEnds[found.turn.turn_id]?.outcome === 'interrupted';
+  endToolCall(found.item, output, !isError ? 'completed' : cancelled ? 'interrupted' : 'failed', note, time);
+  refreshTool(state, found.item);
 }
 
 function refreshRecordedTool(state: ConversationState, toolCallId: string): void {

@@ -175,7 +175,7 @@ SYSTEM.md 是纯 Markdown 正文，不需要也不读取 Frontmatter。文件缺
 
 | 变量 | 内容 |
 | --- | --- |
-| `${skills}` | 合并后的 Agent Skills 注入内容；`Skill` 工具不可用时为空 |
+| `${skills}` | 合并后的 Agent Skills 目录，包含可用技能的名称、描述和路径；禁用 `Skill` 工具仅禁止工具调用，不影响目录展示 |
 | `${agents_md}` | 工作区指令文件（如 `AGENTS.md`）的内容 |
 | `${cwd}` | 当前工作目录 |
 | `${cwd_listing}` | 工作目录的文件列表 |
@@ -203,6 +203,8 @@ ${plugin_sections}
 ## 指令文件
 
 全局 Kimi 专属指令可放在 `$KIMI_CODE_HOME/AGENTS.md`（默认：`~/.kimi-code/AGENTS.md`）。当你用 `KIMI_CODE_HOME` 移动数据根时，这份全局指令文件也会一起移动。跨工具通用指令仍可放在真实 OS home 下的 `~/.agents/AGENTS.md`，项目级指令仍放在项目目录中，例如 `.kimi-code/AGENTS.md` 或 `AGENTS.md`。
+
+在桌面端和 Web UI 中，打开「设置 → 智能体与会话 → 自定义指令 → 全局 AGENTS.md」即可编辑该文件。编辑器读写的是当前连接服务端上的全局指令文件。
 
 ## 会话目录中的存储位置
 

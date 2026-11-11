@@ -8086,7 +8086,7 @@ capabilities = ["image_in", "video_in"]
         } as Event,
         sendQueued,
       );
-      await vi.runAllTimersAsync();
+      await vi.advanceTimersByTimeAsync(0);
 
       expect(sendQueued).toHaveBeenCalledWith({ text: 'next' });
       expect(driver.state.queuedMessages).toEqual([]);
@@ -9210,6 +9210,10 @@ capabilities = ["image_in", "video_in"]
     try {
       const { driver } = await makeDriver();
       const sendQueued = vi.fn();
+      const onAnimationFrame = () => {
+        setTimeout(onAnimationFrame, 120);
+      };
+      setTimeout(onAnimationFrame, 120);
       driver.sessionEventHandler.handleEvent(
         {
           type: 'compaction.started',
@@ -9229,7 +9233,7 @@ capabilities = ["image_in", "video_in"]
         } as Event,
         sendQueued,
       );
-      await vi.runAllTimersAsync();
+      await vi.advanceTimersByTimeAsync(0);
 
       expect(driver.state.appState.isCompacting).toBe(false);
       expect(driver.state.appState.streamingPhase).toBe('idle');
@@ -10838,8 +10842,24 @@ capabilities = ["image_in", "video_in"]
     expect(transcript).not.toContain('Interrupted by user');
   });
 
-  it('keeps unmessaged aborted events compatible with user interruptions', async () => {
+  it('distinguishes steered steps from user interruptions', async () => {
     const { driver } = await makeDriver();
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.step.interrupted',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        step: 1,
+        reason: 'steered',
+      } as Event,
+      vi.fn(),
+    );
+
+    const steeredTranscript = stripSgr(renderTranscript(driver));
+    expect(steeredTranscript).not.toContain('step interrupted (steered)');
+    expect(steeredTranscript).not.toContain('Interrupted by user');
 
     driver.sessionEventHandler.handleEvent(
       {

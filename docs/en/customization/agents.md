@@ -171,7 +171,7 @@ Like the body of a regular agent file, SYSTEM.md is rendered as a template each 
 
 | Variable | Content |
 | --- | --- |
-| `${skills}` | The merged Agent Skills injection; empty when the `Skill` tool is unavailable |
+| `${skills}` | The merged Agent Skills catalog, including available skill names, descriptions, and paths; disabling the `Skill` tool only blocks tool invocation and does not hide the catalog |
 | `${agents_md}` | Content of the workspace instruction files (such as `AGENTS.md`) |
 | `${cwd}` | Current working directory |
 | `${cwd_listing}` | Listing of the working directory |
@@ -197,6 +197,8 @@ ${plugin_sections}
 ## Instruction Files
 
 Global Kimi-specific instructions can live at `$KIMI_CODE_HOME/AGENTS.md` (default: `~/.kimi-code/AGENTS.md`). When you relocate the data root with `KIMI_CODE_HOME`, this global instruction file moves with it. Generic cross-tool instructions can still live under `~/.agents/AGENTS.md` in the real OS home, and project-level instructions remain under the project tree, for example `.kimi-code/AGENTS.md` or `AGENTS.md`.
+
+On desktop and in the Web UI, open **Settings → Agent & Sessions → Custom instructions → Global AGENTS.md** to edit this file. The editor reads and writes the global instruction file on the currently connected server.
 
 ## Storage Location in the Session Directory
 

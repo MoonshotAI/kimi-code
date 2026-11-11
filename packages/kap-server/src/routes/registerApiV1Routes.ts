@@ -11,6 +11,7 @@ import type { MetaFeature } from '../protocol/rest-meta';
 import { type IConnectionRegistry } from '../transport/ws/connectionRegistry';
 import type { ConversationService } from '../services/conversation/conversationService';
 import { registerAuthRoute } from './auth';
+import { registerAgentProfilesRoutes } from './agentProfiles';
 import { registerCapabilitiesRoutes } from './capabilities';
 import { registerClientConfigsRoutes } from './clientConfigs';
 import { registerConfigRoutes } from './config';
@@ -19,6 +20,7 @@ import { registerFileHistoryRoutes } from './fileHistory';
 import { registerFilesRoutes } from './files';
 import { registerFsRoutes } from './fs';
 import { registerGuiStoreRoutes } from './guiStore';
+import { registerGlobalAgentsMdRoutes } from './globalAgentsMd';
 import { registerInteractionsRoutes } from './interactions';
 import { registerMessagesRoutes } from './messages';
 import type { IGuiStoreService } from '../services/guiStore/guiStore';
@@ -115,6 +117,8 @@ export async function registerApiV1Routes(
         opts.remoteControl.homeDir,
       );
       registerConfigRoutes(apiV1 as unknown as Parameters<typeof registerConfigRoutes>[0], core);
+      registerAgentProfilesRoutes(apiV1 as unknown as Parameters<typeof registerAgentProfilesRoutes>[0], core);
+      registerGlobalAgentsMdRoutes(apiV1 as unknown as Parameters<typeof registerGlobalAgentsMdRoutes>[0], core);
       registerClientConfigsRoutes(
         apiV1 as unknown as Parameters<typeof registerClientConfigsRoutes>[0],
         core,
