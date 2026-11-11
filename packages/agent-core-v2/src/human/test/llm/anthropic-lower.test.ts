@@ -36,3 +36,20 @@ describe('anthropic lowering of inline images', () => {
     ).toThrow(/Unsupported media type for base64 video: video\/mp4;codecs=avc1/);
   });
 });
+
+describe('anthropic lowering of blank text', () => {
+  it('omits blank text kept only for another provider signature', () => {
+    const wire = lowerMessage({
+      role: 'assistant',
+      content: [
+        { type: 'text', text: 'answer', meta: { thought_signature_b64: 'sig-text' } },
+        { type: 'text', text: '', meta: { thought_signature_b64: 'sig-end' } },
+      ],
+      toolCalls: [{ type: 'function', id: 'call_1', name: 'get_weather', arguments: '{}' }],
+    });
+    expect(wire[0]?.content).toEqual([
+      { type: 'text', text: 'answer' },
+      { type: 'tool_use', id: 'call_1', name: 'get_weather', input: {} },
+    ]);
+  });
+});

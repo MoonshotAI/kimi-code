@@ -60,6 +60,7 @@ describe('foldWireRecords', () => {
           type: 'tool.call',
           stepUuid: 's1',
           toolCallId: 'tc1',
+          rawId: 'call_native',
           name: 'Shell',
           args: { command: 'ls' },
           display,
@@ -81,7 +82,14 @@ describe('foldWireRecords', () => {
     if (assistant.message.role !== 'assistant') throw new Error('expected assistant message');
     expect(assistant.message.content).toEqual([{ type: 'text', text: 'working' }]);
     expect(assistant.message.toolCalls).toEqual([
-      { type: 'function', id: 'tc1', name: 'Shell', arguments: '{"command":"ls"}', extras: undefined },
+      {
+        type: 'function',
+        id: 'tc1',
+        rawId: 'call_native',
+        name: 'Shell',
+        arguments: '{"command":"ls"}',
+        extras: undefined,
+      },
     ]);
     expect(assistant.message.toolCallDisplays).toEqual({ tc1: display });
     if (tool?.type !== 'message') throw new Error('expected message record');
