@@ -11,16 +11,20 @@ import { ScopeActivation, _clearScopedRegistryForTests, registerScopedService } 
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { LockFile } from '#/persistence/backends/sqlite/lockfile';
-import { drainQueryStoreDisposals, SqliteQueryStore } from '#/persistence/backends/sqlite/sqliteQueryStore';
+import { drainQueryStoreDisposals, DualWriteQueryStore } from '#/persistence/backends/dualWriteQueryStore';
+import { MiniDbQueryStore } from '#/persistence/backends/minidb/miniDbQueryStore';
 import { IQueryStore, QueryStoreRebuiltError } from '#/persistence/interface/queryStore';
-import { stubBootstrap } from '../../../app/bootstrap/stubs';
-import { stubLog } from '../../../_base/log/stubs';
+import { stubBootstrap } from '../../app/bootstrap/stubs';
+import { stubLog } from '../../_base/log/stubs';
 
 const COLLECTION = 'session';
 const STORE_FILE = 'query-store.sqlite';
 
-describe('SqliteQueryStore', () => {
+function backup(store: IQueryStore): MiniDbQueryStore {
+  return (store as unknown as { minidb: MiniDbQueryStore }).minidb;
+}
+
+describe('DualWriteQueryStore', () => {
   let homeDir: string;
   let disposeHost: (() => void) | undefined;
 
@@ -29,7 +33,7 @@ describe('SqliteQueryStore', () => {
     registerScopedService(
       LifecycleScope.App,
       IQueryStore,
-      SqliteQueryStore,
+      DualWriteQueryStore,
       ScopeActivation.OnDemand,
       'storage',
     );
@@ -56,18 +60,21 @@ describe('SqliteQueryStore', () => {
     const store = build();
     await store.put(COLLECTION, 'a', { id: 'a', v: 1 });
     expect(await store.get(COLLECTION, 'a')).toEqual({ id: 'a', v: 1 });
+    expect(await backup(store).get(COLLECTION, 'a')).toEqual({ id: 'a', v: 1 });
     expect(await store.get(COLLECTION, 'missing')).toBeUndefined();
     await store.delete(COLLECTION, 'a');
     expect(await store.get(COLLECTION, 'a')).toBeUndefined();
+    expect(await backup(store).get(COLLECTION, 'a')).toBeUndefined();
   });
 
-  it('batch applies put and delete atomically', async () => {
+  it('batch keeps SQLite atomic and retries non-atomic minidb failures', async () => {
     const store = build();
     await store.batch([
       { kind: 'put', collection: COLLECTION, key: 'a', value: { v: 1 } },
       { kind: 'put', collection: COLLECTION, key: 'b', value: { v: 2 } },
     ]);
     expect(await store.get(COLLECTION, 'a')).toEqual({ v: 1 });
+    expect(await backup(store).get(COLLECTION, 'a')).toEqual({ v: 1 });
     await expect(
       store.batch([
         { kind: 'put', collection: COLLECTION, key: 'c', value: { v: 3 } },
@@ -76,8 +83,28 @@ describe('SqliteQueryStore', () => {
     ).rejects.toThrow(TypeError);
     expect(await store.get(COLLECTION, 'c')).toBeUndefined();
     expect(await store.get(COLLECTION, 'invalid')).toBeUndefined();
+    expect(await backup(store).get(COLLECTION, 'c')).toBeUndefined();
+
+    const minidb = backup(store);
+    const originalBatch = minidb.batch.bind(minidb);
+    let failNextBatch = true;
+    minidb.batch = async (ops) => {
+      if (failNextBatch) {
+        failNextBatch = false;
+        throw new Error('minidb batch failed');
+      }
+      await originalBatch(ops);
+    };
+    const retry = [{ kind: 'put' as const, collection: COLLECTION, key: 'c', value: { v: 3 } }];
+    await expect(store.batch(retry)).rejects.toThrow('minidb batch failed');
+    expect(await store.get(COLLECTION, 'c')).toEqual({ v: 3 });
+    expect(await minidb.get(COLLECTION, 'c')).toBeUndefined();
+    await store.batch(retry);
+    expect(await minidb.get(COLLECTION, 'c')).toEqual({ v: 3 });
+
     await store.batch([{ kind: 'delete', collection: COLLECTION, key: 'a' }]);
     expect(await store.get(COLLECTION, 'a')).toBeUndefined();
+    expect(await minidb.get(COLLECTION, 'a')).toBeUndefined();
     expect(await store.get(COLLECTION, 'b')).toEqual({ v: 2 });
   });
 
@@ -248,7 +275,7 @@ describe('SqliteQueryStore', () => {
     }
   });
 
-  it('rejects text indexes and cleans legacy derived caches only after a published checkpoint', async () => {
+  it('rejects text indexes, dual-writes checkpoints and preserves legacy derived caches', async () => {
     const store = build();
     await store.put(COLLECTION, 'a', { id: 'a', body: 'hello world' });
     await expect(
@@ -276,7 +303,6 @@ describe('SqliteQueryStore', () => {
 
     const storeDir = join(homeDir, 'cache', 'query-store');
     const searchDir = join(homeDir, 'search-index');
-    await fsp.mkdir(join(storeDir, 'shard-00'), { recursive: true });
     await fsp.mkdir(join(storeDir, 'shard-01'), { recursive: true });
     await fsp.mkdir(searchDir, { recursive: true });
     await fsp.writeFile(join(storeDir, 'shard-01', 'marker'), 'derived');
@@ -284,39 +310,38 @@ describe('SqliteQueryStore', () => {
     const authoritative = join(homeDir, 'sessions', 'workspace', 'session', 'state.json');
     await fsp.mkdir(join(homeDir, 'sessions', 'workspace', 'session'), { recursive: true });
     await fsp.writeFile(authoritative, '{"id":"session"}');
-    const clusterLock = new LockFile(join(storeDir, 'shard-00', 'db.lock'));
-    const searchLock = new LockFile(join(searchDir, 'db.lock'));
-    expect(await clusterLock.acquire()).toBe(true);
-    expect(await searchLock.acquire()).toBe(true);
-    try {
-      await store.get(COLLECTION, 'a');
-      await expect(fsp.access(storeDir)).resolves.toBeUndefined();
-      await expect(fsp.access(searchDir)).resolves.toBeUndefined();
-      await expect(store.setCheckpoint('projection', { seq: 1 }, 99)).rejects.toThrow(
-        QueryStoreRebuiltError,
-      );
-      await expect(fsp.access(storeDir)).resolves.toBeUndefined();
-      await expect(fsp.access(searchDir)).resolves.toBeUndefined();
 
-      await store.setCheckpoint('projection', { seq: 1 });
-      expect(await store.getCheckpoint('projection')).toEqual({ seq: 1 });
-      await expect(fsp.access(storeDir)).resolves.toBeUndefined();
-      await expect(fsp.access(searchDir)).resolves.toBeUndefined();
+    await expect(store.setCheckpoint('projection', { seq: 1 }, 99)).rejects.toThrow(
+      QueryStoreRebuiltError,
+    );
+    expect(await store.getCheckpoint('projection')).toBeUndefined();
+    expect(await backup(store).getCheckpoint('projection')).toBeUndefined();
 
-      await clusterLock.release();
-      await searchLock.release();
-      await store.setCheckpoint('projection', { seq: 2 });
-      await expect(fsp.access(storeDir)).rejects.toMatchObject({ code: 'ENOENT' });
-      await expect(fsp.access(searchDir)).rejects.toMatchObject({ code: 'ENOENT' });
-      await fsp.writeFile(searchDir, 'cleanup failure');
-      await expect(store.setCheckpoint('projection', { seq: 3 })).resolves.toBeUndefined();
-      expect(await store.getCheckpoint('projection')).toEqual({ seq: 3 });
-      expect(await fsp.readFile(searchDir, 'utf8')).toBe('cleanup failure');
-      expect(await fsp.readFile(authoritative, 'utf8')).toBe('{"id":"session"}');
-    } finally {
-      await clusterLock.release();
-      await searchLock.release();
-    }
+    await store.setCheckpoint('projection', { seq: 1 });
+    expect(await store.getCheckpoint('projection')).toEqual({ seq: 1 });
+    expect(await backup(store).getCheckpoint('projection')).toEqual({ seq: 1 });
+
+    const minidb = backup(store);
+    const originalSetCheckpoint = minidb.setCheckpoint.bind(minidb);
+    let failNextCheckpoint = true;
+    minidb.setCheckpoint = async (source, checkpoint) => {
+      if (failNextCheckpoint) {
+        failNextCheckpoint = false;
+        throw new Error('minidb checkpoint failed');
+      }
+      await originalSetCheckpoint(source, checkpoint);
+    };
+    await expect(store.setCheckpoint('projection', { seq: 2 })).rejects.toThrow(
+      'minidb checkpoint failed',
+    );
+    expect(await store.getCheckpoint('projection')).toEqual({ seq: 2 });
+    expect(await minidb.getCheckpoint('projection')).toEqual({ seq: 1 });
+    await store.setCheckpoint('projection', { seq: 2 });
+    expect(await store.getCheckpoint('projection')).toEqual({ seq: 2 });
+    expect(await minidb.getCheckpoint('projection')).toEqual({ seq: 2 });
+    expect(await fsp.readFile(join(storeDir, 'shard-01', 'marker'), 'utf8')).toBe('derived');
+    expect(await fsp.readFile(join(searchDir, 'marker'), 'utf8')).toBe('derived');
+    expect(await fsp.readFile(authoritative, 'utf8')).toBe('{"id":"session"}');
   });
 
   it('shares the store with a second SQLite connection instead of locking it out', async () => {
@@ -345,9 +370,19 @@ describe('SqliteQueryStore', () => {
     const first = build();
     await first.put(COLLECTION, 'a', { id: 'a', v: 1 });
     await first.ensureIndex(COLLECTION, { kind: 'value', name: 'byV', field: 'v' });
+    const firstMiniDb = backup(first);
+    const closeMiniDb = firstMiniDb.close.bind(firstMiniDb);
+    let miniDbCloseCount = 0;
+    firstMiniDb.close = async () => {
+      miniDbCloseCount += 1;
+      await closeMiniDb();
+    };
     await first.close();
+    expect(miniDbCloseCount).toBe(1);
     disposeHost?.();
     disposeHost = undefined;
+    await drainQueryStoreDisposals();
+    expect(miniDbCloseCount).toBe(2);
 
     const file = join(homeDir, 'cache', STORE_FILE);
     const peer = new Database(file);
@@ -367,6 +402,7 @@ describe('SqliteQueryStore', () => {
     expect(await second.get(COLLECTION, 'a')).toBeUndefined();
     await second.ensureIndex(COLLECTION, { kind: 'value', name: 'byV', field: 'v' });
     await second.put(COLLECTION, 'b', { id: 'b', v: 2 });
+    expect(await backup(second).get(COLLECTION, 'b')).toEqual({ id: 'b', v: 2 });
     const page = await second.query<{ id: string; v: number }>(COLLECTION).where({ v: 2 }).execute();
     expect(page.items).toEqual([{ id: 'b', v: 2 }]);
   });
@@ -432,6 +468,7 @@ describe('SqliteQueryStore', () => {
     expect(await store.getCheckpoint('projection')).toBeUndefined();
     await store.setCheckpoint('projection', { seq: 7 }, store.storeEpoch());
     expect(await store.getCheckpoint('projection')).toEqual({ seq: 7 });
+    expect(await backup(store).getCheckpoint('projection')).toEqual({ seq: 7 });
   });
 
   it('getMany returns present values and skips missing keys', async () => {

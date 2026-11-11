@@ -41,7 +41,12 @@ export default defineConfig({
   hash: false,
   platform: 'node',
   target: 'node24',
-  banner: { js: '#!/usr/bin/env node' },
+  banner: {
+    js: [
+      '#!/usr/bin/env node',
+      "const __non_webpack_require__ = require('node:module').createRequire(__filename);",
+    ].join('\n'),
+  },
   plugins: [rawTextPlugin()],
   alias: {
     '@': resolve(appRoot, 'src'),

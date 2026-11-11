@@ -66,7 +66,7 @@
 |---|---|---|
 | 旧版本写的会话 | wire 日志、turn 编号、压缩后的 transcript（#3561、#3866、#3922）；新版本能否读、回滚后能否读 | `packages/agent-core-v2/docs/wire-manifest.d.ts`、`packages/agent-core-v2/docs/state-manifest.d.ts` |
 | `kimi migrate` 迁来的会话 | 从 `~/.kimi/` 迁到 `~/.kimi-code/` | `packages/migration-legacy/` |
-| 搜索索引 | minidb 快照与 WAL | `packages/minidb/` |
+| 会话索引 | SQLite 主读、minidb 备用双写；两者都是可重建派生缓存 | `packages/agent-core-v2/src/persistence/backends/dualWriteQueryStore.ts`、`packages/minidb/` |
 | 后台任务与 cron 持久化 | 非正常退出后的恢复（#3924） | |
 | 目录布局 | 任何读写 `~/.kimi-code/` 的代码 | `docs/en/configuration/data-locations.md` |
 

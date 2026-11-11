@@ -9,6 +9,7 @@ import {
   getEmbeddedNativeAssetManifest,
   getNativeCacheBase,
   getNativePackageRoot,
+  getSqliteNativeBinding,
   NATIVE_ASSET_MANIFEST_VERSION,
   type NativeAssetManifest,
   type NativeAssetSource,
@@ -19,7 +20,7 @@ function sha256(bytes: Buffer | string): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-function fakeManifest(files: Record<string, string>): {
+function fakeManifest(files: Record<string, string>, packageName = 'fake-native'): {
   manifest: NativeAssetManifest;
   source: NativeAssetSource;
 } {
@@ -37,8 +38,8 @@ function fakeManifest(files: Record<string, string>): {
     target: 'test-target',
     packages: [
       {
-        name: 'fake-native',
-        root: 'node_modules/fake-native',
+        name: packageName,
+        root: `node_modules/${packageName}`,
         files: assetEntries,
       },
     ],
@@ -112,6 +113,28 @@ describe('native assets', () => {
       expect(repairedRoot).toBe(packageRoot);
       expect(readFileSync(join(repairedRoot ?? '', 'index.js'), 'utf-8')).toContain("value: 'ok'");
       expect(existsSync(join(dir, 'native', 'test', 'test-target'))).toBe(true);
+
+      const sqlite = fakeManifest({
+        'node_modules/better-sqlite3/prebuilds/test-target.node': 'sqlite native',
+      }, 'better-sqlite3');
+      const sqliteBinding = getSqliteNativeBinding({
+        cacheBase: dir,
+        manifest: sqlite.manifest,
+        source: sqlite.source,
+        version: 'test',
+      }, 'test-target');
+      expect(sqliteBinding).toBe(join(
+        dir,
+        'native',
+        'test',
+        'test-target',
+        sha256(JSON.stringify(sqlite.manifest)),
+        'node_modules',
+        'better-sqlite3',
+        'prebuilds',
+        'test-target.node',
+      ));
+      expect(readFileSync(sqliteBinding ?? '', 'utf-8')).toBe('sqlite native');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

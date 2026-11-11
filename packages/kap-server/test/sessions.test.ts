@@ -3061,7 +3061,7 @@ describe('server-v2 /api/v1/sessions status context window', () => {
   });
 });
 
-describe('server-v2 /api/v1/sessions (minidb read model)', () => {
+describe('server-v2 /api/v1/sessions (SQLite-primary dual-write read model)', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
   let base: string;

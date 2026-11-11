@@ -218,8 +218,7 @@ try {
     KIMI_CODE_NATIVE_ASSET_SMOKE: '1',
   });
   assertIncludes(nativeAssetOutput, `Native asset smoke passed: ${target}`, 'native asset smoke');
-  assertIncludes(nativeAssetOutput, 'MiniDb worker build passed', 'MiniDb worker smoke');
-  assertIncludes(nativeAssetOutput, 'search worker ready', 'search worker smoke');
+  assertIncludes(nativeAssetOutput, 'SQLite native smoke passed:', 'SQLite native smoke');
 } finally {
   await rm(smokeHome, { recursive: true, force: true });
 }

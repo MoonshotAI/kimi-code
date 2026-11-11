@@ -463,7 +463,7 @@ max_chars = 100000
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `base` | `boolean` | `true` | 会话索引使用基于 minidb 的读模型；`false` 回退为直接读取会话元数据 |
+| `base` | `boolean` | `true` | 会话索引使用 SQLite 主读、minidb 备用双写的读模型；`false` 回退为直接读取会话元数据 |
 
 `base` 可被环境变量 `KIMI_CODE_PERSISTENCE_MINIDB_READMODEL` 覆盖，优先级高于配置文件。
 

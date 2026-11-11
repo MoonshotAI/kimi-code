@@ -26,7 +26,7 @@ import {
   drainSessionIndexMirror,
   SessionIndexMirror,
 } from '#/app/sessionIndex/sessionIndexMirrorService';
-import { drainQueryStoreDisposals, SqliteQueryStore } from '#/persistence/backends/sqlite/sqliteQueryStore';
+import { drainQueryStoreDisposals, DualWriteQueryStore } from '#/persistence/backends/dualWriteQueryStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { DATABASE_SECTION } from '#/persistence/configSection';
 import { IQueryStore } from '#/persistence/interface/queryStore';
@@ -69,7 +69,7 @@ describe('SessionIndexMirror', () => {
     registerScopedService(
       LifecycleScope.App,
       IQueryStore,
-      SqliteQueryStore,
+      DualWriteQueryStore,
       ScopeActivation.OnDemand,
       'storage',
     );

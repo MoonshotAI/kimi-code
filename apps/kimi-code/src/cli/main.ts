@@ -30,7 +30,7 @@ import {
 import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE, PROCESS_NAME } from '#/constant/app';
 import { runHeadlessMigrate, type MigrateCommandOptions } from '#/migration/index';
 import { installNativeModuleHook } from '#/native/module-hook';
-import { cleanupStaleNativeCacheForCurrent } from '#/native/native-assets';
+import { cleanupStaleNativeCacheForCurrent, getSqliteNativeBinding } from '#/native/native-assets';
 import { runNativeAssetSmokeIfRequested } from '#/native/smoke';
 import { startupTrace } from '#/utils/startup-trace';
 
@@ -201,6 +201,10 @@ function bootstrap(): void {
   // invalid proxy URL is reported and ignored rather than aborting startup.
   installGlobalProxyDispatcher();
   installNativeModuleHook();
+  const sqliteNativeBinding = getSqliteNativeBinding();
+  if (sqliteNativeBinding !== null) {
+    process.env['KIMI_CODE_SQLITE_NATIVE_BINDING'] = sqliteNativeBinding;
+  }
   if (runNativeAssetSmokeIfRequested()) return;
 
   // Start the background cleanup of stale native cache. Fire-and-forget; must not block startup or throw.

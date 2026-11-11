@@ -380,6 +380,14 @@ export function getNativePackageRoot(
   return cacheRoot === null ? null : resolveAssetPath(cacheRoot, pkg.root);
 }
 
+export function getSqliteNativeBinding(
+  options: NativeAssetOptions = {},
+  target = currentTarget(),
+): string | null {
+  const packageRoot = getNativePackageRoot('better-sqlite3', options);
+  return packageRoot === null ? null : join(packageRoot, 'prebuilds', `${target}.node`);
+}
+
 export function hasNativePackage(packageName: string, manifest: NativeAssetManifest): boolean {
   return manifest.packages.some((pkg) => pkg.name === packageName);
 }

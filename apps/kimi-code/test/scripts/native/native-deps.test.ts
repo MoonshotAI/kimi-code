@@ -42,6 +42,7 @@ describe('resolveTargetDeps', () => {
     expect(names).toContain('@mariozechner/clipboard');
     expect(names).toContain('@mariozechner/clipboard-darwin-arm64');
     expect(names).toContain('@moonshot-ai/pi-tui');
+    expect(names).toContain('better-sqlite3');
   });
 
   it('picks the right clipboard subpackage per target', () => {
@@ -56,7 +57,7 @@ describe('resolveTargetDeps', () => {
     ).toContain('@mariozechner/clipboard-win32-arm64-msvc');
   });
 
-  it('encodes pi-tui native file path per target', () => {
+  it('encodes native file paths per target', () => {
     const linuxPiTui = resolveTargetDeps('linux-arm64').find(
       (d) => d.resolvedName === '@moonshot-ai/pi-tui',
     );
@@ -75,6 +76,10 @@ describe('resolveTargetDeps', () => {
     expect(winArmPiTui?.nativeFileRelatives).toEqual([
       'native/win32/prebuilds/win32-arm64/win32-platform.node',
     ]);
+    for (const target of SUPPORTED_TARGETS) {
+      const sqlite = resolveTargetDeps(target).find((d) => d.resolvedName === 'better-sqlite3');
+      expect(sqlite?.nativeFileRelatives).toEqual([`prebuilds/${target}.node`]);
+    }
   });
 
   it('throws on unsupported target', () => {
@@ -94,9 +99,11 @@ describe('nativeDeps registry shape', () => {
     expect(target?.parent).toBe('clipboard-host');
   });
 
-  it('has pi-tui (collect=native-file-only, no parent)', () => {
-    const piTui = nativeDeps.find((d) => d.id === 'pi-tui');
-    expect(piTui?.collect).toBe('native-file-only');
-    expect(piTui?.parent).toBe(null);
+  it('has native-file-only entries with no parent', () => {
+    for (const id of ['pi-tui', 'better-sqlite3']) {
+      const dep = nativeDeps.find((d) => d.id === id);
+      expect(dep?.collect).toBe('native-file-only');
+      expect(dep?.parent).toBe(null);
+    }
   });
 });

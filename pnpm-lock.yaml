@@ -127,6 +127,9 @@ importers:
       '@moonshot-ai/vis-web':
         specifier: workspace:*
         version: link:../vis/web
+      '@types/better-sqlite3':
+        specifier: ^9.6.0
+        version: 9.6.0
       '@types/qrcode':
         specifier: ^1.5.6
         version: 1.5.6
@@ -139,6 +142,9 @@ importers:
       '@types/yazl':
         specifier: ^2.4.6
         version: 2.4.6
+      better-sqlite3:
+        specifier: ^13.0.3
+        version: 13.0.3
       chalk:
         specifier: ^5.4.1
         version: 5.6.2
@@ -480,6 +486,9 @@ importers:
       '@moonshot-ai/kimi-code-oauth':
         specifier: workspace:^
         version: link:../oauth
+      '@moonshot-ai/minidb':
+        specifier: workspace:^
+        version: link:../minidb
       '@moonshot-ai/tree-sitter-bash':
         specifier: workspace:^
         version: link:../tree-sitter-bash

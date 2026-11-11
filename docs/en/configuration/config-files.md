@@ -464,7 +464,7 @@ Both values must be positive integers. A call's `max_chars` overrides the defaul
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `base` | `boolean` | `true` | Use the minidb-backed read model for session indexing; `false` falls back to reading session metadata directly |
+| `base` | `boolean` | `true` | Use the SQLite-primary read model with minidb backup dual writes for session indexing; `false` falls back to reading session metadata directly |
 
 `base` can be overridden by the `KIMI_CODE_PERSISTENCE_MINIDB_READMODEL` environment variable, which takes higher priority than `config.toml`.
 
