@@ -6,6 +6,7 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService, type LoopSnapshot } from '#/agent/loop/loop';
 import { turnKey } from '#/agent/loop/turnOps';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
+import { errorFromLlmMessage } from '#/llm-adapter/contract/errors';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IFlagService } from '#/app/flag/flag';
 import type { PredictionGeneratedEvent } from '#/app/telemetry/events';
@@ -158,9 +159,10 @@ export class SessionPromptPredictionService extends Disposable implements ISessi
         },
         { signal: active.deadline.signal },
       ), active.deadline.signal);
-      if (outcome.type === 'failed') throw outcome.error;
+      if (outcome.type === 'failed') throw errorFromLlmMessage(outcome.error, outcome.diagnostics);
       if (outcome.type === 'aborted') {
-        throw outcome.reason ?? new DOMException('The operation was aborted.', 'AbortError');
+        const message = outcome.reason instanceof Error ? outcome.reason.message : 'The operation was aborted.';
+        throw new DOMException(message, 'AbortError');
       }
       active.usage = outcome.usage;
       active.requestId = outcome.requestId ?? trace?.requestId;
