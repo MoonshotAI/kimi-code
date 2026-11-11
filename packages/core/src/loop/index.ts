@@ -1,3 +1,7 @@
+/**
+ * Public surface of the loop module: contracts, `createLoop`, the record projection, and the request
+ * and task-wait types that hosts implement.
+ */
 export * from './contract/emitted';
 export * from './contract/hook';
 export * from './contract/inbox';

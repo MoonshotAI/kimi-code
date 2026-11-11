@@ -1,3 +1,8 @@
+/**
+ * `runLlmRequest`: the policy-driven attempt loop. Each attempt applies recorded recovery rewrites and
+ * the resolvers, then settles; failures are recovered or retried per the request policy, and every run
+ * ends with `llm.ended` and an `LlmOutcome`.
+ */
 import type { ToolDescription } from '#/llm/message';
 import { isAbortError, toLlmErrorMessage } from '#/llm/protocol/errors';
 import type { LlmRequest } from '#/llm/request';

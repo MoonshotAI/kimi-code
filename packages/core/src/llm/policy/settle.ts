@@ -1,3 +1,8 @@
+/**
+ * Settles one attempt into an `LlmOutcome`: accumulates streamed parts into the assistant message,
+ * normalizes tool call ids, collects usage, finish info, ids, and timing, and turns empty or
+ * thinking-only responses into `empty_response` errors.
+ */
 import { generate, type LlmAttemptEvent } from '#/llm/generate';
 import {
   createMessageAccumulator,

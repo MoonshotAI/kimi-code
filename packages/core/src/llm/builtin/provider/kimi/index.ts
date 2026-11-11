@@ -1,3 +1,7 @@
+/**
+ * Kimi requester presets on the OpenAI Chat Completions, Anthropic, and OpenAI Responses protocols,
+ * each bound to the Kimi default endpoint and its file upload.
+ */
 import type { LlmEndpoint } from '#/llm/request';
 import { createRequester } from '#/llm/requester';
 

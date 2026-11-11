@@ -1,3 +1,7 @@
+/**
+ * Infers Claude model capabilities (vision, thinking, tool use) from known model name prefixes.
+ */
+
 const CLAUDE_VISION_TOOL_PREFIXES = ['claude-3-', 'claude-3.5-', 'claude-3.7-'] as const;
 
 const CLAUDE_THINKING_VISION_TOOL_PREFIXES = [

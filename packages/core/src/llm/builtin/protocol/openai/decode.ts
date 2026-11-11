@@ -1,3 +1,8 @@
+/**
+ * OpenAI Chat Completions decoding: the stream decoder that turns chunks into streamed parts (including
+ * reasoning content and reasoning details), usage, and finish info; replay of a non-streaming response;
+ * and OpenAI SDK error classification, which the Responses protocol reuses.
+ */
 import {
   APIConnectionError as RawOpenAISDKConnectionError,
   APIConnectionTimeoutError as RawOpenAISDKConnectionTimeoutError,

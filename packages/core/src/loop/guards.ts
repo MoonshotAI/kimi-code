@@ -1,3 +1,7 @@
+/**
+ * Runtime type guards for values that reach the loop from hooks and hosts: history entries, tool
+ * calls, LLM outcomes, and tool results.
+ */
 import type { AssistantMessage, ToolCall } from '#/llm/message';
 import type { LlmOutcome } from '#/llm/response';
 import type { HistoryMessage } from '#/history/history';

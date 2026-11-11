@@ -1,3 +1,7 @@
+/**
+ * Composes several `ToolExecutorHook`s into one: argument rewrites chain in order, the first rejection
+ * wins, and `afterExecute` result replacements pass from hook to hook.
+ */
 import type {
   AfterExecuteHookContext,
   ToolDecision,

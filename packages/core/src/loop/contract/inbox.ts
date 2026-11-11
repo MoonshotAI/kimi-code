@@ -1,3 +1,7 @@
+/**
+ * Inbox contract: queued user prompts (normal and notify) and reminders, what triggers a turn, and the
+ * sources an appended message can come from.
+ */
 import type { HistoryMessage, UserEntry } from '#/history/history';
 
 export type RemindEntry = HistoryMessage;

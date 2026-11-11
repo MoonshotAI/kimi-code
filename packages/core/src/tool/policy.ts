@@ -1,3 +1,7 @@
+/**
+ * Tool result helpers used by the executor: error results for unknown or unavailable tools, appended
+ * notes, and character-based truncation.
+ */
 import type { ContentPart } from '#/llm/message';
 
 import type { ToolResult } from './contract';

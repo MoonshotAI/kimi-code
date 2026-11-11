@@ -1,3 +1,8 @@
+/**
+ * Contract of the hook-aware tool executor (`createToolExecutor`): tool results, execution input,
+ * handlers, the starting/permitting/ending hooks and their decisions, and runtime guards for tool
+ * results and executor hosts.
+ */
 import type { ContentPart, ToolCall, ToolDescription } from '#/llm/message';
 
 export interface Cause {

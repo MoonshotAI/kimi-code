@@ -1,3 +1,8 @@
+/**
+ * Anthropic Messages wire types: request content blocks and messages, and raw response, usage, and
+ * stream event shapes.
+ */
+
 export const CONTEXT_MANAGEMENT_BETA = 'context-management-2025-06-27';
 
 export type AnthropicWireContentBlock =

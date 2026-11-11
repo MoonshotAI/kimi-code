@@ -1,3 +1,7 @@
+/**
+ * Message structure rules: verifying that every tool call has exactly one non-empty result, dropping
+ * blank text parts and empty messages, and moving tool results next to their calls.
+ */
 import {
   isVacuousContentPart,
   type ContentPart,

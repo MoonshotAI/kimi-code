@@ -1,3 +1,7 @@
+/**
+ * Recovery contract and ledger: a recovery proposes a request rewrite or a side effect for a failed
+ * attempt; the ledger records applied recoveries and replays their rewrites on later attempts.
+ */
 import type { LlmEndpoint, LlmRequest } from '#/llm/request';
 import type { LlmErrorMessage } from '#/llm/response';
 

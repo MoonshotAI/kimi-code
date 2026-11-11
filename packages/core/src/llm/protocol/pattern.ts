@@ -1,3 +1,8 @@
+/**
+ * Pattern rewriting primitive: a named rule that replaces a run of items starting at an index, and
+ * `applyPatterns`, which applies a list of patterns one after another.
+ */
+
 export interface Rewrite<T> {
   readonly consumed: number;
   readonly replacement: readonly T[];

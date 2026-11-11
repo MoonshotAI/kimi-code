@@ -1,3 +1,7 @@
+/**
+ * Thinking configuration: validates a requested effort against the model's thinking metadata, resolves
+ * default and forced efforts, and resolves the thinking `keep` value from env and config.
+ */
 import { ThinkingConfigError } from '#/llm/protocol/errors';
 import type {
   LlmModelSpec,

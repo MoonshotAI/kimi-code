@@ -1,3 +1,7 @@
+/**
+ * The Google GenAI protocol for Gemini and Vertex AI: SDK client setup (API version base URLs, custom
+ * fetch) and send/sendStream transport, assembled with `defineProtocol`.
+ */
 import { GoogleGenAI as GenAIClient, type GenerateContentParameters } from '@google/genai';
 
 import type { ResolvedEndpoint } from '#/llm/endpoint';

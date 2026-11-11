@@ -1,3 +1,7 @@
+/**
+ * Credential recovery: when the endpoint's credential provider can recover from an auth failure,
+ * invalidate the credentials and try once more, either as a request recovery or around any call.
+ */
 import type { LlmRecovery } from '#/llm/policy/recovery';
 import type { LlmCredentialProvider } from '#/llm/request';
 

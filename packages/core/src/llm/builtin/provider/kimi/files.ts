@@ -1,3 +1,6 @@
+/**
+ * Kimi file upload for image and video media, returning `ms://` file references.
+ */
 import { uploadFilename } from '#/llm/protocol/kit/media';
 import type { LlmFiles } from '#/llm/request';
 

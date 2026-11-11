@@ -1,3 +1,7 @@
+/**
+ * Context-window token accounting: the last usage reported by the provider plus a character-based
+ * estimate for the messages after it, and for the system prompt and tools when no usage exists yet.
+ */
 import type { Message, ToolDescription } from '#/llm/message';
 import { emptyUsage, grandTotal, type TokenUsage } from '#/llm/usage';
 

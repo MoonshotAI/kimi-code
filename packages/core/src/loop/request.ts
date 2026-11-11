@@ -1,3 +1,8 @@
+/**
+ * Bridges a loop step to an LLM request: the per-turn `TurnExecution` (profile, thinking effort,
+ * requester), history-to-request message conversion, and `runLoopRequest`, which forwards progress
+ * events and always resolves to an `LlmOutcome`. Also holds the media recovery ledger reused across steps.
+ */
 import { isAbortError, toLlmErrorMessage } from '#/llm/protocol/errors';
 import type { LlmModelSpec, LlmRequestProfile } from '#/llm/request';
 import type { LlmDimension, LlmRequester } from '#/llm/requester';

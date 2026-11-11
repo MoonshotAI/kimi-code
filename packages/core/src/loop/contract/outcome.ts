@@ -1,3 +1,7 @@
+/**
+ * Outcome types for turns, steps, tool calls, and detached (async) tool calls, plus the standard
+ * causes issued by the loop itself.
+ */
 import type { ToolEntry } from '#/history/history';
 import type { Cause } from '#/tool/contract';
 

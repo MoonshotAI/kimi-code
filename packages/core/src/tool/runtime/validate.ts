@@ -1,3 +1,6 @@
+/**
+ * Validates a call's arguments against the tool's parameter schema, caching the compiled validator per tool.
+ */
 import {
   compileToolArgsValidator,
   validateToolArgs,

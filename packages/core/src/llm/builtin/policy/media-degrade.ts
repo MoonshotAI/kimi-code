@@ -1,3 +1,8 @@
+/**
+ * Built-in media recovery. When a request is too large, media parts other than the most recent ones
+ * are replaced with placeholders; if that is not enough, or the provider rejects an image format, all
+ * media in the request is stripped.
+ */
 import { mediaKeyOf, type ContentPart, type MediaPart, type Message } from '#/llm/message';
 import type {
   LlmRecovery,

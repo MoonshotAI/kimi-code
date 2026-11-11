@@ -1,3 +1,7 @@
+/**
+ * Pattern that merges consecutive user messages without folding a tool-result-only message into a
+ * preceding regular one.
+ */
 import type { Pattern } from '../pattern';
 
 export interface MergeUsersPolicy<T> {

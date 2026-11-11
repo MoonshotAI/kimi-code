@@ -1,3 +1,8 @@
+/**
+ * Protocol contract and `defineProtocol`. A protocol bundles media and tool-call-id rules, the encode
+ * pipeline, client creation, send/sendStream transport, the stream decoder, non-streaming replay, and
+ * error decoding; `.with(patch)` derives provider variants from it.
+ */
 import type { ResolvedEndpoint } from '#/llm/endpoint';
 import type { StreamedMessagePart } from '#/llm/message';
 import type {

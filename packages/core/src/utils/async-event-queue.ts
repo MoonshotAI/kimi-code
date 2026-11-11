@@ -1,3 +1,7 @@
+/**
+ * `AsyncEventQueue`: a push-based queue consumed as an async iterator, with explicit end and failure.
+ */
+
 export class AsyncEventQueue<T> implements AsyncIterable<T>, AsyncIterator<T> {
   private readonly values: T[] = [];
   private readonly waiters: Array<{

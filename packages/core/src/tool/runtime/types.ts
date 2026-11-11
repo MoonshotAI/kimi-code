@@ -1,3 +1,8 @@
+/**
+ * Tool runtime types: execution phases, outcomes and errors, results and detach acknowledgements,
+ * output logs, execution snapshots and events, executor hooks and policy, and the `ExecutableTool`
+ * definition.
+ */
 import type { ContentPart, ToolCall, ToolDescription } from '#/llm/message';
 
 export type { ToolCall, ToolDescription };

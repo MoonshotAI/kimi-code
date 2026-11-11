@@ -1,3 +1,8 @@
+/**
+ * Anthropic legality rules: the audio placeholder pattern, per-model thinking profiles (budget or
+ * adaptive, supported efforts), default max output tokens, unsigned-thinking history cleanup, and
+ * sampling and response-format checks.
+ */
 import type { ContentPart, Message } from '#/llm/message';
 import { SyntaxRequestFormatError } from '#/llm/protocol/errors';
 import type { ModelLegality } from '#/llm/protocol/rules/model';

@@ -1,3 +1,8 @@
+/**
+ * Tool-message conversion patterns for OpenAI Chat Completions: depending on `toolMessageConversion`,
+ * keep tool-result parts, move tool-result media into a following user message, or convert tool
+ * results to plain text.
+ */
 import type { ContentPart, Message, ThinkPart, ToolMessage, UserMessage } from '#/llm/message';
 import { mediaUrlOf } from '#/llm/protocol/kit/media';
 import { toolResultToPlainText } from '#/llm/protocol/patterns';

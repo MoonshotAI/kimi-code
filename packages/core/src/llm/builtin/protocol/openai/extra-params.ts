@@ -1,3 +1,7 @@
+/**
+ * Extra OpenAI Chat Completions request parameters that callers can pass through the protocol options.
+ */
+
 export interface OpenAIExtraParams {
   readonly temperature?: number;
   readonly top_p?: number;

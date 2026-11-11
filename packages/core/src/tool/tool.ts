@@ -1,3 +1,6 @@
+/**
+ * `defineTool`: declares a tool as a frozen description with its `execute` handler.
+ */
 import type { ToolDescription } from '#/llm/message';
 
 import type { ToolExecuteInput, ToolResult } from './executor';

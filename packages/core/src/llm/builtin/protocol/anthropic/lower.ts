@@ -1,3 +1,7 @@
+/**
+ * Anthropic Messages encoding: lowers core messages, tools, and params to the native request, adds
+ * cache-control breakpoints and beta features, and defines the protocol's media support and pipeline spec.
+ */
 import type Anthropic from '@anthropic-ai/sdk';
 import { shake } from 'radashi';
 

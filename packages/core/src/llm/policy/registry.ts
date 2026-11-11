@@ -1,3 +1,7 @@
+/**
+ * `PolicyRegistry`: a mutable set of resolvers, recoveries, and retryables that hosts add to and remove
+ * from at runtime, exposed as a live `LlmPolicy`.
+ */
 import type { LlmPolicy } from './policy';
 import type { LlmRecovery } from './recovery';
 import type { LlmResolver } from './resolver';

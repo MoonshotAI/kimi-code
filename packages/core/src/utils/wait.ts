@@ -1,3 +1,7 @@
+/**
+ * `waitEvent`: resolves with the first matching event from a subscription, rejecting on timeout or abort.
+ */
+
 export interface WaitOpts<E> {
   readonly match?: (event: E) => boolean;
   readonly timeoutMs?: number;

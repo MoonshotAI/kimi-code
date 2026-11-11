@@ -1,3 +1,7 @@
+/**
+ * Tool call id helpers for built-in protocols: OpenAI Responses call id sanitization and applying a
+ * provider's id policy to a message list.
+ */
 import type { Message } from '#/llm/message';
 import { sanitizeToolCallId } from '#/llm/protocol/kit/ids';
 import {

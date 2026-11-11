@@ -1,3 +1,7 @@
+/**
+ * Output stores for tool output logs: an in-memory store and a file-backed store under a directory,
+ * with bounded retention, previews, offset reads, and append listeners.
+ */
 import { closeSync, openSync, readSync, statSync } from 'node:fs';
 import { appendFile, chmod, mkdir, open as openFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';

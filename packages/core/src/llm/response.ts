@@ -1,3 +1,7 @@
+/**
+ * Request results: finish reasons, the `LlmErrorMessage` union, timing, notices, stream and retry
+ * events, the `LlmRunEvent` vocabulary, and the final `LlmOutcome`.
+ */
 import type { AssistantMessage, StreamedMessagePart, ToolCall } from '#/llm/message';
 import type { ThinkingEffort } from '#/llm/request';
 import type { TokenUsage } from '#/llm/usage';

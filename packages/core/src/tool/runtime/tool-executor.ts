@@ -1,3 +1,8 @@
+/**
+ * `ToolExecutor`: runs a tool call through argument parsing, hooks, schema validation, permitting, and
+ * execution, and returns a handle that can be awaited (with a timeout), observed, stopped, or detached
+ * into a background task.
+ */
 import { randomBytes } from 'node:crypto';
 
 import type { ContentPart } from '#/llm/message';

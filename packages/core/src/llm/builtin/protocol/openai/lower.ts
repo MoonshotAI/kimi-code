@@ -1,3 +1,7 @@
+/**
+ * OpenAI Chat Completions encoding: lowers core messages, tools, thinking, and params to the native
+ * request, and defines the protocol's media support and pipeline spec.
+ */
 import type OpenAI from 'openai';
 import { shake } from 'radashi';
 

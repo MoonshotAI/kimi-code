@@ -1,3 +1,7 @@
+/**
+ * OpenAI Responses encoding: lowers core messages, tools, thinking, and params to Responses input
+ * items and request params, and defines the protocol's media support and pipeline spec.
+ */
 import type OpenAI from 'openai';
 import { shake } from 'radashi';
 

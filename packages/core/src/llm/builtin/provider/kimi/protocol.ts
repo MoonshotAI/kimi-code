@@ -1,3 +1,8 @@
+/**
+ * Kimi variants of the OpenAI Chat Completions, Anthropic, and OpenAI Responses protocols: Kimi thinking
+ * params, tool schema and builtin-function conversion, output token filling, usage hoisting,
+ * `x-trace-id` request ids, and Kimi error classification and diagnostics.
+ */
 import type { Message, ToolDescription, ContentPart } from '#/llm/message';
 import { providerImagePolicy } from '#/llm/protocol/kit/media';
 import { requestIdFromHeader } from '#/llm/protocol/kit/http';

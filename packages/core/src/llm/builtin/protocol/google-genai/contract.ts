@@ -1,3 +1,7 @@
+/**
+ * Google GenAI wire types for request contents and parts.
+ */
+
 export type GoogleContent = {
   role: 'user' | 'model';
   parts: GooglePart[];

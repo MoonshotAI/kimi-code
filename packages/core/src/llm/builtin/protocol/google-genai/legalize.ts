@@ -1,3 +1,7 @@
+/**
+ * Google GenAI legality rules: supported sampling parameters and the pattern that reorders tool
+ * results to match call order, rejecting missing, duplicate, or unexpected results.
+ */
 import type { Message, ToolMessage } from '#/llm/message';
 import type { ModelLegality } from '#/llm/protocol/rules/model';
 import type { Pattern } from '#/llm/protocol/pattern';

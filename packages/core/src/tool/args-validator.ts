@@ -1,3 +1,7 @@
+/**
+ * JSON Schema validation of tool arguments with Ajv. The draft (07, 2019-09, or 2020-12) is chosen from
+ * `$schema` or the keywords the schema uses, and errors are formatted for the model.
+ */
 import Ajv, { type ErrorObject, type ValidateFunction } from 'ajv';
 import Ajv2019 from 'ajv/dist/2019';
 import Ajv2020 from 'ajv/dist/2020';

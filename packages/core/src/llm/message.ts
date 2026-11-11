@@ -1,3 +1,8 @@
+/**
+ * Core message model: content parts (text, think, media), tool calls and their streamed fragments, the
+ * four message roles, and the accumulator that merges streamed parts into an assistant message.
+ */
+
 export interface ToolDescription {
   name: string;
   description: string;

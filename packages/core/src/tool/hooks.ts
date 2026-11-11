@@ -1,3 +1,7 @@
+/**
+ * Tool hook registry and runners for the `tool.starting`, `tool.permitting`, and `tool.ending` points,
+ * including validation of hook decisions and failure handling.
+ */
 import type { ToolCall } from '#/llm/message';
 import { errorText } from '#/llm/protocol/errors';
 

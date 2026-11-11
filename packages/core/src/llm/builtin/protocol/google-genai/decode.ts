@@ -1,3 +1,7 @@
+/**
+ * Google GenAI decoding: the stream decoder that turns response chunks into streamed parts, usage, and
+ * finish info; replay of a non-streaming response; and SDK error classification.
+ */
 import { ApiError as RawGoogleGenAISDKApiError } from '@google/genai';
 
 import {

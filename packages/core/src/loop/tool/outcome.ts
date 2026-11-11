@@ -1,3 +1,7 @@
+/**
+ * Turns tool execution results into history: tool entries for completed, aborted, blocked, and failed
+ * calls, and the user entry that reports a detached tool's completion.
+ */
 import { createToolMessage, type ContentPart, type ToolCall } from '#/llm/message';
 import { abortedToolOutput } from '#/tool/abort';
 import { errorText } from '#/llm/protocol/errors';

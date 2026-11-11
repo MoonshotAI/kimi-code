@@ -1,3 +1,6 @@
+/**
+ * `streamLlmRequest`: exposes a request's `LlmRunEvent`s as an `AsyncIterable` that ends after `llm.ended`.
+ */
 import { runLlmRequest, type LlmRunControl } from '#/llm/policy/policy';
 import type { LlmRequest } from '#/llm/request';
 import type { LlmRunEvent } from '#/llm/response';

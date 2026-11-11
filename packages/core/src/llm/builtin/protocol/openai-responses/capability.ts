@@ -1,3 +1,6 @@
+/**
+ * Infers OpenAI Responses model capabilities from model names, using the shared OpenAI capability tables.
+ */
 import {
   hasModelPrefix,
   isOpenAIReasoningModel,

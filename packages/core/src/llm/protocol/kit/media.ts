@@ -1,3 +1,8 @@
+/**
+ * Media helpers for protocols: accepted image MIME types and inline byte budgets per provider,
+ * extension-to-MIME tables, and accessors for a media part's URL, uploaded file id, inline data, and
+ * upload filename.
+ */
 import type { MediaPart } from '#/llm/message';
 import type { LlmFileInput } from '#/llm/request';
 

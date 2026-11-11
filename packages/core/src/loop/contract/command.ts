@@ -1,3 +1,7 @@
+/**
+ * Loop input contract: the snapshot used to construct or reset a loop (profile, history, inbox,
+ * unfinished turn) and the command union accepted from the host.
+ */
 import type { HistoryMessage, UserEntry } from '#/history/history';
 import type { RemindEntry, TurnTrigger } from './inbox';
 import type { LoopProfile } from './profile';

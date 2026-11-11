@@ -1,3 +1,8 @@
+/**
+ * Loop hook contract: the hook points (turn start, message append, step start, tool batch start, step
+ * stop and continue), their event payloads and allowed decisions, registration options, and hook
+ * lifecycle events.
+ */
 import type { ToolCall } from '#/llm/message';
 import type { HistoryMessage } from '#/history/history';
 import type { ToolResult } from '#/tool/executor';

@@ -1,3 +1,7 @@
+/**
+ * Message patterns shared by protocols: merging consecutive user messages and converting tool results
+ * to plain text.
+ */
 import type { Message, ThinkPart } from '#/llm/message';
 
 import { convertToolResultToPlainText } from '../builtin/protocol/tool-result-text';

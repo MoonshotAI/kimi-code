@@ -1,3 +1,7 @@
+/**
+ * Runs the active hooks at each loop hook point in registration order, validates their decisions, and
+ * applies each hook's failure policy (pause the hook, or block) when it throws or returns an invalid value.
+ */
 import type { HistoryMessage } from '#/history/history';
 import type { ToolResult } from '#/tool/executor';
 import type {

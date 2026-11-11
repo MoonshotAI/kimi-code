@@ -1,3 +1,7 @@
+/**
+ * Prompt origin metadata for user messages (client metadata, bundled skill activations, file
+ * attachments), skill-activation text parts, and merging several steer messages into one user message.
+ */
 import type { ContentPart, TextPart } from '#/llm/message';
 
 function promptDisplayTextFromContentParts(parts: readonly ContentPart[]): string {

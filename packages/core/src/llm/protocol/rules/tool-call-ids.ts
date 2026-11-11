@@ -1,3 +1,7 @@
+/**
+ * Tool call id legalization: maps history ids onto the protocol's id policy while keeping them unique
+ * and consistent between calls and results, and normalizes the ids of streamed tool calls.
+ */
 import {
   type AssistantMessage,
   type Message,

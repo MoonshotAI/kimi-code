@@ -1,3 +1,8 @@
+/**
+ * Loop state model: the read-only `LoopState` view, the live turn, step, and tool records the actor
+ * mutates, and pure helpers over them (turn creation, step outcome drafting, tool settlement,
+ * resumability checks).
+ */
 import {
   createAssistantEntry,
   type AssistantEntry,

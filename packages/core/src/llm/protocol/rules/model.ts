@@ -1,3 +1,8 @@
+/**
+ * Model legality rules: merges protocol-inferred capabilities into the model spec, keeps only the
+ * sampling parameters and response formats a protocol supports, and fits the output token cap into
+ * the remaining context window.
+ */
 import { pick } from 'radashi';
 
 import type {

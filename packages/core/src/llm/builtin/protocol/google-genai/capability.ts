@@ -1,3 +1,7 @@
+/**
+ * Infers Gemini model capabilities (multimodal input, thinking, tool use) from known model name prefixes.
+ */
+
 const GEMINI_CATALOGUED_PREFIXES = [
   'gemini-1.5-pro',
   'gemini-1.5-flash',

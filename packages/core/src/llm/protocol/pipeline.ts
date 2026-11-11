@@ -1,3 +1,8 @@
+/**
+ * Encode pipeline shared by all protocols: legalize the request, convert params, tools, and messages
+ * to the native shape, then merge turns, annotate, finalize, and flatten into the wire request. Every
+ * pass can be traced and can report notices.
+ */
 import type { Message, ToolDescription } from '#/llm/message';
 import type {
   LlmModelSpec,

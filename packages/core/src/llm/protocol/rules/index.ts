@@ -1,3 +1,7 @@
+/**
+ * `legalize`: the ordered passes that make a request legal for a protocol before encoding (media,
+ * tool-result media relocation, tool call ids, provider patterns, thinking history, model rules).
+ */
 import type { Message } from '#/llm/message';
 
 import { applyPatterns, type Pattern } from '../pattern';

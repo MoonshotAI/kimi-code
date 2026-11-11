@@ -1,3 +1,7 @@
+/**
+ * OpenAI Chat Completions legality rules: resolving which reasoning key carries thinking content,
+ * stamping it onto history thinking parts, and the supported sampling parameters.
+ */
 import type { ContentPart, Message, ThinkPart } from '#/llm/message';
 import type { ModelLegality } from '#/llm/protocol/rules/model';
 import type { Pattern } from '#/llm/protocol/pattern';

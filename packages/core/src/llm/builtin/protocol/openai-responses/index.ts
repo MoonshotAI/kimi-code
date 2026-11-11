@@ -1,3 +1,7 @@
+/**
+ * The OpenAI Responses protocol: SDK client setup, send/sendStream transport, and the `x-request-id`
+ * header, assembled with `defineProtocol`.
+ */
 import OpenAI from 'openai';
 
 import type { ResolvedEndpoint } from '#/llm/endpoint';

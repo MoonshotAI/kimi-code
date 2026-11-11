@@ -1,3 +1,7 @@
+/**
+ * The Anthropic Messages protocol: SDK client setup, send/sendStream over the regular or beta API, and
+ * the `request-id` header, assembled with `defineProtocol`.
+ */
 import Anthropic from '@anthropic-ai/sdk';
 
 import type { ResolvedEndpoint } from '#/llm/endpoint';

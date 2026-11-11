@@ -1,3 +1,8 @@
+/**
+ * History entry model: system, user, assistant, and tool messages paired with their metadata, entry
+ * constructors, and the conversion of history into request messages, including how tool results are
+ * rendered for the model.
+ */
 import type { FinishInfo } from '#/llm/response';
 import type {
   AssistantMessage,

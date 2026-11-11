@@ -1,3 +1,8 @@
+/**
+ * `createToolExecutor`: a name-keyed tool registry that runs the starting and permitting hooks,
+ * dispatches the call to its handler, runs the ending hooks, and appends hook notes and truncates the
+ * result. Tools can be invalidated, restored, or replaced while calls are in flight.
+ */
 import { errorText } from '#/llm/protocol/errors';
 
 import {

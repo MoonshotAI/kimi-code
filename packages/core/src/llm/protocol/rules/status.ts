@@ -1,3 +1,7 @@
+/**
+ * Classifies transport, stream, and HTTP status failures into `LlmRemoteErrorMessage` kinds (timeout,
+ * connection, context overflow, overload, request too large, image format, and others) with retryability.
+ */
 import type { LlmRemoteErrorMessage, LlmStatusErrorInfo } from '#/llm/response';
 
 const NETWORK_RE = /network|connection|connect|disconnect|terminated/i;

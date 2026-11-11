@@ -1,3 +1,8 @@
+/**
+ * `LlmRequest` contract and its dimensions: protocol binding, model spec and request model (thinking,
+ * sampling, response format, output cap), endpoint with credentials and file upload, profile (system
+ * prompt, tools), content (messages), and policy.
+ */
 import type { ResolvedEndpoint } from '#/llm/endpoint';
 import type { MediaKind, Message, ToolDescription } from '#/llm/message';
 import type { LlmPolicy } from '#/llm/policy/policy';

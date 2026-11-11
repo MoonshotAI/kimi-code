@@ -1,3 +1,7 @@
+/**
+ * `AbortScope`: an abort signal paired with its trigger, optionally linked to a parent signal.
+ */
+
 export interface AbortScope {
   readonly signal: AbortSignal;
   abort(reason?: unknown): void;

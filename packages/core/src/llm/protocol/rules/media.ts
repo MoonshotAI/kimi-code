@@ -1,3 +1,8 @@
+/**
+ * Media legality rules: which media kinds, MIME types, and sources a protocol accepts in content and
+ * in tool results. Unsupported parts become placeholders, and tool-result media the protocol cannot
+ * carry is moved into a following user message.
+ */
 import {
   isMediaPart,
   mediaKindOfPart,

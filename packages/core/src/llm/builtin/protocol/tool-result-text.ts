@@ -1,3 +1,7 @@
+/**
+ * Converts a tool result message to plain text, with placeholders for the image, audio, and video
+ * parts it drops.
+ */
 import { extractText, type Message } from '#/llm/message';
 
 const OMITTED_IMAGE_PLACEHOLDER = '(image omitted: tool result converted to plain text)';

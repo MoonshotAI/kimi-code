@@ -1,3 +1,7 @@
+/**
+ * Endpoint declarations for built-in providers: the environment variables that supply each provider's
+ * API key and base URL, plus Kimi's default base URL.
+ */
 import type { LlmEndpointDeclaration } from '#/llm/endpoint';
 import { KIMI_DEFAULT_BASE_URL } from '#/llm/builtin/provider/kimi/protocol';
 
