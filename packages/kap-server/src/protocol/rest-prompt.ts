@@ -21,6 +21,9 @@ export const promptSubmissionSchema = z.object({
   content: z.array(messageContentSchema).min(1),
   metadata: z.record(z.string(), z.unknown()).optional(),
   agent_id: z.string().min(1).optional(),
+  profile: z
+    .never({ error: 'choose the agent profile with agent_config.profile when creating the session' })
+    .optional(),
   model: z.string().min(1).optional(),
   thinking: promptThinkingSchema.optional(),
   permission_mode: promptPermissionModeSchema.optional(),

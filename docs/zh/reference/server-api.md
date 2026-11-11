@@ -1147,7 +1147,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 成功时，`data` 为被接受的提示词 `{ prompt_id, user_message_id, status, content, created_at }`。会话空闲时，响应会等到提示词开始执行轮次或未开始轮次就结束：hook 拒绝了该提示词时 `status` 为 `blocked`，提交在轮次开始前失败时为 `failed`，例如提示词 hook 出错或附件无法准备。
 
-- `40001`：校验失败——例如未知的 `model`，或模型不支持的 `thinking` 强度
+- `40001`：校验失败——例如未知的 `model`、模型不支持的 `thinking` 强度，或带了 `profile` 字段（Agent 档案只能在创建会话时指定）
 - `40110`：尚未配置供应商——请先完成登录
 - `40111`：解析出的供应商没有凭据（`details.provider_id`）
 - `40112`：供应商的凭据被拒绝（`details.provider_id`）

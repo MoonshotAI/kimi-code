@@ -1147,7 +1147,7 @@ The schema also accepts the `tool_use`, `tool_result`, and `thinking` parts of t
 
 On success, `data` is the accepted prompt `{ prompt_id, user_message_id, status, content, created_at }`. On an idle session the response waits until the prompt starts its turn or ends without one: `status` is `blocked` when a hook rejected the prompt, and `failed` when its submission failed before a turn started, for example because a prompt hook failed or an attachment could not be prepared.
 
-- `40001`: validation failure — for example an unknown `model`, or a `thinking` level the model does not support
+- `40001`: validation failure — for example an unknown `model`, a `thinking` level the model does not support, or a `profile` field, since the agent profile is chosen only when the session is created
 - `40110`: no provider configured yet — finish login first
 - `40111`: the resolved provider has no credential (`details.provider_id`)
 - `40112`: the provider's credential was rejected (`details.provider_id`)

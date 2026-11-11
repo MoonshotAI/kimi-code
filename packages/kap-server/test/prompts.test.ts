@@ -1373,14 +1373,12 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(content[0]?.type).toBe('image');
   });
 
-  it('gates media against the default model a same-request profile selection binds', async () => {
+  it('gates media against the default model bound when the session was created', async () => {
     await writeConfigToml(home as string, PROMPT_TOML_KIMI_VISION_DEFAULT);
     await (server as RunningServer).core.accessor.get(IConfigService).reload();
     const id = await createSession(home as string);
-    await createMainAgent(id);
 
     const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
-      profile: 'agent',
       content: [
         {
           type: 'image',
@@ -2120,6 +2118,18 @@ describe('server-v2 /api/v1 prompts', () => {
           m.content.some((p) => p.type === 'text' && p.text === 'side question after reload'),
       );
     expect(hasText).toBe(true);
+  });
+
+  it('rejects a profile on a prompt and points to session creation', async () => {
+    const id = await createSession(home as string);
+
+    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'hello' }],
+      profile: 'agent',
+    });
+
+    expect(body.code).toBe(40001);
+    expect(JSON.stringify(body)).toContain('agent_config.profile');
   });
 
   it('applies a requested model and thinking effort before the prompt starts', async () => {
