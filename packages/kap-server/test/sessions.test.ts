@@ -32,6 +32,7 @@ import {
   ISessionIndexMirror,
   ISessionManager,
   ISessionMetadata,
+  ISessionPromptPredictionService,
   ISessionTitleService,
   IWireService,
   IWorkspaceInstanceManager,
@@ -1598,14 +1599,71 @@ describe('server-v2 /api/v1/sessions', () => {
     }
   });
 
-  it('rejects a missing session delete and an unsupported action suffix with their error codes', async () => {
+  it('rejects unsupported actions and serves prediction actions with disconnect cancellation', async () => {
     const { body } = await postJson<null>('/api/v1/sessions/sess_missing:delete');
     expect(body.code).toBe(40401);
 
     const cwd = home as string;
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
-    const suffix = await postJson<null>(`/api/v1/sessions/${created.body.data.id}:restart`);
+    const id = created.body.data.id;
+    const suffix = await postJson<null>(`/api/v1/sessions/${id}:restart`);
     expect(suffix.body.code).toBe(40001);
+
+    const predicted = await postJson<{ prediction: string | null }>(`/api/v1/sessions/${id}:predict-prompt`, {
+      prediction_id: 'prediction-1',
+      expected_turn_id: 0,
+    });
+    expect(predicted.body.data).toEqual({ prediction: null });
+    const cancelled = await postJson<{ cancelled: boolean }>(`/api/v1/sessions/${id}:cancel-prompt-prediction`, {
+      prediction_id: 'prediction-1',
+    });
+    expect(cancelled.body.data).toEqual({ cancelled: false });
+
+    const session = getLiveSessionById((server as RunningServer).core.accessor, id);
+    if (session === undefined) throw new Error('expected live session');
+    const service = session.accessor.get(ISessionPromptPredictionService);
+    let releasePrediction!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releasePrediction = resolve;
+    });
+    let markPredictionSettled!: () => void;
+    const predictionSettled = new Promise<void>((resolve) => {
+      markPredictionSettled = resolve;
+    });
+    const predict = vi.spyOn(service, 'predict').mockImplementation(async () => {
+      await gate;
+      markPredictionSettled();
+      return null;
+    });
+    const cancel = vi.spyOn(service, 'cancel');
+    const cancelledWithReason = await postJson<{ cancelled: boolean }>(`/api/v1/sessions/${id}:cancel-prompt-prediction`, {
+      prediction_id: 'visibility-check',
+      reason: 'visibility',
+    });
+    expect(cancelledWithReason.body.data).toEqual({ cancelled: false });
+    expect(cancel).toHaveBeenCalledWith('visibility-check', 'visibility');
+    const cancelledForPlan = await postJson<{ cancelled: boolean }>(`/api/v1/sessions/${id}:cancel-prompt-prediction`, {
+      prediction_id: 'plan-check',
+      reason: 'plan',
+    });
+    expect(cancelledForPlan.body.data).toEqual({ cancelled: false });
+    expect(cancel).toHaveBeenCalledWith('plan-check', 'plan');
+    const abortController = new AbortController();
+    const request = fetch(`${base}/api/v1/sessions/${id}:predict-prompt`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ prediction_id: 'disconnect-me', expected_turn_id: 0 }),
+      signal: abortController.signal,
+    } as never).catch(() => undefined);
+    await vi.waitFor(() => expect(predict).toHaveBeenCalledOnce());
+    abortController.abort();
+    await vi.waitFor(() => expect(cancel).toHaveBeenCalledWith('disconnect-me', 'disconnect'));
+    releasePrediction();
+    await request;
+    await predictionSettled;
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
   });
 
   it('cold-loads a persisted session on :undo and reports an unknown turn instead of 40401', async () => {

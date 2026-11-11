@@ -24,6 +24,7 @@ import type {
   SessionMeta,
   SessionMetaPatch,
 } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
+import type { PromptPredictionCancelReason } from '@moonshot-ai/agent-core-v2/features/promptPrediction/promptPrediction';
 import type { SkillSummary } from '@moonshot-ai/agent-core-v2/features/skill/catalog/types';
 
 import type { ScopeRef } from '../channel.js';
@@ -111,6 +112,14 @@ export interface SessionFacade {
     turnIndex?: number;
   }): Promise<SessionMeta>;
   createChild(input?: { title?: string; metadata?: Record<string, unknown> }): Promise<SessionMeta>;
+  predictNextPrompt(input: {
+    predictionId: string;
+    expectedTurnId: number;
+  }): Promise<string | null>;
+  cancelPromptPrediction(
+    predictionId: string,
+    reason?: PromptPredictionCancelReason,
+  ): Promise<boolean>;
   readonly approvals: SessionApprovalsFacade;
   readonly questions: SessionQuestionsFacade;
   readonly interactions: SessionInteractionsFacade;
@@ -165,6 +174,10 @@ export function createSessionFacade(call: ScopedCaller, sessionId: string): Sess
     delete: () => call({}, 'sessionManager', 'delete', [sessionId]) as Promise<void>,
     fork: (input) => spawn('fork', input),
     createChild: (input) => spawn('createChild', input),
+    predictNextPrompt: (input) =>
+      call(scope, 'sessionPromptPredictionService', 'predict', [input]) as Promise<string | null>,
+    cancelPromptPrediction: (predictionId, reason) =>
+      call(scope, 'sessionPromptPredictionService', 'cancel', [predictionId, reason]) as Promise<boolean>,
 
     approvals: {
       list: () =>

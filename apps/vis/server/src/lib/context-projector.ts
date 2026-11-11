@@ -28,7 +28,7 @@ export interface ProjectedMessage {
 }
 
 export interface UsageTotals {
-  byScope: { session: TokenUsage; turn: TokenUsage };
+  byScope: { session: TokenUsage; turn: TokenUsage; prediction: TokenUsage };
   byModel: Record<string, TokenUsage>;
 }
 
@@ -111,7 +111,7 @@ export function projectContext(
   let messages: ProjectedMessage[] = [];
   let modelMessages: ProjectedMessage[] = [];
   const usage: UsageTotals = {
-    byScope: { session: { ...ZERO }, turn: { ...ZERO } },
+    byScope: { session: { ...ZERO }, turn: { ...ZERO }, prediction: { ...ZERO } },
     byModel: {},
   };
   const config: ConfigSnapshot = {};
@@ -394,7 +394,7 @@ export function projectContext(
         // byScope keeps per-scope cumulative spend. This is NOT the live context-window
         // fill — that is `contextTokens` (latest step.end.usage). The web TokenBar shows
         // contextTokens; byScope/byModel are for the cumulative breakdown only.
-        const scope = (rec.usageScope ?? 'session') as 'session' | 'turn';
+        const scope = rec.usageScope ?? 'session';
         addUsage(usage.byScope[scope], rec.usage);
         usage.byModel[rec.model] ??= { ...ZERO };
         addUsage(usage.byModel[rec.model]!, rec.usage);

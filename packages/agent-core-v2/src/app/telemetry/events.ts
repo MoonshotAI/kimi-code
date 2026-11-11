@@ -1,3 +1,4 @@
+import type { PromptPredictionCancelReason } from '#/features/promptPrediction/promptPrediction';
 import type { TowerExitReason } from '#/features/tower/tower';
 import type { SessionCloseReason } from '#/workspace/sessionLifecycle/sessionLifecycle';
 
@@ -260,6 +261,34 @@ export interface PluginToggleEvent {
   plugin_id: string;
   enabled: boolean;
   enabled_plugins?: string;
+}
+
+export interface PredictionRequestedEvent {
+  prediction_id: string;
+  turn_id: number;
+}
+
+export interface PredictionGeneratedEvent {
+  prediction_id: string;
+  turn_id: number;
+  status: 'generated' | 'empty' | 'invalid' | 'tool_call' | 'timeout' | 'cancelled' | 'stale' | 'error';
+  reason?: PromptPredictionCancelReason;
+  duration_ms: number;
+  prediction_chars?: number;
+  input_tokens?: number;
+  input_other?: number;
+  output_tokens?: number;
+  input_cache_read?: number;
+  input_cache_creation?: number;
+  cache_read_pct?: number;
+  ttft_ms?: number;
+  stream_duration_ms?: number;
+  request_build_ms?: number;
+  server_first_token_ms?: number;
+  server_decode_ms?: number;
+  client_consume_ms?: number;
+  client_blocked_ms?: number;
+  request_id?: string;
 }
 
 export interface CompactionFinishedEvent {
@@ -1000,6 +1029,40 @@ export const telemetryEventDefinitions = {
       enabled: 'Whether the plugin is enabled after the toggle',
       enabled_plugins:
         'Comma-separated sorted ids of enabled, loaded plugins after the toggle commits; empty string for a known empty set',
+    },
+  }),
+  prediction_requested: defineAgentTelemetryEvent<PredictionRequestedEvent>({
+    owner: 'kimi-code',
+    comment: 'A side-channel next-prompt prediction request starts.',
+    properties: {
+      prediction_id: 'Caller-generated prediction identifier; contains no prompt content',
+      turn_id: 'Completed main-agent turn used as the prediction source',
+    },
+  }),
+  prediction_generated: defineAgentTelemetryEvent<PredictionGeneratedEvent>({
+    owner: 'kimi-code',
+    comment: 'A side-channel next-prompt prediction request settles.',
+    properties: {
+      prediction_id: 'Caller-generated prediction identifier; contains no prompt content',
+      turn_id: 'Completed main-agent turn used as the prediction source',
+      status: 'Bounded prediction outcome; stale covers lifecycle, context, and handle changes',
+      reason: 'Cancellation source when status is cancelled; never contains prompt text',
+      duration_ms: 'Prediction wall-clock time in milliseconds',
+      prediction_chars: 'Length of the accepted prediction in UTF-16 code units, never its text',
+      input_tokens: 'Total prediction input tokens including cache usage',
+      input_other: 'Uncached prediction input tokens excluding cache creation',
+      output_tokens: 'Prediction output tokens',
+      input_cache_read: 'Prediction cache-read input tokens',
+      input_cache_creation: 'Prediction cache-creation input tokens',
+      cache_read_pct: 'Cache-read input tokens as a percentage of total input tokens, from 0 to 100',
+      ttft_ms: 'Client-observed time to the first response token in milliseconds',
+      stream_duration_ms: 'Response streaming duration in milliseconds',
+      request_build_ms: 'Provider request construction time in milliseconds when available',
+      server_first_token_ms: 'Server-reported time to the first response token in milliseconds when available',
+      server_decode_ms: 'Server-reported decode time in milliseconds when available',
+      client_consume_ms: 'Client stream consumption time in milliseconds when available',
+      client_blocked_ms: 'Client time blocked by downstream rendering in milliseconds when available',
+      request_id: 'Provider request trace identifier when available',
     },
   }),
   compaction_finished: defineAgentTelemetryEvent<CompactionFinishedEvent>({

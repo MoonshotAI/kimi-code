@@ -33,7 +33,11 @@ export class UsageAgentModel extends AgentModel<UsageModelState> {
 
   record(input: UsageRecordInput): Promise<boolean> {
     const firstRecord = Object.keys(this.state.byModel).length === 0;
-    const usageScope: UsageRecordScope = input.source?.type === 'turn' ? 'turn' : 'session';
+    const usageScope: UsageRecordScope = input.source?.type === 'turn'
+      ? 'turn'
+      : input.source?.type === 'operation' && input.source.requestKind === 'prompt_prediction'
+        ? 'prediction'
+        : 'session';
     const recorded = this.emit(
       new UsageRecord({
         agentId: this.agent.agentId,

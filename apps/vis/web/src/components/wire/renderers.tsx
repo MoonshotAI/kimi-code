@@ -1081,7 +1081,10 @@ export const WIRE_RENDERERS: RendererMap = {
       return {
         main: (
           <span className="flex items-center gap-2 min-w-0">
-            <Pill tone={r.kind === 'compaction' ? 'compaction' : 'turn'} variant="soft">
+            <Pill
+              tone={r.kind === 'compaction' ? 'compaction' : r.kind === 'prediction' ? 'subagent' : 'turn'}
+              variant="soft"
+            >
               {r.kind}
             </Pill>
             <Mono>{r.model}</Mono>

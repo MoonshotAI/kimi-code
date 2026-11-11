@@ -30,14 +30,18 @@ export function ContextTab({ sessionId, initialAgentId = 'main' }: ContextTabPro
   const messages = ctx?.messages ?? [];
   const sessionUsage = ctx?.usage.byScope.session ?? EMPTY_USAGE;
   const turnUsage = ctx?.usage.byScope.turn ?? EMPTY_USAGE;
+  const predictionUsage = ctx?.usage.byScope.prediction ?? EMPTY_USAGE;
   const cumulativeUsage: TokenUsage = {
-    inputOther: sessionUsage.inputOther + turnUsage.inputOther,
-    output: sessionUsage.output + turnUsage.output,
+    inputOther: sessionUsage.inputOther + turnUsage.inputOther + predictionUsage.inputOther,
+    output: sessionUsage.output + turnUsage.output + predictionUsage.output,
     inputCacheRead:
-      sessionUsage.inputCacheRead === undefined || turnUsage.inputCacheRead === undefined
+      sessionUsage.inputCacheRead === undefined ||
+      turnUsage.inputCacheRead === undefined ||
+      predictionUsage.inputCacheRead === undefined
         ? undefined
-        : sessionUsage.inputCacheRead + turnUsage.inputCacheRead,
-    inputCacheCreation: sessionUsage.inputCacheCreation + turnUsage.inputCacheCreation,
+        : sessionUsage.inputCacheRead + turnUsage.inputCacheRead + predictionUsage.inputCacheRead,
+    inputCacheCreation:
+      sessionUsage.inputCacheCreation + turnUsage.inputCacheCreation + predictionUsage.inputCacheCreation,
   };
   // Live context-window fill (latest step.end usage), distinct from the
   // cumulative session-scoped + turn-scoped spend the bar breaks down.
