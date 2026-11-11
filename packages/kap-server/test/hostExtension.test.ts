@@ -11,13 +11,15 @@ import {
   IAgentToolRegistryService,
   IEventBus,
   ISessionManager,
+  ITelemetryService,
   SubagentSpawned,
   type ExecutableTool,
 } from '@moonshot-ai/agent-core-v2';
 import { TurnEnded } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import { historyEntryFromContext } from '@moonshot-ai/agent-core-v2/agent/loop/history';
 import { ISessionEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
-import { startServer } from '../src/index';
+import { IAgentToolResultTruncationService } from '@moonshot-ai/agent-core-v2/agent/toolResultTruncation/toolResultTruncation';
+import { IMAGE_BYTE_BUDGET, startServer } from '../src/index';
 import type { HostAgent, HostExtension } from '../src/index';
 
 const homes: string[] = [];
@@ -109,26 +111,51 @@ it('exposes session and agent capabilities without leaking engine scopes', async
   const tool: ExecutableTool = {
     name: 'HostEcho',
     description: 'host echo',
-    parameters: { type: 'object', required: ['value'], properties: { value: { type: 'string' } } },
+    parameters: { type: 'object', additionalProperties: false, required: ['value'], properties: { value: { type: 'string' } } },
     resolveExecution: resolve,
   } as ExecutableTool;
   main.accessor.get(IAgentToolRegistryService).register(tool, { source: 'builtin' });
   main.accessor.get(IAgentPermissionModeService).setMode('yolo');
-  hostAgent.decorateToolArguments('HostEcho', (args, context) => ({
+  hostAgent.decorateToolExecution('HostEcho', (args, context) => ({
     ...(args as Record<string, unknown>),
     injectedTurn: context.turnId,
   }));
   const interception = hostAgent.onDidExecuteTool((context) => context.toolName === 'HostEcho' ? { output: 'host tool intercepted' } : undefined);
+  const skip = main.accessor.get(IAgentToolExecutorService).registerHook({ starting: () => ({ skipPermitting: true }) });
   const executor = main.accessor.get(IAgentToolExecutorService);
   const call = { type: 'function' as const, id: 'host-call', name: 'HostEcho', arguments: JSON.stringify({ value: 'ok' }) };
   const result = await executor.executor.execute(call, { turnId: 7 });
   expect(result.content).toEqual([{ type: 'text', text: 'host tool intercepted' }]);
   expect(resolve).toHaveBeenCalledWith({ value: 'ok', injectedTurn: 7 });
+  skip.dispose();
   interception.dispose();
   const invalid = await executor.executor.execute({ ...call, id: 'host-invalid', arguments: JSON.stringify({ invalid: true }) }, { turnId: 8 });
   if ('detached' in invalid) throw new Error('unexpected detached tool result');
   expect(invalid.outcome.type).toBe('failed');
   expect(execute).toHaveBeenCalledOnce();
+  main.accessor.get(IAgentToolRegistryService).register({ ...tool, name: 'HostRewrite' }, { source: 'builtin' });
+  hostAgent.decorateToolArguments('HostRewrite', () => ({ value: 'rewritten' }));
+  const rewritten = await executor.executor.execute({ ...call, id: 'host-rewrite', name: 'HostRewrite' }, { turnId: 9 });
+  if ('detached' in rewritten) throw new Error('unexpected detached tool result');
+  expect(rewritten.content).toEqual([{ type: 'text', text: JSON.stringify({ value: 'rewritten' }) }]);
+  main.accessor.get(IAgentToolRegistryService).register({
+    ...tool,
+    name: 'HostResolverFailure',
+    resolveExecution: (args: unknown) => (args as Record<string, unknown>)['fail'] === true
+      ? { isError: true, output: 'decorator rejected' }
+      : { approvalRule: 'always-allow' as const, execute: async () => execute(args) },
+  } as ExecutableTool, { source: 'builtin' });
+  hostAgent.decorateToolExecution('HostResolverFailure', (args) => ({ ...(args as Record<string, unknown>), fail: true }));
+  const truncation = vi.spyOn(main.accessor.get(IAgentToolResultTruncationService), 'truncateForModel');
+  const resolverFailure = await executor.executor.execute({ ...call, id: 'host-resolver-failure', name: 'HostResolverFailure' }, { turnId: 10 });
+  if ('detached' in resolverFailure) throw new Error('unexpected detached tool result');
+  expect(resolverFailure.content).toEqual([{ type: 'text', text: 'decorator rejected' }]);
+  expect(truncation).toHaveBeenCalledWith(expect.objectContaining({
+    result: expect.objectContaining({ output: 'decorator rejected' }),
+    toolCallId: 'host-resolver-failure',
+    toolName: 'HostResolverFailure',
+  }));
+  expect(execute).toHaveBeenCalledTimes(2);
 
   const ended = vi.fn();
   hostAgent.onDidTurnEnd(ended);
@@ -146,6 +173,57 @@ it('exposes session and agent capabilities without leaking engine scopes', async
   expect(closedSessions).toEqual([handle.id]);
   await manager.delete(handle.id);
   expect(deletedSessions).toEqual([handle.id]);
+}, 30000);
+
+
+it('exposes host telemetry and public image limits', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'kap-host-telemetry-'));
+  homes.push(home);
+  const env: NodeJS.ProcessEnv = { ...process.env, KIMI_CODE_EXPERIMENTAL_PERSISTENCE_MINIDB_READMODEL: 'false', KIMI_CODE_EXPERIMENTAL_SEARCH_WORKER: 'false', KIMI_IMAGE_MAX_EDGE_PX: '1234' };
+  const server = await startServer({
+    hostIdentity: { productName: 'test-host', platform: 'test', version: '0.0.0' },
+    homeDir: home,
+    port: 0,
+    logLevel: 'silent',
+    env,
+  });
+  servers.push(server);
+  await expect(server.hostTelemetry.readConsent()).resolves.toBeUndefined();
+  await expect(server.hostTelemetry.getCachedAccessToken()).resolves.toBeNull();
+  await expect(server.hostTelemetry.countSessions()).resolves.toBe(0);
+  const appender = server.hostTelemetry.createCloudAppender({
+    deviceId: 'device-test',
+    appName: 'test-host',
+    getAccessToken: () => null,
+  });
+  expect(appender).toEqual(expect.objectContaining({
+    track: expect.any(Function),
+    startPeriodicFlush: expect.any(Function),
+    stopPeriodicFlush: expect.any(Function),
+    retryDiskEvents: expect.any(Function),
+    shutdown: expect.any(Function),
+  }));
+  const registration = server.hostTelemetry.addAppender(appender);
+  registration.dispose();
+  await appender.shutdown();
+  const manager = server.core.accessor.get(ISessionManager);
+  const handle = await manager.create({ workDir: home });
+  await expect(server.hostTelemetry.countSessions()).resolves.toBe(1);
+  await manager.archive(handle.id);
+  await expect(server.hostTelemetry.countSessions()).resolves.toBe(1);
+  expect(IMAGE_BYTE_BUDGET).toBeGreaterThan(0);
+  expect(server.hostTelemetry.resolveMaxImageEdgePx()).toBe(1234);
+  env['KIMI_DISABLE_TELEMETRY'] = '1';
+  await expect(server.hostTelemetry.readConsent()).resolves.toBe(false);
+  vi.useFakeTimers();
+  try {
+    vi.spyOn(server.core.accessor.get(ITelemetryService), 'shutdown').mockReturnValue(new Promise<void>(() => {}));
+    const shutdown = server.hostTelemetry.shutdown();
+    await vi.advanceTimersByTimeAsync(3_000);
+    await expect(shutdown).resolves.toBeUndefined();
+  } finally {
+    vi.useRealTimers();
+  }
 }, 30000);
 
 

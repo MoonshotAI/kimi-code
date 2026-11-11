@@ -3,6 +3,7 @@ import {
   IAgentLoopService,
   IAgentReminderService,
   IAgentToolExecutorService,
+  IAgentToolRegistryService,
   IAgentToolSelectService,
   IEventBus,
   ISessionMcpHandle,
@@ -11,6 +12,7 @@ import {
   type AgentContext,
   type AgentMeta,
   type ContextInjectionContext,
+  type ExecutableTool,
   type IAgentScopeHandle,
   type IDisposable,
   type ISessionScopeHandle,
@@ -22,7 +24,11 @@ import { ISessionMetadata } from '@moonshot-ai/agent-core-v2/session/sessionMeta
 import { ISessionEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
 import { TurnEnded } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import { legacyDidExecuteContext, legacyRejectedResult } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/legacyHooks';
+import { toLegacyToolReturn } from '@moonshot-ai/agent-core-v2/tool/executor';
+import { IAgentToolResultTruncationService } from '@moonshot-ai/agent-core-v2/agent/toolResultTruncation/toolResultTruncation';
 import type { McpServerConfig } from '@moonshot-ai/agent-core-v2/mcpCore/config-schema';
+
+export type HostDecoratorResult<T> = T | Promise<T>;
 
 export interface HostDisposable {
   dispose(): void;
@@ -144,7 +150,11 @@ export interface HostAgent {
   ): HostDisposable;
   decorateToolArguments(
     toolName: string,
-    decorator: (args: unknown, context: HostToolDecoratorContext) => unknown | Promise<unknown>,
+    decorator: (args: unknown, context: HostToolDecoratorContext) => HostDecoratorResult<unknown>,
+  ): HostDisposable;
+  decorateToolExecution(
+    toolName: string,
+    decorator: (args: unknown, context: HostToolDecoratorContext) => HostDecoratorResult<unknown>,
   ): HostDisposable;
   onDidTurnEnd(listener: (event: { readonly turnId: number }) => void): HostDisposable;
 }
@@ -232,6 +242,48 @@ function createHostAgent(sessionId: string, context: AgentContext, handle: IAgen
         return { args };
       },
     }),
+    decorateToolExecution: (toolName, decorator) => {
+      const registry = handle.accessor.get(IAgentToolRegistryService);
+      const executions = new Map<string, { args: unknown; execution: Awaited<ReturnType<ExecutableTool['resolveExecution']>> }>();
+      return handle.accessor.get(IAgentToolExecutorService).registerHook({
+        starting: async (context) => {
+          if (context.call.name !== toolName || context.prepared.kind !== 'execute') return;
+          const args = await decorator(context.args, { turnId: context.context.turnId });
+          const tool = registry.resolve(toolName);
+          if (tool === undefined) return;
+          const execution = await tool.resolveExecution(args);
+          if (!('execute' in execution)) {
+            const finalized = await handle.accessor.get(IAgentToolResultTruncationService).truncateForModel({
+              result: execution,
+              toolCallId: context.call.id,
+              toolName,
+            });
+            const message = typeof finalized.output === 'string' ? finalized.output : JSON.stringify(finalized.output);
+            return { reject: message, result: toLegacyToolReturn(finalized, toolName) };
+          }
+          executions.set(context.taskId, { args, execution });
+        },
+        beforeExecute: (context) => {
+          if (context.call.name !== toolName || context.prepared.kind !== 'execute') return;
+          const cached = executions.get(context.taskId);
+          if (cached === undefined) return;
+          executions.delete(context.taskId);
+          if (!('execute' in cached.execution)) return;
+          Object.assign(context, { args: cached.args });
+          Object.assign(context.prepared, {
+            execution: cached.execution,
+            accesses: cached.execution.accesses,
+            display: cached.execution.display,
+            description: cached.execution.description,
+            approvalRule: cached.execution.approvalRule,
+            matchesRule: cached.execution.matchesRule,
+          });
+        },
+        afterExecute: (context) => {
+          executions.delete(context.taskId);
+        },
+      });
+    },
     onDidTurnEnd: (listener) => handle.accessor.get(IEventBus).subscribe(TurnEnded, listener),
   };
 }
