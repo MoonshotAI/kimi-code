@@ -74,8 +74,8 @@ export class WsConnectionV1 implements BroadcastTarget {
   private backpressureSince?: number;
 
   private heartbeatTimer?: ReturnType<typeof setInterval>;
-  private lastHeartbeatAt = Date.now();
-  private lastInboundAt = Date.now();
+  private lastHeartbeatAt = performance.now();
+  private lastInboundAt = performance.now();
 
   constructor(opts: WsConnectionV1Options) {
     this.id = `conn_${ulid()}`;
@@ -127,7 +127,7 @@ export class WsConnectionV1 implements BroadcastTarget {
       return;
     }
     if (typeof frame?.type !== 'string') return;
-    this.lastInboundAt = Date.now();
+    this.lastInboundAt = performance.now();
     if (!COMMAND_TYPES.has(frame.type)) return;
 
     const requestId = frame.request_id;
@@ -150,19 +150,30 @@ export class WsConnectionV1 implements BroadcastTarget {
   }
 
   private onHeartbeat(): void {
-    const now = Date.now();
+    const now = performance.now();
     const sinceLastHeartbeat = now - this.lastHeartbeatAt;
     this.lastHeartbeatAt = now;
-    if (now - this.lastInboundAt < this.heartbeatIntervalMs * HEARTBEAT_MISS_LIMIT) {
+    if (!this.heartbeatExpired(now)) {
       this.sendImmediateFrame(buildPing());
       return;
     }
-    if (sinceLastHeartbeat <= this.heartbeatIntervalMs * HEARTBEAT_STALL_FACTOR) {
-      this.close(1001, 'heartbeat timeout');
+    if (sinceLastHeartbeat > this.heartbeatIntervalMs * HEARTBEAT_STALL_FACTOR) {
+      this.lastInboundAt = now;
+      this.sendImmediateFrame(buildPing());
       return;
     }
-    this.lastInboundAt = now;
-    this.sendImmediateFrame(buildPing());
+    setImmediate(() => {
+      if (this.closed) return;
+      if (this.heartbeatExpired(performance.now())) {
+        this.close(1001, 'heartbeat timeout');
+        return;
+      }
+      this.sendImmediateFrame(buildPing());
+    });
+  }
+
+  private heartbeatExpired(now: number): boolean {
+    return now - this.lastInboundAt >= this.heartbeatIntervalMs * HEARTBEAT_MISS_LIMIT;
   }
 
   private async onSubscribe(requestId: string, frame: InboundFrame): Promise<void> {
