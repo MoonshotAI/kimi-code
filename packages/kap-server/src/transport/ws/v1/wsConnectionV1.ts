@@ -25,6 +25,7 @@ const COMMAND_TYPES: ReadonlySet<string> = new Set([
 ]);
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 10_000;
 const HEARTBEAT_MISS_LIMIT = 2;
+const HEARTBEAT_STALL_FACTOR = 1.25;
 
 const DEFAULT_FLUSH_INTERVAL_MS = 16;
 const DEFAULT_MAX_BATCH_SIZE = 64;
@@ -156,7 +157,7 @@ export class WsConnectionV1 implements BroadcastTarget {
       this.sendImmediateFrame(buildPing());
       return;
     }
-    if (sinceLastHeartbeat <= this.heartbeatIntervalMs) {
+    if (sinceLastHeartbeat <= this.heartbeatIntervalMs * HEARTBEAT_STALL_FACTOR) {
       this.close(1001, 'heartbeat timeout');
       return;
     }

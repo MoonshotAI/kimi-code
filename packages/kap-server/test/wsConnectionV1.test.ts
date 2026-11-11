@@ -649,6 +649,23 @@ describe('WsConnectionV1 heartbeat', () => {
     conn.close();
   });
 
+  it('reaps a silent peer when heartbeat callbacks run only slightly late', () => {
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { heartbeatIntervalMs: 10 });
+
+    vi.advanceTimersByTime(10);
+    expect(sentTypes(socket)).toEqual(['ping']);
+
+    const steadyNow = Date.now;
+    const wallClock = vi.spyOn(Date, 'now').mockImplementation(() => steadyNow() + 1);
+    vi.advanceTimersByTime(10);
+
+    expect(socket.closeCalls).toEqual([{ code: 1001, reason: 'heartbeat timeout' }]);
+    expect(sentTypes(socket)).toEqual(['ping']);
+    conn.close();
+    wallClock.mockRestore();
+  });
+
   it('still reaps a peer that stays silent after a stall', () => {
     const socket = new FakeSocket();
     const conn = makeConn(socket, { heartbeatIntervalMs: 10 });
