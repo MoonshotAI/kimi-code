@@ -1,3 +1,7 @@
+import { promises as fsp } from 'node:fs';
+import { dirname, join } from 'pathe';
+import lockfile from 'proper-lockfile';
+
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
@@ -24,6 +28,7 @@ export async function drainQueryStoreDisposals(): Promise<void> {
 export class DualWriteQueryStore extends SqliteQueryStore {
   private readonly minidb: MiniDbQueryStore;
   private readonly dualWriteLog: ILogService;
+  private readonly dualWriteLockTarget: string;
   private dualWriteTail: Promise<void> = Promise.resolve();
 
   constructor(
@@ -33,15 +38,36 @@ export class DualWriteQueryStore extends SqliteQueryStore {
     super(bootstrap, log);
     this.minidb = new MiniDbQueryStore(bootstrap, log);
     this.dualWriteLog = log;
+    this.dualWriteLockTarget = join(bootstrap.cacheDir, 'query-store.dual-write');
   }
 
-  private serializeDualWrite<T>(operation: () => Promise<T>): Promise<T> {
-    const run = this.dualWriteTail.then(operation);
+  private serializeDualWrite<T>(
+    operation: () => Promise<T>,
+    crossProcess = true,
+  ): Promise<T> {
+    const run = this.dualWriteTail.then(() =>
+      crossProcess ? this.withCrossProcessLock(operation) : operation(),
+    );
     this.dualWriteTail = run.then(
       () => undefined,
       () => undefined,
     );
     return run;
+  }
+
+  private async withCrossProcessLock<T>(operation: () => Promise<T>): Promise<T> {
+    await fsp.mkdir(dirname(this.dualWriteLockTarget), { recursive: true });
+    await fsp.writeFile(this.dualWriteLockTarget, new Uint8Array(), { flag: 'a' });
+    const release = await lockfile.lock(this.dualWriteLockTarget, {
+      retries: { retries: 120, factor: 1, minTimeout: 50, maxTimeout: 200 },
+      stale: 5_000,
+      realpath: false,
+    });
+    try {
+      return await operation();
+    } finally {
+      await release();
+    }
   }
 
   private async writeBackup(
@@ -131,7 +157,7 @@ export class DualWriteQueryStore extends SqliteQueryStore {
   override async close(): Promise<void> {
     return this.serializeDualWrite(async () => {
       await Promise.all([super.close(), this.minidb.close()]);
-    });
+    }, false);
   }
 }
 
