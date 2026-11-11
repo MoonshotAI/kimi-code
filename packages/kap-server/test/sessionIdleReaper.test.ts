@@ -49,6 +49,24 @@ describe('SessionIdleReaper', () => {
     }
   });
 
+  it('stops visiting sessions after close', async () => {
+    const sessions = fakeSessions(['s1', 's2']);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    sessions.impl = async () => {
+      await gate;
+      return true;
+    };
+    const reaper = new SessionIdleReaper(sessions.manager, fakeLogger(), 1000);
+    const first = reaper.sweep();
+    const closing = reaper.close();
+    release();
+    await Promise.all([first, closing]);
+    expect(sessions.calls).toEqual(['s1']);
+  });
+
   it('does not re-enter a running sweep, and close waits for it', async () => {
     vi.useFakeTimers();
     try {

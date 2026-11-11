@@ -6,10 +6,10 @@ import { WebSocketServer, type RawData } from 'ws';
 
 import { errEnvelope } from '../../envelope';
 import { ErrorCode } from '../../protocol/error-codes';
-import { HOST_RPC_MAX_BODY_BYTES } from '../../transport/stdioRpc';
+import { HOST_RPC_MAX_BODY_BYTES } from '../../transport/jsonlRpcStream';
 import { selectWsBearerProtocol } from '../../transport/ws/bearerProtocol';
 import type { HostBridgeManager } from './hostBridgeManager';
-import type { HostSession } from './sshKapBridge';
+import { HostRequestError, type HostSession } from './hostSession';
 
 const PROXY_PATH = /^\/api\/v1\/hosts\/([^/?]+)\/proxy(\/[^?]*)?(\?.*)?$/;
 const HOP_BY_HOP = new Set([
@@ -24,11 +24,11 @@ const HOP_BY_HOP = new Set([
 ]);
 const STRIPPED_REQUEST_HEADERS = new Set(['host', 'origin', 'referer', 'authorization', 'cookie']);
 
-class HostBodyTooLargeError extends Error {
-  constructor() {
-    super(`HTTP body exceeds the ${String(HOST_RPC_MAX_BODY_BYTES)} byte host proxy limit`);
-    this.name = 'HostBodyTooLargeError';
-  }
+function bodyTooLarge(): HostRequestError {
+  return new HostRequestError(
+    'body_too_large',
+    `HTTP body exceeds the ${String(HOST_RPC_MAX_BODY_BYTES)} byte host proxy limit`,
+  );
 }
 
 export interface HostProxyTarget {
@@ -76,7 +76,9 @@ async function proxyHttp(
     return;
   }
   const cancellation = new AbortController();
-  const cancel = (): void => cancellation.abort();
+  const cancel = (): void => {
+    cancellation.abort();
+  };
   req.raw.once('aborted', cancel);
   req.raw.once('close', () => {
     if (!req.raw.readableEnded) cancel();
@@ -97,13 +99,13 @@ async function proxyHttp(
   }
   const request = async (): Promise<void> => {
     const declaredLength = Number(req.headers['content-length'] ?? 0);
-    if (declaredLength > HOST_RPC_MAX_BODY_BYTES) throw new HostBodyTooLargeError();
+    if (declaredLength > HOST_RPC_MAX_BODY_BYTES) throw bodyTooLarge();
     const chunks: Buffer[] = [];
     let size = 0;
     for await (const chunk of req.raw) {
       const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       size += buffer.length;
-      if (size > HOST_RPC_MAX_BODY_BYTES) throw new HostBodyTooLargeError();
+      if (size > HOST_RPC_MAX_BODY_BYTES) throw bodyTooLarge();
       chunks.push(buffer);
     }
     const body = chunks.length > 0 ? Buffer.concat(chunks) : undefined;
@@ -126,17 +128,15 @@ async function proxyHttp(
     await request();
   } catch (error) {
     if (reply.raw.destroyed) return;
-    if (error instanceof HostBodyTooLargeError) {
-      await reply.code(413).send(errEnvelope(ErrorCode.FILE_TOO_LARGE, error.message, req.id));
+    const message = error instanceof Error ? error.message : String(error);
+    if (error instanceof HostRequestError && error.failure === 'body_too_large') {
+      await reply.code(413).send(errEnvelope(ErrorCode.FILE_TOO_LARGE, message, req.id));
       return;
     }
-    if (cancellation.signal.aborted && error instanceof Error && error.message === 'host request cancelled') {
-      await reply.code(499).send(errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, error.message, req.id));
-      return;
-    }
-    const timedOut = error instanceof Error && error.message === 'host request timed out';
-    await reply.code(timedOut ? 504 : 502).send(
-      errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, error instanceof Error ? error.message : String(error), req.id),
+    const status = error instanceof HostRequestError && error.failure === 'timeout' ? 504 : 502;
+    const cancelled = error instanceof HostRequestError && error.failure === 'cancelled';
+    await reply.code(cancelled ? 499 : status).send(
+      errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, message, req.id),
     );
   }
 }
@@ -148,7 +148,9 @@ export function registerHostProxyRoutes(
 ): void {
   void app.register(async (scope) => {
     scope.removeAllContentTypeParsers();
-    scope.addContentTypeParser('*', (_req, payload, done) => done(null, payload));
+    scope.addContentTypeParser('*', (_req, payload, done) => {
+      done(null, payload);
+    });
     for (const url of ['/api/v1/hosts/:id/proxy', '/api/v1/hosts/:id/proxy/*']) {
       scope.route({
         method: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'],
@@ -169,7 +171,7 @@ function rawDataToString(data: RawData): string {
   if (typeof data === 'string') return data;
   if (Buffer.isBuffer(data)) return data.toString('utf8');
   if (Array.isArray(data)) return Buffer.concat(data).toString('utf8');
-  return Buffer.from(data as ArrayBuffer).toString('utf8');
+  return Buffer.from(data).toString('utf8');
 }
 
 const proxyWss = new WebSocketServer({

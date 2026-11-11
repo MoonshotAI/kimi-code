@@ -93,7 +93,7 @@ import { HostBridgeManager, hostSnapshots } from './services/hosts/hostBridgeMan
 import { matchHostProxyPath, proxyHostWebSocket, registerHostProxyRoutes } from './services/hosts/hostProxy';
 import { SSH_FULL_REMOTE_FLAG_ID } from './services/hosts/hostsConfig';
 import { DEFAULT_MANAGED_IDLE_EXIT_MS, ManagedIdleExit } from './services/managedIdleExit';
-import { SessionIdleReaper, resolveSessionIdleReclaimMs } from './services/sessionIdleReaper';
+import { SessionIdleReaper, closeIdleSessions, resolveSessionIdleReclaimMs } from './services/sessionIdleReaper';
 import { startConfigChangedPublisher } from './services/config/configChangedPublisher';
 import { createAuthFailureLimiter } from './middleware/rateLimit';
 import {
@@ -434,7 +434,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const sessionManager = core.accessor.get(ISessionManager);
   const drainIdleSessions = async (): Promise<boolean> => {
     if (connectionRegistry.size() > 0) return false;
-    for (const handle of sessionManager.list()) await sessionManager.closeIfIdle(handle.id, 0);
+    await closeIdleSessions(sessionManager, 0);
     return connectionRegistry.size() === 0 && sessionManager.list().length === 0;
   };
   const managedIdleExit =

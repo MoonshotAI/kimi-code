@@ -1,11 +1,11 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import type { IncomingHttpHeaders, OutgoingHttpHeaders } from 'node:http';
-import { createInterface } from 'node:readline';
+import { Duplex } from 'node:stream';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import { HOST_RPC_MAX_BODY_BYTES, WS_BACKPRESSURE_TIMEOUT_MS, type RpcFrame } from '../../transport/stdioRpc';
 import { HOST_PROTOCOL_VERSION } from './hostProtocol';
 import type { HostEntry } from './hostsConfig';
+import type { HostSession } from './hostSession';
+import { StdioHostSession } from './stdioHostSession';
 
 export type HostStatus = 'pending' | 'connecting' | 'ready' | 'disconnected';
 
@@ -23,43 +23,17 @@ export type HostConnectFailure =
   | 'remote_start_failed'
   | 'unknown';
 
-export interface HostHttpRequest {
-  readonly method: string;
-  readonly path: string;
-  readonly headers: IncomingHttpHeaders;
-  readonly body?: Buffer;
-  readonly signal?: AbortSignal;
-  readonly timeoutMs?: number;
-}
-
-export const HOST_HTTP_TIMEOUT_MS = 30_000;
-
-export interface HostHttpResponse {
-  readonly status: number;
-  readonly headers: OutgoingHttpHeaders;
-  readonly body: Buffer;
-}
-
-export interface HostWsHandlers {
-  onMessage(data: string): void;
-  onClose(code?: number, reason?: string): void;
-  onBackpressure(blocked: boolean): void;
-}
-
-export interface HostWsSession {
-  send(data: string): void;
-  close(code?: number, reason?: string): void;
-}
-
-export interface HostSession {
-  readonly version: string;
-  request(req: HostHttpRequest): Promise<HostHttpResponse>;
-  openWebSocket(path: string, handlers: HostWsHandlers): HostWsSession;
-}
-
 export interface BootstrapResult {
   readonly version: string;
   readonly pid?: number;
+}
+
+interface BootstrapMarker {
+  readonly protocol: number | undefined;
+  readonly version?: string;
+  readonly pid?: number;
+  readonly error?: string;
+  readonly message?: string;
 }
 
 export interface RemoteProbe {
@@ -150,14 +124,15 @@ function readVersionLine(stdout: string): string | undefined {
     .findLast((line) => VERSION_LINE.test(line));
 }
 
-function readMarker(stdout: string): Record<string, unknown> | undefined {
+function readMarker(stdout: string): BootstrapMarker | undefined {
   const line = stdout.split('\n').find((candidate) => candidate.startsWith(BOOTSTRAP_MARKER));
   if (line === undefined) return undefined;
   try {
-    return JSON.parse(line.slice(BOOTSTRAP_MARKER.length)) as Record<string, unknown>;
+    const marker: unknown = JSON.parse(line.slice(BOOTSTRAP_MARKER.length));
+    if (typeof marker === 'object' && marker !== null) return marker as BootstrapMarker;
   } catch {
-    return undefined;
   }
+  return undefined;
 }
 
 function outdatedError(version: string | undefined): HostConnectError {
@@ -168,18 +143,19 @@ function outdatedError(version: string | undefined): HostConnectError {
   );
 }
 
-function checkedMarker(stdout: string): { readonly marker: Record<string, unknown>; readonly version?: string } | undefined {
+function checkedMarker(stdout: string): { readonly marker: BootstrapMarker & { readonly protocol: number }; readonly version?: string } | undefined {
   const marker = readMarker(stdout);
   if (marker === undefined) return undefined;
-  const version = typeof marker['version'] === 'string' ? marker['version'] : readVersionLine(stdout);
-  const protocol = marker['protocol'];
-  if (typeof protocol !== 'number' || protocol < HOST_PROTOCOL_VERSION) throw outdatedError(version);
-  const error = marker['error'];
-  if (typeof error === 'string') {
-    const message = typeof marker['message'] === 'string' ? marker['message'] : error;
-    throw new HostConnectError(ENSURE_DAEMON_FAILURES[error] ?? 'unknown', message, version);
+  const version = marker.version ?? readVersionLine(stdout);
+  if (marker.protocol === undefined || marker.protocol < HOST_PROTOCOL_VERSION) throw outdatedError(version);
+  if (marker.error !== undefined) {
+    throw new HostConnectError(
+      ENSURE_DAEMON_FAILURES[marker.error] ?? 'unknown',
+      marker.message ?? marker.error,
+      version,
+    );
   }
-  return { marker, version };
+  return { marker: { ...marker, protocol: marker.protocol }, version };
 }
 
 export function parseBootstrapOutput(stdout: string): BootstrapResult | undefined {
@@ -188,14 +164,14 @@ export function parseBootstrapOutput(stdout: string): BootstrapResult | undefine
   const { marker, version } = checked;
   return {
     version: version ?? 'unknown',
-    pid: typeof marker['pid'] === 'number' ? marker['pid'] : undefined,
+    pid: typeof marker.pid === 'number' ? marker.pid : undefined,
   };
 }
 
 export function parseProbeOutput(stdout: string): RemoteProbe | undefined {
   const checked = checkedMarker(stdout);
   if (checked === undefined) return undefined;
-  return { version: checked.version ?? 'unknown', protocol: checked.marker['protocol'] as number };
+  return { version: checked.version ?? 'unknown', protocol: checked.marker.protocol };
 }
 
 interface SshResult {
@@ -218,169 +194,60 @@ function identityArgs(entry: HostEntry): string[] {
     : ['-i', entry.identityFile, '-o', 'IdentitiesOnly=yes'];
 }
 
-class ActiveHostSession implements HostSession {
-  private nextId = 0;
-  private closed = false;
-  private readonly pendingHttp = new Map<
-    string,
-    {
-      resolve(res: HostHttpResponse): void;
-      reject(err: Error): void;
-      timeout: ReturnType<typeof setTimeout>;
-      signal?: AbortSignal;
-      onCancel?: () => void;
-    }
-  >();
-  private readonly wsChannels = new Map<string, HostWsHandlers>();
-  private readonly pausedWs = new Set<string>();
-  private blocked = false;
-  private blockedTimer?: ReturnType<typeof setTimeout>;
+interface ActiveHostSession {
+  readonly session: StdioHostSession;
+  readonly child: ChildProcess;
+}
 
-  constructor(
-    readonly version: string,
-    private readonly child: ChildProcess,
-  ) {
-    child.stdin?.on('drain', () => {
-      this.blocked = false;
-      if (this.blockedTimer !== undefined) clearTimeout(this.blockedTimer);
-      this.blockedTimer = undefined;
-      for (const id of this.pausedWs) this.wsChannels.get(id)?.onBackpressure(false);
-      this.pausedWs.clear();
+function createProcessStream(child: ChildProcess, initial: Buffer): Duplex {
+  const source = child.stdout;
+  const sink = child.stdin;
+  if (source === null || sink === null) {
+    return new Duplex({
+      read() {},
+      write(_chunk, _encoding, callback) {
+        callback(new Error('SSH stdio is unavailable'));
+      },
     });
   }
-
-  request(req: HostHttpRequest): Promise<HostHttpResponse> {
-    if (this.closed) {
-      return Promise.reject(new HostConnectError('connection_refused', 'host session is closed'));
-    }
-    if (req.signal?.aborted === true) return Promise.reject(new Error('host request cancelled'));
-    const id = String(++this.nextId);
-    const body = req.body !== undefined && req.body.length > 0 ? req.body.toString('base64') : undefined;
-    return new Promise<HostHttpResponse>((resolve, reject) => {
-      const cancel = (message: string): void => {
-        const pending = this.pendingHttp.get(id);
-        if (pending === undefined) return;
-        this.pendingHttp.delete(id);
-        clearTimeout(pending.timeout);
-        if (pending.signal !== undefined && pending.onCancel !== undefined) {
-          pending.signal.removeEventListener('abort', pending.onCancel);
-        }
-        this.write({ type: 'http.cancel', id });
-        pending.reject(new Error(message));
-      };
-      const onCancel = req.signal === undefined ? undefined : () => cancel('host request cancelled');
-      const timeout = setTimeout(() => cancel('host request timed out'), req.timeoutMs ?? HOST_HTTP_TIMEOUT_MS);
-      timeout.unref?.();
-      this.pendingHttp.set(id, { resolve, reject, timeout, signal: req.signal, onCancel });
-      req.signal?.addEventListener('abort', onCancel!, { once: true });
-      this.write({
-        type: 'http.req',
-        id,
-        method: req.method,
-        path: req.path,
-        headers: req.headers,
-        body,
-      });
+  source.pause();
+  const stream = new Duplex({
+    read() {
+      source.resume();
+    },
+    write(chunk, encoding, callback) {
+      if (sink.destroyed) {
+        callback(new Error('SSH stdin is closed'));
+        return;
+      }
+      sink.write(chunk, encoding, callback);
+    },
+  });
+  source.on('data', (chunk: Buffer) => {
+    if (!stream.push(chunk)) source.pause();
+  });
+  if (source.readableEnded) {
+    stream.push(null);
+  } else {
+    source.once('end', () => {
+      stream.push(null);
     });
   }
-
-  openWebSocket(path: string, handlers: HostWsHandlers): HostWsSession {
-    const id = String(++this.nextId);
-    if (this.closed) {
-      queueMicrotask(() => handlers.onClose(1001, 'host session is closed'));
-      return { send() {}, close() {} };
-    }
-    this.wsChannels.set(id, handlers);
-    this.write({ type: 'ws.open', id, path });
-    return {
-      send: (data) => {
-        if (!this.closed && this.wsChannels.has(id)) {
-          this.write({ type: 'ws.msg', id, data }, id);
-        }
-      },
-      close: (code, reason) => {
-        if (this.wsChannels.delete(id)) {
-          this.pausedWs.delete(id);
-          this.write({ type: 'ws.close', id, code, reason });
-        }
-      },
-    };
-  }
-
-  onFrame(frame: RpcFrame): void {
-    if (frame.type === 'http.res') {
-      const pending = this.pendingHttp.get(frame.id);
-      if (pending === undefined) return;
-      this.pendingHttp.delete(frame.id);
-      clearTimeout(pending.timeout);
-      if (pending.signal !== undefined && pending.onCancel !== undefined) {
-        pending.signal.removeEventListener('abort', pending.onCancel);
-      }
-      pending.resolve({
-        status: frame.status,
-        headers: frame.headers,
-        body: frame.body === undefined ? Buffer.alloc(0) : Buffer.from(frame.body, 'base64'),
-      });
-      return;
-    }
-    if (frame.type === 'ws.msg') {
-      this.wsChannels.get(frame.id)?.onMessage(frame.data);
-      return;
-    }
-    if (frame.type === 'ws.close') {
-      const handlers = this.wsChannels.get(frame.id);
-      this.wsChannels.delete(frame.id);
-      this.pausedWs.delete(frame.id);
-      handlers?.onClose(frame.code, frame.reason);
-    }
-  }
-
-  failAll(): boolean {
-    this.closed = true;
-    if (this.blockedTimer !== undefined) clearTimeout(this.blockedTimer);
-    this.blockedTimer = undefined;
-    const hadActive = this.pendingHttp.size > 0 || this.wsChannels.size > 0;
-    const error = new HostConnectError('connection_refused', 'host connection closed');
-    for (const pending of this.pendingHttp.values()) {
-      clearTimeout(pending.timeout);
-      if (pending.signal !== undefined && pending.onCancel !== undefined) {
-        pending.signal.removeEventListener('abort', pending.onCancel);
-      }
-      pending.reject(error);
-    }
-    this.pendingHttp.clear();
-    for (const handlers of this.wsChannels.values()) handlers.onClose(1001, 'host connection closed');
-    this.wsChannels.clear();
-    this.pausedWs.clear();
-    return hadActive;
-  }
-
-  kill(): void {
-    this.failAll();
-    this.child.kill();
-  }
-
-  private write(frame: RpcFrame, wsId?: string): void {
-    const stdin = this.child.stdin;
-    if (this.closed || stdin === null || stdin.destroyed) return;
-    const blocked = !stdin.write(`${JSON.stringify(frame)}\n`);
-    if (stdin.writableLength > HOST_RPC_MAX_BODY_BYTES) {
-      this.child.kill();
-      return;
-    }
-    if (!blocked) return;
-    if (!this.blocked) {
-      this.blocked = true;
-      this.blockedTimer = setTimeout(() => {
-        if (this.blocked) this.child.kill();
-      }, WS_BACKPRESSURE_TIMEOUT_MS);
-      this.blockedTimer.unref?.();
-    }
-    if (wsId !== undefined && !this.pausedWs.has(wsId)) {
-      this.pausedWs.add(wsId);
-      this.wsChannels.get(wsId)?.onBackpressure(true);
-    }
-  }
+  source.once('error', (error) => {
+    stream.destroy(error);
+  });
+  sink.once('error', (error) => {
+    stream.destroy(error);
+  });
+  stream.once('error', () => {
+    child.kill();
+  });
+  stream.once('close', () => {
+    source.destroy();
+    sink.destroy();
+  });
+  if (initial.length > 0) stream.push(initial);
+  return stream;
 }
 
 export interface SshKapBridgeOptions {
@@ -429,13 +296,14 @@ export class SshKapBridge {
   }
 
   get session(): HostSession | undefined {
-    return this.sessionValue;
+    return this.sessionValue?.session;
   }
 
   connect(): Promise<HostSession> {
-    if (this.sessionValue !== undefined) {
-      return Promise.resolve(this.sessionValue);
-    }
+    if (this.disposed) return Promise.reject(new HostConnectError('unknown', 'host bridge disposed'));
+    if (this.sessionValue !== undefined) return Promise.resolve(this.sessionValue.session);
+    this.reconnectGeneration += 1;
+    this.reconnecting = false;
     this.connecting ??= this.establish().finally(() => {
       this.connecting = undefined;
     });
@@ -445,8 +313,10 @@ export class SshKapBridge {
   dispose(): void {
     this.disposed = true;
     this.reconnectGeneration += 1;
-    this.sessionValue?.kill();
+    const active = this.sessionValue;
     this.sessionValue = undefined;
+    active?.session.close(new Error('host bridge disposed'));
+    active?.child.kill();
     for (const child of this.children) child.kill();
   }
 
@@ -476,15 +346,16 @@ export class SshKapBridge {
   private async establish(): Promise<HostSession> {
     if (this.statusValue !== 'ready') this.update('connecting');
     try {
-      const session = await this.openSession();
+      const active = await this.openSession();
       if (this.disposed) {
-        session.kill();
+        active.session.close(new Error('host bridge disposed'));
+        active.child.kill();
         throw new HostConnectError('unknown', 'host bridge disposed');
       }
-      this.remoteVersionValue = session.version;
-      this.sessionValue = session;
+      this.remoteVersionValue = active.session.version;
+      this.sessionValue = active;
       this.update('ready');
-      return session;
+      return active.session;
     } catch (error) {
       const failure = error instanceof HostConnectError ? error.failure : 'unknown';
       const message = error instanceof Error ? error.message : String(error);
@@ -499,18 +370,19 @@ export class SshKapBridge {
   }
 
   private openSession(): Promise<ActiveHostSession> {
-    if (this.disposed) {
-      return Promise.reject(new HostConnectError('unknown', 'host bridge disposed'));
-    }
+    if (this.disposed) return Promise.reject(new HostConnectError('unknown', 'host bridge disposed'));
     return new Promise<ActiveHostSession>((resolve, reject) => {
-      const args = [
-        '-T',
-        ...SSH_OPTIONS,
-        ...identityArgs(this.entry),
-        this.entry.host,
-        remoteKimiCommand(this.entry.remoteBin, 'server ensure-daemon'),
-      ];
-      const child = spawn(this.sshProgram, args, { stdio: ['pipe', 'pipe', 'pipe'], env: this.env });
+      const child = spawn(
+        this.sshProgram,
+        [
+          '-T',
+          ...SSH_OPTIONS,
+          ...identityArgs(this.entry),
+          this.entry.host,
+          remoteKimiCommand(this.entry.remoteBin, 'server ensure-daemon'),
+        ],
+        { stdio: ['pipe', 'pipe', 'pipe'], env: this.env },
+      );
       this.track(child);
       if (this.disposed) {
         child.kill();
@@ -518,16 +390,15 @@ export class SshKapBridge {
         return;
       }
 
+      let bootstrap = Buffer.alloc(0);
       let preMarkerStdout = '';
       let stderr = '';
       let settled = false;
       let activeSession: ActiveHostSession | undefined;
-
       const timer = setTimeout(() => {
         stderr += '\nssh timed out';
         child.kill();
       }, BOOTSTRAP_TIMEOUT_MS);
-
       const finishReject = (error: HostConnectError): void => {
         if (settled) return;
         settled = true;
@@ -536,32 +407,47 @@ export class SshKapBridge {
         reject(error);
       };
 
-      const lines = createInterface({ input: child.stdout!, crlfDelay: Infinity });
-      lines.on('line', (line) => {
-        if (activeSession !== undefined) {
-          const trimmed = line.trim();
-          if (trimmed.length === 0) return;
-          try {
-            activeSession.onFrame(JSON.parse(trimmed) as RpcFrame);
-          } catch {
-          }
+      const onStdout = (chunk: Buffer): void => {
+        bootstrap = Buffer.concat([bootstrap, chunk]);
+        const markerIndex = bootstrap.indexOf(`\n${BOOTSTRAP_MARKER}`);
+        const markerStart = bootstrap.toString('utf8', 0, BOOTSTRAP_MARKER.length) === BOOTSTRAP_MARKER
+          ? 0
+          : markerIndex < 0 ? -1 : markerIndex + 1;
+        if (markerStart < 0) return;
+        const lineEnd = bootstrap.indexOf('\n', markerStart);
+        if (lineEnd < 0) return;
+        let marker: unknown;
+        try {
+          marker = JSON.parse(bootstrap.toString('utf8', markerStart + BOOTSTRAP_MARKER.length, lineEnd));
+        } catch {
           return;
         }
-        preMarkerStdout += `${line}\n`;
-        if (!line.startsWith(BOOTSTRAP_MARKER)) return;
+        if (typeof marker !== 'object' || marker === null) return;
+        preMarkerStdout = bootstrap.toString('utf8', 0, lineEnd + 1);
         try {
           const parsed = parseBootstrapOutput(preMarkerStdout);
           if (parsed === undefined) return;
-          settled = true;
           clearTimeout(timer);
-          activeSession = new ActiveHostSession(parsed.version, child);
+          child.stdout?.off('data', onStdout);
+          const stream = createProcessStream(child, bootstrap.subarray(lineEnd + 1));
+          const session = new StdioHostSession(parsed.version, stream);
+          activeSession = { session, child };
+          settled = true;
           resolve(activeSession);
         } catch (error) {
-          finishReject(
-            error instanceof HostConnectError
-              ? error
-              : new HostConnectError('unknown', error instanceof Error ? error.message : String(error)),
-          );
+          finishReject(error instanceof HostConnectError ? error : new HostConnectError('unknown', String(error)));
+        }
+      };
+      child.stdout?.on('data', onStdout);
+      child.stdout?.on('end', () => {
+        if (activeSession !== undefined) return;
+        if (bootstrap.length > 0) {
+          preMarkerStdout = bootstrap.toString('utf8');
+          try {
+            parseBootstrapOutput(preMarkerStdout);
+          } catch (error) {
+            finishReject(error instanceof HostConnectError ? error : new HostConnectError('unknown', String(error)));
+          }
         }
       });
 
@@ -573,27 +459,22 @@ export class SshKapBridge {
       });
       child.on('close', (code) => {
         clearTimeout(timer);
-        lines.close();
         if (!settled) {
           settled = true;
+          preMarkerStdout ||= bootstrap.toString('utf8');
           reject(sshFailure({ code, stdout: preMarkerStdout, stderr }));
           return;
         }
         if (activeSession !== undefined) {
-          this.onSessionClosed(activeSession, code);
+          activeSession.session.close();
+          if (this.sessionValue !== activeSession) return;
+          this.sessionValue = undefined;
+          if (this.disposed || this.statusValue !== 'ready' || code === 0) return;
+          this.update('connecting');
+          void this.reconnect();
         }
       });
     });
-  }
-
-  private onSessionClosed(session: ActiveHostSession, code: number | null): void {
-    const hadActive = session.failAll();
-    if (this.sessionValue !== session) return;
-    this.sessionValue = undefined;
-    if (this.disposed || this.statusValue !== 'ready') return;
-    if (code === 0 && !hadActive) return;
-    this.update('connecting');
-    void this.reconnect();
   }
 
   private async reconnect(): Promise<void> {
@@ -650,7 +531,7 @@ export class SshKapBridge {
       child.on('error', (error) => {
         stderr += error.message;
       });
-      child.on('close', (code) => {
+      child.once('close', (code) => {
         clearTimeout(timer);
         resolve({ code, stdout, stderr });
       });

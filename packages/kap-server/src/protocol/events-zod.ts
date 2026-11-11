@@ -119,6 +119,7 @@ export const hostChangedEventSchema = z.object({
       name: z.string().optional(),
       enabled: z.boolean().optional(),
       status: z.enum(['pending', 'connecting', 'ready', 'disconnected']),
+      connected: z.boolean(),
       remote_version: z.string().optional(),
       connect_error: z.string().optional(),
       connect_failure: z.string().optional(),

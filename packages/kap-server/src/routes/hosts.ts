@@ -4,13 +4,14 @@ import { z } from 'zod';
 import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
-import { toHostSnapshot, type HostBridgeManager, type HostInfo } from '../services/hosts/hostBridgeManager';
+import { toHostSnapshot, type HostBridgeManager } from '../services/hosts/hostBridgeManager';
 import {
   HOSTS_SECTION,
   SSH_FULL_REMOTE_FLAG_ID,
   hostEntrySchema,
+  hostWireObjectSchema,
+  hostWireSchema,
   isValidHostId,
-  type HostEntry,
 } from '../services/hosts/hostsConfig';
 import { readSshConfigHosts } from '../services/hosts/sshConfigHosts';
 import { HostConnectError, SshKapBridge } from '../services/hosts/sshKapBridge';
@@ -40,9 +41,10 @@ const wireEntrySchema = z.object({
   enabled: z.boolean().optional(),
 });
 
-const hostResponseSchema = wireEntrySchema.extend({
+const hostResponseSchema = hostWireObjectSchema.extend({
   id: z.string(),
   status: z.enum(['pending', 'connecting', 'ready', 'disconnected']),
+  connected: z.boolean(),
   remote_version: z.string().optional(),
   connect_error: z.string().optional(),
   connect_failure: z.string().optional(),
@@ -56,20 +58,6 @@ const testResultSchema = z.object({
   connect_error: z.string().optional(),
   connect_failure: z.string().optional(),
 });
-
-function toEntry(wire: z.infer<typeof wireEntrySchema>): HostEntry {
-  return hostEntrySchema.parse({
-    host: wire.host,
-    identityFile: wire.identity_file,
-    remoteBin: wire.remote_bin,
-    name: wire.name,
-    enabled: wire.enabled,
-  });
-}
-
-function toResponse(info: HostInfo): z.infer<typeof hostResponseSchema> {
-  return toHostSnapshot(info);
-}
 
 export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: HostBridgeManager): void {
   const config = core.accessor.get(IConfigService);
@@ -99,7 +87,7 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
     },
     async (req: RouteRequest, reply: RouteReply) => {
       if (!(await enabled(req, reply))) return;
-      reply.send(okEnvelope({ hosts: manager.list().map(toResponse) }, req.id));
+      reply.send(okEnvelope({ hosts: manager.list().map(toHostSnapshot) }, req.id));
     },
   );
   app.get(listRoute.path, listRoute.options, listRoute.handler as never);
@@ -159,9 +147,9 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
     },
     async (req: RouteRequest, reply: RouteReply) => {
       if (!(await enabled(req, reply))) return;
-      let entry: HostEntry;
+      let entry: z.infer<typeof hostEntrySchema>;
       try {
-        entry = toEntry(req.body as z.infer<typeof wireEntrySchema>);
+        entry = hostWireSchema.parse(req.body);
       } catch (error) {
         reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, error instanceof Error ? error.message : String(error), req.id));
         return;
@@ -209,7 +197,7 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
         reply.send(errEnvelope(ErrorCode.ENVIRONMENT_NOT_FOUND, `host "${id}" is not configured`, req.id));
         return;
       }
-      const snapshot = toResponse(info);
+      const snapshot = toHostSnapshot(info);
       reply.send(
         okEnvelope(
           error !== undefined && snapshot.status === 'pending'
@@ -246,7 +234,7 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
         return;
       }
       try {
-        const entry = toEntry(req.body as z.infer<typeof wireEntrySchema>);
+        const entry = hostWireSchema.parse(req.body);
         await mutateHosts(() => config.replace(HOSTS_SECTION, { ...manager.section(), [id]: entry }));
         reply.send(okEnvelope({ ok: true as const }, req.id));
       } catch (error) {

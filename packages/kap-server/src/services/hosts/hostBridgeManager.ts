@@ -5,9 +5,9 @@ import {
   HostConnectError,
   SshKapBridge,
   type BridgeLogger,
-  type HostSession,
   type HostStatus,
 } from './sshKapBridge';
+import type { HostSession } from './hostSession';
 
 interface BridgeRecord {
   readonly fingerprint: string;
@@ -28,12 +28,14 @@ export interface HostSnapshot {
   readonly name?: string;
   readonly enabled?: boolean;
   readonly status: HostStatus;
+  readonly connected: boolean;
   readonly remote_version?: string;
   readonly connect_error?: string;
   readonly connect_failure?: string;
 }
 
 export function toHostSnapshot(info: HostInfo): HostSnapshot {
+  const disabled = info.entry.enabled === false;
   return {
     id: info.id,
     host: info.entry.host,
@@ -41,10 +43,11 @@ export function toHostSnapshot(info: HostInfo): HostSnapshot {
     remote_bin: info.entry.remoteBin,
     name: info.entry.name,
     enabled: info.entry.enabled,
-    status: info.bridge?.status ?? 'pending',
+    status: disabled ? 'disconnected' : info.bridge?.status ?? 'pending',
+    connected: !disabled && info.bridge?.session !== undefined,
     remote_version: info.bridge?.remoteVersion,
-    connect_error: info.bridge?.error,
-    connect_failure: info.bridge?.failure,
+    connect_error: disabled ? `host "${info.id}" is disabled` : info.bridge?.error,
+    connect_failure: disabled ? 'unknown' : info.bridge?.failure,
   };
 }
 

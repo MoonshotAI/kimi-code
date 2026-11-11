@@ -118,6 +118,7 @@ export interface HostChangedHost {
   readonly name?: string;
   readonly enabled?: boolean;
   readonly status: 'pending' | 'connecting' | 'ready' | 'disconnected';
+  readonly connected: boolean;
   readonly remote_version?: string;
   readonly connect_error?: string;
   readonly connect_failure?: string;

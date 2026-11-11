@@ -1,6 +1,7 @@
 import type { ISessionManager } from '@moonshot-ai/agent-core-v2';
 
 import type { IConnectionRegistry } from '../transport/ws/connectionRegistry';
+import { closeIdleSessions } from './sessionIdleReaper';
 
 export const DEFAULT_MANAGED_IDLE_EXIT_MS = 10 * 60 * 1000;
 const SWEEP_INTERVAL_MS = 30_000;
@@ -54,9 +55,7 @@ export class ManagedIdleExit {
       this.idleSince = this.now();
       return;
     }
-    for (const handle of this.sessions.list()) {
-      await this.sessions.closeIfIdle(handle.id, 0);
-    }
+    await closeIdleSessions(this.sessions, 0);
     if (this.connections.size() > 0 || this.sessions.list().length > 0) {
       this.idleSince = this.now();
       return;

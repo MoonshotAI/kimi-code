@@ -1,8 +1,9 @@
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createConnection } from 'node:net';
-import { Duplex, Writable } from 'node:stream';
+import { Duplex } from 'node:stream';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createInterface } from 'node:readline';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import Fastify from 'fastify';
@@ -13,7 +14,10 @@ import WebSocketClient, { WebSocketServer, type WebSocket as NodeWebSocket } fro
 import { HOST_PROTOCOL_VERSION } from '../src/services/hosts/hostProtocol';
 import { matchHostProxyPath, proxyHostWebSocket, registerHostProxyRoutes, upstreamHeaders } from '../src/services/hosts/hostProxy';
 import { HostBridgeManager } from '../src/services/hosts/hostBridgeManager';
-import { hostsSectionSchema, isValidHostId } from '../src/services/hosts/hostsConfig';
+import { hostsSectionSchema, hostWireSchema, isValidHostId } from '../src/services/hosts/hostsConfig';
+import { HostRequestError } from '../src/services/hosts/hostSession';
+import { StdioHostSession } from '../src/services/hosts/stdioHostSession';
+import { JsonlRpcStream } from '../src/transport/jsonlRpcStream';
 import { registerHostsRoutes } from '../src/routes/hosts';
 import {
   HostConnectError,
@@ -81,6 +85,14 @@ describe('host configuration', () => {
     expect(hostsSectionSchema.safeParse({ dev: { host: 'dev-box', identityFile: '~/.ssh/key' } }).success).toBe(true);
     expect(hostsSectionSchema.safeParse({ dev: { host: 'dev-box', type: 'ssh' } }).success).toBe(false);
     expect(hostsSectionSchema.safeParse({ dev: { host: '-oProxyCommand=x' } }).success).toBe(false);
+  });
+
+  it('maps the wire entry to the config entry through one schema', () => {
+    expect(hostWireSchema.parse({ host: 'dev-box', identity_file: '~/.ssh/key', remote_bin: 'kimi' })).toEqual({
+      host: 'dev-box',
+      identityFile: '~/.ssh/key',
+      remoteBin: 'kimi',
+    });
   });
 
   it('keeps host ids safe for URL path segments', () => {
@@ -177,17 +189,79 @@ describe('ssh bootstrap', () => {
       const bridge = new SshKapBridge({ host: 'dev' }, { sshProgram: ssh });
       const pending = bridge.connect();
       let pid = 0;
-      for (let attempt = 0; attempt < 50 && pid === 0; attempt += 1) {
-        try {
-          pid = Number.parseInt(readFileSync(pidfile, 'utf8'), 10);
-        } catch {
-          await sleep(20);
-        }
-      }
-      expect(pid).toBeGreaterThan(0);
+      await vi.waitFor(() => {
+        pid = Number.parseInt(readFileSync(pidfile, 'utf8'), 10);
+        expect(pid).toBeGreaterThan(0);
+      });
       bridge.dispose();
       await expect(pending).rejects.toBeInstanceOf(HostConnectError);
       expect(() => process.kill(pid, 0)).toThrow();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')('continues after an unmatched frame in the same stdout chunk as the marker', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kimi-handshake-'));
+    try {
+      const ssh = join(dir, 'ssh');
+      writeFileSync(
+        ssh,
+        `#!/bin/sh
+printf '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"version":"1.2.3"}\\n{"type":"http.res","id":"early","status":200,"headers":{},"body":"e30="}\\n'
+read line
+printf '{"type":"http.res","id":"1","status":200,"headers":{},"body":"e30="}\\n'
+`,
+      );
+      chmodSync(ssh, 0o755);
+      const bridge = new SshKapBridge({ host: 'dev' }, { sshProgram: ssh });
+      try {
+        const session = await bridge.connect();
+        const response = await session.request({ method: 'GET', path: '/healthz', headers: {} });
+        expect(response.status).toBe(200);
+      } finally {
+        bridge.dispose();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')('preserves UTF-8 bytes when the handshake splits a character', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kimi-handshake-bytes-'));
+    try {
+      const ssh = join(dir, 'ssh');
+      writeFileSync(
+        ssh,
+        `#!/usr/bin/env node
+const output = Buffer.from(${JSON.stringify(`__KIMI_ENSURE_DAEMON__${JSON.stringify({ protocol: HOST_PROTOCOL_VERSION, version: '版本1.2.3' })}\n`)});
+const split = output.indexOf(Buffer.from('版本')) + 1;
+process.stdout.write(output.subarray(0, split));
+setImmediate(() => {
+  process.stdout.write(output.subarray(split));
+});
+process.stdin.once('data', () => {
+  process.stdout.write(JSON.stringify(${JSON.stringify({ type: 'ws.msg', id: '1', data: '你好' })}) + '\\n');
+});
+process.stdin.resume();
+`,
+      );
+      chmodSync(ssh, 0o755);
+      const bridge = new SshKapBridge({ host: 'dev' }, { sshProgram: ssh });
+      try {
+        const session = await bridge.connect();
+        expect(session.version).toBe('版本1.2.3');
+        const message = new Promise<string>((resolve) => {
+          session.openWebSocket('/api/v1/ws', {
+            onMessage: resolve,
+            onClose() {},
+            onBackpressure() {},
+          });
+        });
+        expect(await message).toBe('你好');
+      } finally {
+        bridge.dispose();
+      }
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -231,12 +305,17 @@ done
         await new Promise<void>((resolve) => {
           session.openWebSocket('/api/v1/ws', {
             onMessage: (data) => messages.push(data),
-            onClose: () => resolve(),
+            onClose: () => {
+              resolve();
+            },
             onBackpressure() {},
           });
         });
         expect(messages).toEqual(['hello']);
-        await sleep(30);
+        await vi.waitFor(() => {
+          expect(bridge.session).toBeUndefined();
+          expect(bridge.status).toBe('ready');
+        });
         const reconnected = await bridge.connect();
         expect(reconnected.version).toBe('1.2.3');
         expect(readFileSync(count, 'utf8').trim().split('\n').length).toBeGreaterThanOrEqual(2);
@@ -250,6 +329,20 @@ done
 });
 
 describe('host HTTP session', () => {
+  it('rejects a pending request when the transport closes', async () => {
+    let stream: Duplex;
+    stream = new Duplex({
+      read() {},
+      write(chunk, encoding, callback) {
+        Duplex.prototype.write.call(stream, chunk, encoding, callback);
+      },
+    });
+    const session = new StdioHostSession('1.0.0', stream);
+    const pending = session.request({ method: 'GET', path: '/held', headers: {} });
+    stream.destroy();
+    await expect(pending).rejects.toMatchObject({ failure: 'unavailable' });
+  });
+
   it('cancels a timed out request and ignores its late response', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'kimi-http-timeout-'));
     try {
@@ -285,17 +378,6 @@ done
 });
 
 describe('host WebSocket backpressure', () => {
-  function replaceSshStdin(bridge: SshKapBridge): { stdin: Writable; killed: ReturnType<typeof vi.fn> } {
-    const session = (bridge as unknown as { sessionValue: { child: { stdin: Writable; kill(): void } } }).sessionValue;
-    const stdin = new Writable({
-      highWaterMark: 1,
-      write(_chunk, _encoding, _callback) {},
-    });
-    Object.defineProperty(session.child, 'stdin', { value: stdin });
-    const killed = vi.fn();
-    session.child.kill = killed as unknown as () => void;
-    return { stdin, killed };
-  }
 
   it('pauses a client while ssh is blocked and resumes after drain', async () => {
     const app = Fastify();
@@ -346,56 +428,46 @@ describe('host WebSocket backpressure', () => {
     }
   });
 
-  it('closes the host session after sustained backpressure without more client messages', async () => {
+  it('closes the RPC stream after sustained backpressure without more client messages', async () => {
     vi.useFakeTimers();
-    const dir = mkdtempSync(join(tmpdir(), 'kimi-blocked-ssh-'));
     try {
-      const ssh = join(dir, 'ssh');
-      writeFileSync(ssh, `#!/bin/sh
-echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"version":"1.2.3"}'
-exec sleep 30
-`);
-      chmodSync(ssh, 0o755);
-      const bridge = new SshKapBridge({ host: 'dev' }, { sshProgram: ssh });
-      const session = await bridge.connect();
-      const { killed } = replaceSshStdin(bridge);
+      let stream: Duplex;
+      stream = new Duplex({
+        highWaterMark: 1,
+        read() {},
+        write(chunk, encoding, callback) {
+          Duplex.prototype.write.call(stream, chunk, encoding, callback);
+        },
+      });
+      const onClose = vi.fn();
+      const session = new StdioHostSession('1.0.0', stream, { onClose });
       session.openWebSocket('/api/v1/ws', {
         onMessage() {},
         onBackpressure() {},
         onClose() {},
       });
       await vi.advanceTimersByTimeAsync(WS_BACKPRESSURE_TIMEOUT_MS + 100);
-      expect(killed).toHaveBeenCalledOnce();
-      bridge.dispose();
+      expect(stream.destroyed).toBe(true);
+      expect(onClose).toHaveBeenCalledWith(expect.objectContaining({ name: 'RpcBackpressureError' }));
     } finally {
       vi.useRealTimers();
-      rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  it('closes the host session when the ssh send buffer exceeds its limit', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'kimi-buffered-ssh-'));
-    try {
-      const ssh = join(dir, 'ssh');
-      writeFileSync(ssh, `#!/bin/sh
-echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"version":"1.2.3"}'
-exec sleep 30
-`);
-      chmodSync(ssh, 0o755);
-      const bridge = new SshKapBridge({ host: 'dev' }, { sshProgram: ssh });
-      const session = await bridge.connect();
-      const { stdin, killed } = replaceSshStdin(bridge);
-      stdin.write('x'.repeat(HOST_RPC_MAX_BODY_BYTES));
-      session.openWebSocket('/api/v1/ws', {
-        onMessage() {},
-        onBackpressure() {},
-        onClose() {},
-      });
-      expect(killed).toHaveBeenCalledOnce();
-      bridge.dispose();
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+  it('closes the RPC stream when its send buffer exceeds the shared limit', async () => {
+    let stream: Duplex;
+    stream = new Duplex({
+      highWaterMark: 1,
+      read() {},
+      write(chunk, encoding, callback) {
+        Duplex.prototype.write.call(stream, chunk, encoding, callback);
+      },
+    });
+    const onClose = vi.fn();
+    const rpc = new JsonlRpcStream(stream, () => {}, () => {}, onClose);
+    rpc.write({ type: 'x'.repeat(HOST_RPC_MAX_BODY_BYTES + 1) });
+    expect(stream.destroyed).toBe(true);
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalledWith(expect.objectContaining({ name: 'RpcBackpressureError' })));
   });
 });
 
@@ -449,7 +521,7 @@ describe('host HTTP proxy', () => {
     registerHostProxyRoutes(app, {
       session: () => ({
         version: '1.0.0',
-        request: async () => { throw new Error('host request timed out'); },
+        request: async () => { throw new HostRequestError('timeout', 'host request timed out'); },
         openWebSocket: () => { throw new Error('unexpected websocket'); },
       }),
     } as never, () => true);
@@ -514,24 +586,14 @@ describe('stdio rpc transport', () => {
     const rpcServer = await startUnixRpcServer(socketPath, { app, wssV1 });
     const client = createConnection(socketPath);
     try {
-      const lines: string[] = [];
-      let onLine: (() => void) | undefined;
-      client.setEncoding('utf8').on('data', (chunk: string) => {
-        for (const part of chunk.split('\n')) {
-          if (part.trim().length > 0) {
-            lines.push(part.trim());
-            onLine?.();
-          }
-        }
-      });
-
+      const lines = createInterface({ input: client, crlfDelay: Infinity });
+      const iterator = lines[Symbol.asyncIterator]();
       const nextLine = async (): Promise<Record<string, unknown>> => {
-        while (lines.length === 0) {
-          await new Promise<void>((resolve) => {
-            onLine = resolve;
-          });
+        while (true) {
+          const { value: line, done } = await iterator.next();
+          if (done) throw new Error('RPC stream ended');
+          if (line.trim().length > 0) return JSON.parse(line.trim()) as Record<string, unknown>;
         }
-        return JSON.parse(lines.shift()!) as Record<string, unknown>;
       };
 
       client.write(
@@ -635,44 +697,37 @@ describe('stdio rpc transport', () => {
     }
   });
 
-  it('closes a websocket only after sustained backpressure', async () => {
+  it('closes the entire RPC stream after sustained backpressure', async () => {
     vi.useFakeTimers();
     try {
       const app = Fastify();
       const wssV1 = new WebSocketServer({ noServer: true });
       let connected!: NodeWebSocket;
       wssV1.on('connection', (ws) => { connected = ws; });
-      const frames: Array<Record<string, unknown>> = [];
-      let draining = false;
-      const stream = new Duplex({
+      let stream: Duplex;
+      stream = new Duplex({
+        highWaterMark: 1,
         read() {},
         write(chunk, encoding, callback) {
           Duplex.prototype.write.call(stream, chunk, encoding, callback);
         },
       });
-      const blockedWrite = stream.write.bind(stream);
-      stream.write = ((chunk: unknown, encoding: BufferEncoding, callback: () => void) => {
-        frames.push(JSON.parse(String(chunk)) as Record<string, unknown>);
-        blockedWrite(chunk, encoding, callback);
-        return draining;
-      }) as typeof stream.write;
       attachRpcStream(stream, { app, wssV1 });
       stream.push(`${JSON.stringify({ type: 'ws.open', id: 'slow', path: '/api/v1/ws' })}\n`);
       await vi.waitFor(() => expect(connected).toBeDefined());
+      stream.emit('drain');
       connected.send('first');
-      draining = true;
       stream.emit('drain');
       connected.send('second');
-      await vi.advanceTimersByTimeAsync(WS_BACKPRESSURE_TIMEOUT_MS + 200);
+      await vi.advanceTimersByTimeAsync(WS_BACKPRESSURE_TIMEOUT_MS - 1);
       expect(connected.readyState).toBe(connected.OPEN);
-      draining = false;
+      stream.emit('drain');
       connected.send('third');
       await vi.advanceTimersByTimeAsync(WS_BACKPRESSURE_TIMEOUT_MS - 1);
       expect(connected.readyState).toBe(connected.OPEN);
-      await vi.advanceTimersByTimeAsync(201);
-      expect(frames).toContainEqual(expect.objectContaining({ type: 'ws.close', id: 'slow', code: 1013 }));
+      await vi.advanceTimersByTimeAsync(2);
+      expect(stream.destroyed).toBe(true);
       expect(connected.readyState).toBe(3);
-      stream.destroy();
       await app.close();
     } finally {
       vi.useRealTimers();
