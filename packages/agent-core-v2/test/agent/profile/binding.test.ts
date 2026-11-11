@@ -1502,6 +1502,27 @@ describe('agentsMdReminder seeding', () => {
     expect(profile.data().agentsMdPaths).toEqual([normalize(join(workDir, 'AGENTS.md'))]);
   });
 
+  it('keeps declared tools separate from the live overlay until an explicit snapshot bind', async () => {
+    const seedInjected = vi.fn<IAgentAgentsMdReminderService['seedInjected']>();
+    const loop = buildSeededContext(seedInjected);
+    const agentsMd = join(workDir, 'AGENTS.md');
+    const systemPrompt = `<!-- From: ${agentsMd} -->\nproject instructions`;
+    await loop.applyBindingSnapshot({ systemPrompt, thinkingLevel: 'off', activeToolNames: ['Read'] });
+    loop.addActiveTool('InheritedTool');
+
+    const declared = loop.bindingSnapshot();
+    expect(declared.activeToolNames).toEqual(['Read']);
+    expect(loop.getActiveToolNames()).toEqual(['Read', 'InheritedTool']);
+    await loop.setProfile({ ...declared, subagents: ['explore'] });
+    expect(loop.getActiveToolNames()).toEqual(['Read', 'InheritedTool']);
+
+    seedInjected.mockClear();
+    await loop.applyBindingSnapshot({ systemPrompt, thinkingLevel: 'off' });
+    expect(loop.getActiveToolNames()).toBeUndefined();
+    expect(loop.bindingSnapshot().agentsMdPaths).toEqual([normalize(agentsMd)]);
+    expect(seedInjected).toHaveBeenCalledExactlyOnceWith([normalize(agentsMd)], workDir);
+  });
+
   it('does not seed when the prompt build fails before the bind commits', async () => {
     const seedInjected = vi.fn<(paths: readonly string[], cwd: string) => void>();
     const profile = buildSeededContext(seedInjected);

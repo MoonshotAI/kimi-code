@@ -133,6 +133,7 @@ export interface IAgentProfileService extends EffectiveProfileReader {
 
   configure(options: ProfileServiceOptions): void;
   applyBindingSnapshot(snapshot: ProfileBindingSnapshot): ProfileBindingSnapshot;
+  prepareBindingSnapshot(snapshot: ProfileBindingSnapshot): ProfileBindingSnapshot;
   defaultProfile(): ProfileBindingSnapshot;
   bind(input: BindAgentInput): Promise<ProfileBindingSnapshot>;
   resolveBinding(input: BindAgentInput, current?: ProfileBindingSnapshot): Promise<ProfileBindingSnapshot>;

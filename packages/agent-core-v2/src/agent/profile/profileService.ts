@@ -224,21 +224,25 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   }
 
   applyBindingSnapshot(snapshot: ProfileBindingSnapshot): ProfileBindingSnapshot {
-    this.activeProfile = undefined;
-    const agentsMdPaths =
-      snapshot.agentsMdPaths ?? extractAgentsMdPathsFromSystemPrompt(snapshot.systemPrompt);
-    this.defaultBinding = { ...snapshot, agentsMdPaths };
+    this.defaultBinding = this.prepareBindingSnapshot(snapshot);
     this.afterConfigDispatch({
       modelAlias: snapshot.modelAlias,
       profileName: snapshot.profileName,
       thinkingLevel: snapshot.thinkingLevel,
       systemPrompt: snapshot.systemPrompt,
       environmentDisclosure: snapshot.environmentDisclosure,
-      agentsMdPaths,
+      agentsMdPaths: this.defaultBinding.agentsMdPaths,
       disallowedTools: snapshot.disallowedTools ?? [],
     }, this.defaultBinding);
-    this.agentsMdReminder.seedInjected(agentsMdPaths, this.workspace.workDir);
     return this.defaultBinding;
+  }
+
+  prepareBindingSnapshot(snapshot: ProfileBindingSnapshot): ProfileBindingSnapshot {
+    this.activeProfile = undefined;
+    const agentsMdPaths =
+      snapshot.agentsMdPaths ?? extractAgentsMdPathsFromSystemPrompt(snapshot.systemPrompt);
+    this.agentsMdReminder.seedInjected(agentsMdPaths, this.workspace.workDir);
+    return { ...snapshot, agentsMdPaths };
   }
 
   defaultProfile(): ProfileBindingSnapshot {

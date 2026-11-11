@@ -308,6 +308,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return this.profileAdapter.getActiveToolNames();
   }
 
+  bindingSnapshot(): ProfileBindingSnapshot {
+    return this.profileAdapter.snapshot();
+  }
+
   setProfile(profile: ProfileBindingSnapshot): Promise<void> {
     return this.profileAdapter.setProfile(profile);
   }
