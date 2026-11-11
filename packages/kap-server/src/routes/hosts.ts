@@ -12,6 +12,7 @@ import {
   hostWireSchema,
   isValidHostId,
 } from '../services/hosts/hostsConfig';
+import { collectSharedProviders, skippedProviderSchema } from '../services/hosts/hostProviders';
 import { readSshConfigHosts } from '../services/hosts/sshConfigHosts';
 import { HostConnectError, SshKapBridge } from '../services/hosts/sshKapBridge';
 
@@ -202,6 +203,46 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
     },
   );
   app.post(connectRoute.path, connectRoute.options, connectRoute.handler as never);
+
+  const shareableRoute = defineRoute(
+    {
+      method: 'GET',
+      path: '/hosts::shareable-providers',
+      success: { data: z.object({ providers: z.array(z.string()), skipped: z.array(skippedProviderSchema) }) },
+      description: 'List the model providers on this computer that can be copied to an SSH host, and the ones that cannot',
+      tags: ['hosts'],
+    },
+    async (req: RouteRequest, reply: RouteReply) => {
+      const { shared, skipped } = await collectSharedProviders(core);
+      reply.send(okEnvelope({ providers: Object.keys(shared.providers), skipped }, req.id));
+    },
+  );
+  app.get(shareableRoute.path, shareableRoute.options, shareableRoute.handler as never);
+
+  const copyProvidersRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/hosts::copy-providers',
+      body: connectBodySchema,
+      success: { data: z.object({ copied: z.array(z.string()), skipped: z.array(skippedProviderSchema) }) },
+      errors: { [ErrorCode.ENVIRONMENT_NOT_FOUND]: {}, [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {} },
+      description: 'Copy the model providers on this computer to a host; providers the host already has are left unchanged',
+      tags: ['hosts'],
+    },
+    async (req: RouteRequest, reply: RouteReply) => {
+      const { id } = req.body as z.infer<typeof connectBodySchema>;
+      if (manager.section()[id] === undefined) {
+        reply.send(errEnvelope(ErrorCode.ENVIRONMENT_NOT_FOUND, `host "${id}" is not configured`, req.id));
+        return;
+      }
+      try {
+        reply.send(okEnvelope(await manager.copyProviders(id), req.id));
+      } catch (error) {
+        reply.send(errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, error instanceof Error ? error.message : String(error), req.id));
+      }
+    },
+  );
+  app.post(copyProvidersRoute.path, copyProvidersRoute.options, copyProvidersRoute.handler as never);
 
   const putRoute = defineRoute(
     {

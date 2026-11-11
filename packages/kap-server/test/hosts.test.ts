@@ -826,6 +826,90 @@ describe('host credentials', () => {
   }, 30_000);
 });
 
+describe('host model providers', () => {
+  it.skipIf(process.platform === 'win32')('copies portable providers with their models and leaves existing remote providers alone', async () => {
+    const localHome = await mkdtemp(join(tmpdir(), 'kimi-host-local-'));
+    const remoteHome = await mkdtemp(join(tmpdir(), 'kimi-host-remote-'));
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 404 })));
+    writeFileSync(join(localHome, 'config.toml'), '[hosts.dev]\nhost = "dev"\n');
+    const env = { KIMI_CODE_MODEL_CATALOG_REFRESH_ON_START: '0', KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS: '0' };
+    const local = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: localHome, logLevel: 'silent', env });
+    const remote = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: remoteHome, logLevel: 'silent',
+      socketPath: join(remoteHome, 'daemon.sock'), managedBy: 'ensure-daemon', env,
+    });
+    const client = createConnection(join(remoteHome, 'daemon.sock'));
+    const pending = new Map<string, (response: HostHttpResponse) => void>();
+    createInterface({ input: client, crlfDelay: Infinity }).on('line', (line) => {
+      const frame = JSON.parse(line) as { id?: string; status?: number; headers?: OutgoingHttpHeaders; body?: string };
+      if (frame.id === undefined) return;
+      pending.get(frame.id)?.({ status: frame.status ?? 500, headers: frame.headers ?? {}, body: Buffer.from(frame.body ?? '', 'base64') });
+      pending.delete(frame.id);
+    });
+    let requestId = 0;
+    const session: HostSession = {
+      version: 'test',
+      request: (input: HostHttpRequest) => new Promise<HostHttpResponse>((resolve) => {
+        const id = `providers-${String(++requestId)}`;
+        pending.set(id, resolve);
+        client.write(`${JSON.stringify({ type: 'http.req', id, method: input.method, path: input.path, headers: input.headers, body: input.body?.toString('base64') })}\n`);
+      }),
+      openWebSocket: () => { throw new Error('not used'); },
+    };
+    vi.spyOn(SshKapBridge.prototype, 'connect').mockResolvedValue(session);
+    vi.spyOn(SshKapBridge.prototype, 'session', 'get').mockReturnValue(session);
+    const localConfig = local.core.accessor.get(IConfigService);
+    const remoteConfig = remote.core.accessor.get(IConfigService);
+    await localConfig.ready;
+    await remoteConfig.ready;
+    await localConfig.replace('providers', {
+      gateway: { type: 'openai', baseUrl: 'https://gateway.example.test/v1', apiKey: 'sk-gateway', customHeaders: { 'x-team': 'core' } },
+      taken: { type: 'openai', baseUrl: 'https://taken.example.test/v1', apiKey: 'sk-local' },
+      fromEnv: { type: 'openai', baseUrl: 'https://env.example.test/v1', apiKeyEnv: 'GATEWAY_KEY' },
+      ollama: { type: 'openai', baseUrl: 'http://127.0.0.1:11434/v1' },
+      signedIn: { type: 'openai', oauth: { storage: 'file', key: 'signed-in' } },
+    });
+    await localConfig.replace('models', {
+      'gateway/large': { provider: 'gateway', model: 'large', maxContextSize: 200_000, maxOutputSize: 8_000, adaptiveThinking: true },
+      'taken/small': { provider: 'taken', model: 'small', maxContextSize: 32_000 },
+      'ollama/local': { provider: 'ollama', model: 'local', maxContextSize: 8_000 },
+    });
+    await remoteConfig.replace('providers', { taken: { type: 'openai', baseUrl: 'https://taken.example.test/v1', apiKey: 'sk-remote' } });
+    const manager = local.hostBridges;
+    try {
+      const result = await manager.copyProviders('dev');
+      expect(result.copied).toEqual(['gateway']);
+      expect(result.skipped).toEqual(expect.arrayContaining([
+        { id: 'fromEnv', reason: 'env_key' },
+        { id: 'ollama', reason: 'loopback' },
+        { id: 'signedIn', reason: 'oauth' },
+        { id: 'taken', reason: 'exists' },
+      ]));
+      expect(result.skipped).toHaveLength(4);
+      const providers = remoteConfig.inspect<Record<string, Record<string, unknown>>>('providers').userValue ?? {};
+      expect(providers['gateway']).toMatchObject({ apiKey: 'sk-gateway', customHeaders: { 'x-team': 'core' } });
+      expect(providers['taken']).toMatchObject({ apiKey: 'sk-remote' });
+      expect(providers).not.toHaveProperty('ollama');
+      const models = remoteConfig.inspect<Record<string, Record<string, unknown>>>('models').userValue ?? {};
+      expect(models['gateway/large']).toMatchObject({ provider: 'gateway', maxOutputSize: 8_000, adaptiveThinking: true });
+      expect(models).not.toHaveProperty('taken/small');
+      expect(models).not.toHaveProperty('ollama/local');
+
+      await expect(manager.copyProviders('dev')).resolves.toMatchObject({ copied: [] });
+      await expect(manager.copyProviders('missing')).rejects.toThrow(/not configured/);
+    } finally {
+      client.destroy();
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+      manager.close();
+      await local.close();
+      await remote.close();
+      await rm(localHome, { recursive: true, force: true });
+      await rm(remoteHome, { recursive: true, force: true });
+    }
+  }, 30_000);
+});
+
 describe('stdio rpc transport', () => {
   it.skipIf(process.platform === 'win32')('routes HTTP requests and WebSocket frames over a unix domain socket', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'kimi-rpc-sock-'));

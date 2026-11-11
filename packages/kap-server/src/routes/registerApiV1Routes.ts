@@ -37,6 +37,7 @@ import { registerSessionExportRoute } from './sessionExport';
 import { registerSessionsRoutes } from './sessions';
 import type { HostBridgeManager } from '../services/hosts/hostBridgeManager';
 import { registerHostCredentialRoute, type HostCredentialStore } from '../services/hosts/hostAuth';
+import { registerImportProvidersRoute } from '../services/hosts/hostProviders';
 import { registerHostsRoutes } from './hosts';
 import { registerShutdownRoutes } from './shutdown';
 import { registerSkillsRoutes } from './skills';
@@ -138,6 +139,7 @@ export async function registerApiV1Routes(
       registerHostsRoutes(apiV1 as unknown as Parameters<typeof registerHostsRoutes>[0], core, opts.hostBridges);
       if (opts.hostCredentials !== undefined) {
         registerHostCredentialRoute(apiV1 as unknown as Parameters<typeof registerHostCredentialRoute>[0], core, opts.hostCredentials);
+        registerImportProvidersRoute(apiV1 as unknown as Parameters<typeof registerImportProvidersRoute>[0], core);
       }
       registerSessionRatingRoutes(
         apiV1 as unknown as Parameters<typeof registerSessionRatingRoutes>[0],

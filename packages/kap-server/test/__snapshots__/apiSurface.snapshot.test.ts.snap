@@ -150,6 +150,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
+      "/api/v1/hosts:shareable-providers",
+    ],
+    [
+      "GET",
       "/api/v1/hosts:ssh-hosts",
     ],
     [
@@ -407,6 +411,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v1/hosts:connect",
+    ],
+    [
+      "POST",
+      "/api/v1/hosts:copy-providers",
     ],
     [
       "POST",
