@@ -1,6 +1,6 @@
 # minidb Agent Guide
 
-The embedded JSON document store (`MiniDb`) behind agent-core-v2's session read model — snapshot + WAL persistence with an exclusive write lock (losers open read-only and catch up from the WAL; `OpenOptions.onLockAcquired` reports the held lock token right after acquisition, before recovery work — supervisors hosting MiniDb in a worker thread need it because worker threads share the host process pid, so the pid in the lock line alone cannot drive stale reclamation), plus a larger-than-RAM full-text layer.
+The legacy embedded JSON document store (`MiniDb`), retained pending final package removal after agent-core-v2's session read model moved to `better-sqlite3` — snapshot + WAL persistence with an exclusive write lock (losers open read-only and catch up from the WAL; `OpenOptions.onLockAcquired` reports the held lock token right after acquisition, before recovery work — supervisors hosting MiniDb in a worker thread need it because worker threads share the host process pid, so the pid in the lock line alone cannot drive stale reclamation), plus a larger-than-RAM full-text layer.
 
 ## Text index
 

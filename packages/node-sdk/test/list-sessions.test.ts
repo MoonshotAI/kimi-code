@@ -330,7 +330,7 @@ describe('SDKRpcClientV2 session index read model', () => {
       expect(resumed.id).toBe(created.id);
 
       // With the read model off, the session query-store is never opened.
-      expect(existsSync(join(homeDir, 'cache', 'query-store'))).toBe(false);
+      expect(existsSync(join(homeDir, 'cache', 'query-store.sqlite'))).toBe(false);
     } finally {
       await client.close();
       vi.unstubAllEnvs();
@@ -360,7 +360,7 @@ describe('SDKRpcClientV2 session index read model', () => {
       // and prove the read model really did engage (the flag took effect).
       const status = await client.engineAccessor.get(ISessionIndex).prepare();
       expect(status.state).toBe('ready');
-      expect(existsSync(join(homeDir, 'cache', 'query-store'))).toBe(true);
+      expect(existsSync(join(homeDir, 'cache', 'query-store.sqlite'))).toBe(true);
     } finally {
       await client.close();
       // Dispose fired the mirror/query-store async closes; await them before

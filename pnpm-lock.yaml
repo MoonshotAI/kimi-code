@@ -480,9 +480,6 @@ importers:
       '@moonshot-ai/kimi-code-oauth':
         specifier: workspace:^
         version: link:../oauth
-      '@moonshot-ai/minidb':
-        specifier: workspace:^
-        version: link:../minidb
       '@moonshot-ai/tree-sitter-bash':
         specifier: workspace:^
         version: link:../tree-sitter-bash
@@ -498,6 +495,9 @@ importers:
       ajv-formats:
         specifier: ^3.0.1
         version: 3.0.1(ajv@8.18.0)
+      better-sqlite3:
+        specifier: ^13.0.3
+        version: 13.0.3
       chokidar:
         specifier: ^4.0.3
         version: 4.0.3
@@ -568,6 +568,9 @@ importers:
         specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
+      '@types/better-sqlite3':
+        specifier: ^9.6.0
+        version: 9.6.0
       '@types/cross-spawn':
         specifier: ^6.0.6
         version: 6.0.6
@@ -4148,6 +4151,9 @@ packages:
   '@types/bcryptjs@2.4.6':
     resolution: {integrity: sha512-9xlo6R2qDs5uixm0bcIqCeMCE6HiQsIyel9KQySStiyqNl2tnj2mP3DX1Nf56MD6KMenNNlBBsy3LJ7gUEQPXQ==}
 
+  '@types/better-sqlite3@9.6.0':
+    resolution: {integrity: sha512-ZEEwBSgMu7GYJOynoagg5X9JbxfL6dTJDsgViJIqh67jV44kyOr9RXfmFjLK5rzC4MWssP06t9hu/JwGDnUbCg==}
+
   '@types/chai@5.2.3':
     resolution: {integrity: sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==}
 
@@ -4977,6 +4983,10 @@ packages:
   better-path-resolve@1.0.0:
     resolution: {integrity: sha512-pbnl5XzGBdrFU/wT4jqmJVPn2B6UHPBOhzMQkY/SPUPB6QtUXtmBHBIwCbXJol93mOpGMnQyP/+BB19q04xj7g==}
     engines: {node: '>=4'}
+
+  better-sqlite3@13.0.3:
+    resolution: {integrity: sha512-RbOBxmLBG8uvFUc15X9+9SFemKcQ0WBuISBVkpuiaUB2qblC8UWlHEjdWVoZ8AdhSwmoEgsiXKfopX0CQxaACQ==}
+    engines: {node: '>=22'}
 
   bidi-js@1.0.3:
     resolution: {integrity: sha512-RKshQI1R3YQ+n9YJz2QQ147P66ELpa1FQEg20Dk8oW9t2KgLbpDLLp9aGZ7y8WHSshDknG0bknqGw5/tyCs5tw==}
@@ -12840,6 +12850,10 @@ snapshots:
 
   '@types/bcryptjs@2.4.6': {}
 
+  '@types/better-sqlite3@9.6.0':
+    dependencies:
+      '@types/node': 22.19.17
+
   '@types/chai@5.2.3':
     dependencies:
       '@types/deep-eql': 4.0.2
@@ -13667,6 +13681,10 @@ snapshots:
   better-path-resolve@1.0.0:
     dependencies:
       is-windows: 1.0.2
+
+  better-sqlite3@13.0.3:
+    dependencies:
+      node-addon-api: 8.9.0
 
   bidi-js@1.0.3:
     dependencies:
