@@ -1064,9 +1064,46 @@ describe('GlobTool integration (real ripgrep)', () => {
   
       const result = await execute(tool, { pattern: '*.ts', path: externalDir });
 
-      expect(result.output).toBe(extFile);
+      expect(result.output).toBe(extFile.replaceAll('\\', '/'));
     } finally {
       await fs.rm(externalDir, { recursive: true, force: true });
     }
+  });
+
+  it.skipIf(process.platform !== 'win32')('preserves rooted globs, ignores and output when both the search and workspace roots are long', async () => {
+    const shortRoot = path.join(tmpDir!, 'short');
+    let longRoot = path.join(tmpDir!, 'long');
+    while (288 - longRoot.length > 95) longRoot = path.join(longRoot, 'a'.repeat(90));
+    longRoot = path.join(longRoot, 'root[probe]{x}!'.padEnd(288 - longRoot.length - 1, 'b'));
+    const files: Record<string, string> = {
+      'top.ts': '', 'src/a.ts': '', 'src/deep/b.ts': '', 'nested/src/a.ts': '',
+      'ignored/a.ts': '', 'omitted.ts': '', 'src/sub-ignore.ts': '',
+      '.git/config': '', '.gitignore': 'ignored/\n', '.ignore': 'omitted.ts\n',
+      'src/.gitignore': '/sub-ignore.ts\n', '.env': '', 'src/.env.local': '', 'id_rsa': '',
+    };
+    for (const root of [shortRoot, longRoot]) {
+      let index = 0;
+      for (const [name, content] of Object.entries(files)) {
+        const target = path.join(root, name);
+        await fs.mkdir(path.dirname(target), { recursive: true });
+        await fs.writeFile(target, content);
+        const mtime = new Date(1_700_000_000_000 + index++ * 1000);
+        await fs.utimes(target, mtime, mtime);
+      }
+    }
+    const environment = createEnvironment(realFs, realEnv, realProcessService);
+    const normal = new GlobTool(environment, stubWorkspaceContext(shortRoot), noopTelemetryService);
+    const long = new GlobTool(environment, stubWorkspaceContext(longRoot), noopTelemetryService);
+    for (const include_ignored of [false, true]) {
+      for (const pattern of ['*.ts', '/top.ts', 'src/*.ts', '/src/**/*.ts', '{src,nested}/*.ts', '!src/*.ts', '**', '!']) {
+        const args = { pattern, include_ignored, head_limit: 0 };
+        const reference = await execute(normal, { ...args, path: shortRoot });
+        const result = await execute(long, { ...args, path: longRoot });
+        expect(reference.isError).not.toBe(true);
+        expect(result, `${pattern}, include_ignored=${String(include_ignored)}`).toEqual(reference);
+      }
+    }
+    const external = await execute(normal, { pattern: '/top.ts', path: longRoot });
+    expect(external.output).toBe(path.join(longRoot, 'top.ts').replaceAll('\\', '/'));
   });
 });
