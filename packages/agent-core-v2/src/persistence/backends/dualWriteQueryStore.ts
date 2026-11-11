@@ -52,10 +52,13 @@ export class DualWriteQueryStore extends SqliteQueryStore {
     try {
       await write();
     } catch (error) {
-      if (this.minidb.storeEpoch() !== expectedBackupEpoch) {
-        await this.resetAfterPeerRebuild();
-      }
-      this.dualWriteLog.error('minidb dual-write failed', { operation, error: String(error) });
+      this.dualWriteLog.error('minidb dual-write failed', {
+        operation,
+        expectedBackupEpoch,
+        backupEpoch: this.minidb.storeEpoch(),
+        error: String(error),
+      });
+      await this.resetAfterPeerRebuild();
       throw error;
     }
   }

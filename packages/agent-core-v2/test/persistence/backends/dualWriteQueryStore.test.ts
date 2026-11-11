@@ -1,8 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { promises as fsp } from 'node:fs';
+import { createRequire } from 'node:module';
 import os from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import Database from 'better-sqlite3';
 
@@ -13,6 +17,7 @@ import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { drainQueryStoreDisposals, DualWriteQueryStore } from '#/persistence/backends/dualWriteQueryStore';
 import { MiniDbQueryStore } from '#/persistence/backends/minidb/miniDbQueryStore';
+import { sqliteNativeBinding } from '#/persistence/backends/sqlite/sqliteQueryStore';
 import { IQueryStore, QueryStoreRebuiltError } from '#/persistence/interface/queryStore';
 import { stubBootstrap } from '../../app/bootstrap/stubs';
 import { stubLog } from '../../_base/log/stubs';
@@ -56,7 +61,7 @@ describe('DualWriteQueryStore', () => {
     return host.app.accessor.get(IQueryStore);
   }
 
-  it('put/get/delete round-trip', async () => {
+  it('put/get/delete round-trip and resets after a backup delete failure', async () => {
     const store = build();
     await store.put(COLLECTION, 'a', { id: 'a', v: 1 });
     expect(await store.get(COLLECTION, 'a')).toEqual({ id: 'a', v: 1 });
@@ -65,9 +70,19 @@ describe('DualWriteQueryStore', () => {
     await store.delete(COLLECTION, 'a');
     expect(await store.get(COLLECTION, 'a')).toBeUndefined();
     expect(await backup(store).get(COLLECTION, 'a')).toBeUndefined();
+
+    await store.put(COLLECTION, 'a', { id: 'a', v: 2 });
+    await store.setCheckpoint('projection', { seq: 1 });
+    backup(store).delete = async () => {
+      throw new Error('minidb delete failed');
+    };
+    await expect(store.delete(COLLECTION, 'a')).rejects.toThrow('minidb delete failed');
+    expect(await store.get(COLLECTION, 'a')).toBeUndefined();
+    expect(await store.getCheckpoint('projection')).toBeUndefined();
+    expect(await backup(store).get(COLLECTION, 'a')).toEqual({ id: 'a', v: 2 });
   });
 
-  it('batch keeps SQLite atomic and retries non-atomic minidb failures', async () => {
+  it('batch keeps SQLite atomic and resets after non-atomic minidb failures', async () => {
     const store = build();
     await store.batch([
       { kind: 'put', collection: COLLECTION, key: 'a', value: { v: 1 } },
@@ -97,7 +112,7 @@ describe('DualWriteQueryStore', () => {
     };
     const retry = [{ kind: 'put' as const, collection: COLLECTION, key: 'c', value: { v: 3 } }];
     await expect(store.batch(retry)).rejects.toThrow('minidb batch failed');
-    expect(await store.get(COLLECTION, 'c')).toEqual({ v: 3 });
+    expect(await store.get(COLLECTION, 'c')).toBeUndefined();
     expect(await minidb.get(COLLECTION, 'c')).toBeUndefined();
     await store.batch(retry);
     expect(await minidb.get(COLLECTION, 'c')).toEqual({ v: 3 });
@@ -105,7 +120,7 @@ describe('DualWriteQueryStore', () => {
     await store.batch([{ kind: 'delete', collection: COLLECTION, key: 'a' }]);
     expect(await store.get(COLLECTION, 'a')).toBeUndefined();
     expect(await minidb.get(COLLECTION, 'a')).toBeUndefined();
-    expect(await store.get(COLLECTION, 'b')).toEqual({ v: 2 });
+    expect(await store.get(COLLECTION, 'b')).toBeUndefined();
 
     class DelayedResetStore extends DualWriteQueryStore {
       override async resetAfterPeerRebuild(): Promise<void> {
@@ -372,7 +387,7 @@ describe('DualWriteQueryStore', () => {
     await expect(store.setCheckpoint('projection', { seq: 2 })).rejects.toThrow(
       'minidb checkpoint failed',
     );
-    expect(await store.getCheckpoint('projection')).toEqual({ seq: 2 });
+    expect(await store.getCheckpoint('projection')).toBeUndefined();
     expect(await minidb.getCheckpoint('projection')).toEqual({ seq: 1 });
     await store.setCheckpoint('projection', { seq: 2 });
     expect(await store.getCheckpoint('projection')).toEqual({ seq: 2 });
@@ -398,10 +413,11 @@ describe('DualWriteQueryStore', () => {
     expect(await fsp.readFile(authoritative, 'utf8')).toBe('{"id":"session"}');
   });
 
-  it('shares the store with a second SQLite connection instead of locking it out', async () => {
+  it('shares connections and rejects stale cross-process checkpoints', async () => {
     const store = build();
     await store.put(COLLECTION, 'seed', { id: 'seed', v: 0 });
-    const peer = new Database(join(homeDir, 'cache', STORE_FILE), { timeout: 1000 });
+    const file = join(homeDir, 'cache', STORE_FILE);
+    const peer = new Database(file, { timeout: 1000 });
     try {
       peer.pragma('busy_timeout = 1000');
       expect(peer.pragma('journal_mode', { simple: true })).toBe('wal');
@@ -414,9 +430,65 @@ describe('DualWriteQueryStore', () => {
         .prepare('SELECT value FROM query_documents WHERE collection = ? AND key = ?')
         .get(COLLECTION, 'mine') as { value: string };
       expect(JSON.parse(row.value)).toEqual({ id: 'mine', v: 2 });
+
+      await store.setCheckpoint('projection', { seq: 1 });
+      const staleEpoch = store.storeEpoch();
+      const packageEntry = createRequire(import.meta.url).resolve('better-sqlite3');
+      const resetScript = join(homeDir, 'reset-store.mjs');
+      await fsp.writeFile(
+        resetScript,
+        `import Database from ${JSON.stringify(pathToFileURL(packageEntry).href)};
+const db = new Database(${JSON.stringify(file)});
+db.pragma('busy_timeout = 1000');
+db.exec('BEGIN IMMEDIATE');
+db.prepare('DELETE FROM query_numeric_values').run();
+db.prepare('DELETE FROM query_documents').run();
+db.prepare('UPDATE query_store_metadata SET epoch = epoch + 1 WHERE id = 1').run();
+process.stdout.write('locked\\n');
+setTimeout(() => {
+  db.exec('COMMIT');
+  db.close();
+}, 100);
+`,
+      );
+      const child = spawn(process.execPath, [resetScript], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let errors = '';
+      child.stderr.on('data', (chunk: Buffer) => {
+        errors += chunk.toString();
+      });
+      const childExit = once(child, 'exit');
+      await once(child.stdout, 'data');
+      await expect(store.setCheckpoint('projection', { seq: 2 }, staleEpoch)).rejects.toThrow(
+        QueryStoreRebuiltError,
+      );
+      expect(await childExit).toEqual([0, null]);
+      expect(errors).toBe('');
+      expect(await store.getCheckpoint('projection')).toBeUndefined();
+      expect(await backup(store).getCheckpoint('projection')).toEqual({ seq: 1 });
+      expect(store.storeEpoch()).toBe(staleEpoch + 1);
       await store.close();
     } finally {
       peer.close();
+    }
+
+    const configured = process.env['KIMI_CODE_SQLITE_NATIVE_BINDING'];
+    delete process.env['KIMI_CODE_SQLITE_NATIVE_BINDING'];
+    const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('linux');
+    const arch = vi.spyOn(process, 'arch', 'get').mockReturnValue('x64');
+    const getReport = vi.spyOn(process.report, 'getReport').mockReturnValue({ header: {} } as never);
+    try {
+      const packageEntry = createRequire(import.meta.url).resolve('better-sqlite3');
+      expect(sqliteNativeBinding()).toBe(
+        join(dirname(packageEntry), '../prebuilds/linuxmusl-x64.node'),
+      );
+    } finally {
+      platform.mockRestore();
+      arch.mockRestore();
+      getReport.mockRestore();
+      if (configured === undefined) delete process.env['KIMI_CODE_SQLITE_NATIVE_BINDING'];
+      else process.env['KIMI_CODE_SQLITE_NATIVE_BINDING'] = configured;
     }
   });
 
