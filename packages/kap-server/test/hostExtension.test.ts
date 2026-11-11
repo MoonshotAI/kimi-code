@@ -11,10 +11,12 @@ import {
   IAgentToolRegistryService,
   IEventBus,
   ISessionManager,
+  ITelemetryService,
   SubagentSpawned,
   type ExecutableTool,
 } from '@moonshot-ai/agent-core-v2';
 import { TurnEnded } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
+import { historyEntryFromContext } from '@moonshot-ai/agent-core-v2/agent/loop/history';
 import { ISessionEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
 import { IMAGE_BYTE_BUDGET, resolveMaxImageEdgePx, startServer } from '../src/index';
 import type { HostAgent, HostExtension } from '../src/index';
@@ -23,7 +25,9 @@ const homes: string[] = [];
 const servers: Array<Awaited<ReturnType<typeof startServer>>> = [];
 
 afterEach(async () => {
-  await Promise.all(servers.splice(0).map((server) => server.close()));
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+  await Promise.all(servers.splice(0).map((server) => server.close().catch(() => undefined)));
   await Promise.all(homes.splice(0).map((home) => rm(home, { recursive: true, force: true })));
 });
 
@@ -75,21 +79,39 @@ it('exposes session and agent capabilities without leaking engine scopes', async
   expect(hostAgent.meta?.type).toBe('main');
   expect(hostAgent.state()).toMatchObject({ running: false });
   expect(await hostSession.agents()).toHaveProperty('main');
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(createdAgents.filter((agent) => agent.id === 'main')).toHaveLength(1);
 
   hostAgent.registerReminder('host-test', (context) => context.isNewTurn ? { content: 'host reminder', disclosure: { seen: true } } : undefined);
   const loop = main.accessor.get(IAgentLoopService);
   await loop.hooks.onWillBeginStep.run({ turnId: 1, step: 1, firstStepOfTurn: true, signal: new AbortController().signal });
   loop.flushReminders();
   expect(JSON.stringify(await hostSession.readAgentHistory('main'))).toContain('host reminder');
+  loop.remind(historyEntryFromContext({
+    role: 'assistant',
+    content: [
+      { type: 'think', think: 'reasoning' },
+      { type: 'image_url', imageUrl: { url: 'https://example.com/image.png' } },
+    ],
+    toolCalls: [],
+  }));
+  loop.flushReminders();
+  const history = await hostSession.readAgentHistory('main');
+  expect(history.at(-1)?.content).toEqual([
+    { type: 'think', think: 'reasoning' },
+    { type: 'image_url', imageUrl: { url: 'https://example.com/image.png' } },
+  ]);
 
+  const execute = vi.fn(async (args: unknown) => ({ output: JSON.stringify(args) }));
+  const resolve = vi.fn((args: unknown) => ({
+    approvalRule: 'always-allow' as const,
+    execute: async () => execute(args),
+  }));
   const tool: ExecutableTool = {
     name: 'HostEcho',
     description: 'host echo',
-    parameters: { type: 'object' },
-    resolveExecution: (args) => ({
-      approvalRule: 'always-allow',
-      execute: async () => ({ output: JSON.stringify(args) }),
-    }),
+    parameters: { type: 'object', required: ['value'], properties: { value: { type: 'string' } } },
+    resolveExecution: resolve,
   } as ExecutableTool;
   main.accessor.get(IAgentToolRegistryService).register(tool, { source: 'builtin' });
   main.accessor.get(IAgentPermissionModeService).setMode('yolo');
@@ -97,11 +119,17 @@ it('exposes session and agent capabilities without leaking engine scopes', async
     ...(args as Record<string, unknown>),
     injectedTurn: context.turnId,
   }));
-  hostAgent.onDidExecuteTool((context) => context.toolName === 'HostEcho' ? { output: 'host tool intercepted' } : undefined);
+  const interception = hostAgent.onDidExecuteTool((context) => context.toolName === 'HostEcho' ? { output: 'host tool intercepted' } : undefined);
   const executor = main.accessor.get(IAgentToolExecutorService);
-  const call = { type: 'function' as const, id: 'host-call', name: 'HostEcho', arguments: '{}' };
+  const call = { type: 'function' as const, id: 'host-call', name: 'HostEcho', arguments: JSON.stringify({ value: 'ok' }) };
   const result = await executor.executor.execute(call, { turnId: 7 });
   expect(result.content).toEqual([{ type: 'text', text: 'host tool intercepted' }]);
+  expect(resolve).toHaveBeenCalledWith({ value: 'ok', injectedTurn: 7 });
+  interception.dispose();
+  const invalid = await executor.executor.execute({ ...call, id: 'host-invalid', arguments: JSON.stringify({ invalid: true }) }, { turnId: 8 });
+  if ('detached' in invalid) throw new Error('unexpected detached tool result');
+  expect(invalid.outcome.type).toBe('failed');
+  expect(execute).toHaveBeenCalledOnce();
 
   const ended = vi.fn();
   hostAgent.onDidTurnEnd(ended);
@@ -125,12 +153,13 @@ it('exposes session and agent capabilities without leaking engine scopes', async
 it('exposes host telemetry and public image limits', async () => {
   const home = await mkdtemp(join(tmpdir(), 'kap-host-telemetry-'));
   homes.push(home);
+  const env: NodeJS.ProcessEnv = { ...process.env, KIMI_CODE_EXPERIMENTAL_PERSISTENCE_MINIDB_READMODEL: 'false', KIMI_CODE_EXPERIMENTAL_SEARCH_WORKER: 'false' };
   const server = await startServer({
     hostIdentity: { productName: 'test-host', platform: 'test', version: '0.0.0' },
     homeDir: home,
     port: 0,
     logLevel: 'silent',
-    env: { ...process.env, KIMI_CODE_EXPERIMENTAL_PERSISTENCE_MINIDB_READMODEL: 'false', KIMI_CODE_EXPERIMENTAL_SEARCH_WORKER: 'false' },
+    env,
   });
   servers.push(server);
   await expect(server.hostTelemetry.readConsent()).resolves.toBeUndefined();
@@ -147,8 +176,41 @@ it('exposes host telemetry and public image limits', async () => {
     stopPeriodicFlush: expect.any(Function),
     retryDiskEvents: expect.any(Function),
   }));
-  await server.core.accessor.get(ISessionManager).create({ workDir: home });
+  const registration = server.hostTelemetry.addAppender(appender);
+  registration.dispose();
+  const manager = server.core.accessor.get(ISessionManager);
+  const handle = await manager.create({ workDir: home });
+  await expect(server.hostTelemetry.countSessions()).resolves.toBe(1);
+  await manager.archive(handle.id);
   await expect(server.hostTelemetry.countSessions()).resolves.toBe(1);
   expect(IMAGE_BYTE_BUDGET).toBeGreaterThan(0);
   expect(resolveMaxImageEdgePx()).toBeGreaterThan(0);
+  env['KIMI_DISABLE_TELEMETRY'] = '1';
+  await expect(server.hostTelemetry.readConsent()).resolves.toBe(false);
+  vi.useFakeTimers();
+  try {
+    vi.spyOn(server.core.accessor.get(ITelemetryService), 'shutdown').mockReturnValue(new Promise<void>(() => {}));
+    const shutdown = server.hostTelemetry.shutdown();
+    await vi.advanceTimersByTimeAsync(3_000);
+    await expect(shutdown).resolves.toBeUndefined();
+  } finally {
+    vi.useRealTimers();
+  }
+}, 30000);
+
+
+it('continues server shutdown when a host extension fails to dispose', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'kap-host-dispose-failure-'));
+  homes.push(home);
+  const server = await startServer({
+    hostIdentity: { productName: 'test-host', platform: 'test', version: '0.0.0' },
+    homeDir: home,
+    port: 0,
+    logLevel: 'silent',
+    env: { ...process.env, KIMI_CODE_EXPERIMENTAL_PERSISTENCE_MINIDB_READMODEL: 'false', KIMI_CODE_EXPERIMENTAL_SEARCH_WORKER: 'false' },
+    hostExtension: { dispose: () => { throw new Error('dispose failed'); } },
+  });
+  servers.push(server);
+  await expect(server.close()).rejects.toThrow(AggregateError);
+  expect(server.app.server.listening).toBe(false);
 }, 30000);
