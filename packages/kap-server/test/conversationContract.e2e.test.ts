@@ -578,7 +578,7 @@ describe('conversation contract e2e', () => {
 
   it('S3: a pending approval rides on the tool item, then resolves', async () => {
     await boot([
-      { match: (body) => !body.includes('echo contract-hi'), respond: () => sseToolCall('call_1', 'Bash', '{"command":"echo contract-hi"}') },
+      { match: (body) => !body.includes('printf contract-hi > approval-probe.txt && printf contract-hi'), respond: () => sseToolCall('call_1', 'Bash', '{"command":"printf contract-hi > approval-probe.txt && printf contract-hi"}') },
       { match: () => true, respond: () => sseText('tool done') },
     ]);
     const sid = await createSession(server!, base);
@@ -605,7 +605,7 @@ describe('conversation contract e2e', () => {
       item_id: 'call_1',
       status: 'ended',
       outcome: 'completed',
-      input: { command: 'echo contract-hi' },
+      input: { command: 'printf contract-hi > approval-probe.txt && printf contract-hi' },
       interaction_id: approval.id,
     });
     expect(tool).not.toHaveProperty('stage');
