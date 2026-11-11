@@ -120,7 +120,7 @@ Hook 命令始终在运行 Kimi Code 的机器上执行，工作目录是当前�
 | `PostToolUseFailure` | 工具名 | — | 工具失败或被阻断后触发 |
 | `PermissionRequest` | 工具名 | — | 即将等待用户审批前触发 |
 | `PermissionResult` | 工具名 | — | 审批结束后触发 |
-| `SessionStart` | `startup` 或 `resume` | — | 新会话启动或历史会话恢复后触发；payload 含 `source`、`model`、`profile` |
+| `SessionStart` | `startup` 或 `resume` | — | 新会话启动或历史会话恢复后触发；payload 含 `source`、`model`、`profile`。main agent 已加载时，`model` 和 `profile` 是它实际使用的值，否则为默认值 |
 | `SessionEnd` | `exit` 或 `archive` | — | 会话关闭后触发；`archive` 表示会话被归档而非退出；`kimi web` 将空闲会话从内存卸载时不触发，之后归档或删除这个已卸载的会话也不触发；透明恢复不触发 `SessionStart` |
 | `SessionHeartbeat` | 空字符串 | — | 会话存活期间每 60 秒触发一次，仅配置本事件时计时器才运行；payload 含 `uptime_ms`；`kimi web` 卸载会话期间暂停，恢复后 `uptime_ms` 重新计时 |
 | `SubagentStart` | subagent 名称 | — | subagent 开始运行前触发 |

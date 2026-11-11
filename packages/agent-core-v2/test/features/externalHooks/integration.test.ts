@@ -77,6 +77,7 @@ import {
 } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { IModelService } from '#/llm-adapter/model/model';
+import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 
 import { stubBootstrap } from '../../app/bootstrap/stubs';
 import { registerLogServices } from '../../_base/log/stubs';
@@ -172,6 +173,19 @@ function stubModelService(model = 'kimi-test'): IModelService {
     _serviceBrand: undefined,
     getDefaultModel: () => model,
   } as unknown as IModelService;
+}
+
+function stubAgents(main?: { model: string; profileName: string }): IAgentLifecycleService {
+  const loop = main === undefined
+    ? undefined
+    : { getModel: () => main.model, data: () => ({ profileName: main.profileName }) };
+  return {
+    _serviceBrand: undefined,
+    handleOf: (agentId: string) =>
+      agentId === MAIN_AGENT_ID && loop !== undefined
+        ? { accessor: { get: (id: unknown) => (id === IAgentLoopService ? loop : undefined) } }
+        : undefined,
+  } as unknown as IAgentLifecycleService;
 }
 
 function hookLogPath(): string {
@@ -572,6 +586,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(ISessionMetadata, stubSessionMetadata());
           reg.defineInstance(ISessionAgentProfileCatalog, stubProfileCatalog());
           reg.defineInstance(IModelService, stubModelService());
+          reg.defineInstance(IAgentLifecycleService, stubAgents());
           reg.definePartialInstance(ISessionSubagentService, {
             hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
             onDidStopAgentTask: stopAgentTask.event,
@@ -919,6 +934,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(ISessionMetadata, stubSessionMetadata(undefined, () => effectiveCwd));
           reg.defineInstance(ISessionAgentProfileCatalog, stubProfileCatalog());
           reg.defineInstance(IModelService, stubModelService());
+          reg.defineInstance(IAgentLifecycleService, stubAgents());
           reg.definePartialInstance(ISessionSubagentService, {
             hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
             onDidStopAgentTask: Event.None as Event<AgentTaskStopHookContext>,
@@ -1121,6 +1137,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(ISessionMetadata, stubSessionMetadata('My Session'));
           reg.defineInstance(ISessionAgentProfileCatalog, stubProfileCatalog('coder'));
           reg.defineInstance(IModelService, stubModelService('kimi-k2'));
+          reg.defineInstance(IAgentLifecycleService, stubAgents());
           reg.definePartialInstance(ISessionSubagentService, {
             hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
             onDidStopAgentTask: Event.None as Event<AgentTaskStopHookContext>,
@@ -1153,6 +1170,82 @@ describe('IExternalHooksRunnerService integration', () => {
           event: 'SessionStart',
           model: 'kimi-k2',
           profile: 'coder',
+          sessionTitle: 'My Session',
+          clientType: 'test_platform',
+        },
+      ]);
+    } finally {
+      ix?.dispose();
+      disposables.dispose();
+    }
+  });
+
+  it('reports the bound main agent model and profile to SessionStart', async () => {
+    const disposables = new DisposableStore();
+    let ix: TestInstantiationService | undefined;
+    try {
+      const lifecycle = stubSessionLifecycle();
+      const path = hookLogPath();
+      const command = stdinScript([
+        'const fs = require("node:fs");',
+        'fs.appendFileSync(',
+        `  ${JSON.stringify(path)},`,
+        '  JSON.stringify({',
+        '    event: parsed.hook_event_name,',
+        '    model: parsed.model,',
+        '    profile: parsed.profile,',
+        '    sessionTitle: parsed.session_title,',
+        '    clientType: parsed.client_type,',
+        '  }) + "\\n",',
+        ');',
+      ].join('\n'));
+
+      ix = createServices(disposables, {
+        strict: true,
+        additionalServices: (reg) => {
+          registerStateServices(reg);
+          registerLogServices(reg);
+          reg.defineInstance(ISessionContext, stubSessionContext());
+          reg.definePartialInstance(ISessionManager, lifecycle.service);
+          reg.defineInstance(ISessionMetadata, stubSessionMetadata('My Session'));
+          reg.defineInstance(ISessionAgentProfileCatalog, stubProfileCatalog('coder'));
+          reg.defineInstance(IModelService, stubModelService('kimi-k2'));
+          reg.defineInstance(
+            IAgentLifecycleService,
+            stubAgents({ model: 'kimi-k2-turbo', profileName: 'reviewer' }),
+          );
+          reg.definePartialInstance(ISessionSubagentService, {
+            hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
+            onDidStopAgentTask: Event.None as Event<AgentTaskStopHookContext>,
+          });
+          reg.definePartialInstance(IConfigService, {
+            ready: Promise.resolve(),
+            get: <T = unknown>(domain: string): T =>
+              (domain === HOOKS_SECTION
+                ? [{ event: 'SessionStart' as const, command, timeout: 5 }]
+                : undefined) as T,
+          });
+          reg.definePartialInstance(IPluginService, {
+            enabledHooks: async () => [],
+            onDidReload: Event.None as IPluginService['onDidReload'],
+          });
+          reg.defineInstance(IBootstrapService, stubBootstrap());
+          reg.define(IHostProcessService, HostProcessService);
+        },
+      });
+      ix.stub(ITelemetryService, { track2: () => {} });
+      ix.set(IExternalHooksRunnerService, new SyncDescriptor(ExternalHooksRunnerService));
+      ix.set(ISessionExternalHooksService, new SyncDescriptor(SessionExternalHooksService));
+      ix.get(ISessionExternalHooksService);
+      await flushMicrotasks();
+
+      await lifecycle.fireDidCreate('startup');
+
+      expect(readHookLog(path)).toEqual([
+        {
+          event: 'SessionStart',
+          model: 'kimi-k2-turbo',
+          profile: 'reviewer',
           sessionTitle: 'My Session',
           clientType: 'test_platform',
         },
@@ -1406,6 +1499,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(ISessionMetadata, stubSessionMetadata());
           reg.defineInstance(ISessionAgentProfileCatalog, stubProfileCatalog());
           reg.defineInstance(IModelService, stubModelService());
+          reg.defineInstance(IAgentLifecycleService, stubAgents());
           reg.definePartialInstance(ISessionSubagentService, {
             hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
             onDidStopAgentTask: Event.None as Event<AgentTaskStopHookContext>,
@@ -1451,6 +1545,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(ISessionMetadata, stubSessionMetadata());
           reg.defineInstance(ISessionAgentProfileCatalog, stubProfileCatalog());
           reg.defineInstance(IModelService, stubModelService());
+          reg.defineInstance(IAgentLifecycleService, stubAgents());
           reg.definePartialInstance(ISessionSubagentService, {
             hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
             onDidStopAgentTask: Event.None as Event<AgentTaskStopHookContext>,
@@ -1498,6 +1593,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(ISessionMetadata, stubSessionMetadata());
           reg.defineInstance(ISessionAgentProfileCatalog, stubProfileCatalog());
           reg.defineInstance(IModelService, stubModelService());
+          reg.defineInstance(IAgentLifecycleService, stubAgents());
           reg.definePartialInstance(ISessionSubagentService, {
             hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
             onDidStopAgentTask: Event.None as Event<AgentTaskStopHookContext>,

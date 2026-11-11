@@ -1,5 +1,7 @@
 import { Service } from '#/_base/di/service';
 import { IntervalTimer } from '#/_base/utils/timer';
+import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IModelService } from '#/llm-adapter/model/model';
 import {
@@ -42,6 +44,7 @@ export class SessionExternalHooksService
     @ISessionAgentProfileCatalog private readonly profiles: ISessionAgentProfileCatalog,
     @IModelService private readonly models: IModelService,
     @IExternalHooksRunnerService private readonly runner: IExternalHooksRunnerService,
+    @IAgentLifecycleService private readonly agents: IAgentLifecycleService,
   ) {
     super();
     void this.metadata
@@ -113,6 +116,8 @@ export class SessionExternalHooksService
   }
 
   private async triggerSessionStart(source: SessionStartHookSource): Promise<void> {
+    const mainLoop = this.agents.handleOf(MAIN_AGENT_ID)?.accessor.get(IAgentLoopService);
+    const mainModel = mainLoop?.getModel();
     await this.runner.trigger('SessionStart', {
       matcherValue: source,
       cwd: await this.hookCwd(),
@@ -120,8 +125,8 @@ export class SessionExternalHooksService
       inputData: {
         source,
         sessionTitle: this.sessionTitle,
-        model: this.models.getDefaultModel(),
-        profile: await this.defaultProfileName(),
+        model: mainModel !== undefined && mainModel !== '' ? mainModel : this.models.getDefaultModel(),
+        profile: mainLoop?.data().profileName ?? (await this.defaultProfileName()),
       },
     });
   }

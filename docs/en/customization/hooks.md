@@ -120,7 +120,7 @@ Only **blockable events** (`PreToolUse`, `Stop`, `UserPromptSubmit`) have return
 | `PostToolUseFailure` | Tool name | — | Triggered after a tool fails or is blocked |
 | `PermissionRequest` | Tool name | — | Triggered just before waiting for user approval |
 | `PermissionResult` | Tool name | — | Triggered after approval completes |
-| `SessionStart` | `startup` or `resume` | — | Triggered after a session starts or resumes; payload includes `source`, `model`, `profile` |
+| `SessionStart` | `startup` or `resume` | — | Triggered after a session starts or resumes; payload includes `source`, `model`, `profile`. `model` and `profile` are the main agent's when it is already loaded, otherwise the defaults |
 | `SessionEnd` | `exit` or `archive` | — | Triggered after a session closes; `archive` means the session was archived rather than exited; not triggered when `kimi web` unloads an idle session from memory, nor when such an unloaded session is later archived or deleted; the transparent reload does not trigger `SessionStart` |
 | `SessionHeartbeat` | Empty string | — | Triggered every 60 seconds while the session is alive; the timer runs only when this event is configured; payload includes `uptime_ms`; pauses while `kimi web` has the session unloaded, and `uptime_ms` restarts after reload |
 | `SubagentStart` | Sub-agent name | — | Triggered before a sub-agent starts running |
