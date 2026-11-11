@@ -145,11 +145,11 @@ export interface HostAgent {
   ): HostDisposable;
   decorateToolArguments(
     toolName: string,
-    decorator: (args: unknown, context: HostToolDecoratorContext) => unknown | Promise<unknown>,
+    decorator: (args: unknown, context: HostToolDecoratorContext) => unknown,
   ): HostDisposable;
   decorateToolExecution(
     toolName: string,
-    decorator: (args: unknown, context: HostToolDecoratorContext) => unknown | Promise<unknown>,
+    decorator: (args: unknown, context: HostToolDecoratorContext) => unknown,
   ): HostDisposable;
   onDidTurnEnd(listener: (event: { readonly turnId: number }) => void): HostDisposable;
 }
