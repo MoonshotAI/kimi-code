@@ -5,6 +5,17 @@ import { HOSTS_SECTION, type HostEntry, type HostsSection } from './hostsConfig'
 import { HostConnectError, SshKapBridge, type BridgeLogger, type HostStatus } from './sshKapBridge';
 import type { HostSession } from './hostSession';
 
+interface BridgeRecord {
+  readonly fingerprint: string;
+  readonly bridge: SshKapBridge;
+}
+
+export interface HostInfo {
+  readonly id: string;
+  readonly entry: HostEntry;
+  readonly bridge: SshKapBridge | undefined;
+}
+
 export interface HostSnapshot {
   readonly id: string;
   readonly host: string;
@@ -19,25 +30,25 @@ export interface HostSnapshot {
   readonly connect_failure?: string;
 }
 
-export function toHostSnapshot(id: string, entry: HostEntry, bridge: SshKapBridge | undefined): HostSnapshot {
+export function toHostSnapshot(info: HostInfo): HostSnapshot {
+  const disabled = info.entry.enabled === false;
   return {
-    id,
-    host: entry.host,
-    identity_file: entry.identityFile,
-    remote_bin: entry.remoteBin,
-    name: entry.name,
-    enabled: entry.enabled,
-    status: entry.enabled === false ? 'disconnected' : bridge?.status ?? 'pending',
-    connected: entry.enabled !== false && bridge?.session !== undefined,
-    remote_version: bridge?.remoteVersion,
-    connect_error: entry.enabled === false ? `host "${id}" is disabled` : bridge?.error,
-    connect_failure: entry.enabled === false ? 'unknown' : bridge?.failure,
+    id: info.id,
+    host: info.entry.host,
+    identity_file: info.entry.identityFile,
+    remote_bin: info.entry.remoteBin,
+    name: info.entry.name,
+    enabled: info.entry.enabled,
+    status: disabled ? 'disconnected' : info.bridge?.status ?? 'pending',
+    connected: !disabled && info.bridge?.session !== undefined,
+    remote_version: info.bridge?.remoteVersion,
+    connect_error: disabled ? `host "${info.id}" is disabled` : info.bridge?.error,
+    connect_failure: disabled ? 'unknown' : info.bridge?.failure,
   };
 }
 
 export function hostSnapshots(manager: HostBridgeManager): HostSnapshot[] {
-  const configured = manager.configured();
-  return configured === undefined ? [] : [toHostSnapshot(configured.id, configured.entry, manager.bridge())];
+  return manager.list().map(toHostSnapshot);
 }
 
 export class HostBridgeManager {
@@ -54,34 +65,28 @@ export class HostBridgeManager {
     });
   }
 
-  configured(): { id: string; entry: HostEntry } | undefined {
-    const section = this.core.accessor.get(IConfigService).get<HostsSection | undefined>(HOSTS_SECTION) ?? {};
-    const id = Object.keys(section)[0];
-    const entry = id === undefined ? undefined : section[id];
-    return entry === undefined || id === undefined ? undefined : { id, entry };
+  section(): HostsSection {
+    return this.core.accessor.get(IConfigService).get<HostsSection | undefined>(HOSTS_SECTION) ?? {};
   }
 
-  bridge(): SshKapBridge | undefined {
-    const id = this.configured()?.id;
-    return id === undefined ? undefined : this.records.get(id)?.bridge;
+  list(): readonly HostInfo[] {
+    return Object.entries(this.section()).map(([id, entry]) => ({
+      id,
+      entry,
+      bridge: this.records.get(id)?.bridge,
+    }));
   }
 
-  session(id: string): HostSession | undefined {
-    return this.configured()?.id === id ? this.bridge()?.session : undefined;
-  }
-
-  async connect(id = this.configured()?.id): Promise<HostSession> {
+  async connect(id = Object.keys(this.section())[0]): Promise<HostSession> {
     await this.core.accessor.get(IConfigService).ready;
-    const selected = this.configured();
-    if (id !== selected?.id) throw new HostConnectError('unknown', `unknown host "${id ?? ''}"`);
-    if (selected === undefined) throw new HostConnectError('unknown', 'no SSH host is configured');
-    if (selected.entry.enabled === false) throw new HostConnectError('unknown', `host "${selected.id}" is disabled`);
-    const bridge = this.record(selected.id, selected.entry).bridge;
+    const entry = id === undefined ? undefined : this.section()[id];
+    if (entry === undefined || id === undefined) throw new HostConnectError('unknown', `host "${id ?? ''}" is not configured`);
+    if (entry.enabled === false) throw new HostConnectError('unknown', `host "${id}" is disabled`);
     const credential = await localHostCredential(this.core);
     const offer: HostCredentialOffer = credential === undefined
       ? { type: 'auth', action: 'logout', oauth_key: await localHostCredentialKey(this.core) }
       : { type: 'auth', action: 'provision', credential };
-    const session = await bridge.connect(offer);
+    const session = await this.record(id, entry).bridge.connect(offer);
     const remote = await this.credential(session, offer.action === 'logout'
       ? { action: 'logout', oauth_key: offer.oauth_key }
       : { action: 'provision', credential: offer.credential });
@@ -115,6 +120,10 @@ export class HostBridgeManager {
     return body.data.credential ?? null;
   }
 
+  session(id: string): HostSession | undefined {
+    return this.records.get(id)?.bridge.session;
+  }
+
   close(): void {
     this.subscription.dispose();
     for (const { bridge } of this.records.values()) bridge.dispose();
@@ -136,18 +145,16 @@ export class HostBridgeManager {
   }
 
   private reconcile(): void {
-    const selected = this.configured();
+    const section = this.section();
+    let changed = false;
     for (const [id, { fingerprint, bridge }] of this.records) {
-      const next = selected?.id === id ? JSON.stringify({ ...selected.entry, enabled: undefined, name: undefined }) : undefined;
-      if (next === fingerprint && selected?.entry.enabled !== false) continue;
+      const entry = section[id];
+      const next = entry === undefined ? undefined : JSON.stringify({ ...entry, enabled: undefined, name: undefined });
+      if (next === fingerprint && entry?.enabled !== false) continue;
       bridge.dispose();
       this.records.delete(id);
+      changed = true;
     }
-    this.onChange?.();
+    if (changed) this.onChange?.();
   }
-}
-
-interface BridgeRecord {
-  readonly fingerprint: string;
-  readonly bridge: SshKapBridge;
 }

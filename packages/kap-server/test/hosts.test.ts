@@ -577,6 +577,51 @@ describe('host API', () => {
   });
 });
 
+describe('host management routes', () => {
+  it('tests, creates, updates and removes hosts through the real HTTP API', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'kimi-hosts-routes-'));
+    const server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+    });
+    const probe = vi.spyOn(SshKapBridge.prototype, 'probe').mockResolvedValue({
+      version: '2.0.0',
+      protocol: HOST_PROTOCOL_VERSION,
+    });
+    const request = (method: string, path: string, body?: unknown) => fetch(`http://127.0.0.1:${server.port}${path}`, {
+      method,
+      headers: { authorization: `Bearer ${server.authTokenService.getToken()}`, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    try {
+      const tested = await request('POST', '/api/v1/hosts:test', { host: 'dev@example.test' });
+      expect(tested.status).toBe(200);
+      expect(await tested.json()).toMatchObject({ code: 0, data: { connected: true, remote_version: '2.0.0' } });
+      expect(probe).toHaveBeenCalledOnce();
+      const created = await request('PUT', '/api/v1/hosts/dev', { host: 'dev@example.test', name: 'Dev' });
+      expect(created.status).toBe(200);
+      await request('PUT', '/api/v1/hosts/other', { host: 'other.example.test' });
+      const updated = await request('PUT', '/api/v1/hosts/dev', { host: 'new.example.test', enabled: false });
+      expect(updated.status).toBe(200);
+      const listed = await request('GET', '/api/v1/hosts');
+      expect(await listed.json()).toMatchObject({ data: { hosts: [
+        { id: 'dev', host: 'new.example.test', enabled: false, status: 'disconnected' },
+        { id: 'other', host: 'other.example.test' },
+      ] } });
+      expect((await request('DELETE', '/api/v1/hosts/dev')).status).toBe(200);
+      const remaining = await request('GET', '/api/v1/hosts');
+      expect(await remaining.json()).toEqual({ code: 0, msg: 'success', data: { hosts: [{ id: 'other', host: 'other.example.test', connected: false, status: 'pending' }] }, request_id: expect.any(String) });
+    } finally {
+      vi.restoreAllMocks();
+      await server.close();
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('host connection', () => {
   it('reports a disabled host as disconnected instead of pending', async () => {
     const config = {
@@ -735,7 +780,8 @@ describe('host credentials', () => {
       openWebSocket: () => { throw new Error('not used'); },
     };
     const bridge = { session };
-    vi.spyOn(manager, 'bridge').mockReturnValue(bridge as never);
+    vi.spyOn(manager, 'list').mockReturnValue([{ id: 'dev', entry: { host: 'dev' }, bridge: bridge as never }]);
+    vi.spyOn(manager, 'session').mockReturnValue(session);
     vi.spyOn(SshKapBridge.prototype, 'connect').mockImplementation(async function (this: SshKapBridge) {
       this.credential = undefined;
       return session;

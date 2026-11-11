@@ -26,6 +26,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "DELETE",
+      "/api/v1/hosts/{id}",
+    ],
+    [
+      "DELETE",
       "/api/v1/hosts/{id}/proxy",
     ],
     [
@@ -406,6 +410,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
+      "/api/v1/hosts:test",
+    ],
+    [
+      "POST",
       "/api/v1/hosts/{id}/proxy",
     ],
     [
@@ -595,6 +603,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v2/sessions:restore",
+    ],
+    [
+      "PUT",
+      "/api/v1/hosts/{id}",
     ],
     [
       "PUT",
