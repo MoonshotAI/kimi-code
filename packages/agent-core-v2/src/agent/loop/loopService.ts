@@ -240,12 +240,16 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.states.set(loopDisposingKey, value);
   }
 
-  async start(): Promise<void> {
+  async start(tools?: readonly Tool[]): Promise<void> {
     if (this.loop !== undefined) return;
-    this.startPromise ??= this.initializeLoop().finally(() => {
+    this.startPromise ??= this.initializeLoop(undefined, tools).finally(() => {
       this.startPromise = undefined;
     });
     return this.startPromise;
+  }
+
+  baselineTools(): readonly Tool[] {
+    return this.loop?.state.profile.tools ?? this.requestFactory.baselineTools();
   }
 
   data(): ProfileData {
@@ -371,12 +375,15 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return true;
   }
 
-  private async initializeLoop(seededMessages?: readonly HistoryMessage[]): Promise<void> {
+  private async initializeLoop(
+    seededMessages?: readonly HistoryMessage[],
+    initialTools?: readonly Tool[],
+  ): Promise<void> {
     if (this.initialized) return;
     await this.wire.drainPersisted().catch(() => undefined);
     const snapshot = this.journal.snapshot();
     this.profileAdapter.restore(snapshot);
-    const tools = this.requestFactory.baselineTools();
+    const tools = initialTools === undefined ? this.requestFactory.baselineTools() : [...initialTools];
     const taskHistory = this.instantiation.invokeFunction((accessor) => accessor.get(IAgentTaskHistoryService));
     await taskHistory.reconcile();
     const completions = await restoreTaskCompletions({

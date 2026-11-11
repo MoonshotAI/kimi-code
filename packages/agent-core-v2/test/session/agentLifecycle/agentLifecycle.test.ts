@@ -415,6 +415,7 @@ describe('AgentLifecycleService', () => {
     const loopStub = {
       _serviceBrand: undefined,
       start: vi.fn(async () => {}),
+      baselineTools: () => [],
       data: () => ({
         ...(loopProfileSequence.length > 0 ? loopProfileSequence.shift()! : loopProfile),
         modelCapabilities: {},

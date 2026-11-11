@@ -308,7 +308,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       stage = 'toolActivation';
       await handle.accessor.get(IAgentToolActivationService).activate();
       stage = 'start';
-      await loop.start();
+      await loop.start(opts.initialTools);
       return agent;
     } catch (error) {
       this.telemetry.track2('agent_create_failed', {
@@ -374,7 +374,8 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       });
     }
     const source = sourceManaged.handle;
-    const sourceData = source.accessor.get(IAgentLoopService).data();
+    const sourceLoop = source.accessor.get(IAgentLoopService);
+    const sourceData = sourceLoop.data();
     const override = opts?.binding;
     const sourceBinding = source.accessor.get(IAgentEnvironmentBindingService).current;
     const childContext = await this.create({
@@ -385,6 +386,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         thinking: override.thinking ?? sourceData.thinkingLevel,
       },
       initialProfile: override?.profile === undefined ? sourceData : undefined,
+      initialTools: override?.profile === undefined ? sourceLoop.baselineTools() : undefined,
       environmentId: sourceBinding.environmentId,
       environmentCwd: sourceBinding.cwd,
       forkedFrom: source.id,
@@ -398,7 +400,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       if (override.thinking !== undefined) childLoop.setThinking(override.thinking);
     }
 
-    const sourceMessages = source.accessor.get(IAgentLoopService).history();
+    const sourceMessages = sourceLoop.history();
     if (sourceMessages.length > 0) {
       await child.accessor
         .get(IAgentLoopService)
