@@ -230,6 +230,10 @@ class FakeLoopService extends StubEffectiveProfileReader implements IAgentLoopSe
 
   async start(): Promise<void> {}
 
+  baselineTools(): readonly Tool[] {
+    return [];
+  }
+
   override getModelCapabilities(): ModelCapability {
     return capabilities;
   }

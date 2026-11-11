@@ -629,7 +629,9 @@ describe('subagent task reminders and fork request parity', () => {
     await ctx.get(IAgentLoopService).bindProfile({ profile: 'agent', model: 'mock-model' });
     ctx.get(IAgentLoopService).update({ activeToolNames: contributedToolNames() });
     const lifecycle = ctx.get(IAgentLifecycleService);
-    await runPrompt(lifecycle.handleOf('main')!);
+    const main = lifecycle.handleOf('main')!;
+    await runPrompt(main);
+    main.accessor.get(IAgentLoopService).update({ activeToolNames: ['Read', 'Grep', 'Glob'] });
     const childId = await ctx.get(ISessionBtwService).start();
     const child = lifecycle.handleOf(childId)!;
 

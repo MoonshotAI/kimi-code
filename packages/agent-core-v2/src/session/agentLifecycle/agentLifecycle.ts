@@ -5,6 +5,7 @@ import type { AgentContext } from '#/agent/agentContext/agentContext';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import type { BindAgentInput, ProfileBindingSnapshot } from '#/agent/profile/profile';
 import type { AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
+import type { ToolDescription as Tool } from '#human/llm/message';
 
 export interface AgentScopeCreatedEvent {
   readonly context: AgentContext;
@@ -18,6 +19,7 @@ export interface CreateAgentOptions {
   readonly agentId?: string;
   readonly binding?: BindAgentInput;
   readonly initialProfile?: ProfileBindingSnapshot;
+  readonly initialTools?: readonly Tool[];
   readonly environmentId?: string;
   readonly environmentCwd?: string;
   readonly forkedFrom?: string;
