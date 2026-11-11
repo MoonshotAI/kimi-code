@@ -66,7 +66,9 @@ export const sessionCreateSchema = z
   .object({
     title: z.string().min(1).optional(),
     metadata: sessionMetadataSchema.partial().optional(),
-    agent_config: sessionAgentConfigPartialSchema.optional(),
+    agent_config: sessionAgentConfigPartialSchema
+      .extend({ profile: z.string().min(1).optional() })
+      .optional(),
     workspace_id: workspaceIdSchema.optional(),
     environment_id: z.string().min(1).optional(),
     environment_cwd: z.string().min(1).optional(),

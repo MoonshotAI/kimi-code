@@ -677,7 +677,7 @@ Every endpoint that returns a session uses this wire shape. The live facts (`bus
 | `last_turn_reason` | string | Main agent's latest turn outcome: `completed` / `cancelled` / `failed` |
 | `last_prompt` | string | Most recent user prompt text, when present |
 | `metadata` | object | Custom metadata; always carries `cwd` (the session's working directory) |
-| `agent_config` | object | Projected as `{ model }`; `model` is the main agent's current model when the session is loaded in this server process and its main agent has one — as in the creation response when the request set a model — and `""` otherwise |
+| `agent_config` | object | Projected as `{ model }`; `model` is the main agent's current model when the session is loaded in this server process and its main agent has one — as in the creation response unless no model was available — and `""` otherwise |
 | `usage` | object | Token rollup `{ input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, context_tokens, context_limit?, total_cost_usd?, turn_count? }`; currently always zeros. The live context size comes with each agent's `usage` frame over the WebSocket (see [Events](#events)) |
 | `permission_rules` | array | Session permission rules; currently always `[]` |
 | `message_count` | integer | Message count; currently always `0` |
@@ -691,11 +691,14 @@ Creates a session and returns it. The target directory comes from `workspace_id`
 | `workspace_id` | body | string | **Required** when `metadata.cwd` is absent. Registered workspace id; the session is created at that workspace's root |
 | `metadata` | body | object | Custom metadata. `metadata.cwd` is the working directory and is **required** when `workspace_id` is absent; with both given, it must equal the workspace root. Other keys are kept as the session's custom metadata, except the reserved keys `goal`, `parent_session_id`, and `child_session_kind`, which are dropped |
 | `title` | body | string | Initial title (at least 1 character); the session is untitled otherwise |
-| `agent_config` | body | object | Partial main-agent config, with the same fields as `POST /api/v1/sessions/{session_id}/profile`, applied before the session is returned. When it cannot be applied, the session is not created and the error is returned. `tower_mode: true` is rejected (`40001`): entering Tower mode changes the repository and cannot be undone if creation fails, so enable it through `POST /api/v1/sessions/{session_id}/profile` once the session exists |
+| `agent_config` | body | object | Partial main-agent config, with the same fields as `POST /api/v1/sessions/{session_id}/profile` plus `profile`, applied before the session is returned. When it cannot be applied, the session is not created and the error is returned. `tower_mode: true` is rejected (`40001`): entering Tower mode changes the repository and cannot be undone if creation fails, so enable it through `POST /api/v1/sessions/{session_id}/profile` once the session exists |
+
+The main agent is bound when the session is created: `agent_config.profile` picks the agent profile (default `agent`), `agent_config.model` the model (default: the server's current default model), and `agent_config.thinking` is checked against that model in the same bind. The profile cannot change afterwards, and later changes to the default model do not affect the session. When no model is available — no default model is configured or it does not resolve — the session is created without a model, unless `agent_config` sets `profile` or `thinking`.
 
 On success, `data` is [the session object](#the-session-object) of the new session.
 
-- `40001`: neither `workspace_id` nor `metadata.cwd` given, `metadata.cwd` does not match the workspace root, or `agent_config` sets `tower_mode: true` (`details` lists the field); also when `agent_config.model` is not configured or the model does not support `agent_config.thinking`
+- `40001`: neither `workspace_id` nor `metadata.cwd` given, `metadata.cwd` does not match the workspace root, or `agent_config` sets `tower_mode: true` (`details` lists the field); also when `agent_config.model` is not configured, `agent_config.profile` names an unknown agent profile, or the model does not support `agent_config.thinking`
+- `40113`: no model is available while `agent_config` sets `profile` or `thinking`
 - `40409`: the working directory does not exist or is not a directory
 - `40410`: no registered workspace with that `workspace_id`
 - `40913`–`40918`, `40920`: `agent_config` could not be applied because of a goal error
@@ -769,6 +772,8 @@ Each `agent_config` field is applied immediately to the main agent:
 
 On success, `data` is the updated [session object](#the-session-object).
 
+- `40001`: `model` is not configured, or the model does not support `thinking`
+- `40113`: `thinking` is set without `model` while the session has no model
 - `40401`: session not found
 
 #### `POST /api/v1/sessions/{session_id}/title/generate`
@@ -1116,7 +1121,7 @@ On success, `data` is `{ active, queued }`: `active` is the running prompt (`nul
 
 #### `POST /api/v1/sessions/{session_id}/prompts`
 
-Submits a user prompt to the session. Media references are validated first, then the optional overrides are applied to the target agent — `profile` (bound together with `model` / `thinking`), then `model`, `thinking`, `permission_mode`, and `disabled_tools` — and the prompt is enqueued; the response returns as soon as the prompt is accepted, without waiting for the turn. With `skills`, the prompt runs as a bundled skill activation instead of a plain user prompt.
+Submits a user prompt to the session. Media references are validated first, then the optional overrides are applied to the target agent — `model`, `thinking`, `permission_mode`, and `disabled_tools` — and the prompt is enqueued; the response returns as soon as the prompt is accepted, without waiting for the turn. With `skills`, the prompt runs as a bundled skill activation instead of a plain user prompt.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -1125,7 +1130,6 @@ Submits a user prompt to the session. Media references are validated first, then
 | `agent_id` | body | string | Target agent. Default the main agent |
 | `prompt_id` | body | string | Client-chosen prompt id that makes the submission idempotent, also with `skills`: sending the same request again with the same id returns the result of the first submission, waiting for it while it is still being processed, and does not submit again; reusing the id for a different request fails `40927` |
 | `skills` | body | array | Bundled skill activations, at least 1 entry of `{ name, path?, args? }`; every skill must exist and be user-activatable. `path` selects a same-name variant from the session catalog |
-| `profile` | body | string | Agent profile to bind before submitting |
 | `model` | body | string | Model alias to switch the agent to |
 | `thinking` | body | string | Thinking-mode effort level |
 | `permission_mode` | body | string | `manual` / `yolo` / `auto` |
@@ -1143,11 +1147,11 @@ The schema also accepts the `tool_use`, `tool_result`, and `thinking` parts of t
 
 On success, `data` is the accepted prompt `{ prompt_id, user_message_id, status, content, created_at }`. On an idle session the response waits until the prompt starts its turn or ends without one: `status` is `blocked` when a hook rejected the prompt, and `failed` when its submission failed before a turn started, for example because a prompt hook failed or an attachment could not be prepared.
 
-- `40001`: validation failure — for example an unknown `profile`
+- `40001`: validation failure — for example an unknown `model`, or a `thinking` level the model does not support
 - `40110`: no provider configured yet — finish login first
 - `40111`: the resolved provider has no credential (`details.provider_id`)
 - `40112`: the provider's credential was rejected (`details.provider_id`)
-- `40113`: the model could not be resolved (`details.model_id` / `details.provider_id` when known)
+- `40113`: the model could not be resolved (`details.model_id` / `details.provider_id` when known), or `thinking` is set without `model` while the session has no model
 - `40401`: session not found
 - `40407`: a referenced `file_id` does not exist (or does not match the part's media kind)
 - `40415`: a `skills` entry names an unknown skill
@@ -1156,9 +1160,9 @@ On success, `data` is the accepted prompt `{ prompt_id, user_message_id, status,
 
 #### `POST /api/v1/sessions/{session_id}/steer`
 
-Directly steers message content into the active turn in one request, without a separate submit-then-steer round trip. The body accepts the same fields as `POST /api/v1/sessions/{session_id}/prompts`, including `content`, `agent_id`, `prompt_id`, `skills`, `profile`, `model`, `thinking`, `permission_mode`, and `disabled_tools`. Media references and bundled skills use the same validation and preparation path as prompt submission.
+Directly steers message content into the active turn in one request, without a separate submit-then-steer round trip. The body accepts the same fields as `POST /api/v1/sessions/{session_id}/prompts`, including `content`, `agent_id`, `prompt_id`, `skills`, `model`, `thinking`, `permission_mode`, and `disabled_tools`. Media references and bundled skills use the same validation and preparation path as prompt submission.
 
-On success, `data` is the accepted prompt in the same shape as `POST /api/v1/sessions/{session_id}/prompts`. Errors are the same as prompt submission, including validation, media, profile, environment, and idempotency failures.
+On success, `data` is the accepted prompt in the same shape as `POST /api/v1/sessions/{session_id}/prompts`. Errors are the same as prompt submission, including validation, media, environment, and idempotency failures.
 
 #### `POST /api/v1/sessions/{session_id}/prompts:steer`
 
