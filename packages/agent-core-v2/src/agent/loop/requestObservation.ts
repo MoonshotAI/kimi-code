@@ -28,6 +28,7 @@ import {
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
+import { ISessionRequestAttributionService } from '#/session/requestAttribution/requestAttribution';
 import { defineState } from '#/state/state';
 import { summarizeProjectionRepairs, type ProjectionAnomaly } from './projection';
 import { hasStrictStructureRecovery } from './projectionPolicy';
@@ -105,6 +106,7 @@ export class AgentLoopRequestObserver {
     @ISessionTokenCountingService private readonly tokenCounting: ISessionTokenCountingService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
+    @ISessionRequestAttributionService private readonly attribution: ISessionRequestAttributionService,
   ) {
     if (!this.states.has(llmRequestTraceKey)) this.states.contributeState(llmRequestTraceKey);
     this.states.contributeState(contextProjectorLastRepairSignatureKey);
@@ -122,7 +124,9 @@ export class AgentLoopRequestObserver {
   }
 
   setRequestId(source: AgentLLMRequestSource, requestId: string | undefined): void {
-    if (source.type === 'turn') this.telemetry.setContext({ request_id: requestId });
+    if (source.type !== 'turn') return;
+    this.telemetry.setContext({ request_id: requestId });
+    this.attribution.noteActiveRequest(this.scopeContext.agentId, requestId);
   }
 
   recordAttempt(

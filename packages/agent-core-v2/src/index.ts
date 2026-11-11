@@ -408,6 +408,7 @@ export * from '#/agent/usage/cacheProbeService';
 export * from '#/session/usage/sessionUsage';
 export * from '#/session/usage/usageAgentModel';
 export * from '#/session/usage/sessionUsageService';
+import '#/session/requestAttribution/requestAttributionService';
 import '#/features/usage/usageFeature';
 export * from '#/agent/toolDedupe/toolDedupe';
 export * from '#/agent/toolDedupe/toolDedupeService';
