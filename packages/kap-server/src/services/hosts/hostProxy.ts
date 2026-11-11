@@ -144,7 +144,6 @@ async function proxyHttp(
 export function registerHostProxyRoutes(
   app: FastifyInstance,
   manager: HostBridgeManager,
-  isEnabled: () => boolean,
 ): void {
   void app.register(async (scope) => {
     scope.removeAllContentTypeParsers();
@@ -156,10 +155,6 @@ export function registerHostProxyRoutes(
         method: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'],
         url,
         handler: async (req, reply) => {
-          if (!isEnabled()) {
-            await reply.code(404).send(errEnvelope(ErrorCode.ENVIRONMENT_NOT_FOUND, 'not found', req.id));
-            return;
-          }
           await proxyHttp(manager, req, reply);
         },
       });

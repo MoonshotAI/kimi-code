@@ -1,4 +1,5 @@
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { createConnection } from 'node:net';
 import { Duplex } from 'node:stream';
 import { tmpdir } from 'node:os';
@@ -7,7 +8,7 @@ import { createInterface } from 'node:readline';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import Fastify from 'fastify';
-import { IBootstrapService, IConfigService, IFlagService } from '@moonshot-ai/agent-core-v2';
+import { IBootstrapService, IConfigService } from '@moonshot-ai/agent-core-v2';
 import { describe, expect, it, vi } from 'vitest';
 import WebSocketClient, { WebSocketServer, type WebSocket as NodeWebSocket } from 'ws';
 
@@ -19,6 +20,8 @@ import { HostRequestError } from '../src/services/hosts/hostSession';
 import { StdioHostSession } from '../src/services/hosts/stdioHostSession';
 import { JsonlRpcStream } from '../src/transport/jsonlRpcStream';
 import { registerHostsRoutes } from '../src/routes/hosts';
+import { startServer } from '../src/start';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import {
   HostConnectError,
   SshKapBridge,
@@ -533,6 +536,33 @@ describe('host WebSocket backpressure', () => {
   });
 });
 
+describe('host API', () => {
+  it('serves hosts without an experimental flag', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'kimi-hosts-no-flag-'));
+    const previousFlag = process.env['KIMI_CODE_EXPERIMENTAL_SSH_FULL_REMOTE'];
+    process.env['KIMI_CODE_EXPERIMENTAL_SSH_FULL_REMOTE'] = '0';
+    const server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.port}/api/v1/hosts`, {
+        headers: { authorization: `Bearer ${server.authTokenService.getToken()}` },
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ code: 0, data: { hosts: [] } });
+    } finally {
+      if (previousFlag === undefined) delete process.env['KIMI_CODE_EXPERIMENTAL_SSH_FULL_REMOTE'];
+      else process.env['KIMI_CODE_EXPERIMENTAL_SSH_FULL_REMOTE'] = previousFlag;
+      await server.close();
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('host connection', () => {
   it('reports a disabled host as disconnected instead of pending', async () => {
     const config = {
@@ -541,12 +571,10 @@ describe('host connection', () => {
       onDidSectionChange: () => ({ dispose() {} }),
     };
     const manager = new HostBridgeManager(config, { warn() {} });
-    const flag = { enabled: () => true };
     const core = {
       accessor: {
         get: (service: unknown) => {
           if (service === IConfigService) return config;
-          if (service === IFlagService) return flag;
           if (service === IBootstrapService) return { osHomeDir: '/tmp' };
           throw new Error(`unexpected service ${String(service)}`);
         },
@@ -586,7 +614,7 @@ describe('host HTTP proxy', () => {
         request: async () => { throw new HostRequestError('timeout', 'host request timed out'); },
         openWebSocket: () => { throw new Error('unexpected websocket'); },
       }),
-    } as never, () => true);
+    } as never);
     await app.ready();
     const timeout = await app.inject({ method: 'GET', url: '/api/v1/hosts/dev/proxy/api/v1/healthz' });
     expect(timeout.statusCode).toBe(504);
@@ -612,7 +640,7 @@ describe('host HTTP proxy', () => {
         },
         openWebSocket: () => { throw new Error('unexpected websocket'); },
       }),
-    } as never, () => true);
+    } as never);
     await app.listen({ host: '127.0.0.1', port: 0 });
     const address = app.server.address();
     if (address === null || typeof address === 'string') throw new Error('missing test server address');

@@ -8,7 +8,6 @@ import {
   CapabilityChanged,
   IAppendLogStore,
   IConfigService,
-  IFlagService,
   IEventService,
   IMcpOAuthService,
   IProviderDiscoveryService,
@@ -91,7 +90,6 @@ import { ConversationService } from './services/conversation/conversationService
 import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
 import { HostBridgeManager, hostSnapshots } from './services/hosts/hostBridgeManager';
 import { matchHostProxyPath, proxyHostWebSocket, registerHostProxyRoutes } from './services/hosts/hostProxy';
-import { SSH_FULL_REMOTE_FLAG_ID } from './services/hosts/hostsConfig';
 import { DEFAULT_MANAGED_IDLE_EXIT_MS, ManagedIdleExit } from './services/managedIdleExit';
 import { SessionIdleReaper, closeIdleSessions, resolveSessionIdleReclaimMs } from './services/sessionIdleReaper';
 import { startConfigChangedPublisher } from './services/config/configChangedPublisher';
@@ -427,7 +425,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   let notifyHosts = (): void => {};
   let hostNotifyTimer: ReturnType<typeof setTimeout> | undefined;
   const hostBridges = new HostBridgeManager(core.accessor.get(IConfigService), logger, () => notifyHosts());
-  const hostProxyEnabled = (): boolean => core.accessor.get(IFlagService).enabled(SSH_FULL_REMOTE_FLAG_ID);
   const requestClose = (): void => {
     void close().catch((error: unknown) => logger.error({ err: error }, 'server close failed'));
   };
@@ -455,7 +452,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     conversations,
   });
   notifyHosts = () => {
-    if (!hostProxyEnabled()) return;
     if (hostNotifyTimer !== undefined) clearTimeout(hostNotifyTimer);
     hostNotifyTimer = setTimeout(() => {
       hostNotifyTimer = undefined;
@@ -585,7 +581,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     const isV1 = url === WS_PATH_V1 || url.startsWith(`${WS_PATH_V1}?`);
     const isDebug = url === WS_DEBUG_PATH || url.startsWith(`${WS_DEBUG_PATH}?`);
     const wss = isV1 ? wssV1 : isDebug ? wssDebug : undefined;
-    const hostProxyTarget = hostProxyEnabled() ? matchHostProxyPath(url) : undefined;
+    const hostProxyTarget = matchHostProxyPath(url);
     if (wss === undefined && hostProxyTarget === undefined) {
       socket.destroy();
       return;
@@ -667,7 +663,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     await broadcaster.close();
   });
 
-  registerHostProxyRoutes(app, hostBridges, hostProxyEnabled);
+  registerHostProxyRoutes(app, hostBridges);
 
   app.get('/asyncapi.json', async (_req, reply) => {
     return reply

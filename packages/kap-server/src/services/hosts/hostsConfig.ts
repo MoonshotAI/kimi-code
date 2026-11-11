@@ -1,17 +1,7 @@
-import { registerConfigSection, registerFlagDefinition } from '@moonshot-ai/agent-core-v2';
+import { registerConfigSection } from '@moonshot-ai/agent-core-v2';
 import { z } from 'zod';
 
 export const HOSTS_SECTION = 'hosts';
-export const SSH_FULL_REMOTE_FLAG_ID = 'ssh_full_remote';
-
-registerFlagDefinition({
-  id: SSH_FULL_REMOTE_FLAG_ID,
-  title: 'SSH Full-Remote',
-  description: 'Run a complete kap-server on SSH hosts and reach it through an SSH tunnel.',
-  env: 'KIMI_CODE_EXPERIMENTAL_SSH_FULL_REMOTE',
-  default: false,
-  surface: 'both',
-});
 
 const HOST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const hostShape = {

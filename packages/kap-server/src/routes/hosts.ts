@@ -1,4 +1,4 @@
-import { IBootstrapService, IConfigService, IHostFileSystem, IFlagService, type Scope } from '@moonshot-ai/agent-core-v2';
+import { IBootstrapService, IConfigService, IHostFileSystem, type Scope } from '@moonshot-ai/agent-core-v2';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -7,7 +7,6 @@ import { ErrorCode } from '../protocol/error-codes';
 import { toHostSnapshot, type HostBridgeManager } from '../services/hosts/hostBridgeManager';
 import {
   HOSTS_SECTION,
-  SSH_FULL_REMOTE_FLAG_ID,
   hostEntrySchema,
   hostWireObjectSchema,
   hostWireSchema,
@@ -70,13 +69,6 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
     return next;
   };
 
-  const enabled = async (req: RouteRequest, reply: RouteReply): Promise<boolean> => {
-    await config.ready;
-    if (core.accessor.get(IFlagService).enabled(SSH_FULL_REMOTE_FLAG_ID)) return true;
-    reply.send(errEnvelope(ErrorCode.ENVIRONMENT_NOT_FOUND, 'SSH Full-Remote is not enabled', req.id));
-    return false;
-  };
-
   const listRoute = defineRoute(
     {
       method: 'GET',
@@ -86,7 +78,6 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
       tags: ['hosts'],
     },
     async (req: RouteRequest, reply: RouteReply) => {
-      if (!(await enabled(req, reply))) return;
       reply.send(okEnvelope({ hosts: manager.list().map(toHostSnapshot) }, req.id));
     },
   );
@@ -114,7 +105,6 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
       tags: ['hosts'],
     },
     async (req: RouteRequest, reply: RouteReply) => {
-      if (!(await enabled(req, reply))) return;
       const result = await readSshConfigHosts(core.accessor.get(IHostFileSystem), bootstrap.osHomeDir);
       reply.send(
         okEnvelope(
@@ -146,7 +136,6 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
       tags: ['hosts'],
     },
     async (req: RouteRequest, reply: RouteReply) => {
-      if (!(await enabled(req, reply))) return;
       let entry: z.infer<typeof hostEntrySchema>;
       try {
         entry = hostWireSchema.parse(req.body);
@@ -186,7 +175,6 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
       tags: ['hosts'],
     },
     async (req: RouteRequest, reply: RouteReply) => {
-      if (!(await enabled(req, reply))) return;
       const { id } = req.body as z.infer<typeof connectBodySchema>;
       const error = await manager.connect(id).then(
         () => undefined,
@@ -227,7 +215,6 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
       tags: ['hosts'],
     },
     async (req: RouteRequest, reply: RouteReply) => {
-      if (!(await enabled(req, reply))) return;
       const { id } = req.params as z.infer<typeof hostParamsSchema>;
       if (!isValidHostId(id)) {
         reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, `invalid host id "${id}"`, req.id));
@@ -254,7 +241,6 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
       tags: ['hosts'],
     },
     async (req: RouteRequest, reply: RouteReply) => {
-      if (!(await enabled(req, reply))) return;
       const { id } = req.params as z.infer<typeof hostParamsSchema>;
       await mutateHosts(async () => {
         const { [id]: _removed, ...rest } = manager.section();
