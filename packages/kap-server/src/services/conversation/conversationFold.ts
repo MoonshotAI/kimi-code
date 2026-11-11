@@ -9,7 +9,7 @@ import { isUserPromptSubmitHookPart } from '@moonshot-ai/agent-core-v2/agent/con
 import type { LoopRecordedEvent } from '@moonshot-ai/agent-core-v2/agent/contextMemory/loopEventFold';
 import { LOOP_MAX_STEPS_EXCEEDED_ERROR_CODE } from '@moonshot-ai/agent-core-v2/human/agent/errors';
 import { stripBundledSkillBlocks } from '@moonshot-ai/agent-core-v2/human/agent/origin';
-import { isVacuousContentPart, type ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
+import { type ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
 import type { WireRecord } from '@moonshot-ai/agent-core-v2/wire/record';
 
 import type {
@@ -364,18 +364,19 @@ function applyLegacyAssistant(
   const open = openTurn(state);
   const ownerless = open === undefined && state.pendingPrompt === undefined;
   const turn = open ?? (ownerless ? addTurn(state, time) : startTurn(state, time));
+  let lastItem: AssistantMessageItem | ReasoningItem | undefined;
   for (const part of message.content) {
-    if (isVacuousContentPart(part)) continue;
+    if (isEmptyLegacyPart(part)) continue;
     const item = contentItem(part, nextItemId(turn), undefined, time);
     if (item === undefined) continue;
-    const last = turn.items.at(-1);
-    if (last === undefined || last.type !== item.type) {
+    if (lastItem === undefined || lastItem.type !== item.type) {
       turn.items.push(item);
+      lastItem = item;
       continue;
     }
-    if (last.type === 'assistant_message' || last.type === 'reasoning') {
-      turn.items[turn.items.length - 1] = { ...last, text: last.text + item.text };
-    }
+    const merged = { ...lastItem, text: lastItem.text + item.text };
+    turn.items[turn.items.length - 1] = merged;
+    lastItem = merged;
   }
   for (const call of message.toolCalls ?? []) {
     upsertToolCall(
@@ -439,16 +440,14 @@ function applyLoopEvent(state: ConversationState, event: LoopRecordedEvent | und
       );
       if (item === undefined) return;
       if (block === undefined) {
-        if (isVacuousContentPart(event.part)) return;
+        if (isEmptyLegacyPart(event.part)) return;
         foldLegacyPart(state, turn, event.stepUuid, item);
         return;
       }
-      state.legacyMerge = undefined;
       upsertItem(turn, item);
       return;
     }
     case 'tool.call': {
-      state.legacyMerge = undefined;
       const turn = turnForNumber(state, numberField(event.turnId), time);
       upsertToolCall(state, turn, toolCallItem(event.toolCallId, event.name, event.step, time, event.args, event.display));
       return;
@@ -872,7 +871,12 @@ function foldLegacyPart(
   item: AssistantMessageItem | ReasoningItem,
 ): void {
   const last = state.legacyMerge;
-  if (last !== undefined && last.stepUuid === stepUuid && last.item.type === item.type) {
+  if (
+    last !== undefined &&
+    last.stepUuid === stepUuid &&
+    last.item === turn.items.at(-1) &&
+    last.item.type === item.type
+  ) {
     const merged = { ...last.item, text: last.item.text + item.text };
     state.legacyMerge = { stepUuid, item: merged };
     upsertItem(turn, merged);
@@ -880,6 +884,12 @@ function foldLegacyPart(
   }
   state.legacyMerge = { stepUuid, item };
   upsertItem(turn, item);
+}
+
+function isEmptyLegacyPart(part: ContentPart): boolean {
+  if (part.type === 'text') return part.text.length === 0;
+  if (part.type === 'think') return part.think.length === 0;
+  return false;
 }
 
 function nextItemId(turn: ConversationTurn): string {
