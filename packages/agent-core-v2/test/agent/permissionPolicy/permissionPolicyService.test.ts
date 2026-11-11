@@ -452,6 +452,22 @@ describe('AgentPermissionPolicyService chain', () => {
     });
   });
 
+  it('returns a read-only approval as the underlying result for Auto Review', async () => {
+    autoReviewEnabled = true;
+    mode = 'yolo';
+
+    const evaluation = await evaluate({
+      toolName: 'Bash',
+      args: { command: 'cat notes.txt' },
+    });
+
+    expect(evaluation).toMatchObject({
+      policyName: 'bash-read-only-approve',
+      result: { kind: 'approve' },
+    });
+    expect(evaluation?.underlying).toBeUndefined();
+  });
+
   it.each([
     'cat foo > out.txt',
     'echo $(rm -f foo)',
