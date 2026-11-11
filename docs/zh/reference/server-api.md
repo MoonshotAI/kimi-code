@@ -993,7 +993,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
-| `turn_number` | query | integer | **必填。** 轮次的 `turn_number`（见 [对话协议](#对话协议)）；仍接受已弃用的别名 `turn_id` |
+| `turn_number` | query | integer | **必填。** 轮次的 `turn_number`（见 [对话协议](#对话协议)） |
 
 成功时，`data` 为 `{ changes, recorded }`。每项变更为 `{ path, status, additions, deletions, binary?, oversize? }`：`status` 为 `added` / `modified` / `deleted`，`additions` / `deletions` 是变更的行数。`binary` 表示文件不是文本或内容已不再保存，`oversize` 表示文件过大没有记录，两者的行数都为 `0`。轮次的文件历史不完整时——从未记录，或部分已记录的内容后来被清理——`recorded` 为 `false`，此时 `changes` 可能为空或不全。
 
@@ -1007,7 +1007,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
-| `turn_number` | query | integer | **必填。** 轮次的 `turn_number`；仍接受已弃用的别名 `turn_id` |
+| `turn_number` | query | integer | **必填。** 轮次的 `turn_number` |
 | `path` | query | string | **必填。** 文件路径，与 `file-history/changes` 列出的一致 |
 | `phase` | query | string | `start`（默认）取这一轮之前的内容，`end` 取这一轮之后的内容 |
 

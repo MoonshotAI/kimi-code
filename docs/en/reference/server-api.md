@@ -993,7 +993,7 @@ Lists the files one turn of the main agent changed, from the turn-level file his
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
-| `turn_number` | query | integer | **Required.** The turn's `turn_number` (see [Conversation protocol](#conversation-protocol)); the deprecated alias `turn_id` is still accepted |
+| `turn_number` | query | integer | **Required.** The turn's `turn_number` (see [Conversation protocol](#conversation-protocol)) |
 
 On success, `data` is `{ changes, recorded }`. Each change is `{ path, status, additions, deletions, binary?, oversize? }`: `status` is `added` / `modified` / `deleted`, and `additions` / `deletions` count changed lines. `binary` marks a file whose content is not text or is no longer stored, and `oversize` a file too large to capture; both report `0` lines. `recorded` is `false` when the turn's file history is incomplete — it was never recorded, or some captured contents have since been cleaned up — so `changes` may be empty or partial.
 
@@ -1007,7 +1007,7 @@ Reads a file as the main agent's file history captured it at the start or end of
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
-| `turn_number` | query | integer | **Required.** The turn's `turn_number`; the deprecated alias `turn_id` is still accepted |
+| `turn_number` | query | integer | **Required.** The turn's `turn_number` |
 | `path` | query | string | **Required.** File path, as listed by `file-history/changes` |
 | `phase` | query | string | `start` (default) for the content before the turn, `end` for the content after it |
 
