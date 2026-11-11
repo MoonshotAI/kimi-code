@@ -180,9 +180,9 @@ describe('check-import-boundaries', () => {
     expect(violations).toHaveLength(0);
   });
 
-  it('allows sibling-package imports outside kosong', () => {
+  it('allows package imports outside kosong', () => {
     const violations = checkSource(
-      `import { something } from '@moonshot-ai/minidb';`,
+      `import { something } from 'better-sqlite3';`,
       at('log', 'log.ts'),
     );
     expect(violations).toHaveLength(0);

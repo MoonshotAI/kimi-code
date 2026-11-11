@@ -4,6 +4,9 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import type Database from 'better-sqlite3';
+
+import { Emitter } from '#/_base/event';
 import { LifecycleScope } from '#/app/scopes';
 import {
   ScopeActivation,
@@ -33,7 +36,7 @@ import {
   drainSessionIndexMirror,
   SessionIndexMirror,
 } from '#/app/sessionIndex/sessionIndexMirrorService';
-import { drainQueryStoreDisposals, MiniDbQueryStore } from '#/persistence/backends/minidb/miniDbQueryStore';
+import { drainQueryStoreDisposals, SqliteQueryStore } from '#/persistence/backends/sqlite/sqliteQueryStore';
 import { DATABASE_SECTION } from '#/persistence/configSection';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
@@ -366,7 +369,7 @@ describe('FileSessionIndex (read model)', () => {
     registerScopedService(
       LifecycleScope.App,
       IQueryStore,
-      MiniDbQueryStore,
+      SqliteQueryStore,
       ScopeActivation.OnDemand,
       'storage',
     );
@@ -451,7 +454,7 @@ describe('FileSessionIndex (read model)', () => {
     rows: number;
   }
 
-  class CountingQueryStore extends MiniDbQueryStore {
+  class CountingQueryStore extends SqliteQueryStore {
     private readonly counts = new Map<string, OpCounts>();
 
     resetCounts(): void {
@@ -776,7 +779,7 @@ describe('FileSessionIndex (read model)', () => {
     let batchGate: Promise<void> | undefined;
     let releaseBatch: () => void = () => {};
     let notifyBatchEntered: (() => void) | undefined;
-    class GatedQueryStore extends MiniDbQueryStore {
+    class GatedQueryStore extends SqliteQueryStore {
       override async batch(ops: readonly WriteOp[]): Promise<void> {
         notifyBatchEntered?.();
         const gate = batchGate;
@@ -882,7 +885,7 @@ describe('FileSessionIndex (read model)', () => {
   it('lists around a mirror queue that cannot flush without handing its ids to the store', async () => {
     const filters: unknown[] = [];
     let failWrites = false;
-    class StalledQueryStore extends MiniDbQueryStore {
+    class StalledQueryStore extends SqliteQueryStore {
       override async batch(ops: readonly WriteOp[]): Promise<void> {
         if (failWrites) throw new Error('disk full');
         return super.batch(ops);
@@ -960,7 +963,7 @@ describe('FileSessionIndex (read model)', () => {
 
   it('widens a page fetch only when stale rows of queued sessions fall inside it', async () => {
     const limits: number[] = [];
-    class LimitRecordingQueryStore extends MiniDbQueryStore {
+    class LimitRecordingQueryStore extends SqliteQueryStore {
       override async pageByColumn<T>(collection: string, query: ColumnPageQuery): Promise<Page<T>> {
         limits.push(query.limit ?? Number.POSITIVE_INFINITY);
         return super.pageByColumn<T>(collection, query);
@@ -997,7 +1000,7 @@ describe('FileSessionIndex (read model)', () => {
     await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
     await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 3 });
 
-    class FlakyQueryStore extends MiniDbQueryStore {
+    class FlakyQueryStore extends SqliteQueryStore {
       failNextBatch = false;
       failure: Error = new Error('injected projection crash');
       override async batch(ops: readonly WriteOp[]): Promise<void> {
@@ -1049,10 +1052,15 @@ describe('FileSessionIndex (read model)', () => {
     const warm = await store.listRecent({ workspaceIds: [workspaceId] });
     expect(warm.items.map((s) => s.id)).toEqual(['b', 'a']);
 
-    const internal = queryStore as unknown as { dbPromise: Promise<{ batch: unknown }> };
+    const internal = queryStore as unknown as { dbPromise: Promise<Database.Database> };
     const db = await internal.dbPromise;
-    db.batch = () =>
-      Promise.reject(Object.assign(new Error('poisoned'), { code: 'WAL_POISONED' }));
+    const prepare = db.prepare.bind(db);
+    (db as unknown as { prepare: unknown }).prepare = (sql: string) => {
+      if (sql.includes('INSERT INTO query_documents')) {
+        throw Object.assign(new Error('poisoned'), { code: 'SQLITE_CORRUPT' });
+      }
+      return prepare(sql);
+    };
     await store.reprojectNow();
     expect(store.status().state).toBe('degraded');
     expect(await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST)).toBeUndefined();
@@ -1069,7 +1077,7 @@ describe('FileSessionIndex (read model)', () => {
     await seedSession('b', { createdAt: 2, updatedAt: 2 });
     await seedSession('c', { createdAt: 3, updatedAt: 1 });
 
-    class FlakyQueryStore extends MiniDbQueryStore {
+    class FlakyQueryStore extends SqliteQueryStore {
       failNextBatch = false;
       override async batch(ops: readonly WriteOp[]): Promise<void> {
         if (this.failNextBatch) {
@@ -1130,7 +1138,7 @@ describe('FileSessionIndex (read model)', () => {
     disposeHost = undefined;
     await drainSessionIndexMirror();
     await drainQueryStoreDisposals();
-    await fsp.rm(join(homeDir, 'cache', 'query-store'), { recursive: true, force: true });
+    await fsp.rm(join(homeDir, 'cache', 'query-store.sqlite'), { recursive: true, force: true });
 
     const second = build();
     const fallback = await second.listRecent({ workspaceIds: [workspaceId] });
@@ -1212,7 +1220,7 @@ describe('FileSessionIndex (read model)', () => {
     await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
     await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 3 });
 
-    class GatedQueryStore extends MiniDbQueryStore {
+    class GatedQueryStore extends SqliteQueryStore {
       private gate: Promise<void> | undefined;
       private openGate: (() => void) | undefined;
       hold(): void {
@@ -1339,7 +1347,7 @@ describe('FileSessionIndex (read model)', () => {
     await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
     await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 3 });
 
-    class GatedQueryStore extends MiniDbQueryStore {
+    class GatedQueryStore extends SqliteQueryStore {
       private gate: Promise<void> | undefined;
       private openGate: (() => void) | undefined;
       hold(): void {
@@ -1407,7 +1415,7 @@ describe('FileSessionIndex (read model)', () => {
   it('status() walks the read-model lifecycle and stays diagnosable through degradation', async () => {
     await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
 
-    class GatedFlakyQueryStore extends MiniDbQueryStore {
+    class GatedFlakyQueryStore extends SqliteQueryStore {
       private gate: Promise<void> | undefined;
       private openGate: (() => void) | undefined;
       failNextBatch = false;
@@ -1471,7 +1479,7 @@ describe('FileSessionIndex (read model)', () => {
     disposeHost = undefined;
     await drainSessionIndexMirror();
     await drainQueryStoreDisposals();
-    await fsp.rm(join(homeDir, 'cache', 'query-store'), { recursive: true, force: true });
+    await fsp.rm(join(homeDir, 'cache', 'query-store.sqlite'), { recursive: true, force: true });
 
     const second = build();
     (queryStore as GatedFlakyQueryStore).failNextBatch = true;
@@ -1560,10 +1568,15 @@ describe('FileSessionIndex (read model)', () => {
     await seedSession('d', { title: 'd', createdAt: 4, updatedAt: 5 });
     const third = build();
     expect(await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST)).toMatchObject({ seq: 1 });
-    const internal = queryStore as unknown as { dbPromise: Promise<{ batch: unknown }> };
+    const internal = queryStore as unknown as { dbPromise: Promise<Database.Database> };
     const db = await internal.dbPromise;
-    db.batch = () =>
-      Promise.reject(Object.assign(new Error('poisoned'), { code: 'WAL_POISONED' }));
+    const prepare = db.prepare.bind(db);
+    (db as unknown as { prepare: unknown }).prepare = (sql: string) => {
+      if (sql.includes('INSERT INTO query_documents')) {
+        throw Object.assign(new Error('poisoned'), { code: 'SQLITE_CORRUPT' });
+      }
+      return prepare(sql);
+    };
     const degraded = await third.prepare();
     expect(degraded.state).toBe('degraded');
     expect(degraded.reason).toBe('prepare failed');
@@ -1813,7 +1826,7 @@ describe('FileSessionIndex (read model)', () => {
     disposeHost = undefined;
     await drainSessionIndexMirror();
     await drainQueryStoreDisposals();
-    await fsp.rm(join(homeDir, 'cache', 'query-store'), { recursive: true, force: true });
+    await fsp.rm(join(homeDir, 'cache', 'query-store.sqlite'), { recursive: true, force: true });
 
     const second = buildWithDocs();
     const status = await second.store.prepare();
@@ -1872,9 +1885,12 @@ describe('FileSessionIndex (read model)', () => {
     await mirror.drain();
     expect(await store.count({ workspaceIds: [workspaceId] })).toBe(3);
 
-    const storeDir = join(homeDir, 'cache', 'query-store');
-    const entries = await fsp.readdir(storeDir, { recursive: true, withFileTypes: true });
-    const files = entries.filter((entry) => entry.isFile()).map((entry) => entry.name);
+    const storeFile = join(homeDir, 'cache', 'query-store.sqlite');
+    expect((await fsp.stat(storeFile)).isFile()).toBe(true);
+    await expect(fsp.access(join(homeDir, 'cache', 'query-store'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
+    const files = await fsp.readdir(join(homeDir, 'cache'));
     expect(files.length).toBeGreaterThan(0);
     expect(files.filter((name) => name === 'db.textindexes.json')).toEqual([]);
     expect(files.filter((name) => /^db\.text-.*\.postings$/.test(name))).toEqual([]);
