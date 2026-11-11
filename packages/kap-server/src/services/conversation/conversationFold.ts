@@ -107,7 +107,7 @@ export interface ConversationState {
   provisionalEnds: Record<string, TurnEnd>;
   recordsTurnEnds: boolean;
   stepParts: Record<string, number>;
-  legacyMerge?: { stepUuid: string; item: AssistantMessageItem | ReasoningItem };
+  legacyMerge?: { stepUuid: string; itemId: string };
   compaction?: CompactionDetails;
 }
 
@@ -870,19 +870,21 @@ function foldLegacyPart(
   stepUuid: string,
   item: AssistantMessageItem | ReasoningItem,
 ): void {
+  const tail = turn.items.at(-1);
   const last = state.legacyMerge;
   if (
     last !== undefined &&
     last.stepUuid === stepUuid &&
-    last.item === turn.items.at(-1) &&
-    last.item.type === item.type
+    tail !== undefined &&
+    tail.item_id === last.itemId &&
+    tail.type === item.type
   ) {
-    const merged = { ...last.item, text: last.item.text + item.text };
-    state.legacyMerge = { stepUuid, item: merged };
+    const merged = { ...tail, text: tail.text + item.text };
+    state.legacyMerge = { stepUuid, itemId: tail.item_id };
     upsertItem(turn, merged);
     return;
   }
-  state.legacyMerge = { stepUuid, item };
+  state.legacyMerge = { stepUuid, itemId: item.item_id };
   upsertItem(turn, item);
 }
 

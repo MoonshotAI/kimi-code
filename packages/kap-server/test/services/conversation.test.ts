@@ -1025,6 +1025,30 @@ async function runningTurn(h: FeedHarness): Promise<void> {
 }
 
 describe('conversation feed', () => {
+  it('coalesces blockless legacy content parts through the replay path', async () => {
+    const h = feedHarness([
+      prompt(0, 'p1').serialize(),
+      userPrompt('p1', 'hello').serialize(),
+      loopEvent({ type: 'step.begin', uuid: 's1', turnId: '0', step: 1 }).serialize(),
+      loopEvent({ type: 'content.part', turnId: '0', step: 1, stepUuid: 's1', part: { type: 'think', think: 'plan' } }).serialize(),
+      loopEvent({ type: 'content.part', turnId: '0', step: 1, stepUuid: 's1', part: { type: 'text', text: 'hel' } }).serialize(),
+      loopEvent({ type: 'content.part', turnId: '0', step: 1, stepUuid: 's1', part: { type: 'think', think: '' } }).serialize(),
+      loopEvent({ type: 'content.part', turnId: '0', step: 1, stepUuid: 's1', part: { type: 'text', text: 'lo world' } }).serialize(),
+      loopEvent({ type: 'step.end', uuid: 's1', turnId: '0', step: 1 }).serialize(),
+      new TurnEnded({ agentId: 'main', turnId: 0, reason: 'completed' }).serialize(),
+    ]);
+    await h.dispatcher.restore();
+
+    const [turn] = h.feed.turns();
+    const items = turn?.items ?? [];
+    expect(items.map((item) => item.type)).toEqual(['user_message', 'reasoning', 'assistant_message']);
+    expect(items.filter((item) => item.type === 'assistant_message' || item.type === 'reasoning').map((item) => item.text)).toEqual([
+      'plan',
+      'hello world',
+    ]);
+    h.dispatcher.dispose();
+  });
+
   it('rejects ready when the first replay fails', async () => {
     const h = feedHarness([prompt(0, 'p1').serialize()]);
     h.failNextReplay();
