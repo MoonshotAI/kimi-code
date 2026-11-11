@@ -991,6 +991,45 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(children.body.data.items.some((s) => s.id === created.body.data.id)).toBe(false);
   });
 
+  it('drops the reserved metadata keys when updating the session profile', async () => {
+    const cwd = home as string;
+    const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const parentId = parent.body.data.id;
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const id = created.body.data.id;
+
+    const updated = await postJson<SessionWire>(`/api/v1/sessions/${id}/profile`, {
+      metadata: {
+        cwd: '/elsewhere',
+        goal: 'not a goal',
+        parent_session_id: parentId,
+        child_session_kind: 'child',
+        source: 'composer',
+      },
+    });
+
+    expect(updated.body.code).toBe(0);
+    expect(updated.body.data.metadata).toEqual({ cwd, source: 'composer' });
+    const children = await getJson<PageWire>(`/api/v1/sessions/${parentId}/children`);
+    expect(children.body.data.items.some((s) => s.id === id)).toBe(false);
+  });
+
+  it('keeps a child session linked when its profile metadata names the child-link keys', async () => {
+    const cwd = home as string;
+    const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const parentId = parent.body.data.id;
+    const child = await postJson<SessionWire>(`/api/v1/sessions/${parentId}/children`, {});
+    const childId = child.body.data.id;
+
+    const updated = await postJson<SessionWire>(`/api/v1/sessions/${childId}/profile`, {
+      metadata: { parent_session_id: null, child_session_kind: null },
+    });
+
+    expect(updated.body.code).toBe(0);
+    const children = await getJson<PageWire>(`/api/v1/sessions/${parentId}/children`);
+    expect(children.body.data.items.some((s) => s.id === childId)).toBe(true);
+  });
+
   it('reports an unknown creation model as a validation error and creates nothing', async () => {
     const listed = async (): Promise<string[]> =>
       (await getJson<PageWire>('/api/v1/sessions')).body.data.items.map((session) => session.id);

@@ -1,13 +1,28 @@
 import {
+  CHILD_SESSION_KIND_KEY,
   ErrorCodes,
   Error2,
   ISessionContext,
   ISessionMetadata,
+  PARENT_SESSION_ID_KEY,
   resumeSessionById,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import type { SessionWireFields } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionLegacy';
 import type { UpdateSessionProfileRequest } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
+
+export function customSessionMetadata(
+  metadata: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const {
+    cwd: _cwd,
+    goal: _goal,
+    [PARENT_SESSION_ID_KEY]: _parentSessionId,
+    [CHILD_SESSION_KIND_KEY]: _childSessionKind,
+    ...custom
+  } = metadata ?? {};
+  return custom;
+}
 
 export async function updateSessionProfile(
   core: Scope,
@@ -24,9 +39,9 @@ export async function updateSessionProfile(
     await metadata.setTitle(body.title);
   }
 
-  const metadataPatch = body.metadata;
-  if (metadataPatch !== undefined && Object.keys(metadataPatch).length > 0) {
-    await metadata.update({ custom: { ...(metadataPatch as Record<string, unknown>) } });
+  const custom = customSessionMetadata(body.metadata);
+  if (Object.keys(custom).length > 0) {
+    await metadata.update({ custom });
   }
 
   const meta = await metadata.read();
