@@ -160,11 +160,35 @@ describe('AgentProfileService.bind', () => {
 
   it('recomputes the bound subagent allowlist when the catalog gains a profile after bind', async () => {
     const persistence = new InMemoryWireRecordPersistence();
-    ctx = createTestAgent({ persistence }, hostEnvironmentServices(homeDir));
+    ctx = createTestAgent(
+      {
+        persistence,
+        autoConfigure: false,
+        initialConfig: {
+          providers: {
+            kimi: { type: 'kimi', apiKey: 'test-key', baseUrl: 'https://api.example.test/v1' },
+          },
+          models: {
+            [MOCK_MODEL]: {
+              provider: 'kimi',
+              model: MOCK_MODEL,
+              maxContextSize: 1_000_000,
+              capabilities: ['always_thinking'],
+              supportEfforts: ['low', 'high'],
+              defaultEffort: 'high',
+            },
+          },
+        },
+      },
+      hostEnvironmentServices(homeDir),
+    );
     const svc = ctx.get(IAgentLoopService);
 
-    await ctx.get(IAgentLoopService).bindProfile({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+    await svc.bindProfile({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+    await svc.applyBindingSnapshot({ ...svc.bindingSnapshot(), thinkingLevel: 'off' });
     expect(svc.data().subagents).toEqual(['coder', 'explore', 'plan']);
+    expect(svc.bindingSnapshot().thinkingLevel).toBe('off');
+    expect(svc.getEffectiveThinkingLevel()).toBe('high');
 
     ctx.get(IAgentProfileRegistry).register({
       sourceId: 'workspace',
@@ -184,6 +208,8 @@ describe('AgentProfileService.bind', () => {
     await ctx.get(IWireService).flush();
 
     expect(svc.data().subagents).toEqual(['coder', 'explore', 'plan', 'code-reviewer']);
+    expect(svc.bindingSnapshot().thinkingLevel).toBe('off');
+    expect(svc.getEffectiveThinkingLevel()).toBe('high');
 
     const bindCount = persistence.records.filter((record) => record.type === 'profile.bind').length;
     await ctx.get(ISessionAgentProfileCatalog).reload();

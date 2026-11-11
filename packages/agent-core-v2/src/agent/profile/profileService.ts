@@ -280,13 +280,12 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   ): Promise<ProfileBindingSnapshot | undefined> {
     if (this.scopeContext.agentId !== MAIN_AGENT_ID || current?.profileName === undefined) return undefined;
     await this.catalog.ready;
-    const snapshot = this.data(current);
-    const subagents = this.bindSubagents(snapshot.profileName, snapshot.subagents);
+    const subagents = this.bindSubagents(current.profileName, current.subagents);
     if (
-      subagents?.length !== snapshot.subagents?.length ||
-      subagents?.some((name, index) => name !== snapshot.subagents?.[index])
+      subagents?.length !== current.subagents?.length ||
+      subagents?.some((name, index) => name !== current.subagents?.[index])
     ) {
-      return { ...snapshot, subagents };
+      return { ...current, subagents };
     }
     return undefined;
   }
