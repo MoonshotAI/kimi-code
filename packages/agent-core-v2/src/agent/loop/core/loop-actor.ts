@@ -1474,7 +1474,17 @@ class LoopActor implements Loop {
       step.toolCallStreaming = true;
     }
     if (event.type === 'llm.retrying') {
-      const entry = assistantEntryOf({ type: 'failed', error: event.error, message: event.message ?? undefined }, step.model);
+      const entry = assistantEntryOf({
+        type: 'failed',
+        error: event.error,
+        message: event.message ?? undefined,
+        usage: event.usage,
+        headers: event.headers,
+        finish: event.finish,
+        messageId: event.messageId,
+        requestId: event.requestId,
+        timing: event.timing,
+      }, step.model);
       if (entry !== undefined) {
         this.record({ type: 'message.appended', turnId: turn.id, step: turn.step, source: 'partial', entry });
         step.partialMessage = event.message ?? undefined;

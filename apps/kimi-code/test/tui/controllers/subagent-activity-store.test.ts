@@ -34,6 +34,7 @@ describe('SubagentActivityStore', () => {
     const store = new SubagentActivityStore();
     store.ensureRecord(spawn());
     store.applyEvent(ev({ type: 'turn.step.started', turnId: 1, step: 0 }));
+    store.applyEvent(ev({ type: 'turn.step.started', turnId: 1, step: 0 }));
     store.applyEvent(ev({ type: 'assistant.delta', turnId: 1, delta: 'Hello ' }));
     store.applyEvent(ev({ type: 'assistant.delta', turnId: 1, delta: 'world' }));
     store.applyEvent(
