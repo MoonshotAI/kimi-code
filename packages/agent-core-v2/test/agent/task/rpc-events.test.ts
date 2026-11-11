@@ -584,12 +584,18 @@ describe('AgentTaskService — notification delivery', () => {
       ...taskHistoryRecords([info]),
     ];
     let occupied = true;
+    const release = vi.fn();
+    const begin = () => {
+      if (occupied) throw sessionOccupiedError('test-session');
+    };
     const ctx = track(createTestAgent(
       taskServices(),
       sessionService(ISessionRunGate, {
         _serviceBrand: undefined,
-        begin: () => {
-          if (occupied) throw sessionOccupiedError('test-session');
+        begin,
+        acquire: () => {
+          begin();
+          return { sessionId: 'test-session', release };
         },
       }),
       { persistence: new InMemoryWireRecordPersistence(records) },
@@ -601,6 +607,7 @@ describe('AgentTaskService — notification delivery', () => {
     await expect(ctx.restorePersisted()).rejects.toMatchObject({ code: ErrorCodes.SESSION_OCCUPIED });
     expect((loop as unknown as { loop?: unknown }).loop).toBeUndefined();
     expect(createCompletion).not.toHaveBeenCalled();
+    expect(release).not.toHaveBeenCalled();
     expect(taskNotifications(ctx, info.taskId)).toEqual([]);
     expect(ctx.llmCalls).toEqual([]);
     expect((await ctx.persistedWireRecords()).filter((record) => record.type === 'turn.prompt')).toEqual([]);
@@ -612,6 +619,8 @@ describe('AgentTaskService — notification delivery', () => {
     await loop.settled();
 
     expect(createCompletion).toHaveBeenCalledTimes(1);
+    expect(release).toHaveBeenCalledTimes(1);
+    expect(release.mock.invocationCallOrder[0]).toBeGreaterThan(createCompletion.mock.invocationCallOrder[0]!);
     expect(taskNotifications(ctx, info.taskId)).toHaveLength(1);
     expect(JSON.stringify(taskNotifications(ctx, info.taskId))).toContain('<notification');
     expect((await ctx.persistedWireRecords()).filter((record) =>

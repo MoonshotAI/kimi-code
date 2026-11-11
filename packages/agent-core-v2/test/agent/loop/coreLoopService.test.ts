@@ -390,8 +390,10 @@ describe('core LoopService integration', () => {
     const core = (loop as unknown as { loop: { historyRevision: number } }).loop;
     const previousRevision = core.historyRevision;
     const begin = vi.spyOn(ctx.get(ISessionRunGate), 'begin');
+    const acquire = vi.spyOn(ctx.get(ISessionRunGate), 'acquire');
     await ctx.get(IAgentConversationUndoService).undo(1);
     expect(begin).toHaveBeenCalledTimes(2);
+    expect(acquire).toHaveBeenCalledTimes(1);
     expect((loop as unknown as { loop: { historyRevision: number } }).loop).toBe(core);
     expect(core.historyRevision).toBeGreaterThan(previousRevision);
     ctx.mockNextResponse({ type: 'text', text: 'third' });
