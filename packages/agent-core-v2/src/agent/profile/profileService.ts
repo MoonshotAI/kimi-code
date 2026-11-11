@@ -224,21 +224,25 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   }
 
   applyBindingSnapshot(snapshot: ProfileBindingSnapshot): ProfileBindingSnapshot {
-    this.activeProfile = undefined;
-    const agentsMdPaths =
-      snapshot.agentsMdPaths ?? extractAgentsMdPathsFromSystemPrompt(snapshot.systemPrompt);
-    this.defaultBinding = { ...snapshot, agentsMdPaths };
+    this.defaultBinding = this.prepareBindingSnapshot(snapshot);
     this.afterConfigDispatch({
       modelAlias: snapshot.modelAlias,
       profileName: snapshot.profileName,
       thinkingLevel: snapshot.thinkingLevel,
       systemPrompt: snapshot.systemPrompt,
       environmentDisclosure: snapshot.environmentDisclosure,
-      agentsMdPaths,
+      agentsMdPaths: this.defaultBinding.agentsMdPaths,
       disallowedTools: snapshot.disallowedTools ?? [],
     }, this.defaultBinding);
-    this.agentsMdReminder.seedInjected(agentsMdPaths, this.workspace.workDir);
     return this.defaultBinding;
+  }
+
+  prepareBindingSnapshot(snapshot: ProfileBindingSnapshot): ProfileBindingSnapshot {
+    this.activeProfile = undefined;
+    const agentsMdPaths =
+      snapshot.agentsMdPaths ?? extractAgentsMdPathsFromSystemPrompt(snapshot.systemPrompt);
+    this.agentsMdReminder.seedInjected(agentsMdPaths, this.workspace.workDir);
+    return { ...snapshot, agentsMdPaths };
   }
 
   defaultProfile(): ProfileBindingSnapshot {
@@ -276,13 +280,12 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   ): Promise<ProfileBindingSnapshot | undefined> {
     if (this.scopeContext.agentId !== MAIN_AGENT_ID || current?.profileName === undefined) return undefined;
     await this.catalog.ready;
-    const snapshot = this.data(current);
-    const subagents = this.bindSubagents(snapshot.profileName, snapshot.subagents);
+    const subagents = this.bindSubagents(current.profileName, current.subagents);
     if (
-      subagents?.length !== snapshot.subagents?.length ||
-      subagents?.some((name, index) => name !== snapshot.subagents?.[index])
+      subagents?.length !== current.subagents?.length ||
+      subagents?.some((name, index) => name !== current.subagents?.[index])
     ) {
-      return { ...snapshot, subagents };
+      return { ...current, subagents };
     }
     return undefined;
   }
