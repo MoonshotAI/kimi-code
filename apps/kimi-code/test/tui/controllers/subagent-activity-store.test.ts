@@ -34,6 +34,7 @@ describe('SubagentActivityStore', () => {
     const store = new SubagentActivityStore();
     store.ensureRecord(spawn());
     store.applyEvent(ev({ type: 'turn.step.started', turnId: 1, step: 0 }));
+    store.applyEvent(ev({ type: 'turn.step.started', turnId: 1, step: 0 }));
     store.applyEvent(ev({ type: 'assistant.delta', turnId: 1, delta: 'Hello ' }));
     store.applyEvent(ev({ type: 'assistant.delta', turnId: 1, delta: 'world' }));
     store.applyEvent(
@@ -168,7 +169,7 @@ describe('SubagentActivityStore', () => {
     expect(call?.result?.output.length).toBeLessThan(SUBAGENT_TOOL_OUTPUT_MAX_CHARS + 120);
   });
 
-  it('marks the current step on retry without opening a new one', () => {
+  it('marks and clears the current step retry without opening a new one', () => {
     const store = new SubagentActivityStore();
     store.ensureRecord(spawn());
     store.applyEvent(ev({ type: 'turn.step.started', turnId: 1, step: 0 }));
@@ -185,6 +186,14 @@ describe('SubagentActivityStore', () => {
     let record = store.get('agent-1');
     expect(record?.steps).toHaveLength(1);
     expect(record?.steps[0]?.retrying).toContain('2/5');
+
+    const version = record?.version ?? 0;
+    store.applyEvent(ev({ type: 'turn.step.started', turnId: 1, step: 0 }));
+    record = store.get('agent-1');
+    expect(record?.steps).toHaveLength(1);
+    expect(record?.totalSteps).toBe(1);
+    expect(record?.steps[0]?.retrying).toBeUndefined();
+    expect(record?.version).toBe(version + 1);
 
     store.applyEvent(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
     record = store.get('agent-1');

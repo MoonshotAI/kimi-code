@@ -31,6 +31,7 @@ import {
   ToolCallDelta,
   TurnStepInterrupted,
   TurnStepRetrying,
+  TurnStepStarted,
   TurnStepStreamReset,
 } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import { TurnCancel, TurnEnded, TurnPrompt, TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
@@ -95,6 +96,7 @@ const RECORD_EVENTS = [
   TurnCancel,
   TurnStepInterrupted,
   TurnStepRetrying,
+  TurnStepStarted,
   TurnEnded,
   PromptCompleted,
   InteractionRequestEvent,

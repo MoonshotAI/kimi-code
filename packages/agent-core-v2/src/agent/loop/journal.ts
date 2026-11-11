@@ -384,6 +384,35 @@ export class LoopJournal {
         if (step !== undefined) this.ensureStepStarted(requesting.turnId, requesting.step, step);
         return;
       }
+      case 'llm.retrying': {
+        const requesting = this.requestingStep;
+        if (requesting === undefined) return;
+        const key = stepKey(requesting.turnId, requesting.step);
+        const step = this.steps.get(key);
+        if (step !== undefined) {
+          this.writeLoopEvent({
+            type: 'step.end',
+            uuid: step.uuid,
+            turnId: String(requesting.turnId),
+            step: requesting.step,
+            finishReason: 'error',
+            usage: step.assistant?.meta?.usage,
+            messageId: step.assistant?.meta?.messageId,
+          });
+          this.steps.delete(key);
+        }
+        return;
+      }
+      case 'llm.sent': {
+        const requesting = this.requestingStep;
+        if (requesting === undefined) return;
+        const key = stepKey(requesting.turnId, requesting.step);
+        if (this.steps.has(key)) return;
+        const step: StepJournal = { uuid: randomUUID(), streamedBlocks: new Map(), started: false };
+        this.steps.set(key, step);
+        this.ensureStepStarted(requesting.turnId, requesting.step, step);
+        return;
+      }
       case 'message.appended':
         this.appendMessage(event);
         return;
@@ -504,7 +533,7 @@ export class LoopJournal {
       const step = this.steps.get(stepKey(event.turnId, event.step));
       if (step === undefined) return;
       this.ensureStepStarted(event.turnId, event.step, step);
-      if (event.source === 'llm') step.assistant = assistant;
+      step.assistant = assistant;
       for (const [block, part] of assistant.message.content.entries()) {
         const streamed = step.streamedBlocks.get(block);
         this.writeLoopEvent({
