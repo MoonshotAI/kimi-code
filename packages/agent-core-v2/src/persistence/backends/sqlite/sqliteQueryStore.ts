@@ -473,7 +473,6 @@ export class SqliteQueryStore extends Disposable implements IQueryStore {
   private transientReadFailures = 0;
   private transientWriteFailures = 0;
   private storeEpochCounter = 0;
-  private readonly ensuredIndexes = new Set<string>();
 
   constructor(
     @IBootstrapService private readonly bootstrap: IBootstrapService,
@@ -541,7 +540,6 @@ export class SqliteQueryStore extends Disposable implements IQueryStore {
       });
       const previous = this.dbPromise;
       this.dbPromise = undefined;
-      this.ensuredIndexes.clear();
       let db = await previous?.catch(() => undefined);
       try {
         if (db === undefined || !db.open) db = await this.openFresh();
@@ -700,8 +698,6 @@ export class SqliteQueryStore extends Disposable implements IQueryStore {
         `sqlite query-store is a structural read model: text index "${def.name}" on collection "${collection}" is rejected`,
       );
     }
-    const guard = `${collection}:${def.kind}:${def.name}`;
-    if (this.ensuredIndexes.has(guard)) return;
     await this.withDb((db) => {
       const existing = db
         .prepare<[string, string, string], { readonly definition: string }>(
@@ -728,7 +724,6 @@ export class SqliteQueryStore extends Disposable implements IQueryStore {
         if (def.kind === 'value') validateUniqueIndex(db, collection, def);
       }).immediate();
     }, 'write');
-    this.ensuredIndexes.add(guard);
   }
 
   async getCheckpoint(source: string): Promise<Checkpoint | undefined> {
@@ -755,7 +750,6 @@ export class SqliteQueryStore extends Disposable implements IQueryStore {
   protected async resetAfterPeerRebuild(): Promise<void> {
     const db = await this.openDb();
     this.storeEpochCounter = resetDatabase(db);
-    this.ensuredIndexes.clear();
   }
 
   storeEpoch(): number {
