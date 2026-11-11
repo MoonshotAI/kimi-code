@@ -7,6 +7,7 @@ import {
   CUSTOM_REGISTRY_DEFAULT_MAX_CONTEXT,
   capabilitiesFromCustomEntry,
   CustomRegistryApiError,
+  CustomRegistryNetworkError,
   fetchCustomRegistry,
   removeCustomRegistryProvider,
   type CustomRegistryProviderEntry,
@@ -282,6 +283,225 @@ describe('fetchCustomRegistry', () => {
     expect(error).toBeInstanceOf(CustomRegistryApiError);
     expect((error as CustomRegistryApiError).status).toBe(401);
     expect((error as Error).message).toBe('invalid bearer');
+  });
+
+  it('surfaces transport root causes without exposing registry credentials', async () => {
+    const source: CustomRegistrySource = {
+      ...KOKUB_SOURCE,
+      url: 'https://registry.example.test/v1/models/api.json?token=sensitive%2Dtoken#sensitive-token',
+    };
+    const failure = new TypeError('fetch failed', {
+      cause: new Error(`connect ECONNREFUSED 127.0.0.1:443: ${source.url}; duplicate token: sensitive%2Dtoken`),
+    });
+    const fetchMock = vi.fn(async () => {
+      throw failure;
+    });
+
+    const error = await fetchCustomRegistry(source, {
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    }).catch((error: unknown) => error);
+
+    expect(error).toBeInstanceOf(CustomRegistryNetworkError);
+    const networkError = error as CustomRegistryNetworkError;
+    expect(networkError.cause).toBe(failure);
+    expect(networkError.registryUrl).toBe('https://registry.example.test/v1/models/api.json');
+    expect(networkError.message).toContain('fetch failed');
+    expect(networkError.message).toContain('connect ECONNREFUSED 127.0.0.1:443');
+    expect(networkError.message).toContain(networkError.registryUrl);
+    expect(networkError.message).not.toContain('sensitive-token');
+    expect(networkError.message).not.toContain('sensitive%2Dtoken');
+  });
+
+  it('includes every nested cause from aggregate transport errors', async () => {
+    const failure = new TypeError('fetch failed', {
+      cause: new AggregateError([
+        new Error('connect ECONNREFUSED 127.0.0.1:443'),
+        new Error('connect ECONNREFUSED 127.0.0.2:443'),
+      ], 'aggregate transport failure'),
+    });
+    const fetchMock = vi.fn(async () => {
+      throw failure;
+    });
+
+    const error = await fetchCustomRegistry(KOKUB_SOURCE, {
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    }).catch((error: unknown) => error);
+
+    expect(error).toBeInstanceOf(CustomRegistryNetworkError);
+    expect((error as Error).message).toContain('connect ECONNREFUSED 127.0.0.1:443');
+    expect((error as Error).message).toContain('connect ECONNREFUSED 127.0.0.2:443');
+  });
+
+  it('does not classify userinfo request construction failures as network errors', async () => {
+    const source: CustomRegistrySource = {
+      ...KOKUB_SOURCE,
+      url: 'https://user:sensitive-token@registry.example.test/api.json',
+    };
+    const failure = new TypeError(`Request cannot be constructed from a URL that includes credentials: ${source.url}`);
+    const fetchMock = vi.fn(async () => {
+      throw failure;
+    });
+
+    const error = await fetchCustomRegistry(source, {
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    }).catch((error: unknown) => error);
+
+    expect(error).not.toBeInstanceOf(CustomRegistryNetworkError);
+    expect((error as Error).message).toContain('Request cannot be constructed from a URL that includes credentials');
+    expect((error as Error).message).not.toContain('sensitive-token');
+  });
+
+  it('does not classify malformed URLs as network errors', async () => {
+    const source: CustomRegistrySource = { ...KOKUB_SOURCE, url: 'not-a-url' };
+    const failure = new TypeError('Failed to parse URL from not-a-url', {
+      cause: new TypeError('Invalid URL'),
+    });
+    const fetchMock = vi.fn(async () => {
+      throw failure;
+    });
+
+    const error = await fetchCustomRegistry(source, {
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    }).catch((error: unknown) => error);
+
+    expect(error).not.toBeInstanceOf(CustomRegistryNetworkError);
+    expect((error as Error).message).toContain('Failed to parse URL from');
+    expect((error as Error).message).toContain('Invalid URL');
+  });
+
+  it('preserves abort errors without wrapping them as network errors', async () => {
+    const failure = new DOMException('This operation was aborted', 'AbortError');
+    const fetchMock = vi.fn(async () => {
+      throw failure;
+    });
+
+    await expect(
+      fetchCustomRegistry(KOKUB_SOURCE, {
+        fetchImpl: fetchMock as unknown as typeof fetch,
+      }),
+    ).rejects.toBe(failure);
+  });
+
+  it('redacts short secrets without damaging network addresses', async () => {
+    const source: CustomRegistrySource = {
+      ...KOKUB_SOURCE,
+      url: 'https://registry.example.test/api.json?token=1',
+    };
+    const failure = new TypeError('fetch failed', {
+      cause: new Error('connect ECONNREFUSED 127.0.0.1:443: token=1'),
+    });
+    const fetchMock = vi.fn(async () => {
+      throw failure;
+    });
+
+    const error = await fetchCustomRegistry(source, {
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    }).catch((error: unknown) => error);
+
+    expect(error).toBeInstanceOf(CustomRegistryNetworkError);
+    expect((error as Error).message).toContain('connect ECONNREFUSED 127.0.0.1:443');
+    expect((error as Error).message).not.toContain('token=1');
+    expect((error as Error).message).not.toContain('<redacted>27.0.0.');
+  });
+
+  it('redacts percent-encoded short secrets without damaging network addresses', async () => {
+    const source: CustomRegistrySource = {
+      ...KOKUB_SOURCE,
+      url: 'https://registry.example.test/api.json?token=%31',
+    };
+    const failure = new TypeError('fetch failed', {
+      cause: new Error('connect ECONNREFUSED 127.0.0.1:443: token=%31'),
+    });
+    const fetchMock = vi.fn(async () => {
+      throw failure;
+    });
+
+    const error = await fetchCustomRegistry(source, {
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    }).catch((error: unknown) => error);
+
+    expect(error).toBeInstanceOf(CustomRegistryNetworkError);
+    expect((error as Error).message).toContain('connect ECONNREFUSED 127.0.0.1:443');
+    expect((error as Error).message).not.toContain('token=%31');
+  });
+
+  it('redacts percent-encoded short secrets with an empty query key', async () => {
+    const source: CustomRegistrySource = {
+      ...KOKUB_SOURCE,
+      url: 'https://registry.example.test/api.json?=%31',
+    };
+    const failure = new TypeError('fetch failed', {
+      cause: new Error('fetch failed: =%31'),
+    });
+    const fetchMock = vi.fn(async () => {
+      throw failure;
+    });
+
+    const error = await fetchCustomRegistry(source, {
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    }).catch((error: unknown) => error);
+
+    expect(error).toBeInstanceOf(CustomRegistryNetworkError);
+    expect((error as Error).message).not.toContain('=%31');
+  });
+
+  it('redacts standalone query secrets without requiring an equals sign', async () => {
+    const source: CustomRegistrySource = {
+      ...KOKUB_SOURCE,
+      url: 'https://registry.example.test/api.json?sensitive-token',
+    };
+    const failure = new TypeError('fetch failed', {
+      cause: new Error('fetch failed: duplicate sensitive-token'),
+    });
+    const fetchMock = vi.fn(async () => {
+      throw failure;
+    });
+
+    const error = await fetchCustomRegistry(source, {
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    }).catch((error: unknown) => error);
+
+    expect(error).toBeInstanceOf(CustomRegistryNetworkError);
+    expect((error as Error).message).not.toContain('sensitive-token');
+  });
+
+  it.each([
+    { suffix: '?', expected: 'fetch failed: token=1' },
+    { suffix: '?token=1&', expected: 'fetch failed: token=<redacted>' },
+  ])('ignores empty query entries in $suffix', async ({ suffix, expected }) => {
+    const source: CustomRegistrySource = {
+      ...KOKUB_SOURCE,
+      url: `https://registry.example.test/api.json${suffix}`,
+    };
+    const failure = new TypeError('fetch failed', {
+      cause: new Error('fetch failed: token=1'),
+    });
+    const fetchMock = vi.fn(async () => {
+      throw failure;
+    });
+
+    const error = await fetchCustomRegistry(source, {
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    }).catch((error: unknown) => error);
+
+    expect(error).toBeInstanceOf(CustomRegistryNetworkError);
+    expect((error as Error).message).toContain(expected);
+    expect((error as Error).message).not.toContain('token=<redacted><redacted>');
+  });
+
+  it('does not classify forbidden fetch ports as network errors', async () => {
+    const source: CustomRegistrySource = { ...KOKUB_SOURCE, url: 'http://127.0.0.1:1/api.json' };
+    const failure = new TypeError('fetch failed', { cause: new Error('bad port') });
+    const fetchMock = vi.fn(async () => {
+      throw failure;
+    });
+
+    const error = await fetchCustomRegistry(source, {
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    }).catch((error: unknown) => error);
+
+    expect(error).not.toBeInstanceOf(CustomRegistryNetworkError);
+    expect((error as Error).message).toContain('bad port');
   });
 
   it('throws when the payload is not an object', async () => {

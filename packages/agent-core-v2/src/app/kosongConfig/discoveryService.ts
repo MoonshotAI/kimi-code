@@ -310,6 +310,9 @@ function mapRefreshResult(result: RefreshResult): RefreshProviderModelsResponse 
     failed: result.failed.map((failure) => ({
       provider: failure.provider,
       reason: failure.reason,
+      kind: failure.kind,
+      registry_group: failure.registryGroup,
+      registry_url: failure.registryUrl,
     })),
     retired_default:
       retired === undefined
