@@ -1,4 +1,5 @@
 import { isKimiError } from '@moonshot-ai/kimi-code-sdk';
+import type { TurnStartedEvent } from '@moonshot-ai/kimi-code-sdk';
 
 import {
   STREAMING_ARGS_FIELD_RE,
@@ -134,4 +135,17 @@ function stringDetail(
 
 export function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
+}
+
+// Matches the engine's /undo anchor rule (user prompts and user-slash
+// skill/plugin turns); anything else cannot be withdrawn once interrupted.
+export function isUserSubmittedTurnOrigin(
+  origin: TurnStartedEvent['origin'] | undefined,
+): boolean {
+  if (origin === undefined) return false;
+  if (origin.kind === 'user') return true;
+  return (
+    (origin.kind === 'skill_activation' || origin.kind === 'plugin_command') &&
+    origin.trigger === 'user-slash'
+  );
 }
