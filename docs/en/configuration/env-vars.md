@@ -191,6 +191,7 @@ Switches that control the behavior of subsystems such as telemetry, background t
 | `KIMI_CODE_LLM_HEADERS_TIMEOUT_MS` | Max time (ms) an LLM request on the `openai` / `openai-responses` / `anthropic` protocols may wait for the response headers (first byte), replacing the HTTP client's default 300 s headers timeout — raise it for long non-streaming thinking; unset keeps the default; the SDK's own total request timeout (default 10 minutes) still caps each attempt; not supported for `google-genai` (its SDK exposes no dispatcher option) or behind a SOCKS proxy (requests still go through the proxy) | Positive integer no greater than 2147483647; invalid values fail the request |
 | `KIMI_CODE_NO_AUTO_UPDATE` | Fully disable the update preflight: no check, background install, or prompt. Legacy alias `KIMI_CLI_NO_AUTO_UPDATE` also honored | Truthy: `1`/`true`/`yes`/`on` |
 | `KIMI_CODE_CLIPBOARD_OSC52` | Also copy through your terminal (OSC 52); try it when copying does not work over a remote connection. In tmux, also add `set -g set-clipboard on` | `1` to enable |
+| `KIMI_CODE_TUI_ANIMATION_FPS` | Frame rate of the shimmer on in-progress titles in the terminal UI | Integer from `1` to `60`; invalid values are ignored with a notice at startup |
 | `KIMI_DISABLE_CRON` | Disable the scheduled-task tool (`CronCreate` rejects new schedules; existing tasks do not fire) | `1` to disable |
 
 The `KIMI_CODE_INFINITE_RETRY`, `KIMI_CODE_IDENTITY_*`, and `KIMI_CODE_BUILTIN_PRODUCT_SKILLS` variables are read by the `agent-core-v2` engine.
