@@ -110,12 +110,12 @@ it('exposes session and agent capabilities without leaking engine scopes', async
   const tool: ExecutableTool = {
     name: 'HostEcho',
     description: 'host echo',
-    parameters: { type: 'object', required: ['value'], properties: { value: { type: 'string' } } },
+    parameters: { type: 'object', additionalProperties: false, required: ['value'], properties: { value: { type: 'string' } } },
     resolveExecution: resolve,
   } as ExecutableTool;
   main.accessor.get(IAgentToolRegistryService).register(tool, { source: 'builtin' });
   main.accessor.get(IAgentPermissionModeService).setMode('yolo');
-  hostAgent.decorateToolArguments('HostEcho', (args, context) => ({
+  hostAgent.decorateToolExecution('HostEcho', (args, context) => ({
     ...(args as Record<string, unknown>),
     injectedTurn: context.turnId,
   }));
@@ -130,6 +130,11 @@ it('exposes session and agent capabilities without leaking engine scopes', async
   if ('detached' in invalid) throw new Error('unexpected detached tool result');
   expect(invalid.outcome.type).toBe('failed');
   expect(execute).toHaveBeenCalledOnce();
+  main.accessor.get(IAgentToolRegistryService).register({ ...tool, name: 'HostRewrite' }, { source: 'builtin' });
+  hostAgent.decorateToolArguments('HostRewrite', () => ({ value: 'rewritten' }));
+  const rewritten = await executor.executor.execute({ ...call, id: 'host-rewrite', name: 'HostRewrite' }, { turnId: 9 });
+  if ('detached' in rewritten) throw new Error('unexpected detached tool result');
+  expect(rewritten.content).toEqual([{ type: 'text', text: JSON.stringify({ value: 'rewritten' }) }]);
 
   const ended = vi.fn();
   hostAgent.onDidTurnEnd(ended);

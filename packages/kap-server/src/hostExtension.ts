@@ -3,6 +3,7 @@ import {
   IAgentLoopService,
   IAgentReminderService,
   IAgentToolExecutorService,
+  IAgentToolRegistryService,
   IAgentToolSelectService,
   IEventBus,
   ISessionMcpHandle,
@@ -146,6 +147,10 @@ export interface HostAgent {
     toolName: string,
     decorator: (args: unknown, context: HostToolDecoratorContext) => unknown | Promise<unknown>,
   ): HostDisposable;
+  decorateToolExecution(
+    toolName: string,
+    decorator: (args: unknown, context: HostToolDecoratorContext) => unknown | Promise<unknown>,
+  ): HostDisposable;
   onDidTurnEnd(listener: (event: { readonly turnId: number }) => void): HostDisposable;
 }
 
@@ -232,6 +237,28 @@ function createHostAgent(sessionId: string, context: AgentContext, handle: IAgen
         return { args };
       },
     }),
+    decorateToolExecution: (toolName, decorator) => {
+      const registry = handle.accessor.get(IAgentToolRegistryService);
+      return handle.accessor.get(IAgentToolExecutorService).registerHook({
+        beforeExecute: async (context) => {
+          if (context.call.name !== toolName || context.prepared.kind !== 'execute') return;
+          const args = await decorator(context.args, { turnId: context.context.turnId });
+          const tool = registry.resolve(toolName);
+          if (tool === undefined) return;
+          const execution = await tool.resolveExecution(args);
+          if (!('execute' in execution)) return;
+          Object.assign(context, { args });
+          Object.assign(context.prepared, {
+            execution,
+            accesses: execution.accesses,
+            display: execution.display,
+            description: execution.description,
+            approvalRule: execution.approvalRule,
+            matchesRule: execution.matchesRule,
+          });
+        },
+      });
+    },
     onDidTurnEnd: (listener) => handle.accessor.get(IEventBus).subscribe(TurnEnded, listener),
   };
 }
