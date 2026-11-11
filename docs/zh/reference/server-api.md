@@ -772,7 +772,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 成功时，`data` 为更新后的 [session 对象](#session-对象)。
 
-- `40001`：`model` 未配置，或模型不支持 `thinking`
+- `40001`：`model` 未配置、模型不支持 `thinking`，或带了 `agent_config.profile`（Agent 档案只能在创建会话时指定）
 - `40113`：会话没有模型时只设置了 `thinking`，没有同时设置 `model`
 - `40401`：会话不存在
 

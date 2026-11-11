@@ -1066,6 +1066,22 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(readAgentState(main, false)).toMatchObject({ model: 'other', thinking: 'high' });
   });
 
+  it('rejects changing the profile after the session is created', async () => {
+    await restartWithModels();
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+    });
+
+    const updated = await postJson<SessionWire>(`/api/v1/sessions/${created.body.data.id}/profile`, {
+      agent_config: { profile: 'route-reviewer' },
+    });
+
+    expect(updated.body.code).toBe(40001);
+    expect(JSON.stringify(updated.body)).toContain('agent_config.profile');
+    const main = liveMainAgent(created.body.data.id)!;
+    expect(main.accessor.get(IAgentLoopService).data().profileName).toBe('agent');
+  });
+
   it('rejects an unknown profile at creation and creates nothing', async () => {
     await restartWithModels();
     const listed = async (): Promise<string[]> =>

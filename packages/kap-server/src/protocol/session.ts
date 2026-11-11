@@ -62,6 +62,10 @@ export const sessionSchema = z.object({
 
 export type Session = z.infer<typeof sessionSchema>;
 
+export const creationOnlyProfileSchema = z
+  .never({ error: 'choose the agent profile with agent_config.profile when creating the session' })
+  .optional();
+
 export const sessionCreateSchema = z
   .object({
     title: z.string().min(1).optional(),

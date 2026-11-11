@@ -772,7 +772,7 @@ Each `agent_config` field is applied immediately to the main agent:
 
 On success, `data` is the updated [session object](#the-session-object).
 
-- `40001`: `model` is not configured, or the model does not support `thinking`
+- `40001`: `model` is not configured, the model does not support `thinking`, or `agent_config.profile` is given, since the agent profile is chosen only when the session is created
 - `40113`: `thinking` is set without `model` while the session has no model
 - `40401`: session not found
 
