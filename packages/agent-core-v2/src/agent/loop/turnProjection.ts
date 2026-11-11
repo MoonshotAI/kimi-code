@@ -920,6 +920,7 @@ export class AgentTurnProjection {
       requestId,
     }));
     if (error !== undefined) void this.options.dispatcher.dispatch(new AgentErrorEvent({ ...error, agentId: this.options.scopeContext.agentId }));
+    this.options.prompts.complete(turn.id, result);
     if (interruptReason !== undefined) {
       const interrupted: TurnInterruptedEvent = {
         turn_id: turn.id,

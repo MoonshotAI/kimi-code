@@ -1,6 +1,7 @@
 import type { HistoryMessage, UserEntry } from '#human/agent/turn';
 import type { IWireService } from '#/wire/wire';
 import { contextFromHistoryEntry } from '#/agent/loop/history';
+import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { AgentTaskService } from './taskService';
 import { TERMINAL_STATUSES } from './types';
 import { IAgentTaskOutputService } from './taskOutput';
@@ -17,9 +18,16 @@ export async function restoreTaskCompletions(options: {
   const history = new AgentTaskService(options.agentId);
   history.restore(journal);
   const delivered = new Set<string>();
-  for (const entry of [...options.messages, ...options.pending ?? []]) {
-    const origin = contextFromHistoryEntry(entry).origin;
+  const recordDelivery = (origin: PromptOrigin | undefined): void => {
     if (origin?.kind === 'task') delivered.add(`${origin.taskId}\0${origin.status}\0${origin.notificationId}`);
+  };
+  for (const entry of [...options.messages, ...options.pending ?? []]) {
+    recordDelivery(contextFromHistoryEntry(entry).origin);
+  }
+  for (const record of journal) {
+    if (record['agentId'] !== undefined && record['agentId'] !== options.agentId) continue;
+    if (record.type !== 'context.append_message') continue;
+    recordDelivery((record['message'] as ContextMessage | undefined)?.origin);
   }
   for (const record of restorable) {
     if (record.type !== 'task.waitDelivered' || record['agentId'] !== options.agentId) continue;

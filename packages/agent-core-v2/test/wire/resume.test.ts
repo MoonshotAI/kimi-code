@@ -660,14 +660,12 @@ describe('Agent resume', () => {
         'agent-seen0000',
         'already delivered summary',
       );
-      const steer = vi.spyOn(ctx.get(IAgentLoopService), 'steer');
-
       await ctx.restorePersisted();
+
+      expect(ctx.get(IAgentLoopService).snapshot().hasPendingRequests).toBe(false);
       expect(
         ctx.context.history().some((message) => message.origin?.kind === 'task'),
       ).toBe(false);
-
-      expect(steer).not.toHaveBeenCalled();
     } finally {
       await ctx.dispose();
       await rm(homeDir, { recursive: true, force: true });
