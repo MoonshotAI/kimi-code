@@ -237,7 +237,7 @@ REST 请求的响应和 WebSocket 帧走不同的通道，到达顺序不固定�
 | `item.started`、`item.ended` | `turn_id` 和完整的 `item` | 替换本地同 `item_id` 的条目，本地没有的追加到这一轮末尾 |
 | `item.updated` | `turn_id`、`item_id`、`set` | `set` 是运行中 `tool_call` 发生变化的字段，浅合并到条目上 |
 | `item.delta` | `turn_id`、`item_id`、`field`、`delta` | 把 `delta` 追加到条目的 `field` 字段，`field` 为 `text`、`input_text` 或 `output` |
-| `item.removed` | `turn_id`、`item_id` | 删除这个条目。它是一个不会完成的运行中条目，例如请求重试导致这一步重新开始 |
+| `item.removed` | `turn_id`、`item_id` | 删除这个条目。例如模型请求失败后重试这一步时，失败那次已经输出的内容会被删除，由重试的结果取代 |
 | `turns.removed` | `turn_ids` | 按 `turn_id` 删除轮次，`turn_ids` 按 ordinal 升序排列。撤销之后是被撤销的轮次，清空上下文之后是全部轮次 |
 | `notice` | `{ level: "info" \| "warning" \| "error", title, detail?, code? }` | agent 实时发出的警告或错误，例如上下文压缩未完成时的 `compaction.cancelled`。通知不属于轮次，订阅时也不补发 |
 
