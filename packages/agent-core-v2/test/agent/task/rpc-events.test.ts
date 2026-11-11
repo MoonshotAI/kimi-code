@@ -613,13 +613,14 @@ describe('AgentTaskService — notification delivery', () => {
     expect(taskNotifications(ctx, info.taskId)).toHaveLength(1);
   });
 
-  it('re-delivers a terminal task notification removed by undo when output is unavailable', async () => {
+  it('does not re-deliver a terminal task notification removed by undo when output is unavailable', async () => {
     const ctx = track(createTestAgent());
     const task = await startControlled(ctx);
     await completeControlled(ctx, task);
     await ctx.get(IAgentConversationUndoService).undo(1);
-    await vi.waitFor(() => expect(taskNotifications(ctx, task.handler.taskId)).toHaveLength(1));
-    expect(taskNotifications(ctx)).toHaveLength(1);
+    await ctx.get(IAgentLoopService).settled();
+    expect(taskNotifications(ctx, task.handler.taskId)).toHaveLength(0);
+    expect(taskNotifications(ctx)).toHaveLength(0);
   });
 
   it('preserves a queued notification when undo rejects an active turn', async () => {
