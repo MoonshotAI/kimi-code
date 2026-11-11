@@ -193,6 +193,7 @@ export function resolveModelProtocol(
 export function resolveEndpointBaseUrl(
   model: ModelRecord,
   provider: ProviderConfig,
+  providerId?: string,
 ): string | undefined {
   const fromModel = nonEmpty(model.baseUrl);
   if (fromModel !== undefined) {
@@ -218,9 +219,10 @@ export function resolveEndpointBaseUrl(
     const env = { ...process.env, ...provider.env };
     const baseUrl = resolveBedrockBaseUrl(protocol, env);
     if (baseUrl === undefined) {
+      const id = providerId ?? 'bedrock';
       throw new Error2(
         CONFIG_INVALID_ERROR_CODE,
-        'Provider "bedrock" could not resolve an AWS region to build the endpoint URL. Set AWS_REGION (or AWS_DEFAULT_REGION) in the provider\'s [providers.bedrock.env] sub-table, or export it in the environment.',
+        `Provider "${id}" could not resolve an AWS region to build the endpoint URL. Set AWS_REGION (or AWS_DEFAULT_REGION) in the provider's [providers.${id}.env] sub-table, or export it in the environment.`,
       );
     }
     return baseUrl;

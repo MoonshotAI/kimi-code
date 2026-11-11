@@ -317,6 +317,25 @@ describe('resolveEndpointBaseUrl', () => {
       vi.unstubAllEnvs();
     }
   });
+
+  it('points the region error at the actual provider table, not [providers.bedrock]', () => {
+    vi.stubEnv('AWS_REGION', '');
+    vi.stubEnv('AWS_DEFAULT_REGION', '');
+    try {
+      expect(() =>
+        resolveEndpointBaseUrl(
+          { model: 'anthropic.claude-sonnet-4-6' },
+          { type: 'bedrock' },
+          'aws-prod',
+        ),
+      ).toThrow(/\[providers\.aws-prod\.env\]/);
+      expect(() =>
+        resolveEndpointBaseUrl({ model: 'anthropic.claude-sonnet-4-6' }, { type: 'bedrock' }),
+      ).toThrow(/\[providers\.bedrock\.env\]/);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 });
 
 describe('deriveProviderId', () => {

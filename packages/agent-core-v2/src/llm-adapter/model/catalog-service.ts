@@ -342,7 +342,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       return {
         providerConfig,
         providerName: providerId,
-        resolvedBaseUrl: resolveEndpointBaseUrl(model, providerConfig),
+        resolvedBaseUrl: resolveEndpointBaseUrl(model, providerConfig, providerId),
       };
     }
 
