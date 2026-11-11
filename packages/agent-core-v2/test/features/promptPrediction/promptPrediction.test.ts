@@ -2,29 +2,32 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { Emitter } from '#/_base/event';
 import type { ILogService } from '#/_base/log/log';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import type { AgentLLMRequestFinish, AgentLLMRequestOverrides } from '#/agent/loop/requesterContract';
+import type { CoreLoopRequester, OperationLoopRequesterOptions } from '#/agent/loop/requesterContract';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IFlagService } from '#/app/flag/flag';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { SessionPromptPredictionService } from '#/features/promptPrediction/promptPredictionService';
+import type { LlmOutcome } from '#human/llm/response';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import {
   ISessionActivityView,
   type SessionActivityChangedEvent,
 } from '#/session/sessionActivity/sessionActivity';
 
+type PredictionOutcome = Extract<LlmOutcome, { type: 'done' }>;
+
 function finish(
   text: string,
-  toolCalls: AgentLLMRequestFinish['message']['toolCalls'] = [],
-  providerFinishReason: AgentLLMRequestFinish['providerFinishReason'] = 'completed',
-): AgentLLMRequestFinish {
+  toolCalls: PredictionOutcome['message']['toolCalls'] = [],
+  finishReason: NonNullable<PredictionOutcome['finish']>['finishReason'] = 'completed',
+): PredictionOutcome {
   return {
-    providerFinishReason,
+    type: 'done',
+    finish: { finishReason, rawFinishReason: finishReason },
     message: {
       role: 'assistant',
       content: text.length === 0 ? [] : [{ type: 'think', think: 'reasoning' }, { type: 'text', text }],
@@ -53,15 +56,31 @@ describe('SessionPromptPredictionService', () => {
     ];
     const originalContext = contextSnapshot;
     let nextResult = () => Promise.resolve(finish('inspect the failing test'));
-    const requests: Array<{ overrides?: AgentLLMRequestOverrides; signal?: AbortSignal }> = [];
+    const requests: Array<{
+      options: OperationLoopRequesterOptions;
+      input?: Parameters<CoreLoopRequester['generate']>[0];
+      signal?: AbortSignal;
+    }> = [];
     const requester = {
-      start: (overrides?: AgentLLMRequestOverrides, _onPart?: unknown, signal?: AbortSignal) => {
-        requests.push({ overrides, signal });
-        return { trace: { requestId: 'request-1' }, result: nextResult() };
+      prepareOperation: async (options: OperationLoopRequesterOptions, signal: AbortSignal) => {
+        const request: (typeof requests)[number] = { options, signal };
+        requests.push(request);
+        options.onTrace?.({ requestId: 'request-1' });
+        return {
+          generate: (
+            input: Parameters<CoreLoopRequester['generate']>[0],
+            control: { signal: AbortSignal },
+          ) => {
+            request.input = input;
+            request.signal = control.signal;
+            return nextResult();
+          },
+        };
       },
     };
     const loop = {
       requester,
+      history: () => contextSnapshot,
       snapshot: () => ({
         state: 'idle',
         queue: [],
@@ -75,7 +94,6 @@ describe('SessionPromptPredictionService', () => {
       accessor: {
         get: (token: unknown) => {
           if (token === IAgentLoopService) return loop;
-          if (token === IAgentContextMemoryService) return { get: () => contextSnapshot };
           if (token === IAgentStateService) return { get: () => ({ lastEnded }) };
           if (token === IAgentPlanService) return { status: async () => null };
           if (token === IAgentScopeContext) return { agentContext: { agentId: MAIN_AGENT_ID } };
@@ -124,13 +142,13 @@ describe('SessionPromptPredictionService', () => {
       client_blocked_ms: 200,
     }));
     expect(requests).toHaveLength(1);
-    expect(requests[0]?.overrides?.source).toEqual({
+    expect(requests[0]?.options.source()).toEqual({
       type: 'operation',
       turnId: 0,
       requestKind: 'prompt_prediction',
     });
-    expect(requests[0]?.overrides?.messages).toHaveLength(2);
-    expect(requests[0]?.overrides?.messages?.at(-1)).toEqual({
+    expect(requests[0]?.input?.content?.messages).toHaveLength(2);
+    expect(requests[0]?.input?.content?.messages?.at(-1)).toEqual({
       role: 'user',
       content: [{
         type: 'text',
@@ -139,7 +157,7 @@ describe('SessionPromptPredictionService', () => {
         ),
       }],
     });
-    expect(requests[0]?.overrides?.tools).toBeUndefined();
+    expect(requests[0]?.options.tools).toBeUndefined();
     expect(contextSnapshot).toBe(originalContext);
     expect(contextSnapshot).toHaveLength(1);
 
@@ -160,7 +178,7 @@ describe('SessionPromptPredictionService', () => {
     expect(requests).toHaveLength(4);
 
     lastEnded = { turnId: 4, reason: 'completed' };
-    nextResult = () => new Promise<AgentLLMRequestFinish>(() => {});
+    nextResult = () => new Promise<PredictionOutcome>(() => {});
     const cancelled = service.predict({ predictionId: 'cancel-me', expectedTurnId: 4 });
     await vi.waitFor(() => expect(requests).toHaveLength(5));
     expect(service.cancel('other')).toBe(false);
@@ -178,8 +196,8 @@ describe('SessionPromptPredictionService', () => {
     }));
 
     lastEnded = { turnId: 5, reason: 'completed' };
-    let resolveStale!: (result: AgentLLMRequestFinish) => void;
-    nextResult = () => new Promise<AgentLLMRequestFinish>((resolve) => {
+    let resolveStale!: (result: PredictionOutcome) => void;
+    nextResult = () => new Promise<PredictionOutcome>((resolve) => {
       resolveStale = resolve;
     });
     const stale = service.predict({ predictionId: 'stale', expectedTurnId: 5 });
@@ -190,7 +208,7 @@ describe('SessionPromptPredictionService', () => {
 
     lastEnded = { turnId: 6, reason: 'completed' };
     contextSnapshot = originalContext;
-    nextResult = () => new Promise<AgentLLMRequestFinish>(() => {});
+    nextResult = () => new Promise<PredictionOutcome>(() => {});
     const activityCancelled = service.predict({ predictionId: 'activity-cancelled', expectedTurnId: 6 });
     await vi.waitFor(() => expect(requests).toHaveLength(7));
     activityEmitter.fire({

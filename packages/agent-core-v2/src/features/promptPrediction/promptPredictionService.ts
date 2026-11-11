@@ -2,17 +2,18 @@ import { Disposable } from '#/_base/di/lifecycle';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { abortable, abortError, createDeadlineAbortSignal, type DeadlineAbortSignal } from '#/_base/utils/abort';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService, type LoopSnapshot } from '#/agent/loop/loop';
-import type { AgentLLMRequestFinish } from '#/agent/loop/requesterContract';
 import { turnKey } from '#/agent/loop/turnOps';
+import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
+import { errorFromLlmOutcome, type ModelRequestTiming } from '#/llm-adapter/model/generate';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IFlagService } from '#/app/flag/flag';
 import type { PredictionGeneratedEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { createUserMessage } from '#human/llm/message';
+import type { LlmOutcome } from '#human/llm/response';
 import type { TokenUsage } from '#human/llm-requester/usage';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import {
@@ -61,14 +62,13 @@ interface ActivePrediction {
   predictionChars?: number;
   usage?: TokenUsage;
   requestId?: string;
-  timing?: AgentLLMRequestFinish['timing'];
+  timing?: ModelRequestTiming;
   cancelReason?: PromptPredictionCancelReason;
 }
 
 interface PredictionScope {
   readonly handle: IAgentScopeHandle;
   readonly loop: IAgentLoopService;
-  readonly context: IAgentContextMemoryService;
   readonly states: IAgentStateService;
   readonly plan: IAgentPlanService;
   readonly telemetry: ITelemetryService;
@@ -112,7 +112,7 @@ export class SessionPromptPredictionService extends Disposable implements ISessi
     if (this.attemptedTurnIds.has(input.expectedTurnId)) return null;
     if (!this.idle(scope.loop.snapshot(), this.activity.state())) return null;
 
-    const contextSnapshot = scope.context.get();
+    const contextSnapshot = scope.loop.history();
     this.attemptedTurnIds.add(input.expectedTurnId);
     const controller = new AbortController();
     const active: ActivePrediction = {
@@ -137,26 +137,35 @@ export class SessionPromptPredictionService extends Disposable implements ISessi
         prediction_id: active.predictionId,
         turn_id: active.expectedTurnId,
       });
-      const task = scope.loop.requester.start(
-        {
-          messages: [...contextSnapshot, createUserMessage(PROMPT_PREDICTION_INSTRUCTION)],
-          maxOutputSize: PROMPT_PREDICTION_MAX_OUTPUT_TOKENS,
-          source: {
-            type: 'operation',
-            turnId: active.expectedTurnId,
-            requestKind: 'prompt_prediction',
-          },
+      const source = {
+        type: 'operation',
+        turnId: active.expectedTurnId,
+        requestKind: 'prompt_prediction',
+      } as const;
+      let trace: LLMRequestTrace | undefined;
+      const requester = await scope.loop.requester.prepareOperation({
+        maxOutputSize: PROMPT_PREDICTION_MAX_OUTPUT_TOKENS,
+        source: () => source,
+        onTrace: (value) => {
+          trace = value;
         },
-        undefined,
-        active.deadline.signal,
-      );
-      const finish = await abortable(task.result, active.deadline.signal);
-      active.usage = finish.usage;
-      active.requestId = finish.requestId ?? task.trace.requestId;
-      active.timing = finish.timing;
-      const prediction = predictionText(finish);
+      }, active.deadline.signal);
+      const outcome = await abortable(requester.generate(
+        {
+          content: {
+            messages: [...contextSnapshot, createUserMessage(PROMPT_PREDICTION_INSTRUCTION)],
+          },
+          profile: {},
+        },
+        { signal: active.deadline.signal },
+      ), active.deadline.signal);
+      if (outcome.type !== 'done') throw errorFromLlmOutcome(outcome);
+      active.usage = outcome.usage;
+      active.requestId = outcome.requestId ?? trace?.requestId;
+      active.timing = outcome.timing;
+      const prediction = predictionText(outcome);
       if (prediction === null) {
-        active.outcome = finish.message.toolCalls.length > 0 ? 'tool_call' : 'invalid';
+        active.outcome = outcome.message.toolCalls.length > 0 ? 'tool_call' : 'invalid';
         return null;
       }
       active.predictionChars = prediction.length;
@@ -260,7 +269,6 @@ export class SessionPromptPredictionService extends Disposable implements ISessi
       return {
         handle,
         loop: handle.accessor.get(IAgentLoopService),
-        context: handle.accessor.get(IAgentContextMemoryService),
         states: handle.accessor.get(IAgentStateService),
         plan: handle.accessor.get(IAgentPlanService),
         telemetry: handle.accessor.get(ITelemetryService),
@@ -290,7 +298,7 @@ export class SessionPromptPredictionService extends Disposable implements ISessi
       !active.deadline.signal.aborted &&
       this.flags.enabled(PROMPT_PREDICTION_FLAG_ID) &&
       this.agents.handleOf(MAIN_AGENT_ID) === scope.handle &&
-      scope.context.get() === contextSnapshot &&
+      scope.loop.history() === contextSnapshot &&
       this.sourceTurnMatches(scope, active.expectedTurnId) &&
       this.idle(scope.loop.snapshot(), this.activity.state())
     );
@@ -312,9 +320,9 @@ export class SessionPromptPredictionService extends Disposable implements ISessi
   }
 }
 
-function predictionText(finish: AgentLLMRequestFinish): string | null {
-  if (finish.providerFinishReason !== 'completed' || finish.message.toolCalls.length > 0) return null;
-  const parts = finish.message.content;
+function predictionText(outcome: Extract<LlmOutcome, { type: 'done' }>): string | null {
+  if (outcome.finish?.finishReason !== 'completed' || outcome.message.toolCalls.length > 0) return null;
+  const parts = outcome.message.content;
   if (parts.some((part) => part.type !== 'text' && part.type !== 'think')) return null;
   const text = parts.map((part) => part.type === 'text' ? part.text : '').join('').trim();
   if (
