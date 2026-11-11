@@ -499,6 +499,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `max_context_size` | integer | **必填。** 以 token 计的上下文窗口，≥ 1 |
 | `display_name` | string | 显示名 |
 | `capabilities` | array | 能力标志，如 `thinking` 或 `image_in` |
+| `protocol` | string | 线路协议覆盖：`anthropic`、`openai` 或 `openai_responses`；省略时按模型 ID 推断 |
 | `max_output_size` | integer | 最大输出 token 数，≥ 1 |
 | `support_efforts` | array | 支持的 Thinking 模式 effort 档位 |
 | `adaptive_thinking` | boolean | 自适应 thinking 开关 |

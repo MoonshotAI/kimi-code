@@ -499,6 +499,7 @@ Each `models[]` entry declares one alias whose id becomes `id/model`:
 | `max_context_size` | integer | **Required.** Context window in tokens, ≥ 1 |
 | `display_name` | string | Display name |
 | `capabilities` | array | Capability flags such as `thinking` or `image_in` |
+| `protocol` | string | Wire protocol override: `anthropic`, `openai`, or `openai_responses`; when omitted it is inferred from the model ID |
 | `max_output_size` | integer | Max output tokens, ≥ 1 |
 | `support_efforts` | array | Supported Thinking-mode effort levels |
 | `adaptive_thinking` | boolean | Adaptive thinking toggle |

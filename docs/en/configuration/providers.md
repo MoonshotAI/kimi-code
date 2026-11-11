@@ -155,11 +155,9 @@ base_url = "https://your-gateway.example"
 
 For connecting to Amazon Bedrock. One `bedrock` provider can serve models over the Anthropic Messages API or the OpenAI-compatible APIs — the wire protocol is inferred per model from the Bedrock model ID, so Claude, GPT, and Kimi models can share a single provider entry.
 
-The distinguishing feature of this provider type is authentication: instead of a long-lived API key, it can generate short-lived bearer tokens from your ambient AWS credentials (the standard [AWS CLI credential chain](https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-configure.html) — environment variables, shared config, SSO, instance roles, and so on). Tokens are cached and regenerated automatically before expiry, and refreshed on a 401.
+### Authentication
 
-### Ambient AWS authentication
-
-Set `type = "bedrock"` and put the AWS region (and optionally a named AWS profile) in the `[providers.bedrock.env]` sub-table. When no `api_key` / `api_key_env` is configured, the CLI generates tokens from the AWS credential chain automatically:
+Providers with `type = "bedrock"` can use the standard [AWS CLI credential chain](https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-configure.html) to generate short-lived bearer tokens from your ambient AWS credentials (from SSO, instance roles, environment variables, shared config, and so on). Just specify your AWS region and optionally a named [profile](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html#cli-configure-files-using-profiles):
 
 ```toml
 [providers.bedrock]
@@ -170,7 +168,13 @@ AWS_REGION = "us-east-1"
 # AWS_PROFILE = "my-profile"   # optional named AWS CLI profile
 ```
 
-The region must be resolvable from `AWS_REGION` or `AWS_DEFAULT_REGION` (in the sub-table or exported in the shell). Inferring the region from `~/.aws/config` for the selected profile is not currently supported. The base URL defaults to the regional `bedrock-runtime.<region>.amazonaws.com` endpoint — set `base_url` (or the `AWS_BEDROCK_BASE_URL` env key) only when you need a custom endpoint such as `bedrock-mantle`, a proxy, or a FIPS/dual-stack hostname.
+Alternatively, you can use an [Amazon Bedrock API key](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html) instead by configuring it through `api_key`, `api_key_env`, or the `AWS_BEARER_TOKEN_BEDROCK` key in the `[providers.bedrock.env]` sub-table. However, for security AWS generally advises against using long-lived API keys. A configured key always takes precedence over the ambient credential chain.
+
+The region must be resolvable from `AWS_REGION` or `AWS_DEFAULT_REGION` (in the sub-table or exported in the shell). Inferring a default region from `~/.aws/config` is not currently supported.
+
+### Endpoint URLs
+
+The base URL defaults to the regional `bedrock-runtime.<region>.amazonaws.com` endpoint — set `base_url` (or the `AWS_BEDROCK_BASE_URL` env key) only when you need a custom endpoint such as `bedrock-mantle`, a proxy, or a FIPS/dual-stack hostname. A custom `base_url` is the complete URL: it must include the wire path (`/anthropic` or `/openai/v1`) of the protocol your models serve, and the CLI uses it verbatim without appending a protocol suffix.
 
 ### Models and wire protocol
 
@@ -206,17 +210,7 @@ protocol = "openai_responses"         # explicit override: Kimi K3 also serves t
 max_context_size = 1000000
 ```
 
-Most current Bedrock models require an inference profile ID (the `global.` / `us.` / … prefix) rather than the base model ID; check the model card in the Bedrock console.
-
-### Long-lived Bedrock API keys
-
-If you prefer a static [Amazon Bedrock API key](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html) instead of ambient AWS credentials, configure it like any other provider — via `api_key`, `api_key_env`, or the `AWS_BEARER_TOKEN_BEDROCK` key in the `[providers.bedrock.env]` sub-table. A configured key always takes precedence over the ambient credential chain:
-
-```toml
-[providers.bedrock]
-type = "bedrock"
-api_key_env = "AWS_BEARER_TOKEN_BEDROCK"   # read the key from this shell variable on every request
-```
+Most current Bedrock models require an inference profile ID (the `global.` / `us.` / … prefix) rather than the base model ID; check the [model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-cards.html) for your target models for full details of supported APIs and inference profiles.
 
 ## `vertexai`
 
