@@ -577,6 +577,31 @@ describe('WsConnectionV1 heartbeat', () => {
     conn.close();
   });
 
+  it('survives a short stall that pushes the pong past the old deadline', () => {
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { heartbeatIntervalMs: 10 });
+
+    vi.advanceTimersByTime(10);
+    expect(sentTypes(socket)).toEqual(['ping']);
+
+    const steadyNow = Date.now;
+    const wallClock = vi.spyOn(Date, 'now').mockImplementation(() => steadyNow() + 5);
+    vi.advanceTimersByTime(10);
+
+    expect(sentTypes(socket)).toEqual(['ping', 'ping']);
+    expect(socket.closeCalls).toHaveLength(0);
+
+    socket.emit('message', JSON.stringify({ type: 'pong' }));
+    vi.advanceTimersByTime(10);
+    expect(socket.closeCalls).toHaveLength(0);
+    socket.emit('message', JSON.stringify({ type: 'pong' }));
+    vi.advanceTimersByTime(10);
+    expect(socket.closeCalls).toHaveLength(0);
+    expect(sentTypes(socket)).toEqual(['ping', 'ping', 'ping', 'ping']);
+    conn.close();
+    wallClock.mockRestore();
+  });
+
   it('survives a forward wall-clock jump without reaping', () => {
     const socket = new FakeSocket();
     const conn = makeConn(socket, { heartbeatIntervalMs: 10 });

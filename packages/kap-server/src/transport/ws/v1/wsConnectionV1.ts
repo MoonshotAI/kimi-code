@@ -152,15 +152,15 @@ export class WsConnectionV1 implements BroadcastTarget {
     const now = Date.now();
     const sinceLastHeartbeat = now - this.lastHeartbeatAt;
     this.lastHeartbeatAt = now;
-    if (sinceLastHeartbeat >= this.heartbeatIntervalMs * HEARTBEAT_MISS_LIMIT) {
-      this.lastInboundAt = now;
+    if (now - this.lastInboundAt < this.heartbeatIntervalMs * HEARTBEAT_MISS_LIMIT) {
       this.sendImmediateFrame(buildPing());
       return;
     }
-    if (now - this.lastInboundAt >= this.heartbeatIntervalMs * HEARTBEAT_MISS_LIMIT) {
+    if (sinceLastHeartbeat <= this.heartbeatIntervalMs) {
       this.close(1001, 'heartbeat timeout');
       return;
     }
+    this.lastInboundAt = now;
     this.sendImmediateFrame(buildPing());
   }
 
