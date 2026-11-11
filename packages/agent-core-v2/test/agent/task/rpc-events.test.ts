@@ -552,13 +552,25 @@ describe('AgentTaskService — notification delivery', () => {
     expect(await ctx.get(IAgentTaskService).readOutput(task.handler.taskId)).toContain('persisted partial output');
   });
 
-  it('replays restored terminal agent task notifications when undelivered', async () => {
+  it('replays restored terminal agent task notifications after a prompt-only crash', async () => {
     const ctx = track(createTestAgent(taskServices()));
+    const info = agentInfo();
+    const notificationId = `task:${info.taskId}:${info.status}`;
     ctx.mockNextResponse({ type: 'text', text: 'restored agent ack' });
-    await restoreTaskHistory(ctx, [agentInfo()]);
+    await restoreTaskHistory(ctx, [info], 'main', [{
+      type: 'turn.prompt',
+      agentId: 'main',
+      origin: {
+        kind: 'task', taskId: info.taskId, status: info.status, notificationId,
+      },
+      promptId: notificationId,
+      turnId: 0,
+      trigger: 'notify',
+      input: [{ type: 'text', text: 'notification prompt' }],
+    } as unknown as WireRecord]);
     await ctx.get(IAgentLoopService).settled();
-    expect(taskNotifications(ctx, 'agent-done0000')).toHaveLength(1);
-    expect(JSON.stringify(taskNotifications(ctx, 'agent-done0000'))).toContain('<notification');
+    expect(taskNotifications(ctx, info.taskId)).toHaveLength(1);
+    expect(JSON.stringify(taskNotifications(ctx, info.taskId))).toContain('<notification');
   });
 
   it('replays restored terminal process task notifications when undelivered', async () => {

@@ -26,11 +26,8 @@ export async function restoreTaskCompletions(options: {
   }
   for (const record of journal) {
     if (record['agentId'] !== undefined && record['agentId'] !== options.agentId) continue;
-    if (record.type === 'turn.prompt') {
-      recordDelivery(record['origin'] as PromptOrigin | undefined);
-    } else if (record.type === 'context.append_message') {
-      recordDelivery((record['message'] as ContextMessage | undefined)?.origin);
-    }
+    if (record.type !== 'context.append_message') continue;
+    recordDelivery((record['message'] as ContextMessage | undefined)?.origin);
   }
   for (const record of restorable) {
     if (record.type !== 'task.waitDelivered' || record['agentId'] !== options.agentId) continue;
