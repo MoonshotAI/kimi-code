@@ -3,8 +3,11 @@
  * Fetches models.dev/api.json, strips fields not needed by kimi-code, and
  * writes the result as raw JSON for release builds to inline.
  *
- * This script intentionally does not write into src/. The source tree keeps a
- * placeholder so the generated catalog is not committed.
+ * Release builds pass --out to a scratch file and inline it through the
+ * __KIMI_CODE_BUILT_IN_CATALOG__ define. The same output is also checked in
+ * at packages/agent-core-v2/src/app/kosongConfig/builtInModelsDev.snapshot.json
+ * as the fallback for builds from source (dev, the desktop app); regenerate
+ * it with `pnpm --filter @moonshot-ai/agent-core-v2 catalog:update`.
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";
