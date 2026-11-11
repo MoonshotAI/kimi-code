@@ -108,6 +108,7 @@ import {
   type HostDisposable,
   type HostSessions,
 } from './hostExtension';
+import { createHostTelemetry, type HostTelemetry } from './hostTelemetry';
 
 export interface ServerHostIdentity extends KimiHostIdentity {
   readonly displayName?: string;
@@ -149,6 +150,7 @@ export interface RunningServer {
   readonly core: Scope;
   readonly connectionRegistry: IConnectionRegistry;
   readonly sessions: HostSessions;
+  readonly hostTelemetry: HostTelemetry;
   registerHostExtension(extension: HostExtension): HostDisposable;
   readonly authTokenService: IAuthTokenService;
   readonly host: string;
@@ -239,6 +241,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     [...logSeed(logging), ...(opts.seeds ?? [])],
   );
   const hostSessions = createHostSessions(core);
+  const hostTelemetry = createHostTelemetry(core);
   const hostExtensions = new Set<HostDisposable>();
   const registerExtension = (extension: HostExtension): HostDisposable => {
     const registration = registerHostExtension(core, extension, hostSessions);
@@ -679,7 +682,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   process.on('unhandledRejection', onUnhandledRejection);
   process.on('uncaughtException', onUncaughtException);
 
-  return { app, core, connectionRegistry, sessions: hostSessions, registerHostExtension: registerExtension, authTokenService, host, port: boundPort, close };
+  return { app, core, connectionRegistry, sessions: hostSessions, hostTelemetry, registerHostExtension: registerExtension, authTokenService, host, port: boundPort, close };
 }
 
 export const PORT_RETRY_LIMIT = 100;

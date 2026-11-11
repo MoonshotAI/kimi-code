@@ -16,7 +16,7 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import { TurnEnded } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import { ISessionEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
-import { startServer } from '../src/index';
+import { IMAGE_BYTE_BUDGET, resolveMaxImageEdgePx, startServer } from '../src/index';
 import type { HostAgent, HostExtension } from '../src/index';
 
 const homes: string[] = [];
@@ -119,4 +119,36 @@ it('exposes session and agent capabilities without leaking engine scopes', async
   expect(closedSessions).toEqual([handle.id]);
   await manager.delete(handle.id);
   expect(deletedSessions).toEqual([handle.id]);
+}, 30000);
+
+
+it('exposes host telemetry and public image limits', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'kap-host-telemetry-'));
+  homes.push(home);
+  const server = await startServer({
+    hostIdentity: { productName: 'test-host', platform: 'test', version: '0.0.0' },
+    homeDir: home,
+    port: 0,
+    logLevel: 'silent',
+    env: { ...process.env, KIMI_CODE_EXPERIMENTAL_PERSISTENCE_MINIDB_READMODEL: 'false', KIMI_CODE_EXPERIMENTAL_SEARCH_WORKER: 'false' },
+  });
+  servers.push(server);
+  await expect(server.hostTelemetry.readConsent()).resolves.toBeUndefined();
+  await expect(server.hostTelemetry.getCachedAccessToken()).resolves.toBeNull();
+  await expect(server.hostTelemetry.countSessions()).resolves.toBe(0);
+  const appender = server.hostTelemetry.createCloudAppender({
+    deviceId: 'device-test',
+    appName: 'test-host',
+    getAccessToken: () => null,
+  });
+  expect(appender).toEqual(expect.objectContaining({
+    track: expect.any(Function),
+    startPeriodicFlush: expect.any(Function),
+    stopPeriodicFlush: expect.any(Function),
+    retryDiskEvents: expect.any(Function),
+  }));
+  await server.core.accessor.get(ISessionManager).create({ workDir: home });
+  await expect(server.hostTelemetry.countSessions()).resolves.toBe(1);
+  expect(IMAGE_BYTE_BUDGET).toBeGreaterThan(0);
+  expect(resolveMaxImageEdgePx()).toBeGreaterThan(0);
 }, 30000);
