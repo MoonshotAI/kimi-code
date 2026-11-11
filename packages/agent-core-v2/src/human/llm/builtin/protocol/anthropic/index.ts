@@ -53,9 +53,10 @@ function anthropicCustomHeaderEnvNames(): string[] {
 
 function buildDefaultHeaders(
   headers: Record<string, string> | undefined,
-  bearer: string | undefined,
+  credentialBearer: string | undefined,
 ): Record<string, string | null> {
-  const defaultHeaders: Record<string, string | null> = bearer === undefined ? { authorization: null } : {};
+  const defaultHeaders: Record<string, string | null> =
+    credentialBearer === undefined ? { authorization: null } : {};
   for (const name of anthropicCustomHeaderEnvNames()) {
     defaultHeaders[name] = null;
   }
@@ -66,30 +67,35 @@ function buildDefaultHeaders(
 }
 
 function createClient(endpoint: ResolvedEndpoint): Anthropic {
-  const { bearer, rest } = splitBearer(endpoint.headers);
+  const { credentialBearer, headers } = splitCredentialBearer(endpoint.headers, endpoint.apiKey);
   return new Anthropic({
-    apiKey: bearer === undefined ? (endpoint.apiKey ?? 'unused') : null,
-    authToken: bearer ?? null,
+    apiKey: credentialBearer === undefined ? (endpoint.apiKey ?? 'unused') : null,
+    authToken: credentialBearer ?? null,
     baseURL: endpoint.baseUrl ?? null,
-    defaultHeaders: buildDefaultHeaders(rest, bearer),
+    defaultHeaders: buildDefaultHeaders(headers, credentialBearer),
     maxRetries: 0,
     fetch: endpoint.fetch,
   });
 }
 
-function splitBearer(headers: Record<string, string> | undefined): {
-  readonly bearer: string | undefined;
-  readonly rest: Record<string, string> | undefined;
+function splitCredentialBearer(
+  headers: Record<string, string> | undefined,
+  apiKey: string | undefined,
+): {
+  readonly credentialBearer: string | undefined;
+  readonly headers: Record<string, string> | undefined;
 } {
   const authorization = headerValue(headers ?? {}, 'authorization');
   const bearer = authorization?.startsWith('Bearer ')
     ? authorization.slice('Bearer '.length)
     : undefined;
-  if (bearer === undefined || headers === undefined) return { bearer, rest: headers };
+  if (bearer === undefined || bearer !== apiKey || headers === undefined) {
+    return { credentialBearer: undefined, headers };
+  }
   const rest = Object.fromEntries(
     Object.entries(headers).filter(([name]) => name.toLowerCase() !== 'authorization'),
   );
-  return { bearer, rest: Object.keys(rest).length > 0 ? rest : undefined };
+  return { credentialBearer: bearer, headers: Object.keys(rest).length > 0 ? rest : undefined };
 }
 
 function requestOptionsOf(request: Request, signal: AbortSignal) {

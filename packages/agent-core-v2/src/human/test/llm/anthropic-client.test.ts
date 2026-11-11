@@ -48,6 +48,7 @@ describe('anthropic client auth mapping', () => {
     anthropicProtocol.client(
       {
         baseUrl: 'https://bedrock-runtime.us-east-1.amazonaws.com/anthropic',
+        apiKey: 'bedrock-api-key-token',
         headers: { authorization: 'Bearer bedrock-api-key-token', 'x-custom': 'keep' },
       },
       undefined,
@@ -58,5 +59,24 @@ describe('anthropic client auth mapping', () => {
     };
     expect(options.defaultHeaders).not.toHaveProperty('authorization');
     expect(options.defaultHeaders['x-custom']).toBe('keep');
+  });
+
+  it('preserves a custom bearer header alongside an api key (dual-auth gateway)', () => {
+    anthropicProtocol.client(
+      {
+        baseUrl: 'https://anthropic-gateway.example.test',
+        apiKey: 'sk-ant-key',
+        headers: { authorization: 'Bearer gateway-token' },
+      },
+      undefined,
+    );
+
+    expect(constructor).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKey: 'sk-ant-key', authToken: null }),
+    );
+    const options = constructor.mock.calls[0]?.[0] as {
+      defaultHeaders: Record<string, string | null>;
+    };
+    expect(options.defaultHeaders['authorization']).toBe('Bearer gateway-token');
   });
 });
