@@ -1773,14 +1773,14 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
-  it('cancels when a droppable user-role tail is appended during the summary request', async () => {
+  it('keeps an injection appended during the summary request', async () => {
     let ctx!: TestAgentContext;
     const generate: GenerateFn = requesterFromGenerateFn(async () => {
       ctx.appendSystemReminder('RACE-NOTIFY-OUTPUT', {
         kind: 'injection',
         variant: 'race-notification',
       });
-      return textResult('Stale compacted summary.');
+      return textResult('Compacted summary.');
     });
     ctx = testAgent({ generate });
     ctx.configure({
@@ -1789,15 +1789,25 @@ describe('FullCompaction', () => {
       tools: SNAPSHOT_VISIBLE_TOOLS,
     });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
-    const cancelled = ctx.once('compaction.cancelled');
+    const completed = ctx.once('compaction.completed');
 
     await ctx.rpc.beginCompaction({});
-    await cancelled;
+    await completed;
 
+    const events = ctx.newEvents();
+    expect(countEvents(events, 'full_compaction.complete')).toBe(1);
+    expect(countEvents(events, 'full_compaction.cancel')).toBe(0);
+    expect(ctx.context.history().at(-1)?.origin).toEqual({
+      kind: 'injection',
+      variant: 'race-notification',
+    });
+    expect(ctx.context.history().at(-2)?.origin).toEqual({
+      kind: 'injection',
+      variant: 'compaction_continuation',
+    });
     expect(ctx.compactHistory().map((entry) => entry.text).join('\n')).toContain(
-      'RACE-NOTIFY-OUTPUT',
+      'Compacted summary.',
     );
-    expect(countEvents(ctx.newEvents(), 'full_compaction.complete')).toBe(0);
     await ctx.expectResumeMatches();
   });
 

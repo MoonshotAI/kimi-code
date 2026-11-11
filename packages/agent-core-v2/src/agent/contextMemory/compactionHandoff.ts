@@ -98,11 +98,14 @@ export function buildContextCompactionShape(
     : [...selection.head, elisionMessage, ...selection.tail];
   const contextSummary = input.contextSummary ?? input.summary;
   const continuationMessage = createCompactionContinuationMessage();
+  const appendedInjections = history
+    .slice(input.compactedCount)
+    .filter((message) => message.origin?.kind === 'injection');
   const tokensAfter =
     input.tokensAfter ??
     (input.requestOverheadTokens ?? 0) +
       (input.summaryOutputTokens ?? estimate.text(contextSummary)) +
-      estimate.messages([...keptMessages, continuationMessage]);
+      estimate.messages([...keptMessages, continuationMessage, ...appendedInjections]);
   const keptUserMessageCount =
     input.keptUserMessageCount ?? selection.head.length + selection.tail.length;
   const keptHeadUserMessageCount =
@@ -121,6 +124,7 @@ export function buildContextCompactionShape(
       ...keptMessages,
       createCompactionSummaryMessage(contextSummary),
       continuationMessage,
+      ...appendedInjections,
     ],
   };
 }
