@@ -18,7 +18,7 @@ import {
 import { TurnEnded } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import { historyEntryFromContext } from '@moonshot-ai/agent-core-v2/agent/loop/history';
 import { ISessionEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
-import { IMAGE_BYTE_BUDGET, resolveMaxImageEdgePx, startServer } from '../src/index';
+import { IMAGE_BYTE_BUDGET, startServer } from '../src/index';
 import type { HostAgent, HostExtension } from '../src/index';
 
 const homes: string[] = [];
@@ -153,7 +153,7 @@ it('exposes session and agent capabilities without leaking engine scopes', async
 it('exposes host telemetry and public image limits', async () => {
   const home = await mkdtemp(join(tmpdir(), 'kap-host-telemetry-'));
   homes.push(home);
-  const env: NodeJS.ProcessEnv = { ...process.env, KIMI_CODE_EXPERIMENTAL_PERSISTENCE_MINIDB_READMODEL: 'false', KIMI_CODE_EXPERIMENTAL_SEARCH_WORKER: 'false' };
+  const env: NodeJS.ProcessEnv = { ...process.env, KIMI_CODE_EXPERIMENTAL_PERSISTENCE_MINIDB_READMODEL: 'false', KIMI_CODE_EXPERIMENTAL_SEARCH_WORKER: 'false', KIMI_IMAGE_MAX_EDGE_PX: '1234' };
   const server = await startServer({
     hostIdentity: { productName: 'test-host', platform: 'test', version: '0.0.0' },
     homeDir: home,
@@ -175,16 +175,18 @@ it('exposes host telemetry and public image limits', async () => {
     startPeriodicFlush: expect.any(Function),
     stopPeriodicFlush: expect.any(Function),
     retryDiskEvents: expect.any(Function),
+    shutdown: expect.any(Function),
   }));
   const registration = server.hostTelemetry.addAppender(appender);
   registration.dispose();
+  await appender.shutdown();
   const manager = server.core.accessor.get(ISessionManager);
   const handle = await manager.create({ workDir: home });
   await expect(server.hostTelemetry.countSessions()).resolves.toBe(1);
   await manager.archive(handle.id);
   await expect(server.hostTelemetry.countSessions()).resolves.toBe(1);
   expect(IMAGE_BYTE_BUDGET).toBeGreaterThan(0);
-  expect(resolveMaxImageEdgePx()).toBeGreaterThan(0);
+  expect(server.hostTelemetry.resolveMaxImageEdgePx()).toBe(1234);
   env['KIMI_DISABLE_TELEMETRY'] = '1';
   await expect(server.hostTelemetry.readConsent()).resolves.toBe(false);
   vi.useFakeTimers();

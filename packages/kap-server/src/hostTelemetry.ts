@@ -26,6 +26,7 @@ export interface HostTelemetryAppender {
   startPeriodicFlush(): void;
   stopPeriodicFlush(): void;
   retryDiskEvents(): Promise<void>;
+  shutdown(): Promise<void>;
 }
 
 export interface HostCloudAppenderOptions {
@@ -39,6 +40,7 @@ export interface HostCloudAppenderOptions {
 export interface HostTelemetry {
   readConsent(): Promise<unknown>;
   defaultModel(): string | undefined;
+  resolveMaxImageEdgePx(): number;
   getCachedAccessToken(): Promise<string | null>;
   createCloudAppender(options: HostCloudAppenderOptions): HostTelemetryAppender;
   addAppender(appender: HostTelemetryAppender): HostDisposable;
@@ -67,6 +69,13 @@ export function createHostTelemetry(core: Scope): HostTelemetry {
         return config.get<string>('defaultModel') ?? undefined;
       } catch {
         return undefined;
+      }
+    },
+    resolveMaxImageEdgePx: () => {
+      try {
+        return config.get<{ readonly maxEdgePx?: number }>('image')?.maxEdgePx ?? 2_000;
+      } catch {
+        return 2_000;
       }
     },
     getCachedAccessToken: async () => (await auth.getCachedAccessToken()) ?? null,

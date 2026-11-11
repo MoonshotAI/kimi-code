@@ -28,7 +28,7 @@ export type {
   HostTelemetryAppender,
   HostTelemetryRecord,
 } from './hostTelemetry';
-export { IMAGE_BYTE_BUDGET, resolveMaxImageEdgePx } from '@moonshot-ai/agent-core-v2/agent/media/image-compress';
+export { IMAGE_BYTE_BUDGET } from '@moonshot-ai/agent-core-v2/agent/media/image-compress';
 export { okEnvelope, errEnvelope } from './envelope';
 export type { Envelope } from './envelope';
 export { classify } from './security/bindClassify';
