@@ -19,6 +19,7 @@ import { wireJournalBackupKey } from '#/wire/repair';
 import { WireError, WireErrors } from '#/wire/errors';
 import { IWireService } from '#/wire/wire';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
+import { normalizeLegacyTurnSteerRecords } from '#/wire/human';
 
 import { recordingWireLog, registerTestAgentWire, testWireScope, noopLogger } from './stubs';
 
@@ -120,7 +121,7 @@ describe('WireService appendRecord', () => {
     for (const record of records) wire.appendRecord(record);
 
     expect(await readRecords()).toEqual(records);
-    expect((await collect(wire.read())).slice(1)).toEqual(records);
+    expect((await collect(wire.read())).slice(1)).toEqual(normalizeLegacyTurnSteerRecords(records));
   });
 
   it('runs records through the dehydrate queue in append order', async () => {
@@ -1084,15 +1085,29 @@ describe('WireService tree projection', () => {
     };
   }
 
+  function turnPrompt(text: string, promptId: string, turnId: number): WireRecord {
+    return {
+      type: 'turn.prompt',
+      input: [{ type: 'text', text }],
+      origin: { kind: 'user' },
+      promptId,
+      turnId,
+      trigger: 'normal',
+      time: turnId,
+    };
+  }
+
   it('writes the undo switch triple with paired physical line numbers after re-reading a rewritten journal', async () => {
     const enc = new TextEncoder();
     const seed = [
+      JSON.stringify(turnPrompt('first', 'p1', 0)),
       JSON.stringify({ type: 'context.append_message', message: userPrompt('first', 'p1'), time: 1 }),
       JSON.stringify({
         type: 'context.append_message',
         message: { role: 'assistant', content: [{ type: 'text', text: 'answer' }], toolCalls: [] },
         time: 2,
       }),
+      JSON.stringify(turnPrompt('second', 'p2', 1)),
       JSON.stringify({ type: 'context.append_message', message: userPrompt('second', 'p2'), time: 3 }),
     ];
     await storage.write(testWireScope(SCOPE, KEY), AGENT_WIRE_RECORD_KEY, enc.encode(`${seed.join('\n')}\n`));
@@ -1101,32 +1116,32 @@ describe('WireService tree projection', () => {
 
     expect(switched).toEqual({
       branch: 'b1',
-      base: { branch: 'main', line: 3 },
-      edgeLine: 5,
-      forkLine: 3,
+      base: { branch: 'main', line: 4 },
+      edgeLine: 7,
+      forkLine: 4,
     });
     const onDisk = await readRecords();
-    expect(onDisk.slice(4)).toEqual([
+    expect(onDisk.slice(6)).toEqual([
       {
         type: 'agent.switched',
         agentId: 'test-agent',
         branch: 'b1',
         reason: 'undo',
-        base: { branch: 'main', line: 3 },
+        base: { branch: 'main', line: 4 },
         turns: 1,
-        legacyUndoLine: 6,
+        legacyUndoLine: 8,
         time: expect.any(Number),
       },
       { type: 'context.undo', agentId: 'test-agent', count: 1, time: expect.any(Number) },
       { type: 'context.undone', agentId: 'test-agent', turns: 1, time: expect.any(Number) },
     ]);
-    expect(wire.lineCount()).toBe(7);
+    expect(wire.lineCount()).toBe(9);
     expect(wire.journalRef).toEqual({ tree: testWireScope(SCOPE, KEY), branch: 'b1' });
     expect(wire.branches()).toEqual(['main', 'b1']);
-    expect(wire.nextSeq()).toBe(8);
+    expect(wire.nextSeq()).toBe(10);
 
     expect(await collect(wire.read())).toEqual([
-      ...onDisk.slice(0, 3).map((record) => {
+      ...onDisk.slice(0, 4).map((record) => {
         if (record.type !== 'context.append_message') return record;
         const message = record['message'] as LegacyMessage & { id?: string; origin?: unknown };
         return {
@@ -1138,15 +1153,15 @@ describe('WireService tree projection', () => {
           },
         };
       }),
-      onDisk[5]!,
-      onDisk[6]!,
+      onDisk[7]!,
+      onDisk[8]!,
     ]);
     expect(await collect(wire.readRaw())).toEqual(onDisk);
 
     await expect(wire.switchBranch({ turns: 2 })).rejects.toMatchObject({
       reason: 'insufficient',
     });
-    expect(wire.lineCount()).toBe(7);
+    expect(wire.lineCount()).toBe(9);
 
     wire.appendRecord({
       type: 'context.apply_compaction',
@@ -1159,8 +1174,8 @@ describe('WireService tree projection', () => {
     await expect(wire.switchBranch({ turns: 1 })).rejects.toMatchObject({
       reason: 'compaction_boundary',
     });
-    expect(wire.lineCount()).toBe(8);
-    expect(await readRecords()).toHaveLength(8);
+    expect(wire.lineCount()).toBe(10);
+    expect(await readRecords()).toHaveLength(10);
   });
 
   it('walks nested switch edges to compute the active chain', async () => {
@@ -1217,6 +1232,7 @@ describe('WireService tree projection', () => {
   it('retries the branch switch on read interference, then rejects when the switch triple is interleaved', async () => {
     const records: WireRecord[] = [
       { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      turnPrompt('first', 'p1', 0),
       { type: 'context.append_message', message: userPrompt('first', 'p1'), time: 1 },
       {
         type: 'context.append_message',
@@ -1249,8 +1265,8 @@ describe('WireService tree projection', () => {
     const switched = await concurrent.switchBranch({ turns: 1 });
 
     expect(switched).toMatchObject({ branch: 'b1', base: { branch: 'main', line: 1 }, forkLine: 1 });
-    expect(records[3]).toEqual({ type: 'wire.test.concurrent', time: 9 });
-    expect(records[4]?.type).toBe('agent.switched');
+    expect(records[4]).toEqual({ type: 'wire.test.concurrent', time: 9 });
+    expect(records[5]?.type).toBe('agent.switched');
 
     interferences = 0;
     maxInterferences = Number.MAX_SAFE_INTEGER;
@@ -1260,6 +1276,7 @@ describe('WireService tree projection', () => {
 
     const tailRecords: WireRecord[] = [
       { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      turnPrompt('first', 'p1', 0),
       { type: 'context.append_message', message: userPrompt('first', 'p1'), time: 1 },
       {
         type: 'context.append_message',
@@ -1282,6 +1299,7 @@ describe('WireService tree projection', () => {
     });
     expect(tailRecords.map((record) => record.type)).toEqual([
       'metadata',
+      'turn.prompt',
       'context.append_message',
       'context.append_message',
       'agent.switched',

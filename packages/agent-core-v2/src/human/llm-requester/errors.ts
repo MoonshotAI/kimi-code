@@ -130,7 +130,11 @@ export function toLlmTransportErrorMessage(message: string): LlmRemoteErrorMessa
     return { kind: 'timeout', message, retryable: true };
   }
   if (NETWORK_RE.test(message)) {
-    return { kind: 'connection', message, retryable: true };
+    return {
+      kind: 'connection',
+      message,
+      retryable: !/\b(?:ECONNREFUSED|ENOTFOUND)\b/.test(message),
+    };
   }
   return { kind: 'provider', message: `Error: ${message}`, retryable: true };
 }

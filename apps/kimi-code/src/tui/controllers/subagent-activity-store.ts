@@ -219,10 +219,9 @@ export class SubagentActivityStore {
         this.bump(record);
         return;
       }
-      case 'tool.progress': {
-        const kind = event.update.kind;
-        if (kind !== 'stdout' && kind !== 'stderr' && kind !== 'status') return;
-        const text = event.update.text;
+      case 'tool.updated': {
+        const status = event.fields['status'];
+        const text = event.output?.text ?? (event.output === undefined && typeof status === 'string' ? status : undefined);
         if (text === undefined || text.trim().length === 0) return;
         const record = this.records.get(event.agentId);
         const call = record === undefined ? undefined : this.findToolCall(record, event.toolCallId);

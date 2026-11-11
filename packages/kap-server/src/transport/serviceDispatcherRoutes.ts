@@ -88,7 +88,7 @@ function makeHandler(
     let promptAttempt: PromptAttempt | undefined;
     try {
       promptAttempt =
-        scopeKind === 'agent' && service === 'agentPromptService' && method === 'submit'
+        scopeKind === 'agent' && service === 'agentLoopService' && method === 'submit'
           ? beginPromptAttempt(
               (req.params as Record<string, string>)['session_id'] ?? '',
               (arg as { promptId?: string } | undefined)?.promptId,

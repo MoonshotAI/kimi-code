@@ -1,7 +1,7 @@
 import {
   AGENT_WIRE_RECORD_KEY,
   IAgentBlobService,
-  IAgentContextMemoryService,
+  IAgentLoopService,
   IAgentScopeContext,
   IAppendLogStore,
   ISessionIndex,
@@ -122,7 +122,7 @@ export async function loadMessageHistory(
   sessionCreatedAtMs: number,
 ): Promise<Message[]> {
   const transcript = await readTranscript(core, agent);
-  const contextMessages = agent.accessor.get(IAgentContextMemoryService).get();
+  const contextMessages = agent.accessor.get(IAgentLoopService).history();
   const merged = mergeLiveTail(transcript, contextMessages);
   const entries = await rehydrate(agent, merged.messages);
 

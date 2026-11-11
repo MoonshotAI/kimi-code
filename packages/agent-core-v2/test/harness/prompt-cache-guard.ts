@@ -3,20 +3,25 @@ import { isDeepStrictEqual } from 'node:util';
 
 import { afterEach } from 'vitest';
 
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentLoopService } from '#/agent/loop/loop';
+import type { IAgentJournal } from '#/wire/journal';
 import type {
-  AgentLLMRequestOverrides,
-  AgentLLMRequestPartHandler,
   AgentLLMRequestSource,
-  AgentLLMRequestTask,
+  AgentTurnExecutionInput,
+  CoreLoopRequester,
   LoopRequester,
-  PreparedTurnRequestConfig,
+  OperationLoopRequesterOptions,
 } from '#/agent/loop/requesterContract';
+import type { TurnExecution } from '#/agent/loop/core/request';
 import type {
-  LlmCredentialProvider,
   LlmRequestConfig,
   LlmRequester,
 } from '#human/llm-requester/requester';
+import {
+  contentsOf,
+  requesterContents,
+  type LlmRequestPart,
+} from '#human/llm/requester';
 
 import { generateCallOf } from './scripted-generate';
 import { findGenerateCallPrefixBreak, type GenerateCall } from './snapshots';
@@ -24,11 +29,13 @@ import { findGenerateCallPrefixBreak, type GenerateCall } from './snapshots';
 interface RequestScope {
   readonly agent: object;
   readonly source: AgentLLMRequestSource | undefined;
+  readonly branch: string;
   readonly contextRevision: number;
   attempts: number;
 }
 
 interface RecordedRequest {
+  readonly branch: string;
   readonly contextRevision: number;
   readonly model: string;
   readonly profile: Readonly<Record<(typeof PROFILE_FIELDS)[number], unknown>>;
@@ -55,42 +62,51 @@ export function promptCacheComparisons(): number {
 export class PromptCacheGuardedLoopRequester implements LoopRequester {
   constructor(
     private readonly inner: LoopRequester,
-    private readonly context: IAgentContextMemoryService,
+    private readonly context: IAgentLoopService,
+    private readonly journal: IAgentJournal,
+    private readonly ready?: () => Promise<void>,
   ) {}
 
-  prepareTurnConfig(turnId: number): PreparedTurnRequestConfig | undefined {
-    return this.inner.prepareTurnConfig(turnId);
-  }
-
-  currentCredentialProvider(): LlmCredentialProvider | undefined {
-    return this.inner.currentCredentialProvider();
-  }
-
-  credentialProviderForTurn(turnId: number): LlmCredentialProvider | undefined {
-    return this.inner.credentialProviderForTurn(turnId);
-  }
-
-  request(
-    overrides?: AgentLLMRequestOverrides,
-    onPart?: AgentLLMRequestPartHandler,
-    signal?: AbortSignal,
-  ) {
-    return this.start(overrides, onPart, signal).result;
-  }
-
-  start(
-    overrides?: AgentLLMRequestOverrides,
-    onPart?: AgentLLMRequestPartHandler,
-    signal?: AbortSignal,
-  ): AgentLLMRequestTask {
-    const contextRevision = this.context.prefixRevision();
-    const scope: RequestScope = {
-      agent: this,
-      source: overrides?.source,
-      contextRevision,
-      attempts: 0,
+  createTurnExecution(input: AgentTurnExecutionInput): TurnExecution {
+    const execution = this.inner.createTurnExecution(input);
+    return {
+      ...execution,
+      requester: this.guard(
+        execution.requester,
+        () => ({ type: 'turn', turnId: input.turnId, step: input.step() }),
+        input.historyRevision,
+      ),
     };
-    return requestScope.run(scope, () => this.inner.start(overrides, onPart, signal));
+  }
+
+  async prepareOperation(options: OperationLoopRequesterOptions, signal: AbortSignal): Promise<CoreLoopRequester> {
+    await this.ready?.();
+    const requester = await this.inner.prepareOperation(options, signal);
+    return this.guard(requester, options.source, () => this.context.historyRevision());
+  }
+
+  private guard(
+    requester: CoreLoopRequester,
+    source: () => AgentLLMRequestSource,
+    revision: () => number,
+  ): CoreLoopRequester {
+    const wrap = (inner: CoreLoopRequester): CoreLoopRequester => ({
+      [requesterContents]: contentsOf(inner),
+      with: ((next: LlmRequestPart | CoreLoopRequester) =>
+        wrap(inner.with(next as never))) as CoreLoopRequester['with'],
+      request: (rest) => inner.request(rest),
+      generate: (rest, control) => {
+        const scope: RequestScope = {
+          agent: this,
+          source: source(),
+          branch: this.journal.journalRef.branch,
+          contextRevision: revision(),
+          attempts: 0,
+        };
+        return requestScope.run(scope, () => inner.generate(rest, control));
+      },
+    });
+    return wrap(requester);
   }
 }
 
@@ -100,6 +116,7 @@ export function guardPromptCachePrefix(requester: LlmRequester): LlmRequester {
       const scope = requestScope.getStore();
       if (scope === undefined) return requester.generate(config, content, control);
       const request: RecordedRequest = {
+        branch: scope.branch,
         contextRevision: scope.contextRevision,
         model: modelIdentity(config),
         profile: Object.fromEntries(PROFILE_FIELDS.map((field) => [field, config[field]])) as RecordedRequest['profile'],
@@ -123,6 +140,7 @@ function checkPrefixExtension(scope: RequestScope, request: RecordedRequest): vo
   if (kind === undefined) return;
   const previous = lastTurnRequests.get(scope.agent);
   if (previous === undefined) return;
+  if (previous.branch !== request.branch) return;
   if (previous.contextRevision !== request.contextRevision || previous.model !== request.model) return;
   comparisons += 1;
   const label = scope.attempts === 1 ? kind : `${kind} retry`;

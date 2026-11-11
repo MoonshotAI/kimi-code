@@ -284,8 +284,7 @@ export function salvageInterruptedMessage(message: AssistantMessage): AssistantM
 }
 
 export interface MessageAccumulator {
-  push(part: StreamedMessagePart): number | undefined;
-  hasToolCall(): boolean;
+  push(part: StreamedMessagePart): { part: StreamedMessagePart; block: number | undefined };
   toolCallEnd(index?: number | string): ToolCall | undefined;
   finish(): AssistantMessage;
 }
@@ -296,10 +295,11 @@ export function createMessageAccumulator(): MessageAccumulator {
   let pending: StreamedMessagePart | null = null;
   let pendingBlock: number | undefined;
   let deferredThink: ThinkPart | null = null;
-  const open = (part: StreamedMessagePart): number | undefined => {
-    pending = structuredClone(part);
-    pendingBlock = isContentPart(pending) ? message.content.length : undefined;
-    return pendingBlock;
+  const open = (part: StreamedMessagePart) => {
+    const opened = structuredClone(part);
+    pending = opened;
+    pendingBlock = isContentPart(opened) ? message.content.length : undefined;
+    return { part: opened, block: pendingBlock };
   };
   const flush = () => {
     if (pending !== null) {
@@ -342,23 +342,20 @@ export function createMessageAccumulator(): MessageAccumulator {
                 ? part.argumentsPart
                 : target.arguments + part.argumentsPart;
           }
-          return undefined;
+          return { part, block: undefined };
         }
       }
       if (part.type === 'text') deferredThink = null;
       if (pending === null) return open(part);
       if (pending.type === 'text' && part.type === 'think' && isVacuousContentPart(part)) {
         deferredThink = structuredClone(part);
-        return undefined;
+        return { part: deferredThink, block: undefined };
       }
       if (!mergeInPlace(pending, part)) {
         flush();
         return open(part);
       }
-      return pendingBlock;
-    },
-    hasToolCall() {
-      return message.toolCalls.length > 0 || (pending !== null && isToolCall(pending));
+      return { part: pending, block: pendingBlock };
     },
     toolCallEnd(index) {
       if (

@@ -29,7 +29,7 @@ export interface AgentRunCompletion {
 
 export interface AgentRunHandle {
   readonly agentId: string;
-  readonly turn: Turn;
+  readonly turn?: Turn;
   readonly completion: Promise<AgentRunCompletion>;
   readonly partialOutput: () => string;
 }

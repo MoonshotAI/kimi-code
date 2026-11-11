@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { contextMemoryKey } from '#/agent/contextMemory/contextOps';
+import { ContextClear } from '#/agent/contextMemory/contextEvents';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { ContextSize, TokenCountingStrategy } from '#/agent/tokenCounting/tokenCounting';
 import {
@@ -59,6 +59,12 @@ export class TokenCountingAgentModel extends AgentModel<TokenCountingState> {
         this.state.tokens = tokens;
       }
       void this.emit(new AgentStatusUpdated({ agentId: event.agentId, contextTokens: tokens }));
+    });
+    this.on(ContextClear, (event) => {
+      const committed = this._state();
+      if (committed.anchors.length !== 1 || committed.anchors[0] !== ZERO_ANCHOR) this.state.anchors = [ZERO_ANCHOR];
+      if (committed.tokens !== 0) this.state.tokens = 0;
+      void this.emit(new AgentStatusUpdated({ agentId: event.agentId, contextTokens: 0 }));
     });
     this.on(TokenCountingTurnRecorded, (event) => {
       const length = normalizeAnchorLength(event.length);
@@ -161,7 +167,7 @@ export class TokenCountingAgentModel extends AgentModel<TokenCountingState> {
   }
 
   private context(): readonly ContextMessage[] {
-    return this.readLegacy(contextMemoryKey) as readonly ContextMessage[];
+    return this.readHistory() as readonly ContextMessage[];
   }
 
   private latestAnchor(contextLength: number): TokenAnchor {
@@ -182,6 +188,7 @@ export const TokenCountingAgentModelDefinition = defineAgentModel({
     schema: z.custom<TokenCountingState>(),
   },
   events: [
+    ContextClear,
     TokenCountingMeasured,
     TokenCountingTruncated,
     TokenCountingRebased,
@@ -190,9 +197,16 @@ export const TokenCountingAgentModelDefinition = defineAgentModel({
 });
 
 function matchesContext(input: readonly Message[], context: readonly ContextMessage[]): boolean {
-  if (input.length !== context.length) return false;
+  if (input.length > context.length) return false;
   for (let index = 0; index < input.length; index += 1) {
-    if (input[index] !== context[index]) return false;
+    const left = input[index]!;
+    const right = context[index]!;
+    if (left.role !== right.role) return false;
+    if (JSON.stringify(left.content) !== JSON.stringify(right.content)) return false;
+    const leftToolCalls = left.role === 'assistant' ? left.toolCalls : [];
+    const rightToolCalls = right.role === 'assistant' ? right.toolCalls : [];
+    if (JSON.stringify(leftToolCalls) !== JSON.stringify(rightToolCalls)) return false;
+    if ((left.role === 'tool' ? left.toolCallId : undefined) !== (right.role === 'tool' ? right.toolCallId : undefined)) return false;
   }
   return true;
 }

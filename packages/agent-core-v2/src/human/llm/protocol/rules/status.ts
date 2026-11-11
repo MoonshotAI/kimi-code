@@ -2,13 +2,33 @@ import type { LlmRemoteErrorMessage, LlmStatusErrorInfo } from '#/llm/response';
 
 const NETWORK_RE = /network|connection|connect|disconnect|terminated/i;
 const TIMEOUT_RE = /timed?\s*out|timeout|deadline/i;
+const UNREACHABLE_CONNECTION = new Set(['ECONNREFUSED', 'ENOTFOUND']);
+
+export function isUnreachableConnection(error: unknown): boolean {
+  const seen = new Set<unknown>();
+  let current = error;
+  while (typeof current === 'object' && current !== null && !seen.has(current)) {
+    seen.add(current);
+    const record = current as { code?: unknown; message?: unknown; cause?: unknown };
+    if (typeof record.code === 'string' && UNREACHABLE_CONNECTION.has(record.code)) return true;
+    if (typeof record.message === 'string' && /\b(?:ECONNREFUSED|ENOTFOUND)\b/.test(record.message)) {
+      return true;
+    }
+    current = record.cause;
+  }
+  return false;
+}
 
 export function toLlmTransportErrorMessage(message: string): LlmRemoteErrorMessage {
   if (TIMEOUT_RE.test(message)) {
     return { kind: 'timeout', message, retryable: true };
   }
   if (NETWORK_RE.test(message)) {
-    return { kind: 'connection', message, retryable: true };
+    return {
+      kind: 'connection',
+      message,
+      retryable: !/\b(?:ECONNREFUSED|ENOTFOUND)\b/.test(message),
+    };
   }
   return { kind: 'provider', message: `Error: ${message}`, retryable: true };
 }

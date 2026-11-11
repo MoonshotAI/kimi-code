@@ -156,26 +156,23 @@ export class AgentSkillService implements IAgentSkillService {
       void this.recordActivation(activation.origin);
     }
     const status = this.loop.snapshot();
-    const steerable = input.steerIfActive === true && status.activeTurnId !== undefined;
-    const { id } = this.loop.submit(
-      {
-        message: {
-          role: 'user',
-          content: [...prepared.map((activation) => activation.part), ...input.input],
-        },
-        meta: {
-          promptId: input.promptId,
-          origin: {
-            kind: 'user',
-            skillActivations: prepared.map((activation) => activation.entry),
-            clientMetadata: input.clientMetadata,
-            attachments: input.attachments,
-          } as PromptOrigin,
-          tracked: true,
-        },
+    const steerable = input.steerIfActive === true && status.state === 'running';
+    const submission = {
+      message: {
+        role: 'user' as const,
+        content: [...prepared.map((activation) => activation.part), ...input.input],
       },
-      { steerIfActive: input.steerIfActive },
-    );
+      meta: {
+        promptId: input.promptId,
+        origin: {
+          kind: 'user',
+          skillActivations: prepared.map((activation) => activation.entry),
+          clientMetadata: input.clientMetadata,
+          attachments: input.attachments,
+        } as PromptOrigin,
+      },
+    };
+    const { id } = steerable ? this.loop.sendNow(submission) : this.loop.submit(submission);
     const handle = this.loop.promptHandle(id)!;
     if (!steerable && (status.state === 'running' || status.paused || status.queue.length > 0)) {
       if (prepared.length === 1) {
@@ -200,7 +197,7 @@ export class AgentSkillService implements IAgentSkillService {
       prompt_id: id,
       created_at: handle.createdAt,
       state: handle.state === 'blocked' ? 'blocked' : 'running',
-      steered: steerable && turn?.id === status.activeTurnId,
+      steered: steerable,
     };
   }
 
@@ -306,14 +303,13 @@ export class AgentSkillService implements IAgentSkillService {
     this.publishActivation(origin);
 
     if (input === undefined) return undefined;
-    const steer = this.loop.snapshot().state === 'running';
-    const { id } = this.loop.submit(
-      {
-        message: { role: 'user', content: [...input] },
-        meta: { promptId, origin, tracked: !steer },
-      },
-      { steerIfActive: steer },
-    );
+    const status = this.loop.snapshot();
+    const running = status.state === 'running';
+    const submission = {
+      message: { role: 'user' as const, content: [...input] },
+      meta: { promptId, origin },
+    };
+    const { id } = running ? this.loop.sendNow(submission) : this.loop.submit(submission);
     return this.loop.promptHandle(id)!.launched;
   }
 

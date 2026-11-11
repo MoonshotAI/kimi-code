@@ -16,7 +16,8 @@ import {
   normalizeAgentProfile,
   type AgentProfile,
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
+import { IAgentLoopService } from '#/agent/loop/loop';
+import type { ProfileData } from '#/agent/profile/profile';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
@@ -87,12 +88,12 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     } as unknown as IAgentUserToolService;
   }
 
-  function profileServiceStub(data: ProfileData): IAgentProfileService {
+  function profileServiceStub(data: ProfileData): IAgentLoopService {
     return {
       _serviceBrand: undefined,
       data: () => data,
       getActiveToolNames: () => data.activeToolNames,
-    } as unknown as IAgentProfileService;
+    } as unknown as IAgentLoopService;
   }
 
   function createdHandle(agentId: string): IAgentScopeHandle {
@@ -101,7 +102,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
       kind: LifecycleScope.Agent,
       accessor: {
         get: (serviceId: unknown) => {
-          if (serviceId === IAgentProfileService) {
+          if (serviceId === IAgentLoopService) {
             return profileServiceStub({ ...callerData, modelCapabilities: {} as never });
           }
           if (serviceId === IAgentPermissionModeService) return createdPermissionMode;
@@ -157,7 +158,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
       kind: LifecycleScope.Agent,
       accessor: {
         get: (serviceId: unknown) => {
-          if (serviceId === IAgentProfileService) return profileServiceStub(callerData);
+          if (serviceId === IAgentLoopService) return profileServiceStub(callerData);
           if (serviceId === IAgentPermissionModeService) return callerPermissionMode;
           if (serviceId === IAgentUserToolService) return callerUserTools;
           if (serviceId === IAgentEnvironmentService) {

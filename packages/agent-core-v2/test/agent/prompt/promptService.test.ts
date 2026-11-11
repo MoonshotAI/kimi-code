@@ -4,13 +4,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { IEventBus } from '#/app/event/eventBus';
 import { IFileService } from '#/app/file/fileService';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { IAgentLoopService, type PromptHandle } from '#/agent/loop/loop';
 import { TurnStarted, TurnStepInterrupted } from '#/agent/loop/turnEvents';
-import { TurnEnded, TurnSteer } from '#/agent/loop/turnOps';
+import { TurnPrompt } from '#/agent/loop/turnOps';
+import { emptyUsage } from '#human/llm-requester/usage';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
-import { IAgentProfileService } from '#/agent/profile/profile';
 import {
   PromptAborted,
   PromptCompleted,
@@ -19,8 +18,7 @@ import {
   PromptSteered,
   PromptSubmitted,
 } from '#/agent/prompt/promptEvents';
-import type { LlmRequester } from '#human/llm-requester/requester';
-import type { ContentPart } from '#human/llm/message';
+import type { ContentPart, Message } from '#human/llm/message';
 
 import {
   appService,
@@ -74,7 +72,7 @@ async function enqueue(
   const status = loop.snapshot();
   const { id } = loop.submit({
     message: { role: 'user', content: [...input.message.content] },
-    meta: { promptId: input.id, origin: input.message.origin, tracked: true },
+    meta: { promptId: input.id, origin: input.message.origin },
   });
   const handle = loop.promptHandle(id)!;
   if (status.state === 'idle' && !status.paused && status.queue.length === 0) {
@@ -242,22 +240,23 @@ describe('prompt queue', () => {
     const two = await enqueue(loop, { message: message('two') });
     await loop.steer([two.id, one.id]);
     expect(steered.map((event) => [event.activePromptId, event.promptIds])).toEqual([
-      [active.id, [one.id, two.id]],
+      [active.id, [one.id]],
+      [active.id, [two.id]],
     ]);
 
     hold.release();
     await loop.settled();
   });
 
-  it('reserves a messageId on prompt.steered and publishes turn.steer at materialize', async () => {
+  it('publishes turn.prompt for each message in its own turn', async () => {
     setup();
     const hold = holdNextStep();
     ctx.mockNextResponse({ type: 'text', text: 'active' });
     ctx.mockNextResponse({ type: 'text', text: 'merged' });
     const steered: PromptSteered[] = [];
-    const events: TurnSteer[] = [];
+    const events: TurnPrompt[] = [];
     ctx.get(IEventBus).subscribe(PromptSteered, (event) => steered.push(event));
-    ctx.get(IEventBus).subscribe(TurnSteer, (event) => events.push(event));
+    ctx.get(IEventBus).subscribe(TurnPrompt, (event) => events.push(event));
 
     await enqueue(loop, { message: message('active') });
     await hold.started;
@@ -265,33 +264,34 @@ describe('prompt queue', () => {
     const two = await enqueue(loop, { message: message('two') });
 
     await loop.steer([two.id, one.id]);
-    expect(events).toHaveLength(1);
-    expect(steered[0]?.messageId).toEqual(expect.any(String));
-    expect(steered[0]?.promptIds).toEqual([one.id, two.id]);
+    expect(events.filter((event) => event.trigger === 'notify')).toHaveLength(0);
+    expect(steered.map((event) => [event.messageId, event.promptIds])).toEqual([
+      [one.id, [one.id]],
+      [two.id, [two.id]],
+    ]);
 
     hold.release();
     await loop.settled();
-    expect(events).toHaveLength(1);
-    expect(events[0]?.input).toEqual([
-      { type: 'text', text: 'one' },
-      { type: 'text', text: 'two' },
-    ]);
-    expect(events[0]?.messageId).toBe(steered[0]?.messageId);
-    expect(events[0]?.promptIds).toEqual([one.id, two.id]);
+    const materialized = events.filter((event) => event.trigger === 'notify');
+    expect(materialized.map((event) => event.turnId)).toEqual([1, 2]);
+    expect(materialized[0]?.input).toEqual([{ type: 'text', text: 'one' }]);
+    expect(materialized[0]?.promptId).toBe(one.id);
+    expect(materialized[1]?.input).toEqual([{ type: 'text', text: 'two' }]);
+    expect(materialized[1]?.promptId).toBe(two.id);
   });
 
   it('keeps each steered prompt client metadata in FIFO order without adding it to model content', async () => {
     setup();
     const hold = holdNextStep();
     const eventBus = ctx.get(IEventBus);
-    const events: TurnSteer[] = [];
+    const events: TurnPrompt[] = [];
     const submitted: PromptSubmitted[] = [];
     const queued: PromptQueued[] = [];
     const steered: PromptSteered[] = [];
     eventBus.subscribe(PromptSubmitted, (event) => submitted.push(event));
     eventBus.subscribe(PromptQueued, (event) => queued.push(event));
     eventBus.subscribe(PromptSteered, (event) => steered.push(event));
-    eventBus.subscribe(TurnSteer, (event) => events.push(event));
+    eventBus.subscribe(TurnPrompt, (event) => events.push(event));
     await enqueue(loop, { message: message('active') });
     await hold.started;
     const first = { composer: { version: 1, refId: 'first' } };
@@ -300,36 +300,42 @@ describe('prompt queue', () => {
     const two = await enqueue(loop, { message: { ...message('two'), origin: { kind: 'user', clientMetadata: [second] } } });
     await loop.steer([two.id, one.id]);
     await Promise.resolve();
-    expect(events).toHaveLength(1);
+    expect(events.filter((event) => event.trigger === 'notify')).toHaveLength(0);
     expect(submitted.find((event) => event.promptId === one.id)?.clientMetadata).toEqual([first]);
     expect(queued.find((event) => event.promptId === two.id)?.clientMetadata).toEqual([second]);
-    expect(PromptSteered.schema.parse(steered[0]).promptIds).toEqual([one.id, two.id]);
+    expect(PromptSteered.schema.parse(steered[0]).promptIds).toEqual([one.id]);
     hold.release();
     await loop.settled();
-    expect(events).toHaveLength(1);
-    const merged = ctx
-      .get(IAgentContextMemoryService)
-      .get()
-      .find(
+    const materialized = events.filter((event) => event.trigger === 'notify');
+    expect(materialized.map((event) => event.turnId)).toEqual([1, 2]);
+    const messages = ctx
+      .get(IAgentLoopService)
+      .history()
+      .filter(
         (entry) =>
           entry.role === 'user' &&
-          entry.content.some((part) => part.type === 'text' && part.text === 'one') &&
-          entry.content.some((part) => part.type === 'text' && part.text === 'two'),
+          entry.content.some((part) => part.type === 'text' && (part.text === 'one' || part.text === 'two')),
       );
-    expect(merged?.origin).toMatchObject({ kind: 'user', clientMetadata: [first, second] });
-    expect(merged?.content).toEqual([
-      { type: 'text', text: 'one' },
-      { type: 'text', text: 'two' },
-    ]);
-    expect(merged?.id).toBe(steered[0]?.messageId);
+    expect(messages).toHaveLength(2);
+    expect(messages[0]).toMatchObject({
+      id: one.id,
+      origin: { kind: 'user', clientMetadata: [first] },
+      content: [{ type: 'text', text: 'one' }],
+    });
+    expect(messages[1]).toMatchObject({
+      id: two.id,
+      origin: { kind: 'user', clientMetadata: [second] },
+      content: [{ type: 'text', text: 'two' }],
+    });
+    expect(messages.map((message) => message.id)).toEqual(steered.map((event) => event.messageId));
   });
 
   it('keeps plain inputs beside composer metadata in a mixed steer', async () => {
     setup();
     const hold = holdNextStep();
     const eventBus = ctx.get(IEventBus);
-    const events: TurnSteer[] = [];
-    eventBus.subscribe(TurnSteer, (event) => events.push(event));
+    const events: TurnPrompt[] = [];
+    eventBus.subscribe(TurnPrompt, (event) => events.push(event));
     await enqueue(loop, { message: message('active') });
     await hold.started;
     const metadata = { display_text: 'Save button', kimi_code_composer: { version: 1 } };
@@ -338,20 +344,29 @@ describe('prompt queue', () => {
     const three = await enqueue(loop, { message: message('last instruction') });
     await loop.steer([three.id, two.id, one.id]);
     await Promise.resolve();
-    expect(events).toHaveLength(1);
+    expect(events.filter((event) => event.trigger === 'notify')).toHaveLength(0);
     hold.release();
     await loop.settled();
-    expect(events).toHaveLength(1);
-    const merged = ctx
-      .get(IAgentContextMemoryService)
-      .get()
-      .find(
+    const materialized = events.filter((event) => event.trigger === 'notify');
+    expect(materialized.map((event) => event.turnId)).toEqual([1, 2, 3]);
+    const messages = ctx
+      .get(IAgentLoopService)
+      .history()
+      .filter(
         (entry) =>
           entry.role === 'user' &&
-          entry.content.some((part) => part.type === 'text' && part.text === 'browser wire'),
+          entry.content.some((part) =>
+            part.type === 'text' && ['[literal](example.md)', 'browser wire', 'last instruction'].includes(part.text),
+          ),
       );
-    expect(merged?.origin).toMatchObject({ clientMetadata: [{ display_text: '[literal](example.md)' }, metadata, { display_text: 'last instruction' }] });
-    expect(merged?.content).toEqual([{ type: 'text', text: '[literal](example.md)' }, { type: 'text', text: 'browser wire' }, { type: 'text', text: 'last instruction' }]);
+    expect(messages).toHaveLength(3);
+    expect(messages[0]).toMatchObject({ id: one.id, content: [{ type: 'text', text: '[literal](example.md)' }] });
+    expect(messages[1]).toMatchObject({
+      id: two.id,
+      origin: { clientMetadata: [metadata] },
+      content: [{ type: 'text', text: 'browser wire' }],
+    });
+    expect(messages[2]).toMatchObject({ id: three.id, content: [{ type: 'text', text: 'last instruction' }] });
   });
 
   it('publishes prompt identities before each steered user message', async () => {
@@ -359,9 +374,9 @@ describe('prompt queue', () => {
     const hold = holdNextStep();
     ctx.mockNextResponse({ type: 'text', text: 'active' });
     ctx.mockNextResponse({ type: 'text', text: 'merged' });
-    const events: (PromptSteered | TurnSteer)[] = [];
+    const events: (PromptSteered | TurnPrompt)[] = [];
     ctx.get(IEventBus).subscribe(PromptSteered, (event) => events.push(event));
-    ctx.get(IEventBus).subscribe(TurnSteer, (event) => events.push(event));
+    ctx.get(IEventBus).subscribe(TurnPrompt, (event) => events.push(event));
 
     const active = await enqueue(loop, { message: message('active') });
     await hold.started;
@@ -370,172 +385,167 @@ describe('prompt queue', () => {
     await loop.steer([two.id, one.id]);
     const three = await enqueue(loop, { message: message('same text') });
     await loop.steer([three.id]);
-    const reserved = events.filter((event) => event.type === 'prompt.steered');
+    const reserved = events.filter((event): event is PromptSteered => 'activePromptId' in event);
     expect(reserved).toMatchObject([
-      { type: 'prompt.steered', activePromptId: active.id, promptIds: [one.id, two.id] },
+      { type: 'prompt.steered', activePromptId: active.id, promptIds: [one.id] },
+      { type: 'prompt.steered', activePromptId: active.id, promptIds: [two.id] },
       { type: 'prompt.steered', activePromptId: active.id, promptIds: [three.id] },
     ]);
-    expect(events.filter((event) => event.type === 'turn.steer')).toHaveLength(2);
+    expect(events.filter((event): event is TurnPrompt => 'trigger' in event && event.trigger === 'notify')).toHaveLength(0);
 
     hold.release();
     await loop.settled();
 
-    const materialized = events.filter((event) => event.type === 'turn.steer');
+    const materialized = events.filter((event): event is TurnPrompt => 'trigger' in event && event.trigger === 'notify');
     expect(materialized).toMatchObject([
-      { type: 'turn.steer', input: [{ type: 'text', text: 'same text' }, { type: 'text', text: 'same text' }] },
-      { type: 'turn.steer', input: [{ type: 'text', text: 'same text' }] },
+      { type: 'turn.prompt', turnId: 1, input: [{ type: 'text', text: 'same text' }] },
+      { type: 'turn.prompt', turnId: 2, input: [{ type: 'text', text: 'same text' }] },
+      { type: 'turn.prompt', turnId: 3, input: [{ type: 'text', text: 'same text' }] },
     ]);
-    expect(materialized[0]?.messageId).toBe(reserved[0]?.messageId);
-    expect(materialized[0]?.promptIds).toEqual([one.id, two.id]);
-    expect(reserved[1]?.messageId).toBe(three.id);
-    expect(materialized[1]?.messageId).toBe(three.id);
-    expect(materialized[1]?.promptIds).toEqual([three.id]);
+    expect(materialized.map((event) => event.promptId)).toEqual(reserved.map((event) => event.messageId));
+    expect(materialized.map((event) => event.promptId)).toEqual([one.id, two.id, three.id]);
   });
 
-  it('returns the prompt identity and continues after a stale gate failure', async () => {
-    setup();
-    const gateStarts: number[] = [];
-    let rejectFirst!: (error: Error) => void;
-    let markFirst!: () => void;
-    let markSecond!: () => void;
-    const first = new Promise<void>((resolve) => { markFirst = resolve; });
-    const second = new Promise<void>((resolve) => { markSecond = resolve; });
-    loop.hooks.onWillBeginStep.register('test-stale-gate', async (hookCtx, next) => {
-      gateStarts.push(hookCtx.step);
-      if (hookCtx.step === 1) {
-        markFirst();
-        await new Promise<void>((_resolve, reject) => { rejectFirst = reject; });
-      }
-      if (hookCtx.step === 2) markSecond();
-      await next();
-    });
-    ctx.mockNextResponse({ type: 'text', text: 'continued' });
-    const turnEnds: TurnEnded[] = [];
-    ctx.get(IEventBus).subscribe(TurnEnded, (event) => turnEnds.push(event));
-    await enqueue(loop, { message: message('active') });
-    await first;
+  it('returns the prompt identity and delivery state for an accepted steer', async () => {
+    let requestStarted!: () => void;
+    const started = new Promise<void>((resolve) => { requestStarted = resolve; });
+    let requests = 0;
+    const histories: (readonly Message[])[] = [];
+    const generate: NonNullable<TestAgentOptions['generate']> = {
+      generate: async (_config, content, control) => {
+        histories.push(structuredClone(content.messages));
+        requests += 1;
+        if (requests === 1) {
+          control.onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'partial answer' } });
+          requestStarted();
+          await new Promise<void>((resolve) => {
+            if (control.signal.aborted) {
+              resolve();
+              return;
+            }
+            control.signal.addEventListener('abort', () => resolve(), { once: true });
+          });
+          control.signal.throwIfAborted();
+        }
+        control.onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'after steer' } });
+        control.onEvent?.({ type: 'llm.streaming.usage', usage: emptyUsage() });
+        control.onEvent?.({
+          type: 'llm.streaming.finish',
+          finish: { finishReason: 'completed', rawFinishReason: 'stop' },
+        });
+        control.onEvent?.({ type: 'llm.done' });
+      },
+    };
+    setup({ generate });
+    const interrupted: TurnStepInterrupted[] = [];
+    ctx.get(IEventBus).subscribe(TurnStepInterrupted, (event) => interrupted.push(event));
+    const active = await enqueue(loop, { message: message('active') });
+    await started;
 
     const result = await ctx.rpc.steer({ input: [{ type: 'text', text: 'steer' }] });
-    await second;
+    await loop.settled();
 
     expect(result).toMatchObject({
       prompt_id: expect.any(String),
       state: 'running',
       steered: true,
-      turn_id: 0,
+      turn_id: 1,
     });
-    rejectFirst(new Error('stale gate'));
-    await loop.settled();
-    expect(gateStarts).toEqual([1, 2]);
-    expect(turnEnds).toMatchObject([{ turnId: 0, reason: 'completed' }]);
+    await expect(active.completion).resolves.toMatchObject({ state: 'completed' });
+    expect(interrupted).toMatchObject([{ turnId: 0, step: 1, stepId: expect.any(String), reason: 'steered' }]);
+    expect(loop.history()).toContainEqual(expect.objectContaining({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'partial answer' }],
+    }));
+    expect(histories[1]?.slice(-3)).toMatchObject([
+      { role: 'user', content: [{ type: 'text', text: 'active' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'partial answer' }] },
+      { role: 'user', content: [{ type: 'text', text: 'steer' }] },
+    ]);
   });
 
-  it('steers into an untracked active turn and interrupts the current llm request', async () => {
-    let calls = 0;
-    const signals: AbortSignal[] = [];
-    const generate: LlmRequester = {
-      generate: (_config, _content, { signal, onEvent }) => {
-        calls += 1;
-        signals.push(signal);
-        if (calls === 1) {
-          onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'partial' } });
-          return new Promise<void>((resolve) => {
-            signal.addEventListener('abort', () => resolve());
-          });
-        }
-        onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'continued' } });
-        onEvent?.({
-          type: 'llm.streaming.finish',
-          finish: { finishReason: 'completed', rawFinishReason: 'stop' },
-        });
-        onEvent?.({ type: 'llm.done' });
-        return Promise.resolve();
-      },
-    };
-    setup({ generate });
-    const turnStarts: TurnStarted[] = [];
-    ctx.get(IEventBus).subscribe(TurnStarted, (event) => turnStarts.push(event));
+  it('accepts new and queued steers during any active turn without overtaking normal FIFO', async () => {
+    setup();
+    await ctx.restorePersisted();
+    const hold = holdNextStep();
+    ctx.mockNextResponse({ type: 'text', text: 'continuation' });
+    const prompts: TurnPrompt[] = [];
+    const interrupted: TurnStepInterrupted[] = [];
+    ctx.get(IEventBus).subscribe(TurnPrompt, (event) => prompts.push(event));
+    ctx.get(IEventBus).subscribe(TurnStepInterrupted, (event) => interrupted.push(event));
     loop.submit({
       message: { role: 'user', content: message('continuation').content },
-      meta: { origin: { kind: 'user' }, tracked: false },
+      meta: { promptId: 'continuation', origin: { kind: 'system_trigger', name: 'goal_continuation' } as PromptOrigin },
     });
-    await vi.waitFor(() => {
-      expect(calls).toBe(1);
-    });
+    await hold.started;
+    expect(loop.snapshot()).toMatchObject({ activeTurnId: 0, activePromptId: 'continuation' });
 
-    const result = await ctx.rpc.steer({ input: [{ type: 'text', text: 'steer now' }] });
+    const steered = await enqueue(loop, { id: 'steered', message: message('steered') });
+    const normal = await enqueue(loop, { id: 'normal', message: message('normal') });
+    await loop.sendNow([steered.id]);
+    await loop.sendNow([steered.id]);
+    const pending = ctx.rpc.steer({ input: [{ type: 'text', text: 'direct steer' }] });
+    hold.release();
+    const result = await pending;
     await loop.settled();
 
     expect(result).toMatchObject({
       prompt_id: expect.any(String),
       state: 'running',
       steered: true,
-      turn_id: 0,
+      turn_id: 3,
     });
-    expect(signals[0]?.aborted).toBe(true);
-    expect(calls).toBe(2);
-    expect(turnStarts).toHaveLength(1);
+    expect(prompts.slice(1).map((event) => [event.turnId, event.trigger, event.promptId])).toEqual([
+      [1, 'normal', normal.id],
+      [2, 'notify', steered.id],
+      [3, 'notify', result.prompt_id],
+    ]);
+    expect(ctx.allEvents).toContainEqual(expect.objectContaining({
+      event: 'turn.ended',
+      args: expect.objectContaining({ turnId: 0, reason: 'completed' }),
+    }));
+    expect(interrupted).toMatchObject([{ turnId: 0, step: 1, stepId: expect.any(String), reason: 'steered' }]);
+    expect(ctx.llmCalls).toHaveLength(1);
+    expect(ctx.llmCalls[0]?.history.filter((entry) => entry.role === 'user')).toMatchObject([
+      { content: [{ type: 'text', text: 'continuation' }] },
+      { content: [{ type: 'text', text: 'normal' }] },
+      { content: [{ type: 'text', text: 'steered' }] },
+      { content: [{ type: 'text', text: 'direct steer' }] },
+    ]);
+    expect(ctx.llmCalls[0]?.history.some((entry) => entry.role === 'assistant')).toBe(false);
   });
 
-  it('interrupts the current llm step on steer and consumes it in the same turn', async () => {
-    let calls = 0;
-    const signals: AbortSignal[] = [];
-    const generate: LlmRequester = {
-      generate: (_config, _content, { signal, onEvent }) => {
-        calls += 1;
-        signals.push(signal);
-        if (calls === 1) {
-          onEvent?.({ type: 'llm.streaming.part', part: { type: 'think', think: 'partial thought' } });
-          onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'partial text' } });
-          return new Promise<void>((resolve) => {
-            signal.addEventListener('abort', () => resolve());
-          });
-        }
-        onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'seeded turn' } });
-        onEvent?.({
-          type: 'llm.streaming.finish',
-          finish: { finishReason: 'completed', rawFinishReason: 'stop' },
-        });
-        onEvent?.({ type: 'llm.done' });
-        return Promise.resolve();
-      },
-    };
-    setup({ generate });
-    const steerEvents: TurnSteer[] = [];
-    const stepInterruptions: TurnStepInterrupted[] = [];
-    const turnStarts: TurnStarted[] = [];
-    const turnEnds: TurnEnded[] = [];
-    ctx.get(IEventBus).subscribe(TurnSteer, (event) => steerEvents.push(event));
-    ctx.get(IEventBus).subscribe(TurnStepInterrupted, (event) => stepInterruptions.push(event));
-    ctx.get(IEventBus).subscribe(TurnStarted, (event) => turnStarts.push(event));
-    ctx.get(IEventBus).subscribe(TurnEnded, (event) => turnEnds.push(event));
+  it('publishes turn.prompt when an unconsumed steer seeds the next turn after cancel', async () => {
+    setup();
+    const hold = holdNextStep();
+    ctx.mockNextResponse({ type: 'text', text: 'seeded turn' });
+    const steerEvents: TurnPrompt[] = [];
+    ctx.get(IEventBus).subscribe(TurnPrompt, (event) => {
+      if (event.trigger === 'notify') steerEvents.push(event);
+    });
 
     await enqueue(loop, { message: message('active') });
-    await vi.waitFor(() => {
-      expect(calls).toBe(1);
-    });
+    await hold.started;
     const stop = await enqueue(loop, { message: message('stop') });
     await loop.steer([stop.id]);
+    loop.cancel();
+    hold.release();
     await loop.settled();
 
-    expect(signals[0]?.aborted).toBe(true);
-    expect(steerEvents).toMatchObject([{ turnId: 0, promptIds: [stop.id] }]);
-    expect(stepInterruptions).toMatchObject([{ turnId: 0, step: 1, reason: 'steered' }]);
-    expect(turnStarts).toHaveLength(1);
-    expect(turnEnds).toMatchObject([{ turnId: 0, reason: 'completed' }]);
+    expect(steerEvents).toHaveLength(1);
+    expect(steerEvents[0]).toMatchObject({ turnId: 1, promptId: stop.id });
     const materializedStops = ctx
-      .get(IAgentContextMemoryService)
-      .get()
+      .get(IAgentLoopService)
+      .history()
       .filter(
         (entry) =>
           entry.role === 'user' &&
           entry.content.some((part) => part.type === 'text' && part.text === 'stop'),
       );
     expect(materializedStops).toHaveLength(1);
-    expect(materializedStops[0]?.origin).toMatchObject({ inTurn: true });
   });
 
-  it('mirrors a drained steer when cancellation wins before the next gate', async () => {
+  it('preserves a notified steer when cancellation wins before the next gate', async () => {
     setup();
     let releaseFinish!: () => void;
     let markFinishing!: () => void;
@@ -551,30 +561,25 @@ describe('prompt queue', () => {
       await next();
     });
     ctx.mockNextResponse({ type: 'text', text: 'active' });
-    const steerEvents: TurnSteer[] = [];
-    ctx.get(IEventBus).subscribe(TurnSteer, (event) => steerEvents.push(event));
+    const steerEvents: TurnPrompt[] = [];
+    ctx.get(IEventBus).subscribe(TurnPrompt, (event) => {
+      if (event.trigger === 'notify') steerEvents.push(event);
+    });
 
     await enqueue(loop, { message: message('active') });
     await finishing;
-    const { id } = loop.submit(
-      {
-        message: { role: 'user', content: message('stop').content },
-        meta: { origin: { kind: 'user' }, tracked: true },
-      },
-      { steerIfActive: true },
-    );
-    await vi.waitFor(() => {
-      expect(loop.snapshot().notificationCount).toBe(0);
+    const { id } = loop.notify({
+      message: { role: 'user', content: message('stop').content },
+      meta: { origin: { kind: 'user' } },
     });
     loop.cancel();
     releaseFinish();
     await loop.settled();
 
     expect(steerEvents).toHaveLength(1);
-    expect(steerEvents[0]?.promptIds).toEqual([id]);
-    const materializedStops = ctx
-      .get(IAgentContextMemoryService)
-      .get()
+    expect(steerEvents[0]).toMatchObject({ turnId: 1, promptId: id });
+    const materializedStops = loop
+      .history()
       .filter(
         (entry) =>
           entry.role === 'user' &&
@@ -606,16 +611,13 @@ describe('prompt queue', () => {
     setup();
     ctx.mockNextResponse({ type: 'text', text: 'injected' });
 
-    const { id } = loop.submit(
-      {
-        message: { role: 'user', content: message('system').content },
-        meta: { origin: { kind: 'injection', variant: 'test' } as PromptOrigin },
-      },
-      { steerIfActive: true },
-    );
+    const { id } = loop.submit({
+      message: { role: 'user', content: message('system').content },
+      meta: { origin: { kind: 'injection', variant: 'test' } as PromptOrigin },
+    });
     const turn = await loop.promptHandle(id)!.launched;
     expect(loop.snapshot().queue).toEqual([]);
-    expect(loop.snapshot().activePromptId).toBeUndefined();
+    expect(loop.snapshot().activePromptId).toBe(id);
     await turn?.result;
     await loop.settled();
   });
@@ -679,7 +681,7 @@ describe('prompt queue', () => {
     const bundled = bundledMessage('review', 'launching');
     const { id } = loop.submit({
       message: { role: 'user', content: bundled.content },
-      meta: { tracked: true, origin: bundled.origin as PromptOrigin },
+      meta: { origin: bundled.origin as PromptOrigin },
     });
     await entered;
     expect(pendingIds(loop)).toEqual([id]);
@@ -689,7 +691,7 @@ describe('prompt queue', () => {
     expect(loop.snapshot().queue).toHaveLength(0);
     await loop.settled();
 
-    const history = ctx.context.get();
+    const history = ctx.context.history();
     expect(history[0]?.role).toBe('user');
     expect(history[0]?.content).toEqual([
       {
@@ -697,7 +699,7 @@ describe('prompt queue', () => {
         text: '<hook_result hook_event="UserPromptSubmit">\nfrom hook\n</hook_result>',
         meta: { contentType: 'text/xml', source: 'user prompt submit hook' },
       },
-      { type: 'text', text: '<skill>review</skill>' },
+      { type: 'text', text: '<skill>review</skill>', meta: { activationId: 'act-review', source: 'skill activation' } },
       { type: 'text', text: 'launching' },
     ]);
     expect(started).toEqual(['launching']);
@@ -710,7 +712,7 @@ describe('prompt queue', () => {
         text: '<hook_result hook_event="UserPromptSubmit">\nfrom hook\n</hook_result>',
         meta: { contentType: 'text/xml', source: 'user prompt submit hook' },
       },
-      { type: 'text', text: '<skill>review</skill>' },
+      { type: 'text', text: '<skill>review</skill>', meta: { activationId: 'act-review', source: 'skill activation' } },
       { type: 'text', text: 'launching' },
     ]);
   });
@@ -728,7 +730,7 @@ describe('prompt queue', () => {
     });
     await expect(handle.completion).resolves.toMatchObject({ state: 'blocked' });
 
-    const history = ctx.context.get();
+    const history = ctx.context.history();
     expect(history).toHaveLength(1);
     expect(history[0]?.origin).toEqual({ kind: 'user' });
     expect(history[0]?.content).toEqual([
@@ -757,7 +759,7 @@ describe('prompt queue', () => {
     setup();
     const hold = holdNextStep();
     ctx.mockNextResponse({ type: 'text', text: 'seen' });
-    vi.spyOn(ctx.get(IAgentProfileService), 'getModelProviderType').mockReturnValue(undefined);
+    vi.spyOn(ctx.get(IAgentLoopService), 'getModelProviderType').mockReturnValue(undefined);
     const url = `data:image/avif;base64,${Buffer.from([1, 2, 3]).toString('base64')}`;
 
     await enqueue(loop, {
@@ -770,7 +772,7 @@ describe('prompt queue', () => {
     });
     await hold.started;
 
-    const appended = ctx.context.get();
+    const appended = ctx.context.history();
     expect(appended).toHaveLength(1);
     const parts = appended[0]!.content;
     expect(parts.some((part) => part.type === 'image_url')).toBe(false);
@@ -799,7 +801,7 @@ describe('prompt queue', () => {
     });
     await hold.started;
 
-    const parts = ctx.context.get()[0]!.content;
+    const parts = ctx.context.history()[0]!.content;
     expect(parts).toEqual([{ type: 'image_url', imageUrl: { url } }]);
 
     hold.release();
@@ -811,7 +813,7 @@ describe('prompt queue', () => {
     const hold = holdNextStep();
     ctx.mockNextResponse({ type: 'text', text: 'active' });
     ctx.mockNextResponse({ type: 'text', text: 'merged' });
-    vi.spyOn(ctx.get(IAgentProfileService), 'getModelProviderType').mockReturnValue(undefined);
+    vi.spyOn(ctx.get(IAgentLoopService), 'getModelProviderType').mockReturnValue(undefined);
 
     await enqueue(loop, { message: message('active') });
     await hold.started;
@@ -829,7 +831,7 @@ describe('prompt queue', () => {
     hold.release();
     await loop.settled();
 
-    const parts = ctx.context.get().flatMap((entry) => entry.content);
+    const parts = ctx.context.history().flatMap((entry) => entry.content);
     expect(parts.some((part) => part.type === 'image_url')).toBe(false);
     expect(
       parts.some((part) => part.type === 'text' && part.text.includes('image/avif')),
@@ -889,11 +891,9 @@ describe('prompt queue', () => {
 
     await loop.steer([one.id, two.id]);
 
-    expect(steered).toHaveLength(1);
-    expect(steered[0]).toEqual([
-      { type: 'text', text: 'first user text' },
-      { type: 'text', text: 'second user text' },
-    ]);
+    expect(steered).toHaveLength(2);
+    expect(steered[0]).toEqual([{ type: 'text', text: 'first user text' }]);
+    expect(steered[1]).toEqual([{ type: 'text', text: 'second user text' }]);
 
     hold.release();
     await loop.settled();
@@ -979,7 +979,7 @@ describe('prompt queue', () => {
     await loop.settled();
   });
 
-  it('keeps bundled skill blocks at the merged message prefix when steering', async () => {
+  it('keeps bundled skill blocks with each steered message', async () => {
     setup();
     const hold = holdNextStep();
     ctx.mockNextResponse({ type: 'text', text: 'active' });
@@ -994,26 +994,29 @@ describe('prompt queue', () => {
     hold.release();
     await loop.settled();
 
-    const merged = ctx.context.get().find(
+    const messages = ctx.context.history().filter(
       (entry) => entry.origin?.kind === 'user' && entry.origin.skillActivations !== undefined,
     );
-    expect(merged?.content).toEqual([
+    expect(messages).toHaveLength(2);
+    expect(messages[0]?.content).toEqual([
       {
         type: 'text',
         text: '<skill>review</skill>',
         meta: { source: 'skill activation', activationId: 'act-review' },
       },
+      { type: 'text', text: 'user A' },
+    ]);
+    expect(messages[1]?.content).toEqual([
       {
         type: 'text',
         text: '<skill>security</skill>',
         meta: { source: 'skill activation', activationId: 'act-security' },
       },
-      { type: 'text', text: 'user A' },
       { type: 'text', text: 'user B' },
     ]);
   });
 
-  it('concatenates origin file attachments when steering queued prompts', async () => {
+  it('preserves each prompt origin file attachments when steering queued prompts', async () => {
     setup();
     const hold = holdNextStep();
     ctx.mockNextResponse({ type: 'text', text: 'active' });
@@ -1046,44 +1049,84 @@ describe('prompt queue', () => {
     hold.release();
     await loop.settled();
 
-    const merged = ctx.context.get().find(
+    const messages = ctx.context.history().filter(
       (entry) => entry.origin?.kind === 'user' && entry.origin.attachments !== undefined,
     );
-    expect(merged?.origin?.kind === 'user' && merged.origin.attachments).toEqual([
+    expect(messages).toHaveLength(2);
+    expect(messages[0]?.origin?.kind === 'user' && messages[0].origin.attachments).toEqual([
       { name: 'a.txt', mediaType: 'text/plain', size: 1, path: '/data/a.txt' },
+    ]);
+    expect(messages[1]?.origin?.kind === 'user' && messages[1].origin.attachments).toEqual([
       { name: 'b.txt', mediaType: 'text/plain', size: 2, path: '/data/b.txt' },
     ]);
-    expect(merged?.origin?.kind === 'user' && merged.origin.skillActivations).toBeUndefined();
+    expect(messages[0]?.origin?.kind === 'user' && messages[0].origin.skillActivations).toBeUndefined();
+    expect(messages[1]?.origin?.kind === 'user' && messages[1].origin.skillActivations).toBeUndefined();
   });
 
-  it('steers a fresh submission into the active turn and settles it with the parent', async () => {
-    setup();
-    const hold = holdNextStep();
-    ctx.mockNextResponse({ type: 'text', text: 'active' });
-    ctx.mockNextResponse({ type: 'text', text: 'merged' });
+  it('launches and settles a fresh steered submission in the next turn', async () => {
+    let requestStarted!: () => void;
+    const started = new Promise<void>((resolve) => { requestStarted = resolve; });
+    let releaseRequest!: () => void;
+    const requestGate = new Promise<void>((resolve) => { releaseRequest = resolve; });
+    let requests = 0;
+    let aborted = false;
+    const generate: NonNullable<TestAgentOptions['generate']> = {
+      generate: async (_config, _content, control) => {
+        requests += 1;
+        if (requests === 1) {
+          control.onEvent?.({
+            type: 'llm.streaming.part',
+            part: { type: 'function', id: 'call-work', name: 'Work', arguments: '{}' },
+          });
+          control.signal.addEventListener('abort', () => { aborted = true; }, { once: true });
+          requestStarted();
+          await requestGate;
+          control.signal.throwIfAborted();
+          control.onEvent?.({ type: 'llm.streaming.usage', usage: emptyUsage() });
+          control.onEvent?.({
+            type: 'llm.streaming.finish',
+            finish: { finishReason: 'tool_calls', rawFinishReason: 'tool_calls' },
+          });
+        } else {
+          control.onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'after steer' } });
+          control.onEvent?.({ type: 'llm.streaming.usage', usage: emptyUsage() });
+          control.onEvent?.({
+            type: 'llm.streaming.finish',
+            finish: { finishReason: 'completed', rawFinishReason: 'stop' },
+          });
+        }
+        control.onEvent?.({ type: 'llm.done' });
+      },
+    };
+    setup({ generate });
     const steered: PromptSteered[] = [];
     ctx.get(IEventBus).subscribe(PromptSteered, (event) => steered.push(event));
 
     const active = await enqueue(loop, { message: message('active') });
-    await hold.started;
-    const { id } = loop.submit(
-      {
-        message: { role: 'user', content: message('steer me').content },
-        meta: { tracked: true },
-      },
-      { steerIfActive: true },
-    );
+    await started;
+    const { id } = loop.sendNow({
+      message: { role: 'user', content: message('steer me').content },
+      meta: {  },
+    });
     const handle = loop.promptHandle(id)!;
 
     expect(steered.map((event) => [event.activePromptId, event.promptIds])).toEqual([
       [active.id, [id]],
     ]);
     expect(handle.state).toBe('steered');
-    await expect(handle.launched).resolves.toBeDefined();
+    let launched = false;
+    void handle.launched.then(() => {
+      launched = true;
+    });
+    await Promise.resolve();
+    expect(launched).toBe(false);
+    expect(aborted).toBe(false);
 
-    hold.release();
+    releaseRequest();
+    await expect(handle.launched).resolves.toMatchObject({ id: 1, state: 'running' });
     await expect(handle.completion).resolves.toMatchObject({ state: 'completed' });
     await loop.settled();
+    expect(aborted).toBe(false);
   });
 
   it('carries submit metadata on the queue snapshot', async () => {
@@ -1095,7 +1138,7 @@ describe('prompt queue', () => {
     await hold.started;
     const { id } = loop.submit({
       message: { role: 'user', content: message('meta').content },
-      meta: { promptId: 'meta-id', tracked: true },
+      meta: { promptId: 'meta-id' },
     });
 
     expect(loop.snapshot().queue).toEqual([
@@ -1103,7 +1146,6 @@ describe('prompt queue', () => {
         meta: expect.objectContaining({
           promptId: 'meta-id',
           origin: { kind: 'user' },
-          tracked: true,
           userMessageId: 'meta-id',
         }),
       }),

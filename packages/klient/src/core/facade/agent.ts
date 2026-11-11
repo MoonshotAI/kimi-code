@@ -14,7 +14,7 @@ import type { IAgentEnvironmentBindingService } from '@moonshot-ai/agent-core-v2
 
 import type { ISessionTokenCountingService } from '@moonshot-ai/agent-core-v2/session/tokenCounting/sessionTokenCounting';
 import type { IAgentPlanService } from '@moonshot-ai/agent-core-v2/features/plan/plan';
-import type { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
+import type { IAgentLoopService } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import type { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommand';
 import type { IAgentSkillService } from '@moonshot-ai/agent-core-v2/features/skill/skillService';
 import type { IAgentTaskService } from '@moonshot-ai/agent-core-v2/agent/task/task';
@@ -43,13 +43,17 @@ import type { ScopedCaller } from './session.js';
 // klient free of protocol-package imports).
 export type PromptLaunchResult = import('@moonshot-ai/agent-core-v2/agent/loop/loop').PromptLaunchResult | undefined;
 export type SteerResult = import('@moonshot-ai/agent-core-v2/agent/loop/loop').SteerResult;
+export type AgentSteerEntry = {
+  readonly message: { readonly role: 'user'; readonly content: readonly ContentPart[] };
+  readonly meta: { readonly origin: { readonly kind: 'user' } };
+};
 export type PromptWithSkillsInput = Omit<Parameters<IAgentSkillService['promptWithSkills']>[0], 'input'> & {
   input: readonly ContentPart[];
 };
 export type PromptWithSkillsResult = Awaited<ReturnType<IAgentSkillService['promptWithSkills']>>;
 export type ShellCommandResult = Awaited<ReturnType<IAgentShellCommandService['run']>>;
-export type SetModelResult = Awaited<ReturnType<IAgentProfileService['setModel']>>;
-export type ThinkingLevel = ReturnType<IAgentProfileService['getEffectiveThinkingLevel']>;
+export type SetModelResult = Awaited<ReturnType<IAgentLoopService['setModel']>>;
+export type ThinkingLevel = ReturnType<IAgentLoopService['getEffectiveThinkingLevel']>;
 export type UsageStatus = Awaited<ReturnType<ISessionUsageService['status']>>;
 type AgentContextMessage = LegacyMessage & {
   readonly id?: string;
@@ -140,11 +144,16 @@ export interface AgentFacade {
 export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFacade {
   return {
     prompt: (input) =>
-      call(scope, 'agentPromptService', 'submit', [input]) as Promise<PromptLaunchResult>,
+      call(scope, 'agentLoopService', 'submit', [input]) as Promise<PromptLaunchResult>,
     promptWithSkills: (input) =>
       call(scope, 'agentSkillService', 'promptWithSkills', [input]) as Promise<PromptWithSkillsResult>,
-    steer: (input) =>
-      call(scope, 'agentPromptService', 'submitSteer', [input]) as Promise<SteerResult>,
+    steer: (input) => {
+      const entry: AgentSteerEntry = {
+        message: { role: 'user', content: input.input },
+        meta: { origin: { kind: 'user' } },
+      };
+      return call(scope, 'agentLoopService', 'notifyClient', [entry]) as Promise<SteerResult>;
+    },
     activateSkill: (input) =>
       call(scope, 'agentSkillService', 'activate', [input]) as Promise<PromptLaunchResult>,
     cancel: (input) =>

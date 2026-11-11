@@ -4,7 +4,7 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { createReminderStub } from '../reminder/stubs';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type {
   ApprovalResponse,
@@ -39,6 +39,7 @@ import { registerTestAgentWireServices } from '../../wire/stubs';
 import { stubPermissionModeService } from '../../agent/permissionMode/stubs';
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
 import { stubPlanEnvironment } from './stubs';
+import { stubLoopWithHooks } from '../../agent/loop/stubs';
 
 const signal = new AbortController().signal;
 const TEMP_DIR = '/var/folders/x/T';
@@ -209,7 +210,7 @@ describe('AgentPlanService plan-guard listener', () => {
           sessionScope: 'sessions/session',
           cwd: '/workspace',
         }));
-        reg.definePartialInstance(IAgentContextMemoryService, {});
+        reg.defineInstance(IAgentLoopService, stubLoopWithHooks());
         reg.defineInstance(IAgentReminderService, createReminderStub());
         reg.defineInstance(IAgentToolExecutorService, executorEvents.executor);
         reg.defineInstance(IAgentToolApprovalService, toolApproval);
@@ -239,7 +240,7 @@ describe('AgentPlanService plan-guard listener', () => {
     if (!permissionStandInRegistered) {
       permissionStandInRegistered = true;
       disposables.add(
-        executorEvents.executor.onBeforeExecuteTool(() => {
+        executorEvents.executor.registerLegacyStarting(() => {
           permissionRan = true;
         }),
       );
@@ -287,7 +288,7 @@ describe('AgentPlanService plan-guard listener', () => {
           }),
         );
 
-        expect(decision).toBeUndefined();
+        expect(decision).toEqual({ allow: true });
         expect(permissionRan).toBe(false);
       },
     );
@@ -304,7 +305,7 @@ describe('AgentPlanService plan-guard listener', () => {
         }),
       );
 
-      expect(decision).toBeUndefined();
+      expect(decision).toEqual({ allow: true });
       expect(permissionRan).toBe(false);
     });
 
@@ -530,7 +531,6 @@ describe('AgentPlanService plan-guard listener', () => {
 
       expect(decision?.veto).toMatchObject({
         isError: true,
-        stopTurn: true,
         output: 'Plan rejected by user. Plan mode deactivated.',
       });
       expect(records).toContainEqual({
@@ -569,7 +569,6 @@ describe('AgentPlanService plan-guard listener', () => {
 
       expect(decision?.veto).toMatchObject({
         isError: true,
-        stopTurn: true,
         output: 'Plan rejected by user. Plan mode remains active.',
       });
       expect(records).toContainEqual({

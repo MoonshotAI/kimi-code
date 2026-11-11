@@ -11,6 +11,7 @@ import {
   isTransientHttpStatus,
   toLlmStatusErrorMessage,
   toLlmStreamErrorMessage,
+  isUnreachableConnection,
   toLlmTransportErrorMessage,
 } from '#/llm/protocol/rules/status';
 import type { LlmRemoteErrorMessage } from '#/llm/response';
@@ -389,7 +390,7 @@ export function decodeError(error: unknown, source?: 'stream'): LlmRemoteErrorMe
     return { kind: 'timeout', message: error.message, retryable: true };
   }
   if (error instanceof RawOpenAISDKConnectionError) {
-    return { kind: 'connection', message: error.message, retryable: true };
+    return { kind: 'connection', message: error.message, retryable: !isUnreachableConnection(error) };
   }
   if (error instanceof RawOpenAISDKAPIError) {
     const body = error.error as

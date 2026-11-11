@@ -6,7 +6,6 @@ import {
   getOrRestoreAgent,
   IAgentLoopService,
   IAgentPermissionModeService,
-  IAgentProfileService,
   IAgentEnvironmentBindingService,
   IAgentEnvironmentService,
   IAgentToolPolicyService,
@@ -122,7 +121,7 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
     prompt: agent.accessor.get(IAgentLoopService),
     skill: agent.accessor.get(IAgentSkillService),
     events: agent.accessor.get(IEventBus),
-    profile: agent.accessor.get(IAgentProfileService),
+    profile: agent.accessor.get(IAgentLoopService),
     toolPolicy: agent.accessor.get(IAgentToolPolicyService),
     permissionMode: agent.accessor.get(IAgentPermissionModeService),
     binding: agent.accessor.get(IAgentEnvironmentBindingService),
@@ -151,14 +150,15 @@ async function assertActivatableSkills(
 }
 
 async function applyProfileSelection(
-  profile: IAgentProfileService,
+  profile: IAgentLoopService,
+  loop: IAgentLoopService,
   profileName: string,
   model: string | undefined,
   thinking: string | undefined,
 ): Promise<boolean> {
   if (profile.data().profileName === profileName) return false;
   try {
-    await profile.bind({
+    await loop.bindProfile({
       profile: profileName,
       model,
       thinking,
@@ -212,7 +212,10 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
       const { session_id } = req.params;
       let attempt: PromptAttempt;
       try {
-        attempt = beginPromptAttempt(session_id, req.body.prompt_id, { route: 'prompts', body: req.body });
+        attempt = beginPromptAttempt(session_id, req.body.prompt_id, {
+          route: directSteer ? 'steer' : 'prompts',
+          body: req.body,
+        });
         if (attempt.earlier !== undefined) {
           reply.send(okEnvelope(await attempt.earlier, req.id));
           return;
@@ -294,12 +297,13 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             thinkingConsumed =
               (await applyProfileSelection(
                 resolved.profile,
+                resolved.prompt,
                 req.body.profile,
                 req.body.model,
                 req.body.thinking,
               )) && req.body.thinking !== undefined;
           }
-          if (req.body.model !== undefined) await resolved.profile.setModel(req.body.model);
+          if (req.body.model !== undefined) await resolved.prompt.setModel(req.body.model);
           if (req.body.thinking !== undefined && !thinkingConsumed)
             resolved.profile.setThinking(req.body.thinking);
           if (req.body.permission_mode !== undefined) resolved.permissionMode.setMode(req.body.permission_mode);
@@ -360,18 +364,23 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             sessionId: session_id,
           }, promptMetadataTextFromContentParts(parts, clientMetadata));
           const status = resolved.prompt.snapshot();
-          const { id } = resolved.prompt.submit({
-            message: { role: 'user', content: parts },
+          const entry = {
+            message: { role: 'user' as const, content: parts },
             meta: {
               promptId: attempt.id,
               origin: { kind: 'user', attachments: promptAttachments, clientMetadata } as PromptOrigin,
-              tracked: true,
             },
-          }, { steerIfActive: directSteer || undefined });
+          };
+          const { id } = directSteer && status.state === 'running'
+            ? resolved.prompt.sendNow(entry)
+            : resolved.prompt.submit(entry);
           attempt.enqueued();
           enqueued = true;
           const handle = resolved.prompt.promptHandle(id)!;
-          if (status.state === 'idle' && !status.paused && status.queue.length === 0) {
+          if (
+            (directSteer && status.state === 'running') ||
+            (status.state === 'idle' && !status.paused && status.queue.length === 0)
+          ) {
             await Promise.race([handle.launched, handle.completion]);
           }
           const staging = preparedMedia;
@@ -394,7 +403,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         sendMappedError(reply, req, error);
       }
   };
-
   const submitRoute = defineRoute(
     {
       method: 'POST',
@@ -555,7 +563,6 @@ function projectPromptList(loop: IAgentLoopService) {
   return {
     active: active === undefined ? null : projectPromptSnapshot(active),
     queued: snapshot.queue
-      .filter((item) => item.meta?.tracked === true)
       .map((item) =>
         projectPromptSnapshot({
           id: item.meta?.promptId ?? '',

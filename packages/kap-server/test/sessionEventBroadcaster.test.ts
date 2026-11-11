@@ -19,9 +19,8 @@ import {
   IAgentGoalService,
   IAgentLoopService,
   IAgentPermissionModeService,
-  IAgentProfileService,
   IAgentScopeContext,
-  IAgentTaskService,
+  IAgentTaskHistoryService,
   IAgentTodoService,
   IEventBus,
   IEventService,
@@ -39,12 +38,13 @@ import {
   interactions,
   makeAgentScopeContext,
 } from '@moonshot-ai/agent-core-v2';
-import { Event2 } from '@moonshot-ai/agent-core-v2/app/event/event2';
+import type { Event2Class } from '@moonshot-ai/agent-core-v2/app/event/event2';
 import {
   AgentEventBusView,
   EventBusService,
 } from '@moonshot-ai/agent-core-v2/app/event/eventBusService';
 import type { AgentActivitySnapshot } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
+import { TaskStarted, TaskTerminatedNotice } from '@moonshot-ai/agent-core-v2/agent/task/taskOps';
 import type { AgentTaskInfo } from '@moonshot-ai/agent-core-v2/agent/task/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -74,9 +74,9 @@ class FakeAgentBus {
   private allHandlers: Array<(e: FakeBusEvent) => void> = [];
   private perType = new Map<string, Array<(e: FakeBusEvent) => void>>();
   subscribe(handler: (e: FakeBusEvent) => void): { dispose(): void };
-  subscribe(type: string, handler: (e: FakeBusEvent) => void): { dispose(): void };
-  subscribe(typeOrHandler: string | ((e: FakeBusEvent) => void), handler?: (e: FakeBusEvent) => void) {
-    if (typeof typeOrHandler === 'function') {
+  subscribe(type: string | Event2Class, handler: (e: FakeBusEvent) => void): { dispose(): void };
+  subscribe(typeOrHandler: string | Event2Class | ((e: FakeBusEvent) => void), handler?: (e: FakeBusEvent) => void) {
+    if (typeof typeOrHandler === 'function' && !('type' in typeOrHandler)) {
       this.allHandlers.push(typeOrHandler);
       return {
         dispose: () => {
@@ -85,9 +85,10 @@ class FakeAgentBus {
         },
       };
     }
-    const list = this.perType.get(typeOrHandler) ?? [];
+    const type = typeof typeOrHandler === 'string' ? typeOrHandler : typeOrHandler.type;
+    const list = this.perType.get(type) ?? [];
     list.push(handler!);
-    this.perType.set(typeOrHandler, list);
+    this.perType.set(type, list);
     return {
       dispose: () => {
         const i = list.indexOf(handler!);
@@ -173,34 +174,48 @@ class FakeManagerEvents {
 
 }
 
-class FakeAgentTasks {
-  private readonly listeners = new Set<(info: AgentTaskInfo) => void>();
+class FakeAgentTasks implements IAgentTaskHistoryService {
+  readonly _serviceBrand = undefined;
   private readonly tasks = new Map<string, AgentTaskInfo>();
 
-  readonly onDidChangeTask = (listener: (info: AgentTaskInfo) => void) => {
-    this.listeners.add(listener);
-    return { dispose: () => this.listeners.delete(listener) };
-  };
+  constructor(
+    private readonly agentId: string,
+    private readonly bus: FakeAgentBus,
+  ) {}
 
-  list(activeOnly = true): AgentTaskInfo[] {
-    return [...this.tasks.values()].filter((info) => !activeOnly || info.status === 'running');
+  async reconcile(): Promise<void> {}
+
+  getTask(taskId: string): AgentTaskInfo | undefined {
+    return this.tasks.get(taskId);
+  }
+
+  list(activeOnly = true, limit?: number): AgentTaskInfo[] {
+    const infos = [...this.tasks.values()].filter((info) => !activeOnly || info.status === 'running');
+    return limit === undefined ? infos : infos.slice(0, limit);
+  }
+
+  values(): IterableIterator<AgentTaskInfo> {
+    return this.tasks.values();
   }
 
   change(info: AgentTaskInfo): void {
     this.tasks.set(info.taskId, info);
-    for (const listener of this.listeners) listener(info);
+    this.bus.emit(info.status === 'running'
+      ? new TaskStarted({ agentId: this.agentId, info })
+      : new TaskTerminatedNotice({ agentId: this.agentId, info }));
   }
 }
 
 class FakeAgentHandle {
   readonly kind = LifecycleScope.Agent;
   readonly bus = new FakeAgentBus();
-  readonly tasks = new FakeAgentTasks();
+  readonly tasks: FakeAgentTasks;
   readonly accessor;
   readonly context: AgentContext;
   activity: AgentActivitySnapshot = {};
   private readonly services = new Map<unknown, unknown>();
   constructor(readonly id: string) {
+    this.tasks = new FakeAgentTasks(id, this.bus);
     const scope = makeAgentScopeContext({
       agentId: id,
       agentScope: `agents/${id}`,
@@ -209,11 +224,13 @@ class FakeAgentHandle {
     this.context = scope.agentContext;
     this.services.set(IAgentScopeContext, scope);
     this.services.set(IEventBus, this.bus);
-    this.services.set(IAgentTaskService, this.tasks);
+    this.services.set(IAgentTaskHistoryService, this.tasks);
     this.services.set(IAgentConversationUndoParticipantRegistry, {
       register: () => ({ dispose: () => {} }),
     });
     this.services.set(IAgentLoopService, {
+      getModel: () => 'k2',
+      getEffectiveThinkingLevel: () => 'off',
       snapshot: () => ({
         state: this.activity.turn === undefined ? 'idle' : 'running',
         turn: this.activity.turn,
@@ -1869,7 +1886,7 @@ describe('SessionEventBroadcaster', () => {
         },
       });
       handle.set(IAgentGoalService, { getGoal: () => ({ goal }) });
-      handle.set(IAgentProfileService, {
+      Object.assign(handle.accessor.get(IAgentLoopService) as Record<string, unknown>, {
         getModel: () => 'k2',
         getEffectiveThinkingLevel: () => 'high',
         getModelCapabilities: () => ({ max_context_tokens: 1000 }),
@@ -1999,7 +2016,7 @@ describe('SessionEventBroadcaster', () => {
       const lc = new FakeLifecycle();
       const main = lc.addAgent('main');
       withAgentState(main);
-      main.set(IAgentProfileService, {
+      Object.assign(main.accessor.get(IAgentLoopService) as Record<string, unknown>, {
         getModel: () => model,
         getEffectiveThinkingLevel: () => 'high',
         getModelCapabilities: () => capabilities,

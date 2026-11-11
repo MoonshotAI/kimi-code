@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { isAbortError, isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { tryAgentContextOf } from '#/agent/scopeContext/scopeContext';
 import { isProviderRateLimitError } from '#/llm-adapter/contract/errors';
 import { type TokenUsage } from '#human/llm-requester/usage';
@@ -166,7 +166,7 @@ export function emitAgentRunSpawned(
   const childProfile = requester.accessor
     .get(IAgentLifecycleService)
     .handleOf(targetAgentId)
-    ?.accessor.get(IAgentProfileService);
+    ?.accessor.get(IAgentLoopService);
   void requester.accessor.get(IEventDispatcher)?.dispatch(
     new SubagentSpawned({
       subagentId: targetAgentId,
@@ -205,6 +205,7 @@ export async function mirrorAgentRun(
   const dispatcher = requester.accessor.get(IEventDispatcher);
   const subagents = requester.accessor.get(ISessionSubagentService);
   const agentLifecycle = requester.accessor.get(IAgentLifecycleService);
+  void run.completion.catch(() => {});
   if (options.deferStarted !== true) {
     void dispatcher?.dispatch(new SubagentStarted({ subagentId: run.agentId }));
   }

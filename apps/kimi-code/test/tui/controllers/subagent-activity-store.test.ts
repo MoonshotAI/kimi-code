@@ -40,7 +40,13 @@ describe('SubagentActivityStore', () => {
       ev({ type: 'tool.call.started', turnId: 1, toolCallId: 't1', name: 'Grep', args: { pattern: 'foo' } }),
     );
     store.applyEvent(
-      ev({ type: 'tool.progress', turnId: 1, toolCallId: 't1', update: { kind: 'stdout', text: 'line1\nline2\n' } }),
+      ev({
+        type: 'tool.updated',
+        turnId: 1,
+        toolCallId: 't1',
+        fields: {},
+        output: { offset: 0, text: 'line1\nline2\n' },
+      }),
     );
     store.applyEvent(
       ev({ type: 'tool.result', turnId: 1, toolCallId: 't1', output: 'a\nb\nc', isError: false }),
@@ -62,7 +68,7 @@ describe('SubagentActivityStore', () => {
     expect(record?.version).toBeGreaterThan(0);
   });
 
-  it('shows a status progress update as the live output tail', () => {
+  it('shows a status fields update as the live output tail', () => {
     const store = new SubagentActivityStore();
     store.ensureRecord(spawn());
     store.applyEvent(
@@ -70,10 +76,14 @@ describe('SubagentActivityStore', () => {
     );
     store.applyEvent(
       ev({
-        type: 'tool.progress',
+        type: 'tool.updated',
         turnId: 1,
         toolCallId: 't1',
-        update: { kind: 'status', text: 'Waiting 10s / 600s · 1 background task still running', replace: true },
+        fields: {
+          status: 'Waiting 10s / 600s · 1 background task still running',
+          statusReplace: true,
+          wait: { elapsedS: 10, timeoutS: 600, runningCount: 1 },
+        },
       }),
     );
 

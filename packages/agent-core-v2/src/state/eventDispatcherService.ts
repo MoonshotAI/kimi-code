@@ -23,6 +23,7 @@ import type { ContentPart } from '#human/llm/message';
 import { OrderedHookSlot } from '#/hooks';
 import { IWireService } from '#/wire/wire';
 import { WireError, WireErrors } from '#/wire/errors';
+import { ContextAppendMessage } from '#/agent/contextMemory/contextEvents';
 import { isHumanRecordType } from '#/wire/human';
 import { AGENT_SWITCHED_TYPE } from '#/wire/tree/index';
 import type { PartsTransformer, WireRecord } from '#/wire/record';
@@ -176,6 +177,8 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
   private readonly replayFreshKeys = new Set<ReplayableStateKey<any>>();
   private readonly replayFreshAttachments = new Set<ParticipantAttachment>();
   private readonly replayMutableStates = new Map<ReplayableStateKey<any>, any>();
+  private readonly preRestoreProjectedKeys = new Set<ReplayableStateKey<any>>();
+  private readonly preRestoreProjectedAttachments = new Set<ParticipantAttachment>();
   private folded: FoldedEventStateRegistry;
 
   private activeModelDefs = new Map<string, AgentModelDefinition<any, any>>();
@@ -194,6 +197,7 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     registerModel: (definition, model) => this.registerModel(definition, model),
     dispatchModelEvent: (event) => this.dispatch(event),
     readLegacyState: (key) => this.agentState.get(key),
+    readHistory: () => this.space()?.readHistory() ?? [],
   };
 
   restorePhase: RestorePhase = 'new';
@@ -342,7 +346,7 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
         if (applier === undefined) continue;
         const ctx = new FoldContextImpl(this, true);
         const next = produce(
-          attachment.getState(),
+          structuredClone(attachment.getState()),
           (draft: any) => applier(draft, event, ctx),
         );
         if (ctx.pendingUndo !== undefined && next !== attachment.getState()) {
@@ -684,6 +688,10 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     for (const p of preparedParticipants) {
       this.commitParticipant(p.attachment, p.ctx, p.next);
     }
+    if (this.restorePhase === 'new' && (event.constructor as Event2Class).durable) {
+      for (const p of prepared) this.preRestoreProjectedKeys.add(p.key);
+      for (const p of preparedParticipants) this.preRestoreProjectedAttachments.add(p.attachment);
+    }
     if (silent) return;
     const cls = event.constructor as Event2Class;
     if (cls.durable) {
@@ -691,7 +699,9 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
         .replayable.blobs?.dehydrate;
       this.wire.appendRecord(event.serialize(), dehydrator);
     }
-    if (cls.observable && !this.disposed) {
+    const observable = cls.observable ||
+      (event instanceof ContextAppendMessage && event.message.origin?.kind === 'task');
+    if (observable && !this.disposed) {
       this.eventBus.publish(event, this.agentScope?.agentContext);
     }
   }
@@ -790,8 +800,8 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
       if (rerun) {
         await this.wire.flush();
         this.notifyWillReplay();
-        this.resetReplayState();
       }
+      this.resetReplayState(!rerun);
       await this.replayRecords();
       this.freezeReplayedStates();
       await this.rehydrateStates();
@@ -858,16 +868,23 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     }
   }
 
-  private resetReplayState(): void {
+  private resetReplayState(initial: boolean): void {
     this.replayMutableStates.clear();
     for (const key of this.agentState.replayableKeys()) {
-      this.agentState.set(key, key.initial());
+      if (!initial || this.preRestoreProjectedKeys.has(key)) this.agentState.set(key, key.initial());
     }
     for (const attachment of this.participantAttachments.values()) {
+      if (initial && !this.preRestoreProjectedAttachments.has(attachment)) continue;
       attachment.commit(attachment.initial);
       attachment.meta.checkpoints.length = 0;
     }
-    this.metas.clear();
+    if (!initial) {
+      this.metas.clear();
+      return;
+    }
+    for (const key of this.preRestoreProjectedKeys) this.metas.delete(key);
+    this.preRestoreProjectedKeys.clear();
+    this.preRestoreProjectedAttachments.clear();
   }
 
   private async replayRecords(): Promise<void> {
@@ -948,7 +965,7 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     }
     this.replayFreshKeys.clear();
     for (const attachment of this.replayFreshAttachments) {
-      attachment.commit(freeze(attachment.getState(), true));
+      attachment.commit(freeze(structuredClone(attachment.getState()), true));
     }
     this.replayFreshAttachments.clear();
     this.replayMutableStates.clear();

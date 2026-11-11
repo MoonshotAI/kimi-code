@@ -60,46 +60,42 @@ describe('TowerRateLimitService', () => {
     expect(gate.reason).toContain('tower concurrency budget exhausted (256/256');
   });
 
-  it('allows explicit maxRunningTasks to exceed the default budget', () => {
+  it('ignores a legacy maxRunningTasks value above the default budget', () => {
     config.setSilent('task', { maxRunningTasks: 300 });
 
-    expect(snapshot().budget).toBe(300);
+    expect(snapshot().budget).toBe(256);
   });
 
-  it('uses task maxRunningTasks to limit the budget and new acquisitions', () => {
+  it('ignores a lower legacy task maxRunningTasks for the budget and new acquisitions', () => {
     config.setSilent('task', { maxRunningTasks: 2 });
     const limiter = ix.get(ITowerRateLimitService);
 
-    expect(snapshot().budget).toBe(2);
+    expect(snapshot().budget).toBe(256);
     expect(limiter.acquire()).toEqual({ ok: true });
     expect(limiter.acquire()).toEqual({ ok: true });
-
-    const gate = limiter.acquire();
-    expect(gate.ok).toBe(false);
-    if (gate.ok) throw new Error('expected acquire to be refused');
-    expect(gate.reason).toContain('tower concurrency budget exhausted (2/2');
+    expect(limiter.acquire()).toEqual({ ok: true });
   });
 
-  it('uses legacy background maxRunningTasks when task is unset', () => {
+  it('ignores the legacy background maxRunningTasks value', () => {
     config.setSilent('background', { maxRunningTasks: 3 });
 
-    expect(snapshot().budget).toBe(3);
+    expect(snapshot().budget).toBe(256);
   });
 
-  it('prefers task maxRunningTasks over the legacy background value', () => {
+  it('ignores legacy maxRunningTasks in both task and background sections', () => {
     config.setSilent('background', { maxRunningTasks: 2 });
     config.setSilent('task', { maxRunningTasks: 5 });
 
-    expect(snapshot().budget).toBe(5);
+    expect(snapshot().budget).toBe(256);
   });
 
-  it('re-reads maxRunningTasks when the configuration changes', () => {
+  it('keeps the default budget when the task configuration changes', () => {
     config.setSilent('task', { maxRunningTasks: 2 });
     const limiter = ix.get(ITowerRateLimitService);
-    expect(limiter.budget()).toBe(2);
+    expect(limiter.budget()).toBe(256);
 
     config.setSilent('task', { maxRunningTasks: 4 });
-    expect(limiter.budget()).toBe(4);
+    expect(limiter.budget()).toBe(256);
 
     config.setSilent('task', undefined);
     expect(limiter.budget()).toBe(256);
@@ -189,20 +185,19 @@ describe('TowerRateLimitService', () => {
     expect(limiter.budget()).toBe(3);
   });
 
-  it('combines 429 recovery with the configured maxRunningTasks cap', () => {
-    config.setSilent('task', { maxRunningTasks: 3 });
+  it('caps 429 recovery at the default budget', () => {
     const limiter = ix.get(ITowerRateLimitService);
-    expect(limiter.acquire().ok).toBe(true);
-    expect(limiter.acquire().ok).toBe(true);
-    expect(limiter.acquire().ok).toBe(true);
+    for (let index = 0; index < 256; index += 1) {
+      expect(limiter.acquire().ok).toBe(true);
+    }
     limiter.reportRateLimited();
-    expect(snapshot().budget).toBe(2);
+    expect(snapshot().budget).toBe(255);
 
     now += RATE_LIMIT_CAPACITY_RECOVERY_INTERVAL_MS;
-    expect(limiter.budget()).toBe(3);
+    expect(limiter.budget()).toBe(256);
 
     now += RATE_LIMIT_CAPACITY_RECOVERY_INTERVAL_MS;
-    expect(limiter.budget()).toBe(3);
+    expect(limiter.budget()).toBe(256);
   });
 
   it('reset restores the pristine state', () => {
