@@ -1018,11 +1018,11 @@ describe('video blocks', () => {
       expect(String(wireError?.['message'])).toContain('Unsupported media type for base64 video');
 
       // The same v2-native payload is recorded on the klient error event, in
-      // order: turn.started → turn.ended → error → prompt.completed.
+      // order: turn.started → prompt.completed → turn.ended → error.
       const errorEvents = ctx.payloads('error');
       expect(errorEvents).toHaveLength(1);
       expect(errorEvents[0]?.['code']).toBe('provider.api_error');
-      expect(ctx.eventNames()).toEqual(['turn.started', 'turn.ended', 'error', 'prompt.completed']);
+      expect(ctx.eventNames()).toEqual(['turn.started', 'prompt.completed', 'turn.ended', 'error']);
       expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('failed');
     } finally {
       await klient.global.config.set({ domain: 'loopControl', patch: { maxAttemptsPerStep: 10 } });
@@ -1210,7 +1210,7 @@ describe('provider HTTP errors', () => {
     const errorEvents = ctx.payloads('error');
     expect(errorEvents).toHaveLength(1);
     expect(errorEvents[0]?.['code']).toBe('provider.api_error');
-    expect(ctx.eventNames()).toEqual(['turn.started', 'turn.ended', 'error', 'prompt.completed']);
+    expect(ctx.eventNames()).toEqual(['turn.started', 'prompt.completed', 'turn.ended', 'error']);
   }, 30_000);
 
   it('a 400 structure error is retried once with the strict projection, then succeeds (l3 + engine fallback)', async () => {
