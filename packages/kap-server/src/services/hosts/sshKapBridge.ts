@@ -4,7 +4,6 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 import { HOST_API_LEVEL, HOST_PROTOCOL_VERSION } from './hostProtocol';
 import type { HostEntry } from './hostsConfig';
-import type { HostCredentialOffer } from './hostAuth';
 import type { HostSession } from './hostSession';
 import { StdioHostSession } from './stdioHostSession';
 
@@ -258,6 +257,7 @@ export interface SshKapBridgeOptions {
   readonly env?: NodeJS.ProcessEnv;
   readonly logger?: BridgeLogger;
   readonly onChange?: () => void;
+  readonly onSession?: (session: HostSession) => Promise<void>;
 }
 
 export class SshKapBridge {
@@ -273,7 +273,6 @@ export class SshKapBridge {
   private reconnectGeneration = 0;
   private readonly sshProgram: string;
   private readonly env: NodeJS.ProcessEnv;
-  credential: HostCredentialOffer | undefined;
 
   constructor(
     private readonly entry: HostEntry,
@@ -303,8 +302,7 @@ export class SshKapBridge {
     return this.sessionValue?.session;
   }
 
-  connect(credential?: HostCredentialOffer): Promise<HostSession> {
-    this.credential = credential;
+  connect(): Promise<HostSession> {
     if (this.disposed) return Promise.reject(new HostConnectError('unknown', 'host bridge disposed'));
     if (this.sessionValue !== undefined) return Promise.resolve(this.sessionValue.session);
     this.reconnectGeneration += 1;
@@ -363,6 +361,7 @@ export class SshKapBridge {
       }
       this.remoteVersionValue = active.session.version;
       this.sessionValue = active;
+      await this.options.onSession?.(active.session);
       this.update('ready');
       return active.session;
     } catch (error) {
@@ -448,14 +447,6 @@ export class SshKapBridge {
           finishReject(error instanceof HostConnectError ? error : new HostConnectError('unknown', String(error)));
         }
       };
-      let authSent = false;
-      const onAuthReady = (chunk: Buffer): void => {
-        if (authSent || this.credential === undefined || child.stdin === null) return;
-        if (!chunk.toString('utf8').includes('__KIMI_HOST_AUTH__\n')) return;
-        authSent = true;
-        child.stdin.write(`${JSON.stringify(this.credential)}\n`);
-      };
-      child.stdout?.on('data', onAuthReady);
       child.stdout?.on('data', onStdout);
       child.stdout?.on('end', () => {
         if (activeSession !== undefined) return;

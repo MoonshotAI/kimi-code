@@ -176,10 +176,6 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
     },
     async (req: RouteRequest, reply: RouteReply) => {
       const { id } = req.body as z.infer<typeof connectBodySchema>;
-      if (manager.section()[id] === undefined) {
-        await config.ready;
-        await config.replace(HOSTS_SECTION, { ...manager.section(), [id]: { host: id } });
-      }
       const error = await manager.connect(id).then(
         () => undefined,
         (error: unknown) => (error instanceof Error ? error : new Error('host connection failed')),

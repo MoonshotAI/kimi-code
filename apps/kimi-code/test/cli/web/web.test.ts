@@ -10,7 +10,7 @@
 import { lstatSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Duplex, PassThrough } from 'node:stream';
+import { PassThrough } from 'node:stream';
 
 import chalk, { Chalk } from 'chalk';
 import { Command } from 'commander';
@@ -24,8 +24,6 @@ import { registerWebCommand } from '#/cli/sub/web';
 import {
   daemonSocketPath,
   ensureDaemon,
-  receiveCredentialOffer,
-  sendCredential,
   type DaemonConnection,
   type EnsureDaemonDeps,
 } from '#/cli/sub/web/ensure-daemon';
@@ -1163,68 +1161,6 @@ describe('browserOpenOrigin', () => {
     expect(browserOpenOrigin('http://127.0.0.1:58627')).toBe('http://127.0.0.1:58627');
     expect(browserOpenOrigin('http://192.168.1.5:58627')).toBe('http://192.168.1.5:58627');
     expect(browserOpenOrigin('http://[::1]:58627')).toBe('http://[::1]:58627');
-  });
-});
-
-describe('ensure-daemon credentials', () => {
-  it('rejects an invalid credential frame', async () => {
-    const input = new PassThrough();
-    const pending = receiveCredentialOffer(input, 100);
-    input.write('not-json\n');
-    await expect(pending).rejects.toThrow('invalid host credential offer');
-  });
-
-  it('reads a provision offer from stdin and installs it over RPC', async () => {
-    const input = new PassThrough();
-    const pending = receiveCredentialOffer(input, 100);
-    const offer = {
-      type: 'auth' as const,
-      action: 'provision' as const,
-      credential: {
-        token: { access_token: 'a', refresh_token: 'r', expires_at: 1, scope: '', token_type: 'Bearer', expires_in: 1 },
-        oauth_key: 'oauth/kimi-code',
-      },
-    };
-    input.write(`${JSON.stringify(offer)}\n`);
-    await expect(pending).resolves.toEqual(offer);
-    const responseInput = new PassThrough();
-    const output = new PassThrough();
-    responseInput.resume();
-    const stream = new Duplex({
-      read() {},
-      write(chunk, encoding, callback) {
-        output.write(chunk, encoding, callback);
-      },
-    });
-    stream.on('finish', () => stream.push(null));
-    const framePromise = new Promise<Record<string, unknown>>((resolve) => output.once('data', (chunk) => resolve(JSON.parse(String(chunk)) as Record<string, unknown>)));
-    const result = sendCredential(stream, offer);
-    const frame = await framePromise;
-    expect(frame['path']).toBe('/api/v1/oauth/host-credential');
-    expect(JSON.parse(Buffer.from(frame['body'] as string, 'base64').toString('utf8'))).toEqual({ action: 'provision', credential: offer.credential });
-    stream.push(`${JSON.stringify({ type: 'http.res', id: 'auth', status: 200, body: Buffer.from(JSON.stringify({ data: { credential: offer.credential } })).toString('base64') })}\n`);
-    await expect(result).resolves.toEqual({ credential: offer.credential });
-  });
-
-  it('fails instead of silently connecting when remote credential installation fails', async () => {
-    const responseInput = new PassThrough();
-    const output = new PassThrough();
-    responseInput.resume();
-    const stream = new Duplex({
-      read() {},
-      write(chunk, encoding, callback) {
-        output.write(chunk, encoding, callback);
-      },
-    });
-    stream.on('finish', () => stream.push(null));
-    const result = sendCredential(stream, {
-      type: 'auth',
-      action: 'logout',
-      oauth_key: 'oauth/kimi-code',
-    });
-    await new Promise<void>((resolve) => output.once('data', () => resolve()));
-    stream.push(`${JSON.stringify({ type: 'http.res', id: 'auth', status: 500, body: Buffer.from(JSON.stringify({ code: 50000 })).toString('base64') })}\n`);
-    await expect(result).rejects.toThrow('unable to provision');
   });
 });
 

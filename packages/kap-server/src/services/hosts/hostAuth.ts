@@ -8,56 +8,44 @@ import {
   resolveKimiCodeLoginAuth,
   resolveKimiCodeOAuthKey,
   resolveKimiTokenStorageName,
-  tokenFromWire,
-  tokenToWire,
+  type AuthManagedUsageResult,
+  type AuthManagedUserInfoResult,
+  type BearerTokenProvider,
+  type KimiOAuthLoginOptions,
+  type KimiOAuthLoginResult,
+  type KimiOAuthLogoutResult,
+  type KimiOAuthTokenRef,
   type ManagedKimiConfigShape,
-  type TokenInfoWire,
 } from '@moonshot-ai/kimi-code-oauth';
 import { IBootstrapService, IConfigService, IOAuthService, IOAuthToolkit, type ProviderConfig, type Scope } from '@moonshot-ai/agent-core-v2';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../../envelope';
 import { defineRoute } from '../../middleware/defineRoute';
-import type { HostBridgeManager } from './hostBridgeManager';
-
-const tokenSchema = z.object({
-  access_token: z.string().min(1),
-  refresh_token: z.string().min(1),
-  expires_at: z.number(),
-  scope: z.string(),
-  token_type: z.string(),
-  expires_in: z.number(),
-}).strict();
 
 const credentialSchema = z.object({
-  token: tokenSchema,
+  oauth_key: z.string().min(1),
   base_url: z.string().min(1).optional(),
   oauth_host: z.string().min(1).optional(),
-  oauth_key: z.string().min(1),
+  access_token: z.string().min(1),
+  expires_at: z.number(),
 }).strict();
 
-export interface HostCredential {
-  readonly token: TokenInfoWire;
-  readonly base_url?: string;
-  readonly oauth_host?: string;
-  readonly oauth_key: string;
-}
+export type HostCredential = z.infer<typeof credentialSchema>;
 
-export type HostCredentialOffer =
-  | { readonly type: 'auth'; readonly action: 'provision'; readonly credential: HostCredential }
-  | { readonly type: 'auth'; readonly action: 'logout'; readonly oauth_key: string };
-
-const requestSchema = z.union([
-  z.object({ action: z.literal('provision'), credential: credentialSchema }).strict(),
-  z.object({ action: z.literal('logout'), oauth_key: z.string().min(1) }).strict(),
+const updateSchema = z.union([
+  z.object({ action: z.literal('put'), credential: credentialSchema }).strict(),
+  z.object({ action: z.literal('revoke') }).strict(),
 ]);
 
-async function localHostAuth(core: Scope): Promise<{
-  readonly token?: TokenInfoWire;
-  readonly base_url?: string;
-  readonly oauth_host?: string;
-  readonly oauth_key: string;
-}> {
+export type HostCredentialUpdate = z.infer<typeof updateSchema>;
+
+export interface LocalHostCredential {
+  readonly credential: HostCredential;
+  readonly refreshAt: number;
+}
+
+export async function localHostCredential(core: Scope): Promise<LocalHostCredential | undefined> {
   const config = core.accessor.get(IConfigService);
   await config.ready;
   await core.accessor.get(IOAuthService).getRegionAsync();
@@ -73,31 +61,120 @@ async function localHostAuth(core: Scope): Promise<{
     },
   });
   const oauthKey = resolveKimiCodeOAuthKey({ baseUrl: auth.baseUrl, oauthHost: auth.oauthHost });
-  const token = await storage(core).load(resolveKimiTokenStorageName({ oauthKey }));
+  const storage = new FileTokenStorage(`${bootstrap.homeDir}/credentials`);
+  const name = resolveKimiTokenStorageName({ oauthKey });
+  const stored = await storage.load(name);
+  if (stored === undefined || stored.refreshToken.length === 0) return undefined;
+  const accessToken = await core.accessor
+    .get(IOAuthToolkit)
+    .tokenProvider(KIMI_CODE_PROVIDER_NAME, { key: oauthKey, oauthHost: auth.oauthHost })
+    .getAccessToken();
+  const token = (await storage.load(name)) ?? stored;
   return {
-    token: token === undefined || token.refreshToken.length === 0 ? undefined : tokenToWire(token),
-    base_url: auth.baseUrl,
-    oauth_host: auth.oauthHost,
-    oauth_key: oauthKey,
+    credential: {
+      oauth_key: oauthKey,
+      base_url: auth.baseUrl,
+      oauth_host: auth.oauthHost,
+      access_token: accessToken,
+      expires_at: token.expiresAt,
+    },
+    refreshAt: token.expiresAt - defaultRefreshThreshold(token.expiresIn),
   };
 }
 
-export async function localHostCredential(core: Scope): Promise<HostCredential | undefined> {
-  const auth = await localHostAuth(core);
-  if (auth.token === undefined) return undefined;
-  return { token: auth.token, base_url: auth.base_url, oauth_host: auth.oauth_host, oauth_key: auth.oauth_key };
+export class HostCredentialStore {
+  private current: HostCredential | undefined;
+
+  read(): HostCredential | undefined {
+    return this.current;
+  }
+
+  write(credential: HostCredential): void {
+    this.current = credential;
+  }
+
+  remove(): boolean {
+    const existed = this.current !== undefined;
+    this.current = undefined;
+    return existed;
+  }
 }
 
-function storage(core: Scope): FileTokenStorage {
-  return new FileTokenStorage(`${core.accessor.get(IBootstrapService).homeDir}/credentials`);
+function expired(credential: HostCredential): boolean {
+  return credential.expires_at * 1000 <= Date.now();
 }
 
-export async function localHostCredentialKey(core: Scope): Promise<string> {
-  return (await localHostAuth(core)).oauth_key;
+function sameAccountTarget(a: HostCredential, b: HostCredential): boolean {
+  return a.oauth_key === b.oauth_key && a.base_url === b.base_url && a.oauth_host === b.oauth_host;
 }
 
-export async function saveLocalHostCredential(core: Scope, credential: HostCredential): Promise<void> {
-  await storage(core).save(resolveKimiTokenStorageName({ oauthKey: credential.oauth_key }), tokenFromWire(credential.token));
+export class HostCredentialToolkit implements IOAuthToolkit {
+  declare readonly _serviceBrand: undefined;
+
+  constructor(
+    private readonly base: Omit<IOAuthToolkit, '_serviceBrand'>,
+    private readonly store: HostCredentialStore,
+  ) {}
+
+  login(providerName?: string, options?: KimiOAuthLoginOptions): Promise<KimiOAuthLoginResult> {
+    if (!this.handles(providerName)) return this.base.login(providerName, options);
+    return Promise.reject(new Error('This host uses the Kimi account of the computer that connects to it. Sign in on that computer.'));
+  }
+
+  logout(providerName?: string, oauthRef?: KimiOAuthTokenRef): Promise<KimiOAuthLogoutResult> {
+    if (!this.handles(providerName)) return this.base.logout(providerName, oauthRef);
+    this.store.remove();
+    return Promise.resolve({ providerName: KIMI_CODE_PROVIDER_NAME, ok: true });
+  }
+
+  getCachedAccessToken(providerName?: string, oauthRef?: KimiOAuthTokenRef): Promise<string | undefined> {
+    if (!this.handles(providerName)) return this.base.getCachedAccessToken(providerName, oauthRef);
+    const credential = this.store.read();
+    return Promise.resolve(credential === undefined || expired(credential) ? undefined : credential.access_token);
+  }
+
+  tokenProvider(providerName?: string, oauthRef?: KimiOAuthTokenRef): BearerTokenProvider {
+    if (!this.handles(providerName)) return this.base.tokenProvider(providerName, oauthRef);
+    return {
+      getAccessToken: () =>
+        new Promise<string>((resolve) => {
+          resolve(this.accessToken());
+        }),
+    };
+  }
+
+  getManagedUsage(
+    providerName?: string,
+    options?: { readonly oauthRef?: KimiOAuthTokenRef; readonly baseUrl?: string },
+  ): Promise<AuthManagedUsageResult> {
+    if (!this.handles(providerName)) return this.base.getManagedUsage(providerName, options);
+    return Promise.resolve({ kind: 'error', message: 'Account usage is available on the computer that connects to this host.' });
+  }
+
+  getManagedUserInfo(
+    providerName?: string,
+    options?: { readonly oauthRef?: KimiOAuthTokenRef; readonly baseUrl?: string },
+  ): Promise<AuthManagedUserInfoResult> {
+    if (!this.handles(providerName)) return this.base.getManagedUserInfo(providerName, options);
+    return Promise.resolve({ kind: 'error', message: 'Account details are available on the computer that connects to this host.' });
+  }
+
+  private handles(providerName: string | undefined): boolean {
+    return (providerName ?? KIMI_CODE_PROVIDER_NAME) === KIMI_CODE_PROVIDER_NAME;
+  }
+
+  private accessToken(): string {
+    const credential = this.store.read();
+    if (credential === undefined) {
+      throw new Error('No Kimi credential has been shared with this host. Connect to it from Kimi Code on a signed-in computer.');
+    }
+    if (expired(credential)) {
+      throw new Error(
+        `The Kimi credential shared with this host expired at ${new Date(credential.expires_at * 1000).toISOString()}. It renews while Kimi Code on the connecting computer is running.`,
+      );
+    }
+    return credential.access_token;
+  }
 }
 
 function readConfig(config: IConfigService): ManagedKimiConfigShape {
@@ -118,117 +195,63 @@ async function writeConfig(config: IConfigService, next: ManagedKimiConfigShape)
   await config.replace('thinking', next.thinking);
 }
 
-async function readRemoteCredential(core: Scope, oauthKey: string): Promise<HostCredential | undefined> {
-  const token = await storage(core).load(resolveKimiTokenStorageName({ oauthKey }));
-  if (token === undefined || token.refreshToken.length === 0) return undefined;
-  const configured = core.accessor.get(IConfigService).get<Record<string, ProviderConfig> | undefined>('providers')?.[KIMI_CODE_PROVIDER_NAME];
-  return {
-    token: tokenToWire(token),
-    base_url: configured?.baseUrl,
-    oauth_host: configured?.oauth?.oauthHost,
-    oauth_key: oauthKey,
-  };
+async function provisionModels(config: IConfigService, credential: HostCredential): Promise<void> {
+  const models = await fetchManagedKimiCodeModels({ accessToken: credential.access_token, baseUrl: credential.base_url });
+  const next = readConfig(config);
+  applyManagedKimiCodeConfig(next, {
+    models,
+    baseUrl: credential.base_url,
+    oauthKey: credential.oauth_key,
+    oauthHost: credential.oauth_host,
+    preserveDefaultModel: true,
+  });
+  await writeConfig(config, next);
 }
 
-function expired(token: TokenInfoWire): boolean {
-  return token.expires_at * 1000 <= Date.now();
-}
-
-export function toolkitWithRemoteRefresh(core: Scope, manager: () => HostBridgeManager | undefined): IOAuthToolkit {
-  const toolkit = core.accessor.get(IOAuthToolkit);
-  return {
-    ...toolkit,
-    getCachedAccessToken(provider, oauthRef) {
-      return toolkit.getCachedAccessToken(provider, oauthRef);
-    },
-    tokenProvider(provider, oauthRef) {
-      const base = toolkit.tokenProvider(provider, oauthRef);
-      return {
-        async getAccessToken(options) {
-          const current = await localHostCredential(core);
-          const remaining = current === undefined ? Number.POSITIVE_INFINITY : current.token.expires_at - Math.floor(Date.now() / 1000);
-          if (current === undefined || (options?.force !== true && remaining >= defaultRefreshThreshold(current.token.expires_in))) {
-            return base.getAccessToken(options);
-          }
-          const remote = manager();
-          if (remote === undefined) return base.getAccessToken(options);
-          const credential = await remote.refreshCredential();
-          await saveLocalHostCredential(core, credential);
-          return credential.token.access_token;
-        },
-      };
-    },
-    async getManagedUsage(provider, options) {
-      await this.tokenProvider(provider, options?.oauthRef).getAccessToken();
-      return toolkit.getManagedUsage(provider, options);
-    },
-    async getManagedUserInfo(provider, options) {
-      await this.tokenProvider(provider, options?.oauthRef).getAccessToken();
-      return toolkit.getManagedUserInfo(provider, options);
-    },
-    async logout(provider, oauthRef) {
-      const result = await toolkit.logout(provider, oauthRef);
-      await manager()?.connect();
-      return result;
-    },
-  };
+export async function applyHostCredentialUpdate(
+  core: Scope,
+  store: HostCredentialStore,
+  input: unknown,
+): Promise<{ readonly applied: boolean }> {
+  const update = updateSchema.parse(input);
+  const config = core.accessor.get(IConfigService);
+  await config.ready;
+  if (update.action === 'revoke') {
+    if (store.remove()) {
+      const next = readConfig(config);
+      clearManagedKimiCodeConfig(next);
+      await writeConfig(config, next);
+    }
+    return { applied: true };
+  }
+  const incoming = update.credential;
+  if (expired(incoming)) throw new Error('The shared Kimi credential has already expired');
+  const previous = store.read();
+  if (previous !== undefined && sameAccountTarget(previous, incoming) && previous.expires_at > incoming.expires_at) {
+    return { applied: false };
+  }
+  store.write(incoming);
+  const managed = config.get<Record<string, ProviderConfig> | undefined>('providers')?.[KIMI_CODE_PROVIDER_NAME];
+  if (previous === undefined || !sameAccountTarget(previous, incoming) || managed?.oauth?.key !== incoming.oauth_key) {
+    await provisionModels(config, incoming);
+  }
+  return { applied: true };
 }
 
 export function registerHostCredentialRoute(app: {
   post(path: string, options: { schema?: Record<string, unknown> }, handler: never): unknown;
-}, core: Scope): void {
+}, core: Scope, store: HostCredentialStore): void {
   const route = defineRoute(
     {
       method: 'POST',
       path: '/oauth/host-credential',
-      success: { data: z.object({ credential: credentialSchema.nullable() }) },
-      description: 'Share account credentials with the connected local client',
+      success: { data: z.object({ applied: z.boolean() }) },
+      description: 'Receive or revoke the inference credential shared by the connecting computer',
       tags: ['hosts'],
     },
     async (req: { body: unknown; id: string }, reply: { send(payload: unknown): void }) => {
       try {
-        const input = requestSchema.parse(req.body);
-        const oauthKey = input.action === 'provision' ? input.credential.oauth_key : input.oauth_key;
-        const name = resolveKimiTokenStorageName({ oauthKey });
-        const config = core.accessor.get(IConfigService);
-        await config.ready;
-        if (input.action === 'logout') {
-          await storage(core).remove(name);
-          const next = readConfig(config);
-          clearManagedKimiCodeConfig(next);
-          await writeConfig(config, next);
-          reply.send(okEnvelope({ credential: null }, req.id));
-          return;
-        }
-        const local = input.credential;
-        const remote = await readRemoteCredential(core, oauthKey);
-        if (remote !== undefined && remote.token.refresh_token !== local.token.refresh_token) {
-          if (expired(remote.token) && expired(local.token)) {
-            throw new Error('The local and remote accounts both have expired credentials. Log in on this computer again.');
-          }
-          if (expired(remote.token)) await storage(core).save(name, tokenFromWire(local.token));
-        } else if (remote === undefined) {
-          await storage(core).save(name, tokenFromWire(local.token));
-        }
-        const credential = await readRemoteCredential(core, oauthKey);
-        if (credential === undefined) throw new Error('Unable to provision the account on this host');
-        await core.accessor.get(IOAuthToolkit).tokenProvider(KIMI_CODE_PROVIDER_NAME, {
-          key: oauthKey,
-          oauthHost: credential.oauth_host,
-        }).getAccessToken();
-        const current = await readRemoteCredential(core, oauthKey);
-        if (current === undefined) throw new Error('Unable to refresh the account on this host');
-        const models = await fetchManagedKimiCodeModels({ accessToken: current.token.access_token, baseUrl: credential.base_url });
-        const next = readConfig(config);
-        applyManagedKimiCodeConfig(next, {
-          models,
-          baseUrl: credential.base_url,
-          oauthKey,
-          oauthHost: credential.oauth_host,
-          preserveDefaultModel: true,
-        });
-        await writeConfig(config, next);
-        reply.send(okEnvelope({ credential: current }, req.id));
+        reply.send(okEnvelope(await applyHostCredentialUpdate(core, store, req.body), req.id));
       } catch (error) {
         reply.send(errEnvelope(40100, error instanceof Error ? error.message : String(error), req.id));
       }
