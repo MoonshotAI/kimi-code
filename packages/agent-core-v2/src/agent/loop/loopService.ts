@@ -380,6 +380,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     initialTools?: readonly Tool[],
   ): Promise<void> {
     if (this.initialized) return;
+    this.runGate.begin();
     await this.wire.drainPersisted().catch(() => undefined);
     const snapshot = this.journal.snapshot();
     this.profileAdapter.restore(snapshot);
@@ -524,6 +525,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const historyRevision = loop.historyRevision + 1;
     const baselineTools = loop.state.profile.tools ?? [];
     await loop.reset(async () => {
+      this.runGate.begin();
       this.drainPendingToLoop();
       await this.wire.drainPersisted().catch(() => undefined);
       const snapshot = this.journal.snapshot();

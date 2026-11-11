@@ -8,6 +8,7 @@ import { LOOP_CONTROL_SECTION } from '#/agent/loop/configSection';
 import { IConfigService } from '#/app/config/config';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { ISessionRunGate } from '#/session/sessionActivity/sessionRunGate';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
@@ -388,7 +389,9 @@ describe('core LoopService integration', () => {
     const loop = ctx.get(IAgentLoopService);
     const core = (loop as unknown as { loop: { historyRevision: number } }).loop;
     const previousRevision = core.historyRevision;
+    const begin = vi.spyOn(ctx.get(ISessionRunGate), 'begin');
     await ctx.get(IAgentConversationUndoService).undo(1);
+    expect(begin).toHaveBeenCalledTimes(2);
     expect((loop as unknown as { loop: { historyRevision: number } }).loop).toBe(core);
     expect(core.historyRevision).toBeGreaterThan(previousRevision);
     ctx.mockNextResponse({ type: 'text', text: 'third' });
