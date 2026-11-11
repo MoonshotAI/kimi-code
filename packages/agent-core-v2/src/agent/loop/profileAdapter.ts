@@ -3,7 +3,8 @@ import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { IProviderDiscoveryService } from '#/app/kosongConfig/discovery';
 import type { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
-import type { ModelCapability, ThinkingEffort } from '@moonshot-ai/core/llm/request';
+import type { ThinkingEffort } from '@moonshot-ai/core/llm/request';
+import type { ModelCapability } from '#/llm-adapter/contract/capability';
 import type { InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
 import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import {
@@ -78,7 +79,7 @@ export class AgentLoopProfileAdapter implements EffectiveProfileReader {
     return this.profile.resolveRequestParams(this.snapshot());
   }
 
-  getModelCapabilities(): ModelCapability | undefined {
+  getModelCapabilities(): ModelCapability {
     return this.profile.getModelCapabilities(this.snapshot());
   }
 

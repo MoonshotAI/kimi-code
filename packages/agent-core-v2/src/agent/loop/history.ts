@@ -1,6 +1,6 @@
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
-import type { HistoryMessage } from '@moonshot-ai/core/history/history';
+import type { HistoryMessage } from '@moonshot-ai/core/llm/history';
 import type { UserMessage } from '@moonshot-ai/core/llm/message';
 import { emptyUsage } from '@moonshot-ai/core/llm/usage';
 

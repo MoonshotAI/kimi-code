@@ -1,4 +1,4 @@
-import type { HistoryMessage, UserEntry } from '@moonshot-ai/core/history/history';
+import type { HistoryMessage, UserEntry } from '@moonshot-ai/core/llm/history';
 import type { IWireService } from '#/wire/wire';
 import { contextFromHistoryEntry } from '#/agent/loop/history';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';

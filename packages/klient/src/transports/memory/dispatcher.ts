@@ -603,7 +603,7 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
                       systemPrompt: resolvedInput.systemPrompt,
                       tools: resolvedInput.tools,
                     },
-                    content: { messages: resolvedInput.messages },
+                    content: { entries: resolvedInput.entries },
                     policy: {
                       retry: { maxAttemptsPerStep: 1 },
                       recoveries: [credentialRecovery],

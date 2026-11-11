@@ -41,7 +41,7 @@ export { openAIModelLegality, resolveOpenAIReasoningKey } from './legalize';
 export interface OpenAIOptions {
   readonly extras?: OpenAIExtraParams;
   readonly reasoningKey?: string;
-  readonly detectedReasoningKey?: string;
+  readonly detectedReasoningKey?: string | (() => string | undefined);
   readonly onReasoningKey?: (reasoningKey: string) => void;
   readonly toolMessageConversion?: ToolMessageConversion;
 }

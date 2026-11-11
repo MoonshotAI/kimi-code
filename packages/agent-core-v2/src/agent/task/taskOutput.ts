@@ -5,7 +5,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { ILogService } from '#/_base/log/log';
 import { escapeXml, escapeXmlAttr, escapeXmlTags } from '#/_base/utils/xml-escape';
 import { userCancellationReason } from '#/_base/utils/abort';
-import { createUserEntry, type UserEntry } from '@moonshot-ai/core/history/history';
+import { createUserEntry, type UserEntry } from '@moonshot-ai/core/llm/history';
 import type { TaskOrigin } from '#/agent/contextMemory/types';
 import { environmentTempTarget, IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';

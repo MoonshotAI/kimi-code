@@ -7,7 +7,7 @@ import type { FinishReason } from '@moonshot-ai/core/llm/response';
 import type { ContentPart, TextPart, ToolCall, ToolDescription as Tool } from '@moonshot-ai/core/llm/message';
 import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
 import type { Hooks } from '#/hooks';
-import type { HistoryMessage, UserEntry } from '@moonshot-ai/core/history/history';
+import type { HistoryMessage, UserEntry } from '@moonshot-ai/core/llm/history';
 import type { LoopRequester } from './requesterContract';
 import type {
   BindAgentInput,

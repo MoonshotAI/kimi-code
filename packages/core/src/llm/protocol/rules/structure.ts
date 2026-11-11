@@ -77,6 +77,26 @@ function carriesStructure(message: Message): boolean {
   return message.role === 'tool';
 }
 
+/**
+ * Drops blank text parts and non-structural messages that have no meaningful content left, while
+ * retaining messages that carry tool calls, tool definitions, or tool results.
+ *
+ * @example
+ * // With `report = () => {}`:
+ * // Input:
+ * [
+ *   {
+ *     role: 'user',
+ *     content: [
+ *       { type: 'text', text: ' ' }, // ←
+ *       { type: 'text', text: 'Hello' },
+ *     ],
+ *   },
+ *   { role: 'user', content: [{ type: 'text', text: '' }] }, // ←
+ * ]
+ * // Output:
+ * [{ role: 'user', content: [{ type: 'text', text: 'Hello' }] }] // ←
+ */
 export function cleanMessages(messages: readonly Message[], report: LlmNoticeSink): readonly Message[] {
   const out: Message[] = [];
   for (const message of messages) {
@@ -97,6 +117,28 @@ export function cleanMessages(messages: readonly Message[], report: LlmNoticeSin
   return sameMessages(out, messages) ? messages : out;
 }
 
+/**
+ * Moves each tool result directly after the assistant message containing its call, preserving call
+ * order and the relative order of all non-tool messages.
+ *
+ * @example
+ * const assistant = {
+ *   role: 'assistant',
+ *   content: [],
+ *   toolCalls: [{ type: 'function', id: 'call-1', name: 'read', arguments: '{}' }],
+ * };
+ * const result = {
+ *   role: 'tool',
+ *   toolCallId: 'call-1',
+ *   content: [{ type: 'text', text: 'done' }],
+ * };
+ * const note = { role: 'user', content: [{ type: 'text', text: 'Note' }] };
+ * // With `report = () => {}`:
+ * // Input:
+ * [assistant, note, result] // ←
+ * // Output:
+ * [assistant, result, note] // ←
+ */
 export function pairToolExchanges(
   messages: readonly Message[],
   report: LlmNoticeSink,
@@ -133,6 +175,29 @@ export function pairToolExchanges(
   return sameMessages(out, messages) ? messages : out;
 }
 
+/**
+ * Runs `cleanMessages` followed by `pairToolExchanges`, removing blank content before moving tool
+ * results next to their calls.
+ *
+ * @example
+ * const assistant = {
+ *   role: 'assistant',
+ *   content: [],
+ *   toolCalls: [{ type: 'function', id: 'call-1', name: 'read', arguments: '{}' }],
+ * };
+ * const result = {
+ *   role: 'tool',
+ *   toolCallId: 'call-1',
+ *   content: [{ type: 'text', text: 'done' }],
+ * };
+ * const empty = { role: 'user', content: [{ type: 'text', text: ' ' }] };
+ * const note = { role: 'user', content: [{ type: 'text', text: 'Note' }] };
+ * // With `report = () => {}`:
+ * // Input:
+ * [assistant, empty, note, result] // ←
+ * // Output:
+ * [assistant, result, note] // ←
+ */
 export function legalizeStructure(messages: readonly Message[], report: LlmNoticeSink): readonly Message[] {
   return pairToolExchanges(cleanMessages(messages, report), report);
 }

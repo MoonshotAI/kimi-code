@@ -4,7 +4,7 @@
  */
 import type { AssistantMessage, ToolCall } from '#/llm/message';
 import type { LlmOutcome } from '#/llm/response';
-import type { HistoryMessage } from '#/history/history';
+import type { HistoryMessage } from '#/llm/history';
 
 export { isToolResult } from '#/tool/contract';
 
@@ -53,9 +53,9 @@ export function isLlmOutcome(value: unknown): value is LlmOutcome {
   if (!isObject(value)) return false;
   switch (value['type']) {
     case 'done':
-      return isAssistantMessage(value['message']);
+      return isEntry(value['entry']) && value['entry'].message.role === 'assistant';
     case 'aborted':
-      return value['message'] === null || isAssistantMessage(value['message']);
+      return value['entry'] === null || (isEntry(value['entry']) && value['entry'].message.role === 'assistant');
     case 'failed':
       return (
         isObject(value['error']) &&

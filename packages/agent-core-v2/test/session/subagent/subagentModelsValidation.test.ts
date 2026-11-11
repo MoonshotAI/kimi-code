@@ -43,7 +43,31 @@ describe('SessionSubagentModelsValidationService', () => {
             { details: { model: id } },
           );
         }
-        return { id, ...modelMeta.get(id) } as Model;
+        const {
+          capabilities,
+          supportEfforts,
+          defaultEffort,
+          offEffort,
+          alwaysThinking,
+          adaptiveThinking,
+          ...rest
+        } = modelMeta.get(id) ?? {};
+        return {
+          ...rest,
+          id,
+          spec: {
+            provider: 'stub',
+            name: id,
+            capability: capabilities,
+            thinking: {
+              supportEfforts,
+              defaultEffort,
+              offEffort,
+              alwaysThinking,
+              adaptiveThinking,
+            },
+          },
+        } as Model;
       },
     } as unknown as IModelCatalog);
     ix.set(

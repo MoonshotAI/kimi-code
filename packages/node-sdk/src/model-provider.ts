@@ -145,7 +145,7 @@ export type OAuthTokenProviderResolver = (
 export interface ResolvedRuntimeProvider {
   readonly providerName: string;
   readonly provider: ProviderConfig;
-  readonly modelCapabilities: ModelCapability | undefined;
+  readonly modelCapabilities: ModelCapability;
   readonly alwaysThinking?: boolean;
   readonly supportEfforts?: readonly string[];
   readonly defaultEffort?: string;

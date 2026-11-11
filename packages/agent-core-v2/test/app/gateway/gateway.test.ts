@@ -18,7 +18,7 @@ import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLi
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import type { PromptPayload } from '#/agent/loop/loop';
-import type { UserEntry } from '@moonshot-ai/core/history/history';
+import type { UserEntry } from '@moonshot-ai/core/llm/history';
 import { stubLog } from '../../_base/log/stubs';
 import { stubLoopWithHooks, type StubLoop } from '../../agent/loop/stubs';
 

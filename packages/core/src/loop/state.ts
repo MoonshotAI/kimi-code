@@ -3,18 +3,9 @@
  * mutates, and pure helpers over them (turn creation, step outcome drafting, tool settlement,
  * resumability checks).
  */
-import {
-  createAssistantEntry,
-  type AssistantEntry,
-  type HistoryMessage,
-  type ToolEntry,
-  type UserEntry,
-} from '#/history/history';
-import { annotateBundledSkillParts, type UserPromptOrigin } from '#/history/origin';
-import { type ToolCall } from '#/llm/message';
-import { usableOutputOf } from '#/llm/policy/settle';
-import { emptyUsage } from '#/llm/usage';
-import type { LlmModelSpec } from '#/llm/request';
+import type { HistoryMessage, ToolEntry, UserEntry } from '#/llm/history';
+import { annotateBundledSkillParts, type UserPromptOrigin } from '#/llm/origin';
+import type { AssistantMessage, ToolCall } from '#/llm/message';
 import type { LlmOutcome } from '#/llm/response';
 import type { ToolExecutionHandler, ToolResult } from '#/tool/runtime';
 import { withAbort, type AbortScope } from '#/utils/abort';
@@ -95,9 +86,8 @@ export interface StepState {
   readonly scope: AbortScope;
   steerRequested: boolean;
   toolCallStreaming: boolean;
-  model?: LlmModelSpec;
   llm?: LlmOutcome;
-  partialMessage?: LlmOutcome['message'];
+  partialMessage?: AssistantMessage | null;
   readonly calls: StepCall[];
   readonly settled: Record<string, ToolEntry | null>;
   outcome?: StepOutcome;
@@ -430,22 +420,8 @@ export function draftOutcome(step: StepState): StepOutcome {
   if (llm.type === 'failed') {
     return { type: 'failed', error: llm.error };
   }
-  if (llm.message.toolCalls.length === 0) return { type: 'done' };
+  if (llm.entry.message.toolCalls.length === 0) return { type: 'done' };
   return { type: 'continue' };
-}
-
-export function assistantEntryOf(outcome: LlmOutcome, model?: LlmModelSpec): AssistantEntry | undefined {
-  if (outcome.message === null || outcome.message === undefined) return undefined;
-  const message = outcome.type === 'done' ? outcome.message : usableOutputOf(outcome.message);
-  if (message === null) return undefined;
-  return createAssistantEntry(message, {
-    source: outcome.type === 'done' ? 'llm' : 'salvaged',
-    ...(model === undefined ? {} : { model: { provider: model.provider, model: model.name } }),
-    usage: outcome.type === 'done' ? outcome.usage : outcome.usage ?? emptyUsage(),
-    headers: outcome.headers,
-    finish: outcome.finish,
-    messageId: outcome.messageId,
-  });
 }
 
 export function allSettled(step: StepState | undefined): boolean {

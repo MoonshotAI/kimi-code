@@ -4,7 +4,7 @@
  * lifecycle events.
  */
 import type { ToolCall } from '#/llm/message';
-import type { HistoryMessage } from '#/history/history';
+import type { HistoryMessage } from '#/llm/history';
 import type { ToolResult } from '#/tool/executor';
 import type { QueuedItem, TurnTrigger } from './inbox';
 import type { Cause, StepOutcome } from './outcome';

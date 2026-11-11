@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { createUserEntry } from '@moonshot-ai/core/history/history';
+import { createUserEntry } from '@moonshot-ai/core/llm/history';
 import { createUserMessage } from '@moonshot-ai/core/llm/message';
 import { createMockProviderRequester } from '../../../harness/scripted-generate';
 import { createTestLoop as createLoop } from './factory';

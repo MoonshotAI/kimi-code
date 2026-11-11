@@ -8,7 +8,6 @@ import type { IDisposable } from '#/_base/di/lifecycle';
 import { toErrorMessage } from '#/_base/errors/errorMessage';
 import { Event } from '#/_base/event';
 import type { LoopRequester } from '#/agent/loop/requesterContract';
-import type { AgentLoopRequestFactory } from '#/agent/loop/requester';
 import type { AgentLoopRequestObserver } from '#/agent/loop/requestObservation';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
@@ -36,6 +35,7 @@ import { IEventBus } from '#/app/event/eventBus';
 import { IPluginService } from '#/app/plugin/plugin';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { abortedToolOutput, isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
+import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 
 import {
   agentService,
@@ -59,10 +59,9 @@ type GenerateFn = NonNullable<TestAgentOptions['generate']>;
 
 function trackStepReasons(ctx: TestAgentContext): readonly (string | undefined)[] {
   const reasons: (string | undefined)[] = [];
-  const factory = (ctx.get(IAgentLoopService) as unknown as {
-    requestFactory: AgentLoopRequestFactory;
-  }).requestFactory;
-  const observer = (factory as unknown as { observer: AgentLoopRequestObserver }).observer;
+  const observer = (ctx.get(IAgentLoopService) as unknown as {
+    observer: AgentLoopRequestObserver;
+  }).observer;
   const recordAttempt = observer.recordAttempt.bind(observer);
   vi.spyOn(observer, 'recordAttempt').mockImplementation((observation, request, ledger) => {
     const header = request.endpoint?.headers?.['X-Msh-Client-Metadata'];
@@ -549,6 +548,7 @@ describe('Agent loop', () => {
     profile.update({ activeToolNames: ['Lookup'] });
     ctx.get(IAgentToolRegistryService).register(lookupTool);
     const reasons = trackStepReasons(ctx);
+    const registryRequest = vi.spyOn(ctx.get(IProtocolAdapterRegistry), 'request');
 
     ctx.mockNextResponse({ type: 'text', text: 'I will look it up.' }, lookupCall);
     await ctx.rpc.prompt({
@@ -615,6 +615,7 @@ describe('Agent loop', () => {
       [wire] token_counting.measured             { "agentId": "main", "length": 4, "tokens": 37, "time": "<time>" }
       [emit] turn.ended                          { "time": "<time>", "agentId": "main", "turnId": 0, "reason": "completed" }
     `);
+    expect(registryRequest).toHaveBeenCalledTimes(1);
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
       messages:
         <last>

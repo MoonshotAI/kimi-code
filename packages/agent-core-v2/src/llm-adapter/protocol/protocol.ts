@@ -5,6 +5,7 @@ import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiatio
 import type { ProtocolName } from '@moonshot-ai/core/llm/protocol/protocol';
 import type { ModelCapability } from '@moonshot-ai/core/llm/request';
 import type { InitializedLlmRequester, InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
+import type { LlmRequesterExecution } from '@moonshot-ai/core/llm/policy/policy';
 import type { Model } from '../model/catalog';
 
 import type { ProtocolBaseId, ResolvedAdapterIdentity } from './protocol-base';
@@ -51,7 +52,11 @@ export interface IProtocolAdapterRegistry {
     providerType?: string,
   ): ModelCapability | undefined;
 
-  request(model: Model, part?: InitializedLlmRequestPart): InitializedLlmRequester;
+  request(
+    model: Model,
+    part?: InitializedLlmRequestPart,
+    execution?: LlmRequesterExecution,
+  ): InitializedLlmRequester;
 }
 
 export const IProtocolAdapterRegistry: ServiceIdentifier<IProtocolAdapterRegistry> =

@@ -1087,7 +1087,7 @@ describe('FullCompaction', () => {
         duration_ms: expect.any(Number),
         round: 1,
         retry_count: 4,
-        error_type: 'Error',
+        error_type: 'APIConnectionError',
       }),
     });
     expect(
@@ -1359,7 +1359,7 @@ describe('FullCompaction', () => {
         tokens_before: expect.any(Number),
         duration_ms: expect.any(Number),
         retry_count: 4,
-        error_type: 'Error',
+        error_type: 'APIConnectionError',
       }),
     });
     vi.useRealTimers();
@@ -1405,7 +1405,7 @@ describe('FullCompaction', () => {
       properties: expect.objectContaining({
         source: 'manual',
         retry_count: 1,
-        error_type: 'Error',
+        error_type: 'APIConnectionError',
       }),
     });
     vi.useRealTimers();
@@ -3000,7 +3000,7 @@ describe('FullCompaction', () => {
       Object.defineProperty(resolved.spec, 'capability', { value: undefined });
       return resolved;
     };
-    expect(ctx.get(IAgentLoopService).data().modelCapabilities).toBeUndefined();
+    expect(ctx.get(IAgentLoopService).data().modelCapabilities.max_context_tokens).toBe(0);
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.newEvents();
 
@@ -4585,7 +4585,7 @@ describe('FullCompaction pre-shrink', () => {
       Object.defineProperty(resolved.spec, 'capability', { value: undefined });
       return resolved;
     };
-    expect(ctx.get(IAgentLoopService).data().modelCapabilities).toBeUndefined();
+    expect(ctx.get(IAgentLoopService).data().modelCapabilities.max_context_tokens).toBe(0);
     appendPreShrinkHistory(ctx);
     const completed = ctx.once('compaction.completed');
 

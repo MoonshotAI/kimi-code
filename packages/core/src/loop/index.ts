@@ -11,9 +11,7 @@ export { createMaxStepsHook, MAX_STEPS_REASON } from './builtin/hooks';
 export type {
   LoopLlmRequester,
   LoopRequestRuntime,
-  MediaRecoveryStore,
 } from './request';
-export { createMediaRecoveryStore } from './request';
 export type { HookRegistry } from './hook/registry';
 export type { PolicyRegistry } from '#/llm/policy/registry';
 export type { LoopInput, UnfinishedTurn } from './contract/command';

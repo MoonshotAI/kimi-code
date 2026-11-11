@@ -33,6 +33,7 @@ import {
   APIEmptyResponseError,
   APIStatusError,
   errorDiagnostics,
+  errorFromLlmMessage,
   isLlmErrorMessage,
   isRetryableGenerateError,
 } from '#/llm-adapter/contract/errors';
@@ -680,12 +681,13 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
             },
           }, signal);
           const outcome = await requester.generate(
-            { content: { messages, usedTokens: usedContextTokens }, profile: {} },
+            { content: { entries: historyFromContext(messages), usedTokens: usedContextTokens }, profile: {} },
             { signal },
           );
-          if (outcome.type === 'failed') throw outcome.error;
+          if (outcome.type === 'failed') throw errorFromLlmMessage(outcome.error, outcome.diagnostics);
           if (outcome.type === 'aborted') {
-            throw outcome.reason ?? new DOMException('The operation was aborted.', 'AbortError');
+            const message = outcome.reason instanceof Error ? outcome.reason.message : 'The operation was aborted.';
+            throw new DOMException(message, 'AbortError');
           }
           cacheProbePending = false;
           attempt = collectSummary(outcome);
@@ -717,12 +719,10 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
             continue;
           }
           const unwrappedError = unwrapErrorCause(error);
-          const retryableEmptyResponse =
-            isLlmErrorMessage(unwrappedError) &&
-            unwrappedError.kind === 'empty_response' &&
-            unwrappedError.finishReason !== 'filtered';
           if (
-            (error instanceof CompactionTruncatedError || retryableEmptyResponse) &&
+            (error instanceof CompactionTruncatedError ||
+              (unwrappedError instanceof APIEmptyResponseError &&
+                unwrappedError.finishReason !== 'filtered')) &&
             messagesToCompact.length > 1
           ) {
             if (requestAttempts >= maxAttempts) {
@@ -954,7 +954,7 @@ function collectSummary(outcome: Extract<LlmOutcome, { type: 'done' }>): Compact
     throw new CompactionTruncatedError();
   }
 
-  const summary = outcome.message.content
+  const summary = outcome.entry.message.content
     .filter((part) => part.type === 'text')
     .map((part) => part.text)
     .join('')

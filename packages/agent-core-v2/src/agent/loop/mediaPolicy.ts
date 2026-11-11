@@ -1,11 +1,10 @@
 import {
   countMediaParts,
   createMediaDegradeRecovery,
-  forkMediaRecovery,
   type MediaReplacement,
 } from '@moonshot-ai/core/llm/builtin/policy/media-degrade';
 import type { Message, ToolMessage, UserMessage } from '@moonshot-ai/core/llm/message';
-import type { LlmRecovery, LlmRecoveryLedger } from '@moonshot-ai/core/llm/policy/recovery';
+import type { LlmRecovery } from '@moonshot-ai/core/llm/policy/recovery';
 import type { LlmResolver } from '@moonshot-ai/core/llm/policy/resolver';
 import { mediaUrlOf } from '@moonshot-ai/core/llm/protocol/kit/media';
 import type { Model } from '#/llm-adapter/model/catalog';
@@ -75,10 +74,6 @@ export interface AgentMediaPolicy {
   readonly toolResolver: LlmResolver;
   readonly resolver: LlmResolver;
   readonly recovery: LlmRecovery;
-  readonly refreshRecovery: (
-    ledger: LlmRecoveryLedger,
-    messages: readonly Message[],
-  ) => Promise<LlmRecoveryLedger>;
 }
 
 export type AgentMediaPolicyFactory = (
@@ -135,9 +130,5 @@ export function createAgentMediaPolicy(
       },
     },
     recovery: createMediaDegradeRecovery(replacement),
-    refreshRecovery: async (ledger, messages) => {
-      mediaPaths = await service.displayPaths(messages);
-      return forkMediaRecovery(ledger, replacement);
-    },
   };
 }

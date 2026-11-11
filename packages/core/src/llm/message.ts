@@ -288,6 +288,29 @@ export function mergeInPlace(target: StreamedMessagePart, source: StreamedMessag
   return false;
 }
 
+/**
+ * Removes vacuous content and all tool calls from an interrupted assistant message, returning `null`
+ * when no meaningful content remains.
+ *
+ * @example
+ * // Input:
+ * {
+ *   role: 'assistant',
+ *   content: [
+ *     { type: 'text', text: ' ' }, // ←
+ *     { type: 'text', text: 'Partial answer' },
+ *   ],
+ *   toolCalls: [
+ *     { type: 'function', id: 'call-1', name: 'read', arguments: '{}' }, // ←
+ *   ],
+ * }
+ * // Output:
+ * {
+ *   role: 'assistant',
+ *   content: [{ type: 'text', text: 'Partial answer' }], // ←
+ *   toolCalls: [], // ←
+ * }
+ */
 export function salvageInterruptedMessage(message: AssistantMessage): AssistantMessage | null {
   const content = message.content.filter((part) => !isVacuousContentPart(part));
   if (content.length === 0) return null;
@@ -324,7 +347,7 @@ export function createMessageAccumulator(): MessageAccumulator {
           name: pending.name,
           arguments: pending.arguments,
         };
-        if (pending.extras != null) toolCall.extras = pending.extras;
+        if (pending.extras !== null && pending.extras !== undefined) toolCall.extras = pending.extras;
         if (pending.rawId !== undefined) toolCall.rawId = pending.rawId;
         message.toolCalls.push(toolCall);
         if (pending._streamIndex !== undefined) {

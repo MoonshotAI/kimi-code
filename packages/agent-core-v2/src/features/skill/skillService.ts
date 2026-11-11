@@ -13,7 +13,7 @@ import { IEventService } from '#/app/event/event';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2 } from '#/errors';
 import type { ContentPart } from '@moonshot-ai/core/llm/message';
-import { skillActivationPart } from '@moonshot-ai/core/history/origin';
+import { skillActivationPart } from '@moonshot-ai/core/llm/origin';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';

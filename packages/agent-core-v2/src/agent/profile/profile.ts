@@ -3,7 +3,8 @@ import type {
   AgentProfileContext,
   EnvironmentDisclosureSnapshot,
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import type { LlmModelSpec, ModelCapability, ThinkingEffort } from '@moonshot-ai/core/llm/request';
+import type { LlmModelSpec, ThinkingEffort } from '@moonshot-ai/core/llm/request';
+import type { ModelCapability } from '#/llm-adapter/contract/capability';
 import type { InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
 
 import { createDecorator } from "#/_base/di/instantiation";
@@ -25,7 +26,7 @@ export class ProfileError extends Error2 {
 
 export interface AgentConfigData {
   modelAlias?: string;
-  modelCapabilities: ModelCapability | undefined;
+  modelCapabilities: ModelCapability;
   profileName?: string;
   thinkingLevel: string;
   systemPrompt: string;
@@ -114,7 +115,7 @@ export interface EffectiveProfileReader {
   getEffectiveThinkingLevel(): ThinkingEffort;
   resolveModelContext(): ProfileModelContext;
   resolveRequestParams(): InitializedLlmRequestPart;
-  getModelCapabilities(): ModelCapability | undefined;
+  getModelCapabilities(): ModelCapability;
   getModelProviderType(alias?: string): string | undefined;
   getMaxOutputSize(): number | undefined;
   hasModel(): boolean;
@@ -153,7 +154,7 @@ export interface IAgentProfileService extends EffectiveProfileReader {
   getEffectiveThinkingLevel(snapshot?: ProfileBindingSnapshot): ThinkingEffort;
   resolveModelContext(snapshot?: ProfileBindingSnapshot): ProfileModelContext;
   resolveRequestParams(snapshot?: ProfileBindingSnapshot): InitializedLlmRequestPart;
-  getModelCapabilities(snapshot?: ProfileBindingSnapshot): ModelCapability | undefined;
+  getModelCapabilities(snapshot?: ProfileBindingSnapshot): ModelCapability;
   getModelProviderType(alias?: string, snapshot?: ProfileBindingSnapshot): string | undefined;
   getMaxOutputSize(snapshot?: ProfileBindingSnapshot): number | undefined;
   hasModel(snapshot?: ProfileBindingSnapshot): boolean;

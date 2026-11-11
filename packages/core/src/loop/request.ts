@@ -1,64 +1,33 @@
 /**
  * Bridges a loop step to an LLM request by combining the active requester, profile, history, and
- * step-scoped abort signal. Also holds the media recovery ledger reused across steps.
+ * step-scoped abort signal.
  */
+import type { HistoryMessage } from '#/llm/history';
+import type { LlmPolicy, LlmRunControl } from '#/llm/policy/policy';
 import { isAbortError, toLlmErrorMessage } from '#/llm/protocol/errors';
-import type { LlmModelSpec, LlmRequestProfile } from '#/llm/request';
-import type { LlmDimension, LlmRequester } from '#/llm/requester';
+import type { LlmRequestProfile } from '#/llm/request';
+import type { LlmDimension, LlmRequestRest } from '#/llm/requester';
 import type { LlmOutcome, LlmRunEvent } from '#/llm/response';
-import type { LlmRecoveryLedger } from '#/llm/policy/recovery';
-import { toRequestMessages, type HistoryMessage } from '#/history/history';
-import { estimateUsedContextTokens as usedContextTokens } from '#/history/context-usage';
 import type { LoopProfile } from './contract/profile';
 import { isLlmOutcome } from './guards';
 
-export interface LoopLlmRequester extends LlmRequester<LlmDimension> {
+export interface LoopLlmRequester {
   snapshot?(): LoopLlmRequester;
-}
-
-export interface MediaRecoveryStore {
-  read(modelAlias: string, revision: number): LlmRecoveryLedger | undefined;
-  write(modelAlias: string, revision: number, ledger: LlmRecoveryLedger): void;
-}
-
-export function createMediaRecoveryStore(): MediaRecoveryStore {
-  let current: { readonly modelAlias: string; readonly revision: number; readonly ledger: LlmRecoveryLedger } | undefined;
-  return {
-    read: (modelAlias, revision) =>
-      current?.modelAlias === modelAlias && current.revision === revision ? current.ledger : undefined,
-    write: (modelAlias, revision, ledger) => {
-      current = {
-        modelAlias,
-        revision,
-        ledger: ledger.fork((entry) => entry.strategy === 'media-degrade'),
-      };
-    },
-  };
+  generate(rest: LlmRequestRest<LlmDimension>, control: LlmRunControl): Promise<LlmOutcome>;
 }
 
 export interface LoopRequestRuntime {
   readonly historyRevision: () => number;
-  readonly mediaRecovery: MediaRecoveryStore;
 }
 
 export interface LoopRequestInput {
   readonly messages: readonly HistoryMessage[];
   readonly profile: LoopProfile;
+  readonly policy?: LlmPolicy;
   readonly signal: AbortSignal;
 }
 
-export type LoopRequestProgress = Exclude<LlmRunEvent, { type: 'llm.ended' }> | {
-  readonly type: 'llm.prepared';
-  readonly model?: LlmModelSpec;
-};
-
-export function toLoopRequestMessages(history: readonly HistoryMessage[]): ReturnType<typeof toRequestMessages> {
-  const messages = toRequestMessages(history);
-  return messages.map((message, index) => {
-    const origin = history[index]!.meta?.origin;
-    return origin === undefined ? message : { ...message, origin };
-  });
-}
+export type LoopRequestProgress = Exclude<LlmRunEvent, { type: 'llm.ended' }>;
 
 function failedOutcome(error: unknown): LlmOutcome {
   return { type: 'failed', error: toLlmErrorMessage(error), rawError: error };
@@ -95,25 +64,21 @@ export function runLoopRequest(
   };
   void (async () => {
     try {
-      const messages = toLoopRequestMessages(input.messages);
       const { systemPrompt, tools } = input.profile;
       const requestProfile: LlmRequestProfile = {
         ...(systemPrompt === undefined || systemPrompt === '' ? {} : { systemPrompt }),
         ...(tools === undefined ? {} : { tools }),
       };
-      const { model, profile } = requester.request({ content: { messages }, profile: requestProfile });
-      onProgress({ type: 'llm.prepared', model: model?.spec });
-      const usedTokens = usedContextTokens(input.messages, profile);
       end(
         await requester.generate(
-          { content: { messages, usedTokens }, profile: requestProfile },
+          { content: { entries: input.messages }, profile: requestProfile, policy: input.policy },
           { signal: input.signal, onEvent: forward },
         ),
       );
     } catch (error) {
       end(
         isAborted(input.signal, error)
-          ? { type: 'aborted', message: null, usage: undefined, reason: input.signal.reason }
+          ? { type: 'aborted', entry: null, usage: undefined, reason: input.signal.reason }
           : failedOutcome(error),
       );
     }

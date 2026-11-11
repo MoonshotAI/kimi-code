@@ -4,6 +4,7 @@
  * thinking-only responses into `empty_response` errors.
  */
 import { generate, type LlmAttemptEvent } from '#/llm/generate';
+import { createAssistantEntry } from '#/llm/history';
 import {
   createMessageAccumulator,
   isVacuousContentPart,
@@ -13,7 +14,7 @@ import { isAbortError, toLlmErrorMessage } from '#/llm/protocol/errors';
 import { parseRetryAfterMs } from '#/llm/protocol/kit/http';
 import { withoutUndefinedStatusCode } from '#/llm/protocol/rules/status';
 import { createToolCallIdNormalizer } from '#/llm/protocol/rules/tool-call-ids';
-import type { LlmModelSpec, LlmRequest } from '#/llm/request';
+import type { LlmModelSpec, LlmProtocolRequest } from '#/llm/request';
 import {
   llmStatusErrorMessage,
   NO_FINISH,
@@ -24,7 +25,7 @@ import {
   type LlmStreamEvent,
   type LlmTiming,
 } from '#/llm/response';
-import { mergeUsagePatch, type TokenUsage } from '#/llm/usage';
+import { emptyUsage, mergeUsagePatch, type TokenUsage } from '#/llm/usage';
 
 export function usableOutputOf(message: AssistantMessage): AssistantMessage | null {
   const drained = message.content.filter((part) => !isVacuousContentPart(part));
@@ -91,7 +92,7 @@ export interface LlmSettleControl {
 }
 
 export async function settleLlmRequest(
-  request: LlmRequest,
+  request: LlmProtocolRequest,
   control: LlmSettleControl,
 ): Promise<LlmOutcome> {
   const { signal, onEvent } = control;
@@ -199,30 +200,46 @@ export async function settleLlmRequest(
     timing,
   });
 
+  const assistantEntry = (message: AssistantMessage, source: 'llm' | 'salvaged') =>
+    createAssistantEntry(message, {
+      source,
+      model: { provider: request.model.spec.provider, model: request.model.spec.name },
+      usage: source === 'llm' ? usage : (usage ?? emptyUsage()),
+      headers,
+      finish,
+      messageId,
+    });
+
   const failed = (
     failure: { error: LlmErrorMessage; rawError?: unknown },
     message: AssistantMessage,
-  ): LlmOutcome => ({
-    type: 'failed',
-    ...failure,
-    message,
-    ...extras(),
-    diagnostics: request.protocol.base.diagnoseError?.({
-      error: failure.error,
-      rawError: failure.rawError,
-      headers,
-    }),
-  });
+  ): LlmOutcome => {
+    const usable = usableOutputOf(message);
+    return {
+      type: 'failed',
+      ...failure,
+      entry: usable === null ? undefined : assistantEntry(usable, 'salvaged'),
+      ...extras(),
+      diagnostics: request.protocol.base.diagnoseError?.({
+        error: failure.error,
+        rawError: failure.rawError,
+        headers,
+      }),
+    };
+  };
 
-  const aborted = (): LlmOutcome => ({
-    type: 'aborted',
-    message: usableOutputOf(finishMessage()),
-    reason:
-      failure?.error.kind === 'abort'
-        ? failure.error
-        : ({ kind: 'abort', message: 'The operation was aborted.', retryable: false } satisfies LlmErrorMessage<'abort'>),
-    ...extras(),
-  });
+  const aborted = (): LlmOutcome => {
+    const usable = usableOutputOf(finishMessage());
+    return {
+      type: 'aborted',
+      entry: usable === null ? null : assistantEntry(usable, 'salvaged'),
+      reason:
+        failure?.error.kind === 'abort'
+          ? failure.error
+          : ({ kind: 'abort', message: 'The operation was aborted.', retryable: false } satisfies LlmErrorMessage<'abort'>),
+      ...extras(),
+    };
+  };
 
   try {
     await generate(request, { signal, onEvent: handle });
@@ -248,5 +265,5 @@ export async function settleLlmRequest(
   if (empty !== null) {
     return failed({ error: empty }, message);
   }
-  return { type: 'done', message, ...extras() };
+  return { type: 'done', entry: assistantEntry(message, 'llm'), ...extras() };
 }

@@ -3,7 +3,7 @@
  * progression, LLM requests, tool execution and detachment, abort, reset, and close, and every state
  * change is emitted as a `LoopEmitted` event.
  */
-import type { HistoryMessage, UserEntry } from '#/history/history';
+import type { HistoryMessage, UserEntry } from '#/llm/history';
 import type { ToolDescription } from '#/llm/message';
 import type { LlmOutcome } from '#/llm/response';
 import { createPolicyRegistry, type PolicyRegistry } from '#/llm/policy/registry';
@@ -39,7 +39,6 @@ import {
   type TurnStartingRun,
 } from './hook/run';
 import {
-  createMediaRecoveryStore,
   runLoopRequest,
   type LoopLlmRequester,
   type LoopRequestProgress,
@@ -48,7 +47,6 @@ import {
 import { loopProjection, type LoopRecord, type LoopRecordState } from './record';
 import {
   allSettled,
-  assistantEntryOf,
   canContinue,
   createTurn,
   draftOutcome,
@@ -326,7 +324,6 @@ class LoopActor implements Loop {
   private toolsSettled = false;
   private revision = 0;
   private seq = 0;
-  private readonly mediaRecovery = createMediaRecoveryStore();
   private kicking = false;
   private dispatching = false;
   private resetting = false;
@@ -410,7 +407,6 @@ class LoopActor implements Loop {
   operation<T>(create: (runtime: LoopRequestRuntime) => T): T {
     return create({
       historyRevision: () => this.revision,
-      mediaRecovery: this.mediaRecovery,
     });
   }
 
@@ -1144,7 +1140,7 @@ class LoopActor implements Loop {
     if (!this.isCurrent(turn) || turn.outcome?.type !== 'aborted') return;
     const step = this.step;
     if (turn.phase === 'requesting' && step !== undefined) {
-      this.completeRequest(turn, step, { type: 'aborted', message: null, usage: undefined, reason: undefined });
+      this.completeRequest(turn, step, { type: 'aborted', entry: null, usage: undefined, reason: undefined });
       return;
     }
     if (turn.phase === 'acting' || turn.phase === 'batching') {
@@ -1397,10 +1393,11 @@ class LoopActor implements Loop {
       return;
     }
     const outcome = runLoopRequest(
-      requester.with({ policy: this.policy.asPolicy() }),
+      requester,
       {
         messages: [...this.durable.messages],
         profile,
+        policy: this.policy.asPolicy(),
         signal: step.scope.signal,
       },
       (event) => {
@@ -1413,29 +1410,15 @@ class LoopActor implements Loop {
 
   private requestProgress(turn: LiveTurn, step: StepState, event: LoopRequestProgress): void {
     if (!this.isCurrentStep(turn, step, 'requesting')) return;
-    if (event.type === 'llm.prepared') {
-      step.model = event.model;
-      return;
-    }
     if (event.type === 'llm.streaming.request_id') this.requestId = event.requestId;
     if (event.type === 'llm.streaming.part' && (event.part.type === 'function' || event.part.type === 'tool_call_part')) {
       step.toolCallStreaming = true;
     }
     if (event.type === 'llm.retrying') {
-      const entry = assistantEntryOf({
-        type: 'failed',
-        error: event.error,
-        message: event.message ?? undefined,
-        usage: event.usage,
-        headers: event.headers,
-        finish: event.finish,
-        messageId: event.messageId,
-        requestId: event.requestId,
-        timing: event.timing,
-      }, step.model);
-      if (entry !== undefined) {
+      const entry = event.entry;
+      if (entry !== undefined && entry !== null) {
         this.record({ type: 'message.appended', turnId: turn.id, step: turn.step, source: 'partial', entry });
-        step.partialMessage = event.message ?? undefined;
+        step.partialMessage = entry.message;
       }
     }
     this.record(event);
@@ -1445,13 +1428,13 @@ class LoopActor implements Loop {
     if (!this.isCurrentStep(turn, step, 'requesting')) return;
     step.llm = outcome;
     if (typeof outcome.requestId === 'string') this.requestId = outcome.requestId;
-    const toolCalls = outcome.type === 'done' ? outcome.message.toolCalls : [];
+    const toolCalls = outcome.type === 'done' ? outcome.entry.message.toolCalls : [];
     step.calls.push(
       ...toolCalls.map((toolCall, index) => ({ key: `${turn.id}:${turn.step}:${index}`, toolCall })),
     );
     this.record({ type: 'llm.ended', outcome });
-    const entry = assistantEntryOf(outcome, step.model);
-    if (entry !== undefined && step.partialMessage !== outcome.message) {
+    const entry = outcome.entry;
+    if (entry !== undefined && entry !== null && step.partialMessage !== entry.message) {
       this.record({
         type: 'message.appended',
         turnId: turn.id,
@@ -1985,11 +1968,11 @@ class LoopActor implements Loop {
       }
     }
     if (turn.phase === 'requesting' && step !== undefined) {
-      const outcome: LlmOutcome = { type: 'aborted', message: null, usage: undefined, reason: undefined };
+      const outcome: LlmOutcome = { type: 'aborted', entry: null, usage: undefined, reason: undefined };
       step.llm = outcome;
       this.record({ type: 'llm.ended', outcome });
-      const entry = assistantEntryOf(outcome, step.model);
-      if (entry !== undefined) {
+      const entry = outcome.entry;
+      if (entry !== undefined && entry !== null) {
         this.record({ type: 'message.appended', turnId: turn.id, step: turn.step, source: 'llm', entry });
       }
       this.finalizeStep(turn, step);

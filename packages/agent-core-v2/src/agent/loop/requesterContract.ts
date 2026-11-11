@@ -1,4 +1,5 @@
-import type { ToolDescription as Tool, Message } from '@moonshot-ai/core/llm/message';
+import type { ToolDescription as Tool } from '@moonshot-ai/core/llm/message';
+import type { HistoryMessage } from '@moonshot-ai/core/llm/history';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import type { LogContext } from '#/_base/log/log';
 import type { LlmOutcome } from '@moonshot-ai/core/llm/response';
@@ -31,15 +32,20 @@ export interface RequestConfigSnapshot {
   readonly maxCompletionTokensCap?: number;
 }
 
+export interface RequesterBinding {
+  readonly request: InitializedLlmRequester;
+  readonly model: Model;
+  readonly requestMetadata: boolean;
+}
+
 export interface ResolvedRequestContext {
   readonly request: InitializedLlmRequester;
   readonly model: Model;
-  readonly params: InitializedLlmRequestPart;
   readonly modelAlias: string;
   readonly thinkingEffort: ThinkingEffort;
   readonly systemPrompt: string;
   readonly tools?: readonly Tool[];
-  readonly messages: Message[];
+  readonly entries: HistoryMessage[];
   readonly usedContextTokens?: number;
   readonly contextRevision: number;
   readonly promptCacheProbe: 'compaction' | undefined;
@@ -53,6 +59,7 @@ export interface CoreLoopRequesterOptions {
   readonly source: () => AgentLLMRequestSource;
   readonly runtime: LoopRequestRuntime;
   readonly config?: RequestConfigSnapshot;
+  readonly binding?: RequesterBinding;
   readonly onSnapshot?: (config: RequestConfigSnapshot) => void;
   readonly dynamicTools?: boolean;
   readonly maxOutputSize?: number;

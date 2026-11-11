@@ -3,7 +3,6 @@
  * constructors, and the conversion of history into request messages, including how tool results are
  * rendered for the model.
  */
-import type { FinishInfo } from '#/llm/response';
 import type {
   AssistantMessage,
   ContentPart,
@@ -15,6 +14,19 @@ import type {
 import type { TokenUsage } from '#/llm/usage';
 
 import type { PromptOrigin } from './origin';
+
+export type FinishReason =
+  | 'completed'
+  | 'tool_calls'
+  | 'truncated'
+  | 'filtered'
+  | 'paused'
+  | 'other';
+
+export interface FinishInfo {
+  readonly finishReason: FinishReason | null;
+  readonly rawFinishReason: string | null;
+}
 
 export interface EntryMeta {
   source?: string;
@@ -126,9 +138,26 @@ export function renderToolResultForModel(result: RenderableToolResult): ContentP
   return [...parts];
 }
 
+export function toHistoryEntries(messages: readonly Message[]): HistoryMessage[] {
+  return messages.map((message): HistoryMessage => {
+    switch (message.role) {
+      case 'system':
+        return createSystemEntry(message);
+      case 'user':
+        return createUserEntry(message);
+      case 'assistant':
+        return createAssistantEntry(message, {});
+      case 'tool':
+        return createToolEntry(message);
+      default:
+        throw new Error('unsupported message role');
+    }
+  });
+}
+
 export function toRequestMessages(history: readonly HistoryMessage[]): Message[] {
-  return history.map((entry) =>
-    entry.message.role === 'tool'
+  return history.map((entry) => {
+    const message = entry.message.role === 'tool'
       ? {
           ...entry.message,
           content: renderToolResultForModel({
@@ -136,6 +165,8 @@ export function toRequestMessages(history: readonly HistoryMessage[]): Message[]
             isError: (entry.meta as ToolMeta | undefined)?.isError === true,
           }),
         }
-      : entry.message,
-  );
+      : entry.message;
+    const origin = entry.meta?.origin;
+    return origin === undefined ? message : { ...message, origin };
+  });
 }

@@ -3,7 +3,8 @@ import { IInstantiationService } from '#/_base/di/instantiation';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
-import type { LlmSampling, ModelCapability, ThinkingEffort } from '@moonshot-ai/core/llm/request';
+import type { LlmSampling, ThinkingEffort } from '@moonshot-ai/core/llm/request';
+import { fromLlmModelSpec, UNKNOWN_CAPABILITY, type ModelCapability } from '#/llm-adapter/contract/capability';
 import type { InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
 import {
   modelSupportsThinkingEffort,
@@ -452,7 +453,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     const model = this.tryResolveRawModel(snapshot.modelAlias);
     return {
       modelAlias: snapshot.modelAlias,
-      modelCapabilities: model?.spec.capability,
+      modelCapabilities: model === undefined ? UNKNOWN_CAPABILITY : fromLlmModelSpec(model.spec),
       profileName: snapshot.profileName,
       thinkingLevel: this.thinkingLevelFor(snapshot),
       systemPrompt: snapshot.systemPrompt,
@@ -512,8 +513,9 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     };
   }
 
-  getModelCapabilities(snapshot: ProfileBindingSnapshot = this.profileState): ModelCapability | undefined {
-    return this.tryResolveRawModel(snapshot.modelAlias)?.spec.capability;
+  getModelCapabilities(snapshot: ProfileBindingSnapshot = this.profileState): ModelCapability {
+    const model = this.tryResolveRawModel(snapshot.modelAlias);
+    return model === undefined ? UNKNOWN_CAPABILITY : fromLlmModelSpec(model.spec);
   }
 
   getModelProviderType(

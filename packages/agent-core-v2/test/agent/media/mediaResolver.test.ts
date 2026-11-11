@@ -36,6 +36,7 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import { type GetResult, IFileService } from '#/app/file/fileService';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ContentPart, ImageURLPart, Message, VideoURLPart } from '@moonshot-ai/core/llm/message';
+import { toHistoryEntries } from '@moonshot-ai/core/llm/history';
 import type { LlmCredentialProvider } from '@moonshot-ai/core/llm/request';
 import type { Protocol } from '#/llm-adapter/protocol/protocol';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
@@ -981,7 +982,7 @@ describe('AgentMediaResolverService image upload', () => {
       const events = streamLlmRequest(
         routed.request({
           profile: { systemPrompt: '' },
-          content: { messages: history },
+          content: { entries: toHistoryEntries(history) },
           policy: {
             recoveries: [media.recovery],
             resolvers: [media.toolResolver, media.resolver],

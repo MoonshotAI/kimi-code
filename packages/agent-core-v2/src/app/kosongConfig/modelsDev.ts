@@ -1,4 +1,4 @@
-import type { ModelCapability } from '@moonshot-ai/core/llm/request';
+import type { ModelCapability } from '#/llm-adapter/contract/capability';
 import type { ProviderType } from '#/llm-adapter/provider/provider';
 
 import { wireHasProtocolThinkingDisable } from '#/llm-adapter/model/thinking';

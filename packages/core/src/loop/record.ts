@@ -3,7 +3,7 @@
  * the projection that folds a record stream back into the state needed to restore a loop (profile,
  * messages, turns, unfinished turn, pending notifications).
  */
-import type { HistoryMessage, UserEntry, UserMeta } from '#/history/history';
+import type { HistoryMessage, UserEntry, UserMeta } from '#/llm/history';
 import type { UnfinishedTurn } from './contract/command';
 import type { LoopEmitted } from './contract/emitted';
 import type { LoopProfile } from './contract/profile';

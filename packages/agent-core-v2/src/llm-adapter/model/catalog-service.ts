@@ -422,8 +422,7 @@ export function resolveOutboundHeaders(
 function resolveModelCapabilities(
   declaredCapabilities: readonly string[] | undefined,
   detected: ModelCapability | undefined,
-): ModelCapability | undefined {
-  if (declaredCapabilities === undefined && detected === undefined) return undefined;
+): ModelCapability {
   const declared = new Set((declaredCapabilities ?? []).map((c) => c.trim().toLowerCase()));
   return {
     image_in: declared.has('image_in') || detected?.image_in === true,

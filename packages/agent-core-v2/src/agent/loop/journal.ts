@@ -27,7 +27,7 @@ import {
   type AssistantEntry,
   type HistoryMessage,
   type UserEntry,
-} from '@moonshot-ai/core/history/history';
+} from '@moonshot-ai/core/llm/history';
 
 import { contextFromHistoryEntry, historyFromContext } from './history';
 import { TurnPrompt } from './turnOps';

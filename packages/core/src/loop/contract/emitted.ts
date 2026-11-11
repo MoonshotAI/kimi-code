@@ -4,7 +4,7 @@
  */
 import type { ContentPart, ToolCall, ToolDescription } from '#/llm/message';
 import type { LlmRunEvent, LlmTiming } from '#/llm/response';
-import type { HistoryMessage, UserEntry } from '#/history/history';
+import type { HistoryMessage, UserEntry } from '#/llm/history';
 import type { ToolHookPoint, ToolUpdate } from '#/tool/executor';
 import type { HookLifecycleEvent, HookPoint } from './hook';
 import type { MessageSource, RemindEntry, TurnTrigger } from './inbox';

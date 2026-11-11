@@ -1530,7 +1530,7 @@ export class AgentTestContext {
         return result;
       }) as IAgentLoopService['sendNow'];
       const remind = loop.remind.bind(loop);
-      loop.remind = (...entries: readonly import('@moonshot-ai/core/history/history').HistoryMessage[]) => {
+      loop.remind = (...entries: readonly import('@moonshot-ai/core/llm/history').HistoryMessage[]) => {
         remind(...entries);
         void Promise.resolve().then(restoreAfterWrites);
       };
@@ -2952,12 +2952,12 @@ function createGenerateBackedGateway(requester: MockProvider): IProtocolAdapterR
       real.resolveProviderBaseId(protocol, providerType),
     resolveCapability: (protocol, modelName, providerType) =>
       real.resolveCapability(protocol, modelName, providerType),
-    request: (model, params) => {
+    request: (model, params, execution) => {
       const cacheKey = (model as Model & { readonly promptCacheKey?: string }).promptCacheKey;
       const initialized = real.request(model, {
         ...params,
         model: { ...params?.model, cacheKey: params?.model?.cacheKey ?? cacheKey },
-      });
+      }, execution);
       return withMockProvider(initialized, requester);
     },
   };

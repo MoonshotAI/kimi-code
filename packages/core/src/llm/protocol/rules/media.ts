@@ -73,6 +73,19 @@ function placeholderReason(
   return acceptsSource(spec, part) ? undefined : 'stripped';
 }
 
+/**
+ * Replaces media whose kind, MIME type, or source is unsupported at its message position with the
+ * corresponding placeholder text, leaving supported media and other content unchanged.
+ *
+ * @example
+ * const image = { type: 'image_url', imageUrl: { url: 'https://example.com/chart.png' } };
+ * const placeholder = { type: 'text', text: '[image omitted: not supported by this provider]' };
+ * // With `support = { kinds: {} }`:
+ * // Input:
+ * [{ role: 'user', content: [image] }] // ←
+ * // Output:
+ * [{ role: 'user', content: [placeholder] }] // ←
+ */
 export function legalizeMedia(
   messages: readonly Message[],
   support: MediaSupport,
@@ -109,6 +122,28 @@ function withoutRelocated(message: ToolMessage, support: MediaSupport): ToolMess
   };
 }
 
+/**
+ * Removes tool-result media whose kind uses `inToolResult: 'relocate'`, inserts a text placeholder
+ * when a tool result has no other body, and moves the media into a user message after the tool run.
+ *
+ * @example
+ * // With `support.kinds.image.inToolResult = 'relocate'`:
+ * const image = { type: 'image_url', imageUrl: { url: 'https://example.com/chart.png' } };
+ * const tool = { role: 'tool', toolCallId: 'call-1', content: [image] };
+ * const strippedTool = {
+ *   role: 'tool',
+ *   toolCallId: 'call-1',
+ *   content: [{ type: 'text', text: '(see attached media)' }],
+ * };
+ * const attachment = {
+ *   role: 'user',
+ *   content: [{ type: 'text', text: 'Attached media from tool result:' }, image],
+ * };
+ * // Input:
+ * [tool] // ←
+ * // Output:
+ * [strippedTool, attachment] // ←
+ */
 export function relocateToolMedia(messages: readonly Message[], support: MediaSupport): readonly Message[] {
   if (!messages.some((message) => message.role === 'tool' && message.content.some((part) => relocates(part, support)))) {
     return messages;

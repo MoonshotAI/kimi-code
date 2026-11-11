@@ -12,8 +12,9 @@ import type { ApiErrorEvent, CacheBreakDetectedEvent } from '#/app/telemetry/eve
 import { unwrapErrorCause } from '#/errors';
 import { countMediaParts } from '@moonshot-ai/core/llm/builtin/policy/media-degrade';
 import type { Message, ToolDescription as Tool } from '@moonshot-ai/core/llm/message';
-import type { LlmRequest as CoreLlmRequest } from '@moonshot-ai/core/llm/request';
-import type { LlmRecoveryLedger, LlmRecoveryRecord } from '@moonshot-ai/core/llm/policy/recovery';
+import { toRequestMessages } from '@moonshot-ai/core/llm/history';
+import type { LlmProtocolRequest } from '@moonshot-ai/core/llm/request';
+import type { LlmRecoveryRecord } from '@moonshot-ai/core/llm/policy/recovery';
 import { llmErrorRequestId, type LlmOutcome, type LlmRunEvent, type LlmTiming } from '@moonshot-ai/core/llm/response';
 import { emptyUsage, grandTotal, inputTotal, type TokenUsage } from '@moonshot-ai/core/llm/usage';
 import type { ThinkingEffort } from '@moonshot-ai/core/llm/request';
@@ -131,8 +132,8 @@ export class AgentLoopRequestObserver {
 
   recordAttempt(
     observation: AgentRequestObservation,
-    attemptRequest: CoreLlmRequest,
-    recoveryLedger: LlmRecoveryLedger,
+    attemptRequest: LlmProtocolRequest,
+    appliedRecoveries: readonly LlmRecoveryRecord[],
   ): void {
     const request = observation.requireContext();
     observation.setRequestId(undefined);
@@ -141,8 +142,8 @@ export class AgentLoopRequestObserver {
       tools: attemptRequest.profile?.tools,
       messages: attemptRequest.content.messages,
     };
-    const mediaRecovery = latestMediaRecovery(recoveryLedger.applied);
-    const projection = projectionNameOf(recoveryLedger.applied, mediaRecovery);
+    const mediaRecovery = latestMediaRecovery(appliedRecoveries);
+    const projection = projectionNameOf(appliedRecoveries, mediaRecovery);
     const fields = projection === undefined ? request.logFields : { ...request.logFields, projection };
     const media = observation.media;
     const currentMediaCount = countMediaParts(attemptInput.messages);
@@ -200,7 +201,6 @@ export class AgentLoopRequestObserver {
   reportEvent(
     observation: AgentRequestObservation,
     event: LlmRunEvent,
-    recoveryLedger: LlmRecoveryLedger,
     infiniteRetry: boolean,
   ): void {
     const request = observation.requireContext();
@@ -262,7 +262,7 @@ export class AgentLoopRequestObserver {
   ): void {
     const request = observation.requireContext();
     observation.setRequestId(outcome.requestId);
-    const { message, usage, timing } = outcome;
+    const { entry, usage, timing } = outcome;
     if (request.promptCacheProbe === 'compaction') {
       this.telemetry.track2('prompt_cache_probe', {
         source: 'compaction',
@@ -297,7 +297,12 @@ export class AgentLoopRequestObserver {
     }
     void this.usage.record(this.scopeContext.agentContext, request.modelAlias, usage, request.source);
     if (usage !== undefined) {
-      this.tokenCounting.measured(this.scopeContext.agentContext, request.messages, [message], usage);
+      this.tokenCounting.measured(
+        this.scopeContext.agentContext,
+        recorded?.messages ?? toRequestMessages(request.entries),
+        [entry.message],
+        usage,
+      );
     }
     this.logResponse(request.logFields, usage ?? emptyUsage(), timing);
   }
@@ -530,7 +535,6 @@ export class AgentRequestObservation {
   readonly startedAt = Date.now();
   readonly media: AttemptObservation = {};
   context: ResolvedRequestContext | undefined;
-  request: CoreLlmRequest | undefined;
   recorded: RecordedRequestSnapshot | undefined;
   private readonly trace = new MutableLLMRequestTrace();
 
@@ -544,9 +548,8 @@ export class AgentRequestObservation {
     this.setRequestId(undefined);
   }
 
-  prepare(context: ResolvedRequestContext, request: CoreLlmRequest): void {
+  prepare(context: ResolvedRequestContext): void {
     this.context = context;
-    this.request = request;
   }
 
   setRequestId(requestId: string | null | undefined): void {

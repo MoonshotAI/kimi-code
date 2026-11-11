@@ -5,7 +5,7 @@ import { PassThrough, Readable, type Writable } from 'node:stream';
 import { isUserCancellation } from '#/_base/utils/abort';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { TurnStarted } from '#/agent/loop/turnEvents';
-import { createToolEntry } from '@moonshot-ai/core/history/history';
+import { createToolEntry } from '@moonshot-ai/core/llm/history';
 import { createToolMessage } from '@moonshot-ai/core/llm/message';
 
 import type { IDisposable } from '#/_base/di/lifecycle';

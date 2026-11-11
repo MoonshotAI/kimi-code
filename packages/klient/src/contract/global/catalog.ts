@@ -48,7 +48,7 @@ export const setDefaultModelResponseSchema = z.object({
 
 const generateInputSchema = z.object({
   systemPrompt: z.string(),
-  messages: z.array(z.unknown()),
+  entries: z.array(z.unknown()),
   tools: z.array(z.unknown()).optional(),
   responseFormat: z.unknown().optional(),
 });

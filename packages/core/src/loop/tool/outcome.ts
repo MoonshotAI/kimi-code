@@ -5,7 +5,7 @@
 import { createToolMessage, type ContentPart, type ToolCall } from '#/llm/message';
 import { abortedToolOutput } from '#/tool/abort';
 import { errorText } from '#/llm/protocol/errors';
-import { createToolEntry, createUserEntry, type ToolEntry, type UserEntry } from '#/history/history';
+import { createToolEntry, createUserEntry, type ToolEntry, type UserEntry } from '#/llm/history';
 import type { ToolDetachAck, ToolResult } from '#/tool/runtime';
 import type { AsyncToolOutcome, Cause, ToolCallOutcome } from '../contract/outcome';
 

@@ -5,6 +5,7 @@ import type {
   StreamedMessagePart,
   ToolDescription as Tool,
 } from '@moonshot-ai/core/llm/message';
+import { toHistoryEntries } from '@moonshot-ai/core/llm/history';
 import { emptyUsage } from '@moonshot-ai/core/llm/usage';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -13,6 +14,7 @@ import type {
   AgentLLMRequestSource,
 } from '#/agent/loop/requesterContract';
 import type { LlmOutcome } from '@moonshot-ai/core/llm/response';
+import { errorFromLlmMessage } from '#/llm-adapter/contract/errors';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { ILogger as Logger, LogPayload } from '#/_base/log/log';
@@ -522,7 +524,7 @@ describe('LLMRequester service migration coverage', () => {
       const llmRequester = ctx.get(IAgentLoopService).requester;
 
       await expect(requestCore(llmRequester)).rejects.toMatchObject({
-        kind: 'connection',
+        name: 'APIConnectionError',
       });
       expect(calls).toBe(1);
     });
@@ -538,7 +540,7 @@ describe('LLMRequester service migration coverage', () => {
       const llmRequester = ctx.get(IAgentLoopService).requester;
 
       await expect(requestCore(llmRequester)).rejects.toMatchObject({
-        kind: 'rate_limit',
+        name: 'APIProviderRateLimitError',
       });
 
       expect(records).toContainEqual({
@@ -569,12 +571,12 @@ describe('LLMRequester service migration coverage', () => {
 
       await expect(
         requestCore(llmRequester, { source: { type: 'turn', turnId: 3, step: 1 } }),
-      ).rejects.toMatchObject({ kind: 'connection' });
+      ).rejects.toMatchObject({ name: 'APIConnectionError' });
       await expect(
         requestCore(llmRequester, {
           source: { type: 'operation', turnId: 7, requestKind: 'full_compaction' },
         }),
-      ).rejects.toMatchObject({ kind: 'connection' });
+      ).rejects.toMatchObject({ name: 'APIConnectionError' });
 
       expect(records).toContainEqual({
         event: 'api_error',
@@ -845,6 +847,21 @@ describe('LLMRequester service migration coverage', () => {
           expect(findGenerateCallPrefixBreak(settled!, nextTurn!)).toBeUndefined();
           expect(ctx.llmCalls).toHaveLength(3);
           expect(promptCacheComparisons()).toBeGreaterThan(compared);
+
+          const mediaMessage = (value: string): Message => ({
+            role: 'user',
+            content: [{ type: 'image_url', imageUrl: { url: `data:image/png;base64,${value}` } }],
+          });
+          ctx.mockNextProviderResponse(providerHttpError(413, 'Request Entity Too Large'));
+          ctx.mockNextResponse({ type: 'text', text: 'Independent request.' });
+          ctx.mockNextResponse({ type: 'text', text: 'Recovered request.' });
+          await Promise.all([
+            requestCore(ctx.get(IAgentLoopService).requester, { messages: [mediaMessage('AAAA')] }),
+            requestCore(ctx.get(IAgentLoopService).requester, { messages: [mediaMessage('BBBB')] }),
+          ]);
+          const sideCalls = ctx.llmCalls.slice(3);
+          expect(sideCalls.map((call) => countMedia(call.history)).toSorted()).toEqual([0, 1, 1]);
+          expect(ctx.llmCalls).toHaveLength(6);
         } finally {
           await ctx.dispose();
         }
@@ -906,10 +923,11 @@ async function requestCore(
     maxOutputSize: overrides.maxOutputSize,
     tools: overrides.tools,
   }, signal);
-  const outcome = await operation.with({ policy: { retry: { maxAttemptsPerStep: 1 } } }).generate(
+  const outcome = await operation.generate(
     {
-      content: { messages: overrides.messages },
+      content: { entries: overrides.messages === undefined ? undefined : toHistoryEntries(overrides.messages) },
       profile: { systemPrompt: overrides.systemPrompt, tools: overrides.tools },
+      policy: { retry: { maxAttemptsPerStep: 1 } },
     },
     {
       signal,
@@ -918,9 +936,10 @@ async function requestCore(
       },
     },
   );
-  if (outcome.type === 'failed') throw outcome.error;
+  if (outcome.type === 'failed') throw errorFromLlmMessage(outcome.error, outcome.diagnostics);
   if (outcome.type === 'aborted') {
-    throw outcome.reason ?? new DOMException('The operation was aborted.', 'AbortError');
+    const message = outcome.reason instanceof Error ? outcome.reason.message : 'The operation was aborted.';
+    throw new DOMException(message, 'AbortError');
   }
   return outcome;
 }

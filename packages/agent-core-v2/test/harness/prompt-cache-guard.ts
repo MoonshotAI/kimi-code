@@ -12,13 +12,8 @@ import type {
   LoopRequester,
   OperationLoopRequesterOptions,
 } from '#/agent/loop/requesterContract';
-import type { LlmRequest } from '@moonshot-ai/core/llm/request';
+import type { LlmProtocolRequest } from '@moonshot-ai/core/llm/request';
 import type { MockProvider } from './scripted-generate';
-import {
-  contentsOf,
-  requesterContents,
-  type LlmRequestPart,
-} from '@moonshot-ai/core/llm/requester';
 
 import { generateCallOf } from './scripted-generate';
 import { findGenerateCallPrefixBreak, type GenerateCall } from './snapshots';
@@ -84,10 +79,6 @@ export class PromptCacheGuardedLoopRequester implements LoopRequester {
     revision: () => number,
   ): CoreLoopRequester {
     const wrap = (inner: CoreLoopRequester): CoreLoopRequester => ({
-      [requesterContents]: contentsOf(inner),
-      with: ((next: LlmRequestPart | CoreLoopRequester) =>
-        wrap(inner.with(next as never))) as CoreLoopRequester['with'],
-      request: (rest) => inner.request(rest),
       snapshot: () => wrap(inner.snapshot?.() ?? inner),
       generate: (rest, control) => {
         const scope: RequestScope = {
@@ -205,7 +196,7 @@ function sameToolNames(previous: GenerateCall, next: GenerateCall): boolean {
   return isDeepStrictEqual(names(previous), names(next));
 }
 
-function modelIdentity(request: LlmRequest): string {
+function modelIdentity(request: LlmProtocolRequest): string {
   return JSON.stringify([
     request.model.spec.provider,
     request.endpoint?.baseUrl,

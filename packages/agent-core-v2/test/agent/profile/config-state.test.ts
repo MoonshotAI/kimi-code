@@ -1,8 +1,9 @@
 import { emptyUsage } from '@moonshot-ai/core/llm/usage';
-import type { LlmRequest } from '@moonshot-ai/core/llm/request';
+import type { LlmProtocolRequest } from '@moonshot-ai/core/llm/request';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { LoopRequester } from '#/agent/loop/requesterContract';
+import { errorFromLlmMessage } from '#/llm-adapter/contract/errors';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ModelRecord } from '#/llm-adapter/model/model';
@@ -277,7 +278,12 @@ describe('ConfigState model capabilities', () => {
 
     profile.update({ modelAlias: 'kimi-code' });
 
-    expect(profile.getModelCapabilities()).toBeUndefined();
+    expect(profile.getModelCapabilities()).toMatchObject({
+      image_in: false,
+      video_in: false,
+      audio_in: false,
+      max_context_tokens: 128_000,
+    });
   });
 
   it('freezes model max output size, system prompt and params across operation preparation', async () => {
@@ -349,9 +355,10 @@ describe('ConfigState model capabilities', () => {
       { content: {}, profile: {} },
       { signal },
     );
-    if (outcome.type === 'failed') throw outcome.error;
+    if (outcome.type === 'failed') throw errorFromLlmMessage(outcome.error, outcome.diagnostics);
     if (outcome.type === 'aborted') {
-      throw outcome.reason ?? new DOMException('The operation was aborted.', 'AbortError');
+      const message = outcome.reason instanceof Error ? outcome.reason.message : 'The operation was aborted.';
+      throw new DOMException(message, 'AbortError');
     }
 
     expect(requestMaxTokens).toBe(384000);
@@ -606,7 +613,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
   let requester: LoopRequester;
   let kimiConfig: TestKimiConfig;
   let capturedProvider: unknown;
-  let capturedRequest: LlmRequest | undefined;
+  let capturedRequest: LlmProtocolRequest | undefined;
 
   beforeEach(() => {
     kimiConfig = {
@@ -722,12 +729,13 @@ async function generateOperation(requester: LoopRequester, signal: AbortSignal):
   const operation = await requester.prepareOperation({
     source: () => ({ type: 'operation' }),
   }, signal);
-  const outcome = await operation.with({ policy: { retry: { maxAttemptsPerStep: 1 } } }).generate(
-    { content: {}, profile: {} },
+  const outcome = await operation.generate(
+    { content: {}, profile: {}, policy: { retry: { maxAttemptsPerStep: 1 } } },
     { signal },
   );
-  if (outcome.type === 'failed') throw outcome.error;
+  if (outcome.type === 'failed') throw errorFromLlmMessage(outcome.error, outcome.diagnostics);
   if (outcome.type === 'aborted') {
-    throw outcome.reason ?? new DOMException('The operation was aborted.', 'AbortError');
+    const message = outcome.reason instanceof Error ? outcome.reason.message : 'The operation was aborted.';
+    throw new DOMException(message, 'AbortError');
   }
 }

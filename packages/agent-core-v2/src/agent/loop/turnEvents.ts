@@ -2,7 +2,7 @@
 import { z } from 'zod';
 
 import type { PromptOrigin } from '#/agent/contextMemory/types';
-import { annotateBundledSkillParts, isSkillActivationPart } from '@moonshot-ai/core/history/origin';
+import { annotateBundledSkillParts, isSkillActivationPart } from '@moonshot-ai/core/llm/origin';
 import { parseDaemonFileUrl } from '#/agent/media/mediaRef';
 import { AgentEvent2, registerEvent2Class } from '#/app/event/event2';
 import type { FinishReason } from '@moonshot-ai/core/llm/response';

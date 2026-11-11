@@ -12,6 +12,7 @@ import {
 import {
   APIStatusError,
   resolveKimiHome,
+  UNKNOWN_CAPABILITY,
 } from '@moonshot-ai/agent-core-v2';
 
 import { ErrorCodes, KimiError } from '#/errors';
@@ -96,7 +97,7 @@ export class KimiForCodingProvider implements ModelProvider {
     return {
       providerName: 'kimi-for-coding',
       provider,
-      modelCapabilities: undefined,
+      modelCapabilities: UNKNOWN_CAPABILITY,
       type: 'kimi',
       protocol: undefined,
     };

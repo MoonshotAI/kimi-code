@@ -1898,7 +1898,7 @@ describe('SessionEventBroadcaster', () => {
       Object.assign(handle.accessor.get(IAgentLoopService) as Record<string, unknown>, {
         getModel: () => 'k2',
         getEffectiveThinkingLevel: () => 'high',
-        getModelCapabilities: () => ({ max_context_tokens: 1000 }),
+        resolveModelContext: () => ({ model: { maxContextSize: 1000 } }),
       });
       handle.set(ISessionUsageService, { status: () => undefined });
       handle.set(ISessionTokenCountingService, {
@@ -2028,10 +2028,15 @@ describe('SessionEventBroadcaster', () => {
       Object.assign(main.accessor.get(IAgentLoopService) as Record<string, unknown>, {
         getModel: () => model,
         getEffectiveThinkingLevel: () => 'high',
-        getModelCapabilities: () => capabilities,
+        resolveModelContext: () => ({
+          model: {
+            maxInputSize: capabilities.max_input_tokens,
+            maxContextSize: capabilities.max_context_tokens,
+          },
+        }),
       });
       main.set(IModelService, { getDefaultModel: () => 'k3' });
-      main.set(IModelCatalog, { get: () => ({ capabilities: { max_input_tokens: 800 } }) });
+      main.set(IModelCatalog, { get: () => ({ spec: { maxInputSize: 800 } }) });
       sessions.set('s1', lc);
       bc = makeBroadcasterForAgents();
 

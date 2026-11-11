@@ -121,8 +121,7 @@ function declaresAlwaysThinking(capabilities: readonly string[] | undefined): bo
   return declaredSet(capabilities).has('always_thinking');
 }
 
-function capabilityFromDeclared(capabilities: readonly string[] | undefined): ModelCapability | undefined {
-  if (capabilities === undefined) return undefined;
+function capabilityFromDeclared(capabilities: readonly string[] | undefined): ModelCapability {
   const declared = declaredSet(capabilities);
   return {
     image_in: declared.has('image_in'),

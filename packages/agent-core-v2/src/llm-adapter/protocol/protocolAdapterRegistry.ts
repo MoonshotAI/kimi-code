@@ -18,6 +18,10 @@ import {
   type LlmRequester as CoreLlmRequester,
 } from '@moonshot-ai/core/llm/requester';
 import { createLlmHeadersTimeoutFetch } from '@moonshot-ai/core/llm/transport/headers-timeout';
+import {
+  createLlmRequesterExecution,
+  type LlmRequesterExecution,
+} from '@moonshot-ai/core/llm/policy/policy';
 
 import type { Model } from '../model/catalog';
 import { getProviderDefinition } from '../provider/provider-definition';
@@ -116,7 +120,11 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
     );
   }
 
-  request(model: Model, part?: InitializedLlmRequestPart): InitializedLlmRequester {
+  request(
+    model: Model,
+    part?: InitializedLlmRequestPart,
+    execution: LlmRequesterExecution = createLlmRequesterExecution(),
+  ): InitializedLlmRequester {
     const route = routeFor(model);
     const base = contentsOf(route.requester);
     const protocol = base.protocol;
@@ -129,7 +137,7 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
         const key = modelKey(model.spec, model.endpoint);
         options = {
           ...resolved,
-          detectedReasoningKey: this.detectedReasoningKeys.get(key),
+          detectedReasoningKey: () => this.detectedReasoningKeys.get(key),
           onReasoningKey: (reasoningKey: string) => {
             if (!this.detectedReasoningKeys.has(key)) {
               this.detectedReasoningKeys.set(key, reasoningKey);
@@ -146,8 +154,18 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
           ? undefined
           : (input, init) => createLlmHeadersTimeoutFetch()(input, init),
     };
-    const initialized = createRequester().with(route.requester).with({
-      protocol: { options, stream: true },
+    const initialized = createRequester(execution).with(route.requester).with({
+      protocol: {
+        options,
+        stream: true,
+        recoveryKey: JSON.stringify([
+          model.protocol,
+          model.providerType,
+          route.providerId,
+          model.providerOptions?.betaApi === true,
+          model.providerOptions?.vertexai === true,
+        ]),
+      },
       endpoint,
       model: {
         spec: { ...model.spec, provider: route.providerId },

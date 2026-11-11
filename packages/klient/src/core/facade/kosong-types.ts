@@ -5,7 +5,8 @@
  * `providerService`/`modelService` wire formats.
  */
 
-import type { Message, ToolDescription as Tool } from '@moonshot-ai/core/llm/message';
+import type { HistoryMessage } from '@moonshot-ai/core/llm/history';
+import type { ToolDescription as Tool } from '@moonshot-ai/core/llm/message';
 import type { ResponseFormat } from '@moonshot-ai/core/llm/request';
 import type { InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
 import type { LlmRunEvent } from '@moonshot-ai/core/llm/response';
@@ -55,7 +56,7 @@ export interface AnonymousProviderInput {
 
 export interface GenerateInput {
   readonly systemPrompt: string;
-  readonly messages: readonly Message[];
+  readonly entries: readonly HistoryMessage[];
   readonly tools?: readonly Tool[];
   readonly responseFormat?: ResponseFormat;
 }

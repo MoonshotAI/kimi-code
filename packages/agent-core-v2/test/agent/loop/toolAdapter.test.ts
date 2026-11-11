@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createTestLoop as createLoop } from './core/factory';
-import { createUserEntry, type ToolEntry } from '@moonshot-ai/core/history/history';
+import { createUserEntry, type ToolEntry } from '@moonshot-ai/core/llm/history';
 import { createUserMessage, extractText, type ToolCall } from '@moonshot-ai/core/llm/message';
 import { createMockProviderRequester, type MockProviderResponse } from '../../harness/scripted-generate';
 import type { ToolResult } from '@moonshot-ai/core/tool/executor';

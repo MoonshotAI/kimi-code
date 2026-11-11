@@ -28,16 +28,38 @@ function historyReasoningKey(messages: readonly Message[]): string | undefined {
 export function resolveOpenAIReasoningKey(
   messages: readonly Message[],
   reasoningKey?: string,
-  detectedReasoningKey?: string,
+  detectedReasoningKey?: string | (() => string | undefined),
 ): string {
+  const detected = typeof detectedReasoningKey === 'function' ? detectedReasoningKey() : detectedReasoningKey;
   return (
     reasoningKey ??
-    detectedReasoningKey ??
+    detected ??
     historyReasoningKey(messages) ??
     KNOWN_REASONING_KEYS[0]!
   );
 }
 
+/**
+ * Converts a message with untagged thinking parts into a copy where every such part has the
+ * resolved reasoning key, leaving all other content unchanged.
+ *
+ * @example
+ * // With `reasoningKey = 'reasoning_content'`:
+ * // Input:
+ * {
+ *   role: 'assistant',
+ *   toolCalls: [],
+ *   content: [{ type: 'think', think: 'Compare options' }], // ←
+ * }
+ * // Output:
+ * {
+ *   role: 'assistant',
+ *   toolCalls: [],
+ *   content: [
+ *     { type: 'think', think: 'Compare options', reasoningKey: 'reasoning_content' }, // ←
+ *   ],
+ * }
+ */
 function stampReasoningKey(reasoningKey: string): Pattern<Message> {
   const needsReasoningKey = (part: ContentPart): part is ThinkPart =>
     part.type === 'think' && part.reasoningKey === undefined;
@@ -57,7 +79,7 @@ function stampReasoningKey(reasoningKey: string): Pattern<Message> {
 export function openAIThinkingHistoryPatterns(
   messages: readonly Message[],
   reasoningKey?: string,
-  detectedReasoningKey?: string,
+  detectedReasoningKey?: string | (() => string | undefined),
 ): readonly Pattern<Message>[] {
   const resolved = resolveOpenAIReasoningKey(messages, reasoningKey, detectedReasoningKey);
   return [stampReasoningKey(resolved)];

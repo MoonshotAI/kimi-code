@@ -13,6 +13,28 @@ export interface MergeUsersPolicy<T> {
   readonly merge: (last: T, next: T) => T;
 }
 
+/**
+ * Converts a run of consecutive user messages into one message merged by `policy`, stopping before
+ * a tool-result-only message when the accumulated message is not tool-result-only.
+ *
+ * @example
+ * // With content-concatenating `policy.merge`:
+ * // Input:
+ * [
+ *   { role: 'user', content: [{ type: 'text', text: 'A' }] }, // ←
+ *   { role: 'user', content: [{ type: 'text', text: 'B' }] }, // ←
+ * ]
+ * // Output:
+ * [
+ *   {
+ *     role: 'user',
+ *     content: [ // ←
+ *       { type: 'text', text: 'A' },
+ *       { type: 'text', text: 'B' },
+ *     ],
+ *   },
+ * ]
+ */
 export function mergeConsecutiveUsers<T>(policy: MergeUsersPolicy<T>): Pattern<T> {
   return {
     name: 'mergeConsecutiveUsers',
@@ -34,6 +56,32 @@ export function mergeConsecutiveUsers<T>(policy: MergeUsersPolicy<T>): Pattern<T
   };
 }
 
+/**
+ * Converts a tool message's text and media into one plain-text part with media placeholders, and
+ * preserves its thinking parts after that text.
+ *
+ * @example
+ * // Input:
+ * {
+ *   role: 'tool',
+ *   toolCallId: 'call-1',
+ *   content: [
+ *     { type: 'text', text: 'Chart ready' },
+ *     { type: 'image_url', imageUrl: { url: 'https://example.com/chart.png' } }, // ←
+ *   ],
+ * }
+ * // Output:
+ * {
+ *   role: 'tool',
+ *   toolCallId: 'call-1',
+ *   content: [
+ *     {
+ *       type: 'text',
+ *       text: 'Chart ready\n(image omitted: tool result converted to plain text)', // ←
+ *     },
+ *   ],
+ * }
+ */
 export const toolResultToPlainText: Pattern<Message> = {
   name: 'toolResultToPlainText',
   rewrite(items, index) {

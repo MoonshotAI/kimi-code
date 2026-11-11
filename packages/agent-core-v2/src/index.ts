@@ -118,7 +118,7 @@ export * from '#/session/state/sessionState';
 import '#/session/state/sessionStateService';
 export * from '#/agent/state/agentState';
 import '#/agent/state/agentStateService';
-export type { ModelCapability } from '@moonshot-ai/core/llm/request';
+export * from '#/llm-adapter/contract/capability';
 export * from '#/llm-adapter/contract/errors';
 export {
   createAssistantMessage,

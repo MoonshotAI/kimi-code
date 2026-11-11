@@ -21,7 +21,7 @@ export interface AgentConfigData {
   provider?: ProviderConfig;
   modelAlias?: string;
   model?: LlmModelSpec;
-  modelCapabilities: ModelCapability | undefined;
+  modelCapabilities: ModelCapability;
   profileName?: string;
   subagentNames?: readonly string[];
   thinkingEffort: string;

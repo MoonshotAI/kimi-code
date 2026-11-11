@@ -663,7 +663,7 @@ describe('direct generate', () => {
             systemPrompt: 'You are a connectivity probe. Answer with the single word "pong".',
             tools: [],
           },
-          content: { messages: [{ role: 'user', content: [{ type: 'text', text: 'ping' }] }] },
+          content: { entries: [{ message: { role: 'user', content: [{ type: 'text', text: 'ping' }] } }] },
           policy: { retry: { maxAttemptsPerStep: 1 } },
         }),
         { signal: new AbortController().signal },
@@ -707,7 +707,7 @@ describe('direct generate', () => {
         for await (const event of streamLlmRequest(
           requester.request({
             profile: { systemPrompt: 'ping', tools: [] },
-            content: { messages: [] },
+            content: { entries: [] },
             policy: { retry: { maxAttemptsPerStep: 1 } },
           }),
           { signal: new AbortController().signal },

@@ -2,8 +2,8 @@ import { createControlledPromise } from '@antfu/utils';
 
 import type { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
-import { stripBundledSkillBlocks } from '@moonshot-ai/core/history/origin';
-import type { HistoryMessage, UserEntry } from '@moonshot-ai/core/history/history';
+import { stripBundledSkillBlocks } from '@moonshot-ai/core/llm/origin';
+import type { HistoryMessage, UserEntry } from '@moonshot-ai/core/llm/history';
 import type { UserMessage } from '@moonshot-ai/core/llm/message';
 import { newMessageId } from '#/agent/contextMemory/messageId';
 import {

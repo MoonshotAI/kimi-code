@@ -185,6 +185,13 @@ describe('request gateway routes', () => {
     expect(contentsOf(resolved).model?.spec?.provider).toBe('openai');
     expect(supportsLlmUpload(resolved, 'video')).toBe(false);
     expect(supportsLlmUpload(resolved, 'image')).toBe(false);
+    const options = contentsOf(resolved).protocol?.options as {
+      detectedReasoningKey?: () => string | undefined;
+      onReasoningKey?: (key: string) => void;
+    };
+    expect(options.detectedReasoningKey?.()).toBeUndefined();
+    options.onReasoningKey?.('reasoning_content');
+    expect(options.detectedReasoningKey?.()).toBe('reasoning_content');
   });
 
   it('keeps stream business codes out of the real HTTP status at the registry boundary', () => {
@@ -276,7 +283,7 @@ describe('request gateway routes', () => {
         for await (const event of streamLlmRequest(
           routed.request({
             profile: { systemPrompt: '', tools: [] },
-            content: { messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] },
+            content: { entries: [{ message: { role: 'user', content: [{ type: 'text', text: 'hi' }] } }] },
           }),
           { signal: new AbortController().signal },
         )) {

@@ -288,6 +288,15 @@ function defaultTool(tool: ToolDescription): Record<string, unknown> {
   };
 }
 
+/**
+ * Converts a message with no native content blocks into no output, leaving other messages unchanged.
+ *
+ * @example
+ * // Input:
+ * [{ role: 'user', content: [] }] // ←
+ * // Output:
+ * [] // ←
+ */
 const dropEmptyMessages: Pattern<NativeMessage> = {
   name: 'dropEmptyMessages',
   rewrite(items, index) {

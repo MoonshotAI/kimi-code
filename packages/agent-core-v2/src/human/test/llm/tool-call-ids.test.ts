@@ -189,10 +189,10 @@ describe('LLM tool call id normalization', () => {
       {
         model: { spec: { provider: 'openai', name: 'test-model' } },
         content: {
-          messages: [
-            createUserMessage('hi'),
-            createAssistantMessage([], [call('call_1')]),
-            createToolMessage('call_1', 'done'),
+          entries: [
+            { message: createUserMessage('hi') },
+            { message: createAssistantMessage([], [call('call_1')]) },
+            { message: createToolMessage('call_1', 'done') },
           ],
         },
       },
@@ -209,7 +209,7 @@ describe('LLM tool call id normalization', () => {
     ]);
     expect(outcome.type).toBe('done');
     if (outcome.type !== 'done') throw new Error('expected done outcome');
-    expect(outcome.message.toolCalls.map((call) => [call.id, call.rawId])).toEqual([
+    expect(outcome.entry.message.toolCalls.map((call) => [call.id, call.rawId])).toEqual([
       ['call_1__2', 'call_1'],
     ]);
   });

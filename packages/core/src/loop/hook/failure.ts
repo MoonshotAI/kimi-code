@@ -4,7 +4,7 @@
  */
 import { createUserMessage } from '#/llm/message';
 import { errorText } from '#/llm/protocol/errors';
-import { createUserEntry, type UserEntry } from '#/history/history';
+import { createUserEntry, type UserEntry } from '#/llm/history';
 import type { ToolHookPoint } from '#/tool/executor';
 import type { HookFailedEvent } from '../contract/emitted';
 import type { HookPoint as LoopHookPoint } from '../contract/hook';

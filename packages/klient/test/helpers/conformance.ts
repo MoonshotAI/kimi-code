@@ -24,6 +24,7 @@ import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/cata
 import { IModelService } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model';
 import { IProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocol';
 import { streamLlmRequest } from '@moonshot-ai/core/llm/stream';
+import { toHistoryEntries } from '@moonshot-ai/core/llm/history';
 import {
   createMockProvider,
   withMockProvider,
@@ -506,7 +507,7 @@ export function defineKlientConformance(
       const publicInput = {
         systemPrompt: '',
         tools: [],
-        messages: [
+        entries: toHistoryEntries([
           {
             role: 'user' as const,
             content: [
@@ -516,14 +517,13 @@ export function defineKlientConformance(
                 imageUrl: { url: 'data:image/png;base64,QUJD', id: 'image-1' },
               },
             ],
-            toolCalls: [],
           },
-        ],
+        ]),
       };
       const coreInput = {
         systemPrompt: '',
         tools: [],
-        messages: [
+        entries: toHistoryEntries([
           {
             role: 'user' as const,
             content: [
@@ -534,7 +534,7 @@ export function defineKlientConformance(
               },
             ],
           },
-        ],
+        ]),
       };
       try {
         await consume(kosong.generate(kimiId, publicInput, { model: { thinking: { effort: 'on' } } }));
@@ -548,7 +548,7 @@ export function defineKlientConformance(
           return streamLlmRequest(
             requester.request({
               profile: { systemPrompt: coreInput.systemPrompt, tools: coreInput.tools },
-              content: { messages: coreInput.messages },
+              content: { entries: coreInput.entries },
             }),
             { signal: new AbortController().signal },
           );
@@ -603,7 +603,9 @@ export function defineKlientConformance(
               type: 'llm.ended',
               outcome: expect.objectContaining({
                 type: 'done',
-                message: { role: 'assistant', content: [responsePart], toolCalls: [] },
+                entry: expect.objectContaining({
+                  message: { role: 'assistant', content: [responsePart], toolCalls: [] },
+                }),
               }),
             }),
           );

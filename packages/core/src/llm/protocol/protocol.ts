@@ -6,7 +6,7 @@
 import type { ResolvedEndpoint } from '#/llm/endpoint';
 import type { StreamedMessagePart } from '#/llm/message';
 import type {
-  LlmRequestContent,
+  LlmMessageContent,
   LlmRequestModel,
   LlmRequestProfile,
   ModelCapability,
@@ -30,7 +30,7 @@ export type ToolMessageConversion = 'extract_text' | 'keep_parts';
 export interface LlmModule<TOptions = unknown> {
   readonly model: LlmRequestModel;
   readonly profile: LlmRequestProfile;
-  readonly content: LlmRequestContent;
+  readonly content: LlmMessageContent;
   readonly options: TOptions | undefined;
 }
 

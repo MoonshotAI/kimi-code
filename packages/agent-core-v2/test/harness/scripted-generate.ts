@@ -15,7 +15,8 @@ import {
 import { openAIProtocol } from '@moonshot-ai/core/llm/builtin/protocol/openai/index';
 import { googleGenAIProtocol } from '@moonshot-ai/core/llm/builtin/protocol/google-genai/index';
 import { APIError as RawOpenAISDKAPIError } from 'openai/error';
-import type { LlmRequest } from '@moonshot-ai/core/llm/request';
+import type { LlmProtocolRequest, LlmRequest } from '@moonshot-ai/core/llm/request';
+import type { LlmResolver } from '@moonshot-ai/core/llm/policy/resolver';
 import {
   contentsOf,
   createRequester,
@@ -26,6 +27,7 @@ import {
 import type { FinishReason } from '@moonshot-ai/core/llm/response';
 import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
 import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
+import { errorFromLlmMessage, llmMessageFromError } from '#/llm-adapter/contract/errors';
 
 import {
   generateInputSnapshot,
@@ -58,12 +60,12 @@ export interface MockProviderResponse {
 }
 
 export type MockProviderHandler = (
-  request: LlmRequest,
+  request: LlmProtocolRequest,
   signal: AbortSignal,
 ) => MockProviderResponse | Promise<MockProviderResponse>;
 
 interface PreparedAttempt {
-  readonly request: LlmRequest;
+  readonly request: LlmProtocolRequest;
   readonly result: {
     readonly id: string | null;
     readonly message: AssistantMessage;
@@ -80,11 +82,11 @@ interface PreparedAttempt {
 }
 
 export interface MockProvider {
-  respond(request: LlmRequest, signal: AbortSignal): PreparedAttempt | Promise<PreparedAttempt>;
+  respond(request: LlmProtocolRequest, signal: AbortSignal): PreparedAttempt | Promise<PreparedAttempt>;
   readonly fetch: typeof fetch;
 }
 
-export function generateCallOf(request: LlmRequest): GenerateCall {
+export function generateCallOf(request: LlmProtocolRequest): GenerateCall {
   return normalizeGenerateInput({
     systemPrompt: request.profile?.systemPrompt ?? '',
     tools: (request.profile?.tools ?? []).filter((tool) => tool.deferred !== true).map(({ name, description, parameters }) => ({
@@ -149,7 +151,7 @@ export function createMockProviderRequester(
 }
 
 function prepareProviderAttempt(
-  request: LlmRequest,
+  request: LlmProtocolRequest,
   response: MockProviderResponse,
   index: number,
 ): PreparedAttempt {
@@ -252,6 +254,16 @@ export function createScriptedGenerate() {
   };
 }
 
+function mockAttemptResolver(provider: MockProvider): LlmResolver {
+  return {
+    id: 'mock-provider',
+    resolve: async (request, control) => {
+      void Promise.resolve(provider.respond(request, control.signal));
+      return request;
+    },
+  };
+}
+
 export function withMockProvider(
   initial: InitializedLlmRequester,
   provider: MockProvider,
@@ -260,16 +272,35 @@ export function withMockProvider(
     [requesterContents]: contentsOf(initial),
     with: ((part: LlmRequestPart) =>
       withMockProvider(initial.with(part as never), provider)) as InitializedLlmRequester['with'],
-    request: (rest) => initial.with({ endpoint: { fetch: provider.fetch } }).request(rest),
+    request: (rest): LlmRequest => {
+      const request = initial.with({ endpoint: { fetch: provider.fetch } }).request(rest);
+      const previous = request.policy?.resolvers;
+      return {
+        ...request,
+        policy: {
+          ...request.policy,
+          resolvers: () => [
+            ...(typeof previous === 'function' ? previous() : (previous ?? [])),
+            mockAttemptResolver(provider),
+          ],
+        },
+      };
+    },
     generate: (rest, control) =>
       initial.with(rest).with({ endpoint: { fetch: provider.fetch } }).generate({}, {
         ...control,
-        onAttempt: (request) => {
+        onAttempt: (request, context) => {
           void Promise.resolve(provider.respond(request, control.signal));
-          control.onAttempt?.(request);
+          control.onAttempt?.(request, context);
         },
       }),
   };
+}
+
+function mockProviderError(error: unknown): Error {
+  const message = llmMessageFromError(error);
+  if (message !== undefined) return errorFromLlmMessage(message);
+  return error instanceof Error ? error : new Error(String(error));
 }
 
 function mockProviderFetch(pending: Promise<PreparedAttempt>[]): typeof fetch {
@@ -309,7 +340,7 @@ function mockProviderFetch(pending: Promise<PreparedAttempt>[]): typeof fetch {
       if (attempt.parts.length > 0 || (attempt.result.requestId !== undefined && attempt.result.requestId !== null)) {
         return streamFailure(attempt, headers, init?.signal ?? undefined);
       }
-      throw await attempt.error;
+      throw mockProviderError(attempt.error);
     }
     const result = attempt.result;
     const kind = protocolKind(attempt.request);
@@ -391,7 +422,7 @@ function chunkedResponse(
           return;
         }
         if (attempt.error !== undefined) {
-          controller.error(await attempt.error);
+          controller.error(mockProviderError(attempt.error));
           return;
         }
         controller.close();
@@ -419,7 +450,7 @@ function googleErrorStatus(statusCode: number): string {
   }
 }
 
-function protocolKind(request: LlmRequest): 'openai' | 'anthropic' | 'responses' | 'google' {
+function protocolKind(request: LlmProtocolRequest): 'openai' | 'anthropic' | 'responses' | 'google' {
   const base = request.protocol.base;
   if (base.client === anthropicProtocol.client || base.client === kimiAnthropicProtocol.client) return 'anthropic';
   if (base.client === openAIResponsesProtocol.client || base.client === kimiResponsesProtocol.client) return 'responses';

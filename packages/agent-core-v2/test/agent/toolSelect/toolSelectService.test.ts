@@ -8,14 +8,15 @@ import { IEventBus } from '#/app/event/eventBus';
 import type { Event2, Event2Class } from '#/app/event/event2';
 import { IFlagService } from '#/app/flag/flag';
 import type { ModelCapability } from '@moonshot-ai/core/llm/request';
+import { fromLlmModelSpec, type ModelCapability as LegacyModelCapability } from '#/llm-adapter/contract/capability';
 import type { Message, ToolCall, ToolDescription as Tool } from '@moonshot-ai/core/llm/message';
-import type { LlmRequest } from '@moonshot-ai/core/llm/request';
+import type { LlmProtocolRequest } from '@moonshot-ai/core/llm/request';
 import { IAgentMcpService } from '#/agent/mcp/mcp';
 import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { contextFromHistoryEntry } from '#/agent/loop/history';
 import { AgentSpaceImpl } from '#/agent/agentContext/agentSpace';
-import type { HistoryMessage } from '@moonshot-ai/core/history/history';
+import type { HistoryMessage } from '@moonshot-ai/core/llm/history';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { createReminderHarness } from '../../features/reminder/stubs';
 import {
@@ -233,8 +234,8 @@ class FakeLoopService extends StubEffectiveProfileReader implements IAgentLoopSe
     return [];
   }
 
-  override getModelCapabilities(): ModelCapability {
-    return capabilities;
+  override getModelCapabilities(): LegacyModelCapability {
+    return fromLlmModelSpec({ provider: 'stub', name: 'stub', capability: capabilities });
   }
 
   bindingSnapshot(): ReturnType<IAgentLoopService['bindingSnapshot']> {
@@ -489,12 +490,12 @@ function resolveWith(
     readonly inferredCapabilities?: ModelCapability;
     readonly dynamic?: boolean;
   },
-): Promise<LlmRequest> {
-  const request: LlmRequest = {
+): Promise<LlmProtocolRequest> {
+  const request: LlmProtocolRequest = {
     protocol: {
       base: {
         capability: () => input.inferredCapabilities,
-      } as unknown as LlmRequest['protocol']['base'],
+      } as unknown as LlmProtocolRequest['protocol']['base'],
     },
     model: {
       spec: { provider: 'test', name: 'test-model', capability: input.capabilities },

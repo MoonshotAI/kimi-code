@@ -2,7 +2,7 @@
  * `Loop` interface and `createLoop` entry: the options a host supplies (tool executor, turn execution
  * factory, hooks, restored input) and the operations it can call on a running loop.
  */
-import type { HistoryMessage, UserEntry } from '#/history/history';
+import type { HistoryMessage, UserEntry } from '#/llm/history';
 import type { SystemMessage, ToolCall, UserMessage } from '#/llm/message';
 import type { PolicyRegistry } from '#/llm/policy/registry';
 import type { ToolExecutionHandler } from '#/tool/runtime';

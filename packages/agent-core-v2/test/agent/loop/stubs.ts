@@ -2,9 +2,9 @@ import { toDisposable } from '#/_base/di/lifecycle';
 import type { IAgentLoopService, LoopErrorHandler, LoopErrorHandlerRegistrationOptions, LoopNotify, LoopNotifyEntry, PromptHandle, PromptPayload, Turn, TurnResult } from '#/agent/loop/loop';
 import type { LoopHooks } from '@moonshot-ai/core/loop/contract/hook';
 import { ToolExecutor } from '#/tool/executor';
-import type { HistoryMessage, UserEntry } from '@moonshot-ai/core/history/history';
+import type { HistoryMessage, UserEntry } from '@moonshot-ai/core/llm/history';
 import { contextFromHistoryEntry, historyFromContext } from '#/agent/loop/history';
-import type { ModelCapability } from '@moonshot-ai/core/llm/request';
+import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/llm-adapter/contract/capability';
 
 export function submitPromptTurn(
   loop: IAgentLoopService,
@@ -96,11 +96,11 @@ export class StubEffectiveProfileReader {
   useProfile(): void {}
   update(): void {}
   setThinking(): void {}
-  data() { return { modelCapabilities: undefined, thinkingLevel: 'off', systemPrompt: '' }; }
+  data() { return { modelCapabilities: UNKNOWN_CAPABILITY, thinkingLevel: 'off', systemPrompt: '' }; }
   getEffectiveThinkingLevel() { return 'off' as const; }
   resolveModelContext(): never { throw new Error('model is not configured'); }
   resolveRequestParams() { return {}; }
-  getModelCapabilities(): ModelCapability | undefined { return undefined; }
+  getModelCapabilities(): ModelCapability { return UNKNOWN_CAPABILITY; }
   getModelProviderType() { return undefined; }
   getMaxOutputSize() { return undefined; }
   hasModel() { return false; }
@@ -154,11 +154,11 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
     useProfile: () => {},
     update: () => {},
     setThinking: () => {},
-    data: () => ({ modelCapabilities: undefined, thinkingLevel: 'off', systemPrompt: '' }),
+    data: () => ({ modelCapabilities: UNKNOWN_CAPABILITY, thinkingLevel: 'off', systemPrompt: '' }),
     getEffectiveThinkingLevel: () => 'off',
     resolveModelContext: () => { throw new Error('model is not configured'); },
     resolveRequestParams: () => ({}),
-    getModelCapabilities: () => undefined,
+    getModelCapabilities: () => UNKNOWN_CAPABILITY,
     getModelProviderType: () => undefined,
     getMaxOutputSize: () => undefined,
     hasModel: () => false,

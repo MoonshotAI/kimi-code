@@ -2,7 +2,12 @@
  * `createRequester`: an immutable builder whose `.with()` fills request dimensions by deep-merging
  * plain-object fields; `generate` completes the request and runs it through `runLlmRequest`.
  */
-import { runLlmRequest, type LlmRunControl } from '#/llm/policy/policy';
+import {
+  createLlmRequesterExecution,
+  runLlmRequest,
+  type LlmRequesterExecution,
+  type LlmRunControl,
+} from '#/llm/policy/policy';
 import type { LlmOutcome } from '#/llm/response';
 import type { LlmRequest } from '#/llm/request';
 
@@ -79,17 +84,20 @@ export function contentsOf(part: LlmRequestPart | LlmRequester<LlmDimension>): L
   return contents;
 }
 
-function partialRequester<F extends LlmDimension>(filled: LlmRequestPart): LlmRequester<F> {
+function partialRequester<F extends LlmDimension>(
+  filled: LlmRequestPart,
+  execution: LlmRequesterExecution,
+): LlmRequester<F> {
   const complete = (rest: LlmRequestPart) => mergeRequest(filled, rest) as LlmRequest;
   return {
     [requesterContents]: filled,
     with: ((part: LlmRequestPart | LlmRequester<LlmDimension>) =>
-      partialRequester(mergeRequest(filled, contentsOf(part)))) as LlmRequester<F>['with'],
+      partialRequester(mergeRequest(filled, contentsOf(part)), execution)) as LlmRequester<F>['with'],
     request: complete,
-    generate: (rest, control) => runLlmRequest(complete(rest), control),
+    generate: (rest, control) => runLlmRequest(complete(rest), control, execution),
   };
 }
 
-export function createRequester(): LlmRequester {
-  return partialRequester({});
+export function createRequester(execution: LlmRequesterExecution = createLlmRequesterExecution()): LlmRequester {
+  return partialRequester({}, execution);
 }
