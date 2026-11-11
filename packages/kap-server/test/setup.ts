@@ -4,6 +4,4 @@ for (const key of Object.keys(process.env)) {
   }
 }
 
-process.env['KIMI_CODE_SEARCH_WORKER'] = 'false';
-
 process.env['KIMI_CODE_PERSISTENCE_MINIDB_READMODEL'] = 'false';

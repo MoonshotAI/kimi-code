@@ -13,10 +13,6 @@
       "types": "./src/contract.ts",
       "default": "./src/contract.ts"
     },
-    "./search-worker-runtime": {
-      "types": "./src/search/worker/runtime.ts",
-      "default": "./src/search/worker/runtime.ts"
-    },
     "./protocol/*": {
       "types": "./src/protocol/*.ts",
       "default": "./src/protocol/*.ts"
@@ -26,7 +22,6 @@
     "build": "tsdown",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "test:bench": "vitest run --config vitest.bench.config.ts",
     "clean": "rm -rf dist"
   },
   "dependencies": {
@@ -35,7 +30,6 @@
     "@moonshot-ai/agent-core-v2": "workspace:^",
     "@moonshot-ai/kimi-code-oauth": "workspace:^",
     "@moonshot-ai/kimi-code-product": "workspace:^",
-    "@moonshot-ai/minidb": "workspace:*",
     "@moonshot-ai/remote-control": "workspace:^",
     "bcryptjs": "^2.4.3",
     "fastify": "^5.1.0",

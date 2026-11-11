@@ -3,29 +3,23 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
-import {
-  getTextBuildWorkerRuntimeState,
-  resetTextBuildWorkerRuntime,
-} from '@moonshot-ai/minidb/worker-runtime';
+import { describe, expect, it } from 'vitest';
 
 import {
   getEmbeddedNativeAssetManifest,
-  getMinidbTextBuildWorkerFile,
   getNativeCacheBase,
   getNativePackageRoot,
   NATIVE_ASSET_MANIFEST_VERSION,
   type NativeAssetManifest,
   type NativeAssetSource,
 } from '#/native/native-assets';
-import { installMinidbTextBuildWorker } from '#/native/minidb-worker';
 import { loadNativePackage } from '#/native/native-require';
 
 function sha256(bytes: Buffer | string): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-function fakeManifest(files: Record<string, string>, workerContent?: string): {
+function fakeManifest(files: Record<string, string>): {
   manifest: NativeAssetManifest;
   source: NativeAssetSource;
 } {
@@ -38,7 +32,6 @@ function fakeManifest(files: Record<string, string>, workerContent?: string): {
     };
   });
   const manifestKey = 'native/test-target/manifest.json';
-  const workerAssetKey = 'native/test-target/runtime/minidb-text-build-worker';
   const manifest: NativeAssetManifest = {
     version: NATIVE_ASSET_MANIFEST_VERSION,
     target: 'test-target',
@@ -49,18 +42,6 @@ function fakeManifest(files: Record<string, string>, workerContent?: string): {
         files: assetEntries,
       },
     ],
-    runtimeFiles:
-      workerContent === undefined
-        ? []
-        : [
-            {
-              key: 'minidb-text-build-worker',
-              assetKey: workerAssetKey,
-              relativePath: 'runtime/minidb/text-build-worker.mjs',
-              sha256: sha256(workerContent),
-              mode: 0o644,
-            },
-          ],
   };
   const assets = new Map<string, Buffer>([
     [manifestKey, Buffer.from(JSON.stringify(manifest))],
@@ -68,9 +49,6 @@ function fakeManifest(files: Record<string, string>, workerContent?: string): {
       `native/test-target/${relativePath}`,
       Buffer.from(content),
     ] as const),
-    ...(workerContent === undefined
-      ? []
-      : [[workerAssetKey, Buffer.from(workerContent)] as const]),
   ]);
   return {
     manifest,
@@ -95,10 +73,6 @@ function sourceForManifest(manifest: unknown): NativeAssetSource {
     },
   };
 }
-
-afterEach(() => {
-  resetTextBuildWorkerRuntime();
-});
 
 describe('native assets', () => {
   it('uses KIMI_CODE_CACHE_DIR as the native cache base when present', () => {
@@ -164,96 +138,15 @@ describe('native assets', () => {
     }
   });
 
-  it('extracts, reuses, and repairs the runtime worker in the unified cache tree', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'kimi-native-worker-'));
-    try {
-      const worker = 'export const worker = true;\n';
-      const { manifest, source } = fakeManifest(
-        { 'node_modules/fake-native/package.json': '{"main":"index.js"}' },
-        worker,
-      );
-      const options = { cacheBase: dir, manifest, source, version: 'test' };
-      const first = getMinidbTextBuildWorkerFile(options);
-      const packageRoot = getNativePackageRoot('fake-native', options);
-      expect(first).toBe(
-        join(
-          dir,
-          'native',
-          'test',
-          'test-target',
-          sha256(JSON.stringify(manifest)),
-          'runtime',
-          'minidb',
-          'text-build-worker.mjs',
-        ),
-      );
-      expect(packageRoot?.startsWith(join(dir, 'native', 'test', 'test-target'))).toBe(true);
-      expect(getMinidbTextBuildWorkerFile(options)).toBe(first);
-
-      writeFileSync(first!, 'corrupt');
-      expect(getMinidbTextBuildWorkerFile(options)).toBe(first);
-      expect(readFileSync(first!, 'utf-8')).toBe(worker);
-
-      const installed = installMinidbTextBuildWorker(options);
-      expect(installed).toMatchObject({ status: 'installed', assetSha256: sha256(worker) });
-      expect(getTextBuildWorkerRuntimeState()).toMatchObject({
-        configured: true,
-        entry: { kind: 'packaged', path: first },
-      });
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('reports missing and corrupt runtime worker assets without configuring MiniDb', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'kimi-native-worker-fail-'));
-    try {
-      const missing = fakeManifest({});
-      expect(
-        installMinidbTextBuildWorker({
-          cacheBase: dir,
-          manifest: missing.manifest,
-          source: missing.source,
-          version: 'test',
-        }),
-      ).toEqual({ status: 'asset-missing' });
-
-      const corrupt = fakeManifest({}, 'worker');
-      const corruptSource: NativeAssetSource = {
-        getAssetKeys: () => corrupt.source.getAssetKeys(),
-        getRawAsset: (key) =>
-          key.endsWith('/runtime/minidb-text-build-worker')
-            ? Buffer.from('wrong')
-            : corrupt.source.getRawAsset(key),
-      };
-      expect(
-        installMinidbTextBuildWorker({
-          cacheBase: dir,
-          manifest: corrupt.manifest,
-          source: corruptSource,
-          version: 'test',
-        }),
-      ).toMatchObject({ status: 'failed', errorCode: 'Error' });
-      expect(getTextBuildWorkerRuntimeState()).toEqual({ configured: false });
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
   it('rejects unsupported or structurally incomplete native manifest versions', () => {
-    const valid = fakeManifest({}, 'worker').manifest;
+    const valid = fakeManifest({}).manifest;
     const cases: Array<{ manifest: unknown; error: RegExp }> = [
       { manifest: { ...valid, version: 1 }, error: /Unsupported native asset manifest version: 1/ },
       {
-        manifest: { version: NATIVE_ASSET_MANIFEST_VERSION, target: 'test-target', runtimeFiles: [] },
+        manifest: { version: NATIVE_ASSET_MANIFEST_VERSION, target: 'test-target' },
         error: /packages must be an array/,
       },
-      {
-        manifest: { version: NATIVE_ASSET_MANIFEST_VERSION, target: 'test-target', packages: [] },
-        error: /runtimeFiles must be an array/,
-      },
       { manifest: { ...valid, packages: {} }, error: /packages must be an array/ },
-      { manifest: { ...valid, runtimeFiles: {} }, error: /runtimeFiles must be an array/ },
     ];
 
     for (const item of cases) {
@@ -263,27 +156,29 @@ describe('native assets', () => {
     }
   });
 
-  it('rejects unsafe paths, invalid file metadata, and duplicate manifest keys', () => {
-    const valid = fakeManifest({}, 'worker').manifest;
-    const worker = valid.runtimeFiles[0]!;
-    const invalidRuntimeFiles: Array<{ file: Record<string, unknown>; error: RegExp }> = [
-      { file: { ...worker, relativePath: '/tmp/worker.mjs' }, error: /safe relative path/ },
-      { file: { ...worker, relativePath: '../worker.mjs' }, error: /safe relative path/ },
-      { file: { ...worker, relativePath: 'runtime\\..\\worker.mjs' }, error: /safe relative path/ },
-      { file: { ...worker, sha256: 'not-a-sha' }, error: /64 lowercase hex/ },
-      { file: { ...worker, mode: 0o1000 }, error: /mode must be an integer/ },
-      { file: { ...worker, assetKey: 42 }, error: /assetKey must be a non-empty string/ },
+  it('rejects unsafe paths, invalid file metadata, and duplicate manifest entries', () => {
+    const valid = fakeManifest({
+      'node_modules/fake-native/index.js': "module.exports = { value: 'ok' };\n",
+    }).manifest;
+    const validPackage = valid.packages[0]!;
+    const file = validPackage.files[0]!;
+    const invalidFiles: Array<{ file: Record<string, unknown>; error: RegExp }> = [
+      { file: { ...file, relativePath: '/tmp/index.js' }, error: /safe relative path/ },
+      { file: { ...file, relativePath: '../index.js' }, error: /safe relative path/ },
+      { file: { ...file, relativePath: 'node_modules\\..\\index.js' }, error: /safe relative path/ },
+      { file: { ...file, sha256: 'not-a-sha' }, error: /64 lowercase hex/ },
+      { file: { ...file, mode: 0o1000 }, error: /mode must be an integer/ },
+      { file: { ...file, assetKey: 42 }, error: /assetKey must be a non-empty string/ },
     ];
-    for (const item of invalidRuntimeFiles) {
+    for (const item of invalidFiles) {
       expect(() =>
         getEmbeddedNativeAssetManifest(
-          sourceForManifest({ ...valid, runtimeFiles: [item.file] }),
+          sourceForManifest({ ...valid, packages: [{ ...validPackage, files: [item.file] }] }),
           'test-target',
         ),
       ).toThrow(item.error);
     }
 
-    const validPackage = valid.packages[0]!;
     expect(() =>
       getEmbeddedNativeAssetManifest(
         sourceForManifest({
@@ -302,32 +197,32 @@ describe('native assets', () => {
         'test-target',
       ),
     ).toThrow(/files must be an array/);
-
+    expect(() =>
+      getEmbeddedNativeAssetManifest(
+        sourceForManifest({ ...valid, packages: [validPackage, validPackage] }),
+        'test-target',
+      ),
+    ).toThrow(/duplicate package name/);
     expect(() =>
       getEmbeddedNativeAssetManifest(
         sourceForManifest({
           ...valid,
-          runtimeFiles: [
-            worker,
-            { ...worker, assetKey: 'native/test-target/runtime/other', relativePath: 'runtime/other.mjs' },
-          ],
+          packages: [{
+            ...validPackage,
+            files: [file, { ...file, assetKey: 'native/test-target/other' }],
+          }],
         }),
         'test-target',
       ),
-    ).toThrow(/duplicate runtime key/);
-
+    ).toThrow(/duplicate relativePath/);
     expect(() =>
       getEmbeddedNativeAssetManifest(
         sourceForManifest({
           ...valid,
-          runtimeFiles: [
-            worker,
-            {
-              ...worker,
-              key: 'other',
-              relativePath: 'runtime/other.mjs',
-            },
-          ],
+          packages: [{
+            ...validPackage,
+            files: [file, { ...file, relativePath: 'node_modules/fake-native/other.js' }],
+          }],
         }),
         'test-target',
       ),

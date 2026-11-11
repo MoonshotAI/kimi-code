@@ -121,6 +121,7 @@ import {
 import { ILogService } from '#/_base/log/log';
 import { IHostClock } from '#/os/interface/hostClock';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
+import { DATABASE_SECTION, type DatabaseConfig } from '#/persistence/configSection';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAtomicTomlDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { TomlAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
@@ -1303,19 +1304,56 @@ describe('config deprecations', () => {
     return { config, disposables, storage };
   }
 
-  it('warns and ignores a deprecated TOML key whose value no longer applies', async () => {
-    const { config, disposables } = await createConfig(
-      {},
-      '[loop_control]\nmax_retries_per_step = 3\n',
-    );
+  it('warns and ignores retired TOML keys and environment variables', async () => {
+    const deprecated = await createConfig({}, '[loop_control]\nmax_retries_per_step = 3\n');
 
-    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({});
-    expect(config.diagnostics()).toContainEqual({
+    expect(deprecated.config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({});
+    expect(deprecated.config.diagnostics()).toContainEqual({
       domain: LOOP_CONTROL_SECTION,
       severity: 'warning',
       message:
         "[loop_control] 'max_retries_per_step' is deprecated and no longer used; rename it to 'max_attempts_per_step'. Run /update-config to fix it.",
     });
+    deprecated.disposables.dispose();
+
+    const { config, disposables } = await createConfig(
+      {
+        KIMI_CODE_GLOBAL_SEARCH: '1',
+        KIMI_CODE_SEARCH_WORKER: '1',
+        KIMI_CODE_SEARCH_SYNC_SESSION_CAP: '10',
+        KIMI_CODE_SEARCH_SYNC_DEBOUNCE_MS: '25',
+        KIMI_CODE_PERSISTENCE_MINIDB_READMODEL: 'true',
+      },
+      '[database]\nbase = false\nglobal_search = true\nsearch = true\nsearch_sync_session_cap = 10\nsearch_sync_debounce_ms = 25\n',
+    );
+
+    expect(config.get<DatabaseConfig>(DATABASE_SECTION)).toEqual({ base: true });
+    const diagnostics = config.diagnostics();
+    for (const key of [
+      'global_search',
+      'search',
+      'search_sync_session_cap',
+      'search_sync_debounce_ms',
+    ]) {
+      expect(diagnostics).toContainEqual({
+        domain: DATABASE_SECTION,
+        severity: 'warning',
+        message: `[database] '${key}' has been removed with global search and is ignored. Remove the key from config.toml.`,
+      });
+    }
+    for (const env of [
+      'KIMI_CODE_GLOBAL_SEARCH',
+      'KIMI_CODE_SEARCH_WORKER',
+      'KIMI_CODE_SEARCH_SYNC_SESSION_CAP',
+      'KIMI_CODE_SEARCH_SYNC_DEBOUNCE_MS',
+    ]) {
+      expect(diagnostics).toContainEqual({
+        domain: DATABASE_SECTION,
+        severity: 'warning',
+        message: `Environment variable ${env} has been removed with global search and is ignored. Unset it.`,
+      });
+    }
+    expect(diagnostics).toHaveLength(8);
 
     disposables.dispose();
   });

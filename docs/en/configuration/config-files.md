@@ -460,15 +460,15 @@ Both values must be positive integers. A call's `max_chars` overrides the defaul
 
 ## `database`
 
-`database` controls the embedded storage engines behind session indexing and global search. Session indexing is on by default; the global full-text search index is off by default and, once enabled, scans past sessions in the background and serves `POST /api/v1/search`.
+`database` controls the embedded storage engine behind session indexing. Session indexing is on by default.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `base` | `boolean` | `true` | Use the minidb-backed read model for session indexing; `false` falls back to reading session metadata directly |
-| `global_search` | `boolean` | `false` | Build the global full-text search index and serve `POST /api/v1/search`; when off, no sessions are scanned, no search worker starts, and the search endpoint reports the index as unavailable |
-| `search` | `boolean` | `true` | With global search enabled, run the index in a dedicated worker thread; `false` runs it in the server process |
 
-`base` can be overridden by the `KIMI_CODE_PERSISTENCE_MINIDB_READMODEL` environment variable, `global_search` by `KIMI_CODE_GLOBAL_SEARCH`, and `search` by `KIMI_CODE_SEARCH_WORKER`; all take higher priority than `config.toml`.
+`base` can be overridden by the `KIMI_CODE_PERSISTENCE_MINIDB_READMODEL` environment variable, which takes higher priority than `config.toml`.
+
+The removed global-search keys `global_search`, `search`, `search_sync_session_cap`, and `search_sync_debounce_ms` are ignored with a warning. The same applies to `KIMI_CODE_GLOBAL_SEARCH`, `KIMI_CODE_SEARCH_WORKER`, `KIMI_CODE_SEARCH_SYNC_SESSION_CAP`, and `KIMI_CODE_SEARCH_SYNC_DEBOUNCE_MS` in the environment.
 
 ## `watch`
 

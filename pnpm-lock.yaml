@@ -109,9 +109,6 @@ importers:
       '@moonshot-ai/migration-legacy':
         specifier: workspace:^
         version: link:../../packages/migration-legacy
-      '@moonshot-ai/minidb':
-        specifier: workspace:^
-        version: link:../../packages/minidb
       '@moonshot-ai/pi-tui':
         specifier: workspace:^
         version: link:../../packages/pi-tui
@@ -628,9 +625,6 @@ importers:
       '@moonshot-ai/kimi-code-product':
         specifier: workspace:^
         version: link:../product
-      '@moonshot-ai/minidb':
-        specifier: workspace:*
-        version: link:../minidb
       '@moonshot-ai/remote-control':
         specifier: workspace:^
         version: link:../remote-control
