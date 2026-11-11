@@ -324,7 +324,7 @@ describe('core LoopService integration', () => {
     });
     await expect(handle!.completion).resolves.toMatchObject({ state: 'completed' });
     await loop.settled();
-    expect(lifecycle).toEqual(['prompt.completed', 'turn.ended']);
+    expect(lifecycle).toEqual(['turn.ended', 'prompt.completed']);
     for (const subscription of subscriptions) subscription.dispose();
   });
 

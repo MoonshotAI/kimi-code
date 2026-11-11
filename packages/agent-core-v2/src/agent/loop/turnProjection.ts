@@ -909,7 +909,6 @@ export class AgentTurnProjection {
     const requestId = promptOnly || result.type === 'cancelled' ? undefined : result.type === 'completed' ? this.lastRequestId : this.activeRequestTrace?.requestId;
     const error = result.type === 'failed' ? toKimiErrorPayload(result.error) : undefined;
     const interruptReason = result.type === 'completed' ? undefined : interruptReasonFor(result);
-    this.options.prompts.complete(turn.prompt, result);
     const turnEnded = this.options.dispatcher.dispatch(new TurnEnded({
       agentId: this.options.scopeContext.agentId,
       turnId: turn.id,
@@ -921,6 +920,7 @@ export class AgentTurnProjection {
       requestId,
     }));
     if (error !== undefined) void this.options.dispatcher.dispatch(new AgentErrorEvent({ ...error, agentId: this.options.scopeContext.agentId }));
+    this.options.prompts.complete(turn.id, result);
     if (interruptReason !== undefined) {
       const interrupted: TurnInterruptedEvent = {
         turn_id: turn.id,

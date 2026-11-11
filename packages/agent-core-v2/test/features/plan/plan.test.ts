@@ -895,7 +895,6 @@ describe('Plan service', () => {
         [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-7>", "turnId": "0", "step": 2, "stepUuid": "<uuid-6>", "block": 0, "part": { "type": "text", "text": "The safe command printed plan-safe." }, "startedAt": "<time>" }, "time": "<time>" }
         [wire] usage.record                { "agentId": "main", "model": "mock-model", "usage": { "inputOther": 793, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
         [wire] token_counting.measured     { "agentId": "main", "length": 5, "tokens": 805, "time": "<time>" }
-        [emit] prompt.completed            { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "finishedAt": "<time>", "reason": "completed" }
         [emit] turn.ended                  { "time": "<time>", "agentId": "main", "turnId": 0, "reason": "completed" }
       `);
 
@@ -975,7 +974,6 @@ describe('Plan service', () => {
         [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-7>", "turnId": "0", "step": 2, "stepUuid": "<uuid-6>", "block": 0, "part": { "type": "text", "text": "The command completed." }, "startedAt": "<time>" }, "time": "<time>" }
         [wire] usage.record                { "agentId": "main", "model": "mock-model", "usage": { "inputOther": 789, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
         [wire] token_counting.measured     { "agentId": "main", "length": 5, "tokens": 798, "time": "<time>" }
-        [emit] prompt.completed            { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "finishedAt": "<time>", "reason": "completed" }
         [emit] turn.ended                  { "time": "<time>", "agentId": "main", "turnId": 0, "reason": "completed" }
       `);
       expect(toolResultText(context.history())).toContain('removed');
