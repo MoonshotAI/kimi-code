@@ -79,6 +79,7 @@ export class TowerFeature extends Feature {
       this.contributeTool(tool.id, tool.ctor, {
         name: tool.name,
         domain: 'tower',
+        userConfigurable: true,
       });
     }
     this.contributeProfiles([TOWER_WORKER_PROFILE_DEF]);

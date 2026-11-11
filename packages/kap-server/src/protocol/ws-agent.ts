@@ -17,6 +17,10 @@ export const agentStateSchema = z.object({
   plan_mode: z.boolean(),
   swarm_mode: z.boolean(),
   tower_mode: z.boolean(),
+  plan_mode_available: z.boolean(),
+  swarm_mode_available: z.boolean(),
+  tower_mode_available: z.boolean(),
+  goal_mode_available: z.boolean(),
 });
 export type AgentState = z.infer<typeof agentStateSchema>;
 

@@ -376,6 +376,7 @@ On success, `data` is the config object; its fields mirror the top-level domains
 | `background` | object | Background task runtime parameters |
 | `subagent` | object | Subagent configuration |
 | `secondary_model` | object | Secondary model pool for subagents |
+| `tools` | object | Global tool allowlist and denylist |
 | `experimental` | object | Experimental flag id → enabled |
 | `telemetry` | boolean | Whether anonymous telemetry is enabled |
 | `auto_session_title` | boolean | Whether clients may automatically generate session titles |
@@ -410,6 +411,7 @@ The body is a partial config object — any subset of the response domains above
 | `background` | body | object | Background task runtime parameters |
 | `subagent` | body | object | Subagent configuration |
 | `secondary_model` | body | object | Secondary model pool for subagents |
+| `tools` | body | object | Global tool allowlist and denylist |
 | `experimental` | body | object | Experimental flag id → enabled |
 | `telemetry` | body | boolean | Whether anonymous telemetry is enabled |
 | `auto_session_title` | body | boolean | Whether clients may automatically generate session titles |
@@ -1291,6 +1293,7 @@ These endpoints expose the skill catalogs a session or workspace sees, the effec
 | `GET /api/v1/workspaces/{workspace_id}/skills` | Session-less skill catalog for a workspace |
 | `POST /api/v1/sessions/{session_id}/skills/{skill_name}:activate` | Activate a skill (starts a turn) |
 | `GET /api/v1/tools` | List tools of the effective agent |
+| `GET /api/v1/tools/catalog` | List user-configurable built-in tools |
 | `GET /api/v1/mcp/servers` | List MCP servers |
 | `POST /api/v1/mcp/servers/{mcp_server_id}:restart` | Restart an MCP server |
 
@@ -1349,6 +1352,12 @@ Lists the tools of the effective agent — the main agent of the session given b
 | `session_id` | query | string | Session whose main agent to inspect. Default the most recently created session |
 
 On success, `data` is `{ tools }` where each item is `{ name, description, input_schema, source, mcp_server_id?, active? }`: `source` is `builtin` / `skill` / `mcp`, `mcp_server_id` is set on MCP tools (parsed from the `mcp__<server>__<tool>` name), and `active` reports the tool policy's verdict. `input_schema` is currently always `null`.
+
+#### `GET /api/v1/tools/catalog`
+
+Lists the built-in tools exposed as user-configurable defaults. The catalog combines static tool contribution metadata with configurable runtime-registered built-in tools. It is available before any session exists; it does not create or resume a session, connect to MCP servers, or include dynamic tools provided by MCP servers or individual skills. Internal orchestration tools such as `select_tools` are excluded.
+
+On success, `data` is `{ tools }`, sorted by name, where each item is `{ name, source }`. `source` is `builtin` for the current catalog.
 
 #### `GET /api/v1/mcp/servers`
 
@@ -2442,7 +2451,7 @@ Each agent's running tasks — shell commands in the foreground and background, 
 
 An agent's own state is synced by four more flat frames, each carrying the full value and replacing the client copy; like the task frames they are never replayed. When a connection starts receiving an agent (the same rule as `task.list`), it first gets the current `agent`, `usage` (when the agent has a model context), `goal` (main agent only), and `todo` frames, and after that each frame again whenever its value changes; a listed agent that joins the session later announces itself with the same frames. Subscribing to a session creates its main agent if it does not exist yet, so the main agent's frames always follow the subscription. All four are `{ type, session_id, agent_id, event_created_at, ... }`:
 
-- `agent`: `{ status: "idle" | "running", compacting, model?, thinking?, permission_mode?, plan_mode, swarm_mode, tower_mode }`. `status` is `running` while the agent works on a turn and `idle` when it does not. `compacting` is `true` while the agent's context is being compacted, whether inside a turn or not. The running turn, and the retry state of a failed model request, come with the conversation frames. `compacting` and the three mode fields are booleans.
+- `agent`: `{ status: "idle" | "running", compacting, model?, thinking?, permission_mode?, plan_mode, swarm_mode, tower_mode, plan_mode_available, swarm_mode_available, tower_mode_available, goal_mode_available }`. `status` is `running` while the agent works on a turn and `idle` when it does not. `compacting` is `true` while the agent's context is being compacted, whether inside a turn or not. The running turn, and the retry state of a failed model request, come with the conversation frames. The mode fields report whether each mode is active. The availability fields report whether the current tool policy permits entering Plan mode (`ExitPlanMode`), swarm mode (`AgentSwarm`), Tower mode (the complete Tower tool set), or autonomous goal work (`UpdateGoal`); all eight mode and availability fields are booleans. Changing `[tools]` alone does not emit a new `agent` frame; availability is refreshed by the next snapshot or `agent` frame.
 - `usage`: `{ context_tokens, max_context_tokens? }`. Only the latest value matters, so while the context grows the server sends it at most a few times per second.
 - `goal`: `{ goal? }`, where `goal` is omitted when the session has none, or is `{ objective, status: "active" | "paused" | "blocked" | "complete", completion_criterion?, turns_used, tokens_used, wall_clock_ms }`.
 - `todo`: `{ items: [{ title, status: "pending" | "in_progress" | "done" }] }`, read from the agent's todo store, so it follows undo and survives a restart.
