@@ -1477,6 +1477,7 @@ class LoopActor implements Loop {
       const entry = assistantEntryOf({ type: 'failed', error: event.error, message: event.message ?? undefined }, step.model);
       if (entry !== undefined) {
         this.record({ type: 'message.appended', turnId: turn.id, step: turn.step, source: 'partial', entry });
+        step.partialMessage = event.message ?? undefined;
       }
     }
     this.record(event);
@@ -1491,7 +1492,7 @@ class LoopActor implements Loop {
     );
     this.record({ type: 'llm.ended', outcome });
     const entry = assistantEntryOf(outcome, step.model);
-    if (entry !== undefined) {
+    if (entry !== undefined && step.partialMessage !== outcome.message) {
       this.record({
         type: 'message.appended',
         turnId: turn.id,
@@ -1500,6 +1501,7 @@ class LoopActor implements Loop {
         entry,
       });
     }
+    step.partialMessage = undefined;
     if (outcome.type !== 'done' && this.finishSteeredStep(turn, step)) return;
     if (toolCalls.length > 0) {
       turn.phase = 'batching';

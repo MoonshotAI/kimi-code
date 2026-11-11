@@ -426,6 +426,25 @@ describe('Agent loop', () => {
         args: expect.objectContaining({ reason: 'error', message: 'stream broke mid-flight' }),
       }),
     );
+
+    const local = createTestAgent({ initialConfig: { providers: {}, loopControl: { maxAttemptsPerStep: 2 } } });
+    try {
+      local.mockNextProviderResponse({
+        parts: [{ type: 'text', text: 'cancel partial' }],
+        error: new APIProviderRateLimitError('retry', null, 60_000),
+      });
+      const { turn } = submitTurn(local.get(IAgentLoopService), 'Cancel during backoff');
+      await local.once('turn.step.retrying');
+      expect(local.get(IAgentLoopService).snapshot().turn?.retry).toMatchObject({ nextAttempt: 2 });
+      turn.cancel(new Error('stop during backoff'));
+      await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
+      const partials = local.contextData().history.filter((message) =>
+        message.role === 'assistant' && message.content.some((part) => part.type === 'text' && part.text.includes('cancel partial')),
+      );
+      expect(partials).toHaveLength(1);
+    } finally {
+      await local.dispose();
+    }
   });
 
   it('does not run loop error handlers for aborted turns', async () => {
