@@ -99,7 +99,9 @@ export function explainProviderEndpoint(
   env: Readonly<Record<string, string | undefined>> = process.env,
   protocol?: Protocol,
 ): ExplainedProviderEndpoint {
-  const definition = getProviderDefinition(providerType, protocol);
+  const definition =
+    getProviderDefinition(providerType, protocol) ??
+    (protocol === undefined ? undefined : getProviderDefinition(providerType));
   if (definition === undefined) return {};
   const endpoint =
     normalizeEndpointDeclaration(definition.endpoint) ?? aggregateEndpoints(definition.endpoints);
