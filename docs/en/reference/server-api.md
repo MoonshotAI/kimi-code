@@ -1,3 +1,10 @@
+<script setup>
+import { onMounted } from 'vue'
+import { redirectLegacyServerApiAnchor } from '../../.vitepress/theme/serverApiLegacyAnchors'
+
+onMounted(() => redirectLegacyServerApiAnchor('en'))
+</script>
+
 # Server API (Beta)
 
 The local server started by `kimi web` exposes two interfaces: a REST API (`/api/v1`, plus `/api/v2/sessions` and `/api/v2/mcp`) and a WebSocket event stream (`/api/v1/ws`). Scripts and third-party clients can use them to create sessions, submit prompts, receive the conversation in real time, and manage configuration, models, and workspaces. For how to start the server and its command-line options, see [kimi command](./kimi-command.md#kimi-web).

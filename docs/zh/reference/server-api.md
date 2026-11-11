@@ -1,3 +1,10 @@
+<script setup>
+import { onMounted } from 'vue'
+import { redirectLegacyServerApiAnchor } from '../../.vitepress/theme/serverApiLegacyAnchors'
+
+onMounted(() => redirectLegacyServerApiAnchor('zh'))
+</script>
+
 # 服务 API【测试版】
 
 `kimi web` 启动的本地服务提供两组接口：REST API（`/api/v1`，另有 `/api/v2/sessions` 和 `/api/v2/mcp`）和 WebSocket 事件流（`/api/v1/ws`）。脚本和第三方客户端可以用它们创建会话、提交提示词、实时接收对话内容，以及管理配置、模型和工作区。启动服务的方法和命令行选项见 [kimi 命令](./kimi-command.md#kimi-web)。
