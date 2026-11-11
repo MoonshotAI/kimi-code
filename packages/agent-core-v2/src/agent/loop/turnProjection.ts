@@ -517,6 +517,19 @@ export class AgentTurnProjection {
         }));
         return;
       }
+      case 'llm.sent': {
+        const turn = this.active;
+        if (turn === undefined || turn.retry === undefined) return;
+        const step = turn.current?.number ?? turn.gatedSteps;
+        turn.retry = undefined;
+        void this.options.dispatcher.dispatch(new TurnStepStarted({
+          agentId: this.options.scopeContext.agentId,
+          turnId: turn.id,
+          step,
+          stepId: turn.current?.uuid ?? turn.stepIds.get(step),
+        }));
+        return;
+      }
       case 'llm.streaming.part': {
         const turn = this.active;
         if (turn === undefined) return;

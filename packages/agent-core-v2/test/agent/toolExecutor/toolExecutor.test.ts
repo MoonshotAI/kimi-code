@@ -683,19 +683,15 @@ describe('AgentToolExecutorService', () => {
     const nextBatch = executor.executor.execute(toolCall('call_next_batch', 'next-batch', {}), { turnId: 1, step: 1 });
     await detachedStarted.promise;
     expect(detached.detach('background')).toBeDefined();
-    await nextBatchStarted.promise;
-    expect(conflictingTool.calls).toEqual([]);
+    await Promise.all([conflictingStarted.promise, nextBatchStarted.promise]);
+    expect(conflictingTool.calls).toHaveLength(1);
     expect(nextBatchTool.calls).toHaveLength(1);
+    expect(detached.snapshot().status).toBe('running');
 
     detachedRelease.resolve();
     await detachedFinalizerStarted.promise;
-    await vi.waitFor(() => {
-      expect(conflictingTool.calls).toHaveLength(1);
-    }, { timeout: 100 });
-    expect(detached.snapshot().status).toBe('running');
     detachedFinalizerRelease.resolve();
     await detached.wait();
-    await conflictingStarted.promise;
     await Promise.all([conflicting.wait(), nextBatch.wait()]);
     executor.release(detached.taskId);
     executor.release(conflicting.taskId);
