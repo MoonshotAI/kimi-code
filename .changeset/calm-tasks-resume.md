@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Prevent already delivered background task notifications from being delivered again after conversation resume or undo.
+Prevent duplicate background task notifications after resume or undo, and persist prompt completion before turn completion.

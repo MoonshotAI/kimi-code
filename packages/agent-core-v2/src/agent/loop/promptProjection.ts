@@ -204,8 +204,12 @@ export class AgentPromptProjection {
     if (waiter.launchedTurn !== undefined) return;
     waiter.launchedTurn = turn;
     waiter.launched.resolve(turn);
-    void turn.result.then((result) => this.settleCompletion(waiter, result));
     this.publishStarted(waiter.id);
+  }
+
+  complete(prompt: ActivePrompt, result: TurnResult): void {
+    const waiter = this.waiters.get(prompt.id);
+    if (waiter !== undefined) this.settleCompletion(waiter, result);
   }
 
   materialized(turn: Turn): void {

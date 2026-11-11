@@ -312,6 +312,11 @@ describe('core LoopService integration', () => {
       },
     });
 
+    const lifecycle: string[] = [];
+    const subscriptions = [
+      ctx.get(IEventBus).subscribe(PromptCompleted, (event) => lifecycle.push(event.type)),
+      ctx.get(IEventBus).subscribe(TurnEnded, (event) => lifecycle.push(event.type)),
+    ];
     let handle: ReturnType<IAgentLoopService['promptHandle']>;
     await vi.waitFor(() => {
       handle = loop.promptHandle('seed-1');
@@ -319,6 +324,8 @@ describe('core LoopService integration', () => {
     });
     await expect(handle!.completion).resolves.toMatchObject({ state: 'completed' });
     await loop.settled();
+    expect(lifecycle).toEqual(['prompt.completed', 'turn.ended']);
+    for (const subscription of subscriptions) subscription.dispose();
   });
 
   it('honors afterStep stopTurn without starting another LLM step', async () => {
