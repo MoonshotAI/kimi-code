@@ -180,10 +180,10 @@ REST 请求的响应和 WebSocket 帧走不同的通道，到达顺序不固定�
 | `stage` | 调用运行时的阶段：模型流式生成参数期间为 `input`，等待审批时为 `awaiting_approval`，其余时候为 `executing` |
 | `input` | 工具参数 |
 | `input_text` | `stage` 为 `input` 时的参数原文 |
-| `output` | 运行时流式追加工具的实时输出；结束后为结果文本 |
+| `output` | 运行时流式追加工具的实时输出；正常完成后为结果文本 |
 | `fields` | handler 最新字段快照组成的 JSON 对象 |
-| `media` | 结束后结果中的图片、视频和音频：`{ kind, file_id?, url?, media_type? }` |
-| `error` | 结果为错误时出现，此时条目的 `outcome` 为 `failed`，不带 `output` |
+| `media` | 正常完成后结果中的图片、视频和音频：`{ kind, file_id?, url?, media_type? }` |
+| `error` | 调用失败（`outcome` 为 `failed`）或被停止（`interrupted`）时的结果文本，此时不带 `output`。例如停止 Bash 后，这里是已产生的输出加上中断说明。轮次结束时仍没有拿到结果的调用也记为 `interrupted`，但不带 `error` |
 | `note` | 工具随结果附给模型的补充说明，例如 `ReadMediaFile` 读取图片时的大小和尺寸 |
 | `task_id` | 这次调用的工作以后台任务运行时出现，无论是一开始就在后台，还是之后转到后台。任务离开 `task.list` 之后，仍然可以用它发送 `task.watch` 和 `task.stop` |
 | `interaction_id` | 为这次调用发起的审批或提问，内容随 [`interaction`](#审批与提问) 帧下发 |
