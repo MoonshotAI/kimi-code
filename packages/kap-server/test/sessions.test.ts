@@ -1014,7 +1014,11 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(children.body.data.items.some((s) => s.id === id)).toBe(false);
   });
 
-  it('keeps a child session linked when its profile metadata names the child-link keys', async () => {
+  it.each([
+    { source: 'composer' },
+    { parent_session_id: null, child_session_kind: null },
+    { parent_session_id: 'session_other', child_session_kind: 'child', source: 'composer' },
+  ])('keeps a child session linked when its profile metadata is %o', async (patch) => {
     const cwd = home as string;
     const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const parentId = parent.body.data.id;
@@ -1022,12 +1026,26 @@ describe('server-v2 /api/v1/sessions', () => {
     const childId = child.body.data.id;
 
     const updated = await postJson<SessionWire>(`/api/v1/sessions/${childId}/profile`, {
-      metadata: { parent_session_id: null, child_session_kind: null },
+      metadata: patch,
     });
 
     expect(updated.body.code).toBe(0);
     const children = await getJson<PageWire>(`/api/v1/sessions/${parentId}/children`);
     expect(children.body.data.items.some((s) => s.id === childId)).toBe(true);
+  });
+
+  it('replaces the custom metadata even when the profile metadata names only reserved keys', async () => {
+    const cwd = home as string;
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd, source: 'composer' },
+    });
+
+    const updated = await postJson<SessionWire>(`/api/v1/sessions/${created.body.data.id}/profile`, {
+      metadata: { cwd: '/elsewhere' },
+    });
+
+    expect(updated.body.code).toBe(0);
+    expect(updated.body.data.metadata).toEqual({ cwd });
   });
 
   it('reports an unknown creation model as a validation error and creates nothing', async () => {
