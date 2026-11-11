@@ -39,7 +39,9 @@ const SOCKET_TIMEOUT_MS = 2_000;
 export type EnsureDaemonErrorCode =
   | 'lock_timeout'
   | 'start_timeout'
-  | 'version_mismatch_busy';
+  | 'remote_start_failed'
+  | 'version_mismatch_busy'
+  | 'unknown';
 
 export class EnsureDaemonError extends Error {
   constructor(
@@ -58,6 +60,18 @@ export interface DaemonConnection {
   /** Resolves false when the instance still has live work and must not be replaced. */
   stopIfIdle(): Promise<boolean>;
   close(): void;
+}
+
+interface CredentialOffer {
+  readonly type: 'auth';
+  readonly action: 'provision' | 'logout';
+  readonly credential?: {
+    readonly token: { readonly refresh_token: string };
+    readonly base_url?: string;
+    readonly oauth_host?: string;
+    readonly oauth_key: string;
+  };
+  readonly oauth_key?: string;
 }
 
 export interface EnsureDaemonResult {
@@ -230,12 +244,72 @@ interface RpcResponseEnvelope {
   readonly body?: string;
 }
 
+interface RpcEnvelope<T> {
+  readonly code?: number;
+  readonly msg?: string;
+  readonly data?: T;
+}
+
+export async function receiveCredentialOffer(stdin: NodeJS.ReadableStream, timeoutMs = 5_000): Promise<CredentialOffer | undefined> {
+  return new Promise((resolve, reject) => {
+    let buffer = '';
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve(undefined);
+    }, timeoutMs);
+    const cleanup = (): void => {
+      clearTimeout(timer);
+      stdin.off('data', onData);
+      stdin.off('end', onEnd);
+      stdin.off('error', onEnd);
+    };
+    const onEnd = (): void => {
+      cleanup();
+      resolve(undefined);
+    };
+    const onData = (chunk: Buffer | string): void => {
+      buffer += typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+      const newline = buffer.indexOf('\n');
+      if (newline === -1) return;
+      const line = buffer.slice(0, newline);
+      buffer = buffer.slice(newline + 1);
+      cleanup();
+      try {
+        resolve(JSON.parse(line) as CredentialOffer);
+      } catch {
+        reject(new EnsureDaemonError('unknown', 'invalid host credential offer'));
+      }
+    };
+    stdin.on('data', onData);
+    stdin.once('end', onEnd);
+    stdin.once('error', onEnd);
+  });
+}
+
+export async function sendCredential(stream: Duplex, offer: CredentialOffer | undefined): Promise<{ credential?: unknown }> {
+  if (offer === undefined) return {};
+  const response = await rpcCall<{ credential?: unknown }>(
+    stream,
+    'auth',
+    'POST',
+    '/api/v1/oauth/host-credential',
+    JSON.stringify(offer.action === 'logout'
+      ? { action: 'logout', oauth_key: offer.oauth_key }
+      : { action: 'provision', credential: offer.credential }),
+    60_000,
+  );
+  if (response?.data?.credential === undefined) throw new EnsureDaemonError('remote_start_failed', response?.msg ?? 'unable to provision the account on the remote host');
+  return { credential: response.data.credential };
+}
+
 function rpcCall<T>(
   socket: Duplex,
   id: string,
   method: string,
   path: string,
-): Promise<{ data?: T } | undefined> {
+  body?: string,
+  timeoutMs = SOCKET_TIMEOUT_MS,
+): Promise<RpcEnvelope<T> | undefined> {
   return new Promise((resolve) => {
     let buffer = '';
     const cleanup = (): void => {
@@ -247,7 +321,7 @@ function rpcCall<T>(
     const timer = setTimeout(() => {
       cleanup();
       resolve(undefined);
-    }, SOCKET_TIMEOUT_MS);
+    }, timeoutMs);
     const onError = (): void => {
       cleanup();
       resolve(undefined);
@@ -268,7 +342,7 @@ function rpcCall<T>(
           resolve(undefined);
           return;
         }
-        resolve(JSON.parse(Buffer.from(frame.body, 'base64').toString('utf8')) as { data?: T });
+        resolve(JSON.parse(Buffer.from(frame.body, 'base64').toString('utf8')) as RpcEnvelope<T>);
       } catch {
         resolve(undefined);
       }
@@ -277,7 +351,7 @@ function rpcCall<T>(
     socket.on('error', onError);
     socket.on('close', onClose);
     socket.write(
-      `${JSON.stringify({ type: 'http.req', id, method, path, headers: { host: '127.0.0.1' } })}\n`,
+      `${JSON.stringify({ type: 'http.req', id, method, path, headers: body === undefined ? { host: '127.0.0.1' } : { host: '127.0.0.1', 'content-type': 'application/json' }, body: body === undefined ? undefined : Buffer.from(body).toString('base64') })}\n`,
     );
   });
 }
@@ -378,7 +452,10 @@ export function registerEnsureDaemonCommand(web: Command): void {
       }
       try {
         const daemon = await ensureDaemon(defaultDeps());
-        report({ pid: daemon.pid });
+        process.stdout.write('__KIMI_HOST_AUTH__\n');
+        const credential = await receiveCredentialOffer(process.stdin);
+        const account = await sendCredential(daemon.stream, credential);
+        report({ pid: daemon.pid, ...account });
         await relayStdio(process.stdin, process.stdout, daemon.stream);
       } catch (error) {
         const code = error instanceof EnsureDaemonError ? error.code : 'unknown';

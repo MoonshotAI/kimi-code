@@ -18,6 +18,7 @@ import {
   IPluginService,
   IEnvironmentService,
   IWorkspaceService,
+  IOAuthToolkit,
   IAgentLifecycleService,
   IAgentEnvironmentBindingService,
   ISessionContext,
@@ -89,6 +90,7 @@ import { createServerSessionRating } from './services/sessionRating';
 import { ConversationService } from './services/conversation/conversationService';
 import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
 import { HostBridgeManager, hostSnapshots } from './services/hosts/hostBridgeManager';
+import { toolkitWithRemoteRefresh } from './services/hosts/hostAuth';
 import { matchHostProxyPath, proxyHostWebSocket, registerHostProxyRoutes } from './services/hosts/hostProxy';
 import { DEFAULT_MANAGED_IDLE_EXIT_MS, ManagedIdleExit } from './services/managedIdleExit';
 import { SessionIdleReaper, closeIdleSessions, resolveSessionIdleReclaimMs } from './services/sessionIdleReaper';
@@ -148,6 +150,7 @@ export interface RunningServer {
   readonly core: Scope;
   readonly connectionRegistry: IConnectionRegistry;
   readonly authTokenService: IAuthTokenService;
+  readonly hostBridges: HostBridgeManager;
   readonly host: string;
   readonly port: number;
   close(): Promise<void>;
@@ -238,6 +241,9 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     },
     [...logSeed(logging), ...(opts.seeds ?? [])],
   );
+  if (opts.socketPath === undefined) {
+    core.instantiation.provide(IOAuthToolkit, toolkitWithRemoteRefresh(core, () => hostBridges));
+  }
   const environments = core.accessor.get(IEnvironmentService);
   const remoteEnvironmentProvider = await environments.addProvider(
     new RemoteEnvironmentProviderFactory({
@@ -424,7 +430,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const connectionRegistry = new ConnectionRegistry();
   let notifyHosts = (): void => {};
   let hostNotifyTimer: ReturnType<typeof setTimeout> | undefined;
-  const hostBridges = new HostBridgeManager(core.accessor.get(IConfigService), logger, () => notifyHosts());
+  const hostBridges = new HostBridgeManager(core, logger, () => notifyHosts());
   const requestClose = (): void => {
     void close().catch((error: unknown) => logger.error({ err: error }, 'server close failed'));
   };
@@ -561,6 +567,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     conversations,
     sessionRating,
     dangerousBypassAuth: opts.disableAuth === true,
+    managedBy: opts.managedBy,
     webTitle: opts.webTitle,
   });
 
@@ -716,7 +723,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   process.on('unhandledRejection', onUnhandledRejection);
   process.on('uncaughtException', onUncaughtException);
 
-  return { app, core, connectionRegistry, authTokenService, host, port: boundPort, close };
+  return { app, core, connectionRegistry, authTokenService, hostBridges, host, port: boundPort, close };
 }
 
 export const PORT_RETRY_LIMIT = 100;

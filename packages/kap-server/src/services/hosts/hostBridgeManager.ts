@@ -1,24 +1,9 @@
-import type { IConfigService } from '@moonshot-ai/agent-core-v2';
+import { IConfigService, type Scope } from '@moonshot-ai/agent-core-v2';
 
+import { localHostCredential, localHostCredentialKey, saveLocalHostCredential, type HostCredential, type HostCredentialOffer } from './hostAuth';
 import { HOSTS_SECTION, type HostEntry, type HostsSection } from './hostsConfig';
-import {
-  HostConnectError,
-  SshKapBridge,
-  type BridgeLogger,
-  type HostStatus,
-} from './sshKapBridge';
+import { HostConnectError, SshKapBridge, type BridgeLogger, type HostStatus } from './sshKapBridge';
 import type { HostSession } from './hostSession';
-
-interface BridgeRecord {
-  readonly fingerprint: string;
-  readonly bridge: SshKapBridge;
-}
-
-export interface HostInfo {
-  readonly id: string;
-  readonly entry: HostEntry;
-  readonly bridge: SshKapBridge | undefined;
-}
 
 export interface HostSnapshot {
   readonly id: string;
@@ -34,25 +19,25 @@ export interface HostSnapshot {
   readonly connect_failure?: string;
 }
 
-export function toHostSnapshot(info: HostInfo): HostSnapshot {
-  const disabled = info.entry.enabled === false;
+export function toHostSnapshot(id: string, entry: HostEntry, bridge: SshKapBridge | undefined): HostSnapshot {
   return {
-    id: info.id,
-    host: info.entry.host,
-    identity_file: info.entry.identityFile,
-    remote_bin: info.entry.remoteBin,
-    name: info.entry.name,
-    enabled: info.entry.enabled,
-    status: disabled ? 'disconnected' : info.bridge?.status ?? 'pending',
-    connected: !disabled && info.bridge?.session !== undefined,
-    remote_version: info.bridge?.remoteVersion,
-    connect_error: disabled ? `host "${info.id}" is disabled` : info.bridge?.error,
-    connect_failure: disabled ? 'unknown' : info.bridge?.failure,
+    id,
+    host: entry.host,
+    identity_file: entry.identityFile,
+    remote_bin: entry.remoteBin,
+    name: entry.name,
+    enabled: entry.enabled,
+    status: entry.enabled === false ? 'disconnected' : bridge?.status ?? 'pending',
+    connected: entry.enabled !== false && bridge?.session !== undefined,
+    remote_version: bridge?.remoteVersion,
+    connect_error: entry.enabled === false ? `host "${id}" is disabled` : bridge?.error,
+    connect_failure: entry.enabled === false ? 'unknown' : bridge?.failure,
   };
 }
 
 export function hostSnapshots(manager: HostBridgeManager): HostSnapshot[] {
-  return manager.list().map(toHostSnapshot);
+  const configured = manager.configured();
+  return configured === undefined ? [] : [toHostSnapshot(configured.id, configured.entry, manager.bridge())];
 }
 
 export class HostBridgeManager {
@@ -60,37 +45,74 @@ export class HostBridgeManager {
   private readonly subscription: { dispose(): void };
 
   constructor(
-    private readonly config: Pick<IConfigService, 'ready' | 'get' | 'onDidSectionChange'>,
+    private readonly core: Scope,
     private readonly logger: BridgeLogger,
     private readonly onChange?: () => void,
   ) {
-    this.subscription = config.onDidSectionChange((event) => {
+    this.subscription = core.accessor.get(IConfigService).onDidSectionChange((event) => {
       if (event.domain === HOSTS_SECTION) this.reconcile();
     });
   }
 
-  section(): HostsSection {
-    return this.config.get<HostsSection | undefined>(HOSTS_SECTION) ?? {};
+  configured(): { id: string; entry: HostEntry } | undefined {
+    const section = this.core.accessor.get(IConfigService).get<HostsSection | undefined>(HOSTS_SECTION) ?? {};
+    const id = Object.keys(section)[0];
+    const entry = id === undefined ? undefined : section[id];
+    return entry === undefined || id === undefined ? undefined : { id, entry };
   }
 
-  list(): readonly HostInfo[] {
-    return Object.entries(this.section()).map(([id, entry]) => ({
-      id,
-      entry,
-      bridge: this.records.get(id)?.bridge,
-    }));
-  }
-
-  async connect(id: string): Promise<HostSession> {
-    await this.config.ready;
-    const entry = this.section()[id];
-    if (entry === undefined) throw new HostConnectError('unknown', `host "${id}" is not configured`);
-    if (entry.enabled === false) throw new HostConnectError('unknown', `host "${id}" is disabled`);
-    return this.record(id, entry).bridge.connect();
+  bridge(): SshKapBridge | undefined {
+    const id = this.configured()?.id;
+    return id === undefined ? undefined : this.records.get(id)?.bridge;
   }
 
   session(id: string): HostSession | undefined {
-    return this.records.get(id)?.bridge.session;
+    return this.configured()?.id === id ? this.bridge()?.session : undefined;
+  }
+
+  async connect(id = this.configured()?.id): Promise<HostSession> {
+    await this.core.accessor.get(IConfigService).ready;
+    const selected = this.configured();
+    if (id !== selected?.id) throw new HostConnectError('unknown', `unknown host "${id ?? ''}"`);
+    if (selected === undefined) throw new HostConnectError('unknown', 'no SSH host is configured');
+    if (selected.entry.enabled === false) throw new HostConnectError('unknown', `host "${selected.id}" is disabled`);
+    const bridge = this.record(selected.id, selected.entry).bridge;
+    const credential = await localHostCredential(this.core);
+    const offer: HostCredentialOffer = credential === undefined
+      ? { type: 'auth', action: 'logout', oauth_key: await localHostCredentialKey(this.core) }
+      : { type: 'auth', action: 'provision', credential };
+    const session = await bridge.connect(offer);
+    const remote = await this.credential(session, offer.action === 'logout'
+      ? { action: 'logout', oauth_key: offer.oauth_key }
+      : { action: 'provision', credential: offer.credential });
+    if (remote !== null) await saveLocalHostCredential(this.core, remote);
+    return session;
+  }
+
+  async refreshCredential(): Promise<HostCredential> {
+    await this.connect();
+    const credential = await localHostCredential(this.core);
+    if (credential === undefined) throw new Error('The account is not available on this host');
+    return credential;
+  }
+
+  private async credential(session: HostSession, input: Record<string, unknown>): Promise<HostCredential | null> {
+    const response = await session.request({
+      method: 'POST',
+      path: '/api/v1/oauth/host-credential',
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(JSON.stringify(input)),
+      timeoutMs: 60_000,
+    });
+    const body = JSON.parse(response.body.toString('utf8')) as {
+      code?: number;
+      msg?: string;
+      data?: { credential?: HostCredential | null };
+    };
+    if (response.status !== 200 || body.code !== 0 || body.data === undefined) {
+      throw new Error(body.msg ?? 'Unable to synchronize the account with the SSH host');
+    }
+    return body.data.credential ?? null;
   }
 
   close(): void {
@@ -114,16 +136,18 @@ export class HostBridgeManager {
   }
 
   private reconcile(): void {
-    const section = this.section();
-    let changed = false;
+    const selected = this.configured();
     for (const [id, { fingerprint, bridge }] of this.records) {
-      const entry = section[id];
-      const next = entry === undefined ? undefined : JSON.stringify({ ...entry, enabled: undefined, name: undefined });
-      if (next === fingerprint && entry?.enabled !== false) continue;
+      const next = selected?.id === id ? JSON.stringify({ ...selected.entry, enabled: undefined, name: undefined }) : undefined;
+      if (next === fingerprint && selected?.entry.enabled !== false) continue;
       bridge.dispose();
       this.records.delete(id);
-      changed = true;
     }
-    if (changed) this.onChange?.();
+    this.onChange?.();
   }
+}
+
+interface BridgeRecord {
+  readonly fingerprint: string;
+  readonly bridge: SshKapBridge;
 }

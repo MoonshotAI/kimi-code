@@ -36,6 +36,7 @@ import { registerSessionRatingRoutes } from './sessionRating';
 import { registerSessionExportRoute } from './sessionExport';
 import { registerSessionsRoutes } from './sessions';
 import type { HostBridgeManager } from '../services/hosts/hostBridgeManager';
+import { registerHostCredentialRoute } from '../services/hosts/hostAuth';
 import { registerHostsRoutes } from './hosts';
 import { registerShutdownRoutes } from './shutdown';
 import { registerSkillsRoutes } from './skills';
@@ -73,6 +74,7 @@ export interface RegisterApiV1RoutesOptions {
   readonly sessionRating: SessionRatingHost;
   readonly remoteControl: RemoteControlRouteOptions;
   readonly dangerousBypassAuth?: boolean;
+  readonly managedBy?: string;
   readonly webTitle?: string;
 }
 
@@ -134,6 +136,9 @@ export async function registerApiV1Routes(
       );
       registerEnvironmentRoutes(apiV1 as unknown as Parameters<typeof registerEnvironmentRoutes>[0], core);
       registerHostsRoutes(apiV1 as unknown as Parameters<typeof registerHostsRoutes>[0], core, opts.hostBridges);
+      if (opts.managedBy === 'ensure-daemon') {
+        registerHostCredentialRoute(apiV1 as unknown as Parameters<typeof registerHostCredentialRoute>[0], core);
+      }
       registerSessionRatingRoutes(
         apiV1 as unknown as Parameters<typeof registerSessionRatingRoutes>[0],
         opts.sessionRating,

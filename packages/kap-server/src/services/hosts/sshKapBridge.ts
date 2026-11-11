@@ -4,6 +4,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 import { HOST_API_LEVEL, HOST_PROTOCOL_VERSION } from './hostProtocol';
 import type { HostEntry } from './hostsConfig';
+import type { HostCredentialOffer } from './hostAuth';
 import type { HostSession } from './hostSession';
 import { StdioHostSession } from './stdioHostSession';
 
@@ -272,6 +273,7 @@ export class SshKapBridge {
   private reconnectGeneration = 0;
   private readonly sshProgram: string;
   private readonly env: NodeJS.ProcessEnv;
+  credential: HostCredentialOffer | undefined;
 
   constructor(
     private readonly entry: HostEntry,
@@ -301,7 +303,8 @@ export class SshKapBridge {
     return this.sessionValue?.session;
   }
 
-  connect(): Promise<HostSession> {
+  connect(credential?: HostCredentialOffer): Promise<HostSession> {
+    this.credential = credential;
     if (this.disposed) return Promise.reject(new HostConnectError('unknown', 'host bridge disposed'));
     if (this.sessionValue !== undefined) return Promise.resolve(this.sessionValue.session);
     this.reconnectGeneration += 1;
@@ -433,6 +436,7 @@ export class SshKapBridge {
         try {
           const parsed = parseBootstrapOutput(preMarkerStdout);
           if (parsed === undefined) return;
+
           clearTimeout(timer);
           child.stdout?.off('data', onStdout);
           const stream = createProcessStream(child, bootstrap.subarray(lineEnd + 1));
@@ -444,6 +448,14 @@ export class SshKapBridge {
           finishReject(error instanceof HostConnectError ? error : new HostConnectError('unknown', String(error)));
         }
       };
+      let authSent = false;
+      const onAuthReady = (chunk: Buffer): void => {
+        if (authSent || this.credential === undefined || child.stdin === null) return;
+        if (!chunk.toString('utf8').includes('__KIMI_HOST_AUTH__\n')) return;
+        authSent = true;
+        child.stdin.write(`${JSON.stringify(this.credential)}\n`);
+      };
+      child.stdout?.on('data', onAuthReady);
       child.stdout?.on('data', onStdout);
       child.stdout?.on('end', () => {
         if (activeSession !== undefined) return;
