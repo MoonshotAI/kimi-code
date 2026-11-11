@@ -333,13 +333,13 @@ agent 正在运行时，排队的输入要等当前这一轮结束才会开启�
 | `agent_id` | 发起交互的 agent |
 | `tool_call_id` | 等待中的工具调用。它的 `tool_call` 条目带有相同的 `interaction_id` |
 | `request` | 审批：`{ tool_name, action, tool_input_display?, expires_at }`，`expires_at` 为发起后 24 小时。提问：`{ questions }`，见下文 |
-| `response` | 结束后出现，见下文 |
+| `response` | 审批结束后总会出现；提问只在 `outcome` 为 `answered` 时出现，被忽略或因轮次结束而取消的提问没有这个字段。形状见下文 |
 | `outcome` | 结束后出现：`approved` / `rejected` / `cancelled` / `answered` / `dismissed` |
 | `ended_at` | 结束时间 |
 
 提问的 `request.questions` 包含 1–4 个问题，每个问题为 `{ id, question, header?, body?, options, multi_select?, allow_other?, other_label?, other_description? }`。`options` 有 2–4 个选项，每个为 `{ id, label, description? }`。`multi_select` 允许选择多个选项，`allow_other` 允许自由文本回答。
 
-用 [`POST /api/v1/sessions/{session_id}/interactions/{interaction_id}`](./server-api-sessions.md#post-api-v1-sessions-session-id-interactions-interaction-id) 回应。交互结束有两种情况：被回应，或者它所在的轮次结束而被取消。结束时服务端发出这个交互的最后一帧，带 `status: "ended"`、`ended_at`、`outcome` 和 `response`：
+用 [`POST /api/v1/sessions/{session_id}/interactions/{interaction_id}`](./server-api-sessions.md#post-api-v1-sessions-session-id-interactions-interaction-id) 回应。交互结束有两种情况：被回应，或者它所在的轮次结束而被取消。结束时服务端发出这个交互的最后一帧，带 `status: "ended"`、`ended_at`、`outcome`，以及按上表规则出现的 `response`：
 
 - 审批的 `response`：`{ decision, scope?, feedback?, selected_label? }`；
 - 已回答的提问的 `response`：`{ answers, method? }`，`answers` 把每个问题的文本映射到对应的回答。

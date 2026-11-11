@@ -333,13 +333,13 @@ When a tool call needs the user's permission, the server raises an approval requ
 | `agent_id` | The agent that raised the interaction |
 | `tool_call_id` | The waiting tool call. Its `tool_call` item carries the same `interaction_id` |
 | `request` | For an approval: `{ tool_name, action, tool_input_display?, expires_at }`, where `expires_at` is 24 hours after the request was raised. For a question: `{ questions }`; see below |
-| `response` | Present once ended; see below |
+| `response` | Always present once an approval ends; for a question, present only when `outcome` is `answered`, so dismissed questions and questions cancelled by the end of their turn have no `response`. Shapes below |
 | `outcome` | Present once ended: `approved` / `rejected` / `cancelled` / `answered` / `dismissed` |
 | `ended_at` | End time |
 
 A question's `request.questions` holds 1–4 questions, each `{ id, question, header?, body?, options, multi_select?, allow_other?, other_label?, other_description? }`. `options` has 2–4 options, each `{ id, label, description? }`. `multi_select` allows choosing several options, and `allow_other` allows a free-text answer.
 
-Answer with [`POST /api/v1/sessions/{session_id}/interactions/{interaction_id}`](./server-api-sessions.md#post-api-v1-sessions-session-id-interactions-interaction-id). An interaction ends in one of two ways: it is answered, or it is cancelled because its turn ended. When it ends, the server sends the interaction's last frame with `status: "ended"`, `ended_at`, `outcome`, and `response`:
+Answer with [`POST /api/v1/sessions/{session_id}/interactions/{interaction_id}`](./server-api-sessions.md#post-api-v1-sessions-session-id-interactions-interaction-id). An interaction ends in one of two ways: it is answered, or it is cancelled because its turn ended. When it ends, the server sends the interaction's last frame with `status: "ended"`, `ended_at`, `outcome`, and `response` when the table above says it is present:
 
 - An approval's `response`: `{ decision, scope?, feedback?, selected_label? }`;
 - An answered question's `response`: `{ answers, method? }`, where `answers` maps each question's text to its answer.
