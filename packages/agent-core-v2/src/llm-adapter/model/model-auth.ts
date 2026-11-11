@@ -215,7 +215,15 @@ export function resolveEndpointBaseUrl(
       bedrockWireProtocolOf(model.protocol) ??
       (wireName === undefined ? undefined : inferBedrockProtocol(wireName)) ??
       'anthropic';
-    return resolveBedrockBaseUrl(protocol, { ...process.env, ...provider.env });
+    const env = { ...process.env, ...provider.env };
+    const baseUrl = resolveBedrockBaseUrl(protocol, env);
+    if (baseUrl === undefined) {
+      throw new Error2(
+        CONFIG_INVALID_ERROR_CODE,
+        'Provider "bedrock" could not resolve an AWS region to build the endpoint URL. Set AWS_REGION (or AWS_DEFAULT_REGION) in the provider\'s [providers.bedrock.env] sub-table, or export it in the environment.',
+      );
+    }
+    return baseUrl;
   }
   return undefined;
 }

@@ -170,7 +170,7 @@ AWS_REGION = "us-east-1"
 # AWS_PROFILE = "my-profile"   # optional named AWS CLI profile
 ```
 
-If you omit `AWS_REGION`, the region is resolved through the standard AWS SDK chain (`AWS_REGION` / `AWS_DEFAULT_REGION` environment variables, then `~/.aws/config` for the selected profile). The base URL defaults to the regional `bedrock-runtime.<region>.amazonaws.com` endpoint — set `base_url` (or the `AWS_BEDROCK_BASE_URL` env key) only when you need a custom endpoint such as `bedrock-mantle`, a proxy, or a FIPS/dual-stack hostname.
+The region must be resolvable from `AWS_REGION` or `AWS_DEFAULT_REGION` (in the sub-table or exported in the shell). Inferring the region from `~/.aws/config` for the selected profile is not currently supported. The base URL defaults to the regional `bedrock-runtime.<region>.amazonaws.com` endpoint — set `base_url` (or the `AWS_BEDROCK_BASE_URL` env key) only when you need a custom endpoint such as `bedrock-mantle`, a proxy, or a FIPS/dual-stack hostname.
 
 ### Models and wire protocol
 

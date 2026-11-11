@@ -291,13 +291,28 @@ describe('resolveEndpointBaseUrl', () => {
     ).toBe('https://bedrock-runtime.us-east-1.amazonaws.com/anthropic');
   });
 
-  it('returns undefined for a bedrock provider when no region is resolvable', () => {
+  it('rejects a bedrock provider when no region is resolvable from env', () => {
     vi.stubEnv('AWS_REGION', '');
     vi.stubEnv('AWS_DEFAULT_REGION', '');
     try {
-      expect(
+      expect(() =>
         resolveEndpointBaseUrl({ model: 'anthropic.claude-sonnet-4-6' }, { type: 'bedrock' }),
-      ).toBeUndefined();
+      ).toThrow(/could not resolve an AWS region/);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('rejects a bedrock provider whose region would come only from an AWS_PROFILE config file', () => {
+    vi.stubEnv('AWS_REGION', '');
+    vi.stubEnv('AWS_DEFAULT_REGION', '');
+    try {
+      expect(() =>
+        resolveEndpointBaseUrl(
+          { model: 'global.openai.gpt-6-astra' },
+          { type: 'bedrock', env: { AWS_PROFILE: 'my-sso-profile' } },
+        ),
+      ).toThrow(/could not resolve an AWS region/);
     } finally {
       vi.unstubAllEnvs();
     }

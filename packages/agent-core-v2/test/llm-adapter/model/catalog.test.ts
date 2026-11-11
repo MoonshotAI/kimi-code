@@ -633,7 +633,13 @@ describe('Model assembly (pure data)', () => {
 
     it('prefers a static credential over ambient AWS auth and skips the token provider', async () => {
       const { host, catalog } = createHost({
-        providers: { bedrock: { type: 'bedrock', apiKey: 'static-bedrock-key' } },
+        providers: {
+          bedrock: {
+            type: 'bedrock',
+            apiKey: 'static-bedrock-key',
+            baseUrl: 'https://bedrock-runtime.us-east-1.amazonaws.com/anthropic',
+          },
+        },
         models: {
           sonnet: { provider: 'bedrock', model: 'anthropic.claude-sonnet-4-6', maxContextSize: 200000 },
         },
@@ -652,7 +658,11 @@ describe('Model assembly (pure data)', () => {
     it('reads AWS_BEARER_TOKEN_BEDROCK from the env bag as a static credential', async () => {
       const { host, catalog } = createHost({
         providers: {
-          bedrock: { type: 'bedrock', env: { AWS_BEARER_TOKEN_BEDROCK: 'env-bearer-token' } },
+          bedrock: {
+            type: 'bedrock',
+            baseUrl: 'https://bedrock-runtime.us-east-1.amazonaws.com/anthropic',
+            env: { AWS_BEARER_TOKEN_BEDROCK: 'env-bearer-token' },
+          },
         },
         models: {
           sonnet: { provider: 'bedrock', model: 'anthropic.claude-sonnet-4-6', maxContextSize: 200000 },

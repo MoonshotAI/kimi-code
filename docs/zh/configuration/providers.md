@@ -170,7 +170,7 @@ AWS_REGION = "us-east-1"
 # AWS_PROFILE = "my-profile"   # 可选的 AWS CLI 命名 profile
 ```
 
-如果不写 `AWS_REGION`，区域会按标准 AWS SDK 链解析（`AWS_REGION` / `AWS_DEFAULT_REGION` 环境变量，然后是所选 profile 的 `~/.aws/config`）。base URL 默认取区域化的 `bedrock-runtime.<region>.amazonaws.com` 端点——只有当你需要自定义端点（如 `bedrock-mantle`、代理或 FIPS/双栈主机名）时才设置 `base_url`（或 `AWS_BEDROCK_BASE_URL` 环境键）。
+区域必须能从 `AWS_REGION` 或 `AWS_DEFAULT_REGION`（写在子表里或在 shell 中导出）解析出来；目前不支持从所选 profile 的 `~/.aws/config` 推断区域。base URL 默认取区域化的 `bedrock-runtime.<region>.amazonaws.com` 端点——只有当你需要自定义端点（如 `bedrock-mantle`、代理或 FIPS/双栈主机名）时才设置 `base_url`（或 `AWS_BEDROCK_BASE_URL` 环境键）。
 
 ### 模型与线路协议
 
