@@ -380,7 +380,14 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   }
 
   const close = async (): Promise<void> => {
-    for (const extension of hostExtensions) extension.dispose();
+    const disposalErrors: unknown[] = [];
+    for (const extension of hostExtensions) {
+      try {
+        extension.dispose();
+      } catch (error) {
+        disposalErrors.push(error);
+      }
+    }
     hostExtensions.clear();
     if (wssDebug !== undefined) {
       for (const client of wssDebug.clients) client.terminate();
@@ -426,6 +433,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
         process.off('uncaughtException', onUncaughtException);
       }
     }
+    if (disposalErrors.length > 0) throw new AggregateError(disposalErrors, 'Host extension disposal failed');
   };
 
   const connectionRegistry = new ConnectionRegistry();

@@ -3,7 +3,6 @@ import {
   IAgentLoopService,
   IAgentReminderService,
   IAgentToolExecutorService,
-  IAgentToolRegistryService,
   IAgentToolSelectService,
   IEventBus,
   ISessionMcpHandle,
@@ -34,15 +33,39 @@ export interface HostAgentMeta {
   readonly labels?: Readonly<Record<string, string>>;
 }
 
-export interface HostContentPart {
-  readonly type: string;
-  readonly text?: string;
+export interface HostTextPart {
+  readonly type: 'text';
+  readonly text: string;
+}
+
+export interface HostThinkPart {
+  readonly type: 'think';
+  readonly think: string;
+  readonly encrypted?: string;
+  readonly detailsIndex?: number;
+  readonly hidden?: boolean;
+  readonly reasoningKey?: string;
+}
+
+export interface HostMediaPart {
+  readonly type: 'image_url' | 'audio_url' | 'video_url';
+  readonly imageUrl?: { readonly url: string; readonly id?: string; readonly name?: string };
+  readonly audioUrl?: { readonly url: string; readonly id?: string };
+  readonly videoUrl?: { readonly url: string; readonly id?: string; readonly name?: string };
+}
+
+export type HostContentPart = HostTextPart | HostThinkPart | HostMediaPart;
+
+export interface HostToolDescription {
+  readonly name: string;
+  readonly description: string;
+  readonly parameters: Readonly<Record<string, unknown>>;
 }
 
 export interface HostToolCall {
   readonly id: string;
   readonly name: string;
-  readonly arguments: string;
+  readonly arguments: string | null;
 }
 
 export interface HostContextMessage {
@@ -50,7 +73,7 @@ export interface HostContextMessage {
   readonly content: readonly HostContentPart[];
   readonly toolCalls?: readonly HostToolCall[];
   readonly toolCallId?: string;
-  readonly tools?: readonly { readonly name: string }[];
+  readonly tools?: readonly HostToolDescription[];
 }
 
 export interface HostMcpServerState {
@@ -202,27 +225,13 @@ function createHostAgent(sessionId: string, context: AgentContext, handle: IAgen
         if (result !== undefined) return legacyRejectedResult(context, result.output);
       },
     }),
-    decorateToolArguments: (toolName, decorator) => {
-      const registry = handle.accessor.get(IAgentToolRegistryService);
-      return handle.accessor.get(IAgentToolExecutorService).registerHook({
-        starting: async (context) => {
-          if (context.call.name !== toolName || context.prepared.kind !== 'execute') return;
-          const args = await decorator(context.args, { turnId: context.context.turnId });
-          const tool = registry.resolve(toolName);
-          if (tool === undefined) return;
-          const execution = await tool.resolveExecution(args);
-          if (!('execute' in execution)) return;
-          Object.assign(context.prepared, {
-            execution,
-            accesses: execution.accesses,
-            display: execution.display,
-            description: execution.description,
-            approvalRule: execution.approvalRule,
-            matchesRule: execution.matchesRule,
-          });
-        },
-      });
-    },
+    decorateToolArguments: (toolName, decorator) => handle.accessor.get(IAgentToolExecutorService).registerHook({
+      starting: async (context) => {
+        if (context.call.name !== toolName || context.prepared.kind !== 'execute') return;
+        const args = await decorator(context.args, { turnId: context.context.turnId });
+        return { args };
+      },
+    }),
     onDidTurnEnd: (listener) => handle.accessor.get(IEventBus).subscribe(TurnEnded, listener),
   };
 }
@@ -286,6 +295,13 @@ export function registerHostExtension(
   const attach = (handle: ISessionScopeHandle): void => {
     if (disposed || attached.has(handle.id)) return;
     const lifecycle = handle.accessor.get(IAgentLifecycleService);
+    const announced = new Set<string>();
+    const announce = (context: AgentContext, agent: IAgentScopeHandle, meta?: AgentMeta): void => {
+      const key = `${context.agentId}:${context.generation}`;
+      if (announced.has(key)) return;
+      announced.add(key);
+      extension.onDidCreateAgent?.(createHostAgent(handle.id, context, agent, meta));
+    };
     const disposables: IDisposable[] = [
       handle.accessor.get(ISessionEventBus).subscribe(SubagentSpawned, (event) => {
         const context = lifecycle.get(event.subagentId);
@@ -294,7 +310,7 @@ export function registerHostExtension(
         }
       }),
       lifecycle.onDidCreateScope(({ context, handle: agent, meta }) => {
-        extension.onDidCreateAgent?.(createHostAgent(handle.id, context, agent, meta));
+        announce(context, agent, meta);
       }),
       lifecycle.onDidClose((context) => {
         extension.onDidCloseAgent?.({ sessionId: handle.id, agentId: context.agentId, generation: context.generation });
@@ -306,14 +322,14 @@ export function registerHostExtension(
       for (const context of lifecycle.list()) {
         const agent = lifecycle.handleOf(context.agentId);
         if (agent === undefined) continue;
-        extension.onDidCreateAgent?.(createHostAgent(handle.id, context, agent, metadata.agents?.[context.agentId] ?? (context.agentId === MAIN_AGENT_ID ? { type: 'main' } : undefined)));
+        announce(context, agent, metadata.agents?.[context.agentId] ?? (context.agentId === MAIN_AGENT_ID ? { type: 'main' } : undefined));
       }
     }, () => {
       if (disposed || !attached.has(handle.id)) return;
       for (const context of lifecycle.list()) {
         const agent = lifecycle.handleOf(context.agentId);
         if (agent === undefined) continue;
-        extension.onDidCreateAgent?.(createHostAgent(handle.id, context, agent, context.agentId === MAIN_AGENT_ID ? { type: 'main' } : undefined));
+        announce(context, agent, context.agentId === MAIN_AGENT_ID ? { type: 'main' } : undefined);
       }
     });
   };
