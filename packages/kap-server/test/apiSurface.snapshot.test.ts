@@ -1,10 +1,11 @@
+import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { startServer, type RunningServer } from '../src';
+import { HOST_API_LEVEL, startServer, type RunningServer } from '../src';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 
@@ -81,4 +82,45 @@ describe('API surface snapshot', () => {
 
     expect({ routes, meta }).toMatchSnapshot();
   });
+
+  it('pins the host API level to the client-visible contract', async () => {
+    const base = `http://${server!.host}:${server!.port}`;
+    const fetchJson = async (path: string): Promise<Record<string, unknown>> => {
+      const res = await fetch(`${base}${path}`, { headers: authHeaders(server as RunningServer) } as never);
+      expect(res.status).toBe(200);
+      return (await res.json()) as Record<string, unknown>;
+    };
+    const openApi = await fetchJson('/openapi.json');
+    const asyncApi = await fetchJson('/asyncapi.json');
+    const paths = Object.fromEntries(
+      Object.entries(openApi['paths'] as Record<string, unknown>).filter(([path]) => !path.startsWith('/api/v1/debug')),
+    );
+    const contract = canonicalContract({
+      paths,
+      components: openApi['components'],
+      operations: asyncApi['operations'],
+      messages: asyncApi['components'],
+    });
+    const digest = createHash('sha256').update(contract).digest('hex');
+
+    expect(
+      { apiLevel: HOST_API_LEVEL, digest },
+      'The client-visible API contract changed. If the current client would break against a remote running the previous release, bump HOST_API_LEVEL; then update HOST_CONTRACT to the new level and digest.',
+    ).toEqual(HOST_CONTRACT);
+  });
 });
+
+const HOST_CONTRACT = { apiLevel: 1, digest: 'd6e4e5efd07ff3001979afbc3272dbc99200e652ccd99b3429aad4ec9d7804a0' };
+
+const NON_CONTRACT_KEYS = new Set(['description', 'summary', 'example', 'examples']);
+const NAMED_MEMBER_KEYS = new Set(['properties', 'patternProperties']);
+
+function canonicalContract(value: unknown, namedMembers = false): string {
+  if (Array.isArray(value)) return `[${value.map((item) => canonicalContract(item)).join(',')}]`;
+  if (typeof value !== 'object' || value === null) return JSON.stringify(value);
+  const entries = Object.entries(value)
+    .filter(([key, item]) => (namedMembers || !NON_CONTRACT_KEYS.has(key)) && item !== undefined)
+    .toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([key, item]) => `${JSON.stringify(key)}:${canonicalContract(item, !namedMembers && NAMED_MEMBER_KEYS.has(key))}`);
+  return `{${entries.join(',')}}`;
+}

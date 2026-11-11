@@ -18,7 +18,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetCapabilitiesCache, setCapabilities } from '@moonshot-ai/pi-tui';
 
-import { HOST_PROTOCOL_VERSION } from '@moonshot-ai/kap-server';
+import { HOST_API_LEVEL, HOST_PROTOCOL_VERSION } from '@moonshot-ai/kap-server';
 
 import { registerWebCommand } from '#/cli/sub/web';
 import {
@@ -111,7 +111,7 @@ describe('kimi web', () => {
       const line = String(write.mock.calls.at(-1)?.[0]);
       expect(line.startsWith('__KIMI_ENSURE_DAEMON__')).toBe(true);
       const payload = JSON.parse(line.slice('__KIMI_ENSURE_DAEMON__'.length)) as Record<string, unknown>;
-      expect(payload).toEqual({ protocol: HOST_PROTOCOL_VERSION, version: expect.any(String) });
+      expect(payload).toEqual({ protocol: HOST_PROTOCOL_VERSION, api_level: HOST_API_LEVEL, version: expect.any(String) });
     } finally {
       write.mockRestore();
     }

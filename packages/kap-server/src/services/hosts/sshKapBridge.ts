@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { Duplex } from 'node:stream';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import { HOST_PROTOCOL_VERSION } from './hostProtocol';
+import { HOST_API_LEVEL, HOST_PROTOCOL_VERSION } from './hostProtocol';
 import type { HostEntry } from './hostsConfig';
 import type { HostSession } from './hostSession';
 import { StdioHostSession } from './stdioHostSession';
@@ -30,6 +30,7 @@ export interface BootstrapResult {
 
 interface BootstrapMarker {
   readonly protocol: number | undefined;
+  readonly api_level?: number;
   readonly version?: string;
   readonly pid?: number;
   readonly error?: string;
@@ -138,7 +139,7 @@ function readMarker(stdout: string): BootstrapMarker | undefined {
 function outdatedError(version: string | undefined): HostConnectError {
   return new HostConnectError(
     'executor_outdated',
-    `kimi ${version ?? '(unknown version)'} on this host does not support host protocol ${String(HOST_PROTOCOL_VERSION)}; run \`kimi upgrade\` on the host`,
+    `kimi ${version ?? '(unknown version)'} on this host is too old for this app; run \`kimi upgrade\` on the host`,
     version,
   );
 }
@@ -148,6 +149,7 @@ function checkedMarker(stdout: string): { readonly marker: BootstrapMarker & { r
   if (marker === undefined) return undefined;
   const version = marker.version ?? readVersionLine(stdout);
   if (marker.protocol === undefined || marker.protocol < HOST_PROTOCOL_VERSION) throw outdatedError(version);
+  if (marker.api_level === undefined || marker.api_level < HOST_API_LEVEL) throw outdatedError(version);
   if (marker.error !== undefined) {
     throw new HostConnectError(
       ENSURE_DAEMON_FAILURES[marker.error] ?? 'unknown',

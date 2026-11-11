@@ -12,7 +12,7 @@ import { IBootstrapService, IConfigService } from '@moonshot-ai/agent-core-v2';
 import { describe, expect, it, vi } from 'vitest';
 import WebSocketClient, { WebSocketServer, type WebSocket as NodeWebSocket } from 'ws';
 
-import { HOST_PROTOCOL_VERSION } from '../src/services/hosts/hostProtocol';
+import { HOST_API_LEVEL, HOST_PROTOCOL_VERSION } from '../src/services/hosts/hostProtocol';
 import { matchHostProxyPath, proxyHostWebSocket, registerHostProxyRoutes, upstreamHeaders } from '../src/services/hosts/hostProxy';
 import { HostBridgeManager } from '../src/services/hosts/hostBridgeManager';
 import { hostsSectionSchema, hostWireSchema, isValidHostId } from '../src/services/hosts/hostsConfig';
@@ -114,7 +114,7 @@ describe('ssh bootstrap', () => {
   });
 
   it('finds the marker line among shell startup noise', () => {
-    const stdout = `welcome\n1.0.0\n__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"pid":42,"version":"1.0.0"}\n`;
+    const stdout = `welcome\n1.0.0\n__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"pid":42,"version":"1.0.0"}\n`;
     expect(parseBootstrapOutput(stdout)).toEqual({ pid: 42, version: '1.0.0' });
     expect(parseBootstrapOutput('command output without a marker\n')).toBeUndefined();
   });
@@ -129,20 +129,32 @@ describe('ssh bootstrap', () => {
     expect(thrown(() => parseProbeOutput('0.40.0\n__KIMI_ENSURE_DAEMON__{"protocol":0}\n')).remoteVersion).toBe('0.40.0');
   });
 
+  it('reports a remote below the host API level as outdated and accepts a newer one', () => {
+    const marker = (apiLevel: number | undefined): string =>
+      `__KIMI_ENSURE_DAEMON__${JSON.stringify({ protocol: HOST_PROTOCOL_VERSION, api_level: apiLevel, version: '2.5.2' })}\n`;
+    for (const apiLevel of [undefined, HOST_API_LEVEL - 1]) {
+      const error = thrown(() => parseBootstrapOutput(marker(apiLevel)));
+      expect(error.failure).toBe('executor_outdated');
+      expect(error.remoteVersion).toBe('2.5.2');
+      expect(error.message).toContain('kimi upgrade');
+    }
+    expect(parseBootstrapOutput(marker(HOST_API_LEVEL + 1))).toEqual({ version: '2.5.2', pid: undefined });
+  });
+
   it.each([
     ['version_mismatch_busy', 'remote_busy'],
     ['start_timeout', 'remote_start_failed'],
     ['lock_timeout', 'remote_start_failed'],
     ['something_new', 'unknown'],
   ] as const)('maps the ensure-daemon error %s to %s', (code, failure) => {
-    const stdout = `__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"version":"2.0.0","error":"${code}","message":"m"}\n`;
+    const stdout = `__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"version":"2.0.0","error":"${code}","message":"m"}\n`;
     const error = thrown(() => parseBootstrapOutput(stdout));
     expect(error.failure).toBe(failure);
     expect(error.remoteVersion).toBe('2.0.0');
   });
 
   it('reads the protocol and version from a probe', () => {
-    expect(parseProbeOutput(`__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"version":"2.0.0"}\n`)).toEqual({
+    expect(parseProbeOutput(`__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"version":"2.0.0"}\n`)).toEqual({
       protocol: HOST_PROTOCOL_VERSION,
       version: '2.0.0',
     });
@@ -211,7 +223,7 @@ describe('ssh bootstrap', () => {
       writeFileSync(
         ssh,
         `#!/bin/sh
-printf '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"version":"1.2.3"}\\n{"type":"http.res","id":"early","status":200,"headers":{},"body":"e30="}\\n'
+printf '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"version":"1.2.3"}\\n{"type":"http.res","id":"early","status":200,"headers":{},"body":"e30="}\\n'
 read line
 printf '{"type":"http.res","id":"1","status":200,"headers":{},"body":"e30="}\\n'
 `,
@@ -237,7 +249,7 @@ printf '{"type":"http.res","id":"1","status":200,"headers":{},"body":"e30="}\\n'
       writeFileSync(
         ssh,
         `#!/usr/bin/env node
-const output = Buffer.from(${JSON.stringify(`__KIMI_ENSURE_DAEMON__${JSON.stringify({ protocol: HOST_PROTOCOL_VERSION, version: '版本1.2.3' })}\n`)});
+const output = Buffer.from(${JSON.stringify(`__KIMI_ENSURE_DAEMON__${JSON.stringify({ protocol: HOST_PROTOCOL_VERSION, api_level: HOST_API_LEVEL, version: '版本1.2.3' })}\n`)});
 const split = output.indexOf(Buffer.from('版本')) + 1;
 process.stdout.write(output.subarray(0, split));
 setImmediate(() => {
@@ -279,7 +291,7 @@ process.stdin.resume();
         ssh,
         `#!/bin/sh
 echo x >> '${count}'
-echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"pid":100,"version":"1.2.3"}'
+echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"pid":100,"version":"1.2.3"}'
 while IFS= read -r line; do
   case "$line" in
     *'"type":"http.req"'*)
@@ -344,7 +356,7 @@ if [ "$attempt" = 2 ]; then
   echo 'ssh: connect to host dev port 22: Connection refused' >&2
   exit 255
 fi
-echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"pid":100,"version":"1.2.3"}'
+echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"pid":100,"version":"1.2.3"}'
 if [ "$attempt" = 1 ]; then exit 1; fi
 while IFS= read -r line; do :; done
 `,
@@ -391,7 +403,7 @@ describe('host HTTP session', () => {
       const ssh = join(dir, 'ssh');
       const cancel = join(dir, 'cancel');
       writeFileSync(ssh, `#!/bin/sh
-echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"version":"1.2.3"}'
+echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"version":"1.2.3"}'
 while IFS= read -r line; do
   case "$line" in
     *'"type":"http.cancel"'*)
