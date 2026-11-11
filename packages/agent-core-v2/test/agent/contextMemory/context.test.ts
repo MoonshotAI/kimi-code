@@ -857,6 +857,60 @@ describe('Agent context', () => {
       expect(withOverhead.tokensAfter).toBe(withoutOverhead.tokensAfter + 3_000);
       expect(withOverhead.messages).toEqual(withoutOverhead.messages);
     });
+
+    it('keeps injections appended after the compacted prefix and drops those inside it', () => {
+      const history = [
+        userMessage('u1'),
+        userMessage('old reminder', { kind: 'injection', variant: 'host' }),
+        {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'a1' }],
+        } as ContextMessage,
+        userMessage('new reminder', { kind: 'injection', variant: 'tool_update_pending' }),
+        userMessage('new user'),
+      ];
+
+      const shape = buildContextCompactionShape(history, {
+        summary: 'summary',
+        compactedCount: 3,
+        tokensBefore: 0,
+      });
+
+      expect(shape.messages).toHaveLength(5);
+      expect(textOf(shape.messages[0]!)).toBe('u1');
+      expect(textOf(shape.messages[1]!)).toBe('new user');
+      expect(shape.messages[2]?.origin?.kind).toBe('compaction_summary');
+      expect(shape.messages[3]?.origin).toEqual({
+        kind: 'injection',
+        variant: 'compaction_continuation',
+      });
+      expect(shape.messages[4]).toBe(history[3]);
+      expect(shape.messages.map(textOf)).not.toContain('old reminder');
+      expect(shape.appendedInjectionCount).toBe(1);
+    });
+
+    it('counts injections appended after the compacted prefix into tokensAfter', () => {
+      const base = [userMessage('u1'), {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'a1' }],
+      } as ContextMessage];
+      const appended = userMessage('new reminder', { kind: 'injection', variant: 'host' });
+
+      const without = buildContextCompactionShape(base, {
+        summary: 'summary',
+        compactedCount: 2,
+        tokensBefore: 0,
+      });
+      const withInjection = buildContextCompactionShape([...base, appended], {
+        summary: 'summary',
+        compactedCount: 2,
+        tokensBefore: 0,
+      });
+
+      expect(withInjection.tokensAfter).toBe(
+        without.tokensAfter + estimateTokensForMessages([appended]),
+      );
+    });
   });
 
   it('preserves surrogate pairs when truncating from the end', () => {

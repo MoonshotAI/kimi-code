@@ -35,6 +35,7 @@ import { InMemoryStorageService } from '#/persistence/backends/memory/inMemorySt
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { renderCompactionInstruction } from '#/agent/fullCompaction/compactionInstruction';
 import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncements';
+import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
 import {
   IAgentFullCompactionService,
@@ -1773,14 +1774,14 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
-  it('cancels when a droppable user-role tail is appended during the summary request', async () => {
+  it('keeps an injection appended during the summary request', async () => {
     let ctx!: TestAgentContext;
     const generate: GenerateFn = requesterFromGenerateFn(async () => {
       ctx.appendSystemReminder('RACE-NOTIFY-OUTPUT', {
         kind: 'injection',
         variant: 'race-notification',
       });
-      return textResult('Stale compacted summary.');
+      return textResult('Compacted summary.');
     });
     ctx = testAgent({ generate });
     ctx.configure({
@@ -1789,15 +1790,61 @@ describe('FullCompaction', () => {
       tools: SNAPSHOT_VISIBLE_TOOLS,
     });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
-    const cancelled = ctx.once('compaction.cancelled');
+    const completed = ctx.once('compaction.completed');
 
     await ctx.rpc.beginCompaction({});
-    await cancelled;
+    await completed;
 
+    const events = ctx.newEvents();
+    expect(countEvents(events, 'full_compaction.complete')).toBe(1);
+    expect(countEvents(events, 'full_compaction.cancel')).toBe(0);
+    expect(ctx.context.history().at(-1)?.origin).toEqual({
+      kind: 'injection',
+      variant: 'race-notification',
+    });
+    expect(ctx.context.history().at(-2)?.origin).toEqual({
+      kind: 'injection',
+      variant: 'compaction_continuation',
+    });
     expect(ctx.compactHistory().map((entry) => entry.text).join('\n')).toContain(
-      'RACE-NOTIFY-OUTPUT',
+      'Compacted summary.',
     );
-    expect(countEvents(ctx.newEvents(), 'full_compaction.complete')).toBe(0);
+    await ctx.expectResumeMatches();
+  });
+
+  it('completes when the request-time reconcile injects a tool update reminder', async () => {
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+      tools: SNAPSHOT_VISIBLE_TOOLS,
+    });
+    await ctx.restorePersisted();
+    const registry = ctx.get(IAgentToolRegistryService);
+    registry.register(mcpTool('mcp__demo__alpha', {}), { source: 'mcp' });
+    await ctx.get(IAgentToolSelectService).prepareForRequest();
+    registry.unregister('mcp__demo__alpha');
+    registry.register(
+      { ...mcpTool('mcp__demo__alpha', {}), description: 'mcp__demo__alpha desc v2' },
+      { source: 'mcp' },
+    );
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    const completed = ctx.once('compaction.completed');
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
+
+    await ctx.rpc.beginCompaction({});
+    await completed;
+
+    const events = ctx.newEvents();
+    expect(countEvents(events, 'full_compaction.complete')).toBe(1);
+    expect(countEvents(events, 'full_compaction.cancel')).toBe(0);
+    expect(ctx.context.history().at(-1)?.origin).toMatchObject({
+      kind: 'injection',
+      variant: 'tool_update_pending',
+    });
+    expect(ctx.compactHistory().at(-1)?.text).toContain(
+      'Tool "mcp__demo__alpha" has an update',
+    );
     await ctx.expectResumeMatches();
   });
 
