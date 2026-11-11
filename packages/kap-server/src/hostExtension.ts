@@ -279,6 +279,9 @@ function createHostAgent(sessionId: string, context: AgentContext, handle: IAgen
             matchesRule: cached.execution.matchesRule,
           });
         },
+        afterExecute: (context) => {
+          executions.delete(context.taskId);
+        },
       });
     },
     onDidTurnEnd: (listener) => handle.accessor.get(IEventBus).subscribe(TurnEnded, listener),
