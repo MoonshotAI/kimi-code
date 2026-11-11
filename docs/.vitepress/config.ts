@@ -93,7 +93,16 @@ const config = withMermaid(defineConfig({
               items: [
                 { text: 'kimi 命令', link: '/zh/reference/kimi-command' },
                 { text: 'kimi acp 子命令', link: '/zh/reference/kimi-acp' },
-                { text: '服务 API', link: '/zh/reference/server-api' },
+                {
+                  text: '服务 API【测试版】',
+                  link: '/zh/reference/server-api',
+                  items: [
+                    { text: '会话与对话', link: '/zh/reference/server-api-conversation' },
+                    { text: '会话接口', link: '/zh/reference/server-api-sessions' },
+                    { text: '服务与配置接口', link: '/zh/reference/server-api-service' },
+                    { text: '文件接口', link: '/zh/reference/server-api-files' },
+                  ],
+                },
                 { text: '内置工具', link: '/zh/reference/tools' },
                 { text: '斜杠命令', link: '/zh/reference/slash-commands' },
                 { text: '键盘快捷键', link: '/zh/reference/keyboard' },
@@ -174,7 +183,16 @@ const config = withMermaid(defineConfig({
               items: [
                 { text: 'kimi Command', link: '/en/reference/kimi-command' },
                 { text: 'kimi acp Subcommand', link: '/en/reference/kimi-acp' },
-                { text: 'Server API', link: '/en/reference/server-api' },
+                {
+                  text: 'Server API (Beta)',
+                  link: '/en/reference/server-api',
+                  items: [
+                    { text: 'Sessions and Conversations', link: '/en/reference/server-api-conversation' },
+                    { text: 'Session Endpoints', link: '/en/reference/server-api-sessions' },
+                    { text: 'Service and Configuration Endpoints', link: '/en/reference/server-api-service' },
+                    { text: 'File Endpoints', link: '/en/reference/server-api-files' },
+                  ],
+                },
                 { text: 'Built-in Tools', link: '/en/reference/tools' },
                 { text: 'Slash Commands', link: '/en/reference/slash-commands' },
                 { text: 'Keyboard Shortcuts', link: '/en/reference/keyboard' },

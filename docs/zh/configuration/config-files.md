@@ -107,7 +107,7 @@ timeout = 5
 | [`providers`](#providers) | `table` | `{}` | API 供应商表 |
 | [`models`](#models) | `table` | — | 模型别名表 |
 | [`thinking`](#thinking) | `table` | — | Thinking 模式默认参数 |
-| [`loop_control`](#loop_control) | `table` | — | Agent 循环控制参数 |
+| [`loop_control`](#loop-control) | `table` | — | Agent 循环控制参数 |
 | [`task`](#task) | `table` | — | 后台任务与 Tower Agent 运行参数；`background` 为 legacy 配置节名称 |
 | [`tools`](#tools) | `table` | — | 全局工具开关 |
 | [`image`](#image) | `table` | — | 图片压缩参数 |
@@ -189,7 +189,7 @@ display_name = "Kimi for Coding (custom)"
 
 `[models."<alias>".overrides]` 接受普通模型字段，例如 `max_context_size`、`max_input_size`、`max_output_size`、`capabilities`、`display_name`、`reasoning_key`、`adaptive_thinking`、`support_efforts`、`default_effort` 和 `off_effort`。不接受身份 / 路由字段（`provider`、`model`、`protocol`、`beta_api` 和 `base_url`），也不接受由 registry 管理的 `upgrade` 元数据。
 
-无需修改配置文件也可以临时切换模型：通过 `KIMI_MODEL_*` 环境变量在内存里合成一个临时供应商，详见[用环境变量定义模型](./env-vars.md#用环境变量定义模型kimi_model_)。
+无需修改配置文件也可以临时切换模型：通过 `KIMI_MODEL_*` 环境变量在内存里合成一个临时供应商，详见[用环境变量定义模型](./env-vars.md#用环境变量定义模型-kimi-model)。
 
 ## `secondary_model`
 
@@ -703,7 +703,7 @@ thinking = "grouped" # "grouped" | "ungrouped"
 
 除了 `~/.kimi-code` 下的用户级文件，Kimi Code 还会读取位于 `<项目根目录>/.kimi-code/local.toml` 的项目级本地配置文件。它保存的是与某一个项目检出相关、通常不应与队友共享的设置。
 
-早期版本的 [`/add-dir`](../reference/slash-commands.md) 会把「记住此目录」写入这个文件；现版本改为记入 `~/.kimi-code/projects.json` 中的工作区注册表，`local.toml` 随之成为只读的存量兼容字段，任何组件都不会再写入它。隐式工作区（终端按目录进入）的会话仍把其中的 `additional_dir` 并入额外目录；显式创建（managed）工作区的会话不再读取它。要把旧配置搬进注册表，可在客户端的新建/编辑工作区弹窗中使用导入功能（底层为 [`GET /api/v1/workspaces/project-config-dirs`](../reference/server-api.md#get-apiv1workspacesproject-config-dirs)），导入后即由注册表管理，删除即时生效。
+早期版本的 [`/add-dir`](../reference/slash-commands.md) 会把「记住此目录」写入这个文件；现版本改为记入 `~/.kimi-code/projects.json` 中的工作区注册表，`local.toml` 随之成为只读的存量兼容字段，任何组件都不会再写入它。隐式工作区（终端按目录进入）的会话仍把其中的 `additional_dir` 并入额外目录；显式创建（managed）工作区的会话不再读取它。要把旧配置搬进注册表，可在客户端的新建/编辑工作区弹窗中使用导入功能（底层为 [`GET /api/v1/workspaces/project-config-dirs`](../reference/server-api-service.md#get-api-v1-workspaces-project-config-dirs)），导入后即由注册表管理，删除即时生效。
 
 ### `[workspace]`
 

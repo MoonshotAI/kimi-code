@@ -107,7 +107,7 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | [`providers`](#providers) | `table` | `{}` | API provider table |
 | [`models`](#models) | `table` | — | Model alias table |
 | [`thinking`](#thinking) | `table` | — | Default parameters for Thinking mode |
-| [`loop_control`](#loop_control) | `table` | — | Agent loop control parameters |
+| [`loop_control`](#loop-control) | `table` | — | Agent loop control parameters |
 | [`task`](#task) | `table` | — | Background task and Tower agent runtime parameters; `background` is the legacy section name |
 | [`tools`](#tools) | `table` | — | Global tool switch |
 | [`image`](#image) | `table` | — | Image compression parameters |
@@ -189,7 +189,7 @@ display_name = "Kimi for Coding (custom)"
 
 `[models."<alias>".overrides]` accepts ordinary model fields such as `max_context_size`, `max_input_size`, `max_output_size`, `capabilities`, `display_name`, `reasoning_key`, `adaptive_thinking`, `support_efforts`, `default_effort`, and `off_effort`. It does not accept identity / routing fields (`provider`, `model`, `protocol`, `beta_api`, and `base_url`) or registry-managed `upgrade` metadata.
 
-You can also switch models temporarily without touching the config file: setting `KIMI_MODEL_*` environment variables synthesizes a temporary provider in memory that does not persist after restart. See [Define a model from environment variables](./env-vars.md#define-a-model-from-environment-variables-kimi_model_).
+You can also switch models temporarily without touching the config file: setting `KIMI_MODEL_*` environment variables synthesizes a temporary provider in memory that does not persist after restart. See [Define a model from environment variables](./env-vars.md#define-a-model-from-environment-variables-kimi-model).
 
 ## `secondary_model`
 
@@ -704,7 +704,7 @@ Changes apply on the next start, or immediately with `/reload-tui` (which reload
 
 In addition to the user-level files under `~/.kimi-code`, Kimi Code reads a project-local configuration file at `<project-root>/.kimi-code/local.toml`. It holds settings that are specific to one project checkout and typically should not be shared with teammates.
 
-Earlier versions of [`/add-dir`](../reference/slash-commands.md) wrote remembered directories to this file; current versions write them to the workspace registry in `~/.kimi-code/projects.json` instead, and `local.toml` is now a read-only legacy field that nothing writes to. Sessions of implicit workspaces (entered by directory in the terminal) still merge its `additional_dir` into the additional directories; sessions of explicitly created (managed) workspaces no longer read it. To move legacy entries into the registry, use the import action in the client's create/edit workspace dialog (backed by [`GET /api/v1/workspaces/project-config-dirs`](../reference/server-api.md#get-apiv1workspacesproject-config-dirs)); imported entries are registry-managed and removals take effect immediately.
+Earlier versions of [`/add-dir`](../reference/slash-commands.md) wrote remembered directories to this file; current versions write them to the workspace registry in `~/.kimi-code/projects.json` instead, and `local.toml` is now a read-only legacy field that nothing writes to. Sessions of implicit workspaces (entered by directory in the terminal) still merge its `additional_dir` into the additional directories; sessions of explicitly created (managed) workspaces no longer read it. To move legacy entries into the registry, use the import action in the client's create/edit workspace dialog (backed by [`GET /api/v1/workspaces/project-config-dirs`](../reference/server-api-service.md#get-api-v1-workspaces-project-config-dirs)); imported entries are registry-managed and removals take effect immediately.
 
 ### `[workspace]`
 
