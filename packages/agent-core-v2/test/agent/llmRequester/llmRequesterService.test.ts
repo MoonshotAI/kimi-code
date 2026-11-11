@@ -5,15 +5,26 @@ import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { AgentLoopRequestFactory, KIMI_CODE_INFINITE_RETRY_ENV } from '#/agent/loop/requester';
 import { AgentLoopRequestObserver } from '#/agent/loop/requestObservation';
+import {
+  agentRoleOf,
+  requestMetadataHeaders,
+  turnTriggerOf,
+  userInputIdOf,
+} from '#/agent/loop/requestMetadata';
+import { TurnEnded, TurnPrompt } from '#/agent/loop/turnOps';
+import { ISessionRequestAttributionService } from '#/session/requestAttribution/requestAttribution';
+import { SessionRequestAttributionService } from '#/session/requestAttribution/requestAttributionService';
 import { LOOP_CONTROL_SECTION } from '#/agent/loop/configSection';
 import { createAgentMediaPolicy } from '#/agent/loop/mediaPolicy';
 import { createMediaRecoveryStore, type LoopRequestRuntime } from '#/agent/loop/core/index';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
@@ -71,6 +82,7 @@ import {
   recordingWireLog,
   registerTestAgentWire,
   registerTestEventDispatcher,
+  restoreTestEventDispatcher,
 } from '../../wire/stubs';
 
 const capabilities: ModelCapability = {
@@ -87,10 +99,11 @@ const history: Message[] = [
 ];
 
 function createRequester(
-  calls: { value: number },
+  calls: { value: number } = { value: 0 },
   firstCallError?: Error | null,
   subsequentCallErrors: readonly Error[] = [],
   capturedInputs?: ModelRequestInput[],
+  modelPatch: Partial<Model> = {},
 ): ModelEventRequester {
   const model: Model = {
     id: 'm',
@@ -103,6 +116,7 @@ function createRequester(
     maxContextSize: 1000,
     alwaysThinking: false,
     providerName: 'p',
+    ...modelPatch,
   };
   return {
     model,
@@ -156,6 +170,9 @@ function createService(
     readonly systemPrompt?: () => string;
     readonly requestParams?: () => ReturnType<IAgentLoopService['resolveRequestParams']>;
     readonly maxAttemptsPerStep?: number;
+    readonly metadata?: AgentMeta;
+    readonly parentUserInputId?: string;
+    readonly parentRequestId?: string;
   } = {},
 ) {
   const ix = disposables.add(new TestInstantiationService());
@@ -266,6 +283,25 @@ function createService(
     log: recordingWireLog(records),
     eventBus,
   });
+  if (options.metadata !== undefined) {
+    ix.stub(
+      IAgentScopeContext,
+      makeAgentScopeContext({
+        agentId: 'test-agent',
+        agentScope: 'wire/llm-requester',
+        meta: options.metadata,
+        generation: 0,
+      }),
+    );
+  }
+  const attribution = new SessionRequestAttributionService();
+  if (options.parentUserInputId !== undefined) {
+    attribution.noteUserInput('main', options.parentUserInputId);
+  }
+  if (options.parentRequestId !== undefined) {
+    attribution.noteActiveRequest('main', options.parentRequestId);
+  }
+  ix.set(ISessionRequestAttributionService, attribution);
   registerTestEventDispatcher(ix);
   ix.set(IAgentStateService, new AgentStateService());
   const observer = ix.createInstance(AgentLoopRequestObserver);
@@ -292,6 +328,7 @@ function createService(
     telemetryRecords,
     measuredCalls,
     usageAliases,
+    attribution,
   };
 }
 
@@ -365,6 +402,31 @@ function startRequest(service: AgentLoopRequestFactory, overrides: RequestOverri
       trace = current;
     }),
   };
+}
+
+function metadataHeader(
+  service: AgentLoopRequestFactory,
+  source: RequestSource = { type: 'operation' },
+): string | undefined {
+  return service.coreRequester({
+    source: () => source,
+    runtime: runtimeOf(service),
+  }).request({ content: { messages: [] } }).endpoint?.headers?.['X-Msh-Client-Metadata'];
+}
+
+async function startMetadataTurn(
+  dispatcher: IEventDispatcher,
+  origin: PromptOrigin = { kind: 'user' },
+  promptId?: string,
+  turnId = 1,
+): Promise<void> {
+  await dispatcher.dispatch(new TurnPrompt({
+    agentId: 'test-agent',
+    turnId,
+    origin,
+    promptId,
+    input: [],
+  }));
 }
 
 describe('AgentLoopRequestFactory measured anchors', () => {
@@ -1500,7 +1562,7 @@ describe('AgentLoopRequestFactory combined recovery projections', () => {
 });
 
 describe('AgentLoopRequestFactory request id', () => {
-  function createTracedRequester(requestId: string | null): ModelEventRequester {
+  function createTracedRequester(requestId: string | null, modelPatch: Partial<Model> = {}): ModelEventRequester {
     const model: Model = {
       id: 'm',
       name: 'wire-model',
@@ -1512,6 +1574,7 @@ describe('AgentLoopRequestFactory request id', () => {
       maxContextSize: 1000,
       alwaysThinking: false,
       providerName: 'p',
+      ...modelPatch,
     };
     return {
       model,
@@ -1529,8 +1592,8 @@ describe('AgentLoopRequestFactory request id', () => {
     };
   }
 
-  it('exposes the request id and returns it on finish', async () => {
-    const requester = createTracedRequester('trace-req-1');
+  it('exposes request ids and attaches declared metadata through the same request pipeline', async () => {
+    const requester = createTracedRequester('trace-req-1', { providerType: 'kimi' });
     const headersArrived = createControlledPromise<void>();
     const releaseStream = createControlledPromise<void>();
     Object.defineProperty(requester, 'request', {
@@ -1550,8 +1613,67 @@ describe('AgentLoopRequestFactory request id', () => {
         } satisfies ModelRequestEvent;
       },
     });
-    const { service } = createService(requester);
-    const request = startRequest(service, { source: { type: 'turn', turnId: 1, step: 1 } });
+    const metadata: AgentMeta = {
+      type: 'sub',
+      labels: { parentAgentId: 'main', profileName: 'coder' },
+    };
+    const { service, dispatcher, attribution } = createService(requester, { metadata });
+    const other = createService(createRequester({ value: 0 }), { metadata });
+    await startMetadataTurn(dispatcher, { kind: 'user' }, '任务-1🚀');
+    const source: RequestSource = { type: 'turn', turnId: 1, step: 1 };
+    const header = metadataHeader(service, source);
+
+    expect(header).toBeDefined();
+    expect(new Headers({ 'X-Msh-Client-Metadata': header! }).get('X-Msh-Client-Metadata')).toBe(header);
+    expect(JSON.parse(header!)).toEqual({
+      agent_role: 'subagent',
+      turn_trigger: 'user',
+      step_reason: 'turn_start',
+      user_input_id: '任务-1🚀',
+    });
+    expect(metadataHeader(other.service, source)).toBeUndefined();
+    expect([
+      agentRoleOf('main', undefined),
+      agentRoleOf('child', { labels: { btw: 'true' } }),
+      agentRoleOf('child', { labels: { profileName: 'tower-worker' } }),
+      agentRoleOf('child', { labels: { swarmItem: '1' } }),
+      agentRoleOf('child', { type: 'sub' }),
+      agentRoleOf('child', undefined),
+    ]).toEqual(['main', 'btw', 'tower_worker', 'swarm_member', 'subagent', 'other']);
+    expect([
+      turnTriggerOf({ kind: 'user' }),
+      turnTriggerOf({ kind: 'skill_activation', activationId: 'a', skillName: 's', trigger: 'user-slash' }),
+      turnTriggerOf({ kind: 'plugin_command', activationId: 'a', pluginId: 'p', commandName: 'c', trigger: 'user-slash' }),
+      turnTriggerOf({ kind: 'system_trigger', name: 'subagent' }),
+      turnTriggerOf({ kind: 'system_trigger', name: 'goal_continuation' }),
+      turnTriggerOf({ kind: 'retry' }),
+      turnTriggerOf({ kind: 'cron_job', jobId: 'j', cron: '* * * * *', recurring: true, coalescedCount: 1, stale: false }),
+      turnTriggerOf({ kind: 'cron_missed', count: 1 }),
+      turnTriggerOf({ kind: 'task', taskId: 't', status: 'completed', notificationId: 'n' }),
+      turnTriggerOf({ kind: 'injection', variant: 'tower_inbox' }),
+      turnTriggerOf({ kind: 'injection', variant: 'shell_command_backgrounded' }),
+      turnTriggerOf({ kind: 'hook_result', event: 'Stop' }),
+    ]).toEqual([
+      'user',
+      'skill',
+      'plugin_command',
+      'subagent_task',
+      'goal_continuation',
+      'swarm_retry',
+      'cron',
+      'cron',
+      'background_task',
+      'tower_inbox',
+      'shell_background',
+      'other',
+    ]);
+    expect(userInputIdOf({ kind: 'skill_activation', activationId: 'a', skillName: 's', trigger: 'model-tool' }, 'msg_1')).toBeUndefined();
+    expect(userInputIdOf({ kind: 'plugin_command', activationId: 'a', pluginId: 'p', commandName: 'c', trigger: 'user-slash' }, 'msg_2')).toBe('msg_2');
+    expect(requestMetadataHeaders({ agentRole: 'main' })).toEqual({
+      'X-Msh-Client-Metadata': '{"agent_role":"main"}',
+    });
+
+    const request = startRequest(service, { source });
     await headersArrived;
     expect(request.trace.requestId).toBe('trace-req-1');
     releaseStream.resolve();
@@ -1559,6 +1681,12 @@ describe('AgentLoopRequestFactory request id', () => {
 
     expect(finish.requestId).toBe('trace-req-1');
     expect(request.trace.requestId).toBe('trace-req-1');
+    expect(attribution.of('test-agent')).toEqual({
+      userInputId: '任务-1🚀',
+      activeRequestId: 'trace-req-1',
+    });
+    await dispatcher.dispatch(new TurnEnded({ agentId: 'test-agent', turnId: 1, reason: 'completed' }));
+    expect(attribution.of('test-agent')).toEqual({ userInputId: '任务-1🚀' });
   });
 
   it('reports an absent trace before a request that returns none', async () => {
@@ -1648,14 +1776,57 @@ describe('AgentLoopRequestFactory request id', () => {
     ).toBeUndefined();
   });
 
-  it('mirrors the request id into the ambient telemetry context', async () => {
-    const { service, telemetry } = createService(
-      createTracedRequester('trace-ambient-1'),
+  it('mirrors request ids and keeps subagent attribution at dispatch boundaries', async () => {
+    const metadata: AgentMeta = {
+      type: 'sub',
+      labels: { parentAgentId: 'main', profileName: 'coder' },
+    };
+    const { service, telemetry, dispatcher, attribution } = createService(
+      createTracedRequester('trace-ambient-1', { providerType: 'kimi' }),
+      {
+        metadata,
+        parentUserInputId: 'msg_parent_1',
+        parentRequestId: 'trace-parent-1',
+      },
     );
 
     await request(service, { source: { type: 'turn', turnId: 1, step: 1 } });
-
     expect(telemetry.getContext()['request_id']).toBe('trace-ambient-1');
+    await startMetadataTurn(dispatcher, { kind: 'system_trigger', name: 'subagent' }, 'sub_1');
+    expect(JSON.parse(metadataHeader(service, { type: 'turn', turnId: 1, step: 1 })!)).toEqual({
+      agent_role: 'subagent',
+      turn_trigger: 'subagent_task',
+      step_reason: 'turn_start',
+      user_input_id: 'msg_parent_1',
+      parent_request_id: 'trace-parent-1',
+    });
+
+    attribution.noteUserInput('main', 'msg_parent_2');
+    attribution.noteActiveRequest('main', 'trace-parent-2');
+    await startMetadataTurn(dispatcher, { kind: 'retry' }, undefined, 2);
+    expect(JSON.parse(metadataHeader(service, { type: 'turn', turnId: 2, step: 1 })!)).toEqual({
+      agent_role: 'subagent',
+      turn_trigger: 'swarm_retry',
+      step_reason: 'turn_start',
+      user_input_id: 'msg_parent_1',
+      parent_request_id: 'trace-parent-1',
+    });
+    await startMetadataTurn(dispatcher, { kind: 'injection', variant: 'tower_inbox' }, undefined, 3);
+    expect(JSON.parse(metadataHeader(service, { type: 'turn', turnId: 3, step: 1 })!)).toEqual({
+      agent_role: 'subagent',
+      turn_trigger: 'tower_inbox',
+      step_reason: 'turn_start',
+      user_input_id: 'msg_parent_1',
+      parent_request_id: 'trace-parent-1',
+    });
+    await startMetadataTurn(dispatcher, { kind: 'system_trigger', name: 'subagent' }, 'sub_2', 4);
+    expect(JSON.parse(metadataHeader(service, { type: 'turn', turnId: 4, step: 1 })!)).toMatchObject({
+      user_input_id: 'msg_parent_2',
+      parent_request_id: 'trace-parent-2',
+    });
+
+    await dispatcher.dispatch(new TurnEnded({ agentId: 'test-agent', turnId: 4, reason: 'completed' }));
+    expect(attribution.of('test-agent').activeRequestId).toBeUndefined();
   });
 
   it('clears the ambient request id when the next turn request starts without one', async () => {
@@ -1706,15 +1877,93 @@ describe('AgentLoopRequestFactory request id', () => {
     expect(telemetry.getContext()['request_id']).toBeUndefined();
   });
 
-  it('keeps the ambient request id untouched for operation requests', async () => {
-    const { service, telemetry } = createService(
-      createTracedRequester('trace-operation-1'),
+  it('keeps operation request ids isolated and resolves compaction metadata from its turn', async () => {
+    const metadata: AgentMeta = {
+      type: 'sub',
+      labels: { parentAgentId: 'main', profileName: 'coder' },
+    };
+    const { service, dispatcher, telemetry } = createService(
+      createTracedRequester('trace-operation-1', { providerType: 'kimi' }),
+      { metadata },
     );
+    await startMetadataTurn(dispatcher, { kind: 'user' }, 'msg_user');
+    await startMetadataTurn(dispatcher, {
+      kind: 'cron_job',
+      jobId: 'j',
+      cron: '* * * * *',
+      recurring: true,
+      coalescedCount: 1,
+      stale: false,
+    }, undefined, 2);
+
+    expect(JSON.parse(metadataHeader(service, {
+      type: 'operation',
+      turnId: 2,
+      requestKind: 'full_compaction',
+    })!)).toEqual({
+      agent_role: 'subagent',
+      turn_trigger: 'cron',
+      step_reason: 'compact',
+      user_input_id: 'msg_user',
+    });
     telemetry.setContext({ request_id: 'trace-turn-1' });
-
-    await request(service, { source: { type: 'operation', requestKind: 'full_compaction' } });
-
+    await request(service, {
+      source: { type: 'operation', turnId: 2, requestKind: 'full_compaction' },
+    });
     expect(telemetry.getContext()['request_id']).toBe('trace-turn-1');
+
+    await dispatcher.dispatch(new TurnEnded({ agentId: 'test-agent', turnId: 2, reason: 'completed' }));
+    expect(JSON.parse(metadataHeader(service, {
+      type: 'operation',
+      requestKind: 'full_compaction',
+    })!)).toEqual({
+      agent_role: 'subagent',
+      turn_trigger: 'user',
+      step_reason: 'compact',
+      user_input_id: 'msg_user',
+    });
+
+    const restored = createService(createRequester({ value: 0 }, undefined, [], undefined, { providerType: 'kimi' }), {
+      metadata,
+    });
+    await restoreTestEventDispatcher(restored.dispatcher, recordingWireLog(restored.records), 'wire/llm-requester', [
+      new TurnPrompt({
+        agentId: 'test-agent',
+        turnId: 1,
+        origin: { kind: 'user' },
+        promptId: 'msg_restored',
+        input: [],
+      }).serialize(),
+      new TurnEnded({ agentId: 'test-agent', turnId: 1, reason: 'completed' }).serialize(),
+    ]);
+    expect(restored.attribution.of('test-agent').userInputId).toBe('msg_restored');
+    expect(JSON.parse(metadataHeader(restored.service, {
+      type: 'operation',
+      requestKind: 'full_compaction',
+    })!)).toMatchObject({ user_input_id: 'msg_restored' });
+
+    const replayed = createService(createRequester({ value: 0 }, undefined, [], undefined, { providerType: 'kimi' }), {
+      metadata,
+      parentUserInputId: 'msg_unrelated',
+      parentRequestId: 'trace-unrelated',
+    });
+    await restoreTestEventDispatcher(replayed.dispatcher, recordingWireLog(replayed.records), 'wire/llm-requester', [
+      new TurnPrompt({
+        agentId: 'test-agent',
+        turnId: 1,
+        origin: { kind: 'system_trigger', name: 'subagent' },
+        input: [],
+      }).serialize(),
+      new TurnEnded({ agentId: 'test-agent', turnId: 1, reason: 'completed' }).serialize(),
+    ]);
+    expect(JSON.parse(metadataHeader(replayed.service, {
+      type: 'operation',
+      requestKind: 'full_compaction',
+    })!)).toEqual({
+      agent_role: 'subagent',
+      turn_trigger: 'user',
+      step_reason: 'compact',
+    });
   });
 });
 

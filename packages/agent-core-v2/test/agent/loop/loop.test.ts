@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { Event } from '#/_base/event';
 import type { CoreLoopRequester, LoopRequester } from '#/agent/loop/requesterContract';
+import type { AgentLoopRequestFactory } from '#/agent/loop/requester';
+import type { AgentLoopRequestObserver } from '#/agent/loop/requestObservation';
 import type { LlmRequest as CoreLlmRequest } from '#human/llm/request';
 import { contentsOf, mergeFields, type LlmRequestPart } from '#human/llm/requester';
 import type { LlmRunControl } from '#human/llm/policy/policy';
@@ -56,6 +58,21 @@ import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/st
 import { submitPromptTurn } from './stubs';
 
 type GenerateFn = NonNullable<TestAgentOptions['generate']>;
+
+function trackStepReasons(ctx: TestAgentContext): readonly (string | undefined)[] {
+  const reasons: (string | undefined)[] = [];
+  const factory = (ctx.get(IAgentLoopService) as unknown as {
+    requestFactory: AgentLoopRequestFactory;
+  }).requestFactory;
+  const observer = (factory as unknown as { observer: AgentLoopRequestObserver }).observer;
+  const recordAttempt = observer.recordAttempt.bind(observer);
+  vi.spyOn(observer, 'recordAttempt').mockImplementation((observation, request, ledger) => {
+    const header = request.endpoint?.headers?.['X-Msh-Client-Metadata'];
+    reasons.push(header === undefined ? undefined : JSON.parse(header).step_reason);
+    recordAttempt(observation, request, ledger);
+  });
+  return reasons;
+}
 
 describe('Agent loop', () => {
   let ctx: TestAgentContext;
@@ -302,6 +319,7 @@ describe('Agent loop', () => {
         return undefined;
       },
     });
+    const reasons = trackStepReasons(ctx);
 
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
     await ctx.untilTurnEnd();
@@ -309,6 +327,7 @@ describe('Agent loop', () => {
     expect(seenErrors).toEqual([
       { step: 1, message: 'Unexpected generate call #1' },
     ]);
+    expect(reasons).toEqual(['turn_start', 'turn_start']);
     expect(ctx.allEvents).toContainEqual(
       expect.objectContaining({
         event: 'turn.ended',
@@ -494,6 +513,7 @@ describe('Agent loop', () => {
 
     profile.update({ activeToolNames: ['Lookup'] });
     ctx.get(IAgentToolRegistryService).register(lookupTool);
+    const reasons = trackStepReasons(ctx);
 
     ctx.mockNextResponse({ type: 'text', text: 'I will look it up.' }, lookupCall);
     await ctx.rpc.prompt({
@@ -566,6 +586,7 @@ describe('Agent loop', () => {
         assistant: text "I will look it up."  calls call_lookup:Lookup { "query": "moon" }
         tool[call_lookup]: text "lookup-result"
     `);
+    expect(reasons).toEqual(['turn_start', 'tool_results']);
   });
 
   it('does not abort sibling tools when a parallel batch tool completes first', async () => {
@@ -742,12 +763,14 @@ describe('Agent loop', () => {
     ctx.mockNextResponse({ type: 'text', text: 'First answer.' });
     ctx.mockNextResponse({ type: 'text', text: 'Second answer.' });
     ctx.mockNextResponse({ type: 'text', text: 'Third answer.' });
+    const reasons = trackStepReasons(ctx);
 
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hello' }] });
     await loop.settled();
 
     expect(continuations).toBe(2);
     expect(ctx.llmCalls).toHaveLength(3);
+    expect(reasons).toEqual(['turn_start', 'turn_start', 'turn_start']);
     const startedSteps = ctx.allEvents
       .filter((event) => event.type === '[rpc]' && event.event === 'turn.step.started')
       .map((event) => (event.args as { step: number }).step);
