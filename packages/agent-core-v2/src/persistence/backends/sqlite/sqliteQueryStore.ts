@@ -4,8 +4,6 @@ import Database from 'better-sqlite3';
 import { dirname, join } from 'pathe';
 
 import { Disposable, toDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import {
@@ -23,12 +21,8 @@ import {
   type WriteOp,
 } from '#/persistence/interface/queryStore';
 
-import { wipeCluster, wipeStoreDir } from './legacyCacheCleanup.js';
-
 const CHECKPOINT_COLLECTION = '__checkpoint__';
 const STORE_FILE = 'query-store.sqlite';
-const LEGACY_STORE_SUBDIR = 'query-store';
-const LEGACY_SEARCH_SUBDIR = 'search-index';
 const LOCK_ACQUIRE_TIMEOUT_MS = 1000;
 const TRANSIENT_ESCALATION_LIMIT = 5;
 
@@ -395,8 +389,6 @@ export class SqliteQueryStore extends Disposable implements IQueryStore {
   declare readonly _serviceBrand: undefined;
 
   private readonly file: string;
-  private readonly legacyStoreDir: string;
-  private readonly legacySearchDir: string;
   private dbPromise: Promise<Database.Database> | undefined;
   private rebuildPromise: Promise<void> | undefined;
   private transientReadFailures = 0;
@@ -410,8 +402,6 @@ export class SqliteQueryStore extends Disposable implements IQueryStore {
   ) {
     super();
     this.file = join(this.bootstrap.cacheDir, STORE_FILE);
-    this.legacyStoreDir = join(this.bootstrap.cacheDir, LEGACY_STORE_SUBDIR);
-    this.legacySearchDir = join(this.bootstrap.homeDir, LEGACY_SEARCH_SUBDIR);
     this._register(
       toDisposable(() => {
         const pending = this.close().catch(() => {});
@@ -436,7 +426,10 @@ export class SqliteQueryStore extends Disposable implements IQueryStore {
   private async openFresh(): Promise<Database.Database> {
     this.log.info('sqlite query-store opening', { file: this.file });
     await fsp.mkdir(dirname(this.file), { recursive: true });
-    const db = new Database(this.file, { timeout: LOCK_ACQUIRE_TIMEOUT_MS });
+    const db = new Database(this.file, {
+      timeout: LOCK_ACQUIRE_TIMEOUT_MS,
+      nativeBinding: process.env['KIMI_CODE_SQLITE_NATIVE_BINDING'],
+    });
     try {
       db.pragma('journal_mode = WAL');
       db.pragma('synchronous = NORMAL');
@@ -663,30 +656,6 @@ export class SqliteQueryStore extends Disposable implements IQueryStore {
       'write',
       expectedStoreEpoch,
     );
-    await this.cleanupLegacyCaches();
-  }
-
-  private async cleanupLegacyCaches(): Promise<void> {
-    for (const cleanup of [
-      { dir: this.legacyStoreDir, wipe: wipeCluster },
-      { dir: this.legacySearchDir, wipe: wipeStoreDir },
-    ]) {
-      try {
-        await fsp.access(cleanup.dir);
-        const outcome = await cleanup.wipe({ dir: cleanup.dir, lockAcquireTimeoutMs: 0 });
-        if (outcome === 'locked') {
-          this.log.debug('legacy derived cache is still locked; cleanup will retry', {
-            dir: cleanup.dir,
-          });
-        }
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
-        this.log.warn('failed to clean legacy derived cache; cleanup will retry', {
-          dir: cleanup.dir,
-          error: String(error),
-        });
-      }
-    }
   }
 
   storeEpoch(): number {
@@ -791,11 +760,3 @@ class SqliteQuery<T> implements IQuery<T> {
     });
   }
 }
-
-registerScopedService(
-  LifecycleScope.App,
-  IQueryStore,
-  SqliteQueryStore,
-  ScopeActivation.OnScopeCreated,
-  'storage',
-);
