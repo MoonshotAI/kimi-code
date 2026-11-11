@@ -8,6 +8,7 @@ import { ConfigErrors } from '#/app/config/errors';
 import { UNKNOWN_CAPABILITY } from '#/llm-adapter/contract/capability';
 import { emptyUsage } from '#human/llm-requester/usage';
 import type { LlmRequester } from '#human/llm-requester/requester';
+import { bedrockCredential } from '#human/llm/builtin/provider/bedrock/credentials';
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import '#/llm-adapter/protocol/protocolAdapterRegistry';
 import {
@@ -646,9 +647,9 @@ describe('Model assembly (pure data)', () => {
       });
       try {
         const model = catalog.get('sonnet');
-        expect(await model.credentialProvider?.resolve()).toEqual({
-          apiKey: 'static-bedrock-key',
-        });
+        expect(await model.credentialProvider?.resolve()).toEqual(
+          bedrockCredential('static-bedrock-key'),
+        );
         expect(model.credentialProvider?.canRecover).toBeUndefined();
       } finally {
         host.dispose();
@@ -669,9 +670,9 @@ describe('Model assembly (pure data)', () => {
         },
       });
       try {
-        expect(await catalog.get('sonnet').credentialProvider?.resolve()).toEqual({
-          apiKey: 'env-bearer-token',
-        });
+        expect(await catalog.get('sonnet').credentialProvider?.resolve()).toEqual(
+          bedrockCredential('env-bearer-token'),
+        );
       } finally {
         host.dispose();
       }

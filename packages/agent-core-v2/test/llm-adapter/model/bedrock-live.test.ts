@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import { createBedrockTokenProvider } from '#human/llm/builtin/provider/bedrock/credentials';
 import { inferBedrockProtocol } from '#human/llm/builtin/provider/bedrock/routing';
+import { anthropicProtocol } from '#human/llm/builtin/protocol/anthropic/index';
 
 const LIVE_REGION = 'us-west-2';
-const LIVE_MODEL = 'global.moonshotai.kimi-k3';
-const LIVE_RESPONSES_MODEL = 'global.openai.gpt-6-astra';
+const LIVE_MODEL = 'global.moonshotai.kimi-k3.1';
+const LIVE_RESPONSES_MODEL = 'global.openai.gpt-6.1-terra';
+const LIVE_ANTHROPIC_MODEL = 'global.anthropic.claude-sonnet-5-5';
 
 const hasAwsChain = await probeAwsChain();
 
@@ -117,5 +119,27 @@ describe.skipIf(!hasAwsChain)('bedrock live integration (ambient AWS credentials
       },
     );
     expect(res.status).toBe(200);
+  }, 60_000);
+
+  it('authenticates a claude model on the anthropic wire via Authorization: Bearer', async () => {
+    expect(inferBedrockProtocol(LIVE_ANTHROPIC_MODEL)).toBe('anthropic');
+    const provider = createBedrockTokenProvider({ region: LIVE_REGION });
+    const credential = await provider.resolve();
+    expect(credential?.headers?.['authorization']).toMatch(/^Bearer bedrock-api-key-/);
+
+    const client = anthropicProtocol.client(
+      {
+        baseUrl: `https://bedrock-runtime.${LIVE_REGION}.amazonaws.com/anthropic`,
+        apiKey: credential?.apiKey,
+        headers: credential?.headers,
+      },
+      undefined,
+    );
+    const res = await client.messages.create({
+      model: LIVE_ANTHROPIC_MODEL,
+      max_tokens: 16,
+      messages: [{ role: 'user', content: 'Reply with exactly: PONG' }],
+    });
+    expect(res.content.length).toBeGreaterThan(0);
   }, 60_000);
 });

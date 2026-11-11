@@ -1,7 +1,7 @@
 import { getTokenProvider } from '@aws/bedrock-token-generator';
 
 import { errorStatusCode } from '#/llm-requester/errors';
-import type { LlmCredentialProvider } from '#/llm-requester/requester';
+import type { LlmCredential, LlmCredentialProvider } from '#/llm-requester/requester';
 
 export interface BedrockTokenProviderOptions {
   readonly region?: string;
@@ -49,14 +49,14 @@ export function createBedrockTokenProvider(
         const token = await forced;
         if (token === undefined) return undefined;
         cached = { token, expiresAt: now() + ttlMs - EXPIRY_MARGIN_MS };
-        return { apiKey: token };
+        return bedrockCredential(token);
       }
       if (cached === undefined || now() >= cached.expiresAt) {
         const token = await acquire();
         if (token === undefined) return undefined;
         cached = { token, expiresAt: now() + ttlMs - EXPIRY_MARGIN_MS };
       }
-      return { apiKey: cached.token };
+      return bedrockCredential(cached.token);
     },
     canRecover: (error) => errorStatusCode(error) === 401,
     invalidate: () => {
@@ -77,4 +77,17 @@ function defaultProvideToken(config: {
     profile: config.profile,
     expiresInSeconds: config.expiresInSeconds,
   });
+}
+
+export function bedrockCredential(token: string): LlmCredential {
+  return {
+    apiKey: token,
+    headers: { authorization: `Bearer ${token}` },
+  };
+}
+
+export function createStaticBedrockCredentialProvider(token: string): LlmCredentialProvider {
+  return {
+    resolve: () => (token.trim().length === 0 ? undefined : bedrockCredential(token)),
+  };
 }

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  bedrockCredential,
   createBedrockTokenProvider,
+  createStaticBedrockCredentialProvider,
   type BedrockTokenProviderOptions,
 } from '#/llm/builtin/provider/bedrock/credentials';
 import {
@@ -37,8 +39,8 @@ describe('createBedrockTokenProvider', () => {
     const { options, calls } = tokenProviderOptions(['tok-1']);
     const provider = createBedrockTokenProvider(options);
 
-    await expect(provider.resolve()).resolves.toEqual({ apiKey: 'tok-1' });
-    await expect(provider.resolve()).resolves.toEqual({ apiKey: 'tok-1' });
+    await expect(provider.resolve()).resolves.toEqual(bedrockCredential('tok-1'));
+    await expect(provider.resolve()).resolves.toEqual(bedrockCredential('tok-1'));
     expect(calls).toHaveLength(1);
   });
 
@@ -47,9 +49,9 @@ describe('createBedrockTokenProvider', () => {
     const { options, calls } = tokenProviderOptions(['tok-1', 'tok-2'], { now: () => now });
     const provider = createBedrockTokenProvider(options);
 
-    await expect(provider.resolve()).resolves.toEqual({ apiKey: 'tok-1' });
+    await expect(provider.resolve()).resolves.toEqual(bedrockCredential('tok-1'));
     now += 12 * 60 * 60 * 1000;
-    await expect(provider.resolve()).resolves.toEqual({ apiKey: 'tok-2' });
+    await expect(provider.resolve()).resolves.toEqual(bedrockCredential('tok-2'));
     expect(calls).toHaveLength(2);
   });
 
@@ -58,8 +60,8 @@ describe('createBedrockTokenProvider', () => {
     const provider = createBedrockTokenProvider(options);
 
     const [a, b] = await Promise.all([provider.resolve(), provider.resolve()]);
-    expect(a).toEqual({ apiKey: 'tok-1' });
-    expect(b).toEqual({ apiKey: 'tok-1' });
+    expect(a).toEqual(bedrockCredential('tok-1'));
+    expect(b).toEqual(bedrockCredential('tok-1'));
     expect(calls).toHaveLength(1);
   });
 
@@ -67,11 +69,11 @@ describe('createBedrockTokenProvider', () => {
     const { options, calls } = tokenProviderOptions(['tok-1', 'tok-2']);
     const provider = createBedrockTokenProvider(options);
 
-    await expect(provider.resolve()).resolves.toEqual({ apiKey: 'tok-1' });
+    await expect(provider.resolve()).resolves.toEqual(bedrockCredential('tok-1'));
     provider.invalidate?.();
     expect(calls).toHaveLength(2);
-    await expect(provider.resolve()).resolves.toEqual({ apiKey: 'tok-2' });
-    await expect(provider.resolve()).resolves.toEqual({ apiKey: 'tok-2' });
+    await expect(provider.resolve()).resolves.toEqual(bedrockCredential('tok-2'));
+    await expect(provider.resolve()).resolves.toEqual(bedrockCredential('tok-2'));
     expect(calls).toHaveLength(2);
   });
 
@@ -91,7 +93,7 @@ describe('createBedrockTokenProvider', () => {
     const provider = createBedrockTokenProvider(options);
 
     await expect(provider.resolve()).resolves.toBeUndefined();
-    await expect(provider.resolve()).resolves.toEqual({ apiKey: 'tok-2' });
+    await expect(provider.resolve()).resolves.toEqual(bedrockCredential('tok-2'));
     expect(calls).toHaveLength(2);
   });
 
@@ -102,6 +104,27 @@ describe('createBedrockTokenProvider', () => {
     expect(provider.canRecover?.(Object.assign(new Error('x'), { statusCode: 401 }))).toBe(true);
     expect(provider.canRecover?.(Object.assign(new Error('x'), { statusCode: 403 }))).toBe(false);
     expect(provider.canRecover?.(new Error('boom'))).toBe(false);
+  });
+});
+
+describe('bedrockCredential', () => {
+  it('carries the token as both an apiKey and a Bearer authorization header', () => {
+    expect(bedrockCredential('tok-1')).toEqual({
+      apiKey: 'tok-1',
+      headers: { authorization: 'Bearer tok-1' },
+    });
+  });
+});
+
+describe('createStaticBedrockCredentialProvider', () => {
+  it('resolves the configured token as a bedrock credential', () => {
+    expect(createStaticBedrockCredentialProvider('tok-1').resolve()).toEqual(
+      bedrockCredential('tok-1'),
+    );
+  });
+
+  it('resolves undefined for a blank token', () => {
+    expect(createStaticBedrockCredentialProvider('   ').resolve()).toBeUndefined();
   });
 });
 
