@@ -452,7 +452,7 @@ describe('AgentPermissionPolicyService chain', () => {
     });
   });
 
-  it('returns a read-only approval as the underlying result for Auto Review', async () => {
+  it('records a read-only approval beneath the mode approval for Auto Review', async () => {
     autoReviewEnabled = true;
     mode = 'yolo';
 
@@ -462,10 +462,13 @@ describe('AgentPermissionPolicyService chain', () => {
     });
 
     expect(evaluation).toMatchObject({
-      policyName: 'bash-read-only-approve',
+      policyName: 'yolo-mode-approve',
       result: { kind: 'approve' },
+      underlying: {
+        policyName: 'bash-read-only-approve',
+        result: { kind: 'approve' },
+      },
     });
-    expect(evaluation?.underlying).toBeUndefined();
   });
 
   it.each([

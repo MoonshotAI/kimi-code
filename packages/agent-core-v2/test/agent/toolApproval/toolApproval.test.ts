@@ -360,7 +360,7 @@ describe('AgentToolApprovalService', () => {
       };
 
       await svc.requestToolApproval(
-        makeContext('Bash', { command: 'agi sandbox create' }),
+        makeContext('Bash', { command: 'terraform apply' }),
         ask({ approvalDetail }),
         'auto-review',
       );

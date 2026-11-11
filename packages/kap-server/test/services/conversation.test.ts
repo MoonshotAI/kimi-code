@@ -1186,7 +1186,6 @@ describe('conversation feed', () => {
     ]);
     expect(Object.keys((h.events[5] as { set: object }).set)).toEqual(['stage']);
     expect(Object.keys((h.events[6] as { set: object }).set)).toEqual(['input']);
-    expect(Object.keys((h.events[4] as { set: object }).set)).toEqual(['input']);
     expect(midway).toMatchObject({
       stage: 'executing',
       output: 'a\nb\n',

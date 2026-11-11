@@ -169,7 +169,7 @@ describe('AgentPermissionGate', () => {
     resolvePermissionResolution.mockResolvedValue(blocked);
     make();
     const later = vi.fn();
-    executorEvents.executor.registerLegacyStarting(later);
+    executorEvents.executor.registerHook({ permitting: later });
     const ctx = makeContext('bash');
 
     const decision = await executorEvents.fireBeforeExecute(ctx);
@@ -369,7 +369,7 @@ describe('AgentPermissionGate', () => {
 
     await executorEvents.fireBeforeExecute(makeContext('Bash'));
     outcome = 'allow';
-    expect(await executorEvents.fireBeforeExecute(makeContext('Bash'))).toBeUndefined();
+    expect(await executorEvents.fireBeforeExecute(makeContext('Bash'))).toEqual({ allow: true });
 
     expect(review).not.toHaveBeenCalled();
   });

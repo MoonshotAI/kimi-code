@@ -696,7 +696,7 @@ describe('AgentToolExecutorService', () => {
       }),
     ]);
     expect(tool.calls).toEqual([]);
-    expect(protocolEventTypes()).toEqual(['tool.call.started', 'tool.result']);
+    expect(protocolEventTypes()).toEqual(['tool.call.started', 'tool.updated', 'tool.result']);
   });
 
   it('resolves a pending veto before reporting the tool call', async () => {
@@ -712,7 +712,7 @@ describe('AgentToolExecutorService', () => {
 
     decision.resolve({ veto: { output: 'forbidden', isError: true } });
     await pending;
-    expect(protocolEventTypes()).toEqual(['tool.call.started', 'tool.result']);
+    expect(protocolEventTypes()).toEqual(['tool.call.started', 'tool.updated', 'tool.result']);
   });
 
   it('onBeforeExecuteTool veto bypasses execute with synthetic results while hook errors emit no tool events', async () => {

@@ -125,7 +125,8 @@ export class BeforeToolExecuteEmitter extends Emitter<BeforeToolExecuteEvent> {
     const event = 'event' in context
       ? await context.event
       : await this.beginBeforeExecute(context);
-    if (event === undefined || event.finalAllowed) return undefined;
+    if (event === undefined) return undefined;
+    if (event.finalAllowed) return { allow: true };
     if (event.vetoResult !== undefined) return { veto: event.vetoResult };
     try {
       return await this.settleBeforeExecute(event);

@@ -142,7 +142,7 @@ describe('ApprovalPanelComponent', () => {
             title: 'Auto Review: denied (medium risk)',
             detail: 'Creating remote resources was not explicitly authorized.',
           },
-          { type: 'shell', language: 'bash', command: 'agi sandbox create' },
+          { type: 'shell', language: 'bash', command: 'terraform apply' },
         ],
         choices: [{ label: 'Approve once', response: 'approved' }],
       },
@@ -152,7 +152,7 @@ describe('ApprovalPanelComponent', () => {
     const out = strip(rendered);
     expect(out).toContain('Auto Review: denied (medium risk)');
     expect(out).toContain('Creating remote resources was not explicitly authorized.');
-    expect(out.indexOf('Auto Review: denied')).toBeLessThan(out.indexOf('agi sandbox create'));
+    expect(out.indexOf('Auto Review: denied')).toBeLessThan(out.indexOf('terraform apply'));
     const titleLine = rendered.split('\n').find((line) => strip(line).includes('Auto Review: denied'));
     expect(titleLine).toContain(currentTheme.fg('warning', 'Auto Review: denied (medium risk)'));
   });
@@ -172,7 +172,7 @@ describe('ApprovalPanelComponent', () => {
             title: 'Auto Review failed',
             detail,
           },
-          { type: 'shell', language: 'bash', command: 'agi sandbox create' },
+          { type: 'shell', language: 'bash', command: 'terraform apply' },
         ],
         choices: [{ label: 'Approve once', response: 'approved' }],
       },
@@ -184,7 +184,7 @@ describe('ApprovalPanelComponent', () => {
     expect(out).toContain('…');
     expect(out).not.toContain('unique-tail');
     expect(reasonLines.length).toBeLessThanOrEqual(2);
-    expect(out.indexOf('Auto Review failed')).toBeLessThan(out.indexOf('agi sandbox create'));
+    expect(out.indexOf('Auto Review failed')).toBeLessThan(out.indexOf('terraform apply'));
   });
 
   it('wraps a long single-line shell command instead of truncating it', () => {

@@ -8,7 +8,7 @@ describe('approval adapter', () => {
       toolCallId: 'tc-review',
       toolName: 'Bash',
       action: 'run',
-      display: { kind: 'command', command: 'agi sandbox create' },
+      display: { kind: 'command', command: 'terraform apply' },
       approvalDetail: {
         title: 'Auto Review: denied (medium risk)',
         detail: 'Creating remote resources was not explicitly authorized.',
@@ -21,7 +21,7 @@ describe('approval adapter', () => {
         title: 'Auto Review: denied (medium risk)',
         detail: 'Creating remote resources was not explicitly authorized.',
       },
-      { type: 'shell', language: 'bash', command: 'agi sandbox create', danger: undefined },
+      { type: 'shell', language: 'bash', command: 'terraform apply', danger: undefined },
     ]);
     expect(adapted.approval_detail).toEqual({
       title: 'Auto Review: denied (medium risk)',
