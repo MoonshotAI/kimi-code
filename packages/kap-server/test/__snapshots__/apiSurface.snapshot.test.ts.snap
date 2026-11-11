@@ -22,6 +22,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
   "routes": [
     [
       "DELETE",
+      "/api/v1/agent-profiles/{name}",
+    ],
+    [
+      "DELETE",
       "/api/v1/files/{file_id}",
     ],
     [
@@ -43,6 +47,14 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "DELETE",
       "/api/v2/mcp/servers/{name}",
+    ],
+    [
+      "GET",
+      "/api/v1/agent-profiles",
+    ],
+    [
+      "GET",
+      "/api/v1/agent-profiles/{name}",
     ],
     [
       "GET",
@@ -318,6 +330,14 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
+      "/api/v1/agent-profiles",
+    ],
+    [
+      "POST",
+      "/api/v1/agent-profiles{refresh}",
+    ],
+    [
+      "POST",
       "/api/v1/capabilities/{tail}",
     ],
     [
@@ -551,6 +571,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v2/sessions:restore",
+    ],
+    [
+      "PUT",
+      "/api/v1/agent-profiles/{name}",
     ],
     [
       "PUT",

@@ -11,6 +11,7 @@ import type { MetaFeature } from '../protocol/rest-meta';
 import { type IConnectionRegistry } from '../transport/ws/connectionRegistry';
 import type { ConversationService } from '../services/conversation/conversationService';
 import { registerAuthRoute } from './auth';
+import { registerAgentProfilesRoutes } from './agentProfiles';
 import { registerCapabilitiesRoutes } from './capabilities';
 import { registerClientConfigsRoutes } from './clientConfigs';
 import { registerConfigRoutes } from './config';
@@ -116,6 +117,7 @@ export async function registerApiV1Routes(
         opts.remoteControl.homeDir,
       );
       registerConfigRoutes(apiV1 as unknown as Parameters<typeof registerConfigRoutes>[0], core);
+      registerAgentProfilesRoutes(apiV1 as unknown as Parameters<typeof registerAgentProfilesRoutes>[0], core);
       registerGlobalAgentsMdRoutes(apiV1 as unknown as Parameters<typeof registerGlobalAgentsMdRoutes>[0], core);
       registerClientConfigsRoutes(
         apiV1 as unknown as Parameters<typeof registerClientConfigsRoutes>[0],
