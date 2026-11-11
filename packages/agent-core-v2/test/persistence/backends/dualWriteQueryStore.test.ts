@@ -106,6 +106,44 @@ describe('DualWriteQueryStore', () => {
     expect(await store.get(COLLECTION, 'a')).toBeUndefined();
     expect(await minidb.get(COLLECTION, 'a')).toBeUndefined();
     expect(await store.get(COLLECTION, 'b')).toEqual({ v: 2 });
+
+    class DelayedResetStore extends DualWriteQueryStore {
+      override async resetAfterPeerRebuild(): Promise<void> {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return super.resetAfterPeerRebuild();
+      }
+    }
+    const concurrent = new DelayedResetStore(stubBootstrap(homeDir), stubLog());
+    const concurrentBackup = backup(concurrent);
+    const originalPut = concurrentBackup.put.bind(concurrentBackup);
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    concurrentBackup.put = async (collection, key, value, options) => {
+      if (key === 'first') {
+        markStarted();
+        (concurrentBackup as unknown as { storeEpochCounter: number }).storeEpochCounter += 1;
+        await firstGate;
+        throw new Error('minidb put rebuilt');
+      }
+      return originalPut(collection, key, value, options);
+    };
+    const first = concurrent.put(COLLECTION, 'first', { value: 1 });
+    await started;
+    const second = concurrent.put(COLLECTION, 'second', { value: 2 });
+    releaseFirst();
+    await expect(first).rejects.toThrow('minidb put rebuilt');
+    await second;
+    expect(await concurrent.get(COLLECTION, 'second')).toEqual({ value: 2 });
+    expect(await concurrentBackup.get(COLLECTION, 'second')).toEqual({ value: 2 });
+    expect(await concurrent.get(COLLECTION, 'first')).toBeUndefined();
+    expect(await concurrentBackup.get(COLLECTION, 'first')).toBeUndefined();
+    await concurrent.close();
   });
 
   it('isolates collections by prefix', async () => {
