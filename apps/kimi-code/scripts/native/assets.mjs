@@ -5,13 +5,7 @@ import { createRequire } from 'node:module';
 import { dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import {
-  KAP_SEARCH_WORKER_ASSET,
-  MINIDB_TEXT_BUILD_WORKER_ASSET,
-  NATIVE_ASSET_MANIFEST_VERSION,
-  buildManifestKey,
-  buildRuntimeAssetKey,
-} from './manifest.mjs';
+import { NATIVE_ASSET_MANIFEST_VERSION, buildManifestKey } from './manifest.mjs';
 import { resolveTargetDeps, SUPPORTED_TARGETS } from './native-deps.mjs';
 
 export { NATIVE_ASSET_MANIFEST_VERSION };
@@ -235,10 +229,7 @@ async function packageManifestEntries({ packageName, packageRoot, files, target 
 export const nativeAssetManifestKey = buildManifestKey;
 
 export function nativeAssetSummary(manifest) {
-  return [
-    ...manifest.packages.map((pkg) => `${pkg.name}: ${pkg.files.length} files`),
-    `runtime: ${manifest.runtimeFiles.length} files`,
-  ];
+  return manifest.packages.map((pkg) => `${pkg.name}: ${pkg.files.length} files`);
 }
 
 export async function collectNativeAssets({ appRoot, target }) {
@@ -273,29 +264,10 @@ export async function collectNativeAssets({ appRoot, target }) {
     Object.assign(assets, result.assets);
   }
 
-  const runtimeFiles = [];
-  for (const [fileName, asset] of [
-    ['text-build-worker.mjs', MINIDB_TEXT_BUILD_WORKER_ASSET],
-    ['search-worker.mjs', KAP_SEARCH_WORKER_ASSET],
-  ]) {
-    const workerSource = resolve(appRoot, 'dist-native', 'intermediates', fileName);
-    const workerBytes = await readFile(workerSource);
-    const workerAssetKey = buildRuntimeAssetKey(target, asset.key);
-    runtimeFiles.push({
-      key: asset.key,
-      assetKey: workerAssetKey,
-      relativePath: asset.relativePath,
-      sha256: sha256(workerBytes),
-      mode: asset.mode,
-    });
-    assets[workerAssetKey] = workerSource;
-  }
-
   const manifest = {
     version: NATIVE_ASSET_MANIFEST_VERSION,
     target,
     packages: manifestPackages,
-    runtimeFiles,
   };
 
   return {
