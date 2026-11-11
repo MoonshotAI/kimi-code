@@ -1767,6 +1767,18 @@ describe('AuthSummaryService', () => {
       key: 'oauth/kimi-code',
     });
   });
+
+  it('ensureReady treats an ambient bedrock provider as ready without a stored credential', async () => {
+    providers['bedrock-main'] = { type: 'bedrock', env: { AWS_REGION: 'us-east-1' } };
+    models['bedrock'] = {
+      provider: 'bedrock-main',
+      model: 'global.moonshotai.kimi-k3.1',
+      maxContextSize: 128000,
+    };
+
+    await expect(createSummary().ensureReady('bedrock')).resolves.toBeUndefined();
+    expect(getCachedAccessToken).not.toHaveBeenCalled();
+  });
 });
 
 describe('AuthLegacyService', () => {

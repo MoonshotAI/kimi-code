@@ -6,7 +6,11 @@ import {
   createStaticBedrockCredentialProvider,
   type BedrockTokenProviderOptions,
 } from '#/llm/builtin/provider/bedrock/credentials';
+import { getAnthropicModelCapability } from '#/llm/builtin/protocol/anthropic/capability';
+import { getOpenAILegacyModelCapability } from '#/llm/builtin/protocol/openai/capability';
+import { getOpenAIResponsesModelCapability } from '#/llm/builtin/protocol/openai-responses/capability';
 import {
+  bedrockModelCapability,
   inferBedrockProtocol,
   resolveBedrockBaseUrl,
   stripBedrockInferenceProfilePrefix,
@@ -224,5 +228,30 @@ describe('resolveBedrockBaseUrl', () => {
 
   it('returns undefined when no region is available', () => {
     expect(resolveBedrockBaseUrl('anthropic', {})).toBeUndefined();
+  });
+});
+
+describe('bedrockModelCapability', () => {
+  it('strips geo and vendor prefixes and dispatches to the matching vendor detector', () => {
+    expect(bedrockModelCapability('anthropic.claude-sonnet-5-5')).toEqual(
+      getAnthropicModelCapability('claude-sonnet-5-5'),
+    );
+    expect(bedrockModelCapability('global.anthropic.claude-sonnet-5-5')).toEqual(
+      getAnthropicModelCapability('claude-sonnet-5-5'),
+    );
+    expect(bedrockModelCapability('openai.gpt-oss-120b-1:0')).toEqual(
+      getOpenAILegacyModelCapability('gpt-oss-120b-1:0'),
+    );
+    expect(bedrockModelCapability('us.openai.gpt-6-astra')).toEqual(
+      getOpenAIResponsesModelCapability('gpt-6-astra'),
+    );
+    expect(bedrockModelCapability('moonshotai.kimi-k3.1')).toEqual(
+      getOpenAILegacyModelCapability('kimi-k3.1'),
+    );
+  });
+
+  it('returns undefined for model families with no inferred protocol', () => {
+    expect(bedrockModelCapability('meta.llama3-3-70b-instruct-v1:0')).toBeUndefined();
+    expect(bedrockModelCapability('amazon.nova-pro-v1:0')).toBeUndefined();
   });
 });

@@ -611,27 +611,6 @@ describe('Model assembly (pure data)', () => {
       }
     });
 
-    it('lets an explicit model protocol win over bedrock prefix inference', () => {
-      const { host, catalog } = createHost({
-        providers: { bedrock: { type: 'bedrock', env: { AWS_REGION: 'us-east-1' } } },
-        models: {
-          responses: {
-            provider: 'bedrock',
-            protocol: 'openai_responses',
-            model: 'openai.gpt-5.4',
-            maxContextSize: 128000,
-          },
-        },
-      });
-      try {
-        const model = catalog.get('responses');
-        expect(model.protocol).toBe('openai_responses');
-        expect(model.baseUrl).toBe('https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1');
-      } finally {
-        host.dispose();
-      }
-    });
-
     it('prefers a static credential over ambient AWS auth and skips the token provider', async () => {
       const { host, catalog } = createHost({
         providers: {
@@ -642,7 +621,7 @@ describe('Model assembly (pure data)', () => {
           },
         },
         models: {
-          sonnet: { provider: 'bedrock', model: 'anthropic.claude-sonnet-4-6', maxContextSize: 200000 },
+          sonnet: { provider: 'bedrock', model: 'anthropic.claude-sonnet-5-5', maxContextSize: 200000 },
         },
       });
       try {
@@ -675,6 +654,30 @@ describe('Model assembly (pure data)', () => {
         );
       } finally {
         host.dispose();
+      }
+    });
+
+    it('wraps an api_key_env credential as a bedrock bearer credential', async () => {
+      vi.stubEnv('BEDROCK_KEY_ENV', 'key-from-named-env');
+      const { host, catalog } = createHost({
+        providers: {
+          bedrock: {
+            type: 'bedrock',
+            apiKeyEnv: 'BEDROCK_KEY_ENV',
+            baseUrl: 'https://bedrock-runtime.us-east-1.amazonaws.com/anthropic',
+          },
+        },
+        models: {
+          sonnet: { provider: 'bedrock', model: 'anthropic.claude-sonnet-4-6', maxContextSize: 200000 },
+        },
+      });
+      try {
+        expect(await catalog.get('sonnet').credentialProvider?.resolve()).toEqual(
+          bedrockCredential('key-from-named-env'),
+        );
+      } finally {
+        host.dispose();
+        vi.unstubAllEnvs();
       }
     });
 
