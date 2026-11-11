@@ -80,6 +80,7 @@ export const servicesEnvBindings: EnvBindings<ServicesConfig> = envBindings(
 );
 
 const servicesCredentialEnvOverlay: ConfigEffectiveOverlay = {
+  domains: [SERVICES_SECTION],
   apply(effective, getEnv, validate) {
     const services = effective[SERVICES_SECTION];
     if (!isPlainObject(services)) return [];
