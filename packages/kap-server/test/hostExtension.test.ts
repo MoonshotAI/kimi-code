@@ -135,6 +135,18 @@ it('exposes session and agent capabilities without leaking engine scopes', async
   const rewritten = await executor.executor.execute({ ...call, id: 'host-rewrite', name: 'HostRewrite' }, { turnId: 9 });
   if ('detached' in rewritten) throw new Error('unexpected detached tool result');
   expect(rewritten.content).toEqual([{ type: 'text', text: JSON.stringify({ value: 'rewritten' }) }]);
+  main.accessor.get(IAgentToolRegistryService).register({
+    ...tool,
+    name: 'HostResolverFailure',
+    resolveExecution: (args: unknown) => (args as Record<string, unknown>)['fail'] === true
+      ? { isError: true, output: 'decorator rejected' }
+      : { approvalRule: 'always-allow' as const, execute: async () => execute(args) },
+  } as ExecutableTool, { source: 'builtin' });
+  hostAgent.decorateToolExecution('HostResolverFailure', (args) => ({ ...(args as Record<string, unknown>), fail: true }));
+  const resolverFailure = await executor.executor.execute({ ...call, id: 'host-resolver-failure', name: 'HostResolverFailure' }, { turnId: 10 });
+  if ('detached' in resolverFailure) throw new Error('unexpected detached tool result');
+  expect(resolverFailure.content).toEqual([{ type: 'text', text: 'decorator rejected' }]);
+  expect(execute).toHaveBeenCalledTimes(2);
 
   const ended = vi.fn();
   hostAgent.onDidTurnEnd(ended);
