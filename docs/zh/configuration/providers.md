@@ -181,7 +181,7 @@ Bedrock 模型 ID 形如 `<vendor>.<model>`，并可带有跨区域推理 profil
 - 其他 `openai.*` → OpenAI Responses API（GPT-6 / GPT-5.6 系列仅提供此 API，也是 OpenAI 推荐的方向）
 - `moonshotai.*` / `moonshot.*` → OpenAI Chat Completions API（Kimi 模型卡片推荐）
 
-其他前缀，或要为同时提供多种 API 的模型另行选择时，请在模型别名上显式设置 `protocol`：
+其他前缀默认使用 OpenAI Chat Completions API。要为同时提供多种 API 的模型另行选择时，请在模型别名上显式设置 `protocol`：
 
 ```toml
 [models."sonnet"]

@@ -181,7 +181,7 @@ Bedrock model IDs use the form `<vendor>.<model>`, optionally with a cross-regio
 - other `openai.*` → OpenAI Responses API (the only API GPT-6 / GPT-5.6 models serve; OpenAI's preferred direction)
 - `moonshotai.*` / `moonshot.*` → OpenAI Chat Completions API (recommended on the Kimi model cards)
 
-For any other prefix, or to pick a different API for a model that serves more than one, set `protocol` on the model alias explicitly:
+Any other prefix defaults to the OpenAI Chat Completions API. To pick a different API for a model that serves more than one, set `protocol` on the model alias explicitly:
 
 ```toml
 [models."sonnet"]
