@@ -413,7 +413,7 @@ describe('DualWriteQueryStore', () => {
     expect(await fsp.readFile(authoritative, 'utf8')).toBe('{"id":"session"}');
   });
 
-  it('shares connections and rejects stale cross-process checkpoints', async () => {
+  it('serializes cross-process writes and rejects stale checkpoints', async () => {
     const store = build();
     await store.put(COLLECTION, 'seed', { id: 'seed', v: 0 });
     const file = join(homeDir, 'cache', STORE_FILE);
@@ -482,6 +482,87 @@ setTimeout(() => {
       await store.close();
     } finally {
       peer.close();
+    }
+
+    const startWriter = async (mode: 'old' | 'new') => {
+      const source = createRequire(import.meta.url).resolve(
+        '#/persistence/backends/dualWriteQueryStore',
+      );
+      const script = join(homeDir, `dual-write-${mode}.mjs`);
+      const value = mode === 'old' ? 1 : 2;
+      await fsp.writeFile(
+        script,
+        `import { DualWriteQueryStore } from ${JSON.stringify(pathToFileURL(source).href)};
+const store = new DualWriteQueryStore(
+  { cacheDir: ${JSON.stringify(join(homeDir, 'cache'))} },
+  { info() {}, warn() {}, error(...args) { console.error(...args); }, debug() {} },
+);
+${mode === 'old' ? `const put = store.minidb.put.bind(store.minidb);
+store.minidb.put = async (...args) => {
+  console.log('primary-written');
+  await new Promise((resolve) => process.stdin.once('data', resolve));
+  return put(...args);
+};
+` : ''}console.log('ready');
+await store.put('session', 'shared', { id: 'shared', v: ${value} });
+console.log('done ' + JSON.stringify({
+  primary: await store.get('session', 'shared'),
+  backup: await store.minidb.get('session', 'shared'),
+}));
+await store.close();
+`,
+      );
+      const child = spawn(process.execPath, ['--import', 'tsx', script], {
+        cwd: process.cwd(),
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      let output = '';
+      let errors = '';
+      child.stdout.setEncoding('utf8');
+      child.stdout.on('data', (chunk: string) => {
+        output += chunk;
+      });
+      child.stderr.setEncoding('utf8');
+      child.stderr.on('data', (chunk: string) => {
+        errors += chunk;
+      });
+      const finished = once(child, 'exit');
+      const waitFor = async (marker: string): Promise<void> => {
+        if (output.includes(marker)) return;
+        await new Promise<void>((resolve) => {
+          const onData = (): void => {
+            if (!output.includes(marker)) return;
+            child.stdout.off('data', onData);
+            resolve();
+          };
+          child.stdout.on('data', onData);
+        });
+      };
+      return { child, finished, waitFor, output: () => output, errors: () => errors };
+    };
+    const older = await startWriter('old');
+    let newer: Awaited<ReturnType<typeof startWriter>> | undefined;
+    try {
+      await older.waitFor('primary-written');
+      newer = await startWriter('new');
+      await newer.waitFor('ready');
+      const completedBeforeRelease = await Promise.race([
+        newer.waitFor('done').then(() => true),
+        new Promise<false>((resolve) => setTimeout(() => resolve(false), 200)),
+      ]);
+      expect(completedBeforeRelease).toBe(false);
+      older.child.stdin.end('go\n');
+      await newer.waitFor('done');
+      await expect(older.finished).resolves.toEqual([0, null]);
+      await expect(newer.finished).resolves.toEqual([0, null]);
+      expect(older.errors()).toBe('');
+      expect(newer.errors()).toBe('');
+      expect(newer.output()).toContain('"primary":{"id":"shared","v":2}');
+      expect(newer.output()).toContain('"backup":{"id":"shared","v":2}');
+    } finally {
+      if (older.child.stdin.writable) older.child.stdin.end('go\n');
+      older.child.kill();
+      newer?.child.kill();
     }
 
     const configured = process.env['KIMI_CODE_SQLITE_NATIVE_BINDING'];
