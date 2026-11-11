@@ -1,7 +1,9 @@
-import { promises as fsp } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { existsSync, promises as fsp } from 'node:fs';
 
 import Database from 'better-sqlite3';
 import { dirname, join } from 'pathe';
+import { fileURLToPath } from 'node:url';
 
 import { Disposable, toDisposable } from '#/_base/di/lifecycle';
 import { ILogService } from '#/_base/log/log';
@@ -25,6 +27,18 @@ const CHECKPOINT_COLLECTION = '__checkpoint__';
 const STORE_FILE = 'query-store.sqlite';
 const LOCK_ACQUIRE_TIMEOUT_MS = 1000;
 const TRANSIENT_ESCALATION_LIMIT = 5;
+
+function sqliteNativeBinding(): string | undefined {
+  const configured = process.env['KIMI_CODE_SQLITE_NATIVE_BINDING'];
+  if (configured !== undefined) return configured;
+  const target = `${process.platform}-${process.arch}`;
+  const bundled = join(
+    dirname(fileURLToPath(import.meta.url)),
+    'better-sqlite3',
+    `${target}.node`,
+  );
+  return existsSync(bundled) ? bundled : undefined;
+}
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS query_documents (
@@ -368,6 +382,20 @@ function resetDatabase(db: Database.Database): void {
   }).immediate();
 }
 
+async function renameQuarantineFile(source: string, destination: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await fsp.rename(source, destination);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT') return;
+      if (code !== 'EPERM' || process.platform !== 'win32' || attempt >= 19) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+}
+
 function classifySqliteError(error: unknown): 'rebuild' | 'transient' {
   if (error instanceof AggregateError) {
     return error.errors.some((inner) => classifySqliteError(inner) === 'rebuild')
@@ -428,7 +456,7 @@ export class SqliteQueryStore extends Disposable implements IQueryStore {
     await fsp.mkdir(dirname(this.file), { recursive: true });
     const db = new Database(this.file, {
       timeout: LOCK_ACQUIRE_TIMEOUT_MS,
-      nativeBinding: process.env['KIMI_CODE_SQLITE_NATIVE_BINDING'],
+      nativeBinding: sqliteNativeBinding(),
     });
     try {
       db.pragma('journal_mode = WAL');
@@ -440,6 +468,17 @@ export class SqliteQueryStore extends Disposable implements IQueryStore {
     } catch (error) {
       if (db.open) db.close();
       throw error;
+    }
+  }
+
+  private async quarantineCorruptStore(): Promise<void> {
+    const quarantineDir = `${this.file}.corrupt-${randomUUID()}`;
+    await fsp.mkdir(quarantineDir, { recursive: true });
+    for (const suffix of ['', '-wal', '-shm']) {
+      await renameQuarantineFile(
+        `${this.file}${suffix}`,
+        join(quarantineDir, `${STORE_FILE}${suffix}`),
+      );
     }
   }
 
@@ -457,8 +496,14 @@ export class SqliteQueryStore extends Disposable implements IQueryStore {
         if (db === undefined || !db.open) db = await this.openFresh();
         resetDatabase(db);
         this.storeEpochCounter += 1;
-      } catch {
-        throw cause;
+      } catch (error) {
+        if (db?.open) db.close();
+        db = undefined;
+        if (classifySqliteError(error) !== 'rebuild') throw cause;
+        await this.quarantineCorruptStore();
+        db = await this.openFresh();
+        resetDatabase(db);
+        this.storeEpochCounter += 1;
       } finally {
         if (db?.open) db.close();
       }
@@ -656,6 +701,13 @@ export class SqliteQueryStore extends Disposable implements IQueryStore {
       'write',
       expectedStoreEpoch,
     );
+  }
+
+  protected async resetAfterPeerRebuild(): Promise<void> {
+    const db = await this.openDb();
+    resetDatabase(db);
+    this.storeEpochCounter += 1;
+    this.ensuredIndexes.clear();
   }
 
   storeEpoch(): number {

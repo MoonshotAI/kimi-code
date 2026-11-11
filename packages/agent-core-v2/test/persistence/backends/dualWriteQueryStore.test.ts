@@ -339,6 +339,22 @@ describe('DualWriteQueryStore', () => {
     await store.setCheckpoint('projection', { seq: 2 });
     expect(await store.getCheckpoint('projection')).toEqual({ seq: 2 });
     expect(await minidb.getCheckpoint('projection')).toEqual({ seq: 2 });
+
+    const primaryEpoch = store.storeEpoch();
+    minidb.setCheckpoint = async () => {
+      (minidb as unknown as { storeEpochCounter: number }).storeEpochCounter += 1;
+      throw new Error('minidb checkpoint rebuilt');
+    };
+    await expect(store.setCheckpoint('projection', { seq: 3 })).rejects.toThrow(
+      'minidb checkpoint rebuilt',
+    );
+    expect(store.storeEpoch()).toBe(primaryEpoch + 1);
+    expect(await store.getCheckpoint('projection')).toBeUndefined();
+    minidb.setCheckpoint = originalSetCheckpoint;
+    await store.setCheckpoint('projection', { seq: 3 });
+    expect(await store.getCheckpoint('projection')).toEqual({ seq: 3 });
+    expect(await minidb.getCheckpoint('projection')).toEqual({ seq: 3 });
+
     expect(await fsp.readFile(join(storeDir, 'shard-01', 'marker'), 'utf8')).toBe('derived');
     expect(await fsp.readFile(join(searchDir, 'marker'), 'utf8')).toBe('derived');
     expect(await fsp.readFile(authoritative, 'utf8')).toBe('{"id":"session"}');
@@ -405,6 +421,19 @@ describe('DualWriteQueryStore', () => {
     expect(await backup(second).get(COLLECTION, 'b')).toEqual({ id: 'b', v: 2 });
     const page = await second.query<{ id: string; v: number }>(COLLECTION).where({ v: 2 }).execute();
     expect(page.items).toEqual([{ id: 'b', v: 2 }]);
+
+    await second.close();
+    (disposeHost as (() => void) | undefined)?.();
+    disposeHost = undefined;
+    await fsp.writeFile(file, 'not a sqlite database');
+    const third = build();
+    await expect(third.get(COLLECTION, 'b')).rejects.toThrow(/SQLITE_NOTADB|not a database/i);
+    expect(await third.get(COLLECTION, 'b')).toBeUndefined();
+    await third.put(COLLECTION, 'c', { id: 'c', v: 3 });
+    expect(await third.get(COLLECTION, 'c')).toEqual({ id: 'c', v: 3 });
+    expect(await backup(third).get(COLLECTION, 'c')).toEqual({ id: 'c', v: 3 });
+    const artifacts = await fsp.readdir(join(homeDir, 'cache'));
+    expect(artifacts.some((name) => name.startsWith(`${STORE_FILE}.corrupt-`))).toBe(true);
   });
 
   it('resets and rebuilds the store after poison-class or persistent transient failures', async () => {

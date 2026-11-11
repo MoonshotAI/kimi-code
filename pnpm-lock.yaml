@@ -419,6 +419,9 @@ importers:
       acorn:
         specifier: 8.17.0
         version: 8.17.0
+      better-sqlite3:
+        specifier: ^13.0.3
+        version: 13.0.3
       jsdom:
         specifier: ^30.0.1
         version: 30.0.1(@noble/hashes@2.4.0)
