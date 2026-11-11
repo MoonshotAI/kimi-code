@@ -605,6 +605,54 @@ describe('live fold parity', () => {
     expect(transcript.foldedLength).toBe(3);
   });
 
+  it('restores signature metadata and raw tool ids from loop events', () => {
+    const records: WireRecord[] = [
+      loopEvent({ type: 'step.begin', uuid: 'step-1' }),
+      loopEvent({
+        type: 'content.part',
+        stepUuid: 'step-1',
+        part: { type: 'text', text: '', meta: { thought_signature_b64: 'sig-end' } },
+      }),
+      loopEvent({
+        type: 'tool.call',
+        stepUuid: 'step-1',
+        toolCallId: 'local_call',
+        rawId: 'call_native',
+        name: 'get_weather',
+        args: {},
+        extras: { thought_signature_b64: 'sig-tool' },
+      }),
+      loopEvent({
+        type: 'tool.result',
+        toolCallId: 'local_call',
+        result: { output: 'sunny' },
+      }),
+      loopEvent({ type: 'step.end', uuid: 'step-1' }),
+    ];
+    expect(reduceContextTranscript(records).entries).toEqual([
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: '', meta: { thought_signature_b64: 'sig-end' } }],
+        toolCalls: [
+          {
+            type: 'function',
+            id: 'local_call',
+            rawId: 'call_native',
+            name: 'get_weather',
+            arguments: '{}',
+            extras: { thought_signature_b64: 'sig-tool' },
+          },
+        ],
+      },
+      {
+        role: 'tool',
+        toolCallId: 'local_call',
+        content: [{ type: 'text', text: 'sunny' }],
+        toolCalls: [],
+      },
+    ]);
+  });
+
   it('keeps injections not owned by any removed prompt across undo', () => {
     const result = reduceContextTranscript([
       appendMessage(userMessage('note', { kind: 'injection', variant: 'test' })),
