@@ -2217,6 +2217,46 @@ describe('server-v2 /api/v1/sessions', () => {
     expect((await getJson<ConversationTurnsPage>(path)).body.data.turns).toEqual([]);
   });
 
+  it('undoes a turn only once when two requests race for it', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home } });
+    const id = created.body.data.id;
+    const session = getLiveSessionById((server as RunningServer).core.accessor, id)!;
+    await session.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
+    const agent = session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
+    const dispatcher = agent.accessor.get(IEventDispatcher);
+    for (let turnId = 0; turnId < 3; turnId++) {
+      await dispatcher.dispatch(new TurnPrompt({
+        agentId: MAIN_AGENT_ID,
+        input: [{ type: 'text', text: `prompt ${turnId}` }],
+        origin: { kind: 'user' },
+        turnId,
+      }));
+      await dispatcher.dispatch(new ContextAppendMessage({
+        agentId: MAIN_AGENT_ID,
+        message: { role: 'user', content: [{ type: 'text', text: `prompt ${turnId}` }], origin: { kind: 'user' } },
+      }));
+      await dispatcher.dispatch(new ContextAppendMessage({
+        agentId: MAIN_AGENT_ID,
+        message: { role: 'assistant', content: [{ type: 'text', text: `answer ${turnId}` }], toolCalls: [] },
+      }));
+      await dispatcher.dispatch(new TurnEnded({ agentId: MAIN_AGENT_ID, turnId, reason: 'completed' }));
+    }
+    await agent.accessor.get(IWireService).flush();
+    const path = `/api/v1/sessions/${id}/agents/main/turns`;
+    const turnIds = (await getJson<ConversationTurnsPage>(path)).body.data.turns.map((turn) => turn.turn_id);
+    expect(turnIds).toHaveLength(3);
+
+    const results = await Promise.all([
+      postJson<{ removed_turn_ids: string[] }>(`/api/v1/sessions/${id}:undo`, { turn_id: turnIds[2] }),
+      postJson<{ removed_turn_ids: string[] }>(`/api/v1/sessions/${id}:undo`, { turn_id: turnIds[2] }),
+    ]);
+
+    expect(results.map((result) => result.body.code).toSorted()).toEqual([0, 40421]);
+    expect((await getJson<ConversationTurnsPage>(path)).body.data.turns.map((turn) => turn.turn_id)).toEqual(
+      turnIds.slice(0, 2),
+    );
+  });
+
   it('forks an undo-branched wire self-contained and replays it equivalently', async () => {
     const cwd = home as string;
     const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
