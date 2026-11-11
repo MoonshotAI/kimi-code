@@ -267,6 +267,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         }
         await planHandle.accessor.get(IAgentPlanService).enter();
       }
+      await opts.prepare?.(handle);
       await this.appendSessionIndexEntry(sessionId, workDir);
     } catch (error) {
       const sessionDir = handle.accessor.get(ISessionContext).sessionDir;
@@ -274,6 +275,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       await this.drainAgents(handle).catch(() => {});
       void handle.dispose();
       await this.hostFs.remove(sessionDir).catch(() => {});
+      await this.index.remove(sessionId).catch(() => {});
       throw error;
     }
     await this.announceCreated({ sessionId, handle, source: 'startup' });

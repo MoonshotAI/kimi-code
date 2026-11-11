@@ -148,7 +148,7 @@ export class APIStatusError extends ChatProviderError {
           statusCode,
           requestId: requestId ?? null,
           traceId: resolvedTraceId ?? null,
-          diagnostics,
+          diagnostics: diagnostics ?? {},
         },
       },
       diagnostics,

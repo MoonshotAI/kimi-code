@@ -415,7 +415,7 @@ describe('foldWireRecords', () => {
       { type: 'turn.prompt', input: [{ type: 'text', text: 'next' }], origin: { kind: 'user' }, time: 6 },
       appendMessage(userMessage('next', { kind: 'user' }), 7),
     ]);
-    expect(messageRecords(turnClock.replay).map((record) => record.type === 'message' ? record.turnId : undefined)).toEqual([4, 4, 6]);
+    expect(messageRecords(turnClock.replay).map((record) => record.type === 'message' ? record.turnId : undefined)).toEqual([4, 5, 6]);
 
     const mixed = fold([
       { type: 'turn.prompt', turnId: 7, input: [{ type: 'text', text: 'persistent' }], origin: { kind: 'user' }, time: 1 },

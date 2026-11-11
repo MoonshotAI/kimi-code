@@ -7,6 +7,16 @@ import { projectContext } from '../../src/lib/context-projector';
 import { readAgentWire } from '../../src/lib/wire-reader';
 import { join } from 'node:path';
 
+function turnPrompt(text: string, promptId = text) {
+  return {
+    type: 'turn.prompt' as const,
+    input: [{ type: 'text' as const, text }],
+    origin: { kind: 'user' as const },
+    promptId,
+    trigger: 'normal' as const,
+  };
+}
+
 describe('context-projector', () => {
   let cleanup: (() => Promise<void>) | null = null;
   afterEach(async () => { if (cleanup) await cleanup(); cleanup = null; });
@@ -161,7 +171,7 @@ describe('context-projector', () => {
   });
 
   it.each(['interrupted', 'error'] as const)(
-    'keeps a %s step open until the next attempt settles it',
+    'seals a %s step immediately and keeps it beside the next attempt',
     (finishReason) => {
       const entries: Array<{ lineNo: number; data: Record<string, unknown>; raw: object }> = [
         { lineNo: 1, data: { type: 'context.append_loop_event' as const,
@@ -175,7 +185,7 @@ describe('context-projector', () => {
 
       const interrupted = projectContext(entries as any);
       expect(interrupted.messages).toHaveLength(1);
-      expect(interrupted.messages[0]!.message.partial).toBe(true);
+      expect(interrupted.messages[0]!.message.partial).toBeUndefined();
 
       entries.push(
         { lineNo: 4, data: { type: 'context.append_loop_event' as const,
@@ -616,6 +626,7 @@ describe('context-projector', () => {
     // array-slice would have retained the wrong prompts.
     const entries = [
       { lineNo: 1, data: { type: 'context.append_message' as const, message: userMsg('u1') }, raw: {} },
+      { lineNo: 2, data: turnPrompt('u2'), raw: {} },
       { lineNo: 2, data: { type: 'context.append_message' as const, message: userMsg('u2') }, raw: {} },
       { lineNo: 3, data: { type: 'context.undo' as const, count: 1 }, raw: {} },
       { lineNo: 4, data: { type: 'context.append_message' as const, message: userMsg('u3') }, raw: {} },
@@ -658,6 +669,7 @@ describe('context-projector', () => {
     // against the naive array-index pass.
     const entries = [
       { lineNo: 1, data: { type: 'context.append_message' as const, message: toolMsg('c0', bigText) }, raw: {} },
+      { lineNo: 2, data: turnPrompt('u1'), raw: {} },
       { lineNo: 2, data: { type: 'context.append_message' as const, message: userMsg('u1') }, raw: {} },
       { lineNo: 3, data: { type: 'context.undo' as const, count: 1 }, raw: {} },
       { lineNo: 4, data: { type: 'context.append_message' as const, message: toolMsg('c1', bigText) }, raw: {} },
@@ -679,6 +691,7 @@ describe('context-projector', () => {
       { lineNo: 1, data: { type: 'context.append_message' as const, message: userMsg('u1') }, raw: {} },
       { lineNo: 2, data: { type: 'context.append_message' as const,
           message: { role: 'assistant' as const, content: [{ type: 'text' as const, text: 'a1' }], toolCalls: [] } }, raw: {} },
+      { lineNo: 3, data: turnPrompt('u2'), raw: {} },
       { lineNo: 3, data: { type: 'context.append_message' as const, message: userMsg('u2') }, raw: {} },
       { lineNo: 4, data: { type: 'context.undo' as const, count: 1 }, raw: {} },
     ];
@@ -710,6 +723,7 @@ describe('context-projector', () => {
       { lineNo: 1, data: { type: 'context.append_message' as const, message: userMsg('u1') }, raw: {} },
       { lineNo: 2, data: { type: 'context.append_message' as const,
           message: { role: 'assistant' as const, content: [{ type: 'text' as const, text: 'a1' }], toolCalls: [] } }, raw: {} },
+      { lineNo: 3, data: turnPrompt('u2'), raw: {} },
       { lineNo: 3, data: { type: 'context.append_message' as const, message: userMsg('u2') }, raw: {} },
       { lineNo: 4, data: { type: 'context.append_message' as const, message: injectionMsg('inj') }, raw: {} },
       { lineNo: 5, data: { type: 'context.append_message' as const,
@@ -738,6 +752,7 @@ describe('context-projector', () => {
           content: [{ type: 'text' as const, text: 'owned reminder' }], toolCalls: [],
           origin: { kind: 'injection' as const, variant: 'prompt-context', ownerPromptId: 'p2' },
         } }, raw: {} },
+      { lineNo: 2.5, data: turnPrompt('u2', 'p2'), raw: {} },
       { lineNo: 3, data: { type: 'context.append_message' as const, message: {
           id: 'p2', role: 'user' as const,
           content: [{ type: 'text' as const, text: 'u2' }], toolCalls: [],
@@ -863,6 +878,7 @@ describe('context-projector', () => {
     // by the stale large cutoff.
     const entries = [
       { lineNo: 1, data: { type: 'context.append_message' as const, message: toolMsg('c0', bigText) }, raw: {} },
+      { lineNo: 2, data: turnPrompt('u1'), raw: {} },
       { lineNo: 2, data: { type: 'context.append_message' as const, message: userMsg('u1') }, raw: {} },
       { lineNo: 3, data: { type: 'context.append_message' as const, message: toolMsg('c2', bigText) }, raw: {} },
       { lineNo: 4, data: { type: 'micro_compaction.apply' as const, cutoff: 3 }, raw: {} },
@@ -915,8 +931,10 @@ describe('context-projector', () => {
     // the history-count clamp.
     const entries = [
       { lineNo: 1, data: { type: 'context.append_message' as const, message: userMsg('u1') }, raw: {} },
+      { lineNo: 2, data: turnPrompt('u2'), raw: {} },
       { lineNo: 2, data: { type: 'context.append_message' as const, message: userMsg('u2') }, raw: {} },
       { lineNo: 3, data: { type: 'context.undo' as const, count: 1 }, raw: {} },
+      { lineNo: 4, data: turnPrompt('u3'), raw: {} },
       { lineNo: 4, data: { type: 'context.append_message' as const, message: userMsg('u3') }, raw: {} },
       { lineNo: 5, data: { type: 'micro_compaction.apply' as const, cutoff: 5 }, raw: {} },
       { lineNo: 6, data: { type: 'context.undo' as const, count: 1 }, raw: {} },
@@ -1073,6 +1091,7 @@ describe('context-projector', () => {
       { lineNo: 1, data: { type: 'context.append_message' as const, message: userMsg('u1') }, raw: {} },
       { lineNo: 2, data: { type: 'context.append_message' as const,
           message: { role: 'assistant' as const, content: [{ type: 'text' as const, text: 'a1' }], toolCalls: [] } }, raw: {} },
+      { lineNo: 3, data: turnPrompt('u2'), raw: {} },
       { lineNo: 3, data: { type: 'context.append_message' as const, message: userMsg('u2') }, raw: {} },
       { lineNo: 4, data: { type: 'context.undo' as const, count: 1 }, raw: {} },
     ];

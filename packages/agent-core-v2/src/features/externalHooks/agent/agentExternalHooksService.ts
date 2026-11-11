@@ -5,20 +5,19 @@ import { defineState } from '#/state/state';
 import { isPlainRecord } from '#/_base/utils/canonical-args';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { IAgentTaskService, type AgentTaskInfo, type AgentTaskNotificationContext } from '#/agent/task/task';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { historyEntryFromContext } from '#/agent/loop/history';
 import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
 import {
   IAgentFullCompactionService,
   type FullCompactionTask,
 } from '#/agent/fullCompaction/fullCompaction';
 import type { CompactionResult } from '#/agent/fullCompaction/types';
-import { IAgentLoopService, type AfterStepContext } from '#/agent/loop/loop';
+import { IAgentLoopService, type AfterStepContext, type PromptSubmitContext } from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
-import { type PromptSubmitContext } from '#/agent/loop/loop';
 import { PromptQueued } from '#/agent/prompt/promptEvents';
-import { TaskNotified, TaskStarted } from '#/agent/task/taskOps';
+import type { AgentTaskInfo } from '#/agent/task/task';
+import { TaskStarted } from '#/agent/task/taskOps';
 import {
   PermissionApprovalRequested,
   PermissionApprovalResolved,
@@ -29,6 +28,7 @@ import type { ExecutableToolResult } from '#/tool/toolContract';
 import type { ResolvedToolExecutionHookContext, ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { legacyDidExecuteContext, registerLegacyStarting } from '#/agent/toolExecutor/legacyHooks';
 import { toKimiErrorPayload } from '#/errors';
 import { fromCorePart } from '#human/message';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
@@ -72,7 +72,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
 
   constructor(
     @IExternalHooksRunnerService private readonly runner: IExternalHooksRunnerService,
-    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
+    @IAgentLoopService private readonly loop: IAgentLoopService,
     @IEventBus private readonly eventBus: IEventBus,
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @ISessionContext private readonly sessionContext: ISessionContext,
@@ -184,26 +184,19 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
       this.instantiation.invokeFunction((accessor) => accessor.get(IAgentFullCompactionService)),
     );
 
-    this.registerTaskHooks(
-      this.instantiation.invokeFunction((accessor) => accessor.get(IAgentTaskService)),
-    );
+    this.registerTaskHooks();
   }
 
   private registerToolHooks(toolExecutor: IAgentToolExecutorService): void {
-    this._register(
-      toolExecutor.onBeforeExecuteTool(async (event) => {
-        const reason = await this.runPreToolUse(event);
-        if (reason !== undefined) {
-          event.veto(denyToolExecution(reason));
-        }
-      }),
-    );
-    this._register(
-      toolExecutor.hooks.onDidExecuteTool.register('externalHooks', async (ctx, next) => {
-        this.notifyPostToolUse(ctx);
-        await next();
-      }),
-    );
+    this._register(registerLegacyStarting(toolExecutor, async (event) => {
+      const reason = await this.runPreToolUse(event);
+      if (reason !== undefined) event.veto(denyToolExecution(reason));
+    }));
+    this._register(toolExecutor.registerHook({
+      afterExecute: (context) => {
+        this.notifyPostToolUse(legacyDidExecuteContext(context));
+      },
+    }));
   }
 
   private registerPermissionHooks(): void {
@@ -282,12 +275,13 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
         const reason = await this.runStop(ctx);
         if (reason !== undefined) {
           this.stopHookContinuationUsed = true;
-          this.context.append({
-            role: 'user',
-            content: [{ type: 'text', text: reason }],
-            origin: { kind: 'system_trigger', name: 'stop_hook' },
+          loop.notify({
+            message: {
+              role: 'user',
+              content: [{ type: 'text', text: reason }],
+              origin: { kind: 'system_trigger', name: 'stop_hook' },
+            },
           });
-          loop.notify();
           return;
         }
       }),
@@ -306,13 +300,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     );
   }
 
-  private registerTaskHooks(_tasks: IAgentTaskService): void {
-    this._register(
-      this.eventBus.subscribe(TaskNotified, (e) => {
-        const { type: _type, time: _time, ...ctx } = e;
-        this.notifyTaskNotification(ctx);
-      }),
-    );
+  private registerTaskHooks(): void {
     this._register(
       this.eventBus.subscribe(TaskStarted, (e) => this.notifyTaskStarted(e.info)),
     );
@@ -390,12 +378,12 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
 
     const block = renderUserPromptHookBlockResult(results);
     if (block !== undefined) {
-      this.context.append({
+      this.loop.remind(historyEntryFromContext({
         role: 'assistant',
         content: [{ type: 'text', text: block.text }],
         toolCalls: [],
         origin: { kind: 'hook_result', event: block.event, blocked: true },
-      });
+      }));
       void this.dispatcher.dispatch(
         new HookResult({
           agentId: this.scopeContext.agentId,
@@ -487,15 +475,6 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     );
   }
 
-  private notifyTaskNotification(ctx: AgentTaskNotificationContext): void {
-    const signal = new AbortController().signal;
-    this.fireAndForget(
-      'Notification',
-      { sink: 'context', ...ctx },
-      ctx.notificationType,
-      signal,
-    );
-  }
 }
 
 function toolOutputText(output: ExecutableToolResult['output']): string {

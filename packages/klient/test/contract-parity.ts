@@ -15,7 +15,7 @@ import type { IAgentEnvironmentBindingService } from '@moonshot-ai/agent-core-v2
 import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type { SessionActivityState } from '@moonshot-ai/agent-core-v2/session/sessionActivity/sessionActivity';
 import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
-import type { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
+import type { IAgentLoopService } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import type { PromptLaunchResult, SteerResult } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import type { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommand';
 import type { IAgentSkillService } from '@moonshot-ai/agent-core-v2/features/skill/skillService';
@@ -160,7 +160,7 @@ import type { TaskInfo } from '@moonshot-ai/agent-core-v2/agent/task/types';
 import type {
   ToolCallDeltaEvent,
   ToolCallStartedEvent,
-  ToolProgressEvent,
+  ToolUpdatedEvent,
 } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
 import type { WarningEvent } from '@moonshot-ai/agent-core-v2/errors';
 
@@ -190,8 +190,8 @@ import {
   setModelResultSchema,
   setPermissionPayloadSchema,
   shellCommandResultSchema,
-  steerPayloadSchema,
   steerResultSchema,
+  steerEntrySchema,
   stopTaskPayloadSchema,
   tokenUsageSchema,
   usageStatusSchema,
@@ -207,7 +207,7 @@ import {
   thinkingDeltaEventSchema,
   toolCallDeltaEventSchema,
   toolCallStartedEventSchema,
-  toolProgressEventSchema,
+  toolUpdatedEventSchema,
   toolResultEventSchema,
   turnEndedEventSchema,
   turnStartedEventSchema,
@@ -330,7 +330,7 @@ import {
 } from '../src/contract/global/workspaces.js';
 
 import type { AssertWire, MutableDeep } from './helpers/typeAssert.js';
-import type { AgentFacade } from '../src/core/facade/agent.js';
+import type { AgentFacade, AgentSteerEntry } from '../src/core/facade/agent.js';
 
 /** One-directional: the engine type must be assignable TO the schema's infer. */
 type AssertEngineToWire<TSchema extends z.ZodType, TEngine> = [MutableDeep<TEngine>] extends [
@@ -616,11 +616,10 @@ type AgentCommandInfo = ReturnType<IAgentCommandService['list']>[number];
 type EnvironmentBinding = IAgentEnvironmentBindingService['current'];
 type RunShellCommandPayload = Parameters<IAgentShellCommandService['run']>[0];
 type ShellCommandResult = Awaited<ReturnType<IAgentShellCommandService['run']>>;
-type SetModelResult = Awaited<ReturnType<IAgentProfileService['setModel']>>;
+type SetModelResult = Awaited<ReturnType<IAgentLoopService['setModel']>>;
 type TokenUsage = NonNullable<UsageStatus['total']>;
 type PromptPart = Extract<ContentPart, { type: 'text' | 'image_url' | 'video_url' }>;
 type PromptPayload = Parameters<AgentFacade['prompt']>[0];
-type SteerPayload = Parameters<AgentFacade['steer']>[0];
 
 type EmptyPayload = {};
 type CancelPayload = NonNullable<Parameters<AgentFacade['cancel']>[0]>;
@@ -649,7 +648,7 @@ const _promptWithSkillsPayload: AssertWireToEngine<
   typeof promptWithSkillsPayloadSchema,
   PromptWithSkillsPayload
 > = true;
-const _steerPayload: AssertWireToEngine<typeof steerPayloadSchema, SteerPayload> = true;
+const _steerEntry: AssertWireToEngine<typeof steerEntrySchema, AgentSteerEntry> = true;
 const _activateSkillPayload: AssertWire<typeof activateSkillPayloadSchema, ActivateSkillPayload> =
   true;
 const _promptLaunchResult: AssertWire<typeof promptLaunchResultSchema, PromptLaunchResult> = true;
@@ -711,7 +710,7 @@ const _toolCallStartedEvent: AssertEngineToWire<
   ToolCallStartedEvent
 > = true;
 const _toolCallDeltaEvent: AssertWire<typeof toolCallDeltaEventSchema, ToolCallDeltaEvent> = true;
-const _toolProgressEvent: AssertWire<typeof toolProgressEventSchema, ToolProgressEvent> = true;
+const _toolUpdatedEvent: AssertWire<typeof toolUpdatedEventSchema, ToolUpdatedEvent> = true;
 const _toolResultEvent: AssertWire<typeof toolResultEventSchema, ToolResultEvent> = true;
 const _promptCompletedEvent: AssertWire<typeof promptCompletedEventSchema, PromptCompletedEvent> =
   true;

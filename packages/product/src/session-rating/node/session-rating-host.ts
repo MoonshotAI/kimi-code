@@ -7,7 +7,6 @@ import {
   IAgentLifecycleService,
   IAgentLoopService,
   IAgentPermissionModeService,
-  IAgentProfileService,
   IBootstrapService,
   IConfigService,
   IEventBus,
@@ -365,7 +364,7 @@ function readEnvironment(
     };
   }
   const context = agentContextOf(agent);
-  const profile = agent.accessor.get(IAgentProfileService);
+  const profile = agent.accessor.get(IAgentLoopService);
   const alias = profile.getModel();
   const total = agent.accessor.get(ISessionUsageService).status(context).total;
   return {

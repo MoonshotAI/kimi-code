@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, realpathSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { PassThrough } from 'node:stream';
 
 import { join } from 'pathe';
 import { describe, expect, it } from 'vitest';
@@ -13,9 +14,10 @@ import {
   StdioMcpClient,
   type StdioMcpClientOptions,
 } from '#/mcpCore/client-stdio';
+import { McpClassifiedStartupError } from '#/mcpCore/client-shared';
 import type { McpServerStdioConfig } from '#/mcpCore/config-schema';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
-import type { IHostProcessService } from '#/os/interface/hostProcess';
+import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 
 import {
@@ -571,6 +573,90 @@ describe('StdioMcpClient', () => {
 
     expect(tracked.every((entry) => entry.disposed)).toBe(true);
   }, 15000);
+
+  it('classifies a process-level ENOENT during startup as a config error', async () => {
+    const fakeProc: IHostProcess = {
+      _serviceBrand: undefined,
+      pid: 4242,
+      exitCode: 1,
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      wait: () => Promise.reject(Object.assign(new Error('spawn definitely-missing ENOENT'), { code: 'ENOENT' })),
+      kill: async () => {},
+      dispose: () => {},
+    };
+    const processService: IHostProcessService = {
+      _serviceBrand: undefined,
+      spawn: () => Promise.resolve(fakeProc),
+    };
+    const environment = Object.assign(
+      new FakeEnvironment(
+        { environmentId: 'local', generation: 'test' },
+        { capabilities: ['process'] },
+      ),
+      { process: processService },
+    );
+    const client = new StdioMcpClient(
+      { transport: 'stdio', command: 'definitely-missing', args: [] },
+      {
+        environmentResolver: {
+          _serviceBrand: undefined,
+          inspect: () => environment,
+          acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }),
+          acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }),
+        },
+        environmentId: 'local',
+        defaultCwd: process.cwd(),
+      },
+    );
+    await expect(client.connect()).rejects.toSatisfy((err: unknown) => {
+      expect(err).toBeInstanceOf(McpClassifiedStartupError);
+      expect((err as McpClassifiedStartupError).failureKind).toBe('config');
+      return true;
+    });
+  });
+
+  it('does not hang when the process outlives its closed stdout', async () => {
+    const stdout = new PassThrough();
+    stdout.end();
+    const fakeProc: IHostProcess = {
+      _serviceBrand: undefined,
+      pid: 4242,
+      exitCode: null,
+      stdin: new PassThrough(),
+      stdout,
+      stderr: new PassThrough(),
+      wait: () => new Promise<number>(() => {}),
+      kill: async () => {},
+      dispose: () => {},
+    };
+    const processService: IHostProcessService = {
+      _serviceBrand: undefined,
+      spawn: () => Promise.resolve(fakeProc),
+    };
+    const environment = Object.assign(
+      new FakeEnvironment(
+        { environmentId: 'local', generation: 'test' },
+        { capabilities: ['process'] },
+      ),
+      { process: processService },
+    );
+    const client = new StdioMcpClient(
+      { transport: 'stdio', command: 'fake', args: [] },
+      {
+        environmentResolver: {
+          _serviceBrand: undefined,
+          inspect: () => environment,
+          acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }),
+          acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }),
+        },
+        environmentId: 'local',
+        defaultCwd: process.cwd(),
+      },
+    );
+    await expect(client.connect()).rejects.toThrow(/Connection closed/);
+  }, 10000);
 });
 
 describe('mergeStdioEnv', () => {

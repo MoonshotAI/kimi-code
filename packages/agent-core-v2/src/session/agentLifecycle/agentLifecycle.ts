@@ -3,7 +3,7 @@ import type { IAgentScopeHandle } from '#/_base/di/scope';
 import type { Event } from '#/_base/event';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
-import type { BindAgentInput } from '#/agent/profile/profile';
+import type { BindAgentInput, ProfileBindingSnapshot } from '#/agent/profile/profile';
 import type { AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
 
 export interface AgentScopeCreatedEvent {
@@ -17,6 +17,7 @@ export const MAIN_AGENT_ID = 'main';
 export interface CreateAgentOptions {
   readonly agentId?: string;
   readonly binding?: BindAgentInput;
+  readonly initialProfile?: ProfileBindingSnapshot;
   readonly environmentId?: string;
   readonly environmentCwd?: string;
   readonly forkedFrom?: string;

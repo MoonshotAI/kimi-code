@@ -103,7 +103,6 @@ export class ExitPlanModeReview {
         kind: 'result',
         result: {
           isError: true,
-          stopTurn: true,
           output: 'Plan rejected by user. Plan mode deactivated.',
         },
       };
@@ -127,7 +126,6 @@ export class ExitPlanModeReview {
       kind: 'result',
       result: {
         isError: true,
-        stopTurn: true,
         output: 'Plan rejected by user. Plan mode remains active.',
       },
     };

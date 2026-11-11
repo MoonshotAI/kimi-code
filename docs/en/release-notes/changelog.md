@@ -6,6 +6,17 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 2.5.3 (2026-11-10)
+
+### Features
+
+- Improve steer interruption logic.
+
+### Bug Fixes
+
+- web: Improved interactions and fixed known bugs.
+- Fix stdio MCP servers configured with script commands such as `npx` failing to start on Windows.
+
 ## 2.5.2 (2026-11-06)
 
 ### Bug Fixes

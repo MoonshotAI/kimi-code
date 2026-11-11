@@ -40,7 +40,7 @@ import { toLlmErrorMessage } from '#human/llm-requester/errors';
 import { resolveEndpoint } from '#human/llm/endpoint';
 import type { LlmRequestPart } from '#human/llm/requester';
 import { runLlmRequest } from '#human/llm/policy/policy';
-import type { LlmSettleControl } from '#human/llm/policy/settle';
+import { usableOutputOf, type LlmSettleControl } from '#human/llm/policy/settle';
 import {
   contentsOf,
   createRequester,
@@ -456,6 +456,7 @@ async function runLegacyRequester(
   ): LlmOutcome => ({
     type: 'failed',
     ...current,
+    message: accumulator.finish(),
     diagnostics:
       errorDiagnostics(current.rawError) ??
       request.protocol.base.diagnoseError?.({
@@ -488,8 +489,11 @@ async function runLegacyRequester(
             } else {
               serverDecodeMs += arrivedAt - lastResumeAt;
             }
-            accumulator.push(event.part);
-            control.onEvent?.(event);
+            const accumulated = accumulator.push(event.part);
+            const part = event.part.type === 'think' && accumulated.part.type === 'think'
+              ? { ...event.part, hidden: accumulated.part.hidden }
+              : event.part;
+            control.onEvent?.({ ...event, part, block: accumulated.block });
             lastResumeAt = Date.now();
             clientConsumeMs += lastResumeAt - arrivedAt;
             return;
@@ -516,7 +520,7 @@ async function runLegacyRequester(
     });
   } catch (error) {
     if (control.signal.aborted || isAbortError(error)) {
-      return { type: 'aborted', message: null, reason: error };
+      return { type: 'aborted', message: usableOutputOf(accumulator.finish()), reason: error };
     }
     const raw = unwrapErrorCause(error);
     const classified = llmMessageFromError(raw);

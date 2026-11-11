@@ -2,12 +2,12 @@ import { createHash } from 'node:crypto';
 
 import {
   PROVIDER_FILTERED_ERROR_CODE,
-  isUndoAnchor,
   type ContextMessage,
 } from '@moonshot-ai/agent-core-v2';
 import { isUserPromptSubmitHookPart } from '@moonshot-ai/agent-core-v2/agent/contextMemory/hookParts';
 import type { LoopRecordedEvent } from '@moonshot-ai/agent-core-v2/agent/contextMemory/loopEventFold';
-import { LOOP_MAX_STEPS_EXCEEDED_ERROR_CODE } from '@moonshot-ai/agent-core-v2/human/agent/errors';
+import { LoopErrors } from '@moonshot-ai/agent-core-v2/agent/loop/errors';
+import { isUndoAnchorOrigin } from '@moonshot-ai/agent-core-v2/agent/undo/turnUndo';
 import { stripBundledSkillBlocks } from '@moonshot-ai/agent-core-v2/human/agent/origin';
 import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
 import type { WireRecord } from '@moonshot-ai/agent-core-v2/wire/record';
@@ -189,6 +189,9 @@ export function applyConversationRecord(state: ConversationState, record: WireRe
     case 'subagent.spawned':
       applySubagentSpawned(state, record);
       return;
+    case 'task.started':
+      applyTaskStarted(state, record);
+      return;
     case 'full_compaction.begin':
       state.compaction = {
         trigger: record['source'] === 'manual' ? 'manual' : 'auto',
@@ -307,7 +310,7 @@ function applyMessage(state: ConversationState, message: ContextMessage | undefi
   const inTurn = origin !== undefined && 'inTurn' in origin && origin.inTurn === true;
   if (inTurn || (steered && state.pendingPrompt === undefined && open !== undefined)) {
     const turn = open ?? addTurn(state, time);
-    if (isUndoAnchor(message)) {
+    if (isUndoAnchorOrigin(message.origin)) {
       state.anchors.push({ turnId: turn.turn_id, itemCount: turn.items.length, stepCount: state.steps[turn.turn_id]?.length ?? 0 });
     }
     turn.items.push(userMessage(message.id ?? nextItemId(turn), 'steer', message.id, message, time));
@@ -321,7 +324,7 @@ function applyMessage(state: ConversationState, message: ContextMessage | undefi
   const owned = state.pendingPrompt !== undefined;
   const promptId = message.id ?? state.pendingPrompt?.promptId;
   const turn = owned ? startTurn(state, time) : addTurn(state, time);
-  if (isUndoAnchor(message)) state.anchors.push({ turnId: turn.turn_id, itemCount: 0, stepCount: 0 });
+  if (isUndoAnchorOrigin(message.origin)) state.anchors.push({ turnId: turn.turn_id, itemCount: 0, stepCount: 0 });
   if (notification) turn.items.push(...notificationItems(turn, message, time));
   else turn.items.push(userMessage(promptId ?? nextItemId(turn), 'opener', promptId, message, time));
   if (!owned) endTurn(state, turn, COMPLETED, time);
@@ -381,7 +384,7 @@ function applyLegacyToolResult(
   time: number,
 ): void {
   const found = findToolCall(state, message.toolCallId);
-  if (found !== undefined) finishToolCall(state, found, message.content, message.isError === true, time);
+  if (found !== undefined) finishToolCall(state, found, message.content, message.isError === true, message.note, time);
 }
 
 function applyLoopEvent(state: ConversationState, event: LoopRecordedEvent | undefined, time: number): void {
@@ -434,7 +437,9 @@ function applyLoopEvent(state: ConversationState, event: LoopRecordedEvent | und
     }
     case 'tool.result': {
       const found = findToolCall(state, event.toolCallId);
-      if (found !== undefined) finishToolCall(state, found, event.result.output, event.result.isError === true, time);
+      if (found !== undefined) {
+        finishToolCall(state, found, event.result.output, event.result.isError === true, event.result.note, time);
+      }
       return;
     }
   }
@@ -442,18 +447,16 @@ function applyLoopEvent(state: ConversationState, event: LoopRecordedEvent | und
 
 function applySteer(state: ConversationState, record: WireRecord): void {
   const messageId = stringField(record['messageId']);
-  if (messageId === undefined) {
-    state.pendingSteers += 1;
-    return;
-  }
   const promptIds = record['promptIds'];
-  if (!Array.isArray(promptIds)) return;
-  for (let index = state.turns.length - 1; index >= 0; index--) {
-    const item = state.turns[index]!.items.find((candidate) => candidate.item_id === messageId);
-    if (item?.type !== 'user_message') continue;
-    item.prompt_ids = promptIdsOf(item.origin, promptIds.filter((id): id is string => typeof id === 'string'));
-    return;
+  if (messageId !== undefined && Array.isArray(promptIds)) {
+    for (let index = state.turns.length - 1; index >= 0; index--) {
+      const item = state.turns[index]!.items.find((candidate) => candidate.item_id === messageId);
+      if (item?.type !== 'user_message') continue;
+      item.prompt_ids = promptIdsOf(item.origin, promptIds.filter((id): id is string => typeof id === 'string'));
+      return;
+    }
   }
+  state.pendingSteers += 1;
 }
 
 function markProvisionalEnd(state: ConversationState, turnNumber: unknown, end: TurnEnd): void {
@@ -528,7 +531,7 @@ function turnEndOf(reason: unknown, error: ErrorInfo | undefined, provisional: T
 }
 
 function failureReasonOf(error: ErrorInfo | undefined): TurnEndReason {
-  if (error?.code === LOOP_MAX_STEPS_EXCEEDED_ERROR_CODE) return 'max_steps';
+  if (error?.code === LoopErrors.codes.LOOP_MAX_STEPS_EXCEEDED) return 'max_steps';
   if (error?.code === PROVIDER_FILTERED_ERROR_CODE) return 'filtered';
   return 'error';
 }
@@ -588,6 +591,17 @@ function applySubagentSpawned(state: ConversationState, record: WireRecord): voi
   const found = findToolCall(state, toolCallId);
   if (found === undefined) return;
   found.item.agent_refs = [...(found.item.agent_refs ?? []).filter((existing) => existing.agent_id !== agentId), ref];
+}
+
+function applyTaskStarted(state: ConversationState, record: WireRecord): void {
+  const info = record['info'] as
+    | { readonly taskId?: unknown; readonly parentToolCallId?: unknown; readonly toolCallId?: unknown }
+    | undefined;
+  const taskId = stringField(info?.taskId);
+  const toolCallId = stringField(info?.parentToolCallId) ?? stringField(info?.toolCallId);
+  if (taskId === undefined || toolCallId === undefined) return;
+  const found = findToolCall(state, toolCallId);
+  if (found !== undefined) found.item.task_id = taskId;
 }
 
 function applyCompactionSummary(state: ConversationState, record: WireRecord, time: number): void {
@@ -822,10 +836,11 @@ function finishToolCall(
   found: { turn: ConversationTurn; item: ToolCallItem },
   output: string | readonly ContentPart[],
   isError: boolean,
+  note: string | undefined,
   time: number,
 ): void {
   const cancelled = state.provisionalEnds[found.turn.turn_id]?.outcome === 'interrupted';
-  endToolCall(found.item, output, !isError ? 'completed' : cancelled ? 'interrupted' : 'failed', time);
+  endToolCall(found.item, output, !isError ? 'completed' : cancelled ? 'interrupted' : 'failed', note, time);
   refreshTool(state, found.item);
 }
 
