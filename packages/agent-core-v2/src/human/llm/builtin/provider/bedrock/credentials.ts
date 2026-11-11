@@ -1,4 +1,4 @@
-import { createRequire } from 'node:module';
+import { getTokenProvider } from '@aws/bedrock-token-generator';
 
 import { errorStatusCode } from '#/llm-requester/errors';
 import type { LlmCredentialProvider } from '#/llm-requester/requester';
@@ -72,9 +72,6 @@ function defaultProvideToken(config: {
   readonly profile?: string;
   readonly expiresInSeconds?: number;
 }): () => Promise<string> {
-  const { getTokenProvider } = createRequire(import.meta.url)(
-    '@aws/bedrock-token-generator',
-  ) as typeof import('@aws/bedrock-token-generator');
   return getTokenProvider({
     region: config.region,
     profile: config.profile,
