@@ -108,6 +108,7 @@ export function toInputMessages(history: readonly HistoryMessage[]): Message[] {
 
 export interface HistoryAccumulator {
   push(part: StreamedMessagePart): number | undefined;
+  hasToolCall(): boolean;
   pushUsage(usage: Partial<TokenUsage>): void;
   pushHeaders(headers: Record<string, string>): void;
   pushFinish(finish: FinishInfo): void;
@@ -123,6 +124,7 @@ export function createHistoryAccumulator(meta?: AssistantMetaInput): HistoryAccu
   let messageId: string | undefined;
   return {
     push: (part) => inner.push(part),
+    hasToolCall: () => inner.hasToolCall(),
     pushUsage: (value) => {
       usage = {
         inputOther: value.inputOther ?? usage?.inputOther ?? 0,
@@ -177,6 +179,7 @@ export type TurnEvent =
   | { type: 'turn.pause' }
   | { type: 'turn.continue' }
   | { type: 'turn.abort'; reason?: unknown }
+  | { type: 'turn.steer' }
   | {
       type: 'turn.failure.evaluated';
       cause: Extract<LlmEvent, { type: 'llm.failed.remote' }>;
@@ -387,6 +390,16 @@ export function createTurnMachine(
         const salvaged = salvageInterruptedMessage(partial.message);
         return {
           outcome: 'aborted' as const,
+          produced:
+            salvaged === null
+              ? context.produced
+              : [...context.produced, { message: salvaged, meta: partial.meta }],
+        };
+      }),
+      salvageSteered: assign(({ context }) => {
+        const partial = context.accumulator.finish({ source: 'salvaged' });
+        const salvaged = salvageInterruptedMessage(partial.message);
+        return {
           produced:
             salvaged === null
               ? context.produced
@@ -685,6 +698,16 @@ export function createTurnMachine(
               'salvageAborted',
             ],
           },
+          'turn.steer': {
+            guard: ({ context }) => !context.accumulator.hasToolCall(),
+            target: 'draining',
+            actions: [
+              ({ context }) => {
+                context.llmScope.abort();
+              },
+              'salvageSteered',
+            ],
+          },
         },
       },
       retrying: {
@@ -696,6 +719,9 @@ export function createTurnMachine(
           'turn.abort': {
             target: 'aborted',
             actions: assign({ outcome: 'aborted' as const }),
+          },
+          'turn.steer': {
+            target: 'draining',
           },
         },
       },

@@ -68,7 +68,7 @@ import {
   type PromptMediaPreparation,
 } from '../lib/promptMedia';
 import { requestLog } from '../lib/requestLog';
-import { defineRoute } from '../middleware/defineRoute';
+import { defineRoute, type RouteDefinition } from '../middleware/defineRoute';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { type ActionTable, resolveActionTarget, runAction } from './action-dispatch';
 import { sendEnvironmentError } from './environment';
@@ -203,29 +203,12 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
   );
   app.get(listRoute.path, listRoute.options, listRoute.handler as Parameters<PromptRouteHost['get']>[2]);
 
-  const submitRoute = defineRoute(
-    {
-      method: 'POST',
-      path: '/sessions/{session_id}/prompts',
-      body: promptSubmissionSchema,
-      params: sessionIdParamSchema,
-      success: { data: promptSubmitResultSchema },
-      errors: {
-        [ErrorCode.VALIDATION_FAILED]: { detailsSchema: validationDetailsSchema },
-        [ErrorCode.SKILL_NOT_FOUND]: {},
-        [ErrorCode.SKILL_NOT_ACTIVATABLE]: {},
-        [ErrorCode.SESSION_NOT_FOUND]: {},
-        [ErrorCode.FILE_NOT_FOUND]: {},
-        [ErrorCode.PROMPT_ID_CONFLICT]: {},
-        [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
-        [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
-        ...sessionConflictErrors,
-      },
-      description: 'Submit a prompt to a session',
-      tags: ['prompts'],
-      operationId: 'submitPrompt',
-    },
-    async (req, reply) => {
+  type PromptSubmissionHandler = RouteDefinition<
+    typeof promptSubmissionSchema,
+    typeof sessionIdParamSchema,
+    undefined
+  >['handler'];
+  const submit = (directSteer: boolean): PromptSubmissionHandler => async (req, reply) => {
       const { session_id } = req.params;
       let attempt: PromptAttempt;
       try {
@@ -353,6 +336,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
                 clientMetadata,
                 skills: req.body.skills,
                 attachments: promptAttachments,
+                steerIfActive: directSteer || undefined,
               });
             } catch (error) {
               settlement.dispose();
@@ -383,7 +367,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
               origin: { kind: 'user', attachments: promptAttachments, clientMetadata } as PromptOrigin,
               tracked: true,
             },
-          });
+          }, { steerIfActive: directSteer || undefined });
           attempt.enqueued();
           enqueued = true;
           const handle = resolved.prompt.promptHandle(id)!;
@@ -409,9 +393,59 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         attempt.fail(error);
         sendMappedError(reply, req, error);
       }
+  };
+
+  const submitRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/sessions/{session_id}/prompts',
+      body: promptSubmissionSchema,
+      params: sessionIdParamSchema,
+      success: { data: promptSubmitResultSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: { detailsSchema: validationDetailsSchema },
+        [ErrorCode.SKILL_NOT_FOUND]: {},
+        [ErrorCode.SKILL_NOT_ACTIVATABLE]: {},
+        [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.FILE_NOT_FOUND]: {},
+        [ErrorCode.PROMPT_ID_CONFLICT]: {},
+        [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
+        [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
+        ...sessionConflictErrors,
+      },
+      description: 'Submit a prompt to a session',
+      tags: ['prompts'],
+      operationId: 'submitPrompt',
     },
+    submit(false),
   );
   app.post(submitRoute.path, submitRoute.options, submitRoute.handler as Parameters<PromptRouteHost['post']>[2]);
+
+  const directSteerRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/sessions/{session_id}/steer',
+      body: promptSubmissionSchema,
+      params: sessionIdParamSchema,
+      success: { data: promptSubmitResultSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: { detailsSchema: validationDetailsSchema },
+        [ErrorCode.SKILL_NOT_FOUND]: {},
+        [ErrorCode.SKILL_NOT_ACTIVATABLE]: {},
+        [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.FILE_NOT_FOUND]: {},
+        [ErrorCode.PROMPT_ID_CONFLICT]: {},
+        [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
+        [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
+        ...sessionConflictErrors,
+      },
+      description: 'Steer a message into the active turn',
+      tags: ['prompts'],
+      operationId: 'steerPromptContent',
+    },
+    submit(true),
+  );
+  app.post(directSteerRoute.path, directSteerRoute.options, directSteerRoute.handler as Parameters<PromptRouteHost['post']>[2]);
 
   const steerManyRoute = defineRoute(
     {
