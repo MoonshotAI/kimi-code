@@ -1,5 +1,26 @@
 export { startServer } from './start';
 export type { ServerHostIdentity, ServerStartOptions, RunningServer } from './start';
+export type {
+  HostAgent,
+  HostAgentClosedEvent,
+  HostAgentMeta,
+  HostAgentState,
+  HostContentPart,
+  HostContextMessage,
+  HostDisposable,
+  HostExtension,
+  HostMcpServerState,
+  HostReminderContext,
+  HostReminderProvider,
+  HostReminderResult,
+  HostSession,
+  HostSessions,
+  HostSessionWillCreateEvent,
+  HostToolCall,
+  HostToolDecoratorContext,
+  HostToolDidExecuteContext,
+  HostToolResult,
+} from './hostExtension';
 export { okEnvelope, errEnvelope } from './envelope';
 export type { Envelope } from './envelope';
 export { classify } from './security/bindClassify';
