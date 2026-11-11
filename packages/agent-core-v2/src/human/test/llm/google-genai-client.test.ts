@@ -200,6 +200,58 @@ describe('google-genai conversation replay', () => {
       },
     ]);
   });
+
+  it('nests only function-response media types for gemini-3 and keeps the rest outside', async () => {
+    const requests: GoogleGenAIRequest['params'][] = [];
+    const client = responseClient(requests, [
+      [{ candidates: [{ content: { parts: [{ text: 'done' }] }, finishReason: 'STOP' }] }],
+    ]);
+    await googleGenAIRequester.generate(
+      {
+        model: { spec: { provider: 'google', name: 'gemini-3-pro-preview' } },
+        endpoint: { apiKey: undefined, clientFactory: () => client },
+        content: {
+          messages: [
+            {
+              role: 'assistant',
+              content: [],
+              toolCalls: [
+                { type: 'function', id: 'local_call', name: 'read_media', arguments: '{}' },
+              ],
+            },
+            {
+              role: 'tool',
+              toolCallId: 'local_call',
+              content: [
+                { type: 'text', text: 'loaded' },
+                { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
+                { type: 'image_url', imageUrl: { url: 'data:image/gif;base64,BBBB' } },
+                { type: 'audio_url', audioUrl: { url: 'data:audio/wav;base64,CCCC' } },
+                { type: 'image_url', imageUrl: { url: 'https://example.com/a.webp' } },
+              ],
+            },
+          ],
+        },
+      },
+      { signal: new AbortController().signal },
+    );
+    expect(requests[0]?.['contents']?.[1]).toEqual({
+      role: 'user',
+      parts: [
+        {
+          functionResponse: {
+            id: undefined,
+            name: 'read_media',
+            response: { output: 'loaded' },
+            parts: [{ inlineData: { mimeType: 'image/png', data: 'AAAA' } }],
+          },
+        },
+        { inlineData: { mimeType: 'image/gif', data: 'BBBB' } },
+        { inlineData: { mimeType: 'audio/wav', data: 'CCCC' } },
+        { fileData: { fileUri: 'https://example.com/a.webp', mimeType: 'image/webp' } },
+      ],
+    });
+  });
 });
 
 describe('google-genai client base URL', () => {

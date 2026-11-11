@@ -43,6 +43,14 @@ export interface Request {
 
 type GoogleGenAIModule = LlmModule<GoogleGenAIOptions>;
 
+const FUNCTION_RESPONSE_MIME_TYPES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'application/pdf',
+  'text/plain',
+]);
+
 function toolCallIdToName(toolCallId: string, messages: readonly Message[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i]!;
@@ -118,6 +126,13 @@ export function lowerMessage(message: Message, module: GoogleGenAIModule): Nativ
       }
     }
     const modernFunctionResponses = /^gemini-(?:[3-9]|[1-9]\d)-/.test(module.model.spec.name);
+    const nestedParts = modernFunctionResponses
+      ? mediaParts.filter(
+          (part) =>
+            part.inlineData !== undefined &&
+            FUNCTION_RESPONSE_MIME_TYPES.has(part.inlineData.mimeType.toLowerCase()),
+        )
+      : [];
     return [
       {
         role: 'user',
@@ -127,10 +142,10 @@ export function lowerMessage(message: Message, module: GoogleGenAIModule): Nativ
               id: toolCallOf(message.toolCallId, module.content.messages)?.rawId,
               name: toolCallIdToName(message.toolCallId, module.content.messages),
               response: { output: textOutput },
-              parts: modernFunctionResponses ? mediaParts : undefined,
+              parts: nestedParts.length > 0 ? nestedParts : undefined,
             },
           },
-          ...(modernFunctionResponses ? [] : mediaParts),
+          ...mediaParts.filter((part) => !nestedParts.includes(part)),
         ],
       },
     ];

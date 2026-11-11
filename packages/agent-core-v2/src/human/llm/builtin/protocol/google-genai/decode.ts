@@ -13,7 +13,7 @@ import {
   type LlmRemoteErrorMessage,
   type TokenUsage,
 } from '#/llm/response';
-import type { StreamedMessagePart, ThinkPart, ToolCall } from '#/llm/message';
+import type { StreamedMessagePart, ToolCall } from '#/llm/message';
 import type { DecodeSink, Decoder } from '#/llm/protocol/protocol';
 
 function extractChunkFinishReason(response: Record<string, unknown>): unknown {
@@ -74,12 +74,7 @@ function extractChunkParts(response: Record<string, unknown>): StreamedMessagePa
         ? { thought_signature_b64: thoughtSignature }
         : undefined;
       if (p['thought'] === true && typeof p['text'] === 'string') {
-        const thoughtSignature = p['thoughtSignature'] ?? p['thought_signature'];
-        const thinkPart: ThinkPart = { type: 'think', think: p['text'] };
-        if (typeof thoughtSignature === 'string' && thoughtSignature.length > 0) {
-          thinkPart.encrypted = thoughtSignature;
-        }
-        parts.push(thinkPart);
+        parts.push({ type: 'think', think: p['text'], encrypted: signature?.thought_signature_b64 });
       } else if (typeof p['text'] === 'string') {
         parts.push({ type: 'text', text: p['text'], meta: signature });
       } else if (p['functionCall'] || p['function_call']) {
