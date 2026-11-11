@@ -11,9 +11,11 @@ import {
   IAgentToolRegistryService,
   IEventBus,
   ISessionManager,
+  SubagentSpawned,
   type ExecutableTool,
 } from '@moonshot-ai/agent-core-v2';
 import { TurnEnded } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
+import { ISessionEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
 import { startServer } from '../src/index';
 import type { HostAgent, HostExtension } from '../src/index';
 
@@ -33,6 +35,7 @@ it('exposes session and agent capabilities without leaking engine scopes', async
   const createdSessions: string[] = [];
   const closedSessions: string[] = [];
   const deletedSessions: string[] = [];
+  const spawnedAgents: string[] = [];
   const extension: HostExtension = {
     onWillCreateSession: (event) => {
       event.contributeMcpServer('host_test', {
@@ -46,6 +49,7 @@ it('exposes session and agent capabilities without leaking engine scopes', async
     onWillDeleteSession: (sessionId) => deletedSessions.push(sessionId),
     onDidCreateAgent: (agent) => createdAgents.push(agent),
     onDidCloseAgent: (event) => closedAgents.push(`${event.sessionId}:${event.agentId}:${event.generation}`),
+    onDidSpawnSubagent: (event) => spawnedAgents.push(`${event.sessionId}:${event.agentId}:${event.description}`),
   };
   const server = await startServer({
     hostIdentity: { productName: 'test-host', platform: 'test', version: '0.0.0' },
@@ -105,6 +109,10 @@ it('exposes session and agent capabilities without leaking engine scopes', async
   expect(ended).toHaveBeenCalledWith(expect.objectContaining({ turnId: 7 }));
 
   const workerContext = await lifecycle.create({ agentId: 'worker' });
+  handle.accessor.get(ISessionEventBus).publish(new SubagentSpawned({
+    subagentId: 'worker', subagentName: 'coder', parentToolCallId: 'parent-call', description: 'Inspect docs', runInBackground: true,
+  }));
+  expect(spawnedAgents).toEqual([`${handle.id}:worker:Inspect docs`]);
   await lifecycle.remove(workerContext);
   expect(closedAgents).toContain(`${handle.id}:worker:${workerContext.generation}`);
   await manager.close(handle.id);

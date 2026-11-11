@@ -8,6 +8,7 @@ import {
   IEventBus,
   ISessionMcpHandle,
   MAIN_AGENT_ID,
+  SubagentSpawned,
   type AgentContext,
   type AgentMeta,
   type ContextInjectionContext,
@@ -19,6 +20,7 @@ import {
 import { ISessionManager } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionManager';
 import { ISessionEphemeralMcpServers } from '@moonshot-ai/agent-core-v2/session/mcp/ephemeralMcpServers';
 import { ISessionMetadata } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
+import { ISessionEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
 import { TurnEnded } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import { legacyDidExecuteContext, legacyRejectedResult } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/legacyHooks';
 import type { McpServerConfig } from '@moonshot-ai/agent-core-v2/mcpCore/config-schema';
@@ -107,6 +109,7 @@ export interface HostToolDecoratorContext {
 }
 
 export interface HostAgent {
+  readonly sessionId: string;
   readonly id: string;
   readonly generation: number;
   readonly meta?: HostAgentMeta;
@@ -129,6 +132,12 @@ export interface HostAgentClosedEvent {
   readonly generation: number;
 }
 
+export interface HostSubagentSpawnedEvent {
+  readonly sessionId: string;
+  readonly agentId: string;
+  readonly description?: string;
+}
+
 export interface HostSessionWillCreateEvent {
   readonly sessionId: string;
   contributeMcpServer(name: string, config: McpServerConfig): void;
@@ -141,6 +150,7 @@ export interface HostExtension {
   onWillDeleteSession?(sessionId: string): void;
   onDidCreateAgent?(agent: HostAgent): void;
   onDidCloseAgent?(event: HostAgentClosedEvent): void;
+  onDidSpawnSubagent?(event: HostSubagentSpawnedEvent): void;
 }
 
 function agentMeta(meta: AgentMeta | undefined): HostAgentMeta | undefined {
@@ -148,9 +158,10 @@ function agentMeta(meta: AgentMeta | undefined): HostAgentMeta | undefined {
   return { type: meta.type, labels: meta.labels };
 }
 
-function createHostAgent(context: AgentContext, handle: IAgentScopeHandle, meta?: AgentMeta): HostAgent {
+function createHostAgent(sessionId: string, context: AgentContext, handle: IAgentScopeHandle, meta?: AgentMeta): HostAgent {
   const loop = handle.accessor.get(IAgentLoopService);
   return {
+    sessionId,
     id: context.agentId,
     generation: context.generation,
     meta: agentMeta(meta),
@@ -274,8 +285,11 @@ export function registerHostExtension(
     if (disposed || attached.has(handle.id)) return;
     const lifecycle = handle.accessor.get(IAgentLifecycleService);
     const disposables: IDisposable[] = [
+      handle.accessor.get(ISessionEventBus).subscribe(SubagentSpawned, (event) => {
+        extension.onDidSpawnSubagent?.({ sessionId: handle.id, agentId: event.subagentId, description: event.description });
+      }),
       lifecycle.onDidCreateScope(({ context, handle: agent, meta }) => {
-        extension.onDidCreateAgent?.(createHostAgent(context, agent, meta));
+        extension.onDidCreateAgent?.(createHostAgent(handle.id, context, agent, meta));
       }),
       lifecycle.onDidClose((context) => {
         extension.onDidCloseAgent?.({ sessionId: handle.id, agentId: context.agentId, generation: context.generation });
@@ -287,14 +301,14 @@ export function registerHostExtension(
       for (const context of lifecycle.list()) {
         const agent = lifecycle.handleOf(context.agentId);
         if (agent === undefined) continue;
-        extension.onDidCreateAgent?.(createHostAgent(context, agent, metadata.agents?.[context.agentId] ?? (context.agentId === MAIN_AGENT_ID ? { type: 'main' } : undefined)));
+        extension.onDidCreateAgent?.(createHostAgent(handle.id, context, agent, metadata.agents?.[context.agentId] ?? (context.agentId === MAIN_AGENT_ID ? { type: 'main' } : undefined)));
       }
     }, () => {
       if (disposed || !attached.has(handle.id)) return;
       for (const context of lifecycle.list()) {
         const agent = lifecycle.handleOf(context.agentId);
         if (agent === undefined) continue;
-        extension.onDidCreateAgent?.(createHostAgent(context, agent, context.agentId === MAIN_AGENT_ID ? { type: 'main' } : undefined));
+        extension.onDidCreateAgent?.(createHostAgent(handle.id, context, agent, context.agentId === MAIN_AGENT_ID ? { type: 'main' } : undefined));
       }
     });
   };
@@ -329,7 +343,11 @@ export function registerHostExtension(
   if (manager.onWillDeleteSession !== undefined) {
     subscriptions.push(manager.onWillDeleteSession(({ sessionId }) => extension.onWillDeleteSession?.(sessionId)));
   }
-  for (const handle of manager.list()) attach(handle);
+  for (const handle of manager.list()) {
+    attach(handle);
+    const session = hostSessions.get(handle.id);
+    if (session !== undefined) extension.onDidCreateSession?.(session);
+  }
   return {
     dispose() {
       if (disposed) return;

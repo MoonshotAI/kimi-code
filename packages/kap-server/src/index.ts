@@ -16,6 +16,7 @@ export type {
   HostSession,
   HostSessions,
   HostSessionWillCreateEvent,
+  HostSubagentSpawnedEvent,
   HostToolCall,
   HostToolDecoratorContext,
   HostToolDidExecuteContext,
