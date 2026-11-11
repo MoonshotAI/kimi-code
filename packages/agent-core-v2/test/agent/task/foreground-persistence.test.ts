@@ -4,7 +4,7 @@ import { join } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { IAgentTaskService } from '#/agent/task/task';
+import { IAgentTaskService, type AgentTaskInfo } from '#/agent/task/task';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { TERMINAL_STATUSES } from '#/agent/task/types';
 import { IAgentTaskOutputService } from '#/agent/task/taskOutput';
@@ -66,6 +66,8 @@ describe('AgentTaskService — foreground persistence', () => {
     join(sessionDir, TASK_TEST_AGENT_SCOPE, 'tasks', `${taskId}.json`);
 
   it('writes only output.log for a foreground task that does not spill or detach', async () => {
+    const changes: AgentTaskInfo[] = [];
+    background.onDidChangeTask((info) => changes.push(info));
     const controlled = await startControlledTaskInLoop(ctx, {
       description: 'demo',
       detached: false,
@@ -75,6 +77,9 @@ describe('AgentTaskService — foreground persistence', () => {
     const taskId = controlled.handler.taskId;
 
     await background.wait(taskId);
+    await vi.waitFor(() => {
+      expect(changes.at(-1)).toMatchObject({ taskId, status: 'completed', detached: false });
+    });
 
     expect(existsSync(taskJsonPath(taskId))).toBe(false);
     expect(existsSync(persistence.taskOutputFile(taskId))).toBe(true);

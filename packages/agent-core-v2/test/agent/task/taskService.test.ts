@@ -229,10 +229,30 @@ describe('AgentTaskService', () => {
     expect((await channel.service.stop(task.handler.taskId))?.status).toBe('killed');
   });
 
-  it('does not implicitly stop live tasks without an explicit lifecycle command', async () => {
+  it('coalesces task changes, ignores output, and cancels queued events on dispose', async () => {
     const channel = createTaskChannel();
-    await startControlledTask(channel);
-    expect(channel.service.list(true)).toHaveLength(1);
+    const changes: AgentTaskInfo[] = [];
+    channel.service.onDidChangeTask((info) => changes.push(info));
+    const task = await startControlledTask(channel, { detached: false });
+    await vi.waitFor(() => expect(changes).toHaveLength(1));
+    expect(changes[0]).toMatchObject({ status: 'running', detached: false });
+
+    task.write('output only');
+    task.handler.detach();
+    task.handler.detach();
+    channel.toolExecutor.release(task.handler.taskId);
+    await vi.waitFor(() => expect(changes).toHaveLength(2));
+    expect(changes[1]).toMatchObject({ status: 'running', detached: true });
+
+    const queued = await startControlledTask(channel, { detached: false });
+    await vi.waitFor(() => expect(changes).toHaveLength(3));
+    queued.handler.detach();
+    (channel.service as AgentTaskRequestService).dispose();
+    task.resolve('released');
+    queued.resolve('disposed');
+    await Promise.all([task.handler.wait(), queued.handler.wait()]);
+    await Promise.resolve();
+    expect(changes).toHaveLength(3);
   });
 
   it('falls back to Wire history after the live handler is released', async () => {
