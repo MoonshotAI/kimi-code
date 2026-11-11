@@ -4,6 +4,7 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { AutoModeApprovePermissionPolicyService } from '#/agent/permissionPolicy/policies/auto-mode-approve';
 import { AutoModeAskUserQuestionDenyPermissionPolicyService } from '#/agent/permissionPolicy/policies/auto-mode-ask-user-question-deny';
+import { BashReadOnlyApprovePermissionPolicyService } from '#/agent/permissionPolicy/policies/bash-read-only';
 import { DangerousCommandAskPermissionPolicyService } from '#/agent/permissionPolicy/policies/dangerous-command-ask';
 import { DefaultToolApprovePermissionPolicyService } from '#/agent/permissionPolicy/policies/default-tool-approve';
 import { FallbackAskPermissionPolicyService } from '#/agent/permissionPolicy/policies/fallback-ask';
@@ -52,6 +53,7 @@ export class AgentPermissionPolicyService
       this.instantiation.createInstance(YoloModeApprovePermissionPolicyService),
       this.instantiation.createInstance(DefaultToolApprovePermissionPolicyService),
       this.instantiation.createInstance(GitCwdWriteApprovePermissionPolicyService),
+      this.instantiation.createInstance(BashReadOnlyApprovePermissionPolicyService),
       this.instantiation.createInstance(FallbackAskPermissionPolicyService),
     ];
   }
