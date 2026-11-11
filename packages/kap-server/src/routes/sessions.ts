@@ -1,5 +1,4 @@
 import {
-  CHILD_SESSION_KIND_KEY,
   ErrorCodes,
   IAgentChangeNotifierService,
   IAgentGoalService,
@@ -24,7 +23,6 @@ import {
   ISessionManager,
   IWorkspaceInstanceManager,
   IWorkspaceService,
-  PARENT_SESSION_ID_KEY,
   closeSessionById,
   ensureMainAgent as ensureMainAgentContext,
   getLiveSessionById,
@@ -92,7 +90,7 @@ import {
   applySessionAgentConfig,
   creationMainAgentBinding,
 } from './sessionAgentConfig';
-import { updateSessionProfile } from './sessionProfile';
+import { customSessionMetadata, updateSessionProfile } from './sessionProfile';
 
 interface SessionRouteHost {
   post(
@@ -271,13 +269,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
           bucket === undefined
             ? await registry.createOrTouch(workDir)
             : ((await registry.touch(bucket.id)) ?? bucket);
-        const {
-          cwd: _cwd,
-          goal: _goal,
-          [PARENT_SESSION_ID_KEY]: _parentSessionId,
-          [CHILD_SESSION_KIND_KEY]: _childSessionKind,
-          ...custom
-        }: Record<string, unknown> = body.metadata ?? {};
+        const custom = customSessionMetadata(body.metadata);
         const agentConfig = body.agent_config ?? {};
         const mainAgentBinding = await creationMainAgentBinding(core, agentConfig);
         const { profile: _profile, model: _model, thinking: _thinking, ...settings } = agentConfig;
