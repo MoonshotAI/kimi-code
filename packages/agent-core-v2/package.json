@@ -53,7 +53,7 @@
     }
   },
   "scripts": {
-    "build": "tsdown",
+    "build": "tsdown && node scripts/copy-sqlite-prebuilds.mjs",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "gen:contract-types": "node scripts/gen-contract-types.mjs",

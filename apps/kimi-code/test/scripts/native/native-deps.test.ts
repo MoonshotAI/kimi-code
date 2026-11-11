@@ -1,5 +1,11 @@
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
 
+import { copySqlitePrebuilds } from '../../../../../build/copy-sqlite-prebuilds.mjs';
 import {
   nativeDeps,
   resolveTargetDeps,
@@ -57,7 +63,7 @@ describe('resolveTargetDeps', () => {
     ).toContain('@mariozechner/clipboard-win32-arm64-msvc');
   });
 
-  it('encodes native file paths per target', () => {
+  it('encodes native file paths per target', async () => {
     const linuxPiTui = resolveTargetDeps('linux-arm64').find(
       (d) => d.resolvedName === '@moonshot-ai/pi-tui',
     );
@@ -79,6 +85,22 @@ describe('resolveTargetDeps', () => {
     for (const target of SUPPORTED_TARGETS) {
       const sqlite = resolveTargetDeps(target).find((d) => d.resolvedName === 'better-sqlite3');
       expect(sqlite?.nativeFileRelatives).toEqual([`prebuilds/${target}.node`]);
+    }
+
+    const outDir = await mkdtemp(join(tmpdir(), 'sqlite-prebuilds-'));
+    try {
+      await copySqlitePrebuilds(outDir);
+      expect((await readdir(outDir)).toSorted()).toEqual(
+        SUPPORTED_TARGETS.map((target) => `${target}.node`).toSorted(),
+      );
+      const nativeBinding = join(outDir, `${process.platform}-${process.arch}.node`);
+      const db = new Database(':memory:', { nativeBinding });
+      expect(db.prepare('select sqlite_version() as version').get()).toMatchObject({
+        version: expect.any(String),
+      });
+      db.close();
+    } finally {
+      await rm(outDir, { recursive: true, force: true });
     }
   });
 

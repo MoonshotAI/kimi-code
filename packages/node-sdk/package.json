@@ -55,7 +55,7 @@
     "provenance": true
   },
   "scripts": {
-    "build": "tsdown && pnpm run build:dts",
+    "build": "tsdown && pnpm run build:dts && node scripts/copy-sqlite-prebuilds.mjs",
     "build:dts": "node scripts/build-dts.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf dist .tmp-api-extractor"

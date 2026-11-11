@@ -2,6 +2,8 @@ import { cp, mkdir, rm, stat } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { copySqlitePrebuilds } from '../../../build/copy-sqlite-prebuilds.mjs';
+
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = resolve(appRoot, '../..');
 const source = resolve(repoRoot, 'packages/pi-tui/native');
@@ -34,4 +36,6 @@ for (const platform of PLATFORMS) {
   await cp(srcPrebuilds, dstPrebuilds, { recursive: true });
 }
 
-console.log(`Copied pi-tui native prebuilds to ${target}`);
+await copySqlitePrebuilds(resolve(appRoot, 'dist', 'better-sqlite3'));
+
+console.log(`Copied pi-tui and SQLite native prebuilds to ${target} and ${appRoot}/dist/better-sqlite3`);
