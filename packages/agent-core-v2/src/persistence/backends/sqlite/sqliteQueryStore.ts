@@ -43,10 +43,21 @@ function packageNativeBinding(target: string): string | undefined {
   return undefined;
 }
 
-function sqliteNativeBinding(): string | undefined {
+function sqliteNativeTarget(): string {
+  if (
+    process.platform === 'linux' &&
+    (process.report.getReport() as { header: { glibcVersionRuntime?: string } }).header
+      .glibcVersionRuntime === undefined
+  ) {
+    return `linuxmusl-${process.arch}`;
+  }
+  return `${process.platform}-${process.arch}`;
+}
+
+export function sqliteNativeBinding(): string | undefined {
   const configured = process.env['KIMI_CODE_SQLITE_NATIVE_BINDING'];
   if (configured !== undefined) return configured;
-  const target = `${process.platform}-${process.arch}`;
+  const target = sqliteNativeTarget();
   const bundled = join(
     dirname(fileURLToPath(import.meta.url)),
     'better-sqlite3',
@@ -71,6 +82,12 @@ const SCHEMA = `
     PRIMARY KEY (collection, key, column_name),
     FOREIGN KEY (collection, key) REFERENCES query_documents(collection, key) ON DELETE CASCADE
   );
+  CREATE TABLE IF NOT EXISTS query_store_metadata (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    epoch INTEGER NOT NULL
+  );
+  INSERT INTO query_store_metadata (id, epoch) VALUES (1, 0)
+    ON CONFLICT(id) DO NOTHING;
   CREATE INDEX IF NOT EXISTS qs_numeric_page
     ON query_numeric_values (collection, column_name, numeric_value, key);
   CREATE TABLE IF NOT EXISTS query_indexes (
@@ -329,8 +346,21 @@ function validateUniqueIndexes(db: Database.Database, collections: ReadonlySet<s
   }
 }
 
-function writeBatch(db: Database.Database, ops: readonly WriteOp[]): void {
+function readStoreEpoch(db: Database.Database): number {
+  return db
+    .prepare<[], { readonly epoch: number }>('SELECT epoch FROM query_store_metadata WHERE id = 1')
+    .get()!.epoch;
+}
+
+function writeBatch(
+  db: Database.Database,
+  ops: readonly WriteOp[],
+  expectedStoreEpoch?: number,
+): void {
   db.transaction((batch: readonly WriteOp[]) => {
+    if (expectedStoreEpoch !== undefined && readStoreEpoch(db) !== expectedStoreEpoch) {
+      throw new QueryStoreRebuiltError();
+    }
     const deleteNumeric = db.prepare(
       'DELETE FROM query_numeric_values WHERE collection = ? AND key = ?',
     );
@@ -384,8 +414,8 @@ function boundsSql(bounds: ColumnBounds): { sql: string; params: number[] } {
   return { sql: clauses.length > 0 ? ` AND ${clauses.join(' AND ')}` : '', params };
 }
 
-function resetDatabase(db: Database.Database): void {
-  db.transaction(() => {
+function resetDatabase(db: Database.Database): number {
+  return db.transaction((): number => {
     const indexes = db
       .prepare<[], { readonly name: string }>(
         "SELECT name FROM sqlite_master WHERE type = 'index' AND (name LIKE 'qs_value_%' OR name LIKE 'qs_compound_%')",
@@ -395,6 +425,11 @@ function resetDatabase(db: Database.Database): void {
     db.prepare('DELETE FROM query_numeric_values').run();
     db.prepare('DELETE FROM query_documents').run();
     db.prepare('DELETE FROM query_indexes').run();
+    return db
+      .prepare<[], { readonly epoch: number }>(
+        'UPDATE query_store_metadata SET epoch = epoch + 1 WHERE id = 1 RETURNING epoch',
+      )
+      .get()!.epoch;
   }).immediate();
 }
 
@@ -510,16 +545,14 @@ export class SqliteQueryStore extends Disposable implements IQueryStore {
       let db = await previous?.catch(() => undefined);
       try {
         if (db === undefined || !db.open) db = await this.openFresh();
-        resetDatabase(db);
-        this.storeEpochCounter += 1;
+        this.storeEpochCounter = resetDatabase(db);
       } catch (error) {
         if (db?.open) db.close();
         db = undefined;
         if (classifySqliteError(error) !== 'rebuild') throw cause;
         await this.quarantineCorruptStore();
         db = await this.openFresh();
-        resetDatabase(db);
-        this.storeEpochCounter += 1;
+        this.storeEpochCounter = resetDatabase(db);
       } finally {
         if (db?.open) db.close();
       }
@@ -543,9 +576,7 @@ export class SqliteQueryStore extends Disposable implements IQueryStore {
   ): Promise<T> {
     try {
       const db = await this.openDb();
-      if (expectedStoreEpoch !== undefined && expectedStoreEpoch !== this.storeEpochCounter) {
-        throw new QueryStoreRebuiltError();
-      }
+      this.storeEpochCounter = readStoreEpoch(db);
       const result = op(db);
       if (kind === 'write') this.transientWriteFailures = 0;
       else this.transientReadFailures = 0;
@@ -711,9 +742,11 @@ export class SqliteQueryStore extends Disposable implements IQueryStore {
   ): Promise<void> {
     await this.withDb(
       (db) =>
-        writeBatch(db, [
-          { kind: 'put', collection: CHECKPOINT_COLLECTION, key: source, value: checkpoint },
-        ]),
+        writeBatch(
+          db,
+          [{ kind: 'put', collection: CHECKPOINT_COLLECTION, key: source, value: checkpoint }],
+          expectedStoreEpoch,
+        ),
       'write',
       expectedStoreEpoch,
     );
@@ -721,8 +754,7 @@ export class SqliteQueryStore extends Disposable implements IQueryStore {
 
   protected async resetAfterPeerRebuild(): Promise<void> {
     const db = await this.openDb();
-    resetDatabase(db);
-    this.storeEpochCounter += 1;
+    this.storeEpochCounter = resetDatabase(db);
     this.ensuredIndexes.clear();
   }
 
