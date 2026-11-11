@@ -786,6 +786,48 @@ describe('headers merge order', () => {
 });
 
 describe('direct generate', () => {
+  it('drives a bedrock-assembled model through generateModel', async () => {
+    const { host, catalog } = createHost({
+      providers: {
+        bedrock: { type: 'bedrock', env: { AWS_REGION: 'us-east-1', AWS_PROFILE: 'dev' } },
+      },
+      models: {
+        sonnet: { provider: 'bedrock', model: 'global.anthropic.claude-sonnet-4-6', maxContextSize: 200000 },
+      },
+    });
+    try {
+      const model = catalog.get('sonnet');
+      const seen: { baseUrl?: string } = {};
+      const fakeRequester: LlmRequester = {
+        generate: (config, _content, control) => {
+          seen.baseUrl = config.model.baseUrl;
+          control.onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'pong' } });
+          control.onEvent?.({ type: 'llm.streaming.usage', usage: emptyUsage() });
+          control.onEvent?.({ type: 'llm.done' });
+          return Promise.resolve();
+        },
+      };
+      const requester = coreRequesterFromA(
+        new ProtocolAdapterRegistry().request(model),
+        fakeRequester,
+      );
+      const events = [];
+      for await (const event of generateModel(
+        requester,
+        { systemPrompt: 'ping', tools: [], messages: [{ role: 'user', content: [{ type: 'text', text: 'ping' }] }] },
+        undefined,
+      )) {
+        events.push(event);
+      }
+      expect(seen.baseUrl).toBe('https://bedrock-runtime.us-east-1.amazonaws.com/anthropic');
+      expect(events.find((event) => event.type === 'part')).toMatchObject({
+        part: { type: 'text', text: 'pong' },
+      });
+    } finally {
+      host.dispose();
+    }
+  });
+
   it('returns the streamed text and usage on a live success', async () => {
     const { host, catalog } = createHost(kimiSections, stubModelOAuthTokens());
     try {

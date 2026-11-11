@@ -9,7 +9,7 @@ const LIVE_MODEL = 'global.moonshotai.kimi-k3.1';
 const LIVE_RESPONSES_MODEL = 'global.openai.gpt-6.1-terra';
 const LIVE_ANTHROPIC_MODEL = 'global.anthropic.claude-sonnet-5-5';
 
-const hasAwsChain = await probeAwsChain();
+const OPT_IN = process.env['KIMI_BEDROCK_LIVE_TEST'] === '1';
 
 async function probeAwsChain(): Promise<boolean> {
   try {
@@ -21,7 +21,13 @@ async function probeAwsChain(): Promise<boolean> {
   }
 }
 
-describe.skipIf(!hasAwsChain)('bedrock live integration (ambient AWS credentials)', () => {
+describe.skipIf(!OPT_IN)('bedrock live integration (ambient AWS credentials)', () => {
+  it('requires an ambient AWS credential chain when opted in', async () => {
+    expect(
+      await probeAwsChain(),
+      'KIMI_BEDROCK_LIVE_TEST=1 is set but no usable AWS credential chain was found; configure AWS_REGION/AWS_PROFILE or shared credentials',
+    ).toBe(true);
+  });
   it('generates a usable bearer token and streams a chat completion', async () => {
     const provider = createBedrockTokenProvider({ region: LIVE_REGION });
     const credential = await provider.resolve();
