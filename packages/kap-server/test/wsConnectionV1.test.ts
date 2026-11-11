@@ -553,6 +553,94 @@ describe('WsConnectionV1 heartbeat', () => {
     expect(sentTypes(socket)).toEqual(['ping']);
     expect(socket.closeCalls).toHaveLength(0);
   });
+
+  it('survives an event-loop stall and a late pong without reaping', () => {
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { heartbeatIntervalMs: 10 });
+
+    vi.advanceTimersByTime(10);
+    socket.emit('message', JSON.stringify({ type: 'pong' }));
+
+    vi.setSystemTime(Date.now() + 60_000);
+    vi.runOnlyPendingTimers();
+
+    expect(sentTypes(socket)).toEqual(['ping', 'ping']);
+    expect(socket.closeCalls).toHaveLength(0);
+
+    socket.emit('message', JSON.stringify({ type: 'pong' }));
+    vi.advanceTimersByTime(10);
+    expect(socket.closeCalls).toHaveLength(0);
+    socket.emit('message', JSON.stringify({ type: 'pong' }));
+    vi.advanceTimersByTime(10);
+    expect(socket.closeCalls).toHaveLength(0);
+    expect(sentTypes(socket)).toEqual(['ping', 'ping', 'ping', 'ping']);
+    conn.close();
+  });
+
+  it('survives a forward wall-clock jump without reaping', () => {
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { heartbeatIntervalMs: 10 });
+
+    vi.advanceTimersByTime(10);
+    socket.emit('message', JSON.stringify({ type: 'pong' }));
+
+    const steadyNow = Date.now;
+    const wallClock = vi.spyOn(Date, 'now').mockImplementation(() => steadyNow() + 3_600_000);
+    vi.advanceTimersByTime(10);
+
+    expect(sentTypes(socket)).toEqual(['ping', 'ping']);
+    expect(socket.closeCalls).toHaveLength(0);
+
+    vi.advanceTimersByTime(10);
+    socket.emit('message', JSON.stringify({ type: 'pong' }));
+    vi.advanceTimersByTime(10);
+    expect(socket.closeCalls).toHaveLength(0);
+    expect(sentTypes(socket)).toEqual(['ping', 'ping', 'ping', 'ping']);
+    conn.close();
+    wallClock.mockRestore();
+  });
+
+  it('opens a full new response window after a sleep-length stall', () => {
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { heartbeatIntervalMs: 10 });
+
+    vi.advanceTimersByTime(10);
+    socket.emit('message', JSON.stringify({ type: 'pong' }));
+
+    vi.setSystemTime(Date.now() + 30_000);
+    vi.runOnlyPendingTimers();
+
+    expect(sentTypes(socket)).toEqual(['ping', 'ping']);
+    expect(socket.closeCalls).toHaveLength(0);
+
+    vi.advanceTimersByTime(15);
+    socket.emit('message', JSON.stringify({ type: 'pong' }));
+
+    vi.advanceTimersByTime(10);
+    expect(socket.closeCalls).toHaveLength(0);
+    vi.advanceTimersByTime(10);
+    expect(socket.closeCalls).toHaveLength(0);
+    expect(sentTypes(socket)).toEqual(['ping', 'ping', 'ping', 'ping', 'ping']);
+    conn.close();
+  });
+
+  it('still reaps a peer that stays silent after a stall', () => {
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { heartbeatIntervalMs: 10 });
+
+    vi.advanceTimersByTime(10);
+
+    vi.setSystemTime(Date.now() + 60_000);
+    vi.runOnlyPendingTimers();
+    expect(socket.closeCalls).toHaveLength(0);
+
+    vi.advanceTimersByTime(10);
+    expect(socket.closeCalls).toHaveLength(0);
+    vi.advanceTimersByTime(10);
+    expect(socket.closeCalls).toEqual([{ code: 1001, reason: 'heartbeat timeout' }]);
+    expect(sentTypes(socket)).toEqual(['ping', 'ping', 'ping']);
+    conn.close();
+  });
 });
 
 describe('WsConnectionV1 global target registration', () => {

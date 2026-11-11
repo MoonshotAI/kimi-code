@@ -73,6 +73,7 @@ export class WsConnectionV1 implements BroadcastTarget {
   private backpressureSince?: number;
 
   private heartbeatTimer?: ReturnType<typeof setInterval>;
+  private lastHeartbeatAt = Date.now();
   private lastInboundAt = Date.now();
 
   constructor(opts: WsConnectionV1Options) {
@@ -148,7 +149,15 @@ export class WsConnectionV1 implements BroadcastTarget {
   }
 
   private onHeartbeat(): void {
-    if (Date.now() - this.lastInboundAt >= this.heartbeatIntervalMs * HEARTBEAT_MISS_LIMIT) {
+    const now = Date.now();
+    const sinceLastHeartbeat = now - this.lastHeartbeatAt;
+    this.lastHeartbeatAt = now;
+    if (sinceLastHeartbeat >= this.heartbeatIntervalMs * HEARTBEAT_MISS_LIMIT) {
+      this.lastInboundAt = now;
+      this.sendImmediateFrame(buildPing());
+      return;
+    }
+    if (now - this.lastInboundAt >= this.heartbeatIntervalMs * HEARTBEAT_MISS_LIMIT) {
       this.close(1001, 'heartbeat timeout');
       return;
     }
