@@ -393,7 +393,7 @@ describe('Agent loop', () => {
     );
   });
 
-  it('appends only the final attempt partial when a retried request fails mid-stream', async () => {
+  it('appends every failed attempt partial when a retried request fails mid-stream', async () => {
     profile.update({ activeToolNames: [] });
     ctx.mockNextProviderResponse({
       parts: [{ type: 'text', text: 'first attempt partial' }],
@@ -414,14 +414,12 @@ describe('Agent loop', () => {
       toolCalls: [],
       usage: { inputOther: 0, output: 0, inputCacheCreation: 0 },
     });
-    expect(ctx.contextData().history).not.toContainEqual(
-      expect.objectContaining({
-        role: 'assistant',
-        content: expect.arrayContaining([
-          expect.objectContaining({ text: expect.stringContaining('first attempt partial') }),
-        ]),
-      }),
-    );
+    expect(ctx.contextData().history).toContainEqual({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'first attempt partial' }],
+      toolCalls: [],
+      usage: { inputOther: 0, output: 0, inputCacheCreation: 0 },
+    });
     expect(ctx.allEvents).toContainEqual(
       expect.objectContaining({
         event: 'turn.step.interrupted',
@@ -809,6 +807,12 @@ describe('Agent loop', () => {
         errorMessage: 'first attempt rate limited',
         statusCode: 429,
       });
+      const started = local.allEvents.filter(
+        (event) => event.type === '[rpc]' && event.event === 'turn.step.started',
+      );
+      expect(started.map((event) => (event.args as { step: number }).step)).toEqual([1, 1]);
+      expect((started[0]?.args as { stepId?: string }).stepId).toBe((started[1]?.args as { stepId?: string }).stepId);
+      expect(local.allEvents.indexOf(retries[0]!)).toBeLessThan(local.allEvents.indexOf(started[1]!));
       const ended = local.allEvents.find(
         (event) => event.type === '[rpc]' && event.event === 'turn.ended',
       );

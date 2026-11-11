@@ -171,6 +171,11 @@ export function applyConversationRecord(state: ConversationState, record: WireRe
     case 'turn.step.interrupted':
       applyStepInterrupted(state, record);
       return;
+    case 'turn.step.started': {
+      const turn = findTurnByNumber(state, numberField(record['turnId'])) ?? unnumberedOpenTurn(state);
+      if (turn !== undefined) turn.retry = undefined;
+      return;
+    }
     case 'turn.step.retrying':
       applyStepRetrying(state, record);
       return;

@@ -1473,6 +1473,12 @@ class LoopActor implements Loop {
     if (event.type === 'llm.streaming.part' && (event.part.type === 'function' || event.part.type === 'tool_call_part')) {
       step.toolCallStreaming = true;
     }
+    if (event.type === 'llm.retrying') {
+      const entry = assistantEntryOf({ type: 'failed', error: event.error, message: event.message ?? undefined }, step.model);
+      if (entry !== undefined) {
+        this.record({ type: 'message.appended', turnId: turn.id, step: turn.step, source: 'partial', entry });
+      }
+    }
     this.record(event);
   }
 

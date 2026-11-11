@@ -207,6 +207,7 @@ async function runAttempts(
         strategy: proposal.strategy,
         action: proposal.action,
         error: result.error,
+        message: result.message ?? undefined,
       });
       continue;
     }
@@ -221,6 +222,7 @@ async function runAttempts(
         maxAttempts,
         delayMs,
         error: result.error,
+        message: result.message ?? undefined,
       });
       if (!(await delay(delayMs, signal))) {
         return abortedOf(result, signal.reason);

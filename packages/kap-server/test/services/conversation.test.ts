@@ -124,6 +124,24 @@ describe('conversation fold', () => {
       contentPart(0, 1, 's1', { type: 'text', text: 'answer' }, 2),
       toolCall(0, 1, 's1', 'call-1', 'Bash', { command: 'ls' }),
       toolResult('call-1', 'a\nb'),
+      record('turn.step.retrying', {
+        turnId: 0,
+        step: 1,
+        stepId: 's1',
+        failedAttempt: 1,
+        nextAttempt: 2,
+        maxAttempts: 2,
+        delayMs: 0,
+        errorName: 'APIStatusError',
+        errorMessage: 'retry',
+        statusCode: 429,
+      }),
+    ]);
+
+    expect(state.turns[0]?.retry).toMatchObject({ attempt: 1, next_attempt: 2, max_attempts: 2 });
+    applyConversationRecord(state, record('turn.step.started', { turnId: 0, step: 1, stepId: 's1' }));
+    expect(state.turns[0]?.retry).toBeUndefined();
+    for (const entry of [
       stepEnd(0, 1, 's1', {
         finishReason: 'tool_use',
         usage: { inputOther: 3, output: 2, inputCacheCreation: 1, raw: { provider: 'example' } },
@@ -133,7 +151,9 @@ describe('conversation fold', () => {
       stepBegin(0, 2, 's2'),
       stepEnd(0, 2, 's2', { finishReason: 'end_turn', usage: { inputOther: 5, output: 1, inputCacheRead: 4, inputCacheCreation: 0 } }),
       turnEnded(0, 'completed', { durationMs: 120 }),
-    ]);
+    ]) {
+      applyConversationRecord(state, entry);
+    }
 
     const [turn] = state.turns;
     expect(turn?.turn_id).toMatch(/^t_[0-9a-f]{12}$/);

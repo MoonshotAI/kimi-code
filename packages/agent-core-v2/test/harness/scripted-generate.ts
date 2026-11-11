@@ -228,6 +228,7 @@ export function createScriptedGenerate() {
     calls.push(input);
 
     const emit = control.onEvent;
+    emit?.({ type: 'llm.sent' });
     emit?.({
       type: 'llm.streaming.headers',
       headers:

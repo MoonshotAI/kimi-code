@@ -139,6 +139,7 @@ export type LlmRetrying =
       readonly type: 'llm.retrying';
       readonly reason: 'backoff';
       readonly error: LlmErrorMessage;
+      readonly message?: AssistantMessage | null;
       readonly failedAttempt: number;
       readonly nextAttempt: number;
       readonly maxAttempts: number;
@@ -148,6 +149,7 @@ export type LlmRetrying =
       readonly type: 'llm.retrying';
       readonly reason: 'recovery';
       readonly error: LlmErrorMessage;
+      readonly message?: AssistantMessage | null;
       readonly strategy: string;
       readonly action: string;
     };
