@@ -431,6 +431,7 @@ describe('DualWriteQueryStore', () => {
         .get(COLLECTION, 'mine') as { value: string };
       expect(JSON.parse(row.value)).toEqual({ id: 'mine', v: 2 });
 
+      await store.ensureIndex(COLLECTION, { kind: 'value', name: 'byParent', field: 'parent' });
       await store.setCheckpoint('projection', { seq: 1 });
       const staleEpoch = store.storeEpoch();
       const packageEntry = createRequire(import.meta.url).resolve('better-sqlite3');
@@ -441,6 +442,10 @@ describe('DualWriteQueryStore', () => {
 const db = new Database(${JSON.stringify(file)});
 db.pragma('busy_timeout = 1000');
 db.exec('BEGIN IMMEDIATE');
+for (const { name } of db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'qs_%'").all()) {
+  db.exec('DROP INDEX "' + name.replaceAll('"', '""') + '"');
+}
+db.prepare('DELETE FROM query_indexes').run();
 db.prepare('DELETE FROM query_numeric_values').run();
 db.prepare('DELETE FROM query_documents').run();
 db.prepare('UPDATE query_store_metadata SET epoch = epoch + 1 WHERE id = 1').run();
@@ -468,6 +473,12 @@ setTimeout(() => {
       expect(await store.getCheckpoint('projection')).toBeUndefined();
       expect(await backup(store).getCheckpoint('projection')).toEqual({ seq: 1 });
       expect(store.storeEpoch()).toBe(staleEpoch + 1);
+      await store.ensureIndex(COLLECTION, { kind: 'value', name: 'byParent', field: 'parent' });
+      expect(
+        peer
+          .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'qs_value_%'")
+          .all(),
+      ).toHaveLength(1);
       await store.close();
     } finally {
       peer.close();
