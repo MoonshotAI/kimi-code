@@ -149,9 +149,13 @@ export class SubagentActivityStore {
     switch (event.type) {
       case 'turn.step.started': {
         const key = `${event.agentId}:${event.turnId}:${event.stepId ?? event.step}`;
-        if (this.startedSteps.has(key)) return;
-        this.startedSteps.add(key);
         const record = this.recordFor(event.agentId);
+        if (this.startedSteps.has(key)) {
+          this.currentStep(record).retrying = undefined;
+          this.bump(record);
+          return;
+        }
+        this.startedSteps.add(key);
         record.steps.push({ step: event.step, textTail: '', toolCalls: [] });
         record.totalSteps += 1;
         while (record.steps.length > MAX_SUBAGENT_ACTIVITY_STEPS) {
