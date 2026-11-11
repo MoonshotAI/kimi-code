@@ -34,7 +34,7 @@ import {
   type SkillDefinition,
   type ExtraSkillDirsConfig,
   type MergeAllAvailableSkillsConfig,
-  IAgentProfileService,
+  IAgentLoopService,
 } from '@moonshot-ai/agent-core-v2';
 import { join } from 'node:path';
 import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
@@ -293,7 +293,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
                 {
                   telemetry,
                   providerType: mainAgent.accessor
-                    .get(IAgentProfileService)
+                    .get(IAgentLoopService)
                     .getModelProviderType(),
                   resolveOriginalsTarget: environmentMedia.resolveOriginalsTarget ?? (async () => ({
                     dir: sessionMediaOriginalsDir(sessionDir),

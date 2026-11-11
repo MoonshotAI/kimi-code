@@ -1,14 +1,17 @@
 import { toDisposable } from '#/_base/di/lifecycle';
-import { Event } from '#/_base/event';
-import type { IAgentLoopService, LoopErrorHandler, LoopErrorHandlerRegistrationOptions, LoopNotify, LoopNotifyHandle, LoopSubmitOptions, PromptHandle, Turn, TurnResult } from '#/agent/loop/loop';
-import type { UserEntry } from '#human/agent/turn';
+import type { IAgentLoopService, LoopErrorHandler, LoopErrorHandlerRegistrationOptions, LoopNotify, LoopNotifyEntry, PromptHandle, PromptPayload, Turn, TurnResult } from '#/agent/loop/loop';
+import type { LoopHooks } from '#/agent/loop/core/contract/hook';
+import { ToolExecutor } from '#/tool/executor';
+import type { HistoryMessage, UserEntry } from '#human/agent/turn';
+import { contextFromHistoryEntry, historyFromContext } from '#/agent/loop/history';
+import { UNKNOWN_CAPABILITY } from '#/llm-adapter/contract/capability';
 
 export function submitPromptTurn(
   loop: IAgentLoopService,
   input: UserEntry,
-  options?: LoopSubmitOptions,
 ): { readonly turn: Turn } {
-  const { id } = loop.submit(input, options);
+  void loop.start();
+  const { id } = loop.submit(input);
   const handle = loop.promptHandle(id);
   if (handle === undefined) throw new Error(`missing prompt handle for ${id}`);
   let backing: Turn | undefined;
@@ -48,8 +51,6 @@ export function submitPromptTurn(
     },
   };
 }
-import type { MachineEngine, MachineEngineAttachBundle } from '#/agent/loop/machine/engine';
-import type { AgentEventStore } from '#human/agent/slices';
 import type { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { BeforeToolExecuteEvent, ToolDidExecuteContext, WillExecuteToolEvent } from '#/agent/toolExecutor/toolHooks';
 import { OrderedHookSlot } from '#/hooks';
@@ -65,9 +66,12 @@ export type StubLoop = IAgentLoopService & {
   readonly launches: readonly number[];
   readonly cancels: readonly { readonly turnId?: number; readonly reason?: unknown }[];
   readonly queue: { hasPendingRequests(): boolean };
+  readonly batchStartingHooks: Array<LoopHooks['tool.batch-starting']>;
   startTurn(): StubTurn;
+  resetLoop(): Promise<void>;
   settleActive(result?: TurnResult): void;
-  drainNextBatch(context: { append(...messages: ContextMessage[]): void }): { readonly driver: { readonly kind: string } } | undefined;
+  drainNextBatch(context?: IAgentLoopService, kinds?: readonly string[]): { readonly driver: { readonly kind: string } } | undefined;
+  flushReminders(): void;
 };
 const turnControllers = new WeakMap<Turn, AbortController>();
 export function makeTurn(id: number): StubTurn {
@@ -87,45 +91,35 @@ function registry(): { handlers: LoopErrorHandler[]; register: IAgentLoopService
   };
   return { handlers, register };
 }
-function stubAttachStore(): AgentEventStore {
-  return {
-    ref: { tree: 'test', branch: 'main' },
-    getState: () => ({ history: [], queue: [], notifications: [], reminders: [], turnIndex: { nextTurnId: 0 } }),
-    subscribe: () => () => {},
-    dispatch: () => Promise.resolve({ kind: 'entry', seq: 0, ts: 0, type: 'noop', payload: null }),
-    registerSlice: () => Promise.resolve(() => {}),
-    reset: () => Promise.resolve(),
-    flush: () => Promise.resolve(),
-    close: () => Promise.resolve(),
-  } as unknown as AgentEventStore;
+export class StubEffectiveProfileReader {
+  async applyProfile(): Promise<void> {}
+  useProfile(): void {}
+  update(): void {}
+  setThinking(): void {}
+  data() { return { modelCapabilities: UNKNOWN_CAPABILITY, thinkingLevel: 'off', systemPrompt: '' }; }
+  getEffectiveThinkingLevel() { return 'off' as const; }
+  resolveModelContext(): never { throw new Error('model is not configured'); }
+  resolveRequestParams() { return {}; }
+  getModelCapabilities() { return UNKNOWN_CAPABILITY; }
+  getModelProviderType() { return undefined; }
+  getMaxOutputSize() { return undefined; }
+  hasModel() { return false; }
+  isRunnable() { return false; }
+  hasProvider() { return false; }
+  getModel() { return ''; }
+  getSystemPrompt() { return ''; }
+  getActiveToolNames() { return undefined; }
+  getAgentsMdWarning() { return undefined; }
+  republishStatus(): void {}
+  addActiveTool(): void {}
+  removeActiveTool(): void {}
 }
-function stubAttachBundle(): MachineEngineAttachBundle {
-  return { store: stubAttachStore(), request: { model: { provider: 'test', model: 'test' } } } as unknown as MachineEngineAttachBundle;
-}
-function stubAttachEngine(): MachineEngine {
-  return {
-    submit: () => {},
-    steer: () => {},
-    notify: () => {},
-    remind: () => {},
-    cancelQueueItem: () => {},
-    abort: () => {},
-    pause: () => {},
-    resume: () => {},
-    resetHistory: () => Promise.resolve(),
-    resetJournal: () => Promise.resolve(),
-    stop: () => {},
-    snapshot: () => ({ running: false, aborting: false, waitingForBackground: false, paused: false, queue: [], queueLength: 0, queueIds: [], notificationCount: 0, reminderCount: 0, backgroundCount: 0 }),
-    currentStep: () => 0,
-    lastFinish: () => undefined,
-    toolExtras: new Map(),
-    handleToolProgress: () => {},
-  };
-}
+
 export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
   const hooks = createHooks(['onWillBeginStep', 'onDidFinishStep', 'onBeforeSubmitPrompt']) as IAgentLoopService['hooks'];
   const errorHandlers = registry(); const launches: number[] = []; const cancels: { turnId?: number; reason?: unknown }[] = [];
   const pending: PendingEntry[] = [];
+  const batchStartingHooks: Array<LoopHooks['tool.batch-starting']> = [];
   const handles = new Map<string, PromptHandle>();
   let active: Turn | undefined; let nextId = typeof options.currentId === 'number' ? options.currentId : 0;
   let releaseActiveResult: ((result: TurnResult) => void) | undefined;
@@ -138,19 +132,63 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
     launches.push(configured.id); active = configured; return configured;
   };
   const hasPending = () => pending.length > 0;
+  const messages: ContextMessage[] = [];
   const stub: StubLoop = {
-    _serviceBrand: undefined, hooks, launches, cancels, startTurn,
+    _serviceBrand: undefined, hooks, launches, cancels, startTurn, batchStartingHooks,
     requester: {} as IAgentLoopService['requester'],
+    registerToolBatchStarting(hook) {
+      batchStartingHooks.push(hook);
+      return toDisposable(() => {
+        const index = batchStartingHooks.indexOf(hook);
+        if (index >= 0) batchStartingHooks.splice(index, 1);
+      });
+    },
+    start: async () => {},
+    baselineTools: () => [],
+    setProfile: async () => {},
+    bindProfile: async () => {},
+    applyBindingSnapshot: async () => {},
+    setModel: async (model) => ({ model }),
+    applyProfile: async () => {},
+    useProfile: () => {},
+    update: () => {},
+    setThinking: () => {},
+    data: () => ({ modelCapabilities: UNKNOWN_CAPABILITY, thinkingLevel: 'off', systemPrompt: '' }),
+    getEffectiveThinkingLevel: () => 'off',
+    resolveModelContext: () => { throw new Error('model is not configured'); },
+    resolveRequestParams: () => ({}),
+    getModelCapabilities: () => UNKNOWN_CAPABILITY,
+    getModelProviderType: () => undefined,
+    getMaxOutputSize: () => undefined,
+    hasModel: () => false,
+    isRunnable: () => false,
+    hasProvider: () => false,
+    getModel: () => '',
+    getSystemPrompt: () => '',
+    getActiveToolNames: () => undefined,
+    getAgentsMdWarning: () => undefined,
+    republishStatus: () => {},
+    addActiveTool: () => {},
+    removeActiveTool: () => {},
+    history: () => messages,
+    historyRevision: () => 0,
+    replaceHistory(next, _reason, onAccepted) {
+      messages.splice(0, messages.length, ...next.map((entry) => contextFromHistoryEntry(entry)));
+      onAccepted?.();
+      return true;
+    },
+    initializeHistory: async (next) => { stub.replaceHistory(next); },
     queue: { hasPendingRequests: hasPending },
     settleActive(result = { type: 'completed', steps: 0, truncated: false }) { releaseActiveResult?.(result); },
-    submit(input: UserEntry, options?: LoopSubmitOptions) {
+    submit: ((input: UserEntry | PromptPayload) => {
+      if ('input' in input) throw new Error('client submit is not supported by this stub');
       const turn = startTurn();
       const id = input.meta?.promptId ?? 'p';
       const message: ContextMessage = {
         ...input.message,
         origin: input.meta?.origin as PromptOrigin | undefined,
       };
-      pending.push({ kind: 'prompt', message, onConsume: options?.onMaterialize });
+      pending.push({ kind: 'prompt', message });
       handles.set(id, {
         id,
         userMessageId: id,
@@ -161,12 +199,39 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
         completion: new Promise(() => {}),
       });
       return { id };
-    },
+    }) as StubLoop['submit'],
     steer: async () => {},
-    remind(note: LoopNotify = {}): LoopNotifyHandle {
-      return this.notify(note);
+    remind(...entries: readonly HistoryMessage[]): void {
+      for (const entry of entries) {
+        pending.push({ kind: 'message', message: contextFromHistoryEntry(entry) });
+      }
     },
-    notify(note: LoopNotify = {}): LoopNotifyHandle {
+    notifyClient: async (input: LoopNotifyEntry) => {
+      const { id } = stub.notify(input);
+      const handle = stub.promptHandle(id);
+      const turn = await handle?.launched;
+      await turn?.ready;
+      if (turn?.id === undefined) {
+        return {
+          prompt_id: id,
+          created_at: handle?.createdAt ?? '',
+          state: handle?.state === 'blocked' ? 'blocked' : 'queued',
+          steered: false,
+        };
+      }
+      return {
+        turn_id: turn.id,
+        prompt_id: id,
+        created_at: handle?.createdAt ?? '',
+        state: 'running',
+        steered: true,
+      };
+    },
+    notify: ((note: LoopNotify | LoopNotifyEntry = {}) => {
+      if ('meta' in note) {
+        const { id } = stub.submit(note);
+        return { id, dropped: false, drop: () => {} };
+      }
       const entry: PendingEntry = {
         kind: note.bypassMaxSteps === true ? 'handoff' : note.message !== undefined ? 'message' : 'continuation',
         message: note.message,
@@ -175,6 +240,7 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
       pending.push(entry);
       let dropped = false;
       return {
+        id: note.message?.id ?? 'n',
         get dropped() { return dropped; },
         drop: () => {
           if (dropped) return;
@@ -184,7 +250,11 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
           note.onDrop?.();
         },
       };
-    },
+    }) as unknown as StubLoop['notify'],
+    sendNow: ((input: LoopNotifyEntry | readonly string[]) => {
+      if (Array.isArray(input)) return Promise.resolve();
+      return stub.submit(input as LoopNotifyEntry);
+    }) as unknown as StubLoop['sendNow'],
     snapshot() {
       return {
         state: active !== undefined ? 'running' : 'idle',
@@ -200,21 +270,35 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
     },
     promptHandle: (id) => handles.get(id),
     cancel(target, reason) { cancels.push({ turnId: target?.turnId, reason }); if (target?.promptId !== undefined) return true; if (active === undefined || (target?.turnId !== undefined && active.id !== target.turnId)) return false; active.cancel(reason); return true; },
+    detachTool: () => {},
+    abortTool: () => {},
     tryAcquireQuiescence: () => toDisposable(() => {}),
     tryAcquireHistorySnapshot: () => toDisposable(() => {}),
-    buildAttachBundle: () => stubAttachBundle(),
-    attachEngine: () => stubAttachEngine(),
-    resetMachineEngine: () => Promise.resolve(),
+    resetLoop: () => Promise.resolve(),
     registerLoopErrorHandler: errorHandlers.register,
     settled: () => Promise.resolve(),
-    drainNextBatch(context) {
-      const batch = pending.splice(0);
+    retry: async () => { throw new Error('retry is not supported by this stub'); },
+    close: () => Promise.resolve(),
+    drainNextBatch(context, kinds) {
+      const batch = kinds === undefined
+        ? pending.splice(0)
+        : pending.filter((entry) => {
+            if (!kinds.includes(entry.kind)) return false;
+            const index = pending.indexOf(entry);
+            if (index >= 0) pending.splice(index, 1);
+            return true;
+          });
       if (batch.length === 0) return undefined;
       for (const entry of batch) {
         entry.onConsume?.();
-        if (entry.message !== undefined && entry.message.content.length > 0) context.append(entry.message);
+        if (context !== undefined && entry.message !== undefined && entry.message.content.length > 0) {
+          context.replaceHistory(historyFromContext([...context.history(), entry.message]), 'fork');
+        }
       }
       return { driver: { kind: batch[0]!.kind } };
+    },
+    flushReminders() {
+      stub.drainNextBatch(stub, ['message']);
     },
   };
   return stub;
@@ -229,6 +313,20 @@ export async function runWillBeginStepHooks(
     firstStepOfTurn,
     signal: new AbortController().signal,
   });
+  if ('flushReminders' in loop && typeof loop.flushReminders === 'function') loop.flushReminders();
+  else if ('drainNextBatch' in loop && typeof loop.drainNextBatch === 'function') loop.drainNextBatch(loop);
 }
 export function stubWire(): IWireService { return stubAgentWire(); }
-export function stubToolExecutor(): IAgentToolExecutorService { return { _serviceBrand: undefined, execute: async function* () {}, onBeforeExecuteTool: Event.None as Event<BeforeToolExecuteEvent>, onWillExecuteTool: Event.None as Event<WillExecuteToolEvent>, hooks: { onDidExecuteTool: new OrderedHookSlot<ToolDidExecuteContext>() }, recordDupType: () => {}, registerToolCallGuard: () => ({ dispose() {} }), registerUnavailableToolDescriber: () => ({ dispose() {} }), registerMissingToolDescriber: () => ({ dispose() {} }) }; }
+export function stubToolExecutor(): IAgentToolExecutorService {
+  return {
+    _serviceBrand: undefined,
+    executor: new ToolExecutor([]),
+    registerHook: () => toDisposable(() => {}),
+    registerLegacyStarting: () => toDisposable(() => {}),
+    handlers: () => [],
+    handler: () => undefined,
+    handlerForCall: () => undefined,
+    release: () => {},
+    recordDupType: () => {},
+  };
+}

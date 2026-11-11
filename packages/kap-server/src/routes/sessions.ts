@@ -3,10 +3,9 @@ import {
   ErrorCodes,
   IAgentChangeNotifierService,
   IAgentGoalService,
-  IAgentProfileService,
+  IAgentLoopService,
   IAgentFullCompactionService,
   IAgentLifecycleService,
-  IAgentLoopService,
   IAgentPluginService,
   IAuthSummaryService,
   IConfigService,
@@ -898,7 +897,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
       }
       try {
         const agent = await ensureMainAgent(session);
-        const agentsMdWarning = agent.accessor.get(IAgentProfileService).getAgentsMdWarning();
+        const agentsMdWarning = agent.accessor.get(IAgentLoopService).getAgentsMdWarning();
         const warnings =
           agentsMdWarning === undefined
             ? []
@@ -1041,7 +1040,7 @@ async function btwSessionAction(ctx: SessionActionCtx): Promise<void> {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
   }
   const agent = await ensureMainAgent(session);
-  const sessionModel = agent.accessor.get(IAgentProfileService).getModel();
+  const sessionModel = agent.accessor.get(IAgentLoopService).getModel();
   await core.accessor.get(IAuthSummaryService).ensureReady(sessionModel || undefined);
   const agentId = await session.accessor.get(ISessionBtwService).start();
   reply.send(okEnvelope({ agent_id: agentId }, req.id));
@@ -1173,6 +1172,7 @@ async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
     await notifier.notifySkillChanges();
     await notifier.notifySubagentChanges({ previousSubagentNames, previousModelPool });
     await notifier.notifyWorkspaceDirsChanges();
+    main.accessor.get(IAgentLoopService).flushReminders();
   }
   const meta = await handle.accessor.get(ISessionMetadata).read();
   const sessionCtx = handle.accessor.get(ISessionContext);

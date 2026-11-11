@@ -21,7 +21,8 @@ import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/envi
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
-import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
+import { IAgentLoopService } from '#/agent/loop/loop';
+import type { ProfileData } from '#/agent/profile/profile';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { createReminderStub } from '../../features/reminder/stubs';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -181,9 +182,9 @@ function createHarness(options: {
         agentContext: stubAgentContext(options.agentId ?? 'main', 0),
         scope: (sub?: string): string => (sub ? `agents/main/${sub}` : 'agents/main'),
       } satisfies IAgentScopeContext);
-      reg.defineInstance(IAgentProfileService, {
+      reg.defineInstance(IAgentLoopService, {
         data: () => options.profile,
-      } as unknown as IAgentProfileService);
+      } as unknown as IAgentLoopService);
       reg.defineInstance(ISessionInstructionsProvider, {
         _serviceBrand: undefined,
         ready: Promise.resolve(),

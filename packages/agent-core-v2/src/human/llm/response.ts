@@ -126,7 +126,7 @@ export type LlmNoticeSink = (notice: LlmNoticeInput) => void;
 export type LlmStreamEvent =
   | { readonly type: 'llm.notice'; readonly notice: LlmNotice }
   | { readonly type: 'llm.streaming.headers'; readonly headers: Record<string, string> }
-  | { readonly type: 'llm.streaming.part'; readonly part: StreamedMessagePart }
+  | { readonly type: 'llm.streaming.part'; readonly part: StreamedMessagePart; readonly block?: number }
   | { readonly type: 'llm.streaming.usage'; readonly usage: Partial<TokenUsage> }
   | { readonly type: 'llm.streaming.finish'; readonly finish: FinishInfo }
   | { readonly type: 'llm.streaming.tool_call_end'; readonly toolCall: ToolCall; readonly index?: number | string }
@@ -139,6 +139,13 @@ export type LlmRetrying =
       readonly type: 'llm.retrying';
       readonly reason: 'backoff';
       readonly error: LlmErrorMessage;
+      readonly message?: AssistantMessage | null;
+      readonly usage?: TokenUsage;
+      readonly headers?: Record<string, string>;
+      readonly finish?: FinishInfo;
+      readonly messageId?: string;
+      readonly requestId?: string;
+      readonly timing?: LlmTiming;
       readonly failedAttempt: number;
       readonly nextAttempt: number;
       readonly maxAttempts: number;
@@ -148,6 +155,13 @@ export type LlmRetrying =
       readonly type: 'llm.retrying';
       readonly reason: 'recovery';
       readonly error: LlmErrorMessage;
+      readonly message?: AssistantMessage | null;
+      readonly usage?: TokenUsage;
+      readonly headers?: Record<string, string>;
+      readonly finish?: FinishInfo;
+      readonly messageId?: string;
+      readonly requestId?: string;
+      readonly timing?: LlmTiming;
       readonly strategy: string;
       readonly action: string;
     };

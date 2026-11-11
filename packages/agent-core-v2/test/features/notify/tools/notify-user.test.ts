@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { appendContext } from '../../../agent/contextMemory/stubs';
 
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { type HostUiCapability, IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IFlagService } from '#/app/flag/flag';
@@ -129,13 +130,13 @@ describe('NotifyUserTool', () => {
   });
 
   it('tracks each update with the silent stretch that preceded it', async () => {
-    const context = ctx.get(IAgentContextMemoryService);
-    context.append({
+    const context = ctx.get(IAgentLoopService);
+    appendContext(context,{
       role: 'user',
       content: [{ type: 'text', text: 'do the thing' }],
       origin: { kind: 'user' },
     });
-    context.append({
+    appendContext(context,{
       role: 'assistant',
       content: [],
       toolCalls: [
@@ -143,12 +144,12 @@ describe('NotifyUserTool', () => {
         { type: 'function', id: 'call_b', name: 'Read', arguments: '{}' },
       ],
     });
-    context.append({
+    appendContext(context,{
       role: 'user',
       content: [{ type: 'text', text: 'nudge' }],
       origin: { kind: 'injection', variant: NOTIFY_USER_NUDGE_VARIANT },
     });
-    context.append({
+    appendContext(context,{
       role: 'assistant',
       content: [],
       toolCalls: [{ type: 'function', id: 'call_notify', name: NOTIFY_USER_TOOL_NAME, arguments: '{}' }],

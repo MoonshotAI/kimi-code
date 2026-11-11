@@ -39,11 +39,9 @@ export class UpdateGoalTool implements IUpdateGoalTool {
 
     const status = args.status;
     const currentGoal = this.goal.getGoal().goal;
-    const goalIsActive = currentGoal?.status === 'active';
 
     return {
       description: `Setting goal status: ${status}`,
-      stopBatchAfterThis: status !== 'active' && goalIsActive,
       approvalRule: this.name,
       execute: async ({ turnId }) => {
         const goalAtExecution = this.goal.getGoal().goal;

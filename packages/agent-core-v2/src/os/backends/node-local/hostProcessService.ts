@@ -42,14 +42,41 @@ function buildEnv(overrides: Record<string, string> | undefined): Record<string,
   return { ...(process.env as Record<string, string>), ...overrides };
 }
 
-function waitForSpawn(child: ChildProcess): Promise<void> {
+function waitForSpawn(child: ChildProcess, mergeStderr: boolean): Promise<IHostProcess> {
   return new Promise((resolve, reject) => {
+    const streams = [child.stdin, child.stdout, child.stderr].filter(
+      (stream): stream is Readable | Writable => stream !== null,
+    );
+    let streamError: Error | undefined;
+    const onStreamError = (error: Error): void => {
+      streamError ??= error;
+    };
+    const releaseStreams = streams.map((stream) => {
+      const onClose = (): void => {
+        stream.off('error', onStreamError);
+      };
+      stream.on('error', onStreamError);
+      stream.once('close', onClose);
+      return (): void => {
+        stream.off('error', onStreamError);
+        stream.off('close', onClose);
+      };
+    });
     const onSpawn = (): void => {
-      child.off('error', onError);
-      resolve();
+      try {
+        if (streamError !== undefined) throw streamError;
+        const proc = new HostProcess(child, mergeStderr);
+        child.off('error', onError);
+        for (const release of releaseStreams) release();
+        resolve(proc);
+      } catch (error) {
+        onError(error as Error);
+      }
     };
     const onError = (err: Error): void => {
       child.off('spawn', onSpawn);
+      child.off('error', onError);
+      for (const stream of streams) stream.destroy();
       reject(err);
     };
     child.once('spawn', onSpawn);
@@ -222,10 +249,9 @@ export class HostProcessService implements IHostProcessService {
     let child: ChildProcess;
     try {
       child = spawnImpl(command, [...args], spawnOptions);
-      await waitForSpawn(child);
+      return await waitForSpawn(child, options.mergeStderr ?? false);
     } catch (error) {
       throw spawnFailedError(command, args, options.cwd, error);
     }
-    return new HostProcess(child, options.mergeStderr ?? false);
   }
 }

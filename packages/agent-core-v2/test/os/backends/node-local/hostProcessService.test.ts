@@ -115,6 +115,8 @@ describe('HostProcessService on Windows', () => {
     options: { cwd?: string; env?: Record<string, string> };
   }>;
   let crossSpawnError: (Error & { code: string }) | undefined;
+  let autoSpawn: boolean;
+  let crossSpawnChild: (EventEmitter & { stdin: PassThrough; stdout: PassThrough; stderr: PassThrough }) | undefined;
   let taskkills: Array<{ kill: ReturnType<typeof vi.fn>; unref: ReturnType<typeof vi.fn> }>;
 
   beforeEach(() => {
@@ -123,6 +125,8 @@ describe('HostProcessService on Windows', () => {
     spawnedCommands = [];
     crossSpawnCalls = [];
     crossSpawnError = undefined;
+    autoSpawn = true;
+    crossSpawnChild = undefined;
     taskkills = [];
     vi.doMock('cross-spawn', () => ({
       default: (
@@ -140,7 +144,8 @@ describe('HostProcessService on Windows', () => {
           kill: vi.fn(() => true),
           unref: vi.fn(),
         });
-        queueMicrotask(() => child.emit('spawn'));
+        crossSpawnChild = child;
+        if (autoSpawn) queueMicrotask(() => child.emit('spawn'));
         return child;
       },
     }));
@@ -234,7 +239,51 @@ describe('HostProcessService on Windows', () => {
       const error = err as HostProcessError;
       expect(error.code).toBe(HostProcessErrorCode.SpawnFailed);
       expect(error.details).toMatchObject({ command: 'fake-tool.cmd', errno: 'EINVAL' });
+      expect(error.cause).toBe(crossSpawnError);
       return true;
     });
+  });
+
+  it('keeps the child spawn error as cause and handles pipe errors until cleanup closes them', async () => {
+    autoSpawn = false;
+    const { HostProcessService: WindowsHostProcessService } = await import(
+      '#/os/backends/node-local/hostProcessService'
+    );
+    const svc = new WindowsHostProcessService();
+    const pending = svc.spawn('fake-tool');
+    const child = crossSpawnChild!;
+    const pipes = [child.stdin, child.stdout, child.stderr];
+    const pipeError = Object.assign(new Error('read ENOTCONN'), { code: 'ENOTCONN' });
+    const spawnError = Object.assign(new Error('spawn fake-tool ENOENT'), { code: 'ENOENT' });
+    for (const pipe of pipes) expect(() => pipe.emit('error', pipeError)).not.toThrow();
+    child.emit('error', spawnError);
+    for (const pipe of pipes) expect(() => pipe.emit('error', pipeError)).not.toThrow();
+    await expect(pending).rejects.toSatisfy((error: HostProcessError) => {
+      expect(error.code).toBe(HostProcessErrorCode.SpawnFailed);
+      expect(error.details).toMatchObject({ command: 'fake-tool', errno: 'ENOENT' });
+      expect(error.cause).toBe(spawnError);
+      return true;
+    });
+    await vi.runAllTimersAsync();
+    for (const pipe of pipes) {
+      expect(pipe.destroyed).toBe(true);
+      expect(pipe.listenerCount('error')).toBe(0);
+      expect(pipe.listenerCount('close')).toBe(0);
+    }
+    autoSpawn = true;
+    const next = await svc.spawn('fake-tool');
+    await next.dispose();
+  });
+
+  it('hands successful pipes to the process without retaining startup listeners', async () => {
+    const { HostProcessService: WindowsHostProcessService } = await import(
+      '#/os/backends/node-local/hostProcessService'
+    );
+    const proc = await new WindowsHostProcessService().spawn('fake-tool');
+    expect(crossSpawnChild!.stdin.listenerCount('error')).toBe(0);
+    expect(crossSpawnChild!.stdin.listenerCount('close')).toBe(0);
+    expect(crossSpawnChild!.stdout.listenerCount('error')).toBe(1);
+    expect(crossSpawnChild!.stderr.listenerCount('error')).toBe(1);
+    await proc.dispose();
   });
 });

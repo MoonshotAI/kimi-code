@@ -68,9 +68,15 @@ export const promptWithSkillsResultSchema = z.object({
 
 export const steerResultSchema = promptWithSkillsResultSchema;
 
-/** Same shape as `SteerPayload` in the engine. */
-export const steerPayloadSchema = z.object({
-  input: z.array(promptPartSchema),
+/** Entry constructed by `AgentFacade.steer` before crossing the wire. */
+export const steerEntrySchema = z.object({
+  message: z.object({
+    role: z.literal('user'),
+    content: z.array(promptPartSchema),
+  }),
+  meta: z.object({
+    origin: z.object({ kind: z.literal('user') }),
+  }),
 });
 
 /** Same shape as `SkillActivationInput`'s wire subset in the engine. */

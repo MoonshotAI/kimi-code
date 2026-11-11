@@ -1,10 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  applyContextCompactionRecord,
-  computeUndoCut,
-  isFullyUndoable,
-} from '#/agent/contextMemory/contextOps';
+import { applyContextCompactionRecord } from '#/agent/contextMemory/contextOps';
+import { cutTurnUndo, wireLinesOf } from '#/agent/undo/turnUndo';
 import {
   reduceContextTranscript,
   type ContextTranscript,
@@ -51,6 +48,7 @@ function compaction(
   compactedCount: number,
   keptUserMessageCount?: number,
   keptHeadUserMessageCount?: number,
+  appendedInjectionCount?: number,
 ): WireRecord {
   return {
     type: 'context.apply_compaction',
@@ -61,6 +59,17 @@ function compaction(
     tokensAfter: 100,
     ...(keptUserMessageCount === undefined ? {} : { keptUserMessageCount }),
     ...(keptHeadUserMessageCount === undefined ? {} : { keptHeadUserMessageCount }),
+    ...(appendedInjectionCount === undefined ? {} : { appendedInjectionCount }),
+  };
+}
+
+function turnPrompt(text: string, promptId = text): WireRecord {
+  return {
+    type: 'turn.prompt',
+    input: [{ type: 'text', text }],
+    origin: { kind: 'user' },
+    promptId,
+    trigger: 'normal',
   };
 }
 
@@ -193,6 +202,7 @@ describe('reduceContextTranscript', () => {
       appendMessage(userMessage('message A')),
       appendMessage(assistantMessage('reply A')),
       compaction('summary text', 2, 1),
+      turnPrompt('message B'),
       appendMessage(userMessage('message B')),
       appendMessage(assistantMessage('reply B')),
       undo(1),
@@ -206,6 +216,7 @@ describe('reduceContextTranscript', () => {
     const result = reduceContextTranscript([
       appendMessage(userMessage('message A')),
       appendMessage(assistantMessage('reply A')),
+      turnPrompt('message B'),
       appendMessage(userMessage('message B')),
       appendMessage(assistantMessage('reply B')),
       undo(1),
@@ -222,6 +233,7 @@ describe('reduceContextTranscript', () => {
           ownerPromptId: 'prompt-1',
         }),
       ),
+      turnPrompt('undo me', 'prompt-1'),
       appendMessage({ ...userMessage('undo me', { kind: 'user' }), id: 'prompt-1' }),
       appendMessage(assistantMessage('undone answer')),
       undo(1),
@@ -236,11 +248,12 @@ describe('reduceContextTranscript', () => {
     const result = reduceContextTranscript([
       appendMessage(userMessage('old')),
       compaction('SUM', 1, 1),
+      turnPrompt('recent'),
       appendMessage(userMessage('recent')),
       appendMessage(assistantMessage('answer')),
       undo(2),
     ]);
-    expect(texts(result)).toEqual(['old', 'SUM']);
+    expect(texts(result)).toEqual(['old', 'SUM', 'recent', 'answer']);
   });
 
   it('clear keeps prior transcript entries but resets the folded view', () => {
@@ -258,6 +271,7 @@ describe('reduceContextTranscript', () => {
     const result = reduceContextTranscript([
       appendMessage(userMessage('u1')),
       { type: 'context.clear' },
+      turnPrompt('u2'),
       appendMessage(userMessage('u2')),
       appendMessage(assistantMessage('a2')),
       undo(1),
@@ -339,8 +353,17 @@ describe('reduceContextTranscript', () => {
 
 describe('live fold parity', () => {
   function foldLive(records: WireRecord[]): readonly ContextMessage[] {
-    let state: readonly ContextMessage[] = [];
+    const activeRecords: WireRecord[] = [];
     for (const record of records) {
+      if (record.type !== 'context.undo') {
+        activeRecords.push(record);
+        continue;
+      }
+      const result = cutTurnUndo(wireLinesOf(activeRecords), new Set(), record['count'] as number);
+      if (result.cut !== undefined) activeRecords.splice(result.cut.index);
+    }
+    let state: readonly ContextMessage[] = [];
+    for (const record of activeRecords) {
       switch (record.type) {
         case 'context.append_message':
           state = foldAppendMessage(state, record['message'] as ContextMessage);
@@ -351,12 +374,6 @@ describe('live fold parity', () => {
         case 'context.apply_compaction':
           state = applyContextCompactionRecord(state, record);
           break;
-        case 'context.undo': {
-          const count = record['count'] as number;
-          const cut = computeUndoCut(state, count);
-          if (isFullyUndoable(cut, count)) state = resetFold(state.slice(0, cut.cutIndex));
-          break;
-        }
         case 'context.clear':
           state = state.length === 0 ? state : resetFold([]);
           break;
@@ -495,6 +512,20 @@ describe('live fold parity', () => {
     expect(transcript.foldedLength).toBe(live.length);
   });
 
+  it('tracks the live context length across compaction with appended injections', () => {
+    const records: WireRecord[] = [
+      appendMessage(userMessage('u1')),
+      ...assistantStep('s1', 'a1'),
+      appendMessage(userMessage('reminder', { kind: 'injection', variant: 'tool_update_pending' })),
+      compaction('SUM', 2, 1, undefined, 1),
+    ];
+    const live = foldLive(records);
+    const transcript = reduceContextTranscript(records);
+    expect(live).toHaveLength(4);
+    expect(live[3]!.origin).toEqual({ kind: 'injection', variant: 'tool_update_pending' });
+    expect(transcript.foldedLength).toBe(live.length);
+  });
+
   it('tracks the live context length across clear and undo', () => {
     const records: WireRecord[] = [
       appendMessage(userMessage('u1')),
@@ -502,6 +533,7 @@ describe('live fold parity', () => {
       { type: 'context.clear' },
       appendMessage(userMessage('u2')),
       ...assistantStep('s2', 'a2'),
+      turnPrompt('u3'),
       appendMessage(userMessage('u3')),
       ...assistantStep('s3', 'a3'),
       undo(1),
@@ -521,6 +553,7 @@ describe('live fold parity', () => {
           ownerPromptId: 'p1',
         }),
       ),
+      turnPrompt('u1', 'p1'),
       appendMessage({ ...userMessage('u1', { kind: 'user' }), id: 'p1' }),
       ...assistantStep('s1', 'a1'),
       appendMessage(
@@ -530,6 +563,7 @@ describe('live fold parity', () => {
           ownerPromptId: 'p2',
         }),
       ),
+      turnPrompt('u2', 'p2'),
       appendMessage({ ...userMessage('u2', { kind: 'user' }), id: 'p2' }),
       ...assistantStep('s2', 'a2'),
       undo(2),
@@ -559,6 +593,7 @@ describe('live fold parity', () => {
           ownerPromptId: 'shared',
         }),
       ),
+      turnPrompt('u2', 'shared'),
       appendMessage({ ...userMessage('u2', { kind: 'user' }), id: 'shared' }),
       ...assistantStep('s2', 'a2'),
       undo(1),
@@ -570,9 +605,58 @@ describe('live fold parity', () => {
     expect(transcript.foldedLength).toBe(3);
   });
 
+  it('restores signature metadata and raw tool ids from loop events', () => {
+    const records: WireRecord[] = [
+      loopEvent({ type: 'step.begin', uuid: 'step-1' }),
+      loopEvent({
+        type: 'content.part',
+        stepUuid: 'step-1',
+        part: { type: 'text', text: '', meta: { thought_signature_b64: 'sig-end' } },
+      }),
+      loopEvent({
+        type: 'tool.call',
+        stepUuid: 'step-1',
+        toolCallId: 'local_call',
+        rawId: 'call_native',
+        name: 'get_weather',
+        args: {},
+        extras: { thought_signature_b64: 'sig-tool' },
+      }),
+      loopEvent({
+        type: 'tool.result',
+        toolCallId: 'local_call',
+        result: { output: 'sunny' },
+      }),
+      loopEvent({ type: 'step.end', uuid: 'step-1' }),
+    ];
+    expect(reduceContextTranscript(records).entries).toEqual([
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: '', meta: { thought_signature_b64: 'sig-end' } }],
+        toolCalls: [
+          {
+            type: 'function',
+            id: 'local_call',
+            rawId: 'call_native',
+            name: 'get_weather',
+            arguments: '{}',
+            extras: { thought_signature_b64: 'sig-tool' },
+          },
+        ],
+      },
+      {
+        role: 'tool',
+        toolCallId: 'local_call',
+        content: [{ type: 'text', text: 'sunny' }],
+        toolCalls: [],
+      },
+    ]);
+  });
+
   it('keeps injections not owned by any removed prompt across undo', () => {
     const result = reduceContextTranscript([
       appendMessage(userMessage('note', { kind: 'injection', variant: 'test' })),
+      turnPrompt('u1'),
       appendMessage(userMessage('u1')),
       appendMessage(assistantMessage('a1')),
       undo(1),

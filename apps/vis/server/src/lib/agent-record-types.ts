@@ -22,9 +22,11 @@ export type {
   AgentTaskInfo as BackgroundTaskInfo,
   AgentTaskStatus as BackgroundTaskStatus,
 } from '@moonshot-ai/agent-core-v2';
-export type { SubagentTaskInfo as AgentBackgroundTaskInfo } from '@moonshot-ai/agent-core-v2';
-export type { ProcessTaskInfo as ProcessBackgroundTaskInfo } from '@moonshot-ai/agent-core-v2/agent/tools/os/bash/process-task';
-export type { QuestionTaskInfo as QuestionBackgroundTaskInfo } from '@moonshot-ai/agent-core-v2/agent/tools/ask-user-question/question-background-task';
+export type {
+  ProcessTaskInfo as ProcessBackgroundTaskInfo,
+  QuestionTaskInfo as QuestionBackgroundTaskInfo,
+  SubagentTaskInfo as AgentBackgroundTaskInfo,
+} from '@moonshot-ai/agent-core-v2/agent/task/types';
 
 import type {
   AgentTaskInfo as BackgroundTaskInfo,
@@ -44,6 +46,7 @@ import type {
   GoalUpdate,
   InteractionRequestEvent,
   InteractionResolvedEvent,
+  InterruptionCancellationRequested,
   InterruptionReminderRecorded,
   LlmRequest,
   LlmToolsSnapshot,
@@ -65,7 +68,6 @@ import type {
   SubagentStarted,
   TaskStarted,
   TaskTerminated,
-  TaskWaitDelivered,
   TokenCountingMeasured,
   TokenCountingRebased,
   TokenCountingTruncated,
@@ -99,6 +101,11 @@ import type { EnvironmentSetBinding } from '@moonshot-ai/agent-core-v2/agent/env
 import type { SwarmModeEnter, SwarmModeExit } from '@moonshot-ai/agent-core-v2/features/swarm/swarmOps';
 import type { TowerModeEnter, TowerModeExit } from '@moonshot-ai/agent-core-v2/features/tower/towerOps';
 import type { ToolsUpdateStore } from '@moonshot-ai/agent-core-v2/features/todo/todoOps';
+
+interface TaskWaitDelivered {
+  readonly agentId: string;
+  readonly keys: string[];
+}
 
 /** A wire record with v2's literal `type` discriminant restored. v2 declares
  *  records as Event2 class + payload interface mergings whose `type` field is
@@ -192,6 +199,7 @@ export type AgentRecord =
   | WireRecordOf<'interaction.request', InteractionRequestEvent>
   | WireRecordOf<'interaction.resolved', InteractionResolvedEvent>
   | WireRecordOf<'interruptionReminder.recorded', InterruptionReminderRecorded>
+  | WireRecordOf<'interruptionReminder.requested', InterruptionCancellationRequested>
   | WireRecordOf<'llm.request', LlmRequest>
   | WireRecordOf<'llm.tools_snapshot', LlmToolsSnapshot>
   | WireRecordOf<'mcp.server_failed', McpServerFailed>

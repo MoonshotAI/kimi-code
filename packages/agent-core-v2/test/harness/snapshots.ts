@@ -63,6 +63,10 @@ export function eventSnapshot(
         args: { ...args, hash: '<tools-hash>', tools: args.tools.map((tool) => tool.name) },
       };
     }
+    if (event.type === '[rpc]' && event.event === 'tool.updated') {
+      const args = event.args as { readonly taskId: string };
+      stableEvent = { ...event, args: { ...args, taskId: '<taskId>' } };
+    }
     if (
       event.type === '[wire]' &&
       event.event === 'llm.request' &&

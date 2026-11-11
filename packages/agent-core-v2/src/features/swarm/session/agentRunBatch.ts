@@ -345,10 +345,10 @@ export class AgentRunBatch<T> {
   }
 
   private failedAttemptOutcome(attempt: ActiveAttempt<T>, error: unknown): AgentRunResult<T> {
-    const status =
-      attempt.controller.signal.aborted && isUserCancellation(attempt.controller.signal.reason)
-        ? 'aborted'
-        : 'failed';
+    const status = isUserCancellation(error) ||
+      (attempt.controller.signal.aborted && isUserCancellation(attempt.controller.signal.reason))
+      ? 'aborted'
+      : 'failed';
     return {
       task: attempt.state.task,
       agentId: attempt.state.agentId,
@@ -673,6 +673,7 @@ export class AgentRunBatch<T> {
     };
     const abortFromTask = () => {
       attempt.controller.abort(task.signal?.reason);
+      if (!isUserCancellation(task.signal?.reason)) this.fail(task.signal?.reason ?? new Error('Aborted'));
     };
     const timeout =
       task.timeout === undefined || task.timeout <= 0

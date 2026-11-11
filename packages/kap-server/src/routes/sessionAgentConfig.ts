@@ -3,8 +3,8 @@ import {
   Error2,
   IAgentGoalService,
   IAgentLifecycleService,
+  IAgentLoopService,
   IAgentPlanService,
-  IAgentProfileService,
   IAgentSwarmService,
   IAgentTowerService,
   resumeSessionById,
@@ -46,9 +46,9 @@ export async function applyAgentConfigToSession(
 ): Promise<void> {
   const agent = await ensureMainAgent(session);
 
-  const profile = agent.accessor.get(IAgentProfileService);
+  const profile = agent.accessor.get(IAgentLoopService);
   if (agentConfig.model !== undefined && agentConfig.model !== '') {
-    await profile.setModel(agentConfig.model);
+    await agent.accessor.get(IAgentLoopService).setModel(agentConfig.model);
   }
   if (agentConfig.thinking !== undefined) {
     profile.setThinking(agentConfig.thinking);

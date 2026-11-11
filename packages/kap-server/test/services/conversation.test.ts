@@ -17,7 +17,7 @@ import { TurnEnded, TurnPrompt } from '@moonshot-ai/agent-core-v2/agent/loop/tur
 import { TaskStarted } from '@moonshot-ai/agent-core-v2/agent/task/taskOps';
 import type { AgentTaskInfo } from '@moonshot-ai/agent-core-v2/agent/task/types';
 import { AgentStateService } from '@moonshot-ai/agent-core-v2/agent/state/agentStateService';
-import { ToolProgress } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
+import { ToolUpdated } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
 import { EventBusService } from '@moonshot-ai/agent-core-v2/app/event/eventBusService';
 import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
 import { EventDispatcherService } from '@moonshot-ai/agent-core-v2/state/eventDispatcherService';
@@ -130,10 +130,30 @@ describe('conversation fold', () => {
         llmFirstTokenLatencyMs: 40,
         llmServerDecodeMs: 7,
       }),
+      record('turn.step.retrying', {
+        turnId: 0,
+        step: 1,
+        stepId: 's1',
+        failedAttempt: 1,
+        nextAttempt: 2,
+        maxAttempts: 2,
+        delayMs: 0,
+        errorName: 'APIStatusError',
+        errorMessage: 'retry',
+        statusCode: 429,
+      }),
+    ]);
+
+    expect(state.turns[0]?.retry).toMatchObject({ attempt: 1, next_attempt: 2, max_attempts: 2 });
+    applyConversationRecord(state, record('turn.step.started', { turnId: 0, step: 1, stepId: 's1' }));
+    expect(state.turns[0]?.retry).toBeUndefined();
+    for (const entry of [
       stepBegin(0, 2, 's2'),
       stepEnd(0, 2, 's2', { finishReason: 'end_turn', usage: { inputOther: 5, output: 1, inputCacheRead: 4, inputCacheCreation: 0 } }),
       turnEnded(0, 'completed', { durationMs: 120 }),
-    ]);
+    ]) {
+      applyConversationRecord(state, entry);
+    }
 
     const [turn] = state.turns;
     expect(turn?.turn_id).toMatch(/^t_[0-9a-f]{12}$/);
@@ -402,7 +422,7 @@ describe('conversation fold', () => {
       turnPrompt(0, 'p1'),
       userMessage('p1', 'work'),
       stepBegin(0, 1, 's1'),
-      userMessage(undefined, notificationXml('a'), { kind: 'task', taskId: 'a' }),
+      userMessage(undefined, notificationXml('a', '\n<output-file path="/tmp/a.log" bytes="123">\nRead output.\n</output-file>'), { kind: 'task', taskId: 'a' }),
       turnEnded(0, 'completed'),
       turnPrompt(1, undefined, { kind: 'task', taskId: 'b' }),
       userMessage(undefined, notificationXml('b'), { kind: 'task', taskId: 'b' }),
@@ -419,6 +439,7 @@ describe('conversation fold', () => {
     expect(state.turns[1]).toMatchObject({ turn_number: 1, status: 'ended' });
     expect(state.turns[2]).toMatchObject({ status: 'ended', outcome: 'completed' });
     expect(state.turns[2]?.items.map((item) => item.item_id)).toEqual(['n-c', 'n-c:1']);
+    expect(state.turns[0]?.items[1]).toMatchObject({ output: { file: '/tmp/a.log', bytes: 123 } });
   });
 
   it('reads the answer of a background question into structured fields', () => {
@@ -953,8 +974,19 @@ const userPrompt = (id: string, text: string): ContextAppendMessage =>
 
 const loopEvent = (event: LoopRecordedEvent): ContextAppendLoopEvent => new ContextAppendLoopEvent({ agentId: 'main', event });
 
-const progress = (update: ToolProgress['update']): ToolProgress =>
-  new ToolProgress({ agentId: 'main', turnId: 0, toolCallId: 'call-1', update });
+const updated = (
+  fields: Readonly<Record<string, unknown>>,
+  output?: { offset: number; text: string },
+): ToolUpdated => new ToolUpdated({
+  agentId: 'main',
+  turnId: 0,
+  toolCallId: 'call-1',
+  taskId: 'task-1',
+  status: 'running',
+  detached: false,
+  fields,
+  output,
+});
 
 const flushed = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -1114,7 +1146,7 @@ describe('conversation feed', () => {
     expect(h.events.at(-1)).toMatchObject({ type: 'item.updated', item_id: 'call-1', set: { task_id: 'bash-p81' } });
   });
 
-  it('streams a tool call through its stages, input, output and progress', async () => {
+  it('streams a tool call through its stages, input, output and fields', async () => {
     const h = feedHarness([]);
     await runningTurn(h);
 
@@ -1133,15 +1165,13 @@ describe('conversation feed', () => {
     await flushed();
     await h.dispatcher.dispatch(loopEvent({ type: 'tool.call', stepUuid: 's1', toolCallId: 'call-1', name: 'Bash', args: { command: 'ls' }, display, turnId: '0', step: 1 }));
     await flushed();
-    await h.dispatcher.dispatch(progress({ kind: 'stdout', text: 'a\n' }));
-    await h.dispatcher.dispatch(progress({ kind: 'stderr', text: 'b\n' }));
-    await h.dispatcher.dispatch(progress({ kind: 'stdout', text: 'fresh', replace: true }));
-    await h.dispatcher.dispatch(progress({ kind: 'progress', percent: 40, text: 'copying' }));
-    await h.dispatcher.dispatch(progress({ kind: 'status', text: 'verifying' }));
-    await h.dispatcher.dispatch(progress({ kind: 'custom', customKind: 'example.kind', customData: { url: 'https://example.com/auth' } }));
+    await h.dispatcher.dispatch(updated({}, { offset: 0, text: 'a\n' }));
+    await h.dispatcher.dispatch(updated({}, { offset: 0, text: 'a\n' }));
+    await h.dispatcher.dispatch(updated({}, { offset: 2, text: 'b\n' }));
+    await h.dispatcher.dispatch(updated({ progress: { percent: 40, text: 'copying' } }));
+    await h.dispatcher.dispatch(updated({ progress: { percent: 40, text: 'copying' }, status: 'verifying' }));
+    await h.dispatcher.dispatch(updated({ progress: { percent: 40, text: 'copying' }, status: 'verifying', 'example.kind': { url: 'https://example.com/auth' } }));
     const midway = (await h.feed.page(undefined, 20)).turns[0]?.items[1];
-    await h.dispatcher.dispatch(loopEvent({ type: 'tool.result', toolCallId: 'call-1', result: { output: 'done' } }));
-    await flushed();
 
     const tool = { turn_id: expect.any(String), item_id: 'call-1' };
     expect(h.events).toMatchObject([
@@ -1150,20 +1180,43 @@ describe('conversation feed', () => {
       { type: 'item.updated', ...tool, set: { stage: 'awaiting_approval', interaction_id: 'i1', display } },
       { type: 'item.updated', ...tool, set: { stage: 'executing' } },
       { type: 'item.updated', ...tool, set: { input: { command: 'ls' } } },
+      { type: 'item.updated', ...tool, set: { fields: {} } },
       { type: 'item.delta', ...tool, field: 'output', delta: 'a\n' },
       { type: 'item.delta', ...tool, field: 'output', delta: 'b\n' },
-      { type: 'item.updated', ...tool, set: { output: 'fresh' } },
-      { type: 'item.updated', ...tool, set: { progress: { percent: 40, status: 'copying' } } },
-      { type: 'item.updated', ...tool, set: { progress: { percent: 40, status: 'verifying' } } },
-      { type: 'item.updated', ...tool, set: { progress: { percent: 40, status: 'verifying', custom_kind: 'example.kind', custom_data: { url: 'https://example.com/auth' } } } },
-      { type: 'item.ended', turn_id: expect.any(String), item: { item_id: 'call-1', status: 'ended', outcome: 'completed', output: 'done', interaction_id: 'i1' } },
+      { type: 'item.updated', ...tool, set: { fields: { progress: { percent: 40, text: 'copying' } } } },
+      { type: 'item.updated', ...tool, set: { fields: { progress: { percent: 40, text: 'copying' }, status: 'verifying' } } },
+      { type: 'item.updated', ...tool, set: { fields: { progress: { percent: 40, text: 'copying' }, status: 'verifying', 'example.kind': { url: 'https://example.com/auth' } } } },
     ]);
     expect(Object.keys((h.events[3] as { set: object }).set)).toEqual(['stage']);
     expect(Object.keys((h.events[4] as { set: object }).set)).toEqual(['input']);
-    expect(midway).toMatchObject({ stage: 'executing', output: 'fresh', progress: { status: 'verifying', custom_kind: 'example.kind' } });
+    expect(midway).toMatchObject({
+      stage: 'executing',
+      output: 'a\nb\n',
+      fields: { status: 'verifying', 'example.kind': { url: 'https://example.com/auth' } },
+    });
+
+    await h.dispatcher.dispatch(loopEvent({ type: 'tool.result', toolCallId: 'call-1', result: { output: 'done' } }));
+    await flushed();
     const ended = (h.events.at(-1) as { item: ConversationItem }).item;
+    expect(ended).toMatchObject({ type: 'tool_call', status: 'ended', outcome: 'completed', output: 'done', interaction_id: 'i1' });
     expect(ended).not.toHaveProperty('stage', expect.anything());
-    expect(ended).not.toHaveProperty('progress', expect.anything());
+    expect(ended).not.toHaveProperty('fields', expect.anything());
+
+    const replayed = feedHarness([
+      prompt(0, 'p1').serialize(),
+      userPrompt('p1', 'run it').serialize(),
+      loopEvent({ type: 'step.begin', uuid: 's1', turnId: '0', step: 1 }).serialize(),
+      loopEvent({ type: 'tool.call', stepUuid: 's1', toolCallId: 'call-1', name: 'Bash', args: { command: 'ls' }, display, turnId: '0', step: 1 }).serialize(),
+      loopEvent({ type: 'tool.result', toolCallId: 'call-1', result: { output: 'done' } }).serialize(),
+      new TurnEnded({ agentId: 'main', turnId: 0, reason: 'completed' }).serialize(),
+    ]);
+    await replayed.dispatcher.restore();
+    await replayed.feed.ready;
+    const reloaded = (await replayed.feed.page(undefined, 20)).turns[0]?.items.find((item) => item.item_id === 'call-1');
+    expect(reloaded).toMatchObject({ status: 'ended', output: 'done' });
+    expect(reloaded).not.toHaveProperty('fields');
+    expect(replayed.events.filter((event) => event.type === 'item.delta' && event.field === 'output')).toEqual([]);
+    replayed.dispatcher.dispose();
     h.dispatcher.dispose();
   });
 

@@ -110,20 +110,7 @@ export interface BindAgentInput {
   readonly strictThinking?: boolean;
 }
 
-export interface IAgentProfileService {
-  readonly _serviceBrand: undefined;
-
-  configure(options: ProfileServiceOptions): void;
-  update(changed: ProfileUpdateData): void;
-  applyBindingSnapshot(snapshot: ProfileBindingSnapshot): void;
-  bind(input: BindAgentInput): Promise<void>;
-  setModel(model: string): Promise<ProfileSetModelResult>;
-  setThinking(level: string): void;
-  republishStatus(): void;
-  getModel(): string;
-  useProfile(profile: ResolvedAgentProfile, context: SystemPromptContext): void;
-  applyProfile(profile: ResolvedAgentProfile, options?: ApplyProfileOptions): Promise<void>;
-  getAgentsMdWarning(): string | undefined;
+export interface EffectiveProfileReader {
   data(): ProfileData;
   getEffectiveThinkingLevel(): ThinkingEffort;
   resolveModelContext(): ProfileModelContext;
@@ -134,10 +121,47 @@ export interface IAgentProfileService {
   hasModel(): boolean;
   isRunnable(): boolean;
   hasProvider(): boolean;
+  getModel(): string;
   getSystemPrompt(): string;
   getActiveToolNames(): readonly string[] | undefined;
-  addActiveTool(name: string): void;
-  removeActiveTool(name: string): void;
+  getAgentsMdWarning(): string | undefined;
+  republishStatus(): void;
+}
+
+export interface IAgentProfileService extends EffectiveProfileReader {
+  readonly _serviceBrand: undefined;
+
+  configure(options: ProfileServiceOptions): void;
+  applyBindingSnapshot(snapshot: ProfileBindingSnapshot): ProfileBindingSnapshot;
+  defaultProfile(): ProfileBindingSnapshot;
+  bind(input: BindAgentInput): Promise<ProfileBindingSnapshot>;
+  resolveBinding(input: BindAgentInput, current?: ProfileBindingSnapshot): Promise<ProfileBindingSnapshot>;
+  refreshBoundSubagentAllowlist(current?: ProfileBindingSnapshot): Promise<ProfileBindingSnapshot | undefined>;
+  prepareUpdate(
+    changed: ProfileUpdateData,
+    current?: ProfileBindingSnapshot,
+    activeTools?: readonly string[] | null,
+  ): import('./profileOps').ProfileUpdatePlan;
+  afterConfigDispatch(changed: Omit<ProfileUpdateData, 'activeToolNames'>, current?: ProfileBindingSnapshot): void;
+  resolveModel(model: string): ProfileSetModelResult;
+  resolveThinkingLevel(level: string, current?: ProfileBindingSnapshot): string;
+  republishStatus(current?: ProfileBindingSnapshot): void;
+  useProfile(profile: ResolvedAgentProfile, context: SystemPromptContext): ProfileUpdateData;
+  applyProfile(profile: ResolvedAgentProfile, options?: ApplyProfileOptions): Promise<ProfileUpdateData>;
+  getAgentsMdWarning(): string | undefined;
+  data(snapshot?: ProfileBindingSnapshot): ProfileData;
+  getEffectiveThinkingLevel(snapshot?: ProfileBindingSnapshot): ThinkingEffort;
+  resolveModelContext(snapshot?: ProfileBindingSnapshot): ProfileModelContext;
+  resolveRequestParams(snapshot?: ProfileBindingSnapshot): ModelRequestParams;
+  getModelCapabilities(snapshot?: ProfileBindingSnapshot): ModelCapability;
+  getModelProviderType(alias?: string, snapshot?: ProfileBindingSnapshot): string | undefined;
+  getMaxOutputSize(snapshot?: ProfileBindingSnapshot): number | undefined;
+  hasModel(snapshot?: ProfileBindingSnapshot): boolean;
+  isRunnable(snapshot?: ProfileBindingSnapshot): boolean;
+  hasProvider(snapshot?: ProfileBindingSnapshot): boolean;
+  getModel(snapshot?: ProfileBindingSnapshot): string;
+  getSystemPrompt(snapshot?: ProfileBindingSnapshot): string;
+  getActiveToolNames(snapshot?: ProfileBindingSnapshot): readonly string[] | undefined;
 }
 
 export const IAgentProfileService = createDecorator<IAgentProfileService>('agentProfileService');

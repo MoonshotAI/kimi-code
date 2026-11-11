@@ -11,7 +11,7 @@ import { describe, expect, it } from 'vitest';
 import type { Event } from '#/index';
 import {
   IAgentLifecycleService,
-  IAgentProfileService,
+  IAgentLoopService,
   IAgentScopeContext,
   IEventBus,
   ISessionTokenCountingService,
@@ -103,7 +103,7 @@ const USAGE = {
 
 function bindStatusServices(agent: FakeAgentHandle, model: string): void {
   agent.set(ISessionTokenCountingService, { statusSize: () => 10 });
-  agent.set(IAgentProfileService, {
+  agent.set(IAgentLoopService, {
     getModel: () => model,
     getModelCapabilities: () => ({ max_context_tokens: 128_000 }),
   });

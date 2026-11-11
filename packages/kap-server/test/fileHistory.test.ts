@@ -125,7 +125,7 @@ describe('file history routes', () => {
     expect(envelope.code).not.toBe(0);
   });
 
-  it('still accepts the older turn_id name for the turn number', async () => {
+  it('no longer takes the turn number as turn_id', async () => {
     const r = await boot();
     const sessionId = await createSession(r);
     for (const url of [
@@ -133,7 +133,7 @@ describe('file history routes', () => {
       `/api/v1/sessions/${sessionId}/file-history/content?turn_id=1&path=a.txt`,
     ]) {
       const res = await appOf(r).inject({ method: 'GET', url });
-      expect((res.json() as Envelope).code).toBe(0);
+      expect((res.json() as Envelope).code).toBe(40001);
     }
   });
 

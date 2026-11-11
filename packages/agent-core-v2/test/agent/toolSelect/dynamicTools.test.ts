@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  collectCurrentDynamicTools,
   collectLoadedDynamicToolNames,
   foldAnnouncedToolNames,
   isDynamicToolSchemaMessage,
@@ -201,10 +202,17 @@ describe('predicates and ledger scan', () => {
     expect(isLoadableToolsAnnouncement(userMessage('x'))).toBe(false);
   });
 
-  it('collects only current loaded versions and does not resurrect A after A-B-A', () => {
+  it('separates ordered history folding from current execution validation', () => {
     const history = [schemaMessage(['a', 'b']), userMessage('x'), schemaMessage(['b', 'c'])];
-    expect([...collectLoadedDynamicToolNames(history, [tool('a'), tool('b'), tool('c')])].toSorted())
+    expect([...collectLoadedDynamicToolNames(history)].toSorted()).toEqual(['a', 'b', 'c']);
+    expect([...collectCurrentDynamicTools(history, [tool('a'), tool('b'), tool('c')]).keys()].toSorted())
       .toEqual(['a', 'b', 'c']);
+    expect([...collectCurrentDynamicTools(history, [
+      { ...tool('a'), description: 'updated a desc' },
+      tool('b'),
+      tool('c'),
+    ]).keys()].toSorted()).toEqual(['b', 'c']);
+    expect(collectCurrentDynamicTools(history, []).size).toBe(0);
 
     const a = tool('a');
     const b = tool('b');
@@ -214,6 +222,6 @@ describe('predicates and ledger scan', () => {
       schemaMessage(['b']),
       deltaAnnouncement([a], [b], 2),
     ];
-    expect(collectLoadedDynamicToolNames(aba, [a]).size).toBe(0);
+    expect(collectLoadedDynamicToolNames(aba).size).toBe(0);
   });
 });

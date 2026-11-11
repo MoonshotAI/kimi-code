@@ -23,7 +23,11 @@ import {
 import { clock } from '#/utils/clock';
 
 export function usableOutputOf(message: AssistantMessage): AssistantMessage | null {
-  const content = message.content.filter((part) => !isVacuousContentPart(part));
+  const drained = message.content.filter((part) => !isVacuousContentPart(part));
+  const lastCompleteThink = drained.findLastIndex(
+    (part) => part.type === 'think' && part.encrypted !== undefined,
+  );
+  const content = drained.filter((part, index) => part.type !== 'think' || index <= lastCompleteThink);
   if (content.every((part) => part.type === 'think')) {
     return null;
   }
@@ -201,9 +205,12 @@ export async function settleLlmRequest(
         return;
       case 'llm.streaming.part': {
         const arrivedAt = attemptClock.partArrived();
-        const part = toolCallIds.normalizePart(event.part);
-        inner.push(part);
-        onEvent?.({ type: 'llm.streaming.part', part });
+        const normalized = toolCallIds.normalizePart(event.part);
+        const accumulated = inner.push(normalized);
+        const part = normalized.type === 'think' && accumulated.part.type === 'think'
+          ? { ...normalized, hidden: accumulated.part.hidden }
+          : normalized;
+        onEvent?.({ type: 'llm.streaming.part', part, block: accumulated.block });
         attemptClock.partConsumed(arrivedAt);
         return;
       }
