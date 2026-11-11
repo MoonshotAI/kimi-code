@@ -272,7 +272,7 @@ describe('HostProcessService on Windows', () => {
     }
     autoSpawn = true;
     const next = await svc.spawn('fake-tool');
-    next.dispose();
+    await next.dispose();
   });
 
   it('hands successful pipes to the process without retaining startup listeners', async () => {
@@ -284,6 +284,6 @@ describe('HostProcessService on Windows', () => {
     expect(crossSpawnChild!.stdin.listenerCount('close')).toBe(0);
     expect(crossSpawnChild!.stdout.listenerCount('error')).toBe(1);
     expect(crossSpawnChild!.stderr.listenerCount('error')).toBe(1);
-    proc.dispose();
+    await proc.dispose();
   });
 });
