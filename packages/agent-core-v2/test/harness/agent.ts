@@ -111,7 +111,7 @@ import { EVENT2_REGISTRY, event2FromRecord } from '#/app/event/event2';
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
 import { summarizeSkill, type SkillCatalog } from '#/features/skill/catalog/types';
-import { type ModelCapability } from '#/llm-adapter/contract/capability';
+import { type ModelCapability } from '@moonshot-ai/core/llm/request';
 import {
   isToolCall,
   isToolCallPart,
@@ -119,15 +119,14 @@ import {
   type Message as KosongMessage,
   type StreamedMessagePart,
   type ToolDescription as KosongTool,
-} from '#human/llm/message';
-import { type ThinkingEffort } from '#human/llm-requester/thinking';
-import { type TokenUsage } from '#human/llm-requester/usage';
+} from '@moonshot-ai/core/llm/message';
+import { type ThinkingEffort } from '@moonshot-ai/core/llm/request';
+import { type TokenUsage } from '@moonshot-ai/core/llm/usage';
 import type { AgentLLMRequestSource } from '#/agent/loop/requesterContract';
 import { type AgentModelDefinition } from '#/state/agentModel';
 import { type AgentModelInstanceOf } from '#/agent/agentContext/agentSpace';
 import { IAgentTodoService } from '#/features/todo/todoService';
 import { type TodoItem } from '#/features/todo/todoItem';
-import type { LlmRequester } from '#human/llm-requester/requester';
 import type { ILogger, LogContext, LogLevel } from '#/_base/log/log';
 import { ILogOptions } from '#/_base/log/logConfig';
 import {
@@ -247,7 +246,12 @@ import { stubClientIdentity } from '../app/bootstrap/stubs';
 import { recordAgentEvents, type RecordedEventEntry } from '../snapshot/events';
 import { createFakeHostFs, createFakeProcessRunner } from '../tools/fixtures/fake-exec';
 import { guardPromptCachePrefix, PromptCacheGuardedLoopRequester } from './prompt-cache-guard';
-import { coreRequesterFromA, createScriptedGenerate } from './scripted-generate';
+import {
+  createScriptedGenerate,
+  createMockProvider,
+  withMockProvider,
+  type MockProvider,
+} from './scripted-generate';
 import { project as projectContext } from '#/agent/loop/projection';
 import {
   DEFAULT_TEST_SYSTEM_PROMPT,
@@ -452,17 +456,22 @@ interface ResumeStateSnapshot {
   readonly usage: Omit<ReturnType<ISessionUsageService['status']>, 'currentTurn'>;
 }
 
+type TestModelCapabilities = ModelCapability & {
+  readonly maxContextSize?: number;
+  readonly maxInputSize?: number;
+};
+
 interface ConfigureOptions {
   readonly tools?: readonly string[] | undefined;
   readonly provider?: TestProviderConfig | undefined;
-  readonly modelCapabilities?: ModelCapability | undefined;
+  readonly modelCapabilities?: TestModelCapabilities | undefined;
   readonly preserveProfile?: boolean | undefined;
 }
 
 export type TestAgentContext = AgentTestContext;
 
 export interface TestAgentOptions {
-  readonly generate?: LlmRequester | undefined;
+  readonly generate?: MockProvider | undefined;
   readonly telemetry?: ITelemetryService | undefined;
   readonly persistence?: WireRecordPersistence | undefined;
   readonly hookEngine?:
@@ -697,7 +706,7 @@ export function logServices(logger: Logger): TestAgentServiceOverride {
   ];
 }
 
-export function llmGenerateServices(requester: LlmRequester): TestAgentServiceOverride {
+export function llmGenerateServices(requester: MockProvider): TestAgentServiceOverride {
   return appService(IProtocolAdapterRegistry, createGenerateBackedGateway(requester));
 }
 
@@ -1189,7 +1198,7 @@ export class AgentTestContext {
           reg.defineInstance(
             IProtocolAdapterRegistry,
             createGenerateBackedGateway(
-              guardPromptCachePrefix(options.generate ?? this.scriptedGenerate.requester),
+              guardPromptCachePrefix(options.generate ?? this.scriptedGenerate.provider),
             ),
           );
           reg.defineInstance(
@@ -1521,7 +1530,7 @@ export class AgentTestContext {
         return result;
       }) as IAgentLoopService['sendNow'];
       const remind = loop.remind.bind(loop);
-      loop.remind = (...entries: readonly import('#human/agent/turn').HistoryMessage[]) => {
+      loop.remind = (...entries: readonly import('@moonshot-ai/core/history/history').HistoryMessage[]) => {
         remind(...entries);
         void Promise.resolve().then(restoreAfterWrites);
       };
@@ -1821,7 +1830,7 @@ export class AgentTestContext {
 
   configureRuntimeModel(
     provider: TestProviderConfig,
-    modelCapabilities?: ModelCapability | undefined,
+    modelCapabilities?: TestModelCapabilities | undefined,
     preserveProfile = false,
   ): void {
     this.kimiConfig = configWithProvider(this.kimiConfig, provider, modelCapabilities);
@@ -2520,9 +2529,9 @@ function createPermissionRulesStub(
   };
 }
 
-const failOnResumeRequester: LlmRequester = {
-  generate: () => Promise.reject(new Error('Resume replay unexpectedly called the LLM')),
-};
+const failOnResumeRequester = createMockProvider(() =>
+  Promise.reject(new Error('Resume replay unexpectedly called the LLM')),
+);
 
 function resumeStateSnapshot(ctx: AgentTestContext): ResumeStateSnapshot {
   const usage = ctx.usage;
@@ -2561,7 +2570,7 @@ function resumeContextSnapshot(ctx: AgentTestContext) {
 }
 
 function stripMessageId(message: ContextMessage): ContextMessage {
-  const { id: _id, ...rest } = message;
+  const { id: _id, providerMessageId: _providerMessageId, ...rest } = message;
   return { ...rest, content: rest.content.map(stripUndefinedFields) } as ContextMessage;
 }
 
@@ -2838,10 +2847,10 @@ function asMutableRecord(value: unknown): Record<string, unknown> {
 function configWithProvider(
   config: KimiConfig,
   provider: TestProviderConfig,
-  modelCapabilities: ModelCapability | undefined,
+  modelCapabilities: TestModelCapabilities | undefined,
 ): KimiConfig {
   const providerName = 'test-provider';
-  const maxContextSize = modelCapabilities?.max_context_tokens;
+  const maxContextSize = modelCapabilities?.maxContextSize;
   return {
     ...config,
     providers: {
@@ -2932,7 +2941,7 @@ function createLogService(logger: Logger | undefined, bindings: LogContext = {})
   };
 }
 
-function createGenerateBackedGateway(requester: LlmRequester): IProtocolAdapterRegistry {
+function createGenerateBackedGateway(requester: MockProvider): IProtocolAdapterRegistry {
   const real = new ProtocolAdapterRegistry();
   return {
     _serviceBrand: undefined,
@@ -2945,15 +2954,11 @@ function createGenerateBackedGateway(requester: LlmRequester): IProtocolAdapterR
       real.resolveCapability(protocol, modelName, providerType),
     request: (model, params) => {
       const cacheKey = (model as Model & { readonly promptCacheKey?: string }).promptCacheKey;
-      return coreRequesterFromA(real.request(model, { cacheKey, ...params }), {
-        ...requester,
-        generate: (config, content, control) =>
-          requester.generate(
-            { ...config, maxCompletionTokens: params?.maxCompletionTokens },
-            content,
-            control,
-          ),
+      const initialized = real.request(model, {
+        ...params,
+        model: { ...params?.model, cacheKey: params?.model?.cacheKey ?? cacheKey },
       });
+      return withMockProvider(initialized, requester);
     },
   };
 }

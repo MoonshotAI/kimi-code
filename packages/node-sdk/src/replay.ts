@@ -2,6 +2,7 @@ import type {
   ModelCapability,
   SessionSummary as V2SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
+import type { LlmModelSpec } from '@moonshot-ai/core/llm/request';
 import type { GoalChange, GoalSnapshot } from '@moonshot-ai/agent-core-v2/features/goal/types';
 import type { PlanData } from '@moonshot-ai/agent-core-v2/features/plan/plan';
 import type { CompactionResult } from '@moonshot-ai/agent-core-v2/agent/fullCompaction/types';
@@ -19,7 +20,8 @@ export interface AgentConfigData {
   cwd: string;
   provider?: ProviderConfig;
   modelAlias?: string;
-  modelCapabilities: ModelCapability;
+  model?: LlmModelSpec;
+  modelCapabilities: ModelCapability | undefined;
   profileName?: string;
   subagentNames?: readonly string[];
   thinkingEffort: string;

@@ -13,11 +13,11 @@ import { SessionMediaStoreService } from '#/agent/media/sessionMediaStoreService
 import { mcpResultToExecutableOutput } from '#/agent/mcp/output';
 import { detectFileType, sniffImageDimensions } from '#/agent/media/file-type';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
-import { lowerMessage as lowerOpenAI } from '#human/llm/builtin/protocol/openai/lower';
-import { lowerMessage as lowerAnthropic } from '#human/llm/builtin/protocol/anthropic/lower';
-import { providerImagePolicy } from '#human/llm/protocol/kit/media';
-import type { Message, ToolMessage } from '#human/llm/message';
-import { degradeLeadingMediaParts } from '#human/llm/builtin/policy/media-degrade';
+import { lowerMessage as lowerOpenAI } from '@moonshot-ai/core/llm/builtin/protocol/openai/lower';
+import { lowerMessage as lowerAnthropic } from '@moonshot-ai/core/llm/builtin/protocol/anthropic/lower';
+import { providerImagePolicy } from '@moonshot-ai/core/llm/protocol/kit/media';
+import type { Message, ToolMessage } from '@moonshot-ai/core/llm/message';
+import { degradeLeadingMediaParts } from '@moonshot-ai/core/llm/builtin/policy/media-degrade';
 import { parseDaemonFileUrl } from '#/agent/media/mediaRef';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';

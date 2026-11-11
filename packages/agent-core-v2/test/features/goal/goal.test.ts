@@ -1,11 +1,12 @@
+import { providerHttpError } from '../../harness/index';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PassThrough, Readable, type Writable } from 'node:stream';
 
 import { isUserCancellation } from '#/_base/utils/abort';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { TurnStarted } from '#/agent/loop/turnEvents';
-import { createToolEntry } from '#human/agent/turn';
-import { createToolMessage } from '#human/llm/message';
+import { createToolEntry } from '@moonshot-ai/core/history/history';
+import { createToolMessage } from '@moonshot-ai/core/llm/message';
 
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
@@ -38,7 +39,7 @@ import type { WireRecord } from '#/wire/record';
 import { IEventBus } from '#/app/event/eventBus';
 import { APIConnectionError, APIStatusError } from '#/llm-adapter/contract/errors';
 import type { ToolCall } from '#human/message';
-import type { TokenUsage } from '#human/llm-requester/usage';
+import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
 import { ErrorCodes, Error2, errorInfo, toKimiErrorPayload } from '#/errors';
 import type { ExecutableTool, RunnableToolExecution } from '#/tool/toolContract';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
@@ -50,7 +51,7 @@ import {
   createTestAgent as createHarnessTestAgent,
   execEnvServices,
   permissionModeServices,
-  requesterFromGenerateFn,
+  createMockProvider,
   telemetryServices,
   type TestAgentContext,
   type TestAgentOptions,
@@ -160,14 +161,20 @@ function blockingGenerate(): {
 } {
   const started = deferred();
   let activeSignal: AbortSignal | undefined;
-  const requester: NonNullable<TestAgentOptions['generate']> = {
-    generate: (_config, _content, control) => {
-      control.onEvent?.({ type: 'llm.sent' });
-      activeSignal = control.signal;
-      started.resolve();
-      return waitForAbort(control.signal);
-    },
-  };
+  const requester = createMockProvider((request, signal) => {
+    const options = {
+        signal,
+        cacheKey: request.model.cacheKey,
+        sampling: request.model.sampling,
+        thinking: request.model.thinking,
+        maxOutputTokens: request.model.maxOutputTokens,
+        maxContextSize: request.model.spec.maxContextSize,
+        usedTokens: request.content.usedTokens,
+      };
+    activeSignal = options?.signal;
+    started.resolve();
+    return waitForAbort(options!.signal!);
+  });
   return {
     requester,
     started: started.promise,
@@ -973,7 +980,7 @@ describe('AgentGoalService core workflow hooks', () => {
     const modelCapabilities = loopService.data().modelCapabilities;
     loopService.resolveModelContext = () => ({
       modelAlias: 'mock-model',
-      modelCapabilities,
+      model: { provider: 'mock', name: 'mock-model', capability: modelCapabilities },
       maxOutputSize: undefined,
       alwaysThinking: undefined,
       thinkingLevel: 'off',
@@ -2090,8 +2097,8 @@ describe('goal pause classification on provider errors', () => {
   }
 
   it('pauses the goal on provider rate limits', async () => {
-    const goal = await goalAfterFailedTurn(requesterFromGenerateFn(async () => {
-      throw new APIStatusError(429, 'Rate limited', true, 'req-429');
+    const goal = await goalAfterFailedTurn(createMockProvider(async () => {
+      return providerHttpError(429, 'Rate limited', { requestId: 'req-429' })
     }));
 
     expect(goal).toMatchObject({
@@ -2101,8 +2108,8 @@ describe('goal pause classification on provider errors', () => {
   });
 
   it('pauses the goal on provider connection errors', async () => {
-    const goal = await goalAfterFailedTurn(requesterFromGenerateFn(async () => {
-      throw new APIConnectionError('socket hang up');
+    const goal = await goalAfterFailedTurn(createMockProvider(async () => {
+      throw new Error('socket hang up');
     }));
 
     expect(goal).toMatchObject({
@@ -2112,8 +2119,8 @@ describe('goal pause classification on provider errors', () => {
   });
 
   it('pauses the goal on provider authentication errors', async () => {
-    const goal = await goalAfterFailedTurn(requesterFromGenerateFn(async () => {
-      throw new APIStatusError(401, 'Unauthorized', false, 'req-401');
+    const goal = await goalAfterFailedTurn(createMockProvider(async () => {
+      return providerHttpError(401, 'Unauthorized', { requestId: 'req-401' })
     }));
 
     expect(goal).toMatchObject({
@@ -2123,7 +2130,7 @@ describe('goal pause classification on provider errors', () => {
   });
 
   it('pauses the goal on model configuration errors', async () => {
-    const goal = await goalAfterFailedTurn(requesterFromGenerateFn(async () => {
+    const goal = await goalAfterFailedTurn(createMockProvider(async () => {
       throw new Error2(ErrorCodes.MODEL_NOT_CONFIGURED, 'Model not set');
     }));
 
@@ -2134,7 +2141,7 @@ describe('goal pause classification on provider errors', () => {
   });
 
   it('pauses the goal on provider safety policy blocks', async () => {
-    const goal = await goalAfterFailedTurn(requesterFromGenerateFn(async () => ({
+    const goal = await goalAfterFailedTurn(createMockProvider(async () => ({
       id: 'mock-filtered',
       message: {
         role: 'assistant',

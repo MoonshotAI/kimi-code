@@ -2,15 +2,16 @@ import { z } from 'zod';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
-import type { ModelCapability } from '../contract/capability';
+import type { ProtocolName } from '@moonshot-ai/core/llm/protocol/protocol';
+import type { ModelCapability } from '@moonshot-ai/core/llm/request';
+import type { InitializedLlmRequester, InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
 import type { Model } from '../model/catalog';
-import type { InitializedLlmRequester, ModelRequestParams } from '../model/generate';
 
 import type { ProtocolBaseId, ResolvedAdapterIdentity } from './protocol-base';
 
 export const ProtocolSchema = z.enum(['anthropic', 'openai', 'openai_responses', 'google-genai']);
 
-export type Protocol = z.infer<typeof ProtocolSchema>;
+export type Protocol = ProtocolName;
 
 export interface ProtocolProviderOptions {
   readonly reasoningKey?: string;
@@ -48,9 +49,9 @@ export interface IProtocolAdapterRegistry {
     protocol: Protocol,
     modelName: string,
     providerType?: string,
-  ): ModelCapability;
+  ): ModelCapability | undefined;
 
-  request(model: Model, params?: ModelRequestParams): InitializedLlmRequester;
+  request(model: Model, part?: InitializedLlmRequestPart): InitializedLlmRequester;
 }
 
 export const IProtocolAdapterRegistry: ServiceIdentifier<IProtocolAdapterRegistry> =

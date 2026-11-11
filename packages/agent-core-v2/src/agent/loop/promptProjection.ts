@@ -2,9 +2,9 @@ import { createControlledPromise } from '@antfu/utils';
 
 import type { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
-import { stripBundledSkillBlocks } from '#human/agent/origin';
-import type { HistoryMessage, UserEntry } from '#human/agent/turn';
-import type { UserMessage } from '#human/llm/message';
+import { stripBundledSkillBlocks } from '@moonshot-ai/core/history/origin';
+import type { HistoryMessage, UserEntry } from '@moonshot-ai/core/history/history';
+import type { UserMessage } from '@moonshot-ai/core/llm/message';
 import { newMessageId } from '#/agent/contextMemory/messageId';
 import {
   PromptAborted,
@@ -14,7 +14,7 @@ import {
   PromptSteered,
   PromptSubmitted,
 } from '#/agent/prompt/promptEvents';
-import type { TurnStartingEvent, TurnTrigger } from './core/index';
+import type { LoopEmitted, TurnStartingEvent, TurnTrigger } from '@moonshot-ai/core/loop/index';
 import type { PromptCompletion, PromptHandle, PromptState, Turn, TurnResult } from './loop';
 
 export interface PromptProjection {
@@ -171,7 +171,7 @@ export class AgentPromptProjection {
     return pending;
   }
 
-  activatePromptOnly(event: Extract<import('./core/index').LoopEmitted, { type: 'turn.started' }>): PendingTurn | undefined {
+  activatePromptOnly(event: Extract<LoopEmitted, { type: 'turn.started' }>): PendingTurn | undefined {
     const entry = event.entry;
     if (entry === undefined) return undefined;
     const waiter = this.ensure(entry, false);
@@ -248,7 +248,7 @@ export class AgentPromptProjection {
     return accepted;
   }
 
-  appended(event: Extract<import('./core/index').LoopEmitted, { type: 'message.appended' }>): void {
+  appended(event: Extract<LoopEmitted, { type: 'message.appended' }>): void {
     if (event.source !== 'normal' && event.source !== 'notify') return;
     const entry = event.entry as UserEntry;
     this.entriesByTurn.set(event.turnId, entry);

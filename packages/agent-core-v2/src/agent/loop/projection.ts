@@ -2,7 +2,7 @@ import { ErrorCodes, Error2 } from '#/errors';
 import { renderToolResultForModel, shouldRenderWallTime } from '#/agent/contextMemory/toolResultRender';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
-import type { ContentPart, Message } from '#human/llm/message';
+import type { ContentPart, Message } from '@moonshot-ai/core/llm/message';
 
 export type ProjectionAnomaly =
   | { readonly kind: 'tool_result_reordered'; readonly toolCallId: string }

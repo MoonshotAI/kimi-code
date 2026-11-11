@@ -25,12 +25,7 @@ export function isUserCancellation(value: unknown): value is UserCancellationErr
   return value instanceof UserCancellationError;
 }
 
-export function abortedToolOutput(toolName: string, reason: unknown): string {
-  if (isUserCancellation(reason)) {
-    return `The user manually interrupted "${toolName}" (and anything else running at the same time). This was a deliberate user action, not a system error, timeout, or capacity limit. Do not retry automatically or guess at the cause — wait for the user's next instruction.`;
-  }
-  return `Tool "${toolName}" was aborted`;
-}
+export { abortedToolOutput } from '@moonshot-ai/core/tool/abort';
 
 export function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) return Promise.reject(abortReason(signal));

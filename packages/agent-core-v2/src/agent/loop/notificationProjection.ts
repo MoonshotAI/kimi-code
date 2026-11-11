@@ -1,4 +1,4 @@
-import type { LoopEmitted } from './core/index';
+import type { LoopEmitted } from '@moonshot-ai/core/loop/index';
 
 interface NotificationState {
   readonly onConsume?: () => void;

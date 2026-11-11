@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { toKimiErrorPayload } from '#/errors';
+import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import type { IWireService } from '#/wire/wire';
 import { normalizeLegacyTurnSteerRecords } from '#/wire/human';
 import type { PartsTransformer, WireRecord } from '#/wire/record';
@@ -26,7 +27,7 @@ import {
   type AssistantEntry,
   type HistoryMessage,
   type UserEntry,
-} from '#human/agent/turn';
+} from '@moonshot-ai/core/history/history';
 
 import { contextFromHistoryEntry, historyFromContext } from './history';
 import { TurnPrompt } from './turnOps';
@@ -36,7 +37,7 @@ import type {
   RemindEntry,
   StepOutcome,
   TurnOutcome,
-} from './core/index';
+} from '@moonshot-ai/core/loop/index';
 
 export interface LoopJournalSnapshot {
   readonly input: LoopInput;
@@ -434,7 +435,7 @@ export class LoopJournal {
           name: event.toolCall.name,
           args: toolArguments(assistant, event.toolCall.id),
           extras: event.toolCall.extras,
-          display: event.display,
+          display: event.display as ToolInputDisplay | undefined,
         });
         return;
       }

@@ -1,15 +1,15 @@
-import { createRecoveryLedger, type LlmRecovery, type LlmRecoveryLedger } from '#human/llm/policy/recovery';
+import { createRecoveryLedger, type LlmRecoveryLedger } from '@moonshot-ai/core/llm/policy/recovery';
+import { credentialRecovery } from '@moonshot-ai/core/llm/policy/credentials';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IInstantiationService } from '#/_base/di/instantiation';
 import type { EffectiveProfileReader, ProfileModelContext } from '#/agent/profile/profile';
 import { READ_MEDIA_FILE_TOOL_NAME } from '#/agent/tools/read-media-file/read-media-file';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IConfigService } from '#/app/config/config';
-import { errorFromLlmOutcome } from '#/llm-adapter/model/generate';
-import { type Message, type ToolDescription as Tool } from '#human/llm/message';
+import { type Message, type ToolDescription as Tool } from '@moonshot-ai/core/llm/message';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
 import type { ModelOverrides } from '#/llm-adapter/model/model.types';
-import { completionBudgetParams, resolveCompletionBudget } from '#/llm-adapter/model/completion-budget';
+import { resolveCompletionBudget } from '#/llm-adapter/model/completion-budget';
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { getProviderDefinition } from '#/llm-adapter/provider/provider-definition';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -27,7 +27,7 @@ import {
   type RequestConfigSnapshot,
   type ResolvedRequestContext,
 } from './requesterContract';
-import type { TurnExecution } from './core/request';
+import type { TurnExecution } from '@moonshot-ai/core/loop/request';
 import { AgentLoopProjector } from './projector';
 import { AgentLoopRequestObserver } from './requestObservation';
 import { createStructureRecovery, createStructureResolver } from './projectionPolicy';
@@ -40,10 +40,11 @@ import {
   type LlmDimension,
   type LlmRequestPart,
   type LlmRequestRest,
-} from '#human/llm/requester';
-import type { LlmRequest as CoreLlmRequest } from '#human/llm/request';
-import type { LlmPolicy, LlmRunControl } from '#human/llm/policy/policy';
-import type { LlmOutcome } from '#human/llm/response';
+  type InitializedLlmRequestPart,
+} from '@moonshot-ai/core/llm/requester';
+import type { LlmRequest as CoreLlmRequest, LlmRequestModel, ModelCapability } from '@moonshot-ai/core/llm/request';
+import type { LlmPolicy, LlmRunControl } from '@moonshot-ai/core/llm/policy/policy';
+import type { LlmOutcome } from '@moonshot-ai/core/llm/response';
 import { LOOP_CONTROL_SECTION, type LoopControl } from './configSection';
 
 interface RequestOverrides {
@@ -142,7 +143,7 @@ export class AgentLoopRequestFactory {
     return this.toolSelect.initialTools();
   }
 
-  operationTools(baseline: readonly Tool[], capabilities: ProfileModelContext['modelCapabilities']): readonly Tool[] {
+  operationTools(baseline: readonly Tool[], capabilities: ModelCapability | undefined): readonly Tool[] {
     const disclosure = this.toolSelect.enabled(capabilities);
     const active = new Set(this.toolSelect.defaultTools(disclosure).map((tool) => tool.name));
     return baseline.filter((tool) => active.has(tool.name));
@@ -150,7 +151,7 @@ export class AgentLoopRequestFactory {
 
   async prepareTools(
     signal: AbortSignal,
-    capabilities: ProfileModelContext['modelCapabilities'],
+    capabilities: ModelCapability | undefined,
     base?: readonly Tool[],
   ): Promise<readonly Tool[]> {
     await this.toolSelect.prepareForRequest(signal);
@@ -158,12 +159,12 @@ export class AgentLoopRequestFactory {
   }
 
   private toolsForCapabilities(
-    capabilities: ProfileModelContext['modelCapabilities'],
+    capabilities: ModelCapability | undefined,
     base?: readonly Tool[],
   ): readonly Tool[] {
     const disclosure = this.toolSelect.enabled(capabilities);
     const tools = base ?? this.toolSelect.defaultTools(disclosure);
-    if (capabilities.image_in || capabilities.video_in) return tools;
+    if (capabilities?.image_in === true || capabilities?.video_in === true) return tools;
     return tools.filter((tool) => tool.name !== READ_MEDIA_FILE_TOOL_NAME);
   }
 
@@ -210,7 +211,7 @@ export class AgentLoopRequestFactory {
       | undefined;
     const base = mergeFields(contentsOf(resolved.request) as Fields, {
       profile: { systemPrompt: resolved.systemPrompt, tools: resolved.tools },
-      content: { messages: resolved.messages, usedTokens: resolved.params.usedContextTokens },
+      content: { messages: resolved.messages, usedTokens: resolved.usedContextTokens },
     } as Fields);
     const request = mergeFields(mergeFields(base, part as Fields), rest as Fields) as unknown as CoreLlmRequest;
     return {
@@ -234,7 +235,7 @@ export class AgentLoopRequestFactory {
         infiniteRetry: this.infiniteRetryEnabled,
       },
       recoveries: [
-        coreCredentialRecovery,
+        credentialRecovery,
         createStructureRecovery(this.projector),
         ...(mediaPolicy === undefined ? [] : [mediaPolicy.recovery]),
       ],
@@ -296,7 +297,7 @@ export class AgentLoopRequestFactory {
         },
       );
       if (outcome.type === 'done') this.observer.completeRequest(observation, outcome);
-      else if (outcome.type === 'failed') this.observer.failRequest(observation, errorFromLlmOutcome(outcome), control.signal);
+      else if (outcome.type === 'failed') this.observer.failRequest(observation, outcome.error, control.signal, outcome.requestId);
       else observation.setRequestId(undefined);
       return outcome;
     } catch (error) {
@@ -322,21 +323,28 @@ export class AgentLoopRequestFactory {
       (overrides.messages === undefined
         ? this.tokenCounting.get(this.scopeContext.agentContext).size
         : undefined);
-    const budgetParams = completionBudgetParams({
-      budget: resolveCompletionBudget({
-        maxOutputSize: overrides.maxOutputSize ?? resolved.maxOutputSize,
-        maxCompletionTokensCap: snapshot.maxCompletionTokensCap,
-      }),
-      capability: resolved.modelCapabilities,
-      usedContextTokens,
+    const budget = resolveCompletionBudget({
+      maxOutputSize: overrides.maxOutputSize ?? resolved.maxOutputSize,
+      maxCompletionTokensCap: snapshot.maxCompletionTokensCap,
     });
     const maxCompletionTokensCap = snapshot.maxCompletionTokensCap;
     const optedOut = maxCompletionTokensCap !== undefined && maxCompletionTokensCap <= 0;
-    const params = {
+    const maxOutputTokens: LlmRequestModel['maxOutputTokens'] = optedOut
+      ? 'none'
+      : budget === undefined
+        ? undefined
+        : Math.max(1, budget);
+    const params: InitializedLlmRequestPart = {
       ...snapshot.params,
-      ...budgetParams,
-      ...(usedContextTokens === undefined ? {} : { usedContextTokens }),
-      ...(optedOut ? { maxCompletionTokens: maxCompletionTokensCap } : {}),
+      model: {
+        ...snapshot.params.model,
+        spec: {
+          ...model.spec,
+          maxContextSize: resolved.model.maxContextSize,
+          maxInputSize: resolved.model.maxInputSize,
+        },
+        maxOutputTokens,
+      },
     };
 
     const messages = overrides.messages ?? this.contextMessages();
@@ -357,6 +365,7 @@ export class AgentLoopRequestFactory {
       systemPrompt: overrides.systemPrompt ?? snapshot.systemPrompt,
       tools: overrides.tools === undefined ? undefined : [...overrides.tools],
       messages: [...messages],
+      usedContextTokens,
       contextRevision: overrides.runtime.historyRevision(),
       promptCacheProbe: overrides.promptCacheProbe,
       source: overrides.source,
@@ -391,19 +400,3 @@ function mergeCorePolicies(host: LlmPolicy, extra: LlmPolicy | undefined): LlmPo
   };
 }
 
-const coreCredentialRecovery: LlmRecovery = {
-  propose: ({ error, appliedRecoveries, endpoint }) => {
-    const provider = endpoint?.credentials;
-    if (
-      provider?.canRecover?.(error) !== true ||
-      appliedRecoveries.some((record) => record.strategy === 'credentials')
-    ) {
-      return undefined;
-    }
-    return {
-      strategy: 'credentials',
-      action: 'refresh',
-      beforeNextAttempt: () => provider.invalidate?.(),
-    };
-  },
-};

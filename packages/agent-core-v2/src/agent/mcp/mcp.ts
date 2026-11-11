@@ -1,4 +1,4 @@
-import type { ToolDescription as KosongTool } from '#human/llm/message';
+import type { ToolDescription as KosongTool } from '@moonshot-ai/core/llm/message';
 
 import { createDecorator } from "#/_base/di/instantiation";
 import { type IDisposable } from "#/_base/di/lifecycle";

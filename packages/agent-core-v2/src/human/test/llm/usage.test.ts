@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import type { DecodeSink } from '#/llm/protocol/protocol';
-import { createDecoder as createAnthropicDecoder } from '#/llm/builtin/protocol/anthropic/decode';
-import { createDecoder as createOpenAIDecoder } from '#/llm/builtin/protocol/openai/decode';
-import type { TokenUsage } from '#/llm-requester/usage';
+import type { DecodeSink } from '@moonshot-ai/core/llm/protocol/protocol';
+import { createDecoder as createAnthropicDecoder } from '@moonshot-ai/core/llm/builtin/protocol/anthropic/decode';
+import { createDecoder as createOpenAIDecoder } from '@moonshot-ai/core/llm/builtin/protocol/openai/decode';
+import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
 
 function createSink() {
   const usages: Partial<TokenUsage>[] = [];

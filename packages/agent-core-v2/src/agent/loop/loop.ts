@@ -3,11 +3,11 @@ import type { IDisposable } from '#/_base/di/lifecycle';
 import { Error2, isError2, type Error2Options } from '#/_base/errors/errors';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { AgentTaskInfo } from '#/agent/task/types';
-import type { FinishReason } from '#human/llm-requester/finish-reason';
-import type { ContentPart, TextPart, ToolCall, ToolDescription as Tool } from '#human/llm/message';
-import type { TokenUsage } from '#human/llm-requester/usage';
+import type { FinishReason } from '@moonshot-ai/core/llm/response';
+import type { ContentPart, TextPart, ToolCall, ToolDescription as Tool } from '@moonshot-ai/core/llm/message';
+import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
 import type { Hooks } from '#/hooks';
-import type { HistoryMessage, UserEntry } from '#human/agent/turn';
+import type { HistoryMessage, UserEntry } from '@moonshot-ai/core/history/history';
 import type { LoopRequester } from './requesterContract';
 import type {
   BindAgentInput,
@@ -20,9 +20,9 @@ import type {
   ApplyProfileOptions,
 } from '#/agent/profile/profile';
 import { LoopErrors } from './errors';
-import type { ToolCompletionFactory } from './core/tool/outcome';
-import type { ToolCallOutcome } from './core/contract/outcome';
-import type { LoopHooks } from './core/contract/hook';
+import type { ToolCompletionFactory } from '@moonshot-ai/core/loop/tool/outcome';
+import type { ToolCallOutcome } from '@moonshot-ai/core/loop/contract/outcome';
+import type { LoopHooks } from '@moonshot-ai/core/loop/contract/hook';
 export interface AgentActivityRetrySnapshot {
   readonly failedAttempt: number;
   readonly nextAttempt: number;

@@ -109,7 +109,7 @@ import { IWireService } from '#/wire/wire';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { contextFromHistoryEntry } from '#/agent/loop/history';
-import type { HistoryMessage } from '#human/agent/turn';
+import type { HistoryMessage } from '@moonshot-ai/core/history/history';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';

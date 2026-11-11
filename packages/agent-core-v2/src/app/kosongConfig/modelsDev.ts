@@ -1,4 +1,4 @@
-import type { ModelCapability } from '#/llm-adapter/contract/capability';
+import type { ModelCapability } from '@moonshot-ai/core/llm/request';
 import type { ProviderType } from '#/llm-adapter/provider/provider';
 
 import { wireHasProtocolThinkingDisable } from '#/llm-adapter/model/thinking';
@@ -43,6 +43,11 @@ export interface ModelsDevProviderEntry {
 
 export type ModelsDevCatalog = Record<string, ModelsDevProviderEntry>;
 
+export interface ModelsDevCapability extends ModelCapability {
+  readonly max_context_tokens: number;
+  readonly max_input_tokens?: number;
+}
+
 export interface ModelsDevModel {
   readonly id: string;
   readonly name?: string;
@@ -53,7 +58,7 @@ export interface ModelsDevModel {
   readonly alwaysThinking?: boolean;
   readonly protocol?: 'anthropic';
   readonly baseUrl?: string;
-  readonly capability: ModelCapability;
+  readonly capability: ModelsDevCapability;
 }
 
 const KNOWN_WIRE_TYPES = [

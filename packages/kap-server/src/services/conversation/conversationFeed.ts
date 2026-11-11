@@ -39,7 +39,7 @@ import { AgentErrorEvent } from '@moonshot-ai/agent-core-v2/agent/mcp/mcpEvents'
 import { WarningIssued } from '@moonshot-ai/agent-core-v2/agent/profile/profileOps';
 import { TaskStarted } from '@moonshot-ai/agent-core-v2/agent/task/taskOps';
 import { ToolUpdated } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
-import { isMediaPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
+import { isMediaPart } from '@moonshot-ai/core/llm/message';
 
 import type {
   AssistantMessageItem,

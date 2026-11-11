@@ -7,15 +7,15 @@ import { OrderedHookSlot } from '#/hooks';
 import { IEventBus } from '#/app/event/eventBus';
 import type { Event2, Event2Class } from '#/app/event/event2';
 import { IFlagService } from '#/app/flag/flag';
-import type { ModelCapability } from '#/llm-adapter/contract/capability';
-import type { Message, ToolCall, ToolDescription as Tool } from '#human/llm/message';
-import type { LlmRequest } from '#human/llm/request';
+import type { ModelCapability } from '@moonshot-ai/core/llm/request';
+import type { Message, ToolCall, ToolDescription as Tool } from '@moonshot-ai/core/llm/message';
+import type { LlmRequest } from '@moonshot-ai/core/llm/request';
 import { IAgentMcpService } from '#/agent/mcp/mcp';
 import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { contextFromHistoryEntry } from '#/agent/loop/history';
 import { AgentSpaceImpl } from '#/agent/agentContext/agentSpace';
-import type { HistoryMessage } from '#human/agent/turn';
+import type { HistoryMessage } from '@moonshot-ai/core/history/history';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { createReminderHarness } from '../../features/reminder/stubs';
 import {
@@ -56,7 +56,7 @@ import {
   toolSelectKey,
 } from '#/agent/toolSelect/toolSelectOps';
 import { SelectToolsTool } from '#/agent/tools/select-tools/selectToolsTool';
-import { kimiOpenAIProtocol } from '#human/llm/builtin/provider/kimi/protocol';
+import { kimiOpenAIProtocol } from '@moonshot-ai/core/llm/builtin/provider/kimi/protocol';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IWireService } from '#/wire/wire';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -117,7 +117,6 @@ function makeCapabilities(overrides: {
     audio_in: false,
     thinking: false,
     tool_use: overrides.tool_use ?? false,
-    max_context_tokens: 128_000,
     dynamically_loaded_tools: overrides.dynamically_loaded_tools,
   };
 }

@@ -1,4 +1,4 @@
-import type { ModelCapability } from '#/llm-adapter/contract/capability';
+import type { ModelCapability } from '@moonshot-ai/core/llm/request';
 import type { ToolCall } from '#human/message';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -165,7 +165,6 @@ describe('Agent config', () => {
       audio_in: false,
       thinking: false,
       tool_use: true,
-      max_context_tokens: 128000,
     };
     ctx.configureRuntimeModel(
       {
@@ -174,7 +173,7 @@ describe('Agent config', () => {
         baseUrl: 'https://initial.example/v1',
         model: 'gpt-initial',
       },
-      initialCapability,
+      { ...initialCapability, maxContextSize: 128000 },
     );
 
     await expect(ctx.rpc.getConfig({})).resolves.toMatchObject({
@@ -189,7 +188,6 @@ describe('Agent config', () => {
       audio_in: false,
       thinking: true,
       tool_use: true,
-      max_context_tokens: 262144,
     };
     ctx.configureRuntimeModel(
       {
@@ -198,7 +196,7 @@ describe('Agent config', () => {
         baseUrl: 'https://next.example/v1',
         model: 'kimi-next',
       },
-      nextCapability,
+      { ...nextCapability, maxContextSize: 262144 },
     );
     profile.update({
       systemPrompt: 'Changed profile prompt.',

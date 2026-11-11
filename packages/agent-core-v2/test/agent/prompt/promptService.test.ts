@@ -8,7 +8,7 @@ import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { IAgentLoopService, type PromptHandle } from '#/agent/loop/loop';
 import { TurnStarted, TurnStepInterrupted } from '#/agent/loop/turnEvents';
 import { TurnPrompt } from '#/agent/loop/turnOps';
-import { emptyUsage } from '#human/llm-requester/usage';
+import { emptyUsage } from '@moonshot-ai/core/llm/usage';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import {
   PromptAborted,
@@ -18,11 +18,12 @@ import {
   PromptSteered,
   PromptSubmitted,
 } from '#/agent/prompt/promptEvents';
-import type { ContentPart, Message } from '#human/llm/message';
+import type { ContentPart, Message } from '@moonshot-ai/core/llm/message';
 
 import {
   appService,
   createTestAgent,
+  createMockProvider,
   sessionService,
   type TestAgentContext,
   type TestAgentOptions,
@@ -411,31 +412,43 @@ describe('prompt queue', () => {
     const started = new Promise<void>((resolve) => { requestStarted = resolve; });
     let requests = 0;
     const histories: (readonly Message[])[] = [];
-    const generate: NonNullable<TestAgentOptions['generate']> = {
-      generate: async (_config, content, control) => {
-        histories.push(structuredClone(content.messages));
-        requests += 1;
-        if (requests === 1) {
-          control.onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'partial answer' } });
-          requestStarted();
-          await new Promise<void>((resolve) => {
-            if (control.signal.aborted) {
-              resolve();
-              return;
-            }
-            control.signal.addEventListener('abort', () => resolve(), { once: true });
-          });
-          control.signal.throwIfAborted();
-        }
-        control.onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'after steer' } });
-        control.onEvent?.({ type: 'llm.streaming.usage', usage: emptyUsage() });
-        control.onEvent?.({
-          type: 'llm.streaming.finish',
-          finish: { finishReason: 'completed', rawFinishReason: 'stop' },
+    const generate = createMockProvider(async (request, signal) => {
+      const history = [...request.content.messages];
+      const options = {
+        signal,
+        cacheKey: request.model.cacheKey,
+        sampling: request.model.sampling,
+        thinking: request.model.thinking,
+        maxOutputTokens: request.model.maxOutputTokens,
+        maxContextSize: request.model.spec.maxContextSize,
+        usedTokens: request.content.usedTokens,
+      };
+      histories.push(structuredClone(history));
+      requests += 1;
+      const content = requests === 1
+        ? [{ type: 'text' as const, text: 'partial answer' }, { type: 'text' as const, text: 'after steer' }]
+        : [{ type: 'text' as const, text: 'after steer' }];
+      if (requests === 1) {
+        
+        requestStarted();
+        await new Promise<void>((resolve) => {
+          if (options!.signal!.aborted) {
+            resolve();
+            return;
+          }
+          options!.signal!.addEventListener('abort', () => resolve(), { once: true });
         });
-        control.onEvent?.({ type: 'llm.done' });
-      },
-    };
+        if (options!.signal!.aborted) throw options!.signal!.reason;
+      }
+      
+      return {
+        id: 'mock-1',
+        message: { role: 'assistant', content, toolCalls: [] },
+        usage: emptyUsage(),
+        finishReason: 'completed',
+        rawFinishReason: 'stop',
+      };
+    });
     setup({ generate });
     const interrupted: TurnStepInterrupted[] = [];
     ctx.get(IEventBus).subscribe(TurnStepInterrupted, (event) => interrupted.push(event));
@@ -1070,34 +1083,45 @@ describe('prompt queue', () => {
     const requestGate = new Promise<void>((resolve) => { releaseRequest = resolve; });
     let requests = 0;
     let aborted = false;
-    const generate: NonNullable<TestAgentOptions['generate']> = {
-      generate: async (_config, _content, control) => {
-        requests += 1;
-        if (requests === 1) {
-          control.onEvent?.({
-            type: 'llm.streaming.part',
-            part: { type: 'function', id: 'call-work', name: 'Work', arguments: '{}' },
-          });
-          control.signal.addEventListener('abort', () => { aborted = true; }, { once: true });
-          requestStarted();
-          await requestGate;
-          control.signal.throwIfAborted();
-          control.onEvent?.({ type: 'llm.streaming.usage', usage: emptyUsage() });
-          control.onEvent?.({
-            type: 'llm.streaming.finish',
-            finish: { finishReason: 'tool_calls', rawFinishReason: 'tool_calls' },
-          });
-        } else {
-          control.onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'after steer' } });
-          control.onEvent?.({ type: 'llm.streaming.usage', usage: emptyUsage() });
-          control.onEvent?.({
-            type: 'llm.streaming.finish',
-            finish: { finishReason: 'completed', rawFinishReason: 'stop' },
-          });
-        }
-        control.onEvent?.({ type: 'llm.done' });
-      },
-    };
+    const generate = createMockProvider(async (request, signal) => {
+      const options = {
+        signal,
+        cacheKey: request.model.cacheKey,
+        sampling: request.model.sampling,
+        thinking: request.model.thinking,
+        maxOutputTokens: request.model.maxOutputTokens,
+        maxContextSize: request.model.spec.maxContextSize,
+        usedTokens: request.content.usedTokens,
+      };
+      requests += 1;
+      if (requests === 1) {
+        const toolCall = { type: 'function' as const, id: 'call-work', name: 'Work', arguments: '{}' };
+        
+        options!.signal!.addEventListener('abort', () => { aborted = true; }, { once: true });
+        requestStarted();
+        await requestGate;
+        if (options!.signal!.aborted) throw options!.signal!.reason;
+        return {
+          id: 'mock-tool-call',
+          message: { role: 'assistant', content: [], toolCalls: [toolCall] },
+          usage: emptyUsage(),
+          finishReason: 'tool_calls',
+          rawFinishReason: 'tool_calls',
+        };
+      }
+      
+      return {
+        id: 'mock-after-steer',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'after steer' }],
+          toolCalls: [],
+        },
+        usage: emptyUsage(),
+        finishReason: 'completed',
+        rawFinishReason: 'stop',
+      };
+    });
     setup({ generate });
     const steered: PromptSteered[] = [];
     ctx.get(IEventBus).subscribe(PromptSteered, (event) => steered.push(event));

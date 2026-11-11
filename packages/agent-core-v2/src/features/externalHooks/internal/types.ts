@@ -1,4 +1,4 @@
-import type { ContentPart } from '#human/llm/message';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 
 export const HOOK_EVENT_TYPES = [
   'PreToolUse',

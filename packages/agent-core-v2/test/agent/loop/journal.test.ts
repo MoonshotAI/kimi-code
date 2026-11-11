@@ -6,12 +6,12 @@ import {
   LoopJournal,
   restoreLoopJournal,
 } from '#/agent/loop/journal';
-import { createLoop } from '#/agent/loop/core/index';
+import { createLoop } from '@moonshot-ai/core/loop/index';
 import { successfulExecutor } from './core/executor';
-import { usableOutputOf } from '#human/llm/policy/settle';
+import { usableOutputOf } from '@moonshot-ai/core/llm/policy/settle';
 import { contextFromHistoryEntry } from '#/agent/loop/history';
-import { createUserEntry, type UserEntry } from '#human/agent/turn';
-import { createAssistantMessage, createUserMessage, type ToolCall } from '#human/llm/message';
+import { createUserEntry, type UserEntry } from '@moonshot-ai/core/history/history';
+import { createAssistantMessage, createUserMessage, type ToolCall } from '@moonshot-ai/core/llm/message';
 import type { IWireService } from '#/wire/wire';
 import type { WireRecord } from '#/wire/record';
 import { normalizeLegacyTurnSteerRecords } from '#/wire/human';

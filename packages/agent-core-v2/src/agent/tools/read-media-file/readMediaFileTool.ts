@@ -1,4 +1,4 @@
-import type { ContentPart } from '#human/llm/message';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { isDaemonFileUrl } from '#/agent/media/mediaRef';

@@ -1,4 +1,3 @@
-import type { ModelCapability } from '../contract/capability';
 import type { OAuthRef } from '../provider/provider';
 
 export interface ModelOverrides {
@@ -8,28 +7,9 @@ export interface ModelOverrides {
   readonly maxCompletionTokens?: number;
 }
 
-export interface CompletionBudgetParams {
-  readonly maxCompletionTokens: number;
-  readonly usedContextTokens?: number;
-  readonly maxContextTokens?: number;
-}
-
 export interface ResolvedModelAuthMaterial {
   readonly apiKey?: string;
   readonly apiKeyEnv?: string;
   readonly oauth?: OAuthRef;
   readonly oauthProviderKey?: string;
-}
-
-export interface ThinkingDefaults {
-  readonly enabled?: boolean;
-  readonly effort?: string;
-}
-
-export interface ModelThinkingMetadata {
-  readonly capabilities?: ModelCapability | readonly string[];
-  readonly adaptiveThinking?: boolean;
-  readonly alwaysThinking?: boolean;
-  readonly supportEfforts?: readonly string[];
-  readonly defaultEffort?: string;
 }

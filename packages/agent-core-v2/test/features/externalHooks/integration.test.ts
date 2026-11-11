@@ -13,7 +13,7 @@ import {
   type TestInstantiationService,
 } from '#/_base/di/test';
 import { AsyncEmitter, Emitter, Event, type IWaitUntil } from '#/_base/event';
-import { emptyUsage } from '#human/llm-requester/usage';
+import { emptyUsage } from '@moonshot-ai/core/llm/usage';
 import { appendContext, stubContextMemory } from '../../agent/contextMemory/stubs';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import {

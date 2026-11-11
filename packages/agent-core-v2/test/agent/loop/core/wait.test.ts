@@ -1,23 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { createUserEntry } from '#human/agent/turn';
-import { createAssistantMessage, createUserMessage } from '#human/llm/message';
-import type { LlmRequest } from '#human/llm/request';
-import type { LlmOutcome } from '#human/llm/response';
-import type { LoopLlmRequester } from '#/agent/loop/core/index';
+import { createUserEntry } from '@moonshot-ai/core/history/history';
+import { createUserMessage } from '@moonshot-ai/core/llm/message';
+import { createMockProviderRequester } from '../../../harness/scripted-generate';
 import { createTestLoop as createLoop } from './factory';
 import { successfulExecutor } from './executor';
 
-function echoRequester(): LoopLlmRequester {
-  const self: LoopLlmRequester = {
-    with: () => self,
-    request: (part) => part as unknown as LlmRequest,
-    generate: async (): Promise<LlmOutcome> => ({
-      type: 'done',
-      message: createAssistantMessage([{ type: 'text', text: 'done' }]),
-    }),
-  };
-  return self;
+function echoRequester() {
+  return createMockProviderRequester(() => ({ parts: [{ type: 'text', text: 'done' }] }));
 }
 
 const prompt = (text: string) => createUserEntry(createUserMessage(text));
@@ -82,14 +72,14 @@ describe('loop.wait', () => {
     await expect(pending).rejects.toThrow('stop-waiting');
     await loop.close();
 
-    const never: LoopLlmRequester = {
-      with: () => never,
-      request: (part) => part as unknown as LlmRequest,
-      generate: (_rest, control) => {
-        control.onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'pending' } });
-        return new Promise<LlmOutcome>(() => {});
-      },
-    };
+    const never = createMockProviderRequester((_request, signal) => ({
+      parts: [{ type: 'text', text: 'pending' }],
+      error: signal.aborted
+        ? signal.reason
+        : new Promise<never>((_resolve, reject) => {
+            signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+          }),
+    }));
     const aborting = createLoop({
       createTurnExecution: ({ profile }) => ({ profile, requester: never }),
       executor: noopExecutor,

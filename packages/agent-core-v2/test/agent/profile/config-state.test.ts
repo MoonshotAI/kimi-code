@@ -1,21 +1,20 @@
-import { emptyUsage } from '#human/llm-requester/usage';
+import { emptyUsage } from '@moonshot-ai/core/llm/usage';
+import type { LlmRequest } from '@moonshot-ai/core/llm/request';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { LoopRequester } from '#/agent/loop/requesterContract';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ModelRecord } from '#/llm-adapter/model/model';
-import { errorFromLlmOutcome } from '#/llm-adapter/model/generate';
 import {
   configServices,
   createTestAgent,
+  createMockProvider,
   InMemoryWireRecordPersistence,
   llmGenerateServices,
   modelProviderOptionServices,
-  requesterFromGenerateFn,
   telemetryServices,
   wireRecordPersistenceServices,
-  type LegacyGenerateFn,
   type TestAgentContext,
 } from '../../harness';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
@@ -26,9 +25,7 @@ type TestProtocolModelConfig = NonNullable<TestKimiConfig['models']>[string] &
 type GenerateFn = Parameters<typeof llmGenerateServices>[0];
 
 function defaultGenerate(): GenerateFn {
-  return {
-    generate: () => Promise.reject(new Error('generate should not be called')),
-  };
+  return createMockProvider(() => Promise.reject(new Error('generate should not be called')));
 }
 
 describe('ConfigState model capabilities', () => {
@@ -48,7 +45,8 @@ describe('ConfigState model capabilities', () => {
     ctx = createTestAgent(
       configServices(() => kimiConfig),
       llmGenerateServices({
-        generate: (config, content, control) => generate.generate(config, content, control),
+        respond: (request, signal) => generate.respond(request, signal),
+        fetch: (input, init) => generate.fetch(input, init),
       }),
       telemetryServices(recordingTelemetry(records)),
     );
@@ -87,14 +85,14 @@ describe('ConfigState model capabilities', () => {
     profile.update({ modelAlias: 'kimi-code/kimi-for-coding' });
 
     expect(profile.getModel()).toBe('kimi-code/kimi-for-coding');
-    expect(ctx.modelResolver.get('kimi-code/kimi-for-coding').name).toBe('kimi-for-coding');
+    expect(ctx.modelResolver.get('kimi-code/kimi-for-coding').spec.name).toBe('kimi-for-coding');
+    expect(ctx.modelResolver.get('kimi-code/kimi-for-coding').spec.maxContextSize).toBe(1_000_000);
     expect(profile.getModelCapabilities()).toMatchObject({
       image_in: true,
       video_in: true,
       audio_in: false,
       thinking: true,
       tool_use: true,
-      max_context_tokens: 1_000_000,
     });
   });
 
@@ -236,7 +234,8 @@ describe('ConfigState model capabilities', () => {
       { autoConfigure: false },
       configServices(() => kimiConfig),
       llmGenerateServices({
-        generate: (config, content, control) => generate.generate(config, content, control),
+        respond: (request, signal) => generate.respond(request, signal),
+        fetch: (input, init) => generate.fetch(input, init),
       }),
       telemetryServices(recordingTelemetry(resumedRecords)),
       wireRecordPersistenceServices(
@@ -278,12 +277,7 @@ describe('ConfigState model capabilities', () => {
 
     profile.update({ modelAlias: 'kimi-code' });
 
-    expect(profile.getModelCapabilities()).toMatchObject({
-      image_in: false,
-      video_in: false,
-      audio_in: false,
-      max_context_tokens: 128_000,
-    });
+    expect(profile.getModelCapabilities()).toBeUndefined();
   });
 
   it('freezes model max output size, system prompt and params across operation preparation', async () => {
@@ -314,13 +308,23 @@ describe('ConfigState model capabilities', () => {
       },
       modelOverrides: { temperature: 0.2 },
     };
-    generate = requesterFromGenerateFn(async (_provider, systemPrompt, _tools, _history, _callbacks, options) => {
-      requestMaxTokens = options?.maxCompletionTokens;
+    generate = createMockProvider(async (request, signal) => {
+      const systemPrompt = request.profile?.systemPrompt ?? '';
+      const options = {
+        signal,
+        cacheKey: request.model.cacheKey,
+        sampling: request.model.sampling,
+        thinking: request.model.thinking,
+        maxOutputTokens: request.model.maxOutputTokens,
+        maxContextSize: request.model.spec.maxContextSize,
+        usedTokens: request.content.usedTokens,
+      };
+      requestMaxTokens = options?.maxOutputTokens;
       requestSystemPrompt = systemPrompt;
       requestTemperature = options?.sampling?.temperature;
       return {
         id: 'response-1',
-        message: { role: 'assistant', content: [], toolCalls: [] },
+        message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }], toolCalls: [] },
         usage: emptyUsage(),
         finishReason: 'completed',
         rawFinishReason: 'stop',
@@ -345,7 +349,10 @@ describe('ConfigState model capabilities', () => {
       { content: {}, profile: {} },
       { signal },
     );
-    if (outcome.type !== 'done') throw errorFromLlmOutcome(outcome);
+    if (outcome.type === 'failed') throw outcome.error;
+    if (outcome.type === 'aborted') {
+      throw outcome.reason ?? new DOMException('The operation was aborted.', 'AbortError');
+    }
 
     expect(requestMaxTokens).toBe(384000);
     expect(requestSystemPrompt).toBe('system');
@@ -454,11 +461,20 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
     capturedThinking = undefined;
     ctx = createTestAgent(
       configServices(() => kimiConfig),
-      llmGenerateServices(requesterFromGenerateFn(async (_provider, _systemPrompt, _tools, _history, _callbacks, options) => {
+      llmGenerateServices(createMockProvider(async (request, signal) => {
+        const options = {
+        signal,
+        cacheKey: request.model.cacheKey,
+        sampling: request.model.sampling,
+        thinking: request.model.thinking,
+        maxOutputTokens: request.model.maxOutputTokens,
+        maxContextSize: request.model.spec.maxContextSize,
+        usedTokens: request.content.usedTokens,
+      };
         capturedThinking = options?.thinking;
         return {
           id: 'response-1',
-          message: { role: 'assistant', content: [], toolCalls: [] },
+          message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }], toolCalls: [] },
           usage: emptyUsage(),
           finishReason: 'completed',
           rawFinishReason: 'stop',
@@ -590,7 +606,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
   let requester: LoopRequester;
   let kimiConfig: TestKimiConfig;
   let capturedProvider: unknown;
-  let capturedOptions: Parameters<LegacyGenerateFn>[5];
+  let capturedRequest: LlmRequest | undefined;
 
   beforeEach(() => {
     kimiConfig = {
@@ -628,12 +644,13 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
   function createAgentWithEnv(): void {
     ctx = createTestAgent(
       configServices(() => kimiConfig),
-      llmGenerateServices(requesterFromGenerateFn(async (provider, _systemPrompt, _tools, _history, _callbacks, options) => {
+      llmGenerateServices(createMockProvider(async (request, signal) => {
+        const provider = { name: request.model.spec.provider, modelName: request.model.spec.name };
         capturedProvider = provider;
-        capturedOptions = options;
+        capturedRequest = request;
         return {
           id: 'response-1',
-          message: { role: 'assistant', content: [], toolCalls: [] },
+          message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }], toolCalls: [] },
           usage: emptyUsage(),
           finishReason: 'completed',
           rawFinishReason: 'stop',
@@ -651,7 +668,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
     profile.update({ modelAlias: 'kimi-code' });
     await generateOperation(requester, new AbortController().signal);
 
-    expect(capturedOptions?.sampling).toMatchObject({
+    expect(capturedRequest?.model.sampling).toMatchObject({
       temperature: 0.3,
     });
   });
@@ -663,7 +680,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
     profile.update({ modelAlias: 'kimi-code', thinkingLevel: 'high' });
     await generateOperation(requester, new AbortController().signal);
 
-    expect(capturedOptions?.thinking).toMatchObject({ effort: 'on', keep: 'all' });
+    expect(capturedRequest?.model.thinking).toMatchObject({ effort: 'on', keep: 'all' });
   });
 
   it('does NOT inject thinking.keep into the per-turn intent when thinking is off', async () => {
@@ -673,8 +690,8 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
     profile.update({ modelAlias: 'kimi-code', thinkingLevel: 'off' });
     await generateOperation(requester, new AbortController().signal);
 
-    expect(capturedOptions?.thinking?.effort).toBe('off');
-    expect(capturedOptions?.thinking?.keep).toBeUndefined();
+    expect(capturedRequest?.model.thinking?.effort).toBe('off');
+    expect(capturedRequest?.model.thinking?.keep).toBeUndefined();
   });
 
   it('injects forced effort through the Anthropic protocol for a Kimi provider', async () => {
@@ -697,7 +714,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
     await generateOperation(requester, new AbortController().signal);
 
     expect(capturedProvider).toMatchObject({ name: 'anthropic' });
-    expect(capturedOptions?.thinking?.effort).toBe('max');
+    expect(capturedRequest?.model.thinking?.effort).toBe('max');
   });
 });
 
@@ -709,5 +726,8 @@ async function generateOperation(requester: LoopRequester, signal: AbortSignal):
     { content: {}, profile: {} },
     { signal },
   );
-  if (outcome.type !== 'done') throw errorFromLlmOutcome(outcome);
+  if (outcome.type === 'failed') throw outcome.error;
+  if (outcome.type === 'aborted') {
+    throw outcome.reason ?? new DOMException('The operation was aborted.', 'AbortError');
+  }
 }

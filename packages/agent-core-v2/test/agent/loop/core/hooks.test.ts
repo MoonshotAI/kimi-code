@@ -1,37 +1,30 @@
 import { describe, expect, it } from 'vitest';
 
-import { createUserEntry, type ToolEntry } from '#human/agent/turn';
-import { createAssistantMessage, createUserMessage, extractText, type Message, type ToolCall } from '#human/llm/message';
-import type { LlmRequest } from '#human/llm/request';
-import type { LlmOutcome } from '#human/llm/response';
+import { createUserEntry, type ToolEntry } from '@moonshot-ai/core/history/history';
+import { createUserMessage, extractText, type Message, type ToolCall } from '@moonshot-ai/core/llm/message';
 import type {
   Loop,
   LoopEmitted,
   LoopLlmRequester,
   StepStartingEvent,
   ToolBatchStartingEvent,
-} from '#/agent/loop/core/index';
+} from '@moonshot-ai/core/loop/index';
+import { createMockProviderRequester, type MockProviderResponse } from '../../../harness/scripted-generate';
 import { createTestLoop as createLoop } from './factory';
 import type {
   ToolExecuteInput,
   ToolHookRegistration,
   ToolResult,
-} from '#human/tool/executor';
+} from '@moonshot-ai/core/tool/executor';
 import { executorFrom, successfulExecutor } from './executor';
 
-function requester(outcomes: (() => LlmOutcome)[], onGenerate?: () => void): LoopLlmRequester {
-  const self: LoopLlmRequester = {
-    with: () => self,
-    request: (part) => part as unknown as LlmRequest,
-    generate: async (_rest, control) => {
-      if (control.signal.aborted) throw new DOMException('aborted', 'AbortError');
-      onGenerate?.();
-      const next = outcomes.shift();
-      if (next === undefined) throw new Error('boom');
-      return next();
-    },
-  };
-  return self;
+function requester(responses: MockProviderResponse[], onGenerate?: () => void): LoopLlmRequester {
+  return createMockProviderRequester(() => {
+    onGenerate?.();
+    const next = responses.shift();
+    if (next === undefined) throw new Error('boom');
+    return next;
+  });
 }
 
 function once(loop: Loop, match: (event: LoopEmitted) => boolean): Promise<void> {
@@ -45,9 +38,8 @@ function once(loop: Loop, match: (event: LoopEmitted) => boolean): Promise<void>
 }
 
 const prompt = (text: string) => createUserEntry(createUserMessage(text));
-const done = (text: string, toolCalls: ToolCall[] = []): (() => LlmOutcome) => () => ({
-  type: 'done',
-  message: createAssistantMessage([{ type: 'text', text }], toolCalls),
+const done = (text: string, toolCalls: ToolCall[] = []): MockProviderResponse => ({
+  parts: [{ type: 'text', text }, ...toolCalls],
 });
 const call = (id: string, name: string): ToolCall => ({ type: 'function', id, name, arguments: '{}' });
 
@@ -115,15 +107,10 @@ describe('step.starting', () => {
 
   it('applies history rewrites during step start and an in-flight request', async () => {
     let sent: Message[] = [];
-    const capturing: LoopLlmRequester = {
-      with: () => capturing,
-      request: (part) => part as unknown as LlmRequest,
-      generate: async (rest, control) => {
-        if (control.signal.aborted) throw new DOMException('aborted', 'AbortError');
-        sent = (rest.content as { messages: Message[] }).messages;
-        return { type: 'done', message: createAssistantMessage([{ type: 'text', text: 'ok' }]) };
-      },
-    };
+    const capturing = createMockProviderRequester((request) => {
+      sent = [...request.content.messages];
+      return done('ok');
+    });
     const rewritten = prompt('rewritten');
     const events: LoopEmitted[] = [];
     const loop = createLoop({
@@ -149,15 +136,11 @@ describe('step.starting', () => {
     const started = new Promise<void>((resolve) => { requestStarted = resolve; });
     let finishRequest!: () => void;
     const finish = new Promise<void>((resolve) => { finishRequest = resolve; });
-    const pending: LoopLlmRequester = {
-      with: () => pending,
-      request: (part) => part as unknown as LlmRequest,
-      generate: async () => {
-        requestStarted();
-        await finish;
-        return { type: 'done', message: createAssistantMessage([{ type: 'text', text: 'late answer' }]) };
-      },
-    };
+    const pending = createMockProviderRequester(async () => {
+      requestStarted();
+      await finish;
+      return done('late answer');
+    });
     const active = createLoop({ createTurnExecution: ({ profile }) => ({ profile, requester: pending }), executor: successfulExecutor(['lookup', 'alpha', 'beta', 'work'], '') });
     const running = active.runTurn(prompt('stale context'));
     await started;

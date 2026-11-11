@@ -58,7 +58,7 @@ describe('check-import-boundaries', () => {
   it('allows intra-human imports through its own alias', () => {
     const violations = checkSource(
       `import { createMessageAccumulator } from '#/message';`,
-      atHuman('llm-requester', 'machine.ts'),
+      atHuman('llm', 'stream.ts'),
     );
     expect(violations).toHaveLength(0);
   });
@@ -73,7 +73,7 @@ describe('check-import-boundaries', () => {
 
   it('flags a non-adapter v2 file importing a human implementation module', () => {
     const violations = checkSource(
-      `import { kimiRequesters } from '#human/llm/builtin/provider/kimi/index';`,
+      `import { kimiRequesters } from '@moonshot-ai/core/llm/builtin/provider/kimi/index';`,
       at('agent', 'loop.ts'),
     );
     expect(violations).toHaveLength(1);
@@ -82,7 +82,7 @@ describe('check-import-boundaries', () => {
 
   it('allows a non-adapter v2 file importing human vocabulary', () => {
     const violations = checkSource(
-      `import type { Message } from '#human/llm/message';\nimport { emptyUsage } from '#human/llm-requester/usage';\nimport type { LlmError } from '#human/llm-requester/errors';`,
+      `import type { Message } from '@moonshot-ai/core/llm/message';\nimport { emptyUsage } from '@moonshot-ai/core/llm/usage';\nimport type { LlmError } from '@moonshot-ai/core/llm/response';`,
       at('agent', 'loop.ts'),
     );
     expect(violations).toHaveLength(0);
@@ -90,7 +90,7 @@ describe('check-import-boundaries', () => {
 
   it('allows llm-adapter to import the human implementation', () => {
     const violations = checkSource(
-      `import { kimiRequesters } from '#human/llm/builtin/provider/kimi/index';`,
+      `import { kimiRequesters } from '@moonshot-ai/core/llm/builtin/provider/kimi/index';`,
       atAdapter('protocol', 'protocolAdapterRegistry.ts'),
     );
     expect(violations).toHaveLength(0);
@@ -121,10 +121,10 @@ describe('check-import-boundaries', () => {
     expect(violations).toHaveLength(0);
   });
 
-  it('flags the A requester importing a protocol lower module', () => {
+  it('flags the transport importing a protocol lower module', () => {
     const violations = checkSource(
       `import { lowerMessage } from '#/llm/builtin/protocol/openai/lower';`,
-      atHuman('llm-requester', 'run.ts'),
+      atHuman('llm', 'stream.ts'),
     );
     expect(violations).toHaveLength(1);
     expect(violations[0]?.message).toMatch(/internal to the requester pipeline/);

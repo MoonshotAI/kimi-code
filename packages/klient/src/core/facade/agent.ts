@@ -33,7 +33,7 @@ import type {
   PromptOrigin,
 } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
 import type { ToolInputDisplay } from '@moonshot-ai/agent-core-v2/tool/toolInputDisplay';
-import type { TokenUsage } from '@moonshot-ai/agent-core-v2/human/llm-requester/usage';
+import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
 import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
 
 import type { ScopeRef } from '../channel.js';

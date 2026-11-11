@@ -1,3 +1,4 @@
+import { providerHttpError } from '../../harness/index';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { appendContext, compactContext } from '../contextMemory/stubs';
 
@@ -44,7 +45,7 @@ import {
   execEnvServices,
   telemetryServices,
   InMemoryWireRecordPersistence,
-  requesterFromGenerateFn,
+  createMockProvider,
   type TestAgentOptions,
   type TestAgentContext,
 } from '../../harness';
@@ -456,19 +457,20 @@ describe('AgentConversationUndoService', () => {
     async (mode) => {
       const imageCounts: number[] = [];
       await setup({
-        generate: requesterFromGenerateFn(async (_provider, _system, _tools, history) => {
+        generate: createMockProvider(async (request, _signal) => {
+          const history = [...request.content.messages];
           const images = history
             .flatMap((message) => message.content)
             .filter((part) => part.type === 'image_url');
           imageCounts.push(images.length);
           if (mode === 'degraded' && images.length > 3) {
-            throw new APIRequestTooLargeError(413, 'Request Entity Too Large');
+            return providerHttpError(413, 'Request Entity Too Large')
           }
           if (
             mode === 'stripped' &&
             images.some((part) => part.imageUrl.url.endsWith('/1-0.png'))
           ) {
-            throw new APIStatusError(400, 'unsupported image format', false);
+            return providerHttpError(400, 'unsupported image format')
           }
           return {
             id: 'media-response',
@@ -482,7 +484,7 @@ describe('AgentConversationUndoService', () => {
       ctx.configure({
         modelCapabilities: {
           image_in: true, video_in: false, audio_in: false,
-          thinking: false, tool_use: true, max_context_tokens: 128_000,
+          thinking: false, tool_use: true, maxContextSize: 128_000,
         },
       });
       const runTurn = async (count: number) => {

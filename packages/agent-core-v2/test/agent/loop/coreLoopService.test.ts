@@ -1,7 +1,7 @@
 import { createControlledPromise } from '@antfu/utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ToolCall } from '#human/llm/message';
+import type { ToolCall } from '@moonshot-ai/core/llm/message';
 import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { LOOP_CONTROL_SECTION } from '#/agent/loop/configSection';
@@ -221,6 +221,7 @@ describe('core LoopService integration', () => {
       },
     });
 
+    await ctx.get(IConfigService).set(LOOP_CONTROL_SECTION, { maxAttemptsPerStep: 1 });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
     await ctx.untilTurnEnd();
 

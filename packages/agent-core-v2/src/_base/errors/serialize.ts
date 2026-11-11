@@ -1,3 +1,4 @@
+import { llmErrorName as coreLlmErrorName, type LlmErrorMessage as CoreLlmErrorMessage } from '@moonshot-ai/core/llm/response';
 import { CoreErrors, errorInfo, isErrorCode } from './codes';
 import type { ErrorCode } from '#/errors';
 import { Error2 } from './errors';
@@ -77,6 +78,16 @@ function toShallowErrorPayload(error: unknown): ErrorPayload {
   if (error instanceof Error) {
     return makeErrorPayload(CoreErrors.codes.INTERNAL, error.message, { name: error.name });
   }
+  if (isLlmErrorMessage(error)) {
+    const code = llmErrorCode(error);
+    if (code === undefined) return makeErrorPayload(CoreErrors.codes.INTERNAL, error.message);
+    return {
+      ...makeErrorPayload(code, error.message),
+      name: llmErrorName(error),
+      details: llmErrorDetails(error),
+      retryable: error.kind !== 'syntax' && error.retryable,
+    };
+  }
   return makeErrorPayload(CoreErrors.codes.INTERNAL, String(error));
 }
 
@@ -94,6 +105,73 @@ function detailsForErrorPayload(
   }
   const { statusCode: _statusCode, ...remaining } = details;
   return remaining;
+}
+
+type LlmErrorMessage = CoreLlmErrorMessage;
+
+function isLlmErrorMessage(error: unknown): error is LlmErrorMessage {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    typeof (error as { readonly kind?: unknown }).kind === 'string' &&
+    typeof (error as { readonly message?: unknown }).message === 'string'
+  );
+}
+
+function llmErrorCode(error: LlmErrorMessage): ErrorCode | undefined {
+  if ('code' in error && isErrorCode(error.code)) return error.code as ErrorCode;
+  switch (error.kind) {
+    case 'rate_limit':
+      return 'provider.rate_limit' as ErrorCode;
+    case 'connection':
+    case 'timeout':
+      return 'provider.connection_error' as ErrorCode;
+    case 'auth':
+      return 'provider.auth_error' as ErrorCode;
+    case 'context_overflow':
+      return 'context.overflow' as ErrorCode;
+    case 'overloaded':
+      return 'provider.overloaded' as ErrorCode;
+    case 'empty_response':
+      return (error.finishReason === 'filtered'
+        ? 'provider.filtered'
+        : 'provider.api_error') as ErrorCode;
+    case 'status':
+    case 'request_too_large':
+    case 'request_structure':
+    case 'image_format':
+    case 'provider':
+    case 'quota_exhausted':
+    case 'unknown':
+      return 'provider.api_error' as ErrorCode;
+    default:
+      return undefined;
+  }
+}
+
+function llmErrorName(error: LlmErrorMessage): string | undefined {
+  if ('error' in error) {
+    const body = error.error;
+    if (typeof body === 'object' && body !== null && 'name' in body) {
+      const name = (body as { readonly name?: unknown }).name;
+      if (typeof name === 'string') return name;
+    }
+  }
+  return coreLlmErrorName(error);
+}
+
+function llmErrorDetails(error: LlmErrorMessage): Readonly<Record<string, unknown>> | undefined {
+  if (!('statusCode' in error) && !('requestId' in error) && !('headers' in error)) return undefined;
+  const headers = 'headers' in error ? error.headers : null;
+  const traceId =
+    headers === null || headers === undefined
+      ? undefined
+      : Object.entries(headers).find(([name]) => name.toLowerCase() === 'x-trace-id')?.[1];
+  return {
+    requestId: 'requestId' in error ? error.requestId : undefined,
+    statusCode: 'statusCode' in error ? error.statusCode : undefined,
+    traceId,
+  };
 }
 
 function readErrorCause(error: unknown): unknown {

@@ -1,26 +1,25 @@
 import { Error2, type Error2Options } from '#/_base/errors/errors';
+import { isAbortError } from '@moonshot-ai/core/llm/protocol/errors';
 import {
   appendThinkingEffortConfigHint,
-  isAbortError,
   isContextOverflowStatusError,
   isImageFormatStatusError,
   isProviderOverloadStatusError,
   isRequestStructureStatusError,
   isRequestTooLargeStatusError,
   isToolExchangeAdjacencyStatusError,
+  isTransientHttpStatus,
+} from '@moonshot-ai/core/llm/protocol/rules/status';
+import {
   llmStatusErrorMessage,
+  type FinishReason,
+  type LlmErrorDiagnostics,
   type LlmErrorMessage,
   type LlmRemoteErrorMessage,
-} from '#human/llm-requester/errors';
-import type { FinishReason } from '#human/llm-requester/finish-reason';
-import { isTransientHttpStatus } from '#human/llm/protocol/rules/status';
-import type { LlmErrorDiagnostics } from '#human/llm/response';
+} from '@moonshot-ai/core/llm/response';
 
-export {
-  isAbortError,
-  parseRetryAfterMs,
-  sanitizeStatusErrorMessage,
-} from '#human/llm-requester/errors';
+export { isAbortError, sanitizeStatusErrorMessage } from '@moonshot-ai/core/llm/protocol/errors';
+export { parseRetryAfterMs } from '@moonshot-ai/core/llm/protocol/kit/http';
 
 export const CONFIG_INVALID_ERROR_CODE = 'config.invalid';
 
@@ -325,6 +324,9 @@ export function isImageFormatError(error: unknown): boolean {
 }
 
 export function isRetryableGenerateError(error: unknown): boolean {
+  if (isLlmErrorMessage(error)) {
+    return error.kind !== 'abort' && error.kind !== 'syntax' && error.retryable;
+  }
   if (isAbortError(error)) return false;
   return error instanceof ChatProviderError && error.retryable;
 }
@@ -474,7 +476,9 @@ export interface ApiErrorClassification {
 }
 
 export function classifyApiError(error: unknown): ApiErrorClassification {
-  const statusCode = getStatusCode(error);
+  const statusCode =
+    getStatusCode(error) ??
+    (isLlmErrorMessage(error) ? llmStatusErrorMessage(error)?.statusCode : undefined);
   if (error instanceof APIContextOverflowError) return { kind: 'context_overflow', statusCode };
   if (error instanceof APIProviderOverloadedError) return { kind: 'overloaded', statusCode };
   if (error instanceof APIProviderQuotaExhaustedError) {
@@ -494,6 +498,35 @@ export function classifyApiError(error: unknown): ApiErrorClassification {
   if (error instanceof APIConnectionError) return { kind: 'network', statusCode };
   if (error instanceof APITimeoutError) return { kind: 'timeout', statusCode };
   if (error instanceof APIEmptyResponseError) return { kind: 'empty_response', statusCode };
+  if (isLlmErrorMessage(error)) {
+    switch (error.kind) {
+      case 'context_overflow':
+        return { kind: 'context_overflow', statusCode };
+      case 'overloaded':
+        return { kind: 'overloaded', statusCode };
+      case 'quota_exhausted':
+        return { kind: 'quota_exhausted', statusCode };
+      case 'rate_limit':
+        return { kind: 'rate_limit', statusCode };
+      case 'auth':
+        return { kind: 'auth', statusCode };
+      case 'connection':
+        return { kind: 'network', statusCode };
+      case 'timeout':
+        return { kind: 'timeout', statusCode };
+      case 'empty_response':
+        return { kind: 'empty_response', statusCode };
+      case 'status':
+      case 'request_too_large':
+      case 'request_structure':
+      case 'image_format':
+        if (statusCode !== undefined && statusCode >= 500) return { kind: '5xx_server', statusCode };
+        if (statusCode !== undefined && statusCode >= 400) return { kind: '4xx_client', statusCode };
+        return { kind: 'other', statusCode };
+      default:
+        return { kind: 'other', statusCode };
+    }
+  }
   return { kind: 'other', statusCode };
 }
 
@@ -593,6 +626,7 @@ export function errorFromLlmMessage(
       );
     case 'request_structure':
     case 'image_format':
+    case 'auth':
     case 'status':
       return new APIStatusError(
         error.statusCode,
@@ -706,10 +740,27 @@ export function llmMessageFromError(error: unknown): LlmRemoteErrorMessage | und
     };
   }
   if (error instanceof APIStatusError) {
+    const statusCode = error.statusCode;
+    const kind =
+      error.code === PROVIDER_RATE_LIMIT_ERROR_CODE || statusCode === 429
+        ? 'rate_limit'
+        : error.code === PROVIDER_AUTH_ERROR_CODE || statusCode === 401 || statusCode === 403
+          ? 'auth'
+          : statusCode === 529
+            ? 'overloaded'
+            : statusCode !== undefined && isContextOverflowStatusError(statusCode, error.message)
+              ? 'context_overflow'
+              : statusCode !== undefined && isRequestTooLargeStatusError(statusCode, error.message)
+                ? 'request_too_large'
+                : statusCode !== undefined && isRequestStructureStatusError(statusCode, error.message)
+                  ? 'request_structure'
+                  : statusCode !== undefined && isImageFormatStatusError(statusCode, error.message)
+                    ? 'image_format'
+                    : 'status';
     return {
-      kind: 'status',
+      kind,
       message: error.message,
-      statusCode: error.statusCode,
+      statusCode,
       requestId: error.requestId,
       retryAfterMs: error.retryAfterMs,
       headers: traceHeadersOf(error),

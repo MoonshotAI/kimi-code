@@ -2,13 +2,13 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { isUserPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
-import { annotateBundledSkillParts, isSkillActivationPart } from '#human/agent/origin';
+import { annotateBundledSkillParts, isSkillActivationPart } from '@moonshot-ai/core/history/origin';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import {
   promptMetadataTextFromContentParts,
   promptMetadataTextFromText,
 } from '#/agent/prompt/promptMetadataText';
-import type { ContentPart } from '#human/llm/message';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 
 import {
   IAgentTitlePromptSource,

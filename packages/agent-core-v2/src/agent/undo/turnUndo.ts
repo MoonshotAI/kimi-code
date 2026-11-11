@@ -1,6 +1,6 @@
-import type { ContentPart } from '#human/llm/message';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
-import type { TurnTrigger } from '#/agent/loop/core/contract/inbox';
+import type { TurnTrigger } from '@moonshot-ai/core/loop/contract/inbox';
 import type { WireRecord } from '#/wire/record';
 import type { WireLine } from '#/wire/tree/tree';
 

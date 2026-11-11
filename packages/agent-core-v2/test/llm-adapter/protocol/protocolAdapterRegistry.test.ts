@@ -1,10 +1,9 @@
 import { APIError as RawOpenAISDKAPIError } from 'openai/error';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
-import { isUnknownCapability } from '#/llm-adapter/contract/capability';
-import { contentsOf } from '#human/llm/requester';
+import { contentsOf } from '@moonshot-ai/core/llm/requester';
+import { streamLlmRequest } from '@moonshot-ai/core/llm/stream';
 import { supportsLlmUpload } from '#/llm-adapter/model/media';
-import { generateModel } from '#/llm-adapter/model/generate';
 import type { Model } from '#/llm-adapter/model/catalog';
 import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
 import {
@@ -71,24 +70,29 @@ function modelWith(spec: {
 }): Model {
   return {
     id: 'm1',
-    name: 'wire-model',
     aliases: [],
     protocol: spec.protocol,
-    headers: {},
-    capabilities: {
-      image_in: false,
-      video_in: false,
-      audio_in: false,
-      thinking: false,
-      tool_use: true,
-      max_context_tokens: 128000,
+    spec: {
+      provider: spec.providerType ?? spec.protocol,
+      name: 'wire-model',
+      capability: {
+        image_in: false,
+        video_in: false,
+        audio_in: false,
+        thinking: false,
+        tool_use: true,
+      },
+      thinking: {
+        supportEfforts: spec.supportEfforts,
+        adaptiveThinking: spec.providerOptions?.adaptiveThinking,
+        alwaysThinking: false,
+      },
+      maxContextSize: 128000,
     },
-    maxContextSize: 128000,
-    alwaysThinking: false,
+    endpoint: { headers: {} },
     providerType: spec.providerType,
     providerName: spec.providerType ?? spec.protocol,
     reasoningKey: spec.reasoningKey,
-    supportEfforts: spec.supportEfforts,
     providerOptions: spec.providerOptions,
   };
 }
@@ -150,22 +154,20 @@ describe('resolveProviderBaseId', () => {
 describe('resolveCapability', () => {
   it('falls back to trait capability hooks before the base catalog', () => {
     const fromTrait = registry.resolveCapability('openai', 'special-model', 'cap-vendor');
-    expect(fromTrait.image_in).toBe(true);
+    expect(fromTrait?.image_in).toBe(true);
     const fromBase = registry.resolveCapability('openai', 'gpt-4o', 'cap-vendor');
-    expect(fromBase.image_in).toBe(true);
+    expect(fromBase?.image_in).toBe(true);
   });
 
   it('falls back to the base catalog and then to UNKNOWN', () => {
-    expect(registry.resolveCapability('openai', 'gpt-4o').image_in).toBe(true);
-    expect(isUnknownCapability(registry.resolveCapability('openai', 'mystery-model'))).toBe(true);
-    expect(registry.resolveCapability('anthropic', 'claude-opus-4-1').thinking).toBe(true);
+    expect(registry.resolveCapability('openai', 'gpt-4o')?.image_in).toBe(true);
+    expect(registry.resolveCapability('openai', 'mystery-model')).toBeUndefined();
+    expect(registry.resolveCapability('anthropic', 'claude-opus-4-1')?.thinking).toBe(true);
   });
 
   it('kimi declares no vendor-level capability — the base catalog answers instead', () => {
-    expect(isUnknownCapability(registry.resolveCapability('openai', 'kimi-for-coding', 'kimi'))).toBe(
-      true,
-    );
-    expect(registry.resolveCapability('openai', 'gpt-4o', 'kimi').image_in).toBe(true);
+    expect(registry.resolveCapability('openai', 'kimi-for-coding', 'kimi')).toBeUndefined();
+    expect(registry.resolveCapability('openai', 'gpt-4o', 'kimi')?.image_in).toBe(true);
   });
 });
 
@@ -271,17 +273,14 @@ describe('request gateway routes', () => {
         modelWith({ protocol: 'anthropic', providerType: 'kimi', providerOptions }),
       );
       try {
-        for await (const event of generateModel(
-          routed,
-          {
-            systemPrompt: '',
-            tools: [],
-            messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
-          },
-          new AbortController().signal,
-          { stream: true },
+        for await (const event of streamLlmRequest(
+          routed.request({
+            profile: { systemPrompt: '', tools: [] },
+            content: { messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] },
+          }),
+          { signal: new AbortController().signal },
         )) {
-          if (event.type === 'finish') terminal.push(event.type);
+          if (event.type === 'llm.ended') terminal.push(event.type);
         }
       } catch (error) {
         failures.push(error);
@@ -292,7 +291,7 @@ describe('request gateway routes', () => {
       await generate({ betaApi: true });
       expect(failures).toEqual([]);
       expect(urls.map((url) => new URL(url).searchParams.get('beta'))).toEqual([null, 'true']);
-      expect(terminal).toEqual(['finish', 'finish']);
+      expect(terminal).toEqual(['llm.ended', 'llm.ended']);
     } finally {
       vi.unstubAllGlobals();
     }

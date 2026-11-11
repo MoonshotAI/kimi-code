@@ -7,30 +7,19 @@ import {
   googleVertexRequester,
   openAIRequester,
   openAIResponsesRequester,
-} from '#human/llm/builtin/provider/index';
-import type { OpenAIOptions } from '#human/llm/builtin/protocol/openai/index';
-import { mergeHeaders } from '#human/llm/endpoint';
-import type { LlmEndpoint, LlmSampling } from '#human/llm/request';
-import { contentsOf, createRequester } from '#human/llm/requester';
-import type { LlmRequester as CoreLlmRequester } from '#human/llm/requester';
-import { isUnknownCapability } from '#human/llm-requester/capability';
-import { resolveModelConnection } from '#human/llm-requester/connection';
-import type { DefaultHeadersResolver, ProtocolEndpoint } from '#human/llm-requester/connection';
-import type { LlmErrorClassifier } from '#human/llm-requester/requester';
+} from '@moonshot-ai/core/llm/builtin/provider/index';
+import type { OpenAIOptions } from '@moonshot-ai/core/llm/builtin/protocol/openai/index';
+import { modelKey, type LlmEndpoint, type ModelCapability } from '@moonshot-ai/core/llm/request';
 import {
-  anthropicEndpoint,
-  geminiEndpoint,
-  openAIEndpoint,
-  vertexEndpoint,
-} from '#human/llm-requester/endpoints';
-import { createLlmHeadersTimeoutFetch } from '#human/llm-requester/timeout';
-import type { LlmModel } from '#human/llm-requester/model';
-import { modelKey } from '#human/llm-requester/model';
-import { thinkingMetadataOf, type ModelThinkingMetadata } from '#human/llm-requester/thinking';
+  contentsOf,
+  createRequester,
+  type InitializedLlmRequester,
+  type InitializedLlmRequestPart,
+  type LlmRequester as CoreLlmRequester,
+} from '@moonshot-ai/core/llm/requester';
+import { createLlmHeadersTimeoutFetch } from '@moonshot-ai/core/llm/transport/headers-timeout';
 
-import { UNKNOWN_CAPABILITY, toLlmCapability, type ModelCapability } from '../contract/capability';
 import type { Model } from '../model/catalog';
-import type { InitializedLlmRequester, ModelRequestParams } from '../model/generate';
 import { getProviderDefinition } from '../provider/provider-definition';
 
 import { IProtocolAdapterRegistry, type Protocol } from './protocol';
@@ -38,10 +27,7 @@ import { getProtocolBase, listProtocolBases, type ProtocolBaseId } from './proto
 
 interface AdapterRoute {
   readonly requester: CoreLlmRequester<'protocol'>;
-  readonly options?: (params: ModelRequestParams | undefined) => unknown;
-  readonly endpoint?: ProtocolEndpoint;
-  readonly defaultHeaders?: DefaultHeadersResolver;
-  readonly classifyError?: LlmErrorClassifier;
+  readonly options?: unknown;
   readonly providerId: string;
 }
 
@@ -58,81 +44,35 @@ function routeFor(model: Model): AdapterRoute {
     case 'openai':
       return {
         requester: definition?.requester ?? openAIRequester,
-        options: (params) => ({
-          extras: samplingExtraParams('openai', params?.sampling),
+        options: {
           reasoningKey:
             definition?.requester === undefined ? openAIReasoningKeyFor(model) : undefined,
-          toolMessageConversion:
-            definition?.requester === undefined ? undefined : 'keep_parts',
-        }),
-        endpoint: definition?.endpoint ?? openAIEndpoint,
-        defaultHeaders: definition?.defaultHeaders,
-        classifyError: definition?.classifyError,
+          toolMessageConversion: definition?.requester === undefined ? undefined : 'keep_parts',
+        },
         providerId: 'openai',
       };
     case 'openai_responses':
       return {
         requester: definition?.requester ?? openAIResponsesRequester,
-        options: (params) => ({
-          extras: samplingExtraParams('openai_responses', params?.sampling),
-        }),
-        endpoint: definition?.endpoint ?? openAIEndpoint,
-        defaultHeaders: definition?.defaultHeaders,
-        classifyError: definition?.classifyError,
         providerId: 'openai-responses',
       };
-    case 'anthropic': {
-      const betaApi = model.providerOptions?.betaApi === true;
+    case 'anthropic':
       return {
         requester: definition?.requester ?? anthropicRequester,
-        options: (params) => ({
-          betaApi,
-          extras: samplingExtraParams('anthropic', params?.sampling),
-        }),
-        endpoint: definition?.endpoint ?? anthropicEndpoint,
-        defaultHeaders: definition?.defaultHeaders,
-        classifyError: definition?.classifyError,
+        options: { betaApi: model.providerOptions?.betaApi === true },
         providerId: 'anthropic',
       };
-    }
     case 'google-genai':
       return model.providerOptions?.vertexai === true
         ? {
             requester: googleVertexRequester,
-            options: (params) => ({
-              vertexai: true,
-              extras: samplingExtraParams('google-genai', params?.sampling),
-            }),
-            endpoint: vertexEndpoint,
+            options: { vertexai: true },
             providerId: 'google_genai',
           }
         : {
             requester: googleGenAIRequester,
-            options: (params) => ({
-              extras: samplingExtraParams('google-genai', params?.sampling),
-            }),
-            endpoint: geminiEndpoint,
             providerId: 'google_genai',
           };
-  }
-}
-
-function samplingExtraParams(
-  protocol: Protocol,
-  sampling: LlmSampling | undefined,
-): Record<string, unknown> | undefined {
-  if (sampling === undefined) return undefined;
-  const { temperature, topP } = sampling;
-  if (temperature === undefined && topP === undefined) return undefined;
-  switch (protocol) {
-    case 'openai':
-      return { temperature, top_p: topP };
-    case 'openai_responses':
-      return { temperature, top_p: topP };
-    case 'anthropic':
-      return { temperature, top_p: topP };
-    case 'google-genai':
-      return { temperature, topP };
   }
 }
 
@@ -162,47 +102,31 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
     return definition?.baseProtocol ?? protocol;
   }
 
-  resolveCapability(protocol: Protocol, modelName: string, providerType?: string): ModelCapability {
+  resolveCapability(
+    protocol: Protocol,
+    modelName: string,
+    providerType?: string,
+  ): ModelCapability | undefined {
     const identity = this.resolveAdapterIdentity(protocol, providerType);
     const definition =
       providerType === undefined ? undefined : getProviderDefinition(providerType, protocol);
-    const hooked = definition?.capability?.(modelName);
-    if (hooked !== undefined) {
-      return toV2Capability(hooked);
-    }
-    const baseCapability = getProtocolBase(identity.baseId)?.capability?.(modelName);
-    if (baseCapability !== undefined) {
-      return toV2Capability(baseCapability);
-    }
-    return UNKNOWN_CAPABILITY;
+    return (
+      definition?.capability?.(modelName) ??
+      getProtocolBase(identity.baseId)?.capability?.(modelName)
+    );
   }
 
-  request(model: Model, params?: ModelRequestParams): InitializedLlmRequester {
+  request(model: Model, part?: InitializedLlmRequestPart): InitializedLlmRequester {
     const route = routeFor(model);
-    const llmModel: LlmModel & ModelThinkingMetadata = {
-      provider: route.providerId,
-      model: model.name,
-      capability: toLlmCapability(model.capabilities),
-      maxContextSize: model.maxContextSize > 0 ? model.maxContextSize : undefined,
-      maxInputSize: model.maxInputSize,
-      baseUrl: model.baseUrl,
-      defaultHeaders: Object.keys(model.headers).length > 0 ? { ...model.headers } : undefined,
-      supportEfforts: model.supportEfforts,
-      defaultEffort: model.defaultEffort,
-      offEffort: model.providerOptions?.offEffort,
-      alwaysThinking: model.alwaysThinking,
-      adaptiveThinking: model.providerOptions?.adaptiveThinking,
-    };
-    const connection = resolveModelConnection(llmModel, route.endpoint);
     const base = contentsOf(route.requester);
     const protocol = base.protocol;
     if (protocol?.base === undefined) throw new TypeError('requester protocol is not initialized');
     const protocolBase = protocol.base;
-    let options = route.options?.(params);
+    let options = route.options;
     if (model.protocol === 'openai') {
       const resolved = options as OpenAIOptions | undefined;
       if (resolved?.reasoningKey === undefined) {
-        const key = modelKey(connection);
+        const key = modelKey(model.spec, model.endpoint);
         options = {
           ...resolved,
           detectedReasoningKey: this.detectedReasoningKeys.get(key),
@@ -216,75 +140,24 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
     }
     const endpoint: LlmEndpoint = {
       ...base.endpoint,
-      baseUrl: connection.baseUrl,
-      headers: mergeHeaders(route.defaultHeaders?.({ model: connection }), connection.defaultHeaders),
-      credentials: {
-        resolve: async () => {
-          const credential = await model.credentialProvider?.resolve();
-          const apiKey = credential?.apiKey ?? connection.apiKey;
-          if (credential === undefined && apiKey === undefined) return undefined;
-          return { ...credential, apiKey };
-        },
-        canRecover: (error) => model.credentialProvider?.canRecover?.(error) === true,
-        invalidate: () => model.credentialProvider?.invalidate?.(),
-      },
+      ...model.endpoint,
       fetch:
         protocolBase.usesEndpointFetch === false
           ? undefined
           : (input, init) => createLlmHeadersTimeoutFetch()(input, init),
     };
-    const contextSizes = [params?.maxContextTokens, connection.maxContextSize].filter(
-      (size): size is number => size !== undefined && size > 0,
-    );
-    return createRequester().with({
-      protocol: {
-        ...protocol,
-        base: Object.assign({}, protocolBase, {
-          decodeError: (error: unknown, source?: 'stream') =>
-            source === 'stream'
-              ? protocolBase.decodeError(error, source)
-              : (route.classifyError?.(error) ?? protocolBase.decodeError(error, source)),
-        }),
-        options,
-        stream: params?.stream ?? true,
-      },
+    const initialized = createRequester().with(route.requester).with({
+      protocol: { options, stream: true },
       endpoint,
       model: {
-        spec: {
-          provider: route.providerId,
-          name: connection.model,
-          capability: isUnknownCapability(connection.capability) ? undefined : connection.capability,
-          thinking: thinkingMetadataOf(connection),
-          maxContextSize: contextSizes.length === 0 ? undefined : Math.min(...contextSizes),
-          maxInputSize: connection.maxInputSize,
-        },
-        thinking:
-          params?.thinkingEffort === undefined
-            ? undefined
-            : { effort: params.thinkingEffort, keep: params.thinkingKeep },
-        maxOutputTokens:
-          params?.maxCompletionTokens === undefined
-            ? undefined
-            : params.maxCompletionTokens <= 0
-              ? 'none'
-              : params.maxCompletionTokens,
-        cacheKey: params?.cacheKey,
-        sampling: params?.sampling,
+        spec: { ...model.spec, provider: route.providerId },
       },
     });
+    const resolved = initialized.with(part ?? {});
+    const spec = contentsOf(resolved).model?.spec;
+    if (spec === undefined) throw new TypeError('requester model is not initialized');
+    return resolved.with({ model: { spec: { ...spec, provider: route.providerId } } });
   }
-}
-
-function toV2Capability(capability: import('#human/llm/request').ModelCapability): ModelCapability {
-  return {
-    image_in: capability.image_in === true,
-    video_in: capability.video_in === true,
-    audio_in: capability.audio_in === true,
-    thinking: capability.thinking === true,
-    tool_use: capability.tool_use ?? true,
-    max_context_tokens: 0,
-    dynamically_loaded_tools: capability.dynamically_loaded_tools === true,
-  };
 }
 
 registerScopedService(

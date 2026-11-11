@@ -19,7 +19,7 @@ import type { AgentTaskInfo } from '@moonshot-ai/agent-core-v2/agent/task/types'
 import { AgentStateService } from '@moonshot-ai/agent-core-v2/agent/state/agentStateService';
 import { ToolUpdated } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
 import { EventBusService } from '@moonshot-ai/agent-core-v2/app/event/eventBusService';
-import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import { EventDispatcherService } from '@moonshot-ai/agent-core-v2/state/eventDispatcherService';
 import type { WireRecord } from '@moonshot-ai/agent-core-v2/wire/record';
 import type { IWireService } from '@moonshot-ai/agent-core-v2/wire/wire';

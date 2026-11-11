@@ -5,8 +5,8 @@ import {
   annotateBundledSkillParts,
   isSkillActivationPart,
   type BundledSkillActivation,
-} from '#human/agent/origin';
-import type { ContentPart } from '#human/llm/message';
+} from '@moonshot-ai/core/history/origin';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import {
   promptMetadataTextFromContentParts,
   promptMetadataTextFromText,

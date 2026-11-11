@@ -29,7 +29,7 @@ import {
   type TestAgentContext,
 } from '../../harness';
 import { createMemoryMcpOAuthStore, startInProcessHttpMcpServer } from '../../mcpCore/stubs';
-import type { Message } from '#human/llm/message';
+import type { Message } from '@moonshot-ai/core/llm/message';
 
 function toolsOf(message: Message | undefined) {
   return message?.role === 'system' ? message.tools : undefined;
@@ -44,7 +44,7 @@ const DISCLOSURE_CAPABILITIES = {
   audio_in: false,
   thinking: false,
   tool_use: true,
-  max_context_tokens: 128_000,
+  maxContextSize: 128_000,
   dynamically_loaded_tools: true,
 } as const;
 

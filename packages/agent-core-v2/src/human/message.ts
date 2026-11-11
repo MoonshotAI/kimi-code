@@ -2,7 +2,7 @@ import type {
   ContentPart as CoreContentPart,
   Message as CoreMessage,
   StreamedMessagePart as CoreStreamedMessagePart,
-} from '#/llm/message';
+} from '@moonshot-ai/core/llm/message';
 
 export interface ToolDescription {
   name: string;

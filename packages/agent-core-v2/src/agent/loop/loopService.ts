@@ -22,9 +22,9 @@ import { TaskStarted, TaskTerminated } from '#/agent/task/taskOps';
 import { TERMINAL_STATUSES } from '#/agent/task/types';
 import { IAgentTaskOutputService } from '#/agent/task/taskOutput';
 import { restoreTaskCompletions } from '#/agent/task/completionRestore';
-import { completionEntry as coreCompletionEntry, type ToolCompletionInput } from './core/tool/outcome';
+import { completionEntry as coreCompletionEntry, type ToolCompletionInput } from '@moonshot-ai/core/loop/tool/outcome';
 import { IConfigService } from '#/app/config/config';
-import { type ContentPart, type ToolDescription as Tool, type UserMessage } from '#human/llm/message';
+import { type ContentPart, type SystemMessage, type ToolDescription as Tool, type UserMessage } from '@moonshot-ai/core/llm/message';
 import { BugIndicatingError, ErrorCodes, Error2 } from '#/errors';
 import { OrderedHookSlot } from '#/hooks';
 import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
@@ -46,9 +46,8 @@ import {
   type ResolvedAgentProfile,
   type SystemPromptContext,
 } from '#/agent/profile/profile';
-import type { ModelCapability } from '#/llm-adapter/contract/capability';
-import type { ModelRequestParams } from '#/llm-adapter/model/generate';
-import type { ThinkingEffort } from '#human/llm-requester/thinking';
+import type { ModelCapability, ThinkingEffort } from '@moonshot-ai/core/llm/request';
+import type { InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
 import { IProviderDiscoveryService } from '#/app/kosongConfig/discovery';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { IAgentInterruptionReminderService } from '#/agent/interruptionReminder/interruptionReminder';
@@ -87,17 +86,19 @@ import {
   type SteerResult,
   type TurnResult,
 } from './loop';
-import { createUserEntry, type HistoryMessage, type UserEntry } from '#human/agent/turn';
+import { createUserEntry, type HistoryMessage, type UserEntry } from '@moonshot-ai/core/history/history';
 import { TurnCancel, turnKey } from './turnOps';
 import { EMPTY_LOOP_PROMPT, historyEntryFromContext } from './history';
 import {
   createLoop,
   createMaxStepsHook,
+  type HookRegistration,
   type Loop,
   type LoopEmitted,
+  type LoopHooks,
   type MessageAppendingEvent,
   type TurnStartingEvent,
-} from './core/index';
+} from '@moonshot-ai/core/loop/index';
 import { LoopJournal, type LoopJournalSnapshot } from './journal';
 import { AgentPromptProjection } from './promptProjection';
 import { AgentTurnProjection, loopLastRequestIdKey } from './turnProjection';
@@ -132,7 +133,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private initialized = false;
   private startPromise: Promise<void> | undefined;
   private closePromise: Promise<void> | undefined;
-  private readonly batchStartingHooks = new Map<string, import('./core/index').HookRegistration>();
+  private readonly batchStartingHooks = new Map<string, HookRegistration>();
   private readonly journal: LoopJournal;
   private readonly prompts: AgentPromptProjection;
   private readonly turns: AgentTurnProjection;
@@ -179,9 +180,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         const config = requester.requestConfigSnapshot();
         const baseline = options.tools ?? this.loop.state.profile.tools;
         const visible = options.tools === undefined && baseline !== undefined
-          ? requester.operationTools(baseline, config.resolved.modelCapabilities)
+          ? requester.operationTools(baseline, config.resolved.model.capability)
           : baseline;
-        const tools = await requester.prepareTools(signal, config.resolved.modelCapabilities, visible);
+        const tools = await requester.prepareTools(signal, config.resolved.model.capability, visible);
         return this.loop.operation((runtime) => requester.coreRequester({ ...options, runtime, tools, config }));
       },
     };
@@ -276,11 +277,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return this.profileAdapter.resolveModelContext();
   }
 
-  resolveRequestParams(): ModelRequestParams {
+  resolveRequestParams(): InitializedLlmRequestPart {
     return this.profileAdapter.resolveRequestParams();
   }
 
-  getModelCapabilities(): ModelCapability {
+  getModelCapabilities(): ModelCapability | undefined {
     return this.profileAdapter.getModelCapabilities();
   }
 
@@ -435,11 +436,15 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         return execution;
       },
       executor: this.toolExecutor.executor,
-      toolContext: () => ({
-        steerSignal: this.turns.steerSignal,
-        trace: this.turns.requestTrace,
-        remind: (message) => this.remind(historyEntryFromContext(message)),
-      }),
+      toolContext: () => {
+        const context = {
+          steerSignal: this.turns.steerSignal,
+          requestId: this.turns.requestTrace?.requestId,
+          trace: this.turns.requestTrace,
+          remind: (message: SystemMessage | UserMessage) => this.remind(historyEntryFromContext(message)),
+        };
+        return context;
+      },
       input: {
         ...snapshot.input,
         profile: {
@@ -913,7 +918,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.loop?.abortTool(toolCallId, reason);
   }
 
-  registerToolBatchStarting(hook: import('./core/index').LoopHooks['tool.batch-starting']): IDisposable {
+  registerToolBatchStarting(hook: LoopHooks['tool.batch-starting']): IDisposable {
     const registration = { point: 'tool.batch-starting' as const, id: randomUUID(), hook };
     this.batchStartingHooks.set(registration.id, registration);
     this.loop?.hooks.add(registration);

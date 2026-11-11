@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { googleGenAIRequester } from '#/llm/builtin/provider/google';
-import { googleGenAIProtocol } from '#/llm/builtin/protocol/google-genai/index';
-import type { GoogleGenAIRequest } from '#/llm/builtin/protocol/google-genai/index';
-import { cleanMessages } from '#/llm/protocol/rules/structure';
-import type { AssistantMessage, Message } from '#/llm/message';
+import { googleGenAIRequester } from '@moonshot-ai/core/llm/builtin/provider/google';
+import { googleGenAIProtocol } from '@moonshot-ai/core/llm/builtin/protocol/google-genai/index';
+import type { GoogleGenAIRequest } from '@moonshot-ai/core/llm/builtin/protocol/google-genai/index';
+import { cleanMessages } from '@moonshot-ai/core/llm/protocol/rules/structure';
+import type { AssistantMessage, Message } from '@moonshot-ai/core/llm/message';
 import { toCoreMessage } from '#/message';
 
 async function* responsesOf(chunks: readonly Record<string, unknown>[]) {

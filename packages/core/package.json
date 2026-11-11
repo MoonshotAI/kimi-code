@@ -1,0 +1,49 @@
+{
+  "name": "@moonshot-ai/core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Loop, llm, and tool runtime without DI or adapters.",
+  "license": "MIT",
+  "author": "Moonshot AI",
+  "homepage": "https://github.com/MoonshotAI/kimi-code/tree/main/packages/core#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MoonshotAI/kimi-code.git",
+    "directory": "packages/core"
+  },
+  "bugs": {
+    "url": "https://github.com/MoonshotAI/kimi-code/issues"
+  },
+  "type": "module",
+  "imports": {
+    "#/*": "./src/*.ts"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./package.json": {
+      "types": "./package.json",
+      "default": "./package.json"
+    },
+    "./*": {
+      "types": "./src/*.ts",
+      "default": "./src/*.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.95.2",
+    "@google/genai": "^1.49.0",
+    "@noble/hashes": "^2.0.0",
+    "ajv": "^8.18.0",
+    "ajv-formats": "^3.0.1",
+    "openai": "^6.34.0",
+    "radashi": "^12.9.1",
+    "undici": "^7.27.1"
+  }
+}

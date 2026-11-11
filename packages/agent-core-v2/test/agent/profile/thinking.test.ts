@@ -5,33 +5,58 @@ import {
   modelSupportsThinkingEffort,
   resolveForcedThinkingEffort,
   resolveThinkingEffortForModel,
-} from '#/llm-adapter/model/thinking';
+} from '@moonshot-ai/core/llm/thinking';
+import type { LlmModelSpec } from '@moonshot-ai/core/llm/request';
 
-const booleanModel = { capabilities: ['thinking'] };
-const effortModel = {
+
+function spec(input: {
+  readonly capabilities?: readonly string[];
+  readonly supportEfforts?: readonly string[];
+  readonly defaultEffort?: string;
+  readonly alwaysThinking?: boolean;
+  readonly adaptiveThinking?: boolean;
+}): LlmModelSpec {
+  const declared = new Set(input.capabilities ?? []);
+  return {
+    provider: "test",
+    name: "test",
+    capability: {
+      image_in: declared.has("image_in"),
+      video_in: declared.has("video_in"),
+      audio_in: declared.has("audio_in"),
+      thinking: declared.has("thinking") || declared.has("always_thinking"),
+      tool_use: declared.has("tool_use"),
+    },
+    thinking: {
+      supportEfforts: input.supportEfforts,
+      defaultEffort: input.defaultEffort,
+      alwaysThinking: input.alwaysThinking,
+      adaptiveThinking: input.adaptiveThinking,
+    },
+  };
+}
+
+const booleanModel = spec({ capabilities: ['thinking'] });
+const effortModel = spec({
   capabilities: ['thinking'],
   supportEfforts: ['low', 'medium', 'high'],
-};
-const effortModelWithDefault = {
+});
+const effortModelWithDefault = spec({
   capabilities: ['thinking'],
   supportEfforts: ['low', 'high', 'max'],
   defaultEffort: 'max',
-};
-const alwaysThinkingModel = {
+});
+const alwaysThinkingModel = spec({
   capabilities: ['thinking', 'always_thinking'],
   alwaysThinking: true,
-  protocol: 'openai',
-  providerType: 'kimi',
-};
-const alwaysThinkingEffortModel = {
+});
+const alwaysThinkingEffortModel = spec({
   capabilities: ['thinking', 'always_thinking'],
   alwaysThinking: true,
-  protocol: 'openai',
-  providerType: 'kimi',
   supportEfforts: ['low', 'high', 'max'],
   defaultEffort: 'high',
-};
-const nonThinkingModel = { capabilities: ['tool_use'] };
+});
+const nonThinkingModel = spec({ capabilities: ['tool_use'] });
 const alwaysThinkingAnthropicEffortModel = {
   ...alwaysThinkingEffortModel,
   protocol: 'anthropic',
@@ -45,7 +70,7 @@ describe('defaultThinkingEffortForModel', () => {
   it('returns off for models that do not support thinking (or an unknown model)', () => {
     expect(defaultThinkingEffortForModel(undefined)).toBe('off');
     expect(defaultThinkingEffortForModel(nonThinkingModel)).toBe('off');
-    expect(defaultThinkingEffortForModel({})).toBe('off');
+    expect(defaultThinkingEffortForModel(spec({}))).toBe('off');
   });
 
   it('returns the declared defaultEffort for effort-capable models', () => {
@@ -54,31 +79,31 @@ describe('defaultThinkingEffortForModel', () => {
 
   it('ignores a defaultEffort that is not declared in supportEfforts', () => {
     expect(
-      defaultThinkingEffortForModel({
+      defaultThinkingEffortForModel(spec({
         capabilities: ['thinking'],
         supportEfforts: ['low', 'high'],
         defaultEffort: 'max',
-      }),
+      })),
     ).toBe('high');
   });
 
   it('falls back to the middle supportEfforts entry when defaultEffort is absent', () => {
     expect(defaultThinkingEffortForModel(effortModel)).toBe('medium');
     expect(
-      defaultThinkingEffortForModel({
+      defaultThinkingEffortForModel(spec({
         capabilities: ['thinking'],
         supportEfforts: ['low', 'high'],
-      }),
+      })),
     ).toBe('high');
     expect(
-      defaultThinkingEffortForModel({ capabilities: ['thinking'], supportEfforts: ['low'] }),
+      defaultThinkingEffortForModel(spec({ capabilities: ['thinking'], supportEfforts: ['low'] })),
     ).toBe('low');
   });
 
   it('returns on for boolean thinking models (thinking support without supportEfforts)', () => {
     expect(defaultThinkingEffortForModel(booleanModel)).toBe('on');
-    expect(defaultThinkingEffortForModel({ capabilities: ['always_thinking'] })).toBe('on');
-    expect(defaultThinkingEffortForModel({ adaptiveThinking: true })).toBe('on');
+    expect(defaultThinkingEffortForModel(spec({ capabilities: ['always_thinking'] }))).toBe('on');
+    expect(defaultThinkingEffortForModel(spec({ adaptiveThinking: true }))).toBe('on');
   });
 });
 

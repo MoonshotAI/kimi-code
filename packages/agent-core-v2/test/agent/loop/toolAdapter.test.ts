@@ -1,33 +1,22 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { LoopLlmRequester } from '#/agent/loop/core/index';
 import { createTestLoop as createLoop } from './core/factory';
-import { createUserEntry, type ToolEntry } from '#human/agent/turn';
-import { createAssistantMessage, createUserMessage, extractText, type ToolCall } from '#human/llm/message';
-import type { LlmRequest } from '#human/llm/request';
-import type { LlmOutcome } from '#human/llm/response';
-import type { ToolResult } from '#human/tool/executor';
+import { createUserEntry, type ToolEntry } from '@moonshot-ai/core/history/history';
+import { createUserMessage, extractText, type ToolCall } from '@moonshot-ai/core/llm/message';
+import { createMockProviderRequester, type MockProviderResponse } from '../../harness/scripted-generate';
+import type { ToolResult } from '@moonshot-ai/core/tool/executor';
 import { executorFrom } from './core/executor';
 
 function call(id: string, name = 'Bash'): ToolCall {
   return { type: 'function', id, name, arguments: '{}' };
 }
 
-function requester(outcomes: (() => LlmOutcome)[]): LoopLlmRequester {
-  const self: LoopLlmRequester = {
-    with: () => self,
-    request: (part) => part as unknown as LlmRequest,
-    generate: async () => {
-      const next = outcomes.shift();
-      if (next === undefined) throw new Error('unexpected generate');
-      return next();
-    },
-  };
-  return self;
+function requester(responses: MockProviderResponse[]) {
+  return createMockProviderRequester(responses);
 }
 
-function done(text: string, toolCalls: ToolCall[] = []): () => LlmOutcome {
-  return () => ({ type: 'done', message: createAssistantMessage([{ type: 'text', text }], toolCalls) });
+function done(text: string, toolCalls: ToolCall[] = []): MockProviderResponse {
+  return { parts: [{ type: 'text', text }, ...toolCalls] };
 }
 
 function prompt() {
@@ -344,7 +333,7 @@ describe('actor handler execution', () => {
     expect((await secondTurn).type).toBe('done');
     await loop.waitForIdle();
     const entries = loop.state.messages.filter((entry): entry is ToolEntry => entry.message.role === 'tool');
-    expect(entries.map((entry) => extractText(entry.message))).toEqual(['old background', '1:same']);
+    expect(entries.map((entry) => extractText(entry.message))).toEqual(['old background', '1:same__2']);
     expect(loop.state.messages.some((entry) => extractText(entry.message).includes('0:same'))).toBe(true);
     expect(gates).toHaveLength(2);
     await loop.close();

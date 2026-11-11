@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { providerImagePolicy } from '#/llm/protocol/kit/media';
-import type { Message } from '#/llm/message';
+import { providerImagePolicy } from '@moonshot-ai/core/llm/protocol/kit/media';
+import type { Message } from '@moonshot-ai/core/llm/message';
 import { fromCorePart, toCorePart } from '#/message';
-import { lowerMessage } from '#/llm/builtin/protocol/anthropic/lower';
+import { lowerMessage } from '@moonshot-ai/core/llm/builtin/protocol/anthropic/lower';
 
 const message: Message = {
   role: 'user',

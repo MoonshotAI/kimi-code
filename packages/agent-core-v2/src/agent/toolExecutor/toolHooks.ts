@@ -1,5 +1,5 @@
 import type { IWaitUntil } from '#/_base/event';
-import type { ToolCall } from '#human/llm/message';
+import type { ToolCall } from '@moonshot-ai/core/llm/message';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 
 import type {

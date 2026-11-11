@@ -36,18 +36,16 @@ import { interactions } from '@moonshot-ai/agent-core-v2/human/interaction/facad
 import { IAgentLoopService, type LoopNotifyEntry, type PromptPayload } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import { IProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocol';
-import {
-  generateModel,
-  type ModelRequestInput,
-  type ModelRequestParams,
-} from '@moonshot-ai/agent-core-v2/llm-adapter/model/generate';
-import { streamWithCredentialRecovery } from '@moonshot-ai/agent-core-v2/llm-adapter/model/credential-recovery';
+import type { LlmRequestContent, LlmRequestModel, LlmRequestProfile } from '@moonshot-ai/core/llm/request';
+import type { InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
+import { streamLlmRequest } from '@moonshot-ai/core/llm/stream';
+import { credentialRecovery } from '@moonshot-ai/core/llm/policy/credentials';
 import {
   fromCorePart,
   toCorePart,
   type ContentPart as LegacyContentPart,
 } from '@moonshot-ai/agent-core-v2/human/message';
-import type { ContentPart as CoreContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
+import type { ContentPart as CoreContentPart } from '@moonshot-ai/core/llm/message';
 import type { SkillActivationOrigin } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
 import { ITelemetryService } from '@moonshot-ai/agent-core-v2/app/telemetry/telemetry';
 import type {
@@ -579,7 +577,7 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
 
     stream(scope, service, method, args): AsyncIterable<unknown> {
       // Special case: direct generate initializes one core request here;
-      // credential recovery and client cancellation stay at this boundary.
+      // client cancellation stays at this boundary.
       if (service === 'modelResolver' && method === 'generate') {
         return {
           [Symbol.asyncIterator]() {
@@ -592,21 +590,27 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
                 const resolved = await resolveScope(scope);
                 const [modelId, input, params] = args;
                 const model = resolved.like.accessor.get(IModelCatalog).get(modelId as string);
-                const request = resolved.like.accessor
+                const requester = resolved.like.accessor
                   .get(IProtocolAdapterRegistry)
-                  .request(model, wireClone(params) as ModelRequestParams | undefined);
-                const iterable = streamWithCredentialRecovery(
-                  model.credentialProvider,
-                  () =>
-                    generateModel(
-                      request,
-                      wireClone(input) as ModelRequestInput,
-                      controller.signal,
-                      wireClone(params) as ModelRequestParams | undefined,
-                    ),
-                  controller.signal,
-                );
-                source = iterable[Symbol.asyncIterator]();
+                  .request(model, wireClone(params) as InitializedLlmRequestPart | undefined);
+                const resolvedInput = wireClone(input) as LlmRequestProfile &
+                  LlmRequestContent &
+                  Pick<LlmRequestModel, 'responseFormat'>;
+                source = streamLlmRequest(
+                  requester.request({
+                    model: { responseFormat: resolvedInput.responseFormat },
+                    profile: {
+                      systemPrompt: resolvedInput.systemPrompt,
+                      tools: resolvedInput.tools,
+                    },
+                    content: { messages: resolvedInput.messages },
+                    policy: {
+                      retry: { maxAttemptsPerStep: 1 },
+                      recoveries: [credentialRecovery],
+                    },
+                  }),
+                  { signal: controller.signal },
+                )[Symbol.asyncIterator]();
               })();
               return started;
             };

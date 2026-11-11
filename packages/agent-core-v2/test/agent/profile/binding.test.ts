@@ -319,7 +319,7 @@ describe('AgentProfileService.bind', () => {
         audio_in: false,
         thinking: true,
         tool_use: true,
-        max_context_tokens: 1_000_000,
+        maxContextSize: 1_000_000,
       },
     });
     await ctx.get(IWireService).flush();
@@ -596,7 +596,7 @@ describe('AgentProfileService.bind', () => {
         audio_in: false,
         thinking: true,
         tool_use: true,
-        max_context_tokens: 1_000_000,
+        maxContextSize: 1_000_000,
       },
     });
     const svc = ctx.get(IAgentLoopService);

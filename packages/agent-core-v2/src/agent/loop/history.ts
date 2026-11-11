@@ -1,8 +1,8 @@
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
-import type { HistoryMessage } from '#human/agent/turn';
-import type { UserMessage } from '#human/llm/message';
-import { emptyUsage } from '#human/llm-requester/usage';
+import type { HistoryMessage } from '@moonshot-ai/core/history/history';
+import type { UserMessage } from '@moonshot-ai/core/llm/message';
+import { emptyUsage } from '@moonshot-ai/core/llm/usage';
 
 export const EMPTY_LOOP_PROMPT: UserMessage = { role: 'user', content: [] };
 

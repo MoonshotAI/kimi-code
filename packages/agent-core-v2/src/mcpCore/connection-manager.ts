@@ -1,7 +1,7 @@
 import { ErrorCodes, Error2 } from '#/errors';
 import type { McpServerConfig } from './config-schema';
 import type { ILogger as Logger } from '#/_base/log/log';
-import type { ToolDescription as Tool } from '#human/llm/message';
+import type { ToolDescription as Tool } from '@moonshot-ai/core/llm/message';
 import { HostProcessError, HostProcessErrorCode } from '#/os/interface/hostProcess';
 import { McpError } from '@modelcontextprotocol/sdk/types.js';
 

@@ -8,8 +8,8 @@ import { isUserPromptSubmitHookPart } from '@moonshot-ai/agent-core-v2/agent/con
 import type { LoopRecordedEvent } from '@moonshot-ai/agent-core-v2/agent/contextMemory/loopEventFold';
 import { LoopErrors } from '@moonshot-ai/agent-core-v2/agent/loop/errors';
 import { isUndoAnchorOrigin } from '@moonshot-ai/agent-core-v2/agent/undo/turnUndo';
-import { stripBundledSkillBlocks } from '@moonshot-ai/agent-core-v2/human/agent/origin';
-import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
+import { stripBundledSkillBlocks } from '@moonshot-ai/core/history/origin';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import type { WireRecord } from '@moonshot-ai/agent-core-v2/wire/record';
 
 import type {

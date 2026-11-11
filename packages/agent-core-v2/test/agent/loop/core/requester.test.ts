@@ -1,31 +1,25 @@
 import { describe, expect, it } from 'vitest';
 
-import { createUserEntry } from '#human/agent/turn';
-import { createAssistantMessage, createUserMessage, extractText } from '#human/llm/message';
-import type { LlmRecovery } from '#human/llm/policy/recovery';
-import type { LlmResolver } from '#human/llm/policy/resolver';
-import type { LlmRetryable } from '#human/llm/policy/retry';
-import type { LlmModelSpec, LlmRequest } from '#human/llm/request';
-import { contentsOf, createRequester, mergeFields, type LlmRequestPart } from '#human/llm/requester';
-import type { LlmOutcome } from '#human/llm/response';
-import type { LoopLlmRequester, LoopProfile } from '#/agent/loop/core/index';
+import { createUserEntry } from '@moonshot-ai/core/history/history';
+import { createUserMessage, extractText } from '@moonshot-ai/core/llm/message';
+import type { LlmRecovery } from '@moonshot-ai/core/llm/policy/recovery';
+import type { LlmResolver } from '@moonshot-ai/core/llm/policy/resolver';
+import type { LlmRetryable } from '@moonshot-ai/core/llm/policy/retry';
+import type { LlmModelSpec, LlmRequest } from '@moonshot-ai/core/llm/request';
+import { createRequester, type LlmRequestPart } from '@moonshot-ai/core/llm/requester';
+import { createMockProviderRequester, type MockProviderResponse } from '../../../harness/scripted-generate';
+import type { LoopLlmRequester, LoopProfile } from '@moonshot-ai/core/loop/index';
 import { createTestLoop as createLoop } from './factory';
 import { executorFrom, successfulExecutor } from './executor';
 
 const spec: LlmModelSpec = { provider: 'fake', name: 'fake-model' };
 
-function fakeRequester(script: (request: LlmRequest) => LlmOutcome, filled: LlmRequestPart = {}): LoopLlmRequester {
-  const complete = (part: LlmRequestPart) =>
-    mergeFields(filled as Record<string, unknown>, part as Record<string, unknown>) as unknown as LlmRequest;
-  return {
-    with: (part: LlmRequestPart | LoopLlmRequester) => fakeRequester(script, complete(contentsOf(part))),
-    request: complete,
-    generate: async (rest) => script(complete(rest)),
-  };
+function fakeRequester(script: (request: LlmRequest) => MockProviderResponse, filled: LlmRequestPart = {}): LoopLlmRequester {
+  return createMockProviderRequester(script).with(filled as never);
 }
 
-function done(text: string): LlmOutcome {
-  return { type: 'done', message: createAssistantMessage([{ type: 'text', text }]) };
+function done(text: string): MockProviderResponse {
+  return { parts: [{ type: 'text', text }] };
 }
 
 const noopExecutor = successfulExecutor(['work']);
@@ -94,11 +88,10 @@ describe('loop.requester', () => {
       models.push('first');
       if (seen.length === 1) {
         return {
-          type: 'done',
-          message: createAssistantMessage(
-            [{ type: 'text', text: 'a' }],
-            [{ type: 'function', id: 'call-work', name: 'work', arguments: '{}' }],
-          ),
+          parts: [
+            { type: 'text', text: 'a' },
+            { type: 'function', id: 'call-work', name: 'work', arguments: '{}' },
+          ],
         };
       }
       return done('a');
@@ -136,7 +129,8 @@ describe('loop.requester', () => {
     expect(request.content).toEqual({ messages: [], usedTokens: 5 });
     const overridden: LoopLlmRequester = merged.with({ model: { spec: other } });
     expect(overridden.request({}).model).toEqual({ spec: other, sampling: { temperature: 1 } });
-    expect(() => createRequester().with(first)).toThrow('requester does not expose its contents');
+    const fromInitialized = createRequester().with(first);
+    expect(fromInitialized.request({ content: { messages: [], usedTokens: 0 } }).model.spec).toEqual(spec);
     const fromFacade: LoopLlmRequester = createRequester().with(
       source.with({ profile: { systemPrompt: 'side' } }),
     );

@@ -2,13 +2,13 @@
 import { z } from 'zod';
 
 import type { PromptOrigin } from '#/agent/contextMemory/types';
-import { annotateBundledSkillParts, isSkillActivationPart } from '#human/agent/origin';
+import { annotateBundledSkillParts, isSkillActivationPart } from '@moonshot-ai/core/history/origin';
 import { parseDaemonFileUrl } from '#/agent/media/mediaRef';
 import { AgentEvent2, registerEvent2Class } from '#/app/event/event2';
-import type { FinishReason } from '#human/llm-requester/finish-reason';
-import type { ContentPart, MediaPart, TextPart } from '#human/llm/message';
-import { mediaFileIdOf, mediaUrlOf } from '#human/llm/protocol/kit/media';
-import type { TokenUsage } from '#human/llm-requester/usage';
+import type { FinishReason } from '@moonshot-ai/core/llm/response';
+import type { ContentPart, MediaPart, TextPart } from '@moonshot-ai/core/llm/message';
+import { mediaFileIdOf, mediaUrlOf } from '@moonshot-ai/core/llm/protocol/kit/media';
+import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
 
 export type TurnEndReason = 'completed' | 'cancelled' | 'failed' | 'blocked';
 

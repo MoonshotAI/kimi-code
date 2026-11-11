@@ -1,13 +1,13 @@
-import type { ToolDescription as Tool, Message } from '#human/llm/message';
+import type { ToolDescription as Tool, Message } from '@moonshot-ai/core/llm/message';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import type { LogContext } from '#/_base/log/log';
-import type { LlmOutcome } from '#human/llm/response';
-import type { LlmDimension, LlmRequester } from '#human/llm/requester';
+import type { LlmOutcome } from '@moonshot-ai/core/llm/response';
+import type { LlmDimension, LlmRequester } from '@moonshot-ai/core/llm/requester';
 import type { ProfileModelContext } from '#/agent/profile/profile';
 import type { Model } from '#/llm-adapter/model/catalog';
-import type { InitializedLlmRequester, ModelRequestParams } from '#/llm-adapter/model/generate';
-import type { ThinkingEffort } from '#human/llm-requester/thinking';
-import type { LoopRequestRuntime, TurnExecution, TurnExecutionInput } from './core/request';
+import type { InitializedLlmRequester, InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
+import type { ThinkingEffort } from '@moonshot-ai/core/llm/request';
+import type { LoopRequestRuntime, TurnExecution, TurnExecutionInput } from '@moonshot-ai/core/loop/request';
 
 export type AgentLLMRequestLogFields = Readonly<LogContext>;
 
@@ -27,7 +27,7 @@ export type AgentLLMRequestSource =
 
 export interface RequestConfigSnapshot {
   readonly resolved: ProfileModelContext;
-  readonly params: ModelRequestParams;
+  readonly params: InitializedLlmRequestPart;
   readonly systemPrompt: string;
   readonly maxCompletionTokensCap?: number;
 }
@@ -35,12 +35,13 @@ export interface RequestConfigSnapshot {
 export interface ResolvedRequestContext {
   readonly request: InitializedLlmRequester;
   readonly model: Model;
-  readonly params: ModelRequestParams;
+  readonly params: InitializedLlmRequestPart;
   readonly modelAlias: string;
   readonly thinkingEffort: ThinkingEffort;
   readonly systemPrompt: string;
   readonly tools?: readonly Tool[];
   readonly messages: Message[];
+  readonly usedContextTokens?: number;
   readonly contextRevision: number;
   readonly promptCacheProbe: 'compaction' | undefined;
   readonly source: AgentLLMRequestSource;

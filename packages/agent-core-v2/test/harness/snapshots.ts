@@ -1,4 +1,4 @@
-import type { Message, ToolDescription as LLMTool } from '#human/llm/message';
+import type { Message, ToolDescription as LLMTool } from '@moonshot-ai/core/llm/message';
 import { expect } from 'vitest';
 
 import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';

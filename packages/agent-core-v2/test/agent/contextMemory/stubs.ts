@@ -7,7 +7,7 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { IEventBus, type ISessionEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { IWireService } from '#/wire/wire';
-import type { HistoryMessage } from '#human/agent/turn';
+import type { HistoryMessage } from '@moonshot-ai/core/history/history';
 import type { IEventDispatcher } from '#/state/eventDispatcher';
 import { TokenCountingRebased } from '#/agent/tokenCounting/tokenCountingOps';
 

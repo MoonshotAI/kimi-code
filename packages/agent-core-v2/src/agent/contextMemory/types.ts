@@ -1,5 +1,5 @@
-import type { ContentPart, Message } from '#human/llm/message';
-import type { TokenUsage } from '#human/llm-requester/usage';
+import type { ContentPart, Message } from '@moonshot-ai/core/llm/message';
+import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import type { AgentTaskStatus } from '#/agent/task/task';

@@ -1,10 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { createUserEntry, type ToolEntry } from '#human/agent/turn';
-import { createAssistantMessage, createUserMessage, extractText, type ToolCall } from '#human/llm/message';
-import type { LlmRequest } from '#human/llm/request';
-import type { LlmOutcome } from '#human/llm/response';
-import type { LoopLlmRequester } from '#/agent/loop/core/index';
+import { createUserEntry, type ToolEntry } from '@moonshot-ai/core/history/history';
+import { createUserMessage, extractText, type ToolCall } from '@moonshot-ai/core/llm/message';
+import { createMockProviderRequester, type MockProviderResponse } from '../../harness/scripted-generate';
 import { createTestLoop as createLoop } from './core/factory';
 import { executorFrom } from './core/executor';
 
@@ -12,21 +10,12 @@ function call(id: string, name = 'Bash'): ToolCall {
   return { type: 'function', id, name, arguments: '{}' };
 }
 
-function requester(outcomes: (() => LlmOutcome)[]): LoopLlmRequester {
-  const self: LoopLlmRequester = {
-    with: () => self,
-    request: (part) => part as unknown as LlmRequest,
-    generate: async () => {
-      const next = outcomes.shift();
-      if (next === undefined) throw new Error('unexpected generate');
-      return next();
-    },
-  };
-  return self;
+function requester(responses: MockProviderResponse[]) {
+  return createMockProviderRequester(responses);
 }
 
-function done(text: string, toolCalls: ToolCall[] = []): () => LlmOutcome {
-  return () => ({ type: 'done', message: createAssistantMessage([{ type: 'text', text }], toolCalls) });
+function done(text: string, toolCalls: ToolCall[] = []): MockProviderResponse {
+  return { parts: [{ type: 'text', text }, ...toolCalls] };
 }
 
 function prompt() {

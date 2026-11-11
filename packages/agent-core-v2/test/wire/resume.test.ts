@@ -390,7 +390,7 @@ describe('Agent resume', () => {
         audio_in: false,
         thinking: false,
         tool_use: true,
-        max_context_tokens: 0,
+        maxContextSize: 0,
       },
     });
     live.mockNextResponse({ type: 'text', text: 'Response before resume.' });

@@ -1,16 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
-import { UNKNOWN_CAPABILITY } from '#/llm-requester/capability';
-import { NO_FINISH } from '#/llm-requester/finish-reason';
+import { NO_FINISH } from '@moonshot-ai/core/llm/response';
 import {
   createMessageAccumulator,
   type AssistantMessage,
   type StreamedMessagePart,
 } from '#/message';
-import type { LlmModel } from '#/llm-requester/model';
-import { emptyResponseError } from '#/llm-requester/empty-response';
+import type { LlmModelSpec } from '@moonshot-ai/core/llm/request';
+import { emptyResponseError } from '@moonshot-ai/core/llm/policy/settle';
 
-const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
+const model: LlmModelSpec = { provider: 'test', name: 'test-model' };
 
 function accumulatedMessage(parts: readonly StreamedMessagePart[]): AssistantMessage {
   const accumulator = createMessageAccumulator();

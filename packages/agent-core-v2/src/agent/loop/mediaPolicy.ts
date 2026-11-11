@@ -3,13 +3,13 @@ import {
   createMediaDegradeRecovery,
   forkMediaRecovery,
   type MediaReplacement,
-} from '#human/llm/builtin/policy/media-degrade';
-import type { Message, ToolMessage, UserMessage } from '#human/llm/message';
-import type { LlmRecovery, LlmRecoveryLedger } from '#human/llm/policy/recovery';
-import type { LlmResolver } from '#human/llm/policy/resolver';
-import { mediaUrlOf } from '#human/llm/protocol/kit/media';
+} from '@moonshot-ai/core/llm/builtin/policy/media-degrade';
+import type { Message, ToolMessage, UserMessage } from '@moonshot-ai/core/llm/message';
+import type { LlmRecovery, LlmRecoveryLedger } from '@moonshot-ai/core/llm/policy/recovery';
+import type { LlmResolver } from '@moonshot-ai/core/llm/policy/resolver';
+import { mediaUrlOf } from '@moonshot-ai/core/llm/protocol/kit/media';
 import type { Model } from '#/llm-adapter/model/catalog';
-import type { InitializedLlmRequester } from '#/llm-adapter/model/generate';
+import type { InitializedLlmRequester } from '@moonshot-ai/core/llm/requester';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { buildMediaPathTag, matchMediaPathTags, mediaKindOfPart, type MediaPathTag } from '#/agent/media/mediaRef';
 import { READ_MEDIA_FILE_TOOL_NAME } from '#/agent/tools/read-media-file/read-media-file';
@@ -104,7 +104,9 @@ export function createAgentMediaPolicy(
       id: 'agent-media-tools',
       recoveryRequest: 'resolved',
       resolve: async (current) => {
-        if (model.capabilities.image_in || model.capabilities.video_in) return current;
+        if (model.spec.capability?.image_in === true || model.spec.capability?.video_in === true) {
+          return current;
+        }
         const messages = hideReadMediaFile(current.content.messages);
         return {
           ...current,

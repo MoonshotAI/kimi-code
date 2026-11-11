@@ -1,9 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { createUserEntry } from '#human/agent/turn';
-import { createAssistantMessage, createUserMessage, extractText, type ToolCall } from '#human/llm/message';
-import type { LlmRequest } from '#human/llm/request';
-import type { LlmOutcome } from '#human/llm/response';
+import { createUserEntry } from '@moonshot-ai/core/history/history';
+import { createUserMessage, extractText, type ToolCall } from '@moonshot-ai/core/llm/message';
 import {
   loopProjection,
   toLoopRecord,
@@ -11,24 +9,18 @@ import {
   type LoopEmitted,
   type LoopLlmRequester,
   type LoopRecord,
-} from '#/agent/loop/core/index';
+} from '@moonshot-ai/core/loop/index';
+import { createMockProviderRequester, type MockProviderResponse } from '../../../harness/scripted-generate';
 import { createTestLoop as createLoop } from './factory';
-import type { ToolExecuteInput, ToolResult } from '#human/tool/executor';
+import type { ToolExecuteInput, ToolResult } from '@moonshot-ai/core/tool/executor';
 import { executorFrom, successfulExecutor } from './executor';
 
-function requester(outcomes: (() => LlmOutcome)[]): LoopLlmRequester {
-  const self: LoopLlmRequester = {
-    with: () => self,
-    request: (part) => part as unknown as LlmRequest,
-    generate: async (_rest, control) => {
-      const next = outcomes.shift();
-      if (next === undefined) throw new Error('boom');
-      const outcome = next();
-      control.onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'hi' } });
-      return outcome;
-    },
-  };
-  return self;
+function requester(responses: MockProviderResponse[]): LoopLlmRequester {
+  return createMockProviderRequester(() => {
+    const next = responses.shift();
+    if (next === undefined) throw new Error('boom');
+    return next;
+  });
 }
 
 function record(loop: Loop): LoopRecord[] {
@@ -59,9 +51,8 @@ function once(loop: Loop, match: (event: LoopEmitted) => boolean): Promise<void>
 }
 
 const prompt = (text: string) => createUserEntry(createUserMessage(text));
-const done = (text: string, toolCalls: ToolCall[] = []): (() => LlmOutcome) => () => ({
-  type: 'done',
-  message: createAssistantMessage([{ type: 'text', text }], toolCalls),
+const done = (text: string, toolCalls: ToolCall[] = []): MockProviderResponse => ({
+  parts: [{ type: 'text', text }, ...toolCalls],
 });
 const call = (id: string, name: string): ToolCall => ({ type: 'function', id, name, arguments: '{}' });
 

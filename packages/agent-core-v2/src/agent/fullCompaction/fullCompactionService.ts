@@ -10,8 +10,7 @@ import { historyFromContext } from '#/agent/loop/history';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
-import { errorFromLlmOutcome } from '#/llm-adapter/model/generate';
-import type { LlmOutcome } from '#human/llm/response';
+import { llmErrorName, llmErrorRequestId, type LlmOutcome } from '@moonshot-ai/core/llm/response';
 import { retryBackoffDelay, sleepForRetry } from '#/_base/utils/retry';
 import { IAgentLoopService, type LoopErrorContext } from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
@@ -34,14 +33,15 @@ import {
   APIEmptyResponseError,
   APIStatusError,
   errorDiagnostics,
+  isLlmErrorMessage,
   isRetryableGenerateError,
 } from '#/llm-adapter/contract/errors';
-import { createUserMessage, type Message } from '#human/llm/message';
-import { emptyUsage, inputTotal, type TokenUsage } from '#human/llm-requester/usage';
+import { createUserMessage, type Message } from '@moonshot-ai/core/llm/message';
+import { emptyUsage, inputTotal, type TokenUsage } from '@moonshot-ai/core/llm/usage';
 import { IEventBus } from '#/app/event/eventBus';
 import type { CompactionFailedEvent, CompactionFinishedEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { ErrorCodes, Error2, isCodedError, isError2, toKimiErrorPayload, unwrapErrorCause } from "#/errors";
+import { ErrorCodes, Error2, fromErrorPayload, isCodedError, isError2, toKimiErrorPayload, unwrapErrorCause } from "#/errors";
 import { AgentErrorEvent } from '#/agent/mcp/mcpEvents';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ISessionRunGate } from '#/session/sessionActivity/sessionRunGate';
@@ -250,8 +250,8 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   }
 
   private getEffectiveMaxContextTokens(): number {
-    const capability = this.loopService.data().modelCapabilities;
-    const configured = capability.max_input_tokens ?? capability.max_context_tokens;
+    const model = this.loopService.resolveModelContext().model;
+    const configured = model.maxInputSize ?? model.maxContextSize ?? 0;
     const modelAlias = this.loopService.data().modelAlias;
     const observed =
       modelAlias === undefined ? undefined : this.observedMaxContextTokensByModel.get(modelAlias);
@@ -265,10 +265,10 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     const effectiveMax = this.getEffectiveMaxContextTokens();
     return {
       ...resolved,
-      modelCapabilities: {
-        ...resolved.modelCapabilities,
-        max_context_tokens: effectiveMax,
-        max_input_tokens: effectiveMax,
+      model: {
+        ...resolved.model,
+        maxContextSize: effectiveMax,
+        maxInputSize: effectiveMax,
       },
     };
   }
@@ -290,6 +290,15 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     estimatedRequestTokens = this.currentRequestTokens(),
   ): boolean {
     if (isCodedError(error) && error.code === ErrorCodes.CONTEXT_OVERFLOW) return true;
+    if (isLlmErrorMessage(error)) {
+      if (error.kind === 'context_overflow') return true;
+      if ((error.kind !== 'status' && error.kind !== 'request_too_large') || error.statusCode !== 413) return false;
+      const effectiveMax = this.getEffectiveMaxContextTokens();
+      return (
+        effectiveMax > 0 &&
+        estimatedRequestTokens >= effectiveMax * OVERFLOW_STATUS_RECOVERY_RATIO
+      );
+    }
     const statusError = findAPIStatusError(error);
     if (statusError instanceof APIContextOverflowError) return true;
     if (statusError === undefined || statusError.statusCode !== 413) return false;
@@ -620,7 +629,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
       const resolvedModel = this.loopService.resolveModelContext();
       thinkingEffort = resolvedModel.thinkingLevel;
-      const maxContextTokens = resolvedModel.modelCapabilities.max_context_tokens;
+      const maxContextTokens = resolvedModel.model.maxContextSize ?? 0;
       const defaultCompactionCap =
         maxContextTokens > 0
           ? Math.min(maxContextTokens, DEFAULT_COMPACTION_MAX_COMPLETION_TOKENS)
@@ -674,7 +683,10 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
             { content: { messages, usedTokens: usedContextTokens }, profile: {} },
             { signal },
           );
-          if (outcome.type !== 'done') throw errorFromLlmOutcome(outcome);
+          if (outcome.type === 'failed') throw outcome.error;
+          if (outcome.type === 'aborted') {
+            throw outcome.reason ?? new DOMException('The operation was aborted.', 'AbortError');
+          }
           cacheProbePending = false;
           attempt = collectSummary(outcome);
           break;
@@ -705,10 +717,12 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
             continue;
           }
           const unwrappedError = unwrapErrorCause(error);
+          const retryableEmptyResponse =
+            isLlmErrorMessage(unwrappedError) &&
+            unwrappedError.kind === 'empty_response' &&
+            unwrappedError.finishReason !== 'filtered';
           if (
-            (error instanceof CompactionTruncatedError ||
-              (unwrappedError instanceof APIEmptyResponseError &&
-                unwrappedError.finishReason !== 'filtered')) &&
+            (error instanceof CompactionTruncatedError || retryableEmptyResponse) &&
             messagesToCompact.length > 1
           ) {
             if (requestAttempts >= maxAttempts) {
@@ -828,10 +842,13 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
         round: 1,
         retry_count: retryCount,
         thinking_effort: thinkingEffort,
-        error_type: error instanceof Error ? error.name : 'Unknown',
+        error_type: isLlmErrorMessage(error) ? llmErrorName(error) : error instanceof Error ? error.name : 'Unknown',
         request_id: findRequestId(error) ?? active.requestId,
       };
       this.telemetry.track2('compaction_failed', properties);
+      if (isLlmErrorMessage(error) && error.kind === 'auth') {
+        throw fromErrorPayload(toKimiErrorPayload(error));
+      }
       if (
         isError2(error) &&
         (error.code === ErrorCodes.AUTH_LOGIN_REQUIRED ||
@@ -839,7 +856,11 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
       ) {
         throw error;
       }
-      throw new Error2(ErrorCodes.COMPACTION_FAILED, String(error), { cause: error });
+      throw new Error2(
+        ErrorCodes.COMPACTION_FAILED,
+        isLlmErrorMessage(error) ? `${llmErrorName(error)}: ${error.message}` : String(error),
+        { cause: error },
+      );
     }
   }
 
@@ -921,6 +942,10 @@ function findRequestId(error: unknown): string | undefined {
   const diagnostics = errorDiagnostics(error);
   const diagnosticRequestId = diagnostics?.['requestId'];
   if (typeof diagnosticRequestId === 'string') return diagnosticRequestId;
+  if (isLlmErrorMessage(error)) {
+    const requestId = llmErrorRequestId(error);
+    if (requestId !== undefined) return requestId;
+  }
   return findAPIStatusError(error)?.requestId ?? undefined;
 }
 

@@ -23,16 +23,21 @@ import type { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecuto
 import { legacyToolDurationMs } from '#/tool/executor';
 import type { AgentLoopService } from './loopService';
 import type { AgentPromptProjection, ActivePrompt, PendingTurn } from './promptProjection';
-import type { Loop, LoopEmitted, StepStartingEvent, StepStoppingEvent, TurnTrigger } from './core/index';
-import type { StepStartingDecision } from './core/contract/hook';
-import { MAX_STEPS_REASON } from './core/index';
+import {
+  MAX_STEPS_REASON,
+  type Loop,
+  type LoopEmitted,
+  type StepStartingDecision,
+  type StepStartingEvent,
+  type StepStoppingEvent,
+  type TurnTrigger,
+} from '@moonshot-ai/core/loop/index';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
-import type { ModelRequestTiming } from '#/llm-adapter/model/generate';
-import type { FinishReason } from '#human/llm-requester/finish-reason';
-import type { ThinkingEffort } from '#human/llm-requester/thinking';
-import { emptyUsage, type TokenUsage } from '#human/llm-requester/usage';
-import type { AssistantEntry, HistoryMessage, UserEntry } from '#human/agent/turn';
-import { createUserEntry } from '#human/agent/turn';
+import type { FinishReason, LlmTiming } from '@moonshot-ai/core/llm/response';
+import type { ThinkingEffort } from '@moonshot-ai/core/llm/request';
+import { emptyUsage, type TokenUsage } from '@moonshot-ai/core/llm/usage';
+import type { AssistantEntry, HistoryMessage, UserEntry } from '@moonshot-ai/core/history/history';
+import { createUserEntry } from '@moonshot-ai/core/history/history';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import { contextFromHistoryEntry, EMPTY_LOOP_PROMPT } from './history';
@@ -81,7 +86,7 @@ interface CoreStepState {
   readonly signal: AbortSignal;
   entry?: AssistantEntry;
   usage?: TokenUsage;
-  timing?: ModelRequestTiming;
+  timing?: LlmTiming;
   providerFinishReason?: FinishReason;
   rawFinishReason?: string;
   messageId?: string;
@@ -265,7 +270,7 @@ export class AgentTurnProjection {
     };
   }
 
-  recordOutcome(outcome: { readonly timing?: ModelRequestTiming }, source: { readonly type: string; readonly turnId?: number; readonly step?: number }): void {
+  recordOutcome(outcome: { readonly timing?: LlmTiming }, source: { readonly type: string; readonly turnId?: number; readonly step?: number }): void {
     if (source.type !== 'turn') return;
     const active = this.active;
     const step = active?.current;
@@ -428,7 +433,7 @@ export class AgentTurnProjection {
         };
       }
       case 'step.ended':
-        return { ...event, timing: this.active?.current?.timing };
+        return event.timing === undefined ? { ...event, timing: this.active?.current?.timing } : event;
       case 'turn.ended': {
         const active = this.active;
         const promptOnly = this.promptOnlyTurnIds.has(event.turnId);

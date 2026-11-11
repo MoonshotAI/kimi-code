@@ -5,8 +5,8 @@ import type {
   TokenCountingRequest,
   TokenCountingStrategy,
 } from '#/agent/tokenCounting/tokenCounting';
-import type { Message, ToolDescription as Tool } from '#human/llm/message';
-import type { TokenUsage } from '#human/llm-requester/usage';
+import type { Message, ToolDescription as Tool } from '@moonshot-ai/core/llm/message';
+import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
 
 export interface TokenCountingRebaseInput {
   readonly length: number;
