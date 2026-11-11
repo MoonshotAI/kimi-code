@@ -135,6 +135,7 @@ export interface HostAgentClosedEvent {
 export interface HostSubagentSpawnedEvent {
   readonly sessionId: string;
   readonly agentId: string;
+  readonly generation: number;
   readonly description?: string;
 }
 
@@ -151,6 +152,7 @@ export interface HostExtension {
   onDidCreateAgent?(agent: HostAgent): void;
   onDidCloseAgent?(event: HostAgentClosedEvent): void;
   onDidSpawnSubagent?(event: HostSubagentSpawnedEvent): void;
+  dispose?(): void;
 }
 
 function agentMeta(meta: AgentMeta | undefined): HostAgentMeta | undefined {
@@ -286,7 +288,10 @@ export function registerHostExtension(
     const lifecycle = handle.accessor.get(IAgentLifecycleService);
     const disposables: IDisposable[] = [
       handle.accessor.get(ISessionEventBus).subscribe(SubagentSpawned, (event) => {
-        extension.onDidSpawnSubagent?.({ sessionId: handle.id, agentId: event.subagentId, description: event.description });
+        const context = lifecycle.get(event.subagentId);
+        if (context !== undefined) {
+          extension.onDidSpawnSubagent?.({ sessionId: handle.id, agentId: event.subagentId, generation: context.generation, description: event.description });
+        }
       }),
       lifecycle.onDidCreateScope(({ context, handle: agent, meta }) => {
         extension.onDidCreateAgent?.(createHostAgent(handle.id, context, agent, meta));
@@ -354,6 +359,7 @@ export function registerHostExtension(
       disposed = true;
       for (const subscription of subscriptions) subscription.dispose();
       for (const sessionId of attached.keys()) detach(sessionId);
+      extension.dispose?.();
     },
   };
 }
