@@ -279,7 +279,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
           ...custom
         }: Record<string, unknown> = body.metadata ?? {};
         const agentConfig = body.agent_config ?? {};
-        const mainAgentBinding = creationMainAgentBinding(core, agentConfig);
+        const mainAgentBinding = await creationMainAgentBinding(core, agentConfig);
         const { profile: _profile, model: _model, thinking: _thinking, ...settings } = agentConfig;
         const appliesSettings = Object.keys(settings).some((key) => key !== 'tower_base');
         const handle = await core.accessor.get(ISessionManager).create({

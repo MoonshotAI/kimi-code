@@ -10,6 +10,7 @@ import {
   IAgentTowerService,
   IModelCatalog,
   IModelService,
+  IProviderService,
   resumeSessionById,
   towerEnterFailureMessage,
   type BindAgentInput,
@@ -33,14 +34,14 @@ export const agentConfigErrors = {
   [ErrorCode.GOAL_UNSUPPORTED_AGENT]: {},
 } as const;
 
-export function creationMainAgentBinding(
+export async function creationMainAgentBinding(
   core: Scope,
   agentConfig: SessionAgentConfigPartial & { readonly profile?: string },
-): BindAgentInput | undefined {
+): Promise<BindAgentInput | undefined> {
   const model =
     agentConfig.model !== undefined && agentConfig.model !== ''
       ? agentConfig.model
-      : bindableDefaultModel(core);
+      : await bindableDefaultModel(core);
   if (model === undefined) {
     if (agentConfig.profile !== undefined || agentConfig.thinking !== undefined) {
       throw sessionModelMissing();
@@ -55,8 +56,10 @@ export function creationMainAgentBinding(
   };
 }
 
-function bindableDefaultModel(core: Scope): string | undefined {
-  const model = core.accessor.get(IModelService).getDefaultModel();
+async function bindableDefaultModel(core: Scope): Promise<string | undefined> {
+  const models = core.accessor.get(IModelService);
+  await Promise.all([models.ready, core.accessor.get(IProviderService).ready]);
+  const model = models.getDefaultModel();
   if (model === undefined || model === '') return undefined;
   try {
     core.accessor.get(IModelCatalog).get(model);

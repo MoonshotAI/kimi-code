@@ -29,6 +29,7 @@ import {
   IEventService,
   IEnvironmentService,
   IModelCatalog,
+  IModelService,
   ISessionActivityView,
   ISessionIndexMirror,
   ISessionManager,
@@ -1035,6 +1036,25 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(main).toBeDefined();
     expect(main!.accessor.get(IAgentLoopService).data().profileName).toBe('agent');
     expect(readAgentState(main!, false).model).toBe('stub');
+  });
+
+  it('waits for the model configuration before choosing the creation model', async () => {
+    await restartWithModels();
+    const models = (server as RunningServer).core.accessor.get(IModelService);
+    let loaded = false;
+    let release!: () => void;
+    (models as { ready: Promise<void> }).ready = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.spyOn(models, 'getDefaultModel').mockImplementation(() => (loaded ? 'stub' : undefined));
+
+    const pending = postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home as string } });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    loaded = true;
+    release();
+    const created = await pending;
+
+    expect(created.body.data.agent_config).toEqual({ model: 'stub' });
   });
 
   it('keeps a thinking level given at creation without a model', async () => {
