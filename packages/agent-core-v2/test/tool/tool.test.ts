@@ -34,6 +34,7 @@ import {
   type AgentSwarmToolInput,
 } from '#/features/swarm/tools/agent-swarm/agent-swarm';
 import {
+  ISubagentTool,
   SubagentToolInputSchema,
   type SubagentToolInput,
 } from '#/agent/tools/agent/agent';
@@ -1196,7 +1197,7 @@ describe('Agent tool description', () => {
     expect(description).not.toContain('- coder: Coder');
   });
 
-  it('freezes the subagent type list once the profile catalog is ready', async () => {
+  it('freezes the subagent type list once the profile catalog is ready until invalidated', async () => {
     const caller: AgentProfile = normalizeAgentProfile({
       name: 'orchestrator',
       description: 'Orchestrator',
@@ -1231,10 +1232,14 @@ describe('Agent tool description', () => {
     const frozen = agentDescription();
     expect(frozen).toContain('- coder: Coder');
 
-    profiles.push(explore);
+    profiles.splice(0, 1, { ...coder, description: 'Updated coder' }, explore);
     const after = agentDescription();
     expect(after).toBe(frozen);
     expect(after).not.toContain('- explore: Explorer');
+
+    ctx.get(ISubagentTool).invalidateProfileDescriptions();
+    expect(agentDescription()).toContain('- coder: Updated coder');
+    expect(agentDescription()).toContain('- explore: Explorer');
   });
 
   it('reflects the current catalog list in the description before the catalog is ready', async () => {

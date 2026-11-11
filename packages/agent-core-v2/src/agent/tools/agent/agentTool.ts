@@ -212,6 +212,10 @@ export class SubagentTool implements ISubagentTool {
     return description;
   }
 
+  invalidateProfileDescriptions(): void {
+    this.frozenCatalogProfiles = undefined;
+  }
+
   private catalogProfiles(): readonly AgentProfile[] {
     if (this.frozenCatalogProfiles !== undefined) return this.frozenCatalogProfiles;
     const profiles = this.catalog.list();
