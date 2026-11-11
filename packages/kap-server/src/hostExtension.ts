@@ -12,6 +12,7 @@ import {
   type AgentContext,
   type AgentMeta,
   type ContextInjectionContext,
+  type ExecutableTool,
   type IAgentScopeHandle,
   type IDisposable,
   type ISessionScopeHandle,
@@ -26,6 +27,8 @@ import { legacyDidExecuteContext, legacyRejectedResult } from '@moonshot-ai/agen
 import { toLegacyToolReturn } from '@moonshot-ai/agent-core-v2/tool/executor';
 import { IAgentToolResultTruncationService } from '@moonshot-ai/agent-core-v2/agent/toolResultTruncation/toolResultTruncation';
 import type { McpServerConfig } from '@moonshot-ai/agent-core-v2/mcpCore/config-schema';
+
+export type HostDecoratorResult<T> = T | Promise<T>;
 
 export interface HostDisposable {
   dispose(): void;
@@ -147,11 +150,11 @@ export interface HostAgent {
   ): HostDisposable;
   decorateToolArguments(
     toolName: string,
-    decorator: (args: unknown, context: HostToolDecoratorContext) => unknown,
+    decorator: (args: unknown, context: HostToolDecoratorContext) => HostDecoratorResult<unknown>,
   ): HostDisposable;
   decorateToolExecution(
     toolName: string,
-    decorator: (args: unknown, context: HostToolDecoratorContext) => unknown,
+    decorator: (args: unknown, context: HostToolDecoratorContext) => HostDecoratorResult<unknown>,
   ): HostDisposable;
   onDidTurnEnd(listener: (event: { readonly turnId: number }) => void): HostDisposable;
 }
@@ -241,6 +244,7 @@ function createHostAgent(sessionId: string, context: AgentContext, handle: IAgen
     }),
     decorateToolExecution: (toolName, decorator) => {
       const registry = handle.accessor.get(IAgentToolRegistryService);
+      const executions = new Map<string, { args: unknown; execution: Awaited<ReturnType<ExecutableTool['resolveExecution']>> }>();
       return handle.accessor.get(IAgentToolExecutorService).registerHook({
         starting: async (context) => {
           if (context.call.name !== toolName || context.prepared.kind !== 'execute') return;
@@ -257,14 +261,22 @@ function createHostAgent(sessionId: string, context: AgentContext, handle: IAgen
             const message = typeof finalized.output === 'string' ? finalized.output : JSON.stringify(finalized.output);
             return { reject: message, result: toLegacyToolReturn(finalized, toolName) };
           }
-          Object.assign(context, { args });
+          executions.set(context.taskId, { args, execution });
+        },
+        beforeExecute: (context) => {
+          if (context.call.name !== toolName || context.prepared.kind !== 'execute') return;
+          const cached = executions.get(context.taskId);
+          if (cached === undefined) return;
+          executions.delete(context.taskId);
+          if (!('execute' in cached.execution)) return;
+          Object.assign(context, { args: cached.args });
           Object.assign(context.prepared, {
-            execution,
-            accesses: execution.accesses,
-            display: execution.display,
-            description: execution.description,
-            approvalRule: execution.approvalRule,
-            matchesRule: execution.matchesRule,
+            execution: cached.execution,
+            accesses: cached.execution.accesses,
+            display: cached.execution.display,
+            description: cached.execution.description,
+            approvalRule: cached.execution.approvalRule,
+            matchesRule: cached.execution.matchesRule,
           });
         },
       });
