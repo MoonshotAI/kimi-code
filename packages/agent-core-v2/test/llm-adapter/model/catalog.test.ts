@@ -693,7 +693,7 @@ describe('Model assembly (pure data)', () => {
       try {
         const provider = catalog.get('sonnet').credentialProvider;
         expect(provider?.canRecover?.(Object.assign(new Error('x'), { status: 401 }))).toBe(true);
-        await expect(provider?.resolve()).resolves.toBeUndefined();
+        await expect(provider?.resolve()).rejects.toThrow();
       } finally {
         host.dispose();
       }
@@ -789,7 +789,11 @@ describe('direct generate', () => {
   it('drives a bedrock-assembled model through generateModel', async () => {
     const { host, catalog } = createHost({
       providers: {
-        bedrock: { type: 'bedrock', env: { AWS_REGION: 'us-east-1', AWS_PROFILE: 'dev' } },
+        bedrock: {
+          type: 'bedrock',
+          apiKey: 'static-bedrock-key',
+          env: { AWS_REGION: 'us-east-1', AWS_PROFILE: 'dev' },
+        },
       },
       models: {
         sonnet: { provider: 'bedrock', model: 'global.anthropic.claude-sonnet-4-6', maxContextSize: 200000 },

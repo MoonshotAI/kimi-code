@@ -29,15 +29,13 @@ export function createBedrockTokenProvider(
     expiresInSeconds: options.expiresInSeconds,
   });
   let cached: { readonly token: string; readonly expiresAt: number } | undefined;
-  let pending: Promise<string | undefined> | undefined;
-  let refreshed: Promise<string | undefined> | undefined;
+  let pending: Promise<string> | undefined;
+  let refreshed: Promise<string> | undefined;
 
-  const acquire = (): Promise<string | undefined> => {
-    pending ??= provideToken()
-      .catch(() => undefined)
-      .finally(() => {
-        pending = undefined;
-      });
+  const acquire = (): Promise<string> => {
+    pending ??= provideToken().finally(() => {
+      pending = undefined;
+    });
     return pending;
   };
 
@@ -47,13 +45,11 @@ export function createBedrockTokenProvider(
       refreshed = undefined;
       if (forced !== undefined) {
         const token = await forced;
-        if (token === undefined) return undefined;
         cached = { token, expiresAt: now() + ttlMs - EXPIRY_MARGIN_MS };
         return bedrockCredential(token);
       }
       if (cached === undefined || now() >= cached.expiresAt) {
         const token = await acquire();
-        if (token === undefined) return undefined;
         cached = { token, expiresAt: now() + ttlMs - EXPIRY_MARGIN_MS };
       }
       return bedrockCredential(cached.token);
@@ -62,7 +58,7 @@ export function createBedrockTokenProvider(
     invalidate: () => {
       cached = undefined;
       refreshed ??= acquire();
-      refreshed.catch(() => {});
+      refreshed.catch(() => undefined);
     },
   };
 }

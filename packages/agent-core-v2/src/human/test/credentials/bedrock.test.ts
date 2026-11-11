@@ -88,13 +88,24 @@ describe('createBedrockTokenProvider', () => {
     expect(calls).toHaveLength(2);
   });
 
-  it('resolves undefined when generation fails and retries on the next resolve', async () => {
+  it('rejects with the credential-chain error and retries on the next resolve', async () => {
     const { options, calls } = tokenProviderOptions([new Error('no credentials'), 'tok-2']);
     const provider = createBedrockTokenProvider(options);
 
-    await expect(provider.resolve()).resolves.toBeUndefined();
+    await expect(provider.resolve()).rejects.toThrow('no credentials');
     await expect(provider.resolve()).resolves.toEqual(bedrockCredential('tok-2'));
     expect(calls).toHaveLength(2);
+  });
+
+  it('surfaces a failed eager refresh on the next resolve without an unhandled rejection', async () => {
+    const { options, calls } = tokenProviderOptions(['tok-1', new Error('sso expired'), 'tok-3']);
+    const provider = createBedrockTokenProvider(options);
+
+    await expect(provider.resolve()).resolves.toEqual(bedrockCredential('tok-1'));
+    provider.invalidate?.();
+    await expect(provider.resolve()).rejects.toThrow('sso expired');
+    await expect(provider.resolve()).resolves.toEqual(bedrockCredential('tok-3'));
+    expect(calls).toHaveLength(3);
   });
 
   it('recovers only from 401 errors', () => {
