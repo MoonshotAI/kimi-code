@@ -171,7 +171,7 @@ export interface ToolCallDensityRule {
 }
 
 export const DENSITY: Readonly<Record<ToolCallDensity, ToolCallDensityRule>> = {
-  compact: { folding: 'all', unfolded: 'card' },
+  compact: { folding: 'all', unfolded: 'row' },
   balanced: { folding: 'readonly', unfolded: 'row' },
   detailed: { folding: 'readonly', unfolded: 'card' },
   ungrouped: { folding: 'none', unfolded: 'card' },

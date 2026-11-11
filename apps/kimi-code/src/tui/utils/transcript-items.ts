@@ -21,6 +21,7 @@ import {
   type TranscriptPresentationOptions,
 } from '#/tui/config';
 import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
+import { MCP_AUTHENTICATE_TOOL_SUFFIX } from '#/tui/constant/mcp';
 import { FOREGROUND_BASH_HINT_DELAY_MS } from '#/tui/constant/rendering';
 import { STREAMING_ARGS_PREVIEW_MAX_CHARS, UNNAMED_TOOL_CALL_NAME } from '#/tui/constant/streaming';
 import { decodeMcpToolName } from '#/tui/utils/mcp-tool-name';
@@ -55,7 +56,7 @@ export type SummaryEvent =
   | { readonly kind: 'other'; readonly outcome: OutcomeCounts }
   | { readonly kind: 'silent'; readonly outcome: OutcomeCounts };
 
-type FoldClass = 'thinking' | 'explore' | 'all';
+type FoldClass = 'thinking' | 'explore' | 'all' | 'never';
 
 export type FoldTraits =
   | { readonly kind: FoldClass }
@@ -88,6 +89,7 @@ export interface LogicalTranscriptItem {
   readonly fold: FoldTraits;
   readonly callId?: ToolCallId;
   readonly current: boolean;
+  readonly detailWhile?: readonly ItemStatus['kind'][];
   readonly event: SummaryEvent;
   readonly label: ItemLabel;
   readonly status: ItemStatus;
@@ -126,6 +128,7 @@ interface ItemInspection {
 interface ToolProfile {
   readonly foldClass: FoldClass;
   readonly event: SummaryEvent['kind'];
+  readonly detailWhile?: readonly ItemStatus['kind'][];
 }
 
 const TOOL_BOUNDARY_ROLES: Readonly<Record<string, BoundaryRole>> = {
@@ -155,8 +158,15 @@ const TOOL_PROFILES: Readonly<Record<string, ToolProfile>> = {
   Write: { foldClass: 'all', event: 'edit' },
   WaitFor: { foldClass: 'all', event: 'taskCheck' },
   TaskOutput: { foldClass: 'all', event: 'taskCheck' },
+  CronCreate: { foldClass: 'never', event: 'other' },
+  CronDelete: { foldClass: 'never', event: 'other' },
 };
 
+const MCP_AUTHENTICATE_PROFILE: ToolProfile = {
+  foldClass: 'never',
+  event: 'mcp',
+  detailWhile: ['running', 'failed'],
+};
 const SUCCESS: OutcomeCounts = { calls: 1, failed: 0, interrupted: 0 };
 const LINE_COUNT_CHIP_TOOLS: ReadonlySet<string> = new Set(['Read', 'Bash']);
 const INTERRUPTION_TEXT = [
@@ -338,6 +348,7 @@ export class TranscriptItemInspector {
       fold: foldTraits(toolCall, profile),
       callId: isToolCallId(toolCall.id) ? toolCall.id : undefined,
       current,
+      detailWhile: profile.detailWhile,
       event,
       label: toolLabel(component),
       status: current ? { kind: 'running' } : finishedStatus(outcome, toolStat(component, event)),
@@ -374,6 +385,7 @@ export class TranscriptItemInspector {
     const name = component.toolCallView.name;
     const profile = TOOL_PROFILES[name];
     if (profile !== undefined) return profile;
+    if (name.startsWith('mcp__') && name.endsWith(MCP_AUTHENTICATE_TOOL_SUFFIX)) return MCP_AUTHENTICATE_PROFILE;
     if (name.startsWith('mcp__')) return { foldClass: 'all', event: 'mcp' };
     return { foldClass: 'all', event: 'other' };
   }
