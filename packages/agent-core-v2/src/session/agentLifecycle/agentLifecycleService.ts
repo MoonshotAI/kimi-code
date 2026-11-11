@@ -254,10 +254,21 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     const agentScope = this.ctx.scope(`agents/${agentId}`);
     const agentHomedir = join(this.bootstrap.homeDir, agentScope);
     const generation = ++this.nextLifecycleGeneration;
+    const meta: AgentMeta = {
+      homedir: agentHomedir,
+      type: agentId === 'main' ? 'main' : 'sub',
+      parentAgentId: agentId === 'main' ? undefined : 'main',
+      forkedFrom: opts.forkedFrom,
+      labels: withSubagentProfile(
+        opts.labels,
+        agentId === 'main' ? undefined : opts.binding?.profile,
+      ),
+    };
     const scopeContext = makeAgentScopeContext({
       agentId,
       agentScope,
       forkedFrom: opts.forkedFrom,
+      meta,
       generation,
     });
     const agent = scopeContext.agentContext;
@@ -338,16 +349,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       stage = 'seal';
       await handle.accessor.get(IWireService).seal();
       stage = 'register';
-      const meta: AgentMeta = {
-        homedir: agentHomedir,
-        type: agentId === 'main' ? 'main' : 'sub',
-        parentAgentId: agentId === 'main' ? undefined : 'main',
-        forkedFrom: opts.forkedFrom,
-        labels: withSubagentProfile(
-          opts.labels,
-          agentId === 'main' ? undefined : opts.binding?.profile,
-        ),
-      };
       await this.sessionMetadata.registerAgent(agentId, meta);
       this.onDidCreateEmitter.fire(agent);
       didCreate = true;

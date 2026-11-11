@@ -12,6 +12,8 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { INHERITED_IN_FLIGHT_TOOL_OUTPUT } from '#/agent/contextMemory/openToolExchange';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { AgentLoopRequester } from '#/agent/loop/requester';
+import type { InitializedLlmRequester } from '#/llm-adapter/model/generate';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentTaskService } from '#/agent/task/task';
@@ -206,11 +208,23 @@ describe('subagent task reminders and fork request parity', () => {
   let store: ScopedAppendLogStore;
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await ctx.dispose();
   });
 
   it('keeps system prompt, tools and history prefix identical to the parent first request', async () => {
     store = new ScopedAppendLogStore();
+    const attempts: { readonly agentId: string; readonly metadata: unknown }[] = [];
+    const prototype = AgentLoopRequester.prototype as unknown as {
+      runRequest(this: AgentLoopRequester, request: { readonly request: InitializedLlmRequester }, ...args: unknown[]): Promise<unknown>;
+    };
+    const runRequest = prototype.runRequest;
+    vi.spyOn(prototype, 'runRequest').mockImplementation(function (this: AgentLoopRequester, request, ...args) {
+      const agentId = (this as unknown as { scopeContext: { agentId: string } }).scopeContext.agentId;
+      const header = request.request.request({ content: { messages: [] } }).endpoint?.headers?.['X-Msh-Client-Metadata'];
+      attempts.push({ agentId, metadata: header === undefined ? undefined : JSON.parse(header) });
+      return runRequest.call(this, request, ...args);
+    });
     const telemetry: TelemetryRecord[] = [];
     ctx = testAgent(
       appService(IAppendLogStore, store),
@@ -237,18 +251,27 @@ describe('subagent task reminders and fork request parity', () => {
     profile.update({ activeToolNames: [...ACTIVE_TOOL_NAMES] });
     parent.accessor.get(IAgentPermissionModeService).setMode('yolo');
 
-    ctx.mockNextResponse({
-      type: 'function',
-      id: 'call_fork',
-      name: 'Agent',
-      arguments: JSON.stringify({
-        description: 'fork parity child',
-        prompt: 'finish the inherited task',
-        fork: true,
-      }),
+    ctx.mockNextProviderResponse({
+      parts: [{
+        type: 'function',
+        id: 'call_fork',
+        name: 'Agent',
+        arguments: JSON.stringify({
+          description: 'fork parity child',
+          prompt: 'finish the inherited task',
+          fork: true,
+        }),
+      }],
+      requestId: 'trace-parent',
     });
-    ctx.mockNextResponse({ type: 'text', text: CHILD_FINAL_TEXT });
-    ctx.mockNextResponse({ type: 'text', text: 'parent final answer' });
+    ctx.mockNextProviderResponse({
+      parts: [{ type: 'text', text: CHILD_FINAL_TEXT }],
+      requestId: 'trace-child',
+    });
+    ctx.mockNextProviderResponse({
+      parts: [{ type: 'text', text: 'parent final answer' }],
+      requestId: 'trace-parent-followup',
+    });
 
     const loop = parent.accessor.get(IAgentLoopService);
     const { id } = loop.submit({
@@ -298,6 +321,26 @@ describe('subagent task reminders and fork request parity', () => {
       .map((agent) => agent.agentId)
       .find((id) => id !== 'parent' && id !== 'main');
     expect(childId).toBeDefined();
+    expect(attempts.map((attempt) => attempt.agentId)).toEqual(['parent', childId, 'parent']);
+    expect(attempts[0]?.metadata).toEqual({
+      agent_role: 'subagent',
+      turn_trigger: 'user',
+      step_reason: 'turn_start',
+      user_input_id: id,
+    });
+    expect(attempts[1]?.metadata).toEqual({
+      agent_role: 'subagent',
+      turn_trigger: 'subagent_task',
+      step_reason: 'turn_start',
+      user_input_id: id,
+      parent_request_id: 'trace-parent',
+    });
+    expect(attempts[2]?.metadata).toEqual({
+      agent_role: 'subagent',
+      turn_trigger: 'user',
+      step_reason: 'tool_results',
+      user_input_id: id,
+    });
     const scopeOf = (agentId: string) =>
       `sessions/test-workspace/test-session/agents/${agentId}`;
     const firstLlmRequest = (agentId: string): WireRecord | undefined =>

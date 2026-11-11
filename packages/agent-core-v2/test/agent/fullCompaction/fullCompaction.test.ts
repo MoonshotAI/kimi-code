@@ -48,6 +48,8 @@ import {
   type ToolExecution,
 } from '#/index';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { AgentLoopRequester } from '#/agent/loop/requester';
+import type { InitializedLlmRequester } from '#/llm-adapter/model/generate';
 import { IWireService } from '#/wire/wire';
 import { IAgentTodoService } from '#/features/todo/todoService';
 import { IAgentGoalService } from '#/features/goal/goalService';
@@ -443,11 +445,28 @@ describe('FullCompaction', () => {
         resolve();
       });
     });
+    const attempts: unknown[] = [];
+    const prototype = AgentLoopRequester.prototype as unknown as {
+      runRequest(this: AgentLoopRequester, request: { readonly request: InitializedLlmRequester }, ...args: unknown[]): Promise<unknown>;
+    };
+    const runRequest = prototype.runRequest;
+    vi.spyOn(prototype, 'runRequest').mockImplementation(function (this: AgentLoopRequester, request, ...args) {
+      const header = request.request.request({ content: { messages: [] } }).endpoint?.headers?.['X-Msh-Client-Metadata'];
+      attempts.push(header === undefined ? undefined : JSON.parse(header));
+      return runRequest.call(this, request, ...args);
+    });
 
     ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
     await ctx.rpc.beginCompaction({ instruction: 'Keep the important test facts.' });
     await compacted;
 
+    expect(attempts).toEqual([
+      {
+        agent_role: 'main',
+        turn_trigger: 'user',
+        step_reason: 'compact',
+      },
+    ]);
     const [compactionCall] = ctx.llmCalls;
     expect(compactionCall?.history.map((message) => message.role)).toEqual([
       'user',
@@ -3688,6 +3707,7 @@ describe('FullCompaction context recovery pointer', () => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.useRealTimers();
   vi.unstubAllEnvs();
 });

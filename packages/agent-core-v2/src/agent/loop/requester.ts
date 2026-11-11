@@ -42,9 +42,11 @@ import { completionBudgetParams, resolveCompletionBudget } from '#/llm-adapter/m
 import { resolveThinkingKeep, type ThinkingConfig } from '#/llm-adapter/model/thinking';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import { IProtocolAdapterRegistry, type Protocol } from '#/llm-adapter/protocol/protocol';
+import { getProviderDefinition } from '#/llm-adapter/provider/provider-definition';
 import type { ApiErrorEvent, CacheBreakDetectedEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { ISessionRequestAttributionService } from '#/session/requestAttribution/requestAttribution';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { WarningIssued } from '#/agent/profile/profileOps';
 
@@ -84,6 +86,8 @@ import {
   sleepForRetry,
 } from '#/_base/utils/retry';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import '#/session/requestAttribution/requestAttributionService';
+import { RequestMetadataTracker, requestMetadataHeaders } from './requestMetadata';
 
 const noopOnPart: AgentLLMRequestPartHandler = () => {};
 
@@ -177,6 +181,7 @@ export const llmRequesterEmittedThinkingEffortWarningsKey = defineState<Set<stri
 );
 export class AgentLoopRequester implements LoopRequester {
   private readonly projector: AgentLoopProjector;
+  private readonly requestMetadata: RequestMetadataTracker;
   private mediaPolicyFactory: AgentMediaPolicyFactory | undefined;
 
   constructor(
@@ -195,8 +200,10 @@ export class AgentLoopRequester implements LoopRequester {
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
+    @ISessionRequestAttributionService private readonly attribution: ISessionRequestAttributionService,
   ) {
     this.projector = new AgentLoopProjector(log, telemetry, states);
+    this.requestMetadata = new RequestMetadataTracker(scopeContext, dispatcher, attribution);
     this.states.contributeState(llmRequestTraceKey);
     this.states.contributeState(llmRequesterLastConfigLogSignatureKey);
     this.states.contributeState(llmRequesterTurnConfigsKey);
@@ -274,6 +281,7 @@ export class AgentLoopRequester implements LoopRequester {
       trace.set(requestId);
       if (overrides.source?.type === 'turn') {
         this.telemetry.setContext({ request_id: requestId });
+        this.attribution.noteActiveRequest(this.scopeContext.agentId, requestId);
       }
     };
     setRequestId(undefined);
@@ -752,8 +760,16 @@ export class AgentLoopRequester implements LoopRequester {
     };
 
     const messages = overrides.messages ?? this.context.get();
+    const request = this.protocolRegistry.request(model, params);
+    const provider = model.providerType === undefined
+      ? undefined
+      : getProviderDefinition(model.providerType, model.protocol);
     return {
-      request: this.protocolRegistry.request(model, params),
+      request: provider?.requestMetadata === true
+        ? request.with({
+            endpoint: { headers: requestMetadataHeaders(this.requestMetadata.resolve(overrides.source)) },
+          })
+        : request,
       model,
       params,
       modelAlias: resolved.modelAlias,

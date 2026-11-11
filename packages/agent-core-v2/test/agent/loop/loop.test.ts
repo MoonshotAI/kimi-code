@@ -8,7 +8,8 @@ import type { IDisposable } from '#/_base/di/lifecycle';
 import { Event } from '#/_base/event';
 import { IAgentProfileService } from '#/index';
 import type { LoopRequester } from '#/agent/loop/requesterContract';
-import type { ModelRequestTiming } from '#/llm-adapter/model/generate';
+import { AgentLoopRequester } from '#/agent/loop/requester';
+import type { InitializedLlmRequester, ModelRequestTiming } from '#/llm-adapter/model/generate';
 import { APIProviderRateLimitError, APIStatusError } from '#/llm-adapter/contract/errors';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
@@ -57,6 +58,20 @@ import { submitPromptTurn } from './stubs';
 
 type GenerateFn = NonNullable<TestAgentOptions['generate']>;
 
+function trackStepReasons(ctx: TestAgentContext): readonly (string | undefined)[] {
+  const reasons: (string | undefined)[] = [];
+  const prototype = AgentLoopRequester.prototype as unknown as {
+    runRequest(this: AgentLoopRequester, request: { readonly request: InitializedLlmRequester }, ...args: unknown[]): Promise<unknown>;
+  };
+  const runRequest = prototype.runRequest;
+  vi.spyOn(prototype, 'runRequest').mockImplementation(function (this: AgentLoopRequester, request, ...args) {
+    const header = request.request.request({ content: { messages: [] } }).endpoint?.headers?.['X-Msh-Client-Metadata'];
+    reasons.push(header === undefined ? undefined : JSON.parse(header).step_reason);
+    return runRequest.call(this, request, ...args);
+  });
+  return reasons;
+}
+
 describe('Agent loop', () => {
   let ctx: TestAgentContext;
   let loop: IAgentLoopService;
@@ -70,6 +85,7 @@ describe('Agent loop', () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     try {
       await ctx.expectResumeMatches();
     } finally {
@@ -313,6 +329,7 @@ describe('Agent loop', () => {
         return undefined;
       },
     });
+    const reasons = trackStepReasons(ctx);
 
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
     await ctx.untilTurnEnd();
@@ -320,6 +337,7 @@ describe('Agent loop', () => {
     expect(seenErrors).toEqual([
       { step: 1, message: 'Unexpected generate call #1' },
     ]);
+    expect(reasons).toEqual(['turn_start', 'turn_start']);
     expect(ctx.allEvents).toContainEqual(
       expect.objectContaining({
         event: 'turn.ended',
@@ -485,6 +503,7 @@ describe('Agent loop', () => {
 
     profile.update({ activeToolNames: ['Lookup'] });
     ctx.get(IAgentToolRegistryService).register(lookupTool);
+    const reasons = trackStepReasons(ctx);
 
     ctx.mockNextResponse({ type: 'text', text: 'I will look it up.' }, lookupCall);
     await ctx.rpc.prompt({
@@ -560,6 +579,7 @@ describe('Agent loop', () => {
         assistant: text "I will look it up."  calls call_lookup:Lookup { "query": "moon" }
         tool[call_lookup]: text "lookup-result"
     `);
+    expect(reasons).toEqual(['turn_start', 'tool_results']);
   });
 
   it('does not abort sibling tools when a parallel batch tool completes first', async () => {
@@ -736,12 +756,14 @@ describe('Agent loop', () => {
     ctx.mockNextProviderResponse({ error: new APIProviderRateLimitError('slow down', null, 1) });
     ctx.mockNextResponse({ type: 'text', text: 'Second answer.' });
     ctx.mockNextResponse({ type: 'text', text: 'Third answer.' });
+    const reasons = trackStepReasons(ctx);
 
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hello' }] });
     await ctx.untilTurnEnd();
 
     expect(continuations).toBe(2);
     expect(ctx.llmCalls).toHaveLength(4);
+    expect(reasons).toEqual(['turn_start', 'tool_results', 'tool_results', 'tool_results']);
     const startedSteps = ctx.allEvents
       .filter((event) => event.type === '[rpc]' && event.event === 'turn.step.started')
       .map((event) => (event.args as { step: number }).step);
