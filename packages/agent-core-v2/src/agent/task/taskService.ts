@@ -1,12 +1,13 @@
 import { event2FromRecord } from '#/app/event/event2';
 import { createDecorator } from '#/_base/di/instantiation';
 import { Service } from '#/_base/di/service';
+import { Emitter } from '#/_base/event';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { IAgentToolExecutorService, type AgentToolExecutionHandler } from '#/agent/toolExecutor/toolExecutor';
 import { IWireService } from '#/wire/wire';
 import type { WireRecord } from '#/wire/record';
 import { ToolTimeoutError } from '#/tool/executor/types';
@@ -166,6 +167,10 @@ export class AgentTaskHistoryService extends Service implements IAgentTaskHistor
 
 export class AgentTaskRequestService extends Service implements IAgentTaskService {
   declare readonly _serviceBrand: undefined;
+  private readonly _onDidChangeTask = this._register(new Emitter<AgentTaskInfo>());
+  readonly onDidChangeTask = this._onDidChangeTask.event;
+  private readonly pendingChanges = new Set<AgentToolExecutionHandler>();
+  private disposed = false;
 
   constructor(
     @IAgentToolExecutorService private readonly toolExecutor: IAgentToolExecutorService,
@@ -173,6 +178,28 @@ export class AgentTaskRequestService extends Service implements IAgentTaskServic
     @IAgentTaskOutputService private readonly outputs: IAgentTaskOutputService,
   ) {
     super();
+    this._register(this.toolExecutor.registerHook({
+      observe: (event) => {
+        if (event.type !== 'change' || event.handler.snapshot().fields['task'] === undefined) return;
+        this.scheduleChange(event.handler);
+      },
+    }));
+    this._register({
+      dispose: () => {
+        this.disposed = true;
+        this.pendingChanges.clear();
+      },
+    });
+  }
+
+  private scheduleChange(handler: AgentToolExecutionHandler): void {
+    if (this.disposed || this.pendingChanges.has(handler)) return;
+    this.pendingChanges.add(handler);
+    queueMicrotask(() => {
+      this.pendingChanges.delete(handler);
+      if (this.disposed || handler.snapshot().fields.task === undefined) return;
+      this._onDidChangeTask.fire(agentTaskInfo(handler));
+    });
   }
 
   getTask(taskId: string): AgentTaskInfo | undefined {

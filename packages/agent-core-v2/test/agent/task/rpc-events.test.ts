@@ -140,6 +140,12 @@ function taskNotifications(ctx: TestAgentContext, taskId?: string) {
   );
 }
 
+function liveTaskChanges(ctx: TestAgentContext): AgentTaskInfo[] {
+  const changes: AgentTaskInfo[] = [];
+  ctx.get(IAgentTaskService).onDidChangeTask((info) => changes.push(info));
+  return changes;
+}
+
 async function drain(ctx: TestAgentContext, taskId: string): Promise<void> {
   await vi.waitFor(() => expect(taskNotifications(ctx, taskId)).toHaveLength(1), { timeout: 3000 });
   await ctx.get(IAgentLoopService).settled();
@@ -232,30 +238,103 @@ describe('AgentTaskService — event emission', () => {
     for (const ctx of contexts.splice(0).reverse()) await ctx.dispose();
   });
 
-  it('dispatches process task creation once', async () => {
+  it('emits process task changes and persists only detached tasks', async () => {
     const sh = controllableProcess();
     const ctx = processContext(sh.proc);
-    const { handler } = await startBashTaskInLoop(ctx, { command: 'echo', description: 'process', run_in_background: true });
-    const records = await ctx.persistedWireRecords();
-    expect(records.filter((record) => record.type === 'task.started' && recordInfo(record, 'taskId') === handler.taskId)).toHaveLength(1);
+    const changes = liveTaskChanges(ctx);
+    const { handler } = await startBashTaskInLoop(ctx, { command: 'echo', description: 'process', run_in_background: false });
+    await vi.waitFor(() => expect(changes).toHaveLength(1));
+    expect(changes[0]).toMatchObject({
+      taskId: handler.taskId,
+      status: 'running',
+      detached: false,
+      parentToolCallId: handler.snapshot().id,
+    });
+    let records = await ctx.persistedWireRecords();
+    expect(records.filter((record) => record.type === 'task.started' && recordInfo(record, 'taskId') === handler.taskId)).toEqual([]);
     expect(records.filter((record) => record.type === 'task.terminated' && recordInfo(record, 'taskId') === handler.taskId)).toEqual([]);
+
+    sh.write('output only\n');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(changes).toHaveLength(1);
+    ctx.get(IAgentTaskService).detach(handler.taskId);
+    await vi.waitFor(() => expect(changes).toHaveLength(2));
+    expect(changes[1]).toMatchObject({ status: 'running', detached: true });
+    records = await ctx.persistedWireRecords();
+    expect(records.filter((record) => record.type === 'task.started' && recordInfo(record, 'taskId') === handler.taskId)).toHaveLength(1);
+
     ctx.mockNextResponse({ type: 'text', text: 'done' });
     sh.finish(0);
     await handler.wait();
+    await vi.waitFor(() => expect(changes.at(-1)).toMatchObject({ status: 'completed', detached: true }));
+    const delivered = changes.length;
     await drain(ctx, handler.taskId);
+    expect(changes).toHaveLength(delivered);
+    records = await ctx.persistedWireRecords();
+    expect(records.filter((record) => record.type === 'task.terminated' && recordInfo(record, 'taskId') === handler.taskId)).toHaveLength(1);
+
+    const backgroundSh = controllableProcess();
+    const backgroundCtx = processContext(backgroundSh.proc);
+    const backgroundChanges = liveTaskChanges(backgroundCtx);
+    const background = await startBashTaskInLoop(backgroundCtx, { command: 'echo', description: 'background', run_in_background: true });
+    await vi.waitFor(() => expect(backgroundChanges).toHaveLength(1));
+    expect(backgroundChanges[0]).toMatchObject({ status: 'running', detached: true });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(backgroundChanges).toHaveLength(1);
+    backgroundCtx.mockNextResponse({ type: 'text', text: 'done' });
+    backgroundSh.finish(0);
+    await background.handler.wait();
+    await drain(backgroundCtx, background.handler.taskId);
   });
 
-  it('dispatches agent task creation once', async () => {
+  it('emits agent task changes and persists only detached tasks', async () => {
     const completion = deferred<{ result: string }>();
     const ctx = agentContext(completion.promise);
-    const { handler } = await startAgent(ctx, 'agent work');
-    const records = await ctx.persistedWireRecords();
-    expect(records.filter((record) => record.type === 'task.started' && recordInfo(record, 'taskId') === handler.taskId)).toHaveLength(1);
+    const changes = liveTaskChanges(ctx);
+    const { handler } = await startAgentTaskInLoop(ctx, {
+      description: 'agent work',
+      prompt: 'agent work',
+      run_in_background: false,
+    });
+    await vi.waitFor(() => expect(changes).toHaveLength(1));
+    expect(changes[0]).toMatchObject({
+      taskId: handler.taskId,
+      status: 'running',
+      detached: false,
+      parentToolCallId: handler.snapshot().id,
+    });
+    let records = await ctx.persistedWireRecords();
+    expect(records.filter((record) => record.type === 'task.started' && recordInfo(record, 'taskId') === handler.taskId)).toEqual([]);
     expect(records.filter((record) => record.type === 'task.terminated' && recordInfo(record, 'taskId') === handler.taskId)).toEqual([]);
+
+    ctx.get(IAgentTaskService).detach(handler.taskId);
+    await vi.waitFor(() => expect(changes).toHaveLength(2));
+    expect(changes[1]).toMatchObject({ status: 'running', detached: true });
+    records = await ctx.persistedWireRecords();
+    expect(records.filter((record) => record.type === 'task.started' && recordInfo(record, 'taskId') === handler.taskId)).toHaveLength(1);
+
     ctx.mockNextResponse({ type: 'text', text: 'done' });
     completion.resolve({ result: 'done' });
     await handler.wait();
+    await vi.waitFor(() => expect(changes.at(-1)).toMatchObject({ status: 'completed', detached: true }));
+    const delivered = changes.length;
     await drain(ctx, handler.taskId);
+    expect(changes).toHaveLength(delivered);
+    records = await ctx.persistedWireRecords();
+    expect(records.filter((record) => record.type === 'task.terminated' && recordInfo(record, 'taskId') === handler.taskId)).toHaveLength(1);
+
+    const backgroundCompletion = deferred<{ result: string }>();
+    const backgroundCtx = agentContext(backgroundCompletion.promise);
+    const backgroundChanges = liveTaskChanges(backgroundCtx);
+    const background = await startAgent(backgroundCtx, 'background agent');
+    await vi.waitFor(() => expect(backgroundChanges).toHaveLength(1));
+    expect(backgroundChanges[0]).toMatchObject({ status: 'running', detached: true });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(backgroundChanges).toHaveLength(1);
+    backgroundCtx.mockNextResponse({ type: 'text', text: 'done' });
+    backgroundCompletion.resolve({ result: 'done' });
+    await background.handler.wait();
+    await drain(backgroundCtx, background.handler.taskId);
   });
 
   it('tracks natural exit telemetry with one terminal record', async () => {
