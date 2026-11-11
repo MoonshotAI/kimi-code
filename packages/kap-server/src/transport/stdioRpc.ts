@@ -81,26 +81,20 @@ class FakeWebSocket extends EventEmitter { // oxlint-disable-line eslint-plugin-
   readonly CLOSED = 3;
   readyState = 1;
 
-  private pendingBytes = 0;
-
   constructor(
     private readonly onSend: (data: string) => void,
     private readonly onClosed: (code?: number, reason?: string) => void,
+    private readonly bufferedBytes: () => number,
   ) {
     super();
   }
 
   get bufferedAmount(): number {
-    return this.pendingBytes;
-  }
-
-  drained(): void {
-    this.pendingBytes = 0;
+    return this.bufferedBytes();
   }
 
   send(data: string): void {
     if (this.readyState !== this.OPEN) return;
-    this.pendingBytes += Buffer.byteLength(data);
     this.onSend(data);
   }
 
@@ -237,6 +231,7 @@ export function attachRpcStream(stream: Duplex, opts: RpcStreamOptions): void {
             sockets.delete(frame.id);
             rpc.write({ type: 'ws.close', id: frame.id, code, reason });
           },
+          () => rpc.bufferedBytes,
         );
         sockets.set(frame.id, fake);
         const fakeReq = {
@@ -257,12 +252,8 @@ export function attachRpcStream(stream: Duplex, opts: RpcStreamOptions): void {
         socket?.receiveClose(frame.code, frame.reason);
       }
     },
-    () => {
-      for (const socket of sockets.values()) socket.drained();
-    },
-    () => {
-      cleanup();
-    },
+    undefined,
+    cleanup,
   );
 }
 

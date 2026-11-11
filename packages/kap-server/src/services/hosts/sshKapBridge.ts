@@ -304,6 +304,10 @@ export class SshKapBridge {
     if (this.sessionValue !== undefined) return Promise.resolve(this.sessionValue.session);
     this.reconnectGeneration += 1;
     this.reconnecting = false;
+    return this.establishOnce();
+  }
+
+  private establishOnce(): Promise<HostSession> {
     this.connecting ??= this.establish().finally(() => {
       this.connecting = undefined;
     });
@@ -488,9 +492,9 @@ export class SshKapBridge {
         delay = Math.min(delay * 2, MAX_RECONNECT_DELAY_MS)
       ) {
         await sleep(delay);
-        if (this.disposed || generation !== this.reconnectGeneration) return;
+        if (this.disposed || generation !== this.reconnectGeneration || this.sessionValue !== undefined) return;
         try {
-          await this.connect();
+          await this.establishOnce();
           return;
         } catch (error) {
           if (error instanceof HostConnectError && !RETRYABLE.has(error.failure)) return;

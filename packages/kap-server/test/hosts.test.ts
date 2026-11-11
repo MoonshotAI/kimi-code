@@ -326,6 +326,45 @@ done
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it.skipIf(process.platform === 'win32')('keeps retrying with backoff after an abnormal exit until the host is reachable again', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kimi-fake-ssh-'));
+    try {
+      const ssh = join(dir, 'ssh');
+      const count = join(dir, 'count');
+      writeFileSync(
+        ssh,
+        `#!/bin/sh
+echo x >> '${count}'
+attempt=$(wc -l < '${count}' | tr -d ' ')
+if [ "$attempt" = 2 ]; then
+  echo 'ssh: connect to host dev port 22: Connection refused' >&2
+  exit 255
+fi
+echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"pid":100,"version":"1.2.3"}'
+if [ "$attempt" = 1 ]; then exit 1; fi
+while IFS= read -r line; do :; done
+`,
+      );
+      chmodSync(ssh, 0o755);
+      const bridge = new SshKapBridge({ host: 'dev' }, { sshProgram: ssh });
+      try {
+        await bridge.connect();
+        await vi.waitFor(
+          () => {
+            expect(readFileSync(count, 'utf8').trim().split('\n')).toHaveLength(3);
+            expect(bridge.session).toBeDefined();
+            expect(bridge.status).toBe('ready');
+          },
+          { timeout: 10_000, interval: 50 },
+        );
+      } finally {
+        bridge.dispose();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 15_000);
 });
 
 describe('host HTTP session', () => {
@@ -454,20 +493,43 @@ describe('host WebSocket backpressure', () => {
     }
   });
 
-  it('closes the RPC stream when its send buffer exceeds the shared limit', async () => {
-    let stream: Duplex;
-    stream = new Duplex({
-      highWaterMark: 1,
-      read() {},
-      write(chunk, encoding, callback) {
-        Duplex.prototype.write.call(stream, chunk, encoding, callback);
-      },
-    });
+  it('buffers a maximum-size body frame and closes the RPC stream once its send buffer exceeds the limit', async () => {
+    const stream = new Duplex({ read() {}, write() {} });
     const onClose = vi.fn();
-    const rpc = new JsonlRpcStream(stream, () => {}, () => {}, onClose);
-    rpc.write({ type: 'x'.repeat(HOST_RPC_MAX_BODY_BYTES + 1) });
+    const rpc = new JsonlRpcStream<{ type: string; body: string }>(stream, () => {}, () => {}, onClose);
+    const body = Buffer.alloc(HOST_RPC_MAX_BODY_BYTES).toString('base64');
+    rpc.write({ type: 'http.res', body });
+    expect(stream.destroyed).toBe(false);
+    for (let frame = 0; frame < 3; frame += 1) rpc.write({ type: 'http.res', body });
     expect(stream.destroyed).toBe(true);
     await vi.waitFor(() => expect(onClose).toHaveBeenCalledWith(expect.objectContaining({ name: 'RpcBackpressureError' })));
+  });
+
+  it('keeps a slow RPC stream that still makes progress and closes it once it stalls', async () => {
+    vi.useFakeTimers();
+    try {
+      let stalled = false;
+      const stream = new Duplex({
+        read() {},
+        write(_chunk, _encoding, callback) {
+          if (!stalled) setTimeout(callback, 1000);
+        },
+      });
+      const onClose = vi.fn();
+      const rpc = new JsonlRpcStream<{ type: string }>(stream, () => {}, () => {}, onClose);
+      rpc.write({ type: 'x'.repeat(10 * 64 * 1024) });
+      await vi.advanceTimersByTimeAsync(WS_BACKPRESSURE_TIMEOUT_MS * 3);
+      expect(stream.destroyed).toBe(false);
+      expect(rpc.bufferedBytes).toBe(0);
+
+      stalled = true;
+      rpc.write({ type: 'x'.repeat(64 * 1024) });
+      await vi.advanceTimersByTimeAsync(WS_BACKPRESSURE_TIMEOUT_MS + 1);
+      expect(stream.destroyed).toBe(true);
+      expect(onClose).toHaveBeenCalledWith(expect.objectContaining({ name: 'RpcBackpressureError' }));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -694,6 +756,37 @@ describe('stdio rpc transport', () => {
       await rpcServer.close();
       await app.close();
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reports the stream backlog as the WebSocket buffered amount', async () => {
+    const app = Fastify();
+    const wssV1 = new WebSocketServer({ noServer: true });
+    let connected!: NodeWebSocket;
+    wssV1.on('connection', (ws) => { connected = ws; });
+    let hold = false;
+    let release: (() => void) | undefined;
+    const stream = new Duplex({
+      read() {},
+      write(_chunk, _encoding, callback) {
+        if (hold) release = callback;
+        else callback();
+      },
+    });
+    attachRpcStream(stream, { app, wssV1 });
+    try {
+      stream.push(`${JSON.stringify({ type: 'ws.open', id: 'live', path: '/api/v1/ws' })}\n`);
+      await vi.waitFor(() => expect(connected).toBeDefined());
+      for (let message = 0; message < 100; message += 1) connected.send('x'.repeat(1024));
+      expect(connected.bufferedAmount).toBe(0);
+      hold = true;
+      connected.send('held');
+      expect(connected.bufferedAmount).toBeGreaterThan(0);
+      release?.();
+      expect(connected.bufferedAmount).toBe(0);
+    } finally {
+      stream.destroy();
+      await app.close();
     }
   });
 
