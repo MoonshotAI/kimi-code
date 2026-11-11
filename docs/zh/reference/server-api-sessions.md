@@ -133,7 +133,7 @@
 | --- | --- | --- | --- |
 | `session_id` | path | string | 必填。会话 id |
 | `title` | body | string | 新标题，至少 1 个字符。会成为自定义标题 |
-| `metadata` | body | object | 合并进会话自定义元数据的键 |
+| `metadata` | body | object | 非空时整体替换会话的自定义元数据。保留键 `cwd`、`goal`、`parent_session_id`、`child_session_kind` 会被忽略，会话已存的这些键保持不变 |
 | `agent_config` | body | object | main agent 的部分配置，字段见下表 |
 
 `agent_config` 的字段都是可选的，服务端按 `model`、`thinking`、`permission_mode`、`plan_mode`、`swarm_mode`、`tower_mode`、`goal_objective`、`goal_control` 的顺序逐个应用到 main agent。应用不是原子的：某个字段出错时，排在它前面的字段已经生效，不会回滚。除 `goal_objective` 和 `goal_control` 外，其他字段重复发送不会产生额外效果，可以安全重发。

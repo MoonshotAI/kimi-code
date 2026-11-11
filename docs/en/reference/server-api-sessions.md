@@ -133,7 +133,7 @@ A title set here is a custom title and takes precedence over generated titles. S
 | --- | --- | --- | --- |
 | `session_id` | path | string | Required. Session id |
 | `title` | body | string | New title, at least 1 character. Becomes a custom title |
-| `metadata` | body | object | Keys merged into the session's custom metadata |
+| `metadata` | body | object | When non-empty, replaces the session's custom metadata as a whole. The reserved keys `cwd`, `goal`, `parent_session_id`, and `child_session_kind` are ignored, and the values the session already stores for them are kept |
 | `agent_config` | body | object | Partial main agent config; fields in the table below |
 
 All `agent_config` fields are optional. The server applies them to the main agent one by one in this order: `model`, `thinking`, `permission_mode`, `plan_mode`, `swarm_mode`, `tower_mode`, `goal_objective`, `goal_control`. Applying is not atomic: when a field fails, the fields before it have already taken effect and are not rolled back. Except for `goal_objective` and `goal_control`, sending a field again has no extra effect, so these fields are safe to resend.
