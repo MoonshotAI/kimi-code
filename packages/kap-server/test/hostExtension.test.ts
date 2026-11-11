@@ -18,6 +18,7 @@ import {
 import { TurnEnded } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import { historyEntryFromContext } from '@moonshot-ai/agent-core-v2/agent/loop/history';
 import { ISessionEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
+import { IAgentToolResultTruncationService } from '@moonshot-ai/agent-core-v2/agent/toolResultTruncation/toolResultTruncation';
 import { IMAGE_BYTE_BUDGET, startServer } from '../src/index';
 import type { HostAgent, HostExtension } from '../src/index';
 
@@ -120,11 +121,13 @@ it('exposes session and agent capabilities without leaking engine scopes', async
     injectedTurn: context.turnId,
   }));
   const interception = hostAgent.onDidExecuteTool((context) => context.toolName === 'HostEcho' ? { output: 'host tool intercepted' } : undefined);
+  const skip = main.accessor.get(IAgentToolExecutorService).registerHook({ starting: () => ({ skipPermitting: true }) });
   const executor = main.accessor.get(IAgentToolExecutorService);
   const call = { type: 'function' as const, id: 'host-call', name: 'HostEcho', arguments: JSON.stringify({ value: 'ok' }) };
   const result = await executor.executor.execute(call, { turnId: 7 });
   expect(result.content).toEqual([{ type: 'text', text: 'host tool intercepted' }]);
   expect(resolve).toHaveBeenCalledWith({ value: 'ok', injectedTurn: 7 });
+  skip.dispose();
   interception.dispose();
   const invalid = await executor.executor.execute({ ...call, id: 'host-invalid', arguments: JSON.stringify({ invalid: true }) }, { turnId: 8 });
   if ('detached' in invalid) throw new Error('unexpected detached tool result');
@@ -143,9 +146,15 @@ it('exposes session and agent capabilities without leaking engine scopes', async
       : { approvalRule: 'always-allow' as const, execute: async () => execute(args) },
   } as ExecutableTool, { source: 'builtin' });
   hostAgent.decorateToolExecution('HostResolverFailure', (args) => ({ ...(args as Record<string, unknown>), fail: true }));
+  const truncation = vi.spyOn(main.accessor.get(IAgentToolResultTruncationService), 'truncateForModel');
   const resolverFailure = await executor.executor.execute({ ...call, id: 'host-resolver-failure', name: 'HostResolverFailure' }, { turnId: 10 });
   if ('detached' in resolverFailure) throw new Error('unexpected detached tool result');
   expect(resolverFailure.content).toEqual([{ type: 'text', text: 'decorator rejected' }]);
+  expect(truncation).toHaveBeenCalledWith(expect.objectContaining({
+    result: expect.objectContaining({ output: 'decorator rejected' }),
+    toolCallId: 'host-resolver-failure',
+    toolName: 'HostResolverFailure',
+  }));
   expect(execute).toHaveBeenCalledTimes(2);
 
   const ended = vi.fn();

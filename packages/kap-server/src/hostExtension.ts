@@ -24,6 +24,7 @@ import { ISessionEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus'
 import { TurnEnded } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import { legacyDidExecuteContext, legacyRejectedResult } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/legacyHooks';
 import { toLegacyToolReturn } from '@moonshot-ai/agent-core-v2/tool/executor';
+import { IAgentToolResultTruncationService } from '@moonshot-ai/agent-core-v2/agent/toolResultTruncation/toolResultTruncation';
 import type { McpServerConfig } from '@moonshot-ai/agent-core-v2/mcpCore/config-schema';
 
 export interface HostDisposable {
@@ -241,15 +242,20 @@ function createHostAgent(sessionId: string, context: AgentContext, handle: IAgen
     decorateToolExecution: (toolName, decorator) => {
       const registry = handle.accessor.get(IAgentToolRegistryService);
       return handle.accessor.get(IAgentToolExecutorService).registerHook({
-        permitting: async (context) => {
+        starting: async (context) => {
           if (context.call.name !== toolName || context.prepared.kind !== 'execute') return;
           const args = await decorator(context.args, { turnId: context.context.turnId });
           const tool = registry.resolve(toolName);
           if (tool === undefined) return;
           const execution = await tool.resolveExecution(args);
           if (!('execute' in execution)) {
-            const message = typeof execution.output === 'string' ? execution.output : JSON.stringify(execution.output);
-            return { reject: message, result: toLegacyToolReturn(execution, toolName) };
+            const finalized = await handle.accessor.get(IAgentToolResultTruncationService).truncateForModel({
+              result: execution,
+              toolCallId: context.call.id,
+              toolName,
+            });
+            const message = typeof finalized.output === 'string' ? finalized.output : JSON.stringify(finalized.output);
+            return { reject: message, result: toLegacyToolReturn(finalized, toolName) };
           }
           Object.assign(context, { args });
           Object.assign(context.prepared, {
