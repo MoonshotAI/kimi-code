@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, promises as fsp } from 'node:fs';
+import { createRequire } from 'node:module';
 
 import Database from 'better-sqlite3';
 import { dirname, join } from 'pathe';
@@ -28,6 +29,20 @@ const STORE_FILE = 'query-store.sqlite';
 const LOCK_ACQUIRE_TIMEOUT_MS = 1000;
 const TRANSIENT_ESCALATION_LIMIT = 5;
 
+function packageNativeBinding(target: string): string | undefined {
+  try {
+    const packageEntry = createRequire(import.meta.url).resolve('better-sqlite3');
+    const packageDir = dirname(packageEntry);
+    for (const relative of [`../prebuilds/${target}.node`, '../build/Release/better_sqlite3.node']) {
+      const candidate = join(packageDir, relative);
+      if (existsSync(candidate)) return candidate;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
 function sqliteNativeBinding(): string | undefined {
   const configured = process.env['KIMI_CODE_SQLITE_NATIVE_BINDING'];
   if (configured !== undefined) return configured;
@@ -37,7 +52,8 @@ function sqliteNativeBinding(): string | undefined {
     'better-sqlite3',
     `${target}.node`,
   );
-  return existsSync(bundled) ? bundled : undefined;
+  if (existsSync(bundled)) return bundled;
+  return packageNativeBinding(target);
 }
 
 const SCHEMA = `
@@ -764,6 +780,12 @@ class SqliteQuery<T> implements IQuery<T> {
     return this.withDb((db) => {
       const params: unknown[] = [this.collection];
       let sql = 'SELECT key, value FROM query_documents AS d WHERE d.collection = ?';
+      const parentFilter = this.filter['custom.parent_session_id'];
+      if (typeof parentFilter === 'string') {
+        const parentPath = sqlString(jsonPath('custom.parent_session_id'));
+        sql += ` AND json_type(d.value, ${parentPath}) IS NOT NULL AND json_extract(d.value, ${parentPath}) = ?`;
+        params.push(parentFilter);
+      }
       if (this.column !== undefined) {
         const bounds = boundsSql(this.column.bounds);
         sql += ` AND EXISTS (

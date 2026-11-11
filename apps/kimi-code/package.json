@@ -76,7 +76,8 @@
     "postinstall": "node scripts/postinstall.mjs"
   },
   "optionalDependencies": {
-    "@mariozechner/clipboard": "^0.3.9"
+    "@mariozechner/clipboard": "^0.3.9",
+    "better-sqlite3": "^13.0.3"
   },
   "devDependencies": {
     "@moonshot-ai/acp-server": "workspace:^",
@@ -98,7 +99,6 @@
     "@types/semver": "^7.7.0",
     "@types/ws": "^8.18.0",
     "@types/yazl": "^2.4.6",
-    "better-sqlite3": "^13.0.3",
     "chalk": "^5.4.1",
     "cli-highlight": "^2.1.11",
     "commander": "^13.1.0",

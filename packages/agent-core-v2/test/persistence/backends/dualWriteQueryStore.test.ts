@@ -668,5 +668,41 @@ describe('DualWriteQueryStore', () => {
       .limit(10)
       .execute();
     expect(page.items.map((i) => i.id)).toEqual(['b', 'a']);
+
+    await store.ensureIndex(COLLECTION, {
+      kind: 'value',
+      name: 'bySessionParent',
+      field: 'custom.parent_session_id',
+    });
+    await store.put(
+      COLLECTION,
+      'child',
+      {
+        id: 'child',
+        custom: { parent_session_id: 'p', child_session_kind: 'child' },
+        updatedAt: 10,
+      },
+      { columns: { updatedAt: 10 } },
+    );
+    const childPage = await store
+      .query<{ id: string; updatedAt: number }>(COLLECTION)
+      .where({ 'custom.parent_session_id': 'p', 'custom.child_session_kind': 'child' })
+      .orderBy('updatedAt', 'desc')
+      .limit(10)
+      .execute();
+    expect(childPage.items.map((item) => item.id)).toEqual(['child']);
+
+    const internal = store as unknown as { dbPromise: Promise<Database.Database> };
+    const db = await internal.dbPromise;
+    const plan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN
+         SELECT key, value FROM query_documents AS d
+         WHERE d.collection = ?
+           AND json_type(d.value, '$."custom"."parent_session_id"') IS NOT NULL
+           AND json_extract(d.value, '$."custom"."parent_session_id"') = ?`,
+      )
+      .all(COLLECTION, 'p') as { detail: string }[];
+    expect(plan.some((step) => step.detail.includes('qs_value_'))).toBe(true);
   });
 });
