@@ -2,12 +2,11 @@ import type { ToolDescription as Tool, Message } from '@moonshot-ai/core/llm/mes
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import type { LogContext } from '#/_base/log/log';
 import type { LlmOutcome } from '@moonshot-ai/core/llm/response';
-import type { LlmDimension, LlmRequester } from '@moonshot-ai/core/llm/requester';
+import type { InitializedLlmRequester, InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
 import type { ProfileModelContext } from '#/agent/profile/profile';
 import type { Model } from '#/llm-adapter/model/catalog';
-import type { InitializedLlmRequester, InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
 import type { ThinkingEffort } from '@moonshot-ai/core/llm/request';
-import type { LoopRequestRuntime, TurnExecution, TurnExecutionInput } from '@moonshot-ai/core/loop/request';
+import type { LoopLlmRequester, LoopRequestRuntime } from '@moonshot-ai/core/loop/request';
 
 export type AgentLLMRequestLogFields = Readonly<LogContext>;
 
@@ -54,6 +53,7 @@ export interface CoreLoopRequesterOptions {
   readonly source: () => AgentLLMRequestSource;
   readonly runtime: LoopRequestRuntime;
   readonly config?: RequestConfigSnapshot;
+  readonly onSnapshot?: (config: RequestConfigSnapshot) => void;
   readonly dynamicTools?: boolean;
   readonly maxOutputSize?: number;
   readonly promptCacheProbe?: 'compaction';
@@ -65,20 +65,12 @@ export interface CoreLoopRequesterOptions {
   ) => void;
 }
 
-export interface AgentTurnExecutionInput extends TurnExecutionInput {
-  readonly onTrace?: (trace: LLMRequestTrace) => void;
-  readonly onOutcome?: (
-    outcome: Extract<LlmOutcome, { type: 'done' }>,
-    source: AgentLLMRequestSource,
-  ) => void;
-}
-
 export type OperationLoopRequesterOptions = Omit<CoreLoopRequesterOptions, 'runtime'>;
 
-export type CoreLoopRequester = LlmRequester<LlmDimension>;
+export type CoreLoopRequester = LoopLlmRequester;
 
 export interface LoopRequester {
-  createTurnExecution(input: AgentTurnExecutionInput): TurnExecution;
+  coreRequester(options: CoreLoopRequesterOptions): CoreLoopRequester;
   prepareOperation(options: OperationLoopRequesterOptions, signal: AbortSignal): Promise<CoreLoopRequester>;
 }
 

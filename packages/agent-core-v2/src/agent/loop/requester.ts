@@ -2,7 +2,7 @@ import { createRecoveryLedger, type LlmRecoveryLedger } from '@moonshot-ai/core/
 import { credentialRecovery } from '@moonshot-ai/core/llm/policy/credentials';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IInstantiationService } from '#/_base/di/instantiation';
-import type { EffectiveProfileReader, ProfileModelContext } from '#/agent/profile/profile';
+import type { EffectiveProfileReader } from '#/agent/profile/profile';
 import { READ_MEDIA_FILE_TOOL_NAME } from '#/agent/tools/read-media-file/read-media-file';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IConfigService } from '#/app/config/config';
@@ -21,13 +21,11 @@ import { RequestMetadataTracker, requestMetadataHeaders } from './requestMetadat
 
 import {
   agentLLMRequestLogFields,
-  type AgentTurnExecutionInput,
   type CoreLoopRequester,
   type CoreLoopRequesterOptions,
   type RequestConfigSnapshot,
   type ResolvedRequestContext,
 } from './requesterContract';
-import type { TurnExecution } from '@moonshot-ai/core/loop/request';
 import { AgentLoopProjector } from './projector';
 import { AgentLoopRequestObserver } from './requestObservation';
 import { createStructureRecovery, createStructureResolver } from './projectionPolicy';
@@ -116,29 +114,6 @@ export class AgentLoopRequestFactory {
     };
   }
 
-  createTurnExecution(input: AgentTurnExecutionInput): TurnExecution {
-    const config = this.requestConfigSnapshot();
-    return {
-      profile: { ...input.profile, systemPrompt: config.systemPrompt },
-      thinkingEffort: config.resolved.thinkingLevel,
-      requester: this.coreRequester({
-        source: () => ({ type: 'turn', turnId: input.turnId, step: input.step() }),
-        runtime: {
-          historyRevision: input.historyRevision,
-          mediaRecovery: input.mediaRecovery,
-        },
-        config,
-        dynamicTools: true,
-        onTrace: input.onTrace,
-        onOutcome: input.onOutcome,
-      }),
-      prepare: async () => ({
-        ...input.profile,
-        systemPrompt: config.systemPrompt,
-      }),
-    };
-  }
-
   baselineTools(): readonly Tool[] {
     return this.toolSelect.initialTools();
   }
@@ -181,6 +156,11 @@ export class AgentLoopRequestFactory {
         options.config ?? this.requestConfigSnapshot(),
       ).request,
       generate: (rest, control) => this.generateCoreRequest(options, part, rest, control),
+      snapshot: () => {
+        const config = options.config ?? this.requestConfigSnapshot();
+        options.onSnapshot?.(config);
+        return this.coreRequester({ ...options, config }).with(part);
+      },
     });
     return accumulate({});
   }

@@ -1,20 +1,20 @@
 /**
- * Bridges a loop step to an LLM request: the per-turn `TurnExecution` (profile, thinking effort,
- * requester), history-to-request message conversion, and `runLoopRequest`, which forwards progress
- * events and always resolves to an `LlmOutcome`. Also holds the media recovery ledger reused across steps.
+ * Bridges a loop step to an LLM request by combining the active requester, profile, history, and
+ * step-scoped abort signal. Also holds the media recovery ledger reused across steps.
  */
 import { isAbortError, toLlmErrorMessage } from '#/llm/protocol/errors';
 import type { LlmModelSpec, LlmRequestProfile } from '#/llm/request';
 import type { LlmDimension, LlmRequester } from '#/llm/requester';
 import type { LlmOutcome, LlmRunEvent } from '#/llm/response';
 import type { LlmRecoveryLedger } from '#/llm/policy/recovery';
-import type { ThinkingEffort } from '#/llm/request';
 import { toRequestMessages, type HistoryMessage } from '#/history/history';
 import { estimateUsedContextTokens as usedContextTokens } from '#/history/context-usage';
 import type { LoopProfile } from './contract/profile';
 import { isLlmOutcome } from './guards';
 
-export type LoopLlmRequester = LlmRequester<LlmDimension>;
+export interface LoopLlmRequester extends LlmRequester<LlmDimension> {
+  snapshot?(): LoopLlmRequester;
+}
 
 export interface MediaRecoveryStore {
   read(modelAlias: string, revision: number): LlmRecoveryLedger | undefined;
@@ -41,23 +41,9 @@ export interface LoopRequestRuntime {
   readonly mediaRecovery: MediaRecoveryStore;
 }
 
-export interface TurnExecution {
-  readonly profile: LoopProfile;
-  readonly thinkingEffort?: ThinkingEffort;
-  readonly requester: LoopLlmRequester;
-  readonly prepare?: (signal: AbortSignal) => Promise<LoopProfile>;
-}
-
-export interface TurnExecutionInput extends LoopRequestRuntime {
-  readonly turnId: number;
-  readonly profile: LoopProfile;
-  readonly step: () => number;
-}
-
-export type TurnExecutionFactory = (input: TurnExecutionInput) => TurnExecution;
-
 export interface LoopRequestInput {
   readonly messages: readonly HistoryMessage[];
+  readonly profile: LoopProfile;
   readonly signal: AbortSignal;
 }
 
@@ -88,7 +74,7 @@ function isAborted(signal: AbortSignal, error: unknown): boolean {
 }
 
 export function runLoopRequest(
-  execution: TurnExecution,
+  requester: LoopLlmRequester,
   input: LoopRequestInput,
   onProgress: (event: LoopRequestProgress) => void,
 ): Promise<LlmOutcome> {
@@ -109,9 +95,8 @@ export function runLoopRequest(
   };
   void (async () => {
     try {
-      const requester = execution.requester;
       const messages = toLoopRequestMessages(input.messages);
-      const { systemPrompt, tools } = execution.profile;
+      const { systemPrompt, tools } = input.profile;
       const requestProfile: LlmRequestProfile = {
         ...(systemPrompt === undefined || systemPrompt === '' ? {} : { systemPrompt }),
         ...(tools === undefined ? {} : { tools }),

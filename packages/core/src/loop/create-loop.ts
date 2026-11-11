@@ -14,7 +14,7 @@ import type { HookRegistration } from './contract/hook';
 import type { RemindEntry } from './contract/inbox';
 import type { TurnOutcome } from './contract/outcome';
 import type { HookRegistry } from './hook/registry';
-import type { LoopLlmRequester, LoopRequestRuntime, TurnExecution, TurnExecutionFactory } from './request';
+import type { LoopLlmRequester, LoopRequestRuntime } from './request';
 import type { LoopState } from './state';
 import type { WaitForTasks } from './tool/tasks';
 import type { ToolCompletionFactory } from './tool/outcome';
@@ -34,7 +34,7 @@ export interface LoopToolExecutor {
 }
 
 export interface CreateLoopOptions {
-  readonly createTurnExecution?: TurnExecutionFactory;
+  readonly requester?: LoopLlmRequester;
   readonly executor: LoopToolExecutor;
   readonly toolContext?: (turnId: number) => Omit<LoopToolContext, 'turnId'>;
   readonly hooks?: readonly HookRegistration[];
@@ -46,7 +46,6 @@ export interface CreateLoopOptions {
 
 export interface Loop {
   readonly state: LoopState;
-  readonly turnExecution: TurnExecution | undefined;
   readonly historyRevision: number;
   readonly executor: LoopToolExecutor;
   readonly waitForTasks: WaitForTasks;

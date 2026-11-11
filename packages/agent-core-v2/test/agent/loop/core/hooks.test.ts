@@ -49,7 +49,7 @@ describe('step.starting', () => {
     const seen: StepStartingEvent[] = [];
     const scripted = requester([done('', [call('c1', 'lookup')]), done('end')]);
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
+      requester: scripted,
       executor: successfulExecutor(['lookup']),
       input: { profile: { tools: [tool] } },
       hooks: [
@@ -79,7 +79,7 @@ describe('step.starting', () => {
     const events: LoopEmitted[] = [];
     const scripted = requester([done('resumed')]);
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
+      requester: scripted,
       executor: successfulExecutor(['lookup', 'alpha', 'beta', 'work'], ''),
       hooks: [
         {
@@ -114,7 +114,7 @@ describe('step.starting', () => {
     const rewritten = prompt('rewritten');
     const events: LoopEmitted[] = [];
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: capturing }),
+      requester: capturing,
       executor: successfulExecutor(['lookup', 'alpha', 'beta', 'work'], ''),
       hooks: [
         {
@@ -141,7 +141,7 @@ describe('step.starting', () => {
       await finish;
       return done('late answer');
     });
-    const active = createLoop({ createTurnExecution: ({ profile }) => ({ profile, requester: pending }), executor: successfulExecutor(['lookup', 'alpha', 'beta', 'work'], '') });
+    const active = createLoop({ requester: pending, executor: successfulExecutor(['lookup', 'alpha', 'beta', 'work'], '') });
     const running = active.runTurn(prompt('stale context'));
     await started;
     expect(active.setContext([], 'clear')?.type).toBe('context.settled');
@@ -159,7 +159,7 @@ describe('step.starting', () => {
     });
     const events: LoopEmitted[] = [];
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
+      requester: scripted,
       executor: successfulExecutor(['lookup', 'alpha', 'beta', 'work'], ''),
       hooks: [{ point: 'step.starting', id: 'guard', hook: () => ({ blocked: { reason: 'no' } }) }],
     });
@@ -207,7 +207,7 @@ describe('tool.batch-starting', () => {
     );
     const scripted = requester([done('', [call('c1', 'alpha'), call('c2', 'beta')]), done('final')]);
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
+      requester: scripted,
       executor: tools,
       hooks: [
         {
@@ -286,7 +286,7 @@ describe('tool.batch-starting', () => {
     );
     const scripted = requester([done('', [call('c1', 'alpha'), call('c2', 'beta')]), done('final')]);
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
+      requester: scripted,
       executor: tools,
       hooks: [
         {
@@ -342,7 +342,7 @@ describe('tool.permitting', () => {
       },
     );
     const scripted = requester([done('', [call('c1', 'alpha')]), done('final')]);
-    const loop = createLoop({ createTurnExecution: ({ profile }) => ({ profile, requester: scripted }), executor: tools });
+    const loop = createLoop({ requester: scripted, executor: tools });
     loop.subscribe((event) => events.push(event));
     expect((await loop.runTurn(prompt('work'))).type).toBe('done');
     expect(order).toEqual(['starting', 'permitting']);
@@ -386,7 +386,7 @@ describe('tool.permitting', () => {
       },
     );
     const scripted = requester([done('', [call('c1', 'alpha')]), done('final')]);
-    const loop = createLoop({ createTurnExecution: ({ profile }) => ({ profile, requester: scripted }), executor: tools });
+    const loop = createLoop({ requester: scripted, executor: tools });
     loop.subscribe((event) => events.push(event));
     expect((await loop.runTurn(prompt('work'))).type).toBe('done');
     expect(permitting).toEqual([]);
@@ -425,7 +425,7 @@ describe('tool.permitting', () => {
       },
     );
     const scripted = requester([done('', [call('c1', 'alpha')]), done('final')]);
-    const loop = createLoop({ createTurnExecution: ({ profile }) => ({ profile, requester: scripted }), executor: tools });
+    const loop = createLoop({ requester: scripted, executor: tools });
     loop.subscribe((event) => events.push(event));
     expect((await loop.runTurn(prompt('work'))).type).toBe('done');
     expect(permitting).toEqual([]);
@@ -456,7 +456,7 @@ describe('tool.permitting', () => {
       },
     );
     const scripted = requester([done('', [call('c1', 'alpha')]), done('final')]);
-    const loop = createLoop({ createTurnExecution: ({ profile }) => ({ profile, requester: scripted }), executor: tools });
+    const loop = createLoop({ requester: scripted, executor: tools });
     loop.subscribe((event) => events.push(event));
     expect((await loop.runTurn(prompt('work'))).type).toBe('done');
     expect(executed).toEqual([]);
@@ -485,7 +485,7 @@ describe('tool.permitting', () => {
       async () => ({ content: [{ type: 'text' as const, text: 'ok' }] }),
     );
     const scripted = requester([done('', [call('c1', 'alpha')]), done('final')]);
-    const loop = createLoop({ createTurnExecution: ({ profile }) => ({ profile, requester: scripted }), executor: tools });
+    const loop = createLoop({ requester: scripted, executor: tools });
     loop.subscribe((event) => events.push(event));
     expect((await loop.runTurn(prompt('work'))).type).toBe('done');
     const entry = loop.state.messages.find((item): item is ToolEntry => item.message.role === 'tool');
@@ -497,7 +497,7 @@ describe('tool.permitting', () => {
       throw new Error('boom');
     });
     const failedScript = requester([done('', [call('c1', 'alpha')]), done('final')]);
-    const failedLoop = createLoop({ createTurnExecution: ({ profile }) => ({ profile, requester: failedScript }), executor: failedTools });
+    const failedLoop = createLoop({ requester: failedScript, executor: failedTools });
     const failedEvents: LoopEmitted[] = [];
     failedLoop.subscribe((event) => failedEvents.push(event));
     expect((await failedLoop.runTurn(prompt('work'))).type).toBe('done');
@@ -516,7 +516,7 @@ describe('hook failure policies', () => {
     });
     const events: LoopEmitted[] = [];
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
+      requester: scripted,
       executor: successfulExecutor(['lookup', 'alpha', 'beta', 'work'], ''),
       hooks: [
         {
@@ -546,7 +546,7 @@ describe('hook failure policies', () => {
     const scripted = requester([done('after')]);
     const events: LoopEmitted[] = [];
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
+      requester: scripted,
       executor: successfulExecutor(['lookup', 'alpha', 'beta', 'work'], ''),
       hooks: [
         {
@@ -581,7 +581,7 @@ describe('hook failure policies', () => {
     const events: LoopEmitted[] = [];
     const scripted = requester([done('', [call('c1', 'alpha'), call('c2', 'beta')]), done('final')]);
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
+      requester: scripted,
       executor: executorFrom(['alpha', 'beta'], async ({ toolCall }: ToolExecuteInput) => {
         executed.push(toolCall.name);
         return { content: [] };
@@ -624,7 +624,7 @@ describe('notify turn handoff', () => {
     const events: LoopEmitted[] = [];
     const scripted = requester([done('', [call('c1', 'alpha')]), done('notified'), done('after reset')]);
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
+      requester: scripted,
       executor: createExecutor([]),
       hooks: [
         {
@@ -685,7 +685,7 @@ describe('notify turn handoff', () => {
     const first = createUserEntry(createUserMessage('first'), { promptId: 'first' });
     const second = createUserEntry(createUserMessage('second'), { promptId: 'second' });
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
+      requester: scripted,
       executor: createExecutor([]),
       hooks: [
         {
@@ -733,7 +733,7 @@ describe('notify turn handoff', () => {
     const events: LoopEmitted[] = [];
     const scripted = requester([done('', [call('c1', 'alpha')]), done('final')]);
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
+      requester: scripted,
       executor: createExecutor([]),
       hooks: [
         {
@@ -759,7 +759,7 @@ describe('notify turn handoff', () => {
     const events: LoopEmitted[] = [];
     const scripted = requester([done('new turn')]);
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
+      requester: scripted,
       executor: createExecutor([]),
       input: {
         messages: [prompt('old')],

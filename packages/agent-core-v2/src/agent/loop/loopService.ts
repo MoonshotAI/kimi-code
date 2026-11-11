@@ -95,6 +95,7 @@ import {
   type HookRegistration,
   type Loop,
   type LoopEmitted,
+  type LoopLlmRequester,
   type LoopHooks,
   type MessageAppendingEvent,
   type TurnStartingEvent,
@@ -174,7 +175,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     requester.registerMediaPolicy((model, request) => createAgentMediaPolicy(mediaResolver, model, request));
     requester.bindHistory(() => this.history());
     this.requester = {
-      createTurnExecution: (input) => requester.createTurnExecution(input),
+      coreRequester: (options) => requester.coreRequester(options),
       prepareOperation: async (options, signal) => {
         if (this.loop === undefined) throw new BugIndicatingError('Agent loop is not started');
         const config = requester.requestConfigSnapshot();
@@ -424,17 +425,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         }
         return this.taskOutputs.createCompletion(agentTaskInfo(handler), input.toolCall.id);
       },
-      createTurnExecution: (input) => {
-        const execution = this.requester.createTurnExecution({
-          ...input,
-          onTrace: (trace) => {
-            this.turns.requestTrace = trace;
-          },
-          onOutcome: (outcome, source) => this.turns.recordOutcome(outcome, source),
-        });
-        this.turns.thinkingEffort = execution.thinkingEffort;
-        return execution;
-      },
       executor: this.toolExecutor.executor,
       toolContext: () => {
         const context = {
@@ -472,6 +462,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         { point: 'step.stopping', hook: (event) => this.turns.stepStopping(event) },
       ],
     });
+    loop.setRequester(this.createLoopRequester(loop));
     this.loop = loop;
     loop.subscribe((event) => {
       const enriched = this.turns.enrich(event, this.toolExecutor);
@@ -487,6 +478,25 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     });
     this.drainPendingToLoop();
     this.maybeSettle();
+  }
+
+  private createLoopRequester(loop: Loop): LoopLlmRequester {
+    return loop.operation((runtime) => this.requester.coreRequester({
+      source: () => {
+        const turn = loop.state.turn;
+        if (turn === undefined) throw new BugIndicatingError('Turn request requires an active turn');
+        return { type: 'turn', turnId: turn.id, step: turn.step };
+      },
+      runtime,
+      dynamicTools: true,
+      onSnapshot: (config) => {
+        this.turns.thinkingEffort = config.resolved.thinkingLevel;
+      },
+      onTrace: (trace) => {
+        this.turns.requestTrace = trace;
+      },
+      onOutcome: (outcome, source) => this.turns.recordOutcome(outcome, source),
+    }));
   }
 
   private projectTaskEvent(event: LoopEmitted): void {
@@ -570,6 +580,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         };
         return input.input;
       });
+      loop.setRequester(this.createLoopRequester(loop));
       this.turns.invalidateHistory();
       this.drainPendingToLoop();
       this.maybeSettle();

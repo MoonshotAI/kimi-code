@@ -16,7 +16,7 @@ const noopExecutor = successfulExecutor(['noop']);
 
 describe('loop.wait', () => {
   it('resolves with the first emitted event of the type passing match', async () => {
-    const loop = createLoop({ createTurnExecution: ({ profile }) => ({ profile, requester: echoRequester() }), executor: noopExecutor });
+    const loop = createLoop({ requester: echoRequester(), executor: noopExecutor });
     const pending = loop.wait('turn.ended', { match: (event) => event.turnId === 1 });
     await loop.runTurn(prompt('one'));
     await loop.runTurn(prompt('two'));
@@ -30,7 +30,6 @@ describe('loop.wait', () => {
       submissionState = {
         status: loop.state.status,
         turnId: loop.state.turn?.id,
-        turnExecution: loop.turnExecution,
         normal: loop.state.inbox.normal.length,
       };
     });
@@ -39,11 +38,9 @@ describe('loop.wait', () => {
     expect(submissionState).toEqual({
       status: 'running',
       turnId: 2,
-      turnExecution: undefined,
       normal: 0,
     });
     expect(loop.state.status).toBe('running');
-    expect(loop.turnExecution).toBeDefined();
     await loop.waitForIdle();
     const active = loop.runTurn(prompt('four'));
     loop.submit(createUserEntry(createUserMessage('cancelled'), { promptId: 'cancelled' }));
@@ -55,7 +52,7 @@ describe('loop.wait', () => {
   });
 
   it('does not resolve while match fails and rejects on timeout', async () => {
-    const loop = createLoop({ createTurnExecution: ({ profile }) => ({ profile, requester: echoRequester() }), executor: noopExecutor });
+    const loop = createLoop({ requester: echoRequester(), executor: noopExecutor });
     const missing = loop.wait('turn.ended', { match: (event) => event.turnId === 99, timeoutMs: 50 });
     await loop.runTurn(prompt('one'));
     await expect(missing).rejects.toThrow('wait timed out after 50ms');
@@ -65,7 +62,7 @@ describe('loop.wait', () => {
   });
 
   it('rejects when the external signal aborts and honors abort grace', async () => {
-    const loop = createLoop({ createTurnExecution: ({ profile }) => ({ profile, requester: echoRequester() }), executor: noopExecutor });
+    const loop = createLoop({ requester: echoRequester(), executor: noopExecutor });
     const controller = new AbortController();
     const pending = loop.wait('turn.ended', { signal: controller.signal });
     controller.abort(new Error('stop-waiting'));
@@ -81,7 +78,7 @@ describe('loop.wait', () => {
           }),
     }));
     const aborting = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: never }),
+      requester: never,
       executor: noopExecutor,
       abortGraceMs: 5,
     });
@@ -100,7 +97,7 @@ describe('loop.wait', () => {
     await aborting.close();
 
     const reentrant = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: echoRequester() }),
+      requester: echoRequester(),
       executor: noopExecutor,
     });
     const steps: number[] = [];

@@ -37,7 +37,7 @@ describe('handler tool execution', () => {
       done('final'),
     ]);
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
+      requester: scripted,
       executor,
     });
 
@@ -56,7 +56,7 @@ describe('handler tool execution', () => {
     });
     const scripted = requester([done('', [call('t1'), call('t2', 'Read')]), done('final')]);
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
+      requester: scripted,
       executor,
     });
 

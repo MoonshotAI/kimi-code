@@ -60,7 +60,7 @@ describe('loop record', () => {
   it('folds durable loop events back into the loop history and recovers interrupted turns', async () => {
     const scripted = requester([done('hi')]);
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
+      requester: scripted,
       executor: successfulExecutor(['lookup', 'bg', 'slow'], ''),
     });
     const records = record(loop);
@@ -80,7 +80,7 @@ describe('loop record', () => {
       [1, 'failed'],
     ]);
     const restored = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: requester([]) }),
+      requester: requester([]),
       executor: successfulExecutor(['lookup', 'bg', 'slow'], ''),
       input: { messages: state.messages, nextTurnId: state.nextTurnId },
     });
@@ -102,7 +102,7 @@ describe('loop record', () => {
     );
     const acting = requester([done('', [call('call-slow', 'slow'), call('call-bg', 'bg')])]);
     const working = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: acting }),
+      requester: acting,
       executor,
       input: { messages: state.messages, nextTurnId: state.nextTurnId },
     });
@@ -142,7 +142,7 @@ describe('loop record', () => {
 
     const answering = requester([done('next')]);
     const recovered = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: answering }),
+      requester: answering,
       executor,
       input: { messages: crashed.messages, nextTurnId: crashed.nextTurnId, unfinished: crashed.unfinished },
     });

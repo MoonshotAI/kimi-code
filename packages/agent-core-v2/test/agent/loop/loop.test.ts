@@ -2626,11 +2626,8 @@ describe('aborted step tool execution', () => {
 
   it('settles a message-less notification without creating an LLM request', async () => {
     const requester: LoopRequester = {
-      createTurnExecution: ({ profile }) => ({
-        profile,
-        requester: createMockProviderRequester(async () => {
-          throw new Error('request must not run');
-        }),
+      coreRequester: () => createMockProviderRequester(async () => {
+        throw new Error('request must not run');
       }),
       prepareOperation: async () => createMockProviderRequester(async () => {
         throw new Error('request must not run');

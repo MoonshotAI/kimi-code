@@ -42,7 +42,7 @@ describe('actor handler execution', () => {
     });
     const scripted = requester([done('', [call('t1'), call('t2', 'Read')]), done('final')]);
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
+      requester: scripted,
       executor,
     });
     const started: string[] = [];
@@ -60,10 +60,7 @@ describe('actor handler execution', () => {
 
     const beforeExecuteError = new Error('beforeExecute blew up');
     const failedLoop = createLoop({
-      createTurnExecution: ({ profile }) => ({
-        profile,
-        requester: requester([done('', [call('failed')])]),
-      }),
+      requester: requester([done('', [call('failed')])]),
       executor: executorFrom(['Bash'], async () => ({ content: [] }), [{
         point: 'tool.starting',
         hook: () => {
@@ -85,10 +82,7 @@ describe('actor handler execution', () => {
     await failedLoop.close();
 
     const vetoedLoop = createLoop({
-      createTurnExecution: ({ profile }) => ({
-        profile,
-        requester: requester([done('', [call('vetoed')]), done('final')]),
-      }),
+      requester: requester([done('', [call('vetoed')]), done('final')]),
       executor: executorFrom(['Bash'], async () => ({ content: [] }), [{
         point: 'tool.starting',
         hook: () => ({
@@ -114,7 +108,7 @@ describe('actor handler execution', () => {
     });
     const scripted = requester([done('', [call('bg')]), done('next'), done('async')]);
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
+      requester: scripted,
       executor,
     });
     const detached = loop.wait('tool.ended', { match: (event) => event.detached });
@@ -149,7 +143,7 @@ describe('actor handler execution', () => {
     });
     const closingRequester = requester([done('', [call('close-bg')]), done('next')]);
     const closingLoop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: closingRequester }),
+      requester: closingRequester,
       executor: closingExecutor,
     });
     const asyncEntries: string[] = [];
@@ -191,7 +185,7 @@ describe('actor handler execution', () => {
     const rejection = new Error('completion factory rejected');
     const rejectedRequester = requester([done('', [call('reject-bg')]), done('next'), done('async failed')]);
     const rejectedLoop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: rejectedRequester }),
+      requester: rejectedRequester,
       executor: executorFrom(['Bash'], async () => {
         await rejectionGate.promise;
         return { content: [{ type: 'text', text: 'ignored successful result' }] };
@@ -234,7 +228,7 @@ describe('actor handler execution', () => {
       });
       const resetRequester = requester([done('', [call(`reset-${timing}`)]), done('next'), done('async')]);
       const resetLoop = createLoop({
-        createTurnExecution: ({ profile }) => ({ profile, requester: resetRequester }),
+        requester: resetRequester,
         executor: resetExecutor,
       });
       const asyncEvents: string[] = [];
@@ -310,7 +304,7 @@ describe('actor handler execution', () => {
       done('second final'),
     ]);
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
+      requester: scripted,
       executor,
     });
     expect((await loop.runTurn(prompt())).type).toBe('done');
@@ -358,7 +352,7 @@ describe('actor handler execution', () => {
     });
     const scripted = requester([done('', [call('a'), call('b', 'Read')]), done('final')]);
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
+      requester: scripted,
       executor,
     });
     const turn = loop.runTurn(prompt());
@@ -371,10 +365,7 @@ describe('actor handler execution', () => {
     await loop.close();
 
     const unknownLoop = createLoop({
-      createTurnExecution: ({ profile }) => ({
-        profile,
-        requester: requester([done('', [call('x', 'Missing')]), done('final')]),
-      }),
+      requester: requester([done('', [call('x', 'Missing')]), done('final')]),
       executor,
     });
     expect((await unknownLoop.runTurn(prompt())).type).toBe('done');

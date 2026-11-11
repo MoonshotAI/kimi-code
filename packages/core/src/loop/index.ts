@@ -12,9 +12,6 @@ export type {
   LoopLlmRequester,
   LoopRequestRuntime,
   MediaRecoveryStore,
-  TurnExecution,
-  TurnExecutionFactory,
-  TurnExecutionInput,
 } from './request';
 export { createMediaRecoveryStore } from './request';
 export type { HookRegistry } from './hook/registry';

@@ -7,12 +7,11 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import type { IAgentJournal } from '#/wire/journal';
 import type {
   AgentLLMRequestSource,
-  AgentTurnExecutionInput,
   CoreLoopRequester,
+  CoreLoopRequesterOptions,
   LoopRequester,
   OperationLoopRequesterOptions,
 } from '#/agent/loop/requesterContract';
-import type { TurnExecution } from '@moonshot-ai/core/loop/request';
 import type { LlmRequest } from '@moonshot-ai/core/llm/request';
 import type { MockProvider } from './scripted-generate';
 import {
@@ -65,16 +64,12 @@ export class PromptCacheGuardedLoopRequester implements LoopRequester {
     private readonly ready?: () => Promise<void>,
   ) {}
 
-  createTurnExecution(input: AgentTurnExecutionInput): TurnExecution {
-    const execution = this.inner.createTurnExecution(input);
-    return {
-      ...execution,
-      requester: this.guard(
-        execution.requester,
-        () => ({ type: 'turn', turnId: input.turnId, step: input.step() }),
-        input.historyRevision,
-      ),
-    };
+  coreRequester(options: CoreLoopRequesterOptions): CoreLoopRequester {
+    return this.guard(
+      this.inner.coreRequester(options),
+      options.source,
+      options.runtime.historyRevision,
+    );
   }
 
   async prepareOperation(options: OperationLoopRequesterOptions, signal: AbortSignal): Promise<CoreLoopRequester> {
@@ -93,6 +88,7 @@ export class PromptCacheGuardedLoopRequester implements LoopRequester {
       with: ((next: LlmRequestPart | CoreLoopRequester) =>
         wrap(inner.with(next as never))) as CoreLoopRequester['with'],
       request: (rest) => inner.request(rest),
+      snapshot: () => wrap(inner.snapshot?.() ?? inner),
       generate: (rest, control) => {
         const scope: RequestScope = {
           agent: this,

@@ -8,7 +8,7 @@ import type { LlmRetryable } from '@moonshot-ai/core/llm/policy/retry';
 import type { LlmModelSpec, LlmRequest } from '@moonshot-ai/core/llm/request';
 import { createRequester, type LlmRequestPart } from '@moonshot-ai/core/llm/requester';
 import { createMockProviderRequester, type MockProviderResponse } from '../../../harness/scripted-generate';
-import type { LoopLlmRequester, LoopProfile } from '@moonshot-ai/core/loop/index';
+import type { LoopLlmRequester } from '@moonshot-ai/core/loop/index';
 import { createTestLoop as createLoop } from './factory';
 import { executorFrom, successfulExecutor } from './executor';
 
@@ -29,20 +29,21 @@ function listOf<T>(value: readonly T[] | (() => readonly T[]) | undefined): read
 }
 
 describe('loop.requester', () => {
-  it('creates one execution per turn and fills live history and policies', async () => {
+  it('creates one requester snapshot per turn and fills live history and policies', async () => {
     const seen: LlmRequest[] = [];
-    const profiles: LoopProfile[] = [];
+    let snapshotCount = 0;
     const tools = [{ name: 'baseline', description: 'baseline tool', parameters: { type: 'object', properties: {} } }];
+    const requester = fakeRequester((request) => {
+      seen.push(request);
+      return done('reply');
+    }).with({ model: { spec } });
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => {
-        profiles.push(profile);
-        return {
-          profile,
-          requester: fakeRequester((request) => {
-            seen.push(request);
-            return done('reply');
-          }).with({ model: { spec } }),
-        };
+      requester: {
+        ...requester,
+        snapshot: () => {
+          snapshotCount += 1;
+          return requester;
+        },
       },
       executor: noopExecutor,
       input: { profile: { tools } },
@@ -54,9 +55,8 @@ describe('loop.requester', () => {
     const removeResolver = loop.policy.addResolver(resolver);
     const removeRecovery = loop.policy.addRecovery(recovery);
     const removeRetryable = loop.policy.addRetryable(retryable);
-    expect(loop.turnExecution).toBeUndefined();
     expect((await loop.runTurn(createUserEntry(createUserMessage('hello')))).type).toBe('done');
-    expect(profiles).toHaveLength(1);
+    expect(snapshotCount).toBe(1);
     expect(seen).toHaveLength(1);
     expect(seen[0]?.model.spec).toEqual(spec);
     expect(seen[0]?.profile?.tools).toEqual(tools);
@@ -71,16 +71,15 @@ describe('loop.requester', () => {
     expect(loop.policy.resolvers).toEqual([]);
 
     expect((await loop.runTurn(createUserEntry(createUserMessage('again')))).type).toBe('done');
-    expect(profiles).toHaveLength(2);
+    expect(snapshotCount).toBe(2);
     expect(seen[1]?.content.messages.map((message) => extractText(message))).toEqual(['hello', 'reply', 'again']);
     expect(listOf(seen[1]?.policy?.resolvers)).toEqual([]);
-    expect(loop.turnExecution).toBeUndefined();
     expect('setTools' in loop).toBe(false);
     expect(loop.state.profile.tools).toEqual(tools);
     await loop.close();
   });
 
-  it('setRequester changes only the next turn factory, and with(requester) merges contents', async () => {
+  it('setRequester changes only the next turn requester, and with(requester) merges contents', async () => {
     const seen: LlmRequest[] = [];
     const models: string[] = [];
     const first = fakeRequester((request) => {

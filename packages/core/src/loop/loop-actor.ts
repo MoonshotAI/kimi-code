@@ -44,8 +44,6 @@ import {
   type LoopLlmRequester,
   type LoopRequestProgress,
   type LoopRequestRuntime,
-  type TurnExecution,
-  type TurnExecutionFactory,
 } from './request';
 import { loopProjection, type LoopRecord, type LoopRecordState } from './record';
 import {
@@ -270,9 +268,6 @@ type ActorMessage =
   | { readonly type: 'step.ended'; readonly turn: LiveTurn; readonly step: StepState; readonly run: StepEndingRun }
   | { readonly type: 'step.finish'; readonly turn: LiveTurn; readonly step: StepState }
   | { readonly type: 'step.finished'; readonly turn: LiveTurn; readonly step: StepState }
-  | { readonly type: 'request.prepare'; readonly turn: LiveTurn; readonly step: StepState }
-  | { readonly type: 'request.prepared'; readonly turn: LiveTurn; readonly step: StepState; readonly profile: LoopProfile }
-  | { readonly type: 'request.prepare_failed'; readonly turn: LiveTurn; readonly step: StepState; readonly error: unknown }
   | { readonly type: 'request.start'; readonly turn: LiveTurn; readonly step: StepState }
   | { readonly type: 'llm.progress'; readonly turn: LiveTurn; readonly step: StepState; readonly event: LoopRequestProgress }
   | { readonly type: 'llm.completed'; readonly turn: LiveTurn; readonly step: StepState; readonly outcome: LlmOutcome }
@@ -324,9 +319,11 @@ class LoopActor implements Loop {
   private turn: LiveTurn | undefined;
   private step: StepState | undefined;
   private readonly tools = new Map<string, LiveTool>();
-  private factory: TurnExecutionFactory | undefined;
-  private execution: TurnExecution | undefined;
-  private executionError: unknown;
+  private requesterTemplate: LoopLlmRequester | undefined;
+  private requester: LoopLlmRequester | undefined;
+  private profile: LoopProfile | undefined;
+  private requesterError: unknown;
+  private toolsSettled = false;
   private revision = 0;
   private seq = 0;
   private readonly mediaRecovery = createMediaRecoveryStore();
@@ -358,7 +355,7 @@ class LoopActor implements Loop {
     this.mailbox = new LoopMailbox(input.inbox, (event) => {
       this.record(event);
     });
-    this.factory = options.createTurnExecution;
+    this.requesterTemplate = options.requester;
     this.executor = options.executor;
     this.toolContext = options.toolContext;
     this.completionFactory = options.completionEntry;
@@ -406,10 +403,6 @@ class LoopActor implements Loop {
     };
   }
 
-  get turnExecution(): TurnExecution | undefined {
-    return this.execution;
-  }
-
   get historyRevision(): number {
     return this.revision;
   }
@@ -423,22 +416,6 @@ class LoopActor implements Loop {
 
   private open(): boolean {
     return this.phase !== 'closed';
-  }
-
-  private createExecution(turn: LiveTurn): TurnExecution {
-    const factory = this.factory;
-    if (factory === undefined) throw new Error('loop has no requester');
-    const profile = this.durable.profile;
-    return factory({
-      turnId: turn.id,
-      profile: {
-        ...profile,
-        tools: profile.tools === undefined ? undefined : [...profile.tools],
-      },
-      step: () => turn.step,
-      historyRevision: () => this.revision,
-      mediaRecovery: this.mediaRecovery,
-    });
   }
 
   private check(command: LoopCommand): void {
@@ -678,15 +655,6 @@ class LoopActor implements Loop {
         return;
       case 'step.finished':
         this.afterStepFinished(message.turn, message.step);
-        return;
-      case 'request.prepare':
-        this.prepareRequest(message.turn, message.step);
-        return;
-      case 'request.prepared':
-        this.completeRequestPreparation(message.turn, message.step, message.profile);
-        return;
-      case 'request.prepare_failed':
-        this.failRequestPreparation(message.turn, message.step, message.error);
         return;
       case 'request.start':
         this.startRequest(message.turn, message.step);
@@ -930,8 +898,10 @@ class LoopActor implements Loop {
       });
       this.turn = undefined;
       this.step = undefined;
-      this.execution = undefined;
-      this.executionError = undefined;
+      this.requester = undefined;
+      this.profile = undefined;
+      this.requesterError = undefined;
+      this.toolsSettled = false;
       this.completionHandoff = false;
       this.held = true;
     } catch (error) {
@@ -945,9 +915,7 @@ class LoopActor implements Loop {
 
   setRequester(requester: LoopLlmRequester | undefined): void {
     if (!this.open()) return;
-    this.factory = requester === undefined
-      ? undefined
-      : ({ profile }) => ({ profile, requester });
+    this.requesterTemplate = requester;
   }
 
   setContext(messages: HistoryMessage[], reason?: string): LoopAck<'context.settled' | 'context.rejected'> | undefined {
@@ -1199,12 +1167,19 @@ class LoopActor implements Loop {
       this.post({ type: 'turn.finish', turn });
       return;
     }
+    const profile = this.durable.profile;
+    this.profile = {
+      ...profile,
+      tools: profile.tools === undefined ? undefined : [...profile.tools],
+    };
+    this.toolsSettled = false;
     try {
-      this.execution = this.createExecution(turn);
-      this.executionError = undefined;
+      const template = this.requesterTemplate;
+      this.requester = template?.snapshot?.() ?? template;
+      this.requesterError = undefined;
     } catch (error) {
-      this.execution = undefined;
-      this.executionError = error;
+      this.requester = undefined;
+      this.requesterError = error;
     }
     if (turn.resumed === true) {
       this.announceTurn(turn);
@@ -1377,7 +1352,15 @@ class LoopActor implements Loop {
     if (this.finishSteeredStep(turn, step)) return;
     if (this.deferForRequest(turn, step, () => this.afterStepStarting(turn, step))) return;
     this.appendReminders(turn, step);
-    this.post({ type: 'request.prepare', turn, step });
+    if (this.requester === undefined || this.profile === undefined) {
+      this.fail(turn, this.requesterError ?? new Error('loop has no requester'));
+      return;
+    }
+    if (!this.toolsSettled) {
+      this.toolsSettled = true;
+      if (this.profile.tools !== undefined) this.record({ type: 'tools.settled', tools: [...this.profile.tools] });
+    }
+    this.post({ type: 'request.start', turn, step });
   }
 
   flushReminders(): void {
@@ -1403,64 +1386,21 @@ class LoopActor implements Loop {
     }
   }
 
-  private prepareRequest(turn: LiveTurn, step: StepState): void {
-    if (!this.isCurrentStep(turn, step, 'requesting')) return;
-    if (this.finishSteeredStep(turn, step)) return;
-    const execution = this.execution;
-    if (execution === undefined) {
-      this.fail(turn, this.executionError ?? new Error('turn has no execution'));
-      return;
-    }
-    if (execution.prepare === undefined) {
-      this.startRequest(turn, step);
-      return;
-    }
-    this.complete(
-      turn,
-      execution.prepare(step.scope.signal),
-      (profile) => ({ type: 'request.prepared', turn, step, profile }),
-      (error) => ({ type: 'request.prepare_failed', turn, step, error }),
-    );
-  }
-
-  private completeRequestPreparation(turn: LiveTurn, step: StepState, profile: LoopProfile): void {
-    if (!this.isCurrentStep(turn, step)) return;
-    if (this.finishSteeredStep(turn, step)) return;
-    if (turn.scope.signal.aborted) {
-      turn.outcome = { type: 'aborted', reason: turn.scope.signal.reason };
-      this.post({ type: 'turn.finish', turn });
-      return;
-    }
-    if (this.deferForRequest(turn, step, () => this.completeRequestPreparation(turn, step, profile))) return;
-    if (profile.tools !== undefined) this.record({ type: 'tools.settled', tools: [...profile.tools] });
-    if (this.execution !== undefined) this.execution = { ...this.execution, profile, prepare: undefined };
-    this.post({ type: 'request.start', turn, step });
-  }
-
-  private failRequestPreparation(turn: LiveTurn, step: StepState, error: unknown): void {
-    if (!this.isCurrent(turn)) return;
-    if (this.finishSteeredStep(turn, step)) return;
-    if (!turn.scope.signal.aborted) {
-      this.fail(turn, error);
-      return;
-    }
-    turn.outcome = { type: 'aborted', reason: turn.scope.signal.reason };
-    this.post({ type: 'turn.finish', turn });
-  }
-
   private startRequest(turn: LiveTurn, step: StepState): void {
     if (!this.isCurrentStep(turn, step, 'requesting')) return;
     if (this.finishSteeredStep(turn, step)) return;
     if (this.deferForRequest(turn, step, () => this.startRequest(turn, step))) return;
-    const execution = this.execution;
-    if (execution === undefined) {
-      this.fail(turn, this.executionError ?? new Error('turn has no execution'));
+    const requester = this.requester;
+    const profile = this.profile;
+    if (requester === undefined || profile === undefined) {
+      this.fail(turn, this.requesterError ?? new Error('loop has no requester'));
       return;
     }
     const outcome = runLoopRequest(
-      { ...execution, requester: execution.requester.with({ policy: this.policy.asPolicy() }) },
+      requester.with({ policy: this.policy.asPolicy() }),
       {
         messages: [...this.durable.messages],
+        profile,
         signal: step.scope.signal,
       },
       (event) => {
@@ -1953,7 +1893,10 @@ class LoopActor implements Loop {
     this.completionContinuation = undefined;
     this.turn = undefined;
     this.phase = this.phase === 'closed' ? 'closed' : 'idle';
-    this.execution = undefined;
+    this.requester = undefined;
+    this.profile = undefined;
+    this.requesterError = undefined;
+    this.toolsSettled = false;
     this.completedTurns.push(turn);
     if (outcome.type === 'aborted' && turn.continueAfterAbort === true) this.held = false;
     this.schedule();
