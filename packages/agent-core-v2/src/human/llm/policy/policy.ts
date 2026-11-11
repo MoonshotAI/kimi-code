@@ -208,6 +208,12 @@ async function runAttempts(
         action: proposal.action,
         error: result.error,
         message: result.message ?? undefined,
+        usage: result.usage,
+        headers: result.headers,
+        finish: result.finish,
+        messageId: result.messageId,
+        requestId: result.requestId,
+        timing: result.timing,
       });
       continue;
     }
@@ -223,6 +229,12 @@ async function runAttempts(
         delayMs,
         error: result.error,
         message: result.message ?? undefined,
+        usage: result.usage,
+        headers: result.headers,
+        finish: result.finish,
+        messageId: result.messageId,
+        requestId: result.requestId,
+        timing: result.timing,
       });
       if (!(await delay(delayMs, signal))) {
         return abortedOf(result, signal.reason);

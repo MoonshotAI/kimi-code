@@ -107,6 +107,7 @@ function capArgStrings(args: Record<string, unknown>): Record<string, unknown> {
 
 export class SubagentActivityStore {
   private readonly records = new Map<string, SubagentActivityRecord>();
+  private readonly startedSteps = new Set<string>();
   /** Raw streaming-arguments buffer per in-flight tool call (from deltas). */
   private readonly streamingArgs = new Map<string, string>();
 
@@ -147,6 +148,9 @@ export class SubagentActivityStore {
   applyEvent(event: Event): void {
     switch (event.type) {
       case 'turn.step.started': {
+        const key = `${event.agentId}:${event.turnId}:${event.stepId ?? event.step}`;
+        if (this.startedSteps.has(key)) return;
+        this.startedSteps.add(key);
         const record = this.recordFor(event.agentId);
         record.steps.push({ step: event.step, textTail: '', toolCalls: [] });
         record.totalSteps += 1;
@@ -284,6 +288,7 @@ export class SubagentActivityStore {
 
   clear(): void {
     this.records.clear();
+    this.startedSteps.clear();
     this.streamingArgs.clear();
   }
 

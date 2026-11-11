@@ -397,10 +397,12 @@ describe('Agent loop', () => {
     profile.update({ activeToolNames: [] });
     ctx.mockNextProviderResponse({
       parts: [{ type: 'text', text: 'first attempt partial' }],
+      usage: { inputOther: 7, output: 3 },
       error: new APIProviderRateLimitError('retry', null, 1),
     });
     ctx.mockNextProviderResponse({
       parts: [{ type: 'text', text: 'final attempt partial' }],
+      usage: { inputOther: 11, output: 5 },
       error: new Error('stream broke mid-flight'),
     });
 
@@ -412,13 +414,13 @@ describe('Agent loop', () => {
       role: 'assistant',
       content: [{ type: 'text', text: 'final attempt partial' }],
       toolCalls: [],
-      usage: { inputOther: 0, output: 0, inputCacheCreation: 0 },
+      usage: { inputOther: 11, output: 5, inputCacheCreation: 0, inputCacheRead: undefined },
     });
     expect(ctx.contextData().history).toContainEqual({
       role: 'assistant',
       content: [{ type: 'text', text: 'first attempt partial' }],
       toolCalls: [],
-      usage: { inputOther: 0, output: 0, inputCacheCreation: 0 },
+      usage: { inputOther: 7, output: 3, inputCacheCreation: 0, inputCacheRead: undefined },
     });
     expect(ctx.allEvents).toContainEqual(
       expect.objectContaining({
@@ -426,6 +428,13 @@ describe('Agent loop', () => {
         args: expect.objectContaining({ reason: 'error', message: 'stream broke mid-flight' }),
       }),
     );
+    const endedSteps = (await ctx.persistedWireRecords()).filter((record) =>
+      record.type === 'context.append_loop_event' && (record['event'] as { type?: string }).type === 'step.end',
+    );
+    expect(endedSteps.map((record) => (record['event'] as { usage?: unknown }).usage)).toMatchObject([
+      { inputOther: 7, output: 3 },
+      { inputOther: 11, output: 5 },
+    ]);
 
     const local = createTestAgent({ initialConfig: { providers: {}, loopControl: { maxAttemptsPerStep: 2 } } });
     try {
