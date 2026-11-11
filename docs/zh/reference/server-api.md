@@ -677,7 +677,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `last_turn_reason` | string | main agent 最近一次轮次的结果：`completed` / `cancelled` / `failed` |
 | `last_prompt` | string | 最近一条用户提示词文本（如有） |
 | `metadata` | object | 自定义元数据；始终携带 `cwd`（会话的工作目录） |
-| `agent_config` | object | 投影为 `{ model }`；会话已加载到当前服务端进程、且 main agent 有模型时，`model` 为 main agent 当前的模型（例如创建请求设置了模型时的创建响应），否则为 `""` |
+| `agent_config` | object | 投影为 `{ model }`；会话已加载到当前服务端进程、且 main agent 有模型时，`model` 为 main agent 当前的模型（创建响应也是如此，除非创建时没有可用的模型），否则为 `""` |
 | `usage` | object | token 汇总 `{ input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, context_tokens, context_limit?, total_cost_usd?, turn_count? }`；当前始终为零。实时的上下文大小随每个 Agent 的 `usage` 帧通过 WebSocket 下发（见 [事件](#事件)） |
 | `permission_rules` | array | 会话权限规则；当前始终为 `[]` |
 | `message_count` | integer | 消息数；当前始终为 `0` |
@@ -691,11 +691,14 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `workspace_id` | body | string | 未提供 `metadata.cwd` 时**必填**。已注册的工作区 id；会话创建于该工作区的根目录 |
 | `metadata` | body | object | 自定义元数据。`metadata.cwd` 为工作目录，未提供 `workspace_id` 时**必填**；两者同时提供时必须等于工作区根目录。其他键保存为会话的自定义元数据；保留键 `goal`、`parent_session_id`、`child_session_kind` 会被丢弃 |
 | `title` | body | string | 初始标题（至少 1 个字符）；否则会话无标题 |
-| `agent_config` | body | object | main agent 的部分配置，字段与 `POST /api/v1/sessions/{session_id}/profile` 相同，在返回会话之前应用。无法应用时不创建会话，直接返回错误。`tower_mode: true` 会被拒绝（返回 `40001`）：进入 Tower 模式会改动仓库，创建失败时无法撤销，请在会话建好后通过 `POST /api/v1/sessions/{session_id}/profile` 开启 |
+| `agent_config` | body | object | main agent 的部分配置，字段与 `POST /api/v1/sessions/{session_id}/profile` 相同，另加 `profile`，在返回会话之前应用。无法应用时不创建会话，直接返回错误。`tower_mode: true` 会被拒绝（返回 `40001`）：进入 Tower 模式会改动仓库，创建失败时无法撤销，请在会话建好后通过 `POST /api/v1/sessions/{session_id}/profile` 开启 |
+
+创建会话时就绑定 main agent：`agent_config.profile` 指定 Agent 档案（默认 `agent`），`agent_config.model` 指定模型（默认为服务端当前的默认模型），`agent_config.thinking` 在同一次绑定中按该模型校验。Agent 档案之后不能更改，之后修改默认模型也不影响该会话。没有可用模型时（未配置默认模型或它无法解析），会话照常创建但没有模型；此时如果 `agent_config` 设置了 `profile` 或 `thinking`，则不创建会话。
 
 成功时，`data` 为新会话的 [session 对象](#session-对象)。
 
-- `40001`：`workspace_id` 与 `metadata.cwd` 都未提供，`metadata.cwd` 与工作区根目录不一致，或 `agent_config` 设置了 `tower_mode: true`（`details` 会列出该字段）；`agent_config.model` 未配置，或模型不支持 `agent_config.thinking` 时也返回此码
+- `40001`：`workspace_id` 与 `metadata.cwd` 都未提供，`metadata.cwd` 与工作区根目录不一致，或 `agent_config` 设置了 `tower_mode: true`（`details` 会列出该字段）；`agent_config.model` 未配置、`agent_config.profile` 是未知的 Agent 档案，或模型不支持 `agent_config.thinking` 时也返回此码
+- `40113`：没有可用模型，而 `agent_config` 设置了 `profile` 或 `thinking`
 - `40409`：工作目录不存在或不是目录
 - `40410`：没有以该 `workspace_id` 注册的工作区
 - `40913`–`40918`、`40920`：`agent_config` 因目标相关错误无法应用
@@ -769,6 +772,8 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 成功时，`data` 为更新后的 [session 对象](#session-对象)。
 
+- `40001`：`model` 未配置、模型不支持 `thinking`，或带了 `agent_config.profile`（Agent 档案只能在创建会话时指定）
+- `40113`：会话没有模型时只设置了 `thinking`，没有同时设置 `model`
 - `40401`：会话不存在
 
 #### `POST /api/v1/sessions/{session_id}/title/generate`
@@ -1116,7 +1121,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 #### `POST /api/v1/sessions/{session_id}/prompts`
 
-向会话提交一条用户提示词。先校验媒体引用，然后把可选的覆盖项应用到目标 Agent——`profile`（与 `model` / `thinking` 一起绑定），接着是 `model`、`thinking`、`permission_mode` 和 `disabled_tools`——随后提示词入队；响应在提示词被接受后立即返回，不等待轮次执行。提供 `skills` 时，提示词以打包的 Skill 激活方式运行，而不是普通用户提示词。
+向会话提交一条用户提示词。先校验媒体引用，然后把可选的覆盖项应用到目标 Agent——`model`、`thinking`、`permission_mode` 和 `disabled_tools`——随后提示词入队；响应在提示词被接受后立即返回，不等待轮次执行。提供 `skills` 时，提示词以打包的 Skill 激活方式运行，而不是普通用户提示词。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -1125,7 +1130,6 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `agent_id` | body | string | 目标 Agent。默认为 main agent |
 | `prompt_id` | body | string | 客户端选定的提示词 id，使提交幂等，带 `skills` 时同样可用：用同一个 id 再次发送同一个请求，会返回第一次提交的结果（第一次还在处理时等它完成），不会重复提交；同一个 id 用于不同的请求返回 `40927` |
 | `skills` | body | array | 打包的 Skill 激活，至少 1 个 `{ name, path?, args? }` 条目；每个 Skill 必须存在且可由用户激活。`path` 用于选择会话目录中的同名变体 |
-| `profile` | body | string | 提交前要绑定的 Agent 档案 |
 | `model` | body | string | 要切换到的模型别名 |
 | `thinking` | body | string | Thinking 强度等级 |
 | `permission_mode` | body | string | `manual` / `yolo` / `auto` |
@@ -1143,11 +1147,11 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 成功时，`data` 为被接受的提示词 `{ prompt_id, user_message_id, status, content, created_at }`。会话空闲时，响应会等到提示词开始执行轮次或未开始轮次就结束：hook 拒绝了该提示词时 `status` 为 `blocked`，提交在轮次开始前失败时为 `failed`，例如提示词 hook 出错或附件无法准备。
 
-- `40001`：校验失败——例如未知的 `profile`
+- `40001`：校验失败——例如未知的 `model`、模型不支持的 `thinking` 强度，或带了 `profile` 字段（Agent 档案只能在创建会话时指定）
 - `40110`：尚未配置供应商——请先完成登录
 - `40111`：解析出的供应商没有凭据（`details.provider_id`）
 - `40112`：供应商的凭据被拒绝（`details.provider_id`）
-- `40113`：模型无法解析（已知时带 `details.model_id` / `details.provider_id`）
+- `40113`：模型无法解析（已知时带 `details.model_id` / `details.provider_id`），或会话没有模型时只设置了 `thinking`、没有同时设置 `model`
 - `40401`：会话不存在
 - `40407`：引用的 `file_id` 不存在（或与内容块的媒体 kind 不匹配）
 - `40415`：某个 `skills` 条目指向未知的 Skill
@@ -1156,9 +1160,9 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 #### `POST /api/v1/sessions/{session_id}/steer`
 
-直接把消息内容插入进行中的轮次，只需一次请求，无需先提交再按 id steer。请求体字段与 `POST /api/v1/sessions/{session_id}/prompts` 相同，包括 `content`、`agent_id`、`prompt_id`、`skills`、`profile`、`model`、`thinking`、`permission_mode` 和 `disabled_tools`。媒体引用与打包 Skill 也复用提示词提交的校验和准备流程。
+直接把消息内容插入进行中的轮次，只需一次请求，无需先提交再按 id steer。请求体字段与 `POST /api/v1/sessions/{session_id}/prompts` 相同，包括 `content`、`agent_id`、`prompt_id`、`skills`、`model`、`thinking`、`permission_mode` 和 `disabled_tools`。媒体引用与打包 Skill 也复用提示词提交的校验和准备流程。
 
-成功时，`data` 与 `POST /api/v1/sessions/{session_id}/prompts` 返回的被接受提示词结构相同。错误也与提示词提交一致，包括校验、媒体、档案、环境和幂等错误。
+成功时，`data` 与 `POST /api/v1/sessions/{session_id}/prompts` 返回的被接受提示词结构相同。错误也与提示词提交一致，包括校验、媒体、环境和幂等错误。
 
 #### `POST /api/v1/sessions/{session_id}/prompts:steer`
 
