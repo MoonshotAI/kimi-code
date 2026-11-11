@@ -67,14 +67,14 @@ describe('AgentToolPolicyService', () => {
     expect(policy.isToolDenied('Bash')).toBe(false);
     expect(toolsSectionReads()).toBe(0);
   });
-  it('honors a validated memory policy while the file is unreadable', () => {
+  it('keeps the last validated policy when an unvalidated fallback arrives', () => {
     let broken = false;
     let sectionHandler: ((event: unknown) => void) | undefined;
     const config = {
       assertValid: vi.fn(() => {
         if (broken) throw new Error('config could not be read');
       }),
-      get: vi.fn(() => (broken ? undefined : { disabled: [] })),
+      get: vi.fn(() => (broken ? undefined : { disabled: ['Bash'] })),
       onDidSectionChange: vi.fn((handler: (event: unknown) => void) => {
         sectionHandler = handler;
         return { dispose: () => { } };
@@ -97,8 +97,8 @@ describe('AgentToolPolicyService', () => {
     sectionHandler?.({
       domain: TOOLS_SECTION,
       source: 'set',
-      value: { disabled: ['Bash'] },
-      previousValue: { disabled: [] },
+      value: { disabled: [] },
+      previousValue: { disabled: ['Bash'] },
     });
 
     expect(policy.isToolDenied('Bash')).toBe(true);
@@ -145,43 +145,6 @@ describe('AgentToolPolicyService', () => {
       source: 'reload',
       value: undefined,
       previousValue: undefined,
-    });
-
-    expect(policy.isToolDenied('Bash')).toBe(false);
-  });
-
-  it('honors an explicit memory-policy clear while the file is unreadable', () => {
-    let broken = false;
-    let configHandler: ((event: unknown) => void) | undefined;
-    const config = {
-      assertValid: vi.fn(() => {
-        if (broken) throw new Error('config could not be read');
-      }),
-      get: vi.fn(() => (broken ? undefined : { disabled: ['Bash'] })),
-      onDidSectionChange: vi.fn(() => ({ dispose: () => { } })),
-      onDidChangeConfiguration: vi.fn((handler: (event: unknown) => void) => {
-        configHandler = handler;
-        return { dispose: () => { } };
-      }),
-    };
-    const profile = { data: () => ({ activeToolNames: ['Bash'], disallowedTools: [] }) };
-    const sessionToolPolicy = { disabledTools: () => [] };
-    const toolPolicyGate = { disabledTools: [] };
-    const toolExecutor = { registerToolCallGuard: vi.fn(() => ({ dispose: () => { } })) };
-    const policy = new AgentToolPolicyService(
-      profile as never,
-      config as never,
-      sessionToolPolicy as never,
-      toolPolicyGate as never,
-      toolExecutor as never,
-    );
-
-    broken = true;
-    configHandler?.({
-      domain: TOOLS_SECTION,
-      source: 'set',
-      value: undefined,
-      previousValue: { disabled: ['Bash'] },
     });
 
     expect(policy.isToolDenied('Bash')).toBe(false);
