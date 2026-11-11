@@ -92,6 +92,27 @@ max_context_size = 1000000
     expect(config.models?.['bedrock/kimi-k3']?.provider).toBe('bedrock');
   });
 
+  it('accepts a bedrock model with an explicit protocol = "openai" override', async () => {
+    const rpc = createKimiConfigRpc();
+    const text = `
+[providers.bedrock]
+type = "bedrock"
+
+[providers.bedrock.env]
+AWS_REGION = "us-west-2"
+
+[models."bedrock/kimi-k3-chat"]
+provider = "bedrock"
+model = "global.moonshotai.kimi-k3"
+max_context_size = 1000000
+protocol = "openai"
+`;
+
+    await expect(rpc.validateConfigToml({ text })).resolves.toBeUndefined();
+    const config = parseConfigString(text);
+    expect(config.models?.['bedrock/kimi-k3-chat']?.protocol).toBe('openai');
+  });
+
   it('keeps a valid [environments] section through parseConfigString', () => {
     const text = `
 [environments.dev-box]

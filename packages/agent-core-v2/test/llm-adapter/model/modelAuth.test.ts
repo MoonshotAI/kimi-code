@@ -239,7 +239,7 @@ describe('resolveModelProtocol', () => {
   it('falls back to the bedrock base protocol for unrecognized model families', () => {
     const provider: ProviderConfig = { type: 'bedrock' };
     expect(resolveModelProtocol({ model: 'meta.llama3-3-70b-instruct-v1:0' }, provider)).toBe(
-      'anthropic',
+      'openai',
     );
   });
 });

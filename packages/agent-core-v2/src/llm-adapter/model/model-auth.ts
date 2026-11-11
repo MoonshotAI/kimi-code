@@ -215,7 +215,7 @@ export function resolveEndpointBaseUrl(
     const protocol =
       bedrockWireProtocolOf(model.protocol) ??
       (wireName === undefined ? undefined : inferBedrockProtocol(wireName)) ??
-      'anthropic';
+      'openai';
     const env = { ...process.env, ...provider.env };
     const baseUrl = resolveBedrockBaseUrl(protocol, env);
     if (baseUrl === undefined) {

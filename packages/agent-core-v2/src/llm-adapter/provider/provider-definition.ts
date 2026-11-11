@@ -195,13 +195,6 @@ registerProviderDefinition({
 
 registerProviderDefinition({
   id: 'bedrock',
-  baseProtocol: 'anthropic',
-  endpoint: bedrockEndpoint,
-  capability: bedrockModelCapability,
-});
-
-registerProviderDefinition({
-  id: 'bedrock',
   baseProtocol: 'openai',
   endpoint: bedrockEndpoint,
   capability: bedrockModelCapability,
@@ -210,6 +203,13 @@ registerProviderDefinition({
 registerProviderDefinition({
   id: 'bedrock',
   baseProtocol: 'openai_responses',
+  endpoint: bedrockEndpoint,
+  capability: bedrockModelCapability,
+});
+
+registerProviderDefinition({
+  id: 'bedrock',
+  baseProtocol: 'anthropic',
   endpoint: bedrockEndpoint,
   capability: bedrockModelCapability,
 });
