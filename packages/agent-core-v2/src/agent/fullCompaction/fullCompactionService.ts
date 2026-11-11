@@ -787,6 +787,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
           summaryOutputTokens,
           keptUserMessageCount: compacted.keptUserMessageCount,
           keptHeadUserMessageCount: compacted.keptHeadUserMessageCount,
+          appendedInjectionCount: compacted.appendedInjectionCount,
           droppedCount: dropped,
           wireLines,
         }));

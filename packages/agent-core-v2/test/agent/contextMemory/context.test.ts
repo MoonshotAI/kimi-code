@@ -886,6 +886,7 @@ describe('Agent context', () => {
       });
       expect(shape.messages[4]).toBe(history[3]);
       expect(shape.messages.map(textOf)).not.toContain('old reminder');
+      expect(shape.appendedInjectionCount).toBe(1);
     });
 
     it('counts injections appended after the compacted prefix into tokensAfter', () => {

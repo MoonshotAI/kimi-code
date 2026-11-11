@@ -48,6 +48,7 @@ function compaction(
   compactedCount: number,
   keptUserMessageCount?: number,
   keptHeadUserMessageCount?: number,
+  appendedInjectionCount?: number,
 ): WireRecord {
   return {
     type: 'context.apply_compaction',
@@ -58,6 +59,7 @@ function compaction(
     tokensAfter: 100,
     ...(keptUserMessageCount === undefined ? {} : { keptUserMessageCount }),
     ...(keptHeadUserMessageCount === undefined ? {} : { keptHeadUserMessageCount }),
+    ...(appendedInjectionCount === undefined ? {} : { appendedInjectionCount }),
   };
 }
 
@@ -507,6 +509,20 @@ describe('live fold parity', () => {
       'user',
       'assistant',
     ]);
+    expect(transcript.foldedLength).toBe(live.length);
+  });
+
+  it('tracks the live context length across compaction with appended injections', () => {
+    const records: WireRecord[] = [
+      appendMessage(userMessage('u1')),
+      ...assistantStep('s1', 'a1'),
+      appendMessage(userMessage('reminder', { kind: 'injection', variant: 'tool_update_pending' })),
+      compaction('SUM', 2, 1, undefined, 1),
+    ];
+    const live = foldLive(records);
+    const transcript = reduceContextTranscript(records);
+    expect(live).toHaveLength(4);
+    expect(live[3]!.origin).toEqual({ kind: 'injection', variant: 'tool_update_pending' });
     expect(transcript.foldedLength).toBe(live.length);
   });
 

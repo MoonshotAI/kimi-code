@@ -56,6 +56,7 @@ export interface ContextCompactionShape {
   readonly tokensAfter: number;
   readonly keptUserMessageCount: number;
   readonly keptHeadUserMessageCount?: number;
+  readonly appendedInjectionCount: number;
   readonly droppedCount?: number;
   readonly messages: readonly ContextMessage[];
 }
@@ -78,6 +79,7 @@ export function buildContextCompactionShape(
       tokensBefore: input.tokensBefore,
       tokensAfter: input.tokensAfter ?? estimate.messages(messages),
       keptUserMessageCount: 0,
+      appendedInjectionCount: 0,
       droppedCount: input.droppedCount,
       messages,
     };
@@ -119,6 +121,7 @@ export function buildContextCompactionShape(
     tokensAfter,
     keptUserMessageCount,
     keptHeadUserMessageCount,
+    appendedInjectionCount: appendedInjections.length,
     droppedCount: input.droppedCount,
     messages: [
       ...keptMessages,
