@@ -326,6 +326,7 @@ interface QueuedEntryBase {
 
 export interface QueuedPromptMessage extends QueuedEntryBase {
   readonly mode?: 'prompt';
+  readonly delivery?: 'prompt-only';
   readonly agentId?: string;
   readonly parts?: readonly PromptPart[];
   readonly imageAttachmentIds?: readonly number[];

@@ -7,6 +7,7 @@ import {
   FAKE_CURSOR_END,
   FAKE_CURSOR_START,
   isKeyRelease,
+  isKeyRepeat,
   matchesKey,
   Key,
   SelectList,
@@ -19,6 +20,7 @@ import {
 import { currentTheme } from '#/tui/theme';
 import { createEditorTheme } from '#/tui/theme/pi-tui-theme';
 import { printableChar } from '#/tui/utils/printable-key';
+import type { EditorSubmitIntent } from '../../utils/follow-up';
 
 import { extractAtPrefix } from './file-mention-provider';
 import { findInlineSkillTokens } from '../../utils/inline-skill-tokens';
@@ -136,6 +138,7 @@ export class CustomEditor extends Editor {
   public onCtrlC?: () => void;
   public onToggleToolExpand?: () => void;
   public onOpenExternalEditor?: () => void;
+  public declare onSubmit?: (text: string, intent?: EditorSubmitIntent) => void;
   public onCtrlS?: () => void;
   /** Return `true` to consume Ctrl+B; return `false`/`undefined` to fall through to the editor default (cursor-left). */
   public onCtrlB?: () => boolean;
@@ -413,6 +416,17 @@ export class CustomEditor extends Editor {
     return trailingSpace.length > 0 ? hint : ` ${hint}`;
   }
 
+  private submitWithIntent(intent: Exclude<EditorSubmitIntent, 'default'>): void {
+    if (this.disableSubmit) return;
+    const previous = this.onSubmit;
+    this.onSubmit = (text: string) => previous?.(text, intent);
+    try {
+      (this as unknown as { submitValue(): void }).submitValue();
+    } finally {
+      this.onSubmit = previous;
+    }
+  }
+
   override handleInput(data: string): void {
     const normalized = normalizeCapsLockedCtrl(data);
     if (isKeyRelease(normalized)) {
@@ -519,6 +533,16 @@ export class CustomEditor extends Editor {
 
     if (matchesKey(normalized, Key.ctrl('s'))) {
       this.onCtrlS?.();
+      return;
+    }
+
+    if (matchesKey(normalized, Key.ctrl('enter')) || matchesKey(normalized, Key.super('enter'))) {
+      if (!isKeyRepeat(normalized)) this.submitWithIntent('opposite');
+      return;
+    }
+
+    if (matchesKey(normalized, Key.ctrl('q'))) {
+      if (!isKeyRepeat(normalized)) this.submitWithIntent('queue');
       return;
     }
 

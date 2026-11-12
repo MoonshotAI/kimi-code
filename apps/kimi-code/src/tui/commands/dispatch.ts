@@ -24,6 +24,7 @@ import type {
   TranscriptEntry,
 } from '../types';
 import { formatErrorMessage } from '../utils/event-payload';
+import type { EditorSubmitIntent } from '../utils/follow-up';
 import { handleLoginCommand, handleLogoutCommand } from './auth';
 import { handleBtwCommand } from './btw';
 import { handleCopyCommand } from './copy';
@@ -210,13 +211,18 @@ export interface SlashCommandHost {
   showHelpPanel(): void;
   createNewSession(): Promise<void>;
   showSessionPicker(): Promise<void>;
-  sendNormalUserInput(text: string): void;
+  sendNormalUserInput(text: string, preExtracted?: unknown, submitIntent?: EditorSubmitIntent): void;
   /**
    * Submit a prompt that explicitly activates one or more skills inline
    * (v2 engine only): all activations ride the same submission as the prompt
    * and launch as a single turn.
    */
-  sendInlineSkillUserInput(text: string, activations: readonly InlineSkillActivation[]): Promise<void>;
+  sendInlineSkillUserInput(
+    text: string,
+    activations: readonly InlineSkillActivation[],
+    preExtracted?: unknown,
+    submitIntent?: EditorSubmitIntent,
+  ): Promise<void>;
   activatePluginCommand(
     session: Session,
     pluginId: string,
@@ -240,7 +246,11 @@ export interface SlashCommandHost {
 // Dispatch — entry point from handleUserInput
 // ---------------------------------------------------------------------------
 
-export function dispatchInput(host: SlashCommandHost, text: string): void {
+export function dispatchInput(
+  host: SlashCommandHost,
+  text: string,
+  submitIntent?: EditorSubmitIntent,
+): void {
   const { intent, activations } = resolveUserInput({
     input: text,
     skillCommandMap: host.skillCommandMap,
@@ -262,14 +272,14 @@ export function dispatchInput(host: SlashCommandHost, text: string): void {
         skill_name: leading.skillName,
       });
     }
-    void host.sendInlineSkillUserInput(text, activations);
+    void host.sendInlineSkillUserInput(text, activations, undefined, submitIntent);
     return;
   }
   if (intent.kind !== 'not-command') {
-    void executeSlashCommand(host, text, intent, activations);
+    void executeSlashCommand(host, text, intent, activations, submitIntent);
     return;
   }
-  host.sendNormalUserInput(text);
+  host.sendNormalUserInput(text, undefined, submitIntent);
 }
 
 async function executeSlashCommand(
@@ -277,6 +287,7 @@ async function executeSlashCommand(
   input: string,
   intent: Exclude<SlashCommandIntent, { readonly kind: 'skill' | 'not-command' }>,
   activations: readonly InlineSkillActivation[],
+  submitIntent?: EditorSubmitIntent,
 ): Promise<void> {
   const parsedCommand = parseSlashInput(input);
 
@@ -324,7 +335,7 @@ async function executeSlashCommand(
       if (parsedCommand !== null && tryHandleDanceCommand(host, parsedCommand)) {
         return;
       }
-      host.sendNormalUserInput(intent.input);
+      host.sendNormalUserInput(intent.input, undefined, submitIntent);
       return;
     case 'builtin':
       if (intent.enqueue === true) {

@@ -881,3 +881,61 @@ describe('CustomEditor bash mode file completion', () => {
     expect(calls.every((call) => call.force === true)).toBe(true);
   });
 });
+
+
+describe('CustomEditor follow-up submit intents', () => {
+  it.each([
+    ['CSI-u Ctrl+Enter', '\u001B[13;5u', 'opposite'],
+    ['modifyOtherKeys Ctrl+Enter', '\u001B[27;5;13~', 'opposite'],
+    ['Cmd+Enter', '\u001B[13;9u', 'opposite'],
+    ['Ctrl+Q', '\u0011', 'queue'],
+    ['CSI-u Ctrl+Q', '\u001B[113;5u', 'queue'],
+  ] as const)('submits the expanded draft for %s and clears undo history', (_name, key, intent) => {
+    const editor = makeEditor();
+    const submit = vi.fn();
+    editor.onSubmit = submit;
+    const longText = 'line\n'.repeat(15).trimEnd();
+    editor.handleInput(`\u001B[200~${longText}\u001B[201~`);
+    editor.handleInput('\\');
+
+    editor.handleInput(key);
+
+    expect(submit).toHaveBeenCalledWith(`${longText}\\`, intent);
+    expect(editor.getText()).toBe('');
+    editor.handleInput('\u001F');
+    expect(editor.getText()).toBe('');
+  });
+
+  it('ignores repeat events without clearing the draft', () => {
+    const editor = makeEditor();
+    const submit = vi.fn();
+    editor.onSubmit = submit;
+    editor.setText('draft');
+
+    editor.handleInput('\u001B[13;5:2u');
+    editor.handleInput('\u001B[113;5:2u');
+    editor.handleInput('\u001B[13;5:3u');
+    editor.handleInput('\u001B[113;5:3u');
+
+    expect(submit).not.toHaveBeenCalled();
+    expect(editor.getText()).toBe('draft');
+  });
+
+  it('keeps ordinary Enter and Alt+Enter behavior unchanged', () => {
+    const editor = makeEditor();
+    const submit = vi.fn();
+    editor.onSubmit = submit;
+    editor.setText('first\\');
+
+    editor.handleInput('\r');
+    expect(submit).not.toHaveBeenCalled();
+    expect(editor.getText()).toBe('first\n');
+
+    editor.handleInput('\u001B[13;3u');
+    expect(submit).not.toHaveBeenCalled();
+
+    editor.setText('plain');
+    editor.handleInput('\r');
+    expect(submit).toHaveBeenCalledWith('plain');
+  });
+});

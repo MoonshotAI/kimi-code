@@ -610,10 +610,12 @@ export class StreamingUIController {
 
     this.host.setAppState({ streamingPhase: 'idle' });
     this.host.resetLivePane();
-    notifyTerminalOnce(state, `turn-complete:${completedTurnKey}`, {
-      title: 'Kimi Code task complete',
-      body: state.appState.sessionTitle ?? undefined,
-    });
+    if (state.queuedMessages.length === 0) {
+      notifyTerminalOnce(state, `turn-complete:${completedTurnKey}`, {
+        title: 'Kimi Code task complete',
+        body: state.appState.sessionTitle ?? undefined,
+      });
+    }
   }
 
   // ---------------------------------------------------------------------------

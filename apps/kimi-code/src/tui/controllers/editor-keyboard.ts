@@ -22,6 +22,7 @@ import { isKeyRelease, isKeyRepeat, Key, matchesKey, TuiAltScreen } from '@moons
 import { normalizeCapsLockedCtrl } from '../components/editor/custom-editor';
 import { MEDIA_STAGING_TTL_SECONDS } from '../constant/media';
 import { formatErrorMessage } from '../utils/event-payload';
+import type { EditorSubmitIntent } from '../utils/follow-up';
 import type {
   ImageAttachment,
   ImageAttachmentStore,
@@ -46,7 +47,7 @@ export interface EditorKeyboardHost {
    */
   harness?: KimiHarness | undefined;
 
-  handleUserInput(text: string): void;
+  handleUserInput(text: string, intent?: EditorSubmitIntent): void;
   readonly btwPanelController: BtwPanelController;
   readonly surveyController: SurveyController;
   readonly modelMigration?: ModelMigrationController;
@@ -109,10 +110,10 @@ export class EditorKeyboardController {
     const { host } = this;
     const editor = host.state.editor;
 
-    editor.onSubmit = (text: string) => {
+    editor.onSubmit = (text: string, intent?: EditorSubmitIntent) => {
       if (host.surveyController.handleSubmit(text)) return;
       host.promptPredictionController?.handleSubmit(text);
-      host.handleUserInput(text);
+      host.handleUserInput(text, intent);
     };
 
     // After dispose (shutdown), consume every key here so no shortcut can fire

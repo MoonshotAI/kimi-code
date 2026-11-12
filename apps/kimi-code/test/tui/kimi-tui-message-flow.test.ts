@@ -183,7 +183,7 @@ interface MessageDriver {
     handleEvent(event: Event, sendQueued: (item: QueuedMessage) => void): void;
   };
   init(): Promise<boolean>;
-  handleUserInput(text: string): void;
+  handleUserInput: KimiTUI['handleUserInput'];
   restoreInputText(text: string, inlineSkillActivations?: readonly InlineSkillActivation[]): void;
   toggleToolOutputExpansion(): void;
   appendTranscriptEntry(entry: TranscriptEntry): void;
@@ -15944,5 +15944,237 @@ describe('transcript fold block clicks', () => {
     expect(closed).not.toContain('wide-tail');
     expect(closed).toContain('wide-head');
     expect(driver.state.transcriptContainer.toolOutputExpanded).toBe(true);
+  });
+});
+
+
+describe('KimiTUI follow-up behavior', () => {
+  function startWaitFor(driver: MessageDriver): void {
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.call.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_wait_follow_up',
+        name: 'WaitFor',
+        args: { timeout: 60 },
+      } as Event,
+      () => {},
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.updated',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_wait_follow_up',
+        taskId: 'task-wait-follow-up',
+        status: 'running',
+        detached: false,
+        fields: {
+          status: 'Waiting 0s / 1m · 1 background task still running',
+          statusReplace: true,
+          wait: { elapsedS: 0, timeoutS: 60, runningCount: 1 },
+        },
+      } as Event,
+      () => {},
+    );
+  }
+
+  it('steers only the opposite-intent draft under the default queue behavior', async () => {
+    const { driver, session } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.handleUserInput('already queued');
+
+    driver.handleUserInput('current draft', 'opposite');
+
+    expect(session.steer).toHaveBeenCalledWith('current draft');
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([{ text: 'already queued', agentId: 'main' }]);
+  });
+
+  it('steers only a media draft by default when follow-up behavior is steer', async () => {
+    const { driver, session } = await makeDriver();
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = stagedImage(imageStore, 'file-follow-up-steer');
+    driver.state.appState.followUpBehavior = 'steer';
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.queuedMessages = [{ text: 'already queued', agentId: 'main' }];
+
+    driver.handleUserInput(`describe ${attachment.placeholder}`);
+
+    await vi.waitFor(() => {
+      expect(session.steer).toHaveBeenCalledOnce();
+    });
+    expect(JSON.stringify(vi.mocked(session.steer).mock.calls[0])).toContain(
+      'kimi-file://file-follow-up-steer',
+    );
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([{ text: 'already queued', agentId: 'main' }]);
+  });
+
+  it('steers only an inline skill draft without consuming the existing queue', async () => {
+    const session = makeSession({
+      listSkills: vi.fn(async () => [
+        {
+          name: 'review',
+          description: 'Review skill',
+          path: '/tmp/review',
+          source: 'user',
+          type: 'inline',
+        },
+      ]),
+    });
+    const { driver } = await makeDriver(session);
+    await (driver as unknown as { refreshSkillCommands(s: unknown): Promise<void> })
+      .refreshSkillCommands(session);
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.queuedMessages = [{ text: 'already queued', agentId: 'main' }];
+
+    driver.handleUserInput('/skill:review check this', 'opposite');
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledOnce();
+    });
+    expect(session.promptWithSkills).toHaveBeenCalledWith(
+      '/skill:review check this',
+      [{ name: 'review', args: 'check this' }],
+      { steerIfActive: true },
+    );
+    expect(session.steer).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([{ text: 'already queued', agentId: 'main' }]);
+  });
+
+  it('queues opposite and explicit queue intents when the default behavior is steer', async () => {
+    const { driver, session } = await makeDriver();
+    driver.state.appState.followUpBehavior = 'steer';
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.queuedMessages = [{ text: 'already queued', agentId: 'main' }];
+
+    driver.handleUserInput('current draft');
+    driver.handleUserInput('opposite draft', 'opposite');
+    driver.handleUserInput('explicit queue', 'queue');
+
+    expect(session.steer).toHaveBeenCalledOnce();
+    expect(session.steer).toHaveBeenCalledWith('current draft');
+    expect(driver.state.queuedMessages).toEqual([
+      { text: 'already queued', agentId: 'main' },
+      { text: 'opposite draft', agentId: 'main', delivery: 'prompt-only' },
+      { text: 'explicit queue', agentId: 'main', delivery: 'prompt-only' },
+    ]);
+  });
+
+  it.each([
+    ['shell', false],
+    ['waiting', true],
+  ] as const)('falls back to an ordinary queued prompt in phase %s with compacting %s', async (phase, compacting) => {
+    const { driver, session } = await makeDriver();
+    driver.state.appState.followUpBehavior = 'steer';
+    driver.state.appState.streamingPhase = phase;
+    driver.state.appState.isCompacting = compacting;
+
+    driver.handleUserInput('draft that cannot steer');
+
+    expect(session.steer).not.toHaveBeenCalled();
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([
+      { text: 'draft that cannot steer', agentId: 'main' },
+    ]);
+    expect(stripSgr(renderTranscript(driver))).not.toContain('Failed to steer');
+  });
+
+  it.each([undefined, 'opposite', 'queue'] as const)('keeps bash input queued for submit intent %s', async (intent) => {
+    const { driver, session } = await makeDriver();
+    driver.state.appState.followUpBehavior = 'steer';
+    driver.state.appState.isCompacting = true;
+    driver.state.appState.inputMode = 'bash';
+    driver.state.editor.inputMode = 'bash';
+
+    driver.handleUserInput('ls', intent);
+
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(session.steer).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([
+      { text: 'ls', agentId: 'main', mode: 'bash' },
+    ]);
+  });
+
+  it('keeps explicit queue items out of WaitFor and Tower steering but allows manual Ctrl-S', async () => {
+    const { driver, session } = await makeDriver();
+    driver.state.appState.followUpBehavior = 'steer';
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.handleUserInput('held prompt', 'opposite');
+
+    startWaitFor(driver);
+
+    expect(session.steer).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([
+      { text: 'held prompt', agentId: 'main', delivery: 'prompt-only' },
+    ]);
+
+    driver.state.appState.towerMode = true;
+    driver.state.appState.followUpBehavior = 'queue';
+    driver.handleUserInput('ordinary Tower input');
+
+    expect(session.steer).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([
+      { text: 'held prompt', agentId: 'main', delivery: 'prompt-only' },
+      { text: 'ordinary Tower input', agentId: 'main' },
+    ]);
+
+    driver.state.editor.onCtrlS?.();
+
+    expect(session.steer).toHaveBeenCalledWith('held prompt\n\nordinary Tower input');
+    await vi.waitFor(() => {
+      expect(driver.state.queuedMessages).toEqual([]);
+    });
+  });
+
+  it('holds an explicit queue item across goal turns and drains it when the goal ends', async () => {
+    const { driver, session } = await makeDriver();
+    driver.state.appState.goal = makeActiveGoalSnapshot();
+    driver.state.appState.followUpBehavior = 'steer';
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.handleUserInput('held until goal ends', 'opposite');
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        reason: 'completed',
+      } as Event,
+      (item) => {
+        driver.sendQueuedMessage(session, item);
+      },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(driver.state.appState.streamingPhase).toBe('idle');
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(session.steer).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([
+      { text: 'held until goal ends', agentId: 'main', delivery: 'prompt-only' },
+    ]);
+
+    (driver as unknown as { setAppState(patch: { goal: GoalSnapshot }): void }).setAppState({
+      goal: { ...makeActiveGoalSnapshot(), status: 'complete' },
+    });
+
+    expect(session.prompt).toHaveBeenCalledWith('held until goal ends', { promptId: undefined });
+    expect(driver.state.queuedMessages).toEqual([]);
+  });
+
+  it.each(['opposite', 'queue'] as const)('treats %s as an ordinary submit while idle', async (intent) => {
+    const { driver, session } = await makeDriver();
+    driver.state.appState.followUpBehavior = intent === 'opposite' ? 'queue' : 'steer';
+
+    driver.handleUserInput('fresh turn', intent);
+
+    expect(session.prompt).toHaveBeenCalledWith('fresh turn', { promptId: undefined });
+    expect(session.steer).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([]);
   });
 });

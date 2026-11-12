@@ -186,6 +186,14 @@ import { workingLabel } from './utils/activity-label';
 import { hasDispose } from './utils/component-capabilities';
 import { isDeadTerminalError } from './utils/dead-terminal';
 import { formatErrorMessage } from './utils/event-payload';
+import {
+  bashInputIsBusy,
+  canSteerSingleDraft,
+  holdsForActiveGoal,
+  resolveFollowUpDelivery,
+  type EditorSubmitIntent,
+  type FollowUpRuntimeState,
+} from './utils/follow-up';
 import { pickForegroundTasks } from './utils/foreground-task';
 import { findInlineSkillTokens, rebaseInlineSkillActivations } from './utils/inline-skill-tokens';
 import { ImageAttachmentStore, type ImageAttachment, type MediaAttachment } from './utils/image-attachment-store';
@@ -356,10 +364,12 @@ interface SendMessageOptions {
    */
   readonly lease?: StagingLease;
   readonly occupiedRetry?: boolean;
+  readonly submitIntent?: EditorSubmitIntent;
 }
 
 type EnqueueMessageOptions = SendMessageOptions & {
   readonly inlineSkillActivations?: readonly InlineSkillActivation[];
+  readonly delivery?: 'prompt-only';
 };
 
 /** How long the one-shot "moved to background" footer hint stays visible. */
@@ -1563,7 +1573,7 @@ export class KimiTUI {
     this.updateEditorBorderHighlight();
   }
 
-  handleUserInput(text: string): void {
+  handleUserInput(text: string, submitIntent?: EditorSubmitIntent): void {
     const wasBashMode = this.state.appState.inputMode === 'bash';
     if (wasBashMode) {
       // A submit always exits bash mode (the `!` is consumed by this command).
@@ -1583,7 +1593,7 @@ export class KimiTUI {
     if (wasBashMode) {
       // Only one foreground action at a time: queue the shell command while
       // another shell command is running or an agent turn is in progress.
-      if (this.state.appState.streamingPhase !== 'idle') {
+      if (bashInputIsBusy(this.followUpRuntimeState())) {
         this.enqueueMessage(text, undefined, 'bash');
         this.updateQueueDisplay();
         this.state.ui.requestRender();
@@ -1592,7 +1602,7 @@ export class KimiTUI {
       void this.runShellCommandFromInput(text);
       return;
     }
-    slashCommands.dispatchInput(this, text);
+    slashCommands.dispatchInput(this, text, submitIntent);
   }
 
   private async runShellCommandFromInput(command: string): Promise<void> {
@@ -1604,7 +1614,7 @@ export class KimiTUI {
       // creation was in flight (both inputs share the same creation promise);
       // honor the busy gate here, like handleUserInput does before the await,
       // instead of running the shell command concurrently with an agent turn.
-      if (this.state.appState.streamingPhase !== 'idle') {
+      if (bashInputIsBusy(this.followUpRuntimeState())) {
         this.enqueueMessage(command, undefined, 'bash');
         this.updateQueueDisplay();
         this.state.ui.requestRender();
@@ -1728,7 +1738,11 @@ export class KimiTUI {
     this.updateQueueDisplay();
   }
 
-  async sendNormalUserInput(text: string, preExtracted?: ExtractionResult): Promise<void> {
+  async sendNormalUserInput(
+    text: string,
+    preExtracted?: ExtractionResult,
+    submitIntent?: EditorSubmitIntent,
+  ): Promise<void> {
     if (this.btwPanelController.sendUserInput(text)) return;
     if (this.state.appState.model.trim().length === 0) {
       this.showError(LLM_NOT_SET_MESSAGE);
@@ -1814,9 +1828,10 @@ export class KimiTUI {
         imageAttachmentIds: extraction.imageAttachmentIds,
         videoAttachmentIds: extraction.videoAttachmentIds,
         lease: stagingLease,
+        submitIntent,
       });
     } else {
-      this.sendMessage(session, text);
+      this.sendMessage(session, text, { submitIntent });
     }
     this.updateQueueDisplay();
     this.state.ui.requestRender();
@@ -1826,6 +1841,7 @@ export class KimiTUI {
     text: string,
     activations: readonly InlineSkillActivation[],
     preExtracted?: ExtractionResult,
+    submitIntent?: EditorSubmitIntent,
   ): Promise<void> {
     if (this.btwPanelController.sendUserInput(text, activations)) return;
     if (this.state.appState.model.trim().length === 0) {
@@ -1878,6 +1894,50 @@ export class KimiTUI {
         ], []);
         return;
       }
+    }
+    const runtime = this.followUpRuntimeState();
+    const delivery = resolveFollowUpDelivery(
+      submitIntent ?? 'default',
+      this.state.appState.followUpBehavior,
+      runtime,
+    );
+    if (delivery === 'queue') {
+      this.enqueueMessage(text, {
+        parts: extraction.hasMedia ? extraction.parts : undefined,
+        imageAttachmentIds: extraction.imageAttachmentIds,
+        videoAttachmentIds: extraction.videoAttachmentIds,
+        mediaSnapshots: extraction.mediaSnapshots,
+        inlineSkillActivations: activations,
+        delivery: 'prompt-only',
+      });
+      this.updateQueueDisplay();
+      this.state.ui.requestRender();
+      return;
+    }
+    if (delivery === 'steer-draft') {
+      if (canSteerSingleDraft(runtime)) {
+        this.steerMessage(session, [{
+          text,
+          parts: extraction.hasMedia ? extraction.parts : undefined,
+          imageAttachmentIds:
+            extraction.imageAttachmentIds.length > 0 ? extraction.imageAttachmentIds : undefined,
+          videoAttachmentIds:
+            extraction.videoAttachmentIds.length > 0 ? extraction.videoAttachmentIds : undefined,
+          mediaSnapshots: extraction.mediaSnapshots,
+          inlineSkillActivations: activations,
+        }]);
+      } else {
+        this.enqueueMessage(text, {
+          parts: extraction.hasMedia ? extraction.parts : undefined,
+          imageAttachmentIds: extraction.imageAttachmentIds,
+          videoAttachmentIds: extraction.videoAttachmentIds,
+          mediaSnapshots: extraction.mediaSnapshots,
+          inlineSkillActivations: activations,
+        });
+      }
+      this.updateQueueDisplay();
+      this.state.ui.requestRender();
+      return;
     }
     if (
       this.deferUserMessages ||
@@ -2209,6 +2269,7 @@ export class KimiTUI {
           ? options.videoAttachmentIds
           : undefined,
       mode: undefined,
+      delivery: options?.delivery,
       mediaSnapshots: options?.mediaSnapshots,
       inlineSkillActivations: options?.inlineSkillActivations,
     };
@@ -2702,7 +2763,43 @@ export class KimiTUI {
     );
   }
 
+  private followUpRuntimeState(): FollowUpRuntimeState {
+    return {
+      streamingPhase: this.state.appState.streamingPhase,
+      isCompacting: this.state.appState.isCompacting,
+      deferUserMessages: this.deferUserMessages,
+      goalActive: this.state.appState.goal?.status === 'active',
+      steeringQueue: this.steeringQueuedMessages.size > 0,
+    };
+  }
+
   private sendMessage(session: Session, input: string, options?: SendMessageOptions): void {
+    const runtime = this.followUpRuntimeState();
+    const delivery = resolveFollowUpDelivery(
+      options?.submitIntent ?? 'default',
+      this.state.appState.followUpBehavior,
+      runtime,
+    );
+    if (delivery === 'queue') {
+      this.staging.defer(options?.lease);
+      this.enqueueMessage(input, { ...options, delivery: 'prompt-only' });
+      return;
+    }
+    if (delivery === 'steer-draft') {
+      this.staging.defer(options?.lease);
+      if (canSteerSingleDraft(runtime)) {
+        this.steerMessage(session, [{
+          text: input,
+          parts: options?.parts,
+          imageAttachmentIds: options?.imageAttachmentIds,
+          videoAttachmentIds: options?.videoAttachmentIds,
+          mediaSnapshots: options?.mediaSnapshots,
+        }]);
+      } else {
+        this.enqueueMessage(input, options);
+      }
+      return;
+    }
     // Submission order must survive a mid-turn compaction: objectives queued
     // while compacting stay queued when the turn outlives the compaction, so
     // steering this input ahead of them would reorder the conversation.
@@ -3091,6 +3188,14 @@ export class KimiTUI {
         () => {},
       );
     }
+    if (onSettled === undefined && !startsNewTurn) {
+      void request.then(
+        () => {
+          if (this.session === session) this.programStatus.markUserSteer();
+        },
+        () => {},
+      );
+    }
     this.staging.trackDispatch(stagingLease, request, (error) => {
       this.releaseSteerEntries(steeredEntries);
       if (this.session !== session) {
@@ -3171,6 +3276,10 @@ export class KimiTUI {
 
   shiftQueuedMessage(): QueuedMessage | undefined {
     if (this.steeringQueuedMessages.size > 0) return undefined;
+    const first = this.state.queuedMessages[0];
+    if (first !== undefined && holdsForActiveGoal(first, this.state.appState.goal?.status === 'active')) {
+      return undefined;
+    }
     return this.state.queuedMessages.shift();
   }
 
@@ -3236,6 +3345,7 @@ export class KimiTUI {
 
   setAppState(patch: Partial<AppState>): void {
     if (!hasPatchChanges(this.state.appState, patch)) return;
+    const wasGoalActive = this.state.appState.goal?.status === 'active';
     const additionalDirsChanged =
       'additionalDirs' in patch &&
       !sameStringArrays(this.state.appState.additionalDirs, patch.additionalDirs ?? []);
@@ -3252,6 +3362,7 @@ export class KimiTUI {
     if (additionalDirsChanged) this.setupAutocomplete();
     this.modelMigration.retry();
     this.state.ui.requestRender();
+    if (wasGoalActive && this.state.appState.goal?.status !== 'active') this.drainQueueIfIdle();
   }
 
   patchLivePane(patch: Partial<LivePaneState>): void {
@@ -5607,7 +5718,11 @@ export class KimiTUI {
 }
 
 function isSteerableQueuedMessage(message: QueuedMessage): message is QueuedPromptMessage {
-  return isPromptQueuedMessage(message) && message.inlineSkillActivations === undefined;
+  return (
+    isPromptQueuedMessage(message) &&
+    message.delivery !== 'prompt-only' &&
+    message.inlineSkillActivations === undefined
+  );
 }
 
 function toSteerInputItem(message: QueuedPromptMessage): SteerInputItem {

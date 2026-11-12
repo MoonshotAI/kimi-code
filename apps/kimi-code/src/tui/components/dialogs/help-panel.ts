@@ -35,12 +35,17 @@ export const DEFAULT_KEYBOARD_SHORTCUTS: readonly KeyboardShortcut[] = [
   { keys: 'Ctrl-G', description: 'Edit in external editor ($VISUAL / $EDITOR)' },
   { keys: 'Ctrl-O', description: 'Toggle tool output / compaction summary expansion' },
   { keys: 'Ctrl-S', description: 'Steer — inject a follow-up during streaming' },
+  {
+    keys: 'Ctrl-Enter / Cmd-Enter',
+    description: 'Steer or queue (opposite of follow_up_behavior)',
+  },
+  { keys: 'Ctrl-Q', description: 'Queue follow-up for the next turn' },
   { keys: 'Shift-Enter / Ctrl-J', description: 'Insert newline' },
   { keys: 'Ctrl-C', description: 'Interrupt stream / clear input' },
   { keys: 'Ctrl-D', description: 'Exit (on empty input)' },
   { keys: 'Esc', description: 'Close dialogs / interrupt streaming' },
   { keys: '↑ / ↓', description: 'Browse input history' },
-  { keys: 'Enter', description: 'Submit' },
+  { keys: 'Enter', description: 'Submit (queues or steers per follow_up_behavior while busy)' },
 ];
 
 export interface HelpPanelOptions {

@@ -770,7 +770,24 @@ describe('EditorKeyboardController survey wiring', () => {
     survey.handleSubmit.mockReturnValueOnce(false);
     onSubmit('hello');
 
-    expect(host.handleUserInput).toHaveBeenCalledWith('hello');
+    expect(host.handleUserInput).toHaveBeenCalledWith('hello', undefined);
+  });
+
+  it('passes the submit intent through without changing Ctrl-S', () => {
+    const { host, editor, survey } = createHarness({ streamingPhase: 'waiting' });
+    const onSubmit = editor['onSubmit'] as unknown as (
+      text: string,
+      intent?: 'default' | 'opposite' | 'queue',
+    ) => void;
+    const onCtrlS = editor['onCtrlS'];
+    survey.handleSubmit.mockReturnValue(false);
+
+    onSubmit('hello', 'opposite');
+    onSubmit('hold', 'queue');
+
+    expect(host.handleUserInput).toHaveBeenNthCalledWith(1, 'hello', 'opposite');
+    expect(host.handleUserInput).toHaveBeenNthCalledWith(2, 'hold', 'queue');
+    expect(editor['onCtrlS']).toBe(onCtrlS);
   });
 
   it('displaces the survey when the external editor opens', () => {
