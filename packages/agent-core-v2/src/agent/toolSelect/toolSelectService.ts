@@ -569,10 +569,17 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     tools: readonly Tool[],
   ): readonly ContextMessage[] {
     const inlineNames = new Set(tools.filter((tool) => tool.deferred !== true).map((tool) => tool.name));
+    const lastToolDeclarations = new Map<string, { message: ContextMessage; toolIndex: number }>();
+    for (const message of messages) {
+      if (message.role !== 'system' || message.tools === undefined) continue;
+      for (let toolIndex = 0; toolIndex < message.tools.length; toolIndex += 1) {
+        lastToolDeclarations.set(message.tools[toolIndex]!.name, { message, toolIndex });
+      }
+    }
     let shaped: ContextMessage[] | undefined;
     for (let i = 0; i < messages.length; i += 1) {
       const message = messages[i]!;
-      const next = this.shapeActiveMessage(message, inlineNames);
+      const next = this.shapeActiveMessage(message, inlineNames, lastToolDeclarations);
       if (next === message) {
         if (shaped !== undefined) shaped.push(message);
         continue;
@@ -586,6 +593,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   private shapeActiveMessage(
     message: ContextMessage,
     inlineNames: ReadonlySet<string>,
+    lastToolDeclarations: ReadonlyMap<string, { readonly message: ContextMessage; readonly toolIndex: number }>,
   ): ContextMessage | undefined {
     if (message.role !== 'system') return message;
     const tools = message.tools;
@@ -594,7 +602,13 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     let kept: Tool[] | undefined;
     for (let i = 0; i < tools.length; i += 1) {
       const tool = tools[i]!;
-      if (!inlineNames.has(tool.name)) {
+      const lastDeclaration = lastToolDeclarations.get(tool.name);
+      if (
+        !inlineNames.has(tool.name) &&
+        lastDeclaration !== undefined &&
+        lastDeclaration.message === message &&
+        lastDeclaration.toolIndex === i
+      ) {
         if (kept !== undefined) kept.push(tool);
         continue;
       }
