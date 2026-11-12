@@ -4,9 +4,13 @@ import { findGitWorkTree } from '#/app/git/workTree';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 
 import type { SystemPromptContext } from './profile';
-import { buildRepoMap, REPO_MAP_MAX_LINES } from './repoMap';
+import {
+  buildRepoMap,
+  REPO_MAP_MAX_LINES,
+  type BuildRepoMapOptions,
+} from './repoMap';
 
-export { buildRepoMap, REPO_MAP_MAX_LINES };
+export { buildRepoMap, REPO_MAP_MAX_LINES, type BuildRepoMapOptions };
 
 export const AGENTS_MD_RECOMMENDED_MAX_BYTES = 32 * 1024;
 

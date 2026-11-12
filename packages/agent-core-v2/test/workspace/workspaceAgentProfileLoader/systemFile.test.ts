@@ -159,10 +159,11 @@ describe('loadSystemMdProfile', () => {
     const { warn } = collectWarnings();
 
     const profile = await loadProfile(hostFs, BUILTIN_DEFAULT, warn);
-    const prompt = profile?.systemPrompt({ repoMap: '- `src/api` — API service' });
+    const prompt = profile?.systemPrompt({ repoMap: '- src/api — "API service"' });
 
-    expect(prompt).toContain('map=- `src/api` — API service');
+    expect(prompt).toContain('map=- src/api — "API service"');
     expect(prompt).toContain('## Repository Map');
+    expect(prompt).toContain('```````\n- src/api — "API service"\n```````');
     expect(prompt).toContain('end');
   });
 });

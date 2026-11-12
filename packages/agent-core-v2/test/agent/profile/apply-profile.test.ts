@@ -548,7 +548,7 @@ describe('AgentLoopService.applyProfile', () => {
     await svc.applyProfile(repoMapProfile);
 
     expect(svc.getSystemPrompt()).toBe(
-      'map:- `src/sub-app` — Frontend application (`src/sub-app/AGENTS.md`)',
+      'map:- src/sub-app — "Frontend application" (src/sub-app/AGENTS.md)',
     );
   });
 });

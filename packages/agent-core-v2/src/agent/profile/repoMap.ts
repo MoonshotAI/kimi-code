@@ -8,6 +8,10 @@ import type { ProfileContextDeps } from './context';
 
 export const REPO_MAP_MAX_LINES = 10;
 
+export interface BuildRepoMapOptions {
+  readonly budgetMs?: number;
+}
+
 const AGENTS_MD_NAMES = ['AGENTS.md', 'agents.md'] as const;
 const REPO_MAP_MAX_SUMMARY_CHARS = 120;
 const MAX_SCAN_DEPTH = 3;
@@ -72,6 +76,12 @@ const OVERVIEW_HEADING_RE =
 const PURE_REPLY_LANGUAGE_DIRECTIVE_RE =
   /^(?:(?:always\s+)?reply in (?:the same language(?:\s+as\s+the\s+user)?|english|chinese)[^A-Za-z0-9]*|(?:请用|一律用)?中文回复(?:用户)?[。！!.\s]*)$/i;
 
+class RepoMapDeadlineError extends Error {
+  constructor() {
+    super('Repository map scan budget exceeded');
+  }
+}
+
 interface DiscoveredRepoDir {
   readonly relPath: string;
   readonly dirPath: string;
@@ -87,17 +97,34 @@ interface ScanQueueItem {
 export async function buildRepoMap(
   deps: ProfileContextDeps,
   workDir: string,
+  options?: BuildRepoMapOptions,
 ): Promise<string> {
   const rootDir = normalize(workDir);
   if (rootDir.length === 0 || dirname(rootDir) === rootDir) return '';
 
-  const discovered = await discoverSubRepos(deps, rootDir);
+  const budgetMs = options?.budgetMs ?? SCAN_BUDGET_MS;
+  if (budgetMs <= 0) return '';
+  const now = Date.now();
+  const totalDeadline = now + budgetMs;
+  const discoveryDeadline = now + Math.max(1, Math.floor(budgetMs * 0.75));
+  const discoveryDeps: ProfileContextDeps = {
+    fs: createDeadlineFs(deps.fs, discoveryDeadline),
+    homeDir: deps.homeDir,
+  };
+
+  const discovered = await discoverSubRepos(discoveryDeps, rootDir, discoveryDeadline);
   if (discovered.length === 0) return '';
 
+  const formatDeps: ProfileContextDeps = {
+    fs: createDeadlineFs(deps.fs, totalDeadline),
+    homeDir: deps.homeDir,
+  };
   const sorted = discovered.toSorted((a, b) => a.relPath.localeCompare(b.relPath));
   const visible =
     sorted.length <= REPO_MAP_MAX_LINES ? sorted : sorted.slice(0, REPO_MAP_MAX_LINES - 1);
-  const lines = await Promise.all(visible.map((repo) => formatRepoLine(deps, repo)));
+  const lines = await Promise.all(
+    visible.map((repo) => formatRepoLine(formatDeps, repo, totalDeadline)),
+  );
   const remaining = sorted.length - visible.length;
   if (remaining > 0) {
     lines.push(`- ... and ${String(remaining)} more sub-repositories`);
@@ -108,8 +135,8 @@ export async function buildRepoMap(
 async function discoverSubRepos(
   deps: ProfileContextDeps,
   rootDir: string,
+  deadline: number,
 ): Promise<DiscoveredRepoDir[]> {
-  const deadline = Date.now() + SCAN_BUDGET_MS;
   const foundByRelPath = new Map<string, DiscoveredRepoDir>();
   const rootReal = (await tryRealpath(deps.fs, rootDir)) ?? rootDir;
   const seenRealDirs = new Set<string>([rootDir, rootReal]);
@@ -151,6 +178,7 @@ async function discoverSubRepos(
       const candidates = selectTraversableEntries(entries, skipHomeProtected);
 
       for (const entry of candidates) {
+        if (Date.now() >= deadline) break;
         const childDirPath = join(node.dirPath, entry.name);
         const childRelPath = node.relPath === '' ? entry.name : `${node.relPath}/${entry.name}`;
         let childRealPath = join(node.realPath, entry.name);
@@ -183,8 +211,8 @@ async function discoverSubRepos(
     }
   }
 
-  if (hasRootGitmodules) {
-    const gitmodulesText = await readSmallText(deps.fs, join(rootDir, '.gitmodules'));
+  if (hasRootGitmodules && Date.now() < deadline) {
+    const gitmodulesText = await readSmallText(deps.fs, join(rootDir, '.gitmodules'), deadline);
     if (gitmodulesText !== undefined) {
       for (const relPath of parseGitmodulesPaths(gitmodulesText)) {
         if (visitedDirs >= MAX_VISITED_DIRS || Date.now() >= deadline) break;
@@ -278,19 +306,39 @@ function normalizeRelativeSubpath(raw: string): string | undefined {
 async function formatRepoLine(
   deps: ProfileContextDeps,
   repo: DiscoveredRepoDir,
+  deadline: number,
 ): Promise<string> {
+  const safePath = sanitizePathDisplay(repo.relPath);
+  if (Date.now() >= deadline) return `- ${safePath}`;
+
   const entries = repo.entries ?? (await safeReaddir(deps.fs, repo.dirPath)) ?? [];
+  if (entries.length === 0 && Date.now() >= deadline) return `- ${safePath}`;
+
   const byName = new Map(entries.map((entry) => [entry.name, entry]));
   const [agentsRelPaths, role] = await Promise.all([
-    findSubrepoAgentsMdRelPaths(deps.fs, repo.dirPath, repo.relPath, byName),
-    extractRepoRole(deps.fs, repo.dirPath, byName),
+    findSubrepoAgentsMdRelPaths(deps.fs, repo.dirPath, repo.relPath, byName, deadline),
+    extractRepoRole(deps.fs, repo.dirPath, byName, deadline),
   ]);
   const suffix =
-    agentsRelPaths.length > 0 ? ` (${agentsRelPaths.map((p) => `\`${p}\``).join(', ')})` : '';
+    agentsRelPaths.length > 0
+      ? ` (${agentsRelPaths.map((p) => sanitizePathDisplay(p)).join(', ')})`
+      : '';
   if (role !== undefined && role.length > 0) {
-    return `- \`${repo.relPath}\` — ${role}${suffix}`;
+    return `- ${safePath} — ${quoteUntrustedSummary(role)}${suffix}`;
   }
-  return `- \`${repo.relPath}\`${suffix}`;
+  return `- ${safePath}${suffix}`;
+}
+
+function sanitizePathDisplay(path: string): string {
+  return stripControlAndFenceBreakers(path).replaceAll('`', "'");
+}
+
+function quoteUntrustedSummary(summary: string): string {
+  return JSON.stringify(stripControlAndFenceBreakers(summary));
+}
+
+function stripControlAndFenceBreakers(value: string): string {
+  return value.replaceAll(/[\u0000-\u001F\u007F]+/g, ' ').replaceAll(/`{3,}/g, "'''").trim();
 }
 
 async function findSubrepoAgentsMdRelPaths(
@@ -298,21 +346,24 @@ async function findSubrepoAgentsMdRelPaths(
   repoDir: string,
   repoRelPath: string,
   byName: ReadonlyMap<string, HostDirEntry>,
+  deadline: number,
 ): Promise<string[]> {
+  if (Date.now() >= deadline) return [];
   const found: string[] = [];
   const dotKimiEntry = byName.get('.kimi-code');
   if (
     dotKimiEntry !== undefined &&
     (dotKimiEntry.isDirectory || dotKimiEntry.isSymbolicLink === true)
   ) {
-    const dotKimiAgents = await readSmallText(fs, join(repoDir, '.kimi-code', 'AGENTS.md'));
+    const dotKimiAgents = await readSmallText(fs, join(repoDir, '.kimi-code', 'AGENTS.md'), deadline);
     if (dotKimiAgents !== undefined && dotKimiAgents.trim().length > 0) {
       found.push(`${repoRelPath}/.kimi-code/AGENTS.md`);
     }
   }
   for (const fileName of AGENTS_MD_NAMES) {
+    if (Date.now() >= deadline) break;
     if (!hasFileCandidate(byName, fileName)) continue;
-    const text = await readSmallText(fs, join(repoDir, fileName));
+    const text = await readSmallText(fs, join(repoDir, fileName), deadline);
     if (text !== undefined && text.trim().length > 0) {
       found.push(`${repoRelPath}/${fileName}`);
       break;
@@ -325,28 +376,31 @@ async function extractRepoRole(
   fs: IHostFileSystem,
   repoDir: string,
   byName: ReadonlyMap<string, HostDirEntry>,
+  deadline: number,
 ): Promise<string | undefined> {
-  const manifest = await readManifestInfo(fs, repoDir, byName);
+  if (Date.now() >= deadline) return undefined;
+  const manifest = await readManifestInfo(fs, repoDir, byName, deadline);
   if (manifest.description !== undefined) return manifest.description;
 
   let readmeTitle: string | undefined;
   for (const candidate of README_CANDIDATES) {
+    if (Date.now() >= deadline) return undefined;
     if (!hasFileCandidate(byName, candidate)) continue;
-    const text = await readSmallText(fs, join(repoDir, candidate));
+    const text = await readSmallText(fs, join(repoDir, candidate), deadline);
     if (text === undefined) continue;
     const lead = extractMarkdownLead(text, false);
     if (lead.prose !== undefined) return lead.prose;
     if (readmeTitle === undefined && lead.title !== undefined) readmeTitle = lead.title;
   }
 
-  const agentsLead = await readAgentsMdLead(fs, repoDir, byName);
+  const agentsLead = await readAgentsMdLead(fs, repoDir, byName, deadline);
   if (agentsLead !== undefined) return agentsLead;
 
   const folderName = basename(repoDir);
   if (readmeTitle !== undefined && !isRedundantTitle(readmeTitle, folderName)) {
     return formatSummary(readmeTitle);
   }
-  const moduleName = manifest.name ?? (await readGoModuleName(fs, repoDir, byName));
+  const moduleName = manifest.name ?? (await readGoModuleName(fs, repoDir, byName, deadline));
   if (moduleName !== undefined && !isRedundantTitle(moduleName, folderName)) {
     return formatSummary(moduleName);
   }
@@ -357,11 +411,12 @@ async function readManifestInfo(
   fs: IHostFileSystem,
   repoDir: string,
   byName: ReadonlyMap<string, HostDirEntry>,
+  deadline: number,
 ): Promise<{ description?: string; name?: string }> {
   let fallbackName: string | undefined;
 
-  if (hasFileCandidate(byName, 'package.json')) {
-    const raw = await readSmallText(fs, join(repoDir, 'package.json'));
+  if (Date.now() < deadline && hasFileCandidate(byName, 'package.json')) {
+    const raw = await readSmallText(fs, join(repoDir, 'package.json'), deadline);
     if (raw !== undefined) {
       const parsed = tryParseJsonRecord(raw);
       const description = cleanManifestDescription(parsed?.['description']);
@@ -370,8 +425,8 @@ async function readManifestInfo(
     }
   }
 
-  if (hasFileCandidate(byName, 'pyproject.toml')) {
-    const raw = await readSmallText(fs, join(repoDir, 'pyproject.toml'));
+  if (Date.now() < deadline && hasFileCandidate(byName, 'pyproject.toml')) {
+    const raw = await readSmallText(fs, join(repoDir, 'pyproject.toml'), deadline);
     if (raw !== undefined) {
       const parsed = tryParseTomlRecord(raw);
       const project = asRecord(parsed?.['project']);
@@ -384,8 +439,8 @@ async function readManifestInfo(
     }
   }
 
-  if (hasFileCandidate(byName, 'Cargo.toml')) {
-    const raw = await readSmallText(fs, join(repoDir, 'Cargo.toml'));
+  if (Date.now() < deadline && hasFileCandidate(byName, 'Cargo.toml')) {
+    const raw = await readSmallText(fs, join(repoDir, 'Cargo.toml'), deadline);
     if (raw !== undefined) {
       const parsed = tryParseTomlRecord(raw);
       const pkg = asRecord(parsed?.['package']);
@@ -405,9 +460,10 @@ async function readGoModuleName(
   fs: IHostFileSystem,
   repoDir: string,
   byName: ReadonlyMap<string, HostDirEntry>,
+  deadline: number,
 ): Promise<string | undefined> {
-  if (!hasFileCandidate(byName, 'go.mod')) return undefined;
-  const raw = await readSmallText(fs, join(repoDir, 'go.mod'));
+  if (Date.now() >= deadline || !hasFileCandidate(byName, 'go.mod')) return undefined;
+  const raw = await readSmallText(fs, join(repoDir, 'go.mod'), deadline);
   if (raw === undefined) return undefined;
   for (const line of raw.split(/\r?\n/)) {
     const match = /^module\s+(\S+)/.exec(line.trim());
@@ -420,20 +476,23 @@ async function readAgentsMdLead(
   fs: IHostFileSystem,
   repoDir: string,
   byName: ReadonlyMap<string, HostDirEntry>,
+  deadline: number,
 ): Promise<string | undefined> {
   for (const fileName of AGENTS_MD_NAMES) {
+    if (Date.now() >= deadline) return undefined;
     if (!hasFileCandidate(byName, fileName)) continue;
-    const raw = await readSmallText(fs, join(repoDir, fileName));
+    const raw = await readSmallText(fs, join(repoDir, fileName), deadline);
     if (raw === undefined) continue;
     const lead = extractMarkdownLead(raw, true);
     if (lead.prose !== undefined) return lead.prose;
   }
   const dotKimiEntry = byName.get('.kimi-code');
   if (
+    Date.now() < deadline &&
     dotKimiEntry !== undefined &&
     (dotKimiEntry.isDirectory || dotKimiEntry.isSymbolicLink === true)
   ) {
-    const raw = await readSmallText(fs, join(repoDir, '.kimi-code', 'AGENTS.md'));
+    const raw = await readSmallText(fs, join(repoDir, '.kimi-code', 'AGENTS.md'), deadline);
     if (raw !== undefined) {
       const lead = extractMarkdownLead(raw, true);
       if (lead.prose !== undefined) return lead.prose;
@@ -541,6 +600,7 @@ function cleanMarkdownInline(text: string): string {
     .replaceAll(/\*\*([^*]+)\*\*/g, '$1')
     .replaceAll(/(?<!\*)\*([^*]+)\*(?!\*)/g, '$1')
     .replaceAll(/__([^_]+)__/g, '$1')
+    .replaceAll(/`([^`]*)`/g, '$1')
     .replaceAll(/\s+/g, ' ')
     .trim();
 }
@@ -600,7 +660,12 @@ function hasFileCandidate(
   return entry !== undefined && (!entry.isDirectory || entry.isSymbolicLink === true);
 }
 
-async function readSmallText(fs: IHostFileSystem, path: string): Promise<string | undefined> {
+async function readSmallText(
+  fs: IHostFileSystem,
+  path: string,
+  deadline: number,
+): Promise<string | undefined> {
+  if (Date.now() >= deadline) return undefined;
   const stat = await safeStat(fs, path);
   if (stat === undefined || !stat.isFile || stat.size <= 0) return undefined;
   if (stat.size <= METADATA_INLINE_MAX_BYTES) {
@@ -613,8 +678,14 @@ async function readSmallText(fs: IHostFileSystem, path: string): Promise<string 
   try {
     const head = await fs.readFileHead(path, METADATA_HEAD_BYTES);
     return Buffer.from(head.bytes).toString('utf8');
-  } catch {
-    if (stat.size > METADATA_FALLBACK_MAX_BYTES) return undefined;
+  } catch (error) {
+    if (
+      error instanceof RepoMapDeadlineError ||
+      Date.now() >= deadline ||
+      stat.size > METADATA_FALLBACK_MAX_BYTES
+    ) {
+      return undefined;
+    }
     try {
       return (await fs.readText(path, { errors: 'ignore' })).slice(0, METADATA_HEAD_BYTES);
     } catch {
@@ -648,6 +719,61 @@ async function tryRealpath(fs: IHostFileSystem, path: string): Promise<string | 
   } catch {
     return undefined;
   }
+}
+
+function createDeadlineFs(base: IHostFileSystem, deadline: number): IHostFileSystem {
+  const call = <T>(fn: () => Promise<T>): Promise<T> => {
+    if (Date.now() >= deadline) return Promise.reject(new RepoMapDeadlineError());
+    try {
+      return raceWithDeadline(fn(), deadline);
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
+  };
+  return Object.assign(Object.create(base) as IHostFileSystem, {
+    readText: (path: string, options?: Parameters<IHostFileSystem['readText']>[1]) =>
+      call(() => base.readText(path, options)),
+    readFileHead: (path: string, maxBytes: number) =>
+      call(() => base.readFileHead(path, maxBytes)),
+    stat: (path: string) => call(() => base.stat(path)),
+    lstat: (path: string) => call(() => base.lstat(path)),
+    readdir: (path: string) => call(() => base.readdir(path)),
+    realpath: (path: string) => call(() => base.realpath(path)),
+  });
+}
+
+function raceWithDeadline<T>(promise: Promise<T>, deadline: number): Promise<T> {
+  const remainingMs = deadline - Date.now();
+  if (remainingMs <= 0) {
+    promise.then(
+      () => undefined,
+      () => undefined,
+    );
+    return Promise.reject(new RepoMapDeadlineError());
+  }
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new RepoMapDeadlineError());
+    }, remainingMs);
+    timer.unref?.();
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        if (settled) return;
+        settled = true;
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        if (settled) return;
+        settled = true;
+        reject(error instanceof Error ? error : new Error(String(error)));
+      },
+    );
+  });
 }
 
 function tryParseJsonRecord(raw: string): Record<string, unknown> | undefined {
