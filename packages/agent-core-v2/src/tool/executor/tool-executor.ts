@@ -101,6 +101,21 @@ export class ToolExecutor<TContext = unknown> {
       if ('args' in decision) control.setArgs(decision.args);
       return decision;
     };
+    const decideSync = <T extends ToolDecision>(
+      phase: ToolPhase,
+      decider: (
+        context: ToolDecisionContext<unknown, TContext, any>,
+      ) => T | void,
+    ): T | void => {
+      control.enter(phase);
+      const decision = decider(decisionContext());
+      if (decision === undefined) return;
+      if ('reject' in decision) {
+        throw new ToolStop(rejected(phase, decision.reject, decision.data), decision.result);
+      }
+      if ('args' in decision) control.setArgs(decision.args);
+      return decision;
+    };
     const prepare = async (tool: AnyTool<TContext>): Promise<ToolReturn | undefined> => {
       control.enter('validate');
       const validation = toolArgsError(tool, control.args);
@@ -136,6 +151,7 @@ export class ToolExecutor<TContext = unknown> {
         if (tool === undefined) {
           throw new ToolStop(rejected('resolve', `Tool "${call.name}" not found`, undefined, 'resolve'));
         }
+        decideSync('validate', (ctx) => hook?.validating?.(ctx));
         const synthetic = await prepare(tool);
         if (synthetic !== undefined) return control.returned(synthetic);
         if (tool.execute === undefined) {

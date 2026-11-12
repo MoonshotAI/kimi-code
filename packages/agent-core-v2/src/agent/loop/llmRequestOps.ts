@@ -55,7 +55,7 @@ export interface LlmToolsSnapshot {
 
 const llmRequestSchema = z.object({
   agentId: z.string(),
-  kind: z.enum(['loop', 'compaction']),
+  kind: z.enum(['loop', 'compaction', 'prediction']),
   provider: z.string(),
   model: z.string(),
   modelAlias: z.string().optional(),
@@ -85,7 +85,7 @@ export class LlmRequest extends AgentEvent2<LlmRequestPayload> {
 }
 export interface LlmRequest {
   readonly agentId: string;
-  readonly kind: 'loop' | 'compaction';
+  readonly kind: 'loop' | 'compaction' | 'prediction';
   readonly provider: string;
   readonly model: string;
   readonly modelAlias?: string;

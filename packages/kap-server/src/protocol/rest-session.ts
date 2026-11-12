@@ -1,31 +1,34 @@
 import { z } from 'zod';
 
 import {
+  sessionAgentConfigPartialSchema,
   sessionWarningSchema,
   sessionWarningsResponseSchema,
-  updateSessionProfileRequestSchema,
-  type UpdateSessionProfileRequest,
+  updateSessionProfileRequestSchema as engineUpdateSessionProfileRequestSchema,
 } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
 
 import { goalSnapshotSchema } from './goal';
 import { cursorQuerySchema, pageResponseSchema } from './pagination';
 import {
+  creationOnlyProfileSchema,
   sessionChildCreateSchema,
   sessionCreateSchema,
   sessionForkSchema,
   sessionSchema,
 } from './session';
 
-export {
-  sessionWarningSchema,
-  sessionWarningsResponseSchema,
-  updateSessionProfileRequestSchema,
-};
+export { sessionWarningSchema, sessionWarningsResponseSchema };
 export type {
   SessionWarning,
   SessionWarningsResponse,
-  UpdateSessionProfileRequest,
 } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
+
+export const updateSessionProfileRequestSchema = engineUpdateSessionProfileRequestSchema.extend({
+  agent_config: sessionAgentConfigPartialSchema
+    .extend({ profile: creationOnlyProfileSchema })
+    .optional(),
+});
+export type UpdateSessionProfileRequest = z.infer<typeof updateSessionProfileRequestSchema>;
 
 export const createSessionRequestSchema = sessionCreateSchema;
 export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>;
@@ -103,6 +106,50 @@ export const startBtwSessionResponseSchema = z.object({
   agent_id: z.string().min(1),
 });
 export type StartBtwSessionResponse = z.infer<typeof startBtwSessionResponseSchema>;
+
+export const predictPromptRequestSchema = z.object({
+  prediction_id: z.string().min(1),
+  expected_turn_id: z.number().int().nonnegative(),
+});
+export type PredictPromptRequest = z.infer<typeof predictPromptRequestSchema>;
+
+export const predictPromptResponseSchema = z.object({
+  prediction: z.string().nullable(),
+});
+export type PredictPromptResponse = z.infer<typeof predictPromptResponseSchema>;
+
+export const cancelPromptPredictionRequestSchema = z.object({
+  prediction_id: z.string().min(1),
+  reason: z.enum([
+    'input',
+    'escape',
+    'new_turn',
+    'session',
+    'dialog',
+    'queue',
+    'submit',
+    'plan',
+    'visibility',
+    'shutdown',
+    'disconnect',
+    'activity_turn_started',
+    'activity_turn_ended',
+    'activity_background',
+    'activity_interaction',
+    'activity_agent_lifecycle',
+    'agent_will_close',
+    'agent_replaced',
+    'agent_closed',
+    'disposed',
+    'unspecified',
+  ]).optional(),
+});
+export type CancelPromptPredictionRequest = z.infer<typeof cancelPromptPredictionRequestSchema>;
+
+export const cancelPromptPredictionResponseSchema = z.object({
+  cancelled: z.boolean(),
+});
+export type CancelPromptPredictionResponse = z.infer<typeof cancelPromptPredictionResponseSchema>;
 
 export const listSessionChildrenQuerySchema = cursorQuerySchema.and(
   z.object({

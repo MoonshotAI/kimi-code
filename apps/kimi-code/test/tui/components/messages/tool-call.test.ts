@@ -20,8 +20,9 @@ function strip(text: string): string {
     .replaceAll(new RegExp(`${ESC}\\]8;;[^${BEL}]*${BEL}`, 'g'), '');
 }
 
-function stubTui(rows: number): TUI {
+function stubTui(rows: number, mode: TUI['mode'] = 'regular'): TUI {
   return {
+    mode,
     terminal: { rows },
     requestRender: () => {},
   } as unknown as TUI;
@@ -432,15 +433,51 @@ describe('ToolCallComponent', () => {
       expect(component.hasHiddenContent()).toBe(true);
     });
 
-    it('renders the Update badge with a primary background and white text', () => {
+    it('renders the Update badge with a primary background and white text in regular mode', () => {
       const component = new ToolCallComponent(
         { id: 'call_notify_brand', name: 'NotifyUser', args: { message } },
         { tool_call_id: 'call_notify_brand', output: 'Update shown to the user.', is_error: false },
+        stubTui(24, 'regular'),
       );
 
       const output = component.render(100).join('\n');
       const expectedMark = chalk.bgHex(darkColors.primary)(chalk.hex('#FFFFFF')(NOTIFY_USER_MARK));
       expect(output).toContain(expectedMark);
+    });
+
+    it('replaces the Update badge with a primary bullet in fullscreen mode across collapsed and expanded states', () => {
+      const title = 'x'.repeat(114);
+      const component = new ToolCallComponent(
+        { id: 'call_notify_fullscreen', name: 'NotifyUser', args: { title, message } },
+        {
+          tool_call_id: 'call_notify_fullscreen',
+          output: 'Update shown to the user.',
+          is_error: false,
+        },
+        stubTui(24, 'fullscreen'),
+      );
+
+      const collapsedRaw = component.render(100).join('\n');
+      expect(collapsedRaw).toContain(chalk.hex(darkColors.primary)(STATUS_BULLET));
+      expect(collapsedRaw).not.toContain(NOTIFY_USER_MARK);
+
+      const collapsed = component.render(60).map(strip).filter((line) => line.trim().length > 0);
+      expect(collapsed).toHaveLength(1);
+      expect(collapsed[0]?.startsWith(STATUS_BULLET)).toBe(true);
+      expect(collapsed[0]).toContain('…');
+      expect(visibleWidth(collapsed[0]!)).toBeLessThanOrEqual(60);
+
+      component.setExpanded(true);
+      const expandedRaw = component.render(60).join('\n');
+      expect(expandedRaw).toContain(chalk.hex(darkColors.primary)(STATUS_BULLET));
+      expect(expandedRaw).not.toContain(NOTIFY_USER_MARK);
+
+      const rows = component.render(60).map(strip).filter((line) => line.trim().length > 0);
+      expect(rows[0]).toBe(`${STATUS_BULLET}${'x'.repeat(58)}`);
+      expect(rows[1]).toBe(`  ${'x'.repeat(56)}`);
+      expect(rows[2]).toBe('  Login module is clean.');
+      expect(rows.at(-1)).toBe('  The bug must be in session expiry.');
+      for (const row of rows) expect(visibleWidth(row)).toBeLessThanOrEqual(60);
     });
 
     it('uses the title as the header and keeps the message behind ctrl+o', () => {

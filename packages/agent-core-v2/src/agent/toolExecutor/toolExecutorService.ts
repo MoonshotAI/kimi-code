@@ -234,6 +234,10 @@ export class AgentToolExecutorService extends Service implements IAgentToolExecu
     this.announce(event);
     if (!this.announced.has(handler)) return;
     const snapshot = handler.snapshot();
+    if (event.type === 'change' && snapshot.detached) {
+      this.leases.get(handler.taskId)?.();
+      this.leases.delete(handler.taskId);
+    }
     void this.dispatcher.dispatch(new ToolUpdated({
       agentId: this.scopeContext.agentId,
       turnId: event.context.turnId,

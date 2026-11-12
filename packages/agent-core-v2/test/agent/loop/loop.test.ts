@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { Event } from '#/_base/event';
 import type { CoreLoopRequester, LoopRequester } from '#/agent/loop/requesterContract';
+import type { AgentLoopRequestFactory } from '#/agent/loop/requester';
+import type { AgentLoopRequestObserver } from '#/agent/loop/requestObservation';
 import type { LlmRequest as CoreLlmRequest } from '#human/llm/request';
 import { contentsOf, mergeFields, type LlmRequestPart } from '#human/llm/requester';
 import type { LlmRunControl } from '#human/llm/policy/policy';
@@ -37,7 +39,7 @@ import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IEventBus } from '#/app/event/eventBus';
 import { IPluginService } from '#/app/plugin/plugin';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
+import { abortedToolOutput, isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
 
 import {
   agentService,
@@ -56,6 +58,21 @@ import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/st
 import { submitPromptTurn } from './stubs';
 
 type GenerateFn = NonNullable<TestAgentOptions['generate']>;
+
+function trackStepReasons(ctx: TestAgentContext): readonly (string | undefined)[] {
+  const reasons: (string | undefined)[] = [];
+  const factory = (ctx.get(IAgentLoopService) as unknown as {
+    requestFactory: AgentLoopRequestFactory;
+  }).requestFactory;
+  const observer = (factory as unknown as { observer: AgentLoopRequestObserver }).observer;
+  const recordAttempt = observer.recordAttempt.bind(observer);
+  vi.spyOn(observer, 'recordAttempt').mockImplementation((observation, request, ledger) => {
+    const header = request.endpoint?.headers?.['X-Msh-Client-Metadata'];
+    reasons.push(header === undefined ? undefined : JSON.parse(header).step_reason);
+    recordAttempt(observation, request, ledger);
+  });
+  return reasons;
+}
 
 describe('Agent loop', () => {
   let ctx: TestAgentContext;
@@ -302,6 +319,7 @@ describe('Agent loop', () => {
         return undefined;
       },
     });
+    const reasons = trackStepReasons(ctx);
 
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
     await ctx.untilTurnEnd();
@@ -309,6 +327,7 @@ describe('Agent loop', () => {
     expect(seenErrors).toEqual([
       { step: 1, message: 'Unexpected generate call #1' },
     ]);
+    expect(reasons).toEqual(['turn_start', 'turn_start']);
     expect(ctx.allEvents).toContainEqual(
       expect.objectContaining({
         event: 'turn.ended',
@@ -393,14 +412,16 @@ describe('Agent loop', () => {
     );
   });
 
-  it('appends only the final attempt partial when a retried request fails mid-stream', async () => {
+  it('appends every failed attempt partial when a retried request fails mid-stream', async () => {
     profile.update({ activeToolNames: [] });
     ctx.mockNextProviderResponse({
       parts: [{ type: 'text', text: 'first attempt partial' }],
+      usage: { inputOther: 7, output: 3 },
       error: new APIProviderRateLimitError('retry', null, 1),
     });
     ctx.mockNextProviderResponse({
       parts: [{ type: 'text', text: 'final attempt partial' }],
+      usage: { inputOther: 11, output: 5 },
       error: new Error('stream broke mid-flight'),
     });
 
@@ -412,22 +433,46 @@ describe('Agent loop', () => {
       role: 'assistant',
       content: [{ type: 'text', text: 'final attempt partial' }],
       toolCalls: [],
-      usage: { inputOther: 0, output: 0, inputCacheCreation: 0 },
+      usage: { inputOther: 11, output: 5, inputCacheCreation: 0, inputCacheRead: undefined },
     });
-    expect(ctx.contextData().history).not.toContainEqual(
-      expect.objectContaining({
-        role: 'assistant',
-        content: expect.arrayContaining([
-          expect.objectContaining({ text: expect.stringContaining('first attempt partial') }),
-        ]),
-      }),
-    );
+    expect(ctx.contextData().history).toContainEqual({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'first attempt partial' }],
+      toolCalls: [],
+      usage: { inputOther: 7, output: 3, inputCacheCreation: 0, inputCacheRead: undefined },
+    });
     expect(ctx.allEvents).toContainEqual(
       expect.objectContaining({
         event: 'turn.step.interrupted',
         args: expect.objectContaining({ reason: 'error', message: 'stream broke mid-flight' }),
       }),
     );
+    const endedSteps = (await ctx.persistedWireRecords()).filter((record) =>
+      record.type === 'context.append_loop_event' && (record['event'] as { type?: string }).type === 'step.end',
+    );
+    expect(endedSteps.map((record) => (record['event'] as { usage?: unknown }).usage)).toMatchObject([
+      { inputOther: 7, output: 3 },
+      { inputOther: 11, output: 5 },
+    ]);
+
+    const local = createTestAgent({ initialConfig: { providers: {}, loopControl: { maxAttemptsPerStep: 2 } } });
+    try {
+      local.mockNextProviderResponse({
+        parts: [{ type: 'text', text: 'cancel partial' }],
+        error: new APIProviderRateLimitError('retry', null, 60_000),
+      });
+      const { turn } = submitTurn(local.get(IAgentLoopService), 'Cancel during backoff');
+      await local.once('turn.step.retrying');
+      expect(local.get(IAgentLoopService).snapshot().turn?.retry).toMatchObject({ nextAttempt: 2 });
+      turn.cancel(new Error('stop during backoff'));
+      await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
+      const partials = local.contextData().history.filter((message) =>
+        message.role === 'assistant' && message.content.some((part) => part.type === 'text' && part.text.includes('cancel partial')),
+      );
+      expect(partials).toHaveLength(1);
+    } finally {
+      await local.dispose();
+    }
   });
 
   it('does not run loop error handlers for aborted turns', async () => {
@@ -494,6 +539,7 @@ describe('Agent loop', () => {
 
     profile.update({ activeToolNames: ['Lookup'] });
     ctx.get(IAgentToolRegistryService).register(lookupTool);
+    const reasons = trackStepReasons(ctx);
 
     ctx.mockNextResponse({ type: 'text', text: 'I will look it up.' }, lookupCall);
     await ctx.rpc.prompt({
@@ -566,6 +612,7 @@ describe('Agent loop', () => {
         assistant: text "I will look it up."  calls call_lookup:Lookup { "query": "moon" }
         tool[call_lookup]: text "lookup-result"
     `);
+    expect(reasons).toEqual(['turn_start', 'tool_results']);
   });
 
   it('does not abort sibling tools when a parallel batch tool completes first', async () => {
@@ -682,6 +729,69 @@ describe('Agent loop', () => {
     }
   });
 
+  it('records the output a stopped tool produced before it was interrupted', async () => {
+    const local = createTestAgent(permissionModeServices('yolo'));
+    try {
+      const started = deferred();
+      const streamTool: ExecutableTool = {
+        name: 'Stream',
+        description: 'Stream until aborted.',
+        parameters: { type: 'object', properties: {}, additionalProperties: false },
+        resolveExecution: () => ({
+          approvalRule: 'Stream',
+          execute: ({ signal }) => {
+            started.resolve();
+            return new Promise((resolve) => {
+              signal.addEventListener(
+                'abort',
+                () => resolve({ output: 'line-1\nInterrupted by user', isError: true }),
+                { once: true },
+              );
+            });
+          },
+        }),
+      };
+      const hangTool: ExecutableTool = {
+        name: 'Hang',
+        description: 'Wait until aborted.',
+        parameters: { type: 'object', properties: {}, additionalProperties: false },
+        resolveExecution: () => ({
+          approvalRule: 'Hang',
+          execute: ({ signal }) =>
+            new Promise((_, reject) => {
+              signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+            }),
+        }),
+      };
+      local.get(IAgentLoopService).update({ activeToolNames: ['Stream', 'Hang'] });
+      local.get(IAgentToolRegistryService).register(streamTool);
+      local.get(IAgentToolRegistryService).register(hangTool);
+      local.mockNextResponse(
+        { type: 'text', text: 'working' },
+        { type: 'function', id: 'call-stream-1', name: 'Stream', arguments: '{}' },
+        { type: 'function', id: 'call-hang-1', name: 'Hang', arguments: '{}' },
+      );
+
+      const loop = local.get(IAgentLoopService);
+      const { turn } = submitTurn(loop, 'stream until cancelled');
+      await started.promise;
+      expect(loop.cancel()).toBe(true);
+      await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
+
+      const outputs = Object.fromEntries(
+        local.allEvents
+          .filter((entry) => entry.type === '[wire]' && entry.event === 'context.append_loop_event')
+          .map((entry) => (entry.args as { event: LoopRecordedEvent }).event)
+          .filter((event): event is Extract<LoopRecordedEvent, { type: 'tool.result' }> => event.type === 'tool.result')
+          .map((event) => [event.toolCallId, event.result.output]),
+      );
+      expect(outputs['call-stream-1']).toBe('line-1\nInterrupted by user');
+      expect(outputs['call-hang-1']).toBe(abortedToolOutput('Hang', userCancellationReason()));
+    } finally {
+      await local.dispose();
+    }
+  });
+
 
   it('preserves tool call extras (Gemini thought_signature) through to context', async () => {
     const sigCall: ToolCall = {
@@ -742,12 +852,14 @@ describe('Agent loop', () => {
     ctx.mockNextResponse({ type: 'text', text: 'First answer.' });
     ctx.mockNextResponse({ type: 'text', text: 'Second answer.' });
     ctx.mockNextResponse({ type: 'text', text: 'Third answer.' });
+    const reasons = trackStepReasons(ctx);
 
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hello' }] });
     await loop.settled();
 
     expect(continuations).toBe(2);
     expect(ctx.llmCalls).toHaveLength(3);
+    expect(reasons).toEqual(['turn_start', 'turn_start', 'turn_start']);
     const startedSteps = ctx.allEvents
       .filter((event) => event.type === '[rpc]' && event.event === 'turn.step.started')
       .map((event) => (event.args as { step: number }).step);
@@ -809,6 +921,12 @@ describe('Agent loop', () => {
         errorMessage: 'first attempt rate limited',
         statusCode: 429,
       });
+      const started = local.allEvents.filter(
+        (event) => event.type === '[rpc]' && event.event === 'turn.step.started',
+      );
+      expect(started.map((event) => (event.args as { step: number }).step)).toEqual([1, 1]);
+      expect((started[0]?.args as { stepId?: string }).stepId).toBe((started[1]?.args as { stepId?: string }).stepId);
+      expect(local.allEvents.indexOf(retries[0]!)).toBeLessThan(local.allEvents.indexOf(started[1]!));
       const ended = local.allEvents.find(
         (event) => event.type === '[rpc]' && event.event === 'turn.ended',
       );

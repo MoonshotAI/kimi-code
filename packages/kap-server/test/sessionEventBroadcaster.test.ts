@@ -20,7 +20,7 @@ import {
   IAgentLoopService,
   IAgentPermissionModeService,
   IAgentScopeContext,
-  IAgentTaskHistoryService,
+  IAgentTaskService,
   IAgentTodoService,
   IEventBus,
   IEventService,
@@ -44,7 +44,6 @@ import {
   EventBusService,
 } from '@moonshot-ai/agent-core-v2/app/event/eventBusService';
 import type { AgentActivitySnapshot } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
-import { TaskStarted, TaskTerminatedNotice } from '@moonshot-ai/agent-core-v2/agent/task/taskOps';
 import type { AgentTaskInfo } from '@moonshot-ai/agent-core-v2/agent/task/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -174,16 +173,14 @@ class FakeManagerEvents {
 
 }
 
-class FakeAgentTasks implements IAgentTaskHistoryService {
-  readonly _serviceBrand = undefined;
+class FakeAgentTasks implements Pick<IAgentTaskService, 'getTask' | 'list' | 'onDidChangeTask'> {
   private readonly tasks = new Map<string, AgentTaskInfo>();
+  private readonly listeners = new Set<(info: AgentTaskInfo) => void>();
 
-  constructor(
-    private readonly agentId: string,
-    private readonly bus: FakeAgentBus,
-  ) {}
-
-  async reconcile(): Promise<void> {}
+  readonly onDidChangeTask = (listener: (info: AgentTaskInfo) => void) => {
+    this.listeners.add(listener);
+    return { dispose: () => this.listeners.delete(listener) };
+  };
 
   getTask(taskId: string): AgentTaskInfo | undefined {
     return this.tasks.get(taskId);
@@ -194,15 +191,9 @@ class FakeAgentTasks implements IAgentTaskHistoryService {
     return limit === undefined ? infos : infos.slice(0, limit);
   }
 
-  values(): IterableIterator<AgentTaskInfo> {
-    return this.tasks.values();
-  }
-
   change(info: AgentTaskInfo): void {
     this.tasks.set(info.taskId, info);
-    this.bus.emit(info.status === 'running'
-      ? new TaskStarted({ agentId: this.agentId, info })
-      : new TaskTerminatedNotice({ agentId: this.agentId, info }));
+    for (const listener of [...this.listeners]) listener(info);
   }
 }
 
@@ -215,7 +206,7 @@ class FakeAgentHandle {
   activity: AgentActivitySnapshot = {};
   private readonly services = new Map<unknown, unknown>();
   constructor(readonly id: string) {
-    this.tasks = new FakeAgentTasks(id, this.bus);
+    this.tasks = new FakeAgentTasks();
     const scope = makeAgentScopeContext({
       agentId: id,
       agentScope: `agents/${id}`,
@@ -224,7 +215,7 @@ class FakeAgentHandle {
     this.context = scope.agentContext;
     this.services.set(IAgentScopeContext, scope);
     this.services.set(IEventBus, this.bus);
-    this.services.set(IAgentTaskHistoryService, this.tasks);
+    this.services.set(IAgentTaskService, this.tasks);
     this.services.set(IAgentConversationUndoParticipantRegistry, {
       register: () => ({ dispose: () => {} }),
     });
@@ -1735,13 +1726,13 @@ describe('SessionEventBroadcaster', () => {
       return new SessionEventBroadcaster({ core: makeCore(sessions, eventBus, metaAgents), conversations: conversationService() });
     }
 
-    function shellTask(taskId: string, status: AgentTaskInfo['status']): AgentTaskInfo {
+    function shellTask(taskId: string, status: AgentTaskInfo['status'], detached = true): AgentTaskInfo {
       return {
         taskId,
         kind: 'process',
         description: 'dev server',
         status,
-        detached: true,
+        detached,
         startedAt: 1_700_000_000_000,
         endedAt: status === 'running' ? null : 1_700_000_005_000,
         command: 'npm run dev',
@@ -1766,7 +1757,7 @@ describe('SessionEventBroadcaster', () => {
     it('lists the running tasks of every subscribed agent, then streams each change as a task frame', async () => {
       const lc = new FakeLifecycle();
       const main = lc.addAgent('main');
-      main.tasks.change(shellTask('bash-1', 'running'));
+      main.tasks.change(shellTask('bash-1', 'running', false));
       main.tasks.change(shellTask('bash-0', 'completed'));
       sessions.set('s1', lc);
       bc = makeBroadcasterForAgents();
@@ -1775,7 +1766,9 @@ describe('SessionEventBroadcaster', () => {
       const offView = collectingTarget();
       await bc.subscribe('s1', view.target, ['main']);
       await bc.subscribe('s1', offView.target, ['agent-9']);
-      main.tasks.change(shellTask('bash-1', 'killed'));
+      main.tasks.change(shellTask('bash-2', 'running', false));
+      main.tasks.change({ ...shellTask('bash-2', 'running', false), detached: true });
+      main.tasks.change(shellTask('bash-2', 'killed'));
 
       expect(taskFramesOf(view)).toEqual([
         {
@@ -1787,7 +1780,7 @@ describe('SessionEventBroadcaster', () => {
               task_id: 'bash-1',
               kind: 'shell',
               status: 'running',
-              detached: true,
+              detached: false,
               description: 'dev server',
               parent_tool_call_id: 'call_bash',
               command: 'npm run dev',
@@ -1798,7 +1791,23 @@ describe('SessionEventBroadcaster', () => {
         expect.objectContaining({
           type: 'task',
           agent_id: 'main',
-          task_id: 'bash-1',
+          task_id: 'bash-2',
+          status: 'running',
+          detached: false,
+          parent_tool_call_id: 'call_bash',
+        }),
+        expect.objectContaining({
+          type: 'task',
+          agent_id: 'main',
+          task_id: 'bash-2',
+          status: 'running',
+          detached: true,
+          parent_tool_call_id: 'call_bash',
+        }),
+        expect.objectContaining({
+          type: 'task',
+          agent_id: 'main',
+          task_id: 'bash-2',
           status: 'ended',
           outcome: 'killed',
           ended_at: new Date(1_700_000_005_000).toISOString(),

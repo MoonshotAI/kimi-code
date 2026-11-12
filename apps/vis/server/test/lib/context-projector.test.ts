@@ -25,7 +25,20 @@ describe('context-projector', () => {
     const { sessionDir, cleanup: c } = await buildSessionFixture('sample-main');
     cleanup = c;
     const wire = await readAgentWire(join(sessionDir, 'agents', 'main', 'wire.jsonl'));
-    const proj = projectContext(wire.records);
+    const proj = projectContext([
+      ...wire.records,
+      {
+        lineNo: wire.records.length + 1,
+        data: {
+          type: 'usage.record',
+          agentId: 'main',
+          model: 'kimi-k2',
+          usage: { inputOther: 7, output: 2, inputCacheRead: 1, inputCacheCreation: 3 },
+          usageScope: 'prediction',
+        },
+        raw: {},
+      },
+    ]);
 
     expect(proj.messages).toHaveLength(2);
     expect(proj.messages[0]!.message.role).toBe('user');
@@ -37,8 +50,11 @@ describe('context-projector', () => {
     expect(proj.usage.byScope.turn).toEqual({
       inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0,
     });
+    expect(proj.usage.byScope.prediction).toEqual({
+      inputOther: 7, output: 2, inputCacheRead: 1, inputCacheCreation: 3,
+    });
     expect(proj.usage.byModel['kimi-k2']).toEqual({
-      inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0,
+      inputOther: 17, output: 7, inputCacheRead: 1, inputCacheCreation: 3,
     });
 
     expect(proj.config.systemPrompt).toBe('You are Kimi.');

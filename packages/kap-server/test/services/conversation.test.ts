@@ -130,10 +130,30 @@ describe('conversation fold', () => {
         llmFirstTokenLatencyMs: 40,
         llmServerDecodeMs: 7,
       }),
+      record('turn.step.retrying', {
+        turnId: 0,
+        step: 1,
+        stepId: 's1',
+        failedAttempt: 1,
+        nextAttempt: 2,
+        maxAttempts: 2,
+        delayMs: 0,
+        errorName: 'APIStatusError',
+        errorMessage: 'retry',
+        statusCode: 429,
+      }),
+    ]);
+
+    expect(state.turns[0]?.retry).toMatchObject({ attempt: 1, next_attempt: 2, max_attempts: 2 });
+    applyConversationRecord(state, record('turn.step.started', { turnId: 0, step: 1, stepId: 's1' }));
+    expect(state.turns[0]?.retry).toBeUndefined();
+    for (const entry of [
       stepBegin(0, 2, 's2'),
       stepEnd(0, 2, 's2', { finishReason: 'end_turn', usage: { inputOther: 5, output: 1, inputCacheRead: 4, inputCacheCreation: 0 } }),
       turnEnded(0, 'completed', { durationMs: 120 }),
-    ]);
+    ]) {
+      applyConversationRecord(state, entry);
+    }
 
     const [turn] = state.turns;
     expect(turn?.turn_id).toMatch(/^t_[0-9a-f]{12}$/);
@@ -696,6 +716,28 @@ describe('conversation fold', () => {
     expect(state.turns[0]?.items[1]).toMatchObject({ item_id: 'Bash_0', outcome: 'failed' });
   });
 
+  it('replaces the partial reply of a failed attempt with the attempt that retries its step', () => {
+    const failedAttempt = [
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'Which regions?'),
+      stepBegin(0, 1, 's1'),
+      contentPart(0, 1, 's1', { type: 'text', text: 'Affected: eu-west ' }, 0),
+      stepEnd(0, 1, 's1', { finishReason: 'error' }),
+    ];
+
+    const retried = fold([
+      ...failedAttempt,
+      stepBegin(0, 1, 's2'),
+      contentPart(0, 1, 's2', { type: 'text', text: 'Affected regions are eu-west and us-east.' }, 0),
+      stepEnd(0, 1, 's2', { finishReason: 'end_turn' }),
+      turnEnded(0, 'completed'),
+    ]);
+    const exhausted = fold([...failedAttempt, turnEnded(0, 'failed', { error: { name: 'APIConnectionError', message: 'terminated' } })]);
+
+    expect(shape(retried.turns[0])).toEqual(['opener:Which regions?', 'assistant_message:Affected regions are eu-west and us-east.']);
+    expect(shape(exhausted.turns[0])).toEqual(['opener:Which regions?', 'assistant_message:Affected: eu-west ']);
+  });
+
   it('keeps the note of a tool result beside its output', () => {
     const note = 'Read image file. Mime type: image/png. Size: 1234 bytes. Original dimensions: 640x480 pixels.';
     const state = fold([
@@ -1111,6 +1153,25 @@ describe('conversation feed', () => {
     const ended = h.events.flatMap((event) => (event.type === 'item.ended' && 'item' in event ? [event.item] : []));
     expect(ended.map((item) => item.item_id)).toEqual(['s1:0', 's1:1']);
     expect(ended[0]).toMatchObject({ type: 'reasoning', duration_ms: 1_500 });
+    h.dispatcher.dispose();
+  });
+
+  it('removes the reply a failed attempt streamed once a retry of its step begins', async () => {
+    const h = feedHarness([]);
+    await runningTurn(h);
+
+    await h.dispatcher.dispatch(new AssistantDelta({ agentId: 'main', turnId: 0, block: 0, delta: 'Affected: eu-west ' }));
+    await h.dispatcher.dispatch(loopEvent({ type: 'content.part', turnId: '0', step: 1, stepUuid: 's1', block: 0, part: { type: 'text', text: 'Affected: eu-west ' } }));
+    await h.dispatcher.dispatch(loopEvent({ type: 'step.end', uuid: 's1', turnId: '0', step: 1, finishReason: 'error' }));
+    await h.dispatcher.dispatch(loopEvent({ type: 'step.begin', uuid: 's2', turnId: '0', step: 1 }));
+    await h.dispatcher.dispatch(new AssistantDelta({ agentId: 'main', turnId: 0, block: 0, delta: 'Affected regions are eu-west and us-east.' }));
+    await flushed();
+
+    expect(h.events.flatMap((event) => {
+      if (event.type === 'item.started' || event.type === 'item.ended') return [`${event.type}:${event.item.item_id}`];
+      return event.type === 'item.removed' ? [`${event.type}:${event.item_id}`] : [];
+    })).toEqual(['item.started:s1:0', 'item.ended:s1:0', 'item.removed:s1:0', 'item.started:s2:0']);
+    expect((await h.feed.page(undefined, 20)).turns[0]?.items.map((item) => item.item_id)).toEqual(['p1', 's2:0']);
     h.dispatcher.dispose();
   });
 

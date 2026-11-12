@@ -10,6 +10,7 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
+import { SessionRequestAttributionService } from '#/session/requestAttribution/requestAttributionService';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import type { ContentPart, MediaPart, Message } from '#human/llm/message';
 import { mediaUrlOf } from '#human/llm/protocol/kit/media';
@@ -119,6 +120,7 @@ describe('projector tool-exchange normalization', () => {
       {} as ISessionTokenCountingService,
       {} as IAgentScopeContext,
       new AgentStateService(),
+      new SessionRequestAttributionService(),
     );
     projector = new AgentLoopProjector((anomalies) => observer.reportProjectionRepairs(anomalies));
   });

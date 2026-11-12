@@ -57,6 +57,7 @@ export type LoopRecordedEvent =
       readonly type: 'tool.call';
       readonly stepUuid: string;
       readonly toolCallId: string;
+      readonly rawId?: string;
       readonly name: string;
       readonly args?: unknown;
       readonly extras?: Record<string, unknown>;
@@ -188,7 +189,7 @@ function createLoopEventFoldWithState(
             name: event.name,
             arguments: event.args === undefined ? null : JSON.stringify(event.args),
             extras: event.extras,
-            rawId: undefined,
+            rawId: event.rawId,
           };
           sink.appendOpenToolCall(call, event.display);
           pending.set(event.toolCallId, event.name);

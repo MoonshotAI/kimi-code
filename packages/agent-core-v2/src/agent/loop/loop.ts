@@ -4,7 +4,7 @@ import { Error2, isError2, type Error2Options } from '#/_base/errors/errors';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { AgentTaskInfo } from '#/agent/task/types';
 import type { FinishReason } from '#human/llm-requester/finish-reason';
-import type { ContentPart, TextPart, ToolCall } from '#human/llm/message';
+import type { ContentPart, TextPart, ToolCall, ToolDescription as Tool } from '#human/llm/message';
 import type { TokenUsage } from '#human/llm-requester/usage';
 import type { Hooks } from '#/hooks';
 import type { HistoryMessage, UserEntry } from '#human/agent/turn';
@@ -250,7 +250,11 @@ export interface IAgentLoopService extends EffectiveProfileReader {
 
   readonly requester: LoopRequester;
 
-  start(): Promise<void>;
+  start(tools?: readonly Tool[]): Promise<void>;
+
+  baselineTools(): readonly Tool[];
+
+  bindingSnapshot(): ProfileBindingSnapshot;
 
   setProfile(profile: ProfileBindingSnapshot): Promise<void>;
 

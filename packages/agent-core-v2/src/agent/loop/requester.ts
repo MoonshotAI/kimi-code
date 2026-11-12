@@ -11,9 +11,13 @@ import { IModelCatalog } from '#/llm-adapter/model/catalog';
 import type { ModelOverrides } from '#/llm-adapter/model/model.types';
 import { completionBudgetParams, resolveCompletionBudget } from '#/llm-adapter/model/completion-budget';
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
+import { getProviderDefinition } from '#/llm-adapter/provider/provider-definition';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { ISessionRequestAttributionService } from '#/session/requestAttribution/requestAttribution';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import { parseBooleanEnv } from '#/_base/utils/env';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { RequestMetadataTracker, requestMetadataHeaders } from './requestMetadata';
 
 import {
   agentLLMRequestLogFields,
@@ -68,6 +72,7 @@ interface PreparedCoreRequest {
 
 export class AgentLoopRequestFactory {
   private readonly projector: AgentLoopProjector;
+  private readonly requestMetadata: RequestMetadataTracker;
   private mediaPolicyFactory: AgentMediaPolicyFactory | undefined;
   private contextMessages: () => readonly Message[] = () => [];
 
@@ -81,8 +86,11 @@ export class AgentLoopRequestFactory {
     @IProtocolAdapterRegistry private readonly protocolRegistry: IProtocolAdapterRegistry,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
+    @IEventDispatcher dispatcher: IEventDispatcher,
+    @ISessionRequestAttributionService attribution: ISessionRequestAttributionService,
   ) {
     this.projector = new AgentLoopProjector((anomalies) => observer.reportProjectionRepairs(anomalies));
+    this.requestMetadata = new RequestMetadataTracker(scopeContext, dispatcher, attribution);
   }
 
   private get toolSelect(): IAgentToolSelectService {
@@ -332,8 +340,16 @@ export class AgentLoopRequestFactory {
     };
 
     const messages = overrides.messages ?? this.contextMessages();
+    const request = this.protocolRegistry.request(model, params);
+    const provider = model.providerType === undefined
+      ? undefined
+      : getProviderDefinition(model.providerType, model.protocol);
     return {
-      request: this.protocolRegistry.request(model, params),
+      request: provider?.requestMetadata === true
+        ? request.with({
+            endpoint: { headers: requestMetadataHeaders(this.requestMetadata.resolve(overrides.source)) },
+          })
+        : request,
       model,
       params,
       modelAlias: resolved.modelAlias,

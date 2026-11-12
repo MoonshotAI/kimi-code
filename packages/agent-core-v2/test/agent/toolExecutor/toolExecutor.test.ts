@@ -683,19 +683,15 @@ describe('AgentToolExecutorService', () => {
     const nextBatch = executor.executor.execute(toolCall('call_next_batch', 'next-batch', {}), { turnId: 1, step: 1 });
     await detachedStarted.promise;
     expect(detached.detach('background')).toBeDefined();
-    await nextBatchStarted.promise;
-    expect(conflictingTool.calls).toEqual([]);
+    await Promise.all([conflictingStarted.promise, nextBatchStarted.promise]);
+    expect(conflictingTool.calls).toHaveLength(1);
     expect(nextBatchTool.calls).toHaveLength(1);
+    expect(detached.snapshot().status).toBe('running');
 
     detachedRelease.resolve();
     await detachedFinalizerStarted.promise;
-    await vi.waitFor(() => {
-      expect(conflictingTool.calls).toHaveLength(1);
-    }, { timeout: 100 });
-    expect(detached.snapshot().status).toBe('running');
     detachedFinalizerRelease.resolve();
     await detached.wait();
-    await conflictingStarted.promise;
     await Promise.all([conflicting.wait(), nextBatch.wait()]);
     executor.release(detached.taskId);
     executor.release(conflicting.taskId);
@@ -2176,10 +2172,15 @@ describe('ToolExecutor handler kernel', () => {
 
   it('composes hooks in order and seals responses after execute settles', async () => {
     const events: string[] = [];
+    let prepareCalls = 0;
     const afterEntered = deferred<void>();
     const afterRelease = deferred<void>();
     const first = {
       label: 'first',
+      validating() {
+        events.push(`${this.label}:validating`);
+        return { args: { rewritten: true } };
+      },
       starting() {
         events.push(`${this.label}:starting`);
         return { skipPermitting: true as const };
@@ -2197,6 +2198,9 @@ describe('ToolExecutor handler kernel', () => {
     };
     const second = {
       label: 'second',
+      validating() {
+        events.push(`${this.label}:validating`);
+      },
       starting() {
         events.push(`${this.label}:starting`);
       },
@@ -2222,6 +2226,10 @@ describe('ToolExecutor handler kernel', () => {
       name: 'hooked',
       description: 'hooked',
       parameters: { type: 'object' },
+      prepare: () => {
+        prepareCalls += 1;
+        return { type: 'execute' as const, prepared: {} };
+      },
       execute: (context) => {
         executionSignal = context.signal;
         events.push('execute');
@@ -2248,6 +2256,8 @@ describe('ToolExecutor handler kernel', () => {
       outcome: { type: 'success' },
     });
     expect(events).toEqual([
+      'first:validating',
+      'second:validating',
       'first:observe',
       'second:observe',
       'first:starting',
@@ -2257,45 +2267,37 @@ describe('ToolExecutor handler kernel', () => {
       'first:after',
       'second:after',
     ]);
+    expect(prepareCalls).toBe(1);
 
-    const entered = deferred<void>();
-    const release = deferred<void>();
     const preHookEvents: string[] = [];
     const execute = vi.fn(() => ({ content: textToolContent('must not run') }));
     const rawHook = {
       label: 'raw-hook',
-      starting: async function () {
+      validating() {
         expect(this.label).toBe('raw-hook');
-        preHookEvents.push('starting');
-        entered.resolve();
-        await release.promise;
+        preHookEvents.push('validating');
       },
       afterExecute: () => {
         preHookEvents.push('after');
       },
     };
+    const prepare = vi.fn(() => ({ type: 'execute' as const, prepared: {} }));
     const stoppedExecutor = new HandlerToolExecutor([{
       name: 'pre-hook-stop',
       description: 'pre-hook-stop',
       parameters: { type: 'object' },
+      prepare,
       execute,
     }], { hook: rawHook });
     const stoppedHandler = stoppedExecutor.execute(
       toolCall('pre-hook-stop-1', 'pre-hook-stop', {}),
       undefined,
     );
-    await entered.promise;
     const stopping = stoppedHandler.stop('stop before execute');
-    let stopped = false;
-    void stopping.then(() => {
-      stopped = true;
-    });
-    await Promise.resolve();
-    expect(stopped).toBe(false);
-    expect(preHookEvents).toEqual(['starting']);
-    release.resolve();
+    expect(preHookEvents).toEqual(['validating']);
     expect((await stopping).outcome.type).toBe('aborted');
-    expect(preHookEvents).toEqual(['starting', 'after']);
+    expect(preHookEvents).toEqual(['validating', 'after']);
+    expect(prepare).toHaveBeenCalledTimes(1);
     expect(execute).not.toHaveBeenCalled();
   });
 

@@ -331,6 +331,7 @@ class WireReplayFoldState {
         openStep.toolCalls.push({
           type: 'function',
           id: event.toolCallId,
+          rawId: event.rawId,
           name: event.name,
           arguments: event.args === undefined ? null : JSON.stringify(event.args),
           extras: event.extras,

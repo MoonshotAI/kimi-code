@@ -93,6 +93,7 @@ export interface StepState {
   toolCallStreaming: boolean;
   model?: LlmModelSpec;
   llm?: LlmOutcome;
+  partialMessage?: LlmOutcome['message'];
   readonly calls: StepCall[];
   readonly settled: Record<string, ToolEntry | null>;
   outcome?: StepOutcome;

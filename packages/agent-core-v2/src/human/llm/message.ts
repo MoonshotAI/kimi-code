@@ -162,7 +162,7 @@ export type Message = SystemMessage | UserMessage | AssistantMessage | ToolMessa
 export function isVacuousContentPart(part: ContentPart): boolean {
   switch (part.type) {
     case 'text':
-      return part.text.trim().length === 0;
+      return part.meta?.['thought_signature_b64'] === undefined && part.text.trim().length === 0;
     case 'think':
       return part.encrypted === undefined && part.hidden !== true && part.think.trim().length === 0;
     case 'image_url':
@@ -244,6 +244,12 @@ function samePartIdentity(target: ContentPartBase, source: ContentPartBase): boo
 
 export function mergeInPlace(target: StreamedMessagePart, source: StreamedMessagePart): boolean {
   if (target.type === 'text' && source.type === 'text') {
+    if (
+      target.meta?.['thought_signature_b64'] !== undefined ||
+      source.meta?.['thought_signature_b64'] !== undefined
+    ) {
+      return false;
+    }
     if (!samePartIdentity(target, source)) return false;
     target.text += source.text;
     target.contentType ??= source.contentType;

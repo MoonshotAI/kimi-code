@@ -491,8 +491,9 @@ export interface TUI extends Component {
 	/**
 	 * Works like the browser's `window.requestAnimationFrame`: calls `callback` once, on the next
 	 * frame, with that frame's timestamp in milliseconds on the same clock as `performance.now()`.
-	 * Request again from inside the callback to keep animating. Frames are at least
-	 * `ANIMATION_FRAME_INTERVAL_MS` apart, and every callback of a frame gets the same timestamp.
+	 * Request again from inside the callback to keep animating. Frames are at least one frame
+	 * interval apart (`ANIMATION_FRAME_INTERVAL_MS` unless the host calls `setAnimationFrameRate`),
+	 * and every callback of a frame gets the same timestamp.
 	 * A frame does not render by itself: call `requestRender()` when the callback changes what is
 	 * drawn. Returns a handle for `cancelAnimationFrame`.
 	 */
@@ -1056,6 +1057,10 @@ export abstract class TuiBase extends Container implements TUI {
 
 	cancelAnimationFrame(handle: number): void {
 		this.animationFrames.cancelAnimationFrame(handle);
+	}
+
+	setAnimationFrameRate(fps: number): void {
+		this.animationFrames.setFrameRate(fps);
 	}
 
 	requestRender(force = false): void {

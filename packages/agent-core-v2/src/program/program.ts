@@ -179,6 +179,10 @@ export class Program {
     await generation.userAgentProfiles.reload().catch(() => undefined);
   }
 
+  waitForPluginAgentProfiles(): Promise<void> {
+    return this.requireGeneration().pluginAgentProfiles.ready;
+  }
+
   snapshot(): ProgramSnapshot {
     const generation = this.generation;
     const skills = generation?.workdirs.root.skills.catalog.listSkills() ?? [];

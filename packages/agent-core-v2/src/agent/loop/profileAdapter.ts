@@ -141,7 +141,9 @@ export class AgentLoopProfileAdapter implements EffectiveProfileReader {
   }
 
   applyBindingSnapshot(profile: ProfileBindingSnapshot): Promise<void> {
-    return this.setProfile(profile);
+    const binding = this.profile.prepareBindingSnapshot(profile);
+    this.activeToolNamesOverlay = undefined;
+    return this.setProfile(binding);
   }
 
   useProfile(profile: ResolvedAgentProfile, context: SystemPromptContext): void {

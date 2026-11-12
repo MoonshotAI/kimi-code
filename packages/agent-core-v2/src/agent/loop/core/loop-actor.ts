@@ -1473,6 +1473,23 @@ class LoopActor implements Loop {
     if (event.type === 'llm.streaming.part' && (event.part.type === 'function' || event.part.type === 'tool_call_part')) {
       step.toolCallStreaming = true;
     }
+    if (event.type === 'llm.retrying') {
+      const entry = assistantEntryOf({
+        type: 'failed',
+        error: event.error,
+        message: event.message ?? undefined,
+        usage: event.usage,
+        headers: event.headers,
+        finish: event.finish,
+        messageId: event.messageId,
+        requestId: event.requestId,
+        timing: event.timing,
+      }, step.model);
+      if (entry !== undefined) {
+        this.record({ type: 'message.appended', turnId: turn.id, step: turn.step, source: 'partial', entry });
+        step.partialMessage = event.message ?? undefined;
+      }
+    }
     this.record(event);
   }
 
@@ -1485,7 +1502,7 @@ class LoopActor implements Loop {
     );
     this.record({ type: 'llm.ended', outcome });
     const entry = assistantEntryOf(outcome, step.model);
-    if (entry !== undefined) {
+    if (entry !== undefined && step.partialMessage !== outcome.message) {
       this.record({
         type: 'message.appended',
         turnId: turn.id,
@@ -1494,6 +1511,7 @@ class LoopActor implements Loop {
         entry,
       });
     }
+    step.partialMessage = undefined;
     if (outcome.type !== 'done' && this.finishSteeredStep(turn, step)) return;
     if (toolCalls.length > 0) {
       turn.phase = 'batching';

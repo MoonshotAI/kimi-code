@@ -74,6 +74,7 @@ import type {
   SessionMetadataChangedEvent,
   SessionMetaPatch,
 } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
+import type { ISessionPromptPredictionService } from '@moonshot-ai/agent-core-v2/features/promptPrediction/promptPrediction';
 import type { ISessionTitleService } from '@moonshot-ai/agent-core-v2/session/sessionTitle/sessionTitle';
 import type {
   AuthStatus,
@@ -246,6 +247,12 @@ import {
   questionResponseSchema,
   questionResultSchema,
 } from '../src/contract/session/question.js';
+import {
+  promptPredictionCancelInputSchema,
+  promptPredictionCancelReasonSchema,
+  promptPredictionInputSchema,
+  sessionPromptPredictionContract,
+} from '../src/contract/session/promptPrediction.js';
 import { skillSummarySchema } from '../src/contract/session/skills.js';
 import { sessionTitleContract } from '../src/contract/session/title.js';
 
@@ -598,6 +605,26 @@ const _skillSummary: AssertWire<typeof skillSummarySchema, SkillSummary> = true;
 const _generateTitleOutput: AssertWire<
   (typeof sessionTitleContract)['generateTitle']['output'],
   Awaited<ReturnType<ISessionTitleService['generateTitle']>>
+> = true;
+const _promptPredictionInput: AssertWire<
+  typeof promptPredictionInputSchema,
+  Parameters<ISessionPromptPredictionService['predict']>[0]
+> = true;
+const _promptPredictionOutput: AssertWire<
+  (typeof sessionPromptPredictionContract)['predict']['output'],
+  Awaited<ReturnType<ISessionPromptPredictionService['predict']>>
+> = true;
+const _cancelPromptPredictionInput: AssertWire<
+  typeof promptPredictionCancelInputSchema,
+  Parameters<ISessionPromptPredictionService['cancel']>[0]
+> = true;
+const _cancelPromptPredictionReason: AssertWire<
+  typeof promptPredictionCancelReasonSchema,
+  NonNullable<Parameters<ISessionPromptPredictionService['cancel']>[1]>
+> = true;
+const _cancelPromptPredictionOutput: AssertWire<
+  (typeof sessionPromptPredictionContract)['cancel']['output'],
+  ReturnType<ISessionPromptPredictionService['cancel']>
 > = true;
 
 // session/activity.ts

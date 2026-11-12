@@ -212,6 +212,10 @@ export class SubagentTool implements ISubagentTool {
     return description;
   }
 
+  invalidateProfileDescriptions(): void {
+    this.frozenCatalogProfiles = undefined;
+  }
+
   private catalogProfiles(): readonly AgentProfile[] {
     if (this.frozenCatalogProfiles !== undefined) return this.frozenCatalogProfiles;
     const profiles = this.catalog.list();
@@ -589,20 +593,25 @@ export class SubagentTool implements ISubagentTool {
         detach?.(formatBackgroundAgentResult(taskId, handle, args.description, allowBackground, false));
       }
       let rejectDeadline: (error: Error) => void = () => {};
-      const deadline = new Promise<never>((_resolve, reject) => {
-        rejectDeadline = reject;
-      });
-      timeoutHandle = setTimeout(() => {
-        timedOut = true;
-        controller.abort('Timed out');
-        const graceMs = resolveAgentTaskConfig(this.config)?.killGracePeriodMs ?? 5_000;
-        forceHandle = setTimeout(() => {
-          writePartialOutput();
-          rejectDeadline(new Error('Timed out'));
-        }, graceMs);
-        forceHandle.unref?.();
-      }, timeoutMs);
-      timeoutHandle.unref?.();
+      const deadline =
+        timeoutMs > 0
+          ? new Promise<never>((_resolve, reject) => {
+              rejectDeadline = reject;
+            })
+          : undefined;
+      if (timeoutMs > 0) {
+        timeoutHandle = setTimeout(() => {
+          timedOut = true;
+          controller.abort('Timed out');
+          const graceMs = resolveAgentTaskConfig(this.config)?.killGracePeriodMs ?? 5_000;
+          forceHandle = setTimeout(() => {
+            writePartialOutput();
+            rejectDeadline(new Error('Timed out'));
+          }, graceMs);
+          forceHandle.unref?.();
+        }, timeoutMs);
+        timeoutHandle.unref?.();
+      }
       setStop(({ reason, abandon }) => {
         controller.abort(reason);
         const graceMs = resolveAgentTaskConfig(this.config)?.killGracePeriodMs ?? 5_000;
@@ -621,7 +630,10 @@ export class SubagentTool implements ISubagentTool {
       if (signal.aborted) requestAbort();
       else signal.addEventListener('abort', requestAbort, { once: true });
       try {
-        const outcome = await Promise.race([handle.completion, deadline]);
+        const outcome =
+          deadline === undefined
+            ? await handle.completion
+            : await Promise.race([handle.completion, deadline]);
         write?.(outcome.result);
         stopCode = outcome.stopReason;
         status = 'completed';

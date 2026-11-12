@@ -4911,22 +4911,16 @@ describe("Editor component", () => {
 });
 
 describe("wordWrapLine narrow width", () => {
-	it("does not recurse infinitely on a wide grapheme at maxWidth 1", () => {
-		const chunks = wordWrapLine("中", 1);
+	it("keeps wide graphemes intact and preserves source offsets at maxWidth 1", () => {
+		for (const [text, expected] of [
+			["中", ["中"]],
+			["中文文本", ["中", "文", "文", "本"]],
+			["ab中cd", ["a", "b", "中", "c", "d"]],
+		]) {
+			assert.deepStrictEqual(wordWrapLine(text, 1).map((c) => c.text), expected);
+		}
 		assert.deepStrictEqual(
-			chunks.map((c) => c.text),
-			["中"],
-		);
-	});
-
-	it("splits CJK text into per-grapheme overflow chunks at maxWidth 1", () => {
-		const chunks = wordWrapLine("中文文本", 1);
-		assert.deepStrictEqual(
-			chunks.map((c) => c.text),
-			["中", "文", "文", "本"],
-		);
-		assert.deepStrictEqual(
-			chunks.map((c) => [c.startIndex, c.endIndex]),
+			wordWrapLine("中文文本", 1).map((c) => [c.startIndex, c.endIndex]),
 			[
 				[0, 1],
 				[1, 2],
@@ -4936,18 +4930,7 @@ describe("wordWrapLine narrow width", () => {
 		);
 	});
 
-	it("handles mixed narrow and wide graphemes at maxWidth 1", () => {
-		const chunks = wordWrapLine("ab中cd", 1);
-		assert.deepStrictEqual(
-			chunks.map((c) => c.text),
-			["a", "b", "中", "c", "d"],
-		);
-	});
-
 	it("still re-wraps multi-grapheme atomic segments at narrow widths", () => {
-		// Paste markers arrive as one atomic pre-segmented unit; they can
-		// still be broken down grapheme by grapheme — recursion must keep
-		// that ability.
 		const marker = "[paste #1]";
 		const preSegmented: Intl.SegmentData[] = [{ segment: marker, index: 0, input: marker }];
 		const chunks = wordWrapLine(marker, 3, preSegmented);
@@ -4956,32 +4939,19 @@ describe("wordWrapLine narrow width", () => {
 	});
 
 	it("does not recurse infinitely on a multi-code-unit grapheme at maxWidth 1", () => {
-		// Guards "grapheme count, not code-unit length": a ZWJ family emoji
-		// is 11 code units but 1 grapheme (width 2). A guard mistakenly
-		// written as `grapheme.length <= 1` passes the BMP CJK cases yet
-		// recurses forever on this input.
 		const chunks = wordWrapLine("👨‍👩‍👧‍👦", 1);
-		assert.deepStrictEqual(
-			chunks.map((c) => c.text),
-			["👨‍👩‍👧‍👦"],
-		);
+		assert.deepStrictEqual(chunks.map((c) => c.text), ["👨‍👩‍👧‍👦"]);
 	});
 });
 
 describe("Editor narrow width rendering", () => {
-	it("renders CJK text without crashing at widths 1-8 (default padding)", () => {
-		for (let width = 1; width <= 8; width++) {
-			const editor = new Editor(createTestTUI(), defaultEditorTheme);
-			editor.setText("你好世界");
-			assert.doesNotThrow(() => editor.render(width), `width ${width}`);
-		}
-	});
-
-	it("renders CJK text without crashing at widths 1-8 (paddingX 4, matches kimi-code)", () => {
-		for (let width = 1; width <= 8; width++) {
-			const editor = new Editor(createTestTUI(), defaultEditorTheme, { paddingX: 4 });
-			editor.setText("你好，世界！");
-			assert.doesNotThrow(() => editor.render(width), `width ${width}`);
+	it("renders CJK text without crashing at widths 1-8 with both padding configurations", () => {
+		for (const options of [undefined, { paddingX: 4 }] as const) {
+			for (let width = 1; width <= 8; width++) {
+				const editor = new Editor(createTestTUI(), defaultEditorTheme, options);
+				editor.setText(options ? "你好，世界！" : "你好世界");
+				assert.doesNotThrow(() => editor.render(width), `width ${width}`);
+			}
 		}
 	});
 

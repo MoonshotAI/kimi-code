@@ -92,9 +92,13 @@ export const MAX_FINAL_OUTPUT_LABEL_CODE_UNITS = 2_000;
 export const BRAILLE_SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 export const BRAILLE_SPINNER_INTERVAL_MS = 80;
 
-export const TRANSCRIPT_GROUP_SWEEP_COLUMNS_PER_SECOND = 42;
-export const TRANSCRIPT_GROUP_SWEEP_HALF_WIDTH = 6;
-export const TRANSCRIPT_GROUP_SWEEP_RESTART_GAP_COLUMNS = 14;
+export const TRANSCRIPT_GROUP_SWEEP_START_DELAY_MS = 600;
+export const TRANSCRIPT_GROUP_SWEEP_INTERVAL_MS = 4_000;
+export const TRANSCRIPT_GROUP_SWEEP_DURATION_MS = 1_600;
+export const TRANSCRIPT_GROUP_SWEEP_HALF_WIDTH_RATIO = 0.2;
+export const TRANSCRIPT_GROUP_SWEEP_MIN_HALF_WIDTH = 5;
+export const TRANSCRIPT_GROUP_SWEEP_LIGHT_REST_TEXT_RATIO = 0.6;
+export const TRANSCRIPT_GROUP_SWEEP_LIGHT_REST_MIN_CONTRAST = 4.5;
 // Every 150 ms the title highlight closes half of what is left to full or off, so it fades out
 // in about a second: the speed it was tuned to on 50 ms frames.
 export const TRANSCRIPT_GROUP_FADE_HALF_LIFE_MS = 150;

@@ -139,6 +139,13 @@ export type LlmRetrying =
       readonly type: 'llm.retrying';
       readonly reason: 'backoff';
       readonly error: LlmErrorMessage;
+      readonly message?: AssistantMessage | null;
+      readonly usage?: TokenUsage;
+      readonly headers?: Record<string, string>;
+      readonly finish?: FinishInfo;
+      readonly messageId?: string;
+      readonly requestId?: string;
+      readonly timing?: LlmTiming;
       readonly failedAttempt: number;
       readonly nextAttempt: number;
       readonly maxAttempts: number;
@@ -148,6 +155,13 @@ export type LlmRetrying =
       readonly type: 'llm.retrying';
       readonly reason: 'recovery';
       readonly error: LlmErrorMessage;
+      readonly message?: AssistantMessage | null;
+      readonly usage?: TokenUsage;
+      readonly headers?: Record<string, string>;
+      readonly finish?: FinishInfo;
+      readonly messageId?: string;
+      readonly requestId?: string;
+      readonly timing?: LlmTiming;
       readonly strategy: string;
       readonly action: string;
     };

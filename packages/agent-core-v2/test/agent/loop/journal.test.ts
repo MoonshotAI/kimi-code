@@ -208,11 +208,26 @@ describe('loop journal restore', () => {
         },
         meta: { source: 'input', promptId: 'media' },
       };
-      const answer = assistant('answer');
+      const answer = assistant('answer', [
+        {
+          type: 'function',
+          id: 'local_call',
+          rawId: 'call_native',
+          name: 'get_weather',
+          arguments: '{}',
+          extras: { thought_signature_b64: 'sig-tool' },
+        },
+      ]);
       journal.append({ type: 'turn.started', turnId: 0, trigger: 'normal' });
       journal.append({ type: 'message.appended', turnId: 0, step: 0, source: 'normal', entry });
       journal.append({ type: 'step.started', turnId: 0, step: 1 });
       journal.append({ type: 'message.appended', turnId: 0, step: 1, source: 'llm', entry: answer });
+      journal.append({
+        type: 'tool.started',
+        turnId: 0,
+        step: 1,
+        toolCall: answer.message.toolCalls[0]!,
+      });
       journal.append({
         type: 'step.ended',
         turnId: 0,
@@ -230,6 +245,17 @@ describe('loop journal restore', () => {
       });
       await journal.settled();
 
+      expect(persisted).toContainEqual({
+        type: 'context.append_loop_event',
+        agentId: 'main',
+        time: expect.any(Number),
+        event: expect.objectContaining({
+          type: 'tool.call',
+          toolCallId: 'local_call',
+          rawId: 'call_native',
+          extras: { thought_signature_b64: 'sig-tool' },
+        }),
+      });
       expect(persisted.some((record) => record.type === 'context.append_message')).toBe(true);
       expect(persisted.every((record) => !record.type.startsWith('agent.'))).toBe(true);
       expect(JSON.stringify(persisted)).toContain('text/markdown');
@@ -247,7 +273,10 @@ describe('loop journal restore', () => {
         }),
       }));
       const restored = journal.snapshot().input.messages!;
-      expect(restored.map((item) => item.message)).toMatchObject([entry.message, answer.message]);
+      expect(restored.slice(0, 2).map((item) => item.message)).toMatchObject([
+        entry.message,
+        answer.message,
+      ]);
       expect(restored[0]?.message.content[0]).not.toHaveProperty('meta');
       expect(restored.every((item) => item.meta?.llmTiming === undefined)).toBe(true);
     } finally {

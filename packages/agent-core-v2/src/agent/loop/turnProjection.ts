@@ -20,7 +20,6 @@ import type { ILogService } from '#/_base/log/log';
 import type { IAgentStateService } from '#/agent/state/agentState';
 import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import { abortedToolOutput } from '#/agent/toolExecutor/toolExecutorService';
 import { legacyToolDurationMs } from '#/tool/executor';
 import type { AgentLoopService } from './loopService';
 import type { AgentPromptProjection, ActivePrompt, PendingTurn } from './promptProjection';
@@ -416,11 +415,10 @@ export class AgentTurnProjection {
         const result = prepared?.kind === 'execute' || prepared?.kind === 'synthetic' ? prepared.result : undefined;
         const stop = result as { stopTurn?: boolean; stopTurnReason?: string } | undefined;
         const entry = event.outcome.entry;
-        const toolName = this.active?.current?.entry?.message.toolCalls.find((call) => call.id === event.toolCallId)?.name ?? event.toolCallId;
         return {
           ...event,
           result: {
-            output: event.outcome.type === 'aborted' ? abortedToolOutput(toolName, event.outcome.reason) : result?.output ?? entry.message.content,
+            output: result?.output ?? entry.message.content,
             isError: event.outcome.type === 'succeeded' ? result?.isError : true,
             note: result?.note,
             durationMs: event.detached || snapshot === undefined ? undefined : legacyToolDurationMs(snapshot),
@@ -514,6 +512,19 @@ export class AgentTurnProjection {
           turnId: turn.id,
           step: step.number,
           stepId: step.uuid,
+        }));
+        return;
+      }
+      case 'llm.sent': {
+        const turn = this.active;
+        if (turn === undefined || turn.retry === undefined) return;
+        const step = turn.current?.number ?? turn.gatedSteps;
+        turn.retry = undefined;
+        void this.options.dispatcher.dispatch(new TurnStepStarted({
+          agentId: this.options.scopeContext.agentId,
+          turnId: turn.id,
+          step,
+          stepId: turn.current?.uuid ?? turn.stepIds.get(step),
         }));
         return;
       }
@@ -907,6 +918,7 @@ export class AgentTurnProjection {
       requestId,
     }));
     if (error !== undefined) void this.options.dispatcher.dispatch(new AgentErrorEvent({ ...error, agentId: this.options.scopeContext.agentId }));
+    this.options.prompts.complete(turn.id, result);
     if (interruptReason !== undefined) {
       const interrupted: TurnInterruptedEvent = {
         turn_id: turn.id,

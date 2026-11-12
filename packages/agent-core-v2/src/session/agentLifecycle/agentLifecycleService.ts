@@ -46,7 +46,7 @@ import { abortError } from '#/_base/utils/abort';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
 
-import { historyFromContext } from '#/agent/loop/history';
+import { historyFromContextPreservingToolNotes } from '#/agent/loop/history';
 import { closeTrailingOpenToolExchange } from '#/agent/contextMemory/openToolExchange';
 import { IAgentEnvironmentBindingSeed, IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
 import '#/agent/environmentBinding/environmentBindingService';
@@ -189,10 +189,21 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     const agentScope = this.ctx.scope(`agents/${agentId}`);
     const agentHomedir = join(this.bootstrap.homeDir, agentScope);
     const generation = ++this.nextLifecycleGeneration;
+    const meta: AgentMeta = {
+      homedir: agentHomedir,
+      type: agentId === 'main' ? 'main' : 'sub',
+      parentAgentId: agentId === 'main' ? undefined : 'main',
+      forkedFrom: opts.forkedFrom,
+      labels: withSubagentProfile(
+        opts.labels,
+        agentId === 'main' ? undefined : opts.binding?.profile,
+      ),
+    };
     const scopeContext = makeAgentScopeContext({
       agentId,
       agentScope,
       forkedFrom: opts.forkedFrom,
+      meta,
       generation,
     });
     const agent = scopeContext.agentContext;
@@ -274,16 +285,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       this.rosterAdopt(scopeHandle);
       managed = this.roster.get(agentId);
       stage = 'register';
-      const meta: AgentMeta = {
-        homedir: agentHomedir,
-        type: agentId === 'main' ? 'main' : 'sub',
-        parentAgentId: agentId === 'main' ? undefined : 'main',
-        forkedFrom: opts.forkedFrom,
-        labels: withSubagentProfile(
-          opts.labels,
-          agentId === 'main' ? undefined : opts.binding?.profile,
-        ),
-      };
       await this.sessionMetadata.registerAgent(agentId, meta);
       this.onDidCreateEmitter.fire(agent);
       didCreate = true;
@@ -308,7 +309,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       stage = 'toolActivation';
       await handle.accessor.get(IAgentToolActivationService).activate();
       stage = 'start';
-      await loop.start();
+      await loop.start(opts.initialTools);
       return agent;
     } catch (error) {
       this.telemetry.track2('agent_create_failed', {
@@ -374,7 +375,8 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       });
     }
     const source = sourceManaged.handle;
-    const sourceData = source.accessor.get(IAgentLoopService).data();
+    const sourceLoop = source.accessor.get(IAgentLoopService);
+    const sourceData = sourceLoop.data();
     const override = opts?.binding;
     const sourceBinding = source.accessor.get(IAgentEnvironmentBindingService).current;
     const childContext = await this.create({
@@ -385,6 +387,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         thinking: override.thinking ?? sourceData.thinkingLevel,
       },
       initialProfile: override?.profile === undefined ? sourceData : undefined,
+      initialTools: override?.profile === undefined ? sourceLoop.baselineTools() : undefined,
       environmentId: sourceBinding.environmentId,
       environmentCwd: sourceBinding.cwd,
       forkedFrom: source.id,
@@ -398,11 +401,11 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       if (override.thinking !== undefined) childLoop.setThinking(override.thinking);
     }
 
-    const sourceMessages = source.accessor.get(IAgentLoopService).history();
+    const sourceMessages = sourceLoop.history();
     if (sourceMessages.length > 0) {
       await child.accessor
         .get(IAgentLoopService)
-        .initializeHistory(historyFromContext(closeTrailingOpenToolExchange(sourceMessages)));
+        .initializeHistory(historyFromContextPreservingToolNotes(closeTrailingOpenToolExchange(sourceMessages)));
     }
     return childContext;
   }

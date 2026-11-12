@@ -1,5 +1,4 @@
 import {
-  CHILD_SESSION_KIND_KEY,
   ErrorCodes,
   IAgentChangeNotifierService,
   IAgentGoalService,
@@ -17,6 +16,7 @@ import {
   ISessionIndex,
   ISessionMetadata,
   ISessionLegacyService,
+  ISessionPromptPredictionService,
   ISessionTitleService,
   IEventService,
   SessionCreated,
@@ -24,7 +24,6 @@ import {
   ISessionManager,
   IWorkspaceInstanceManager,
   IWorkspaceService,
-  PARENT_SESSION_ID_KEY,
   closeSessionById,
   ensureMainAgent as ensureMainAgentContext,
   getLiveSessionById,
@@ -48,6 +47,8 @@ import type { ConversationService } from '../services/conversation/conversationS
 import { loadWorkspaceVisibility } from '../services/workspaceVisibility';
 import {
   archiveSessionResponseSchema,
+  cancelPromptPredictionRequestSchema,
+  cancelPromptPredictionResponseSchema,
   compactSessionRequestSchema,
   compactSessionResponseSchema,
   createSessionChildRequestSchema,
@@ -58,6 +59,8 @@ import {
   editSessionGoalResponseSchema,
   getSessionGoalResponseSchema,
   listSessionChildrenResponseSchema,
+  predictPromptRequestSchema,
+  predictPromptResponseSchema,
   sessionAbortResponseSchema,
   sessionWarningsResponseSchema,
   startBtwSessionResponseSchema,
@@ -86,8 +89,13 @@ import {
   sendMappedError as sendSessionMappedError,
   sessionConflictErrors,
 } from './sessionErrors';
-import { agentConfigErrors, applyAgentConfigToSession, applySessionAgentConfig } from './sessionAgentConfig';
-import { updateSessionProfile } from './sessionProfile';
+import {
+  agentConfigErrors,
+  applyAgentConfigToSession,
+  applySessionAgentConfig,
+  creationMainAgentBinding,
+} from './sessionAgentConfig';
+import { customSessionMetadata, updateSessionProfile } from './sessionProfile';
 
 interface SessionRouteHost {
   post(
@@ -189,6 +197,11 @@ const sessionActionRequestSchema = z.preprocess(
     instruction: z.string().optional(),
     turn_id: z.string().min(1).optional(),
     agent_id: z.string().min(1).optional(),
+     count: z.number().int().positive().optional(),
+     page_size: z.number().int().min(1).max(100).optional(),
+    prediction_id: z.string().min(1).optional(),
+    expected_turn_id: z.number().int().nonnegative().optional(),
+    reason: cancelPromptPredictionRequestSchema.shape.reason,
   }),
 );
 
@@ -266,27 +279,23 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
           bucket === undefined
             ? await registry.createOrTouch(workDir)
             : ((await registry.touch(bucket.id)) ?? bucket);
-        const {
-          cwd: _cwd,
-          goal: _goal,
-          [PARENT_SESSION_ID_KEY]: _parentSessionId,
-          [CHILD_SESSION_KIND_KEY]: _childSessionKind,
-          ...custom
-        }: Record<string, unknown> = body.metadata ?? {};
+        const custom = customSessionMetadata(body.metadata);
         const agentConfig = body.agent_config ?? {};
-        const { model, tower_base: _towerBase, ...settings } = agentConfig;
-        const appliesAgentConfig = Boolean(model) || Object.keys(settings).length > 0;
+        const mainAgentBinding = await creationMainAgentBinding(core, agentConfig);
+        const { profile: _profile, model: _model, thinking: _thinking, ...settings } = agentConfig;
+        const appliesSettings = Object.keys(settings).some((key) => key !== 'tower_base');
         const handle = await core.accessor.get(ISessionManager).create({
           workspaceId: resolved.id,
           workDir,
           environmentId: body.environment_id,
           environmentCwd: body.environment_cwd,
+          mainAgentBinding,
           ensureMainAgent: body.environment_id !== undefined && body.environment_id !== 'local',
           prepare: async (session) => {
             if (Object.keys(custom).length > 0) {
               await session.accessor.get(ISessionMetadata).update({ custom });
             }
-            if (appliesAgentConfig) await applyAgentConfigToSession(session, agentConfig);
+            if (appliesSettings) await applyAgentConfigToSession(session, settings);
           },
         });
         const metadata = handle.accessor.get(ISessionMetadata);
@@ -645,6 +654,8 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
           undoSessionResponseSchema,
           sessionAbortResponseSchema,
           startBtwSessionResponseSchema,
+          predictPromptResponseSchema,
+          cancelPromptPredictionResponseSchema,
           archiveSessionResponseSchema,
           deleteSessionResponseSchema,
           takeoverSessionResponseSchema,
@@ -927,6 +938,8 @@ type SessionAction =
   | 'undo'
   | 'abort'
   | 'btw'
+  | 'predict-prompt'
+  | 'cancel-prompt-prediction'
   | 'restore'
   | 'archive'
   | 'delete'
@@ -936,8 +949,22 @@ type SessionAction =
 interface SessionActionExtra {
   readonly core: Scope;
   readonly conversations: ConversationService;
-  readonly req: { readonly id: string };
-  readonly reply: { readonly send: (payload: unknown) => unknown };
+  readonly req: {
+    readonly id: string;
+    readonly raw?: {
+      readonly aborted: boolean;
+      once(event: 'aborted', listener: () => void): unknown;
+      off(event: 'aborted', listener: () => void): unknown;
+    };
+  };
+  readonly reply: {
+    readonly send: (payload: unknown) => unknown;
+    readonly raw?: {
+      readonly destroyed: boolean;
+      once(event: 'close', listener: () => void): unknown;
+      off(event: 'close', listener: () => void): unknown;
+    };
+  };
 }
 
 type SessionActionCtx<TBody = unknown> = SessionActionExtra & {
@@ -951,6 +978,14 @@ const sessionActions: ActionTable<SessionAction, SessionActionExtra> = {
   undo: { body: undoSessionRequestSchema, handle: undoSessionAction },
   abort: { handle: abortSessionAction },
   btw: { handle: btwSessionAction },
+  'predict-prompt': {
+    body: predictPromptRequestSchema,
+    handle: predictPromptAction,
+  },
+  'cancel-prompt-prediction': {
+    body: cancelPromptPredictionRequestSchema,
+    handle: cancelPromptPredictionAction,
+  },
   restore: { handle: restoreSessionAction },
   archive: { handle: archiveSessionAction },
   delete: { handle: deleteSessionAction },
@@ -1044,6 +1079,50 @@ async function btwSessionAction(ctx: SessionActionCtx): Promise<void> {
   await core.accessor.get(IAuthSummaryService).ensureReady(sessionModel || undefined);
   const agentId = await session.accessor.get(ISessionBtwService).start();
   reply.send(okEnvelope({ agent_id: agentId }, req.id));
+}
+
+async function predictPromptAction(
+  ctx: SessionActionCtx<z.infer<typeof predictPromptRequestSchema>>,
+): Promise<void> {
+  const { core, req, reply, id, body } = ctx;
+  const session = await resumeSessionById(core.accessor, id);
+  if (session === undefined) {
+    throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
+  }
+  const service = session.accessor.get(ISessionPromptPredictionService);
+  const disconnected = (): boolean => req.raw?.aborted === true || reply.raw?.destroyed === true;
+  const onAborted = (): void => {
+    service.cancel(body.prediction_id, 'disconnect');
+  };
+  req.raw?.once('aborted', onAborted);
+  reply.raw?.once('close', onAborted);
+  try {
+    if (disconnected()) return;
+    const prediction = await service.predict({
+      predictionId: body.prediction_id,
+      expectedTurnId: body.expected_turn_id,
+    });
+    if (!disconnected()) {
+      reply.send(okEnvelope(predictPromptResponseSchema.parse({ prediction }), req.id));
+    }
+  } finally {
+    req.raw?.off('aborted', onAborted);
+    reply.raw?.off('close', onAborted);
+  }
+}
+
+async function cancelPromptPredictionAction(
+  ctx: SessionActionCtx<z.infer<typeof cancelPromptPredictionRequestSchema>>,
+): Promise<void> {
+  const { core, req, reply, id, body } = ctx;
+  const session = await resumeSessionById(core.accessor, id);
+  if (session === undefined) {
+    throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
+  }
+  const cancelled = session.accessor
+    .get(ISessionPromptPredictionService)
+    .cancel(body.prediction_id, body.reason);
+  reply.send(okEnvelope(cancelPromptPredictionResponseSchema.parse({ cancelled }), req.id));
 }
 
 async function restoreSessionAction(ctx: SessionActionCtx): Promise<void> {

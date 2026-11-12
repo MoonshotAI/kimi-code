@@ -216,6 +216,7 @@ describe('TowerSpawnTool', () => {
   });
 
   afterEach(async () => {
+    vi.useRealTimers();
     completion.resolve({ summary: 'test cleanup' });
     await lastHandler?.wait();
     disposables.dispose();
@@ -494,6 +495,45 @@ describe('TowerSpawnTool', () => {
     expect(lastHandler?.snapshot()).toMatchObject({
       detached: true,
       fields: { task: { timeoutMs: DEFAULT_SUBAGENT_TIMEOUT_MS } },
+    });
+  });
+
+  it('treats [subagent].timeout_ms = 0 as no deadline and preserves the metadata', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    subagentTimeoutMs = 0;
+    runAgent = vi.fn(
+      async (agent: AgentContext, _request: unknown, options: { signal: AbortSignal }) =>
+        ({
+          agentId: agent.agentId,
+          turn: undefined,
+          completion: new Promise<{ summary: string }>((resolve, reject) => {
+            options.signal.addEventListener(
+              'abort',
+              () => {
+                reject(options.signal.reason);
+              },
+              { once: true },
+            );
+            void completion.promise.then(resolve, reject);
+          }),
+        }) as unknown as AgentRunHandle,
+    );
+
+    const result = await execute(WORKER_ARGS);
+    await vi.advanceTimersByTimeAsync(DEFAULT_SUBAGENT_TIMEOUT_MS + 1_000);
+
+    expect(result.isError).toBeUndefined();
+    expect(lastHandler?.snapshot()).toMatchObject({
+      detached: true,
+      fields: { task: { timeoutMs: 0, timedOut: undefined } },
+    });
+
+    completion.resolve({ summary: 'worker done' });
+    const settled = await lastHandler?.wait();
+    expect(settled).toMatchObject({ outcome: { type: 'success' } });
+    expect(lastHandler?.snapshot().fields.task).toMatchObject({
+      timeoutMs: 0,
+      timedOut: undefined,
     });
   });
 

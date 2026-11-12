@@ -48,6 +48,7 @@ function compaction(
   compactedCount: number,
   keptUserMessageCount?: number,
   keptHeadUserMessageCount?: number,
+  appendedInjectionCount?: number,
 ): WireRecord {
   return {
     type: 'context.apply_compaction',
@@ -58,6 +59,7 @@ function compaction(
     tokensAfter: 100,
     ...(keptUserMessageCount === undefined ? {} : { keptUserMessageCount }),
     ...(keptHeadUserMessageCount === undefined ? {} : { keptHeadUserMessageCount }),
+    ...(appendedInjectionCount === undefined ? {} : { appendedInjectionCount }),
   };
 }
 
@@ -510,6 +512,20 @@ describe('live fold parity', () => {
     expect(transcript.foldedLength).toBe(live.length);
   });
 
+  it('tracks the live context length across compaction with appended injections', () => {
+    const records: WireRecord[] = [
+      appendMessage(userMessage('u1')),
+      ...assistantStep('s1', 'a1'),
+      appendMessage(userMessage('reminder', { kind: 'injection', variant: 'tool_update_pending' })),
+      compaction('SUM', 2, 1, undefined, 1),
+    ];
+    const live = foldLive(records);
+    const transcript = reduceContextTranscript(records);
+    expect(live).toHaveLength(4);
+    expect(live[3]!.origin).toEqual({ kind: 'injection', variant: 'tool_update_pending' });
+    expect(transcript.foldedLength).toBe(live.length);
+  });
+
   it('tracks the live context length across clear and undo', () => {
     const records: WireRecord[] = [
       appendMessage(userMessage('u1')),
@@ -587,6 +603,54 @@ describe('live fold parity', () => {
     expect(texts(transcript)).toEqual(['injA', 'u1', 'a1']);
     expect(comparable(transcript.entries)).toEqual(comparable(live));
     expect(transcript.foldedLength).toBe(3);
+  });
+
+  it('restores signature metadata and raw tool ids from loop events', () => {
+    const records: WireRecord[] = [
+      loopEvent({ type: 'step.begin', uuid: 'step-1' }),
+      loopEvent({
+        type: 'content.part',
+        stepUuid: 'step-1',
+        part: { type: 'text', text: '', meta: { thought_signature_b64: 'sig-end' } },
+      }),
+      loopEvent({
+        type: 'tool.call',
+        stepUuid: 'step-1',
+        toolCallId: 'local_call',
+        rawId: 'call_native',
+        name: 'get_weather',
+        args: {},
+        extras: { thought_signature_b64: 'sig-tool' },
+      }),
+      loopEvent({
+        type: 'tool.result',
+        toolCallId: 'local_call',
+        result: { output: 'sunny' },
+      }),
+      loopEvent({ type: 'step.end', uuid: 'step-1' }),
+    ];
+    expect(reduceContextTranscript(records).entries).toEqual([
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: '', meta: { thought_signature_b64: 'sig-end' } }],
+        toolCalls: [
+          {
+            type: 'function',
+            id: 'local_call',
+            rawId: 'call_native',
+            name: 'get_weather',
+            arguments: '{}',
+            extras: { thought_signature_b64: 'sig-tool' },
+          },
+        ],
+      },
+      {
+        role: 'tool',
+        toolCallId: 'local_call',
+        content: [{ type: 'text', text: 'sunny' }],
+        toolCalls: [],
+      },
+    ]);
   });
 
   it('keeps injections not owned by any removed prompt across undo', () => {

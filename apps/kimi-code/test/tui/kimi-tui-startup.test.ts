@@ -3984,6 +3984,29 @@ function uiContainsFooter(driver: StartupDriver): boolean {
   return visit(driver.state.ui);
 }
 
+describe('animation frame interval wiring', () => {
+  it('runs animation frames at the startup frame rate, and every 120 ms without one', () => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const frameGaps = (animationFrameRate?: number): number[] => {
+      const { ui } = makeDriver(makeHarness(), { ...makeStartupInput(), animationFrameRate }).state;
+      const times: number[] = [];
+      const step = (time: number): void => {
+        times.push(time);
+        if (times.length < 4) ui.requestAnimationFrame(step);
+      };
+      ui.requestAnimationFrame(step);
+      vi.advanceTimersByTime(1_000);
+      return times.slice(1).map((time, index) => time - (times[index] ?? 0));
+    };
+
+    expect(frameGaps()).toEqual([120, 120, 120]);
+    expect(frameGaps(20)).toEqual([50, 50, 50]);
+  });
+});
+
 describe('survey telemetry gate wiring', () => {
   function surveyGateTelemetryDisabled(input: KimiTUIStartupInput): boolean {
     const driver = new KimiTUI(makeHarness() as never, input);
