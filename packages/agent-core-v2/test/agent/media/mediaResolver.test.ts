@@ -77,8 +77,8 @@ function imageMessage(url: string, ...before: ContentPart[]): Message {
   };
 }
 
-function firstPart(messages: readonly Message[]) {
-  return messages[0]!.content[0]!;
+function mediaPart(messages: readonly Message[]) {
+  return messages[0]!.content.at(-1)!;
 }
 
 function fileService(files: Map<string, { name: string; bytes: Buffer }>): IFileService {
@@ -337,8 +337,8 @@ describe('AgentMediaResolverService video strategy', () => {
     const first = await resolveMedia(res, [message], req);
     const second = await resolveMedia(res, [message], req);
 
-    expect(firstPart(first)).toEqual(msPart('prov-1'));
-    expect(firstPart(second)).toEqual(msPart('prov-1'));
+    expect(mediaPart(first)).toEqual(msPart('prov-1'));
+    expect(mediaPart(second)).toEqual(msPart('prov-1'));
     expect(upload).toHaveBeenCalledTimes(1);
 
     const plain = [videoMessage('ms://already-uploaded')];
@@ -352,13 +352,13 @@ describe('AgentMediaResolverService video strategy', () => {
     const message = videoMessage(buildKimiFileUrl(FILE_ID));
 
     const capable = await resolveMedia(res, [message], requester({ uploadVideo: upload }));
-    expect(firstPart(capable)).toEqual(msPart('prov-1'));
+    expect(mediaPart(capable)).toEqual(msPart('prov-1'));
 
     const incapable = await resolveMedia(res, 
       [message],
       requester({ videoIn: false, uploadVideo: upload }),
     );
-    expect(firstPart(incapable)).toEqual({
+    expect(mediaPart(incapable)).toEqual({
       type: 'text',
       text: `${VIDEO_CAPABILITY_HINT}\n<video path="${canonical}"></video>`,
     });
@@ -382,7 +382,7 @@ describe('AgentMediaResolverService video strategy', () => {
       requester({ uploadVideo: upload2 }),
     );
 
-    expect(firstPart(out)).toEqual(msPart('prov-1'));
+    expect(mediaPart(out)).toEqual(msPart('prov-1'));
     expect(upload1).toHaveBeenCalledTimes(1);
     expect(upload2).not.toHaveBeenCalled();
   });
@@ -430,7 +430,7 @@ describe('AgentMediaResolverService video strategy', () => {
       req(upload),
     );
 
-    expect(firstPart(out)).toEqual({
+    expect(mediaPart(out)).toEqual({
       type: 'text',
       text:
         canonical === undefined
@@ -471,7 +471,7 @@ describe('AgentMediaResolverService video strategy', () => {
       requester({ uploadVideo: upload, credentialProvider }),
     );
 
-    expect(firstPart(out)).toEqual(msPart('prov-9'));
+    expect(mediaPart(out)).toEqual(msPart('prov-9'));
     expect(upload).toHaveBeenCalledTimes(2);
     expect(invalidations).toBe(1);
   });
@@ -491,7 +491,7 @@ describe('AgentMediaResolverService video strategy', () => {
 
     const retry = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-1'));
     const out = await resolveMedia(res, [message], requester({ uploadVideo: retry }));
-    expect(firstPart(out)).toEqual(msPart('prov-1'));
+    expect(mediaPart(out)).toEqual(msPart('prov-1'));
     expect(retry).toHaveBeenCalledTimes(1);
   });
 
@@ -508,13 +508,13 @@ describe('AgentMediaResolverService video strategy', () => {
     const req = requester({ uploadVideo: upload });
 
     const failed = await resolveMedia(res, [message], req);
-    expect(firstPart(failed)).toEqual({
+    expect(mediaPart(failed)).toEqual({
       type: 'text',
       text: `<video path="${canonical}"></video>`,
     });
 
     const retried = await resolveMedia(res, [message], req);
-    expect(firstPart(retried)).toEqual(msPart('prov-1'));
+    expect(mediaPart(retried)).toEqual(msPart('prov-1'));
     expect(upload).toHaveBeenCalledTimes(2);
   });
 
@@ -524,7 +524,7 @@ describe('AgentMediaResolverService video strategy', () => {
       requester({ uploadVideo: vi.fn() }),
     );
 
-    expect(firstPart(out)).toEqual({
+    expect(mediaPart(out)).toEqual({
       type: 'text',
       text: VIDEO_UNAVAILABLE_TEXT,
     });
@@ -543,7 +543,7 @@ describe('AgentMediaResolverService video strategy', () => {
     const accountB = requester({ uploadVideo: upload, credentialProvider: createStaticCredentialProvider('key-b') });
     const out = await resolveMedia(res, [message], accountB);
 
-    expect(firstPart(out)).toEqual(msPart('prov-1'));
+    expect(mediaPart(out)).toEqual(msPart('prov-1'));
     expect(upload).toHaveBeenCalledTimes(2);
   });
 
@@ -591,7 +591,7 @@ describe('AgentMediaResolverService video strategy', () => {
     });
     const out = await resolveMedia(res, [message], endpointB);
 
-    expect(firstPart(out)).toEqual(msPart('prov-1'));
+    expect(mediaPart(out)).toEqual(msPart('prov-1'));
     expect(upload).toHaveBeenCalledTimes(2);
   });
 });
@@ -625,7 +625,7 @@ describe('AgentMediaResolverService canonical session bytes', () => {
       const out = await resolveMedia(res, [message], requester({ uploadVideo: upload }));
 
       expect(upload).toHaveBeenCalledTimes(uploads);
-      expect(firstPart(out)).toEqual(expected);
+      expect(mediaPart(out)).toEqual(expected);
     },
   );
 });
@@ -750,11 +750,11 @@ describe('AgentMediaResolverService image strategy', () => {
       requester({ providerType: 'anthropic', protocol: 'anthropic' }),
     );
 
-    expect(firstPart(kimi)).toEqual({
+    expect(mediaPart(kimi)).toEqual({
       type: 'image_url',
       imageUrl: { url: `data:image/bmp;base64,${BMP_BYTES.toString('base64')}` },
     });
-    expect(firstPart(other)).toEqual({ type: 'text', text: `<image path="${canonical}"></image>` });
+    expect(mediaPart(other)).toEqual({ type: 'text', text: `<image path="${canonical}"></image>` });
   });
 
   it('never serves a memoized image to a provider that rejects its format', async () => {
@@ -767,13 +767,13 @@ describe('AgentMediaResolverService image strategy', () => {
       imageUrl: { url: `data:image/bmp;base64,${BMP_BYTES.toString('base64')}` },
     };
 
-    expect(firstPart(await resolveMedia(res, [message], requester({})))).toEqual(inline);
+    expect(mediaPart(await resolveMedia(res, [message], requester({})))).toEqual(inline);
     const other = requester({ providerType: 'anthropic', protocol: 'anthropic' });
-    expect(firstPart(await resolveMedia(res, [message], other))).toEqual({
+    expect(mediaPart(await resolveMedia(res, [message], other))).toEqual({
       type: 'text',
       text: `<image path="${canonical}"></image>`,
     });
-    expect(firstPart(await resolveMedia(res, [message], requester({})))).toEqual(inline);
+    expect(mediaPart(await resolveMedia(res, [message], requester({})))).toEqual(inline);
   });
 
   it.each([
@@ -819,8 +819,8 @@ describe('AgentMediaResolverService image strategy', () => {
       requester({ providerType: 'other', protocol: 'anthropic' }),
     );
 
-    expect(firstPart(first)).toEqual(expected);
-    expect(firstPart(second)).toEqual(expected);
+    expect(mediaPart(first)).toEqual(expected);
+    expect(mediaPart(second)).toEqual(expected);
     expect(counting.gets).toBe(1);
   });
 
@@ -842,7 +842,7 @@ describe('AgentMediaResolverService image strategy', () => {
     const first = await resolveMedia(res, [message], requester({}));
     const second = await resolveMedia(res, [message], requester({}));
 
-    expect(firstPart(first)).toEqual(firstPart(second));
+    expect(mediaPart(first)).toEqual(mediaPart(second));
     expect(counting.gets).toBe(2);
   });
 
@@ -911,13 +911,13 @@ describe('AgentMediaResolverService image strategy', () => {
       if (!present) files.set(FILE_ID, { name: 'pic.png', bytes: PNG_BYTES });
       const out = await resolveMedia(res, [message], requester({}));
 
-      expect(firstPart(degraded)).toEqual({
+      expect(mediaPart(degraded)).toEqual({
         type: 'text',
         text: imageIn
           ? `<image path="${canonical}"></image>`
           : `${IMAGE_CAPABILITY_HINT}\n<image path="${canonical}"></image>`,
       });
-      expect(firstPart(out)).toEqual({ type: 'image_url', imageUrl: { url: PNG_DATA_URL } });
+      expect(mediaPart(out)).toEqual({ type: 'image_url', imageUrl: { url: PNG_DATA_URL } });
       expect(counting.gets).toBe(reads);
     },
   );
@@ -1012,8 +1012,8 @@ describe('AgentMediaResolverService image upload', () => {
     const first = await resolveMedia(res, [message], req);
     const second = await resolveMedia(res, [message], req);
 
-    expect(firstPart(first)).toEqual(msImagePart('img-1'));
-    expect(firstPart(second)).toEqual(msImagePart('img-1'));
+    expect(mediaPart(first)).toEqual(msImagePart('img-1'));
+    expect(mediaPart(second)).toEqual(msImagePart('img-1'));
     expect(upload).toHaveBeenCalledTimes(1);
     expect(upload).toHaveBeenCalledWith(
       { data: PNG_BYTES, mimeType: 'image/png', filename: 'pic.png' },
@@ -1038,7 +1038,7 @@ describe('AgentMediaResolverService image upload', () => {
       requester({ uploadImage: upload2 }),
     );
 
-    expect(firstPart(out)).toEqual(msImagePart('img-1'));
+    expect(mediaPart(out)).toEqual(msImagePart('img-1'));
     expect(upload1).toHaveBeenCalledTimes(1);
     expect(upload2).not.toHaveBeenCalled();
   });
@@ -1054,7 +1054,7 @@ describe('AgentMediaResolverService image upload', () => {
       requester({ uploadImage: upload }),
     );
 
-    expect(firstPart(out)).toEqual({ type: 'image_url', imageUrl: { url: PNG_DATA_URL } });
+    expect(mediaPart(out)).toEqual({ type: 'image_url', imageUrl: { url: PNG_DATA_URL } });
     expect(upload).toHaveBeenCalledTimes(1);
   });
 
@@ -1088,7 +1088,7 @@ describe('AgentMediaResolverService image upload', () => {
       requester({ uploadImage: undefined }),
     );
 
-    expect(firstPart(out)).toEqual({ type: 'image_url', imageUrl: { url: PNG_DATA_URL } });
+    expect(mediaPart(out)).toEqual({ type: 'image_url', imageUrl: { url: PNG_DATA_URL } });
   });
 
   it('re-uploads when the resolved account changes, reusing the upload while it stays the same', async () => {
@@ -1104,7 +1104,7 @@ describe('AgentMediaResolverService image upload', () => {
     const accountB = requester({ uploadImage: upload, credentialProvider: createStaticCredentialProvider('key-b') });
     const out = await resolveMedia(res, [message], accountB);
 
-    expect(firstPart(out)).toEqual(msImagePart('img-1'));
+    expect(mediaPart(out)).toEqual(msImagePart('img-1'));
     expect(upload).toHaveBeenCalledTimes(2);
   });
 
@@ -1129,7 +1129,7 @@ describe('AgentMediaResolverService image upload', () => {
     });
     const out = await resolveMedia(res, [message], endpointB);
 
-    expect(firstPart(out)).toEqual(msImagePart('img-1'));
+    expect(mediaPart(out)).toEqual(msImagePart('img-1'));
     expect(upload).toHaveBeenCalledTimes(2);
   });
 
@@ -1155,7 +1155,7 @@ describe('AgentMediaResolverService image upload', () => {
     await resolveMedia(res, [message], openai);
     const out = await resolveMedia(res, [message], anthropic);
 
-    expect(firstPart(out)).toEqual(msImagePart('anthropic-image'));
+    expect(mediaPart(out)).toEqual(msImagePart('anthropic-image'));
     expect(upload).toHaveBeenCalledTimes(2);
   });
 
@@ -1181,7 +1181,7 @@ describe('AgentMediaResolverService image upload', () => {
     await resolveMedia(res, [message], accountA);
     const out = await resolveMedia(res, [message], accountB);
 
-    expect(firstPart(out)).toEqual(msImagePart('account-b-image'));
+    expect(mediaPart(out)).toEqual(msImagePart('account-b-image'));
     expect(upload).toHaveBeenCalledTimes(2);
   });
 
@@ -1196,8 +1196,8 @@ describe('AgentMediaResolverService image upload', () => {
     const first = await resolveMedia(res, [message], req);
     const second = await resolveMedia(res, [message], req);
 
-    expect(firstPart(first)).toEqual({ type: 'image_url', imageUrl: { url: PNG_DATA_URL } });
-    expect(firstPart(second)).toEqual({ type: 'image_url', imageUrl: { url: PNG_DATA_URL } });
+    expect(mediaPart(first)).toEqual({ type: 'image_url', imageUrl: { url: PNG_DATA_URL } });
+    expect(mediaPart(second)).toEqual({ type: 'image_url', imageUrl: { url: PNG_DATA_URL } });
     expect(upload).toHaveBeenCalledTimes(1);
   });
 });
@@ -1235,11 +1235,11 @@ describe('AgentMediaResolverService session-canonical display path', () => {
     const req = requester({ videoIn: false });
 
     const first = await resolveMedia(res, [message], req);
-    expect(firstPart(first)).toEqual({ type: 'text', text: VIDEO_CAPABILITY_HINT });
+    expect(mediaPart(first)).toEqual({ type: 'text', text: VIDEO_CAPABILITY_HINT });
 
     const canonical = await plantCanonical(FILE_ID, '.mp4', VIDEO_BYTES);
     const second = await resolveMedia(res, [message], req);
-    expect(firstPart(second)).toEqual({
+    expect(mediaPart(second)).toEqual({
       type: 'text',
       text: `${VIDEO_CAPABILITY_HINT}\n<video path="${canonical}"></video>`,
     });
@@ -1274,7 +1274,7 @@ describe('AgentMediaResolverService session-canonical display path', () => {
       ],
     };
     const first = await resolveMedia(res, [bare], req);
-    expect(firstPart(first)).toEqual({ type: 'text', text: VIDEO_CAPABILITY_HINT });
+    expect(mediaPart(first)).toEqual({ type: 'text', text: VIDEO_CAPABILITY_HINT });
 
     const withLegacyTag: Message = {
       role: 'user',
@@ -1491,7 +1491,7 @@ describe('AgentMediaResolverService scoped registration', () => {
       requester({}),
     );
 
-    expect(firstPart(out)).toEqual({ type: 'image_url', imageUrl: { url: PNG_DATA_URL } });
+    expect(mediaPart(out)).toEqual({ type: 'image_url', imageUrl: { url: PNG_DATA_URL } });
   });
 });
 
@@ -1520,5 +1520,114 @@ describe('AgentMediaResolverService displayPaths', () => {
     ]);
 
     expect(paths.size).toBe(0);
+  });
+});
+
+describe('AgentMediaResolverService media labels', () => {
+  function namedImage(fileId: string, name: string): ContentPart {
+    return { type: 'image_url', imageUrl: { url: buildKimiFileUrl(fileId), name } };
+  }
+
+  it('precedes each inline image with a name and path label, preserving order', async () => {
+    const p1 = await plantCanonical('f1', '.png', PNG_BYTES);
+    const p2 = await plantCanonical('f2', '.png', PNG_BYTES);
+    const files = new Map([
+      ['f1', { name: 'a.png', bytes: PNG_BYTES }],
+      ['f2', { name: 'b.png', bytes: PNG_BYTES }],
+    ]);
+    const message: Message = {
+      role: 'user',
+      content: [
+        { type: 'text', text: 'compare these' },
+        namedImage('f1', 'a.png'),
+        namedImage('f2', 'b.png'),
+      ],
+    };
+
+    const out = await resolveMedia(resolver(files, sessionDir), [message], requester({}));
+
+    expect(out[0]!.content).toEqual([
+      { type: 'text', text: 'compare these' },
+      { type: 'text', text: `<image name="a.png" path="${p1}">` },
+      { type: 'image_url', imageUrl: { url: PNG_DATA_URL } },
+      { type: 'text', text: `<image name="b.png" path="${p2}">` },
+      { type: 'image_url', imageUrl: { url: PNG_DATA_URL } },
+    ]);
+  });
+
+  it('names the path tag when the model cannot accept the media', async () => {
+    const imagePath = await plantCanonical('f_img', '.png', PNG_BYTES);
+    const videoPath = await plantCanonical('f_vid', '.mp4', VIDEO_BYTES);
+    const message: Message = {
+      role: 'user',
+      content: [
+        namedImage('f_img', 'shot.png'),
+        { type: 'video_url', videoUrl: { url: buildKimiFileUrl('f_vid'), name: 'clip.mp4' } },
+      ],
+    };
+
+    const out = await resolveMedia(
+      resolver(new Map(), sessionDir),
+      [message],
+      requester({ imageIn: false, videoIn: false }),
+    );
+
+    expect(out[0]!.content).toEqual([
+      {
+        type: 'text',
+        text: `${IMAGE_CAPABILITY_HINT}\n<image name="shot.png" path="${imagePath}"></image>`,
+      },
+      {
+        type: 'text',
+        text: `${VIDEO_CAPABILITY_HINT}\n<video name="clip.mp4" path="${videoPath}"></video>`,
+      },
+    ]);
+  });
+
+  it('keeps the name on images dropped by the request media budget', async () => {
+    const older = Buffer.concat([PNG_BYTES, Buffer.alloc(14 * 1024 * 1024)]);
+    const newer = Buffer.concat([PNG_BYTES, Buffer.alloc(2 * 1024 * 1024)]);
+    const oldPath = await plantCanonical('f_old', '.png', older);
+    const files = new Map([
+      ['f_old', { name: 'old.png', bytes: older }],
+      ['f_new', { name: 'new.png', bytes: newer }],
+    ]);
+
+    const out = await resolveMedia(
+      resolver(files, sessionDir),
+      [
+        { role: 'user', content: [namedImage('f_old', 'old.png')] },
+        { role: 'user', content: [namedImage('f_new', 'new.png')] },
+      ],
+      requester({}),
+    );
+
+    expect(out[0]!.content).toEqual([
+      { type: 'text', text: `<image name="old.png" path="${oldPath}"></image>` },
+    ]);
+    expect(out[1]!.content[0]).toEqual({ type: 'text', text: '<image name="new.png">' });
+    expect(out[1]!.content[1]!.type).toBe('image_url');
+  });
+
+  it('labels a kept image that follows a budget-dropped sibling in the same message', async () => {
+    const older = Buffer.concat([PNG_BYTES, Buffer.alloc(14 * 1024 * 1024)]);
+    const newer = Buffer.concat([PNG_BYTES, Buffer.alloc(2 * 1024 * 1024)]);
+    const oldPath = await plantCanonical('f_old', '.png', older);
+    const files = new Map([
+      ['f_old', { name: 'old.png', bytes: older }],
+      ['f_new', { name: 'new.png', bytes: newer }],
+    ]);
+
+    const out = await resolveMedia(
+      resolver(files, sessionDir),
+      [{ role: 'user', content: [namedImage('f_old', 'old.png'), namedImage('f_new', 'new.png')] }],
+      requester({}),
+    );
+
+    expect(out[0]!.content.slice(0, 2)).toEqual([
+      { type: 'text', text: `<image name="old.png" path="${oldPath}"></image>` },
+      { type: 'text', text: '<image name="new.png">' },
+    ]);
+    expect(out[0]!.content[2]!.type).toBe('image_url');
   });
 });

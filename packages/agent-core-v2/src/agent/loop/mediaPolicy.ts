@@ -97,7 +97,13 @@ export function createAgentMediaPolicy(
     if (path === undefined) return undefined;
     const kind = mediaKindOfPart(part);
     if (kind === undefined) return undefined;
-    return { type: 'text', text: buildMediaPathTag(kind, path) };
+    const name =
+      part.type === 'image_url'
+        ? part.imageUrl.name
+        : part.type === 'video_url'
+          ? part.videoUrl.name
+          : undefined;
+    return { type: 'text', text: buildMediaPathTag(kind, path, name) };
   };
   return {
     toolResolver: {
