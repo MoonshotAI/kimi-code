@@ -2700,6 +2700,25 @@ key = "${titleOAuthRef.key}"
       await harness.close();
     }
   });
+
+  it('rejects tower projection watching when the initial snapshot cannot be read', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_TOWER', '1');
+    const { harness } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    try {
+      const session = await harness.createSession({ workDir });
+      await mkdir(join(workDir, '.tower', 'comms', 'log'), { recursive: true });
+      await writeFile(join(workDir, '.tower', 'comms', 'state.json'), '{broken\n', 'utf8');
+      const listener = vi.fn();
+
+      await expect(session.watchTowerProjection(listener)).rejects.toThrow();
+      expect(listener).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+      await harness.close();
+    }
+  });
 });
 
 describe('SDKRpcClientV2 workspace trust', () => {

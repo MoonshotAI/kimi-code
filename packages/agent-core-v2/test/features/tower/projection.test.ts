@@ -324,7 +324,7 @@ describe('missions', () => {
     await writeState(stateFixture({ missions }));
     await writeActivityLog([
       logLine('2026-11-08T01:00:00.000Z', 'tower', 'merge', { branch: 'feat/one', base: 'main' }),
-      logLine('2026-11-08T02:00:00.000Z', 'tower', 'mission.update', {
+      logLine('2026-11-08T02:00:00.000Z', 'worker merge', 'mission.update', {
         id: 'M2',
         status: 'abandoned',
       }),
@@ -418,6 +418,19 @@ describe('parseTowerActivityLine', () => {
 
     expect(event?.kind).toBe('mission.update');
     expect(event?.fields['scope']).toBe('src/a/**,src/b/**');
+  });
+
+  it('preserves actors containing spaces and action-like words', () => {
+    const event = parseTowerActivityLine(
+      '2026-11-08T04:14:02.286Z worker merge alpha mission.update id=M2 status=abandoned',
+    );
+
+    expect(event).toEqual({
+      at: '2026-11-08T04:14:02.286Z',
+      actor: 'worker merge alpha',
+      kind: 'mission.update',
+      fields: { id: 'M2', status: 'abandoned' },
+    });
   });
 
   it('returns undefined for inbox and worktree chatter', () => {
@@ -659,6 +672,30 @@ describe('watchTower', () => {
     } finally {
       dispose();
       await rm(bare, { recursive: true, force: true });
+    }
+  });
+
+  it('backs off persistent watch failures without emitting projection hints', async () => {
+    const file = join(root, 'not-a-directory');
+    await writeFile(file, 'file');
+    const timers: Array<{ run: () => void; delay: number }> = [];
+    vi.stubGlobal('setTimeout', (run: () => void, delay: number) => {
+      timers.push({ run, delay });
+      return { unref: () => {} };
+    });
+    vi.stubGlobal('clearTimeout', () => {});
+    const hints: TowerWatchHint[] = [];
+    const dispose = watchTower(join(file, 'child'), (hint) => hints.push(hint));
+    try {
+      expect(timers.map((timer) => timer.delay)).toEqual([50]);
+      timers[0]!.run();
+      expect(timers.map((timer) => timer.delay)).toEqual([50, 100]);
+      timers[1]!.run();
+      expect(timers.map((timer) => timer.delay)).toEqual([50, 100, 200]);
+      expect(hints).toEqual([]);
+    } finally {
+      dispose();
+      vi.unstubAllGlobals();
     }
   });
 });

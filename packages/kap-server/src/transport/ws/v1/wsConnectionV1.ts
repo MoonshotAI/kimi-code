@@ -211,7 +211,9 @@ export class WsConnectionV1 implements BroadcastTarget {
       return;
     }
     try {
-      await this.towerWatch.subscribe(parsed.data.workspace_id, this);
+      await this.towerWatch.subscribe(parsed.data.workspace_id, this, () => {
+        this.respond(requestId, ErrorCode.SUCCESS);
+      });
     } catch (error) {
       if (error instanceof Error2 && error.code === ErrorCodes.WORKSPACE_NOT_FOUND) {
         this.respond(requestId, ErrorCode.WORKSPACE_NOT_FOUND, error.message);
@@ -221,7 +223,6 @@ export class WsConnectionV1 implements BroadcastTarget {
       this.respond(requestId, failure.code, failure.msg);
       return;
     }
-    this.respond(requestId, ErrorCode.SUCCESS);
     if (this.closed) this.towerWatch.removeTarget(this);
   }
 

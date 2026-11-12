@@ -2713,10 +2713,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const publish = (): Promise<void> => {
       const run = queue.then(async () => {
         if (disposed) return;
-        try {
-          const projection = await readTowerProjection(repoRoot);
-          if (!disposed) listener(projection);
-        } catch {}
+        const projection = await readTowerProjection(repoRoot);
+        if (!disposed) listener(projection);
       });
       queue = run.then(
         () => undefined,
@@ -2725,9 +2723,15 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       return run;
     };
     const stopWatch = watchTower(repoRoot, () => {
-      void publish();
+      void publish().catch(() => {});
     });
-    await publish();
+    try {
+      await publish();
+    } catch (error) {
+      disposed = true;
+      stopWatch();
+      throw error;
+    }
     return () => {
       if (disposed) return;
       disposed = true;
