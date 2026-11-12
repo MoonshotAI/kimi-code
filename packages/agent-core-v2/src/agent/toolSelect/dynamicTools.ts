@@ -147,7 +147,7 @@ export function collectCurrentDynamicTools(
 
 export function collectPendingSchemaUpdateNames(
   history: readonly ContextMessage[],
-  current: readonly Pick<ToolSelectTool, 'name' | 'description' | 'parameters'>[],
+  current: readonly ToolInfo[],
 ): Set<string> {
   const first = new Map<string, ToolDescription>();
   const latest = new Map<string, ToolDescription>();
@@ -164,9 +164,10 @@ export function collectPendingSchemaUpdateNames(
     const latestTool = latest.get(name);
     const currentTool = currentByName.get(name);
     if (latestTool === undefined || currentTool === undefined) continue;
+    const currentSchema = { ...currentTool, parameters: currentTool.parameters ?? {} };
     if (
-      toolSelectSchemaSignature(latestTool) === toolSelectSchemaSignature(currentTool) &&
-      toolSelectSchemaSignature(firstTool) !== toolSelectSchemaSignature(currentTool)
+      toolSelectSchemaSignature(latestTool) === toolSelectSchemaSignature(currentSchema) &&
+      toolSelectSchemaSignature(firstTool) !== toolSelectSchemaSignature(currentSchema)
     ) {
       pending.add(name);
     }
