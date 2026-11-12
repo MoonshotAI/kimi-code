@@ -1,5 +1,7 @@
 import type { McpServerInfo, McpServerStatusEvent } from '@moonshot-ai/kimi-code-sdk';
 
+import { MCP_STATUS_ERROR_MAX_CHARS } from '../constant/rendering';
+
 export type McpServerStatusSnapshot = McpServerInfo | McpServerStatusEvent['server'];
 
 export const MCP_STARTUP_STATUS_ROW_LIMIT = 4;
@@ -74,4 +76,17 @@ export function formatMcpStartupStatusSummary(
 
 export function mcpServerStatusKey(server: McpServerStatusSnapshot): string {
   return JSON.stringify([server.status, server.transport, server.toolCount, server.error]);
+}
+
+export function formatMcpServerErrorSummary(error: string): string {
+  const firstLine = error
+    .replaceAll(/<[^>]*>/g, ' ')
+    .split('\n')
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+  if (firstLine === undefined) return '';
+  const collapsed = firstLine.replaceAll(/\s+/g, ' ');
+  return collapsed.length > MCP_STATUS_ERROR_MAX_CHARS
+    ? `${collapsed.slice(0, MCP_STATUS_ERROR_MAX_CHARS - 1)}…`
+    : collapsed;
 }
