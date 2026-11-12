@@ -136,6 +136,7 @@ Use `/goal next <objective>` to line up follow-up work without interrupting the 
 
 The input box remains usable while the agent is thinking or calling tools, and supports the following extra actions:
 
+- **`Enter`**: queue the message; pick Steer under `/settings` → `Follow-up behavior` to inject it into the running turn instead
 - **`Ctrl-S`**: inject the content in the input box into the running turn immediately, without waiting for it to finish
 - **`Esc` / `Ctrl-C`**: interrupt the current turn
 - **`Ctrl-O`**: globally toggle the collapsed/expanded state of tool output and compaction summaries
