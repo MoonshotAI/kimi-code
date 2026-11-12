@@ -255,6 +255,7 @@ export interface KimiTUIStartupInput {
   readonly additionalDirs?: readonly string[];
   readonly tuiConfig: TuiConfig;
   readonly resolvedTuiMode?: TuiMode;
+  readonly animationFrameRate?: number;
   readonly version: string;
   readonly workDir: string;
   readonly startupNotice?: string;
@@ -515,6 +516,7 @@ export class KimiTUI {
     const tuiOptions: KimiTUIOptions = {
       initialAppState: createInitialAppState(startupInput),
       resolvedTuiMode: startupInput.resolvedTuiMode,
+      animationFrameRate: startupInput.animationFrameRate,
       startup: {
         sessionFlag: startupInput.cliOptions.session,
         continueLast: startupInput.cliOptions.continue,

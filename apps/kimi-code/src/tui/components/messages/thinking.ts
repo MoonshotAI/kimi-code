@@ -214,7 +214,7 @@ export class ThinkingComponent implements Component {
 
   private startFrames(): void {
     if (this.ui === undefined || this.frameRequest !== undefined) return;
-    this.sweep.start(performance.now());
+    this.sweep.start(performance.now(), true);
     this.frameRequest = this.ui.requestAnimationFrame(this.onFrame);
   }
 

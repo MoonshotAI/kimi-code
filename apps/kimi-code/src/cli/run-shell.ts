@@ -20,11 +20,12 @@ import {
 import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE, TUI_HOST_UI_CAPABILITIES } from '#/constant/app';
 import { detectPendingMigration, resolveLegacySourceHome, sameLegacyPath } from '#/migration/index';
 import type { TuiConfig } from '#/tui/config';
-import { loadTuiConfig, resolveTuiMode, TuiConfigParseError } from '#/tui/config';
+import { loadTuiConfig, resolveAnimationFrameRate, resolveTuiMode, TuiConfigParseError } from '#/tui/config';
 import { CHROME_GUTTER } from '#/tui/constant/rendering';
 import { KimiTUI } from '#/tui/index';
 import { startupTrace } from '#/utils/startup-trace';
 import { currentTheme, getColorPalette } from '#/tui/theme';
+import { combineStartupNotice } from '#/tui/utils/startup';
 import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
 import { restoreTerminalModes } from '#/utils/terminal-restore';
 import { resolveCommandPath } from '#/utils/process/resolve-command';
@@ -136,15 +137,17 @@ export async function runShell(
   // has already rejected them alongside --session/--continue.
   const agentProfile = await resolveAgentProfileSelection(opts, workDir);
   const tuiModeResolution = resolveTuiMode(tuiConfig.tuiMode);
+  const animationFrameRateResolution = resolveAnimationFrameRate();
   tui = new KimiTUI(harness, {
     cliOptions: opts,
     agentProfile,
     additionalDirs: opts.addDirs?.length ? opts.addDirs : undefined,
     tuiConfig,
     resolvedTuiMode: tuiModeResolution.mode,
+    animationFrameRate: animationFrameRateResolution.fps,
     version,
     workDir,
-    startupNotice: configWarning,
+    startupNotice: combineStartupNotice(configWarning, animationFrameRateResolution.warning),
     migrationPlan,
     migrateOnly: runOptions.migrateOnly,
     telemetryDisabled: config.telemetry === false,

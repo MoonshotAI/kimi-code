@@ -171,6 +171,7 @@ describe('runShell', () => {
     vi.stubEnv('KIMI_CODE_OAUTH_HOST', 'https://auth.kimi.com');
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '');
     vi.stubEnv('KIMI_CODE_TUI_FULL_SCREEN', '');
+    vi.stubEnv('KIMI_CODE_TUI_ANIMATION_FPS', '');
     vi.stubEnv('TERM', 'xterm-256color');
     vi.stubEnv('TERMUX_VERSION', '');
     vi.stubEnv('TMUX', '');
@@ -694,6 +695,74 @@ describe('runShell', () => {
         editorCommand: 'vim',
         notifications: { enabled: true, condition: 'always' },
       },
+    });
+  });
+
+  it('passes the KIMI_CODE_TUI_ANIMATION_FPS frame rate to the TUI', async () => {
+    vi.stubEnv('KIMI_CODE_TUI_ANIMATION_FPS', '25');
+    mocks.loadTuiConfig.mockResolvedValue({
+      theme: 'dark',
+      editorCommand: null,
+      notifications: { enabled: true, condition: 'unfocused' },
+    });
+    mocks.tuiStart.mockResolvedValue(undefined);
+
+    await runShell(
+      {
+        session: '',
+        continue: false,
+        yolo: false,
+        auto: false,
+        plan: false,
+        model: undefined,
+        outputFormat: undefined,
+        prompt: undefined,
+        skillsDirs: [],
+        agent: undefined,
+        agentFiles: [],
+        environment: undefined,
+      },
+      '1.2.3-test',
+    );
+
+    const [, , startupInput] = mocks.kimiTuiConstructor.mock.calls[0]!;
+    expect(startupInput).toMatchObject({ animationFrameRate: 25, startupNotice: undefined });
+  });
+
+  it('adds an ignored KIMI_CODE_TUI_ANIMATION_FPS to the startup notice after a tui.toml warning', async () => {
+    vi.stubEnv('KIMI_CODE_TUI_ANIMATION_FPS', 'fast');
+    mocks.loadTuiConfig.mockRejectedValue(
+      new mocks.TuiConfigParseError({
+        theme: 'dark',
+        editorCommand: null,
+        notifications: { enabled: true, condition: 'unfocused' },
+      }),
+    );
+    mocks.tuiStart.mockResolvedValue(undefined);
+
+    await runShell(
+      {
+        session: '',
+        continue: false,
+        yolo: false,
+        auto: false,
+        plan: false,
+        model: undefined,
+        outputFormat: undefined,
+        prompt: undefined,
+        skillsDirs: [],
+        agent: undefined,
+        agentFiles: [],
+        environment: undefined,
+      },
+      '1.2.3-test',
+    );
+
+    const [, , startupInput] = mocks.kimiTuiConstructor.mock.calls[0]!;
+    expect(startupInput).toMatchObject({
+      animationFrameRate: undefined,
+      startupNotice: 'Invalid TUI config in ~/.kimi-code/tui.toml; using defaults.\n' +
+        'Ignored KIMI_CODE_TUI_ANIMATION_FPS="fast": expected a whole number from 1 to 60.',
     });
   });
 
