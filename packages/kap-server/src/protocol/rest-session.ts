@@ -1,31 +1,34 @@
 import { z } from 'zod';
 
 import {
+  sessionAgentConfigPartialSchema,
   sessionWarningSchema,
   sessionWarningsResponseSchema,
-  updateSessionProfileRequestSchema,
-  type UpdateSessionProfileRequest,
+  updateSessionProfileRequestSchema as engineUpdateSessionProfileRequestSchema,
 } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
 
 import { goalSnapshotSchema } from './goal';
 import { cursorQuerySchema, pageResponseSchema } from './pagination';
 import {
+  creationOnlyProfileSchema,
   sessionChildCreateSchema,
   sessionCreateSchema,
   sessionForkSchema,
   sessionSchema,
 } from './session';
 
-export {
-  sessionWarningSchema,
-  sessionWarningsResponseSchema,
-  updateSessionProfileRequestSchema,
-};
+export { sessionWarningSchema, sessionWarningsResponseSchema };
 export type {
   SessionWarning,
   SessionWarningsResponse,
-  UpdateSessionProfileRequest,
 } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
+
+export const updateSessionProfileRequestSchema = engineUpdateSessionProfileRequestSchema.extend({
+  agent_config: sessionAgentConfigPartialSchema
+    .extend({ profile: creationOnlyProfileSchema })
+    .optional(),
+});
+export type UpdateSessionProfileRequest = z.infer<typeof updateSessionProfileRequestSchema>;
 
 export const createSessionRequestSchema = sessionCreateSchema;
 export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>;

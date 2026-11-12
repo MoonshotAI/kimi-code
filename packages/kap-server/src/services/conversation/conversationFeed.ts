@@ -132,6 +132,7 @@ export class ConversationFeed implements IDisposable {
   private readonly tools = new Map<string, LiveTool>();
   private readonly listeners = new Set<ConversationListener>();
   private readonly disposables: IDisposable[] = [];
+  private undoQueue: Promise<unknown> = Promise.resolve();
   readonly ready: Promise<ConversationFeed>;
 
   constructor(
@@ -152,7 +153,13 @@ export class ConversationFeed implements IDisposable {
     return this.state.turns;
   }
 
-  async undo(turnId: string): Promise<readonly string[]> {
+  undo(turnId: string): Promise<readonly string[]> {
+    const run = this.undoQueue.then(() => this.undoNow(turnId));
+    this.undoQueue = run.catch(() => undefined);
+    return run;
+  }
+
+  private async undoNow(turnId: string): Promise<readonly string[]> {
     const turns = this.state.turns;
     const index = turns.findIndex((turn) => turn.turn_id === turnId);
     if (index === -1) throw new Error2(ErrorCodes.TURN_NOT_FOUND, `turn not found: ${turnId}`);
@@ -350,6 +357,10 @@ export class ConversationFeed implements IDisposable {
 
   private emitItemChanges(before: ConversationTurn | undefined, turn: ConversationTurn): void {
     const previous = new Map(before?.items.map((item) => [item.item_id, item]));
+    const kept = new Set(turn.items.map((item) => item.item_id));
+    for (const itemId of previous.keys()) {
+      if (!kept.has(itemId)) this.emit({ type: 'item.removed', turn_id: turn.turn_id, item_id: itemId });
+    }
     for (const item of turn.items) {
       const old = previous.get(item.item_id);
       if (old === item) continue;

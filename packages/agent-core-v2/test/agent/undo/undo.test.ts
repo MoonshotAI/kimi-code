@@ -897,7 +897,7 @@ describe('AgentConversationUndoService', () => {
     }
   });
 
-  it('re-delivers task notifications removed by conversation undo without wait suppression', async () => {
+  it('does not re-deliver task notifications removed by conversation undo without wait suppression', async () => {
     await setup({}, installControlledTask);
     const undo = ctx.get(IAgentConversationUndoService);
     const tasks = ctx.get(IAgentTaskService);
@@ -927,13 +927,8 @@ describe('AgentConversationUndoService', () => {
     await tasks.wait(taskC, 1000);
 
     await vi.waitFor(() => {
-      const redelivered = ctx.context.history().filter((message) => message.origin?.kind === 'task');
-      expect(redelivered.map((message) => message.origin?.kind === 'task' ? message.origin.taskId : undefined).toSorted()).toEqual(
-        [taskA, taskB, taskC].toSorted(),
-      );
-      for (const taskId of [taskA, taskB, taskC]) {
-        expect(redelivered.filter((message) => message.origin?.kind === 'task' && message.origin.taskId === taskId)).toHaveLength(1);
-      }
+      const delivered = ctx.context.history().filter((message) => message.origin?.kind === 'task');
+      expect(delivered.map((message) => message.origin?.kind === 'task' ? message.origin.taskId : undefined)).toEqual([taskC]);
     });
   });
 
