@@ -241,6 +241,7 @@ export class ConversationFeed implements IDisposable {
       id: 'kap.conversation',
       events: RECORD_EVENTS,
       undoable: true,
+      mutableReplay: true,
       transition: (draft, event) => {
         applyConversationRecord(draft, event.serialize());
       },
