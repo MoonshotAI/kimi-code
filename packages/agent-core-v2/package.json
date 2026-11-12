@@ -53,7 +53,7 @@
     }
   },
   "scripts": {
-    "build": "tsdown",
+    "build": "tsdown && node scripts/copy-sqlite-prebuilds.mjs",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "gen:contract-types": "node scripts/gen-contract-types.mjs",
@@ -76,6 +76,7 @@
     "@noble/hashes": "^2.0.0",
     "ajv": "^8.18.0",
     "ajv-formats": "^3.0.1",
+    "better-sqlite3": "^13.0.3",
     "chokidar": "^4.0.3",
     "cross-spawn": "^7.0.6",
     "ignore": "^5.3.2",
@@ -101,6 +102,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
     "@types/cross-spawn": "^6.0.6",
     "@types/js-yaml": "^4.0.9",
     "@types/picomatch": "^4.0.3",

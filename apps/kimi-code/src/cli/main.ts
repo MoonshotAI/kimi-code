@@ -29,10 +29,8 @@ import {
 
 import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE, PROCESS_NAME } from '#/constant/app';
 import { runHeadlessMigrate, type MigrateCommandOptions } from '#/migration/index';
-import { installMinidbTextBuildWorker } from '#/native/minidb-worker';
 import { installNativeModuleHook } from '#/native/module-hook';
-import { installKapSearchWorker } from '#/native/search-worker';
-import { cleanupStaleNativeCacheForCurrent } from '#/native/native-assets';
+import { cleanupStaleNativeCacheForCurrent, getSqliteNativeBinding } from '#/native/native-assets';
 import { runNativeAssetSmokeIfRequested } from '#/native/smoke';
 import { startupTrace } from '#/utils/startup-trace';
 
@@ -203,27 +201,10 @@ function bootstrap(): void {
   // invalid proxy URL is reported and ignored rather than aborting startup.
   installGlobalProxyDispatcher();
   installNativeModuleHook();
-  // Best-effort SEA worker installation. Diagnostics are trace-only and avoid
-  // exposing the user's cache path; failure keeps MiniDb's bounded inline mode.
-  const workerInstall = installMinidbTextBuildWorker();
-  startupTrace(
-    workerInstall.status === 'installed'
-      ? `minidb-worker:installed basename=${workerInstall.basename} sha256=${workerInstall.assetSha256}`
-      : workerInstall.status === 'failed'
-        ? `minidb-worker:failed code=${workerInstall.errorCode} sha256=${workerInstall.assetSha256 ?? 'unknown'}`
-        : `minidb-worker:${workerInstall.status}`,
-  );
-  // Same pattern for the global-search worker: extracted from the SEA blob so
-  // the search index runs off the main thread; a failure leaves the search
-  // surface degraded ([database] search = false restores the inline host).
-  const searchWorkerInstall = installKapSearchWorker();
-  startupTrace(
-    searchWorkerInstall.status === 'installed'
-      ? `search-worker:installed basename=${searchWorkerInstall.basename} sha256=${searchWorkerInstall.assetSha256}`
-      : searchWorkerInstall.status === 'failed'
-        ? `search-worker:failed code=${searchWorkerInstall.errorCode} sha256=${searchWorkerInstall.assetSha256 ?? 'unknown'}`
-        : `search-worker:${searchWorkerInstall.status}`,
-  );
+  const sqliteNativeBinding = getSqliteNativeBinding();
+  if (sqliteNativeBinding !== null) {
+    process.env['KIMI_CODE_SQLITE_NATIVE_BINDING'] = sqliteNativeBinding;
+  }
   if (runNativeAssetSmokeIfRequested()) return;
 
   // Start the background cleanup of stale native cache. Fire-and-forget; must not block startup or throw.

@@ -718,8 +718,33 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     const next = await this.primaryByWorkspace();
     const previous = this.primarySnapshot;
     this.primarySnapshot = next;
-    if (previous !== undefined && samePrimaryByWorkspace(previous, next)) return;
-    if (!this.readModelEnabled() || this.state === 'uninitialized' || this.state === 'preparing') return;
+    if (
+      previous === undefined ||
+      !this.readModelEnabled() ||
+      this.state === 'uninitialized' ||
+      this.state === 'preparing'
+    ) {
+      return;
+    }
+    if (samePrimaryByWorkspace(previous, next)) return;
+    const added = Object.keys(next).filter((id) => previous[id] === undefined);
+    if (added.length > 0 && Object.keys(previous).every((id) => next[id] === previous[id])) {
+      const manifest = await this.queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
+      if (manifest !== undefined) {
+        const counters = await this.queryStore.getMany<SessionWorkspaceCounts>(
+          sessionCountersCollection(manifest.seq),
+          added,
+        );
+        const hasIndexedSessions = [...counters.values()].some(
+          (entry) => entry.active + entry.archived > 0,
+        );
+        if (!hasIndexedSessions) {
+          this.generation = manifest.seq;
+          await this.projector.reconcile(manifest.seq);
+          return;
+        }
+      }
+    }
     await this.ensureProjection();
   }
 

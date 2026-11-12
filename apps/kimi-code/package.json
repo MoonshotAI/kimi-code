@@ -50,7 +50,7 @@
     "provenance": true
   },
   "scripts": {
-    "build": "tsdown && tsdown --config tsdown.dist-worker.config.ts && node scripts/copy-native-assets.mjs && node scripts/check-web-assets.mjs",
+    "build": "tsdown && node scripts/copy-native-assets.mjs && node scripts/check-web-assets.mjs",
     "prebuild": "node scripts/build-vis-asset.mjs",
     "catalog:update": "node scripts/update-catalog.mjs --out dist/built-in-catalog.json",
     "smoke": "node scripts/smoke.mjs",
@@ -76,7 +76,8 @@
     "postinstall": "node scripts/postinstall.mjs"
   },
   "optionalDependencies": {
-    "@mariozechner/clipboard": "^0.3.9"
+    "@mariozechner/clipboard": "^0.3.9",
+    "better-sqlite3": "^13.0.3"
   },
   "devDependencies": {
     "@moonshot-ai/acp-server": "workspace:^",
@@ -87,13 +88,13 @@
     "@moonshot-ai/kimi-code-sdk": "workspace:^",
     "@moonshot-ai/kimi-telemetry": "workspace:^",
     "@moonshot-ai/migration-legacy": "workspace:^",
-    "@moonshot-ai/minidb": "workspace:^",
     "@moonshot-ai/pi-tui": "workspace:^",
     "@moonshot-ai/remote-control": "workspace:^",
     "@moonshot-ai/session-import": "workspace:^",
     "@moonshot-ai/tree-sitter-bash": "workspace:^",
     "@moonshot-ai/vis-server": "workspace:^",
     "@moonshot-ai/vis-web": "workspace:*",
+    "@types/better-sqlite3": "^9.6.0",
     "@types/qrcode": "^1.5.6",
     "@types/semver": "^7.7.0",
     "@types/ws": "^8.18.0",

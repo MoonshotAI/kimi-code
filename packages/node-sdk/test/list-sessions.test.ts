@@ -312,14 +312,8 @@ describe('SDKRpcClientV2.listSessionsPage', () => {
   });
 });
 
-describe('SDKRpcClientV2 search-index separation', () => {
-  // The global full-text search database (`<homeDir>/search-index`) belongs
-  // to the kap-server search surface. The TUI-side chain (rpc client →
-  // klient → `ISessionIndex`) must list, resume and continue sessions without
-  // ever opening it — including while the session read model is still
-  // preparing.
-
-  it('listSessions / resumeSession never open the global search index (read model off)', async () => {
+describe('SDKRpcClientV2 session index read model', () => {
+  it('listSessions / resumeSession do not open the query store (read model off)', async () => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
     vi.stubEnv('KIMI_CODE_PERSISTENCE_MINIDB_READMODEL', '0');
     const homeDir = await makeTempDir();
@@ -327,7 +321,7 @@ describe('SDKRpcClientV2 search-index separation', () => {
     const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
 
     try {
-      const created = await client.createSession({ id: 'ses_search_sep_off', workDir });
+      const created = await client.createSession({ id: 'ses_read_model_off', workDir });
       await client.closeSession({ sessionId: created.id });
 
       const sessions = await client.listSessions({ workDir });
@@ -335,8 +329,8 @@ describe('SDKRpcClientV2 search-index separation', () => {
       const resumed = await client.resumeSession({ id: created.id });
       expect(resumed.id).toBe(created.id);
 
-      expect(existsSync(join(homeDir, 'search-index'))).toBe(false);
-      // With the read model off, the session query-store is never opened either.
+      // With the read model off, the session query-store is never opened.
+      expect(existsSync(join(homeDir, 'cache', 'query-store.sqlite'))).toBe(false);
       expect(existsSync(join(homeDir, 'cache', 'query-store'))).toBe(false);
     } finally {
       await client.close();
@@ -344,7 +338,7 @@ describe('SDKRpcClientV2 search-index separation', () => {
     }
   });
 
-  it('listSessions / resumeSession never open the global search index (read model on)', async () => {
+  it('listSessions / resumeSession work while the read model is preparing', async () => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
     vi.stubEnv('KIMI_CODE_PERSISTENCE_MINIDB_READMODEL', '1');
     const homeDir = await makeTempDir();
@@ -352,26 +346,23 @@ describe('SDKRpcClientV2 search-index separation', () => {
     const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
 
     try {
-      const created = await client.createSession({ id: 'ses_search_sep_on', workDir });
+      const created = await client.createSession({ id: 'ses_read_model_on', workDir });
       await client.closeSession({ sessionId: created.id });
 
       // The read model is still preparing here: the first list kicks the
-      // background projection and answers from authoritative metadata, the
-      // resume reads the authoritative document — neither waits for, nor
-      // opens, any full-text index.
+      // background projection and answers from authoritative metadata, and
+      // resume reads the authoritative document without waiting for it.
       const sessions = await client.listSessions({ workDir });
       expect(sessions.map((item) => item.id)).toEqual([created.id]);
       const resumed = await client.resumeSession({ id: created.id });
       expect(resumed.id).toBe(created.id);
 
-      expect(existsSync(join(homeDir, 'search-index'))).toBe(false);
-
       // Settle the kicked projection before close so teardown never races it,
       // and prove the read model really did engage (the flag took effect).
       const status = await client.engineAccessor.get(ISessionIndex).prepare();
       expect(status.state).toBe('ready');
+      expect(existsSync(join(homeDir, 'cache', 'query-store.sqlite'))).toBe(true);
       expect(existsSync(join(homeDir, 'cache', 'query-store'))).toBe(true);
-      expect(existsSync(join(homeDir, 'search-index'))).toBe(false);
     } finally {
       await client.close();
       // Dispose fired the mirror/query-store async closes; await them before

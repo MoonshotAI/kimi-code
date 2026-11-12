@@ -165,9 +165,7 @@ kimi
 | `KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION` | 在交互式 TUI 中启用实验性的下一条提示词预测，在轮次正常完成后显示建议，详见[提示词预测](../guides/interaction.md#提示词预测（实验）) | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_CODE_EXPERIMENTAL_TOWER` | 启用实验性 [Tower 多 Agent 协作](../guides/tower.md) 和 `/tower` 命令，需在启动前设置。持久配置等价于在 `config.toml` 中设置 `[experimental] tower = true`；在运行中的 CLI 里修改该配置后，需要重启 Kimi Code。`KIMI_CODE_EXPERIMENTAL_FLAG=1` 仅在未显式配置 `[experimental] tower` 时启用 Tower；`tower = false` 会优先于总开关，而本变量可覆盖该配置 | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_CODE_WATCH` | 是否挂文件系统 watch 以热更新配置和工作区文件，优先级高于 `[watch] enabled`（默认 `true`） | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
-| `KIMI_CODE_GLOBAL_SEARCH` | 是否构建全局全文搜索索引并提供 `POST /api/v1/search`，优先级高于 `[database] global_search`（默认 `false`） | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
-| `KIMI_CODE_SEARCH_WORKER` | 全局搜索开启时，在独立 worker 线程中运行索引，优先级高于 `[database] search`（默认 `true`） | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
-| `KIMI_CODE_PERSISTENCE_MINIDB_READMODEL` | 会话索引使用基于 minidb 的读模型，优先级高于 `[database] base`（默认 `true`） | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
+| `KIMI_CODE_PERSISTENCE_MINIDB_READMODEL` | 会话索引使用 SQLite 主读、minidb 备用双写的读模型，优先级高于 `[database] base`（默认 `true`） | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_MCP_STARTUP_TIMEOUT_MS` | MCP server 全局默认连接超时（毫秒）；优先级高于配置文件，低于 `mcp.json` 的 `startupTimeoutMs` | `1` 到 `2147483647` 的整数；非法值被忽略 |
 | `KIMI_MCP_TOOL_TIMEOUT_MS` | MCP server 全局默认单次工具调用超时（毫秒）；优先级高于配置文件，低于 `mcp.json` 的 `toolTimeoutMs` | `1` 到 `2147483647` 的整数；非法值被忽略 |
 | `KIMI_MCP_RECONNECT_INITIAL_DELAY_MS` | workspace 级 MCP server 首次连接失败或意外断连后，首次自动重连前的等待时间（毫秒）；优先级高于配置文件 | `1` 到 `2147483647` 的整数；非法值被忽略 |

@@ -1,8 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { builtinModules } from 'node:module';
-import { resolve } from 'node:path';
 
-import { nativeIntermediatesDir, nativeJsBundlePath } from './paths.mjs';
+import { nativeJsBundlePath } from './paths.mjs';
 
 const builtins = new Set([
   ...builtinModules,
@@ -33,19 +32,19 @@ function executableLines(text) {
     });
 }
 
-function checkBundle(bundlePath, { worker = false } = {}) {
+function checkBundle(bundlePath) {
   if (!existsSync(bundlePath)) return [`bundle does not exist: ${bundlePath}`];
   const text = readFileSync(bundlePath, 'utf-8');
   const errors = [];
-  const allowedExternal = worker ? new Set() : optionalRuntimeRequires;
-  const allowedRelative = worker ? new Set() : optionalRelativeRuntimeRequires;
 
   const checkSpecifier = (specifier, kind) => {
     if (specifier.startsWith('.') || specifier.startsWith('/')) {
-      if (!allowedRelative.has(specifier)) errors.push(`relative ${kind} remains: ${specifier}`);
+      if (!optionalRelativeRuntimeRequires.has(specifier)) {
+        errors.push(`relative ${kind} remains: ${specifier}`);
+      }
       return;
     }
-    if (!builtins.has(specifier) && !specifier.startsWith('node:') && !allowedExternal.has(specifier)) {
+    if (!builtins.has(specifier) && !specifier.startsWith('node:') && !optionalRuntimeRequires.has(specifier)) {
       errors.push(`external ${kind} remains: ${specifier}`);
     }
   };
@@ -68,17 +67,10 @@ function checkBundle(bundlePath, { worker = false } = {}) {
   return errors;
 }
 
-const bundles = [
-  { path: nativeJsBundlePath(), worker: false },
-  { path: resolve(nativeIntermediatesDir(), 'text-build-worker.mjs'), worker: true },
-  { path: resolve(nativeIntermediatesDir(), 'search-worker.mjs'), worker: true },
-];
-let failed = false;
-for (const bundle of bundles) {
-  const errors = checkBundle(bundle.path, { worker: bundle.worker });
-  if (errors.length === 0) continue;
-  failed = true;
-  console.error(`Native JS bundle check failed for ${bundle.path}:`);
+const bundlePath = nativeJsBundlePath();
+const errors = checkBundle(bundlePath);
+if (errors.length > 0) {
+  console.error(`Native JS bundle check failed for ${bundlePath}:`);
   for (const error of errors) console.error(`- ${error}`);
+  process.exit(1);
 }
-if (failed) process.exit(1);

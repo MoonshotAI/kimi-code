@@ -459,15 +459,15 @@ max_chars = 100000
 
 ## `database`
 
-`database` 控制会话索引和全局搜索背后的嵌入式存储引擎。会话索引默认开启；全局全文搜索索引默认关闭，开启后才会在后台扫描历史会话并提供 `POST /api/v1/search`。
+`database` 控制会话索引背后的嵌入式存储引擎。会话索引默认开启。
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `base` | `boolean` | `true` | 会话索引使用基于 minidb 的读模型；`false` 回退为直接读取会话元数据 |
-| `global_search` | `boolean` | `false` | 是否构建全局全文搜索索引并提供 `POST /api/v1/search`；关闭时不扫描会话、不启动搜索 worker，搜索接口返回索引不可用 |
-| `search` | `boolean` | `true` | 全局搜索开启时，在独立 worker 线程中运行索引；`false` 在服务器进程内运行 |
+| `base` | `boolean` | `true` | 会话索引使用 SQLite 主读、minidb 备用双写的读模型；`false` 回退为直接读取会话元数据 |
 
-`base` 可被环境变量 `KIMI_CODE_PERSISTENCE_MINIDB_READMODEL` 覆盖，`global_search` 可被 `KIMI_CODE_GLOBAL_SEARCH` 覆盖，`search` 可被 `KIMI_CODE_SEARCH_WORKER` 覆盖，优先级均高于配置文件。
+`base` 可被环境变量 `KIMI_CODE_PERSISTENCE_MINIDB_READMODEL` 覆盖，优先级高于配置文件。
+
+已移除的全局搜索配置键 `global_search`、`search`、`search_sync_session_cap` 和 `search_sync_debounce_ms` 会被忽略并产生警告。环境变量 `KIMI_CODE_GLOBAL_SEARCH`、`KIMI_CODE_SEARCH_WORKER`、`KIMI_CODE_SEARCH_SYNC_SESSION_CAP` 和 `KIMI_CODE_SEARCH_SYNC_DEBOUNCE_MS` 同样如此。
 
 ## `watch`
 

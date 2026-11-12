@@ -100,8 +100,6 @@ import { createCredentialValidator } from './services/auth/credentials';
 import { resolvePasswordHash } from './services/auth/password';
 import { createTokenStore } from './services/auth/tokenStore';
 
-import { drainGlobalSearchDisposals, IGlobalSearchService } from './search/searchService';
-
 export interface ServerHostIdentity extends KimiHostIdentity {
   readonly displayName?: string;
   readonly replyStyleGuide?: string;
@@ -388,7 +386,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       core.dispose();
       await appendLogStore.drainRetirements();
       await drainSessionIndexMirror();
-      await drainGlobalSearchDisposals();
       await drainQueryStoreDisposals();
       await drainSessionMetadataWrites();
       await drainLogCloses();
@@ -405,7 +402,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const connectionRegistry = new ConnectionRegistry();
   const conversations = new ConversationService(core);
   const sessionRating = createServerSessionRating(core, { debugEndpoints, logger });
-  core.accessor.get(IGlobalSearchService);
   const broadcaster = new SessionEventBroadcaster({
     core,
     logger,

@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
+import { copySqlitePrebuilds } from '../../../build/copy-sqlite-prebuilds.mjs';
 import { runLocalCli } from './local-cli.mjs';
 import {
   defaultVsixOutputDir,
@@ -77,7 +78,7 @@ async function main() {
 
   if (!options.dryRun) {
     console.log('Building the extension once before packaging all targets...');
-    buildExtension();
+    await buildExtension();
   }
 
   const packVsix = options.dryRun ? undefined : loadVscePack();
@@ -109,8 +110,9 @@ async function main() {
   }
 }
 
-function buildExtension() {
+async function buildExtension() {
   runLocalCli('tsdown', 'tsdown', ['--config', 'tsdown.config.ts'], { cwd: extensionRoot });
+  await copySqlitePrebuilds(join(extensionRoot, 'dist', 'better-sqlite3'));
   runLocalCli('vite', 'vite', ['build', '--config', 'webview-ui/vite.config.ts'], {
     cwd: extensionRoot,
   });

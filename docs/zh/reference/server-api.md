@@ -78,7 +78,7 @@ HTTP 状态码几乎总是 200，业务结果以 `code` 为准。例外情况：
 列表端点有两种分页风格：
 
 - **游标式**：`before_id` / `after_id`（互斥）加 `page_size`（1–100），响应为 `{ items, has_more }`。用于会话列表、消息列表等。Agent 的轮次改按轮次 `ordinal` 分页（`before_ordinal` / `page_size`）。
-- **`page_token`**：不透明令牌（绑定了查询条件的指纹），用于 `POST /api/v1/search` 与 `GET /api/v2/sessions`。翻页途中改变任何查询条件会使令牌失效：v2 返回 `40922`，search 返回 `40001`。`GET /api/v2/sessions` 另提供无状态的 `page` 页码模式作为替代。
+- **`page_token`**：不透明令牌（绑定了查询条件的指纹），用于 `GET /api/v2/sessions`。翻页途中改变任何查询条件会使令牌失效并返回 `40922`。该接口另提供无状态的 `page` 页码模式作为替代。
 
 ## 用 API 驱动一个会话
 
@@ -2170,38 +2170,16 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 成功时 `data` 为 `null`。
 
-### 全局搜索与其他
+### 连接与其他
 
 | 方法与路径 | 说明 |
 | --- | --- |
-| `POST /api/v1/search` | 跨会话全文搜索，`mode` 为 `terms`（默认）或 `literal`（精确子串），`page_token` 分页 |
 | `GET /api/v1/connections` | 列出当前在线的 WebSocket 连接 |
 | `GET /api/v2/sessions` | 新一代会话列表，见下文 |
 | `POST /api/v2/sessions:archive` | 批量归档会话，见下文 |
 | `POST /api/v2/sessions:restore` | 批量恢复已归档会话，见下文 |
 | `/api/v2/mcp/*` | 统一的 MCP 管理面，见下文 |
 | `/api/v1/debug/*` | 反射式调试 RPC，仅 `--debug-endpoints` 且 loopback 时挂载，不属于稳定协议 |
-
-#### `POST /api/v1/search`
-
-跨会话全文搜索，覆盖 User 消息、Assistant 回复与会话标题，由服务端的持久搜索索引支撑。用 `container.session_id` 限定在单个会话内的搜索同样走索引，因此正在运行的步骤还在生成的文本，要等该步骤保存、索引追上之后才能搜到；`index_state.stale` 标记仍在追赶的视图。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `query` | body | string | **必填。** 搜索文本 |
-| `mode` | body | string | `terms`（默认）/ `literal` |
-| `op` | body | string | `terms` 模式下的词项组合符：`AND`（默认）/ `OR` |
-| `container` | body | object | 将搜索限定在 `{ session_id?, agent_id? }` |
-| `role` | body | string | 限定 `user` / `assistant` / `title` 命中 |
-| `start_time` | body | integer | 只看不早于该时间的命中（epoch 毫秒） |
-| `end_time` | body | integer | 只看不晚于该时间的命中（epoch 毫秒） |
-| `sort` | body | string | `score`（默认）/ `time_desc` / `time_asc`；`literal` 模式忽略此参数，始终最新在前 |
-| `page_size` | body | integer | 每页命中数，1–50。默认 `20` |
-| `page_token` | body | string | 上一页响应返回的令牌 |
-
-`terms` 模式下查询会被分词（ASCII 词加 CJK n-gram）、去重，并以至多 32 个词项匹配倒排索引；`literal` 模式是零误报的精确子串搜索。成功时 `data` 为 `{ items, has_more, page_token?, index_state }`，每项为 `{ session_id, workspace_id, session_title, agent_id, role, snippet, time, turn?, step_id?, score }`。`index_state` 为 `{ state, indexed_sessions, total_sessions, documents, stale?, degraded? }`，其中 `state` 为 `building` / `ready` / `readonly` 之一；`stale` 标记仍在追赶的落后视图，`degraded` 携带最近一次刷新失败的信息。超出预算的页会额外携带 `incomplete`，取值为 `candidate_cap` / `postings_budget` / `deadline` 之一。分页令牌锁定索引代际与查询条件——索引重建或查询变更会使其失效。
-
-- `40001`：请求体校验失败、查询不可用（为空或超过 32 个词项），或分页令牌非法
 
 #### `GET /api/v1/connections`
 

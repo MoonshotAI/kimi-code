@@ -1,19 +1,18 @@
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { once } from 'node:events';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { Worker } from 'node:worker_threads';
 
-import { MiniDb } from '@moonshot-ai/minidb';
-import { getSearchWorkerRuntimeState } from '@moonshot-ai/kap-server/search-worker-runtime';
+import Database from 'better-sqlite3';
 
 import {
   getEmbeddedNativeAssetManifest,
-  getNativeCacheBase,
   getNativePackageRoot,
+  getSqliteNativeBinding,
+  type NativeAssetManifest,
 } from './native-assets';
 
-const smokePackages = ['@mariozechner/clipboard', '@moonshot-ai/pi-tui'];
+const smokePackages = ['@mariozechner/clipboard', '@moonshot-ai/pi-tui', 'better-sqlite3'];
 
 function smokePiTuiNativeLoad(): void {
   const platform = process.platform;
@@ -38,73 +37,32 @@ function smokePiTuiNativeLoad(): void {
   }
 }
 
-async function smokeMinidbWorker(): Promise<void> {
-  const cacheBase = getNativeCacheBase();
-  mkdirSync(cacheBase, { recursive: true });
-  const dir = mkdtempSync(join(cacheBase, 'sea-minidb-smoke-'));
-  let db: MiniDb<Record<string, unknown>> | null = null;
+function smokeSqlite(manifest: NativeAssetManifest): void {
+  const nativeBinding = getSqliteNativeBinding({ manifest });
+  if (nativeBinding === null || process.env['KIMI_CODE_SQLITE_NATIVE_BINDING'] !== nativeBinding) {
+    throw new Error('SQLite native binding was not resolved from the embedded manifest.');
+  }
+
+  const dir = mkdtempSync(join(tmpdir(), 'kimi-sqlite-native-smoke-'));
   try {
-    db = await MiniDb.open<Record<string, unknown>>({ dir, valueCodec: 'json' });
-    const total = 4_200;
-    for (let base = 0; base < total; base += 500) {
-      await db.batch(
-        Array.from({ length: Math.min(500, total - base) }, (_, offset) => {
-          const id = base + offset;
-          return {
-            op: 'set' as const,
-            key: `doc-${id}`,
-            value: { text: `sea worker searchable document ${id}` },
-          };
-        }),
-      );
-    }
-    await db.createTextIndex('smoke', { fields: ['text'] });
-    if (db.stats.textWorkerBuilds < 1) {
-      throw new Error(`MiniDb worker did not run: ${JSON.stringify(db.stats)}`);
-    }
-    if (db.stats.textWorkerFallbacks !== 0) {
-      throw new Error(
-        `MiniDb worker unexpectedly fell back: ${db.stats.lastTextWorkerFallback ?? 'unknown'}`,
-      );
-    }
-    if (!db.search('smoke', 'searchable').some((hit) => hit.key === 'doc-0')) {
-      throw new Error('MiniDb worker-built text index returned an incorrect search result');
+    const db = new Database(join(dir, 'smoke.sqlite'), { nativeBinding });
+    try {
+      db.exec('CREATE TABLE native_smoke (id TEXT PRIMARY KEY, value INTEGER NOT NULL)');
+      db.prepare('INSERT INTO native_smoke (id, value) VALUES (?, ?)').run('kimi', 42);
+      const row = db
+        .prepare('SELECT value, sqlite_version() AS version FROM native_smoke WHERE id = ?')
+        .get('kimi') as { value: number; version: string } | undefined;
+      if (row?.value !== 42) throw new Error(`SQLite readback mismatch: ${JSON.stringify(row)}`);
+      process.stdout.write(`SQLite native smoke passed: ${row.version} (${nativeBinding})\n`);
+    } finally {
+      db.close();
     }
   } finally {
-    await db?.close().catch(() => {});
     rmSync(dir, { recursive: true, force: true });
   }
 }
 
-async function smokeSearchWorker(): Promise<void> {
-  // The SEA-extracted global-search worker entry must boot from disk and
-  // complete the versioned ready handshake.
-  const runtime = getSearchWorkerRuntimeState();
-  if (!runtime.configured) {
-    throw new Error('search worker runtime was not configured');
-  }
-  const cacheBase = getNativeCacheBase();
-  mkdirSync(cacheBase, { recursive: true });
-  const dir = mkdtempSync(join(cacheBase, 'sea-search-worker-'));
-  const worker = new Worker(runtime.path, {
-    workerData: { dir, bootSalt: 'sea-smoke' },
-  });
-  try {
-    const ready = once(worker, 'message', {
-      signal: AbortSignal.timeout(15_000),
-    }) as Promise<unknown[]>;
-    const [event] = await ready;
-    const v = (event as { type?: string; v?: number }).v;
-    if ((event as { type?: string }).type !== 'ready' || typeof v !== 'number') {
-      throw new Error(`search worker handshake is unexpected: ${JSON.stringify(event)}`);
-    }
-  } finally {
-    await worker.terminate().catch(() => {});
-    rmSync(dir, { recursive: true, force: true });
-  }
-}
-
-async function runSmoke(): Promise<void> {
+function runSmoke(): void {
   const manifest = getEmbeddedNativeAssetManifest();
   if (manifest === null) throw new Error('Native asset manifest is not available.');
   for (const packageName of smokePackages) {
@@ -113,22 +71,19 @@ async function runSmoke(): Promise<void> {
     }
   }
   smokePiTuiNativeLoad();
-  await smokeMinidbWorker();
-  await smokeSearchWorker();
-  process.stdout.write(
-    `Native asset smoke passed: ${manifest.target}; MiniDb worker build passed; search worker ready\n`,
-  );
+  smokeSqlite(manifest);
+  process.stdout.write(`Native asset smoke passed: ${manifest.target}\n`);
 }
 
 export function runNativeAssetSmokeIfRequested(): boolean {
   if (process.env['KIMI_CODE_NATIVE_ASSET_SMOKE'] !== '1') return false;
-  void runSmoke().then(
-    () => process.exit(0),
-    (error: unknown) => {
-      const message = error instanceof Error ? error.message : String(error);
-      process.stderr.write(`Native asset smoke failed: ${message}\n`);
-      process.exit(1);
-    },
-  );
+  try {
+    runSmoke();
+    process.exit(0);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`Native asset smoke failed: ${message}\n`);
+    process.exit(1);
+  }
   return true;
 }
