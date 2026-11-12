@@ -394,7 +394,8 @@ export class TranscriptRowComponent implements Component {
     const key = statusKey(status, now);
     const { display } = this.item;
     const open = isExpandedComponent(display);
-    const detail = open && hasRowDetail(display) ? display.renderRowDetail(width) : undefined;
+    const shown = open || this.item.detailWhile?.includes(status.kind) === true;
+    const detail = shown && hasRowDetail(display) ? display.renderRowDetail(width) : undefined;
     const previous = this.frame;
     if (
       previous?.item === this.item &&
@@ -417,6 +418,8 @@ export class TranscriptRowComponent implements Component {
 
   handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
     if (event.type !== 'click' || event.button !== 'left' || event.y < 1) return undefined;
+    const status = rowStatusOf(this.item, this.timeline, monotonicNow());
+    if (status.kind === 'running' && this.item.detailWhile?.includes(status.kind) === true) return undefined;
     return this.interaction.toggleRow(this.item) ? { handled: true } : undefined;
   }
 
