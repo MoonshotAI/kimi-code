@@ -917,7 +917,7 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
     expect(next?.content).toContain(`<tools_removed>\n${USER_INLINE}\n</tools_removed>`);
   });
 
-  it('keeps the first historical schema and drops empty duplicates', async () => {
+  it('keeps the first schema and converts changed duplicates to reminders', async () => {
     const h = createHarness();
     const original = new StubMcpTool(MCP_ALPHA);
     const registration = registerMcp(h, original);
@@ -949,13 +949,21 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
       dynamic: true,
     });
     expect(resolved.profile?.tools).toEqual([]);
-    expect(resolved.content.messages).toHaveLength(3);
+    expect(resolved.content.messages).toHaveLength(4);
     expect(resolved.content.messages[0]).toBe(originalSchemaMessage);
     expect(resolved.content.messages.flatMap((message) => toolsOf(message) ?? []).map((tool) => tool.parameters))
       .toEqual([original.parameters]);
     expect(resolved.content.messages).toContainEqual({
       role: 'system',
       content: [{ type: 'text', text: 'keep body' }],
+      origin: { kind: 'injection', variant: DYNAMIC_TOOL_SCHEMA_VARIANT },
+    });
+    expect(resolved.content.messages).toContainEqual({
+      role: 'system',
+      content: [{
+        type: 'text',
+        text: `<system-reminder>\nTool "${MCP_ALPHA}" has a schema update, but applying schema updates is not supported in this session. Start a new session to use the updated schema.\n</system-reminder>`,
+      }],
       origin: { kind: 'injection', variant: DYNAMIC_TOOL_SCHEMA_VARIANT },
     });
     expect(h.contextMemory.history()).toHaveLength(4);
