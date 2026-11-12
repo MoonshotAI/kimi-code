@@ -193,7 +193,10 @@ export function forkMediaRecovery(
   });
 }
 
-export function createMediaDegradeRecovery(replacement?: MediaReplacement): LlmRecovery {
+export function createMediaDegradeRecovery(
+  replacement?: MediaReplacement,
+  hasWireMedia?: () => boolean,
+): LlmRecovery {
   return {
     propose: ({ error, request, appliedRecoveries }) => {
       const imageFormat =
@@ -203,7 +206,9 @@ export function createMediaDegradeRecovery(replacement?: MediaReplacement): LlmR
       const mediaClientError =
         error.kind === 'status' &&
         error.statusCode === 400 &&
-        countMediaParts(request.content.messages) > 0;
+        !error.retryable &&
+        countMediaParts(request.content.messages) > 0 &&
+        (hasWireMedia?.() ?? true);
       if (error.kind !== 'request_too_large' && !imageFormat && !mediaClientError) return undefined;
       const messages = request.content.messages;
       const stripped = appliedRecoveries.some(

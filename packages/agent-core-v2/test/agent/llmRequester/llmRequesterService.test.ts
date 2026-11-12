@@ -985,6 +985,46 @@ describe('AgentLoopRequestFactory media-stripped resend', () => {
     expect(mediaCounts(inputs)).toEqual([1, 0]);
   });
 
+  it('lets a retryable client 400 keep media and use normal retry instead of stripping', async () => {
+    const calls = { value: 0 };
+    const inputs: ModelRequestInput[] = [];
+    const { service } = createService(
+      createRequester(calls, new APIStatusError(400, 'Invalid request Error', true), [], inputs),
+      { contextMessages },
+    );
+
+    await expect(request(service)).rejects.toMatchObject({ statusCode: 400 });
+    expect(calls.value).toBe(1);
+    expect(mediaCounts(inputs)).toEqual([1]);
+  });
+
+  it('does not strip when the resolver already removed media before the request was sent', async () => {
+    const calls = { value: 0 };
+    const { service } = createService(
+      createRequester(calls, new APIStatusError(400, 'Invalid request Error', false)),
+      {
+        contextMessages,
+        mediaResolver: {
+          resolve: async (messages) =>
+            messages.map((message) => ({
+              ...message,
+              content: message.content.map((part) =>
+                part.type === 'image_url'
+                  ? {
+                      type: 'text' as const,
+                      text: '[image omitted: the current model does not support image input]',
+                    }
+                  : part,
+              ),
+            })),
+        },
+      },
+    );
+
+    await expect(request(service)).rejects.toMatchObject({ statusCode: 400 });
+    expect(calls.value).toBe(1);
+  });
+
   it('warns the user when media are stripped from the retried request', async () => {
     const calls = { value: 0 };
     const { service, dispatcher, events } = createService(
