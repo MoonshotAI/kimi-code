@@ -6,7 +6,10 @@ import { emptyUsage } from '#human/llm-requester/usage';
 
 export const EMPTY_LOOP_PROMPT: UserMessage = { role: 'user', content: [] };
 
-export function historyEntryFromContext(entry: ContextMessage, preserveToolNotes = false): HistoryMessage {
+function historyEntryFromContextWithOptions(
+  entry: ContextMessage,
+  preserveToolNotes: boolean,
+): HistoryMessage {
   const meta = {
     promptId: entry.id,
     origin: entry.origin,
@@ -52,11 +55,18 @@ export function historyEntryFromContext(entry: ContextMessage, preserveToolNotes
   }
 }
 
-export function historyFromContext(
+export function historyEntryFromContext(entry: ContextMessage): HistoryMessage {
+  return historyEntryFromContextWithOptions(entry, false);
+}
+
+export function historyFromContext(messages: readonly ContextMessage[]): HistoryMessage[] {
+  return messages.map(historyEntryFromContext);
+}
+
+export function historyFromContextPreservingToolNotes(
   messages: readonly ContextMessage[],
-  preserveToolNotes = false,
 ): HistoryMessage[] {
-  return messages.map((entry) => historyEntryFromContext(entry, preserveToolNotes));
+  return messages.map((entry) => historyEntryFromContextWithOptions(entry, true));
 }
 
 export function contextFromHistoryEntry(
