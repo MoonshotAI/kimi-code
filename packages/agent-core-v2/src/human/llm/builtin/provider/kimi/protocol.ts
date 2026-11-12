@@ -121,6 +121,41 @@ function applyKimiMessageExtras(
   return native;
 }
 
+function dedupeKimiMessageTools(params: Record<string, unknown>): Record<string, unknown> {
+  const requestTools = params['tools'];
+  if (!Array.isArray(requestTools) || requestTools.length === 0) return params;
+  const inlineNames = new Set(
+    requestTools.flatMap((tool) => {
+      const name = (tool as { function?: { name?: unknown } }).function?.name;
+      return typeof name === 'string' ? [name] : [];
+    }),
+  );
+  if (inlineNames.size === 0) return params;
+  const messages = params['messages'];
+  if (!Array.isArray(messages)) return params;
+  let changed = false;
+  const kept = messages.flatMap((message) => {
+    if (typeof message !== 'object' || message === null) return [message];
+    const record = message as Record<string, unknown>;
+    const tools = record['tools'];
+    if (!Array.isArray(tools) || tools.length === 0) return [message];
+    const remaining = tools.filter((tool) => {
+      const name = (tool as { function?: { name?: unknown } }).function?.name;
+      return typeof name !== 'string' || !inlineNames.has(name);
+    });
+    if (remaining.length === tools.length) return [message];
+    changed = true;
+    if (remaining.length > 0) return [{ ...record, tools: remaining }];
+    const { tools: _tools, ...rest } = record;
+    void _tools;
+    const content = rest['content'];
+    const emptyContent =
+      content === undefined || content === '' || (Array.isArray(content) && content.length === 0);
+    return emptyContent ? [] : [rest];
+  });
+  return changed ? { ...params, messages: kept } : params;
+}
+
 function hoistKimiUsage(chunk: OpenAIRawChunk): OpenAIRawChunk {
   if (chunk.usage !== null && chunk.usage !== undefined && typeof chunk.usage === 'object') {
     return chunk;
@@ -184,7 +219,11 @@ export const kimiOpenAIProtocol = openAIProtocol.with((base) => ({
   flatten: (native, module) => {
     const { extra_body: extraBody, ...extras } = module.options?.extras ?? {};
     const options = { ...module.options, extras: { ...extras, ...extraBody } };
-    return base.flatten(native, { ...module, options });
+    const request = base.flatten(native, { ...module, options });
+    return {
+      ...request,
+      params: dedupeKimiMessageTools(request.params as Record<string, unknown>),
+    } as typeof request;
   },
   decodeError: withKimiErrors(base),
 }));
