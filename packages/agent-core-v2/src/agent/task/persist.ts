@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { open } from 'node:fs/promises';
 import { join } from 'pathe';
 import type { EnvironmentPath } from '#/environment/environment';
 
@@ -189,19 +190,29 @@ export class AgentTaskPersistence {
     maxBytes: number,
   ): Promise<{ readonly offset: number; readonly data: Uint8Array } | undefined> {
     await this.flushTaskOutput(taskId);
-    if (existsSync(this.taskOutputPhysicalFile(taskId))) {
-      const output = this.open(taskId);
-      const totalBytes = output.preview(0).totalBytes;
-      const offset = Math.max(0, totalBytes - Math.max(0, Math.trunc(maxBytes)));
-      if (offset === totalBytes) return { offset, data: new Uint8Array() };
-      return { offset, data: Buffer.from(await output.read(offset, totalBytes - offset)) };
+    const limit = Math.max(0, Math.trunc(maxBytes));
+    const file = await open(this.taskOutputPhysicalFile(taskId), 'r').catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+      throw error;
+    });
+    if (file !== undefined) {
+      try {
+        const { size } = await file.stat();
+        const offset = Math.max(0, size - limit);
+        if (offset === size) return { offset, data: new Uint8Array() };
+        const data = Buffer.alloc(size - offset);
+        const { bytesRead } = await file.read(data, 0, data.byteLength, offset);
+        return { offset, data: data.subarray(0, bytesRead) };
+      } finally {
+        await file.close();
+      }
     }
     const root = this.fallbackRoot;
     if (root === undefined) return undefined;
     const scope = this.taskOutputScope(taskId, root);
     const size = await this.bytes.size(scope, OUTPUT_LOG_KEY);
     if (size === undefined) return undefined;
-    const offset = Math.max(0, size - Math.max(0, Math.trunc(maxBytes)));
+    const offset = Math.max(0, size - limit);
     if (offset === size) return { offset, data: new Uint8Array() };
     const parts: Uint8Array[] = [];
     for await (const part of this.bytes.readStream(scope, OUTPUT_LOG_KEY, { start: offset, end: size - 1 })) {
