@@ -22,6 +22,7 @@ import type {
 import { formatBackgroundAgentTranscript } from '../utils/background-agent-status';
 import { argsRecord, serializeToolResultOutput } from '../utils/event-payload';
 import { formatHookResultPlain } from '../utils/hook-result-format';
+import { markTranscriptComponentTurnId } from '../utils/transcript-component-metadata';
 import { nextTranscriptId } from '../utils/transcript-id';
 import type { SessionEventHost } from './session-event-handler';
 import { SubagentActivityStore } from './subagent-activity-store';
@@ -746,6 +747,7 @@ export class SubAgentEventHandler {
     progress.updateArgs(args, options);
     this.agentSwarmProgress.set(toolCallId, progress);
     this.host.streamingUI.finalizeLiveTextBuffers('tool');
+    markTranscriptComponentTurnId(progress, this.host.streamingUI.getTurnContext().turnId);
     this.host.state.transcriptContainer.addChild(progress);
     this.host.updateActivityPane();
     this.requestRender();

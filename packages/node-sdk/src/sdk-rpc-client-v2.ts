@@ -1441,6 +1441,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       context: context as AgentContextData,
       replay: folded.replay,
       userTurnCount: type === 'main' ? folded.userTurnCount : undefined,
+      replayWarning: folded.warning,
+      replayError: folded.error,
       permission: {
         mode: agent.accessor.get(IAgentPermissionModeService).mode,
         rules: [...agent.accessor.get(IAgentPermissionRulesService).rules],

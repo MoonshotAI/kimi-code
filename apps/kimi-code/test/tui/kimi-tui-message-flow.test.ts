@@ -1750,6 +1750,77 @@ describe('KimiTUI message flow', () => {
     expect(stripSgr(renderTranscript(driver))).not.toContain('skill card');
   });
 
+  it('surfaces a warning when replay preserved history around corrupt records', async () => {
+    const session = makeSession({
+      getResumeState: vi.fn(() => ({
+        sessionMetadata: {},
+        agents: {
+          main: {
+            config: { modelCapabilities: { max_context_tokens: 100 }, modelAlias: 'k2' },
+            plan: null,
+            permission: { mode: 'manual' },
+            swarmMode: false,
+            context: { history: [], tokenCount: 0 },
+            background: [],
+            toolStore: {},
+            replayWarning: 'Skipped 1 corrupt record while replaying session history (line 3).',
+            replay: [
+              {
+                type: 'message',
+                time: 1,
+                message: {
+                  role: 'user',
+                  content: [{ type: 'text', text: 'preserved question' }],
+                  toolCalls: [],
+                  origin: { kind: 'user' },
+                },
+              },
+            ],
+          },
+        },
+      })),
+    });
+    const { driver } = await makeDriver(session);
+
+    const replayed = await driver.sessionReplay.hydrateFromReplay(session as unknown as Session);
+
+    expect(replayed).toBe(true);
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('preserved question');
+    expect(transcript).toContain(
+      'Warning: Skipped 1 corrupt record while replaying session history (line 3).',
+    );
+  });
+
+  it('reports a replay error instead of treating a failed wire fold as empty history', async () => {
+    const session = makeSession({
+      getResumeState: vi.fn(() => ({
+        sessionMetadata: {},
+        agents: {
+          main: {
+            config: { modelCapabilities: { max_context_tokens: 100 }, modelAlias: 'k2' },
+            plan: null,
+            permission: { mode: 'manual' },
+            swarmMode: false,
+            context: { history: [], tokenCount: 0 },
+            background: [],
+            toolStore: {},
+            replayError: 'Agent wire metadata is malformed',
+            replay: [],
+          },
+        },
+      })),
+    });
+    const { driver } = await makeDriver(session);
+
+    const replayed = await driver.sessionReplay.hydrateFromReplay(session as unknown as Session);
+
+    expect(replayed).toBe(false);
+    expect(stripSgr(renderTranscript(driver))).toContain(
+      'Error: Failed to replay session history: Agent wire metadata is malformed',
+    );
+  });
+
   it('focuses Updates with Ctrl+N, pages with Shift+arrows, and returns focus to the editor on Esc', async () => {
     const { driver } = await makeDriver(makeSession());
     const notifications = driver.sessionEventHandler.notifications;
@@ -4064,6 +4135,120 @@ command = "vim"
     expect(driver.state.transcriptEntries.some((entry) => entry.content === 'question 1')).toBe(false);
     expect(facts('call_1')).toBeUndefined();
     expect(facts(`call_${turns}`)?.settle?.kind).toBe('result');
+  });
+
+  it('keeps mixed normal, worker and cron turns aligned through live trimming', async () => {
+    const { driver } = await makeDriver();
+    const emit = (event: Record<string, unknown>): void => {
+      driver.sessionEventHandler.handleEvent({ agentId: 'main', sessionId: 'ses-1', ...event } as Event, () => {});
+    };
+    let turnId = 0;
+    let entryId = 0;
+    let boundaryWorkerCard: TranscriptEntry | undefined;
+    const append = (
+      kind: TranscriptEntry['kind'],
+      content: string,
+      entryTurnId?: string,
+    ): TranscriptEntry => {
+      const entry: TranscriptEntry = {
+        id: `mixed-${++entryId}`,
+        kind,
+        turnId: entryTurnId,
+        renderMode: kind === 'assistant' ? 'markdown' : 'plain',
+        content,
+      };
+      driver.appendTranscriptEntry(entry);
+      return entry;
+    };
+    const streamReply = (text: string) => {
+      emit({ type: 'assistant.delta', turnId, delta: text });
+      emit({ type: 'turn.ended', turnId, reason: 'completed' });
+    };
+    const normalTurn = (withSkill = false) => {
+      turnId++;
+      append('user', `question ${turnId}`);
+      if (withSkill) append('skill_activation', 'review');
+      emit({ type: 'turn.started', turnId, origin: { kind: 'user' } });
+      streamReply(`NORMAL-ANSWER-${turnId}`);
+    };
+    const workerTurn = (captureBoundary = false) => {
+      const previousTurnId = String(turnId);
+      const workerNumber = turnId + 1;
+      emit({
+        type: 'background.task.started',
+        info: {
+          taskId: `task-${workerNumber}`,
+          kind: 'agent',
+          agentId: `agent-${workerNumber}`,
+          description: 'worker',
+          status: 'running',
+          startedAt: 0,
+        },
+      });
+      const card: TranscriptEntry = {
+        id: `mixed-${++entryId}`,
+        kind: 'status',
+        turnId: previousTurnId,
+        renderMode: 'plain',
+        content: `WORKER-CARD-${workerNumber}`,
+        backgroundAgentStatus: {
+          phase: 'completed',
+          headline: `WORKER-CARD-${workerNumber}`,
+          agentId: `agent-${workerNumber}`,
+        },
+      };
+      driver.appendTranscriptEntry(card);
+      if (captureBoundary) boundaryWorkerCard = card;
+      turnId++;
+      emit({
+        type: 'turn.started',
+        turnId,
+        origin: {
+          kind: 'task',
+          taskId: `task-${workerNumber}`,
+          status: 'completed',
+          notificationId: `notification-${workerNumber}`,
+        },
+      });
+      emit({ type: 'tool.call.started', turnId, toolCallId: `worker_call_${turnId}`, name: 'Bash', args: { command: 'echo ok' } });
+      emit({ type: 'tool.result', turnId, toolCallId: `worker_call_${turnId}`, output: 'ok' });
+      streamReply(`WORKER-ANSWER-${turnId}`);
+    };
+    const cronTurn = () => {
+      turnId++;
+      const origin = {
+        kind: 'cron_job',
+        jobId: `job-${turnId}`,
+        cron: '*/5 * * * *',
+        recurring: true,
+        coalescedCount: 1,
+        stale: false,
+      };
+      emit({ type: 'turn.started', turnId, origin });
+      emit({ type: 'cron.fired', origin, prompt: `cron ${turnId}` });
+      streamReply(`CRON-ANSWER-${turnId}`);
+    };
+
+    normalTurn(true);
+    for (let index = 0; index < 5; index++) normalTurn();
+    workerTurn(true);
+    cronTurn();
+    while (turnId < TRANSCRIPT_MAX_TURNS + TRANSCRIPT_HYSTERESIS + 1) {
+      normalTurn();
+      workerTurn();
+      cronTurn();
+    }
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(boundaryWorkerCard?.turnId).toBe('7');
+    expect(transcript).toContain('WORKER-CARD-7');
+    expect(transcript).toContain('WORKER-ANSWER-7');
+    expect(transcript).toContain('CRON-ANSWER-8');
+    expect(transcript).not.toContain('NORMAL-ANSWER-6');
+    expect(transcript).not.toContain('question 1\n');
+    for (const entry of driver.state.transcriptEntries) {
+      if (entry.kind === 'assistant') expect(transcript).toContain(entry.content);
+    }
   });
 
   it.each(['new', 'switch'] as const)('forgets recorded turns when the session changes (%s)', async (action) => {
@@ -14374,6 +14559,46 @@ describe('transcript step and assistant folding', () => {
     expect(children.filter((child) => child instanceof AssistantMessageComponent)).toHaveLength(3);
     expect(children.filter((child) => child instanceof ToolCallComponent)).toHaveLength(3);
     expect(children.filter((child) => child instanceof StepSummaryComponent)).toHaveLength(0);
+  });
+
+  it('keeps AskUserQuestion mounted after more than thirty later tool calls', async () => {
+    const { driver } = await makeDriver();
+    driver.handleUserInput('keep the question');
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.call.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_question',
+        name: 'AskUserQuestion',
+        args: { questions: [{ question: 'Which option?', options: ['A', 'B'] }] },
+      } as Event,
+      vi.fn(),
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.result',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_question',
+        output: JSON.stringify({ answers: { 'Which option?': 'Option A' } }),
+        isError: false,
+      } as Event,
+      vi.fn(),
+    );
+
+    driveSteps(driver, TRANSCRIPT_KEEP_RECENT_STEPS + 5);
+
+    const question = driver.state.transcriptContainer.children.find(
+      (child) => child instanceof ToolCallComponent && child.toolCallView.id === 'call_question',
+    );
+    expect(question).toBeInstanceOf(ToolCallComponent);
+    const rendered = stripSgr(question!.render(120).join('\n'));
+    expect(rendered).toContain('Collected your answers');
+    expect(rendered).toContain('Which option?');
+    expect(rendered).toContain('Option A');
   });
 
   it('folds a completed turn down to its conclusion tail on turn end', async () => {
