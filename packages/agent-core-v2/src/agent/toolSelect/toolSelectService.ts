@@ -78,6 +78,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     this.states.contributeState(toolSelectKey);
     this._register(toolExecutor.registerHook({
       validating: (context) => {
+        if (!this.enabled()) return undefined;
         if (!collectPendingSchemaUpdateNames(this.history(), this.toolRegistry.list()).has(context.call.name)) {
           return undefined;
         }
@@ -550,6 +551,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     if (info === undefined) {
       return isMcpToolName(name) && this.toolPolicy.isToolActive(name, 'mcp');
     }
+    if (!this.enabled()) return this.toolPolicy.isToolActive(name, info.source);
     return (
       this.toolPolicy.isToolActive(name, info.source) &&
       !collectPendingSchemaUpdateNames(this.history(), this.toolRegistry.list()).has(name) &&
@@ -704,7 +706,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   }
 
   private describeUnavailableTool(name: string): string | undefined {
-    if (collectPendingSchemaUpdateNames(this.history(), this.toolRegistry.list()).has(name)) {
+    if (this.enabled() && collectPendingSchemaUpdateNames(this.history(), this.toolRegistry.list()).has(name)) {
       return schemaUpdateUnsupportedToolOutput(name);
     }
     if (!this.isInactiveLoadedTool(name)) return undefined;

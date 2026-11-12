@@ -968,6 +968,12 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
     });
     expect(h.contextMemory.history()).toHaveLength(4);
 
+    capabilities = makeCapabilities({ tool_use: true, dynamically_loaded_tools: false });
+    const nonDynamic = await execute(h, toolCall('call-non-dynamic', MCP_ALPHA, { payload: 'value' }));
+    expect(nonDynamic).toHaveLength(1);
+    expect(nonDynamic[0]?.result.isError).not.toBe(true);
+    capabilities = makeCapabilities({ tool_use: true, dynamically_loaded_tools: true });
+
     const rejected = await execute(h, toolCall('call-updated', MCP_ALPHA));
     expect(rejected).toHaveLength(1);
     expect(rejected[0]?.result).toMatchObject({

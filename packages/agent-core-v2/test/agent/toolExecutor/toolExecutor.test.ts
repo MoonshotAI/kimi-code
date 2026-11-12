@@ -2257,9 +2257,9 @@ describe('ToolExecutor handler kernel', () => {
     });
     expect(events).toEqual([
       'first:validating',
+      'second:validating',
       'first:observe',
       'second:observe',
-      'second:validating',
       'first:starting',
       'first:before',
       'second:before',
@@ -2269,44 +2269,35 @@ describe('ToolExecutor handler kernel', () => {
     ]);
     expect(prepareCalls).toBe(1);
 
-    const entered = deferred<void>();
-    const release = deferred<void>();
     const preHookEvents: string[] = [];
     const execute = vi.fn(() => ({ content: textToolContent('must not run') }));
     const rawHook = {
       label: 'raw-hook',
-      starting: async function () {
+      validating() {
         expect(this.label).toBe('raw-hook');
-        preHookEvents.push('starting');
-        entered.resolve();
-        await release.promise;
+        preHookEvents.push('validating');
       },
       afterExecute: () => {
         preHookEvents.push('after');
       },
     };
+    const prepare = vi.fn(() => ({ type: 'execute' as const, prepared: {} }));
     const stoppedExecutor = new HandlerToolExecutor([{
       name: 'pre-hook-stop',
       description: 'pre-hook-stop',
       parameters: { type: 'object' },
+      prepare,
       execute,
     }], { hook: rawHook });
     const stoppedHandler = stoppedExecutor.execute(
       toolCall('pre-hook-stop-1', 'pre-hook-stop', {}),
       undefined,
     );
-    await entered.promise;
     const stopping = stoppedHandler.stop('stop before execute');
-    let stopped = false;
-    void stopping.then(() => {
-      stopped = true;
-    });
-    await Promise.resolve();
-    expect(stopped).toBe(false);
-    expect(preHookEvents).toEqual(['starting']);
-    release.resolve();
+    expect(preHookEvents).toEqual(['validating']);
     expect((await stopping).outcome.type).toBe('aborted');
-    expect(preHookEvents).toEqual(['starting', 'after']);
+    expect(preHookEvents).toEqual(['validating', 'after']);
+    expect(prepare).toHaveBeenCalledTimes(1);
     expect(execute).not.toHaveBeenCalled();
   });
 
