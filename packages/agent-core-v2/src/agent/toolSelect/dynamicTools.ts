@@ -145,6 +145,35 @@ export function collectCurrentDynamicTools(
   return loaded;
 }
 
+export function collectPendingSchemaUpdateNames(
+  history: readonly ContextMessage[],
+  current: readonly Pick<ToolSelectTool, 'name' | 'description' | 'parameters'>[],
+): Set<string> {
+  const first = new Map<string, ToolDescription>();
+  const latest = new Map<string, ToolDescription>();
+  for (const message of history) {
+    if (!isDynamicToolSchemaMessage(message)) continue;
+    for (const tool of message.tools ?? []) {
+      if (!first.has(tool.name)) first.set(tool.name, tool);
+      latest.set(tool.name, tool);
+    }
+  }
+  const currentByName = new Map(current.map((tool) => [tool.name, tool]));
+  const pending = new Set<string>();
+  for (const [name, firstTool] of first) {
+    const latestTool = latest.get(name);
+    const currentTool = currentByName.get(name);
+    if (latestTool === undefined || currentTool === undefined) continue;
+    if (
+      toolSelectSchemaSignature(latestTool) === toolSelectSchemaSignature(currentTool) &&
+      toolSelectSchemaSignature(firstTool) !== toolSelectSchemaSignature(currentTool)
+    ) {
+      pending.add(name);
+    }
+  }
+  return pending;
+}
+
 export function collectLoadedDynamicToolNames(
   history: readonly ContextMessage[],
 ): Set<string> {

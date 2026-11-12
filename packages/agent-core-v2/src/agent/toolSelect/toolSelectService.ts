@@ -11,6 +11,7 @@ import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { isMcpToolName, type ToolInfo } from '#/tool/toolContract';
+import { toLegacyToolReturn } from '#/tool/executor';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { legacyRejectedResult, runLegacyStarting } from '#/agent/toolExecutor/legacyHooks';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -22,6 +23,7 @@ import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import {
   collectCurrentDynamicTools,
   collectLoadedDynamicTools,
+  collectPendingSchemaUpdateNames,
   foldAnnouncedToolNames,
   isDynamicToolSchemaMessage,
   isLoadableToolsAnnouncement,
@@ -42,7 +44,6 @@ import {
   ToolSelectInitialized,
   ToolSelectToolsChanged,
   toolSelectKey,
-  toolSelectSchemaSignature,
   toolSelectVersionSignature,
   type ToolSelectModelState,
   type ToolSelectTool,
@@ -76,6 +77,16 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     super();
     this.states.contributeState(toolSelectKey);
     this._register(toolExecutor.registerHook({
+      validating: (context) => {
+        if (!collectPendingSchemaUpdateNames(this.history(), this.toolRegistry.list()).has(context.call.name)) {
+          return undefined;
+        }
+        const text = schemaUpdateUnsupportedToolOutput(context.call.name);
+        return {
+          reject: text,
+          result: toLegacyToolReturn({ output: text, isError: true }, context.call.name),
+        };
+      },
       starting: (context) => {
         const text = this.describeUnavailableTool(context.call.name);
         return text === undefined
@@ -541,6 +552,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     }
     return (
       this.toolPolicy.isToolActive(name, info.source) &&
+      !collectPendingSchemaUpdateNames(this.history(), this.toolRegistry.list()).has(name) &&
       (!this.isDynamicallyLoadable(info) ||
         collectCurrentDynamicTools(this.history(), this.currentTools()).has(name))
     );
@@ -571,20 +583,29 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     tools: readonly Tool[],
   ): readonly ContextMessage[] {
     const inlineNames = new Set(tools.filter((tool) => tool.deferred !== true).map((tool) => tool.name));
-    const firstToolDeclarations = new Map<string, { message: ContextMessage; toolIndex: number; tool: Tool }>();
+    const firstToolDeclarations = new Map<string, { message: ContextMessage; toolIndex: number }>();
+    const latestToolDeclarations = new Map<string, { message: ContextMessage; toolIndex: number }>();
     for (const message of messages) {
       if (message.role !== 'system' || message.tools === undefined) continue;
       for (let toolIndex = 0; toolIndex < message.tools.length; toolIndex += 1) {
         const tool = message.tools[toolIndex]!;
         if (!firstToolDeclarations.has(tool.name)) {
-          firstToolDeclarations.set(tool.name, { message, toolIndex, tool });
+          firstToolDeclarations.set(tool.name, { message, toolIndex });
         }
+        latestToolDeclarations.set(tool.name, { message, toolIndex });
       }
     }
+    const pendingSchemaUpdates = collectPendingSchemaUpdateNames(messages, this.toolRegistry.list());
     let shaped: ContextMessage[] | undefined;
     for (let i = 0; i < messages.length; i += 1) {
       const message = messages[i]!;
-      const next = this.shapeActiveMessage(message, inlineNames, firstToolDeclarations);
+      const next = this.shapeActiveMessage(
+        message,
+        inlineNames,
+        firstToolDeclarations,
+        latestToolDeclarations,
+        pendingSchemaUpdates,
+      );
       if (next === message) {
         if (shaped !== undefined) shaped.push(message);
         continue;
@@ -598,10 +619,9 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   private shapeActiveMessage(
     message: ContextMessage,
     inlineNames: ReadonlySet<string>,
-    firstToolDeclarations: ReadonlyMap<
-      string,
-      { readonly message: ContextMessage; readonly toolIndex: number; readonly tool: Tool }
-    >,
+    firstToolDeclarations: ReadonlyMap<string, { readonly message: ContextMessage; readonly toolIndex: number }>,
+    latestToolDeclarations: ReadonlyMap<string, { readonly message: ContextMessage; readonly toolIndex: number }>,
+    pendingSchemaUpdates: ReadonlySet<string>,
   ): ContextMessage | undefined {
     if (message.role !== 'system') return message;
     const tools = message.tools;
@@ -620,11 +640,16 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
         if (kept !== undefined) kept.push(tool);
         continue;
       }
+      const latestDeclaration = latestToolDeclarations.get(tool.name);
+      const isLatestDeclaration =
+        latestDeclaration !== undefined &&
+        latestDeclaration.message === message &&
+        latestDeclaration.toolIndex === i;
       if (
         !inlineNames.has(tool.name) &&
-        firstDeclaration !== undefined &&
         !isFirstDeclaration &&
-        toolSelectSchemaSignature(firstDeclaration.tool) !== toolSelectSchemaSignature(tool)
+        isLatestDeclaration &&
+        pendingSchemaUpdates.has(tool.name)
       ) {
         schemaUpdates.push(tool.name);
       }
@@ -635,10 +660,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
       ...message.content,
       ...schemaUpdates.map((name) => ({
         type: 'text' as const,
-        text: wrapSystemReminder(
-          `Tool "${name}" has a schema update, but applying schema updates is not supported in this session. ` +
-            'Start a new session to use the updated schema.',
-        ),
+        text: wrapSystemReminder(schemaUpdateUnsupportedToolOutput(name)),
       })),
     ];
     if (kept.length > 0) return { ...message, tools: kept, content };
@@ -682,6 +704,9 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   }
 
   private describeUnavailableTool(name: string): string | undefined {
+    if (collectPendingSchemaUpdateNames(this.history(), this.toolRegistry.list()).has(name)) {
+      return schemaUpdateUnsupportedToolOutput(name);
+    }
     if (!this.isInactiveLoadedTool(name)) return undefined;
     return inactiveLoadedToolOutput(name);
   }
@@ -749,6 +774,13 @@ function suggestToolNames(name: string, pool: readonly string[]): readonly strin
     }
   }
   return [...matches].toSorted((a, b) => a.localeCompare(b)).slice(0, 3);
+}
+
+function schemaUpdateUnsupportedToolOutput(name: string): string {
+  return (
+    `Tool "${name}" has a schema update, but applying schema updates is not supported in this session. ` +
+    'Start a new session to use the updated schema.'
+  );
 }
 
 function inactiveLoadedToolOutput(name: string): string {
