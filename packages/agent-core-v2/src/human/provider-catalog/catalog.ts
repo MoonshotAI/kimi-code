@@ -287,7 +287,7 @@ async function runPingProbe(
     if (base === undefined) return `No requester configured for ${provider.id}/${model.id}`;
     const requester = base.with({
       protocol: { options: protocolOptionsOf(model) },
-      endpoint: { ...model.endpoint, ...provider.endpoint },
+      endpoint: { ...provider.endpoint, ...model.endpoint },
       model: { spec: model.spec, maxOutputTokens: 512 },
       profile: {
         systemPrompt: 'You are a connectivity probe. Answer with the single word "pong".',

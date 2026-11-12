@@ -117,19 +117,37 @@ describe('providerCatalog ping', () => {
     catalog.stop();
   });
 
-  it('carries the model protocol flags into the ping generate config', async () => {
+  it('carries the model protocol flags and endpoint overrides into the ping generate config', async () => {
     const seen: LlmRequestPart[] = [];
-    const provider = stubProvider('test', requesterOf(doneResponse(), (part) => seen.push(part)));
+    const provider = {
+      ...stubProvider('test', requesterOf(doneResponse(), (part) => seen.push(part))),
+      endpoint: {
+        baseUrl: 'https://provider.example.test',
+        headers: { 'x-endpoint-source': 'provider' },
+      },
+    };
     const catalog = await createProviderCatalog();
     catalog.upsert({
       provider,
-      models: [{ ...modelDef, protocol: 'anthropic', betaApi: true }],
+      models: [{
+        ...modelDef,
+        protocol: 'anthropic',
+        betaApi: true,
+        endpoint: {
+          baseUrl: 'https://model.example.test',
+          headers: { 'x-endpoint-source': 'model' },
+        },
+      }],
     });
 
     catalog.ping('test', 'm1');
 
     await until(() => seen.length > 0);
     expect(seen[0]?.protocol?.options).toMatchObject({ betaApi: true });
+    expect(seen[0]?.endpoint).toEqual({
+      baseUrl: 'https://model.example.test',
+      headers: { 'x-endpoint-source': 'model' },
+    });
     catalog.stop();
   });
 
