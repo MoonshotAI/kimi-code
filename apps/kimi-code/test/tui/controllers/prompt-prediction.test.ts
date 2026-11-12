@@ -117,8 +117,11 @@ describe('PromptPredictionController', () => {
     }));
 
     nextPrediction = () => Promise.resolve('git push');
+    editor.terminalFocused = false;
     controller.handleTurnEnded(turnEnded(13));
     await vi.waitFor(() => expect(editor.getPromptPrediction()).toBeDefined());
+    expect(editor.render(80).join('\n')).toContain('git push');
+    editor.terminalFocused = true;
     editor.handleInput('!');
     expect(editor.inputMode).toBe('bash');
     expect(controller.handlePreInput('\t')).toBe(false);

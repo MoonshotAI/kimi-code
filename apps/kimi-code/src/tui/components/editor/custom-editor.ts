@@ -850,7 +850,7 @@ function injectPromptPrediction(line: string, prediction: string, width: number)
     : mapVisibleIdxToRaw(line, EDITOR_LEFT_PADDING);
   const trailing = line.slice(insertAt);
   const remaining = Math.max(0, visibleWidth(trailing) - visibleWidth(trimmed));
-  return line.slice(0, insertAt) + currentTheme.fg('textDim', trimmed) + ' '.repeat(remaining);
+  return line.slice(0, insertAt) + currentTheme.fg('textMuted', trimmed) + ' '.repeat(remaining);
 }
 
 /**
