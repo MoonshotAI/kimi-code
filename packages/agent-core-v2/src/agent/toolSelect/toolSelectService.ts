@@ -7,6 +7,7 @@ import type { ToolDescription as Tool } from '#human/llm/message';
 import { AgentSpaceImpl } from '#/agent/agentContext/agentSpace';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
+import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { isMcpToolName, type ToolInfo } from '#/tool/toolContract';
@@ -41,6 +42,7 @@ import {
   ToolSelectInitialized,
   ToolSelectToolsChanged,
   toolSelectKey,
+  toolSelectSchemaSignature,
   toolSelectVersionSignature,
   type ToolSelectModelState,
   type ToolSelectTool,
@@ -569,13 +571,13 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     tools: readonly Tool[],
   ): readonly ContextMessage[] {
     const inlineNames = new Set(tools.filter((tool) => tool.deferred !== true).map((tool) => tool.name));
-    const firstToolDeclarations = new Map<string, { message: ContextMessage; toolIndex: number }>();
+    const firstToolDeclarations = new Map<string, { message: ContextMessage; toolIndex: number; tool: Tool }>();
     for (const message of messages) {
       if (message.role !== 'system' || message.tools === undefined) continue;
       for (let toolIndex = 0; toolIndex < message.tools.length; toolIndex += 1) {
-        const name = message.tools[toolIndex]!.name;
-        if (!firstToolDeclarations.has(name)) {
-          firstToolDeclarations.set(name, { message, toolIndex });
+        const tool = message.tools[toolIndex]!;
+        if (!firstToolDeclarations.has(tool.name)) {
+          firstToolDeclarations.set(tool.name, { message, toolIndex, tool });
         }
       }
     }
@@ -596,34 +598,55 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   private shapeActiveMessage(
     message: ContextMessage,
     inlineNames: ReadonlySet<string>,
-    firstToolDeclarations: ReadonlyMap<string, { readonly message: ContextMessage; readonly toolIndex: number }>,
+    firstToolDeclarations: ReadonlyMap<
+      string,
+      { readonly message: ContextMessage; readonly toolIndex: number; readonly tool: Tool }
+    >,
   ): ContextMessage | undefined {
     if (message.role !== 'system') return message;
     const tools = message.tools;
     if (tools === undefined || tools.length === 0) return message;
 
     let kept: Tool[] | undefined;
+    const schemaUpdates: string[] = [];
     for (let i = 0; i < tools.length; i += 1) {
       const tool = tools[i]!;
       const firstDeclaration = firstToolDeclarations.get(tool.name);
+      const isFirstDeclaration =
+        firstDeclaration !== undefined &&
+        firstDeclaration.message === message &&
+        firstDeclaration.toolIndex === i;
+      if (!inlineNames.has(tool.name) && isFirstDeclaration) {
+        if (kept !== undefined) kept.push(tool);
+        continue;
+      }
       if (
         !inlineNames.has(tool.name) &&
         firstDeclaration !== undefined &&
-        firstDeclaration.message === message &&
-        firstDeclaration.toolIndex === i
+        !isFirstDeclaration &&
+        toolSelectSchemaSignature(firstDeclaration.tool) !== toolSelectSchemaSignature(tool)
       ) {
-        if (kept !== undefined) kept.push(tool);
-        continue;
+        schemaUpdates.push(tool.name);
       }
       if (kept === undefined) kept = tools.slice(0, i);
     }
     if (kept === undefined) return message;
-    if (kept.length > 0) return { ...message, tools: kept };
+    const content: ContextMessage['content'] = [
+      ...message.content,
+      ...schemaUpdates.map((name) => ({
+        type: 'text' as const,
+        text: wrapSystemReminder(
+          `Tool "${name}" has a schema update, but applying schema updates is not supported in this session. ` +
+            'Start a new session to use the updated schema.',
+        ),
+      })),
+    ];
+    if (kept.length > 0) return { ...message, tools: kept, content };
 
     const { tools: _tools, ...rest } = message;
     void _tools;
-    if (rest.content.length === 0) return undefined;
-    return rest;
+    if (content.length === 0) return undefined;
+    return { ...rest, content };
   }
 
   private schemaOf(name: string): Tool | undefined {
