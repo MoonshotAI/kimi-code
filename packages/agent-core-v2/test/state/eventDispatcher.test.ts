@@ -1142,4 +1142,71 @@ describe('EventDispatcherService', () => {
     expect(liveState.items).toEqual(['live', 'replay']);
     expect(Object.isFrozen(liveState)).toBe(true);
   });
+
+  it('isolates unfrozen assigned subtrees, preserves deletion order on rollback, and rolls back uncommitted participants when commit throws', async () => {
+    const externalSubtree = { tags: ['external'] };
+    interface RichState {
+      sub: { tags: string[] };
+      dict: Record<string, number>;
+      map: Map<string, number>;
+      set: Set<string>;
+    }
+    let state: RichState = {
+      sub: { tags: [] },
+      dict: { a: 1, b: 2, c: 3 },
+      map: new Map([['a', 1], ['b', 2], ['c', 3]]),
+      set: new Set(['a', 'b', 'c']),
+    };
+    let throwOnCommit = false;
+    dispatcher.attach({
+      id: 'runtime.test.commit-thrower',
+      events: [CounterSet],
+      undoable: false,
+      transition: () => 1,
+      getState: () => 0,
+      commit: () => {
+        if (throwOnCommit) throw new Error('commit failure');
+      },
+    });
+    dispatcher.attach({
+      id: 'runtime.test.order-and-isolation',
+      events: [ItemAdd, ClearEvent, CounterSet],
+      undoable: false,
+      transition: (draft, event) => {
+        if (event instanceof ClearEvent) {
+          draft.sub = externalSubtree;
+          return;
+        }
+        if (event instanceof ItemAdd) {
+          draft.sub.tags.push(event.item);
+          return;
+        }
+        if (event instanceof CounterSet) {
+          delete draft.dict['b'];
+          draft.map.delete('b');
+          draft.set.delete('b');
+        }
+      },
+      getState: () => state,
+      commit: (next) => {
+        state = next;
+      },
+    });
+
+    throwOnCommit = true;
+    journal.push(
+      new ItemAdd({ item: 'init' }).serialize(),
+      new ClearEvent({}).serialize(),
+      new ItemAdd({ item: 'mutated-later' }).serialize(),
+      new CounterSet({ value: 1 }).serialize(),
+    );
+
+    await expect(dispatcher.restore()).rejects.toThrow('commit failure');
+
+    expect(externalSubtree).toEqual({ tags: ['external'] });
+    expect(state.sub.tags).toEqual(['external', 'mutated-later']);
+    expect(Object.keys(state.dict)).toEqual(['a', 'b', 'c']);
+    expect([...state.map.keys()]).toEqual(['a', 'b', 'c']);
+    expect([...state.set.values()]).toEqual(['a', 'b', 'c']);
+  });
 });

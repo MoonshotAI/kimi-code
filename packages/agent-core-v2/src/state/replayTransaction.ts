@@ -15,29 +15,38 @@ export function unwrapReplayDraft<T>(value: T): T {
   return raw ?? value;
 }
 
-function cloneFrozenContainer<T>(value: T): T {
-  if (!isDraftableObject(value) || !Object.isFrozen(value)) return value;
+function cloneContainer<T>(value: T): T {
+  if (!isDraftableObject(value)) return value;
   if (Array.isArray(value)) return [...value] as T;
   if (value instanceof Map) return new Map(value) as T;
   if (value instanceof Set) return new Set(value) as T;
   const proto = Object.getPrototypeOf(value) as object | null;
-  return Object.assign(Object.create(proto) as Record<PropertyKey, unknown>, value) as T;
+  return Object.defineProperties(
+    Object.create(proto) as Record<PropertyKey, unknown>,
+    Object.getOwnPropertyDescriptors(value),
+  ) as T;
+}
+
+function cloneFrozenContainer<T>(value: T): T {
+  return isDraftableObject(value) && Object.isFrozen(value) ? cloneContainer(value) : value;
 }
 
 function normalizeAssignedTree<T>(
   root: T,
   cleanCommitted: WeakSet<object>,
   seen: WeakSet<object>,
+  cloneUnowned: boolean,
 ): T {
   const unwrapped = unwrapReplayDraft(root);
   if (!isDraftableObject(unwrapped)) return unwrapped;
   if (cleanCommitted.has(unwrapped) && !Object.isFrozen(unwrapped)) return unwrapped;
-  const raw = cloneFrozenContainer(unwrapped);
+  const raw =
+    cloneUnowned || Object.isFrozen(unwrapped) ? cloneContainer(unwrapped) : unwrapped;
   if (seen.has(raw)) return raw;
   seen.add(raw);
   if (Array.isArray(raw)) {
     for (let i = 0; i < raw.length; i += 1) {
-      const next = normalizeAssignedTree(raw[i], cleanCommitted, seen);
+      const next = normalizeAssignedTree(raw[i], cleanCommitted, seen, cloneUnowned);
       if (next !== raw[i]) raw[i] = next;
     }
     cleanCommitted.add(raw);
@@ -48,8 +57,8 @@ function normalizeAssignedTree<T>(
     let changed = false;
     const nextEntries: Array<[unknown, unknown]> = [];
     for (const [k, v] of entries) {
-      const nk = normalizeAssignedTree(k, cleanCommitted, seen);
-      const nv = normalizeAssignedTree(v, cleanCommitted, seen);
+      const nk = normalizeAssignedTree(k, cleanCommitted, seen, cloneUnowned);
+      const nv = normalizeAssignedTree(v, cleanCommitted, seen, cloneUnowned);
       if (nk !== k || nv !== v) changed = true;
       nextEntries.push([nk, nv]);
     }
@@ -65,7 +74,7 @@ function normalizeAssignedTree<T>(
     let changed = false;
     const nextItems: unknown[] = [];
     for (const item of items) {
-      const ni = normalizeAssignedTree(item, cleanCommitted, seen);
+      const ni = normalizeAssignedTree(item, cleanCommitted, seen, cloneUnowned);
       if (ni !== item) changed = true;
       nextItems.push(ni);
     }
@@ -80,7 +89,7 @@ function normalizeAssignedTree<T>(
   for (const key of Reflect.ownKeys(record)) {
     const desc = Object.getOwnPropertyDescriptor(record, key);
     if (desc !== undefined && 'value' in desc && desc.writable) {
-      const next = normalizeAssignedTree(desc.value, cleanCommitted, seen);
+      const next = normalizeAssignedTree(desc.value, cleanCommitted, seen, cloneUnowned);
       if (next !== desc.value) record[key] = next;
     }
   }
@@ -103,7 +112,7 @@ export function applyReplayTransaction<S>(
     const out = fn(root);
     const seen = new WeakSet<object>();
     return {
-      next: out === undefined ? root : normalizeAssignedTree(out, cleanCommitted, seen),
+      next: out === undefined ? root : normalizeAssignedTree(out, cleanCommitted, seen, true),
       mutated: false,
       rollback: () => {},
     };
@@ -161,8 +170,8 @@ export function applyReplayTransaction<S>(
                 apply: (seen) => {
                   if (!obj.has(rk)) return;
                   const currentVal = obj.get(rk);
-                  const nk = normalizeAssignedTree(rk, cleanCommitted, seen);
-                  const nv = normalizeAssignedTree(currentVal, cleanCommitted, seen);
+                  const nk = normalizeAssignedTree(rk, cleanCommitted, seen, true);
+                  const nv = normalizeAssignedTree(currentVal, cleanCommitted, seen, true);
                   if (nk !== rk) {
                     obj.delete(rk);
                     obj.set(nk, nv);
@@ -178,9 +187,10 @@ export function applyReplayTransaction<S>(
             return (k: unknown) => {
               const rk = unwrapReplayDraft(k);
               if (!obj.has(rk)) return false;
-              const old = obj.get(rk);
+              const entries = [...obj.entries()];
               undo.push(() => {
-                obj.set(rk, old);
+                obj.clear();
+                for (const [ek, ev] of entries) obj.set(ek, ev);
               });
               return obj.delete(rk);
             };
@@ -236,7 +246,7 @@ export function applyReplayTransaction<S>(
               assignedSlots.push({
                 apply: (seen) => {
                   if (!obj.has(rv)) return;
-                  const nv = normalizeAssignedTree(rv, cleanCommitted, seen);
+                  const nv = normalizeAssignedTree(rv, cleanCommitted, seen, true);
                   if (nv !== rv) {
                     obj.delete(rv);
                     obj.add(nv);
@@ -250,8 +260,10 @@ export function applyReplayTransaction<S>(
             return (v: unknown) => {
               const rv = unwrapReplayDraft(v);
               if (!obj.has(rv)) return false;
+              const items = [...obj.values()];
               undo.push(() => {
-                obj.add(rv);
+                obj.clear();
+                for (const item of items) obj.add(item);
               });
               return obj.delete(rv);
             };
@@ -332,19 +344,29 @@ export function applyReplayTransaction<S>(
           apply: (seen) => {
             if (!Object.prototype.hasOwnProperty.call(obj, prop)) return;
             const cur = rec[prop];
-            const next = normalizeAssignedTree(cur, cleanCommitted, seen);
+            const next = normalizeAssignedTree(cur, cleanCommitted, seen, true);
             if (next !== cur) rec[prop] = next;
           },
         });
         return true;
       },
       deleteProperty(obj, prop) {
-        const rec = obj as Record<PropertyKey, unknown>;
         const had = Object.prototype.hasOwnProperty.call(obj, prop);
         if (!had) return true;
-        const old = rec[prop];
+        if (Array.isArray(obj)) {
+          const rec = obj as unknown as Record<PropertyKey, unknown>;
+          const old = rec[prop];
+          undo.push(() => {
+            rec[prop] = old;
+          });
+          return Reflect.deleteProperty(obj, prop);
+        }
+        const descriptors = Object.getOwnPropertyDescriptors(obj);
         undo.push(() => {
-          rec[prop] = old;
+          for (const key of Reflect.ownKeys(obj)) {
+            Reflect.deleteProperty(obj, key);
+          }
+          Object.defineProperties(obj, descriptors);
         });
         return Reflect.deleteProperty(obj, prop);
       },
@@ -365,7 +387,7 @@ export function applyReplayTransaction<S>(
             apply: (seen) => {
               const curDesc = Object.getOwnPropertyDescriptor(obj, prop);
               if (curDesc === undefined || !('value' in curDesc) || !curDesc.writable) return;
-              const next = normalizeAssignedTree(curDesc.value, cleanCommitted, seen);
+              const next = normalizeAssignedTree(curDesc.value, cleanCommitted, seen, true);
               if (next !== curDesc.value) rec[prop] = next;
             },
           });
@@ -384,11 +406,11 @@ export function applyReplayTransaction<S>(
     undo.length = 0;
   };
   try {
-    normalizeAssignedTree(root, cleanCommitted, new WeakSet<object>());
+    normalizeAssignedTree(root, cleanCommitted, new WeakSet<object>(), false);
     const out = fn(wrap(root));
     const seen = new WeakSet<object>();
     for (const slot of assignedSlots) slot.apply(seen);
-    const next = out === undefined ? root : normalizeAssignedTree(out, cleanCommitted, seen);
+    const next = out === undefined ? root : normalizeAssignedTree(out, cleanCommitted, seen, true);
     return { next, mutated: undo.length > 0, rollback };
   } catch (error) {
     rollback();

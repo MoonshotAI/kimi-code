@@ -713,11 +713,26 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
         throw error;
       }
     }
-    for (const p of prepared) {
-      this.commit(p.key, p.meta, p.ctx, p.next);
+    try {
+      for (const p of prepared) {
+        this.commit(p.key, p.meta, p.ctx, p.next);
+      }
+    } catch (error) {
+      for (let j = preparedParticipants.length - 1; j >= 0; j -= 1) {
+        preparedParticipants[j]!.rollback?.();
+      }
+      throw error;
     }
-    for (const p of preparedParticipants) {
-      this.commitParticipant(p.attachment, p.ctx, p.next);
+    for (let i = 0; i < preparedParticipants.length; i += 1) {
+      const p = preparedParticipants[i]!;
+      try {
+        this.commitParticipant(p.attachment, p.ctx, p.next);
+      } catch (error) {
+        for (let j = preparedParticipants.length - 1; j > i; j -= 1) {
+          preparedParticipants[j]!.rollback?.();
+        }
+        throw error;
+      }
     }
     if (this.restorePhase === 'new' && (event.constructor as Event2Class).durable) {
       for (const p of prepared) this.preRestoreProjectedKeys.add(p.key);
