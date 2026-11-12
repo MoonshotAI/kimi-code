@@ -331,6 +331,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     cacheExpiryHint: input.tuiConfig.cacheExpiryHint,
     disableFeedbackSurvey: input.tuiConfig.disableFeedbackSurvey,
     autoSessionTitle: input.tuiConfig.autoSessionTitle,
+    followUpBehavior: input.tuiConfig.followUpBehavior,
     notifications: input.tuiConfig.notifications,
     upgrade: input.tuiConfig.upgrade,
     statusLine: input.tuiConfig.statusLine,
