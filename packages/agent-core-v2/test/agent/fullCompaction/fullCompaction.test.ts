@@ -4633,6 +4633,156 @@ describe('FullCompaction pre-shrink', () => {
     );
     await ctx.expectResumeMatches();
   });
+
+  it('triggers auto compaction before step 1 from historical assistant usage when measured anchors are stale', async () => {
+    const callSnapshots: {
+      isCompaction: boolean;
+      maxOutputTokens?: number | 'none';
+      usedTokens?: number;
+    }[] = [];
+    const generate: GenerateFn = createMockProvider(async (request) => {
+      const lastText = messageText(request.content.messages.at(-1));
+      const isCompaction = lastText === renderCompactionInstruction({});
+      callSnapshots.push({
+        isCompaction,
+        maxOutputTokens: request.model.maxOutputTokens,
+        usedTokens: request.content.usedTokens,
+      });
+      return textResult(isCompaction ? 'Usage-anchored summary.' : 'Recovered reply after compaction.');
+    });
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: {
+        ...CATALOGUED_MODEL_CAPABILITIES,
+        maxContextSize: 1_000_000,
+      },
+    });
+    const models = (ctx as unknown as MutableKimiConfig).kimiConfig.models;
+    models![CATALOGUED_PROVIDER.model] = {
+      ...models![CATALOGUED_PROVIDER.model]!,
+      maxOutputSize: 64_000,
+    };
+    ctx.notifyModelConfigChanged();
+
+    appendContext(
+      ctx.context,
+      { role: 'user', content: [{ type: 'text', text: 'first short question' }], origin: { kind: 'user' } },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'first short answer' }],
+        toolCalls: [],
+        usage: {
+          inputOther: 3_600,
+          output: 1,
+          inputCacheRead: 1_000_000,
+          inputCacheCreation: 0,
+        },
+      },
+    );
+    expect(ctx.tokenCounting.get().size).toBeLessThan(1_000);
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue working' }] });
+    const events = await ctx.untilTurnEnd();
+
+    expect(callSnapshots).toHaveLength(2);
+    expect(callSnapshots[0]?.isCompaction).toBe(true);
+    expect(callSnapshots[1]?.isCompaction).toBe(false);
+    expect(callSnapshots[1]?.maxOutputTokens).toBe(64_000);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'compaction.completed',
+        args: expect.objectContaining({
+          result: expect.objectContaining({
+            summary: 'Usage-anchored summary.',
+            tokensBefore: 1_003_601 + ctx.tokenCounting.estimateMessage({
+              role: 'user',
+              content: [{ type: 'text', text: 'continue working' }],
+            }),
+          }),
+        }),
+      }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'turn.ended',
+        args: expect.objectContaining({ reason: 'completed' }),
+      }),
+    );
+  });
+
+  it('pre-shrinks compaction history using historical assistant usage anchors when character estimates fit the window', async () => {
+    const compactionBudgets: {
+      texts: string[];
+      usedTokens?: number;
+      maxContextSize?: number;
+    }[] = [];
+    const generate: GenerateFn = createMockProvider(async (request) => {
+      compactionBudgets.push({
+        texts: request.content.messages.map(messageText),
+        usedTokens: request.content.usedTokens,
+        maxContextSize: request.model.spec.maxContextSize,
+      });
+      return textResult('Usage-shrunk summary.');
+    });
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: {
+        ...CATALOGUED_MODEL_CAPABILITIES,
+        maxContextSize: 1_000_000,
+      },
+    });
+    appendContext(
+      ctx.context,
+      { role: 'user', content: [{ type: 'text', text: 'old user one' }], origin: { kind: 'user' } },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'old assistant one' }],
+        toolCalls: [],
+        usage: { inputOther: 50_000, output: 100, inputCacheRead: 299_900, inputCacheCreation: 0 },
+      },
+      { role: 'user', content: [{ type: 'text', text: 'mid user two' }], origin: { kind: 'user' } },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'mid assistant two' }],
+        toolCalls: [],
+        usage: { inputOther: 30_000, output: 100, inputCacheRead: 649_900, inputCacheCreation: 0 },
+      },
+      { role: 'user', content: [{ type: 'text', text: 'recent user three' }], origin: { kind: 'user' } },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'recent assistant three' }],
+        toolCalls: [],
+        usage: { inputOther: 23_501, output: 100, inputCacheRead: 980_000, inputCacheCreation: 0 },
+      },
+    );
+    expect(ctx.tokenCounting.estimateMessages(ctx.context.history())).toBeLessThan(1_000);
+
+    const completed = ctx.once('compaction.completed');
+    await ctx.rpc.beginCompaction({});
+    await completed;
+
+    expect(compactionBudgets).toHaveLength(1);
+    const [call] = compactionBudgets;
+    expect(call!.texts.some((text) => text.includes('old user one'))).toBe(false);
+    expect(call!.texts.some((text) => text.includes('old assistant one'))).toBe(false);
+    expect(call!.texts.some((text) => text.includes('mid user two'))).toBe(true);
+    expect(call!.texts.some((text) => text.includes('recent assistant three'))).toBe(true);
+    expect(call!.maxContextSize! - call!.usedTokens!).toBeGreaterThan(125_000);
+    const events = ctx.newEvents();
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'compaction.completed',
+        args: expect.objectContaining({
+          result: expect.objectContaining({
+            droppedCount: 2,
+            tokensBefore: 1_003_601,
+          }),
+        }),
+      }),
+    );
+  });
 });
 
 describe('FullCompaction prompt-cache prefix', () => {
