@@ -15,12 +15,16 @@ import type { TowerActivityMessage, TowerStateMessage } from '../../protocol/ws-
 import { toWireTowerProjection } from '../../routes/tower';
 import type { BroadcastTarget } from '../../transport/ws/v1/sessionEventBroadcaster';
 
-interface TowerWatchEntry {
-  readonly root: string;
-  readonly targets: Set<BroadcastTarget>;
-  readonly disposeWatch: () => void;
+interface TowerWatchSubscription {
+  readonly target: BroadcastTarget;
   logOffset: number;
   queue: Promise<void>;
+}
+
+interface TowerWatchEntry {
+  readonly root: string;
+  readonly targets: Map<BroadcastTarget, TowerWatchSubscription>;
+  readonly disposeWatch: () => void;
 }
 
 export class TowerWatchService {
@@ -29,10 +33,13 @@ export class TowerWatchService {
 
   constructor(private readonly core: Scope) {}
 
-  async subscribe(workspaceId: string, target: BroadcastTarget): Promise<void> {
+  async subscribe(
+    workspaceId: string,
+    target: BroadcastTarget,
+    accepted: () => void,
+  ): Promise<void> {
     if (this.disposed) return;
     let entry = this.entries.get(workspaceId);
-    let isFirst = false;
     if (entry === undefined) {
       const workspace = await this.core.accessor.get(IWorkspaceService).get(workspaceId);
       if (this.disposed) return;
@@ -44,36 +51,44 @@ export class TowerWatchService {
       }
       entry = this.entries.get(workspaceId);
       if (entry === undefined) {
-        isFirst = true;
         const created: TowerWatchEntry = {
           root: workspace.root,
-          targets: new Set(),
+          targets: new Map(),
           disposeWatch: watchTower(workspace.root, (hint) => {
             this.onHint(workspaceId, hint);
           }),
-          logOffset: 0,
-          queue: Promise.resolve(),
         };
         this.entries.set(workspaceId, created);
         entry = created;
       }
     }
-    entry.targets.add(target);
     const current = entry;
-    void this.enqueue(current, async () => {
-      if (!current.targets.has(target)) return;
-      const projection = await readTowerProjection(current.root);
-      if (isFirst) current.logOffset = projection.logOffset;
-      this.send(target, {
-        type: 'tower.state',
-        timestamp: new Date().toISOString(),
-        payload: {
-          workspace_id: workspaceId,
-          ...toWireTowerProjection(projection),
-        },
+    const subscription: TowerWatchSubscription = {
+      target,
+      logOffset: 0,
+      queue: Promise.resolve(),
+    };
+    current.targets.set(target, subscription);
+    try {
+      await this.enqueue(subscription, async () => {
+        if (!this.isCurrent(workspaceId, current, subscription)) return;
+        const projection = await readTowerProjection(current.root);
+        if (!this.isCurrent(workspaceId, current, subscription)) return;
+        subscription.logOffset = projection.logOffset;
+        accepted();
+        this.send(target, {
+          type: 'tower.state',
+          timestamp: new Date().toISOString(),
+          payload: {
+            workspace_id: workspaceId,
+            ...toWireTowerProjection(projection),
+          },
+        });
       });
-    }).catch(() => {
-    });
+    } catch (error) {
+      this.removeSubscription(workspaceId, current, subscription);
+      throw error;
+    }
   }
 
   unsubscribe(workspaceId: string, target: BroadcastTarget): void {
@@ -101,28 +116,60 @@ export class TowerWatchService {
     this.entries.clear();
   }
 
+  private isCurrent(
+    workspaceId: string,
+    entry: TowerWatchEntry,
+    subscription: TowerWatchSubscription,
+  ): boolean {
+    return (
+      !this.disposed &&
+      this.entries.get(workspaceId) === entry &&
+      entry.targets.get(subscription.target) === subscription
+    );
+  }
+
+  private removeSubscription(
+    workspaceId: string,
+    entry: TowerWatchEntry,
+    subscription: TowerWatchSubscription,
+  ): void {
+    if (!this.isCurrent(workspaceId, entry, subscription)) return;
+    entry.targets.delete(subscription.target);
+    if (entry.targets.size > 0) return;
+    entry.disposeWatch();
+    this.entries.delete(workspaceId);
+  }
+
   private onHint(workspaceId: string, hint: TowerWatchHint): void {
     if (this.disposed) return;
     const entry = this.entries.get(workspaceId);
     if (entry === undefined) return;
-    void this.enqueue(entry, () => this.handleHint(workspaceId, entry, hint)).catch(() => {
-    });
+    for (const subscription of entry.targets.values()) {
+      void this.enqueue(subscription, () =>
+        this.handleHint(workspaceId, entry, subscription, hint),
+      ).catch(() => {});
+    }
   }
 
   private async handleHint(
     workspaceId: string,
     entry: TowerWatchEntry,
+    subscription: TowerWatchSubscription,
     hint: TowerWatchHint,
   ): Promise<void> {
-    if (hint.logAppended) await this.emitActivity(workspaceId, entry);
-    if (hint.stateChanged) await this.emitState(workspaceId, entry);
+    if (hint.logAppended) await this.emitActivity(workspaceId, entry, subscription);
+    if (hint.stateChanged) await this.emitState(workspaceId, entry, subscription);
   }
 
-  private async emitActivity(workspaceId: string, entry: TowerWatchEntry): Promise<void> {
+  private async emitActivity(
+    workspaceId: string,
+    entry: TowerWatchEntry,
+    subscription: TowerWatchSubscription,
+  ): Promise<void> {
     let events: TowerActivityEvent[];
     let offset: number;
     try {
-      const slice = await readTowerLogFrom(entry.root, entry.logOffset);
+      const slice = await readTowerLogFrom(entry.root, subscription.logOffset);
       events = slice.lines
         .map(parseTowerActivityLine)
         .filter((event): event is TowerActivityEvent => event !== undefined);
@@ -130,16 +177,21 @@ export class TowerWatchService {
     } catch {
       return;
     }
-    entry.logOffset = offset;
+    if (!this.isCurrent(workspaceId, entry, subscription)) return;
+    subscription.logOffset = offset;
     if (events.length === 0) return;
-    this.broadcast(entry, {
+    this.send(subscription.target, {
       type: 'tower.activity',
       timestamp: new Date().toISOString(),
       payload: { workspace_id: workspaceId, events, offset },
     });
   }
 
-  private async emitState(workspaceId: string, entry: TowerWatchEntry): Promise<void> {
+  private async emitState(
+    workspaceId: string,
+    entry: TowerWatchEntry,
+    subscription: TowerWatchSubscription,
+  ): Promise<void> {
     let frame: TowerStateMessage;
     try {
       const projection = await readTowerProjection(entry.root);
@@ -154,23 +206,22 @@ export class TowerWatchService {
     } catch {
       return;
     }
-    this.broadcast(entry, frame);
-  }
-
-  private broadcast(entry: TowerWatchEntry, frame: TowerStateMessage | TowerActivityMessage): void {
-    for (const target of entry.targets) this.send(target, frame);
+    if (!this.isCurrent(workspaceId, entry, subscription)) return;
+    this.send(subscription.target, frame);
   }
 
   private send(target: BroadcastTarget, frame: TowerStateMessage | TowerActivityMessage): void {
     try {
       target.send(frame);
-    } catch {
-    }
+    } catch {}
   }
 
-  private enqueue(entry: TowerWatchEntry, task: () => Promise<void>): Promise<void> {
-    const run = entry.queue.then(task);
-    entry.queue = run.then(
+  private enqueue(
+    subscription: TowerWatchSubscription,
+    task: () => Promise<void>,
+  ): Promise<void> {
+    const run = subscription.queue.then(task);
+    subscription.queue = run.then(
       () => undefined,
       () => undefined,
     );

@@ -2,11 +2,28 @@ import { appendFile, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
+
+const activityReadControl = vi.hoisted(() => ({
+  gate: undefined as (() => Promise<void>) | undefined,
+}));
+
+vi.mock('@moonshot-ai/agent-core-v2', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@moonshot-ai/agent-core-v2')>();
+  return {
+    ...actual,
+    readTowerLogFrom: async (repoRoot: string, offset: number) => {
+      const gate = activityReadControl.gate;
+      activityReadControl.gate = undefined;
+      if (gate !== undefined) await gate();
+      return actual.readTowerLogFrom(repoRoot, offset);
+    },
+  };
+});
 
 interface InjectResponse {
   statusCode: number;
@@ -503,6 +520,7 @@ describe('server-v2 /api/v1/ws tower subscriptions', () => {
     expect(state.payload.status).toBe('active');
     expect(state.payload.events.some((event) => event.kind === 'inbox.send')).toBe(false);
     expect(state.payload.log_offset).toBeGreaterThan(0);
+    expect(client.frames.indexOf(response)).toBeLessThan(client.frames.indexOf(state));
   });
 
   it('pushes tower.activity with the appended whitelisted event and a later offset', async () => {
@@ -587,6 +605,22 @@ describe('server-v2 /api/v1/ws tower subscriptions', () => {
     expect(response.code).toBe(40410);
   });
 
+  it('rejects tower.subscribe when the initial projection cannot be read', async () => {
+    const api = appOf(server as RunningServer);
+    const { root, workspaceId } = await createTowerWorkspace(api);
+    await writeFile(join(root, '.tower', 'comms', 'state.json'), '{broken\n', 'utf8');
+    const client = await connect();
+
+    sendTowerSubscribe(client, 'sub-broken', workspaceId);
+
+    const response = (await waitForFrame(
+      client.frames,
+      (frame) => frame.type === 'response' && frame.request_id === 'sub-broken',
+    )) as TowerResponseFrame;
+    expect(response.code).not.toBe(0);
+    expect(client.frames.filter((frame) => frame.type === 'tower.state')).toEqual([]);
+  });
+
   it('stops pushing after tower.unsubscribe', async () => {
     const api = appOf(server as RunningServer);
     const { root, workspaceId } = await createTowerWorkspace(api);
@@ -666,5 +700,63 @@ describe('server-v2 /api/v1/ws tower subscriptions', () => {
     await sleep(500);
 
     expect(first.frames.filter((frame) => frame.type === 'tower.activity')).toEqual([]);
+  });
+
+  it('keeps a new subscriber baseline ahead of older in-flight activity', async () => {
+    const api = appOf(server as RunningServer);
+    const { root, workspaceId } = await createTowerWorkspace(api);
+    const first = await connect();
+    sendTowerSubscribe(first, 'sub-first', workspaceId);
+    await waitForFrame(first.frames, (frame) => frame.type === 'tower.state');
+
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    activityReadControl.gate = async () => {
+      markStarted();
+      await blocked;
+    };
+    const second = await connect();
+    try {
+      await appendTowerActivity(
+        root,
+        '2026-01-01T00:15:00.000Z tower spawn name=worker-queued mission=M1 branch=feat/add-feature',
+      );
+      await started;
+      sendTowerSubscribe(second, 'sub-second', workspaceId);
+      const response = (await waitForFrame(
+        second.frames,
+        (frame) => frame.type === 'response' && frame.request_id === 'sub-second',
+      )) as TowerResponseFrame;
+      expect(response.code).toBe(0);
+      release();
+
+      await waitForFrame(
+        first.frames,
+        (frame) =>
+          frame.type === 'tower.activity' &&
+          ((frame.payload?.['events'] as TowerEventWire[] | undefined) ?? []).some(
+            (event) => event.fields['name'] === 'worker-queued',
+          ),
+      );
+      const state = (await waitForFrame(
+        second.frames,
+        (frame) => frame.type === 'tower.state',
+      )) as TowerStateFrame;
+
+      expect(state.payload.events.some((event) => event.fields['name'] === 'worker-queued')).toBe(
+        true,
+      );
+      expect(second.frames.filter((frame) => frame.type === 'tower.activity')).toEqual([]);
+      expect(second.frames.indexOf(response)).toBeLessThan(second.frames.indexOf(state));
+    } finally {
+      release();
+      activityReadControl.gate = undefined;
+    }
   });
 });

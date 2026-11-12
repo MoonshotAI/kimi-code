@@ -16,6 +16,7 @@ export interface TowerWatchHint {
 
 const DEFAULT_DEBOUNCE_MS = 300;
 const REARM_DELAY_MS = 50;
+const MAX_REARM_DELAY_MS = 5_000;
 
 export function watchTower(
   repoRoot: string,
@@ -68,17 +69,24 @@ export function watchTower(
     } catch {}
   };
 
+  let rearmDelayMs = REARM_DELAY_MS;
+
   const scheduleRearm = (): void => {
     if (disposed || rearmTimer !== undefined) return;
     rearmTimer = setTimeout(() => {
       rearmTimer = undefined;
-      arm();
-      emit({ stateChanged: true, logAppended: true });
-    }, REARM_DELAY_MS);
+      if (arm()) {
+        rearmDelayMs = REARM_DELAY_MS;
+        emit({ stateChanged: true, logAppended: true });
+        return;
+      }
+      rearmDelayMs = Math.min(rearmDelayMs * 2, MAX_REARM_DELAY_MS);
+      scheduleRearm();
+    }, rearmDelayMs);
     rearmTimer.unref?.();
   };
 
-  const armDir = (dir: string, expectedFile: string | undefined, onMatch: () => void): void => {
+  const armDir = (dir: string, expectedFile: string | undefined, onMatch: () => void): boolean => {
     let watcher: FSWatcher;
     try {
       watcher = watch(dir, { persistent: true }, (_event, filename) => {
@@ -97,38 +105,41 @@ export function watchTower(
         onMatch();
       });
     } catch {
-      scheduleRearm();
-      return;
+      return false;
     }
     watchers.add(watcher);
     watcher.on('error', () => {
       closeWatcher(watcher);
       scheduleRearm();
     });
+    return true;
   };
 
-  const arm = (): void => {
-    if (disposed) return;
+  const arm = (): boolean => {
+    if (disposed) return false;
     clearRearm();
     for (const watcher of watchers) closeWatcher(watcher);
     if (existsSync(commsDir) && existsSync(logDir)) {
-      armDir(commsDir, stateFile, () => emit({ stateChanged: true, logAppended: false }));
-      armDir(logDir, logFile, () => emit({ stateChanged: false, logAppended: true }));
-      return;
+      const commsArmed = armDir(commsDir, stateFile, () => {
+        emit({ stateChanged: true, logAppended: false });
+      });
+      const logArmed = armDir(logDir, logFile, () => {
+        emit({ stateChanged: false, logAppended: true });
+      });
+      return commsArmed && logArmed;
     }
     if (!existsSync(commsDir)) {
       const towerExists = existsSync(towerDir);
-      armDir(
+      return armDir(
         towerExists ? towerDir : repoRoot,
         towerExists ? commsName : basename(TOWER_ROOT),
         scheduleRearm,
       );
-      return;
     }
-    armDir(commsDir, logName, scheduleRearm);
+    return armDir(commsDir, logName, scheduleRearm);
   };
 
-  arm();
+  if (!arm()) scheduleRearm();
 
   return () => {
     if (disposed) return;

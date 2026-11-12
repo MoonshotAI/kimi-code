@@ -28,11 +28,16 @@ export const TOWER_ACTIVITY_FEED_KINDS: ReadonlySet<string> = new Set([
 
 export function parseTowerActivityLine(line: string): TowerActivityEvent | undefined {
   const tokens = line.trim().split(/\s+/);
-  const [at, actor, kind] = tokens;
-  if (at === undefined || actor === undefined || kind === undefined) return undefined;
-  if (!TOWER_ACTIVITY_FEED_KINDS.has(kind)) return undefined;
+  const at = tokens[0];
+  let kindIndex = -1;
+  for (let index = 2; index < tokens.length; index += 1) {
+    if (TOWER_ACTIVITY_FEED_KINDS.has(tokens[index]!)) kindIndex = index;
+  }
+  if (at === undefined || at.length === 0 || kindIndex < 0) return undefined;
+  const actor = tokens.slice(1, kindIndex).join(' ');
+  const kind = tokens[kindIndex]!;
   const fields: Record<string, string> = {};
-  for (const token of tokens.slice(3)) {
+  for (const token of tokens.slice(kindIndex + 1)) {
     const separator = token.indexOf('=');
     if (separator <= 0) continue;
     fields[token.slice(0, separator)] = token.slice(separator + 1);
