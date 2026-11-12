@@ -24,6 +24,8 @@ import {
   BRAILLE_SPINNER_FRAMES,
   BRAILLE_SPINNER_INTERVAL_MS,
   COMMAND_PREVIEW_LINES,
+  DETACH_HINT_TEXT,
+  FOREGROUND_BASH_HINT_DELAY_MS,
   MESSAGE_INDENT,
   OUTCOME_MAX_LINES,
   RESULT_PREVIEW_LINES,
@@ -43,7 +45,7 @@ import {
 } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
-import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
+import type { Elapsed, ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 import type { TokenUsage } from '@moonshot-ai/kimi-code-sdk';
 import { appendStreamingArgsPreview } from '#/tui/utils/event-payload';
 import { createMarkdownOptions } from '#/tui/utils/markdown-options';
@@ -61,13 +63,13 @@ import {
   type HeaderSegments,
 } from './truncated-header-line';
 import { ShellExecutionComponent } from './shell-execution';
-import { countNonEmptyLines, pickChip } from './tool-renderers/chip';
-import { buildGoalToolHeader, parseGoalToolOutput } from './tool-renderers/goal';
+import { chipText, countNonEmptyLines } from './tool-renderers/chip';
+import { buildGoalToolHeader, isGoalToolName, parseGoalToolOutput } from './tool-renderers/goal';
 import { searchNoticeOnly } from './tool-renderers/grep-output';
 import { parseReadMediaOutput } from './tool-renderers/media';
 import { nonEmptyLines, outcomeLine, outcomeRows } from './tool-renderers/outcome';
 import { TruncatedOutputComponent, trimTrailingEmptyLines } from './tool-renderers/truncated';
-import { isSpilledToolOutput } from './tool-renderers/types';
+import { CardOnly, isSpilledToolOutput } from './tool-renderers/types';
 import { isGenericToolResult, pickResultRenderer } from './tool-renderers/registry';
 import {
   isTodoListRead,
@@ -89,15 +91,12 @@ const STREAMING_PROGRESS_INTERVAL_MS = 1000;
 const PROGRESS_URL_RE = /https?:\/\/\S+/g;
 const ABORTED_MARK = '⊘';
 const MAX_LIVE_OUTPUT_CHARS = 50_000;
+const CARD_PREAMBLE_CHILDREN = 2;
 // One shared reference: the header line compares segment styles by identity
 // to keep its render cache across rebuilds, and the palette is read at call
 // time so theme switches still apply.
 const dimHeaderStyle = (text: string): string => currentTheme.dim(text);
 const notifyTitleStyle = (text: string): string => currentTheme.boldFg('textStrong', text);
-
-/** Delay before a long-running foreground Bash/Agent card advertises Ctrl+B. */
-const DETACH_HINT_DELAY_MS = 10_000;
-const DETACH_HINT_TEXT = 'Press Ctrl+B to run in background';
 
 type SubagentTextKind = 'thinking' | 'text';
 type SubagentPhase = 'queued' | 'spawning' | 'running' | 'done' | 'failed' | 'backgrounded';
@@ -674,11 +673,12 @@ function isNotifyUserHeaderContent(content: HeaderContent): content is NotifyUse
   return typeof content !== 'string' && 'notifyUserTitle' in content;
 }
 
-function notifyUserBadge(): string {
-  return currentTheme.bg(
+function notifyUserPrefix(fullscreen: boolean): string {
+  if (fullscreen) return currentTheme.fg('primary', STATUS_BULLET);
+  return `${currentTheme.bg(
     'primary',
     chalk.hex(NOTIFY_USER_MARK_FOREGROUND)(NOTIFY_USER_MARK),
-  );
+  )} `;
 }
 
 function notifyUserLiveArgs(toolCall: ToolCallBlockData): Record<string, unknown> {
@@ -708,6 +708,7 @@ function notifyUserTitle(args: Record<string, unknown>): string {
 }
 
 class NotifyUserHeader extends TruncatedHeaderLine {
+  private prefix = '';
   private title: string | undefined;
   private expanded = false;
   private expandedCache: { width: number; lines: string[] } | undefined;
@@ -718,7 +719,13 @@ class NotifyUserHeader extends TruncatedHeaderLine {
   }
 
   override setText(content: HeaderContent): void {
-    this.title = isNotifyUserHeaderContent(content) ? content.notifyUserTitle : undefined;
+    if (isNotifyUserHeaderContent(content)) {
+      this.prefix = content.head;
+      this.title = content.notifyUserTitle;
+    } else {
+      this.prefix = '';
+      this.title = undefined;
+    }
     this.expandedCache = undefined;
     super.setText(content);
   }
@@ -740,7 +747,7 @@ class NotifyUserHeader extends TruncatedHeaderLine {
     if (isRenderCacheEnabled() && this.expandedCache?.width === safeWidth) {
       return this.expandedCache.lines;
     }
-    const firstPrefix = `${notifyUserBadge()} `;
+    const firstPrefix = this.prefix;
     const firstWidth = Math.max(1, safeWidth - visibleWidth(firstPrefix));
     const continuationWidth = Math.max(1, safeWidth - visibleWidth(MESSAGE_INDENT));
     const first = wrapTextWithAnsi(this.title, firstWidth)[0] ?? '';
@@ -787,6 +794,16 @@ class ToolOutputMarkdown extends Markdown {
   }
 }
 
+class StableSpacer extends Spacer {
+  private cache: { width: number; lines: string[] } | undefined;
+
+  override render(width: number): string[] {
+    if (!isRenderCacheEnabled()) return super.render(width);
+    if (this.cache?.width !== width) this.cache = { width, lines: super.render(width) };
+    return this.cache.lines;
+  }
+}
+
 export class ToolCallComponent extends Container {
   private expanded = false;
   private toolCall: ToolCallBlockData;
@@ -798,7 +815,11 @@ export class ToolCallComponent extends Container {
   private hiddenContent: boolean | undefined = undefined;
   /** Width-dependent half of hasHiddenContent(); recomputed on every collapsed render. */
   private truncatedAtLastRender = false;
+  readonly startedAtMs = Date.now();
+
   private result: ToolResultBlockData | undefined;
+  private elapsed: Elapsed | undefined;
+  private projectionVersion = 0;
   private ui: TUI | undefined;
   private planPath: string | undefined;
   /**
@@ -885,7 +906,7 @@ export class ToolCallComponent extends Container {
 
   /**
    * Advertises `Ctrl+B` on a foreground Bash/Agent card that has been running
-   * for {@link DETACH_HINT_DELAY_MS}. Cleared when the result lands.
+   * for {@link FOREGROUND_BASH_HINT_DELAY_MS}. Cleared when the result lands.
    */
   private detachHintTimer: ReturnType<typeof setTimeout> | undefined;
   private detachHintVisible = false;
@@ -909,10 +930,11 @@ export class ToolCallComponent extends Container {
     super();
     this.toolCall = toolCall;
     this.result = result;
+    this.elapsed = result === undefined ? undefined : { known: false };
     this.ui = ui;
     this.applySubagentReplay(toolCall.subagent);
 
-    this.addChild(new Spacer(1));
+    this.addChild(new StableSpacer(1));
     this.headerText =
       toolCall.name === 'NotifyUser'
         ? new NotifyUserHeader(this.buildHeader())
@@ -993,8 +1015,45 @@ export class ToolCallComponent extends Container {
     return out;
   }
 
+  private rowDetailCache:
+    | { width: number; lines: string[]; parts: Component[]; partLines: string[][] }
+    | undefined;
+
+  renderRowDetail(width: number): string[] {
+    const parts = this.children.slice(CARD_PREAMBLE_CHILDREN).filter((child) => !(child instanceof CardOnly));
+    const partLines = parts.map((part) => part.render(width));
+    const cache = this.rowDetailCache;
+    if (
+      isRenderCacheEnabled() &&
+      cache !== undefined &&
+      cache.width === width &&
+      cache.parts.length === parts.length &&
+      parts.every((part, index) => cache.parts[index] === part && cache.partLines[index] === partLines[index])
+    ) {
+      return cache.lines;
+    }
+    const lines = partLines.flat();
+    this.rowDetailCache = { width, lines, parts, partLines };
+    return lines;
+  }
+
+  statusMarker(): string {
+    const { toolCall, result } = this;
+    if (result === undefined) {
+      if (toolCall.truncated === true) return currentTheme.fg('error', FAILURE_MARK);
+      return currentTheme.fg('text', STATUS_BULLET);
+    }
+    if (result.is_error === true) return currentTheme.fg('error', FAILURE_MARK);
+    if (isGoalToolName(toolCall.name)) return currentTheme.fg('primary', STATUS_BULLET);
+    if (toolCall.name === 'WaitFor' && parseWaitForOutput(result.output)?.status === 'timed_out') {
+      return currentTheme.fg('warning', STATUS_BULLET);
+    }
+    return currentTheme.fg('success', STATUS_BULLET);
+  }
+
   override invalidate(): void {
     this.renderCache = undefined;
+    this.rowDetailCache = undefined;
     this.headerText.setText(this.buildHeader());
     this.rebuildBody();
     super.invalidate();
@@ -1023,7 +1082,13 @@ export class ToolCallComponent extends Container {
     return this.hiddenContent || this.truncatedAtLastRender;
   }
 
+  private collapsedOutcomeClipCache: { width: number; clips: boolean } | undefined;
+
   private collapsedOutcomeClips(width: number): boolean {
+    const cacheEnabled = isRenderCacheEnabled();
+    if (cacheEnabled && this.collapsedOutcomeClipCache?.width === width) {
+      return this.collapsedOutcomeClipCache.clips;
+    }
     const result = this.result;
     if (result === undefined || result.output.length === 0 || result.is_error === true) {
       return false;
@@ -1037,12 +1102,14 @@ export class ToolCallComponent extends Container {
       result.output,
       name === 'Bash' && !leadsWithMetadata ? 'last' : 'first',
     );
+    let clips = false;
     for (const row of rows) {
       if (!(row instanceof TruncatedHeaderLine)) continue;
       row.render(width);
-      if (row.wasTruncated()) return true;
+      if (row.wasTruncated()) clips = true;
     }
-    return false;
+    if (cacheEnabled) this.collapsedOutcomeClipCache = { width, clips };
+    return clips;
   }
 
   /** Whether the global ctrl+o toggle currently has this card expanded. */
@@ -1202,8 +1269,10 @@ export class ToolCallComponent extends Container {
     }
   }
 
-  setResult(result: ToolResultBlockData): void {
+  setResult(result: ToolResultBlockData, elapsed: Elapsed): void {
     this.result = result;
+    this.elapsed = elapsed;
+    this.projectionVersion += 1;
     // Result supersedes any live progress chatter; the result body is the
     // authoritative final state. Without this clear, a finished tool would
     // show both the streamed status lines and the final output stacked.
@@ -1226,6 +1295,7 @@ export class ToolCallComponent extends Container {
   }
 
   updateToolCall(toolCall: ToolCallBlockData): void {
+    this.projectionVersion += 1;
     this.toolCall = toolCall;
     this.syncStreamingProgressTimer();
     this.headerText.setText(this.buildHeader());
@@ -1440,6 +1510,18 @@ export class ToolCallComponent extends Container {
     return this.toolCall;
   }
 
+  get toolResultView(): Readonly<ToolResultBlockData> | undefined {
+    return this.result;
+  }
+
+  get toolElapsed(): Elapsed | undefined {
+    return this.elapsed;
+  }
+
+  get transcriptProjectionVersion(): number {
+    return this.projectionVersion;
+  }
+
   /** Notifies the listener when internal state changes, if a group is attached. */
   private notifySnapshotChange(): void {
     this.onSnapshotChange?.();
@@ -1529,7 +1611,7 @@ export class ToolCallComponent extends Container {
       this.detachHintVisible = true;
       this.rebuildBody();
       this.ui?.requestRender();
-    }, DETACH_HINT_DELAY_MS);
+    }, FOREGROUND_BASH_HINT_DELAY_MS);
   }
 
   private stopDetachHintTimer(): void {
@@ -1541,7 +1623,7 @@ export class ToolCallComponent extends Container {
   private buildDetachHintBlock(): void {
     if (!this.detachHintVisible) return;
     if (this.result !== undefined) return;
-    this.addChild(new Text(currentTheme.dim(DETACH_HINT_TEXT), 2, 0));
+    this.addChild(new CardOnly(new Text(currentTheme.dim(DETACH_HINT_TEXT), 2, 0)));
   }
 
   private syncSubagentElapsedTimer(): void {
@@ -1601,6 +1683,7 @@ export class ToolCallComponent extends Container {
     this.subagentAgentId = meta.agentId;
     this.subagentAgentName = meta.agentName;
     this.subagentPhase = meta.runInBackground ? 'backgrounded' : 'queued';
+    this.projectionVersion += 1;
     this.subagentStartedAtMs = Date.now();
     this.subagentEndedAtMs = undefined;
     this.syncSubagentElapsedTimer();
@@ -1641,6 +1724,7 @@ export class ToolCallComponent extends Container {
     resultSummary: string;
   }): void {
     this.subagentPhase = 'done';
+    this.projectionVersion += 1;
     this.subagentEndedAtMs ??= Date.now();
     if (payload.contextTokens !== undefined && payload.contextTokens > 0) {
       this.subagentContextTokens = payload.contextTokens;
@@ -1686,6 +1770,7 @@ export class ToolCallComponent extends Container {
   /** Handles SDK `subagent.failed`. */
   onSubagentFailed(payload: { error: string }): void {
     this.subagentPhase = 'failed';
+    this.projectionVersion += 1;
     this.subagentEndedAtMs ??= Date.now();
     this.subagentError = payload.error;
     this.syncSubagentElapsedTimer();
@@ -1735,6 +1820,7 @@ export class ToolCallComponent extends Container {
     }
     if (phaseUnchanged && !errorChanged) return;
     this.backgroundTaskTerminalPhase = phase;
+    this.projectionVersion += 1;
     this.subagentEndedAtMs ??= Date.now();
     this.syncSubagentElapsedTimer();
     this.headerText.setText(this.buildHeader());
@@ -1752,6 +1838,7 @@ export class ToolCallComponent extends Container {
     if (this.detachedFromForeground) return;
     this.detachedFromForeground = true;
     this.subagentPhase = 'backgrounded';
+    this.projectionVersion += 1;
     this.headerText.setText(this.buildHeader());
     this.rebuildContent();
     this.notifySnapshotChange();
@@ -1928,17 +2015,7 @@ export class ToolCallComponent extends Container {
     const isFinished = result !== undefined;
     const isError = result?.is_error ?? false;
     const isTruncated = toolCall.truncated === true && !isFinished;
-
-    let bullet: string;
-    if (isFinished) {
-      bullet = isError ? currentTheme.fg('error', '✗ ') : currentTheme.fg('success', STATUS_BULLET);
-    } else if (isTruncated) {
-      bullet = currentTheme.fg('error', '✗ ');
-    } else {
-      // Solid bullet for in-flight tools — the previous marker ↔ blank
-      // toggle caused visible flicker on every re-render.
-      bullet = currentTheme.fg('text', STATUS_BULLET);
-    }
+    const bullet = this.statusMarker();
 
     if (toolCall.name === 'ExitPlanMode') {
       const label = currentTheme.boldFg('primary', 'Current plan');
@@ -1989,7 +2066,7 @@ export class ToolCallComponent extends Container {
       if (!isFinished || (!isError && delivery === 'displayed')) {
         const title = notifyUserTitle(isFinished ? toolCall.args : notifyUserLiveArgs(toolCall));
         const content: NotifyUserHeaderContent = {
-          head: `${notifyUserBadge()} `,
+          head: notifyUserPrefix(this.ui?.mode === 'fullscreen'),
           flex: { text: title, style: notifyTitleStyle, keep: 'head' },
           tail: '',
           notifyUserTitle: title,
@@ -2081,11 +2158,7 @@ export class ToolCallComponent extends Container {
   }
 
   private buildHeaderChip(result: ToolResultBlockData): string {
-    // The truncation envelope of an oversized result is not countable data.
-    if (isSpilledToolOutput(result.output)) return '';
-    const provider = pickChip(this.toolCall.name);
-    if (provider === undefined) return '';
-    const text = provider(this.toolCall, result);
+    const text = chipText(this.toolCall, result);
     if (text.length === 0) return '';
     if (result.is_error) return currentTheme.fg('error', ` · ${text}`);
     return currentTheme.dim(` · ${text}`);
@@ -2093,6 +2166,7 @@ export class ToolCallComponent extends Container {
 
   private rebuildContent(): void {
     this.hiddenContent = undefined;
+    this.collapsedOutcomeClipCache = undefined;
     while (this.children.length > this.callPreviewEndIndex) {
       this.children.pop();
     }
@@ -2105,7 +2179,8 @@ export class ToolCallComponent extends Container {
 
   private rebuildBody(): void {
     this.hiddenContent = undefined;
-    while (this.children.length > 2) {
+    this.collapsedOutcomeClipCache = undefined;
+    while (this.children.length > CARD_PREAMBLE_CHILDREN) {
       this.children.pop();
     }
     this.buildCallPreview();
@@ -2614,8 +2689,9 @@ export class ToolCallComponent extends Container {
         contextLines: 3,
         ...(shouldCap ? { maxLines: COMMAND_PREVIEW_LINES } : {}),
       });
-      for (const line of lines) {
-        this.addChild(new Text(line, 2, 0));
+      for (const [index, line] of lines.entries()) {
+        const text = new Text(line, 2, 0);
+        this.addChild(index === 0 ? new CardOnly(text) : text);
       }
     } else if (name === 'Bash') {
       // The engine stamps the cwd the command actually executes in (the bound
@@ -2636,11 +2712,13 @@ export class ToolCallComponent extends Container {
       const command = str(this.toolCall.args['command']);
       if (command.length === 0) return;
       this.addChild(
-        new ShellExecutionComponent({
-          command,
-          showCommand: true,
-          commandPreviewLines: undefined,
-        }),
+        new CardOnly(
+          new ShellExecutionComponent({
+            command,
+            showCommand: true,
+            commandPreviewLines: undefined,
+          }),
+        ),
       );
     }
   }
@@ -2710,11 +2788,13 @@ export class ToolCallComponent extends Container {
       const cmd = extractPartialStringField(previewText, 'command');
       if (cmd === undefined || cmd.length === 0) return;
       this.addChild(
-        new ShellExecutionComponent({
-          command: cmd,
-          showCommand: true,
-          commandPreviewLines: undefined,
-        }),
+        new CardOnly(
+          new ShellExecutionComponent({
+            command: cmd,
+            showCommand: true,
+            commandPreviewLines: undefined,
+          }),
+        ),
       );
     }
     // Unknown tools: nothing sensible to stream without a schema, so

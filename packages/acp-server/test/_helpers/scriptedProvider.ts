@@ -171,6 +171,7 @@ export function createScriptedProvider(): ScriptedProvider {
           error: {
             kind: 'unknown',
             message: error instanceof Error ? error.message : String(error),
+            retryable: false,
           },
         });
       }

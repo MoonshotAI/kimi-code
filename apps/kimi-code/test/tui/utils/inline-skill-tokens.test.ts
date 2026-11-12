@@ -65,18 +65,29 @@ describe('extractInlineSkillActivations', () => {
         SKILL_COMMAND_MAP,
         { includeLeading: true },
       ),
-    ).toEqual([{ skillName: 'review' }, { skillName: 'security' }]);
+    ).toEqual([
+      {
+        skillName: 'review',
+        path: undefined,
+        start: 0,
+        occurrences: [
+          { commandName: 'skill:review', start: 0 },
+          { commandName: 'skill:review', start: 19 },
+        ],
+      },
+      { skillName: 'security', path: undefined, start: 39 },
+    ]);
   });
 
   it('supports the skill: prefix fallback for bare names', () => {
     expect(extractInlineSkillActivations('hello /review', SKILL_COMMAND_MAP)).toEqual([
-      { skillName: 'review' },
+      { skillName: 'review', path: undefined, start: 6 },
     ]);
   });
 
   it('keeps builtin skill command names as-is', () => {
     expect(extractInlineSkillActivations('please /commit this', SKILL_COMMAND_MAP)).toEqual([
-      { skillName: 'commit' },
+      { skillName: 'commit', path: undefined, start: 7 },
     ]);
   });
 

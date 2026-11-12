@@ -14,10 +14,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
   LoopRequester,
-  AgentLLMRequestFinish,
+  AgentLLMRequestSource,
 } from '#/agent/loop/requesterContract';
+import { errorFromLlmOutcome } from '#/llm-adapter/model/generate';
+import type { LlmOutcome } from '#human/llm/response';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { ILogger as Logger, LogPayload } from '#/_base/log/log';
 import {
@@ -83,6 +84,14 @@ describe('LLMRequester service migration coverage', () => {
         },
         deferred: true,
       },
+      {
+        name: 'ReadMediaFile',
+        description: 'Hidden from a model without media input.',
+        parameters: {
+          type: 'object',
+          properties: {},
+        },
+      },
     ];
 
     beforeEach(() => {
@@ -101,7 +110,7 @@ describe('LLMRequester service migration coverage', () => {
       }
     });
 
-    it('records one tools snapshot per unique provider-visible tool table and one request per outbound call', async () => {
+    it('records one tools snapshot per unique provider-visible tool table and captures each outbound call', async () => {
       ctx.configure({
         modelCapabilities: {
           image_in: false,
@@ -114,7 +123,7 @@ describe('LLMRequester service migration coverage', () => {
         },
       });
       ctx.mockNextResponse({ type: 'text', text: 'first response' });
-      await llmRequester.request({
+      await requestCore(llmRequester, {
         messages: [userMessage('first direct request')],
         systemPrompt: 'request-specific system',
         tools: requestTools,
@@ -125,7 +134,7 @@ describe('LLMRequester service migration coverage', () => {
         },
       });
       ctx.mockNextResponse({ type: 'text', text: 'second response' });
-      await llmRequester.request({
+      await requestCore(llmRequester, {
         messages: [userMessage('second direct request')],
         systemPrompt: 'request-specific system',
         tools: requestTools,
@@ -138,7 +147,6 @@ describe('LLMRequester service migration coverage', () => {
 
       const snapshots = wireEvents(ctx, 'llm.tools_snapshot');
       expect(snapshots).toHaveLength(1);
-      const snapshotArgs = snapshots[0]?.args as Record<string, unknown> | undefined;
       expect(snapshots[0]?.args).toMatchObject({
         hash: expect.any(String),
         tools: [
@@ -150,57 +158,37 @@ describe('LLMRequester service migration coverage', () => {
         ],
       });
       expect(JSON.stringify(snapshots[0]?.args)).not.toContain('DeferredLookup');
-
-      const requests = wireEvents(ctx, 'llm.request');
-      expect(requests).toHaveLength(2);
-      expect(requests[0]?.args).toMatchObject({
-        kind: 'loop',
-        provider: 'openai',
-        model: 'mock-model',
-        modelAlias: 'mock-model',
-        thinkingEffort: 'off',
-        toolSelect: true,
-        toolsHash: snapshotArgs?.['hash'],
-        messageCount: 1,
-        systemPromptHash: expect.any(String),
-        systemPrompt: 'request-specific system',
-        turnStep: '7.2',
-        droppedCount: 3,
-      });
-      expect(requests[1]?.args).toMatchObject({
-        toolsHash: snapshotArgs?.['hash'],
-        messageCount: 1,
-        turnStep: '7.3',
-      });
+      expect(JSON.stringify(snapshots[0]?.args)).not.toContain('ReadMediaFile');
+      expect(ctx.llmCalls).toHaveLength(2);
+      expect(ctx.llmCalls.map((call) => call.tools.map((tool) => tool.name))).toEqual([
+        ['Lookup'],
+        ['Lookup'],
+      ]);
+      expect(ctx.llmCalls.map((call) => call.systemPrompt)).toEqual([
+        'request-specific system',
+        'request-specific system',
+      ]);
+      expect(ctx.llmCalls.map((call) => call.history.map((message) => message.role))).toEqual([
+        ['user'],
+        ['user'],
+      ]);
     });
 
-    it('records the resolved Kimi thinking keep default when thinking is enabled', async () => {
-      ctx.configure({
-        modelCapabilities: {
-          image_in: false,
-          video_in: false,
-          audio_in: false,
-          thinking: true,
-          tool_use: true,
-          max_context_tokens: 1_000_000,
-        },
-      });
-      ctx.get(IAgentProfileService).update({ thinkingLevel: 'high' });
-      ctx.mockNextResponse({ type: 'text', text: 'thinking response' });
-
-      await llmRequester.request();
-
-      expect(wireEvents(ctx, 'llm.request')).toHaveLength(1);
-      expect(wireEvents(ctx, 'llm.request')[0]?.args).toMatchObject({
-        thinkingEffort: 'on',
-        thinkingKeep: 'all',
-      });
-    });
-
-    it('records the env-forced Kimi effort used by the provider', async () => {
+    it('sends the resolved Kimi thinking keep default to the provider when thinking is enabled', async () => {
       await ctx.dispose();
-      vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'max');
-      ctx = createTestAgent();
+      let thinking: unknown;
+      ctx = createTestAgent(
+        llmGenerateServices(requesterFromGenerateFn(async (_provider, _systemPrompt, _tools, _history, _callbacks, options) => {
+          thinking = options?.thinking;
+          return {
+            id: 'thinking-response',
+            message: { role: 'assistant', content: [], toolCalls: [] },
+            usage: emptyUsage(),
+            finishReason: 'completed',
+            rawFinishReason: 'stop',
+          };
+        })),
+      );
       llmRequester = ctx.get(IAgentLoopService).requester;
       ctx.configure({
         modelCapabilities: {
@@ -212,18 +200,48 @@ describe('LLMRequester service migration coverage', () => {
           max_context_tokens: 1_000_000,
         },
       });
-      const profile = ctx.get(IAgentProfileService);
+      ctx.get(IAgentLoopService).update({ thinkingLevel: 'high' });
+
+      await requestCore(llmRequester);
+
+      expect(thinking).toMatchObject({ effort: 'on', keep: 'all' });
+    });
+
+    it('sends the env-forced Kimi effort to the provider', async () => {
+      await ctx.dispose();
+      vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'max');
+      let thinking: unknown;
+      ctx = createTestAgent(
+        llmGenerateServices(requesterFromGenerateFn(async (_provider, _systemPrompt, _tools, _history, _callbacks, options) => {
+          thinking = options?.thinking;
+          return {
+            id: 'forced-thinking-response',
+            message: { role: 'assistant', content: [], toolCalls: [] },
+            usage: emptyUsage(),
+            finishReason: 'completed',
+            rawFinishReason: 'stop',
+          };
+        })),
+      );
+      llmRequester = ctx.get(IAgentLoopService).requester;
+      ctx.configure({
+        modelCapabilities: {
+          image_in: false,
+          video_in: false,
+          audio_in: false,
+          thinking: true,
+          tool_use: true,
+          max_context_tokens: 1_000_000,
+        },
+      });
+      const profile = ctx.get(IAgentLoopService);
       profile.update({ thinkingLevel: 'high' });
       expect(profile.data().thinkingLevel).toBe('on');
       expect(profile.resolveModelContext().thinkingLevel).toBe('max');
-      ctx.mockNextResponse({ type: 'text', text: 'forced thinking response' });
 
-      await llmRequester.request();
+      await requestCore(llmRequester);
 
-      expect(wireEvents(ctx, 'llm.request')).toHaveLength(1);
-      expect(wireEvents(ctx, 'llm.request')[0]?.args).toMatchObject({
-        thinkingEffort: 'max',
-      });
+      expect(thinking).toMatchObject({ effort: 'max' });
     });
 
     it('records strict projection resends as separate outbound requests', async () => {
@@ -233,7 +251,7 @@ describe('LLMRequester service migration coverage', () => {
         llmGenerateServices(requesterFromGenerateFn(async () => {
           calls += 1;
           if (calls === 1) {
-            throw new APIStatusError(400, 'tool_use ids must be unique');
+            throw new APIStatusError(400, 'tool_use ids must be unique', false);
           }
           return {
             id: 'strict-response',
@@ -250,12 +268,9 @@ describe('LLMRequester service migration coverage', () => {
       );
       llmRequester = ctx.get(IAgentLoopService).requester;
 
-      await llmRequester.request();
+      await requestCore(llmRequester);
 
-      const requests = wireEvents(ctx, 'llm.request');
-      expect(requests).toHaveLength(2);
-      expect((requests[0]?.args as Record<string, unknown> | undefined)?.['projection']).toBeUndefined();
-      expect(requests[1]?.args).toMatchObject({ projection: 'strict' });
+      expect(calls).toBe(2);
     });
 
     it('emits cache break with loop-assigned identifiers and per-agent baselines', async () => {
@@ -306,7 +321,7 @@ describe('LLMRequester service migration coverage', () => {
       const runChildTurn = async (text: string): Promise<void> => {
         const { id } = childLoop.submit({
           message: { role: 'user', content: [{ type: 'text', text }] },
-          meta: { origin: { kind: 'user' }, tracked: true },
+          meta: { origin: { kind: 'user' } },
         });
         expect((await childLoop.promptHandle(id)!.completion).state).toBe('completed');
       };
@@ -362,11 +377,11 @@ describe('LLMRequester service migration coverage', () => {
 
   describe('tool-call deltas', () => {
     let ctx: TestAgentContext;
-    let profile: IAgentProfileService;
+    let profile: IAgentLoopService;
 
     beforeEach(() => {
       ctx = createTestAgent();
-      profile = ctx.get(IAgentProfileService);
+      profile = ctx.get(IAgentLoopService);
       profile.update({ activeToolNames: ['Lookup'] });
     });
 
@@ -416,8 +431,8 @@ describe('LLMRequester service migration coverage', () => {
 
       expect(protocolEvents(ctx, 'tool.call.delta').map((event) => event.args)).toEqual([
         { time: expect.any(Number), agentId: 'main', turnId: 0, toolCallId: 'call_lookup', name: 'Lookup', argumentsPart: undefined },
-        { time: expect.any(Number), agentId: 'main', turnId: 0, toolCallId: 'call_lookup', name: 'Lookup', argumentsPart: '{"query"' },
-        { time: expect.any(Number), agentId: 'main', turnId: 0, toolCallId: 'call_lookup', name: 'Lookup', argumentsPart: ':"moon"}' },
+        { time: expect.any(Number), agentId: 'main', turnId: 0, toolCallId: 'call_lookup', argumentsPart: '{"query"' },
+        { time: expect.any(Number), agentId: 'main', turnId: 0, toolCallId: 'call_lookup', argumentsPart: ':"moon"}' },
       ]);
       expect(protocolEvents(ctx, 'toolCall').at(-1)?.args).toEqual({
         turnId: 0,
@@ -461,7 +476,7 @@ describe('LLMRequester service migration coverage', () => {
       const llmRequester = ctx.get(IAgentLoopService).requester;
 
       await expect(
-        llmRequester.request({
+        requestCore(llmRequester, {
           source: {
             type: 'operation',
             requestKind: 'direct_test',
@@ -493,7 +508,7 @@ describe('LLMRequester service migration coverage', () => {
       );
       const llmRequester = ctx.get(IAgentLoopService).requester;
 
-      await expect(llmRequester.request()).rejects.toMatchObject({
+      await expect(requestCore(llmRequester)).rejects.toMatchObject({
         name: 'APIConnectionError',
       });
       expect(calls).toBe(1);
@@ -503,13 +518,13 @@ describe('LLMRequester service migration coverage', () => {
       const records: TelemetryRecord[] = [];
       ctx = createTestAgent(
         llmGenerateServices(requesterFromGenerateFn(async () => {
-          throw new APIStatusError(429, 'rate limited');
+          throw new APIStatusError(429, 'rate limited', true);
         })),
         telemetryServices(recordingTelemetry(records)),
       );
       const llmRequester = ctx.get(IAgentLoopService).requester;
 
-      await expect(llmRequester.request()).rejects.toMatchObject({
+      await expect(requestCore(llmRequester)).rejects.toMatchObject({
         name: 'APIStatusError',
       });
 
@@ -540,10 +555,10 @@ describe('LLMRequester service migration coverage', () => {
       const llmRequester = ctx.get(IAgentLoopService).requester;
 
       await expect(
-        llmRequester.request({ source: { type: 'turn', turnId: 3, step: 1 } }),
+        requestCore(llmRequester, { source: { type: 'turn', turnId: 3, step: 1 } }),
       ).rejects.toMatchObject({ name: 'APIConnectionError' });
       await expect(
-        llmRequester.request({
+        requestCore(llmRequester, {
           source: { type: 'operation', turnId: 7, requestKind: 'full_compaction' },
         }),
       ).rejects.toMatchObject({ name: 'APIConnectionError' });
@@ -570,7 +585,7 @@ describe('LLMRequester service migration coverage', () => {
   describe('request timing and budget', () => {
     let ctx: TestAgentContext;
     let llmRequester: LoopRequester;
-    let profile: IAgentProfileService;
+    let profile: IAgentLoopService;
     let requestMaxTokens: unknown;
     let logEntries: CapturedLogEntry[];
 
@@ -616,7 +631,7 @@ describe('LLMRequester service migration coverage', () => {
         logServices(logger),
       );
       llmRequester = ctx.get(IAgentLoopService).requester;
-      profile = ctx.get(IAgentProfileService);
+      profile = ctx.get(IAgentLoopService);
       profile.update({
         modelAlias: 'deepseek/deepseek-v4-flash',
         systemPrompt: 'system',
@@ -634,20 +649,15 @@ describe('LLMRequester service migration coverage', () => {
 
     it('emits stream timing and applies the model output budget through LoopRequester', async () => {
       const { parts, finish } = await collectLLMRequest((onPart) =>
-        llmRequester.request(undefined, onPart),
+        requestCore(llmRequester, undefined, onPart),
       );
 
       expect(requestMaxTokens).toBe(384_000);
-      expect(wireEvents(ctx, 'llm.request')[0]?.args).toMatchObject({
-        maxTokens: 384_000,
-      });
       expect(parts).toContainEqual({ type: 'text', text: 'timed' });
       expect(finish).toMatchObject({
         usage: emptyUsage(),
-        model: 'deepseek/deepseek-v4-flash',
-        providerMessageId: 'response-1',
-        providerFinishReason: 'completed',
-        rawFinishReason: 'stop',
+        messageId: 'response-1',
+        finish: { finishReason: 'completed', rawFinishReason: 'stop' },
       });
       expect(finish.timing).toEqual(
         expect.objectContaining({
@@ -659,7 +669,7 @@ describe('LLMRequester service migration coverage', () => {
 
     it('logs successful LLM responses with caller-provided request fields', async () => {
       await collectLLMRequest((onPart) =>
-        llmRequester.request(
+        requestCore(llmRequester, 
           {
             source: {
               type: 'operation',
@@ -688,14 +698,14 @@ describe('LLMRequester service migration coverage', () => {
     });
 
     it('applies a per-request output budget override', async () => {
-      await llmRequester.request({ maxOutputSize: 123_000 });
+      await requestCore(llmRequester, { maxOutputSize: 123_000 });
 
       expect(requestMaxTokens).toBe(123_000);
     });
 
     it('carries kosong decode accounting and leaves the TTFT split undefined without a dispatch boundary', async () => {
       const { finish } = await collectLLMRequest((onPart) =>
-        llmRequester.request(undefined, onPart),
+        requestCore(llmRequester, undefined, onPart),
       );
       const timing = finish.timing;
 
@@ -742,7 +752,7 @@ describe('LLMRequester service migration coverage', () => {
     });
 
     it('forwards the session id as the per-turn cache-key intent', async () => {
-      await llmRequester.request();
+      await requestCore(llmRequester);
 
       expect(capturedCacheKey).toBe('test-session');
     });
@@ -763,7 +773,7 @@ describe('LLMRequester service migration coverage', () => {
       },
       {
         recovery: 'media-stripped',
-        error: new APIStatusError(400, 'unsupported image format: image/avif is not supported'),
+        error: new APIStatusError(400, 'unsupported image format: image/avif is not supported', false),
         keptMedia: 0,
       },
     ])(
@@ -845,9 +855,45 @@ function userMessage(text: string) {
   return { role: 'user' as const, content: [{ type: 'text' as const, text }] };
 }
 
+interface RequestOverrides {
+  readonly messages?: readonly Message[];
+  readonly tools?: readonly Tool[];
+  readonly systemPrompt?: string;
+  readonly source?: AgentLLMRequestSource;
+  readonly maxOutputSize?: number;
+}
+
+async function requestCore(
+  requester: LoopRequester,
+  overrides: RequestOverrides = {},
+  onPart: (part: StreamedMessagePart) => void = () => {},
+  signal = new AbortController().signal,
+) {
+  const source: AgentLLMRequestSource = overrides.source ?? { type: 'operation' };
+  const operation = await requester.prepareOperation({
+    source: () => source,
+    maxOutputSize: overrides.maxOutputSize,
+    tools: overrides.tools,
+  }, signal);
+  const outcome = await operation.with({ policy: { retry: { maxAttemptsPerStep: 1 } } }).generate(
+    {
+      content: { messages: overrides.messages },
+      profile: { systemPrompt: overrides.systemPrompt, tools: overrides.tools },
+    },
+    {
+      signal,
+      onEvent: (event) => {
+        if (event.type === 'llm.streaming.part') onPart(event.part);
+      },
+    },
+  );
+  if (outcome.type !== 'done') throw errorFromLlmOutcome(outcome);
+  return outcome;
+}
+
 async function collectLLMRequest(
-  request: (onPart: (part: StreamedMessagePart) => void) => Promise<AgentLLMRequestFinish>,
-): Promise<{ parts: StreamedMessagePart[]; finish: AgentLLMRequestFinish }> {
+  request: (onPart: (part: StreamedMessagePart) => void) => Promise<Extract<LlmOutcome, { type: 'done' }>>,
+): Promise<{ parts: StreamedMessagePart[]; finish: Extract<LlmOutcome, { type: 'done' }> }> {
   const parts: StreamedMessagePart[] = [];
   const finish = await request((part) => {
     parts.push(part);

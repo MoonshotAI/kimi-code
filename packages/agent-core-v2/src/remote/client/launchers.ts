@@ -79,8 +79,20 @@ export function shQuote(value: string): string {
 }
 
 const TILDE_PREFIX = /^~[a-zA-Z0-9._-]*/;
+const BARE_REMOTE_BIN = /^[A-Za-z0-9_.-]+$/;
+const SHELL_RESERVED_WORDS: ReadonlySet<string> = new Set([
+  'case', 'coproc', 'do', 'done', 'elif', 'else', 'esac', 'fi', 'for', 'function',
+  'if', 'in', 'select', 'then', 'time', 'until', 'while',
+]);
+
+export function isBareRemoteBin(remoteBin: string): boolean {
+  return BARE_REMOTE_BIN.test(remoteBin) && !SHELL_RESERVED_WORDS.has(remoteBin);
+}
 
 function execServerShellCommand(remoteBin: string): string {
+  if (isBareRemoteBin(remoteBin)) {
+    return [remoteBin, ...EXEC_SERVER_ARGV].join(' ');
+  }
   const tilde = TILDE_PREFIX.exec(remoteBin);
   if (tilde === null) {
     return [shQuote(remoteBin), ...EXEC_SERVER_ARGV.map(shQuote)].join(' ');
@@ -100,6 +112,30 @@ function execServerShellCommand(remoteBin: string): string {
     bin = shQuote(remoteBin);
   }
   return [bin, ...EXEC_SERVER_ARGV.map(shQuote)].join(' ');
+}
+
+export function powerShellCommand(script: string): string {
+  return `powershell -NoLogo -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(script, 'utf16le').toString('base64')}`;
+}
+
+function execServerPowerShellCommand(remoteBin: string): string {
+  const path = remoteBin === DEFAULT_REMOTE_BIN ? '~/.kimi-code/bin/kimi.exe' : remoteBin;
+  const literal = (value: string) => `'${value.replaceAll("'", "''")}'`;
+  const executable = /^~[\\/]/.test(path)
+    ? `($env:USERPROFILE + ${literal(path.slice(1))})`
+    : literal(path);
+  return powerShellCommand(`$ErrorActionPreference = 'Stop'; & ${executable} ${EXEC_SERVER_ARGV.join(' ')}; exit $LASTEXITCODE`);
+}
+
+export function resolveSshCommand(host: string, command: string, interactiveSshAuth = false): ResolvedLauncher {
+  assertLauncherOperand('ssh host', host);
+  const authOptions = interactiveSshAuth
+    ? ['-o', 'BatchMode=no', '-o', 'NumberOfPasswordPrompts=1']
+    : ['-o', 'BatchMode=yes'];
+  return {
+    program: 'ssh',
+    args: ['-T', ...authOptions, ...SSH_CONFIG_OPTIONS.slice(2), host, command],
+  };
 }
 
 const COMMAND_LAUNCHER_ENV_KEYS: ReadonlySet<string> = new Set([
@@ -135,17 +171,20 @@ export function commandLauncherEnv(
   return env;
 }
 
-export function resolveLauncher(spec: LauncherSpec, interactiveSshAuth = false): ResolvedLauncher {
+export function resolveLauncher(
+  spec: LauncherSpec,
+  interactiveSshAuth = false,
+  sshPlatform: 'posix' | 'windows' = 'posix',
+): ResolvedLauncher {
   switch (spec.type) {
     case 'ssh': {
-      assertLauncherOperand('ssh host', spec.host);
-      const authOptions = interactiveSshAuth
-        ? ['-o', 'BatchMode=no', '-o', 'NumberOfPasswordPrompts=1']
-        : ['-o', 'BatchMode=yes'];
-      return {
-        program: 'ssh',
-        args: ['-T', ...authOptions, ...SSH_CONFIG_OPTIONS.slice(2), spec.host, execServerShellCommand(spec.remoteBin ?? DEFAULT_REMOTE_BIN)],
-      };
+      const remoteBin = spec.remoteBin ?? DEFAULT_REMOTE_BIN;
+      return resolveSshCommand(spec.host,
+        sshPlatform === 'windows' && !isBareRemoteBin(remoteBin)
+          ? execServerPowerShellCommand(remoteBin)
+          : execServerShellCommand(remoteBin),
+        interactiveSshAuth,
+      );
     }
     case 'docker':
       assertLauncherOperand('docker container', spec.container);

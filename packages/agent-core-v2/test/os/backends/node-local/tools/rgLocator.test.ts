@@ -8,6 +8,7 @@ import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  detectRemoteTarget,
   detectTarget,
   ensureRgPath,
   extractRgFromZip,
@@ -111,16 +112,23 @@ describe('ensureRgPath remote environment branch', () => {
 
   function remoteEnvironment(
     environmentId: string,
-    options: { readonly generation?: string; readonly osKind?: string; readonly osArch?: string; readonly withFs?: boolean } = {},
+    options: {
+      readonly generation?: string;
+      readonly osKind?: string;
+      readonly osArch?: string;
+      readonly pathClass?: 'posix' | 'win32';
+      readonly withFs?: boolean;
+    } = {},
   ): Environment {
     const environment = new FakeEnvironment(
       { environmentId, generation: options.generation ?? `${environmentId}-g1` },
       {
         capabilities: ['fs', 'process'],
+        pathClass: options.pathClass,
         host: {
           osKind: options.osKind ?? 'Linux',
           osArch: options.osArch ?? 'x64',
-          homeDir: '/home/remote',
+          homeDir: options.pathClass === 'win32' ? 'C:\\Users\\remote' : '/home/remote',
         },
       },
     );
@@ -147,6 +155,35 @@ describe('ensureRgPath remote environment branch', () => {
     await expect(ensureRgPath(probe, { environment })).rejects.toThrow(/on PATH/);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(environment.fs!.mkdir as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+  });
+
+  it('uses rg.exe and target-native paths for a Windows cache hit', async () => {
+    const probe = probeWith((args) => (args[0] === 'rg' ? -1 : 0));
+    const environment = remoteEnvironment('remote-windows', { osKind: 'Windows', pathClass: 'win32' });
+
+    const resolution = await ensureRgPath(probe, { environment, allowCachedFallback: true });
+
+    expect(resolution).toEqual({
+      path: 'C:\\Users\\remote\\.kimi-code\\bin\\rg.exe',
+      source: 'share-bin-cached',
+    });
+    expect(probe.exec).toHaveBeenCalledTimes(2);
+    expect(probe.exec).toHaveBeenCalledWith(['C:\\Users\\remote\\.kimi-code\\bin\\rg.exe', '--version']);
+    expect(environment.fs!.mkdir).not.toHaveBeenCalled();
+  });
+
+  it.each(['x64', 'arm64'])('downloads the target Windows ZIP on a cache miss (%s)', async (osArch) => {
+    const probe = noRgProbe();
+    const environment = remoteEnvironment(`remote-windows-download-${osArch}`, { osKind: 'Windows', pathClass: 'win32', osArch });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, body: bodyFromBuffer(Buffer.from('invalid checksum')) });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await expect(ensureRgPath(probe, { environment, allowCachedFallback: true })).rejects.toThrow(/checksum mismatch/);
+
+    const arch = osArch === 'x64' ? 'x86_64' : 'aarch64';
+    expect(fetchMock.mock.calls[0]?.[0]).toMatch(new RegExp(`ripgrep-15\\.0\\.0-${arch}-pc-windows-msvc\\.zip$`));
+    expect(probe.exec).toHaveBeenCalledWith([String.raw`C:\Users\remote\.kimi-code\bin\rg.exe`, '--version']);
+    expect(environment.fs!.writeBytes).not.toHaveBeenCalled();
   });
 
   it('keeps the local flow for the local environment', async () => {
@@ -210,6 +247,10 @@ describe('detectTarget', () => {
   it('win32 x64 -> x86_64-pc-windows-msvc', () => {
     setPlatform('x64', 'win32');
     expect(detectTarget()).toBe('x86_64-pc-windows-msvc');
+  });
+  it('win32 remote targets use Windows archives', () => {
+    expect(detectRemoteTarget('Windows', 'x64')).toBe('x86_64-pc-windows-msvc');
+    expect(detectRemoteTarget('Windows', 'arm64')).toBe('aarch64-pc-windows-msvc');
   });
   it('unsupported arch -> undefined', () => {
     setPlatform('mips', 'linux');

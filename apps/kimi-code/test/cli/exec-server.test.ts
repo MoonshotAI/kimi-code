@@ -186,7 +186,7 @@ async function runExecServerHandshake(
   try {
     send({ method: 'initialize', id: 1, params: { clientName: 'vitest', clientVersion: '0.0.0' } });
     const initialize = await nextLine();
-    send({ method: 'fs/getMetadata', id: 2, params: { path: '/' } });
+    send({ method: 'fs/getMetadata', id: 2, params: { path: options.cwd ?? appRoot } });
     const status = await nextLine();
     child.stdin.end();
     const exitCode = await new Promise<number | null>((resolveExit) => {
@@ -214,7 +214,7 @@ async function runExecServerHandshake(
 
 describe('exec-server stdio handshake (source entry)', () => {
   it(
-    'answers initialize with the host version and a posix environment, then exits 0 on stdin EOF',
+    'answers initialize with the host version and a target-native environment, then exits 0 on stdin EOF',
     { timeout: 60_000 },
     async () => {
       const tsxBin = resolve(appRoot, 'node_modules/.bin/tsx');
@@ -223,10 +223,10 @@ describe('exec-server stdio handshake (source entry)', () => {
       expect(result.initialize['id']).toBe(1);
       const initializeResult = result.initialize['result'] as {
         executorVersion: string;
-        environment: { osKind: string; cwd: string };
+        environment: { pathClass: string; cwd: string };
       };
       expect(initializeResult.executorVersion).toBe(hostPackage.version);
-      expect(initializeResult.environment.osKind).not.toBe('windows');
+      expect(initializeResult.environment.pathClass).toBe(process.platform === 'win32' ? 'win32' : 'posix');
       expect(initializeResult.environment.cwd).toBe(appRoot);
 
       expect(result.status['id']).toBe(2);

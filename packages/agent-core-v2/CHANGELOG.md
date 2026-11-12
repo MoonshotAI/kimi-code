@@ -1,5 +1,17 @@
 # @moonshot-ai/agent-core-v2
 
+## 0.6.0
+
+### Minor Changes
+
+- [#4457](https://github.com/MoonshotAI/kimi-code/pull/4457) [`e2ad1dc`](https://github.com/MoonshotAI/kimi-code/commit/e2ad1dcf214337ecfb5ca160fa36d5ef73560ab6) Thanks [@liruifengv](https://github.com/liruifengv)! - Allow file listings to expose symlinked directories and optionally follow symlinks outside the workspace.
+
+### Patch Changes
+
+- [#4527](https://github.com/MoonshotAI/kimi-code/pull/4527) [`1853dae`](https://github.com/MoonshotAI/kimi-code/commit/1853dae4ff54b36da878a08c86a7088bde0114a8) Thanks [@liruifengv](https://github.com/liruifengv)! - Add batched, folder-scoped Git and pull request queries for multi-root workspace panels.
+
+- [#4525](https://github.com/MoonshotAI/kimi-code/pull/4525) [`8019337`](https://github.com/MoonshotAI/kimi-code/commit/80193374ebb47973a97d21d0b4ce4c27128eee82) Thanks [@liruifengv](https://github.com/liruifengv)! - Support digest-verified marketplace plugin installation and preserve OAuth credentials across configuration changes.
+
 ## 0.5.1
 
 ### Patch Changes

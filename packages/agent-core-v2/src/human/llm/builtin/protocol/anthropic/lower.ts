@@ -181,7 +181,9 @@ export function lowerMessage(
           content.push({ type: 'thinking', thinking: part.think });
         }
       } else if (part.type === 'text') {
-        content.push({ type: 'text', text: part.text });
+        if (part.text.trim().length > 0) {
+          content.push({ type: 'text', text: part.text });
+        }
       } else if (part.type === 'image_url') {
         content.push(imageUrlPartToAnthropic(mediaUrlOf(part), acceptedMimes));
       } else if (part.type === 'video_url') {

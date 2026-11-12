@@ -30,7 +30,7 @@ import {
   INTERACTION_TAG_AGENT_ID,
   INTERACTION_TAG_SESSION_ID,
   IAgentLifecycleService,
-  IAgentProfileService,
+  IAgentLoopService,
   IEventBus,
   interactions,
   ISessionTokenCountingService,
@@ -283,7 +283,7 @@ function interactionAgentId(interaction: Interaction): string | undefined {
  * wire-compatibility concerns.
  */
 function withStatusSnapshot(agent: IAgentScopeHandle, event: Event2<any>): Event2<any> {
-  const profile = agent.accessor.get(IAgentProfileService) as IAgentProfileService | undefined;
+  const profile = agent.accessor.get(IAgentLoopService) as IAgentLoopService | undefined;
   const usageService = agent.accessor.get(ISessionUsageService) as ISessionUsageService | undefined;
   const tokenCounting = agent.accessor.get(ISessionTokenCountingService) as
     | ISessionTokenCountingService

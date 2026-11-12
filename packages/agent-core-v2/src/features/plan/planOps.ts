@@ -6,7 +6,7 @@ import { AgentEvent2 } from '#/app/event/event2';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { defineState } from '#/state/state';
 
-import '#/agent/contextMemory/conversationTime';
+import '#/agent/loop/turnOps';
 
 export interface PlanState {
   readonly active: boolean;

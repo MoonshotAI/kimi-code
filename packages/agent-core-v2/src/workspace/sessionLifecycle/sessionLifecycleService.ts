@@ -24,10 +24,13 @@ import {
   touchForkedFileHistory,
 } from '#/features/fileHistory/fileHistoryRetention';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { readUserPermissionRules } from '#/agent/permissionRules/configSection';
+import { IProjectPermissionRulesService } from '#/agent/permissionRules/projectPermissionRules';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { LifecycleScope } from '#/app/scopes';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
+import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
 import { IEventService } from '#/app/event/event';
 import { IFlagService } from '#/app/flag/flag';
 import { CHILD_SESSION_KIND,
@@ -68,6 +71,7 @@ import { ISessionSkillCatalogData } from '#/features/skill/session/skillCatalogD
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
+import { resolveEffectiveWorkspaceRoots } from '#/session/workspaceContext/workspaceRoots';
 import { ISessionWorkdir } from '#/session/workdir/workdir';
 import {
   drainSessionMetadataWrites,
@@ -79,6 +83,7 @@ import { ISessionNotify } from '#/features/notify/sessionNotify';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import {
   AGENT_WIRE_RECORD_KEY,
+  assertWireRecordsReaderVersion,
   createWireMetadataRecord,
   type WireRecord,
 } from '#/wire/record';
@@ -87,6 +92,7 @@ import { flattenChain } from '#/wire/tree/index';
 import { IModelService } from '#/llm-adapter/model/model';
 import { IProviderService } from '#/llm-adapter/provider/provider';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
+import { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
 import { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
 import { IPluginAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoader';
 import {
@@ -99,7 +105,7 @@ import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
 import { PLUGIN_SKILL_SOURCE_ID } from '#/features/skill/catalog/skillSource';
 
 import { agentScopeOf, sessionDirOf, sessionScopeOf } from './internal/addressing';
-import { SessionArchived, SessionDeleted } from './sessionLifecycleEvents';
+import { SessionArchived, SessionDeleted, SessionRestored } from './sessionLifecycleEvents';
 import {
   assertForkTurnIndex,
   sliceMainRecordsForRunningFork,
@@ -204,7 +210,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @IModelService private readonly models: IModelService,
     @IProviderService private readonly providers: IProviderService,
     private readonly environments: IEnvironmentService,
-    private readonly acquireWorkdir: (environmentId: string, cwd: string) => Promise<ProgramWorkdir>,
+    private readonly trust: IWorkspaceTrust,
+    private readonly acquireWorkdir: (environmentId: string, cwd: string, followsPrimary?: boolean) => Promise<ProgramWorkdir>,
     onDispose?: () => void,
   ) {
     super();
@@ -222,11 +229,13 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   async create(opts: CreateSessionOptions): Promise<ISessionScopeHandle> {
     const sessionId = opts.sessionId ?? createSessionId();
     const environment = sessionEnvironment(opts.environmentId, opts.environmentCwd);
-    const workdir = await this.openWorkdir(environment);
+    const workDir = this.sessionWorkDir(opts.workDir, environment);
+    const effective = { ...opts, workDir };
+    const workdir = await this.openWorkdir(environment, workDir);
     await workdir.skills
       .reloadSources(SESSION_CREATE_RELOAD_SKILL_SOURCES)
       .catch(() => undefined);
-    const handle = await this.materializeSession({ ...opts, sessionId }, environment, workdir);
+    const handle = await this.materializeSession({ ...effective, sessionId }, environment, workdir);
     try {
       if (environment !== undefined) {
         await handle.accessor.get(ISessionMetadata).update(
@@ -235,7 +244,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
             : {
                 environmentId: environment.environmentId,
                 environmentCwd: environment.cwd,
-                cwd: opts.workDir,
+                cwd: workDir,
               },
           { touchUpdatedAt: false },
         );
@@ -258,13 +267,15 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         }
         await planHandle.accessor.get(IAgentPlanService).enter();
       }
-      await this.appendSessionIndexEntry(sessionId, opts.workDir);
+      await opts.prepare?.(handle);
+      await this.appendSessionIndexEntry(sessionId, workDir);
     } catch (error) {
       const sessionDir = handle.accessor.get(ISessionContext).sessionDir;
       this.sessions.delete(sessionId);
       await this.drainAgents(handle).catch(() => {});
       void handle.dispose();
       await this.hostFs.remove(sessionDir).catch(() => {});
+      await this.index.remove(sessionId).catch(() => {});
       throw error;
     }
     await this.announceCreated({ sessionId, handle, source: 'startup' });
@@ -283,6 +294,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     const dirs = workdir.dirs;
     try {
       await Promise.all([this.config.ready, this.models.ready, this.providers.ready]);
+      readUserPermissionRules(this.config);
       await dirs.ready;
       await dirs.mergeAdditionalDirs(environment?.cwd ?? opts.workDir, opts.additionalDirs ?? []);
     } catch (error) {
@@ -312,6 +324,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         {
           seeds: [
             ...sessionContextSeed(ctx),
+            [IProjectLocalConfigService, workdir.localConfig],
+            [IWorkspaceTrust, this.trust],
             [ITelemetryService, telemetryBinding.telemetry],
             ...sessionAgentProfileCatalogSeed({
               _serviceBrand: undefined,
@@ -362,6 +376,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       await handle.accessor.get(ISessionMetadata).ready;
       await handle.accessor.get(ISessionNotify).ready;
       await handle.accessor.get(ISessionToolPolicy).ready;
+      await handle.accessor.get(IProjectPermissionRulesService).ready;
       await Promise.all([
         workdir.agentProfiles.ready,
         this.extraAgentProfileLoader.ready,
@@ -378,8 +393,21 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     return handle;
   }
 
-  private async openWorkdir(environment: (EnvironmentBinding & { readonly cwd: string }) | undefined): Promise<ProgramWorkdir> {
-    if (environment === undefined) return this.acquireWorkdir(LOCAL_ENVIRONMENT_ID, this.workspaceContext.cwd);
+  private sessionWorkDir(fallbackCwd: string, environment: EnvironmentBinding | undefined): string {
+    if (environment !== undefined && environment.environmentId !== LOCAL_ENVIRONMENT_ID) return fallbackCwd;
+    const primary = this.workspaceContext.meta.root;
+    return resolveEffectiveWorkspaceRoots(
+      { workspaceId: this.workspaceId, cwd: fallbackCwd },
+      environment,
+      { primaryByWorkspace: { [this.workspaceId]: primary }, additionalDirs: [] },
+    ).workDir;
+  }
+
+  private async openWorkdir(
+    environment: (EnvironmentBinding & { readonly cwd: string }) | undefined,
+    workDir: string,
+  ): Promise<ProgramWorkdir> {
+    if (environment === undefined) return this.acquireWorkdir(LOCAL_ENVIRONMENT_ID, workDir, true);
     const { environmentId, cwd } = environment;
     let lease: EnvironmentLease;
     try {
@@ -405,7 +433,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     } finally {
       lease.dispose();
     }
-    return this.acquireWorkdir(environmentId, cwd);
+    return this.acquireWorkdir(environmentId, cwd, false);
   }
 
   private async appendSessionIndexEntry(sessionId: string, workDir: string): Promise<void> {
@@ -474,16 +502,15 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     if (summary === undefined || summary.workspaceId !== this.workspaceId) return undefined;
     const persisted = await this.readMetaFromDisk(sessionId);
     const environment = sessionEnvironment(persisted?.environmentId, persisted?.environmentCwd);
-    const workDir = environment !== undefined && environment.environmentId !== LOCAL_ENVIRONMENT_ID
-      ? persisted?.cwd ?? this.workspaceContext.cwd
-      : summary.cwd ?? this.workspaceContext.cwd;
+    const fallbackCwd = persisted?.cwd ?? summary.cwd ?? this.workspaceContext.meta.root;
+    const workDir = this.sessionWorkDir(fallbackCwd, environment);
 
     const handle = await this.materializeSession({
       sessionId,
       workDir,
       additionalDirs: opts?.additionalDirs,
       mcpServers: opts?.mcpServers,
-    }, environment, await this.openWorkdir(environment));
+    }, environment, await this.openWorkdir(environment, workDir));
     try {
       const agents = handle.accessor.get(IAgentLifecycleService);
       if (agents.get(MAIN_AGENT_ID) === undefined) {
@@ -557,7 +584,16 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   ): Promise<ISessionScopeHandle | undefined> {
     const handle = await this.resume(sessionId, opts);
     if (handle === undefined) return undefined;
-    await handle.accessor.get(ISessionMetadata).setArchived(false);
+    const metadata = handle.accessor.get(ISessionMetadata);
+    const wasArchived = (await metadata.read()).archived;
+    await metadata.setArchived(false);
+    if (wasArchived) {
+      this.event.publish(
+        new SessionRestored({
+          payload: { sessionId, workspaceId: this.workspaceContext.workspaceId },
+        }),
+      );
+    }
     return handle;
   }
 
@@ -805,6 +841,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
           id: targetId,
           workspaceId: this.workspaceId,
           cwd: hostCwd,
+          environmentId: meta.environmentId,
+          environmentCwd: meta.environmentCwd,
           title,
           lastPrompt: meta.lastPrompt,
           createdAt: now,
@@ -864,6 +902,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       ...(args.records ??
         (await this.readSourceWireRecords(args.sourceHandle, args.sourceSessionId, args.agentId))),
     ];
+    assertWireRecordsReaderVersion(records);
     if (records.length === 0) {
       records.push(createWireMetadataRecord());
     } else if (records[0]?.type !== 'metadata') {
@@ -896,6 +935,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       return;
     }
     if (first.type === 'metadata') {
+      assertWireRecordsReaderVersion([first]);
       this.appendLogStore.append(scope, AGENT_WIRE_RECORD_KEY, forkedRecord(agentId));
       return;
     }
@@ -933,6 +973,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         },
       }),
     );
+    assertWireRecordsReaderVersion(records);
     if (truncation !== undefined) {
       await repairWireJournal(
         {

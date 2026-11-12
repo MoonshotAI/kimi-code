@@ -11,6 +11,7 @@ import { InstantiationService } from '#/_base/di/instantiationService';
 import { ServiceCollection } from '#/_base/di/serviceCollection';
 import { ILogService } from '#/_base/log/log';
 import { EXTRA_AGENT_DIRS_SECTION } from '#/workspace/workspaceAgentProfileLoader/configSection';
+import * as agentRoots from '#/workspace/workspaceAgentProfileLoader/internal/agentRoots';
 import { UserAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoaderService';
 import type { PluginAgentRoot, PluginReloadEvent } from '#/app/plugin/types';
 import {
@@ -40,6 +41,7 @@ import { ExplicitAgentProfileLoaderService } from '#/workspace/workspaceAgentPro
 import { ExtraAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/extraAgentProfileLoaderService';
 import { WorkspaceAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoaderService';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
+import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
 import { IPluginAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoader';
 import { IWorkspaceAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
@@ -127,6 +129,18 @@ function workspaceContextStub(workDir: string): IWorkspaceContext {
   };
 }
 
+function workspaceDirsStub(workDir: string, onDidChange: IWorkspaceDirs['onDidChange'] = Event.None as Event<void>): IWorkspaceDirs {
+  return {
+    _serviceBrand: undefined,
+    ready: Promise.resolve(),
+    primary: workDir,
+    additionalDirs: [],
+    sharedAdditionalDirs: [],
+    primaryByWorkspace: {},
+    onDidChange,
+  } as unknown as IWorkspaceDirs;
+}
+
 function agentMd(name: string, description: string, override = false): string {
   const overrideLine = override ? 'override: true\n' : '';
   return `---\nname: ${name}\ndescription: ${description}\n${overrideLine}---\n\nYou are ${name}.\n`;
@@ -188,15 +202,18 @@ function pluginStub(
     _serviceBrand: undefined,
     onDidReload: reloadEmitter !== undefined ? reloadEmitter.event : () => ({ dispose: () => {} }),
     onDidMutate: () => ({ dispose: () => {} }),
+    withMcpServersSuspended: async (_id, task) => task(),
     listPlugins: async () => [],
     installPlugin: async () => ({ id: '' }) as never,
     setPluginEnabled: async () => {},
     setPluginMcpServerEnabled: async () => {},
     removePlugin: async () => {},
     reloadPlugins: async () => ({ added: [], removed: [], errors: [] }),
+    reconcileAvailability: async () => {},
     getPluginInfo: async () => {
       throw new Error('getPluginInfo is not used by these tests');
     },
+    previewPlugin: async () => ({ skills: [], mcpServers: [] }),
     listPluginCommands: async () => [],
     checkUpdates: async () => [],
     pluginSkillRoots: async () => [],
@@ -256,6 +273,9 @@ function makeStack(fixture: Fixture, opts?: StackOptions) {
   };
   const hostFs = opts?.hostFs ?? new HostFileSystem();
   const workspaceContext = workspaceContextStub(fixture.workDir);
+  const dirsChanges = new Emitter<void>();
+  const workspaceDirs = workspaceDirsStub(workspaceContext.cwd, dirsChanges.event);
+  Object.defineProperty(workspaceDirs, 'primary', { get: () => workspaceContext.cwd });
 
   const container = new InstantiationService(
     new ServiceCollection(
@@ -264,6 +284,7 @@ function makeStack(fixture: Fixture, opts?: StackOptions) {
       [IBootstrapService, bootstrap],
       [IHostFileSystem, hostFs],
       [IWorkspaceContext, workspaceContext],
+      [IWorkspaceDirs, workspaceDirs],
       [IPluginService, pluginStub(opts?.pluginAgentRoots ?? [], opts?.pluginReloadEmitter)],
       [IAgentProfileRegistry, new SyncDescriptor(AgentProfileRegistryService)],
       [IBuiltinAgentProfileLoader, new SyncDescriptor(BuiltinAgentProfileLoaderService)],
@@ -300,6 +321,8 @@ function makeStack(fixture: Fixture, opts?: StackOptions) {
     explicitLoader,
     catalog,
     config,
+    dirsChanges,
+    workspaceContext,
     warnings,
     async ready(): Promise<void> {
       await Promise.all([
@@ -833,6 +856,87 @@ describe('agent profile loaders + session catalog', () => {
   });
 });
 
+describe('workspace primary changes', () => {
+  beforeEach(() => {
+    watchMockState.mode = 'inert';
+    _clearAgentProfileContributionsForTests();
+    registerAgentProfile(normalizeAgentProfile({
+      name: DEFAULT_AGENT_PROFILE_NAME,
+      description: 'builtin default',
+      systemPrompt: () => 'BUILTIN PROMPT',
+    }));
+  });
+
+  it('reloads workspace profiles and moves the project watcher when primary changes', async () => {
+    await withFixture(async (fixture) => {
+      await mkdir(join(fixture.workDir, '.kimi-code', 'agents'), { recursive: true });
+      await writeFile(
+        join(fixture.workDir, '.kimi-code', 'agents', 'first.md'),
+        agentMd('first', 'first'),
+      );
+      const stack = makeStack(fixture);
+      try {
+        await stack.ready();
+        expect(stack.catalog.list().map((profile) => profile.name)).toContain('first');
+        const next = join(fixture.workDir, 'next');
+        await mkdir(join(next, '.kimi-code', 'agents'), { recursive: true });
+        await writeFile(join(next, '.kimi-code', 'agents', 'next.md'), agentMd('next', 'next'));
+
+        watchMockState.calls = [];
+        Object.defineProperty(stack.workspaceContext, 'cwd', { get: () => next });
+        stack.dirsChanges.fire();
+        await vi.waitFor(() => {
+          expect(stack.catalog.list().map((profile) => profile.name)).toContain('next');
+        });
+        expect(stack.catalog.list().map((profile) => profile.name)).not.toContain('first');
+        expect(watchMockState.calls.some((path) => path === next || path.startsWith(`${next}/`))).toBe(true);
+      } finally {
+        stack.dispose();
+      }
+    });
+  });
+
+  it('serializes initial watcher discovery with a primary change', async () => {
+    await withFixture(async (fixture) => {
+      let releaseInitial!: () => void;
+      let markInitialStarted!: () => void;
+      const initialGate = new Promise<void>((resolve) => {
+        releaseInitial = resolve;
+      });
+      const initialStarted = new Promise<void>((resolve) => {
+        markInitialStarted = resolve;
+      });
+      const candidates = vi.spyOn(agentRoots, 'projectAgentRootCandidates').mockImplementation(
+        async (_fs, primary) => {
+          if (primary === fixture.workDir) {
+            markInitialStarted();
+            await initialGate;
+          }
+          return { projectRoot: primary, candidates: [primary] };
+        },
+      );
+      const stack = makeStack(fixture);
+      try {
+        await initialStarted;
+        watchMockState.calls = [];
+        const next = join(fixture.workDir, 'next');
+        Object.defineProperty(stack.workspaceContext, 'cwd', { get: () => next });
+        stack.dirsChanges.fire();
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(watchMockState.calls).not.toContain(next);
+
+        releaseInitial();
+        await stack.ready();
+        expect(watchMockState.calls.at(-1)).toBe(next);
+      } finally {
+        releaseInitial();
+        stack.dispose();
+        candidates.mockRestore();
+      }
+    });
+  });
+});
+
 describe('workspace loader watchEnabled', () => {
   function userStub(): IUserAgentProfileLoader {
     return {
@@ -847,6 +951,7 @@ describe('workspace loader watchEnabled', () => {
         new WorkspaceAgentProfileLoaderService(
           workspaceContextStub(fixture.workDir),
           new HostFileSystem(),
+          workspaceDirsStub(fixture.workDir),
           logStub(),
           userStub(),
           undefined,

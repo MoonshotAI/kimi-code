@@ -59,10 +59,14 @@ function delay(ms: number, signal: AbortSignal): Promise<boolean> {
   });
 }
 
-function abortedOf(result: Extract<LlmOutcome, { type: 'failed' }>): LlmOutcome {
+function abortedOf(
+  result: Extract<LlmOutcome, { type: 'failed' }>,
+  reason: unknown,
+): LlmOutcome {
   return {
     type: 'aborted',
     message: result.message ?? null,
+    reason,
     usage: result.usage,
     headers: result.headers,
     finish: result.finish,
@@ -203,6 +207,13 @@ async function runAttempts(
         strategy: proposal.strategy,
         action: proposal.action,
         error: result.error,
+        message: result.message ?? undefined,
+        usage: result.usage,
+        headers: result.headers,
+        finish: result.finish,
+        messageId: result.messageId,
+        requestId: result.requestId,
+        timing: result.timing,
       });
       continue;
     }
@@ -217,9 +228,16 @@ async function runAttempts(
         maxAttempts,
         delayMs,
         error: result.error,
+        message: result.message ?? undefined,
+        usage: result.usage,
+        headers: result.headers,
+        finish: result.finish,
+        messageId: result.messageId,
+        requestId: result.requestId,
+        timing: result.timing,
       });
       if (!(await delay(delayMs, signal))) {
-        return abortedOf(result);
+        return abortedOf(result, signal.reason);
       }
       attempt += 1;
       continue;

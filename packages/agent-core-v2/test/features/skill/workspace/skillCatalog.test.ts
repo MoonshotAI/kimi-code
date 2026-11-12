@@ -1,5 +1,6 @@
-import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { parse } from 'node:path';
 
 import { join } from 'pathe';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -13,11 +14,14 @@ import {
 } from '#/_base/di/scope';
 import { AsyncEmitter, Emitter, Event } from '#/_base/event';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IMcpOAuthService } from '#/app/mcpConfig/oauthService';
+import { IRegionService } from '#/app/region/region';
 import { IPluginService } from '#/app/plugin/plugin';
 import { PluginService } from '#/app/plugin/pluginService';
 import type { PluginReloadEvent } from '#/app/plugin/types';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { IProviderService } from '#/llm-adapter/provider/provider';
+import type { McpOAuthService } from '#/mcpCore/oauth/service';
 import { IAppStateService } from '#/app/state/appState';
 import { AppStateService } from '#/app/state/appStateService';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
@@ -59,11 +63,13 @@ import { stubLog } from '../../../_base/log/stubs';
 const watchMockState = vi.hoisted(() => ({
   calls: [] as { path: string; options?: WatchOptions }[],
   factory: undefined as undefined | ((path: string, options?: WatchOptions) => unknown),
+  useRealWatch: false,
 }));
 
 vi.mock('#human/utils/watch', async (importOriginal) => {
   const original = await importOriginal<typeof import('#human/utils/watch')>();
   const watch = (path: string, options?: WatchOptions) => {
+    if (watchMockState.useRealWatch) return original.watch(path, options);
     watchMockState.calls.push({ path, options });
     if (watchMockState.factory !== undefined) {
       return watchMockState.factory(path, options) as ReturnType<typeof original.watch>;
@@ -77,8 +83,10 @@ vi.mock('#human/utils/watch', async (importOriginal) => {
   return {
     ...original,
     watch,
-    watchCandidates: (root: string, _candidates: readonly string[], options?: WatchOptions) =>
-      watch(root, options),
+    watchCandidates: (root: string, candidates: readonly string[], options?: WatchOptions) =>
+      watchMockState.useRealWatch
+        ? original.watchCandidates(root, candidates, options)
+        : watch(root, options),
   };
 });
 
@@ -137,15 +145,18 @@ function pluginStub(
     _serviceBrand: undefined,
     onDidReload: reloadEmitter !== undefined ? reloadEmitter.event : () => ({ dispose: () => {} }),
     onDidMutate: () => ({ dispose: () => {} }),
+    withMcpServersSuspended: async (_id, task) => task(),
     listPlugins: async () => [],
     installPlugin: async () => ({ id: '' }) as never,
     setPluginEnabled: async () => {},
     setPluginMcpServerEnabled: async () => {},
     removePlugin: async () => {},
     reloadPlugins: async () => ({ added: [], removed: [], errors: [] }),
+    reconcileAvailability: async () => {},
     getPluginInfo: async () => {
       throw new Error('getPluginInfo is not used by these tests');
     },
+    previewPlugin: async () => ({ skills: [], variants: [], mcpServers: [] }),
     listPluginCommands: async () => [],
     checkUpdates: async () => [],
     pluginSkillRoots: async () => skillRoots,
@@ -179,6 +190,7 @@ function workspaceDirsStub(
   return {
     _serviceBrand: undefined,
     ready,
+    primary: '/workspace',
     additionalDirs,
     sharedAdditionalDirs,
     primaryByWorkspace: {},
@@ -266,6 +278,7 @@ describe('WorkspaceSkillCatalogService', () => {
   beforeEach(() => {
     watchMockState.calls = [];
     watchMockState.factory = undefined;
+    watchMockState.useRealWatch = false;
     _clearScopedRegistryForTests();
     registerScopedService(LifecycleScope.App, IBuiltinSkillSource, BuiltinSkillSource);
     registerScopedService(LifecycleScope.App, IUserFileSkillSource, UserFileSkillSource);
@@ -346,6 +359,21 @@ describe('WorkspaceSkillCatalogService', () => {
       expect(catalog.catalog.getSkill('third-only')?.description).toBe('from third');
       expect(catalog.catalog.getSkill('shared')?.description).toBe('from primary');
       expect(catalog.catalog.getSkill('additional-shared')?.description).toBe('from secondary');
+      expect(
+        catalog.catalog.listSkills().filter((skill) => skill.name === 'shared').map((skill) => skill.description),
+      ).toEqual(['from primary', 'from secondary']);
+      expect(
+        catalog.catalog.getSkill(
+          'shared',
+          await realpath(join(secondary, '.kimi-code', 'skills', 'shared', 'SKILL.md')),
+        )?.description,
+      ).toBe('from secondary');
+      expect(
+        catalog.catalog.getSkill(
+          'shared',
+          join(third, '.kimi-code', 'skills', 'shared', 'SKILL.md'),
+        ),
+      ).toBeUndefined();
       const watchedPaths = watchMockState.calls.map((call) => call.path);
       for (const dir of [primary, secondary, third]) {
         expect(watchedPaths).toContain(await realpath(dir));
@@ -665,6 +693,129 @@ describe('WorkspaceSkillCatalogService', () => {
     host.dispose();
   });
 
+  it.each(['explicit', 'extra'] as const)('refreshes the loaded catalog when a skill is added to an %s root', async (source) => {
+    const workDir = await realpath(await mkdtemp(join(tmpdir(), 'configured-skill-watch-')));
+    const skillRoot = join(workDir, 'managed', 'skills');
+    const skillDir = join(skillRoot, 'new-skill');
+    await mkdir(skillRoot, { recursive: true });
+    watchMockState.useRealWatch = true;
+    const { host, workspace, config } = makeHost(
+      new FileSkillDiscovery(stubLog()),
+      workspaceContextStub(workDir),
+      [],
+      source === 'explicit' ? ['managed/skills'] : undefined,
+    );
+    if (source === 'extra') config.setExtraSkillDirs([skillRoot]);
+
+    try {
+      const catalog = workspace.accessor.get(IWorkspaceSkillCatalog);
+      const watcherScan = waitForEvents(Event.filter(catalog.onDidChange, (id) => id === source), 1);
+      await catalog.load();
+      await watcherScan;
+      const sessionData = catalog.sessionData();
+      expect(sessionData.catalog.getSkill('new-skill')).toBeUndefined();
+
+      await mkdir(skillDir);
+      await writeFile(
+        join(skillDir, 'SKILL.md'),
+        '---\nname: new-skill\ndescription: Added after catalog load\n---\n',
+      );
+      await expect.poll(() => sessionData.catalog.getSkill('new-skill')?.description, { timeout: 5000 }).toBe(
+        'Added after catalog load',
+      );
+    } finally {
+      host.dispose();
+      await rm(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it('loads configured skills before watching is ready and refreshes when watching starts', async () => {
+    await withSkillCatalogWorkspace(async ({ workDir, skillRoot }) => {
+      const watchReady = deferred<void>();
+      const watchRoot = parse(skillRoot).root;
+      watchMockState.factory = (path) => ({
+        ready: path === watchRoot ? watchReady.promise : Promise.resolve(),
+        onDidChange: () => ({ dispose: () => {} }),
+        dispose: () => {},
+      });
+      const store = new InMemorySkillDiscovery();
+      const existingSkill = stubSkill('existing-skill', { description: 'Available before watching starts' });
+      store.setUserSkills([existingSkill]);
+      const { host, workspace } = makeHost(store, workspaceContextStub(workDir), [], [skillRoot]);
+      const catalog = workspace.accessor.get(IWorkspaceSkillCatalog);
+      const loaded = catalog.load();
+
+      try {
+        await expect.poll(() => catalog.catalog.getSkill('existing-skill')?.description).toBe(existingSkill.description);
+        await loaded;
+
+        const addedSkill = stubSkill('added-skill', { description: 'Added before watching starts' });
+        store.setUserSkills([existingSkill, addedSkill]);
+        expect(catalog.catalog.getSkill('added-skill')).toBeUndefined();
+
+        watchReady.resolve(undefined);
+        await expect.poll(() => catalog.catalog.getSkill('added-skill')?.description).toBe(addedSkill.description);
+      } finally {
+        watchReady.resolve(undefined);
+        await loaded.catch(() => undefined);
+        host.dispose();
+      }
+    });
+  });
+
+  it.each([
+    { scenario: 'the root link is repointed', existing: true, subdir: '' },
+    { scenario: 'an ancestor link is repointed', existing: true, subdir: 'skills' },
+    { scenario: 'the root link is created', existing: false, subdir: '' },
+  ])('refreshes the configured catalog when $scenario', async ({ existing, subdir }) => {
+    const workDir = await realpath(await mkdtemp(join(tmpdir(), 'explicit-skill-link-')));
+    const configured = join(workDir, 'configured');
+    const oldTarget = join(workDir, 'original');
+    const newTarget = join(workDir, 'replacement');
+    const stagedLink = join(workDir, 'staged');
+    const writeSkill = async (target: string, name: string, description: string) => {
+      const dir = join(target, subdir, name);
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, 'SKILL.md'), `---\nname: ${name}\ndescription: ${description}\n---\n`);
+    };
+    if (existing) {
+      await writeSkill(oldTarget, 'seed', 'Original target');
+      await symlink(oldTarget, configured, 'junction');
+    }
+    await writeSkill(newTarget, 'seed', 'Replacement target');
+    await symlink(newTarget, stagedLink, 'junction');
+    watchMockState.useRealWatch = true;
+    const { host, workspace } = makeHost(
+      new FileSkillDiscovery(stubLog()),
+      workspaceContextStub(workDir),
+      [],
+      [join(configured, subdir)],
+    );
+
+    try {
+      const catalog = workspace.accessor.get(IWorkspaceSkillCatalog);
+      const watcherScan = existing ? waitForEvents(catalog.onDidChange, 1) : undefined;
+      await catalog.load();
+      await watcherScan;
+      const sessionData = catalog.sessionData();
+      expect(sessionData.catalog.getSkill('seed')?.description).toBe(existing ? 'Original target' : undefined);
+
+      if (existing) await rename(configured, join(workDir, 'retired'));
+      await rename(stagedLink, configured);
+      await expect.poll(() => sessionData.catalog.getSkill('seed')?.description, { timeout: 5000 }).toBe(
+        'Replacement target',
+      );
+
+      await writeSkill(newTarget, 'after-switch', 'Added after the target changed');
+      await expect.poll(() => sessionData.catalog.getSkill('after-switch')?.description, { timeout: 5000 }).toBe(
+        'Added after the target changed',
+      );
+    } finally {
+      host.dispose();
+      await rm(workDir, { recursive: true, force: true });
+    }
+  });
+
   it('waits for config ready before loading extra skill dirs', async () => {
     let markReady!: () => void;
     let ready = false;
@@ -716,7 +867,7 @@ describe('WorkspaceSkillCatalogService', () => {
       calls = 0;
       async discover() {
         this.calls++;
-        return { skills: [], skipped: [], scannedRoots: [], scannedDirectories: [] };
+        return { skills: [], variants: [], skipped: [], scannedRoots: [], scannedDirectories: [] };
       }
     }
     const store = new CountingDiscovery();
@@ -800,7 +951,7 @@ describe('WorkspaceSkillCatalogService', () => {
         const pluginSkills = roots
           .filter((root) => root.plugin !== undefined)
           .map((root) => stubSkill('demo-skill', { source: 'extra', plugin: root.plugin }));
-        return { skills: pluginSkills, skipped: [], scannedRoots: [], scannedDirectories: [] };
+        return { skills: pluginSkills, variants: pluginSkills, skipped: [], scannedRoots: [], scannedDirectories: [] };
       }
     }
     const store = new ExtraRootStore();
@@ -822,7 +973,7 @@ describe('WorkspaceSkillCatalogService', () => {
         declare readonly _serviceBrand: undefined;
         async discover(roots: readonly SkillRoot[]) {
           return {
-            skills: [],
+            skills: [], variants: [],
             skipped: [],
             scannedRoots: roots
               .filter((root) => root.source === 'project')
@@ -857,7 +1008,7 @@ describe('WorkspaceSkillCatalogService', () => {
         async discover(roots: readonly SkillRoot[]) {
           const isProject = roots.some((root) => root.source === 'project');
           return {
-            skills: [],
+            skills: [], variants: [],
             skipped: isProject ? [skippedEntry] : [],
             scannedRoots: [],
             scannedDirectories: [],
@@ -1062,8 +1213,18 @@ describe('WorkspaceSkillCatalogService', () => {
       stubPair(ISkillDiscovery, store),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(IConfigService, configStub()),
+      stubPair(ILogService, stubLog()),
       stubPair(IProviderService, stubProviderService()),
+      stubPair(IRegionService, {
+        _serviceBrand: undefined,
+        current: () => ({ region: 'mainland-cn', source: 'default' }),
+        getRegionAsync: async () => 'mainland-cn',
+      } satisfies IRegionService),
       stubPair(ITelemetryService, noopTelemetryService),
+      stubPair(IMcpOAuthService, {
+        cancelAuthorization: async () => {},
+        invalidateFromConfiguration: async () => {},
+      } as unknown as McpOAuthService),
     ]);
     const ws = workspaceContextStub('/work');
     const workspace = host.child('program', 'w1', [
@@ -1153,8 +1314,10 @@ describe('WorkspaceSkillCatalogService', () => {
       _serviceBrand: undefined,
       discover: async () => {
         scans += 1;
+        const skills = [stubSkill('demo', { description: scans === 1 ? 'stale' : 'fresh' })];
         return {
-          skills: [stubSkill('demo', { description: scans === 1 ? 'stale' : 'fresh' })],
+          skills,
+          variants: skills,
           skipped: [],
           scannedRoots: [scannedDirectory],
           scannedDirectories: [scannedDirectory],

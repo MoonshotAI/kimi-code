@@ -6,7 +6,6 @@ import type { TokenUsage } from '#human/llm-requester/usage';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import type { ContextMessage, ContextMessageTiming } from './types';
-import { shouldRenderWallTime } from './toolResultRender';
 import { isVacuousContentPart } from './vacuousContent';
 
 const TOOL_INTERRUPTED_ON_RESUME_OUTPUT =
@@ -15,6 +14,7 @@ const TOOL_INTERRUPTED_ON_RESUME_OUTPUT =
 export interface AssistantSealMeta {
   readonly usage?: TokenUsage;
   readonly llmTiming?: ContextMessageTiming;
+  readonly providerMessageId?: string;
 }
 
 export type LoopRecordedEvent =
@@ -46,6 +46,9 @@ export type LoopRecordedEvent =
       readonly type: 'content.part';
       readonly stepUuid: string;
       readonly part: ContentPart;
+      readonly block?: number;
+      readonly startedAt?: number;
+      readonly durationMs?: number;
       readonly uuid?: string;
       readonly turnId?: string;
       readonly step?: number;
@@ -54,6 +57,7 @@ export type LoopRecordedEvent =
       readonly type: 'tool.call';
       readonly stepUuid: string;
       readonly toolCallId: string;
+      readonly rawId?: string;
       readonly name: string;
       readonly args?: unknown;
       readonly extras?: Record<string, unknown>;
@@ -121,7 +125,10 @@ function createLoopEventFoldWithState(
   const closePending = (time: number | undefined): void => {
     if (pending.size === 0) return;
     for (const toolCallId of pending.keys()) {
-      sink.pushToolMessage(interruptedToolMessage(toolCallId), time);
+      const hasRecordedResult = deferred.some(
+        (entry) => entry.message.role === 'tool' && entry.message.toolCallId === toolCallId,
+      );
+      if (!hasRecordedResult) sink.pushToolMessage(interruptedToolMessage(toolCallId), time);
     }
     pending.clear();
     flushDeferred();
@@ -164,7 +171,6 @@ function createLoopEventFoldWithState(
           return;
         }
         case 'step.end': {
-          if (event.finishReason === 'interrupted' || event.finishReason === 'error') return;
           settleOpen(time, stepEndSealMeta(event));
           flushDeferred();
           return;
@@ -182,7 +188,8 @@ function createLoopEventFoldWithState(
             id: event.toolCallId,
             name: event.name,
             arguments: event.args === undefined ? null : JSON.stringify(event.args),
-            ...(event.extras !== undefined ? { extras: event.extras } : {}),
+            extras: event.extras,
+            rawId: event.rawId,
           };
           sink.appendOpenToolCall(call, event.display);
           pending.set(event.toolCallId, event.name);
@@ -191,7 +198,6 @@ function createLoopEventFoldWithState(
         }
         case 'tool.result': {
           if (!pending.has(event.toolCallId)) return;
-          const toolName = pending.get(event.toolCallId)!;
           pending.delete(event.toolCallId);
           const output = event.result.output;
           sink.pushToolMessage(
@@ -202,7 +208,7 @@ function createLoopEventFoldWithState(
               ),
               isError: event.result.isError,
               note: event.result.note,
-              durationMs: shouldRenderWallTime(toolName) ? event.result.durationMs : undefined,
+              durationMs: event.result.durationMs,
             },
             time,
           );
@@ -256,6 +262,12 @@ export function foldLoopEvent(
   const bound = boundOf(state, mutable);
   bound.sink.setMutable(mutable);
   bound.fold.loopEvent(event, undefined);
+  return bind(bound, bound.sink.current());
+}
+
+export function foldSettle(state: readonly ContextMessage[]): readonly ContextMessage[] {
+  const bound = boundOf(state, false);
+  bound.fold.settle(undefined);
   return bind(bound, bound.sink.current());
 }
 
@@ -349,6 +361,7 @@ function createFoldSink(initial: readonly ContextMessage[], initialMutable: bool
         ...message,
         usage: meta?.usage,
         llmTiming: meta?.llmTiming,
+        providerMessageId: meta?.providerMessageId,
         partial: undefined,
       }));
       openIndex = -1;
@@ -413,6 +426,10 @@ function stepEndSealMeta(
     llmStreamDurationMs: event.llmStreamDurationMs,
   };
   const hasTiming = Object.values(timing).some((value) => value !== undefined);
-  if (event.usage === undefined && !hasTiming) return undefined;
-  return { usage: event.usage, llmTiming: hasTiming ? timing : undefined };
+  if (event.usage === undefined && !hasTiming && event.messageId === undefined) return undefined;
+  return {
+    usage: event.usage,
+    llmTiming: hasTiming ? timing : undefined,
+    providerMessageId: event.messageId,
+  };
 }

@@ -4,7 +4,7 @@ import { CoreErrors } from '#/_base/errors/codes';
 import { Error2 } from '#/_base/errors/errors';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { isAbortError } from '#/_base/utils/abort';
-import { IAgentTaskService } from '#/agent/task/task';
+
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -23,6 +23,7 @@ import {
   INTERACTION_TAG_TOOL_CALL_ID,
   INTERACTION_TAG_TURN_ID,
   isInteractionCancellation,
+  type InteractionCancellation,
   type InteractionTags,
 } from '#/human/interaction/interaction';
 import { interactions } from '#/human/interaction/facade';
@@ -42,7 +43,6 @@ import {
   type AskUserQuestionInput,
 } from './ask-user-question';
 import DESCRIPTION from './ask-user.md?raw';
-import { QuestionBackgroundTask } from './question-background-task';
 
 const QUESTION_DISMISSED_MESSAGE = 'User dismissed the question without answering.';
 
@@ -67,7 +67,6 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
   constructor(
     @ISessionContext private readonly session: ISessionContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    @IAgentTaskService private readonly tasks: IAgentTaskService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
@@ -94,8 +93,9 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
 
   private async execution(
     args: AskUserQuestionInput,
-    { toolCallId, signal, turnId, trace }: ExecutableToolContext,
+    ctx: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
+    const { toolCallId, signal, detach, onDetach, write, set, taskId = toolCallId } = ctx;
     if (this.bootstrap.args.nonInteractive === true) {
       return { isError: true, output: QUESTION_NON_INTERACTIVE_MESSAGE };
     }
@@ -108,12 +108,43 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
     if (uniquenessError !== null) {
       return { isError: true, output: uniquenessError };
     }
+    signal.throwIfAborted();
 
+    const description = questionDescription(args.questions);
+    set?.({
+      task: {
+        kind: 'question',
+        description,
+        questionCount: args.questions.length,
+        toolCallId,
+      },
+    });
     if (args.background === true) {
-      return this.executeInBackground(args, { toolCallId, turnId, signal, trace });
+      const started: ExecutableToolResult & { readonly output: string } = {
+        isError: false,
+        output:
+          `task_id: ${taskId}\n` +
+          'status: running\n' +
+          'next_step: Continue your work; the answer arrives automatically in a later message. Use TaskStop only to cancel the question.',
+      };
+      onDetach?.(() => ({ content: [{ type: 'text', text: started.output }] }));
+      detach?.(started.output);
     }
-
-    return this.executeQuestion(args, { toolCallId, turnId, signal, trace });
+    const result = await this.executeQuestion(args, ctx);
+    const output = typeof result.output === 'string' ? result.output : JSON.stringify(result.output);
+    if (output.length > 0) write?.(output);
+    if (result.isError === true) {
+      set?.({
+        task: {
+          kind: 'question',
+          description,
+          questionCount: args.questions.length,
+          toolCallId,
+          stopReason: output,
+        },
+      });
+    }
+    return result;
   }
 
   private allowBackground(): boolean {
@@ -122,47 +153,6 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
       this.toolPolicy.isToolActive('TaskOutput') &&
       this.toolPolicy.isToolActive('TaskStop')
     );
-  }
-
-  private executeInBackground(
-    args: AskUserQuestionInput,
-    {
-      toolCallId,
-      signal,
-      turnId,
-      trace,
-    }: Pick<ExecutableToolContext, 'toolCallId' | 'signal' | 'turnId' | 'trace'>,
-  ): ExecutableToolResult {
-    if (signal.aborted) {
-      signal.throwIfAborted();
-    }
-
-    const description = questionDescription(args.questions);
-    let taskId: string;
-    try {
-      taskId = this.tasks.registerTask(
-        new QuestionBackgroundTask(
-          (taskSignal) => this.executeQuestion(args, { toolCallId, turnId, signal: taskSignal, trace }),
-          description,
-          { questionCount: args.questions.length, toolCallId },
-        ),
-        { detached: true },
-      );
-    } catch (error) {
-      return {
-        isError: true,
-        output: error instanceof Error ? error.message : String(error),
-      };
-    }
-
-    const status = this.tasks.getTask(taskId)?.status ?? 'running';
-    return {
-      isError: false,
-      output:
-        `task_id: ${taskId}\n` +
-        `status: ${status}\n` +
-        'next_step: Continue your work; the answer arrives automatically in a later message. Use TaskStop only to cancel the question.',
-    };
   }
 
   private async executeQuestion(
@@ -245,11 +235,12 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
         tags,
       })
       .then((response) => (isInteractionCancellation(response) ? null : (response as QuestionResult)));
+    const stopped: InteractionCancellation = { cancelled: true, reason: 'turn_ended' };
     if (signal.aborted) {
-      interactions.respond(id, null);
+      interactions.respond(id, stopped);
     } else {
       const onAbort = (): void => {
-        interactions.respond(id, null);
+        interactions.respond(id, stopped);
       };
       signal.addEventListener('abort', onAbort, { once: true });
       void pending.finally(() => {

@@ -88,6 +88,7 @@ export type RpcMessageValidation =
 
 export const Events = {
   ExtensionConfigChanged: "extensionConfigChanged",
+  ModelCatalogChanged: "modelCatalogChanged",
   MCPServersChanged: "mcpServersChanged",
   StreamEvent: "streamEvent",
   FocusInput: "focusInput",

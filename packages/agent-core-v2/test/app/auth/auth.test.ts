@@ -1334,7 +1334,10 @@ describe('WebSearchProviderService', () => {
     expect(headers['User-Agent']).toBe('kimi-code-cli/test');
     expect(headers['X-Msh-Device-Id']).toBe('device-test');
     expect(headers['X-Custom']).toBe('yes');
-    expect(JSON.parse(init.body as string)).toEqual({ text_query: 'hello' });
+    expect(JSON.parse(init.body as string)).toEqual({
+      text_query: 'hello',
+      search_mode: 'links',
+    });
   });
 
   it('builds a search provider from the services.moonshot_search api_key config', async () => {

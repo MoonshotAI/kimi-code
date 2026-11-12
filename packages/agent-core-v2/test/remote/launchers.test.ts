@@ -1,5 +1,5 @@
-import { execFileSync } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 
@@ -77,6 +77,24 @@ describe('ssh remote command quoting', () => {
     expect(resolved.args.at(-1)).toBe(`'/opt/$(whoami)/kimi' 'exec-server' '--listen' 'stdio'`);
   });
 
+  it('invokes a bare executor name without POSIX-only quoting', () => {
+    expect(resolveLauncher({ type: 'ssh', host: 'dev-box', remoteBin: 'kimi' }).args.at(-1)).toBe(
+      'kimi exec-server --listen stdio',
+    );
+    expect(resolveLauncher({ type: 'ssh', host: 'dev-box', remoteBin: 'kimi.exe' }).args.at(-1)).toBe(
+      'kimi.exe exec-server --listen stdio',
+    );
+    expect(resolveLauncher({ type: 'ssh', host: 'dev-box', remoteBin: 'kimi-dev' }).args.at(-1)).toBe(
+      'kimi-dev exec-server --listen stdio',
+    );
+  });
+
+  it.each(['if', 'time', 'done'])('keeps POSIX quoting for reserved word %s', (remoteBin) => {
+    expect(resolveLauncher({ type: 'ssh', host: 'dev-box', remoteBin }).args.at(-1)).toBe(
+      `'${remoteBin}' 'exec-server' '--listen' 'stdio'`,
+    );
+  });
+
   it('keeps tilde prefixes expandable while quoting the remainder', () => {
     expect(resolveLauncher({ type: 'ssh', host: 'dev-box', remoteBin: '~/bin/kimi' }).args.at(-1)).toBe(
       `"$HOME"'/bin/kimi' 'exec-server' '--listen' 'stdio'`,
@@ -113,6 +131,52 @@ describe('ssh remote command tilde expansion through a local shell', () => {
     const username = userInfo().username;
     const command = resolveLauncher({ type: 'ssh', host: 'dev-box', remoteBin: `~${username}/bin/kimi` }).args.at(-1)!;
     expect(expandBinWord(command)).toBe(`${userInfo().homedir}/bin/kimi`);
+  });
+});
+
+describe('complete SSH executor commands', () => {
+  it.each(['exit 1', 'exit 23'])('preserves executor failure without a second launch: %s', async (exit) => {
+    const dir = await mkdtemp(join(tmpdir(), 'kimi-executor-exit-'));
+    try {
+      const bin = join(dir, 'kimi');
+      const calls = join(dir, 'calls');
+      await writeFile(bin, `#!/bin/sh\nprintf 'called\\n' >> "$CALLS"\n${exit}\n`);
+      await chmod(bin, 0o700);
+      const command = resolveLauncher({ type: 'ssh', host: 'example.test', remoteBin: bin }).args.at(-1)!;
+      const result = spawnSync('sh', ['-c', command], { env: { ...process.env, CALLS: calls }, encoding: 'utf8' });
+      expect(result.status).toBe(Number(exit.slice(5)));
+      expect(result.stderr).toBe('');
+      expect(await readFile(calls, 'utf8')).toBe('called\n');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['$(printf INJECTED >&2)', '`printf INJECTED >&2`', 'a"b', "it's", 'a b'])('executes the literal path containing %s', async (name) => {
+    const dir = await mkdtemp(join(tmpdir(), 'kimi-executor-literal-'));
+    try {
+      const bin = join(dir, name);
+      await writeFile(bin, '#!/bin/sh\nprintf "%s\\n" "$@"\n');
+      await chmod(bin, 0o700);
+      const command = resolveLauncher({ type: 'ssh', host: 'example.test', remoteBin: bin }).args.at(-1)!;
+      const result = spawnSync('sh', ['-c', command], { encoding: 'utf8' });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe('');
+      expect(result.stdout).toBe('exec-server\n--listen\nstdio\n');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    [undefined, "($env:USERPROFILE + '/.kimi-code/bin/kimi.exe')"],
+    ['~/bin dir/kimi.exe', "($env:USERPROFILE + '/bin dir/kimi.exe')"],
+    [String.raw`C:\Program Files\it's $env:PATH $(whoami) & Kimi\kimi.exe`, String.raw`'C:\Program Files\it''s $env:PATH $(whoami) & Kimi\kimi.exe'`],
+  ])('encodes the entire Windows script with a literal executable: %s', (remoteBin, executable) => {
+    const command = resolveLauncher({ type: 'ssh', host: 'example.test', remoteBin }, false, 'windows').args.at(-1)!;
+    expect(command).toMatch(/^powershell -NoLogo -NoProfile -NonInteractive -EncodedCommand [A-Za-z0-9+/=]+$/);
+    const script = Buffer.from(command.split(' ').at(-1)!, 'base64').toString('utf16le');
+    expect(script).toBe(`$ErrorActionPreference = 'Stop'; & ${executable} exec-server --listen stdio; exit $LASTEXITCODE`);
   });
 });
 
@@ -224,6 +288,7 @@ describe('command program PATH resolution', () => {
     try {
       expect(resolveProgramPath(program, { cwd: cwdDir, pathEnv: pathDir }).toLowerCase()).toBe(join(pathDir, 'sandbox.exe').toLowerCase());
       expect(() => resolveProgramPath(program, { cwd: pathDir, pathEnv: pathDir })).toThrow(/refusing cwd match/);
+      expect(() => resolveProgramPath(program, { cwd: sandbox.toUpperCase(), pathEnv: pathDir })).toThrow(/refusing cwd match/);
     } finally {
       Object.defineProperty(process, 'platform', descriptor);
       vi.unstubAllEnvs();

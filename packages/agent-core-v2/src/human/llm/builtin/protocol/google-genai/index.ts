@@ -20,20 +20,39 @@ export interface GoogleGenAIOptions {
   readonly extras?: GoogleGenAIExtraParams;
 }
 
+const GEMINI_API_VERSION = 'v1beta';
+const VERTEX_API_VERSION = 'v1beta1';
+
+function sdkHttpBase(baseUrl: string, vertexai: boolean): string {
+  const version = vertexai ? VERTEX_API_VERSION : GEMINI_API_VERSION;
+  let url: URL;
+  try {
+    url = new URL(baseUrl);
+  } catch {
+    return baseUrl;
+  }
+  const segments = url.pathname.split('/').filter((segment) => segment.length > 0);
+  if (segments.at(-1) !== version) return baseUrl;
+  segments.pop();
+  url.pathname = segments.length > 0 ? `/${segments.join('/')}` : '/';
+  return url.toString();
+}
+
 function createClient(
   endpoint: ResolvedEndpoint,
   options: GoogleGenAIOptions | undefined,
 ): GenAIClient {
+  const vertexai = options?.vertexai === true;
   const httpOptions: { headers?: Record<string, string>; baseUrl?: string } = {};
   if (endpoint.headers !== undefined) {
     httpOptions.headers = endpoint.headers;
   }
   if (endpoint.baseUrl !== undefined) {
-    httpOptions.baseUrl = endpoint.baseUrl;
+    httpOptions.baseUrl = sdkHttpBase(endpoint.baseUrl, vertexai);
   }
   return new GenAIClient({
     apiKey: endpoint.apiKey,
-    vertexai: options?.vertexai === true ? true : undefined,
+    vertexai: vertexai ? true : undefined,
     httpOptions: Object.keys(httpOptions).length > 0 ? httpOptions : undefined,
   });
 }

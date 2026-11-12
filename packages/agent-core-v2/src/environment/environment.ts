@@ -1,4 +1,5 @@
 import type { Event } from '#/_base/event';
+import type { ShellPathBridge } from '#/_base/execEnv/shellPathBridge';
 import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
@@ -47,6 +48,7 @@ export interface Environment {
   readonly host?: HostEnvironmentInfo;
   readonly path?: EnvironmentPath;
   readonly workspace?: EnvironmentWorkspaceMapper;
+  readonly shellPathBridge?: ShellPathBridge;
   readonly fs?: IHostFileSystem;
   readonly process?: IHostProcessService;
   readonly status: EnvironmentStatus;

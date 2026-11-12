@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { IFileEditService } from '#/app/edit/fileEdit';
+import { REMOTE_SHELL_PATH_BRIDGE } from '#/_base/execEnv/shellPathBridge';
 import { noopTelemetryService } from '#/app/telemetry/telemetry';
 import type { Environment, EnvironmentBinding, EnvironmentCapability } from '#/environment/environment';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
@@ -13,7 +14,7 @@ import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentE
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import type { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
-import type { IAgentProfileService } from '#/agent/profile/profile';
+import type { IAgentLoopService } from '#/agent/loop/loop';
 import type { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import type { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import type { WorkspaceConfig } from '#/tool/path-access';
@@ -46,7 +47,7 @@ const WORKSPACE: WorkspaceConfig = { workspaceDir: '/workspace', additionalDirs:
 const skillCatalog = { catalog: { getSkillRoots: () => [] } } as unknown as ISessionSkillCatalog;
 const profile = {
   getModelCapabilities: () => ({ image_in: true, video_in: true }),
-} as unknown as IAgentProfileService;
+} as unknown as IAgentLoopService;
 const toolPolicy = { isToolActive: () => true } as unknown as IAgentToolPolicyService;
 const toolRegistry = { resolve: () => ({}) } as unknown as IAgentToolRegistryService;
 
@@ -385,6 +386,7 @@ describe('Bash environment generation guard', () => {
       }),
       stubWorkspaceContext('/workspace'),
       {} as never,
+      {} as never,
       toolPolicy,
       stubConfigService(),
     );
@@ -408,5 +410,31 @@ describe('Bash environment generation guard', () => {
 
     expect(harness.calls).toEqual(['connect']);
     expect(outputText(result)).not.toContain(ENVIRONMENT_CHANGED_OUTPUT);
+  });
+
+  it('fails the call and releases the lease when the cwd cannot be resolved on the target', async () => {
+    const harness = readyHarness(createFakeHostFs());
+    Object.assign(harness.registry.inspect(BINDING), { shellPathBridge: REMOTE_SHELL_PATH_BRIDGE });
+    const release = vi.fn();
+    const service: IAgentEnvironmentService = {
+      ...harness.service,
+      acquire: (required) => {
+        const lease = harness.service.acquire(required);
+        return {
+          environment: lease.environment,
+          track: (resource, sessionId) => lease.track(resource, sessionId),
+          dispose: () => {
+            release();
+            lease.dispose();
+          },
+        };
+      },
+    };
+
+    const result = await finish(bashTool(service).resolveExecution({ command: 'echo hi', cwd: '/tmp' }));
+
+    expect(result.isError).toBe(true);
+    expect(outputText(result)).toContain('cannot be resolved on the target');
+    expect(release).toHaveBeenCalledOnce();
   });
 });

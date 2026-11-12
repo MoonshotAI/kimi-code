@@ -18,6 +18,7 @@ export interface CodedErrorShape {
   readonly message: string;
   readonly name?: string;
   readonly details?: Readonly<Record<string, unknown>>;
+  readonly retryable?: boolean;
 }
 
 const MAX_CAUSE_DEPTH = 8;
@@ -69,14 +70,30 @@ function toShallowErrorPayload(error: unknown): ErrorPayload {
       code: error.code,
       message: error.message,
       name: error.name,
-      details: error.details,
-      retryable: errorInfo(error.code).retryable,
+      details: detailsForErrorPayload(error),
+      retryable: error.retryable ?? errorInfo(error.code).retryable,
     };
   }
   if (error instanceof Error) {
     return makeErrorPayload(CoreErrors.codes.INTERNAL, error.message, { name: error.name });
   }
   return makeErrorPayload(CoreErrors.codes.INTERNAL, String(error));
+}
+
+function detailsForErrorPayload(
+  error: CodedErrorShape,
+): Readonly<Record<string, unknown>> | undefined {
+  const details = error.details;
+  if (details === undefined || details === null) return undefined;
+  if (!Object.prototype.hasOwnProperty.call(details, 'statusCode')) {
+    return details;
+  }
+  const directStatusCode = (error as { readonly statusCode?: unknown }).statusCode;
+  if (typeof directStatusCode === 'number' && details['statusCode'] === directStatusCode) {
+    return details;
+  }
+  const { statusCode: _statusCode, ...remaining } = details;
+  return remaining;
 }
 
 function readErrorCause(error: unknown): unknown {
@@ -89,9 +106,23 @@ function readErrorCause(error: unknown): unknown {
 export const toKimiErrorPayload = toErrorPayload;
 
 export function fromErrorPayload(payload: ErrorPayload): Error2 {
-  return new Error2(payload.code, payload.message, {
+  const error = new Error2(payload.code, payload.message, {
     name: payload.name,
     details: payload.details,
     cause: payload.cause === undefined ? undefined : fromErrorPayload(payload.cause),
   });
+  Object.assign(error, { retryable: payload.retryable });
+  const statusCode = payload.details?.['statusCode'];
+  if (
+    typeof statusCode === 'number' &&
+    (payload.name === 'APIStatusError' ||
+      payload.name === 'APIContextOverflowError' ||
+      payload.name === 'APIRequestTooLargeError' ||
+      payload.name === 'APIProviderRateLimitError' ||
+      payload.name === 'APIProviderQuotaExhaustedError' ||
+      payload.name === 'APIProviderOverloadedError')
+  ) {
+    return Object.assign(error, { statusCode });
+  }
+  return error;
 }

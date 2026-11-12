@@ -25,10 +25,10 @@ export function requestIdFromHeader(
 
 export function parseRetryAfterMs(headers: unknown): number | null {
   const raw =
-    headers !== null &&
-    typeof headers === 'object' &&
-    typeof (headers as { get?: unknown }).get === 'function'
-      ? (headers as { get(name: string): string | null }).get('retry-after')
+    headers !== null && typeof headers === 'object'
+      ? typeof (headers as { get?: unknown }).get === 'function'
+        ? (headers as { get(name: string): string | null }).get('retry-after')
+        : headerValue(headers as Readonly<Record<string, string>>, 'retry-after')
       : null;
   if (raw === null || raw === undefined) return null;
   const seconds = Number.parseInt(raw, 10);

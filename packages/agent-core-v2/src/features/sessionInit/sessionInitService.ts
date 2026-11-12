@@ -1,6 +1,6 @@
 import { isAbortError, isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { loadAgentsMdDetailed } from '#/agent/profile/context';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
@@ -46,7 +46,7 @@ export class SessionInitService implements ISessionInitService {
     const controller = new AbortController();
     this.initRun = controller;
     try {
-      const own = main.accessor.get(IAgentProfileService).data();
+      const own = main.accessor.get(IAgentLoopService).data();
       if (own.modelAlias === undefined) {
         throw new Error2(ErrorCodes.SESSION_INIT_FAILED, 'Main agent has no model bound');
       }

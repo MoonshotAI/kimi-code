@@ -13,7 +13,9 @@ function sameMessages(left: readonly Message[], right: readonly Message[]): bool
 }
 
 function isBlankText(part: ContentPart): boolean {
-  return part.type === 'text' && part.text.trim().length === 0;
+  return part.type === 'text' &&
+    part.meta?.['thought_signature_b64'] === undefined &&
+    part.text.trim().length === 0;
 }
 
 export function verifyToolExchanges(messages: readonly Message[]): readonly Message[] {

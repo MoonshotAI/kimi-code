@@ -6,7 +6,7 @@ import {
   collectCompactableUserMessages,
   selectRecentUserMessages,
 } from './compactionHandoff';
-import { isPromptOwnedInjection, isUndoAnchor } from './conversationTime';
+import { cutTurnUndo, wireLinesOf } from '#/agent/undo/turnUndo';
 import { createLoopEventFold, type LoopRecordedEvent } from './loopEventFold';
 import type { ContextMessage } from './types';
 
@@ -87,32 +87,9 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
     openEntry = undefined;
   };
 
-  const applyUndo = (count: number): void => {
-    if (count <= 0) return;
-    let removedUserCount = 0;
-    for (let i = transcript.length - 1; i >= clearFloor; i--) {
-      const message = transcript[i]!.message;
-      if (message.origin?.kind === 'injection') continue;
-      if (message.origin?.kind === 'compaction_summary') break;
-      transcript.splice(i, 1);
-      foldedLength = Math.max(0, foldedLength - 1);
-      if (isUndoAnchor(message)) {
-        removedUserCount++;
-        while (
-          i > clearFloor &&
-          isPromptOwnedInjection(transcript[i - 1]!.message, message)
-        ) {
-          transcript.splice(i - 1, 1);
-          i--;
-          foldedLength = Math.max(0, foldedLength - 1);
-        }
-        if (removedUserCount >= count) break;
-      }
-    }
-    resetOpenState();
-  };
+  const records: WireRecord[] = [];
 
-  const add = (record: WireRecord): void => {
+  const appendRecord = (record: WireRecord): void => {
     switch (record.type) {
       case 'context.append_message': {
         fold.appendMessage(record['message'] as ContextMessage, record.time);
@@ -140,9 +117,6 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
         foldedLength = recoverFoldedLength(record, transcript, clearFloor, foldedLength);
         break;
       }
-      case 'context.undo':
-        applyUndo(record['count'] as number);
-        break;
       case 'context.clear':
         clearFloor = transcript.length;
         foldedLength = 0;
@@ -151,6 +125,26 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
       default:
         break;
     }
+  };
+
+  const applyUndo = (count: number): void => {
+    const result = cutTurnUndo(wireLinesOf(records), new Set(), count);
+    if (result.cut === undefined) return;
+    records.splice(result.cut.index);
+    transcript.length = 0;
+    foldedLength = 0;
+    clearFloor = 0;
+    resetOpenState();
+    for (const record of records) appendRecord(record);
+  };
+
+  const add = (record: WireRecord): void => {
+    if (record.type === 'context.undo') {
+      applyUndo(record['count'] as number);
+      return;
+    }
+    records.push(record);
+    appendRecord(record);
   };
 
   return {
@@ -205,7 +199,8 @@ function recoverFoldedLength(
   const keptHeadUserMessageCount = readNumber(record, 'keptHeadUserMessageCount');
   const compactedCount = readNumber(record, 'compactedCount');
   if (keptUserMessageCount !== undefined) {
-    return keptUserMessageCount + (keptHeadUserMessageCount === undefined ? 2 : 3);
+    return keptUserMessageCount + (keptHeadUserMessageCount === undefined ? 2 : 3) +
+      (readNumber(record, 'appendedInjectionCount') ?? 0);
   }
   if (compactedCount !== undefined && compactedCount < foldedLength) {
     return 1 + (foldedLength - compactedCount);

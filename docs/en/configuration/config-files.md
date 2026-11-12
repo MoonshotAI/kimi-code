@@ -63,7 +63,6 @@ max_attempts_per_step = 10
 reserved_context_size = 50000
 
 [task]
-max_running_tasks = 4
 keep_alive_on_exit = false
 
 [services.moonshot_search]
@@ -218,7 +217,6 @@ Constraints between the fields:
 - `default_model`: required when a `models` table is configured, and must be one of its keys.
 - `models`: values may be Chinese or English; an empty string lists the alias with no hint.
 - `default_effort` is section-wide: every spawn binds it regardless of the chosen pool entry. For per-entry efforts, leave it unset and use model variants (see below).
-- `primary` is a reserved alias and cannot be a pool key.
 
 Pool aliases reference the current `[models]` table: if a provider is later deleted or logged out, or its refreshed model list no longer contains an alias, session startup fails with a configuration error naming the broken alias. Fix or remove the entry to recover. The `[secondary_model]` section itself is never rewritten automatically.
 
@@ -343,7 +341,6 @@ Retries only apply to transient failures: connection errors, timeouts, HTTP 429 
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `max_running_tasks` | `integer` | — | Maximum number of background tasks running concurrently; also caps Tower workers and reviewers (default Tower cap: 256) |
 | `keep_alive_on_exit` | `boolean` | `false` | Whether to keep still-running background tasks when the session closes; in print mode only a fallback when `print_background_mode` is unset (`true` = `drain`) |
 | `kill_grace_period_ms` | `integer` | `5000` | Grace period in milliseconds after a task is asked to terminate; still-running tasks are force-stopped when it elapses |
 | `bash_auto_background_on_timeout` | `boolean` | `true` | Move a foreground `Bash` command to a background task on timeout instead of killing it; set to `false` to kill timed-out foreground commands instead |
@@ -352,9 +349,7 @@ Retries only apply to transient failures: connection errors, timeouts, HTTP 429 
 | `print_wait_ceiling_s` | `integer` | `2147483` | Wall-clock ceiling (seconds) for the print-mode wait/steer loop; no effect outside print mode or with `"exit"` |
 | `print_max_turns` | `integer` | `100000` | Maximum number of new turns triggered by background-task completions in `"steer"` mode; keeps the steering loop bounded |
 
-For Tower, `max_running_tasks` limits workers and reviewers together. If neither configuration section nor `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS` sets a value, Tower uses a default combined limit of 256.
-
-`keep_alive_on_exit` can be overridden by the `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` environment variable, `max_running_tasks` by `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS`, `bash_task_timeout_s` by `KIMI_CODE_BACKGROUND_BASH_TASK_TIMEOUT_S`, and `print_background_mode`, `print_wait_ceiling_s`, and `print_max_turns` by `KIMI_CODE_BACKGROUND_PRINT_BACKGROUND_MODE`, `KIMI_CODE_BACKGROUND_PRINT_WAIT_CEILING_S`, and `KIMI_CODE_BACKGROUND_PRINT_MAX_TURNS`; all take higher priority than either configuration section.
+`keep_alive_on_exit` can be overridden by the `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` environment variable, `bash_task_timeout_s` by `KIMI_CODE_BACKGROUND_BASH_TASK_TIMEOUT_S`, and `print_background_mode`, `print_wait_ceiling_s`, and `print_max_turns` by `KIMI_CODE_BACKGROUND_PRINT_BACKGROUND_MODE`, `KIMI_CODE_BACKGROUND_PRINT_WAIT_CEILING_S`, and `KIMI_CODE_BACKGROUND_PRINT_MAX_TURNS`; all take higher priority than either configuration section.
 
 In print mode (`kimi -p "<prompt>"`), Kimi Code stays alive after the main agent's turn as long as background tasks are still pending: each completion is fed back to the main agent as a synthetic user message, steering it into a new turn (`print_background_mode = "steer"` by default), and the run exits once a turn ends with nothing pending. The loop is bounded by `print_wait_ceiling_s` and `print_max_turns`, both effectively unbounded by default. Background work is never killed by a wall-clock cap in print mode either: background `Bash` tasks default to no timeout (`bash_task_timeout_s = 0`), and subagents run without a timeout (`[subagent] timeout_ms` and `[swarm] timeout_ms` both default to `0` unless explicitly set), so only the model itself stops a task. Set `print_background_mode` to `"drain"` to wait for tasks without feeding results back, or `"exit"` to end the run as soon as the main agent finishes.
 
@@ -499,7 +494,7 @@ require_trust = false
 ```
 
 ::: warning Note
-Disabling the trust requirement loads project-level MCP servers and other trust-gated project configuration without confirmation. Use this setting only when every workspace is already trusted. It does not change permission modes, tool approvals, or dangerous-command guards.
+Disabling the trust requirement loads project-level MCP servers and other trust-gated project configuration without confirmation. Use this setting only when every workspace is already trusted. Permission modes and the `dangerous_command_guard` setting are unchanged, but [project `allow` rules](#permission) loaded from `.kimi-code/local.toml` can suppress tool approval prompts, including sensitive-file and git-control-path guards.
 :::
 
 Changes take effect on `/reload`; a running TUI does not show a startup trust prompt retroactively. `KIMI_CODE_TRUST_WORKSPACE=1` remains an independent per-process trust override, and a falsy value does not restore the first-open requirement when `require_trust` is `false`. Existing trust records are preserved and used again if the requirement is re-enabled.
@@ -539,14 +534,18 @@ api_key = "sk-xxx"
 
 ## `permission`
 
-`permission` sets permission rules that are automatically loaded when a session starts, controlling whether the Agent needs user confirmation before calling a tool. Rules are written as a `[[permission.rules]]` array of tables, matched in order; the first matching rule takes effect.
+`permission` sets permission rules that are automatically loaded when a session starts, controlling whether the Agent needs user confirmation before calling a tool. Rules are written as a `[[permission.rules]]` array of tables. Matching `deny` rules take precedence over matching `ask` rules, which take precedence over matching `allow` rules.
+
+User rules are loaded from the user `config.toml` at session startup. For compatibility, legacy `turn-override` and `session-runtime` rules in the user config are silently ignored without a warning.
+
+Project rules are read from `.kimi-code/local.toml` only in the local environment when the workspace is trusted, with an omitted `scope` defaulting to `project`. Remote project rules are not supported. Project rule changes take effect in a new session and are not hot-reloaded.
 
 You can also set `dangerous_command_guard = false` under `[permission]` to turn off every built-in guard confirmation policy entirely: dangerous commands, access to sensitive files such as `.env` or `id_rsa`, and access to git control paths no longer ask for confirmation in Always Ask and Ask When Needed mode (these policies are never active in Never Ask mode); the default is `true`. An environment variable `KIMI_CODE_DANGEROUS_COMMAND_GUARD=false` overrides the file setting. With all built-in guards off, only `ask` rules you configured yourself can still prompt in Ask When Needed mode; in Always Ask mode, tools that are not auto-approved continue to prompt as before. The hard block that stops `Read`/`Write`/`Edit` from touching secret files stays in effect. Use this switch only for environments that already gate commands outside the agent.
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `decision` | `string` | Yes | Action on match: `allow` (permit immediately), `deny` (reject immediately), `ask` (prompt each time) |
-| `scope` | `string` | No | Rule scope: `turn-override`, `session-runtime`, `project`, `user`; defaults to `user` |
+| `scope` | `string` | No | Rule scope: `turn-override`, `session-runtime`, `project`, `user`; defaults to `user` in the user config. Project config accepts only `project` and `user` |
 | `pattern` | `string` | Yes | Match pattern in the form `ToolName` or `ToolName(arg-pattern)`, e.g. `Read` or `Bash(rm -rf*)` |
 | `reason` | `string` | No | Rule description for debugging and auditing |
 
@@ -580,7 +579,7 @@ MCP server declarations are configured in `~/.kimi-code/mcp.json` or the project
 
 Each entry is keyed by its environment id: at most 64 characters, no leading or trailing whitespace, and `local` and `default` are reserved words. Within one entry, `type` and `command` are mutually exclusive.
 
-Remote working directories must be absolute POSIX paths; relative paths and `~` are not expanded.
+Remote working directories must be absolute POSIX paths or Windows drive paths; relative paths and `~` are not expanded. See [Windows target environments](../guides/remote-environment.md#windows-target-environments) for the Git Bash and launcher requirements.
 
 The optional top-level `default` names the environment a session binds to when creation does not specify one. It must reference a configured entry, and that entry must set `defaultCwd` — a binding pairs an environment with a working directory, so a default without one would dangle. Without a `default`, those sessions start on the `local` environment. A TUI `/new` does not use this default: it keeps the current environment. See [Remote environments](../guides/remote-environment.md).
 
@@ -590,7 +589,7 @@ The optional top-level `default` names the environment a session binds to when c
 | --- | --- | --- | --- |
 | `type` | `string` | Yes | `"ssh"` |
 | `host` | `string` | Yes | SSH host; spawned through the system `ssh`, so `~/.ssh/config` (user, port, key, `ProxyJump`, `ControlMaster`) applies |
-| `remoteBin` | `string` | No | Executor path on the target; defaults to `~/.kimi-code/bin/kimi` |
+| `remoteBin` | `string` | No | Path to `kimi` on the target; defaults to `~/.kimi-code/bin/kimi` on POSIX and `~/.kimi-code/bin/kimi.exe` on Windows. Supports absolute paths with spaces, `~/` paths under the target account's home, or bare names on the target's `PATH`, such as `kimi` |
 | `defaultCwd` | `string` | No | Working-directory prefill when binding a session; not validated locally |
 
 ### Docker entries
@@ -600,7 +599,7 @@ The optional top-level `default` names the environment a session binds to when c
 | `type` | `string` | Yes | `"docker"` |
 | `container` | `string` | Yes | Running container name or id; attached with `docker exec` |
 | `context` | `string` | No | Docker context (for example `orbstack`) |
-| `remoteBin` | `string` | No | Executor path inside the container; defaults to `~/.kimi-code/bin/kimi` under the container user's home. The launcher runs through `docker exec … sh -c`, so a leading `~` is expanded by the container's shell |
+| `remoteBin` | `string` | No | Path to `kimi` inside the container; defaults to `~/.kimi-code/bin/kimi` under the container user's home. The launcher runs through `docker exec … sh -c`, so a leading `~` is expanded by the container's shell |
 | `defaultCwd` | `string` | No | Working-directory prefill when binding a session |
 
 ### Command entries
@@ -612,7 +611,7 @@ The generic launcher form, for any environment the built-in launchers do not cov
 | `command` | `string` | Yes | Launcher executable: a name resolved against `PATH`, or an absolute path. A resolution landing inside the working directory is refused, so a project cannot shadow the launcher with a same-named binary |
 | `args` | `array<string>` | No | Launcher arguments that reach the target. When an argument already invokes `exec-server` (for example `--command "~/.kimi-code/bin/kimi exec-server"`), nothing is appended and the arguments run as written |
 | `env` | `table<string, string>` | No | Environment for the launcher process on your machine; never propagated into commands running on the target |
-| `remoteBin` | `string` | No | Executor path on the target, appended after `args`; defaults to `~/.kimi-code/bin/kimi`. Use a plain path without spaces or shell metacharacters. `~` only expands when the launcher runs the arguments through a shell on the target, as ssh does; launchers that pass arguments straight through, such as `kubectl exec` and `docker exec`, need an absolute path |
+| `remoteBin` | `string` | No | Path to `kimi` on the target, appended after `args`; defaults to `~/.kimi-code/bin/kimi`. Use a plain path without spaces or shell metacharacters. `~` only expands when the launcher runs the arguments through a shell on the target, as ssh does; launchers that pass arguments straight through, such as `kubectl exec` and `docker exec`, need an absolute path |
 | `defaultCwd` | `string` | No | Working-directory prefill when binding a session |
 
 ```toml
@@ -649,6 +648,7 @@ Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a c
 | --- | --- | --- | --- |
 | `theme` | `string` | `auto` | Color theme: `auto`, `dark`, `light`, or the name of a [custom theme](../customization/themes.md) |
 | `tui_mode` | `string` | `regular` | UI layout: `regular` renders into the terminal scrollback; `fullscreen` (experimental) makes parts of the UI mouse-interactive for a smoother experience |
+| `copy_on_select` | `boolean` | `true` | Fullscreen mode only: copy text as soon as you select it; you can also press `Ctrl-C` to copy |
 | `render_latex` | `boolean` | `true` | Render LaTeX math expressions in Markdown messages as Unicode text; `false` keeps the raw source |
 | `disable_paste_burst` | `boolean` | `false` | Disable the non-bracketed paste-burst fallback that keeps rapid multi-line pastes from submitting line by line |
 | `cache_expiry_hint` | `boolean` | `true` | On resume or when submitting after a long idle stretch, warn that the context cache may have expired and offer to compact or start a new session (v2 engine only) |
@@ -657,6 +657,8 @@ Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a c
 | `[notifications].enabled` | `boolean` | `true` | Whether desktop notifications are sent |
 | `[notifications].notification_condition` | `string` | `unfocused` | When to notify: `unfocused` (only when the terminal is not focused) or `always` |
 | `[upgrade].auto_install` | `boolean` | `true` | Whether new versions are installed automatically |
+| `[transcript].tool_call_density` | `string` | `compact` | Tool call density in `fullscreen` mode: `compact`, `balanced`, or `detailed` |
+| `[transcript].thinking` | `string` | `grouped` | Thinking folding in `fullscreen` mode: `grouped` or `ungrouped` |
 | `[status_line].items` | `string[]` | `[]` | Built-in slots on the first footer line and their order: `mode`, `goal`, `model`, `tasks`, `cwd`, `git`, `tips`; unknown ids are skipped with a warning |
 | `[status_line].command` | `string` | `""` | Custom status line command: its first stdout line replaces the footer, and a JSON snapshot is passed on stdin; capped at 300ms, throttled to once per second, failures fall back to the built-in layout |
 
@@ -670,7 +672,8 @@ Model, cwd, git branch, permission mode, plan mode, context usage, session id, v
 ```toml
 # ~/.kimi-code/tui.toml
 theme = "auto" # "auto" | "dark" | "light" | custom theme name
-tui_mode = "regular" # "regular" | "fullscreen" ("fullscreen" is experimental)
+# tui_mode = "regular" # "regular" | "fullscreen" ("fullscreen" is experimental)
+copy_on_select = true # fullscreen only: false copies only when you press Ctrl-C
 render_latex = true # false keeps LaTeX math in messages as raw source
 disable_paste_burst = false # true disables non-bracketed paste-burst fallback
 cache_expiry_hint = true # false disables the "cache expired" dialog on resume / idle submit
@@ -685,6 +688,10 @@ notification_condition = "unfocused" # "unfocused" | "always"
 
 [upgrade]
 auto_install = true
+
+[transcript] # fullscreen mode only
+tool_call_density = "compact" # "compact" | "balanced" | "detailed"
+thinking = "grouped" # "grouped" | "ungrouped"
 
 # [status_line]
 # items = ["mode", "goal", "model", "tasks", "cwd", "git", "tips"]

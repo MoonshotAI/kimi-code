@@ -159,14 +159,16 @@ describe('toProtocolMessage', () => {
     ]);
   });
 
-  it('projects media parts as legacy tool_result output', () => {
+  it('projects daemon media refs with the UserMessage contract in tool_result output', () => {
     const result: ContextMessage = {
       role: 'tool',
       content: [
         { type: 'text', text: 'image result' },
         { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
+        { type: 'image_url', imageUrl: { url: 'kimi-file://file_9?path=%2Fcache%2Fpic.png', name: 'pic.png' } },
         { type: 'audio_url', audioUrl: { url: 'https://example.com/audio.mp3' } },
         { type: 'video_url', videoUrl: { url: 'ms://video-1', id: 'video-1' } },
+        { type: 'video_url', source: { kind: 'url', url: 'kimi-file://file_10' }, name: 'clip.mp4' } as unknown as ContextMessage['content'][number],
       ],
       toolCallId: 'call_media',
     };
@@ -182,12 +184,22 @@ describe('toProtocolMessage', () => {
             imageUrl: expect.objectContaining({ url: 'data:image/png;base64,AAAA' }),
           },
           {
+            type: 'image',
+            source: { kind: 'session_media', file_id: 'file_9' },
+            name: 'pic.png',
+          },
+          {
             type: 'audio_url',
             audioUrl: expect.objectContaining({ url: 'https://example.com/audio.mp3' }),
           },
           {
             type: 'video_url',
             videoUrl: expect.objectContaining({ url: 'ms://video-1', id: 'video-1' }),
+          },
+          {
+            type: 'video',
+            source: { kind: 'session_media', file_id: 'file_10' },
+            name: 'clip.mp4',
           },
         ],
       },

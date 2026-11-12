@@ -99,6 +99,7 @@ export class GrepTool implements IGrepTool {
       if (args.path !== undefined) {
         path = resolvePathAccessPath(args.path, {
           env,
+          shellPathBridge: view.shellPathBridge,
           workspace,
           operation: 'search',
           policy: { guardMode: 'absolute-outside-allowed', checkSensitive: false },

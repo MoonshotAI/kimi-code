@@ -14,6 +14,7 @@ import { SGR_FAINT, SGR_NORMAL_INTENSITY, SGR_SEQUENCE } from '#/tui/constant/te
 
 import type { ColorPalette } from './colors';
 import { darkColors } from './colors';
+import { colorDistance } from './color-mix';
 import { deriveHoverBackground } from './hover-color';
 
 export type ColorToken = keyof ColorPalette;
@@ -40,6 +41,15 @@ export class Theme {
 
   setTerminalBackground(background: string | undefined): void {
     this._terminalBackground = background;
+  }
+
+  terminalBackground(): string {
+    return this._terminalBackground ?? (this.isLight() ? '#FFFFFF' : '#000000');
+  }
+
+  isLight(): boolean {
+    const strong = this.color('textStrong');
+    return colorDistance(strong, '#000000') < colorDistance(strong, '#FFFFFF');
   }
 
   hoverBackground(): string | undefined {

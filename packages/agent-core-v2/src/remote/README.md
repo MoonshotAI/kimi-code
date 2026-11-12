@@ -151,12 +151,16 @@ The connect path (`connectWithGuidance`, wired into the factory) classifies
 handshake failures and attaches per-launcher install/upgrade guidance to the
 error. **The executor is never installed automatically**: a missing or too-old
 executor fails the connect, and the error text tells the user where to get the
-binary and where to put it. Both typed launchers go through a remote shell, so
-a `~`-prefixed `remoteBin` (the default `~/.kimi-code/bin/kimi` is) expands on
-the target: ssh runs the command line in the remote shell, and docker runs
-`docker exec -i <container> sh -c 'exec <remoteBin> exec-server --listen
-stdio'` — the same word-initial tilde expansion on both, with the remainder of
-`remoteBin` single-quoted against shell re-parsing.
+binary and where to put it. SSH invokes bare executor names directly. For
+paths, it probes the target with `uname -s`, falling back to a static encoded
+PowerShell probe when needed, before launching the executor exactly once.
+Authentication failures and probe timeouts stop detection. POSIX paths retain
+shell quoting and tilde expansion. Windows paths use an encoded PowerShell
+script with a literal executable path, target-side `~` expansion, and the
+executor's exit status; the default becomes `~/.kimi-code/bin/kimi.exe`.
+The outer command contains no shell conditionals, so Windows PowerShell 5.1
+can serve as the SSH default shell. Docker retains
+`docker exec -i <container> sh -c 'exec <remoteBin> exec-server --listen stdio'`.
 
 - **Missing executor** — the launcher exited 127 (the remote shell could not
   find the executor binary) or 126 (the remote shell found the executor but
@@ -184,7 +188,10 @@ handshake completes: any byte or unknown notification disconnects.
 
 ## Operational notes
 
-- The executor is posix-only; the client refuses non-posix environments and
-  executors below `MIN_EXECUTOR_VERSION` at the handshake gate.
+- The executor supports POSIX and Windows targets; Windows uses the same Git
+  Bash environment probe as the local Windows host. The client refuses unknown
+  path classes, executors below `MIN_EXECUTOR_VERSION`, and Windows executors
+  without `windowsProcessLifecycle`. Remote Windows path resolution rejects
+  unresolved MSYS paths instead of invoking cygpath on the controller.
 - `test/remote/e2e/` holds the real-machine (ssh/docker) acceptance driver and
   step-by-step docs; the vitest suite covers the local loopback.

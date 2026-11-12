@@ -26,6 +26,7 @@ export interface ResolvedToolExecutionHookContext extends ToolExecutionHookConte
 export interface BeforeExecuteDecision {
   readonly veto?: ExecutableToolResult;
   readonly executionMetadata?: unknown;
+  readonly allow?: true;
 }
 
 export interface BeforeToolExecuteEvent extends ResolvedToolExecutionHookContext {
@@ -55,5 +56,4 @@ export interface ToolDidExecuteContext extends ToolExecutionHookContext {
   readonly outcome: ToolExecutionOutcome;
   readonly accesses?: ToolAccesses;
   result: ExecutableToolResult;
-  stopTurn?: boolean;
 }

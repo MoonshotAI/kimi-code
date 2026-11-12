@@ -2,10 +2,8 @@ import type { GenerateContentParameters } from '@google/genai';
 import { shake } from 'radashi';
 
 import type { Message, TextPart, ToolDescription } from '#/llm/message';
-import type { LlmSampling } from '#/llm/request';
-import type { ResponseFormat } from '#/llm/request';
+import type { LlmSampling, ResponseFormat, ThinkingEffort } from '#/llm/request';
 import { SyntaxRequestFormatError, ThinkingConfigError } from '#/llm/protocol/errors';
-import type { ThinkingEffort } from '#/llm/request';
 import { mediaUrlOf } from '#/llm/protocol/kit/media';
 import { withExtras } from '#/llm/protocol/kit/params';
 import { mergeConsecutiveUsers } from '#/llm/protocol/patterns';
@@ -45,6 +43,14 @@ export interface Request {
 
 type GoogleGenAIModule = LlmModule<GoogleGenAIOptions>;
 
+const FUNCTION_RESPONSE_MIME_TYPES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'application/pdf',
+  'text/plain',
+]);
+
 function toolCallIdToName(toolCallId: string, messages: readonly Message[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i]!;
@@ -55,6 +61,16 @@ function toolCallIdToName(toolCallId: string, messages: readonly Message[]): str
   const withoutEntropy = toolCallId.replace(/_[0-9a-f]{8}$/, '');
   const match = /^(.+)_[^_]+$/.exec(withoutEntropy);
   return match?.[1] ?? withoutEntropy;
+}
+
+function toolCallOf(toolCallId: string, messages: readonly Message[]) {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]!;
+    if (message.role !== 'assistant') continue;
+    const toolCall = message.toolCalls.findLast((call) => call.id === toolCallId);
+    if (toolCall !== undefined) return toolCall;
+  }
+  return undefined;
 }
 
 function convertMediaUrl(url: string, fallbackMimeType: string): NativePart {
@@ -109,18 +125,27 @@ export function lowerMessage(message: Message, module: GoogleGenAIModule): Nativ
           break;
       }
     }
+    const modernFunctionResponses = /^gemini-(?:[3-9]|[1-9]\d)-/.test(module.model.spec.name);
+    const nestedParts = modernFunctionResponses
+      ? mediaParts.filter(
+          (part) =>
+            part.inlineData !== undefined &&
+            FUNCTION_RESPONSE_MIME_TYPES.has(part.inlineData.mimeType.toLowerCase()),
+        )
+      : [];
     return [
       {
         role: 'user',
         parts: [
           {
             functionResponse: {
+              id: toolCallOf(message.toolCallId, module.content.messages)?.rawId,
               name: toolCallIdToName(message.toolCallId, module.content.messages),
               response: { output: textOutput },
-              parts: [],
+              parts: nestedParts.length > 0 ? nestedParts : undefined,
             },
           },
-          ...mediaParts,
+          ...mediaParts.filter((part) => !nestedParts.includes(part)),
         ],
       },
     ];
@@ -144,9 +169,17 @@ export function lowerMessage(message: Message, module: GoogleGenAIModule): Nativ
   const parts: NativePart[] = [];
   for (const part of message.content) {
     switch (part.type) {
-      case 'text':
-        parts.push({ text: part.text });
+      case 'text': {
+        const signature = message.role === 'assistant'
+          ? part.meta?.['thought_signature_b64']
+          : undefined;
+        parts.push({
+          text: part.text,
+          thoughtSignature:
+            typeof signature === 'string' && signature.length > 0 ? signature : undefined,
+        });
         break;
+      }
       case 'think': {
         const thoughtPart: NativePart = { text: part.think, thought: true };
         if (part.encrypted !== undefined && part.encrypted.length > 0) {
@@ -185,6 +218,7 @@ export function lowerMessage(message: Message, module: GoogleGenAIModule): Nativ
 
       const functionCallPart: NativePart = {
         functionCall: {
+          id: toolCall.rawId,
           name: toolCall.name,
           args,
         },

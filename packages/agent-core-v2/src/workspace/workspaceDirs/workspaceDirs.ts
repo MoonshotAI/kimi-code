@@ -19,6 +19,7 @@ export interface IWorkspaceDirs {
   readonly _serviceBrand: undefined;
 
   readonly ready: Promise<void>;
+  readonly primary: string;
   readonly additionalDirs: readonly string[];
   readonly sharedAdditionalDirs: readonly string[];
   readonly primaryByWorkspace: Readonly<Record<string, string>>;

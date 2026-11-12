@@ -9,7 +9,7 @@ import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostFileSystem, type HostFileStat } from '#/os/interface/hostFileSystem';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import type { Environment } from '#/environment/environment';
@@ -117,7 +117,7 @@ describe('SessionInitService', () => {
           if (id === IAgentScopeContext) {
             return { agentContext: stubAgentContext('main', 1) };
           }
-          if (id === IAgentProfileService) return profile;
+          if (id === IAgentLoopService) return profile;
           if (id === IAgentPermissionModeService) return permissionMode;
           if (id === IAgentAgentsMdReminderService) return { seedInjected };
           if (id === IAgentReminderService) return { notify: appendReminder };
@@ -149,7 +149,7 @@ describe('SessionInitService', () => {
             };
           }
           if (id === IAgentPermissionModeService) return permissionMode;
-          if (id === IAgentProfileService)
+          if (id === IAgentLoopService)
             return { republishStatus, getEffectiveThinkingLevel: () => 'off' };
           return undefined;
         },

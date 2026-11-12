@@ -4,6 +4,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
+import { resolveProgramPath } from '#/environment/programPath';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 
 import { IGitService } from './git';
@@ -12,6 +13,7 @@ import { findGitWorkTree, type GitWorkTree } from './workTree';
 
 const DIFF_MAX_BYTES = 1_048_576;
 
+const GIT_SPAWN_TIMEOUT_MS = 30_000;
 const PR_SPAWN_TIMEOUT_MS = 5_000;
 const PULL_REQUEST_TTL_MS = 60_000;
 
@@ -20,7 +22,7 @@ export class GitService implements IGitService {
 
   private readonly pullRequestCache = new Map<
     string,
-    { value: FsPullRequest | null; fetchedAt: number }
+    { branch: string; value: FsPullRequest | null; fetchedAt: number }
   >();
 
   constructor(
@@ -71,16 +73,16 @@ export class GitService implements IGitService {
       }
     }
 
-    result.pullRequest = options.includePullRequest === false ? null : await this.readPullRequest(cwd);
+    result.pullRequest = options.includePullRequest === false ? null : await this.readPullRequest(cwd, result.branch);
     return result;
   }
 
   async pullRequest(cwd: string): Promise<FsPullRequest | null> {
-    const inside = await this.runCommand('git', ['rev-parse', '--is-inside-work-tree'], cwd);
-    if (inside.exitCode !== 0 || inside.stdout.trim() !== 'true') {
-      throw this.gitUnavailable(cwd, inside.stderr.trim() || `git rev-parse exit ${inside.exitCode}`);
+    const head = await this.runCommand('git', ['symbolic-ref', '--short', '-q', 'HEAD'], cwd);
+    if (head.exitCode !== 0 && head.exitCode !== 1) {
+      throw this.gitUnavailable(cwd, head.stderr.trim() || `git symbolic-ref exit ${head.exitCode}`);
     }
-    return this.readPullRequest(cwd);
+    return this.readPullRequest(cwd, head.stdout.trim());
   }
 
   async diff(cwd: string, relPath: string, absPath: string): Promise<FsDiffResponse> {
@@ -140,10 +142,11 @@ export class GitService implements IGitService {
     return findGitWorkTree(this.fs, cwd);
   }
 
-  private async readPullRequest(cwd: string): Promise<FsPullRequest | null> {
+  private async readPullRequest(cwd: string, branch: string): Promise<FsPullRequest | null> {
+    if (branch === '') return null;
     const cached = this.pullRequestCache.get(cwd);
     const now = Date.now();
-    if (cached !== undefined && now - cached.fetchedAt < PULL_REQUEST_TTL_MS) {
+    if (cached !== undefined && cached.branch === branch && now - cached.fetchedAt < PULL_REQUEST_TTL_MS) {
       return cached.value;
     }
 
@@ -157,7 +160,7 @@ export class GitService implements IGitService {
       },
     );
     const value = res.exitCode === 0 ? parsePullRequest(res.stdout) : null;
-    this.pullRequestCache.set(cwd, { value, fetchedAt: now });
+    this.pullRequestCache.set(cwd, { branch, value, fetchedAt: now });
     return value;
   }
 
@@ -167,9 +170,13 @@ export class GitService implements IGitService {
     cwd: string,
     options: RunOptions = {},
   ): Promise<RunResult> {
+    const program = this.environmentId === LOCAL_ENVIRONMENT_ID ? localProgramPath(cmd, cwd) : cmd;
+    if (program === undefined) {
+      return { exitCode: -1, stdout: '', stderr: '' };
+    }
     const lease = this.resolver.acquire({ environmentId: this.environmentId }, ['process']);
     const spawned = await lease.environment.process!
-      .spawn(cmd, args, { cwd, env: options.env })
+      .spawn(program, args, { cwd, env: options.env })
       .then(
         (proc) => ({ ok: true as const, proc }),
         () => ({ ok: false as const }),
@@ -188,12 +195,8 @@ export class GitService implements IGitService {
 
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      if (options.timeoutMs === undefined) {
-        const [stdout, stderr, exitCode] = await work;
-        return { exitCode, stdout, stderr };
-      }
       const timeout = new Promise<'timeout'>((resolve) => {
-        timer = setTimeout(() => resolve('timeout'), options.timeoutMs);
+        timer = setTimeout(() => resolve('timeout'), options.timeoutMs ?? GIT_SPAWN_TIMEOUT_MS);
         timer.unref?.();
       });
       const result = await Promise.race([
@@ -234,6 +237,14 @@ interface RunResult {
 interface RunOptions {
   readonly timeoutMs?: number;
   readonly env?: Record<string, string>;
+}
+
+function localProgramPath(cmd: string, cwd: string): string | undefined {
+  try {
+    return resolveProgramPath(cmd, { cwd });
+  } catch {
+    return undefined;
+  }
 }
 
 async function collect(stream: AsyncIterable<Uint8Array | string>): Promise<string> {

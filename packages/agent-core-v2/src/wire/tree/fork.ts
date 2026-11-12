@@ -1,8 +1,4 @@
-import {
-  isPromptOwnedInjection,
-  isUndoAnchor,
-  isValidUndoCount,
-} from '#/agent/contextMemory/conversationTime';
+import { cutTurnUndo } from '#/agent/undo/turnUndo';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { WireRecord } from '#/wire/record';
 
@@ -20,39 +16,10 @@ export class ForkLineError extends Error {
   }
 }
 
-const compactionSummaryMarker: ContextMessage = {
-  role: 'user',
-  content: [],
-  origin: { kind: 'compaction_summary' },
-};
-
 function isContextMessage(value: unknown): value is ContextMessage {
   if (value === null || typeof value !== 'object') return false;
   const message = value as { role?: unknown; content?: unknown };
   return typeof message.role === 'string' && Array.isArray(message.content);
-}
-
-interface NumberedMessage {
-  readonly message: ContextMessage;
-  readonly line: number;
-}
-
-function foldUnpairedUndo(messages: NumberedMessage[], count: number): void {
-  let removed = 0;
-  for (let index = messages.length - 1; index >= 0; index--) {
-    const { message } = messages[index]!;
-    if (message.origin?.kind === 'injection') continue;
-    if (message.origin?.kind === 'compaction_summary') return;
-    if (!isUndoAnchor(message)) continue;
-    removed++;
-    if (removed < count) continue;
-    let cutIndex = index;
-    while (cutIndex > 0 && isPromptOwnedInjection(messages[cutIndex - 1]!.message, message)) {
-      cutIndex--;
-    }
-    messages.splice(cutIndex);
-    return;
-  }
 }
 
 export function computeForkLine(
@@ -60,43 +27,12 @@ export function computeForkLine(
   pairedLegacyUndoLines: ReadonlySet<number>,
   turns: number,
 ): number {
-  let clearFloor = 0;
-  for (const { record, line } of chain) {
-    if (record.type === 'context.clear') clearFloor = line;
+  const result = cutTurnUndo(chain, pairedLegacyUndoLines, turns);
+  if (result.cut !== undefined) return result.cut.line;
+  if (result.stoppedAtCompaction) {
+    throw new ForkLineError('compaction_boundary', result.anchors.length);
   }
-  const messages: NumberedMessage[] = [];
-  for (const { record, line } of chain) {
-    if (line <= clearFloor) continue;
-    if (record.type === 'context.append_message') {
-      const message = record['message'];
-      if (isContextMessage(message)) messages.push({ message, line });
-    } else if (record.type === 'context.apply_compaction') {
-      messages.push({ message: compactionSummaryMarker, line });
-    } else if (record.type === 'context.undo' && !pairedLegacyUndoLines.has(line)) {
-      const count = record['count'];
-      if (typeof count === 'number' && isValidUndoCount(count)) foldUnpairedUndo(messages, count);
-    }
-  }
-  let remaining = turns;
-  let cutIndex = -1;
-  for (let index = messages.length - 1; index >= 0 && remaining > 0; index--) {
-    const { message } = messages[index]!;
-    if (message.origin?.kind === 'injection') continue;
-    if (message.origin?.kind === 'compaction_summary') {
-      throw new ForkLineError('compaction_boundary', turns - remaining);
-    }
-    if (isUndoAnchor(message)) {
-      remaining--;
-      cutIndex = index;
-      while (cutIndex > 0 && isPromptOwnedInjection(messages[cutIndex - 1]!.message, message)) {
-        cutIndex--;
-      }
-    }
-  }
-  if (cutIndex < 0 || remaining > 0) {
-    throw new ForkLineError('insufficient', turns - remaining);
-  }
-  return messages[cutIndex]!.line - 1;
+  throw new ForkLineError('insufficient', result.anchors.length);
 }
 
 export function restorableChain(
@@ -111,14 +47,17 @@ export function restorableChain(
   const chainLines = new Set(chain.map((entry) => entry.line));
   const survivingPromptIds = new Set<string>();
   for (const { record } of chain) {
-    if (record.type !== 'context.append_message') continue;
-    const message = record['message'];
-    if (!isContextMessage(message) || message.id === undefined) continue;
-    if (isUndoAnchor(message)) survivingPromptIds.add(message.id);
+    if (record.type !== 'turn.prompt') continue;
+    const promptId = record['promptId'];
+    if (typeof promptId === 'string') survivingPromptIds.add(promptId);
   }
   const reIncluded: WireLine[] = [];
   for (const entry of entries) {
     if (chainLines.has(entry.line)) continue;
+    if (entry.record.type === 'turn.prompt') {
+      reIncluded.push(entry);
+      continue;
+    }
     if (entry.record.type !== 'context.append_message') continue;
     const message = entry.record['message'];
     if (!isContextMessage(message)) continue;

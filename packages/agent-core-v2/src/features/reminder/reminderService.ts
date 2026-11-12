@@ -8,7 +8,7 @@ import {
   type AgentActorContext,
   type AgentActorRestoreEvent,
 } from '#/agent/actorService/agentActorService';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { historyEntryFromContext } from '#/agent/loop/history';
 import { isCompactionSummaryMessage } from '#/agent/contextMemory/compactionHandoff';
 import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import type { ContextMessage } from '#/agent/contextMemory/types';
@@ -56,12 +56,16 @@ function actorContext(runtime: AgentActorContext<null>): ReminderActorContext {
   return runtime.getLogicState<ReminderActorContext>();
 }
 
+function appendContext(runtime: AgentActorContext<null>, message: ContextMessage): void {
+  runtime.get(IAgentLoopService).remind(historyEntryFromContext(message));
+}
+
 function appendReminder(
   runtime: AgentActorContext<null>,
   content: string,
   notification: ReminderNotification,
 ): void {
-  runtime.get(IAgentContextMemoryService).append({
+  appendContext(runtime, {
     role: 'user',
     content: [{ type: 'text', text: wrapSystemReminder(content) }],
     origin: {
@@ -78,7 +82,7 @@ function providerContext(
   isNewTurn: boolean,
   signal?: AbortSignal,
 ): ContextInjectionContext<unknown> {
-  const history = runtime.get(IAgentContextMemoryService).get();
+  const history = runtime.get(IAgentLoopService).history();
   const injectedPositions = findInjections(history, entry.variant);
   const lastInjectedAt = injectedPositions.at(-1) ?? null;
   const lastInjection = lastInjectedAt === null ? undefined : history[lastInjectedAt];
@@ -129,11 +133,12 @@ function appendResult(
     kind: 'injection' as const,
     variant: entry.variant,
     disclosure: result.disclosure,
+    ownerPromptId: result.ownerPromptId,
   };
   const resolved = result.content;
   if (typeof resolved === 'string') {
     if (resolved.trim().length === 0) return;
-    runtime.get(IAgentContextMemoryService).append({
+    appendContext(runtime,{
       role: 'user',
       content: [{ type: 'text', text: wrapSystemReminder(resolved) }],
         origin,
@@ -146,14 +151,14 @@ function appendResult(
       return;
     }
     if (message.role === 'system') {
-      runtime.get(IAgentContextMemoryService).append({
+      appendContext(runtime,{
         role: 'system',
         content: [...message.content],
         tools: message.tools === undefined ? undefined : [...message.tools],
         origin,
       });
     } else {
-      runtime.get(IAgentContextMemoryService).append({
+      appendContext(runtime,{
         role: 'user',
         content: [...message.content],
         origin,
@@ -162,7 +167,7 @@ function appendResult(
     return;
   }
   if (resolved.length === 0) return;
-  runtime.get(IAgentContextMemoryService).append({
+  appendContext(runtime,{
     role: 'user',
     content: [...resolved],
     origin,
@@ -297,6 +302,7 @@ export class AgentReminderService extends AgentActorService<null> implements IAg
       }
     } finally {
       quiescence.dispose();
+      loop.flushReminders();
     }
   }
 }

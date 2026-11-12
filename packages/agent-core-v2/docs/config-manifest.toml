@@ -50,7 +50,6 @@
 #   hooks: stripEnv
 #   env:
 #     keep_alive_on_exit <- KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT (custom parse)
-#     max_running_tasks <- KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS (custom parse)
 #     bash_task_timeout_s <- KIMI_CODE_BACKGROUND_BASH_TASK_TIMEOUT_S (custom parse)
 #     print_wait_ceiling_s <- KIMI_CODE_BACKGROUND_PRINT_WAIT_CEILING_S (custom parse)
 #     print_background_mode <- KIMI_CODE_BACKGROUND_PRINT_BACKGROUND_MODE (custom parse)
@@ -58,7 +57,6 @@
 # ##########################################################################
 
 [background]
-# max_running_tasks: integer
 # keep_alive_on_exit: boolean
 # bash_auto_background_on_timeout: boolean
 # bash_task_timeout_s: integer
@@ -453,7 +451,6 @@ timeout_ms = 7200000
 #   hooks: stripEnv
 #   env:
 #     keep_alive_on_exit <- KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT (custom parse)
-#     max_running_tasks <- KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS (custom parse)
 #     bash_task_timeout_s <- KIMI_CODE_BACKGROUND_BASH_TASK_TIMEOUT_S (custom parse)
 #     print_wait_ceiling_s <- KIMI_CODE_BACKGROUND_PRINT_WAIT_CEILING_S (custom parse)
 #     print_background_mode <- KIMI_CODE_BACKGROUND_PRINT_BACKGROUND_MODE (custom parse)
@@ -461,7 +458,6 @@ timeout_ms = 7200000
 # ##########################################################################
 
 [task]
-# max_running_tasks: integer
 # keep_alive_on_exit: boolean
 # bash_auto_background_on_timeout: boolean
 # bash_task_timeout_s: integer

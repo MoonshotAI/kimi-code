@@ -5,9 +5,12 @@ import {
   type AssistantMessage,
 } from '#/llm/message';
 import { isAbortError, toLlmErrorMessage } from '#/llm/protocol/errors';
+import { parseRetryAfterMs } from '#/llm/protocol/kit/http';
+import { withoutUndefinedStatusCode } from '#/llm/protocol/rules/status';
 import { createToolCallIdNormalizer } from '#/llm/protocol/rules/tool-call-ids';
 import type { LlmModelSpec, LlmRequest } from '#/llm/request';
 import {
+  llmStatusErrorMessage,
   NO_FINISH,
   type FinishInfo,
   type LlmErrorMessage,
@@ -20,7 +23,11 @@ import {
 import { clock } from '#/utils/clock';
 
 export function usableOutputOf(message: AssistantMessage): AssistantMessage | null {
-  const content = message.content.filter((part) => !isVacuousContentPart(part));
+  const drained = message.content.filter((part) => !isVacuousContentPart(part));
+  const lastCompleteThink = drained.findLastIndex(
+    (part) => part.type === 'think' && part.encrypted !== undefined,
+  );
+  const content = drained.filter((part, index) => part.type !== 'think' || index <= lastCompleteThink);
   if (content.every((part) => part.type === 'think')) {
     return null;
   }
@@ -60,6 +67,7 @@ function createEmptyResponseError(
     message: `${detail}${formatFinishReasonHint(finish)} Provider: ${model.provider}, model: ${model.name}`,
     finishReason: finish.finishReason,
     rawFinishReason: finish.rawFinishReason,
+    retryable: finish.finishReason !== 'filtered',
   };
 }
 
@@ -197,9 +205,12 @@ export async function settleLlmRequest(
         return;
       case 'llm.streaming.part': {
         const arrivedAt = attemptClock.partArrived();
-        const part = toolCallIds.normalizePart(event.part);
-        inner.push(part);
-        onEvent?.({ type: 'llm.streaming.part', part });
+        const normalized = toolCallIds.normalizePart(event.part);
+        const accumulated = inner.push(normalized);
+        const part = normalized.type === 'think' && accumulated.part.type === 'think'
+          ? { ...normalized, hidden: accumulated.part.hidden }
+          : normalized;
+        onEvent?.({ type: 'llm.streaming.part', part, block: accumulated.block });
         attemptClock.partConsumed(arrivedAt);
         return;
       }
@@ -215,9 +226,23 @@ export async function settleLlmRequest(
         messageId = event.messageId;
         onEvent?.(event);
         return;
-      case 'attempt.failed':
-        failure = { error: event.error, rawError: event.rawError };
+      case 'attempt.failed': {
+        const statusError = llmStatusErrorMessage(event.error);
+        const error =
+          statusError === null
+            ? event.error
+            : withoutUndefinedStatusCode({
+                ...statusError,
+                requestId: statusError.requestId ?? requestId ?? null,
+                retryAfterMs: statusError.retryAfterMs ?? parseRetryAfterMs(headers),
+                headers:
+                  statusError.headers === null
+                    ? (headers ?? null)
+                    : { ...headers, ...statusError.headers },
+              });
+        failure = { error, rawError: event.rawError };
         return;
+      }
     }
   };
 
@@ -251,7 +276,7 @@ export async function settleLlmRequest(
     reason:
       failure?.error.kind === 'abort'
         ? failure.error
-        : ({ kind: 'abort', message: 'The operation was aborted.' } satisfies LlmErrorMessage<'abort'>),
+        : ({ kind: 'abort', message: 'The operation was aborted.', retryable: false } satisfies LlmErrorMessage<'abort'>),
     ...extras(),
   });
 

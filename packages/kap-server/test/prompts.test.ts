@@ -8,10 +8,8 @@ import { deflateSync } from 'node:zlib';
 import {
   agentContextOf,
   IAgentTitlePromptSource,
-  IAgentContextMemoryService,
   IAgentLifecycleService,
   IAgentPermissionModeService,
-  IAgentProfileService,
   IAgentLoopService,
   IAgentStateService,
   IAgentSwarmService,
@@ -19,6 +17,7 @@ import {
   IBootstrapService,
   IConfigService,
   IEventBus,
+  IEventDispatcher,
   IFileService,
   ISessionContext,
   ISessionMetadata,
@@ -28,7 +27,9 @@ import {
   ErrorCodes,
   closeSessionById,
   getLiveSessionById,
+  resumeSessionById,
 } from '@moonshot-ai/agent-core-v2';
+import type { PromptOrigin } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
 import { HostProcessService } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostProcessService';
 import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
@@ -285,35 +286,69 @@ describe('server-v2 /api/v1 prompts', () => {
     await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
   }
 
+  function stubUnreachableModel(): () => void {
+    const actual = globalThis.fetch.bind(globalThis);
+    const cause = new Error('connect ECONNREFUSED 127.0.0.1:9999');
+    (cause as NodeJS.ErrnoException).code = 'ECONNREFUSED';
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.includes('127.0.0.1:9999')) {
+        return Promise.reject(new TypeError('fetch failed', { cause }));
+      }
+      return actual(input, init);
+    });
+    return () => spy.mockRestore();
+  }
+
   async function setSessionModel(sessionId: string, model: string): Promise<void> {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
     const agent = session.accessor.get(IAgentLifecycleService).handleOf('main');
     if (agent === undefined) throw new Error(`main agent of session ${sessionId} not found`);
-    await agent.accessor.get(IAgentProfileService).setModel(model);
+    await agent.accessor.get(IAgentLoopService).setModel(model);
   }
 
   it('submits a prompt and lists it as active', async () => {
-    const id = await createSession(home as string);
-    await createMainAgent(id);
+    const restoreModel = stubUnreachableModel();
+    try {
+      const id = await createSession(home as string);
+      await createMainAgent(id);
 
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
-      content: [{ type: 'text', text: 'hello' }],
-    });
-    expect(submitted.body.code).toBe(0);
-    expect(submitted.body.data.prompt_id).toMatch(/^msg_/);
-    expect(submitted.body.data.status).toBe('running');
-    expect(submitted.body.data.user_message_id).toBe(submitted.body.data.prompt_id);
+      const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+        content: [{ type: 'text', text: 'hello' }],
+      });
+      expect(submitted.body.code).toBe(0);
+      expect(submitted.body.data.prompt_id).toMatch(/^msg_/);
+      expect(submitted.body.data.status).toBe('running');
+      expect(submitted.body.data.user_message_id).toBe(submitted.body.data.prompt_id);
+      const session = getLiveSessionById(server!.core.accessor, id)!;
+      const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
+      const loop = agent.accessor.get(IAgentLoopService);
+      await loop.settled();
+      const quiescence = loop.tryAcquireQuiescence();
+      expect(quiescence).toBeDefined();
+      loop.submit({
+        message: { role: 'user', content: [{ type: 'text', text: 'goal continuation' }] },
+        meta: {
+          promptId: 'goal-queued',
+          origin: { kind: 'system_trigger', name: 'goal_continuation' } as PromptOrigin,
+        },
+      });
 
-    const list = await call<{ active: PromptItemWire | null; queued: PromptItemWire[] }>(
-      'GET',
-      `/api/v1/sessions/${id}/prompts`,
-    );
-    expect(list.body.code).toBe(0);
-    if (list.body.data.active !== null) {
-      expect(list.body.data.active.prompt_id).toBe(submitted.body.data.prompt_id);
+      const list = await call<{ active: PromptItemWire | null; queued: PromptItemWire[] }>(
+        'GET',
+        `/api/v1/sessions/${id}/prompts`,
+      );
+      expect(list.body.code).toBe(0);
+      if (list.body.data.active !== null) {
+        expect(list.body.data.active.prompt_id).toBe(submitted.body.data.prompt_id);
+      }
+      expect(Array.isArray(list.body.data.queued)).toBe(true);
+      expect(list.body.data.queued.map((item) => item.prompt_id)).toContain('goal-queued');
+      quiescence?.dispose();
+    } finally {
+      restoreModel();
     }
-    expect(Array.isArray(list.body.data.queued)).toBe(true);
   });
 
   it('applies swarm_mode before submitting the prompt', async () => {
@@ -406,13 +441,13 @@ describe('server-v2 /api/v1 prompts', () => {
 
     await vi.waitFor(() => {
       expect(ended).toHaveLength(1);
+      expect(completed).toContainEqual(expect.objectContaining({ reason: 'failed' }));
     });
     subscription.dispose();
     expect(ended[0]).toMatchObject({
       reason: 'failed',
       error: { code: 'model.not_configured', message: 'Model not set' },
     });
-    expect(completed).toContainEqual(expect.objectContaining({ reason: 'failed' }));
   });
 
   it('rejects a bound profile switch with 40001 even when the session model is stale', async () => {
@@ -466,13 +501,13 @@ describe('server-v2 /api/v1 prompts', () => {
     await vi.waitFor(
       () => {
         expect(ended).toHaveLength(1);
+        expect(completed).toContainEqual(expect.objectContaining({ reason: 'failed' }));
       },
       { timeout: 15000 },
     );
     subscription.dispose();
     expect(ended[0]?.reason).toBe('failed');
     expect(ended[0]?.error?.message).toContain('stub');
-    expect(completed).toContainEqual(expect.objectContaining({ reason: 'failed' }));
   });
 
   it('submits a bundled skill prompt through the skills field', async () => {
@@ -490,7 +525,7 @@ describe('server-v2 /api/v1 prompts', () => {
 
     const session = getLiveSessionById(server!.core.accessor, id);
     const agent = session!.accessor.get(IAgentLifecycleService).handleOf('main');
-    const history = agent!.accessor.get(IAgentContextMemoryService).get();
+    const history = agent!.accessor.get(IAgentLoopService).history();
     const bundled = history.find((message) => message.origin?.kind === 'user');
     expect(bundled?.origin).toMatchObject({
       kind: 'user',
@@ -554,63 +589,100 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(projected.metadata).toEqual(metadata);
   });
 
-  it('backfills active skill activation metadata on the first transcript connection', async () => {
-    const id = await createSession(home as string);
-    await createMainAgent(id);
-    const session = getLiveSessionById(server!.core.accessor, id)!;
-    const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
-    const metadata = [{ display_text: 'Save button', kimi_code_composer: { version: 1 } }];
-    const loop = agent.accessor.get(IAgentLoopService);
-    const handle = {
-      id: 'active-skill',
-      userMessageId: 'active-skill',
+  it.each([
+    ['pending', 'queued'],
+    ['running', 'running'],
+    ['steered', 'running'],
+    ['blocked', 'blocked'],
+    ['failed', 'failed'],
+  ] as const)('projects the engine prompt state %s as the %s status', (state, status) => {
+    const projected = projectPromptSnapshot({
+      id: 'msg_state',
+      userMessageId: 'msg_state',
       createdAt: '2026-01-01T00:00:00.000Z',
-      message: { role: 'user', content: [{ type: 'text', text: 'User activated the skill' }], toolCalls: [], origin: { kind: 'skill_activation', activationId: 'act-1', skillName: 'update-config', trigger: 'user-slash', clientMetadata: metadata } },
-    };
-    const listing = vi.spyOn(loop, 'snapshot').mockReturnValue({ ...loop.snapshot(), activePromptId: 'active-skill', queue: [] });
-    const lookup = vi.spyOn(loop, 'promptHandle').mockImplementation((promptId) => (promptId === 'active-skill' ? handle : undefined) as never);
+      state,
+      message: { role: 'user', content: [{ type: 'text', text: 'hello' }], origin: { kind: 'user' } },
+    });
+    expect(projected.status).toBe(status);
+  });
+
+  it.each([
+    ['blocked', async (ctx: { block: boolean }) => {
+      ctx.block = true;
+    }],
+    ['failed', async () => {
+      throw new Error('prompt hook crashed');
+    }],
+  ] as const)('reports an idle submission whose prompt gate ends it without a turn as %s', async (status, gate) => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const loop = getLiveSessionById(server!.core.accessor, id)!
+      .accessor.get(IAgentLifecycleService)
+      .handleOf('main')!
+      .accessor.get(IAgentLoopService);
+    const hook = loop.hooks.onBeforeSubmitPrompt.register('prompts-test-gate', async (ctx, next) => {
+      await gate(ctx);
+      await next();
+    });
     try {
-      const result = await call<{ prompts: unknown[] }>('GET', `/api/v1/sessions/${id}/transcript?agent_id=main`);
-      expect(result.body.code).toBe(0);
-      expect(result.body.data.prompts).toContainEqual(expect.objectContaining({ promptId: 'active-skill', status: 'running', clientMetadata: metadata }));
+      const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+        content: [{ type: 'text', text: 'hello' }],
+      });
+      expect(submitted.body.code).toBe(0);
+      expect(submitted.body.data.status).toBe(status);
     } finally {
-      lookup.mockRestore();
-      listing.mockRestore();
+      hook.dispose();
     }
   });
 
-  it('backfills queued prompt metadata on the first transcript connection', async () => {
+  it('directly steers a message with a client-chosen prompt_id in one request', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
-    const session = getLiveSessionById(server!.core.accessor, id)!;
-    const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
-    const metadata = [{ display_text: 'Save button', kimi_code_composer: { version: 1 } }];
-    const loop = agent.accessor.get(IAgentLoopService);
-    const origin = { kind: 'user', clientMetadata: metadata };
-    const listing = vi.spyOn(loop, 'snapshot').mockReturnValue({
-      ...loop.snapshot(),
-      queue: [{ message: { role: 'user', content: [{ type: 'text', text: 'browser wire' }] }, meta: { promptId: 'queued-example', userMessageId: 'queued-example', tracked: true, createdAt: '2026-01-01T00:00:00.000Z', origin } }],
+    const loop = getLiveSessionById(server!.core.accessor, id)!
+      .accessor.get(IAgentLifecycleService)
+      .handleOf('main')!
+      .accessor.get(IAgentLoopService);
+    const submit = vi.spyOn(loop, 'submit');
+    const sendNow = vi.spyOn(loop, 'sendNow');
+    let releaseGate!: () => void;
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    const gate = new Promise<void>((resolve) => { releaseGate = resolve; });
+    let armed = true;
+    const hook = loop.hooks.onWillBeginStep.register('prompts-test-steer', async (_ctx, next) => {
+      if (armed) {
+        armed = false;
+        markStarted();
+        await gate;
+      }
+      await next();
     });
     try {
-      const result = await call<{ prompts: unknown[] }>('GET', `/api/v1/sessions/${id}/transcript?agent_id=main`);
-      expect(result.body.code).toBe(0);
-      expect(result.body.data.prompts).toContainEqual(expect.objectContaining({ promptId: 'queued-example', status: 'queued', clientMetadata: metadata }));
+      await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+        content: [{ type: 'text', text: 'active' }],
+        model: 'stub',
+      });
+      await started;
+      const pending = call<PromptItemWire>('POST', `/api/v1/sessions/${id}/steer`, {
+        content: [{ type: 'text', text: 'direct steer message' }],
+        prompt_id: 'submission-1',
+      });
+      await vi.waitFor(() => expect(sendNow).toHaveBeenCalledWith(
+        expect.objectContaining({ message: expect.objectContaining({ content: [{ type: 'text', text: 'direct steer message' }] }) }),
+      ));
+      releaseGate();
+      const steered = await pending;
+      expect(steered.body.code).toBe(0);
+      expect(steered.body.data.prompt_id).toBe('submission-1');
+      expect(steered.body.data.user_message_id).toBe('submission-1');
+      expect(steered.body.data.status).toBe('running');
+      expect(submit).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => expect(JSON.stringify(loop.history())).toContain('direct steer message'));
+      loop.cancel();
     } finally {
-      listing.mockRestore();
+      releaseGate();
+      hook.dispose();
     }
-  });
-
-  it('honors a client-chosen prompt_id on submit', async () => {
-    const id = await createSession(home as string);
-    await createMainAgent(id);
-
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
-      content: [{ type: 'text', text: 'hello' }],
-      prompt_id: 'submission-1',
-    });
-    expect(submitted.body.code).toBe(0);
-    expect(submitted.body.data.prompt_id).toBe('submission-1');
-    expect(submitted.body.data.user_message_id).toBe('submission-1');
   });
 
   it('reloads a stale session and resubmits under the same prompt_id', async () => {
@@ -659,15 +731,15 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(resumed.body.code).toBe(0);
     const session = getLiveSessionById(server!.core.accessor, id);
     const agent = session!.accessor.get(IAgentLifecycleService).handleOf('main');
-    const history = agent!.accessor.get(IAgentContextMemoryService).get();
+    const history = agent!.accessor.get(IAgentLoopService).history();
     const saved = history.find((message) => message.origin?.kind === 'user');
     expect(saved?.origin).toMatchObject({ clientMetadata: [metadata] });
     expect(await session!.accessor.get(ISessionMetadata).read()).toMatchObject({ title: metadata.display_text, lastPrompt: metadata.display_text });
     expect(JSON.stringify(saved?.content)).not.toContain('ref-example');
-    const transcript = await call<{ items: { kind: string; origin?: { payload?: { clientMetadata?: unknown } } }[] }>('GET', `/api/v1/sessions/${id}/transcript?agent_id=main&page_size=20`);
-    expect(transcript.body.code).toBe(0);
-    const turn = transcript.body.data.items.find((item) => item.kind === 'turn');
-    expect(turn?.origin?.payload?.clientMetadata).toEqual([metadata]);
+    const page = await call<{ turns: { items: { type: string; metadata?: unknown }[] }[] }>('GET', `/api/v1/sessions/${id}/agents/main/turns`);
+    expect(page.body.code).toBe(0);
+    const opener = page.body.data.turns[0]?.items[0];
+    expect(opener).toMatchObject({ type: 'user_message', origin: { kind: 'user' }, metadata });
   });
 
   it('updates session metadata for a bundled prompt routed to a non-main agent', async () => {
@@ -720,8 +792,32 @@ describe('server-v2 /api/v1 prompts', () => {
       prompt_id: 'submission-1',
     });
     expect(afterResume.body.code).toBe(40927);
-    const resumed = getLiveSessionById(server!.core.accessor, id);
+    const resumed = await resumeSessionById(server!.core.accessor, id);
     expect((await resumed!.accessor.get(ISessionMetadata).read()).lastPrompt).toBe('first prompt');
+  });
+
+  it('answers a resubmission with the same prompt_id and request with the first result', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    await setSessionModel(id, 'stub');
+    const request = { content: [{ type: 'text', text: 'only once' }], prompt_id: 'submission-2' };
+
+    const [first, again] = await Promise.all([
+      call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, request),
+      call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, request),
+    ]);
+    const later = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, request);
+
+    expect(first.body.code).toBe(0);
+    expect(again.body).toEqual({ ...first.body, request_id: again.body.request_id });
+    expect(later.body).toEqual({ ...first.body, request_id: later.body.request_id });
+    const session = getLiveSessionById(server!.core.accessor, id)!;
+    const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
+    const loop = agent.accessor.get(IAgentLoopService);
+    await loop.promptHandle('submission-2')!.launched;
+    await agent.accessor.get(IEventDispatcher).flush();
+    const turns = await call<{ turns: { items: { type: string }[] }[] }>('GET', `/api/v1/sessions/${id}/agents/main/turns`);
+    expect(turns.body.data.turns.flatMap((turn) => turn.items).filter((item) => item.type === 'user_message')).toHaveLength(1);
   });
 
   it('rejects a bundled submission with an unknown skill and records nothing', async () => {
@@ -736,7 +832,7 @@ describe('server-v2 /api/v1 prompts', () => {
 
     const session = getLiveSessionById(server!.core.accessor, id);
     const agent = session!.accessor.get(IAgentLifecycleService).handleOf('main');
-    const history = agent!.accessor.get(IAgentContextMemoryService).get();
+    const history = agent!.accessor.get(IAgentLoopService).history();
     expect(history.filter((message) => message.origin?.kind === 'user')).toHaveLength(0);
   });
 
@@ -754,7 +850,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const session = getLiveSessionById(server!.core.accessor, id);
     const agent = session!.accessor.get(IAgentLifecycleService).handleOf('main');
     expect(agent!.accessor.get(IAgentPermissionModeService).mode).toBe('manual');
-    const history = agent!.accessor.get(IAgentContextMemoryService).get();
+    const history = agent!.accessor.get(IAgentLoopService).history();
     expect(history.filter((message) => message.origin?.kind === 'user')).toHaveLength(0);
   });
 
@@ -771,19 +867,24 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(session!.accessor.get(IAgentLifecycleService).handleOf('main')).toBeUndefined();
   });
 
-  it('rejects a bundled prompt_id combination before any override or agent materialization', async () => {
+  it('honors a client-chosen prompt_id on a bundled skill submission', async () => {
     const id = await createSession(home as string);
+    await createMainAgent(id);
 
-    const submitted = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
       content: [{ type: 'text', text: 'Review this change.' }],
-      permission_mode: 'yolo',
       prompt_id: 'submission-1',
       skills: [{ name: 'update-config' }],
     });
-    expect(submitted.body.code).toBe(40001);
+    expect(submitted.body.code).toBe(0);
+    expect(submitted.body.data.prompt_id).toBe('submission-1');
 
-    const session = getLiveSessionById(server!.core.accessor, id);
-    expect(session!.accessor.get(IAgentLifecycleService).handleOf('main')).toBeUndefined();
+    const duplicate = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'Review it again.' }],
+      prompt_id: 'submission-1',
+      skills: [{ name: 'update-config' }],
+    });
+    expect(duplicate.body.code).toBe(40927);
   });
 
   it('cleans bundled staging through the settlement tracker', async () => {
@@ -976,7 +1077,7 @@ describe('server-v2 /api/v1 prompts', () => {
 
     const session = getLiveSessionById(server!.core.accessor, id);
     const main = session!.accessor.get(IAgentLifecycleService).handleOf('main')!;
-    const memory = main.accessor.get(IAgentContextMemoryService).get();
+    const memory = main.accessor.get(IAgentLoopService).history();
     const promptMessage = memory.find((m) => m.origin?.kind === 'user');
     const captionPart = promptMessage?.content[0];
     expect(captionPart?.type).toBe('text');
@@ -1077,8 +1178,8 @@ describe('server-v2 /api/v1 prompts', () => {
     const main = session!.accessor.get(IAgentLifecycleService).handleOf('main')!;
     await vi.waitFor(() => {
       const replayedMessage = main.accessor
-        .get(IAgentContextMemoryService)
-        .get()
+        .get(IAgentLoopService)
+        .history()
         .find(
           (message) =>
             message.role === 'user' &&
@@ -1114,8 +1215,8 @@ describe('server-v2 /api/v1 prompts', () => {
       const main = session!.accessor.get(IAgentLifecycleService).handleOf('main')!;
       await vi.waitFor(() => {
         const message = main.accessor
-          .get(IAgentContextMemoryService)
-          .get()
+          .get(IAgentLoopService)
+          .history()
           .find((m) => m.role === 'user' && m.content.some((part) => part.type === 'image_url'));
         expect(message).toBeDefined();
         expect(message!.content).toContainEqual({
@@ -1522,7 +1623,7 @@ describe('server-v2 /api/v1 prompts', () => {
 
       const main = session!.accessor.get(IAgentLifecycleService).handleOf('main')!;
       await vi.waitFor(() => {
-        const memory = main.accessor.get(IAgentContextMemoryService).get();
+        const memory = main.accessor.get(IAgentLoopService).history();
         const promptMessage = memory.find((entry) => entry.origin?.kind === 'user');
         expect(promptMessage?.origin).toEqual({
           kind: 'user',
@@ -1902,19 +2003,28 @@ describe('server-v2 /api/v1 prompts', () => {
   });
 
   it('returns 40402 when aborting a prompt that already settled', async () => {
-    const id = await createSession(home as string);
-    await createMainAgent(id);
+    const restoreModel = stubUnreachableModel();
+    try {
+      const id = await createSession(home as string);
+      await createMainAgent(id);
 
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
-      content: [{ type: 'text', text: 'hello' }],
-    });
-    const promptId = submitted.body.data.prompt_id;
+      const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+        content: [{ type: 'text', text: 'hello' }],
+      });
+      const promptId = submitted.body.data.prompt_id;
+      const session = getLiveSessionById(server!.core.accessor, id)!;
+      const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
+      const loop = agent.accessor.get(IAgentLoopService);
+      await loop.promptHandle(promptId)!.completion;
 
-    const aborted = await call<{ aborted: boolean }>(
-      'POST',
-      `/api/v1/sessions/${id}/prompts/${promptId}:abort`,
-    );
-    expect(aborted.body.code).toBe(40402);
+      const aborted = await call<{ aborted: boolean }>(
+        'POST',
+        `/api/v1/sessions/${id}/prompts/${promptId}:abort`,
+      );
+      expect(aborted.body.code).toBe(40402);
+    } finally {
+      restoreModel();
+    }
   });
 
   it('returns 40402 when aborting an unknown prompt', async () => {
@@ -1972,8 +2082,8 @@ describe('server-v2 /api/v1 prompts', () => {
       text: string,
     ): boolean =>
       handle.accessor
-        .get(IAgentContextMemoryService)
-        .get()
+        .get(IAgentLoopService)
+        .history()
         .some(
           (m) =>
             m.role === 'user' &&
@@ -2021,8 +2131,8 @@ describe('server-v2 /api/v1 prompts', () => {
     const rebuilt = resumed.accessor.get(IAgentLifecycleService).handleOf(childContext.agentId);
     expect(rebuilt).toBeDefined();
     const hasText = rebuilt!.accessor
-      .get(IAgentContextMemoryService)
-      .get()
+      .get(IAgentLoopService)
+      .history()
       .some(
         (m) =>
           m.role === 'user' &&
@@ -2073,7 +2183,7 @@ describe('server-v2 /api/v1 prompts', () => {
       const session = getLiveSessionById(server!.core.accessor, id);
       if (session === undefined) throw new Error(`session ${id} not found`);
       const main = session.accessor.get(IAgentLifecycleService).handleOf('main');
-      expect(main?.accessor.get(IAgentProfileService).data().profileName).toBe('route-reviewer');
+      expect(main?.accessor.get(IAgentLoopService).data().profileName).toBe('route-reviewer');
 
       const again = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
         content: [{ type: 'text', text: 'again' }],
@@ -2119,7 +2229,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const session = getLiveSessionById(server!.core.accessor, id);
     if (session === undefined) throw new Error(`session ${id} not found`);
     const main = session.accessor.get(IAgentLifecycleService).handleOf('main');
-    const profile = main?.accessor.get(IAgentProfileService);
+    const profile = main?.accessor.get(IAgentLoopService);
     expect(profile?.data().profileName).toBe('agent');
     expect(profile?.data().thinkingLevel).toBe('high');
   });

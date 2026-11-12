@@ -19,15 +19,18 @@ export function stubPluginService(options: StubPluginServiceOptions): IPluginSer
     _serviceBrand: undefined,
     onDidReload: options.reloadEmitter?.event ?? (Event.None as IPluginService['onDidReload']),
     onDidMutate: options.mutateEmitter?.event ?? (Event.None as IPluginService['onDidMutate']),
+    withMcpServersSuspended: async (_id, task) => task(),
     listPlugins: async () => [],
     installPlugin: async () => ({ id: '' }) as never,
     setPluginEnabled: async () => {},
     setPluginMcpServerEnabled: async () => {},
     removePlugin: async () => {},
     reloadPlugins: async (): Promise<ReloadSummary> => ({ added: [], removed: [], errors: [] }),
+    reconcileAvailability: async () => {},
     getPluginInfo: async () => {
       throw new Error('getPluginInfo is not used by this stub');
     },
+    previewPlugin: async () => ({ skills: [], mcpServers: [] }),
     listPluginCommands: async () => [],
     checkUpdates: async () => [],
     pluginSkillRoots: async () => [],

@@ -7,7 +7,7 @@ import {
 
 import type { SlashCommandHost } from '../commands/dispatch';
 import { defaultThinkingEffortFor, modelDisplayName } from '../components/dialogs/model-selector';
-import type { AppState } from '../types';
+import type { AppState, ModelSwitchPersistence } from '../types';
 import { formatErrorMessage } from './event-payload';
 import { thinkingEffortFromConfig, thinkingEffortToConfig } from './thinking-config';
 
@@ -64,18 +64,22 @@ export function lazyModelSelection(
   return patch;
 }
 
-/**
- * How a model switch is saved: `session` keeps it to this session, `model`
- * saves the model as the default (and the effort only when it changed), and
- * `model-and-effort` saves both.
- */
-export type ModelSwitchPersistence = 'session' | 'model' | 'model-and-effort';
+export type { ModelSwitchPersistence } from '../types';
+
+// The engine freezes a turn's model on its first request, which the TUI sees
+// as turn.step.started with step >= 1. beginSessionRequest clears the turn id
+// but not the step, and turn.started resets the step to 0.
+function currentTurnSentRequest(host: SlashCommandHost): boolean {
+  const { turnId, step } = host.streamingUI.getTurnContext();
+  return turnId !== undefined && step > 0;
+}
 
 export async function performModelSwitch(
   host: SlashCommandHost,
   alias: string,
   effort: ThinkingEffort,
   persist: ModelSwitchPersistence,
+  options?: { readonly appliesNextTurn?: boolean },
 ): Promise<boolean> {
   let session = host.session;
   if (session === undefined) {
@@ -85,11 +89,12 @@ export async function performModelSwitch(
     await host.waitForSessionAssembly();
     session = host.session;
   }
-  if (host.state.appState.streamingPhase !== 'idle') {
-    host.showError('Cannot switch models while streaming — press Esc or Ctrl-C first.');
-    return false;
-  }
-
+  const phase = host.state.appState.streamingPhase;
+  const appliesNextTurn =
+    options?.appliesNextTurn ??
+    (host.state.appState.isCompacting ||
+      phase === 'shell' ||
+      (phase !== 'idle' && currentTurnSentRequest(host)));
   const prevModel = host.state.appState.model;
   const prevEffort = host.state.appState.thinkingEffort;
   const modelChanged = alias !== prevModel;
@@ -172,6 +177,9 @@ export async function performModelSwitch(
     status = `Saved ${displayName} with thinking ${effectiveEffort} as default.`;
   } else {
     status = `Already using ${displayName} with thinking ${effectiveEffort}.`;
+  }
+  if (appliesNextTurn && (effectiveModelChanged || effectiveEffortChanged)) {
+    status += ' Takes effect from the next turn.';
   }
   host.showStatus(status, 'success');
   return true;

@@ -11,6 +11,8 @@ export interface SessionSummary {
   readonly id: string;
   readonly workspaceId: string;
   readonly cwd?: string;
+  readonly environmentId?: string;
+  readonly environmentCwd?: string;
   readonly title?: string;
   readonly lastPrompt?: string;
   readonly createdAt: number;

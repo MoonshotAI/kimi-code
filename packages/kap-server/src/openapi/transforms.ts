@@ -108,6 +108,7 @@ export function transformOpenApiDocument(
   patchSessionAction(paths);
   patchFsAction(paths);
   patchFsDownload(paths);
+  patchWorkspaceFsContent(paths);
 
   return document;
 }
@@ -268,6 +269,22 @@ function patchFsDownload(paths: Record<string, unknown>): void {
       etag: headerString(),
     },
   });
+  setRawDownloadErrorResponses(operation);
+}
+
+function patchWorkspaceFsContent(paths: Record<string, unknown>): void {
+  const operation = getOperation(paths, '/api/v1/fs:content', 'get');
+  if (operation === undefined) return;
+  setRawDownloadErrorResponses(operation);
+}
+
+function setRawDownloadErrorResponses(operation: Record<string, unknown>): void {
+  for (const status of ['400', '403', '404', '409', '413', '500']) {
+    setResponse(operation, status, {
+      description: 'File download failed',
+      content: jsonContent(errorEnvelopeSchema),
+    });
+  }
 }
 
 function getOperation(

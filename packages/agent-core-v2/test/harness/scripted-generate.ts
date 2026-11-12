@@ -40,7 +40,7 @@ import { toLlmErrorMessage } from '#human/llm-requester/errors';
 import { resolveEndpoint } from '#human/llm/endpoint';
 import type { LlmRequestPart } from '#human/llm/requester';
 import { runLlmRequest } from '#human/llm/policy/policy';
-import type { LlmSettleControl } from '#human/llm/policy/settle';
+import { usableOutputOf, type LlmSettleControl } from '#human/llm/policy/settle';
 import {
   contentsOf,
   createRequester,
@@ -181,6 +181,7 @@ export function requesterFromGenerateFn(fn: LegacyGenerateFn): LlmRequester {
 
 interface ScriptedResponse {
   readonly parts?: readonly StreamedMessagePart[] | undefined;
+  readonly usage?: Partial<TokenUsage> | undefined;
   readonly finishReason?: FinishReason | null | undefined;
   readonly rawFinishReason?: string | null | undefined;
   readonly requestId?: string | null | undefined;
@@ -198,6 +199,7 @@ export function createScriptedGenerate() {
 
   function mockNextProviderResponse(input: {
     readonly parts?: readonly StreamedMessagePart[] | undefined;
+    readonly usage?: Partial<TokenUsage> | undefined;
     readonly finishReason?: FinishReason | null | undefined;
     readonly rawFinishReason?: string | null | undefined;
     readonly requestId?: string | null | undefined;
@@ -205,6 +207,7 @@ export function createScriptedGenerate() {
   }) {
     responses.push({
       ...(input.parts !== undefined ? { parts: structuredClone(input.parts) } : {}),
+      ...(input.usage !== undefined ? { usage: structuredClone(input.usage) } : {}),
       ...(input.finishReason !== undefined ? { finishReason: input.finishReason } : {}),
       ...(input.rawFinishReason !== undefined ? { rawFinishReason: input.rawFinishReason } : {}),
       ...(input.requestId !== undefined ? { requestId: input.requestId } : {}),
@@ -228,6 +231,7 @@ export function createScriptedGenerate() {
     calls.push(input);
 
     const emit = control.onEvent;
+    emit?.({ type: 'llm.sent' });
     emit?.({
       type: 'llm.streaming.headers',
       headers:
@@ -253,6 +257,9 @@ export function createScriptedGenerate() {
       emit?.({ type: 'llm.streaming.part', part: structuredClone(part) });
       await Promise.resolve();
       control.signal.throwIfAborted();
+    }
+    if (response.usage !== undefined) {
+      emit?.({ type: 'llm.streaming.usage', usage: response.usage });
     }
     if (response.error !== undefined) {
       if (isAbortError(response.error)) throw response.error;
@@ -456,6 +463,22 @@ async function runLegacyRequester(
   ): LlmOutcome => ({
     type: 'failed',
     ...current,
+    message: accumulator.finish(),
+    usage,
+    headers,
+    finish,
+    messageId,
+    requestId,
+    timing:
+      firstChunkAt === undefined
+        ? undefined
+        : buildStreamTiming(
+            requestStartedAt,
+            requestSentAt,
+            firstChunkAt,
+            Date.now(),
+            finalizeDecodeStats(decodeEluEnd, { serverDecodeMs, clientConsumeMs }),
+          ) as LlmTiming,
     diagnostics:
       errorDiagnostics(current.rawError) ??
       request.protocol.base.diagnoseError?.({
@@ -488,8 +511,11 @@ async function runLegacyRequester(
             } else {
               serverDecodeMs += arrivedAt - lastResumeAt;
             }
-            accumulator.push(event.part);
-            control.onEvent?.(event);
+            const accumulated = accumulator.push(event.part);
+            const part = event.part.type === 'think' && accumulated.part.type === 'think'
+              ? { ...event.part, hidden: accumulated.part.hidden }
+              : event.part;
+            control.onEvent?.({ ...event, part, block: accumulated.block });
             lastResumeAt = Date.now();
             clientConsumeMs += lastResumeAt - arrivedAt;
             return;
@@ -516,7 +542,7 @@ async function runLegacyRequester(
     });
   } catch (error) {
     if (control.signal.aborted || isAbortError(error)) {
-      return { type: 'aborted', message: null, reason: error };
+      return { type: 'aborted', message: usableOutputOf(accumulator.finish()), reason: error };
     }
     const raw = unwrapErrorCause(error);
     const classified = llmMessageFromError(raw);

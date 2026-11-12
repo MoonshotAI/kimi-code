@@ -110,6 +110,7 @@ export function registerToolsRoutes(app: ToolsRouteHost, core: Scope): void {
       success: { data: restartMcpServerResultSchema },
       errors: {
         [ErrorCode.MCP_SERVER_NOT_FOUND]: {},
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
       },
       description: 'Restart an MCP server by ID',
       tags: ['tools'],
@@ -262,7 +263,7 @@ function sendMappedError(
   err: unknown,
 ): void {
   if (err instanceof Error2 && err.code === ErrorCodes.MCP_SERVER_NOT_FOUND) {
-    reply.send(errEnvelope(ErrorCode.MCP_SERVER_NOT_FOUND, err.message, requestId, err.stack));
+    reply.send(errEnvelope(ErrorCode.MCP_SERVER_NOT_FOUND, err.message, requestId));
     return;
   }
   throw err;

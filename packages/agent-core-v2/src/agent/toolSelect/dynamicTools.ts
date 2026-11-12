@@ -69,10 +69,16 @@ export function shapeUnsupportedDynamicToolContext(
       const removed = disclosure?.kind === 'delta'
         ? disclosure.removed.map((tool) => tool.name)
         : matchToolNameBlocks(text, TOOLS_REMOVED_BLOCK);
-      out.push({
-        ...message,
-        content: [{ type: 'text', text: wrapSystemReminder(renderRuntimeToolChangeReminder(added, removed)) }],
-      });
+      const content: ContextMessage['content'] = [
+        { type: 'text', text: wrapSystemReminder(renderRuntimeToolChangeReminder(added, removed)) },
+      ];
+      if (message.role === 'system') {
+        const { tools: _tools, ...rest } = message;
+        void _tools;
+        out.push({ ...rest, content });
+      } else {
+        out.push({ ...message, content });
+      }
       continue;
     }
     if (isDynamicToolSchemaMessage(message)) {
@@ -101,7 +107,6 @@ export function shapeUnsupportedDynamicToolContext(
 
 export function collectLoadedDynamicTools(
   history: readonly ContextMessage[],
-  current: readonly ToolSelectTool[],
 ): ReadonlyMap<string, ToolDescription> {
   const loaded = new Map<string, ToolDescription>();
   for (const message of history) {
@@ -114,11 +119,18 @@ export function collectLoadedDynamicTools(
             TOOLS_REMOVED_BLOCK,
           );
       for (const name of removed) loaded.delete(name);
-      continue;
     }
     if (!isDynamicToolSchemaMessage(message)) continue;
     for (const tool of message.tools ?? []) loaded.set(tool.name, tool);
   }
+  return loaded;
+}
+
+export function collectCurrentDynamicTools(
+  history: readonly ContextMessage[],
+  current: readonly ToolSelectTool[],
+): ReadonlyMap<string, ToolDescription> {
+  const loaded = new Map(collectLoadedDynamicTools(history));
   const currentByName = new Map(current.map((tool) => [tool.name, tool]));
   for (const [name, schema] of loaded) {
     const currentTool = currentByName.get(name);
@@ -135,9 +147,8 @@ export function collectLoadedDynamicTools(
 
 export function collectLoadedDynamicToolNames(
   history: readonly ContextMessage[],
-  current: readonly ToolSelectTool[],
 ): Set<string> {
-  return new Set(collectLoadedDynamicTools(history, current).keys());
+  return new Set(collectLoadedDynamicTools(history).keys());
 }
 
 const TOOLS_ADDED_BLOCK = /<tools_added>\n?([\s\S]*?)\n?<\/tools_added>/g;
@@ -213,9 +224,8 @@ export function renderRuntimeToolChangeReminder(
   if (removed.length > 0) sections.push(`<tools_removed>\n${removed.join('\n')}\n</tools_removed>`);
   sections.push(
     'The available tools changed during this session. The current model cannot load runtime ' +
-      'tool additions or replacements with select_tools. Do not call select_tools. Tools from ' +
-      'the initial session snapshot remain visible, but removed or replaced definitions may be ' +
-      'unavailable or fail when called.',
+      'tool additions with select_tools. Do not call select_tools. Use the tool definitions ' +
+      'provided in this request. Removed tools may be unavailable or fail when called.',
   );
   return sections.join('\n\n');
 }

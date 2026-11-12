@@ -18,6 +18,7 @@
 import type { TUI } from '@moonshot-ai/pi-tui';
 import { Container, Spacer, Text } from '@moonshot-ai/pi-tui';
 
+import { DETACH_HINT_TEXT } from '#/tui/constant/rendering';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import { formatTokenCount } from '#/utils/usage/usage-format';
@@ -25,8 +26,6 @@ import { formatTokenCount } from '#/utils/usage/usage-format';
 import type { ToolCallComponent, ToolCallSubagentSnapshot } from './tool-call';
 
 const THROTTLE_MS = 200;
-
-const DETACH_HINT_TEXT = 'Press Ctrl+B to run in background';
 
 interface AgentEntry {
   readonly toolCallId: string;
@@ -50,6 +49,7 @@ export class AgentGroupComponent extends Container {
   private throttleTimer: ReturnType<typeof setTimeout> | null = null;
   private lastFlushPhases = new Map<string, ToolCallSubagentSnapshot['phase']>();
   private _invalidating = false;
+  private projectionVersion = 0;
 
   constructor(private readonly ui: TUI | undefined) {
     super();
@@ -75,6 +75,13 @@ export class AgentGroupComponent extends Container {
     return this.entries.map((entry) => entry.tc);
   }
 
+  get transcriptProjectionVersion(): number {
+    return this.projectionVersion + this.entries.reduce(
+      (version, entry) => version + entry.tc.transcriptProjectionVersion,
+      0,
+    );
+  }
+
   /**
    * Borrows a standalone `ToolCallComponent` into the group as a hidden state
    * container. Snapshot changes trigger throttled refreshes. Re-attaching the
@@ -83,6 +90,7 @@ export class AgentGroupComponent extends Container {
   attach(toolCallId: string, tc: ToolCallComponent): void {
     if (this.entries.some((e) => e.toolCallId === toolCallId)) return;
     this.entries.push({ toolCallId, tc });
+    this.projectionVersion += 1;
     tc.setSnapshotListener(() => {
       this.scheduleRender();
     });

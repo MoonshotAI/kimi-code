@@ -175,7 +175,7 @@ SYSTEM.md 是纯 Markdown 正文，不需要也不读取 Frontmatter。文件缺
 
 | 变量 | 内容 |
 | --- | --- |
-| `${skills}` | 合并后的 Agent Skills 注入内容；`Skill` 工具不可用时为空 |
+| `${skills}` | 合并后的 Agent Skills 目录，包含可用技能的名称、描述和路径；禁用 `Skill` 工具仅禁止工具调用，不影响目录展示 |
 | `${agents_md}` | 工作区指令文件（如 `AGENTS.md`）的内容 |
 | `${cwd}` | 当前工作目录 |
 | `${cwd_listing}` | 工作目录的文件列表 |

@@ -9,6 +9,7 @@ import type { ConfigSectionChange, SDKRpcClientBase } from '#/rpc';
 import type {
   AuthenticateMcpServerOptions,
   AppMcpServerInspection,
+  CapabilityInstallOptions,
   CapabilityStatus,
   ConfigDiagnostics,
   CreateSessionOptions,
@@ -21,6 +22,7 @@ import type {
   ImportCustomRegistryOptions,
   ImportCustomRegistryResult,
   GlobalMcpServerAuthStatus,
+  InstallPluginInput,
   KimiConfig,
   KimiConfigPatch,
   KimiHostIdentity,
@@ -42,6 +44,9 @@ import type {
   SessionSummary,
   SessionSummaryPage,
   SkillSummary,
+  GitPullRequest,
+  GitQueryInput,
+  GitStatusSummary,
   SuggestFilesInput,
   SuggestFilesResult,
   TelemetryClient,
@@ -354,6 +359,24 @@ export class KimiHarness {
   }
 
   /**
+   * Git working-tree summary of `workDir` on this machine, or of a live
+   * session's working directory on the environment it runs on. `null` when
+   * the directory is not inside a git work tree or git is unavailable there.
+   */
+  async getGitStatus(workDir: string, input: GitQueryInput = {}): Promise<GitStatusSummary | null> {
+    return this.rpc.getGitStatus(workDir, input);
+  }
+
+  /**
+   * Pull request of the current branch, resolved the same way as
+   * {@link getGitStatus}. `null` when there is none, the HEAD is detached,
+   * or `gh` is unavailable.
+   */
+  async getGitPullRequest(workDir: string, input: GitQueryInput = {}): Promise<GitPullRequest | null> {
+    return this.rpc.getGitPullRequest(workDir, input);
+  }
+
+  /**
    * App-global plugin command list, no session required. Empty on the v1
    * engine, which only exposes plugin commands through a live session.
    */
@@ -373,15 +396,15 @@ export class KimiHarness {
 
   /**
    * Workspace-level MCP server list, no session required. The v2 engine owns
-   * one shared connection set per workspace handler, so `/mcp` is inspectable
+   * one shared connection set per workspace `Program`, so `/mcp` is inspectable
    * before the first session exists; empty on the v1 engine.
    */
   async listWorkspaceMcpServers(workDir: string): Promise<readonly McpServerInfo[]> {
     return this.rpc.listWorkspaceMcpServers(workDir);
   }
 
-  async installPlugin(source: string): Promise<PluginSummary> {
-    return this.rpc.installPlugin(source);
+  async installPlugin(input: string | InstallPluginInput): Promise<PluginSummary> {
+    return this.rpc.installPlugin(input);
   }
 
   async setPluginEnabled(id: string, enabled: boolean): Promise<void> {
@@ -418,8 +441,8 @@ export class KimiHarness {
     return capabilityRpc(this.rpc).getCapability(id);
   }
 
-  async installCapability(id: string): Promise<CapabilityStatus> {
-    return capabilityRpc(this.rpc).installCapability(id);
+  async installCapability(id: string, options?: CapabilityInstallOptions): Promise<CapabilityStatus> {
+    return capabilityRpc(this.rpc).installCapability(id, options);
   }
 
   /**

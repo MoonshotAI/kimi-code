@@ -133,5 +133,7 @@ export function isAgentReplayUserTurnMessage(message: ContextMessage): boolean {
       return false;
     case 'system_trigger':
       return message.origin.name === 'goal_continuation';
+    default:
+      return false;
   }
 }

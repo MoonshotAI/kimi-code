@@ -31,17 +31,25 @@ import type {
 } from './skill';
 import { SkillActivated } from './skillOps';
 
+export interface ModelToolSkillContext {
+  readonly queryDepth: number;
+  readonly workspaceDir?: string;
+}
+
 export interface IAgentSkillService {
   readonly _serviceBrand: undefined;
   activate(input: SkillActivationInput): Promise<PromptLaunchResult>;
   promptWithSkills(input: PromptWithSkillsInput): Promise<PromptWithSkillsResult>;
-  recordModelToolActivation(origin: SkillActivationOrigin): void;
+  recordModelToolActivation(origin: SkillActivationOrigin, queryDepth?: number): void;
+  modelToolContext(): ModelToolSkillContext;
 }
 
 export const IAgentSkillService = createDecorator<IAgentSkillService>('agentSkillService');
 
 export class AgentSkillService implements IAgentSkillService {
   declare readonly _serviceBrand: undefined;
+  private modelToolParent?: ModelToolSkillContext & { readonly turnId: number };
+  private ambiguousModelToolTurnId?: number;
 
   constructor(
     @ISessionSkillCatalog private readonly catalog: ISessionSkillCatalog,
@@ -57,7 +65,7 @@ export class AgentSkillService implements IAgentSkillService {
   async activate(input: SkillActivationInput): Promise<PromptLaunchResult> {
     const catalog = this.catalog;
     await catalog.ready;
-    const skill = catalog.catalog.getSkill(input.name);
+    const skill = catalog.catalog.getSkill(input.name, input.path);
     if (skill === undefined) {
       throw new Error2(ErrorCodes.SKILL_NOT_FOUND, `Skill "${input.name}" was not found`);
     }
@@ -84,21 +92,20 @@ export class AgentSkillService implements IAgentSkillService {
       ...(input.content ?? []),
     ];
 
-    const turn = await this.recordActivation(
-      {
-        kind: 'skill_activation',
-        activationId: randomUUID(),
-        skillName: skill.name,
-        trigger: 'user-slash',
-        skillType: skill.metadata.type,
-        skillPath: skill.path,
-        skillSource: skill.source,
-        skillArgs: input.args,
-        attachments: input.attachments,
-        clientMetadata: input.clientMetadata,
-      },
-      content,
-    );
+    const origin: SkillActivationOrigin = {
+      kind: 'skill_activation',
+      activationId: randomUUID(),
+      skillName: skill.name,
+      trigger: 'user-slash',
+      skillType: skill.metadata.type,
+      skillPath: skill.path,
+      skillSource: skill.source,
+      skillArgs: input.args,
+      attachments: input.attachments,
+      clientMetadata: input.clientMetadata,
+    };
+    const turn = await this.recordActivation(origin, content, input.promptId);
+    if (turn?.id !== undefined) this.rememberModelToolParent(origin, turn.id);
     if (turn === undefined) {
       throw new Error2(
         ErrorCodes.TURN_AGENT_BUSY,
@@ -149,36 +156,40 @@ export class AgentSkillService implements IAgentSkillService {
       void this.recordActivation(activation.origin);
     }
     const status = this.loop.snapshot();
-    const steerable =
-      input.steerIfActive === true &&
-      status.state === 'running' &&
-      status.activePromptId !== undefined;
-    const { id } = this.loop.submit(
-      {
-        message: {
-          role: 'user',
-          content: [...prepared.map((activation) => activation.part), ...input.input],
-        },
-        meta: {
-          origin: {
-            kind: 'user',
-            skillActivations: prepared.map((activation) => activation.entry),
-            clientMetadata: input.clientMetadata,
-            attachments: input.attachments,
-          } as PromptOrigin,
-          tracked: true,
-        },
+    const steerable = input.steerIfActive === true && status.state === 'running';
+    const submission = {
+      message: {
+        role: 'user' as const,
+        content: [...prepared.map((activation) => activation.part), ...input.input],
       },
-      { steerIfActive: input.steerIfActive },
-    );
+      meta: {
+        promptId: input.promptId,
+        origin: {
+          kind: 'user',
+          skillActivations: prepared.map((activation) => activation.entry),
+          clientMetadata: input.clientMetadata,
+          attachments: input.attachments,
+        } as PromptOrigin,
+      },
+    };
+    const { id } = steerable ? this.loop.sendNow(submission) : this.loop.submit(submission);
     const handle = this.loop.promptHandle(id)!;
     if (!steerable && (status.state === 'running' || status.paused || status.queue.length > 0)) {
-      return { prompt_id: id, created_at: handle.createdAt, state: 'queued' };
+      if (prepared.length === 1) {
+        void handle.launched.then((turn) => {
+          if (turn?.id !== undefined) this.rememberModelToolParent(prepared[0]!.origin, turn.id);
+        });
+      }
+      return { prompt_id: id, created_at: handle.createdAt, state: 'queued', steered: false };
     }
     await Promise.race([handle.launched, handle.completion]);
     const turn = await handle.launched;
     if (turn === undefined && handle.state !== 'blocked') {
       throw new Error2(ErrorCodes.INTERNAL, 'promptWithSkills failed to launch a turn');
+    }
+    if (turn?.id !== undefined) {
+      if (prepared.length === 1) this.rememberModelToolParent(prepared[0]!.origin, turn.id);
+      else if (this.modelToolParent?.turnId === turn.id) this.modelToolParent = undefined;
     }
     if (turn !== undefined) await turn.ready.catch(() => undefined);
     return {
@@ -186,11 +197,38 @@ export class AgentSkillService implements IAgentSkillService {
       prompt_id: id,
       created_at: handle.createdAt,
       state: handle.state === 'blocked' ? 'blocked' : 'running',
+      steered: steerable,
     };
   }
 
-  recordModelToolActivation(origin: SkillActivationOrigin): void {
+  recordModelToolActivation(origin: SkillActivationOrigin, queryDepth?: number): void {
+    const turnId = this.loop.snapshot().activeTurnId;
+    if (turnId !== undefined) this.rememberModelToolParent(origin, turnId, queryDepth);
     void this.recordActivation(origin);
+  }
+
+  modelToolContext(): ModelToolSkillContext {
+    const status = this.loop.snapshot();
+    if (status.state !== 'running' || status.activeTurnId === undefined || this.modelToolParent?.turnId !== status.activeTurnId) {
+      return { queryDepth: 0 };
+    }
+    return {
+      queryDepth: this.modelToolParent.queryDepth,
+      workspaceDir: this.modelToolParent.workspaceDir,
+    };
+  }
+
+  private rememberModelToolParent(origin: SkillActivationOrigin, turnId: number, resolvedQueryDepth?: number): void {
+    if (this.ambiguousModelToolTurnId === turnId) return;
+    const parent = this.modelToolParent?.turnId === turnId ? this.modelToolParent : undefined;
+    const workspaceDir = this.catalog.catalog.listSkills().find((skill) => skill.path === origin.skillPath)?.workspaceDir;
+    if (origin.trigger === 'model-tool' && parent !== undefined && parent.workspaceDir !== workspaceDir) {
+      this.modelToolParent = undefined;
+      this.ambiguousModelToolTurnId = turnId;
+      return;
+    }
+    const queryDepth = resolvedQueryDepth ?? (origin.trigger === 'nested-skill' ? (parent?.queryDepth ?? 0) + 1 : 1);
+    this.modelToolParent = { turnId, queryDepth, workspaceDir };
   }
 
   private prepareBundled(input: PromptSkillActivation): {
@@ -199,7 +237,7 @@ export class AgentSkillService implements IAgentSkillService {
     readonly entry: BundledSkillActivation;
   } {
     const catalog = this.catalog;
-    const skill = catalog.catalog.getSkill(input.name);
+    const skill = catalog.catalog.getSkill(input.name, input.path);
     if (skill === undefined) {
       throw new Error2(ErrorCodes.SKILL_NOT_FOUND, `Skill "${input.name}" was not found`);
     }
@@ -249,6 +287,7 @@ export class AgentSkillService implements IAgentSkillService {
   private async recordActivation(
     origin: SkillActivationOrigin,
     input?: readonly ContentPart[],
+    promptId?: string,
   ): Promise<Turn | undefined> {
     await this.dispatcher.dispatch(
       new SkillActivated({
@@ -264,14 +303,13 @@ export class AgentSkillService implements IAgentSkillService {
     this.publishActivation(origin);
 
     if (input === undefined) return undefined;
-    const steer = this.loop.snapshot().state === 'running';
-    const { id } = this.loop.submit(
-      {
-        message: { role: 'user', content: [...input] },
-        meta: { origin, tracked: !steer },
-      },
-      { steerIfActive: steer },
-    );
+    const status = this.loop.snapshot();
+    const running = status.state === 'running';
+    const submission = {
+      message: { role: 'user' as const, content: [...input] },
+      meta: { promptId, origin },
+    };
+    const { id } = running ? this.loop.sendNow(submission) : this.loop.submit(submission);
     return this.loop.promptHandle(id)!.launched;
   }
 

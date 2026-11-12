@@ -1,28 +1,10 @@
 import { bench, describe } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { ILogService, type ILogger } from '#/_base/log/log';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { AgentLoopProjector } from '#/agent/loop/projector';
-import { AgentStateService } from '#/agent/state/agentStateService';
-import { recordingTelemetry } from '../../app/telemetry/stubs';
 import { ErrorCodes, Error2 } from '#/errors';
 import type { ContentPart, Message, TextPart, ToolCall } from '#human/llm/message';
-
-const noopLogger: ILogger = {
-  error: () => {},
-  warn: () => {},
-  info: () => {},
-  debug: () => {},
-  child: () => noopLogger,
-};
-const noopLogService: ILogService = {
-  ...noopLogger,
-  _serviceBrand: undefined,
-  level: 'off',
-  setLevel: () => {},
-  flush: () => Promise.resolve(),
-};
 
 function projectLegacy(history: readonly ContextMessage[]): Message[] {
   const openCalls = new Map<string, ToolCall>();
@@ -182,7 +164,7 @@ function makeMixedHistory(turns: number): ContextMessage[] {
 }
 
 function createProjector(_disposables: DisposableStore): AgentLoopProjector {
-  return new AgentLoopProjector(noopLogService, recordingTelemetry([]), new AgentStateService());
+  return new AgentLoopProjector(() => {});
 }
 
 const disposables = new DisposableStore();

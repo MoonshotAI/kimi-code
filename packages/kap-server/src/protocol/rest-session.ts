@@ -1,8 +1,6 @@
 import { z } from 'zod';
 
-import { messageSchema } from './message';
 import {
-  sessionStatusResponseSchema,
   sessionWarningSchema,
   sessionWarningsResponseSchema,
   updateSessionProfileRequestSchema,
@@ -19,13 +17,11 @@ import {
 } from './session';
 
 export {
-  sessionStatusResponseSchema,
   sessionWarningSchema,
   sessionWarningsResponseSchema,
   updateSessionProfileRequestSchema,
 };
 export type {
-  SessionStatusResponse,
   SessionWarning,
   SessionWarningsResponse,
   UpdateSessionProfileRequest,
@@ -108,6 +104,50 @@ export const startBtwSessionResponseSchema = z.object({
 });
 export type StartBtwSessionResponse = z.infer<typeof startBtwSessionResponseSchema>;
 
+export const predictPromptRequestSchema = z.object({
+  prediction_id: z.string().min(1),
+  expected_turn_id: z.number().int().nonnegative(),
+});
+export type PredictPromptRequest = z.infer<typeof predictPromptRequestSchema>;
+
+export const predictPromptResponseSchema = z.object({
+  prediction: z.string().nullable(),
+});
+export type PredictPromptResponse = z.infer<typeof predictPromptResponseSchema>;
+
+export const cancelPromptPredictionRequestSchema = z.object({
+  prediction_id: z.string().min(1),
+  reason: z.enum([
+    'input',
+    'escape',
+    'new_turn',
+    'session',
+    'dialog',
+    'queue',
+    'submit',
+    'plan',
+    'visibility',
+    'shutdown',
+    'disconnect',
+    'activity_turn_started',
+    'activity_turn_ended',
+    'activity_background',
+    'activity_interaction',
+    'activity_agent_lifecycle',
+    'agent_will_close',
+    'agent_replaced',
+    'agent_closed',
+    'disposed',
+    'unspecified',
+  ]).optional(),
+});
+export type CancelPromptPredictionRequest = z.infer<typeof cancelPromptPredictionRequestSchema>;
+
+export const cancelPromptPredictionResponseSchema = z.object({
+  cancelled: z.boolean(),
+});
+export type CancelPromptPredictionResponse = z.infer<typeof cancelPromptPredictionResponseSchema>;
+
 export const listSessionChildrenQuerySchema = cursorQuerySchema.and(
   z.object({
     busy: booleanQueryParam,
@@ -128,6 +168,14 @@ export type CreateSessionChildResponse = z.infer<typeof createSessionChildRespon
 export const getSessionGoalResponseSchema = goalSnapshotSchema.nullable();
 export type GetSessionGoalResponse = z.infer<typeof getSessionGoalResponseSchema>;
 
+export const editSessionGoalRequestSchema = z.object({
+  objective: z.string(),
+});
+export type EditSessionGoalRequest = z.infer<typeof editSessionGoalRequestSchema>;
+
+export const editSessionGoalResponseSchema = goalSnapshotSchema;
+export type EditSessionGoalResponse = z.infer<typeof editSessionGoalResponseSchema>;
+
 export const compactSessionRequestSchema = z.preprocess(
   (value) => value === undefined ? {} : value,
   z.object({
@@ -139,18 +187,14 @@ export type CompactSessionRequest = z.infer<typeof compactSessionRequestSchema>;
 export const compactSessionResponseSchema = z.object({});
 export type CompactSessionResponse = z.infer<typeof compactSessionResponseSchema>;
 
-export const undoSessionRequestSchema = z.preprocess(
-  (value) => value === undefined ? {} : value,
-  z.object({
-    count: z.number().int().positive().default(1),
-    page_size: z.number().int().min(1).max(100).optional(),
-  }),
-);
+export const undoSessionRequestSchema = z.object({
+  turn_id: z.string().min(1),
+  agent_id: z.string().min(1).optional(),
+});
 export type UndoSessionRequest = z.infer<typeof undoSessionRequestSchema>;
 
 export const undoSessionResponseSchema = z.object({
-  messages: pageResponseSchema(messageSchema),
-  status: sessionStatusResponseSchema,
+  removed_turn_ids: z.array(z.string().min(1)),
 });
 export type UndoSessionResponse = z.infer<typeof undoSessionResponseSchema>;
 

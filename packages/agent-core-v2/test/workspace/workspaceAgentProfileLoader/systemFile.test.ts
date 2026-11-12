@@ -108,7 +108,7 @@ describe('loadSystemMdProfile', () => {
     expect(profile?.systemPrompt({})).toBe('You are a custom main agent.');
   });
 
-  it('empties ${skills} when the builtin default disables the Skill tool', async () => {
+  it('keeps ${skills} when the builtin default disables the Skill tool', async () => {
     await writeFile(join(home, SYSTEM_MD_FILENAME), 'skills=${skills}');
     const noSkillBuiltin: AgentProfile = normalizeAgentProfile({
       name: DEFAULT_AGENT_PROFILE_NAME,
@@ -120,7 +120,7 @@ describe('loadSystemMdProfile', () => {
 
     const profile = await loadProfile(hostFs, noSkillBuiltin, warn);
 
-    expect(profile?.systemPrompt({ skills: 'SKILLS' })).toBe('skills=');
+    expect(profile?.systemPrompt({ skills: 'SKILLS' })).toBe('skills=SKILLS');
   });
 
   it('embeds the builtin default prompt via ${base_prompt}', async () => {

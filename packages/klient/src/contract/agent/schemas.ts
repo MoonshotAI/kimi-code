@@ -47,6 +47,7 @@ export const promptPayloadSchema = z.object({
 /** Same shape as `PromptSkillActivation` in the engine. */
 export const promptSkillActivationSchema = z.object({
   name: z.string(),
+  path: z.string().optional(),
   args: z.string().optional(),
 });
 
@@ -62,16 +63,26 @@ export const promptWithSkillsResultSchema = z.object({
   prompt_id: z.string(),
   created_at: z.string(),
   state: z.enum(['running', 'queued', 'blocked']),
+  steered: z.boolean().optional(),
 });
 
-/** Same shape as `SteerPayload` in the engine. */
-export const steerPayloadSchema = z.object({
-  input: z.array(promptPartSchema),
+export const steerResultSchema = promptWithSkillsResultSchema;
+
+/** Entry constructed by `AgentFacade.steer` before crossing the wire. */
+export const steerEntrySchema = z.object({
+  message: z.object({
+    role: z.literal('user'),
+    content: z.array(promptPartSchema),
+  }),
+  meta: z.object({
+    origin: z.object({ kind: z.literal('user') }),
+  }),
 });
 
 /** Same shape as `SkillActivationInput`'s wire subset in the engine. */
 export const activateSkillPayloadSchema = z.object({
   name: z.string(),
+  path: z.string().optional(),
   args: z.string().optional(),
 });
 

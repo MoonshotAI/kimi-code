@@ -13,13 +13,6 @@ export const TERMINAL_STATUSES: ReadonlySet<AgentTaskStatus> = new Set<AgentTask
   'killed',
   'lost',
 ]);
-export type AgentTaskSettlementStatus = 'completed' | 'failed' | 'timed_out' | 'killed';
-
-export interface AgentTaskSettlement {
-  readonly status: AgentTaskSettlementStatus;
-  readonly stopReason?: string;
-}
-
 export interface AgentTaskInfoBase {
   readonly taskId: string;
   readonly description: string;
@@ -33,29 +26,43 @@ export interface AgentTaskInfoBase {
   readonly timeoutMs?: number;
 }
 
-export interface AgentTaskInfoByKind {}
+export interface ProcessTaskInfo extends AgentTaskInfoBase {
+  readonly kind: 'process';
+  readonly command: string;
+  readonly pid: number;
+  readonly exitCode: number | null;
+  readonly stopCode?: string;
+  readonly parentToolCallId?: string;
+}
+
+export interface SubagentTaskInfo extends AgentTaskInfoBase {
+  readonly kind: 'agent';
+  readonly agentId?: string;
+  readonly subagentType?: string;
+  readonly parentToolCallId?: string;
+  readonly model?: string;
+  readonly thinkingEffort?: string;
+  readonly stopCode?: string;
+  readonly swarmIndex?: number;
+  readonly stateReason?: string;
+  readonly resultSummary?: string;
+}
+
+export interface QuestionTaskInfo extends AgentTaskInfoBase {
+  readonly kind: 'question';
+  readonly questionCount: number;
+  readonly toolCallId?: string;
+}
+
+export interface AgentTaskInfoByKind {
+  readonly process: ProcessTaskInfo;
+  readonly agent: SubagentTaskInfo;
+  readonly question: QuestionTaskInfo;
+}
 
 export type AgentTaskKind = Extract<keyof AgentTaskInfoByKind, string>;
 
 export type AgentTaskInfo = AgentTaskInfoByKind[AgentTaskKind];
-
-export interface AgentTaskSink {
-  readonly signal: AbortSignal;
-  appendOutput(chunk: string): void;
-  settle(settlement: AgentTaskSettlement): Promise<boolean>;
-}
-
-export interface AgentTask {
-  readonly idPrefix: string;
-  readonly kind: AgentTaskKind;
-  readonly description: string;
-  readonly timeoutMs?: number;
-
-  start(sink: AgentTaskSink): void | Promise<void>;
-  onDetach?(): void;
-  forceStop?(): Promise<void>;
-  toInfo(base: AgentTaskInfoBase): AgentTaskInfo;
-}
 
 export interface TaskInfoBase {
   readonly taskId: string;

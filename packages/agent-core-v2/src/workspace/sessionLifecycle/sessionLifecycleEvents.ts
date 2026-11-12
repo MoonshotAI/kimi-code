@@ -13,6 +13,18 @@ export interface SessionArchived {
   readonly payload: SessionArchivedPayload;
 }
 
+export interface SessionRestoredPayload {
+  readonly sessionId: string;
+  readonly workspaceId: string;
+}
+
+export class SessionRestored extends Event2<{ readonly payload: SessionRestoredPayload }> {
+  static override readonly type = 'event.session.restored';
+}
+export interface SessionRestored {
+  readonly payload: SessionRestoredPayload;
+}
+
 export interface SessionDeletedPayload {
   readonly sessionId: string;
   readonly workspaceId: string;

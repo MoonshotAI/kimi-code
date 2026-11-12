@@ -9,10 +9,11 @@ export type GooglePart = {
   thoughtSignature?: string;
   inlineData?: { mimeType: string; data: string };
   fileData?: { fileUri: string; mimeType: string };
-  functionCall?: { name: string; args: Record<string, unknown> };
+  functionCall?: { id?: string; name: string; args: Record<string, unknown> };
   functionResponse?: {
+    id?: string;
     name: string;
     response: Record<string, string>;
-    parts: GooglePart[];
+    parts?: GooglePart[];
   };
 };

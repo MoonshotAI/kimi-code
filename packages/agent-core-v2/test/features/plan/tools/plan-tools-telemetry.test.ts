@@ -5,6 +5,7 @@ import { IAgentPlanService, type PlanData } from '#/features/plan/plan';
 import { ExitPlanModeTool } from '#/features/plan/tools/exit-plan-mode/exitPlanModeTool';
 import type { ToolResult } from '#/tool/toolContract';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { executeLegacyTool } from '../../../agent/toolExecutor/execute';
 
 import { executeTool } from '../../../tools/fixtures/execute-tool';
 import { createFakeHostFs } from '../../../tools/fixtures/fake-exec';
@@ -83,15 +84,12 @@ describe('AgentPlanService without an EnterPlanMode tool', () => {
           arguments: '{}',
         };
 
-        const result: ToolResult[] = [];
-        for await (const item of toolExecutor.execute([call], {
+        const result = await executeLegacyTool(toolExecutor, [call], {
           turnId: 1,
           signal: new AbortController().signal,
-        })) {
-          result.push(item.result);
-        }
+        });
 
-        expect(result[0]?.isError).toBe(true);
+        expect(result[0]?.result.isError).toBe(true);
         expect(await ctx.get(IAgentPlanService).status()).toBeNull();
         expect(records.some((record) => record.event === 'plan_enter_resolved')).toBe(false);
       });

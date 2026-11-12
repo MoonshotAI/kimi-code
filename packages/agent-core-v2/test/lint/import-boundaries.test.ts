@@ -73,7 +73,7 @@ describe('check-import-boundaries', () => {
 
   it('flags a non-adapter v2 file importing a human implementation module', () => {
     const violations = checkSource(
-      `import { createOpenAIRequester } from '#human/llm-requester/factories';`,
+      `import { kimiRequesters } from '#human/llm/builtin/provider/kimi/index';`,
       at('agent', 'loop.ts'),
     );
     expect(violations).toHaveLength(1);
@@ -90,7 +90,7 @@ describe('check-import-boundaries', () => {
 
   it('allows llm-adapter to import the human implementation', () => {
     const violations = checkSource(
-      `import { createOpenAIRequester } from '#human/llm-requester/factories';\nimport { kimiRequesters } from '#human/llm/builtin/provider/kimi/index';`,
+      `import { kimiRequesters } from '#human/llm/builtin/provider/kimi/index';`,
       atAdapter('protocol', 'protocolAdapterRegistry.ts'),
     );
     expect(violations).toHaveLength(0);
@@ -98,7 +98,7 @@ describe('check-import-boundaries', () => {
 
   it('flags a package-self human implementation import outside llm-adapter', () => {
     const violations = checkSource(
-      `import { createOpenAIRequester } from '@moonshot-ai/agent-core-v2/human/llm-requester/factories';`,
+      `import { kimiRequesters } from '@moonshot-ai/agent-core-v2/human/llm/builtin/provider/kimi/index';`,
       at('agent', 'loop.ts'),
     );
     expect(violations).toHaveLength(1);

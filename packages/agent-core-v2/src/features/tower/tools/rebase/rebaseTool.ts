@@ -1,5 +1,5 @@
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentTaskService } from '#/agent/task/task';
+import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentTowerService } from '#/features/tower/tower';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -20,7 +20,7 @@ export class TowerRebaseTool implements ITowerRebaseTool {
   constructor(
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
-    @IAgentTaskService private readonly tasks: IAgentTaskService,
+    @IAgentToolExecutorService private readonly tasks: IAgentToolExecutorService,
     @IAgentTowerService private readonly tower: IAgentTowerService,
   ) {}
 
@@ -60,14 +60,18 @@ export class TowerRebaseTool implements ITowerRebaseTool {
               output: [
                 `rebase of mission ${mission.id} (${mission.branch}) onto "${state.base}" conflicted and was aborted — the mission is marked blocked.`,
                 `conflicted files: ${result.files?.join(', ') || '(none reported)'}`,
-                `resume the worker in the background (foreground only when background task tools are unavailable) so it resolves the conflicts in its worktree and requests a fresh review.`,
+                mission.kind === 'artifact'
+                  ? `resume the worker in the background (foreground only when background task tools are unavailable) so it resolves the conflicts in its worktree; the moved tip then needs fresh explicit human acceptance.`
+                  : `resume the worker in the background (foreground only when background task tools are unavailable) so it resolves the conflicts in its worktree and requests a fresh review.`,
               ].join('\n'),
             };
           }
           return {
             output: [
               `rebased mission ${mission.id} (${mission.branch}) onto "${state.base}": ${result.fromCommit!.slice(0, 7)} → ${result.toCommit!.slice(0, 7)}.`,
-              'The pre-rebase review keeps its exact-tip binding, but merge approval still requires a clean review with merge verdict "merge" — retry TowerMerge.',
+              mission.kind === 'artifact'
+                ? 'The pre-rebase human acceptance does not carry over — have the worker run TowerComplete with the current report and key_artifacts at the rebased tip, present that new request for fresh explicit human acceptance of the entire tip, record it with TowerReview, then retry TowerMerge.'
+                : 'The pre-rebase review keeps its exact-tip binding, but merge approval still requires a clean review with merge verdict "merge" — retry TowerMerge.',
             ].join('\n'),
           };
         }),
@@ -76,11 +80,10 @@ export class TowerRebaseTool implements ITowerRebaseTool {
 
   private activeAgentIds(): ReadonlySet<string> {
     return new Set(
-      this.tasks
-        .list(true)
-        .flatMap((task) =>
-          task.kind === 'agent' && task.agentId !== undefined ? [task.agentId] : [],
-        ),
+      this.tasks.handlers().flatMap((handler) => {
+        const task = handler.snapshot().fields.task;
+        return task?.kind === 'agent' && task.agentId !== undefined ? [task.agentId] : [];
+      }),
     );
   }
 }

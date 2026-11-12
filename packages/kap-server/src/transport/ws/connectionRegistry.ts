@@ -3,7 +3,6 @@ export interface ConnectionLike {
   readonly connectedAt: string;
   readonly remoteAddress: string | null;
   readonly userAgent: string | null;
-  readonly hasClientHello: boolean;
   readonly subscriptionSessionIds: readonly string[];
   close(code?: number, reason?: string): void;
 }

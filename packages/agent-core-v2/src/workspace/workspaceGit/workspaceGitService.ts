@@ -1,6 +1,6 @@
 import { ref, type LiveRef } from '#/_base/di/instantiation';
 import { type FsDiffResponse, type FsGitStatusResponse, type FsPullRequest, type GitStatusOptions, IGitService } from '#/app/git/git';
-import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
+import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 
 import { IWorkspaceGitService } from './workspaceGit';
 
@@ -8,12 +8,12 @@ export class WorkspaceGitService implements IWorkspaceGitService {
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IWorkspaceContext private readonly workspace: Pick<IWorkspaceContext, 'cwd'>,
+    @IWorkspaceDirs private readonly dirs: Pick<IWorkspaceDirs, 'primary'>,
     @ref(IGitService) private readonly git: LiveRef<IGitService>,
   ) {}
 
   status(pathFilter?: ReadonlySet<string>): Promise<FsGitStatusResponse> {
-    return this.git.current!.status(this.workspace.cwd, { pathFilter });
+    return this.git.current!.status(this.dirs.primary, { pathFilter });
   }
 
   statusAt(cwd: string, options?: GitStatusOptions): Promise<FsGitStatusResponse> {
@@ -25,11 +25,10 @@ export class WorkspaceGitService implements IWorkspaceGitService {
   }
 
   diff(relPath: string, absPath: string): Promise<FsDiffResponse> {
-    return this.git.current!.diff(this.workspace.cwd, relPath, absPath);
+    return this.git.current!.diff(this.dirs.primary, relPath, absPath);
   }
 
   diffAt(cwd: string, relPath: string, absPath: string): Promise<FsDiffResponse> {
     return this.git.current!.diff(cwd, relPath, absPath);
   }
 }
-

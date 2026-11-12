@@ -33,8 +33,7 @@ import {
   type InteractionRequest,
 } from '@moonshot-ai/agent-core-v2/human/interaction/interaction';
 import { interactions } from '@moonshot-ai/agent-core-v2/human/interaction/facade';
-import { IAgentLoopService, type PromptPayload, type SteerPayload } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
-import { IAgentPromptChannel } from '@moonshot-ai/agent-core-v2/agent/loop/promptChannel';
+import { IAgentLoopService, type LoopNotifyEntry, type PromptPayload } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import { IProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocol';
 import {
@@ -233,22 +232,14 @@ function questionServiceView(sessionId: string): Record<string, unknown> {
 type LegacyPromptPayload = Omit<PromptPayload, 'input'> & {
   readonly input: readonly LegacyContentPart[];
 };
-type LegacySteerPayload = Omit<SteerPayload, 'input'> & {
-  readonly input: readonly LegacyContentPart[];
+type LegacySteerEntry = Omit<LoopNotifyEntry, 'message'> & {
+  readonly message: Omit<LoopNotifyEntry['message'], 'content'> & {
+    readonly content: readonly LegacyContentPart[];
+  };
 };
 type LegacyPromptWithSkillsInput = Omit<PromptWithSkillsInput, 'input'> & {
   readonly input: readonly LegacyContentPart[];
 };
-
-function agentPromptServiceView(agent: IAgentScopeHandle): Record<string, unknown> {
-  const prompt = agent.accessor.get(IAgentPromptChannel);
-  return {
-    submit: (input: LegacyPromptPayload) =>
-      prompt.submit({ ...input, input: input.input.map(toCorePart) }),
-    submitSteer: (input: LegacySteerPayload) =>
-      prompt.submitSteer({ ...input, input: input.input.map(toCorePart) }),
-  };
-}
 
 function agentSkillServiceView(agent: IAgentScopeHandle): Record<string, unknown> {
   const skill = agent.accessor.get(IAgentSkillService);
@@ -265,6 +256,14 @@ function agentSkillServiceView(agent: IAgentScopeHandle): Record<string, unknown
 function agentLoopServiceView(agent: IAgentScopeHandle): Record<string, unknown> {
   const loop = agent.accessor.get(IAgentLoopService);
   return {
+    submit: (input: LegacyPromptPayload) =>
+      loop.submit({ ...input, input: input.input.map(toCorePart) }),
+    notifyClient: (input: LegacySteerEntry) =>
+      loop.notifyClient({
+        ...input,
+        message: { ...input.message, content: input.message.content.map(toCorePart) },
+      }),
+    get: () => loop.history(),
     cancelFromUser: (turnId?: number) => {
       const snapshot = loop.snapshot();
       if (snapshot.state === 'running') {
@@ -421,19 +420,13 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
       }
       return view;
     }
-    if (service === 'agentPromptService') {
-      if (resolved.kind !== 'agent') {
-        throw new RPCError(REQUEST_INVALID, `service not available in ${resolved.kind} scope: ${service}`);
-      }
-      return agentPromptServiceView(resolved.like as IAgentScopeHandle);
-    }
     if (service === 'agentSkillService') {
       if (resolved.kind !== 'agent') {
         throw new RPCError(REQUEST_INVALID, `service not available in ${resolved.kind} scope: ${service}`);
       }
       return agentSkillServiceView(resolved.like as IAgentScopeHandle);
     }
-    if (service === 'agentLoopService') {
+    if (service === 'agentLoopService' || service === 'agentContextMemoryService') {
       if (resolved.kind !== 'agent') {
         throw new RPCError(REQUEST_INVALID, `service not available in ${resolved.kind} scope: ${service}`);
       }

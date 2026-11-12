@@ -72,7 +72,7 @@ export interface Protocol<
   readonly decoder: (module: LlmModule<TOptions>, sink: DecodeSink) => Decoder<TChunk>;
   readonly replay: (response: TResponse) => Iterable<TChunk>;
   readonly requestId?: (headers: Readonly<Record<string, string>>) => string | undefined;
-  readonly decodeError: (error: unknown) => LlmRemoteErrorMessage;
+  readonly decodeError: (error: unknown, source?: 'stream') => LlmRemoteErrorMessage;
   readonly diagnoseError?: (input: LlmErrorDiagnosticsInput) => LlmErrorDiagnostics;
 }
 

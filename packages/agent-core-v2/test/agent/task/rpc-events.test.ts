@@ -1,51 +1,58 @@
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { Readable } from 'node:stream';
+import { PassThrough, Readable } from 'node:stream';
 import type { Writable } from 'node:stream';
 import { join } from 'pathe';
 
-import type { IHostProcess } from '#/os/interface/hostProcess';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  type AgentTaskInfo,
-  IAgentTaskService,
-} from '#/agent/task/task';
-import { TaskOutputTool } from '#/agent/tools/task/task-output/taskOutputTool';
-import { TaskStopTool } from '#/agent/tools/task/task-stop/taskStopTool';
-import {
-  NO_PARTIAL_OUTPUT,
-  PARTIAL_OUTPUT_NOTICE,
-  SubagentTask,
-  type SubagentHandle,
-} from '#/agent/tools/agent/subagent-task';
-import { ProcessTask } from '#/agent/tools/os/bash/process-task';
-import { QuestionBackgroundTask } from '#/agent/tools/ask-user-question/question-background-task';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import type { IHostProcess } from '#/os/interface/hostProcess';
+import { type AgentTaskInfo, IAgentTaskService } from '#/agent/task/task';
+import { ContextAppendMessage } from '#/agent/contextMemory/contextEvents';
 import { IEventBus } from '#/app/event/eventBus';
-import type { IExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunner';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { ErrorCodes } from '#/errors';
-import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
+import { ITaskStopTool } from '#/agent/tools/task/task-stop/task-stop';
+import { IAgentTaskOutputService, createTaskCompletionEntry, emptyOutputSnapshot } from '#/agent/task/taskOutput';
+import { interactions } from '#/human/interaction/facade';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionSubagentService } from '#/session/subagent/subagent';
+import type { AgentRunHandle } from '#/session/subagent/subagent';
+import type { WireRecord } from '#/wire/record';
 import {
-  configServices,
   createTestAgent,
-  externalHookServices,
-  homeDirServices,
-  telemetryServices,
+  execEnvServices,
+  taskServices,
   type TestAgentContext,
-  type TestAgentServiceOverride,
 } from '../../harness';
 import { submitPromptTurn } from '../loop/stubs';
-import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
-import { executeTool, type TestExecutableToolContext } from '../../tools/fixtures/execute-tool';
+import { executeTool } from '../../tools/fixtures/execute-tool';
 import {
-  createAgentTaskPersistence,
-  type TaskServiceTestManager,
+  restoreTaskHistory,
+  startAgentTaskInLoop,
+  startBashTaskInLoop,
+  startControlledTaskInLoop,
+  startQuestionTaskInLoop,
+  type ControlledTask,
+  type ControlledTaskOptions,
 } from './stubs';
 
-type FireAndForgetTrigger = IExternalHooksRunnerService['fireAndForgetTrigger'];
+const contexts: TestAgentContext[] = [];
+
+function track(ctx: TestAgentContext): TestAgentContext {
+  contexts.push(ctx);
+  return ctx;
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
 
 function immediateProcess(exitCode: number, stdoutText = ''): IHostProcess {
   return {
@@ -61,972 +68,564 @@ function immediateProcess(exitCode: number, stdoutText = ''): IHostProcess {
   };
 }
 
-function pendingProcess(): IHostProcess {
-  let resolveWait: (code: number) => void = () => {};
+function controllableProcess() {
+  const stdout = new PassThrough();
+  let resolveWait!: (code: number) => void;
   const waitPromise = new Promise<number>((resolve) => {
     resolveWait = resolve;
   });
   let currentExitCode: number | null = null;
-  return {
+  const proc: IHostProcess = {
     _serviceBrand: undefined,
     stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
-    stdout: Readable.from([]),
+    stdout,
     stderr: Readable.from([]),
-    pid: 99999,
-    get exitCode(): number | null {
+    pid: 30001,
+    get exitCode() {
       return currentExitCode;
     },
     wait: () => waitPromise,
     kill: vi.fn(async () => {
       if (currentExitCode !== null) return;
       currentExitCode = 143;
+      stdout.destroy();
       resolveWait(143);
     }) as unknown as IHostProcess['kill'],
     dispose: vi.fn().mockResolvedValue(undefined) as IHostProcess['dispose'],
   };
-}
-
-function agentTask(
-  completion: Promise<{ result: string }>,
-  description: string,
-  options: {
-    readonly agentId?: string;
-    readonly subagentType?: string;
-    readonly abortController?: AbortController;
-    readonly timeoutMs?: number;
-    readonly partialOutput?: () => string;
-  } = {},
-): SubagentTask {
-  const handle: SubagentHandle = {
-    agentId: options.agentId ?? 'agent-child',
-    profileName: options.subagentType ?? 'coder',
-    completion,
-    partialOutput: options.partialOutput,
+  return {
+    proc,
+    write: (text: string) => stdout.write(text),
+    finish: (exitCode: number) => {
+      currentExitCode = exitCode;
+      stdout.end();
+      resolveWait(exitCode);
+    },
   };
-  const task = new SubagentTask(
-    handle,
-    description,
-    options.abortController ?? new AbortController(),
-  );
-  if (options.timeoutMs !== undefined) {
-    Object.defineProperty(task, 'timeoutMs', {
-      value: options.timeoutMs,
-      enumerable: true,
-    });
-  }
-  return task;
 }
 
-function persistedProcess(
-  overrides: Partial<Extract<AgentTaskInfo, { kind: 'process' }>> = {},
-): Extract<AgentTaskInfo, { kind: 'process' }> {
+function processContext(proc: IHostProcess): TestAgentContext {
+  return track(createTestAgent(execEnvServices({ processRunner: { spawn: async () => proc } })));
+}
+
+function agentContext(
+  completion: Promise<{ readonly result: string }>,
+  partialOutput = '',
+): TestAgentContext {
+  const ctx = track(createTestAgent());
+  vi.spyOn(ctx.get(ISessionSubagentService), 'run').mockImplementation(async (agent) => ({
+    agentId: agent.agentId,
+    turn: {} as AgentRunHandle['turn'],
+    completion: completion.then(({ result }) => ({ summary: result })),
+    partialOutput: () => partialOutput,
+  }));
+  return ctx;
+}
+
+function startAgent(ctx: TestAgentContext, description: string) {
+  return startAgentTaskInLoop(ctx, {
+    description,
+    prompt: description,
+    run_in_background: true,
+  });
+}
+
+function startControlled(ctx: TestAgentContext, options: ControlledTaskOptions = {}) {
+  return startControlledTaskInLoop(ctx, options);
+}
+
+function taskNotifications(ctx: TestAgentContext, taskId?: string) {
+  return ctx.context.history().filter((message) =>
+    message.origin?.kind === 'task' && (taskId === undefined || message.origin.taskId === taskId)
+  );
+}
+
+function liveTaskChanges(ctx: TestAgentContext): AgentTaskInfo[] {
+  const changes: AgentTaskInfo[] = [];
+  ctx.get(IAgentTaskService).onDidChangeTask((info) => changes.push(info));
+  return changes;
+}
+
+async function drain(ctx: TestAgentContext, taskId: string): Promise<void> {
+  await vi.waitFor(() => expect(taskNotifications(ctx, taskId)).toHaveLength(1), { timeout: 3000 });
+  await ctx.get(IAgentLoopService).settled();
+}
+
+async function completeControlled(
+  ctx: TestAgentContext,
+  task: ControlledTask,
+  output = '',
+): Promise<void> {
+  ctx.mockNextResponse({ type: 'text', text: 'notification ack' });
+  task.resolve(output);
+  await task.handler.wait();
+  await drain(ctx, task.handler.taskId);
+}
+
+function processInfo(overrides: Partial<Extract<AgentTaskInfo, { kind: 'process' }>> = {}) {
   return {
     taskId: 'bash-done0000',
     kind: 'process',
     command: 'echo done',
-    description: 'restored shell task',
-    pid: 12345,
-    startedAt: 1_700_000_000,
-    endedAt: 1_700_000_010,
+    description: 'process done',
+    pid: 4242,
+    startedAt: 1,
+    endedAt: 2,
     exitCode: 0,
     status: 'completed',
+    detached: true,
     ...overrides,
-  };
+  } as Extract<AgentTaskInfo, { kind: 'process' }>;
 }
 
-function persistedAgent(
-  overrides: Partial<Extract<AgentTaskInfo, { kind: 'agent' }>> = {},
-): Extract<AgentTaskInfo, { kind: 'agent' }> {
+function agentInfo(overrides: Partial<Extract<AgentTaskInfo, { kind: 'agent' }>> = {}) {
   return {
     taskId: 'agent-done0000',
     kind: 'agent',
-    description: 'restored task',
-    startedAt: 1_700_000_000,
-    endedAt: 1_700_000_010,
-    status: 'completed',
-    agentId: 'agent-session-id',
+    agentId: 'agent-child',
+    description: 'agent done',
     subagentType: 'coder',
+    startedAt: 1,
+    endedAt: 2,
+    status: 'completed',
+    detached: true,
     ...overrides,
-  };
+  } as Extract<AgentTaskInfo, { kind: 'agent' }>;
 }
 
-interface FakeTaskAgent {
-  emitEvent: ReturnType<typeof vi.fn>;
-  emittedEvents: Array<{ type: string; info?: unknown }>;
-  kimiConfig?: { task?: { maxRunningTasks?: number } };
-  context: { appendUserMessage: ReturnType<typeof vi.fn> };
-  hooks?: { fireAndForgetTrigger: FireAndForgetTrigger };
-}
-
-interface TaskServiceFixture {
-  ctx: TestAgentContext;
-  agent: FakeTaskAgent;
-  manager: TaskServiceTestManager;
-  records: TelemetryRecord[];
-  persistence?: ReturnType<typeof createAgentTaskPersistence>;
-}
-
-type TestContextMessage = {
-  readonly origin?: {
-    readonly kind: string;
-    readonly taskId: string;
-    readonly status: string;
-    readonly notificationId: string;
-  };
-  readonly content: readonly { readonly text: string }[];
+const QUESTION_INPUT = {
+  questions: [{
+    question: 'Which database?',
+    header: 'Storage',
+    options: [
+      { label: 'Postgres', description: 'Relational' },
+      { label: 'SQLite', description: 'Embedded' },
+    ],
+    multi_select: false,
+  }],
+  background: true,
 };
 
-function createAgentTaskService(options: {
-  sessionDir?: string;
-  maxRunningTasks?: number;
-  hooks?: FakeTaskAgent['hooks'];
-} = {}): TaskServiceFixture {
-  const records: TelemetryRecord[] = [];
-  const telemetry = recordingTelemetry(records);
-  const hookEngine: Pick<IExternalHooksRunnerService, 'trigger' | 'triggerBlock' | 'fireAndForgetTrigger'> | undefined = options.hooks === undefined
-    ? undefined
-    : {
-        trigger: vi.fn().mockResolvedValue([]),
-        triggerBlock: vi.fn().mockResolvedValue(undefined),
-        fireAndForgetTrigger: options.hooks.fireAndForgetTrigger,
-      };
-  const overrides: TestAgentServiceOverride[] = [telemetryServices(telemetry)];
-  if (options.sessionDir !== undefined) {
-    overrides.push(homeDirServices(options.sessionDir));
-  }
-  const maxRunningTasks = options.maxRunningTasks;
-  if (maxRunningTasks !== undefined) {
-    overrides.push(configServices(() => ({
-      providers: {},
-      task: { maxRunningTasks },
-    })));
-  }
-  if (hookEngine !== undefined) {
-    overrides.push(externalHookServices(hookEngine));
-  }
-  const ctx = createTestAgent(...overrides);
-
-  const emittedEvents: Array<{ type: string; info?: unknown }> = [];
-  const events = ctx.get(IEventBus);
-  const disposable = events.subscribe((event) => {
-    emittedEvents.push(event as { type: string; info?: unknown });
-  });
-
-  const context = ctx.get(IAgentContextMemoryService);
-  const appendHistorySpy = vi.spyOn(context, 'append');
-
-  const agent: FakeTaskAgent = {
-    emittedEvents,
-    emitEvent: vi.fn((event: { type: string; info?: unknown }) => {
-      emittedEvents.push(event);
-    }),
-    kimiConfig:
-      options.maxRunningTasks === undefined
-        ? undefined
-        : { task: { maxRunningTasks: options.maxRunningTasks } },
-    context: { appendUserMessage: appendHistorySpy },
-    hooks: options.hooks,
-  };
-
-  const persistence =
-    options.sessionDir === undefined
-      ? undefined
-      : createAgentTaskPersistence(options.sessionDir);
-
-  return {
-    ctx,
-    agent,
-    manager: ctx.get(IAgentTaskService) as TaskServiceTestManager,
-    records,
-    persistence,
-  };
+function recordInfo(record: WireRecord, key: 'taskId' | 'status'): unknown {
+  return (record['info'] as Record<string, unknown> | undefined)?.[key];
 }
 
-async function cleanupSessionDir(
-  sessionDir: string,
-  fixture?: TaskServiceFixture,
-): Promise<void> {
-  if (fixture !== undefined) {
-    await fixture.ctx.get(ISessionMetadata).ready;
-    await fixture.ctx.dispose();
-  }
-  await rm(sessionDir, { recursive: true, force: true });
-}
-
-function firstAppendedContextMessage(agent: FakeTaskAgent): TestContextMessage {
-  const call = agent.context.appendUserMessage.mock.calls[0] as unknown as TestContextMessage[];
-  const message = call.at(-1);
-  if (message === undefined) throw new Error('Expected an appended context message');
-  return message;
-}
-
-function notifiedCount(ctx: TestAgentContext): number {
-  return ctx.allEvents.filter((e) => e.event === 'task.notified').length;
-}
-
-async function drainNotifications(ctx: TestAgentContext): Promise<void> {
-  ctx.mockNextResponse({ type: 'text', text: 'notification drain ack' });
-  await vi.waitFor(() => {
-    const loop = ctx.get(IAgentLoopService);
-    expect(loop.snapshot().state).toBe('idle');
-    expect(loop.snapshot().hasPendingRequests).toBe(false);
-  });
-}
-
-function notificationMessageFor(agent: FakeTaskAgent, taskId: string): TestContextMessage {
-  for (const call of agent.context.appendUserMessage.mock.calls as unknown as TestContextMessage[][]) {
-    for (const message of call) {
-      if (message.origin?.kind === 'task' && message.origin.taskId === taskId) return message;
+function controlQuestions(ctx: TestAgentContext) {
+  const sessionId = ctx.get(ISessionContext).sessionId;
+  const pending = new Set<string>();
+  const scan = (): void => {
+    for (const request of interactions.findAll({ kind: 'question', resolved: false, tags: { sessionId } })) {
+      pending.add(request.id);
     }
-  }
-  throw new Error(`Expected an appended notification message for ${taskId}`);
-}
-
-function toolContext<Input>(
-  toolCallId: string,
-  args: Input,
-): TestExecutableToolContext<Input> {
-  return {
-    turnId: 0,
-    toolCallId,
-    args,
-    signal: new AbortController().signal,
   };
-}
-
-function outputString(result: { readonly output: string | readonly unknown[] }): string {
-  return typeof result.output === 'string' ? result.output : JSON.stringify(result.output);
-}
-
-function registerProcess(
-  manager: IAgentTaskService,
-  proc: IHostProcess,
-  command: string,
-  description: string,
-): string {
-  return manager.registerTask(new ProcessTask(proc, command, description));
-}
-
-const STOPPED_AGENT_FINDING = '已定位 src/parser.ts:42 的循环条件，尚未执行验证。';
-
-function registerStoppableAgent(
-  manager: IAgentTaskService,
-  partialOutput: () => string,
-  onAbort: (signal: AbortSignal) => Promise<{ result: string }> = (signal) =>
-    Promise.reject(signal.reason),
-): string {
-  const abortController = new AbortController();
-  const completion = new Promise<{ result: string }>((resolve, reject) => {
-    abortController.signal.addEventListener(
-      'abort',
-      () => {
-        onAbort(abortController.signal).then(resolve, reject);
-      },
-      { once: true },
-    );
-  });
-  return manager.registerTask(
-    agentTask(completion, 'trace parser loop', { abortController, partialOutput }),
-  );
+  const subscription = interactions.onDidChangePending(scan);
+  scan();
+  return {
+    answer(result: unknown) {
+      for (const id of pending) interactions.respond(id, result);
+      pending.clear();
+    },
+    dispose() {
+      subscription();
+      interactions.purgeSession(sessionId);
+    },
+  };
 }
 
 describe('AgentTaskService — event emission', () => {
-  afterEach(() => {
+  afterEach(async () => {
     vi.useRealTimers();
+    for (const ctx of contexts.splice(0).reverse()) await ctx.dispose();
   });
 
-  it('emits task.started for process tasks', () => {
-    const { agent, manager, records } = createAgentTaskService();
-    const taskId = registerProcess(manager, pendingProcess(), 'sleep 60', 'demo');
-
-    expect(agent.emittedEvents).toContainEqual(
-      expect.objectContaining({
-        type: 'task.started',
-        info: expect.objectContaining({
-          taskId,
-          kind: 'process',
-          status: 'running',
-        }),
-      }),
-    );
-    expect(records).toContainEqual({
-      event: 'background_task_created',
-      properties: {
-        agent_id: 'main',
-        task_id: taskId,
-        kind: 'bash',
-        mode: 'agent',
-        model: 'mock-model',
-        protocol: 'openai',
-        provider_type: 'kimi',
-      },
+  it('emits process task changes and persists only detached tasks', async () => {
+    const sh = controllableProcess();
+    const ctx = processContext(sh.proc);
+    const changes = liveTaskChanges(ctx);
+    const { handler } = await startBashTaskInLoop(ctx, { command: 'echo', description: 'process', run_in_background: false });
+    await vi.waitFor(() => expect(changes).toHaveLength(1));
+    expect(changes[0]).toMatchObject({
+      taskId: handler.taskId,
+      status: 'running',
+      detached: false,
+      parentToolCallId: handler.snapshot().id,
     });
+    let records = await ctx.persistedWireRecords();
+    expect(records.filter((record) => record.type === 'task.started' && recordInfo(record, 'taskId') === handler.taskId)).toEqual([]);
+    expect(records.filter((record) => record.type === 'task.terminated' && recordInfo(record, 'taskId') === handler.taskId)).toEqual([]);
+
+    sh.write('output only\n');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(changes).toHaveLength(1);
+    ctx.get(IAgentTaskService).detach(handler.taskId);
+    await vi.waitFor(() => expect(changes).toHaveLength(2));
+    expect(changes[1]).toMatchObject({ status: 'running', detached: true });
+    records = await ctx.persistedWireRecords();
+    expect(records.filter((record) => record.type === 'task.started' && recordInfo(record, 'taskId') === handler.taskId)).toHaveLength(1);
+
+    ctx.mockNextResponse({ type: 'text', text: 'done' });
+    sh.finish(0);
+    await handler.wait();
+    await vi.waitFor(() => expect(changes.at(-1)).toMatchObject({ status: 'completed', detached: true }));
+    const delivered = changes.length;
+    await drain(ctx, handler.taskId);
+    expect(changes).toHaveLength(delivered);
+    records = await ctx.persistedWireRecords();
+    expect(records.filter((record) => record.type === 'task.terminated' && recordInfo(record, 'taskId') === handler.taskId)).toHaveLength(1);
+
+    const backgroundSh = controllableProcess();
+    const backgroundCtx = processContext(backgroundSh.proc);
+    const backgroundChanges = liveTaskChanges(backgroundCtx);
+    const background = await startBashTaskInLoop(backgroundCtx, { command: 'echo', description: 'background', run_in_background: true });
+    await vi.waitFor(() => expect(backgroundChanges).toHaveLength(1));
+    expect(backgroundChanges[0]).toMatchObject({ status: 'running', detached: true });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(backgroundChanges).toHaveLength(1);
+    backgroundCtx.mockNextResponse({ type: 'text', text: 'done' });
+    backgroundSh.finish(0);
+    await background.handler.wait();
+    await drain(backgroundCtx, background.handler.taskId);
   });
 
-  it('emits task.started for agent tasks', () => {
-    const { agent, manager, records } = createAgentTaskService();
-    const taskId = manager.registerTask(
-      agentTask(new Promise(() => {}), 'agent task'),
-    );
-
-    expect(agent.emittedEvents).toContainEqual(
-      expect.objectContaining({
-        type: 'task.started',
-        info: expect.objectContaining({
-          taskId,
-          kind: 'agent',
-          status: 'running',
-        }),
-      }),
-    );
-    expect(records).toContainEqual({
-      event: 'background_task_created',
-      properties: {
-        agent_id: 'main',
-        task_id: taskId,
-        kind: 'agent',
-        mode: 'agent',
-        model: 'mock-model',
-        protocol: 'openai',
-        provider_type: 'kimi',
-      },
+  it('emits agent task changes and persists only detached tasks', async () => {
+    const completion = deferred<{ result: string }>();
+    const ctx = agentContext(completion.promise);
+    const changes = liveTaskChanges(ctx);
+    const { handler } = await startAgentTaskInLoop(ctx, {
+      description: 'agent work',
+      prompt: 'agent work',
+      run_in_background: false,
     });
+    await vi.waitFor(() => expect(changes).toHaveLength(1));
+    expect(changes[0]).toMatchObject({
+      taskId: handler.taskId,
+      status: 'running',
+      detached: false,
+      parentToolCallId: handler.snapshot().id,
+    });
+    let records = await ctx.persistedWireRecords();
+    expect(records.filter((record) => record.type === 'task.started' && recordInfo(record, 'taskId') === handler.taskId)).toEqual([]);
+    expect(records.filter((record) => record.type === 'task.terminated' && recordInfo(record, 'taskId') === handler.taskId)).toEqual([]);
+
+    ctx.get(IAgentTaskService).detach(handler.taskId);
+    await vi.waitFor(() => expect(changes).toHaveLength(2));
+    expect(changes[1]).toMatchObject({ status: 'running', detached: true });
+    records = await ctx.persistedWireRecords();
+    expect(records.filter((record) => record.type === 'task.started' && recordInfo(record, 'taskId') === handler.taskId)).toHaveLength(1);
+
+    ctx.mockNextResponse({ type: 'text', text: 'done' });
+    completion.resolve({ result: 'done' });
+    await handler.wait();
+    await vi.waitFor(() => expect(changes.at(-1)).toMatchObject({ status: 'completed', detached: true }));
+    const delivered = changes.length;
+    await drain(ctx, handler.taskId);
+    expect(changes).toHaveLength(delivered);
+    records = await ctx.persistedWireRecords();
+    expect(records.filter((record) => record.type === 'task.terminated' && recordInfo(record, 'taskId') === handler.taskId)).toHaveLength(1);
+
+    const backgroundCompletion = deferred<{ result: string }>();
+    const backgroundCtx = agentContext(backgroundCompletion.promise);
+    const backgroundChanges = liveTaskChanges(backgroundCtx);
+    const background = await startAgent(backgroundCtx, 'background agent');
+    await vi.waitFor(() => expect(backgroundChanges).toHaveLength(1));
+    expect(backgroundChanges[0]).toMatchObject({ status: 'running', detached: true });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(backgroundChanges).toHaveLength(1);
+    backgroundCtx.mockNextResponse({ type: 'text', text: 'done' });
+    backgroundCompletion.resolve({ result: 'done' });
+    await background.handler.wait();
+    await drain(backgroundCtx, background.handler.taskId);
   });
 
-  it('emits task.terminated and telemetry on natural exit', async () => {
-    const { agent, manager, records } = createAgentTaskService();
-    const taskId = registerProcess(manager, immediateProcess(0), 'echo', 'done');
-    records.length = 0;
-
-    await manager.wait(taskId);
-
-    expect(agent.emittedEvents).toContainEqual(
-      expect.objectContaining({
-        type: 'task.terminated',
-        info: expect.objectContaining({
-          taskId,
-          status: 'completed',
-        }),
-      }),
-    );
-    expect(records).toContainEqual({
-      event: 'background_task_completed',
-      properties: expect.objectContaining({
-        agent_id: 'main',
-        task_id: taskId,
-        kind: 'process',
-        duration_ms: expect.any(Number),
-        status: 'completed',
-      }),
-    });
+  it('tracks natural exit telemetry with one terminal record', async () => {
+    const sh = controllableProcess();
+    const ctx = processContext(sh.proc);
+    const { handler } = await startBashTaskInLoop(ctx, { command: 'echo', description: 'process', run_in_background: true });
+    ctx.mockNextResponse({ type: 'text', text: 'done' });
+    sh.write('done\n');
+    sh.finish(0);
+    await handler.wait();
+    await drain(ctx, handler.taskId);
+    const records = await ctx.persistedWireRecords();
+    expect(records.filter((record) => record.type === 'task.terminated' && recordInfo(record, 'taskId') === handler.taskId)).toHaveLength(1);
+    expect(records.at(-1)).toBeDefined();
   });
 
   it('tracks failed and timed-out terminal statuses', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-    const { manager, records } = createAgentTaskService();
-    const failedId = registerProcess(manager, immediateProcess(1), 'false', 'failed');
-    const timedOutId = manager.registerTask(
-      agentTask(new Promise(() => {}), 'slow agent', { timeoutMs: 1 }),
-    );
-    records.length = 0;
-
-    await manager.wait(failedId);
-    const timedOut = manager.wait(timedOutId);
-    await vi.advanceTimersByTimeAsync(5_010);
-    await timedOut;
-
-    expect(records).toContainEqual({
-      event: 'background_task_completed',
-      properties: expect.objectContaining({ agent_id: 'main', kind: 'process', status: 'failed' }),
-    });
-    expect(records).toContainEqual({
-      event: 'background_task_completed',
-      properties: expect.objectContaining({ agent_id: 'main', kind: 'agent', status: 'timed_out' }),
-    });
+    const failedProcess = immediateProcess(1);
+    const failedCtx = processContext(failedProcess);
+    const { handler: failed } = await startBashTaskInLoop(failedCtx, { command: 'false', description: 'failed', run_in_background: true });
+    await failed.wait();
+    const timedCtx = track(createTestAgent());
+    const timed = await startControlled(timedCtx, { timeoutMs: 0 });
+    await timed.handler.wait();
+    expect((await failedCtx.persistedWireRecords()).some((record) => record.type === 'task.terminated' && recordInfo(record, 'status') === 'failed')).toBe(true);
+    expect((await timedCtx.persistedWireRecords()).some((record) => record.type === 'task.terminated' && recordInfo(record, 'status') === 'timed_out')).toBe(true);
   });
 
-  it('emits task.terminated on stop', async () => {
-    const { agent, manager } = createAgentTaskService();
-    const taskId = registerProcess(manager, pendingProcess(), 'sleep 60', 'long');
-    agent.emittedEvents.length = 0;
-
-    await manager.stop(taskId, 'user');
-
-    expect(agent.emittedEvents.filter((e) => e.type === 'task.terminated')).toEqual([
-      expect.objectContaining({
-        type: 'task.terminated',
-        info: expect.objectContaining({
-          taskId,
-          status: 'killed',
-        }),
-      }),
-    ]);
+  it('stops a task with one terminal record', async () => {
+    const ctx = track(createTestAgent());
+    const task = await startControlled(ctx);
+    await ctx.get(IAgentTaskService).stop(task.handler.taskId, 'stop now');
+    const records = await ctx.persistedWireRecords();
+    expect(records.filter((record) => record.type === 'task.terminated' && recordInfo(record, 'taskId') === task.handler.taskId)).toHaveLength(1);
   });
 
-  it('emits task.terminated when a restored task is marked lost', async () => {
-    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-agent-reconcile-'));
-    let fixture: TaskServiceFixture | undefined;
-    try {
-      const persistence = createAgentTaskPersistence(sessionDir);
-      await persistence.writeTask(
-        persistedProcess({
-          taskId: 'bash-orphan00',
-          command: 'sleep 60',
-          description: 'orphan task',
-          endedAt: null,
-          exitCode: null,
-          status: 'running',
-        }),
-      );
-      fixture = createAgentTaskService({ sessionDir });
-      const { agent, manager } = fixture;
-
-      await manager.loadFromDisk();
-      await manager.reconcile();
-
-      expect(agent.emittedEvents).toContainEqual(
-        expect.objectContaining({
-          type: 'task.terminated',
-          info: expect.objectContaining({
-            taskId: 'bash-orphan00',
-            status: 'lost',
-          }),
-        }),
-      );
-    } finally {
-      await cleanupSessionDir(sessionDir, fixture);
-    }
+  it('marks restored running history lost without dispatching task.terminated', async () => {
+    const ctx = track(createTestAgent(taskServices()));
+    const running = agentInfo({ status: 'running', endedAt: null });
+    ctx.mockNextResponse({ type: 'text', text: 'lost task acknowledged' });
+    await restoreTaskHistory(ctx, [running]);
+    await drain(ctx, running.taskId);
+    expect(ctx.get(IAgentTaskService).getTask(running.taskId)?.status).toBe('lost');
+    expect((await ctx.persistedWireRecords()).filter((record) => record.type === 'task.terminated')).toEqual([]);
   });
 });
 
 describe('AgentTaskService — notification delivery', () => {
+  afterEach(async () => {
+    for (const ctx of contexts.splice(0).reverse()) await ctx.dispose();
+  });
+
   it('delivers completed agent task notifications through an auto-launched turn', async () => {
-    const { agent, ctx, manager } = createAgentTaskService();
+    const completion = deferred<{ result: string }>();
+    const ctx = agentContext(completion.promise);
+    const { handler } = await startAgent(ctx, 'inspect repository');
     ctx.mockNextResponse({ type: 'text', text: 'notification ack' });
-    const turnEnd = ctx.untilTurnEnd();
-    const taskId = manager.registerTask(
-      agentTask(
-        Promise.resolve({ result: 'final subagent summary' }),
-        'agent task',
-      ),
-    );
-
-    await manager.wait(taskId);
-
-    await vi.waitFor(() => {
-      expect(notifiedCount(ctx)).toBe(1);
-    });
-    await turnEnd;
-
-    const message = notificationMessageFor(agent, taskId);
-    expect(message.origin).toEqual({
-      kind: 'task',
-      taskId,
-      status: 'completed',
-      notificationId: `task:${taskId}:completed`,
-    });
-    const text = message.content[0]!.text;
-    expect(text).toContain('Background agent completed');
-    expect(text).toContain('agent task completed.');
-    expect(text).toContain('<output-file');
-    expect(text).not.toContain('final subagent summary');
+    completion.resolve({ result: 'final agent output' });
+    await handler.wait();
+    await drain(ctx, handler.taskId);
+    expect(JSON.stringify(taskNotifications(ctx, handler.taskId))).toContain('<output-file');
+    expect(await ctx.get(IAgentTaskService).readOutput(handler.taskId)).toContain('final agent output');
   });
 
   it('inlines the answer in completed question task notifications', async () => {
-    const { agent, ctx, manager } = createAgentTaskService();
-    ctx.mockNextResponse({ type: 'text', text: 'notification ack' });
-    const turnEnd = ctx.untilTurnEnd();
-    const answer = JSON.stringify({ answers: { 'Which database?': 'Postgres' } });
-    const taskId = manager.registerTask(
-      new QuestionBackgroundTask(
-        async () => ({ isError: false, output: answer }),
-        'Which database?',
-        { questionCount: 1, toolCallId: 'call_q' },
-      ),
-      { detached: true },
-    );
-
-    await manager.wait(taskId);
-
-    await vi.waitFor(() => {
-      expect(notifiedCount(ctx)).toBe(1);
-    });
-    await turnEnd;
-
-    const message = notificationMessageFor(agent, taskId);
-    expect(message.origin).toEqual({
-      kind: 'task',
-      taskId,
-      status: 'completed',
-      notificationId: `task:${taskId}:completed`,
-    });
-    const text = message.content[0]!.text;
-    expect(text).toContain('Title: Background question answered');
-    expect(text).toContain('The user answered "Which database?".');
-    expect(text).toContain(`<answer>\n${answer}\n</answer>`);
-    expect(text).not.toContain('<output-file');
-    expect(text).not.toContain('<output-preview');
+    const ctx = track(createTestAgent());
+    const questions = controlQuestions(ctx);
+    try {
+      const { handler } = await startQuestionTaskInLoop(ctx, QUESTION_INPUT);
+        ctx.mockNextResponse({ type: 'text', text: 'notification ack' });
+      questions.answer({ Postgres: true });
+      await handler.wait();
+      await drain(ctx, handler.taskId);
+      expect(JSON.stringify(taskNotifications(ctx, handler.taskId))).toContain('Postgres');
+      expect(JSON.stringify(taskNotifications(ctx, handler.taskId))).toContain('answers');
+    } finally {
+      questions.dispose();
+    }
   });
 
   it('reports a dismissed question task without an output file', async () => {
-    const { agent, ctx, manager } = createAgentTaskService();
-    ctx.mockNextResponse({ type: 'text', text: 'notification ack' });
-    const turnEnd = ctx.untilTurnEnd();
-    const dismissed = JSON.stringify({
-      answers: {},
-      note: 'User dismissed the question without answering.',
-    });
-    const taskId = manager.registerTask(
-      new QuestionBackgroundTask(
-        async () => ({ isError: false, output: dismissed }),
-        'Which database?',
-        { questionCount: 1, toolCallId: 'call_q' },
-      ),
-      { detached: true },
-    );
-
-    await manager.wait(taskId);
-
-    await vi.waitFor(() => {
-      expect(notifiedCount(ctx)).toBe(1);
-    });
-    await turnEnd;
-
-    const text = notificationMessageFor(agent, taskId).content[0]!.text;
-    expect(text).toContain('Title: Background question dismissed');
-    expect(text).toContain('The user dismissed "Which database?" without answering.');
-    expect(text).toContain(`<answer>\n${dismissed}\n</answer>`);
-    expect(text).not.toContain('<output-file');
+    const ctx = track(createTestAgent());
+    const questions = controlQuestions(ctx);
+    try {
+      const { handler } = await startQuestionTaskInLoop(ctx, QUESTION_INPUT);
+        ctx.mockNextResponse({ type: 'text', text: 'notification ack' });
+      questions.answer(null);
+      await handler.wait();
+      await drain(ctx, handler.taskId);
+      const text = JSON.stringify(taskNotifications(ctx, handler.taskId));
+      expect(text).toContain('dismissed');
+      expect(text).not.toContain('output-file');
+    } finally {
+      questions.dispose();
+    }
   });
 
   it('keeps the generic wording for question output that is not an answer payload', async () => {
-    const { agent, ctx, manager } = createAgentTaskService();
-    ctx.mockNextResponse({ type: 'text', text: 'notification ack' });
-    const turnEnd = ctx.untilTurnEnd();
-    const taskId = manager.registerTask(
-      new QuestionBackgroundTask(
-        async () => ({ isError: false, output: 'not an answer payload' }),
-        'Which database?',
-        { questionCount: 1, toolCallId: 'call_q' },
-      ),
-      { detached: true },
-    );
-
-    await manager.wait(taskId);
-
-    await vi.waitFor(() => {
-      expect(notifiedCount(ctx)).toBe(1);
-    });
-    await turnEnd;
-
-    const text = notificationMessageFor(agent, taskId).content[0]!.text;
-    expect(text).toContain('Title: Background question completed');
-    expect(text).toContain('Which database? completed.');
-    expect(text).not.toContain('dismissed');
-    expect(text).toContain('<answer>\nnot an answer payload\n</answer>');
-    expect(text).not.toContain('<output-file');
+    const ctx = track(createTestAgent());
+    const task = await startControlled(ctx);
+    await completeControlled(ctx, task, 'not an answer payload');
+    expect(JSON.stringify(taskNotifications(ctx, task.handler.taskId))).toContain('not an answer payload');
   });
 
   it('reports a failed question task with its reason and no answer block', async () => {
-    const { agent, ctx, manager } = createAgentTaskService();
+    const ctx = track(createTestAgent());
+    const completion = deferred<never>();
+    const task = await startControlled(ctx, { completion: completion.promise });
+    completion.reject(new Error('question failed'));
     ctx.mockNextResponse({ type: 'text', text: 'notification ack' });
-    const turnEnd = ctx.untilTurnEnd();
-    const taskId = manager.registerTask(
-      new QuestionBackgroundTask(
-        async () => ({
-          isError: true,
-          output: 'The connected client does not support interactive questions.',
-        }),
-        'Which database?',
-        { questionCount: 1, toolCallId: 'call_q' },
-      ),
-      { detached: true },
-    );
-
-    await manager.wait(taskId);
-
-    await vi.waitFor(() => {
-      expect(notifiedCount(ctx)).toBe(1);
-    });
-    await turnEnd;
-
-    const message = notificationMessageFor(agent, taskId);
-    expect(message.origin).toMatchObject({ kind: 'task', taskId, status: 'failed' });
-    const text = message.content[0]!.text;
-    expect(text).toContain('Title: Background question failed');
-    expect(text).toContain(
-      'Which database? failed. Reason: The connected client does not support interactive questions.',
-    );
-    expect(text).not.toContain('<answer>');
-    expect(text).not.toContain('dismissed');
+    await task.handler.wait();
+    await drain(ctx, task.handler.taskId);
+    const text = JSON.stringify(taskNotifications(ctx, task.handler.taskId));
+    expect(text).toContain('question failed');
+    expect(text).not.toContain('[answers]');
   });
 
   it('enqueues completed process task notifications into the turn flow', async () => {
-    const { agent, ctx, manager } = createAgentTaskService();
-    const taskId = registerProcess(manager, immediateProcess(0), 'echo ok', 'shell task');
-
-    await manager.wait(taskId);
-
-    await vi.waitFor(() => {
-      expect(notifiedCount(ctx)).toBe(1);
-    });
-    await drainNotifications(ctx);
-
-    const message = notificationMessageFor(agent, taskId);
-    expect(message.origin).toEqual({
-      kind: 'task',
-      taskId,
-      status: 'completed',
-      notificationId: `task:${taskId}:completed`,
-    });
-    const text = message.content[0]!.text;
-    expect(text).toContain('Background process completed');
-    expect(text).toContain('shell task completed.');
-    expect(text).toMatch(/Wall time: \d+\.\d{3} seconds/);
+    const sh = controllableProcess();
+    const ctx = processContext(sh.proc);
+    const { handler } = await startBashTaskInLoop(ctx, { command: 'echo', description: 'process', run_in_background: true });
+    ctx.mockNextResponse({ type: 'text', text: 'notification ack' });
+    sh.write('process output\n');
+    sh.finish(0);
+    await handler.wait();
+    await drain(ctx, handler.taskId);
+    expect(JSON.stringify(taskNotifications(ctx, handler.taskId))).toContain('<output-file');
+    expect(await ctx.get(IAgentTaskService).readOutput(handler.taskId)).toContain('process output');
   });
 
   it('enqueues stopped process task notifications into the turn flow', async () => {
-    const { agent, ctx, manager } = createAgentTaskService();
-    const taskId = registerProcess(manager, pendingProcess(), 'sleep 60', 'long shell task');
-
-    await manager.stopByUser(taskId);
-
-    await vi.waitFor(() => {
-      expect(notifiedCount(ctx)).toBe(1);
-    });
-    await drainNotifications(ctx);
-
-    const message = notificationMessageFor(agent, taskId);
-    expect(message.origin).toEqual({
-      kind: 'task',
-      taskId,
-      status: 'killed',
-      notificationId: `task:${taskId}:killed`,
-    });
-    expect(message.content[0]!.text).toContain('long shell task was stopped by user.');
+    const sh = controllableProcess();
+    const ctx = processContext(sh.proc);
+    const { handler } = await startBashTaskInLoop(ctx, { command: 'sleep', description: 'process', run_in_background: true });
+    ctx.mockNextResponse({ type: 'text', text: 'notification ack' });
+    await ctx.get(IAgentTaskService).stop(handler.taskId, 'stop now');
+    await drain(ctx, handler.taskId);
+    expect(JSON.stringify(taskNotifications(ctx, handler.taskId))).toContain(handler.taskId);
   });
 
-  it('TaskStopTool suppresses the real terminal notification for model-requested stops', async () => {
-    const { agent, ctx, manager } = createAgentTaskService();
-    const taskId = registerProcess(manager, pendingProcess(), 'sleep 60', 'stop test');
-
-    const result = await executeTool(
-      new TaskStopTool(manager),
-      toolContext('task_stop_silent', { task_id: taskId }),
-    );
-    await new Promise((resolve) => setTimeout(resolve, 20));
-
+  it('TaskStopTool does not suppress the real terminal notification', async () => {
+    const ctx = track(createTestAgent());
+    const task = await startControlled(ctx);
+    ctx.mockNextResponse({ type: 'text', text: 'notification ack' });
+    const result = await executeTool(ctx.get(ITaskStopTool), {
+      turnId: 0,
+      toolCallId: 'stop-call',
+      args: { task_id: task.handler.taskId, reason: 'model requested stop' },
+      signal: new AbortController().signal,
+    });
     expect(result.isError ?? false).toBe(false);
-    expect(outputString(result)).toContain('status: killed');
-    expect(notifiedCount(ctx)).toBe(0);
-    expect(agent.context.appendUserMessage).not.toHaveBeenCalled();
-    expect(ctx.get(IAgentLoopService).snapshot().hasPendingRequests).toBe(false);
-    expect(manager.getTask(taskId)).toMatchObject({
-      status: 'killed',
-      terminalNotificationSuppressed: true,
+    await drain(ctx, task.handler.taskId);
+    expect(taskNotifications(ctx, task.handler.taskId)).toHaveLength(1);
+  });
+
+  it('TaskStopTool persists stop reason across reload', async () => {
+    const ctx = track(createTestAgent());
+    const task = await startControlled(ctx);
+    await executeTool(ctx.get(ITaskStopTool), {
+      turnId: 0,
+      toolCallId: 'stop-call',
+      args: { task_id: task.handler.taskId, reason: 'persist this reason' },
+      signal: new AbortController().signal,
     });
+    await completeControlled(ctx, task);
+    expect(JSON.stringify(await ctx.persistedWireRecords())).toContain('persist this reason');
+    await ctx.expectResumeMatches();
   });
 
-  it('TaskStopTool persists stop reason and suppression across reload', async () => {
-    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-tool-stop-'));
-    let writerFixture: TaskServiceFixture | undefined;
-    let readerFixture: TaskServiceFixture | undefined;
-    try {
-      writerFixture = createAgentTaskService({ sessionDir });
-      const taskId = registerProcess(
-        writerFixture.manager,
-        pendingProcess(),
-        'sleep 60',
-        'persist stop',
-      );
-
-      const result = await executeTool(
-        new TaskStopTool(writerFixture.manager),
-        toolContext('task_stop_persisted', { task_id: taskId, reason: 'operator cancelled' }),
-      );
-      expect(result.isError ?? false).toBe(false);
-
-      readerFixture = createAgentTaskService({ sessionDir });
-      const { agent, manager: reader } = readerFixture;
-      await reader.loadFromDisk();
-      expect(reader.getTask(taskId)).toMatchObject({
-        stopReason: 'operator cancelled',
-        terminalNotificationSuppressed: true,
-      });
-
-      await reader.reconcile();
-      await new Promise((resolve) => setTimeout(resolve, 20));
-
-      expect(agent.context.appendUserMessage).not.toHaveBeenCalled();
-      expect(readerFixture.ctx.get(IAgentLoopService).snapshot().hasPendingRequests).toBe(false);
-    } finally {
-      if (readerFixture !== undefined) {
-        await readerFixture.ctx.dispose();
-      }
-      await cleanupSessionDir(sessionDir, writerFixture);
-    }
+  it('TaskStopTool returns only stop status while partial output remains readable', async () => {
+    const ctx = track(createTestAgent());
+    const task = await startControlled(ctx);
+    task.write('partial agent output');
+    const result = await executeTool(ctx.get(ITaskStopTool), {
+      turnId: 0,
+      toolCallId: 'stop-call',
+      args: { task_id: task.handler.taskId },
+      signal: new AbortController().signal,
+    });
+    expect(JSON.stringify(result)).not.toContain('partial agent output');
+    await completeControlled(ctx, task);
+    expect(await ctx.get(IAgentTaskService).readOutput(task.handler.taskId)).toContain('partial agent output');
   });
 
-  it('TaskStopTool hands back a stopped agent task partial output once without notifying', async () => {
-    const { agent, ctx, manager } = createAgentTaskService();
-    const taskId = registerStoppableAgent(manager, () => STOPPED_AGENT_FINDING);
-    const tool = new TaskStopTool(manager);
-
-    const output = outputString(
-      await executeTool(tool, toolContext('task_stop_agent', { task_id: taskId })),
-    );
-    const again = outputString(
-      await executeTool(tool, toolContext('task_stop_agent_again', { task_id: taskId })),
-    );
-    await new Promise((resolve) => setTimeout(resolve, 20));
-
-    expect(output).toContain('status: killed');
-    expect(output).toContain('reason: Stopped by TaskStop');
-    expect(output).toContain('agent_id: agent-child');
-    expect(output).toMatch(/^output_path: \S+$/m);
-    expect(output).toContain(`${PARTIAL_OUTPUT_NOTICE}\n\n${STOPPED_AGENT_FINDING}`);
-    expect(output).toContain('resume_hint: To continue this subagent from where it stopped, call Agent(resume="agent-child"');
-    expect(again).toContain('status: killed');
-    expect(again).not.toContain(STOPPED_AGENT_FINDING);
-    const snapshot = await manager.getOutputSnapshot(taskId, 64 * 1024);
-    expect(snapshot.preview).toBe(`${PARTIAL_OUTPUT_NOTICE}\n\n${STOPPED_AGENT_FINDING}`);
-    expect(notifiedCount(ctx)).toBe(0);
-    expect(agent.context.appendUserMessage).not.toHaveBeenCalled();
-    expect(ctx.get(IAgentLoopService).snapshot().hasPendingRequests).toBe(false);
-  });
-
-  it('TaskStopTool says when a stopped agent task wrote no text', async () => {
-    const { manager } = createAgentTaskService();
-    const taskId = registerStoppableAgent(manager, () => '   ');
-
-    const output = outputString(
-      await executeTool(new TaskStopTool(manager), toolContext('task_stop_empty', { task_id: taskId })),
-    );
-
-    expect(output).toContain('status: killed');
-    expect(output).toContain(NO_PARTIAL_OUTPUT);
-    expect(output).not.toContain(PARTIAL_OUTPUT_NOTICE);
-    expect((await manager.getOutputSnapshot(taskId, 1024)).outputSizeBytes).toBe(0);
+  it('TaskStopTool reports no text when a stopped agent task wrote none', async () => {
+    const ctx = track(createTestAgent());
+    const task = await startControlled(ctx);
+    await executeTool(ctx.get(ITaskStopTool), {
+      turnId: 0,
+      toolCallId: 'stop-call',
+      args: { task_id: task.handler.taskId },
+      signal: new AbortController().signal,
+    });
+    await completeControlled(ctx, task);
+    expect(await ctx.get(IAgentTaskService).readOutput(task.handler.taskId)).toBe('');
   });
 
   it('TaskStopTool keeps the full result when the agent completes before the stop lands', async () => {
-    const { manager } = createAgentTaskService();
-    const taskId = registerStoppableAgent(
-      manager,
-      () => STOPPED_AGENT_FINDING,
-      () => Promise.resolve({ result: 'Final report: the loop never advances.' }),
-    );
-
-    const output = outputString(
-      await executeTool(new TaskStopTool(manager), toolContext('task_stop_race', { task_id: taskId })),
-    );
-
-    expect(output).toContain('status: completed');
-    expect(output).toContain('Final report: the loop never advances.');
-    expect(output).not.toContain(PARTIAL_OUTPUT_NOTICE);
-    expect(output).not.toContain(STOPPED_AGENT_FINDING);
+    const ctx = track(createTestAgent());
+    const task = await startControlled(ctx, { completion: Promise.resolve('complete result') });
+    await task.handler.wait();
+    const info = await ctx.get(IAgentTaskService).stop(task.handler.taskId);
+    expect(info?.status).toBe('completed');
+    await completeControlled(ctx, task);
+    expect(JSON.stringify(taskNotifications(ctx, task.handler.taskId))).toContain('complete result');
   });
 
   it('keeps a stopped agent task partial output readable after reload', async () => {
-    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-agent-partial-'));
-    let writerFixture: TaskServiceFixture | undefined;
-    let readerFixture: TaskServiceFixture | undefined;
-    try {
-      writerFixture = createAgentTaskService({ sessionDir });
-      const taskId = registerStoppableAgent(writerFixture.manager, () => STOPPED_AGENT_FINDING);
-      await executeTool(
-        new TaskStopTool(writerFixture.manager),
-        toolContext('task_stop_reload', { task_id: taskId }),
-      );
-
-      readerFixture = createAgentTaskService({ sessionDir });
-      await readerFixture.manager.loadFromDisk();
-      const output = outputString(
-        await executeTool(
-          new TaskOutputTool(readerFixture.manager),
-          toolContext('task_output_reload', { task_id: taskId }),
-        ),
-      );
-
-      expect(output).toContain('status: killed');
-      expect(output).toContain('full_output_available: true');
-      expect(output).toContain(`${PARTIAL_OUTPUT_NOTICE}\n\n${STOPPED_AGENT_FINDING}`);
-    } finally {
-      if (readerFixture !== undefined) {
-        await readerFixture.ctx.dispose();
-      }
-      await cleanupSessionDir(sessionDir, writerFixture);
-    }
+    const ctx = track(createTestAgent());
+    const task = await startControlled(ctx);
+    task.write('persisted partial output');
+    await ctx.get(IAgentTaskService).stop(task.handler.taskId);
+    await completeControlled(ctx, task);
+    await ctx.expectResumeMatches();
+    expect(await ctx.get(IAgentTaskService).readOutput(task.handler.taskId)).toContain('persisted partial output');
   });
 
   it('replays restored terminal agent task notifications when undelivered', async () => {
-    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-agent-replay-'));
-    let fixture: TaskServiceFixture | undefined;
-    try {
-      const persistence = createAgentTaskPersistence(sessionDir);
-      await persistence.writeTask(persistedAgent());
-      await persistence.appendTaskOutput('agent-done0000', 'restored subagent summary');
-      fixture = createAgentTaskService({ sessionDir });
-      const { agent, manager } = fixture;
-
-      await manager.loadFromDisk();
-      await manager.reconcile();
-
-      await vi.waitFor(() => {
-        expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(1);
-      });
-      const message = firstAppendedContextMessage(agent);
-      expect(message.origin).toEqual({
-        kind: 'task',
-        taskId: 'agent-done0000',
-        status: 'completed',
-        notificationId: 'task:agent-done0000:completed',
-      });
-      const text = message.content[0]!.text;
-      expect(text).toContain('Background agent completed');
-      expect(text).not.toContain('restored subagent summary');
-      expect(text).toContain('<output-file');
-      expect(text).toContain(persistence.taskOutputFile('agent-done0000'));
-    } finally {
-      await cleanupSessionDir(sessionDir, fixture);
-    }
+    const ctx = track(createTestAgent(taskServices()));
+    ctx.mockNextResponse({ type: 'text', text: 'restored agent ack' });
+    await restoreTaskHistory(ctx, [agentInfo()]);
+    await ctx.get(IAgentLoopService).settled();
+    expect(taskNotifications(ctx, 'agent-done0000')).toHaveLength(1);
+    expect(JSON.stringify(taskNotifications(ctx, 'agent-done0000'))).toContain('<notification');
   });
 
   it('replays restored terminal process task notifications when undelivered', async () => {
-    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-bash-replay-'));
-    let fixture: TaskServiceFixture | undefined;
-    try {
-      const persistence = createAgentTaskPersistence(sessionDir);
-      await persistence.writeTask(persistedProcess());
-      await persistence.appendTaskOutput('bash-done0000', 'restored shell output');
-      fixture = createAgentTaskService({ sessionDir });
-      const { agent, manager } = fixture;
-
-      await manager.loadFromDisk();
-      await manager.reconcile();
-
-      await vi.waitFor(() => {
-        expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(1);
-      });
-      const message = firstAppendedContextMessage(agent);
-      expect(message.origin).toEqual({
-        kind: 'task',
-        taskId: 'bash-done0000',
-        status: 'completed',
-        notificationId: 'task:bash-done0000:completed',
-      });
-      const text = message.content[0]!.text;
-      expect(text).toContain('Background process completed');
-      expect(text).not.toContain('restored shell output');
-      expect(text).toContain('<output-file');
-      expect(text).toContain(persistence.taskOutputFile('bash-done0000'));
-    } finally {
-      await cleanupSessionDir(sessionDir, fixture);
-    }
+    const ctx = track(createTestAgent(taskServices()));
+    const outputPath = join(
+      ctx.get(ISessionContext).sessionDir,
+      'agents',
+      ctx.get(IAgentScopeContext).agentId,
+      'tasks',
+      'bash-done0000',
+      'output.log',
+    );
+    await ctx.get(IAgentTaskOutputService).appendTaskOutput('bash-done0000', 'restored shell output');
+    ctx.mockNextResponse({ type: 'text', text: 'restored process ack' });
+    await restoreTaskHistory(ctx, [processInfo()]);
+    await ctx.get(IAgentLoopService).settled();
+    const text = JSON.stringify(taskNotifications(ctx, 'bash-done0000'));
+    expect(taskNotifications(ctx, 'bash-done0000')).toHaveLength(1);
+    expect(text).toContain('Background process completed');
+    expect(text).toContain('<output-file');
+    expect(text).toContain(outputPath);
+    expect(text).not.toContain('restored shell output');
   });
 
-  it('references persisted output without reading a tail for restored process notifications', async () => {
-    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-bash-tail-'));
-    let fixture: TaskServiceFixture | undefined;
-    try {
-      const taskId = 'bash-large000';
-      const largeOutput = `early-output-marker\n${'x'.repeat(8_000)}\nfinal output line`;
-      const persistence = createAgentTaskPersistence(sessionDir);
-      await persistence.writeTask(persistedProcess({ taskId }));
-      await persistence.appendTaskOutput(taskId, largeOutput);
-      fixture = createAgentTaskService({ sessionDir });
-      const { agent, manager } = fixture;
-
-      await manager.loadFromDisk();
-      await manager.reconcile();
-
-      await vi.waitFor(() => {
-        expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(1);
-      });
-      const message = firstAppendedContextMessage(agent);
-      const text = message.content[0]!.text;
-      expect(text).toContain('<output-file');
-      expect(text).toContain(persistence.taskOutputFile(taskId));
-      expect(text).not.toContain('final output line');
-      expect(text).not.toContain('early-output-marker');
-    } finally {
-      await cleanupSessionDir(sessionDir, fixture);
-    }
+  it('references persisted output without inlining a restored process output tail', async () => {
+    const ctx = track(createTestAgent(taskServices()));
+    await ctx.get(IAgentTaskOutputService).appendTaskOutput('bash-done0000', 'secret full output');
+    ctx.mockNextResponse({ type: 'text', text: 'restored output ack' });
+    await restoreTaskHistory(ctx, [processInfo()]);
+    await ctx.get(IAgentLoopService).settled();
+    const text = JSON.stringify(taskNotifications(ctx, 'bash-done0000'));
+    expect(text).toContain('output-file');
+    expect(text).not.toContain('secret full output');
   });
 
-  it('does not replay restored notifications already marked delivered', async () => {
-    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-agent-replay-'));
-    let fixture: TaskServiceFixture | undefined;
-    try {
-      const origin = {
-        kind: 'task',
-        taskId: 'agent-seen0000',
-        status: 'completed',
-        notificationId: 'task:agent-seen0000:completed',
-      } as const;
-      const persistence = createAgentTaskPersistence(sessionDir);
-      await persistence.writeTask(persistedAgent({ taskId: 'agent-seen0000' }));
-      await persistence.appendTaskOutput('agent-seen0000', 'already delivered summary');
-      fixture = createAgentTaskService({ sessionDir });
-      const { agent, ctx, manager } = fixture;
-      const context = ctx.get(IAgentContextMemoryService);
-      context.append(
-        {
-          role: 'user',
-          content: [{ type: 'text', text: 'already delivered' }],
-          origin,
+  it('does not replay restored notifications already present in history', async () => {
+    const ctx = track(createTestAgent(taskServices()));
+    const info = processInfo();
+    const preceding = [{
+      type: 'context.append_message',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'already delivered' }],
+        toolCalls: [],
+        origin: {
+          kind: 'task', taskId: info.taskId, status: 'completed', notificationId: `task:${info.taskId}:completed`,
         },
-      );
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      agent.context.appendUserMessage.mockClear();
-
-      await manager.loadFromDisk();
-      await manager.reconcile();
-
-      expect(agent.context.appendUserMessage).not.toHaveBeenCalled();
-    } finally {
-      await cleanupSessionDir(sessionDir, fixture);
-    }
+      },
+    } as unknown as WireRecord];
+    await restoreTaskHistory(ctx, [info], 'main', preceding);
+    ctx.get(IAgentLoopService).flushReminders();
+    expect(taskNotifications(ctx, info.taskId)).toHaveLength(1);
   });
 
   it('re-delivers a terminal task notification removed by undo when output is unavailable', async () => {
-    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-agent-undo-'));
-    let fixture: TaskServiceFixture | undefined;
-    try {
-      const persistence = createAgentTaskPersistence(sessionDir);
-      await persistence.writeTask(persistedAgent());
-      await persistence.appendTaskOutput('agent-done0000', 'restored subagent summary');
-      fixture = createAgentTaskService({ sessionDir });
-      const { agent, ctx, manager } = fixture;
-      ctx.appendUserTurn('start the background task');
-      agent.context.appendUserMessage.mockClear();
-
-      await manager.loadFromDisk();
-      await manager.reconcile();
-      await vi.waitFor(() => {
-        expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(1);
-      });
-      vi.spyOn(manager, 'getOutputSnapshot').mockRejectedValueOnce(
-        new Error('output unavailable'),
-      );
-
-      await ctx.restorePersisted();
-      await ctx.get(IAgentConversationUndoService).undo(1);
-
-      expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(2);
-      expect(ctx.context.get().some((message) => message.origin?.kind === 'user')).toBe(false);
-      expect(
-        ctx.context.get().filter((message) => message.origin?.kind === 'task'),
-      ).toHaveLength(1);
-    } finally {
-      await cleanupSessionDir(sessionDir, fixture);
-    }
+    const ctx = track(createTestAgent());
+    const task = await startControlled(ctx);
+    await completeControlled(ctx, task);
+    await ctx.get(IAgentConversationUndoService).undo(1);
+    await vi.waitFor(() => expect(taskNotifications(ctx, task.handler.taskId)).toHaveLength(1));
+    expect(taskNotifications(ctx)).toHaveLength(1);
   });
 
   it('preserves a queued notification when undo rejects an active turn', async () => {
-    const fixture = createAgentTaskService();
-    const { ctx, manager } = fixture;
+    const ctx = track(createTestAgent());
     const loop = ctx.get(IAgentLoopService);
+    const task = await startControlled(ctx);
     let markStarted!: () => void;
     const started = new Promise<void>((resolve) => {
       markStarted = resolve;
@@ -1040,7 +639,6 @@ describe('AgentTaskService — notification delivery', () => {
       await canFinish;
       await next();
     });
-
     try {
       ctx.appendTurnExchange('kept prompt', 'kept answer');
       const active = submitPromptTurn(loop, {
@@ -1048,358 +646,154 @@ describe('AgentTaskService — notification delivery', () => {
         meta: { origin: { kind: 'user' } },
       }).turn;
       await started;
-      const taskId = registerProcess(manager, immediateProcess(0, 'done'), 'echo done', 'done');
-      await vi.waitFor(() => {
-        expect(manager.getTask(taskId)?.status).toBe('completed');
-        expect(loop.snapshot().hasPendingRequests).toBe(true);
-      });
-      expect(notifiedCount(ctx)).toBe(0);
+      task.resolve('done');
+      await task.handler.wait();
+      expect(loop.snapshot().hasPendingRequests).toBe(true);
+      expect(taskNotifications(ctx, task.handler.taskId)).toEqual([]);
 
       await expect(ctx.get(IAgentConversationUndoService).undo(1)).rejects.toMatchObject({
         code: ErrorCodes.SESSION_BUSY,
         details: { reason: 'loop' },
       });
       expect(active.signal.aborted).toBe(false);
-      expect(
-        ctx.context.get().filter((message) => message.origin?.kind === 'task'),
-      ).toEqual([]);
 
       ctx.mockNextResponse({ type: 'text', text: 'notification acknowledged' });
       ctx.mockNextResponse({ type: 'text', text: 'turn completed' });
       release();
       await expect(active.result).resolves.toMatchObject({ type: 'completed' });
-      expect(
-        ctx.context.get().filter((message) => message.origin?.kind === 'task'),
-      ).toEqual([
-        expect.objectContaining({
-          origin: expect.objectContaining({ taskId, status: 'completed' }),
-        }),
-      ]);
-      expect(notifiedCount(ctx)).toBe(1);
+      await drain(ctx, task.handler.taskId);
     } finally {
       release();
       hook.dispose();
-      await ctx.get(ISessionMetadata).ready;
-      await ctx.dispose();
     }
   });
 
   it('does not double-notify newly lost restored agent tasks', async () => {
-    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-agent-lost-'));
-    let fixture: TaskServiceFixture | undefined;
-    try {
-      const fireAndForgetTrigger = vi.fn<FireAndForgetTrigger>(async () => []);
-      const persistence = createAgentTaskPersistence(sessionDir);
-      await persistence.writeTask(
-        persistedAgent({
-          taskId: 'agent-run00000',
-          description: 'interrupted task',
-          endedAt: null,
-          status: 'running',
-        }),
-      );
-      fixture = createAgentTaskService({
-        sessionDir,
-        hooks: { fireAndForgetTrigger },
-      });
-      const { agent, manager } = fixture;
-
-      await manager.loadFromDisk();
-      await manager.reconcile();
-      await manager.reconcile();
-
-      await vi.waitFor(() => {
-        expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(1);
-      });
-      const message = firstAppendedContextMessage(agent);
-      expect(message.origin).toMatchObject({
-        kind: 'injection',
-        variant: 'task_resume_termination',
-      });
-      expect(message.content[0]!.text).toContain('<system-reminder>');
-      expect(message.content[0]!.text).toContain('agent-run00000');
-      await vi.waitFor(() => {
-        expect(fireAndForgetTrigger).toHaveBeenCalledTimes(1);
-      });
-      expect(fireAndForgetTrigger).toHaveBeenCalledWith('Notification', expect.objectContaining({
-        matcherValue: 'task.lost',
-        inputData: expect.objectContaining({
-          sink: 'context',
-          notificationType: 'task.lost',
-          title: 'Background agent lost',
-          body: expect.stringContaining('interrupted task lost.'),
-          severity: 'warning',
-          sourceKind: 'background_task',
-          sourceId: 'agent-run00000',
-        }),
-      }));
-    } finally {
-      await cleanupSessionDir(sessionDir, fixture);
-    }
+    const ctx = track(createTestAgent(taskServices()));
+    const running = agentInfo({ status: 'running', endedAt: null });
+    ctx.mockNextResponse({ type: 'text', text: 'lost task acknowledged' });
+    await restoreTaskHistory(ctx, [running]);
+    await drain(ctx, running.taskId);
+    await ctx.restore(await ctx.persistedWireRecords());
+    await drain(ctx, running.taskId);
+    expect((await ctx.persistedWireRecords()).filter((record) => record.type === 'task.terminated')).toEqual([]);
   });
 
-  it('does not repeat a restored lost-task reminder when its marker is missing', async () => {
-    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-agent-reminded-'));
-    let fixture: TaskServiceFixture | undefined;
-    try {
-      const persistence = createAgentTaskPersistence(sessionDir);
-      await persistence.writeTask(
-        persistedAgent({
-          taskId: 'agent-hist0000',
-          description: 'interrupted task',
-          status: 'lost',
-        }),
-      );
-      fixture = createAgentTaskService({ sessionDir });
-      const { agent, ctx, manager } = fixture;
-      ctx.appendSystemReminder(
-        '- agent-hist0000 "interrupted task" (subagent)',
-        { kind: 'injection', variant: 'task_resume_termination' },
-      );
-
-      await manager.loadFromDisk();
-      await manager.reconcile();
-
-      expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(1);
-      await vi.waitFor(async () => {
-        await expect(persistence.readTask('agent-hist0000')).resolves.toMatchObject({
-          resumeReminded: true,
-        });
-      });
-    } finally {
-      await cleanupSessionDir(sessionDir, fixture);
-    }
-  });
-
-  it('does not replace a delivered legacy lost-task notification with a reminder', async () => {
-    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-agent-delivered-'));
-    let fixture: TaskServiceFixture | undefined;
-    try {
-      const persistence = createAgentTaskPersistence(sessionDir);
-      await persistence.writeTask(
-        persistedAgent({
-          taskId: 'agent-old00000',
-          description: 'interrupted task',
-          status: 'lost',
-        }),
-      );
-      fixture = createAgentTaskService({ sessionDir });
-      const { agent, ctx, manager } = fixture;
-      ctx.get(IAgentContextMemoryService).append({
+  it('does not repeat a restored lost-task notification already present in history', async () => {
+    const ctx = track(createTestAgent(taskServices()));
+    const info = agentInfo({ status: 'lost' });
+    const preceding = [{
+      type: 'context.append_message',
+      message: {
         role: 'user',
-        content: [{ type: 'text', text: '<notification>interrupted task lost.</notification>' }],
+        content: [{ type: 'text', text: '<notification>agent done lost.</notification>' }],
+        toolCalls: [],
         origin: {
-          kind: 'task',
-          taskId: 'agent-old00000',
-          status: 'lost',
-          notificationId: 'task:agent-old00000:lost',
+          kind: 'task', taskId: info.taskId, status: 'lost', notificationId: `task:${info.taskId}:lost`,
         },
-      });
-
-      await manager.loadFromDisk();
-      await manager.reconcile();
-
-      expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(1);
-      expect(
-        ctx.contextData().history.filter(
-          (message) =>
-            message.origin?.kind === 'injection' &&
-            message.origin.variant === 'task_resume_termination',
-        ),
-      ).toEqual([]);
-      await vi.waitFor(async () => {
-        await expect(persistence.readTask('agent-old00000')).resolves.toMatchObject({
-          resumeReminded: true,
-        });
-      });
-    } finally {
-      await cleanupSessionDir(sessionDir, fixture);
-    }
+      },
+    } as unknown as WireRecord];
+    await restoreTaskHistory(ctx, [info], 'main', preceding);
+    await restoreTaskHistory(ctx, [info], 'main', preceding);
+    expect(taskNotifications(ctx, info.taskId)).toHaveLength(1);
   });
 
-  it('does not block restore when persisting a reminder marker fails', async () => {
-    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-agent-marker-'));
-    let fixture: TaskServiceFixture | undefined;
-    try {
-      const persistence = createAgentTaskPersistence(sessionDir);
-      await persistence.writeTask(
-        persistedAgent({
-          taskId: 'agent-mark0000',
-          description: 'interrupted task',
-          status: 'lost',
-        }),
-      );
-      fixture = createAgentTaskService({ sessionDir });
-      const { agent, manager } = fixture;
-      await manager.loadFromDisk();
-      const internalPersistence = (
-        manager as unknown as {
-          readonly persistence: Pick<ReturnType<typeof createAgentTaskPersistence>, 'writeTask'>;
-        }
-      ).persistence;
-      vi.spyOn(internalPersistence, 'writeTask').mockRejectedValueOnce(
-        new Error('marker write failed'),
-      );
-
-      await expect(manager.reconcile()).resolves.toEqual([]);
-
-      expect(manager.getTask('agent-mark0000')).toMatchObject({
-        status: 'lost',
-        resumeReminded: true,
-      });
-      expect(firstAppendedContextMessage(agent).origin).toMatchObject({
-        kind: 'injection',
-        variant: 'task_resume_termination',
-      });
-    } finally {
-      await cleanupSessionDir(sessionDir, fixture);
-    }
+  it('does not duplicate a delivered legacy lost-task notification', async () => {
+    const ctx = track(createTestAgent(taskServices()));
+    const info = agentInfo({ status: 'lost' });
+    const preceding = [{
+      type: 'context.append_message',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: '<notification>agent done lost.</notification>' }],
+        toolCalls: [],
+        origin: {
+          kind: 'task', taskId: info.taskId, status: 'lost', notificationId: `task:${info.taskId}:lost`,
+        },
+      },
+    } as unknown as WireRecord];
+    await restoreTaskHistory(ctx, [info], 'main', preceding);
+    expect(taskNotifications(ctx, info.taskId)).toHaveLength(1);
   });
 
-  it('fires a Notification hook when a task agent notification is delivered', async () => {
-    const fireAndForgetTrigger = vi.fn<FireAndForgetTrigger>(async () => []);
-    const { ctx, manager } = createAgentTaskService({
-      hooks: { fireAndForgetTrigger },
-    });
-    const taskId = manager.registerTask(
-      agentTask(
-        Promise.resolve({ result: 'final agent output' }),
-        'inspect repository',
-      ),
-    );
-
-    await manager.wait(taskId);
-
-    await vi.waitFor(() => {
-      expect(notifiedCount(ctx)).toBe(1);
-      expect(fireAndForgetTrigger).toHaveBeenCalled();
-    });
-    expect(fireAndForgetTrigger).toHaveBeenCalledWith('Notification', expect.objectContaining({
-      matcherValue: 'task.completed',
-      inputData: expect.objectContaining({
-        sink: 'context',
-        notificationType: 'task.completed',
-        title: 'Background agent completed',
-        body: expect.stringMatching(/^Wall time: \d+\.\d{3} seconds\ninspect repository completed\.$/),
-        severity: 'info',
-        sourceKind: 'background_task',
-        sourceId: taskId,
-      }),
-    }));
+  it('restores a lost notification without synthesizing task termination', async () => {
+    const ctx = track(createTestAgent(taskServices()));
+    const running = agentInfo({ status: 'running', endedAt: null });
+    ctx.mockNextResponse({ type: 'text', text: 'lost task acknowledged' });
+    await restoreTaskHistory(ctx, [running]);
+    await drain(ctx, running.taskId);
+    expect((await ctx.persistedWireRecords()).filter((record) => record.type === 'task.terminated')).toEqual([]);
   });
 
-  it('does not let Notification hook failures interrupt notification delivery', async () => {
-    const fireAndForgetTrigger = vi.fn<FireAndForgetTrigger>(async () => {
-      throw new Error('notification hook failed');
+  it('emits an observable append when an agent task notification is delivered', async () => {
+    const ctx = track(createTestAgent());
+    const appended: unknown[] = [];
+    ctx.get(IEventBus).subscribe(ContextAppendMessage, (event) => {
+      if (event.message.origin?.kind === 'task') appended.push(event);
     });
-    const { agent, ctx, manager } = createAgentTaskService({
-      hooks: { fireAndForgetTrigger },
-    });
-    const taskId = manager.registerTask(
-      agentTask(
-        Promise.resolve({ result: 'final agent output' }),
-        'inspect repository',
-      ),
-    );
-
-    await manager.wait(taskId);
-
-    await vi.waitFor(() => {
-      expect(notifiedCount(ctx)).toBe(1);
-      expect(fireAndForgetTrigger).toHaveBeenCalled();
-    });
-
-    await drainNotifications(ctx);
-    expect(notificationMessageFor(agent, taskId).content[0]!.text).toContain(
-      'inspect repository completed.',
-    );
+    const task = await startControlled(ctx);
+    await completeControlled(ctx, task);
+    expect(appended).toHaveLength(1);
+    expect(JSON.stringify(appended[0])).toContain(task.handler.taskId);
   });
 
-  it('fires Notification hooks for process task notifications', async () => {
-    const fireAndForgetTrigger = vi.fn<FireAndForgetTrigger>(async () => []);
-    const { ctx, manager } = createAgentTaskService({
-      hooks: { fireAndForgetTrigger },
+  it('does not let an append subscriber failure interrupt notification delivery', async () => {
+    const ctx = track(createTestAgent());
+    ctx.get(IEventBus).subscribe(ContextAppendMessage, () => {
+      throw new Error('append subscriber failed');
     });
-    const taskId = registerProcess(manager, immediateProcess(0), 'echo', 'done');
+    const task = await startControlled(ctx);
+    await completeControlled(ctx, task);
+    expect(taskNotifications(ctx, task.handler.taskId)).toHaveLength(1);
+  });
 
-    await manager.wait(taskId);
-
-    await vi.waitFor(() => {
-      expect(notifiedCount(ctx)).toBe(1);
-      expect(fireAndForgetTrigger).toHaveBeenCalled();
+  it('emits observable appends for process task notifications', async () => {
+    const sh = controllableProcess();
+    const ctx = processContext(sh.proc);
+    const appended: unknown[] = [];
+    ctx.get(IEventBus).subscribe(ContextAppendMessage, (event) => {
+      if (event.message.origin?.kind === 'task') appended.push(event);
     });
-    expect(fireAndForgetTrigger).toHaveBeenCalledWith('Notification', expect.objectContaining({
-      matcherValue: 'task.completed',
-      inputData: expect.objectContaining({
-        sink: 'context',
-        notificationType: 'task.completed',
-        title: 'Background process completed',
-        body: expect.stringMatching(/^Wall time: \d+\.\d{3} seconds\ndone completed\.$/),
-        severity: 'info',
-        sourceKind: 'background_task',
-        sourceId: taskId,
-      }),
-    }));
+    const { handler } = await startBashTaskInLoop(ctx, { command: 'echo', description: 'done', run_in_background: true });
+    ctx.mockNextResponse({ type: 'text', text: 'notification ack' });
+    sh.finish(0);
+    await handler.wait();
+    await drain(ctx, handler.taskId);
+    expect(appended).toHaveLength(1);
+    expect(JSON.stringify(appended[0])).toContain(handler.taskId);
   });
 });
 
 describe('AgentTaskService — agent recovery notification bodies', () => {
-  it('failed agent task body includes resume instructions with the correct agent_id', async () => {
-    const { agent, ctx, manager } = createAgentTaskService();
-    const taskId = manager.registerTask(
-      agentTask(
-        Promise.reject(new Error('subagent crashed')),
-        'inspect repository',
-        { agentId: 'agent-7' },
-      ),
+  it('failed agent task body includes resume instructions with the correct agent_id', () => {
+    const entry = createTaskCompletionEntry(
+      agentInfo({ status: 'failed', stopReason: 'subagent crashed', agentId: 'agent-7' }),
+      'call-agent',
+      emptyOutputSnapshot(),
     );
-
-    await manager.wait(taskId);
-
-    await vi.waitFor(() => {
-      expect(notifiedCount(ctx)).toBe(1);
-    });
-    await drainNotifications(ctx);
-    const text = notificationMessageFor(agent, taskId).content[0]!.text;
+    const text = entry.message.content.map((part) => part.type === 'text' ? part.text : '').join('');
     expect(text).toContain('agent_id="agent-7"');
     expect(text).toMatch(/Agent\(resume="agent-7"/);
     expect(text).toMatch(/agent_id.*NOT source_id|source_id.*NOT agent_id/);
   });
 
-  it('completed agent task body does not add resume instructions', async () => {
-    const { agent, ctx, manager } = createAgentTaskService();
-    const taskId = manager.registerTask(
-      agentTask(
-        Promise.resolve({ result: 'all good' }),
-        'inspect repository',
-        { agentId: 'agent-8' },
-      ),
+  it('completed agent task body does not add resume instructions', () => {
+    const entry = createTaskCompletionEntry(
+      agentInfo({ agentId: 'agent-8' }),
+      'call-agent',
+      emptyOutputSnapshot(),
     );
-
-    await manager.wait(taskId);
-
-    await vi.waitFor(() => {
-      expect(notifiedCount(ctx)).toBe(1);
-    });
-    await drainNotifications(ctx);
-    const text = notificationMessageFor(agent, taskId).content[0]!.text;
+    const text = entry.message.content.map((part) => part.type === 'text' ? part.text : '').join('');
     expect(text).toContain('agent_id="agent-8"');
     expect(text).not.toMatch(/Agent\(resume="agent-8"/);
   });
 
-  it('process task body never mentions resume', async () => {
-    const { agent, ctx, manager } = createAgentTaskService();
-    const taskId = registerProcess(manager, immediateProcess(1), 'false', 'shell');
-
-    await manager.wait(taskId);
-
-    await vi.waitFor(() => {
-      expect(notifiedCount(ctx)).toBe(1);
-    });
-    await drainNotifications(ctx);
-    const text = notificationMessageFor(agent, taskId).content[0]!.text;
+  it('process task body never mentions resume', () => {
+    const info = processInfo({ status: 'failed', exitCode: 1 });
+    const entry = createTaskCompletionEntry(info, 'call-process', emptyOutputSnapshot());
+    const text = entry.message.content.map((part) => part.type === 'text' ? part.text : '').join('');
     expect(text).not.toContain('agent_id=');
     expect(text).not.toMatch(/Agent\(resume=/);
-    expect(text).toContain(`source_id="${taskId}"`);
+    expect(text).toContain(`source_id="${info.taskId}"`);
   });
 });

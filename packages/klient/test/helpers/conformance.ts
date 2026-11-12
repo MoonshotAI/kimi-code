@@ -17,7 +17,7 @@ import { ToolResultEvent } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/t
 import { IEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
 import { IFeatureManager } from '@moonshot-ai/agent-core-v2/app/feature/featureManager';
 import { getLiveSessionById } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionLookup';
-import { IAgentContextMemoryService } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextMemory';
+import { IAgentLoopService } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
 import { IWireService } from '@moonshot-ai/agent-core-v2/wire/wire';
 import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
@@ -137,6 +137,9 @@ export function defineKlientConformance(
           id: created.id,
           title: 'conformance session',
         });
+        const context = await target.klient.session(created.id).agent('main').getContext();
+        expect(context.history).toEqual([]);
+        expect(typeof context.tokenCount).toBe('number');
       } finally {
         await target.klient.session(created.id).close();
       }
@@ -153,11 +156,15 @@ export function defineKlientConformance(
           .get(IAgentLifecycleService)
           .create({ agentId: 'main' });
         const mainHandle = parentHandle.accessor.get(IAgentLifecycleService).handleOf(main.agentId)!;
-        mainHandle.accessor.get(IAgentContextMemoryService).append({
-          role: 'user',
-          content: [{ type: 'text', text: 'fork through this turn' }],
-          origin: { kind: 'user' },
+        const loop = mainHandle.accessor.get(IAgentLoopService);
+        loop.submit({
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'fork through this turn' }],
+          },
+          meta: { origin: { kind: 'user' } },
         });
+        await loop.settled();
         await mainHandle.accessor.get(IWireService).flush();
 
         const child = await target.klient.session(parent.id).createChild();

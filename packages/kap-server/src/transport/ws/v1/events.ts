@@ -18,6 +18,11 @@ export interface SessionArchivedEvent {
   readonly workspace_id: string;
 }
 
+export interface SessionRestoredEvent {
+  readonly type: 'event.session.restored';
+  readonly workspace_id: string;
+}
+
 export interface SessionDeletedEvent {
   readonly type: 'event.session.deleted';
   readonly workspace_id: string;
@@ -105,18 +110,11 @@ export interface CapabilityChangedEvent {
   };
 }
 
-export interface DiUnitChangedEvent {
-  readonly type: 'event.di.unit_changed';
-  readonly scope: string;
-  readonly token: string;
-  readonly state: 'Pending' | 'Activating' | 'Active' | 'Unloading' | 'Failed';
-  readonly error?: string;
-}
-
 export type PushEvent =
   | SessionMetaUpdatedEvent
   | SessionCreatedEvent
   | SessionArchivedEvent
+  | SessionRestoredEvent
   | SessionDeletedEvent
   | WorkspaceCreatedEvent
   | WorkspaceUpdatedEvent
@@ -126,7 +124,6 @@ export type PushEvent =
   | ConfigWarningEvent
   | ModelCatalogChangedEvent
   | PluginChangedEvent
-  | CapabilityChangedEvent
-  | DiUnitChangedEvent;
+  | CapabilityChangedEvent;
 
 export type Event = PushEvent & { agentId: string; sessionId: string; readonly time?: number };

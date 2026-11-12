@@ -5,14 +5,20 @@ import path from 'node:path';
 
 import { kimiCdnContentUrl } from '@moonshot-ai/kimi-code-oauth';
 
+import { Error2 } from '#/errors';
+
+import { installResolvedMarketplacePlugin } from '../../plugin/pluginService';
+import { CapabilityErrors } from '../errors';
 import { downloadToFile, runCommand } from '../host';
 import type {
   CapabilityDetectResult,
   CapabilityEntry,
   CapabilityInstallReporter,
+  CapabilityInstallOptions,
   CapabilityStep,
 } from '../types';
 import type { CapabilityEntryContext } from './context';
+import { findWindowsCuProcesses, manageWindowsCuProcesses } from './windowsCuProcesses';
 
 const MAC_PLUGIN_ID = 'kimi-cu';
 const WINDOWS_PLUGIN_ID = 'kimi-cu-win';
@@ -178,7 +184,34 @@ async function installPluginLayer(
   ctx: CapabilityEntryContext,
   config: PluginLayerConfig,
 ): Promise<void> {
-  const summary = await ctx.plugins.installPlugin({ source: config.zipUrl });
+  const defaultCatalog = await ctx.marketplace.isDefaultMarketplace().catch(() => false);
+  const marketplace = defaultCatalog
+    ? await ctx.marketplace.listMarketplace().catch(() => undefined)
+    : undefined;
+  const entry = marketplace?.plugins.find((candidate) => candidate.id === config.id);
+  if (marketplace !== undefined && entry === undefined) {
+    throw new Error(`Marketplace plugin "${config.id}" was not found in the current catalog`);
+  }
+  if (marketplace !== undefined && entry?.version === undefined) {
+    throw new Error(`Marketplace plugin "${config.id}" has no version in the current catalog`);
+  }
+  const summary = marketplace === undefined
+    ? await installResolvedMarketplacePlugin(
+        ctx.plugins,
+        { marketplaceId: config.id },
+        {
+          source: config.zipUrl,
+          catalogId: config.id,
+          origin: 'marketplace',
+          expectedPluginId: config.id,
+          fetchImpl: fetch,
+        },
+      )
+    : await ctx.plugins.installPlugin({
+        marketplaceId: config.id,
+        expectedVersion: entry!.version,
+        expectedSha256: entry!.sha256sum,
+      });
   if (!summary.enabled) {
     await ctx.plugins.setPluginEnabled({ id: config.id, enabled: true });
   }
@@ -343,7 +376,11 @@ function createMacKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry {
       permissionsProbeError = errorMessage(error);
     }
     if (permissionsProbeError !== undefined) {
-      steps.push({ id: 'permissions', state: 'failed', detail: permissionsProbeError });
+      steps.push(
+        { id: 'permissions', state: 'failed', detail: permissionsProbeError },
+        { id: 'permissions.accessibility', state: 'failed', detail: permissionsProbeError },
+        { id: 'permissions.screenRecording', state: 'failed', detail: permissionsProbeError },
+      );
     } else {
       const granted =
         permissions !== undefined && permissions.accessibility && permissions.screenRecording;
@@ -353,14 +390,24 @@ function createMacKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry {
             ...(permissions.accessibility ? [] : ['accessibility']),
             ...(permissions.screenRecording ? [] : ['screenRecording']),
           ].join(',');
-      steps.push({
-        id: 'permissions',
-        state: granted ? 'ok' : 'missing',
-        detail:
-          granted || missingPermissions === undefined || missingPermissions.length === 0
-            ? undefined
-            : missingPermissions,
-      });
+      steps.push(
+        {
+          id: 'permissions',
+          state: granted ? 'ok' : 'missing',
+          detail:
+            granted || missingPermissions === undefined || missingPermissions.length === 0
+              ? undefined
+              : missingPermissions,
+        },
+        {
+          id: 'permissions.accessibility',
+          state: permissions?.accessibility === true ? 'ok' : 'missing',
+        },
+        {
+          id: 'permissions.screenRecording',
+          state: permissions?.screenRecording === true ? 'ok' : 'missing',
+        },
+      );
     }
 
     return {
@@ -479,7 +526,10 @@ function createMacKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry {
       }
     }
 
-    if (stepStates.get('permissions') !== 'ok') {
+    if (
+      stepStates.get('permissions.accessibility') !== 'ok' ||
+      stepStates.get('permissions.screenRecording') !== 'ok'
+    ) {
       report('permissions');
       await runCommand(
         ctx.hostProcess,
@@ -633,7 +683,7 @@ function createWindowsKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
           throw error;
         }
         throw new Error(
-          'Kimi Computer Use plugin files are still in use by the current Kimi Code process. Restart Kimi Code, then install again.',
+          'Kimi Computer Use plugin files are still in use. Close other applications using the plugin, then install again.',
           { cause: error },
         );
       }
@@ -696,7 +746,27 @@ function createWindowsKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
       'Windows GUI automation — read app UIs and click, type, scroll, and drag in desktop apps.',
     supported,
     detect,
-    install,
+    install: async (report, options: CapabilityInstallOptions = {}) => {
+      if (!supported) return install(report);
+      const { powershell, count } = await findWindowsCuProcesses(ctx, [powershellPath, powershell7Path]);
+      function checkProcessConsent(count: number): number {
+        if (count > 0 && options.stopRunningProcesses !== true) {
+          throw new Error2(
+            CapabilityErrors.codes.CAPABILITY_PROCESSES_RUNNING,
+            'Kimi Computer Use processes must be stopped before installation',
+          );
+        }
+        return count;
+      }
+      checkProcessConsent(count);
+      return ctx.plugins.withMcpServersSuspended(WINDOWS_PLUGIN_ID, async () => {
+        if (checkProcessConsent(await manageWindowsCuProcesses(ctx, powershell, false)) > 0) {
+          report('stop-processes');
+          await manageWindowsCuProcesses(ctx, powershell, true);
+        }
+        return install(report);
+      });
+    },
   };
 }
 

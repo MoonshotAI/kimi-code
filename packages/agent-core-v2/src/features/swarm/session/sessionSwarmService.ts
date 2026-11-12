@@ -1,10 +1,8 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import type { TokenUsage } from '#human/llm-requester/usage';
 import { Error2, ErrorCodes } from '#/errors';
-import { linkAbortSignal } from '#/_base/utils/abort';
+import { linkAbortSignal, userCancellationReason } from '#/_base/utils/abort';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
-import { IAgentProfileService } from '#/agent/profile/profile';
-import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { Event2 } from '#/app/event/event2';
@@ -94,17 +92,18 @@ export class SessionSwarmService implements ISessionSwarmService {
     const unlinks: Array<() => void> = [];
     const memberControllers = new Map<SessionSwarmTask, AbortController>();
     const linkedTasks: SessionSwarmTask<T>[] = tasks.map((task) => {
-      if (task.signal !== undefined) unlinks.push(linkAbortSignal(task.signal, controller));
       const memberController = new AbortController();
+      if (task.signal !== undefined) unlinks.push(linkAbortSignal(task.signal, memberController));
       unlinks.push(linkAbortSignal(controller.signal, memberController));
       const linked = { ...task, signal: memberController.signal };
       memberControllers.set(linked, memberController);
       return linked;
     });
+    const caller = this.agentLifecycle.handleOf(callerAgentId);
     const members = new SwarmMemberTasks(
-      this.agentLifecycle.handleOf(callerAgentId)?.accessor.get(IAgentTaskService),
+      caller?.accessor.get(IEventDispatcher),
+      callerAgentId,
       linkedTasks,
-      (member, reason) => memberControllers.get(member)?.abort(reason),
     );
     const terminalized = new Set<string>();
     const terminalize: TerminalizeSubagent = (agentId, event) => {
@@ -160,7 +159,7 @@ export class SessionSwarmService implements ISessionSwarmService {
   }
 
   cancel({ callerAgentId }: { readonly callerAgentId: string }): void {
-    this.inFlight.get(callerAgentId)?.abort();
+    this.inFlight.get(callerAgentId)?.abort(userCancellationReason());
   }
 
   private dispatchSubagentEvent(callerAgentId: string, event: Event2): void {
@@ -194,6 +193,13 @@ export class SessionSwarmService implements ISessionSwarmService {
       modelSource: plan.modelSource,
     });
     const child = this.requireHandle(spawned.agentId, 'Agent instance');
+    try {
+      options.signal.throwIfAborted();
+    } catch (error) {
+      terminalize(spawned.agentId, runStartTerminalEvent(spawned.agentId, error, options.signal));
+      await this.agentLifecycle.remove(agentContextOf(child)).catch(() => undefined);
+      throw error;
+    }
     return this.observe(
       caller,
       child,
@@ -222,9 +228,9 @@ export class SessionSwarmService implements ISessionSwarmService {
       (await this.rebuildSubagent(agentId, meta, caller, options.signal));
     this.requireIdleSubagent(agentId, child);
     const profileName =
-      child.accessor.get(IAgentProfileService).data().profileName ?? RESUMED_PROFILE_FALLBACK;
+      child.accessor.get(IAgentLoopService).data().profileName ?? RESUMED_PROFILE_FALLBACK;
     if (!retryTurn) {
-      const resumedModel = child.accessor.get(IAgentProfileService).data().modelAlias;
+      const resumedModel = child.accessor.get(IAgentLoopService).data().modelAlias;
       emitAgentRunSpawned(caller, agentId, {
         profileName,
         parentToolCallId: options.parentToolCallId,
@@ -267,7 +273,7 @@ export class SessionSwarmService implements ISessionSwarmService {
       signal: options.signal,
       terminalize,
     });
-    const profile = child.accessor.get(IAgentProfileService);
+    const profile = child.accessor.get(IAgentLoopService);
     return {
       agentId,
       profileName,
@@ -318,7 +324,7 @@ export class SessionSwarmService implements ISessionSwarmService {
         details: { agentId },
       });
     }
-    if (!hasPinnedPermissionMode(rebuilt.accessor.get(IAgentProfileService).data().profileName)) {
+    if (!hasPinnedPermissionMode(rebuilt.accessor.get(IAgentLoopService).data().profileName)) {
       rebuilt.accessor
         .get(IAgentPermissionModeService)
         .setMode(caller.accessor.get(IAgentPermissionModeService).mode);

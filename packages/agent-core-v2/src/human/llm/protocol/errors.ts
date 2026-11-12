@@ -75,10 +75,10 @@ export function errorText(error: unknown): string {
 export function toLlmErrorMessage(error: unknown): LlmRemoteErrorMessage {
   try {
     if (isAbortError(error)) {
-      return { kind: 'abort', message: abortErrorMessage(error) };
+      return { kind: 'abort', message: abortErrorMessage(error), retryable: false };
     }
   } catch {
-    return { kind: 'unknown', message: errorText(error) };
+    return { kind: 'unknown', message: errorText(error), retryable: false };
   }
-  return { kind: 'unknown', message: errorText(error) };
+  return { kind: 'unknown', message: errorText(error), retryable: false };
 }

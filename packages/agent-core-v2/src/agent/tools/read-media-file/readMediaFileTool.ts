@@ -183,6 +183,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
       const workspace = { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
       const path = resolvePathAccessPath(args.path, {
         env,
+        shellPathBridge: view.shellPathBridge,
         workspace,
         operation: 'read',
       });

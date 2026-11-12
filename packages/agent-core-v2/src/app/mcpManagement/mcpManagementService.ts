@@ -17,7 +17,7 @@ import {
   type McpOAuthService,
   type McpOAuthTokenState,
 } from '#/mcpCore/oauth/service';
-import { canonicalMcpOAuthResource } from '#/mcpCore/oauth/store';
+import { canonicalMcpOAuthResource, mcpOAuthStoreKey } from '#/mcpCore/oauth/store';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IConfigService } from '#/app/config/config';
 import { MCP_SECTION, type McpSection } from '#/app/mcpConfig/configSection';
@@ -94,7 +94,10 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
   ): Promise<readonly McpManagedServer[]> {
     const name = normalizeServerName(server.name);
     await this.guardMutation(name, query);
-    await this.store.update({ ...server, name });
+    const next = { ...server, name };
+    const previous = (await this.store.list()).find((entry) => entry.name === name);
+    await this.store.update(next);
+    await this.reconcileOAuthIdentity(previous, next);
     return this.listServers(query);
   }
 
@@ -104,8 +107,30 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
   ): Promise<readonly McpManagedServer[]> {
     const normalized = normalizeServerName(name);
     await this.guardMutation(normalized, query);
+    const previous = (await this.store.list()).find((entry) => entry.name === normalized);
     await this.store.remove(normalized);
+    await this.reconcileOAuthIdentity(previous, undefined);
     return this.listServers(query);
+  }
+
+  private async reconcileOAuthIdentity(
+    previous: GlobalMcpServerConfig | undefined,
+    next: GlobalMcpServerConfig | undefined,
+  ): Promise<void> {
+    if (previous === undefined || !('url' in previous)) return;
+    if (
+      next !== undefined &&
+      'url' in next &&
+      mcpOAuthStoreKey(previous.name, previous.url) === mcpOAuthStoreKey(next.name, next.url)
+    ) {
+      return;
+    }
+    try {
+      await this.oauth.cancelAuthorizationFromConfiguration(undefined, previous.name, previous.url);
+      await this.oauth.invalidateFromConfiguration(undefined, previous.name, previous.url);
+    } catch (error) {
+      this.log.warn('mcp oauth credential cleanup failed', { name: previous.name, error });
+    }
   }
 
   async testServer(target: McpServerTestTarget): Promise<McpServerTestResult> {

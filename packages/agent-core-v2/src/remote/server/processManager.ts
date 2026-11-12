@@ -227,6 +227,10 @@ export class ProcessManager {
     entry.closed = true;
     this.notify(PROCESS_CLOSED_METHOD, { processId: entry.processId });
     this.processes.delete(entry.processId);
+    if (process.platform === 'win32') {
+      if (entry.killTimer !== undefined) clearTimeout(entry.killTimer);
+      return;
+    }
     const group: ExitedProcessGroup = {
       pid: entry.pid,
       killTimer: entry.killTimer,
@@ -349,6 +353,7 @@ export class ProcessManager {
 
   private async beginTermination(entry: ManagedProcess): Promise<void> {
     await entry.child?.kill('SIGTERM');
+    if (process.platform === 'win32') return;
     entry.killTimer = setTimeout(() => {
       this.killGroup(entry, 'SIGKILL');
     }, PROCESS_TERMINATION_GRACE_MS);
@@ -415,7 +420,7 @@ export class ProcessManager {
       }
     }
     for (const entry of entries) {
-      this.killGroup(entry, 'SIGKILL');
+      if (process.platform !== 'win32') this.killGroup(entry, 'SIGKILL');
     }
     for (const group of [...orphanedGroups, ...this.exitedGroups.values()]) {
       this.killOrphanedGroup(group.pid, 'SIGKILL');

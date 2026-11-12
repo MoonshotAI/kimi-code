@@ -59,6 +59,7 @@ function renderedRowsAfterChild(
 export class SubAgentEventHandler {
   readonly subagentInfo: Map<string, SubagentInfo> = new Map();
   private readonly agentSwarmProgress: Map<string, AgentSwarmProgressComponent> = new Map();
+  private readonly toolStatuses = new Map<string, string>();
   backgroundAgentMetadata: Map<string, BackgroundAgentMetadata> = new Map();
   /** Bounded per-agent activity fold feeding the background-agent detail view. */
   readonly activityStore = new SubagentActivityStore();
@@ -70,6 +71,7 @@ export class SubAgentEventHandler {
 
   resetRuntimeState(): void {
     this.subagentInfo.clear();
+    this.toolStatuses.clear();
     this.backgroundAgentMetadata.clear();
     this.activityStore.clear();
     this.clearAgentSwarmProgress();
@@ -129,19 +131,25 @@ export class SubAgentEventHandler {
         name: event.name,
         argumentsPart: event.argumentsPart ?? null,
       });
-    } else if (
-      event.type === 'tool.progress' &&
-      (event.update.kind === 'stdout' ||
-        event.update.kind === 'stderr' ||
-        event.update.kind === 'status') &&
-      event.update.text !== undefined
-    ) {
-      toolCall.appendSubToolLiveOutput(
-        `${childAgentId}:${event.toolCallId}`,
-        event.update.text,
-        { replace: event.update.replace === true },
-      );
+    } else if (event.type === 'tool.updated') {
+      const key = `${childAgentId}\0${event.toolCallId}`;
+      if (event.output !== undefined) {
+        if (event.output.text.length > 0) {
+          toolCall.appendSubToolLiveOutput(`${childAgentId}:${event.toolCallId}`, event.output.text);
+        }
+      } else {
+        const status = event.fields['status'];
+        if (typeof status === 'string' && status.length > 0 && this.toolStatuses.get(key) !== status) {
+          this.toolStatuses.set(key, status);
+          toolCall.appendSubToolLiveOutput(
+            `${childAgentId}:${event.toolCallId}`,
+            status,
+            { replace: event.fields['statusReplace'] === true },
+          );
+        }
+      }
     } else if (event.type === 'tool.result') {
+      this.toolStatuses.delete(`${childAgentId}\0${event.toolCallId}`);
       toolCall.finishSubToolCall({
         tool_call_id: `${childAgentId}:${event.toolCallId}`,
         output: serializeToolResultOutput(event.output),
@@ -755,7 +763,7 @@ export class SubAgentEventHandler {
     if (index >= 0) {
       // Structural removal only: GutterContainer's ref-checked render cache
       // detects the child-list change; no tree-wide invalidate needed.
-      children.splice(index, 1);
+      this.host.state.transcriptContainer.removeChild(progress);
     }
     this.host.updateActivityPane();
   }

@@ -28,6 +28,7 @@ describe('emptyResponseError', () => {
       kind: 'empty_response',
       finishReason: null,
       rawFinishReason: null,
+      retryable: true,
     });
     expect(error?.message).toContain('empty response (no content, no tool calls)');
     expect(error?.message).toContain('Provider: test, model: test-model');
@@ -40,6 +41,7 @@ describe('emptyResponseError', () => {
       kind: 'empty_response',
       finishReason: 'filtered',
       rawFinishReason: 'content_filter',
+      retryable: false,
     });
     expect(filtered?.message).toContain('filtered the response');
   });

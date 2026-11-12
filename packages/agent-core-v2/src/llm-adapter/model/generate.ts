@@ -169,27 +169,7 @@ async function runModel(
         },
       },
     );
-    if (outcome.type === 'aborted') {
-      throw errorFromLlmMessage({ kind: 'abort', message: 'The operation was aborted.' });
-    }
-    if (outcome.type === 'failed') {
-      const classified =
-        outcome.error.kind === 'unknown' && outcome.rawError !== undefined
-          ? llmMessageFromError(outcome.rawError)
-          : undefined;
-      if (
-        outcome.error.kind === 'unknown' &&
-        classified === undefined &&
-        outcome.rawError instanceof Error
-      ) {
-        throw withErrorDiagnostics(translateProviderError(outcome.rawError), outcome.diagnostics);
-      }
-      const error = classified ?? outcome.error;
-      throw errorFromLlmMessage(
-        error.kind === 'auth' ? { ...error, kind: 'status' as const } : error,
-        outcome.diagnostics,
-      );
-    }
+    if (outcome.type !== 'done') throw errorFromLlmOutcome(outcome);
     pushDone(outcome, events, contentsOf(initial).model?.spec?.name);
   } catch (error) {
     if (isAbortError(error)) throw error;
@@ -198,6 +178,29 @@ async function runModel(
     if (message !== undefined) throw errorFromLlmMessage(message, diagnostics);
     throw withErrorDiagnostics(translateProviderError(error), diagnostics);
   }
+}
+
+export function errorFromLlmOutcome(outcome: Exclude<LlmOutcome, { readonly type: 'done' }>): Error {
+  if (outcome.type === 'aborted') {
+    const message = outcome.reason instanceof Error ? outcome.reason.message : 'The operation was aborted.';
+    return new DOMException(message, 'AbortError');
+  }
+  const classified =
+    outcome.error.kind === 'unknown' && outcome.rawError !== undefined
+      ? llmMessageFromError(outcome.rawError)
+      : undefined;
+  if (
+    outcome.error.kind === 'unknown' &&
+    classified === undefined &&
+    outcome.rawError instanceof Error
+  ) {
+    return withErrorDiagnostics(translateProviderError(outcome.rawError), outcome.diagnostics);
+  }
+  const error = classified ?? outcome.error;
+  return errorFromLlmMessage(
+    error.kind === 'auth' ? { ...error, kind: 'status' as const } : error,
+    outcome.diagnostics,
+  );
 }
 
 function pushDone(

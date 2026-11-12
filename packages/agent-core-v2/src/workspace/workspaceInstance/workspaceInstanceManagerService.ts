@@ -34,7 +34,6 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IEnvironmentService } from '#/app/environment/environment';
 import { canonicalWorkspaceRoot } from '#/_base/utils/paths';
-import { workspaceRootKey } from '#/_base/utils/workdir-slug';
 import { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
 import { IWorkspaceTrustStore } from '#/workspace/workspaceTrust/workspaceTrustStore';
 
@@ -51,6 +50,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
   private readonly changeEmitter = new Emitter<{ workspaceId: string; instance?: WorkspaceInstance }>();
   private disposing = false;
   readonly onDidChange = this.changeEmitter.event;
+  private readonly workspaceStoreSubscription: { dispose(): void };
 
   constructor(
     @IInstantiationService private readonly instantiation: IInstantiationService,
@@ -85,7 +85,19 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     @IEnvironmentService private readonly environments: IEnvironmentService,
     @IWorkspacePersistence private readonly workspaceStore: IWorkspacePersistence,
     @IWorkspaceTrustStore private readonly trustStore: IWorkspaceTrustStore,
-  ) {}
+  ) {
+    this.workspaceStoreSubscription = this.workspaceStore.onDidChange(() => {
+      for (const instance of this.instances.values()) {
+        void this.workspaces.get(instance.id).then((workspace) => {
+          if (workspace !== undefined && this.instances.get(instance.id) === instance) {
+            instance.update(workspace);
+          }
+        }).catch((error) => {
+          this.log.warn('workspace metadata refresh failed', { workspaceId: instance.id, error });
+        });
+      }
+    });
+  }
 
   get(workspaceId: string): WorkspaceInstance | undefined {
     return this.instances.get(workspaceId);
@@ -152,11 +164,8 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     while (!this.disposing) {
       const existing = this.instances.get(workspace.id);
       if (existing !== undefined) {
-        if (workspaceRootKey(existing.root) === workspaceRootKey(workspace.root)) {
-          return this.retain(existing);
-        }
-        await this.close(existing);
-        continue;
+        existing.update(workspace);
+        return this.retain(existing);
       }
       const closing = this.closing.get(workspace.id);
       if (closing !== undefined) {
@@ -220,6 +229,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
 
   async dispose(): Promise<void> {
     this.disposing = true;
+    this.workspaceStoreSubscription.dispose();
     await Promise.allSettled([
       ...this.requests.values(),
       ...this.inflight.values(),
@@ -287,6 +297,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
           this.models,
           this.modelProviders,
           this.environments,
+          input.trust,
           input.acquireWorkdir,
           input.onDispose,
         ),

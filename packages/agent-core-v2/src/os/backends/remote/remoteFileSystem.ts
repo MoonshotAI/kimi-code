@@ -119,11 +119,16 @@ export class RemoteFileSystem implements IHostFileSystem {
 
   async readText(
     path: string,
-    options?: { encoding?: BufferEncoding; errors?: TextDecodeErrors },
+    options?: { encoding?: BufferEncoding; errors?: TextDecodeErrors; preserveBOM?: boolean },
   ): Promise<string> {
     const bytes = await this.readBytes(path);
     const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    return decodeTextWithErrors(buffer, options?.encoding ?? 'utf-8', options?.errors ?? 'strict');
+    return decodeTextWithErrors(
+      buffer,
+      options?.encoding ?? 'utf-8',
+      options?.errors ?? 'strict',
+      options?.preserveBOM,
+    );
   }
 
   async writeText(path: string, data: string): Promise<void> {

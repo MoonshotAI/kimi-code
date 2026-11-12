@@ -101,6 +101,9 @@ function applyKimiMessageExtras(
   }
   if (message.role === 'system' && message.tools !== undefined && message.tools.length > 0) {
     record['tools'] = message.tools.map((tool) => convertKimiTool(tool));
+    if (record['content'] === '') {
+      delete record['content'];
+    }
   }
   const convertedToolCalls = record['tool_calls'];
   if (message.role === 'assistant' && Array.isArray(convertedToolCalls)) {
@@ -132,8 +135,13 @@ function hoistKimiUsage(chunk: OpenAIRawChunk): OpenAIRawChunk {
 
 const kimiImageMimes = providerImagePolicy('kimi').acceptedMimes;
 
-function withKimiErrors(base: { readonly decodeError: (error: unknown) => LlmRemoteErrorMessage }) {
-  return (error: unknown) => classifyKimiQuotaError(error) ?? base.decodeError(error);
+function withKimiErrors(base: {
+  readonly decodeError: (error: unknown, source?: 'stream') => LlmRemoteErrorMessage;
+}) {
+  return (error: unknown, source?: 'stream') =>
+    source === 'stream'
+      ? base.decodeError(error, source)
+      : (classifyKimiQuotaError(error) ?? base.decodeError(error, source));
 }
 
 function diagnoseKimiError({ error, headers }: LlmErrorDiagnosticsInput) {

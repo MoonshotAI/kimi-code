@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createControlledPromise } from '@antfu/utils';
 
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
 import { summarizeSkill } from '#/features/skill/catalog/types';
 import { IAgentSkillService } from '#/features/skill/skillService';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { LlmRequester } from '#human/llm-requester/requester';
 import {
   ISkillTool,
@@ -53,7 +55,7 @@ describe('AgentSkillService', () => {
     expect(launched.turn_id).toBe(0);
     await ctx.untilTurnEnd();
 
-    const activation = ctx.context.get().find((m) => m.origin?.kind === 'skill_activation');
+    const activation = ctx.context.history().find((m) => m.origin?.kind === 'skill_activation');
     expect(activation?.role).toBe('user');
     expect(activation?.origin).toMatchObject({
       kind: 'skill_activation',
@@ -104,7 +106,7 @@ describe('AgentSkillService', () => {
 
     expect(finished).toBe(true);
     await ctx.untilTurnEnd();
-    expect(ctx.context.get().some((m) => m.origin?.kind === 'skill_activation')).toBe(true);
+    expect(ctx.context.history().some((m) => m.origin?.kind === 'skill_activation')).toBe(true);
   });
 });
 
@@ -151,6 +153,28 @@ describe('SkillTool', () => {
     expect(SkillToolInputSchema.safeParse({ skill: 'commit' }).success).toBe(true);
     expect(SkillToolInputSchema.safeParse({ skill: 'commit', args: '-m fix' }).success).toBe(true);
     expect(SkillToolInputSchema.safeParse({}).success).toBe(false);
+  });
+
+  it('renders arguments and session context through the model-tool path', async () => {
+    skills.register(
+      stubSkill('rename-session', {
+        content: 'Run "$ARGUMENTS" with "${KIMI_SESSION_ID}"',
+      }),
+    );
+
+    const result = await executeTool(
+      makeTool(),
+      toolContext({ skill: 'rename-session', args: 'Tokenizer Myths' }),
+    );
+    await ctx.restorePersisted();
+    ctx.get(IAgentLoopService).flushReminders();
+    const text = ctx.context.history().flatMap((message) => message.content).map((part) => part.type === 'text' ? part.text : '').join('\n');
+    const sessionId = ctx.get(ISessionContext).sessionId;
+
+    expect(text).toContain('Tokenizer Myths');
+    expect(text).toContain(sessionId);
+    expect(text).not.toContain('${KIMI_SESSION_ID}');
+    expect(text).toContain('dir="/skills/rename-session"');
   });
 
   it('returns a tool error when the skill is unknown', async () => {
@@ -203,41 +227,48 @@ describe('SkillTool', () => {
       output: 'Skill "commit" loaded inline. Follow its instructions.',
     });
     expect(result.output).not.toContain('# Commit');
-    expect(ctx.context.get()).toHaveLength(0);
-    expect(result.delivery?.kind).toBe('steer');
-    expect(result.delivery?.message.origin).toMatchObject({
+    expect(ctx.context.history()).toHaveLength(0);
+
+    await ctx.restorePersisted();
+    ctx.get(IAgentLoopService).flushReminders();
+    const [reminder] = ctx.context.history();
+    expect(reminder?.origin).toMatchObject({
       kind: 'skill_activation',
       skillName: 'commit',
       trigger: 'model-tool',
     });
-    expect(result.delivery?.message.content[0]).toMatchObject({
+    expect(reminder?.content[0]).toMatchObject({
       type: 'text',
       text: expect.stringContaining(
         '<skill-loaded name="commit" trigger="model-tool" source="user" dir="/skills/commit" args="src/app.ts">',
       ),
     });
-    expect(result.delivery?.message.content[0]).toMatchObject({
+    expect(reminder?.content[0]).toMatchObject({
       type: 'text',
       text: expect.stringContaining('ARGUMENTS: src/app.ts'),
     });
   });
 
   it('honors initialQueryDepth as an alias for queryDepth', async () => {
-    const nested = await executeTool(
+    await executeTool(
       makeTool(2),
       toolContext({ skill: 'commit' }),
     );
-    const root = await executeTool(
+    await executeTool(
       makeTool(0),
       toolContext({ skill: 'commit' }),
     );
 
-    expect(ctx.context.get()).toHaveLength(0);
-    expect(nested.delivery?.message.origin).toMatchObject({
+    expect(ctx.context.history()).toHaveLength(0);
+    await ctx.restorePersisted();
+    ctx.get(IAgentLoopService).flushReminders();
+    const reminders = ctx.context.history();
+    expect(reminders).toHaveLength(2);
+    expect(reminders[0]?.origin).toMatchObject({
       kind: 'skill_activation',
       trigger: 'nested-skill',
     });
-    expect(root.delivery?.message.origin).toMatchObject({
+    expect(reminders[1]?.origin).toMatchObject({
       kind: 'skill_activation',
       trigger: 'model-tool',
     });
@@ -250,7 +281,7 @@ describe('SkillTool', () => {
         toolContext({ skill: 'commit' }),
       ),
     ).rejects.toBeInstanceOf(NestedSkillTooDeepError);
-    expect(ctx.context.get()).toHaveLength(0);
+    expect(ctx.context.history()).toHaveLength(0);
   });
 });
 
@@ -261,7 +292,7 @@ describe('AgentSkillService busy delivery (harness)', () => {
     await ctx.dispose();
   });
 
-  it('steers the activation into the running turn and launches a new one when idle', async () => {
+  it('launches a busy activation in the next turn and an idle activation immediately', async () => {
     const catalog = new InMemorySkillCatalog();
     catalog.register(
       stubSkill('tower', {
@@ -302,17 +333,17 @@ describe('AgentSkillService busy delivery (harness)', () => {
       expect(generateCalls).toBe(1);
     });
 
-    const busyResult = await ctx.get(IAgentSkillService).activate({ name: 'tower', args: 'mission-1' });
-    expect(busyResult.turn_id).toBe(0);
-    expect(generateCalls).toBe(1);
-
+    const busyPromise = ctx.get(IAgentSkillService).activate({ name: 'tower', args: 'mission-1' });
     gate.resolve();
+    const busyResult = await busyPromise;
+    expect(busyResult.turn_id).toBe(1);
+
     await promptPromise;
-    await ctx.untilTurnEnd();
+    await ctx.get(IAgentLoopService).settled();
 
     const idleResult = await ctx.get(IAgentSkillService).activate({ name: 'tower', args: 'mission-2' });
     expect(idleResult.turn_id).toBe(2);
-    await ctx.untilTurnEnd();
+    await ctx.get(IAgentLoopService).settled();
     expect(generateCalls).toBe(3);
 
     const activations = ctx
@@ -324,9 +355,42 @@ describe('AgentSkillService busy delivery (harness)', () => {
     ]);
 
     const types = persistence.records.map((record) => record.type);
-    expect(types.filter((type) => type === 'turn.prompt')).toHaveLength(2);
-    expect(types.filter((type) => type === 'turn.steer')).toHaveLength(1);
-    const steer = persistence.records.find((record) => record.type === 'turn.steer');
-    expect(steer).toMatchObject({ origin: { kind: 'skill_activation', skillArgs: 'mission-1' } });
+    expect(types.filter((type) => type === 'turn.prompt')).toHaveLength(3);
+    expect(types.filter((type) => type === 'turn.steer')).toHaveLength(0);
+    const busyPrompt = persistence.records.find((record) => record.type === 'turn.prompt' && record['turnId'] === 1);
+    expect(busyPrompt).toMatchObject({ turnId: 1, origin: { kind: 'skill_activation', skillArgs: 'mission-1' } });
+  });
+
+  it('resets nesting depth for each user activation in the same running turn', async () => {
+    const catalog = new InMemorySkillCatalog();
+    catalog.register(stubSkill('tower'));
+    const gate = createControlledPromise<void>();
+    let generateCalls = 0;
+    const generate: GenerateFn = {
+      generate: async (_config, _content, control) => {
+        generateCalls += 1;
+        control.onEvent?.({ type: 'llm.sent' });
+        await gate;
+        control.signal.throwIfAborted();
+        control.onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'done' } });
+        control.onEvent?.({ type: 'llm.streaming.finish', finish: { finishReason: 'completed', rawFinishReason: 'stop' } });
+        control.onEvent?.({ type: 'llm.streaming.message_id', messageId: 'mock-depth-reset' });
+        control.onEvent?.({ type: 'llm.done' });
+      },
+    };
+    ctx = createTestAgent(skillServices(catalog), { generate });
+    const promptPromise = ctx.rpc.prompt({ input: [{ type: 'text', text: 'start' }] });
+    await vi.waitFor(() => { expect(generateCalls).toBe(1); });
+    const service = ctx.get(IAgentSkillService);
+
+    const one = service.activate({ name: 'tower', args: 'one' });
+    const two = service.activate({ name: 'tower', args: 'two' });
+    const three = service.activate({ name: 'tower', args: 'three' });
+
+    gate.resolve();
+    await Promise.all([one, two, three]);
+    await promptPromise;
+    expect(service.modelToolContext()).toEqual({ queryDepth: 1, workspaceDir: undefined });
+    await ctx.untilTurnEnd();
   });
 });

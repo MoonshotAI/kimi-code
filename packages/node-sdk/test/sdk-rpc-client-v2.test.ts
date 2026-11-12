@@ -25,6 +25,7 @@ import {
   buildDaemonFileUrl,
   createKimiHarness,
   ErrorCodes,
+  fromKimiErrorPayload,
   isDaemonFileUrl,
   isKimiError,
   KimiHarness,
@@ -43,14 +44,12 @@ import {
   getLiveSessionById,
   HostProcessError,
   IAgentIdentity,
-  IAgentContextMemoryService,
   IAgentTodoService,
   IAgentLifecycleService,
-  IAgentProfileService,
   IAgentConversationUndoService,
   IAgentFullCompactionService,
   IAgentPluginCommandService,
-  IAgentPromptChannel,
+  IAgentLoopService,
   IAgentSkillService,
   IAgentToolActivationService,
   IAgentToolRegistryService,
@@ -68,9 +67,12 @@ import {
   IWorkspaceService,
   MAIN_AGENT_ID,
   OsProcessErrors,
+  APIProviderRateLimitError,
+  APIStatusError,
 } from '@moonshot-ai/agent-core-v2';
 
 import { ISessionMediaStore } from '@moonshot-ai/agent-core-v2/agent/media/sessionMediaStore';
+import { CapabilityService } from '@moonshot-ai/agent-core-v2/app/capability/capabilityService';
 import { ISessionAgentProfileCatalog } from '@moonshot-ai/agent-core-v2/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { attachmentFileSource } from '@moonshot-ai/agent-core-v2/agent/tools/fileReadSource';
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
@@ -170,6 +172,36 @@ async function findSessionDir(homeDir: string, sessionId: string): Promise<strin
 }
 
 describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
+  it('forwards process-stop authorization through harness and session capability installs', async () => {
+    const status = {
+      id: 'kimi-cu' as const,
+      displayName: 'Kimi Computer Use',
+      description: 'Computer operations on Windows',
+      supported: true,
+      state: 'partial' as const,
+      steps: [],
+      install: { running: false, confirmationRequired: 'stop-processes' as const },
+    };
+    const install = vi.spyOn(CapabilityService.prototype, 'installCapability').mockResolvedValue(status);
+    const { harness, homeDir } = await makeHarness();
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    const session = new Session({ id: 'capability-test', workDir: homeDir, rpc: client });
+    try {
+      for (const api of [harness, session]) {
+        expect(await api.installCapability('kimi-cu')).toMatchObject({
+          install: { confirmationRequired: 'stop-processes' },
+        });
+        expect(install).toHaveBeenLastCalledWith('kimi-cu', undefined);
+        await api.installCapability('kimi-cu', { stopRunningProcesses: true });
+        expect(install).toHaveBeenLastCalledWith('kimi-cu', { stopRunningProcesses: true });
+      }
+    } finally {
+      install.mockRestore();
+      await client.close();
+      await harness.close();
+    }
+  });
+
   it('loads explicit agent files for native print sessions', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-print-'));
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-print-work-'));
@@ -203,6 +235,11 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       expect(binding.environmentId).toBe('local');
       expect(binding).toEqual({ environmentId: 'local' });
       expect(await session.getEnvironment()).toEqual(binding);
+      await expect(session.predictNextPrompt({
+        predictionId: 'prediction-1',
+        expectedTurnId: 0,
+      })).resolves.toBeNull();
+      await expect(session.cancelPromptPrediction('prediction-1', 'escape')).resolves.toBe(false);
     } finally {
       await harness.close();
     }
@@ -295,16 +332,19 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     {
       name: 'a valid default next to an invalid entry',
       config: '[environments]\ndefault = "good"\n\n[environments.good]\ntype = "ssh"\nhost = "example.com"\ndefault_cwd = "/remote/work"\n\n[environments.bad]\ntype = "ssh"\n',
+      allowsExplicitLocal: true,
     },
     {
       name: 'an invalid default reference',
       config: '[environments]\ndefault = "missing"\n',
+      allowsExplicitLocal: true,
     },
     {
       name: 'malformed TOML',
       config: '[environments\n',
+      allowsExplicitLocal: false,
     },
-  ])('rejects implicit local creation with $name and allows explicit local', async ({ config }) => {
+  ])('validates implicit and explicit local creation with $name', async ({ config, allowsExplicitLocal }) => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', 'false');
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-invalid-env-work-'));
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-invalid-env-home-'));
@@ -322,8 +362,13 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     });
     try {
       await expect(harness.createSession({ workDir })).rejects.toMatchObject({ code: 'config.invalid' });
-      const local = await client.engineAccessor.get(ISessionManager).create({ workDir, environmentId: 'local' });
-      expect(local.id).not.toBe('');
+      const localCreation = client.engineAccessor.get(ISessionManager).create({ workDir, environmentId: 'local' });
+      if (allowsExplicitLocal) {
+        const local = await localCreation;
+        expect(local.id).not.toBe('');
+      } else {
+        await expect(localCreation).rejects.toMatchObject({ code: 'config.invalid' });
+      }
     } finally {
       await harness.close();
       vi.unstubAllEnvs();
@@ -392,10 +437,10 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       const main = () => getLiveSessionById(client.engineAccessor, session.id)!.accessor
         .get(IAgentLifecycleService)
         .handleOf(MAIN_AGENT_ID)!;
-      const changeMessages = () => main().accessor.get(IAgentContextMemoryService).get()
+      const changeMessages = () => main().accessor.get(IAgentLoopService).history()
         .filter((message) => message.origin?.kind === 'injection' && message.origin.variant === 'agents_md_change')
         .map((message) => message.content.map((part) => part.type === 'text' ? part.text : '').join(''));
-      const prompt = main().accessor.get(IAgentProfileService).getSystemPrompt();
+      const prompt = main().accessor.get(IAgentLoopService).getSystemPrompt();
       expect(prompt).toContain('remote v1');
       expect(prompt).toContain('local personal');
       expect(prompt).not.toContain('local project');
@@ -406,6 +451,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
 
       await writeFile(remoteAgentsMd, 'remote v2');
       await harness.reloadSession({ id: session.id });
+      main().accessor.get(IAgentLoopService).flushReminders();
       expect(changeMessages()).toHaveLength(1);
       const message = changeMessages()[0]!;
       expect(message).toContain(`- ${remoteAgentsMd}\n`);
@@ -673,6 +719,46 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     }
   }, 15_000);
 
+  it('preserves status-less rate limits and verbatim backend messages in SDK payloads', () => {
+    const rateLimit = new APIProviderRateLimitError(
+      'backend stream rate limit',
+      'req-stream',
+      null,
+      null,
+      { statusCode: undefined },
+    );
+    expect(toKimiErrorPayload(rateLimit)).toMatchObject({
+      code: ErrorCodes.PROVIDER_RATE_LIMIT,
+      message: 'backend stream rate limit',
+      details: { statusCode: undefined, requestId: 'req-stream' },
+      retryable: true,
+    });
+
+    const message = '<html><title>Backend title</title><body>Backend body</body></html>\r\n';
+    expect(toKimiErrorPayload(new APIStatusError(502, message, true))).toMatchObject({
+      message,
+    });
+
+    const retryableClientError = new APIStatusError(400, 'explicitly retryable', true);
+    expect(toKimiErrorPayload(retryableClientError)).toMatchObject({
+      code: ErrorCodes.PROVIDER_API_ERROR,
+      message: 'explicitly retryable',
+      retryable: true,
+    });
+
+    const deterministicServerError = new APIStatusError(503, 'explicitly deterministic', false);
+    expect(toKimiErrorPayload(deterministicServerError)).toMatchObject({
+      code: ErrorCodes.PROVIDER_API_ERROR,
+      message: 'explicitly deterministic',
+      retryable: false,
+    });
+
+    for (const error of [retryableClientError, deterministicServerError]) {
+      const revived = fromKimiErrorPayload(toKimiErrorPayload(error));
+      expect(toKimiErrorPayload(revived).retryable).toBe(error.retryable);
+    }
+  });
+
   it('restates engine MCP management Error2s as KimiError, undeclared codes as internal', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
     tempDirs.push(homeDir);
@@ -731,6 +817,57 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     }
   });
 
+  it('returns prompt identities and delivery state from the v2 steer APIs', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(homeDir, workDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      await client.createSession({ id: 'ses_steer_result', workDir });
+      await client.getSessionWarnings({ sessionId: 'ses_steer_result' });
+      const main = getLiveSessionById(client.engineAccessor, 'ses_steer_result')!
+        .accessor.get(IAgentLifecycleService)
+        .handleOf('main')!;
+      vi.spyOn(main.accessor.get(IAgentLoopService), 'notifyClient').mockResolvedValue({
+        prompt_id: 'prompt-steer',
+        created_at: '2026-01-01T00:00:00.000Z',
+        state: 'queued',
+        steered: false,
+      });
+      await expect(client.steer({
+        sessionId: 'ses_steer_result',
+        input: [{ type: 'text', text: 'steer' }],
+      })).resolves.toEqual({
+        promptId: 'prompt-steer',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        state: 'queued',
+        steered: false,
+      });
+
+      vi.spyOn(main.accessor.get(IAgentSkillService), 'promptWithSkills').mockResolvedValue({
+        turn_id: 3,
+        prompt_id: 'prompt-skill',
+        created_at: '2026-01-01T00:00:00.000Z',
+        state: 'running',
+        steered: true,
+      });
+      await expect(client.promptWithSkills({
+        sessionId: 'ses_steer_result',
+        input: [{ type: 'text', text: 'skill steer' }],
+        skills: [{ name: 'review' }],
+        steerIfActive: true,
+      })).resolves.toEqual({
+        turnId: 3,
+        promptId: 'prompt-skill',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        state: 'running',
+        steered: true,
+      });
+    } finally {
+      await client.close();
+    }
+  });
+
   it('restates engine session-lock Error2s as KimiError on the conflict-handled entry points', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
@@ -744,8 +881,8 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       const main = getLiveSessionById(client.engineAccessor, 'ses_lock')!
         .accessor.get(IAgentLifecycleService)
         .handleOf('main')!;
-      const submitSpy = vi.spyOn(main.accessor.get(IAgentPromptChannel), 'submit');
-      const steerSpy = vi.spyOn(main.accessor.get(IAgentPromptChannel), 'submitSteer');
+      const submitSpy = vi.spyOn(main.accessor.get(IAgentLoopService), 'submit');
+      const steerSpy = vi.spyOn(main.accessor.get(IAgentLoopService), 'notifyClient');
       const skillsSpy = vi.spyOn(main.accessor.get(IAgentSkillService), 'promptWithSkills');
       const beginSpy = vi.spyOn(main.accessor.get(IAgentFullCompactionService), 'begin');
       const undoSpy = vi.spyOn(main.accessor.get(IAgentConversationUndoService), 'undo');
@@ -1463,18 +1600,57 @@ key = "${titleOAuthRef.key}"
         source: "session 'source-a'",
       });
       await client.closeSession({ sessionId: 'ses_resume_fail' });
-      // Malform the wire's metadata record: the engine's cold restore throws,
-      // while the index entry (and thus the overlapped fold's wire path)
-      // stays intact.
+      // Require a newer reader: the engine's cold restore throws, while the
+      // index entry (and thus the overlapped fold's wire path) stays intact.
       const sessionDir = await findSessionDir(homeDir, 'ses_resume_fail');
+      const mainWirePath = join(sessionDir, 'agents', MAIN_AGENT_ID, 'wire.jsonl');
       await writeFile(
-        join(sessionDir, 'agents', MAIN_AGENT_ID, 'wire.jsonl'),
-        '{"type":"metadata"}\n',
+        mainWirePath,
+        '{"type":"metadata","protocol_version":"9.9","created_at":1,"min_protocol_version":"9.9"}\n',
         'utf-8',
       );
-      await expect(client.resumeSession({ id: 'ses_resume_fail' })).rejects.toThrow(
-        'Agent wire metadata is malformed',
+      const mainFailure = await client.resumeSession({ id: 'ses_resume_fail' }).catch((error: unknown) => error);
+      expect(isKimiError(mainFailure)).toBe(true);
+      expect(mainFailure).toMatchObject({ code: ErrorCodes.WIRE_VERSION_TOO_LOW });
+      expect(toKimiErrorPayload(mainFailure)).toMatchObject({
+        code: ErrorCodes.WIRE_VERSION_TOO_LOW,
+        message: expect.stringContaining('Upgrade Kimi Code'),
+      });
+      await expect(client.reloadSession({ sessionId: 'ses_resume_fail' })).rejects.toMatchObject({
+        code: ErrorCodes.WIRE_VERSION_TOO_LOW,
+      });
+      await expect(
+        client.renameSession({ id: 'ses_resume_fail', title: 'incompatible' }),
+      ).rejects.toMatchObject({ code: ErrorCodes.WIRE_VERSION_TOO_LOW });
+
+      await writeFile(
+        mainWirePath,
+        '{"type":"metadata","protocol_version":"1.5","created_at":1,"min_protocol_version":"1.5"}\n',
+        'utf-8',
       );
+      const subagentDir = join(sessionDir, 'agents', 'sub-incompatible');
+      await mkdir(subagentDir, { recursive: true });
+      await writeFile(
+        join(subagentDir, 'wire.jsonl'),
+        '{"type":"metadata","protocol_version":"9.9","created_at":1,"min_protocol_version":"9.9"}\n',
+        'utf-8',
+      );
+      await expect(
+        client.resumeSession({ id: 'ses_resume_fail', includeSubagents: true }),
+      ).rejects.toMatchObject({ code: ErrorCodes.WIRE_VERSION_TOO_LOW });
+      await expect(client.getStatus({ sessionId: 'ses_resume_fail' })).rejects.toMatchObject({
+        code: ErrorCodes.SESSION_NOT_FOUND,
+      });
+      const [successful, failed] = await Promise.allSettled([
+        client.resumeSession({ id: 'ses_resume_fail' }),
+        client.resumeSession({ id: 'ses_resume_fail', includeSubagents: true }),
+      ]);
+      expect(successful.status).toBe('fulfilled');
+      expect(failed.status).toBe('rejected');
+      expect(failed).toMatchObject({
+        reason: { code: ErrorCodes.WIRE_VERSION_TOO_LOW },
+      });
+      await expect(client.getStatus({ sessionId: 'ses_resume_fail' })).resolves.toBeDefined();
       // The abandoned fold promise must settle quietly.
       await new Promise((resolve) => setTimeout(resolve, 100));
       expect(unhandled).toEqual([]);
@@ -1609,13 +1785,25 @@ key = "${titleOAuthRef.key}"
     await writeFile(join(workDir, 'src', 'app.ts'), 'app');
     await writeFile(join(workDir, 'src', 'index.ts'), 'index');
     await writeFile(join(workDir, 'README.md'), 'readme');
+    await writeFile(join(workDir, '.gitignore'), 'ignored-app.ts\n');
+    await writeFile(join(workDir, 'ignored-app.ts'), 'ignored');
     try {
       const matched = await harness.suggestFiles(workDir, { query: 'app', limit: 20 });
       expect(matched?.items).toContainEqual(
         expect.objectContaining({ kind: 'file', path: 'src/app.ts', name: 'app.ts' }),
       );
+      expect(matched?.items.some((item) => item.path === 'ignored-app.ts')).toBe(false);
       const appItem = matched?.items.find((item) => item.name === 'app.ts');
       expect(appItem?.matchPositions.length).toBeGreaterThan(0);
+
+      const withIgnored = await harness.suggestFiles(workDir, {
+        query: 'app',
+        limit: 20,
+        followGitignore: false,
+      });
+      const paths = withIgnored?.items.map((item) => item.path) ?? [];
+      expect(paths).toContain('ignored-app.ts');
+      expect(paths.indexOf('src/app.ts')).toBeLessThan(paths.indexOf('ignored-app.ts'));
 
       const topLevel = await harness.suggestFiles(workDir, { query: '', limit: 20 });
       expect(topLevel?.items).toContainEqual(expect.objectContaining({ kind: 'directory', name: 'src' }));
@@ -1740,6 +1928,35 @@ key = "${titleOAuthRef.key}"
       expect(await rpc.listPlugins()).toEqual([]);
       expect(await rpc.reloadPlugins()).toEqual({ added: [], removed: [], errors: [] });
       await expect(rpc.getPluginInfo('missing-plugin')).rejects.toThrow();
+    } finally {
+      await rpc.close();
+    }
+  });
+
+  it('returns origin and installedAt from a custom plugin install', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    const source = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-plugin-'));
+    tempDirs.push(homeDir, source);
+    await writeFile(
+      join(source, 'kimi.plugin.json'),
+      JSON.stringify({ name: 'demo', version: '1.0.0' }),
+    );
+    const rpc = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      const installed = await rpc.installPlugin({ source });
+      expect(installed).toMatchObject({
+        id: 'demo',
+        origin: 'custom',
+        installedAt: expect.any(String),
+      });
+      expect(installed.catalogId).toBeUndefined();
+      expect(await rpc.listPlugins()).toEqual([
+        expect.objectContaining({
+          id: 'demo',
+          origin: 'custom',
+          installedAt: installed.installedAt,
+        }),
+      ]);
     } finally {
       await rpc.close();
     }
@@ -2064,7 +2281,7 @@ key = "${titleOAuthRef.key}"
               .find((tool) => tool.name === 'Agent');
             expect(delegation?.description.includes('NotifyUser')).toBe(enabled && panel);
           }
-          const prompt = agent.accessor.get(IAgentProfileService).getSystemPrompt();
+          const prompt = agent.accessor.get(IAgentLoopService).getSystemPrompt();
           expect(prompt.includes('When `NotifyUser` is available')).toBe(enabled && panel);
           if (offered) {
             expect(
@@ -2075,17 +2292,17 @@ key = "${titleOAuthRef.key}"
           }
         }
         const main = lifecycle.handleOf('main')!;
-        const originalPrompt = main.accessor.get(IAgentProfileService).getSystemPrompt();
+        const originalPrompt = main.accessor.get(IAgentLoopService).getSystemPrompt();
         const fork = await lifecycle.fork(lifecycle.get('main')!, { agentId: 'fork-worker' });
         expect(
-          lifecycle.handleOf(fork.agentId)!.accessor.get(IAgentProfileService).getSystemPrompt(),
+          lifecycle.handleOf(fork.agentId)!.accessor.get(IAgentLoopService).getSystemPrompt(),
         ).toBe(originalPrompt);
         const originalTools = structuredClone(main.accessor.get(IAgentToolRegistryService).list());
         for (const [index, nextEnabled] of [!enabled, enabled, !enabled].entries()) {
           await client.setConfig({ experimental: { notify_user: nextEnabled } });
           let current = getLiveSessionById(client.engineAccessor, 'ses_notify')!;
           let currentMain = current.accessor.get(IAgentLifecycleService).handleOf('main')!;
-          expect(currentMain.accessor.get(IAgentProfileService).getSystemPrompt()).toBe(
+          expect(currentMain.accessor.get(IAgentLoopService).getSystemPrompt()).toBe(
             originalPrompt,
           );
           expect(currentMain.accessor.get(IAgentToolRegistryService).list()).toEqual(originalTools);
@@ -2118,7 +2335,7 @@ key = "${titleOAuthRef.key}"
           ).toBe(enabled && panel);
           expect(
             child.accessor
-              .get(IAgentProfileService)
+              .get(IAgentLoopService)
               .getSystemPrompt()
               .includes('When `NotifyUser` is available'),
           ).toBe(enabled && panel);
@@ -2126,7 +2343,7 @@ key = "${titleOAuthRef.key}"
           current = getLiveSessionById(client.engineAccessor, 'ses_notify')!;
           currentMain = current.accessor.get(IAgentLifecycleService).handleOf('main')!;
           expect(currentMain.accessor.get(IAgentToolRegistryService).list()).toEqual(originalTools);
-          expect(currentMain.accessor.get(IAgentProfileService).getSystemPrompt()).toBe(
+          expect(currentMain.accessor.get(IAgentLoopService).getSystemPrompt()).toBe(
             originalPrompt,
           );
         }
@@ -2144,12 +2361,12 @@ key = "${titleOAuthRef.key}"
         ).toBe(!enabled && panel);
         expect(
           fresh.accessor
-            .get(IAgentProfileService)
+            .get(IAgentLoopService)
             .getSystemPrompt()
             .includes('When `NotifyUser` is available'),
         ).toBe(!enabled && panel);
         if (enabled || !panel) {
-          expect(fresh.accessor.get(IAgentProfileService).getSystemPrompt()).not.toContain(
+          expect(fresh.accessor.get(IAgentLoopService).getSystemPrompt()).not.toContain(
             'NotifyUser',
           );
           expect(
@@ -2165,7 +2382,7 @@ key = "${titleOAuthRef.key}"
         const migrated = getLiveSessionById(client.engineAccessor, 'ses_notify')!
           .accessor.get(IAgentLifecycleService)
           .handleOf('main')!;
-        expect(migrated.accessor.get(IAgentProfileService).getSystemPrompt()).toBe(originalPrompt);
+        expect(migrated.accessor.get(IAgentLoopService).getSystemPrompt()).toBe(originalPrompt);
         expect(migrated.accessor.get(IAgentToolRegistryService).list()).toEqual(originalTools);
       } finally {
         await client.close();
@@ -2215,12 +2432,14 @@ key = "${titleOAuthRef.key}"
 
       await client.reloadSession({ sessionId: 'ses_dirs_reload' });
       expect(reloadDirs).toHaveBeenCalledTimes(1);
-      const context = () =>
-        getLiveSessionById(client.engineAccessor, 'ses_dirs_reload')!
+      const context = () => {
+        const loop = getLiveSessionById(client.engineAccessor, 'ses_dirs_reload')!
           .accessor.get(IAgentLifecycleService)
           .handleOf('main')!
-          .accessor.get(IAgentContextMemoryService)
-          .get();
+          .accessor.get(IAgentLoopService);
+        loop.flushReminders();
+        return loop.history();
+      };
       const dirsReminders = () =>
         context().filter(
           (message) =>

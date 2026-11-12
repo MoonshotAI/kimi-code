@@ -53,6 +53,7 @@ export interface ReplayRenderContext {
 export interface SkillActivationProjection {
   readonly activationId: string;
   readonly skillName: string;
+  readonly skillPath?: string;
   readonly skillArgs?: string;
   readonly skillSource?: string;
   readonly trigger: SkillActivationTrigger;
@@ -325,6 +326,7 @@ export function skillActivationFromOrigin(
   return {
     activationId: origin.activationId,
     skillName: origin.skillName,
+    skillPath: origin.skillPath,
     skillArgs: origin.skillArgs,
     skillSource: origin.skillSource,
     trigger: origin.trigger,
@@ -349,6 +351,7 @@ export function bundledSkillsFromOrigin(
       readonly skillActivations?: readonly {
         readonly activationId: string;
         readonly skillName: string;
+        readonly skillPath?: string;
         readonly skillArgs?: string;
       }[];
     }
@@ -357,6 +360,7 @@ export function bundledSkillsFromOrigin(
   return activations.map((activation) => ({
     activationId: activation.activationId,
     skillName: activation.skillName,
+    skillPath: activation.skillPath,
     skillArgs: activation.skillArgs,
     trigger: 'user-slash' as const,
     bundled: true,

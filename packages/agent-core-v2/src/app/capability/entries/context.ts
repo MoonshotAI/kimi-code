@@ -1,6 +1,7 @@
 import type { KimiRegion } from '@moonshot-ai/kimi-code-oauth';
 
 import type { IPluginService } from '#/app/plugin/plugin';
+import type { IPluginMarketplaceService } from '#/app/plugin/marketplaceService';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
 
 export interface CapabilityEntryContext {
@@ -9,6 +10,7 @@ export interface CapabilityEntryContext {
   readonly kimiHomeDir: string;
   readonly userHomeDir: string;
   readonly plugins: IPluginService;
+  readonly marketplace: IPluginMarketplaceService;
   readonly hostProcess: IHostProcessService;
   readonly fetchImpl?: typeof fetch;
   readonly applicationsDir?: string;

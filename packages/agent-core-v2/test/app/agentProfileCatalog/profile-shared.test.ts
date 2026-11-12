@@ -62,6 +62,7 @@ describe('systemPromptVars', () => {
     expect(vars['additional_dirs_section']).toContain('/extra');
     expect(vars['skills_section']).toContain('# Skills');
     expect(vars['skills_section']).toContain('SKILLS');
+    expect(vars['skills_section']).toContain('invoke them with the `Skill` tool');
   });
 
   it('renders missing context fields as empty strings', () => {
@@ -79,15 +80,18 @@ describe('systemPromptVars', () => {
     expect(vars['role_additional']).toBe('');
   });
 
-  it('empties skills and the skills section when the Skill tool is off', () => {
+  it('keeps skills and the skills section when the Skill tool is off', () => {
     const vars = systemPromptVars({ skills: 'SKILLS' }, { skillActive: false });
 
-    expect(vars['skills']).toBe('');
-    expect(vars['skills_section']).toBe('');
+    expect(vars['skills']).toBe('SKILLS');
+    expect(vars['skills_section']).toContain('# Skills');
+    expect(vars['skills_section']).toContain('SKILLS');
+    expect(vars['skills_section']).toContain('use a user-initiated skill command');
+    expect(vars['skills_section']).not.toContain('invoke them with the `Skill` tool');
   });
 
-  it('lets a context skillActive override the profile default', () => {
-    const vars = systemPromptVars({ skills: 'SKILLS', skillActive: true }, { skillActive: false });
+  it('does not use context skillActive to hide the listing', () => {
+    const vars = systemPromptVars({ skills: 'SKILLS', skillActive: false }, { skillActive: true });
 
     expect(vars['skills']).toBe('SKILLS');
   });
@@ -242,11 +246,11 @@ describe('renderSystemPromptResult', () => {
     expect(readOnly).toContain('AGENTS');
   });
 
-  it('omits the skills section when the profile disables the Skill tool', () => {
+  it('includes the skills section when the profile disables the Skill tool', () => {
     const prompt = renderSystemPromptResult('', { skills: 'SKILLS' }, { skillActive: false }).text;
 
-    expect(prompt).not.toContain('# Skills');
-    expect(prompt).not.toContain('SKILLS');
+    expect(prompt).toContain('# Skills');
+    expect(prompt).toContain('SKILLS');
   });
 
   it('shows Windows notes only on Windows', () => {

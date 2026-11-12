@@ -1,5 +1,5 @@
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentTaskService } from '#/agent/task/task';
+import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { ISessionEventBus } from '#/app/event/eventBus';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -25,7 +25,7 @@ export class TowerCompleteTool implements ITowerCompleteTool {
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @ISessionEventBus private readonly sessionBus: ISessionEventBus,
-    @IAgentTaskService private readonly tasks: IAgentTaskService,
+    @IAgentToolExecutorService private readonly tasks: IAgentToolExecutorService,
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
   ) {}
 
@@ -43,13 +43,14 @@ export class TowerCompleteTool implements ITowerCompleteTool {
           const result = await store.complete(
             resolved.caller,
             args.report.trim(),
+            args.key_artifacts,
           );
           const delivery =
             result.message !== undefined
               ? deliverTowerMessage(
                   {
                     sessionBus: this.sessionBus,
-                    tasks: this.tasks,
+                    toolExecutor: this.tasks,
                     agentLifecycle: this.agentLifecycle,
                     state: resolved.state,
                   },

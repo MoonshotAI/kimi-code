@@ -89,20 +89,16 @@ export const toolCallDeltaEventSchema = z.object({
   argumentsPart: z.string().optional(),
 });
 
-export const toolProgressEventSchema = z.object({
-  type: z.literal('tool.progress'),
+export const toolUpdatedEventSchema = z.object({
+  type: z.literal('tool.updated'),
   time: z.number().optional(),
   turnId: z.number(),
   toolCallId: z.string(),
-  /** Protocol `ToolUpdate` — mirrored field-for-field. */
-  update: z.object({
-    kind: z.enum(['stdout', 'stderr', 'progress', 'status', 'custom']),
-    text: z.string().optional(),
-    percent: z.number().optional(),
-    customKind: z.string().optional(),
-    customData: z.unknown().optional(),
-    replace: z.boolean().optional(),
-  }),
+  taskId: z.string(),
+  status: z.enum(['running', 'stopping', 'success', 'failed', 'aborted']),
+  detached: z.boolean(),
+  fields: z.record(z.string(), z.unknown()),
+  output: z.object({ offset: z.number(), text: z.string() }).optional(),
 });
 
 export const toolResultEventSchema = z.object({
@@ -215,7 +211,7 @@ export interface AgentEventPayloads {
   'thinking.delta': z.infer<typeof thinkingDeltaEventSchema>;
   'tool.call.started': z.infer<typeof toolCallStartedEventSchema>;
   'tool.call.delta': z.infer<typeof toolCallDeltaEventSchema>;
-  'tool.progress': z.infer<typeof toolProgressEventSchema>;
+  'tool.updated': z.infer<typeof toolUpdatedEventSchema>;
   'tool.result': z.infer<typeof toolResultEventSchema>;
   'prompt.completed': z.infer<typeof promptCompletedEventSchema>;
   'prompt.aborted': z.infer<typeof promptAbortedEventSchema>;
@@ -240,7 +236,7 @@ export const agentEvents = {
   'thinking.delta': { kind: 'stream', name: 'events', type: 'thinking.delta', schema: thinkingDeltaEventSchema },
   'tool.call.started': { kind: 'stream', name: 'events', type: 'tool.call.started', schema: toolCallStartedEventSchema },
   'tool.call.delta': { kind: 'stream', name: 'events', type: 'tool.call.delta', schema: toolCallDeltaEventSchema },
-  'tool.progress': { kind: 'stream', name: 'events', type: 'tool.progress', schema: toolProgressEventSchema },
+  'tool.updated': { kind: 'stream', name: 'events', type: 'tool.updated', schema: toolUpdatedEventSchema },
   'tool.result': { kind: 'stream', name: 'events', type: 'tool.result', schema: toolResultEventSchema },
   'prompt.completed': { kind: 'stream', name: 'events', type: 'prompt.completed', schema: promptCompletedEventSchema },
   'prompt.aborted': { kind: 'stream', name: 'events', type: 'prompt.aborted', schema: promptAbortedEventSchema },

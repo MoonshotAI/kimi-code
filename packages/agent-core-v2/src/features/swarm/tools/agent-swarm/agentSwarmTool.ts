@@ -10,7 +10,7 @@ import { toInputJsonSchema } from '#/tool/input-schema';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
 import { ISessionSwarmService, type SessionSwarmTask } from '#/features/swarm/session/sessionSwarm';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 import { resolveSwarmTimeoutMs } from '#/features/swarm/configSection';
@@ -98,7 +98,7 @@ export class AgentSwarmTool implements IAgentSwarmTool {
     @IConfigService private readonly config: IConfigService,
     @IFlagService private readonly flags: IFlagService,
     @ISessionSubagentService private readonly subagents: ISessionSubagentService,
-    @IAgentProfileService private readonly profile: IAgentProfileService,
+    @IAgentLoopService private readonly profile: IAgentLoopService,
   ) {
     this.callerAgentId = scopeContext.agentId;
   }

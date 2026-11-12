@@ -1,5 +1,5 @@
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentTaskService } from '#/agent/task/task';
+import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentTowerService } from '#/features/tower/tower';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -19,7 +19,7 @@ export class TowerMergeTool implements ITowerMergeTool {
   constructor(
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
-    @IAgentTaskService private readonly tasks: IAgentTaskService,
+    @IAgentToolExecutorService private readonly tasks: IAgentToolExecutorService,
     @IAgentTowerService private readonly tower: IAgentTowerService,
   ) {}
 
@@ -58,7 +58,7 @@ export class TowerMergeTool implements ITowerMergeTool {
               output: [
                 `PARTIAL MERGE: only the evaluated commit ${evaluatedBranchTip} of ${args.branch} was merged (merge commit ${mergeCommit}).`,
                 `${args.branch} advanced during the merge to ${currentBranchTip}; that newer tip and any commits after ${evaluatedBranchTip} were NOT merged.`,
-                'The mission was not marked merged. Review the new exact tip, then retry TowerMerge; do not treat the partial merge as a completed mission merge.',
+                'The mission was not marked merged. Review the new exact tip, then retry TowerMerge; an artifact mission instead needs fresh explicit human acceptance on that tip. Do not treat the partial merge as a completed mission merge.',
               ].join('\n'),
             };
           }
@@ -91,7 +91,7 @@ export class TowerMergeTool implements ITowerMergeTool {
               ...conflictsWith.map(
                 (conflict) => `- ${conflict.branch}: ${conflict.files.join(', ')}`,
               ),
-              'For each affected mission, follow the next structured refusal: TowerRebase while its worker is idle (or ask the worker to rebase mid-turn). Conflict-free rebase preserves review binding; real conflicts must be resolved before another merge.',
+              'For each affected mission, follow the next structured refusal: TowerRebase while its worker is idle (or ask the worker to rebase mid-turn). Conflict-free rebase preserves build review binding; artifact missions instead require fresh explicit human acceptance after the tip moves. Real conflicts must be resolved before another merge.',
             );
           } else if (allClosed) {
             lines.push(`The mission is now marked merged. ${teardownHint}`);
@@ -105,11 +105,10 @@ export class TowerMergeTool implements ITowerMergeTool {
 
   private activeAgentIds(): ReadonlySet<string> {
     return new Set(
-      this.tasks
-        .list(true)
-        .flatMap((task) =>
-          task.kind === 'agent' && task.agentId !== undefined ? [task.agentId] : [],
-        ),
+      this.tasks.handlers().flatMap((handler) => {
+        const task = handler.snapshot().fields.task;
+        return task?.kind === 'agent' && task.agentId !== undefined ? [task.agentId] : [];
+      }),
     );
   }
 }

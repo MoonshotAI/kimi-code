@@ -27,6 +27,7 @@ export function createEmptyResponseError(
     message: `${detail}${formatFinishReasonHint(finish)} Provider: ${model.provider}, model: ${model.model}`,
     finishReason: finish.finishReason,
     rawFinishReason: finish.rawFinishReason,
+    retryable: finish.finishReason !== 'filtered',
   };
 }
 

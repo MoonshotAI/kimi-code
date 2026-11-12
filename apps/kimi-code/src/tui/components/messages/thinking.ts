@@ -5,29 +5,44 @@
  * Supports expand/collapse via Ctrl+O (shared with tool output).
  */
 
-import { Text, truncateToWidth, type Component, type TUI } from '@moonshot-ai/pi-tui';
+import { Text, truncateToWidth, visibleWidth, type Component, type TUI } from '@moonshot-ai/pi-tui';
 
+import { renderHeaderContent } from '#/tui/components/messages/truncated-header-line';
 import {
-  BRAILLE_SPINNER_FRAMES,
-  BRAILLE_SPINNER_INTERVAL_MS,
+  ANSI_ESCAPE_PATTERN,
   MESSAGE_INDENT,
   THINKING_PREVIEW_LINES,
 } from '#/tui/constant/rendering';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
+import type { Elapsed } from '#/tui/types';
 import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
+import { elapsedSuffix, shownSeconds, TitleSweep } from './running-title';
+
+const LIVE_LABEL = 'Thinking';
+const FINALIZED_FOLD_HINT_ROWS = 1;
 
 export type ThinkingRenderMode = 'live' | 'finalized';
 
+export type FinishedThinkingForm =
+  | { readonly kind: 'standalone' }
+  | { readonly kind: 'opened'; readonly title: string };
+
 export class ThinkingComponent implements Component {
+  readonly startedAtMs = Date.now();
+
   private text: string;
   private showMarker: boolean;
   private mode: ThinkingRenderMode;
+  private finishedForm: FinishedThinkingForm = { kind: 'standalone' };
   private expanded = false;
   private previewHidesLines = false;
   private readonly ui: TUI | undefined;
-  private spinnerFrame = 0;
-  private spinnerInterval: ReturnType<typeof setInterval> | undefined;
+  private readonly sweep = new TitleSweep();
+  private frameRequest: number | undefined;
+  private shownAnimation: string | undefined;
+  private elapsed: Elapsed | undefined;
+  private projectionVersion = 0;
   // Hold a single Text instance so pi-tui's (text, width) → lines cache
   // actually survives across renders. Re-constructing per render destroys
   // the cache and forces full re-wrap on every frame, which dominates CPU
@@ -35,6 +50,7 @@ export class ThinkingComponent implements Component {
   private readonly textComponent: Text;
 
   private renderCache: { width: number; lines: string[] } | undefined;
+  private rowDetailCache: { width: number; lines: string[] } | undefined;
 
   constructor(
     text: string,
@@ -46,14 +62,16 @@ export class ThinkingComponent implements Component {
     this.showMarker = showMarker;
     this.mode = mode;
     this.ui = ui;
+    this.elapsed = mode === 'live' ? undefined : { known: false };
     this.textComponent = new Text(this.styled(text), 0, 0);
     if (mode === 'live') {
-      this.startSpinner();
+      this.startFrames();
     }
   }
 
   private markRenderDirty(): void {
     this.renderCache = undefined;
+    this.rowDetailCache = undefined;
   }
 
   invalidate(): void {
@@ -72,19 +90,35 @@ export class ThinkingComponent implements Component {
     return currentTheme.italicFg('textDim', text);
   }
 
-  finalize(): void {
+  finalize(elapsed: Elapsed): void {
+    this.elapsed = elapsed;
+    this.projectionVersion += 1;
     this.mode = 'finalized';
     this.markRenderDirty();
-    this.stopSpinner();
+    this.stopFrames();
+  }
+
+  get thinkingElapsed(): Elapsed | undefined {
+    return this.elapsed;
+  }
+
+  get transcriptProjectionVersion(): number {
+    return this.projectionVersion;
   }
 
   dispose(): void {
-    this.stopSpinner();
+    this.stopFrames();
   }
 
   setExpanded(expanded: boolean): void {
     if (this.expanded === expanded) return;
     this.expanded = expanded;
+    this.markRenderDirty();
+  }
+
+  setFinishedForm(form: FinishedThinkingForm): void {
+    if (sameFinishedForm(this.finishedForm, form)) return;
+    this.finishedForm = form;
     this.markRenderDirty();
   }
 
@@ -111,29 +145,34 @@ export class ThinkingComponent implements Component {
 
     const contentWidth = Math.max(1, width - MESSAGE_INDENT.length);
     const contentLines = this.text.length > 0 ? this.textComponent.render(contentWidth) : [''];
-    // Live folding hides every row beyond the tail. Finalized folding swaps
-    // hidden rows for a one-line hint, so it must save at least one row.
-    this.previewHidesLines =
-      this.mode === 'live'
-        ? contentLines.length > THINKING_PREVIEW_LINES
-        : contentLines.length > THINKING_PREVIEW_LINES + 1;
 
     let rendered: string[];
     if (this.mode === 'live') {
+      const streamed = withoutTrailingBlankLines(contentLines);
+      this.previewHidesLines = streamed.length > THINKING_PREVIEW_LINES;
       const visibleLines =
         !this.expanded && this.previewHidesLines
-          ? contentLines.slice(contentLines.length - THINKING_PREVIEW_LINES)
-          : contentLines;
-      const spinner = currentTheme.fg(
-        'textDim',
-        `${BRAILLE_SPINNER_FRAMES[this.spinnerFrame] ?? BRAILLE_SPINNER_FRAMES[0]} `,
-      );
+          ? streamed.slice(streamed.length - THINKING_PREVIEW_LINES)
+          : streamed;
+      const paint = this.sweep.painter();
+      const title =
+        paint(STATUS_BULLET, 0) +
+        paint(LIVE_LABEL, visibleWidth(STATUS_BULLET)) +
+        elapsedSuffix(this.startedAtMs, Date.now());
       rendered = [
         '',
-        spinner + currentTheme.fg('textDim', 'thinking…'),
+        truncateToWidth(title, width, '…'),
         ...visibleLines.map((line) => MESSAGE_INDENT + line),
       ];
+    } else if (this.finishedForm.kind === 'opened') {
+      this.previewHidesLines = false;
+      rendered = [
+        '',
+        openedTitle(this.finishedForm.title, width),
+        ...withoutTrailingBlankLines(contentLines).map((line) => MESSAGE_INDENT + line),
+      ];
     } else {
+      this.previewHidesLines = contentLines.length > THINKING_PREVIEW_LINES + FINALIZED_FOLD_HINT_ROWS;
       const lines: string[] = [''];
       for (let i = 0; i < contentLines.length; i++) {
         const p = i === 0 && this.showMarker ? currentTheme.fg('textDim', STATUS_BULLET) : MESSAGE_INDENT;
@@ -162,18 +201,57 @@ export class ThinkingComponent implements Component {
     return rendered;
   }
 
-  private startSpinner(): void {
-    if (this.ui === undefined || this.spinnerInterval !== undefined) return;
-    this.spinnerInterval = setInterval(() => {
-      this.spinnerFrame = (this.spinnerFrame + 1) % BRAILLE_SPINNER_FRAMES.length;
-      this.markRenderDirty();
-      this.ui?.requestRender();
-    }, BRAILLE_SPINNER_INTERVAL_MS);
+  renderRowDetail(width: number): string[] {
+    if (isRenderCacheEnabled() && this.rowDetailCache?.width === width) {
+      return this.rowDetailCache.lines;
+    }
+    const contentWidth = Math.max(1, width - MESSAGE_INDENT.length);
+    const contentLines = this.text.length > 0 ? this.textComponent.render(contentWidth) : [''];
+    const lines = contentLines.map((line) => MESSAGE_INDENT + line);
+    this.rowDetailCache = { width, lines };
+    return lines;
   }
 
-  private stopSpinner(): void {
-    if (this.spinnerInterval === undefined) return;
-    clearInterval(this.spinnerInterval);
-    this.spinnerInterval = undefined;
+  private startFrames(): void {
+    if (this.ui === undefined || this.frameRequest !== undefined) return;
+    this.sweep.start(performance.now(), true);
+    this.frameRequest = this.ui.requestAnimationFrame(this.onFrame);
   }
+
+  private readonly onFrame = (time: number): void => {
+    this.sweep.advance(time, visibleWidth(STATUS_BULLET + LIVE_LABEL), true);
+    const shown = `${this.sweep.frameKey}|${String(shownSeconds(this.startedAtMs, Date.now()))}`;
+    if (shown !== this.shownAnimation) {
+      this.shownAnimation = shown;
+      this.markRenderDirty();
+      this.ui?.requestRender();
+    }
+    this.frameRequest = this.ui?.requestAnimationFrame(this.onFrame);
+  };
+
+  private stopFrames(): void {
+    if (this.frameRequest === undefined) return;
+    this.ui?.cancelAnimationFrame(this.frameRequest);
+    this.frameRequest = undefined;
+  }
+}
+
+function sameFinishedForm(left: FinishedThinkingForm, right: FinishedThinkingForm): boolean {
+  if (left.kind === 'standalone' || right.kind === 'standalone') return left.kind === right.kind;
+  return left.title === right.title;
+}
+
+function openedTitle(title: string, width: number): string {
+  const dim = (text: string): string => currentTheme.fg('textDim', text);
+  return renderHeaderContent({
+    head: '  ',
+    flex: { text: title, style: dim, keep: 'head' },
+    tail: '',
+  }, width);
+}
+
+function withoutTrailingBlankLines(lines: readonly string[]): readonly string[] {
+  let end = lines.length;
+  while (end > 0 && (lines[end - 1] ?? '').replaceAll(ANSI_ESCAPE_PATTERN, '').trim() === '') end--;
+  return lines.slice(0, end);
 }

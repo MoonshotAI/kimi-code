@@ -20,7 +20,12 @@ import {
   resolveWireMigrations,
   type WireMigration,
 } from '#/wire/migration/migration';
-import { isWireMetadataRecord, type WireRecord } from '#/wire/record';
+import {
+  assertWireRecordsReaderVersion,
+  isWireMetadataRecord,
+  type WireRecord,
+} from '#/wire/record';
+import { normalizeLegacyTurnSteerRecords } from '#/wire/human';
 
 import type { AgentReplayRecord, AgentReplayRecordPayload } from './types';
 
@@ -86,10 +91,12 @@ export function foldWireRecords(
   decodePersistent?: (record: WireRecord) => WireRecord,
   matchingRecords?: readonly WireRecord[],
 ): WireReplayFold {
+  records = normalizeLegacyTurnSteerRecords(records);
+  const matching = normalizeLegacyTurnSteerRecords(matchingRecords ?? records);
   const turnIdByAppend = new Map<WireRecord, number>();
-  for (const match of matchWireTurnInputRecords(matchingRecords ?? records, true)) {
+  for (const match of matchWireTurnInputRecords(matching, true)) {
     if (match.turnId !== undefined) {
-      turnIdByAppend.set((matchingRecords ?? records)[match.appendIndex]!, match.turnId);
+      turnIdByAppend.set(matching[match.appendIndex]!, match.turnId);
     }
   }
   const fold = new WireReplayFoldState();
@@ -113,6 +120,7 @@ function migrateJournalRecords(records: readonly WireRecord[]): WireRecord[] {
     if (!isWireMetadataRecord(first)) {
       throw new Error('Agent wire metadata is malformed');
     }
+    assertWireRecordsReaderVersion(records);
     migrations = isNewerWireVersion(first.protocol_version)
       ? []
       : resolveWireMigrations(first.protocol_version);
@@ -323,6 +331,7 @@ class WireReplayFoldState {
         openStep.toolCalls.push({
           type: 'function',
           id: event.toolCallId,
+          rawId: event.rawId,
           name: event.name,
           arguments: event.args === undefined ? null : JSON.stringify(event.args),
           extras: event.extras,
@@ -473,6 +482,8 @@ class WireReplayFoldState {
     if (state === undefined) return;
     const status = record['status'] as GoalStatus | undefined;
     const reason = readString(record, 'reason');
+    const objective = readString(record, 'objective');
+    if (objective !== undefined) state.objective = objective;
     if (status !== undefined) {
       state.status = status;
       state.terminalReason = status === 'active' ? undefined : reason;

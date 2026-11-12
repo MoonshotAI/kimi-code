@@ -135,7 +135,7 @@ async function undoByCount(host: SlashCommandHost, count: number): Promise<boole
       if (entry?.hookResult === true) continue;
       break;
     }
-    removeUndoContextComponents(children, lastUserComponentIndex, groupChildIndices);
+    removeUndoContextComponents(host, children, lastUserComponentIndex, groupChildIndices);
   }
 
   const groupEntryIndices = new Set<number>();
@@ -188,7 +188,7 @@ async function showUndoSelector(host: SlashCommandHost): Promise<void> {
       onSelect: (choice) => {
         void undoByCount(host, choice.count).then((undone) => {
           if (undone) {
-            host.restoreInputText(choice.input);
+            host.restoreInputText(choice.input, choice.inlineSkillActivations);
             return;
           }
           host.restoreEditor();
@@ -296,6 +296,7 @@ function createUndoChoices(
     id: entry.id,
     count: anchors.length - index,
     input: formatUndoChoiceInput(entry),
+    inlineSkillActivations: entry.inlineSkillActivations,
     label: formatUndoChoiceLabel(entry),
   }));
 }
@@ -488,7 +489,8 @@ function findUndoAnchorComponentIndex(
 }
 
 function removeUndoContextComponents(
-  children: Component[],
+  host: SlashCommandHost,
+  children: readonly Component[],
   startIndex: number,
   additionalIndices: ReadonlySet<number>,
 ): void {
@@ -499,7 +501,7 @@ function removeUndoContextComponents(
       (i >= startIndex || additionalIndices.has(i)) &&
       isUndoContextComponent(child)
     ) {
-      children.splice(i, 1);
+      host.state.transcriptContainer.removeChild(child);
     }
   }
 }

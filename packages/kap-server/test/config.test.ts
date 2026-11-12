@@ -305,7 +305,6 @@ describe('server-v2 config changed WS notifications', () => {
       if (frame.type === 'event.config.changed') frames.push(frame as ConfigChangedFrame);
     });
     await new Promise((resolve) => ws.on('open', resolve));
-    ws.send(JSON.stringify({ type: 'client_hello', payload: { client_id: 'config-ws-test' } }));
     return frames;
   }
 

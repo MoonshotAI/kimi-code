@@ -294,7 +294,7 @@ export function createMessageAccumulator(): MessageAccumulator {
 export function toCorePart(part: ContentPart): CoreContentPart {
   switch (part.type) {
     case 'text':
-      return { type: 'text', text: part.text, meta: part.meta };
+      return { type: 'text', text: part.text, ...(part.meta === undefined ? {} : { meta: part.meta }) };
     case 'think':
       return {
         type: 'think',

@@ -3,9 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { LoopRequester } from '#/agent/loop/requesterContract';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentProfileService } from '#/agent/profile/profile';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ModelRecord } from '#/llm-adapter/model/model';
+import { errorFromLlmOutcome } from '#/llm-adapter/model/generate';
 import {
   configServices,
   createTestAgent,
@@ -33,7 +33,7 @@ function defaultGenerate(): GenerateFn {
 
 describe('ConfigState model capabilities', () => {
   let ctx: TestAgentContext;
-  let profile: IAgentProfileService;
+  let profile: IAgentLoopService;
   let requester: LoopRequester;
   let kimiConfig: TestKimiConfig;
   let generate: GenerateFn;
@@ -52,7 +52,7 @@ describe('ConfigState model capabilities', () => {
       }),
       telemetryServices(recordingTelemetry(records)),
     );
-    profile = ctx.get(IAgentProfileService);
+    profile = ctx.get(IAgentLoopService);
     requester = ctx.get(IAgentLoopService).requester;
   });
 
@@ -286,8 +286,10 @@ describe('ConfigState model capabilities', () => {
     });
   });
 
-  it('uses model max output size as the LLM completion cap', async () => {
+  it('freezes model max output size, system prompt and params across operation preparation', async () => {
     let requestMaxTokens: unknown;
+    let requestSystemPrompt: unknown;
+    let requestTemperature: unknown;
     kimiConfig = {
       providers: {
         deepseek: {
@@ -303,10 +305,19 @@ describe('ConfigState model capabilities', () => {
           maxContextSize: 1_000_000,
           maxOutputSize: 384_000,
         },
+        'deepseek/deepseek-v4-mini': {
+          provider: 'deepseek',
+          model: 'deepseek-v4-mini',
+          maxContextSize: 1_000_000,
+          maxOutputSize: 128_000,
+        },
       },
+      modelOverrides: { temperature: 0.2 },
     };
-    generate = requesterFromGenerateFn(async (_provider, _systemPrompt, _tools, _history, _callbacks, options) => {
+    generate = requesterFromGenerateFn(async (_provider, systemPrompt, _tools, _history, _callbacks, options) => {
       requestMaxTokens = options?.maxCompletionTokens;
+      requestSystemPrompt = systemPrompt;
+      requestTemperature = options?.sampling?.temperature;
       return {
         id: 'response-1',
         message: { role: 'assistant', content: [], toolCalls: [] },
@@ -321,15 +332,30 @@ describe('ConfigState model capabilities', () => {
       systemPrompt: 'system',
       thinkingLevel: 'off',
     });
-    await requester.request({}, undefined, new AbortController().signal);
+    const signal = new AbortController().signal;
+    const operation = await requester.prepareOperation({
+      source: () => ({ type: 'operation' }),
+    }, signal);
+    profile.update({
+      modelAlias: 'deepseek/deepseek-v4-mini',
+      systemPrompt: 'changed-system',
+    });
+    kimiConfig = { ...kimiConfig, modelOverrides: { temperature: 0.9 } };
+    const outcome = await operation.generate(
+      { content: {}, profile: {} },
+      { signal },
+    );
+    if (outcome.type !== 'done') throw errorFromLlmOutcome(outcome);
 
     expect(requestMaxTokens).toBe(384000);
+    expect(requestSystemPrompt).toBe('system');
+    expect(requestTemperature).toBe(0.2);
   });
 });
 
 describe('ConfigState prompt cache hint', () => {
   let ctx: TestAgentContext;
-  let profile: IAgentProfileService;
+  let profile: IAgentLoopService;
   let kimiConfig: TestKimiConfig;
 
   beforeEach(() => {
@@ -353,7 +379,7 @@ describe('ConfigState prompt cache hint', () => {
       configServices(() => kimiConfig),
       modelProviderOptionServices({ promptCacheKey: 'session-test' }),
     );
-    profile = ctx.get(IAgentProfileService);
+    profile = ctx.get(IAgentLoopService);
   });
 
   afterEach(async () => {
@@ -376,7 +402,7 @@ describe('ConfigState prompt cache hint', () => {
 
 describe('ConfigState thinking clamp for always-thinking models', () => {
   let ctx: TestAgentContext;
-  let profile: IAgentProfileService;
+  let profile: IAgentLoopService;
   let requester: LoopRequester;
   let kimiConfig: TestKimiConfig;
   let capturedThinking: unknown;
@@ -439,7 +465,7 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
         };
       })),
     );
-    profile = ctx.get(IAgentProfileService);
+    profile = ctx.get(IAgentLoopService);
     requester = ctx.get(IAgentLoopService).requester;
   });
 
@@ -460,7 +486,7 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
   it('sends the clamped thinking effort in the per-turn intent after thinking was set off', async () => {
     profile.update({ modelAlias: 'kimi-code/deep', thinkingLevel: 'off' });
 
-    await requester.request({}, undefined, new AbortController().signal);
+    await generateOperation(requester, new AbortController().signal);
 
     expect(capturedThinking).toMatchObject({ effort: 'high' });
   });
@@ -560,7 +586,7 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
 
 describe('ConfigState.provider applies global KIMI_MODEL_* request config', () => {
   let ctx: TestAgentContext | undefined;
-  let profile: IAgentProfileService;
+  let profile: IAgentLoopService;
   let requester: LoopRequester;
   let kimiConfig: TestKimiConfig;
   let capturedProvider: unknown;
@@ -614,7 +640,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
         };
       })),
     );
-    profile = ctx.get(IAgentProfileService);
+    profile = ctx.get(IAgentLoopService);
     requester = ctx.get(IAgentLoopService).requester;
   }
 
@@ -623,7 +649,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
     createAgentWithEnv();
 
     profile.update({ modelAlias: 'kimi-code' });
-    await requester.request({}, undefined, new AbortController().signal);
+    await generateOperation(requester, new AbortController().signal);
 
     expect(capturedOptions?.sampling).toMatchObject({
       temperature: 0.3,
@@ -635,7 +661,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
     createAgentWithEnv();
 
     profile.update({ modelAlias: 'kimi-code', thinkingLevel: 'high' });
-    await requester.request({}, undefined, new AbortController().signal);
+    await generateOperation(requester, new AbortController().signal);
 
     expect(capturedOptions?.thinking).toMatchObject({ effort: 'on', keep: 'all' });
   });
@@ -645,7 +671,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
     createAgentWithEnv();
 
     profile.update({ modelAlias: 'kimi-code', thinkingLevel: 'off' });
-    await requester.request({}, undefined, new AbortController().signal);
+    await generateOperation(requester, new AbortController().signal);
 
     expect(capturedOptions?.thinking?.effort).toBe('off');
     expect(capturedOptions?.thinking?.keep).toBeUndefined();
@@ -668,9 +694,20 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
       thinkingEffort: 'max',
     });
 
-    await requester.request({}, undefined, new AbortController().signal);
+    await generateOperation(requester, new AbortController().signal);
 
     expect(capturedProvider).toMatchObject({ name: 'anthropic' });
     expect(capturedOptions?.thinking?.effort).toBe('max');
   });
 });
+
+async function generateOperation(requester: LoopRequester, signal: AbortSignal): Promise<void> {
+  const operation = await requester.prepareOperation({
+    source: () => ({ type: 'operation' }),
+  }, signal);
+  const outcome = await operation.with({ policy: { retry: { maxAttemptsPerStep: 1 } } }).generate(
+    { content: {}, profile: {} },
+    { signal },
+  );
+  if (outcome.type !== 'done') throw errorFromLlmOutcome(outcome);
+}

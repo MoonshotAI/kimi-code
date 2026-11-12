@@ -17,6 +17,8 @@ import { ChoicePickerComponent } from '#/tui/components/dialogs/choice-picker';
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
 import { BannerComponent } from '#/tui/components/chrome/banner';
 import { WelcomeComponent } from '#/tui/components/chrome/welcome';
+import { MoonLoader } from '#/tui/components/chrome/moon-loader';
+import type { FooterGitBinding } from '#/tui/components/chrome/footer';
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
 import { maybeShowModelMigrationPrompt } from '#/tui/controllers/model-migration';
 import type { ApprovalPanelData, QuestionPanelData } from '#/tui/reverse-rpc/types';
@@ -121,6 +123,7 @@ function makeStartupInput(
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
+      transcript: { toolCallDensity: 'compact', thinking: 'grouped' },
       statusLine: { items: null, command: null },
       ...tuiConfig,
     },
@@ -243,6 +246,8 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     setTelemetryContext: vi.fn(),
     getExperimentalFeatures: vi.fn(async () => []),
     getWorkspaceAdditionalDirs: vi.fn(async () => []),
+    getGitStatus: vi.fn(async () => null),
+    getGitPullRequest: vi.fn(async () => null),
     getWorkspaceTrustInfo: vi.fn(async () => ({ trusted: true, gatedMcpServers: [], gatedAdditionalDirs: [], additionalDirSources: [], warnings: [], instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [], paths: [] } })),
     refreshProviderModels: vi.fn(async () => ({ changed: [], unchanged: [], failed: [] })),
     auth: {
@@ -491,6 +496,7 @@ describe('KimiTUI startup', () => {
 
     // Dock = 6 chrome containers + footer wrap, below the transcript viewport.
     expect(driver.state.dockContainer?.children).toHaveLength(7);
+    expect(driver.state.activityContainer.render(80).map((line) => line.trim())).toEqual(['']);
   });
 
   it('shows a session-less notice on v2 startup', async () => {
@@ -940,6 +946,33 @@ describe('KimiTUI startup', () => {
     }
   });
 
+  it('reads footer git state through the engine, skipping a remote binding until its session exists', async () => {
+    type GitBindingDriver = { footerGitBinding(state: TUIState['appState']): FooterGitBinding | null };
+    const localHarness = makeHarness();
+    const local = makeDriver(localHarness, makeStartupInput());
+    const localBinding = (local as unknown as GitBindingDriver).footerGitBinding(local.state.appState);
+    expect(localBinding?.source.localWorkDir).toBe(local.state.appState.workDir);
+    await localBinding?.source.status();
+    expect(localHarness.getGitStatus).toHaveBeenCalledWith(local.state.appState.workDir, { sessionId: undefined });
+
+    const remoteHarness = makeHarness();
+    const remote = makeDriver(remoteHarness, makeStartupInput({ environment: 'dev-box' }));
+    const driver = remote as unknown as GitBindingDriver;
+    expect(driver.footerGitBinding(remote.state.appState)).toBeNull();
+
+    const connected = {
+      ...remote.state.appState,
+      sessionId: 'ses-remote',
+      environment: { environmentId: 'dev-box', type: 'ssh' as const, status: 'ready' as const, cwd: '/remote/work' },
+    };
+    const remoteBinding = driver.footerGitBinding(connected);
+    expect(remoteBinding?.source.localWorkDir).toBeUndefined();
+    await remoteBinding?.source.pullRequest();
+    expect(remoteHarness.getGitPullRequest).toHaveBeenCalledWith(remote.state.appState.workDir, { sessionId: 'ses-remote' });
+    expect(driver.footerGitBinding({ ...connected, environment: { ...connected.environment, status: 'disconnected' } })?.key)
+      .toBe(remoteBinding?.key);
+  });
+
   it('completes remote @ mentions through the live session', async () => {
     const suggestFiles = vi.fn(async () => ({
       items: [{ path: 'src/app.ts', name: 'app.ts', kind: 'file', matchPositions: [0] }],
@@ -967,6 +1000,7 @@ describe('KimiTUI startup', () => {
     expect(suggestFiles).toHaveBeenCalledWith(driver.state.appState.workDir, {
       query: 'app',
       sessionId: session.id,
+      followGitignore: false,
     });
     expect(result?.items[0]).toMatchObject({ value: '@src/app.ts' });
   });
@@ -3521,6 +3555,31 @@ describe('KimiTUI startup', () => {
     expect(onExit).toHaveBeenCalledWith(0);
   });
 
+  it('removes the startup progress row once ready and keeps the failure row', async () => {
+    const startDriver = (initMainTui: () => Promise<boolean>): MigrateExitDriver => {
+      const driver = makeDriver(makeHarness(), makeStartupInput()) as unknown as MigrateExitDriver;
+      vi.spyOn(driver.state.ui, 'start').mockImplementation(() => {});
+      vi.spyOn(driver.state.ui, 'stop').mockImplementation(() => {});
+      vi.spyOn(driver.state.terminal, 'write').mockImplementation(() => {});
+      vi.spyOn(driver, 'initMainTui').mockImplementation(initMainTui);
+      vi.spyOn(driver as unknown as { finishStartup(): Promise<void> }, 'finishStartup').mockResolvedValue();
+      return driver;
+    };
+    const transcriptText = (driver: MigrateExitDriver): string =>
+      driver.state.transcriptContainer.children.flatMap((child) => child.render(80)).join('\n');
+
+    const ready = startDriver(async () => false);
+    await ready.start();
+    expect(ready.state.transcriptContainer.children.some((child) => child instanceof MoonLoader)).toBe(false);
+    expect(transcriptText(ready)).not.toContain('Ready.');
+
+    const failed = startDriver(async () => {
+      throw new Error('startup boom');
+    });
+    await expect(failed.start()).rejects.toThrow('startup boom');
+    expect(transcriptText(failed)).toContain('Startup failed.');
+  });
+
   it('disposes terminal tracking when post-migration startup fails', async () => {
     const harness = makeHarness();
     const driver = makeDriver(harness, {
@@ -3924,6 +3983,29 @@ function uiContainsFooter(driver: StartupDriver): boolean {
   };
   return visit(driver.state.ui);
 }
+
+describe('animation frame interval wiring', () => {
+  it('runs animation frames at the startup frame rate, and every 120 ms without one', () => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const frameGaps = (animationFrameRate?: number): number[] => {
+      const { ui } = makeDriver(makeHarness(), { ...makeStartupInput(), animationFrameRate }).state;
+      const times: number[] = [];
+      const step = (time: number): void => {
+        times.push(time);
+        if (times.length < 4) ui.requestAnimationFrame(step);
+      };
+      ui.requestAnimationFrame(step);
+      vi.advanceTimersByTime(1_000);
+      return times.slice(1).map((time, index) => time - (times[index] ?? 0));
+    };
+
+    expect(frameGaps()).toEqual([120, 120, 120]);
+    expect(frameGaps(20)).toEqual([50, 50, 50]);
+  });
+});
 
 describe('survey telemetry gate wiring', () => {
   function surveyGateTelemetryDisabled(input: KimiTUIStartupInput): boolean {

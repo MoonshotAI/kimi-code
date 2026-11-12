@@ -4,8 +4,10 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
 import { setExperimentalFeatures } from '#/tui/commands/experimental-flags';
 import { ToolCallComponent } from '#/tui/components/messages/tool-call';
+import { TruncatedHeaderLine } from '#/tui/components/messages/truncated-header-line';
 import { NOTIFY_USER_MARK, STATUS_BULLET } from '#/tui/constant/symbols';
 import { darkColors } from '#/tui/theme/colors';
+import { setRenderCacheEnabled } from '#/tui/utils/render-cache';
 
 import { captureProcessWrite } from '../../../helpers/process';
 
@@ -18,8 +20,9 @@ function strip(text: string): string {
     .replaceAll(new RegExp(`${ESC}\\]8;;[^${BEL}]*${BEL}`, 'g'), '');
 }
 
-function stubTui(rows: number): TUI {
+function stubTui(rows: number, mode: TUI['mode'] = 'regular'): TUI {
   return {
+    mode,
     terminal: { rows },
     requestRender: () => {},
   } as unknown as TUI;
@@ -113,7 +116,7 @@ describe('ToolCallComponent', () => {
       );
 
       vi.advanceTimersByTime(5_000);
-      component.setResult({ tool_call_id: 'call_bash_short', output: 'hi', is_error: false });
+      component.setResult({ tool_call_id: 'call_bash_short', output: 'hi', is_error: false }, { known: false });
       vi.advanceTimersByTime(10_000);
 
       expect(strip(component.render(100).join('\n'))).not.toContain(
@@ -321,7 +324,7 @@ describe('ToolCallComponent', () => {
       tool_call_id: 'call_shell_live_done',
       output: 'final-only\n',
       is_error: false,
-    });
+    }, { known: false });
     component.setExpanded(true);
 
     const out = strip(component.render(100).join('\n'));
@@ -364,7 +367,7 @@ describe('ToolCallComponent', () => {
         tool_call_id: 'call_bash_done',
         output: 'step a\nstep b\nstep c\ndone',
         is_error: false,
-      });
+      }, { known: false });
 
       const collapsed = component.render(100).map(strip).filter((line) => line.trim().length > 0);
       expect(collapsed).toHaveLength(2);
@@ -430,15 +433,51 @@ describe('ToolCallComponent', () => {
       expect(component.hasHiddenContent()).toBe(true);
     });
 
-    it('renders the Update badge with a primary background and white text', () => {
+    it('renders the Update badge with a primary background and white text in regular mode', () => {
       const component = new ToolCallComponent(
         { id: 'call_notify_brand', name: 'NotifyUser', args: { message } },
         { tool_call_id: 'call_notify_brand', output: 'Update shown to the user.', is_error: false },
+        stubTui(24, 'regular'),
       );
 
       const output = component.render(100).join('\n');
       const expectedMark = chalk.bgHex(darkColors.primary)(chalk.hex('#FFFFFF')(NOTIFY_USER_MARK));
       expect(output).toContain(expectedMark);
+    });
+
+    it('replaces the Update badge with a primary bullet in fullscreen mode across collapsed and expanded states', () => {
+      const title = 'x'.repeat(114);
+      const component = new ToolCallComponent(
+        { id: 'call_notify_fullscreen', name: 'NotifyUser', args: { title, message } },
+        {
+          tool_call_id: 'call_notify_fullscreen',
+          output: 'Update shown to the user.',
+          is_error: false,
+        },
+        stubTui(24, 'fullscreen'),
+      );
+
+      const collapsedRaw = component.render(100).join('\n');
+      expect(collapsedRaw).toContain(chalk.hex(darkColors.primary)(STATUS_BULLET));
+      expect(collapsedRaw).not.toContain(NOTIFY_USER_MARK);
+
+      const collapsed = component.render(60).map(strip).filter((line) => line.trim().length > 0);
+      expect(collapsed).toHaveLength(1);
+      expect(collapsed[0]?.startsWith(STATUS_BULLET)).toBe(true);
+      expect(collapsed[0]).toContain('…');
+      expect(visibleWidth(collapsed[0]!)).toBeLessThanOrEqual(60);
+
+      component.setExpanded(true);
+      const expandedRaw = component.render(60).join('\n');
+      expect(expandedRaw).toContain(chalk.hex(darkColors.primary)(STATUS_BULLET));
+      expect(expandedRaw).not.toContain(NOTIFY_USER_MARK);
+
+      const rows = component.render(60).map(strip).filter((line) => line.trim().length > 0);
+      expect(rows[0]).toBe(`${STATUS_BULLET}${'x'.repeat(58)}`);
+      expect(rows[1]).toBe(`  ${'x'.repeat(56)}`);
+      expect(rows[2]).toBe('  Login module is clean.');
+      expect(rows.at(-1)).toBe('  The bug must be in session expiry.');
+      for (const row of rows) expect(visibleWidth(row)).toBeLessThanOrEqual(60);
     });
 
     it('uses the title as the header and keeps the message behind ctrl+o', () => {
@@ -683,7 +722,7 @@ describe('ToolCallComponent', () => {
         tool_call_id: 'call_notify_transition',
         output: 'Update shown to the user.',
         is_error: false,
-      });
+      }, { known: false });
       rows = component.render(100).map(strip).filter((line) => line.trim().length > 0);
       expect(rows).toEqual([`${NOTIFY_USER_MARK} Root cause`]);
       expect(component.hasHiddenContent()).toBe(true);
@@ -831,7 +870,7 @@ describe('ToolCallComponent', () => {
       expect(header.render(100)).toBe(first);
       expect(header.render(80)).not.toBe(first);
 
-      component.setResult({ tool_call_id: 'call_bash_cached', output: 'ok', is_error: false });
+      component.setResult({ tool_call_id: 'call_bash_cached', output: 'ok', is_error: false }, { known: false });
       const finished = header.render(100);
       expect(finished).not.toBe(first);
       expect(strip(finished[0]!)).toContain('Ran a command');
@@ -1623,7 +1662,7 @@ describe('ToolCallComponent', () => {
       tool_call_id: 'call_agent',
       output: 'parent duplicate result',
       is_error: false,
-    });
+    }, { known: false });
     vi.setSystemTime(30_000);
 
     out = strip(component.render(120).join('\n'));
@@ -1699,7 +1738,7 @@ describe('ToolCallComponent', () => {
       tool_call_id: 'call_agent_detach',
       output: 'agent_id: sub_detach_1\nactual_subagent_type: explore\n',
       is_error: false,
-    });
+    }, { known: false });
     out = strip(component.render(120).join('\n'));
     expect(out).toContain('Backgrounded');
     expect(out).not.toContain('Completed');
@@ -2182,7 +2221,7 @@ describe('ToolCallComponent', () => {
     const runningLines = strip(component.render(120).join('\n')).split('\n').length;
 
     component.onSubagentCompleted({ resultSummary: 'short answer' });
-    component.setResult({ tool_call_id: 'call_agent_height', output: 'done', is_error: false });
+    component.setResult({ tool_call_id: 'call_agent_height', output: 'done', is_error: false }, { known: false });
 
     const doneLines = strip(component.render(120).join('\n')).split('\n').length;
 
@@ -2286,7 +2325,7 @@ describe('ToolCallComponent', () => {
       );
       component.setBackgroundTaskTerminalStatus('lost');
       // Now the spawn-success result lands.
-      component.setResult({ ...spawnSuccessResult, tool_call_id: 'call_bg_agent' });
+      component.setResult({ ...spawnSuccessResult, tool_call_id: 'call_bg_agent' }, { known: false });
       expect(component.getSubagentSnapshot().phase).toBe('failed');
     });
 
@@ -2544,7 +2583,7 @@ describe('ToolCallComponent', () => {
       tool_call_id: 'call_write_snap',
       output: 'Wrote big.txt',
       is_error: false,
-    });
+    }, { known: false });
 
     const after = strip(component.render(100).join('\n'));
     expect(after).toContain('line1');
@@ -2711,7 +2750,7 @@ describe('ToolCallComponent', () => {
       tool_call_id: 'call_edit_timer',
       output: 'Replaced 1 occurrence in foo.ts',
       is_error: false,
-    });
+    }, { known: false });
     vi.advanceTimersByTime(1000);
     expect(ui.requestRender).not.toHaveBeenCalled();
 
@@ -3033,7 +3072,7 @@ describe('ToolCallComponent hasHiddenContent', () => {
     expect(component.hasHiddenContent()).toBe(false);
     component.appendLiveOutput('one\ntwo\n');
     expect(component.hasHiddenContent()).toBe(true);
-    component.setResult({ tool_call_id: 'tc', output: 'one\ntwo', is_error: false });
+    component.setResult({ tool_call_id: 'tc', output: 'one\ntwo', is_error: false }, { known: false });
     expect(component.hasHiddenContent()).toBe(false);
     component.dispose();
   });
@@ -3114,7 +3153,7 @@ describe('ToolCallComponent hasHiddenContent for a solo subagent card', () => {
       tool_call_id: 'call_agent',
       output: 'line 1\nline 2\nline 3\nline 4\nline 5',
       is_error: false,
-    });
+    }, { known: false });
     expect(component.hasHiddenContent()).toBe(false);
     component.dispose();
   });
@@ -3372,5 +3411,114 @@ describe('ToolCallComponent hasHiddenContent while arguments stream', () => {
     );
     expect(bash.hasHiddenContent()).toBe(true);
     bash.dispose();
+  });
+});
+
+describe('ToolCallComponent render cache', () => {
+  const readCall = { id: 'call_cache', name: 'Read', args: { path: 'foo.ts' } };
+  const readResult = { tool_call_id: 'call_cache', output: 'content', is_error: false };
+
+  it('returns the same array when nothing changed between renders', () => {
+    const component = new ToolCallComponent(readCall, readResult);
+    const first = component.render(100);
+    expect(component.render(100)).toBe(first);
+    component.dispose();
+  });
+
+  it('renders the same text as a fresh card after a width change and back', () => {
+    const component = new ToolCallComponent(readCall, readResult);
+    const wide = component.render(100);
+    const narrow = component.render(20);
+    expect(narrow).toEqual(new ToolCallComponent(readCall, readResult).render(20));
+    expect(component.render(100)).toEqual(wide);
+    component.dispose();
+  });
+
+  it('re-renders when the result arrives', () => {
+    const component = new ToolCallComponent(readCall, undefined);
+    const pending = component.render(100);
+    component.setResult(readResult, { known: false });
+    const done = component.render(100);
+    expect(done).not.toBe(pending);
+    expect(done).toEqual(new ToolCallComponent(readCall, readResult).render(100));
+    component.dispose();
+  });
+
+  describe('with the render cache disabled', () => {
+    beforeEach(() => setRenderCacheEnabled(false));
+    afterEach(() => setRenderCacheEnabled(true));
+
+    it('renders the card again with equal text', () => {
+      const component = new ToolCallComponent(readCall, readResult);
+      const first = component.render(100);
+      const second = component.render(100);
+      expect(second).not.toBe(first);
+      expect(second).toEqual(first);
+      component.dispose();
+    });
+
+    it('renders the spacer again with equal text', () => {
+      const component = new ToolCallComponent(readCall, readResult);
+      const spacer = component.children.find((child) => child.constructor.name === 'StableSpacer');
+      if (spacer === undefined) throw new Error('spacer not found');
+      const first = spacer.render(100);
+      const second = spacer.render(100);
+      expect(second).not.toBe(first);
+      expect(second).toEqual(first);
+      component.dispose();
+    });
+  });
+});
+
+describe('ToolCallComponent expanded clip detection', () => {
+  const bashCall = { id: 'call_clip', name: 'Bash', args: { command: 'echo hi' } };
+  const longLine = 'x'.repeat(200);
+  const bashResult = { tool_call_id: 'call_clip', output: longLine, is_error: false };
+
+  it('tracks the render width instead of keeping the first answer', () => {
+    const component = new ToolCallComponent(bashCall, bashResult);
+    component.setExpanded(true);
+    component.render(400);
+    expect(component.hasHiddenContent()).toBe(false);
+    component.render(60);
+    expect(component.hasHiddenContent()).toBe(true);
+    component.dispose();
+  });
+
+  it('forgets the answer when the result changes', () => {
+    const component = new ToolCallComponent(bashCall, { ...bashResult, output: 'short' });
+    component.setExpanded(true);
+    component.render(60);
+    expect(component.hasHiddenContent()).toBe(false);
+    component.setResult(bashResult, { known: false });
+    component.render(60);
+    expect(component.hasHiddenContent()).toBe(true);
+    component.dispose();
+  });
+
+  it('measures the output again on every render when the render cache is disabled', () => {
+    const measure = vi.spyOn(TruncatedHeaderLine.prototype, 'render');
+    const countRenderCalls = (cacheEnabled: boolean): number[] => {
+      setRenderCacheEnabled(cacheEnabled);
+      const component = new ToolCallComponent(bashCall, { ...bashResult, output: 'short' });
+      component.setExpanded(true);
+      const counts: number[] = [];
+      for (let pass = 0; pass < 2; pass += 1) {
+        measure.mockClear();
+        component.render(60);
+        counts.push(measure.mock.calls.length);
+      }
+      component.dispose();
+      return counts;
+    };
+    try {
+      const [first, second] = countRenderCalls(true);
+      expect(first).toBeGreaterThan(0);
+      expect(second).toBeLessThan(first!);
+      expect(countRenderCalls(false)).toEqual([first, first]);
+    } finally {
+      setRenderCacheEnabled(true);
+      measure.mockRestore();
+    }
   });
 });

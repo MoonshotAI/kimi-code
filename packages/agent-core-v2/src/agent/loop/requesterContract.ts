@@ -1,16 +1,13 @@
-import type { FinishReason } from '#human/llm-requester/finish-reason';
-import type { LlmCredentialProvider } from '#human/llm-requester/requester';
-import type { ThinkingEffort } from '#human/llm-requester/thinking';
-import type {
-  AssistantMessage,
-  Message,
-  StreamedMessagePart,
-  ToolDescription as Tool,
-} from '#human/llm/message';
-import type { TokenUsage } from '#human/llm-requester/usage';
+import type { ToolDescription as Tool, Message } from '#human/llm/message';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
-import type { ModelRequestTiming } from '#/llm-adapter/model/generate';
 import type { LogContext } from '#/_base/log/log';
+import type { LlmOutcome } from '#human/llm/response';
+import type { LlmDimension, LlmRequester } from '#human/llm/requester';
+import type { ProfileModelContext } from '#/agent/profile/profile';
+import type { Model } from '#/llm-adapter/model/catalog';
+import type { InitializedLlmRequester, ModelRequestParams } from '#/llm-adapter/model/generate';
+import type { ThinkingEffort } from '#human/llm-requester/thinking';
+import type { LoopRequestRuntime, TurnExecution, TurnExecutionInput } from './core/request';
 
 export type AgentLLMRequestLogFields = Readonly<LogContext>;
 
@@ -28,55 +25,77 @@ export type AgentLLMRequestSource =
       readonly logFields?: AgentLLMRequestLogFields;
     };
 
-export interface AgentLLMRequestFinish {
-  message: AssistantMessage;
-  usage: TokenUsage;
-  model?: string | undefined;
-  providerFinishReason?: FinishReason;
-  rawFinishReason?: string;
-  providerMessageId?: string;
-  timing?: ModelRequestTiming;
-  requestId?: string;
+export interface RequestConfigSnapshot {
+  readonly resolved: ProfileModelContext;
+  readonly params: ModelRequestParams;
+  readonly systemPrompt: string;
+  readonly maxCompletionTokensCap?: number;
 }
 
-export type AgentLLMRequestPartHandler = (part: StreamedMessagePart) => void | Promise<void>;
-
-export interface AgentLLMRequestOverrides {
-  messages?: readonly Message[];
-  tools?: readonly Tool[];
-  systemPrompt?: string;
-  source?: AgentLLMRequestSource;
-  maxOutputSize?: number;
-  usedContextTokens?: number;
-  promptCacheProbe?: 'compaction';
-  onAttemptRetry?: () => void;
-}
-
-export interface AgentLLMRequestTask {
-  readonly trace: LLMRequestTrace;
-  readonly result: Promise<AgentLLMRequestFinish>;
-}
-
-export interface PreparedTurnRequestConfig {
+export interface ResolvedRequestContext {
+  readonly request: InitializedLlmRequester;
+  readonly model: Model;
+  readonly params: ModelRequestParams;
+  readonly modelAlias: string;
   readonly thinkingEffort: ThinkingEffort;
+  readonly systemPrompt: string;
+  readonly tools?: readonly Tool[];
+  readonly messages: Message[];
+  readonly contextRevision: number;
+  readonly promptCacheProbe: 'compaction' | undefined;
+  readonly source: AgentLLMRequestSource;
+  readonly logFields: AgentLLMRequestLogFields;
+  readonly dynamicTools: boolean;
+  readonly runtime: LoopRequestRuntime;
 }
+
+export interface CoreLoopRequesterOptions {
+  readonly source: () => AgentLLMRequestSource;
+  readonly runtime: LoopRequestRuntime;
+  readonly config?: RequestConfigSnapshot;
+  readonly dynamicTools?: boolean;
+  readonly maxOutputSize?: number;
+  readonly promptCacheProbe?: 'compaction';
+  readonly tools?: readonly Tool[];
+  readonly onTrace?: (trace: LLMRequestTrace) => void;
+  readonly onOutcome?: (
+    outcome: Extract<LlmOutcome, { type: 'done' }>,
+    source: AgentLLMRequestSource,
+  ) => void;
+}
+
+export interface AgentTurnExecutionInput extends TurnExecutionInput {
+  readonly onTrace?: (trace: LLMRequestTrace) => void;
+  readonly onOutcome?: (
+    outcome: Extract<LlmOutcome, { type: 'done' }>,
+    source: AgentLLMRequestSource,
+  ) => void;
+}
+
+export type OperationLoopRequesterOptions = Omit<CoreLoopRequesterOptions, 'runtime'>;
+
+export type CoreLoopRequester = LlmRequester<LlmDimension>;
 
 export interface LoopRequester {
-  prepareTurnConfig(turnId: number): PreparedTurnRequestConfig | undefined;
+  createTurnExecution(input: AgentTurnExecutionInput): TurnExecution;
+  prepareOperation(options: OperationLoopRequesterOptions, signal: AbortSignal): Promise<CoreLoopRequester>;
+}
 
-  currentCredentialProvider(): LlmCredentialProvider | undefined;
-
-  credentialProviderForTurn(turnId: number): LlmCredentialProvider | undefined;
-
-  request(
-    overrides?: AgentLLMRequestOverrides,
-    onPart?: AgentLLMRequestPartHandler,
-    signal?: AbortSignal,
-  ): Promise<AgentLLMRequestFinish>;
-
-  start(
-    overrides?: AgentLLMRequestOverrides,
-    onPart?: AgentLLMRequestPartHandler,
-    signal?: AbortSignal,
-  ): AgentLLMRequestTask;
+export function agentLLMRequestLogFields(source: AgentLLMRequestSource | undefined): AgentLLMRequestLogFields {
+  switch (source?.type) {
+    case 'turn':
+      return {
+        ...source.logFields,
+        ...(source.step === undefined
+          ? {}
+          : { turnStep: `${String(source.turnId)}.${String(source.step)}` }),
+      };
+    case 'operation':
+      return {
+        ...source.logFields,
+        ...(source.requestKind === undefined ? {} : { requestKind: source.requestKind }),
+      };
+    default:
+      return {};
+  }
 }

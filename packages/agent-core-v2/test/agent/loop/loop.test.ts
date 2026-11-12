@@ -6,17 +6,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { Event } from '#/_base/event';
-import { IAgentProfileService } from '#/index';
-import type { LoopRequester } from '#/agent/loop/requesterContract';
-import type { ModelRequestTiming } from '#/llm-adapter/model/generate';
-import { APIProviderRateLimitError } from '#/llm-adapter/contract/errors';
+import type { CoreLoopRequester, LoopRequester } from '#/agent/loop/requesterContract';
+import type { AgentLoopRequestFactory } from '#/agent/loop/requester';
+import type { AgentLoopRequestObserver } from '#/agent/loop/requestObservation';
+import type { LlmRequest as CoreLlmRequest } from '#human/llm/request';
+import { contentsOf, mergeFields, type LlmRequestPart } from '#human/llm/requester';
+import type { LlmRunControl } from '#human/llm/policy/policy';
+import type { LlmOutcome } from '#human/llm/response';
+import { APIProviderRateLimitError, APIStatusError } from '#/llm-adapter/contract/errors';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
 import { IAgentGoalService } from '#/features/goal/goalService';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
-import { createActor } from '#human/xstate2';
-import { createAgentMachine } from '#human/agent/machine';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import {
@@ -57,16 +59,31 @@ import { submitPromptTurn } from './stubs';
 
 type GenerateFn = NonNullable<TestAgentOptions['generate']>;
 
+function trackStepReasons(ctx: TestAgentContext): readonly (string | undefined)[] {
+  const reasons: (string | undefined)[] = [];
+  const factory = (ctx.get(IAgentLoopService) as unknown as {
+    requestFactory: AgentLoopRequestFactory;
+  }).requestFactory;
+  const observer = (factory as unknown as { observer: AgentLoopRequestObserver }).observer;
+  const recordAttempt = observer.recordAttempt.bind(observer);
+  vi.spyOn(observer, 'recordAttempt').mockImplementation((observation, request, ledger) => {
+    const header = request.endpoint?.headers?.['X-Msh-Client-Metadata'];
+    reasons.push(header === undefined ? undefined : JSON.parse(header).step_reason);
+    recordAttempt(observation, request, ledger);
+  });
+  return reasons;
+}
+
 describe('Agent loop', () => {
   let ctx: TestAgentContext;
   let loop: IAgentLoopService;
-  let profile: IAgentProfileService;
+  let profile: IAgentLoopService;
 
   beforeEach(async () => {
     ctx = createTestAgent();
     await ctx.restorePersisted();
     loop = ctx.get(IAgentLoopService);
-    profile = ctx.get(IAgentProfileService);
+    profile = ctx.get(IAgentLoopService);
   });
 
   afterEach(async () => {
@@ -89,42 +106,36 @@ describe('Agent loop', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
 
     expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
+      [emit] agent.status.updated        { "time": "<time>", "agentId": "main", "model": "mock-model", "thinkingEffort": "off", "maxContextTokens": 1000000 }
       [wire] tools.set_active_tools      { "agentId": "main", "names": [], "time": "<time>" }
       [emit] prompt.submitted            { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Hello" } ], "createdAt": "<time>" }
-      [wire] turn.prompt                 { "agentId": "main", "input": [ { "type": "text", "text": "Hello" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0, "time": "<time>" }
-      [emit] turn.prompt                 { "time": "<time>", "agentId": "main", "input": [ { "type": "text", "text": "Hello" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0 }
-      [emit] turn.started                { "time": "<time>", "agentId": "main", "turnId": 0, "promptId": "<msg-1>", "origin": { "kind": "user" }, "prompt": "Hello" }
+      [wire] turn.prompt                 { "agentId": "main", "input": [ { "type": "text", "text": "Hello" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0, "trigger": "normal", "time": "<time>" }
       [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "id": "<msg-1>", "origin": { "kind": "user" } } ] }
-      [emit] prompt.started              { "time": "<time>", "agentId": "main", "promptId": "<msg-1>" }
       [wire] context.append_message      { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "toolCalls": [], "id": "<msg-1>", "origin": { "kind": "user" } }, "time": "<time>" }
-      [wire] agent.message.appended      { "message": { "message": { "role": "user", "content": [ { "type": "text", "text": "Hello" } ] }, "meta": { "source": "input", "promptId": "<msg-1>", "origin": { "kind": "user" }, "tracked": true, "createdAt": "<time>", "userMessageId": "<msg-1>" } }, "time": "<time>", "kind": "event" }
-      [wire] agent.turn.started          { "turnId": 0, "queueItemId": "<msg-1>", "time": "<time>", "kind": "event" }
-      [wire] plugin.session_start        { "agentId": "main", "content": null, "time": "<time>" }
+      [emit] turn.prompt                 { "time": "<time>", "agentId": "main", "input": [ { "type": "text", "text": "Hello" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0, "trigger": "normal" }
+      [emit] turn.started                { "time": "<time>", "agentId": "main", "turnId": 0, "promptId": "<msg-1>", "origin": { "kind": "user" }, "prompt": "Hello" }
+      [emit] prompt.started              { "time": "<time>", "agentId": "main", "promptId": "<msg-1>" }
       [emit] turn.step.started           { "time": "<time>", "agentId": "main", "turnId": 0, "step": 1, "stepId": "<uuid-1>" }
-      [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "step.begin", "uuid": "<uuid-1>", "turnId": "0", "step": 1 }, "time": "<time>" }
+      [wire] plugin.session_start        { "agentId": "main", "content": null, "time": "<time>" }
       [wire] tool_select.initialized     { "agentId": "main", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Read", "ReadMediaFile", "select_tools", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
-      [wire] llm.tools_snapshot          { "agentId": "main", "hash": "<tools-hash>", "tools": [], "time": "<time>" }
-      [wire] llm.request                 { "agentId": "main", "kind": "loop", "provider": "openai", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "<tools-hash>", "messageCount": 1, "turnStep": "0.1", "time": "<time>" }
-      [emit] thinking.delta              { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "<think-1>" }
-      [emit] assistant.delta             { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "<text-1>" }
+      [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "step.begin", "uuid": "<uuid-2>", "turnId": "0", "step": 1 }, "time": "<time>" }
+      [emit] thinking.delta              { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "<think-1>", "block": 0 }
+      [emit] assistant.delta             { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "<text-1>", "block": 1 }
+      [wire] llm.tools_snapshot          { "agentId": "main", "hash": "<tools-hash>", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Read", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
       [emit] thinking.delta              { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "" }
-      [emit] assistant.delta             { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "<text-2>" }
-      [wire] usage.record                { "agentId": "main", "model": "mock-model", "usage": { "inputOther": 3, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
-      [emit] agent.status.updated        { "time": "<time>", "agentId": "main", "usage": { "byModel": { "mock-model": { "inputOther": 3, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 3, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 3, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
-      [wire] token_counting.measured     { "agentId": "main", "length": 2, "tokens": 13, "time": "<time>" }
-      [emit] agent.status.updated        { "time": "<time>", "agentId": "main", "contextTokens": 13 }
+      [emit] assistant.delta             { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "<text-2>", "block": 1 }
+      [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 1, "deleteCount": 0, "messages": [ { "role": "assistant", "content": [ { "type": "think", "think": "<think-1>" }, { "type": "text", "text": "<text-1><text-2>" } ], "toolCalls": [], "providerMessageId": "mock-1", "usage": { "inputOther": 3, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 } } ] }
       [emit] turn.step.completed         { "time": "<time>", "agentId": "main", "turnId": 0, "step": 1, "stepId": "<uuid-1>", "usage": { "inputOther": 3, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn", "providerFinishReason": "completed", "rawFinishReason": "stop" }
-      [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-2>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "part": { "type": "think", "think": "<think-1>" } }, "time": "<time>" }
-      [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-3>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "part": { "type": "text", "text": "<text-1><text-2>" } }, "time": "<time>" }
-      [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "finishReason": "end_turn", "usage": { "inputOther": 3, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-1", "providerFinishReason": "completed", "rawFinishReason": "stop" }, "time": "<time>" }
-      [wire] agent.message.appended      { "message": { "message": { "role": "assistant", "content": [ { "type": "think", "think": "<think-1>" }, { "type": "text", "text": "<text-1><text-2>" } ], "toolCalls": [] }, "meta": { "model": { "provider": "agent-loop", "model": "agent-loop" }, "source": "llm", "usage": { "inputOther": 3, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finish": { "finishReason": "completed", "rawFinishReason": "stop" }, "messageId": "mock-1" } }, "time": "<time>", "kind": "event" }
-      [wire] agent.turn.ended            { "turnId": 0, "outcome": "done", "time": "<time>", "kind": "event" }
-      [wire] turn.ended                  { "agentId": "main", "turnId": 0, "reason": "completed", "time": "<time>" }
+      [emit] agent.status.updated        { "time": "<time>", "agentId": "main", "usage": { "byModel": { "mock-model": { "inputOther": 3, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 3, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 3, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [emit] agent.status.updated        { "time": "<time>", "agentId": "main", "contextTokens": 13 }
+      [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-3>", "turnId": "0", "step": 1, "stepUuid": "<uuid-2>", "block": 0, "part": { "type": "think", "think": "<think-1>" }, "startedAt": "<time>" }, "time": "<time>" }
+      [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-4>", "turnId": "0", "step": 1, "stepUuid": "<uuid-2>", "block": 1, "part": { "type": "text", "text": "<text-1><text-2>" }, "startedAt": "<time>" }, "time": "<time>" }
+      [wire] usage.record                { "agentId": "main", "model": "mock-model", "usage": { "inputOther": 3, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
       [emit] turn.ended                  { "time": "<time>", "agentId": "main", "turnId": 0, "reason": "completed" }
     `);
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
     system: <system-prompt>
-    tools: []
+    tools: Agent, AgentSwarm, AskUserQuestion, Bash, CreateGoal, CronCreate, CronDelete, CronList, Edit, ExitPlanMode, FetchURL, GetGoal, Glob, Grep, Read, SetGoalBudget, Skill, TaskList, TaskOutput, TaskStop, TodoList, UpdateGoal, WaitFor, Write
     messages:
       user: text "Hello"
   `);
@@ -150,7 +161,7 @@ describe('Agent loop', () => {
     await ctx.untilTurnEnd();
 
     const records = await ctx.persistedWireRecords();
-    expect(records.some((record) => record.type === 'agent.turn.ended')).toBe(true);
+    expect(records.some((record) => record.type === 'turn.ended')).toBe(true);
 
     const resumed = createTestAgent(
       wireRecordPersistenceServices(new InMemoryWireRecordPersistence(records)),
@@ -170,7 +181,7 @@ describe('Agent loop', () => {
       const persisted = await resumed.persistedWireRecords();
       expect(
         persisted
-          .filter((record) => record.type === 'agent.turn.ended')
+          .filter((record) => record.type === 'turn.ended')
           .map((record) => record['turnId']),
       ).toEqual([0, 1]);
     } finally {
@@ -186,32 +197,27 @@ describe('Agent loop', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
 
     expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
+      [emit] agent.status.updated        { "time": "<time>", "agentId": "main", "model": "mock-model", "thinkingEffort": "off", "maxContextTokens": 1000000 }
       [emit] prompt.submitted            { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Hello" } ], "createdAt": "<time>" }
-      [wire] turn.prompt                 { "agentId": "main", "input": [ { "type": "text", "text": "Hello" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0, "time": "<time>" }
-      [emit] turn.prompt                 { "time": "<time>", "agentId": "main", "input": [ { "type": "text", "text": "Hello" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0 }
-      [emit] turn.started                { "time": "<time>", "agentId": "main", "turnId": 0, "promptId": "<msg-1>", "origin": { "kind": "user" }, "prompt": "Hello" }
+      [wire] turn.prompt                 { "agentId": "main", "input": [ { "type": "text", "text": "Hello" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0, "trigger": "normal", "time": "<time>" }
       [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "id": "<msg-1>", "origin": { "kind": "user" } } ] }
-      [emit] prompt.started              { "time": "<time>", "agentId": "main", "promptId": "<msg-1>" }
       [wire] context.append_message      { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "toolCalls": [], "id": "<msg-1>", "origin": { "kind": "user" } }, "time": "<time>" }
-      [wire] agent.message.appended      { "message": { "message": { "role": "user", "content": [ { "type": "text", "text": "Hello" } ] }, "meta": { "source": "input", "promptId": "<msg-1>", "origin": { "kind": "user" }, "tracked": true, "createdAt": "<time>", "userMessageId": "<msg-1>" } }, "time": "<time>", "kind": "event" }
-      [wire] agent.turn.started          { "turnId": 0, "queueItemId": "<msg-1>", "time": "<time>", "kind": "event" }
-      [wire] plugin.session_start        { "agentId": "main", "content": null, "time": "<time>" }
+      [emit] turn.prompt                 { "time": "<time>", "agentId": "main", "input": [ { "type": "text", "text": "Hello" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0, "trigger": "normal" }
+      [emit] turn.started                { "time": "<time>", "agentId": "main", "turnId": 0, "promptId": "<msg-1>", "origin": { "kind": "user" }, "prompt": "Hello" }
+      [emit] prompt.started              { "time": "<time>", "agentId": "main", "promptId": "<msg-1>" }
       [emit] turn.step.started           { "time": "<time>", "agentId": "main", "turnId": 0, "step": 1, "stepId": "<uuid-1>" }
-      [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "step.begin", "uuid": "<uuid-1>", "turnId": "0", "step": 1 }, "time": "<time>" }
+      [wire] plugin.session_start        { "agentId": "main", "content": null, "time": "<time>" }
       [wire] tool_select.initialized     { "agentId": "main", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Read", "ReadMediaFile", "select_tools", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
+      [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "step.begin", "uuid": "<uuid-2>", "turnId": "0", "step": 1 }, "time": "<time>" }
+      [emit] assistant.delta             { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "blocked", "block": 0 }
       [wire] llm.tools_snapshot          { "agentId": "main", "hash": "<tools-hash>", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Read", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
-      [wire] llm.request                 { "agentId": "main", "kind": "loop", "provider": "openai", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "<tools-hash>", "messageCount": 1, "turnStep": "0.1", "time": "<time>" }
-      [emit] assistant.delta             { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "blocked" }
-      [wire] usage.record                { "agentId": "main", "model": "mock-model", "usage": { "inputOther": 3, "output": 5, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
-      [emit] agent.status.updated        { "time": "<time>", "agentId": "main", "usage": { "byModel": { "mock-model": { "inputOther": 3, "output": 5, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 3, "output": 5, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 3, "output": 5, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
-      [wire] token_counting.measured     { "agentId": "main", "length": 2, "tokens": 8, "time": "<time>" }
-      [emit] agent.status.updated        { "time": "<time>", "agentId": "main", "contextTokens": 8 }
+      [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 1, "deleteCount": 0, "messages": [ { "role": "assistant", "content": [ { "type": "text", "text": "blocked" } ], "toolCalls": [], "providerMessageId": "mock-1", "usage": { "inputOther": 3, "output": 5, "inputCacheRead": 0, "inputCacheCreation": 0 } } ] }
       [emit] turn.step.completed         { "time": "<time>", "agentId": "main", "turnId": 0, "step": 1, "stepId": "<uuid-1>", "usage": { "inputOther": 3, "output": 5, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "filtered", "providerFinishReason": "filtered", "rawFinishReason": "filtered" }
-      [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-2>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "part": { "type": "text", "text": "blocked" } }, "time": "<time>" }
-      [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "finishReason": "filtered", "usage": { "inputOther": 3, "output": 5, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-1", "providerFinishReason": "filtered", "rawFinishReason": "filtered" }, "time": "<time>" }
-      [wire] agent.message.appended      { "message": { "message": { "role": "assistant", "content": [ { "type": "text", "text": "blocked" } ], "toolCalls": [] }, "meta": { "model": { "provider": "agent-loop", "model": "agent-loop" }, "source": "llm", "usage": { "inputOther": 3, "output": 5, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finish": { "finishReason": "filtered", "rawFinishReason": "filtered" }, "messageId": "mock-1" } }, "time": "<time>", "kind": "event" }
-      [wire] agent.turn.ended            { "turnId": 0, "outcome": "done", "time": "<time>", "kind": "event" }
-      [wire] turn.ended                  { "agentId": "main", "turnId": 0, "reason": "failed", "error": { "code": "provider.filtered", "message": "Provider safety policy blocked the response.", "name": "ProviderFilteredError", "details": { "finishReason": "filtered" }, "retryable": false }, "time": "<time>" }
+      [emit] agent.status.updated        { "time": "<time>", "agentId": "main", "usage": { "byModel": { "mock-model": { "inputOther": 3, "output": 5, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 3, "output": 5, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 3, "output": 5, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [emit] agent.status.updated        { "time": "<time>", "agentId": "main", "contextTokens": 8 }
+      [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-3>", "turnId": "0", "step": 1, "stepUuid": "<uuid-2>", "block": 0, "part": { "type": "text", "text": "blocked" }, "startedAt": "<time>" }, "time": "<time>" }
+      [wire] usage.record                { "agentId": "main", "model": "mock-model", "usage": { "inputOther": 3, "output": 5, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
+      [wire] token_counting.measured     { "agentId": "main", "length": 2, "tokens": 8, "time": "<time>" }
       [emit] turn.ended                  { "time": "<time>", "agentId": "main", "turnId": 0, "reason": "failed", "error": { "code": "provider.filtered", "message": "Provider safety policy blocked the response.", "name": "ProviderFilteredError", "details": { "finishReason": "filtered" }, "retryable": false }, "interruptReason": "filtered" }
     `);
 
@@ -313,6 +319,7 @@ describe('Agent loop', () => {
         return undefined;
       },
     });
+    const reasons = trackStepReasons(ctx);
 
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
     await ctx.untilTurnEnd();
@@ -320,6 +327,7 @@ describe('Agent loop', () => {
     expect(seenErrors).toEqual([
       { step: 1, message: 'Unexpected generate call #1' },
     ]);
+    expect(reasons).toEqual(['turn_start', 'turn_start']);
     expect(ctx.allEvents).toContainEqual(
       expect.objectContaining({
         event: 'turn.ended',
@@ -329,7 +337,7 @@ describe('Agent loop', () => {
 
     profile.update({ activeToolNames: ['Work'] });
     const beforeExecuteError = new Error('beforeExecute blew up');
-    const subscription = ctx.get(IAgentToolExecutorService).onBeforeExecuteTool(() => {
+    const subscription = ctx.get(IAgentToolExecutorService).registerLegacyStarting(() => {
       throw beforeExecuteError;
     });
     ctx.mockNextResponse(
@@ -354,23 +362,36 @@ describe('Agent loop', () => {
         }),
       }),
     );
-    expect(ctx.allEvents).toContainEqual(
-      expect.objectContaining({
-        type: '[wire]',
-        event: 'context.append_loop_event',
-        args: expect.objectContaining({
-          event: expect.objectContaining({ type: 'step.end', finishReason: 'error' }),
+    await vi.waitFor(() => {
+      expect(ctx.allEvents).toContainEqual(
+        expect.objectContaining({
+          type: '[wire]',
+          event: 'context.append_loop_event',
+          args: expect.objectContaining({
+            event: expect.objectContaining({ type: 'step.end', finishReason: 'error' }),
+          }),
         }),
-      }),
-    );
+      );
+    });
     expect(
       ctx.allEvents.filter(
         (entry) =>
           entry.type === '[wire]' &&
           entry.event === 'context.append_loop_event' &&
-          (entry.args as { event?: { type?: string } }).event?.type === 'tool.result',
+          ['tool.call', 'tool.result'].includes(
+            (entry.args as { event?: { type?: string } }).event?.type ?? '',
+          ),
       ),
     ).toHaveLength(0);
+    expect(
+      ctx.allEvents.filter(
+        (entry) => entry.type === '[rpc]' && ['tool.call.started', 'tool.result'].includes(entry.event),
+      ),
+    ).toHaveLength(0);
+    expect(ctx.contextData().history.some((message) => message.role === 'tool')).toBe(false);
+    expect(
+      ctx.contextData().history.every((message) => message.role !== 'assistant' || message.toolCalls.length === 0),
+    ).toBe(true);
     expect(ctx.llmCalls).toHaveLength(2);
   });
 
@@ -391,34 +412,67 @@ describe('Agent loop', () => {
     );
   });
 
-  it('appends streamed partial content to the wire when the request fails mid-stream', async () => {
+  it('appends every failed attempt partial when a retried request fails mid-stream', async () => {
     profile.update({ activeToolNames: [] });
     ctx.mockNextProviderResponse({
-      parts: [{ type: 'text', text: 'partial before error' }],
+      parts: [{ type: 'text', text: 'first attempt partial' }],
+      usage: { inputOther: 7, output: 3 },
+      error: new APIProviderRateLimitError('retry', null, 1),
+    });
+    ctx.mockNextProviderResponse({
+      parts: [{ type: 'text', text: 'final attempt partial' }],
+      usage: { inputOther: 11, output: 5 },
       error: new Error('stream broke mid-flight'),
     });
 
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
     await ctx.untilTurnEnd();
 
-    expect(ctx.allEvents).toContainEqual(
-      expect.objectContaining({
-        type: '[wire]',
-        event: 'context.append_loop_event',
-        args: expect.objectContaining({
-          event: expect.objectContaining({
-            type: 'content.part',
-            part: { type: 'text', text: 'partial before error' },
-          }),
-        }),
-      }),
-    );
+    expect(ctx.llmCalls).toHaveLength(2);
+    expect(ctx.contextData().history).toContainEqual({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'final attempt partial' }],
+      toolCalls: [],
+      usage: { inputOther: 11, output: 5, inputCacheCreation: 0, inputCacheRead: undefined },
+    });
+    expect(ctx.contextData().history).toContainEqual({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'first attempt partial' }],
+      toolCalls: [],
+      usage: { inputOther: 7, output: 3, inputCacheCreation: 0, inputCacheRead: undefined },
+    });
     expect(ctx.allEvents).toContainEqual(
       expect.objectContaining({
         event: 'turn.step.interrupted',
         args: expect.objectContaining({ reason: 'error', message: 'stream broke mid-flight' }),
       }),
     );
+    const endedSteps = (await ctx.persistedWireRecords()).filter((record) =>
+      record.type === 'context.append_loop_event' && (record['event'] as { type?: string }).type === 'step.end',
+    );
+    expect(endedSteps.map((record) => (record['event'] as { usage?: unknown }).usage)).toMatchObject([
+      { inputOther: 7, output: 3 },
+      { inputOther: 11, output: 5 },
+    ]);
+
+    const local = createTestAgent({ initialConfig: { providers: {}, loopControl: { maxAttemptsPerStep: 2 } } });
+    try {
+      local.mockNextProviderResponse({
+        parts: [{ type: 'text', text: 'cancel partial' }],
+        error: new APIProviderRateLimitError('retry', null, 60_000),
+      });
+      const { turn } = submitTurn(local.get(IAgentLoopService), 'Cancel during backoff');
+      await local.once('turn.step.retrying');
+      expect(local.get(IAgentLoopService).snapshot().turn?.retry).toMatchObject({ nextAttempt: 2 });
+      turn.cancel(new Error('stop during backoff'));
+      await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
+      const partials = local.contextData().history.filter((message) =>
+        message.role === 'assistant' && message.content.some((part) => part.type === 'text' && part.text.includes('cancel partial')),
+      );
+      expect(partials).toHaveLength(1);
+    } finally {
+      await local.dispose();
+    }
   });
 
   it('does not run loop error handlers for aborted turns', async () => {
@@ -485,6 +539,7 @@ describe('Agent loop', () => {
 
     profile.update({ activeToolNames: ['Lookup'] });
     ctx.get(IAgentToolRegistryService).register(lookupTool);
+    const reasons = trackStepReasons(ctx);
 
     ctx.mockNextResponse({ type: 'text', text: 'I will look it up.' }, lookupCall);
     await ctx.rpc.prompt({
@@ -492,36 +547,35 @@ describe('Agent loop', () => {
     });
     ctx.mockNextResponse({ type: 'text', text: 'The lookup result is lookup-result.' });
     expect(await ctx.untilApproval(true)).toMatchInlineSnapshot(`
+      [emit] agent.status.updated            { "time": "<time>", "agentId": "main", "model": "mock-model", "thinkingEffort": "off", "maxContextTokens": 1000000 }
       [wire] tools.set_active_tools          { "agentId": "main", "names": [ "Lookup" ], "time": "<time>" }
       [emit] prompt.submitted                { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Look up moon" } ], "createdAt": "<time>" }
-      [wire] turn.prompt                     { "agentId": "main", "input": [ { "type": "text", "text": "Look up moon" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0, "time": "<time>" }
-      [emit] turn.prompt                     { "time": "<time>", "agentId": "main", "input": [ { "type": "text", "text": "Look up moon" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0 }
-      [emit] turn.started                    { "time": "<time>", "agentId": "main", "turnId": 0, "promptId": "<msg-1>", "origin": { "kind": "user" }, "prompt": "Look up moon" }
+      [wire] turn.prompt                     { "agentId": "main", "input": [ { "type": "text", "text": "Look up moon" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0, "trigger": "normal", "time": "<time>" }
       [emit] context.spliced                 { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ], "id": "<msg-1>", "origin": { "kind": "user" } } ] }
-      [emit] prompt.started                  { "time": "<time>", "agentId": "main", "promptId": "<msg-1>" }
       [wire] context.append_message          { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ], "toolCalls": [], "id": "<msg-1>", "origin": { "kind": "user" } }, "time": "<time>" }
-      [wire] agent.message.appended          { "message": { "message": { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ] }, "meta": { "source": "input", "promptId": "<msg-1>", "origin": { "kind": "user" }, "tracked": true, "createdAt": "<time>", "userMessageId": "<msg-1>" } }, "time": "<time>", "kind": "event" }
-      [wire] agent.turn.started              { "turnId": 0, "queueItemId": "<msg-1>", "time": "<time>", "kind": "event" }
-      [wire] plugin.session_start            { "agentId": "main", "content": null, "time": "<time>" }
+      [emit] turn.prompt                     { "time": "<time>", "agentId": "main", "input": [ { "type": "text", "text": "Look up moon" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0, "trigger": "normal" }
+      [emit] turn.started                    { "time": "<time>", "agentId": "main", "turnId": 0, "promptId": "<msg-1>", "origin": { "kind": "user" }, "prompt": "Look up moon" }
+      [emit] prompt.started                  { "time": "<time>", "agentId": "main", "promptId": "<msg-1>" }
       [emit] turn.step.started               { "time": "<time>", "agentId": "main", "turnId": 0, "step": 1, "stepId": "<uuid-1>" }
-      [wire] context.append_loop_event       { "agentId": "main", "event": { "type": "step.begin", "uuid": "<uuid-1>", "turnId": "0", "step": 1 }, "time": "<time>" }
+      [wire] plugin.session_start            { "agentId": "main", "content": null, "time": "<time>" }
       [wire] tool_select.initialized         { "agentId": "main", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Lookup", "Read", "ReadMediaFile", "select_tools", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
-      [wire] llm.tools_snapshot              { "agentId": "main", "hash": "<tools-hash>", "tools": [ "Lookup" ], "time": "<time>" }
-      [wire] llm.request                     { "agentId": "main", "kind": "loop", "provider": "openai", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "<tools-hash>", "messageCount": 1, "turnStep": "0.1", "time": "<time>" }
-      [emit] assistant.delta                 { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "I will look it up." }
+      [wire] context.append_loop_event       { "agentId": "main", "event": { "type": "step.begin", "uuid": "<uuid-2>", "turnId": "0", "step": 1 }, "time": "<time>" }
+      [emit] assistant.delta                 { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "I will look it up.", "block": 0 }
       [emit] tool.call.delta                 { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "name": "Lookup", "argumentsPart": "{\\"query\\":\\"moon\\"}" }
-      [wire] usage.record                    { "agentId": "main", "model": "mock-model", "usage": { "inputOther": 4, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
+      [wire] llm.tools_snapshot              { "agentId": "main", "hash": "<tools-hash>", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Read", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
+      [emit] context.spliced                 { "time": "<time>", "agentId": "main", "start": 1, "deleteCount": 0, "messages": [ { "role": "assistant", "content": [ { "type": "text", "text": "I will look it up." } ], "toolCalls": [ { "type": "function", "id": "call_lookup", "name": "Lookup", "arguments": "{\\"query\\":\\"moon\\"}" } ], "providerMessageId": "mock-1", "usage": { "inputOther": 4, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 } } ] }
       [emit] agent.status.updated            { "time": "<time>", "agentId": "main", "usage": { "byModel": { "mock-model": { "inputOther": 4, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 4, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 4, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
-      [wire] token_counting.measured         { "agentId": "main", "length": 2, "tokens": 20, "time": "<time>" }
       [emit] agent.status.updated            { "time": "<time>", "agentId": "main", "contextTokens": 20 }
-      [wire] context.append_loop_event       { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-2>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "part": { "type": "text", "text": "I will look it up." } }, "time": "<time>" }
+      [wire] context.append_loop_event       { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-3>", "turnId": "0", "step": 1, "stepUuid": "<uuid-2>", "block": 0, "part": { "type": "text", "text": "I will look it up." }, "startedAt": "<time>" }, "time": "<time>" }
+      [wire] usage.record                    { "agentId": "main", "model": "mock-model", "usage": { "inputOther": 4, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
+      [wire] token_counting.measured         { "agentId": "main", "length": 2, "tokens": 20, "time": "<time>" }
       [emit] permission.approval.requested   { "time": "<time>", "id": "<approval-1>", "sessionId": "test-session", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "toolName": "Lookup", "action": "Approve Lookup", "display": { "kind": "generic", "summary": "Approve Lookup", "detail": { "query": "moon" } }, "toolInput": { "query": "moon" } }
       [wire] interaction.request             { "agentId": "main", "id": "<approval-1>", "kind": "approval", "toolCallId": "call_lookup", "request": { "id": "<approval-1>", "sessionId": "test-session", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "toolName": "Lookup", "action": "Approve Lookup", "display": { "kind": "generic", "summary": "Approve Lookup", "detail": { "query": "moon" } } }, "time": "<time>" }
       [emit] requestApproval                 { "id": "<approval-1>", "turnId": 0, "toolCallId": "call_lookup", "toolName": "Lookup", "action": "Approve Lookup", "display": { "kind": "generic", "summary": "Approve Lookup", "detail": { "query": "moon" } } }
     `);
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
     system: <system-prompt>
-    tools: Lookup
+    tools: Agent, AgentSwarm, AskUserQuestion, Bash, CreateGoal, CronCreate, CronDelete, CronList, Edit, ExitPlanMode, FetchURL, GetGoal, Glob, Grep, Read, SetGoalBudget, Skill, TaskList, TaskOutput, TaskStop, TodoList, UpdateGoal, WaitFor, Write
     messages:
       user: text "Look up moon"
   `);
@@ -531,27 +585,25 @@ describe('Agent loop', () => {
       [emit] permission.approval.resolved        { "time": "<time>", "id": "<approval-1>", "sessionId": "test-session", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "toolName": "Lookup", "action": "Approve Lookup", "display": { "kind": "generic", "summary": "Approve Lookup", "detail": { "query": "moon" } }, "toolInput": { "query": "moon" }, "decision": "approved", "selectedLabel": "approve" }
       [wire] permission.record_approval_result   { "turnId": 0, "toolCallId": "call_lookup", "toolName": "Lookup", "action": "Approve Lookup", "result": { "decision": "approved", "selectedLabel": "approve" }, "agentId": "main", "time": "<time>" }
       [emit] tool.call.started                   { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "name": "Lookup", "args": { "query": "moon" } }
-      [wire] context.append_loop_event           { "agentId": "main", "event": { "type": "tool.call", "uuid": "<uuid-3>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "toolCallId": "call_lookup", "name": "Lookup", "args": { "query": "moon" } }, "time": "<time>" }
+      [emit] tool.updated                        { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "taskId": "<taskId>", "status": "running", "detached": false, "fields": {} }
+      [wire] context.append_loop_event           { "agentId": "main", "event": { "type": "tool.call", "uuid": "<uuid-4>", "turnId": "0", "step": 1, "stepUuid": "<uuid-2>", "toolCallId": "call_lookup", "name": "Lookup", "args": { "query": "moon" } }, "time": "<time>" }
+      [emit] tool.updated                        { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "taskId": "<taskId>", "status": "running", "detached": false, "fields": {} }
+      [emit] tool.updated                        { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "taskId": "<taskId>", "status": "success", "detached": false, "fields": {} }
       [emit] tool.result                         { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "output": "lookup-result" }
-      [wire] context.append_loop_event           { "agentId": "main", "event": { "type": "tool.result", "parentUuid": "<uuid-3>", "toolCallId": "call_lookup", "result": { "output": "lookup-result" } }, "time": "<time>" }
       [emit] turn.step.completed                 { "time": "<time>", "agentId": "main", "turnId": 0, "step": 1, "stepId": "<uuid-1>", "usage": { "inputOther": 4, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use", "providerFinishReason": "tool_calls", "rawFinishReason": "tool_calls" }
-      [wire] context.append_loop_event           { "agentId": "main", "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "finishReason": "tool_use", "usage": { "inputOther": 4, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-1", "providerFinishReason": "tool_calls", "rawFinishReason": "tool_calls" }, "time": "<time>" }
-      [emit] turn.step.started                   { "time": "<time>", "agentId": "main", "turnId": 0, "step": 2, "stepId": "<uuid-4>" }
-      [wire] context.append_loop_event           { "agentId": "main", "event": { "type": "step.begin", "uuid": "<uuid-4>", "turnId": "0", "step": 2 }, "time": "<time>" }
-      [wire] llm.request                         { "agentId": "main", "kind": "loop", "provider": "openai", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "<tools-hash>", "messageCount": 3, "turnStep": "0.2", "time": "<time>" }
-      [emit] assistant.delta                     { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "The lookup result is lookup-result." }
-      [wire] usage.record                        { "agentId": "main", "model": "mock-model", "usage": { "inputOther": 25, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
+      [emit] context.spliced                     { "time": "<time>", "agentId": "main", "start": 2, "deleteCount": 0, "messages": [ { "role": "tool", "content": [ { "type": "text", "text": "lookup-result" } ], "toolCallId": "call_lookup" } ] }
+      [wire] context.append_loop_event           { "agentId": "main", "event": { "type": "tool.result", "parentUuid": "<uuid-4>", "toolCallId": "call_lookup", "result": { "output": "lookup-result" } }, "time": "<time>" }
+      [emit] turn.step.started                   { "time": "<time>", "agentId": "main", "turnId": 0, "step": 2, "stepId": "<uuid-5>" }
+      [wire] context.append_loop_event           { "agentId": "main", "event": { "type": "step.end", "uuid": "<uuid-2>", "turnId": "0", "step": 1, "finishReason": "tool_use", "usage": { "inputOther": 4, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-1", "providerFinishReason": "tool_calls", "rawFinishReason": "tool_calls" }, "time": "<time>" }
+      [wire] context.append_loop_event           { "agentId": "main", "event": { "type": "step.begin", "uuid": "<uuid-6>", "turnId": "0", "step": 2 }, "time": "<time>" }
+      [emit] assistant.delta                     { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "The lookup result is lookup-result.", "block": 0 }
+      [emit] context.spliced                     { "time": "<time>", "agentId": "main", "start": 3, "deleteCount": 0, "messages": [ { "role": "assistant", "content": [ { "type": "text", "text": "The lookup result is lookup-result." } ], "toolCalls": [], "providerMessageId": "mock-2", "usage": { "inputOther": 25, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 } } ] }
+      [emit] turn.step.completed                 { "time": "<time>", "agentId": "main", "turnId": 0, "step": 2, "stepId": "<uuid-5>", "usage": { "inputOther": 25, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn", "providerFinishReason": "completed", "rawFinishReason": "stop" }
       [emit] agent.status.updated                { "time": "<time>", "agentId": "main", "usage": { "byModel": { "mock-model": { "inputOther": 29, "output": 28, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 29, "output": 28, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 29, "output": 28, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
-      [wire] token_counting.measured             { "agentId": "main", "length": 4, "tokens": 37, "time": "<time>" }
       [emit] agent.status.updated                { "time": "<time>", "agentId": "main", "contextTokens": 37 }
-      [emit] turn.step.completed                 { "time": "<time>", "agentId": "main", "turnId": 0, "step": 2, "stepId": "<uuid-4>", "usage": { "inputOther": 25, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn", "providerFinishReason": "completed", "rawFinishReason": "stop" }
-      [wire] context.append_loop_event           { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-5>", "turnId": "0", "step": 2, "stepUuid": "<uuid-4>", "part": { "type": "text", "text": "The lookup result is lookup-result." } }, "time": "<time>" }
-      [wire] context.append_loop_event           { "agentId": "main", "event": { "type": "step.end", "uuid": "<uuid-4>", "turnId": "0", "step": 2, "finishReason": "end_turn", "usage": { "inputOther": 25, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-2", "providerFinishReason": "completed", "rawFinishReason": "stop" }, "time": "<time>" }
-      [wire] agent.message.appended              { "message": { "message": { "role": "assistant", "content": [ { "type": "text", "text": "I will look it up." } ], "toolCalls": [ { "type": "function", "id": "call_lookup", "name": "Lookup", "arguments": "{\\"query\\":\\"moon\\"}" } ] }, "meta": { "model": { "provider": "agent-loop", "model": "agent-loop" }, "source": "llm", "usage": { "inputOther": 4, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finish": { "finishReason": "tool_calls", "rawFinishReason": "tool_calls" }, "messageId": "mock-1" } }, "time": "<time>", "kind": "event" }
-      [wire] agent.message.appended              { "message": { "message": { "role": "tool", "content": [ { "type": "text", "text": "lookup-result" } ], "toolCallId": "call_lookup" }, "meta": { "source": "tool" } }, "time": "<time>", "kind": "event" }
-      [wire] agent.message.appended              { "message": { "message": { "role": "assistant", "content": [ { "type": "text", "text": "The lookup result is lookup-result." } ], "toolCalls": [] }, "meta": { "model": { "provider": "agent-loop", "model": "agent-loop" }, "source": "llm", "usage": { "inputOther": 25, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finish": { "finishReason": "completed", "rawFinishReason": "stop" }, "messageId": "mock-2" } }, "time": "<time>", "kind": "event" }
-      [wire] agent.turn.ended                    { "turnId": 0, "outcome": "done", "time": "<time>", "kind": "event" }
-      [wire] turn.ended                          { "agentId": "main", "turnId": 0, "reason": "completed", "time": "<time>" }
+      [wire] context.append_loop_event           { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-7>", "turnId": "0", "step": 2, "stepUuid": "<uuid-6>", "block": 0, "part": { "type": "text", "text": "The lookup result is lookup-result." }, "startedAt": "<time>" }, "time": "<time>" }
+      [wire] usage.record                        { "agentId": "main", "model": "mock-model", "usage": { "inputOther": 25, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
+      [wire] token_counting.measured             { "agentId": "main", "length": 4, "tokens": 37, "time": "<time>" }
       [emit] turn.ended                          { "time": "<time>", "agentId": "main", "turnId": 0, "reason": "completed" }
     `);
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
@@ -560,6 +612,7 @@ describe('Agent loop', () => {
         assistant: text "I will look it up."  calls call_lookup:Lookup { "query": "moon" }
         tool[call_lookup]: text "lookup-result"
     `);
+    expect(reasons).toEqual(['turn_start', 'tool_results']);
   });
 
   it('does not abort sibling tools when a parallel batch tool completes first', async () => {
@@ -591,7 +644,8 @@ describe('Agent loop', () => {
           },
         }),
       };
-      local.get(IAgentProfileService).update({ activeToolNames: ['Fast', 'Slow'] });
+      await local.restorePersisted();
+      local.get(IAgentLoopService).update({ activeToolNames: ['Fast', 'Slow'] });
       local.get(IAgentToolRegistryService).register(fastTool);
       local.get(IAgentToolRegistryService).register(slowTool);
 
@@ -653,7 +707,7 @@ describe('Agent loop', () => {
           },
         }),
       };
-      local.get(IAgentProfileService).update({ activeToolNames: ['Hang'] });
+      local.get(IAgentLoopService).update({ activeToolNames: ['Hang'] });
       local.get(IAgentToolRegistryService).register(hangTool);
       local.mockNextResponse(
         { type: 'text', text: 'working' },
@@ -714,7 +768,7 @@ describe('Agent loop', () => {
     expect(assistant?.toolCalls[0]?.extras).toEqual({ thought_signature_b64: 'c2lnbmF0dXJl' });
   });
 
-  it('lets non-external stop hooks continue a turn more than once', async () => {
+  it('lets non-external stop hooks launch follow-up turns more than once', async () => {
     profile.update({ activeToolNames: [] });
     let continuations = 0;
     loop.hooks.onDidFinishStep.register('test-repeat-stop-continuation', async (hookCtx, next) => {
@@ -733,23 +787,24 @@ describe('Agent loop', () => {
     });
 
     ctx.mockNextResponse({ type: 'text', text: 'First answer.' });
-    ctx.mockNextProviderResponse({ error: new APIProviderRateLimitError('slow down', null, 1) });
     ctx.mockNextResponse({ type: 'text', text: 'Second answer.' });
     ctx.mockNextResponse({ type: 'text', text: 'Third answer.' });
+    const reasons = trackStepReasons(ctx);
 
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hello' }] });
-    await ctx.untilTurnEnd();
+    await loop.settled();
 
     expect(continuations).toBe(2);
-    expect(ctx.llmCalls).toHaveLength(4);
+    expect(ctx.llmCalls).toHaveLength(3);
+    expect(reasons).toEqual(['turn_start', 'turn_start', 'turn_start']);
     const startedSteps = ctx.allEvents
       .filter((event) => event.type === '[rpc]' && event.event === 'turn.step.started')
       .map((event) => (event.args as { step: number }).step);
-    expect(startedSteps).toEqual([1, 2, 3, 4]);
+    expect(startedSteps).toEqual([1, 1, 1]);
     const retryingSteps = ctx.allEvents
       .filter((event) => event.type === '[rpc]' && event.event === 'turn.step.retrying')
       .map((event) => (event.args as { step: number }).step);
-    expect(retryingSteps).toEqual([2]);
+    expect(retryingSteps).toEqual([]);
     expect(ctx.contextData().history).toContainEqual(
       expect.objectContaining({
         role: 'user',
@@ -764,6 +819,76 @@ describe('Agent loop', () => {
         origin: { kind: 'system_trigger', name: 'stop_hook' },
       }),
     );
+  });
+
+  it('keeps the terminal real 503 after an earlier real 429', async () => {
+    const local = createTestAgent({
+      initialConfig: { providers: {}, loopControl: { maxAttemptsPerStep: 2 } },
+    });
+    try {
+      local.mockNextProviderResponse({
+        error: new APIProviderRateLimitError(
+          'first attempt rate limited',
+          'req-first-429',
+          1,
+          'trace-first-429',
+        ),
+      });
+      local.mockNextProviderResponse({
+        error: new APIStatusError(
+          503,
+          'final attempt unavailable',
+          true,
+          'req-final-503',
+          null,
+          'trace-final-503',
+        ),
+      });
+
+      await local.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
+      await local.untilTurnEnd();
+
+      const retries = local.allEvents.filter(
+        (event) => event.type === '[rpc]' && event.event === 'turn.step.retrying',
+      );
+      expect(retries).toHaveLength(1);
+      expect(retries[0]?.args).toMatchObject({
+        failedAttempt: 1,
+        nextAttempt: 2,
+        errorMessage: 'first attempt rate limited',
+        statusCode: 429,
+      });
+      const started = local.allEvents.filter(
+        (event) => event.type === '[rpc]' && event.event === 'turn.step.started',
+      );
+      expect(started.map((event) => (event.args as { step: number }).step)).toEqual([1, 1]);
+      expect((started[0]?.args as { stepId?: string }).stepId).toBe((started[1]?.args as { stepId?: string }).stepId);
+      expect(local.allEvents.indexOf(retries[0]!)).toBeLessThan(local.allEvents.indexOf(started[1]!));
+      const ended = local.allEvents.find(
+        (event) => event.type === '[rpc]' && event.event === 'turn.ended',
+      );
+      expect(ended?.args).toMatchObject({
+        reason: 'failed',
+        error: {
+          code: 'provider.api_error',
+          name: 'APIStatusError',
+          message: 'final attempt unavailable',
+          details: {
+            statusCode: 503,
+            requestId: 'req-final-503',
+            traceId: 'trace-final-503',
+          },
+        },
+      });
+      expect((ended?.args as TurnEnded).error?.details).toEqual({
+        statusCode: 503,
+        requestId: 'req-final-503',
+        traceId: 'trace-final-503',
+        diagnostics: {},
+      });
+    } finally {
+      await local.dispose();
+    }
   });
 
   it('raises the abort-listener ceiling on the step signal for parallel tool bursts', async () => {
@@ -808,7 +933,9 @@ describe('Agent loop', () => {
     profile.update({ activeToolNames: ['Lookup'] });
     ctx.get(IAgentToolRegistryService).register(lookupTool);
 
+    const afterSteps: number[] = [];
     loop.hooks.onDidFinishStep.register('test-stop-turn', async (hookCtx, next) => {
+      afterSteps.push(hookCtx.step);
       hookCtx.stopTurn = true;
       await next();
     });
@@ -820,6 +947,7 @@ describe('Agent loop', () => {
     await ctx.untilApproval(true);
     await ctx.untilTurnEnd();
 
+    expect(afterSteps).toEqual([1]);
     expect(ctx.llmCalls).toHaveLength(1);
     await expect(turn!.result).resolves.toEqual({
       type: 'completed',
@@ -828,25 +956,26 @@ describe('Agent loop', () => {
     });
   });
 
-  it('lets stopTurn take precedence over a queued continuation request', async () => {
+  it('runs a queued notify in a new turn after stopTurn', async () => {
     profile.update({ activeToolNames: [] });
 
     loop.hooks.onDidFinishStep.register('test-continue-like-stop-hook', async (hookCtx, next) => {
-      loop.notify();
+      if (hookCtx.turnId === 0) loop.notify();
       await next();
     });
     loop.hooks.onDidFinishStep.register('test-hard-stop', async (hookCtx, next) => {
-      hookCtx.stopTurn = true;
+      if (hookCtx.turnId === 0) hookCtx.stopTurn = true;
       await next();
     });
 
     ctx.mockNextResponse({ type: 'text', text: 'First answer.' });
-    ctx.mockNextResponse({ type: 'text', text: 'This continuation should not run.' });
+    ctx.mockNextResponse({ type: 'text', text: 'Notify answer.' });
 
     const { turn } = submitTurn(loop, 'hello');
     await ctx.untilTurnEnd();
+    await ctx.untilTurnEnd();
 
-    expect(ctx.llmCalls).toHaveLength(1);
+    expect(ctx.llmCalls).toHaveLength(2);
     await expect(turn!.result).resolves.toEqual({
       type: 'completed',
       steps: 1,
@@ -912,11 +1041,22 @@ describe('Agent loop', () => {
     loop.notify();
 
     await Promise.all([first.result, second.result, third.result]);
+    await loop.settled();
     subscription.dispose();
 
-    await expect(first.result).resolves.toMatchObject({ type: 'completed' });
-    await expect(second.result).resolves.toMatchObject({ type: 'completed' });
-    await expect(third.result).resolves.toMatchObject({ type: 'completed' });
+    const startedSteps = ctx.allEvents
+      .filter((event) => event.type === '[rpc]' && event.event === 'turn.step.started')
+      .map((event) => event.args as { turnId: number; step: number });
+    expect(startedSteps).toMatchObject([
+      { turnId: 0, step: 1 },
+      { turnId: 3, step: 1 },
+    ]);
+    expect(first.id).toBe(0);
+    expect(second.id).toBe(1);
+    expect(third.id).toBe(2);
+    await expect(first.result).resolves.toMatchObject({ type: 'completed', steps: 1 });
+    await expect(second.result).resolves.toMatchObject({ type: 'completed', steps: 0, stopReason: 'prompt_only' });
+    await expect(third.result).resolves.toMatchObject({ type: 'completed', steps: 0, stopReason: 'prompt_only' });
     expect(events).toEqual([
       'turn.started:0',
       'turn.ended:0',
@@ -924,8 +1064,10 @@ describe('Agent loop', () => {
       'turn.ended:1',
       'turn.started:2',
       'turn.ended:2',
+      'turn.started:3',
+      'turn.ended:3',
     ]);
-    expect(ctx.llmCalls).toHaveLength(3);
+    expect(ctx.llmCalls).toHaveLength(2);
   });
 
   it('takes a non-pausing history snapshot while a turn runs to natural completion', async () => {
@@ -1005,19 +1147,14 @@ describe('Agent loop', () => {
         },
       });
       parked.mockNextResponse({ type: 'text', text: 'real answer' });
-      const parkedRef = attachParkedEngine(parkedLoop);
-      try {
-        await expect(real.result).resolves.toMatchObject({ type: 'completed' });
-        expect(nudgeConsumed).toBe(1);
-        expect(parked.llmCalls).toHaveLength(1);
-        expect(parked.contextData().history).toContainEqual(
-          expect.objectContaining({
-            content: [{ type: 'text', text: 'nudge text' }],
-          }),
-        );
-      } finally {
-        parkedRef.stop();
-      }
+      await expect(real.result).resolves.toMatchObject({ type: 'completed' });
+      expect(nudgeConsumed).toBe(1);
+      expect(parked.llmCalls).toHaveLength(1);
+      expect(parked.contextData().history).toContainEqual(
+        expect.objectContaining({
+          content: [{ type: 'text', text: 'nudge text' }],
+        }),
+      );
     } finally {
       await parked.dispose();
     }
@@ -1040,7 +1177,7 @@ describe('Agent loop', () => {
     expect(loop.snapshot().state).toBe('idle');
   });
 
-  it('cancels an in-flight turn while its queued turn continues afterwards', async () => {
+  it('preserves explicit queue semantics across programmatic and user cancellation', async () => {
     let releaseRunning!: () => void;
     const running = new Promise<void>((resolve) => {
       releaseRunning = resolve;
@@ -1076,6 +1213,60 @@ describe('Agent loop', () => {
 
     expect(queued.state).toBe('completed');
     expect(ctx.llmCalls).toHaveLength(1);
+
+    const local = createTestAgent(permissionModeServices('yolo'));
+    await local.restorePersisted();
+    const localLoop = local.get(IAgentLoopService);
+    let releaseActive!: () => void;
+    const activeRunning = new Promise<void>((resolve) => {
+      releaseActive = resolve;
+    });
+    let activeStepStarted!: () => void;
+    const activeStarted = new Promise<void>((resolve) => {
+      activeStepStarted = resolve;
+    });
+    let blockActive = true;
+    localLoop.hooks.onWillBeginStep.register('test-user-cancel-holds-internal-work', async (hookCtx, next) => {
+      if (blockActive) {
+        blockActive = false;
+        activeStepStarted();
+        await Promise.race([
+          activeRunning,
+          new Promise<void>((_, reject) => {
+            hookCtx.signal.addEventListener('abort', () => reject(hookCtx.signal.reason), { once: true });
+          }),
+        ]);
+      }
+      await next();
+    });
+    try {
+      const active = submitTurn(localLoop, 'active').turn;
+      const skill = submitPromptTurn(localLoop, {
+        message: { role: 'user', content: [{ type: 'text', text: 'skill continuation' }] },
+        meta: { origin: {
+          kind: 'skill_activation',
+          activationId: 'act_queued',
+          skillName: 'queued-skill',
+          trigger: 'model-tool',
+        } as PromptOrigin },
+      }).turn;
+      const explicit = submitPromptTurn(localLoop, {
+        message: { role: 'user', content: [{ type: 'text', text: 'explicitly queued' }] },
+        meta: { origin: { kind: 'user' } },
+      }).turn;
+      await activeStarted;
+
+      local.mockNextResponse({ type: 'text', text: 'explicit answer' });
+      expect(active.cancel()).toBe(true);
+      await expect(active.result).resolves.toMatchObject({ type: 'cancelled' });
+      await expect(skill.result).resolves.toMatchObject({ type: 'cancelled', steps: 0 });
+      await expect(explicit.result).resolves.toMatchObject({ type: 'completed' });
+      expect(localLoop.snapshot().queue).toHaveLength(0);
+      expect(local.llmCalls).toHaveLength(1);
+    } finally {
+      releaseActive();
+      await local.dispose();
+    }
   });
 
   it('disposes active and queued turns with all turns settled and never pumps again', async () => {
@@ -1130,7 +1321,7 @@ describe('Agent loop', () => {
     );
   });
 
-  it('omits the turn.started prompt for system-triggered turns', async () => {
+  it('carries the turn.started prompt for system-triggered turns', async () => {
     const prompts: Array<string | undefined> = [];
     const subscription = ctx.get(IEventBus).subscribe(TurnStarted, (event) => {
       prompts.push(event.prompt);
@@ -1147,7 +1338,7 @@ describe('Agent loop', () => {
     await user.result;
     subscription.dispose();
 
-    expect(prompts).toEqual([undefined, 'hi']);
+    expect(prompts).toEqual(['continue the goal', 'hi']);
   });
 
   it('carries the turn.started prompt for subagent system triggers', async () => {
@@ -1307,7 +1498,7 @@ describe('turn telemetry', () => {
     const records: TelemetryRecord[] = [];
     const local = createTestAgent({ telemetry: recordingTelemetry(records) });
     try {
-      local.get(IAgentProfileService).update({ activeToolNames: [] });
+      local.get(IAgentLoopService).update({ activeToolNames: [] });
       local.mockNextResponse({ type: 'text', text: 'hi' });
       await local.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
       await local.untilTurnEnd();
@@ -1353,7 +1544,7 @@ describe('turn telemetry', () => {
       ),
     );
     try {
-      local.get(IAgentProfileService).update({ activeToolNames: [] });
+      local.get(IAgentLoopService).update({ activeToolNames: [] });
       local.mockNextResponse({ type: 'text', text: 'hi' });
       await local.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
       await local.untilTurnEnd();
@@ -1382,7 +1573,7 @@ describe('turn telemetry', () => {
     const local = createTestAgent({ telemetry: recordingTelemetry(records) });
     try {
       const localLoop = local.get(IAgentLoopService);
-      const localProfile = local.get(IAgentProfileService);
+      const localProfile = local.get(IAgentLoopService);
       local.configure({
         modelCapabilities: {
           image_in: false,
@@ -1404,10 +1595,6 @@ describe('turn telemetry', () => {
       await local.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
       await local.untilTurnEnd();
 
-      const request = local.allEvents.find(
-        (event) => event.type === '[wire]' && event.event === 'llm.request',
-      );
-      expect(request?.args).toMatchObject({ thinkingEffort: 'on' });
       expect(records).toContainEqual({
         event: 'turn_started',
         properties: expect.objectContaining({ turn_id: 0, thinking_effort: 'on' }),
@@ -1425,7 +1612,7 @@ describe('turn telemetry', () => {
     const records: TelemetryRecord[] = [];
     const local = createTestAgent({ telemetry: recordingTelemetry(records) });
     try {
-      local.get(IAgentProfileService).update({ activeToolNames: [] });
+      local.get(IAgentLoopService).update({ activeToolNames: [] });
       local.mockNextProviderResponse({
         parts: [{ type: 'text', text: 'hi' }],
         requestId: 'trace-turn-1',
@@ -1450,7 +1637,7 @@ describe('turn telemetry', () => {
     const records: TelemetryRecord[] = [];
     const local = createTestAgent({ telemetry: recordingTelemetry(records) });
     try {
-      local.get(IAgentProfileService).update({ activeToolNames: [] });
+      local.get(IAgentLoopService).update({ activeToolNames: [] });
       local.mockNextProviderResponse({
         parts: [{ type: 'text', text: 'hi' }],
         requestId: 'trace-turn-clear',
@@ -1469,7 +1656,7 @@ describe('turn telemetry', () => {
     const local = createTestAgent({ telemetry: recordingTelemetry(records) });
     try {
       const localLoop = local.get(IAgentLoopService);
-      local.get(IAgentProfileService).update({ activeToolNames: [] });
+      local.get(IAgentLoopService).update({ activeToolNames: [] });
       localLoop.hooks.onDidFinishStep.register('test-continue-after-first-step', async (hookCtx, next) => {
         if (hookCtx.step === 1) {
           localLoop.notify();
@@ -1488,10 +1675,15 @@ describe('turn telemetry', () => {
 
       await local.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
       await local.untilTurnEnd();
+      await local.untilTurnEnd();
 
       expect(local.llmCalls).toHaveLength(1);
+      const ended = records.filter((record) => record.event === 'turn_ended');
+      expect(ended).toHaveLength(2);
+      expect(ended[0]?.properties).toMatchObject({ reason: 'completed', request_id: 'trace-step-1' });
+      expect(ended[1]?.properties).toMatchObject({ reason: 'failed' });
+      expect(ended[1]?.properties?.['request_id']).toBeUndefined();
       expect(records.find((record) => record.event === 'turn_interrupted')?.properties?.['request_id']).toBeUndefined();
-      expect(records.find((record) => record.event === 'turn_ended')?.properties?.['request_id']).toBeUndefined();
     } finally {
       await local.dispose();
     }
@@ -1539,7 +1731,7 @@ describe('turn telemetry', () => {
   it('carries the last step request id on the turn.ended event payload', async () => {
     const local = createTestAgent();
     try {
-      local.get(IAgentProfileService).update({ activeToolNames: [] });
+      local.get(IAgentLoopService).update({ activeToolNames: [] });
       const ended: TurnEnded[] = [];
       const subscription = local.get(IEventBus).subscribe((event) => {
         if (event instanceof TurnEnded) ended.push(event);
@@ -1566,7 +1758,7 @@ describe('turn telemetry', () => {
   it('carries the in-flight request id on the turn.ended payload when the turn fails', async () => {
     const local = createTestAgent();
     try {
-      local.get(IAgentProfileService).update({ activeToolNames: [] });
+      local.get(IAgentLoopService).update({ activeToolNames: [] });
       const ended: TurnEnded[] = [];
       const subscription = local.get(IEventBus).subscribe((event) => {
         if (event instanceof TurnEnded) ended.push(event);
@@ -1634,7 +1826,7 @@ describe('turn telemetry', () => {
   it('omits the request id on the turn.ended payload when the turn saw none', async () => {
     const local = createTestAgent();
     try {
-      local.get(IAgentProfileService).update({ activeToolNames: [] });
+      local.get(IAgentLoopService).update({ activeToolNames: [] });
       const ended: TurnEnded[] = [];
       const subscription = local.get(IEventBus).subscribe((event) => {
         if (event instanceof TurnEnded) ended.push(event);
@@ -1658,7 +1850,7 @@ describe('turn telemetry', () => {
   it('does not leak a compaction request request id into the turn.ended payload', async () => {
     const local = createTestAgent();
     try {
-      local.get(IAgentProfileService).update({ activeToolNames: [] });
+      local.get(IAgentLoopService).update({ activeToolNames: [] });
       const ended: TurnEnded[] = [];
       const subscription = local.get(IEventBus).subscribe((event) => {
         if (event instanceof TurnEnded) ended.push(event);
@@ -1693,7 +1885,7 @@ describe('turn telemetry', () => {
 
   it('emits turn_ended with error_type for an uncoded failure', async () => {
     const records: TelemetryRecord[] = [];
-    const local = createTestAgent({ telemetry: recordingTelemetry(records) });
+    const local = createTestAgent({ telemetry: recordingTelemetry(records) }, permissionModeServices('yolo'));
     try {
       const workTool: ExecutableTool = {
         name: 'Work',
@@ -1705,9 +1897,11 @@ describe('turn telemetry', () => {
         }),
       };
       local.get(IAgentToolRegistryService).register(workTool);
-      local.get(IAgentProfileService).update({ activeToolNames: ['Work'] });
-      const subscription = local.get(IAgentToolExecutorService).onBeforeExecuteTool(() => {
-        throw new Error('beforeExecute blew up');
+      local.get(IAgentLoopService).update({ activeToolNames: ['Work'] });
+      const subscription = local.get(IAgentToolExecutorService).registerHook({
+        beforeExecute: () => {
+          throw new Error('beforeExecute blew up');
+        },
       });
       local.mockNextResponse(
         { type: 'text', text: 'working' },
@@ -1818,7 +2012,7 @@ describe('interruption reminder', () => {
     ).length;
   }
 
-  it('preserves the partial stream and appends one reminder at the cancellation event point', async () => {
+  it('preserves the partial stream and appends one reminder before turn.ended', async () => {
     ctx.mockNextResponse({ type: 'text', text: 'partial answer' }, { type: 'text', text: ' more' });
     const subscription = cancelOnFirstDelta();
     const turn = submitTurn(loop, 'Hello').turn;
@@ -1831,10 +2025,26 @@ describe('interruption reminder', () => {
         role: 'assistant',
         content: [{ type: 'text', text: 'partial answer' }],
         toolCalls: [],
-        partial: true,
+        usage: { inputOther: 0, output: 0, inputCacheCreation: 0 },
       },
     ]);
     expect(interruptionReminders()).toHaveLength(1);
+    expect(interruptionReminders()[0]!.content).toEqual([
+      {
+        type: 'text',
+        text: '<system-reminder>\nThe previous turn was interrupted by the user before completion; any partial output shown above is incomplete. The user\'s next message continues the conversation.\n</system-reminder>',
+      },
+    ]);
+    expect(ctx.contextData().history.indexOf(interruptionReminders()[0]!)).toBe(2);
+    const wire = ctx.allEvents.filter((entry) => entry.type === '[wire]');
+    const reminderAt = wire.findIndex((entry) => {
+      if (entry.event !== 'context.append_message') return false;
+      const origin = (entry.args as { message?: ContextMessage }).message?.origin;
+      return origin?.kind === 'injection' && origin.variant === 'interruption';
+    });
+    const endedAt = wire.findIndex((entry) => entry.event === 'turn.ended');
+    expect(reminderAt).toBeGreaterThanOrEqual(0);
+    expect(endedAt).toBeGreaterThan(reminderAt);
 
     const cancelRecord = ctx.allEvents.find(
       (entry) => entry.type === '[wire]' && entry.event === 'turn.cancel',
@@ -1858,12 +2068,6 @@ describe('interruption reminder', () => {
     await ctx.untilTurnEnd();
 
     expect(interruptionReminders()).toHaveLength(1);
-    expect(interruptionReminders()[0]!.content).toEqual([
-      {
-        type: 'text',
-        text: '<system-reminder>\nThe previous turn was interrupted by the user before completion; any partial output shown above is incomplete. The user\'s next message continues the conversation.\n</system-reminder>',
-      },
-    ]);
     expect(ctx.contextData().history.indexOf(interruptionReminders()[0]!)).toBe(2);
   });
 
@@ -1880,6 +2084,7 @@ describe('interruption reminder', () => {
     await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
     subscription.dispose();
     expect(results).toEqual([true, true]);
+    expect(interruptionReminders()).toHaveLength(1);
     expect(
       ctx.allEvents.filter(
         (entry) => entry.type === '[wire]' && entry.event === 'turn.cancel',
@@ -1904,7 +2109,7 @@ describe('interruption reminder', () => {
       role: 'assistant',
       content: [{ type: 'text', text: 'partial answer' }],
       toolCalls: [],
-      partial: true,
+      usage: { inputOther: 0, output: 0, inputCacheCreation: 0 },
     });
     expect(interruptionReminders()).toHaveLength(0);
 
@@ -1963,6 +2168,7 @@ describe('interruption reminder', () => {
     const queued = submitTurn(loop, 'queued').turn;
     expect(queued.cancel()).toBe(true);
     await expect(queued.result).resolves.toMatchObject({ type: 'cancelled', steps: 0 });
+    expect(interruptionReminders()).toHaveLength(0);
     await entered;
     release();
     loop.cancel({ turnId: active.id });
@@ -1976,7 +2182,7 @@ describe('interruption reminder', () => {
     expect(interruptionReminders()).toHaveLength(1);
   });
 
-  it('sends the partial output and reminder in the next atomic step', async () => {
+  it('sends the reminder recorded on the cancelled turn ahead of the next user message', async () => {
     ctx.mockNextResponse({ type: 'text', text: 'partial answer' }, { type: 'text', text: ' more' });
     const subscription = cancelOnFirstDelta();
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
@@ -1997,7 +2203,7 @@ describe('interruption reminder', () => {
     `);
   });
 
-  it('undo removes the event-point interruption with its cancelled turn', async () => {
+  it('undo removes a pending interruption with its cancelled turn', async () => {
     ctx.mockNextResponse({ type: 'text', text: 'partial answer' });
     const subscription = cancelOnFirstDelta();
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
@@ -2039,24 +2245,19 @@ describe('interruption reminder', () => {
     expect(ctx.contextData().history).toEqual([]);
   });
 
-  it('undo removes a cancelled retry reminder with its preceding user prompt', async () => {
+  it('retry continues after an assistant response without appending a user message', async () => {
     ctx.mockNextResponse({ type: 'text', text: 'first answer' });
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
-    await ctx.untilTurnEnd();
+    const first = submitTurn(loop, 'Hello').turn;
+    await expect(first.result).resolves.toMatchObject({ type: 'completed' });
+    const usersBefore = ctx.contextData().history.filter((message) => message.role === 'user');
 
-    ctx.mockNextResponse({ type: 'text', text: 'partial retry' });
-    const subscription = cancelOnFirstDelta();
-    const retry = submitPromptTurn(loop, {
-      message: { role: 'user', content: [] },
-      meta: { origin: { kind: 'retry' } },
-    }).turn;
-    await expect(retry.result).resolves.toMatchObject({ type: 'cancelled' });
-    subscription.dispose();
-    expect(interruptionReminders()).toHaveLength(1);
+    ctx.mockNextResponse({ type: 'text', text: 'retried answer' });
+    const result = await loop.retry();
 
-    await ctx.undoHistory(1);
-
-    expect(ctx.contextData().history).toEqual([]);
+    expect(result).toMatchObject({ type: 'completed' });
+    expect(ctx.llmCalls).toHaveLength(2);
+    expect(ctx.contextData().history.filter((message) => message.role === 'user')).toEqual(usersBefore);
+    await ctx.expectResumeMatches();
   });
 
   it('drops unsigned thinking but keeps signed thinking on user cancel', async () => {
@@ -2085,6 +2286,7 @@ describe('interruption reminder', () => {
     const secondTurn = submitTurn(loop, 'Again').turn;
     await expect(secondTurn.result).resolves.toMatchObject({ type: 'cancelled' });
     second.dispose();
+    expect(interruptionReminders()).toHaveLength(2);
 
     expect(ctx.contextData().history).toContainEqual({
       role: 'assistant',
@@ -2093,8 +2295,12 @@ describe('interruption reminder', () => {
         { type: 'text', text: 'partial answer' },
       ],
       toolCalls: [],
-      partial: true,
+      usage: { inputOther: 0, output: 0, inputCacheCreation: 0 },
     });
+    ctx.mockNextResponse({ type: 'text', text: 'continued answer' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue' }] });
+    await ctx.untilTurnEnd();
+    expect(interruptionReminders()).toHaveLength(2);
   });
 
   it('records no partial content when the stream only produced whitespace', async () => {
@@ -2105,37 +2311,32 @@ describe('interruption reminder', () => {
     subscription.dispose();
 
     expect(contentPartRecordsIn(ctx)).toBe(0);
-    expect(ctx.contextData().history.slice(0, 2)).toEqual([
+    expect(ctx.contextData().history.slice(0, 1)).toEqual([
       expect.objectContaining({ role: 'user' }),
-      { role: 'assistant', content: [], toolCalls: [], partial: true },
     ]);
+    expect(interruptionReminders()).toHaveLength(1);
+    ctx.mockNextResponse({ type: 'text', text: 'continued answer' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue' }] });
+    await ctx.untilTurnEnd();
     expect(interruptionReminders()).toHaveLength(1);
   });
 
-  it('does not stack a second reminder around a vacuous retry turn', async () => {
+  it('retry after cancellation does not add another reminder or retry user message', async () => {
     ctx.mockNextResponse({ type: 'text', text: 'partial answer' });
-    const first = cancelOnFirstDelta();
+    const subscription = cancelOnFirstDelta();
     const firstTurn = submitTurn(loop, 'Hello').turn;
     await expect(firstTurn.result).resolves.toMatchObject({ type: 'cancelled' });
-    first.dispose();
+    subscription.dispose();
     expect(interruptionReminders()).toHaveLength(1);
+    const usersBefore = ctx.contextData().history.filter((message) => message.role === 'user');
 
     ctx.mockNextResponse({ type: 'text', text: 'retried answer' });
-    const onStepStarted = ctx.get(IEventBus).subscribe(TurnStepStarted, () => {
-      loop.cancel();
-    });
-    const retryTurn = submitPromptTurn(loop, {
-      message: { role: 'user', content: [] },
-      meta: { origin: { kind: 'retry' } },
-    }).turn;
-    await expect(retryTurn.result).resolves.toMatchObject({ type: 'cancelled' });
-    onStepStarted.dispose();
-    expect(interruptionReminders()).toHaveLength(1);
+    const result = await loop.retry();
 
-    ctx.mockNextResponse({ type: 'text', text: 'third answer' });
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Next' }] });
-    await ctx.untilTurnEnd();
+    expect(result).toMatchObject({ type: 'completed' });
     expect(interruptionReminders()).toHaveLength(1);
+    expect(ctx.contextData().history.filter((message) => message.role === 'user')).toEqual(usersBefore);
+    await ctx.expectResumeMatches();
   });
 
   it('renders a new interruption reminder after an intervening completed turn', async () => {
@@ -2155,6 +2356,7 @@ describe('interruption reminder', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'second prompt' }] });
     await ctx.untilTurnEnd();
     second.dispose();
+    expect(interruptionReminders()).toHaveLength(2);
 
     ctx.mockNextResponse({ type: 'text', text: 'final answer' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'final prompt' }] });
@@ -2165,6 +2367,7 @@ describe('interruption reminder', () => {
   it('does not duplicate recorded content when cancelled during tool execution', async () => {
     const local = createTestAgent(permissionModeServices('yolo'));
     const releaseSlowTool = deferred();
+    await local.restorePersisted();
     try {
       const slowToolStarted = registerAbortableWorkTool(local, releaseSlowTool.promise);
       const localLoop = local.get(IAgentLoopService);
@@ -2197,16 +2400,22 @@ describe('interruption reminder', () => {
           ),
         ).toBe(true);
       }
+      expect(toolResults.find((event) => event.toolCallId === 'call-work-1')?.result.durationMs).toEqual(
+        expect.any(Number),
+      );
       expect(toolResults.filter((event) => event.toolCallId === 'call-work-2')).toEqual([
         expect.objectContaining({
           result: {
             output:
               'The user manually interrupted "Work" (and anything else running at the same time). This was a deliberate user action, not a system error, timeout, or capacity limit. Do not retry automatically or guess at the cause — wait for the user\'s next instruction.',
             isError: true,
+            durationMs: expect.any(Number),
           },
         }),
       ]);
 
+      releaseSlowTool.resolve();
+      local.newEvents();
       local.mockNextResponse({ type: 'text', text: 'follow-up answer' });
       await local.rpc.prompt({ input: [{ type: 'text', text: 'again' }] });
       await local.untilTurnEnd();
@@ -2219,6 +2428,10 @@ describe('interruption reminder', () => {
         role: 'user',
         content: [{ type: 'text', text: 'again' }],
       });
+      expect(history.at(-1)).toMatchObject({
+        role: 'assistant',
+        content: [{ type: 'text', text: 'follow-up answer' }],
+      });
 
       await local.expectResumeMatches();
     } finally {
@@ -2229,26 +2442,35 @@ describe('interruption reminder', () => {
 });
 
 describe('step timing split propagation', () => {
-  it('carries the split from the llmRequester timing event to the turn.step.completed protocol event', async () => {
-    const ctx = createTestAgent();
-    replaceLoopRequester(ctx, createTimingRequester());
+  it('carries current timing and ignores a late outcome from an aborted turn', async () => {
+    const late = createLateTimingGenerate();
+    const ctx = createTestAgent({ generate: late.generate });
     try {
-      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hello' }] });
-      await ctx.untilTurnEnd();
+      const loop = ctx.get(IAgentLoopService);
+      const first = submitTurn(loop, 'old').turn;
+      await late.firstStarted.promise;
+      const second = submitTurn(loop, 'new').turn;
+      first.cancel(new Error('stop'));
+      first.cancel(new Error('stop'));
+      await expect(first.result).resolves.toMatchObject({ type: 'cancelled' });
+      await late.secondStarted.promise;
 
-      const stepCompleted = ctx.allEvents.find(
+      late.resolveFirst();
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      const currentTiming = (loop as unknown as {
+        active?: { current?: { timing?: unknown } };
+      }).active?.current?.timing;
+      expect(currentTiming).toBeUndefined();
+
+      late.resolveSecond();
+      await expect(second.result).resolves.toMatchObject({ type: 'completed' });
+      const completed = ctx.allEvents.findLast(
         (event) => event.type === '[rpc]' && event.event === 'turn.step.completed',
       );
-      expect(stepCompleted?.args).toMatchObject({
-        llmFirstTokenLatencyMs: 100,
-        llmStreamDurationMs: 200,
-        llmRequestBuildMs: 30,
-        llmServerFirstTokenMs: 70,
-        llmServerDecodeMs: 150,
-        llmClientConsumeMs: 50,
-        llmClientBlockedMs: 20,
-      });
+      expect(completed?.args).toMatchObject({ llmFirstTokenLatencyMs: expect.any(Number) });
     } finally {
+      late.resolveFirst();
+      late.resolveSecond();
       await ctx.dispose();
     }
   });
@@ -2328,23 +2550,20 @@ describe('aborted step tool execution', () => {
     }
   });
 
-  it('settles a message-less notification when credential resolution rejects before the first request', async () => {
-    const rejectingCredentials = () => ({
-      resolve: () => Promise.reject(new Error('OAuth login required')),
-    });
+  it('settles a message-less notification without creating an LLM request', async () => {
     const requester: LoopRequester = {
-      prepareTurnConfig: () => ({ thinkingEffort: 'off' }),
-      currentCredentialProvider: rejectingCredentials,
-      credentialProviderForTurn: rejectingCredentials,
-      async request() {
+      createTurnExecution: ({ profile }) => ({
+        profile,
+        requester: fakeCoreRequester(async () => {
+          throw new Error('request must not run');
+        }),
+      }),
+      prepareOperation: async () => fakeCoreRequester(async () => {
         throw new Error('request must not run');
-      },
-      start() {
-        throw new Error('request must not run');
-      },
+      }),
     };
     const ctx = createTestAgent();
-    replaceLoopRequester(ctx, requester);
+    await replaceLoopRequester(ctx, requester);
     try {
       const loopService = ctx.get(IAgentLoopService);
       const handle = loopService.notify();
@@ -2363,8 +2582,10 @@ function submitTurn(loop: IAgentLoopService, text: string): { readonly turn: Tur
   });
 }
 
-function replaceLoopRequester(ctx: TestAgentContext, requester: LoopRequester): void {
-  (ctx.get(IAgentLoopService) as { requester: LoopRequester }).requester = requester;
+async function replaceLoopRequester(ctx: TestAgentContext, requester: LoopRequester): Promise<void> {
+  const loop = ctx.get(IAgentLoopService) as { requester: LoopRequester } & IAgentLoopService;
+  loop.requester = requester;
+  await loop.initializeHistory([]);
 }
 
 function parkedLifecycleStub(): IAgentLifecycleService {
@@ -2385,59 +2606,57 @@ function parkedLifecycleStub(): IAgentLifecycleService {
   };
 }
 
-function attachParkedEngine(loop: IAgentLoopService) {
-  const bundle = loop.buildAttachBundle();
-  const ref = createActor(createAgentMachine({}), {
-    input: {
-      request: bundle.request,
-      scopeFactory: () =>
-        Promise.resolve({
-          store: bundle.store,
-          turnLogic: bundle.turnLogic,
-          toolLogic: bundle.toolLogic,
-          tools: bundle.tools,
-          request: bundle.request,
-        }),
+function createLateTimingGenerate() {
+  const firstStarted = deferred();
+  const secondStarted = deferred();
+  const firstGate = deferred();
+  const secondGate = deferred();
+  let calls = 0;
+  const generate: GenerateFn = {
+    async generate(_config, _content, control) {
+      calls += 1;
+      const current = calls;
+      if (current === 1) {
+        firstStarted.resolve();
+        await firstGate.promise;
+      } else if (current === 2) {
+        secondStarted.resolve();
+        await secondGate.promise;
+      } else {
+        throw new Error('Unexpected model request');
+      }
+      control.onEvent?.({
+        type: 'llm.streaming.part',
+        part: { type: 'text', text: current === 1 ? 'old' : 'new' },
+      });
+      control.onEvent?.({ type: 'llm.streaming.usage', usage: emptyUsage() });
+      control.onEvent?.({
+        type: 'llm.streaming.finish',
+        finish: { finishReason: 'completed', rawFinishReason: 'stop' },
+      });
+      control.onEvent?.({ type: 'llm.done' });
     },
-  });
-  ref.start();
-  loop.attachEngine(ref, bundle);
-  return ref;
+  };
+  return {
+    generate,
+    firstStarted,
+    secondStarted,
+    resolveFirst: firstGate.resolve,
+    resolveSecond: secondGate.resolve,
+  };
 }
 
-function createTimingRequester(): LoopRequester {
-  const timing: ModelRequestTiming = {
-    firstTokenLatencyMs: 100,
-    streamDurationMs: 200,
-    requestBuildMs: 30,
-    serverFirstTokenMs: 70,
-    serverDecodeMs: 150,
-    clientConsumeMs: 50,
-    clientBlockedMs: 20,
+function fakeCoreRequester(
+  script: (request: CoreLlmRequest, control: LlmRunControl) => Promise<LlmOutcome>,
+  filled: LlmRequestPart = {},
+): CoreLoopRequester {
+  const complete = (part: LlmRequestPart) =>
+    mergeFields(filled as Record<string, unknown>, part as Record<string, unknown>) as unknown as CoreLlmRequest;
+  return {
+    with: (part: LlmRequestPart | CoreLoopRequester) => fakeCoreRequester(script, complete(contentsOf(part))),
+    request: complete,
+    generate: (rest, control) => script(complete(rest), control),
   };
-
-  const requester: LoopRequester = {
-    prepareTurnConfig: () => ({ thinkingEffort: 'off' }),
-    currentCredentialProvider: () => undefined,
-    credentialProviderForTurn: () => undefined,
-    async request(_overrides, onPart = () => {}) {
-      await onPart({ type: 'text', text: 'answer' });
-      return {
-        message: {
-          role: 'assistant',
-          content: [{ type: 'text', text: 'answer' }],
-          toolCalls: [],
-        },
-        usage: emptyUsage(),
-        model: 'mock-model',
-        timing,
-      };
-    },
-    start(overrides, onPart, signal) {
-      return { trace: { requestId: undefined }, result: this.request(overrides, onPart, signal) };
-    },
-  };
-  return requester;
 }
 
 function createAbortedStepGenerate(): GenerateFn {
@@ -2508,7 +2727,7 @@ function registerAbortableWorkTool(
       },
     }),
   };
-  ctx.get(IAgentProfileService).update({ activeToolNames: ['Work'] });
+  ctx.get(IAgentLoopService).update({ activeToolNames: ['Work'] });
   ctx.get(IAgentToolRegistryService).register(tool);
   return slowToolStarted;
 }

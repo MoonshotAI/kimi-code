@@ -7,7 +7,7 @@ import { type IDisposable } from '#/_base/di/lifecycle';
 import { Service } from '#/_base/di/service';
 import { Error2, ErrorCodes } from '#/errors';
 import { generateHeroSlug } from '#/_base/utils/hero-slug';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { PlanModeInjection } from '#/features/plan/injection/planModeInjection';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
@@ -16,6 +16,7 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { registerLegacyStarting } from '#/agent/toolExecutor/legacyHooks';
 import type {
   BeforeToolExecuteEvent,
   ResolvedToolExecutionHookContext,
@@ -52,7 +53,7 @@ export class AgentPlanService extends Service implements IAgentPlanService {
   private readonly review: ExitPlanModeReview;
 
   constructor(
-    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
+    @IAgentLoopService private readonly context: IAgentLoopService,
     @IHostEnvironment private readonly hostEnvironment: IHostEnvironment,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @IBlobStore private readonly blobs: IBlobStore,
@@ -88,10 +89,23 @@ export class AgentPlanService extends Service implements IAgentPlanService {
 
     this._register(new PlanModeInjection(reminder, this, this.context, agentState));
     this._register(this.registerPlanGuard(toolExecutor));
+    this._register(this.context.hooks.onDidFinishStep.register('plan-rejection-stop', (context, next) => {
+      for (const tool of context.tools) {
+        if (tool.toolCall.name !== 'ExitPlanMode') continue;
+        const text = tool.outcome.entry.message.content
+          .map((part) => part.type === 'text' ? part.text : '')
+          .join('\n');
+        if (
+          text === 'Plan rejected by user. Plan mode deactivated.' ||
+          text === 'Plan rejected by user. Plan mode remains active.'
+        ) context.stopTurn = true;
+      }
+      return next();
+    }));
   }
 
   private registerPlanGuard(toolExecutor: IAgentToolExecutorService): IDisposable {
-    return toolExecutor.onBeforeExecuteTool((event) => this.guardToolExecution(event));
+    return registerLegacyStarting(toolExecutor, (event) => this.guardToolExecution(event));
   }
 
   private async guardToolExecution(event: BeforeToolExecuteEvent): Promise<void> {
