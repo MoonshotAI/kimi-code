@@ -6,7 +6,7 @@
 import { randomBytes } from 'node:crypto';
 
 import type { ContentPart } from '#/llm/message';
-import { parseToolCallArguments } from '#/tool/tool-args-parse';
+import { applyToolArgAliases, parseToolCallArguments } from '#/tool/tool-args-parse';
 import { abortedToolOutput, isUserCancellation } from '#/tool/abort';
 
 import { memoryOutputStore } from './output-store';
@@ -152,7 +152,7 @@ export class ToolExecutor<TContext = unknown> {
             parsed.error,
           ));
         }
-        control.setArgs(parsed.data);
+        control.setArgs(applyToolArgAliases(tool?.argAliases, parsed.data));
         if (tool === undefined) {
           throw new ToolStop(rejected('resolve', `Tool "${call.name}" not found`, undefined, 'resolve'));
         }

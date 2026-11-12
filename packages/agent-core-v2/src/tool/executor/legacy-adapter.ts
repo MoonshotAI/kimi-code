@@ -103,6 +103,10 @@ export class LegacyExecutableToolAdapter<Input = unknown>
     return this.legacy.deferred;
   }
 
+  get argAliases(): Readonly<Record<string, string>> | undefined {
+    return this.legacy.argAliases;
+  }
+
   async prepare(
     context: ToolPrepareContext<Input, LegacyToolAgentContext>,
   ): Promise<ToolPreparation<LegacyToolPreparation>> {

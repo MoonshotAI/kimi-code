@@ -213,6 +213,7 @@ function notUtf8DecodableFileOutput(path: string): string {
 export class ReadTool implements IReadTool {
   declare readonly _serviceBrand: undefined;
   readonly name = 'Read' as const;
+  readonly argAliases: Readonly<Record<string, string>> = { offset: 'line_offset', limit: 'n_lines' };
   get description(): string {
     const limits = this.limits();
     return renderPrompt(readDescriptionTemplate, {
