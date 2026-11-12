@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { freeze } from 'immer';
 
 import { toKimiErrorPayload } from '#/errors';
 import type { IWireService } from '#/wire/wire';
@@ -165,12 +166,12 @@ export function restoreLoopJournal(records: readonly WireRecord[]): LoopJournalS
         profile = reduceLoopActiveTools(profile ?? EMPTY_LOOP_PROFILE, undefined);
         break;
       case 'context.append_message':
-        context = foldAppendMessage(context, record['message'] as ContextMessage);
+        context = foldAppendMessage(context, record['message'] as ContextMessage, true);
         break;
       case 'context.append_loop_event': {
         const event = record['event'] as LoopRecordedEvent;
         requestingStep = event.type === 'step.begin' ? event : undefined;
-        context = foldLoopEvent(context, event);
+        context = foldLoopEvent(context, event, true);
         break;
       }
       case 'context.apply_compaction':
@@ -178,7 +179,7 @@ export function restoreLoopJournal(records: readonly WireRecord[]): LoopJournalS
           context,
           record as unknown as Parameters<typeof applyContextCompactionRecord>[1],
         );
-        if (requestingStep !== undefined) context = foldLoopEvent(context, requestingStep);
+        if (requestingStep !== undefined) context = foldLoopEvent(context, requestingStep, true);
         break;
       case 'context.clear':
         context = [];
@@ -186,7 +187,7 @@ export function restoreLoopJournal(records: readonly WireRecord[]): LoopJournalS
         break;
     }
   }
-  context = foldSettle(context);
+  context = freeze(foldSettle(context), true);
   return {
     profile,
     profileBound,
