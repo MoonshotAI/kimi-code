@@ -136,7 +136,10 @@ Use `/goal next <objective>` to line up follow-up work without interrupting the 
 
 The input box remains usable while the agent is thinking or calling tools, and supports the following extra actions:
 
-- **`Ctrl-S`**: inject the content in the input box into the running turn immediately, without waiting for it to finish
+- **`Enter`**: queue the input for the next turn by default, or steer only the current input when [`follow_up_behavior`](../configuration/config-files.md#tuitoml) is set to `"steer"` (also configurable in `/settings`)
+- **`Ctrl-Enter` / `Cmd-Enter`**: perform the opposite of `follow_up_behavior` for this message
+- **`Ctrl-Q`**: queue the current input for the next turn
+- **`Ctrl-S`**: inject the content in the input box and steerable queued messages into the running turn immediately, without waiting for it to finish
 - **`Esc` / `Ctrl-C`**: interrupt the current turn
 - **`Ctrl-O`**: globally toggle the collapsed/expanded state of tool output and compaction summaries
 

@@ -647,6 +647,7 @@ defaultCwd = "/workspace"
 | --- | --- | --- | --- |
 | `theme` | `string` | `auto` | 配色主题：`auto`、`dark`、`light` 或[自定义主题](../customization/themes.md)名 |
 | `tui_mode` | `string` | `regular` | 界面布局：`regular` 渲染进终端滚动缓冲区；`fullscreen`（实验性）部分组件支持鼠标交互，交互更顺手 |
+| `follow_up_behavior` | `string` | `queue` | 轮次运行期间按 `Enter` 的行为：`queue` 将跟进消息排入下一轮次；`steer` 仅将当前输入注入正在运行的轮次 |
 | `copy_on_select` | `boolean` | `true` | 仅全屏模式：选中文本即复制；也可以按 `Ctrl-C` 复制 |
 | `render_latex` | `boolean` | `true` | 将 Markdown 中的 LaTeX 公式渲染为 Unicode 文本；`false` 保留原始源码 |
 | `disable_paste_burst` | `boolean` | `false` | 禁用非 bracketed paste 的粘贴突发兜底；默认开启，避免快速多行粘贴被逐行提交 |
@@ -672,6 +673,7 @@ model、cwd、git 分支、permission 模式、plan 模式、上下文用量、s
 # ~/.kimi-code/tui.toml
 theme = "auto" # "auto" | "dark" | "light" | 自定义主题名
 # tui_mode = "regular" # "regular" | "fullscreen"（"fullscreen" 为实验性）
+# follow_up_behavior = "queue" # "queue" | "steer"
 copy_on_select = true # 仅全屏模式：false 表示按 Ctrl-C 才复制
 render_latex = true # false 表示消息中的 LaTeX 公式保留原始源码
 disable_paste_burst = false # true 表示禁用非 bracketed paste 的粘贴突发兜底

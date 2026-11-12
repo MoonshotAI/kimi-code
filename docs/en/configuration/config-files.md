@@ -648,6 +648,7 @@ Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a c
 | --- | --- | --- | --- |
 | `theme` | `string` | `auto` | Color theme: `auto`, `dark`, `light`, or the name of a [custom theme](../customization/themes.md) |
 | `tui_mode` | `string` | `regular` | UI layout: `regular` renders into the terminal scrollback; `fullscreen` (experimental) makes parts of the UI mouse-interactive for a smoother experience |
+| `follow_up_behavior` | `string` | `queue` | Action for `Enter` while a turn is running: `queue` holds follow-ups for the next turn; `steer` injects only the current input into the running turn |
 | `copy_on_select` | `boolean` | `true` | Fullscreen mode only: copy text as soon as you select it; you can also press `Ctrl-C` to copy |
 | `render_latex` | `boolean` | `true` | Render LaTeX math expressions in Markdown messages as Unicode text; `false` keeps the raw source |
 | `disable_paste_burst` | `boolean` | `false` | Disable the non-bracketed paste-burst fallback that keeps rapid multi-line pastes from submitting line by line |
@@ -673,6 +674,7 @@ Model, cwd, git branch, permission mode, plan mode, context usage, session id, v
 # ~/.kimi-code/tui.toml
 theme = "auto" # "auto" | "dark" | "light" | custom theme name
 # tui_mode = "regular" # "regular" | "fullscreen" ("fullscreen" is experimental)
+# follow_up_behavior = "queue" # "queue" | "steer"
 copy_on_select = true # fullscreen only: false copies only when you press Ctrl-C
 render_latex = true # false keeps LaTeX math in messages as raw source
 disable_paste_burst = false # true disables non-bracketed paste-burst fallback
