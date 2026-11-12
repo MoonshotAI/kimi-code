@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { HOST_API_LEVEL, startServer, type RunningServer } from '../src';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -27,6 +27,8 @@ describe('API surface snapshot', () => {
   let server: RunningServer | undefined;
 
   beforeAll(async () => {
+    vi.stubEnv('KIMI_CODE_MODEL_CATALOG_REFRESH_ON_START', '0');
+    vi.stubEnv('KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS', '0');
     home = mkdtempSync(join(tmpdir(), 'kimi-server-v2-api-surface-'));
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
@@ -39,6 +41,7 @@ describe('API surface snapshot', () => {
   });
 
   afterAll(async () => {
+    vi.unstubAllEnvs();
     if (server !== undefined) {
       try {
         await server.close();
