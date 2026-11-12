@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 
-import type { ResolvedEndpoint } from '#/llm/endpoint';
+import { headerValue, type ResolvedEndpoint } from '#/llm/endpoint';
 import { headersToRecord, requestIdFromHeader } from '#/llm/protocol/kit/http';
 import { defineProtocol } from '#/llm/protocol/protocol';
 
@@ -53,8 +53,10 @@ function anthropicCustomHeaderEnvNames(): string[] {
 
 function buildDefaultHeaders(
   headers: Record<string, string> | undefined,
+  credentialBearer: string | undefined,
 ): Record<string, string | null> {
-  const defaultHeaders: Record<string, string | null> = { authorization: null };
+  const defaultHeaders: Record<string, string | null> =
+    credentialBearer === undefined ? { authorization: null } : {};
   for (const name of anthropicCustomHeaderEnvNames()) {
     defaultHeaders[name] = null;
   }
@@ -65,14 +67,35 @@ function buildDefaultHeaders(
 }
 
 function createClient(endpoint: ResolvedEndpoint): Anthropic {
+  const { credentialBearer, headers } = splitCredentialBearer(endpoint.headers, endpoint.apiKey);
   return new Anthropic({
-    apiKey: endpoint.apiKey ?? 'unused',
-    authToken: null,
+    apiKey: credentialBearer === undefined ? (endpoint.apiKey ?? 'unused') : null,
+    authToken: credentialBearer ?? null,
     baseURL: endpoint.baseUrl ?? null,
-    defaultHeaders: buildDefaultHeaders(endpoint.headers),
+    defaultHeaders: buildDefaultHeaders(headers, credentialBearer),
     maxRetries: 0,
     fetch: endpoint.fetch,
   });
+}
+
+function splitCredentialBearer(
+  headers: Record<string, string> | undefined,
+  apiKey: string | undefined,
+): {
+  readonly credentialBearer: string | undefined;
+  readonly headers: Record<string, string> | undefined;
+} {
+  const authorization = headerValue(headers ?? {}, 'authorization');
+  const bearer = authorization?.startsWith('Bearer ')
+    ? authorization.slice('Bearer '.length)
+    : undefined;
+  if (bearer === undefined || bearer !== apiKey || headers === undefined) {
+    return { credentialBearer: undefined, headers };
+  }
+  const rest = Object.fromEntries(
+    Object.entries(headers).filter(([name]) => name.toLowerCase() !== 'authorization'),
+  );
+  return { credentialBearer: bearer, headers: Object.keys(rest).length > 0 ? rest : undefined };
 }
 
 function requestOptionsOf(request: Request, signal: AbortSignal) {

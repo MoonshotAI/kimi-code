@@ -471,7 +471,7 @@ On success, `data.items` is an array of:
 | Field | Type | Description |
 | --- | --- | --- |
 | `id` | string | Provider id |
-| `type` | string | Wire protocol: `kimi` / `openai` / `openai_responses` / `anthropic` / `google-genai` / `vertexai` |
+| `type` | string | Wire protocol: `kimi` / `openai` / `openai_responses` / `anthropic` / `bedrock` / `google-genai` / `vertexai` |
 | `base_url` | string | API base URL, when set |
 | `default_model` | string | The provider's default model alias, when set |
 | `has_api_key` | boolean | Whether a credential is stored |
@@ -485,7 +485,7 @@ Creates a provider and its model aliases in one save; the reply is HTTP 201 with
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `id` | body | string | **Required.** Provider id — letters, digits, `-`, `_`, and spaces; must start with a letter or digit |
-| `type` | body | string | **Required.** Wire protocol: `kimi` / `openai` / `openai_responses` / `anthropic` / `google-genai` / `vertexai` |
+| `type` | body | string | **Required.** Wire protocol: `kimi` / `openai` / `openai_responses` / `anthropic` / `bedrock` / `google-genai` / `vertexai` |
 | `api_key` | body | string | API key, stored in `config.toml` |
 | `base_url` | body | string | API base URL; must not contain an environment variable placeholder (`${...}`) |
 | `default_model` | body | string | The provider's default model; must be one of `models[].model` |
@@ -499,6 +499,7 @@ Each `models[]` entry declares one alias whose id becomes `id/model`:
 | `max_context_size` | integer | **Required.** Context window in tokens, ≥ 1 |
 | `display_name` | string | Display name |
 | `capabilities` | array | Capability flags such as `thinking` or `image_in` |
+| `protocol` | string | Wire protocol override: `anthropic`, `openai`, or `openai_responses`; when omitted it is inferred from the model ID |
 | `max_output_size` | integer | Max output tokens, ≥ 1 |
 | `support_efforts` | array | Supported Thinking-mode effort levels |
 | `adaptive_thinking` | boolean | Adaptive thinking toggle |
@@ -527,7 +528,7 @@ Replaces a provider in one save: `type`, `base_url`, and the model list are rewr
 | --- | --- | --- | --- |
 | `provider_id` | path | string | **Required.** Current provider id |
 | `new_id` | body | string | Rename the provider; the providers key, model aliases, `default_provider`, a `default_model` pointing at an old alias, and the subagent secondary-model pool all migrate. Same id rules as `POST /api/v1/providers` |
-| `type` | body | string | **Required.** Wire protocol: `kimi` / `openai` / `openai_responses` / `anthropic` / `google-genai` / `vertexai` |
+| `type` | body | string | **Required.** Wire protocol: `kimi` / `openai` / `openai_responses` / `anthropic` / `bedrock` / `google-genai` / `vertexai` |
 | `api_key` | body | string | Tri-state, see above |
 | `base_url` | body | string | API base URL; must not contain an environment variable placeholder (`${...}`) |
 | `default_model` | body | string | The provider's default model; must be one of `models[].model` |

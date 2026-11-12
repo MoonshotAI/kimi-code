@@ -385,6 +385,48 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     });
   });
 
+  it('persists a per-model protocol override on create and on replace', async () => {
+    await boot();
+    const { status } = await postJson<unknown>('/api/v1/providers', {
+      ...CREATE_BODY,
+      default_model: 'claude-sonnet-4-5',
+      models: [{ model: 'claude-sonnet-4-5', max_context_size: 200000, protocol: 'openai' }],
+    });
+    expect(status).toBe(201);
+
+    const afterCreate = await readConfigToml();
+    expect(afterCreate['models']).toMatchObject({
+      'my-openai/claude-sonnet-4-5': { protocol: 'openai' },
+    });
+
+    const { status: putStatus, body: putBody } = await putJson<{ code: number }>(
+      '/api/v1/providers/my-openai',
+      {
+        type: 'openai',
+        base_url: 'https://api.openai.example/v1',
+        models: [
+          { model: 'claude-sonnet-4-5', max_context_size: 200000, protocol: 'openai_responses' },
+        ],
+      },
+    );
+    expect(putBody.code).toBe(0);
+    expect(putStatus).toBe(200);
+
+    const afterReplace = await readConfigToml();
+    expect(afterReplace['models']).toMatchObject({
+      'my-openai/claude-sonnet-4-5': { protocol: 'openai_responses' },
+    });
+  });
+
+  it('rejects an unknown protocol value on create with 40001', async () => {
+    await boot();
+    const { body } = await postJson<unknown>('/api/v1/providers', {
+      ...CREATE_BODY,
+      models: [{ model: 'gpt-4.1', max_context_size: 1047576, protocol: 'google-genai' }],
+    });
+    expect(body.code).toBe(40001);
+  });
+
   it('rejects invalid create bodies with 40001', async () => {
     await boot();
     const cases: Array<{ name: string; body: unknown; path?: string }> = [

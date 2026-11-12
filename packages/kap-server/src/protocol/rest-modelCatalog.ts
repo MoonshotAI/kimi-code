@@ -26,6 +26,7 @@ export const providerWireTypeSchema = z.enum([
   'openai',
   'openai_responses',
   'anthropic',
+  'bedrock',
   'google-genai',
   'vertexai',
 ]);
@@ -39,6 +40,7 @@ export const createProviderModelSchema = z.object({
   max_output_size: z.number().int().min(1).optional(),
   support_efforts: z.array(z.string().min(1)).optional(),
   adaptive_thinking: z.boolean().optional(),
+  protocol: z.enum(['anthropic', 'openai', 'openai_responses']).optional(),
 });
 export type CreateProviderModel = z.infer<typeof createProviderModelSchema>;
 

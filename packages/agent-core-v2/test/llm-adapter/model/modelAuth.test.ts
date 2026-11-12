@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { ConfigErrors } from '#/app/config/errors';
 import type { ProviderConfig } from '#/llm-adapter/provider/provider';
@@ -6,8 +6,10 @@ import type { ModelRecord } from '#/llm-adapter/model/model';
 import {
   deriveProviderId,
   effectiveModelConfig,
+  resolveEndpointBaseUrl,
   resolveModelAuthMaterial,
   resolveModelForReady,
+  resolveModelProtocol,
 } from '#/llm-adapter/model/model-auth';
 
 function authMaterial(args: {
@@ -123,6 +125,48 @@ describe('resolveModelAuthMaterial', () => {
     expect(authMaterial({ model: { model: 'm' }, provider: { type: 'openai' } })).toEqual({});
     expect(authMaterial({ model: { model: 'm' } })).toEqual({});
   });
+
+  it('prefers an explicit credential over bedrock ambient auth', () => {
+    expect(
+      authMaterial({
+        model: { model: 'anthropic.claude-sonnet-4-6' },
+        provider: { type: 'bedrock', apiKey: 'static-key' },
+      }),
+    ).toEqual({ apiKey: 'static-key' });
+    expect(
+      authMaterial({
+        model: { model: 'anthropic.claude-sonnet-4-6' },
+        provider: { type: 'bedrock', env: { AWS_BEARER_TOKEN_BEDROCK: 'env-token' } },
+      }),
+    ).toEqual({ apiKey: 'env-token' });
+  });
+
+  it('falls back to bedrock ambient auth carrying the env-bag region and profile', () => {
+    expect(
+      authMaterial({
+        model: { model: 'anthropic.claude-sonnet-4-6' },
+        provider: {
+          type: 'bedrock',
+          env: { AWS_REGION: 'eu-west-1', AWS_PROFILE: 'bedrock-dev' },
+        },
+      }),
+    ).toEqual({ aws: { region: 'eu-west-1', profile: 'bedrock-dev' } });
+  });
+
+  it('reads the ambient AWS region and profile from process.env for bedrock providers', () => {
+    vi.stubEnv('AWS_REGION', 'ap-southeast-2');
+    vi.stubEnv('AWS_PROFILE', 'ambient-profile');
+    try {
+      expect(
+        authMaterial({
+          model: { model: 'anthropic.claude-sonnet-4-6' },
+          provider: { type: 'bedrock' },
+        }),
+      ).toEqual({ aws: { region: 'ap-southeast-2', profile: 'ambient-profile' } });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 });
 
 describe('effectiveModelConfig', () => {
@@ -157,6 +201,140 @@ describe('effectiveModelConfig', () => {
     const kimiRouted = effectiveModelConfig({ model: 'kimi-k2', protocol: 'anthropic' }, 'kimi');
     expect(kimiRouted.supportEfforts).toBeUndefined();
     expect(kimiRouted.capabilities).toBeUndefined();
+  });
+
+  it('matches bedrock inference-profile model ids against the Anthropic profile', () => {
+    const inferred = effectiveModelConfig(
+      { model: 'global.anthropic.claude-sonnet-4-6', protocol: 'anthropic' },
+      'bedrock',
+    );
+    expect(inferred.supportEfforts).toEqual(['low', 'medium', 'high', 'max']);
+    expect(inferred.capabilities).toContain('thinking');
+  });
+});
+
+describe('resolveModelProtocol', () => {
+  it('infers the bedrock wire protocol from the model id prefix', () => {
+    const provider: ProviderConfig = { type: 'bedrock' };
+    expect(
+      resolveModelProtocol({ model: 'global.anthropic.claude-sonnet-4-6' }, provider),
+    ).toBe('anthropic');
+    expect(resolveModelProtocol({ model: 'openai.gpt-oss-120b-1:0' }, provider)).toBe('openai');
+    expect(resolveModelProtocol({ model: 'global.openai.gpt-6-astra' }, provider)).toBe(
+      'openai_responses',
+    );
+    expect(resolveModelProtocol({ model: 'global.moonshotai.kimi-k3' }, provider)).toBe('openai');
+  });
+
+  it('lets an explicit model protocol win over bedrock inference', () => {
+    const provider: ProviderConfig = { type: 'bedrock' };
+    expect(
+      resolveModelProtocol(
+        { model: 'anthropic.claude-sonnet-4-6', protocol: 'openai_responses' },
+        provider,
+      ),
+    ).toBe('openai_responses');
+  });
+
+  it('falls back to the bedrock base protocol for unrecognized model families', () => {
+    const provider: ProviderConfig = { type: 'bedrock' };
+    expect(resolveModelProtocol({ model: 'meta.llama3-3-70b-instruct-v1:0' }, provider)).toBe(
+      'openai',
+    );
+  });
+});
+
+describe('resolveEndpointBaseUrl', () => {
+  it('derives the bedrock-runtime base url from the env-bag region when nothing is set', () => {
+    vi.stubEnv('AWS_REGION', 'us-west-2');
+    try {
+      expect(
+        resolveEndpointBaseUrl(
+          { model: 'global.anthropic.claude-sonnet-4-6' },
+          { type: 'bedrock', env: { AWS_REGION: 'eu-west-1' } },
+        ),
+      ).toBe('https://bedrock-runtime.eu-west-1.amazonaws.com/anthropic');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('derives the openai bedrock-runtime base url for openai models', () => {
+    vi.stubEnv('AWS_REGION', 'us-east-1');
+    try {
+      expect(
+        resolveEndpointBaseUrl({ model: 'openai.gpt-oss-120b-1:0' }, { type: 'bedrock' }),
+      ).toBe('https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('prefers explicit bedrock base urls and env declarations over region derivation', () => {
+    expect(
+      resolveEndpointBaseUrl(
+        { model: 'anthropic.claude-sonnet-4-6' },
+        { type: 'bedrock', baseUrl: 'https://bedrock-mantle.us-east-1.api.aws/anthropic' },
+      ),
+    ).toBe('https://bedrock-mantle.us-east-1.api.aws/anthropic');
+    expect(
+      resolveEndpointBaseUrl(
+        { model: 'anthropic.claude-sonnet-4-6' },
+        {
+          type: 'bedrock',
+          env: {
+            AWS_BEDROCK_BASE_URL: 'https://bedrock-runtime.us-east-1.amazonaws.com/anthropic',
+            AWS_REGION: 'eu-west-1',
+          },
+        },
+      ),
+    ).toBe('https://bedrock-runtime.us-east-1.amazonaws.com/anthropic');
+  });
+
+  it('rejects a bedrock provider when no region is resolvable from env', () => {
+    vi.stubEnv('AWS_REGION', '');
+    vi.stubEnv('AWS_DEFAULT_REGION', '');
+    try {
+      expect(() =>
+        resolveEndpointBaseUrl({ model: 'anthropic.claude-sonnet-4-6' }, { type: 'bedrock' }),
+      ).toThrow(/could not resolve an AWS region/);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('rejects a bedrock provider whose region would come only from an AWS_PROFILE config file', () => {
+    vi.stubEnv('AWS_REGION', '');
+    vi.stubEnv('AWS_DEFAULT_REGION', '');
+    try {
+      expect(() =>
+        resolveEndpointBaseUrl(
+          { model: 'global.openai.gpt-6-astra' },
+          { type: 'bedrock', env: { AWS_PROFILE: 'my-sso-profile' } },
+        ),
+      ).toThrow(/could not resolve an AWS region/);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('points the region error at the actual provider table, not [providers.bedrock]', () => {
+    vi.stubEnv('AWS_REGION', '');
+    vi.stubEnv('AWS_DEFAULT_REGION', '');
+    try {
+      expect(() =>
+        resolveEndpointBaseUrl(
+          { model: 'anthropic.claude-sonnet-4-6' },
+          { type: 'bedrock' },
+          'aws-prod',
+        ),
+      ).toThrow(/\[providers\.aws-prod\.env\]/);
+      expect(() =>
+        resolveEndpointBaseUrl({ model: 'anthropic.claude-sonnet-4-6' }, { type: 'bedrock' }),
+      ).toThrow(/\[providers\.bedrock\.env\]/);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 

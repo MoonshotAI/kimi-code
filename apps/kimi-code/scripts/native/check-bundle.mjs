@@ -10,6 +10,7 @@ const builtins = new Set([
 ]);
 
 const optionalRuntimeRequires = new Set([
+  '@aws-sdk/signature-v4a',
   'ajv-formats/dist/formats',
   'ajv/dist/runtime/validation_error',
   'bufferutil',

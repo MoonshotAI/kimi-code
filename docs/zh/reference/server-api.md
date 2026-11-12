@@ -471,7 +471,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `id` | string | 供应商 id |
-| `type` | string | 通信协议：`kimi` / `openai` / `openai_responses` / `anthropic` / `google-genai` / `vertexai` |
+| `type` | string | 通信协议：`kimi` / `openai` / `openai_responses` / `anthropic` / `bedrock` / `google-genai` / `vertexai` |
 | `base_url` | string | API 基础 URL，如已设置 |
 | `default_model` | string | 该供应商的默认模型别名，如已设置 |
 | `has_api_key` | boolean | 是否已存储凭据 |
@@ -485,7 +485,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `id` | body | string | **必填。** 供应商 id——字母、数字、`-`、`_` 与空格；必须以字母或数字开头 |
-| `type` | body | string | **必填。** 通信协议：`kimi` / `openai` / `openai_responses` / `anthropic` / `google-genai` / `vertexai` |
+| `type` | body | string | **必填。** 通信协议：`kimi` / `openai` / `openai_responses` / `anthropic` / `bedrock` / `google-genai` / `vertexai` |
 | `api_key` | body | string | API 密钥，存储于 `config.toml` |
 | `base_url` | body | string | API 基础 URL；不得包含环境变量占位符（`${...}`） |
 | `default_model` | body | string | 该供应商的默认模型；必须是 `models[].model` 之一 |
@@ -499,6 +499,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `max_context_size` | integer | **必填。** 以 token 计的上下文窗口，≥ 1 |
 | `display_name` | string | 显示名 |
 | `capabilities` | array | 能力标志，如 `thinking` 或 `image_in` |
+| `protocol` | string | 线路协议覆盖：`anthropic`、`openai` 或 `openai_responses`；省略时按模型 ID 推断 |
 | `max_output_size` | integer | 最大输出 token 数，≥ 1 |
 | `support_efforts` | array | 支持的 Thinking 模式 effort 档位 |
 | `adaptive_thinking` | boolean | 自适应 thinking 开关 |
@@ -527,7 +528,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | --- | --- | --- | --- |
 | `provider_id` | path | string | **必填。** 当前供应商 id |
 | `new_id` | body | string | 重命名供应商；providers 键、模型别名、`default_provider`、指向旧别名的 `default_model` 以及 subagent 次级模型池都会随之迁移。id 规则与 `POST /api/v1/providers` 相同 |
-| `type` | body | string | **必填。** 通信协议：`kimi` / `openai` / `openai_responses` / `anthropic` / `google-genai` / `vertexai` |
+| `type` | body | string | **必填。** 通信协议：`kimi` / `openai` / `openai_responses` / `anthropic` / `bedrock` / `google-genai` / `vertexai` |
 | `api_key` | body | string | 三态，见上文 |
 | `base_url` | body | string | API 基础 URL；不得包含环境变量占位符（`${...}`） |
 | `default_model` | body | string | 该供应商的默认模型；必须是 `models[].model` 之一 |

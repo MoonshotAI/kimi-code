@@ -14,6 +14,11 @@ import {
   createOAuthCredentialProvider,
   createStaticCredentialProvider,
 } from '#human/credentials/credentials';
+import {
+  bedrockCredential,
+  createBedrockTokenProvider,
+  createStaticBedrockCredentialProvider,
+} from '#human/llm/builtin/provider/bedrock/credentials';
 import type { LlmCredentialProvider } from '#human/llm-requester/requester';
 import type { ModelCapability } from '../contract/capability';
 import { CONFIG_INVALID_ERROR_CODE } from '../contract/errors';
@@ -205,9 +210,12 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
     provider: CatalogProviderInfo,
   ): Promise<ProviderCredentialState> {
     const declared = declaredProviderCredential(provider, providerId);
+    const hasApiKey = hasConfiguredApiKey(provider);
+    const hasOAuthToken = await this.hasCachedToken(providerId, provider);
     return {
-      hasApiKey: hasConfiguredApiKey(provider),
-      hasOAuthToken: await this.hasCachedToken(providerId, provider),
+      hasApiKey,
+      hasOAuthToken,
+      supportsAmbientCredential: provider.type === 'bedrock' && !hasApiKey && !hasOAuthToken,
       hasCredentialConflict: declared.kind === 'conflict',
     };
   }
@@ -250,9 +258,8 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       provider: providerConfig,
       providerName,
     });
-    const credentialProvider = this.buildCredentialProvider(providerName, auth);
-
     const providerType = providerConfig?.type ?? protocol;
+    const credentialProvider = this.buildCredentialProvider(providerName, auth, providerType);
     const resolvedBaseUrl =
       protocol === 'anthropic' && rawBaseUrl !== undefined
         ? stripTrailingV1(rawBaseUrl)
@@ -338,7 +345,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       return {
         providerConfig,
         providerName: providerId,
-        resolvedBaseUrl: resolveEndpointBaseUrl(model, providerConfig),
+        resolvedBaseUrl: resolveEndpointBaseUrl(model, providerConfig, providerId),
       };
     }
 
@@ -374,9 +381,12 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
   private buildCredentialProvider(
     providerName: string,
     auth: ResolvedModelAuthMaterial,
+    providerType: string,
   ): LlmCredentialProvider {
+    const isBedrock = providerType === 'bedrock';
     if (auth.apiKey !== undefined) {
-      return createStaticCredentialProvider(auth.apiKey);
+      const key = auth.apiKey;
+      return isBedrock ? createStaticBedrockCredentialProvider(key) : createStaticCredentialProvider(key);
     }
     if (auth.apiKeyEnv !== undefined) {
       const envName = auth.apiKeyEnv;
@@ -389,7 +399,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
               apiKeyEnvMissingMessage(providerName, envName),
             );
           }
-          return { apiKey };
+          return isBedrock ? bedrockCredential(apiKey) : { apiKey };
         },
       };
     }
@@ -400,6 +410,12 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       return createOAuthCredentialProvider((options) =>
         tokens.getAccessToken(providerKey, oauthRef, { force: options?.force === true }),
       );
+    }
+    if (auth.aws !== undefined) {
+      return createBedrockTokenProvider({
+        region: auth.aws.region,
+        profile: auth.aws.profile,
+      });
     }
     return createStaticCredentialProvider(undefined);
   }

@@ -8,6 +8,7 @@ import { ConfigErrors } from '#/app/config/errors';
 import { UNKNOWN_CAPABILITY } from '#/llm-adapter/contract/capability';
 import { emptyUsage } from '#human/llm-requester/usage';
 import type { LlmRequester } from '#human/llm-requester/requester';
+import { bedrockCredential } from '#human/llm/builtin/provider/bedrock/credentials';
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import '#/llm-adapter/protocol/protocolAdapterRegistry';
 import {
@@ -557,6 +558,150 @@ describe('Model assembly (pure data)', () => {
       host.dispose();
     }
   });
+
+  describe('bedrock providers', () => {
+    const bedrockSections: Record<string, unknown> = {
+      providers: {
+        bedrock: { type: 'bedrock', env: { AWS_REGION: 'us-east-1', AWS_PROFILE: 'dev' } },
+      },
+      models: {
+        sonnet: { provider: 'bedrock', model: 'global.anthropic.claude-sonnet-4-6', maxContextSize: 200000 },
+        gpt: { provider: 'bedrock', model: 'openai.gpt-oss-120b-1:0', maxContextSize: 128000 },
+      },
+    };
+
+    it('assembles an anthropic-wired bedrock model with region-derived base url and profile', () => {
+      const { host, catalog } = createHost(bedrockSections);
+      try {
+        const model = catalog.get('sonnet');
+        expect(model.protocol).toBe('anthropic');
+        expect(model.providerType).toBe('bedrock');
+        expect(model.baseUrl).toBe('https://bedrock-runtime.us-east-1.amazonaws.com/anthropic');
+        expect(model.supportEfforts).toEqual(['low', 'medium', 'high', 'max']);
+        expect(model.capabilities.thinking).toBe(true);
+      } finally {
+        host.dispose();
+      }
+    });
+
+    it('assembles an openai-wired bedrock model with the openai base url suffix', () => {
+      const { host, catalog } = createHost(bedrockSections);
+      try {
+        const model = catalog.get('gpt');
+        expect(model.protocol).toBe('openai');
+        expect(model.baseUrl).toBe('https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1');
+      } finally {
+        host.dispose();
+      }
+    });
+
+    it('assembles a responses-wired bedrock model for openai gpt ids', () => {
+      const { host, catalog } = createHost({
+        providers: { bedrock: { type: 'bedrock', env: { AWS_REGION: 'us-east-1' } } },
+        models: {
+          gpt6: { provider: 'bedrock', model: 'global.openai.gpt-6-astra', maxContextSize: 1000000 },
+        },
+      });
+      try {
+        const model = catalog.get('gpt6');
+        expect(model.protocol).toBe('openai_responses');
+        expect(model.baseUrl).toBe('https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1');
+      } finally {
+        host.dispose();
+      }
+    });
+
+    it('prefers a static credential over ambient AWS auth and skips the token provider', async () => {
+      const { host, catalog } = createHost({
+        providers: {
+          bedrock: {
+            type: 'bedrock',
+            apiKey: 'static-bedrock-key',
+            baseUrl: 'https://bedrock-runtime.us-east-1.amazonaws.com/anthropic',
+          },
+        },
+        models: {
+          sonnet: { provider: 'bedrock', model: 'anthropic.claude-sonnet-5-5', maxContextSize: 200000 },
+        },
+      });
+      try {
+        const model = catalog.get('sonnet');
+        expect(await model.credentialProvider?.resolve()).toEqual(
+          bedrockCredential('static-bedrock-key'),
+        );
+        expect(model.credentialProvider?.canRecover).toBeUndefined();
+      } finally {
+        host.dispose();
+      }
+    });
+
+    it('reads AWS_BEARER_TOKEN_BEDROCK from the env bag as a static credential', async () => {
+      const { host, catalog } = createHost({
+        providers: {
+          bedrock: {
+            type: 'bedrock',
+            baseUrl: 'https://bedrock-runtime.us-east-1.amazonaws.com/anthropic',
+            env: { AWS_BEARER_TOKEN_BEDROCK: 'env-bearer-token' },
+          },
+        },
+        models: {
+          sonnet: { provider: 'bedrock', model: 'anthropic.claude-sonnet-4-6', maxContextSize: 200000 },
+        },
+      });
+      try {
+        expect(await catalog.get('sonnet').credentialProvider?.resolve()).toEqual(
+          bedrockCredential('env-bearer-token'),
+        );
+      } finally {
+        host.dispose();
+      }
+    });
+
+    it('wraps an api_key_env credential as a bedrock bearer credential', async () => {
+      vi.stubEnv('BEDROCK_KEY_ENV', 'key-from-named-env');
+      const { host, catalog } = createHost({
+        providers: {
+          bedrock: {
+            type: 'bedrock',
+            apiKeyEnv: 'BEDROCK_KEY_ENV',
+            baseUrl: 'https://bedrock-runtime.us-east-1.amazonaws.com/anthropic',
+          },
+        },
+        models: {
+          sonnet: { provider: 'bedrock', model: 'anthropic.claude-sonnet-4-6', maxContextSize: 200000 },
+        },
+      });
+      try {
+        expect(await catalog.get('sonnet').credentialProvider?.resolve()).toEqual(
+          bedrockCredential('key-from-named-env'),
+        );
+      } finally {
+        host.dispose();
+        vi.unstubAllEnvs();
+      }
+    });
+
+    it('builds a recoverable ambient credential provider when no key is configured', async () => {
+      const { host, catalog } = createHost({
+        providers: {
+          bedrock: {
+            type: 'bedrock',
+            baseUrl: 'https://bedrock-runtime.us-east-1.amazonaws.com/anthropic',
+          },
+        },
+        models: {
+          sonnet: { provider: 'bedrock', model: 'anthropic.claude-sonnet-4-6', maxContextSize: 200000 },
+        },
+      });
+      try {
+        const provider = catalog.get('sonnet').credentialProvider;
+        expect(provider?.canRecover?.(Object.assign(new Error('x'), { status: 401 }))).toBe(true);
+        await expect(provider?.resolve()).rejects.toThrow();
+      } finally {
+        host.dispose();
+      }
+    });
+  });
 });
 
 describe('ModelCatalog caching and config-event invalidation', () => {
@@ -644,6 +789,52 @@ describe('headers merge order', () => {
 });
 
 describe('direct generate', () => {
+  it('drives a bedrock-assembled model through generateModel', async () => {
+    const { host, catalog } = createHost({
+      providers: {
+        bedrock: {
+          type: 'bedrock',
+          apiKey: 'static-bedrock-key',
+          env: { AWS_REGION: 'us-east-1', AWS_PROFILE: 'dev' },
+        },
+      },
+      models: {
+        sonnet: { provider: 'bedrock', model: 'global.anthropic.claude-sonnet-4-6', maxContextSize: 200000 },
+      },
+    });
+    try {
+      const model = catalog.get('sonnet');
+      const seen: { baseUrl?: string } = {};
+      const fakeRequester: LlmRequester = {
+        generate: (config, _content, control) => {
+          seen.baseUrl = config.model.baseUrl;
+          control.onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'pong' } });
+          control.onEvent?.({ type: 'llm.streaming.usage', usage: emptyUsage() });
+          control.onEvent?.({ type: 'llm.done' });
+          return Promise.resolve();
+        },
+      };
+      const requester = coreRequesterFromA(
+        new ProtocolAdapterRegistry().request(model),
+        fakeRequester,
+      );
+      const events = [];
+      for await (const event of generateModel(
+        requester,
+        { systemPrompt: 'ping', tools: [], messages: [{ role: 'user', content: [{ type: 'text', text: 'ping' }] }] },
+        undefined,
+      )) {
+        events.push(event);
+      }
+      expect(seen.baseUrl).toBe('https://bedrock-runtime.us-east-1.amazonaws.com/anthropic');
+      expect(events.find((event) => event.type === 'part')).toMatchObject({
+        part: { type: 'text', text: 'pong' },
+      });
+    } finally {
+      host.dispose();
+    }
+  });
+
   it('returns the streamed text and usage on a live success', async () => {
     const { host, catalog } = createHost(kimiSections, stubModelOAuthTokens());
     try {
@@ -815,6 +1006,7 @@ describe('wire projection (pure)', () => {
       toProtocolProvider('p1', provider, models, 'a', {
         hasApiKey: true,
         hasOAuthToken: false,
+        supportsAmbientCredential: false,
         hasCredentialConflict: false,
       }),
     ).toEqual({
@@ -836,13 +1028,19 @@ describe('wire projection (pure)', () => {
         },
         models,
         'a',
-        { hasApiKey: true, hasOAuthToken: true, hasCredentialConflict: true },
+        {
+          hasApiKey: true,
+          hasOAuthToken: true,
+          supportsAmbientCredential: false,
+          hasCredentialConflict: true,
+        },
       ),
     ).toMatchObject({ status: 'error', has_api_key: true });
     expect(
       toProtocolProvider('p1', { ...provider, defaultModel: 'own' }, models, 'a', {
         hasApiKey: false,
         hasOAuthToken: false,
+        supportsAmbientCredential: false,
         hasCredentialConflict: false,
       }).default_model,
     ).toBe('own');
@@ -850,9 +1048,22 @@ describe('wire projection (pure)', () => {
       toProtocolProvider('p1', { ...provider, type: undefined }, models, undefined, {
         hasApiKey: false,
         hasOAuthToken: false,
+        supportsAmbientCredential: false,
         hasCredentialConflict: false,
       }),
     ).toMatchObject({ type: 'openai', status: 'unconfigured', default_model: undefined });
+  });
+
+  it('toProtocolProvider reports an ambient-credential provider as connected', () => {
+    const models: Record<string, ModelRecord> = { a: { provider: 'p1', model: 'm-a' } };
+    expect(
+      toProtocolProvider('p1', { type: 'bedrock' }, models, 'a', {
+        hasApiKey: false,
+        hasOAuthToken: false,
+        supportsAmbientCredential: true,
+        hasCredentialConflict: false,
+      }),
+    ).toMatchObject({ status: 'connected' });
   });
 });
 
@@ -1149,6 +1360,26 @@ describe('ModelCatalog enumeration', () => {
     try {
       const [provider] = await catalog.listProviders();
       expect(provider).toMatchObject({ id: 'acme', has_api_key: false, status: 'connected' });
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('marks an ambient bedrock provider connected while a keyed non-bedrock one stays unconfigured without a key', async () => {
+    const { host, catalog } = createHost({
+      providers: {
+        ambient: { type: 'bedrock', env: { AWS_REGION: 'us-east-1' } },
+        keyed: { type: 'bedrock', env: { AWS_REGION: 'us-east-1', AWS_BEARER_TOKEN_BEDROCK: 'tok' } },
+        plain: { type: 'openai' },
+      },
+      models: {},
+    });
+    try {
+      const providers = await catalog.listProviders();
+      const byId = Object.fromEntries(providers.map((p) => [p.id, p]));
+      expect(byId['ambient']).toMatchObject({ has_api_key: false, status: 'connected' });
+      expect(byId['keyed']).toMatchObject({ has_api_key: true, status: 'connected' });
+      expect(byId['plain']).toMatchObject({ has_api_key: false, status: 'unconfigured' });
     } finally {
       host.dispose();
     }

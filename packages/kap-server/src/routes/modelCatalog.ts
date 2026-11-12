@@ -288,6 +288,7 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
             alias.supportEfforts = [...entry.support_efforts];
           if (entry.adaptive_thinking !== undefined)
             alias.adaptiveThinking = entry.adaptive_thinking;
+          if (entry.protocol !== undefined) alias.protocol = entry.protocol;
           aliases[`${id}/${entry.model}`] = alias;
         }
         await config.set(MODELS_SECTION, aliases);
@@ -452,6 +453,7 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
             entry.support_efforts !== undefined ? [...entry.support_efforts] : undefined;
           alias.adaptiveThinking =
             entry.adaptive_thinking !== undefined ? entry.adaptive_thinking : undefined;
+          alias.protocol = entry.protocol !== undefined ? entry.protocol : undefined;
           nextModels[`${newId}/${entry.model}`] = alias;
         }
         await config.replace(MODELS_SECTION, nextModels);

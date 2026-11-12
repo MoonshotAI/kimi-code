@@ -8,6 +8,7 @@ import { generateModel } from '#/llm-adapter/model/generate';
 import type { Model } from '#/llm-adapter/model/catalog';
 import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
 import {
+  explainProviderEndpoint,
   getProviderDefinition,
   getProviderDefinitions,
   hasProviderDefinition,
@@ -166,6 +167,24 @@ describe('resolveCapability', () => {
       true,
     );
     expect(registry.resolveCapability('openai', 'gpt-4o', 'kimi').image_in).toBe(true);
+  });
+
+  it('bedrock strips geo and vendor prefixes so claude capabilities match the direct vendor', () => {
+    for (const bare of ['claude-sonnet-4-6', 'claude-3-5-sonnet', 'claude-opus-4-1']) {
+      const direct = registry.resolveCapability('anthropic', bare, 'anthropic');
+      expect(registry.resolveCapability('anthropic', `anthropic.${bare}`, 'bedrock')).toEqual(
+        direct,
+      );
+      expect(registry.resolveCapability('anthropic', `global.anthropic.${bare}`, 'bedrock')).toEqual(
+        direct,
+      );
+      expect(registry.resolveCapability('anthropic', `us.anthropic.${bare}`, 'bedrock')).toEqual(
+        direct,
+      );
+    }
+    expect(
+      registry.resolveCapability('anthropic', 'global.anthropic.claude-sonnet-4-6', 'bedrock'),
+    ).toMatchObject({ image_in: true, thinking: true, tool_use: true });
   });
 });
 
@@ -355,6 +374,34 @@ describe('resolveProviderEndpoint', () => {
 
   it('returns {} for unregistered vendors', () => {
     expect(resolveProviderEndpoint('no-such-vendor')).toEqual({});
+  });
+});
+
+describe('explainProviderEndpoint protocol resolution', () => {
+  it('keeps the provider env when a model overrides to an unregistered protocol', () => {
+    const env = { OPENAI_API_KEY: 'sk-compatible', OPENAI_BASE_URL: 'https://compatible.example/v1' };
+    expect(explainProviderEndpoint('openai', env, 'openai_responses')).toEqual({
+      apiKey: 'sk-compatible',
+      apiKeyEnvName: 'OPENAI_API_KEY',
+      baseUrl: 'https://compatible.example/v1',
+      baseUrlEnvName: 'OPENAI_BASE_URL',
+    });
+  });
+
+  it('prefers an exact protocol registration over the provider default', () => {
+    const env = { AWS_BEARER_TOKEN_BEDROCK: 'tok', AWS_BEDROCK_BASE_URL: 'https://br.example' };
+    for (const protocol of ['anthropic', 'openai', 'openai_responses'] as const) {
+      expect(explainProviderEndpoint('bedrock', env, protocol)).toEqual({
+        apiKey: 'tok',
+        apiKeyEnvName: 'AWS_BEARER_TOKEN_BEDROCK',
+        baseUrl: 'https://br.example',
+        baseUrlEnvName: 'AWS_BEDROCK_BASE_URL',
+      });
+    }
+  });
+
+  it('returns {} for an unregistered vendor even with a protocol', () => {
+    expect(explainProviderEndpoint('no-such-vendor', {}, 'openai_responses')).toEqual({});
   });
 });
 

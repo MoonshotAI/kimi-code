@@ -3,6 +3,7 @@ import type { ModelCapability as HumanModelCapability } from '#human/llm-request
 import type { DefaultHeadersResolver, ProtocolEndpoint } from '#human/llm-requester/connection';
 import {
   anthropicEndpoint,
+  bedrockEndpoint,
   geminiEndpoint,
   kimiEndpoint,
   openAIEndpoint,
@@ -12,6 +13,7 @@ import type { LlmErrorClassifier } from '#human/llm-requester/requester';
 import type { LlmRequester } from '#human/llm/requester';
 import { kimiRequesters } from '#human/llm/builtin/provider/kimi/index';
 import { classifyKimiQuotaError } from '#human/llm/builtin/provider/kimi/errors';
+import { bedrockModelCapability } from '#human/llm/builtin/provider/bedrock/routing';
 
 import type { Protocol } from '../protocol/protocol';
 import type { ModelSource } from './provider';
@@ -96,8 +98,11 @@ export interface ExplainedProviderEndpoint {
 export function explainProviderEndpoint(
   providerType: string,
   env: Readonly<Record<string, string | undefined>> = process.env,
+  protocol?: Protocol,
 ): ExplainedProviderEndpoint {
-  const definition = getProviderDefinition(providerType);
+  const definition =
+    getProviderDefinition(providerType, protocol) ??
+    (protocol === undefined ? undefined : getProviderDefinition(providerType));
   if (definition === undefined) return {};
   const endpoint =
     normalizeEndpointDeclaration(definition.endpoint) ?? aggregateEndpoints(definition.endpoints);
@@ -186,6 +191,27 @@ registerProviderDefinition({
   id: 'openai_responses',
   baseProtocol: 'openai_responses',
   endpoint: openAIEndpoint,
+});
+
+registerProviderDefinition({
+  id: 'bedrock',
+  baseProtocol: 'openai',
+  endpoint: bedrockEndpoint,
+  capability: bedrockModelCapability,
+});
+
+registerProviderDefinition({
+  id: 'bedrock',
+  baseProtocol: 'openai_responses',
+  endpoint: bedrockEndpoint,
+  capability: bedrockModelCapability,
+});
+
+registerProviderDefinition({
+  id: 'bedrock',
+  baseProtocol: 'anthropic',
+  endpoint: bedrockEndpoint,
+  capability: bedrockModelCapability,
 });
 
 registerProviderDefinition({
