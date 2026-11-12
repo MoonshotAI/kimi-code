@@ -17,6 +17,7 @@ import WebSocketClient, { WebSocketServer, type WebSocket as NodeWebSocket } fro
 import { HOST_API_LEVEL, HOST_PROTOCOL_VERSION } from '../src/services/hosts/hostProtocol';
 import { matchHostProxyPath, proxyHostWebSocket, registerHostProxyRoutes, upstreamHeaders } from '../src/services/hosts/hostProxy';
 import { HostBridgeManager } from '../src/services/hosts/hostBridgeManager';
+import { collectSharedProviders } from '../src/services/hosts/hostProviders';
 import { hostsSectionSchema, hostWireSchema, isValidHostId } from '../src/services/hosts/hostsConfig';
 import { HostRequestError, type HostHttpRequest, type HostHttpResponse, type HostSession } from '../src/services/hosts/hostSession';
 import { StdioHostSession } from '../src/services/hosts/stdioHostSession';
@@ -849,7 +850,7 @@ describe('host account', () => {
 });
 
 describe('host model providers', () => {
-  it.skipIf(process.platform === 'win32')('copies portable providers with their models and leaves existing remote providers alone', async () => {
+  it.skipIf(process.platform === 'win32')('copies portable providers with their models, replaces same-name ones whole and reports which ones match', async () => {
     await withManagedHostPair(
       async () => new Response(null, { status: 404 }),
       async ({ local, remote }) => {
@@ -875,6 +876,9 @@ describe('host model providers', () => {
         });
         await remoteConfig.replace('models', { 'taken/remote-only': { provider: 'taken', model: 'remote-only', maxContextSize: 16_000 } });
         const manager = local.hostBridges;
+        const statusOf = async () => manager.providerStatus('dev', (await collectSharedProviders(local.core)).shared);
+
+        await expect(statusOf()).resolves.toEqual({ gateway: 'missing', taken: 'outdated' });
 
         const result = await manager.copyProviders('dev');
         expect(result.copied).toEqual(['gateway']);
@@ -893,8 +897,15 @@ describe('host model providers', () => {
         const models = remoteConfig.inspect<Record<string, Record<string, unknown>>>('models').userValue ?? {};
         expect(models['gateway/large']).toMatchObject({ provider: 'gateway', maxOutputSize: 8_000, adaptiveThinking: true });
         expect(models['taken/small']).toMatchObject({ provider: 'taken', maxContextSize: 32_000 });
-        expect(models['taken/remote-only']).toMatchObject({ provider: 'taken' });
+        expect(models).not.toHaveProperty('taken/remote-only');
         expect(models).not.toHaveProperty('ollama/local');
+        await expect(statusOf()).resolves.toEqual({ gateway: 'synced', taken: 'synced' });
+
+        await localConfig.replace('providers', {
+          ...localConfig.inspect<Record<string, unknown>>('providers').userValue,
+          gateway: { type: 'openai', baseUrl: 'https://gateway.example.test/v1', apiKey: 'sk-rotated', customHeaders: { 'x-team': 'core' } },
+        });
+        await expect(statusOf()).resolves.toEqual({ gateway: 'outdated', taken: 'synced' });
 
         await expect(manager.copyProviders('dev')).resolves.toMatchObject({ copied: [], updated: ['gateway', 'taken'] });
         await expect(manager.copyProviders('missing')).rejects.toThrow(/not configured/);

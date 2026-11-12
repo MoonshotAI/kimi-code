@@ -12,7 +12,7 @@ import {
   hostWireSchema,
   isValidHostId,
 } from '../services/hosts/hostsConfig';
-import { collectSharedProviders, skippedProviderSchema } from '../services/hosts/hostProviders';
+import { collectSharedProviders, providerHostStatusSchema, skippedProviderSchema } from '../services/hosts/hostProviders';
 import { readSshConfigHosts } from '../services/hosts/sshConfigHosts';
 import { HostConnectError, SshKapBridge } from '../services/hosts/sshKapBridge';
 
@@ -27,6 +27,7 @@ interface RouteRequest {
   readonly id: string;
   readonly body: unknown;
   readonly params: unknown;
+  readonly query?: unknown;
 }
 
 interface RouteReply {
@@ -53,6 +54,7 @@ const hostResponseSchema = hostWireObjectSchema.extend({
 const hostParamsSchema = z.object({ id: z.string() });
 const connectBodySchema = z.object({ id: z.string() });
 const copyProvidersBodySchema = z.object({ id: z.string(), providers: z.array(z.string()).optional() });
+const shareableProvidersQuerySchema = z.object({ host_id: z.string().optional() });
 const testResultSchema = z.object({
   connected: z.boolean(),
   remote_version: z.string().optional(),
@@ -209,13 +211,36 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
     {
       method: 'GET',
       path: '/hosts::shareable-providers',
-      success: { data: z.object({ providers: z.array(z.string()), skipped: z.array(skippedProviderSchema) }) },
-      description: 'List the model providers on this computer that can be copied to an SSH host, and the ones that cannot',
+      querystring: shareableProvidersQuerySchema,
+      success: {
+        data: z.object({
+          providers: z.array(z.string()),
+          skipped: z.array(skippedProviderSchema),
+          host_status: z.record(z.string(), providerHostStatusSchema).optional(),
+        }),
+      },
+      errors: { [ErrorCode.ENVIRONMENT_NOT_FOUND]: {}, [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {} },
+      description:
+        'List the model providers on this computer that can be copied to an SSH host, and the ones that cannot. With host_id, also report whether each one is missing on that host, the same there, or different there',
       tags: ['hosts'],
     },
     async (req: RouteRequest, reply: RouteReply) => {
+      const { host_id: hostId } = (req.query ?? {}) as z.infer<typeof shareableProvidersQuerySchema>;
       const { shared, skipped } = await collectSharedProviders(core);
-      reply.send(okEnvelope({ providers: Object.keys(shared.providers), skipped }, req.id));
+      const providers = Object.keys(shared.providers);
+      if (hostId === undefined) {
+        reply.send(okEnvelope({ providers, skipped }, req.id));
+        return;
+      }
+      if (manager.section()[hostId] === undefined) {
+        reply.send(errEnvelope(ErrorCode.ENVIRONMENT_NOT_FOUND, `host "${hostId}" is not configured`, req.id));
+        return;
+      }
+      try {
+        reply.send(okEnvelope({ providers, skipped, host_status: await manager.providerStatus(hostId, shared) }, req.id));
+      } catch (error) {
+        reply.send(errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, error instanceof Error ? error.message : String(error), req.id));
+      }
     },
   );
   app.get(shareableRoute.path, shareableRoute.options, shareableRoute.handler as never);

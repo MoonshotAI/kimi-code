@@ -1,6 +1,15 @@
 import { IConfigService, type Scope } from '@moonshot-ai/agent-core-v2';
 
-import { collectSharedProviders, sendSharedProviders, type ProviderCopyResult } from './hostProviders';
+import {
+  collectSharedProviders,
+  compareProviderDigests,
+  fetchHostProviderDigests,
+  sendSharedProviders,
+  sharedProviderDigests,
+  type ProviderCopyResult,
+  type ProviderHostStatus,
+  type SharedProviders,
+} from './hostProviders';
 import { HOSTS_SECTION, type HostEntry, type HostsSection } from './hostsConfig';
 import { HostConnectError, SshKapBridge, type BridgeLogger, type HostStatus } from './sshKapBridge';
 import type { HostSession } from './hostSession';
@@ -100,6 +109,14 @@ export class HostBridgeManager {
     if (Object.keys(shared.providers).length === 0) return { copied: [], updated: [], skipped };
     const result = await sendSharedProviders(session, shared);
     return { copied: result.copied, updated: result.updated, skipped: [...skipped, ...result.skipped] };
+  }
+
+  async providerStatus(id: string, shared: SharedProviders): Promise<Record<string, ProviderHostStatus>> {
+    const session = await this.connect(id);
+    const local = sharedProviderDigests(shared);
+    const ids = Object.keys(local);
+    if (ids.length === 0) return {};
+    return compareProviderDigests(local, await fetchHostProviderDigests(session, ids));
   }
 
   session(id: string): HostSession | undefined {

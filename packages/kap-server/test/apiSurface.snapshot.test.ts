@@ -113,7 +113,7 @@ describe('API surface snapshot', () => {
   });
 });
 
-const HOST_CONTRACT = { apiLevel: 1, digest: 'e35d07519a7cc925f2eb75aecd63e18734f8c2edae49083abdb16cc4c4fa7e95' };
+const HOST_CONTRACT = { apiLevel: 1, digest: 'ec2d920d8edb5f52c73320e4536fb7f06ea892366239fe8292f95133af185ccd' };
 
 const NON_CONTRACT_KEYS = new Set(['description', 'summary', 'example', 'examples']);
 const NAMED_MEMBER_KEYS = new Set(['properties', 'patternProperties']);
