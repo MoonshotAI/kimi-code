@@ -237,7 +237,7 @@ Later changes arrive as the frames below. Every frame carries `session_id`, `age
 | `item.started`, `item.ended` | `turn_id` and the full `item` | Replace the local item with the same `item_id`, or append it to the end of the turn if it is not there |
 | `item.updated` | `turn_id`, `item_id`, `set` | `set` holds the fields of a running `tool_call` that changed; merge it shallowly into the item |
 | `item.delta` | `turn_id`, `item_id`, `field`, `delta` | Append `delta` to the item's `field`, which is `text`, `input_text`, or `output` |
-| `item.removed` | `turn_id`, `item_id` | Remove the item. It is a running item that will not be finished, for example when a request retry restarts the step |
+| `item.removed` | `turn_id`, `item_id` | Remove the item. For example, when a failed model request is retried, the output of the failed attempt is removed and replaced by the retry |
 | `turns.removed` | `turn_ids` | Remove the turns by `turn_id`; `turn_ids` is in ascending ordinal order. After an undo it lists the undone turns; after a context clear it lists every turn |
 | `notice` | `{ level: "info" \| "warning" \| "error", title, detail?, code? }` | A live warning or error raised by the agent, for example `compaction.cancelled` when a context compaction did not finish. Notices are not part of any turn and are not resent on subscribe |
 
