@@ -20,8 +20,8 @@ describe('HelpPanelComponent', () => {
   const STEERS = 'Submit; steers into the running turn';
 
   it.each([
-    ['queue', true, { Enter: QUEUES, 'Ctrl-Enter': STEERS }],
-    ['queue', false, { Enter: QUEUES }],
+    ['queue', true, { Enter: QUEUES, 'Ctrl-Enter': STEERS, 'Ctrl-Q': QUEUES }],
+    ['queue', false, { Enter: QUEUES, 'Ctrl-Q': QUEUES }],
     ['steer', true, { Enter: STEERS, 'Ctrl-Enter': QUEUES, 'Ctrl-Q': QUEUES }],
     ['steer', false, { Enter: STEERS, 'Ctrl-Q': QUEUES }],
   ] as const)(
