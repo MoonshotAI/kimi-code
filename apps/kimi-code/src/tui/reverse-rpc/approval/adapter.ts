@@ -222,8 +222,8 @@ function describeApproval(display: ToolInputDisplay, action: string): string {
 }
 
 const DANGER_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
-  { pattern: /\brm\s+(-[a-zA-Z]*[rRfF][a-zA-Z]*|--recursive|--force)/i, label: 'recursive delete' },
-  { pattern: /\bsudo\b/i, label: 'sudo' },
+  { pattern: /\brm\s+(-[a-zA-Z]*[rR][a-zA-Z]*|--recursive\b)/, label: 'recursive delete' },
+  { pattern: /\brm\s+(-[a-zA-Z]*[fF][a-zA-Z]*|--force\b)/i, label: 'force delete' },
   { pattern: /\b(curl|wget)\b[^|]*\|\s*(sh|bash|zsh)\b/i, label: 'pipe to shell' },
   { pattern: /\bdd\b[^|]*\bof=/i, label: 'dd write' },
   { pattern: /\bmkfs\b/i, label: 'mkfs' },
