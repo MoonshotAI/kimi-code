@@ -405,7 +405,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     if (sourceMessages.length > 0) {
       await child.accessor
         .get(IAgentLoopService)
-        .initializeHistory(historyFromContext(closeTrailingOpenToolExchange(sourceMessages)));
+        .initializeHistory(historyFromContext(closeTrailingOpenToolExchange(sourceMessages), true));
     }
     return childContext;
   }
