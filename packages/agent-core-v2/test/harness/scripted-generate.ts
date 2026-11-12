@@ -1,58 +1,34 @@
-import { performance, type EventLoopUtilization } from 'node:perf_hooks';
-
-import { type FinishReason } from '#human/llm-requester/finish-reason';
-import type { ThinkingRequestOptions } from '#human/llm-requester/thinking';
 import {
   isContentPart,
   isToolCall,
   isToolCallPart,
+  type AssistantMessage,
+  type Message,
   type StreamedMessagePart,
-} from '#human/llm/message';
-import type {
-  ExtraParams,
-  LlmRequestConfig,
-  LlmRequestContent,
-  LlmRequestControl,
-  LlmRequester,
-} from '#human/llm-requester/requester';
-import type { AssistantMessage, Message, ToolDescription as Tool } from '#human/llm/message';
+} from '@moonshot-ai/core/llm/message';
+import { anthropicProtocol } from '@moonshot-ai/core/llm/builtin/protocol/anthropic/index';
+import { openAIResponsesProtocol } from '@moonshot-ai/core/llm/builtin/protocol/openai-responses/index';
 import {
-  errorDiagnostics,
-  isAbortError,
-  isImageFormatError,
-  isRecoverableRequestStructureError,
-  llmMessageFromError,
-} from '#/llm-adapter/contract/errors';
-import { unwrapErrorCause } from '#/errors';
-import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
-import type { TokenUsage } from '#human/llm-requester/usage';
-import type {
-  InitializedLlmRequester,
-  ModelRequestEvent,
-  ModelRequestInput,
-  ModelRequestParams,
-  ModelRequestTiming,
-  SamplingOptions,
-} from '#/llm-adapter/model/generate';
-import type { Model } from '#/llm-adapter/model/catalog';
-import { translateProviderError } from '#/llm-adapter/protocol/errors';
-import { toLlmErrorMessage } from '#human/llm-requester/errors';
-import { resolveEndpoint } from '#human/llm/endpoint';
-import type { LlmRequestPart } from '#human/llm/requester';
-import { runLlmRequest } from '#human/llm/policy/policy';
-import { usableOutputOf, type LlmSettleControl } from '#human/llm/policy/settle';
+  kimiAnthropicProtocol,
+  kimiResponsesProtocol,
+} from '@moonshot-ai/core/llm/builtin/provider/kimi/protocol';
+import { openAIProtocol } from '@moonshot-ai/core/llm/builtin/protocol/openai/index';
+import { googleGenAIProtocol } from '@moonshot-ai/core/llm/builtin/protocol/google-genai/index';
+import { APIError as RawOpenAISDKAPIError } from 'openai/error';
+import type { LlmRequest } from '@moonshot-ai/core/llm/request';
+import type { LlmResolver } from '@moonshot-ai/core/llm/policy/resolver';
 import {
   contentsOf,
   createRequester,
-  mergeFields,
   requesterContents,
-} from '#human/llm/requester';
-import type { FinishInfo, LlmOutcome, LlmTiming } from '#human/llm/response';
-import { createMessageAccumulator } from '#human/llm/message';
-import { mergeUsagePatch } from '#human/llm-requester/usage';
-import { emptyResponseError } from '#human/llm-requester/empty-response';
-import { NO_FINISH } from '#human/llm-requester/finish-reason';
-import { UNKNOWN_CAPABILITY } from '#/llm-adapter/contract/capability';
+  type InitializedLlmRequester,
+  type LlmRequestPart,
+} from '@moonshot-ai/core/llm/requester';
+import type { FinishReason } from '@moonshot-ai/core/llm/response';
+import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
+import { isError2 } from '#/_base/errors/errors';
+import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
+import { ChatProviderError, errorFromLlmMessage, llmMessageFromError } from '#/llm-adapter/contract/errors';
 
 import {
   generateInputSnapshot,
@@ -61,240 +37,196 @@ import {
   type GenerateCall,
 } from './snapshots';
 
-export interface LegacyGenerateResult {
-  readonly id: string | null;
-  readonly message: AssistantMessage;
-  readonly usage: TokenUsage | null;
-  readonly finishReason: FinishReason | null;
-  readonly rawFinishReason: string | null;
+export interface MockProviderHttpError {
+  readonly statusCode: number;
+  readonly message: string;
   readonly requestId?: string | null;
+  readonly traceId?: string | null;
+  readonly retryAfterMs?: number | null;
+  readonly code?: string;
 }
 
-export type LegacyGenerateFn = (
-  provider: { readonly name: string; readonly modelName: string },
-  systemPrompt: string,
-  tools: readonly Tool[],
-  history: Message[],
-  callbacks?: { onMessagePart?: (part: StreamedMessagePart) => void | Promise<void> },
-  options?: {
-    readonly signal?: AbortSignal;
-    readonly auth?: { readonly apiKey?: string };
-    readonly cacheKey?: string;
-    readonly sampling?: SamplingOptions;
-    readonly thinking?: ThinkingRequestOptions;
-    readonly maxCompletionTokens?: number;
-    readonly maxContextTokens?: number;
-    readonly usedContextTokens?: number;
-  },
-) => Promise<LegacyGenerateResult>;
-
-function samplingFromExtraParams(extra: ExtraParams | undefined): SamplingOptions | undefined {
-  if (extra === undefined) return undefined;
-  const temperature =
-    extra.openai?.temperature ??
-    extra.responses?.temperature ??
-    extra.anthropic?.temperature ??
-    extra.googleGenai?.temperature;
-  const topP =
-    extra.openai?.top_p ?? extra.responses?.top_p ?? extra.anthropic?.top_p ?? extra.googleGenai?.topP;
-  if (temperature === undefined && topP === undefined) return undefined;
-  return { temperature, topP };
+export interface MockProviderResponse {
+  readonly id?: string | null;
+  readonly message?: AssistantMessage;
+  readonly parts?: readonly StreamedMessagePart[];
+  readonly usage?: Partial<TokenUsage> | null;
+  readonly finishReason?: FinishReason | null;
+  readonly rawFinishReason?: string | null;
+  readonly requestId?: string | null;
+  readonly httpError?: MockProviderHttpError;
+  readonly error?: unknown;
+  readonly fetch?: typeof fetch;
+  readonly onStream?: () => void | Promise<void>;
 }
 
-export function generateCallOf(config: LlmRequestConfig, content: LlmRequestContent): GenerateCall {
+export type MockProviderHandler = (
+  request: LlmRequest,
+  signal: AbortSignal,
+) => MockProviderResponse | Promise<MockProviderResponse>;
+
+interface PreparedAttempt {
+  readonly request: LlmRequest;
+  readonly result: {
+    readonly id: string | null;
+    readonly message: AssistantMessage;
+    readonly usage: Partial<TokenUsage> | null;
+    readonly finishReason: FinishReason | null;
+    readonly rawFinishReason: string | null;
+    readonly requestId?: string | null;
+  };
+  readonly parts: readonly StreamedMessagePart[];
+  readonly httpError?: MockProviderHttpError;
+  readonly error?: unknown;
+  readonly fetch?: typeof fetch;
+  readonly onStream?: () => void | Promise<void>;
+}
+
+export interface MockProvider {
+  respond(request: LlmRequest, signal: AbortSignal): PreparedAttempt | Promise<PreparedAttempt>;
+  readonly fetch: typeof fetch;
+}
+
+export function generateCallOf(request: LlmRequest): GenerateCall {
   return normalizeGenerateInput({
-    systemPrompt: config.systemPrompt ?? '',
-    tools: (config.tools ?? []).map(({ name, description, parameters }) => ({
+    systemPrompt: request.profile?.systemPrompt ?? '',
+    tools: (request.profile?.tools ?? []).filter((tool) => tool.deferred !== true).map(({ name, description, parameters }) => ({
       name,
       description,
       parameters,
     })),
-    history: structuredClone([...content.messages]),
+    history: structuredClone(
+      request.content.messages.map(({ attributes: _attributes, ...message }) => message),
+    ),
   });
 }
 
-export function requesterFromGenerateFn(fn: LegacyGenerateFn): LlmRequester {
+export function createMockProvider(handler: MockProviderHandler): MockProvider {
+  const pending: Promise<PreparedAttempt>[] = [];
+  let index = 0;
   return {
-    async generate(config, content, control) {
-      const emit = control.onEvent;
-      const parts: StreamedMessagePart[] = [];
-      let result: LegacyGenerateResult;
-      try {
-        result = await fn(
-          { name: config.model.provider, modelName: config.model.model },
-          config.systemPrompt ?? '',
-          [...(config.tools ?? [])],
-          [...content.messages],
-          {
-            onMessagePart: (part) => {
-              parts.push(structuredClone(part));
-            },
-          },
-          {
-            signal: control.signal,
-            auth: config.model.apiKey === undefined ? undefined : { apiKey: config.model.apiKey },
-            cacheKey: config.cacheKey,
-            sampling: samplingFromExtraParams(config.extraParams),
-            thinking: config.thinking,
-            maxCompletionTokens: config.maxCompletionTokens,
-            maxContextTokens: config.maxContextTokens,
-            usedContextTokens: content.usedContextTokens,
-          },
-        );
-      } catch (error) {
-        for (const part of normalizeProviderStreamParts(parts)) {
-          emit?.({ type: 'llm.streaming.part', part: structuredClone(part) });
+    respond: (request, signal) => {
+      const attempt = (async (): Promise<PreparedAttempt> => {
+        try {
+          return prepareProviderAttempt(request, await handler(request, signal), index++);
+        } catch (error) {
+          return { ...prepareProviderAttempt(request, {}, index++), parts: [], error };
         }
-        throw error;
-      }
-
-      emit?.({
-        type: 'llm.streaming.headers',
-        headers:
-          result.requestId !== undefined && result.requestId !== null
-            ? { 'x-trace-id': result.requestId }
-            : {},
-      });
-      const streamed =
-        parts.length > 0
-          ? normalizeProviderStreamParts(parts)
-          : partsFromGeneratedMessage(result.message);
-      for (const part of streamed) {
-        emit?.({ type: 'llm.streaming.part', part: structuredClone(part) });
-        await Promise.resolve();
-        control.signal.throwIfAborted();
-      }
-      if (result.usage !== null) {
-        emit?.({ type: 'llm.streaming.usage', usage: result.usage });
-      }
-      emit?.({
-        type: 'llm.streaming.finish',
-        finish: { finishReason: result.finishReason, rawFinishReason: result.rawFinishReason },
-      });
-      if (result.id !== null) {
-        emit?.({ type: 'llm.streaming.message_id', messageId: result.id });
-      }
-      emit?.({ type: 'llm.done' });
+      })();
+      pending.push(attempt);
+      return attempt;
     },
+    fetch: mockProviderFetch(pending),
   };
 }
 
-interface ScriptedResponse {
-  readonly parts?: readonly StreamedMessagePart[] | undefined;
-  readonly usage?: Partial<TokenUsage> | undefined;
-  readonly finishReason?: FinishReason | null | undefined;
-  readonly rawFinishReason?: string | null | undefined;
-  readonly requestId?: string | null | undefined;
-  readonly error?: Error | undefined;
+export function providerHttpError(
+  statusCode: number,
+  message: string,
+  options: Omit<MockProviderHttpError, 'statusCode' | 'message'> = {},
+): MockProviderResponse {
+  return { httpError: { statusCode, message, ...options } };
+}
+
+export function createMockProviderRequester(
+  input: MockProviderHandler | readonly (MockProviderResponse | Error)[],
+): InitializedLlmRequester {
+  const responses = typeof input === 'function' ? undefined : [...input];
+  const provider = createMockProvider((request, signal) => {
+    if (responses === undefined) return (input as MockProviderHandler)(request, signal);
+    const response = responses.shift();
+    if (response instanceof Error) throw response;
+    if (response === undefined) throw new Error('Unexpected provider request');
+    return response;
+  });
+  return withMockProvider(
+    createRequester().with({
+      protocol: { base: openAIProtocol },
+      model: { spec: { provider: 'mock', name: 'mock-model' } },
+      policy: { retry: { maxAttemptsPerStep: 1 } },
+      endpoint: {
+        baseUrl: 'https://provider.example.test/v1',
+        credentials: { resolve: () => ({ apiKey: 'test-key' }) },
+      },
+    }),
+    provider,
+  );
+}
+
+function prepareProviderAttempt(
+  request: LlmRequest,
+  response: MockProviderResponse,
+  index: number,
+): PreparedAttempt {
+  const parts = normalizeProviderStreamParts(
+    response.parts ?? (response.message === undefined ? [] : partsFromGeneratedMessage(response.message)),
+  );
+  const message = response.message ?? {
+    role: 'assistant' as const,
+    content: parts.filter(isContentPart),
+    toolCalls: parts.filter(isToolCall),
+  };
+  const finishReason = response.finishReason === undefined
+    ? message.toolCalls.length > 0
+      ? 'tool_calls'
+      : 'completed'
+    : response.finishReason;
+  if (response.error !== undefined) void Promise.resolve(response.error).catch(() => {});
+  return {
+    request,
+    result: {
+      id: response.id === undefined ? `mock-${String(index + 1)}` : response.id,
+      message,
+      usage: response.usage === undefined
+        ? {
+            inputOther: estimateTokensForMessages(normalizeMessagesForTokenEstimates(request.content.messages)),
+            output: estimateTokensForMessages(normalizeMessagesForTokenEstimates([message])),
+            inputCacheRead: 0,
+            inputCacheCreation: 0,
+          }
+        : response.usage,
+      finishReason,
+      rawFinishReason: response.rawFinishReason === undefined
+        ? defaultRawFinishReason(finishReason, protocolKind(request))
+        : response.rawFinishReason,
+      requestId: response.requestId,
+    },
+    parts,
+    httpError: response.httpError,
+    error: response.error,
+    fetch: response.fetch,
+    onStream: response.onStream,
+  };
 }
 
 export function createScriptedGenerate() {
   const calls: GenerateCall[] = [];
-  const responses: ScriptedResponse[] = [];
+  const responses: MockProviderResponse[] = [];
   let assertedCallCount = 0;
 
   function mockNextResponse(...response: StreamedMessagePart[]) {
     responses.push({ parts: structuredClone(response) });
   }
 
-  function mockNextProviderResponse(input: {
-    readonly parts?: readonly StreamedMessagePart[] | undefined;
-    readonly usage?: Partial<TokenUsage> | undefined;
-    readonly finishReason?: FinishReason | null | undefined;
-    readonly rawFinishReason?: string | null | undefined;
-    readonly requestId?: string | null | undefined;
-    readonly error?: Error | undefined;
-  }) {
+  function mockNextProviderResponse(input: MockProviderResponse) {
     responses.push({
-      ...(input.parts !== undefined ? { parts: structuredClone(input.parts) } : {}),
-      ...(input.usage !== undefined ? { usage: structuredClone(input.usage) } : {}),
-      ...(input.finishReason !== undefined ? { finishReason: input.finishReason } : {}),
-      ...(input.rawFinishReason !== undefined ? { rawFinishReason: input.rawFinishReason } : {}),
-      ...(input.requestId !== undefined ? { requestId: input.requestId } : {}),
-      ...(input.error !== undefined ? { error: input.error } : {}),
+      ...input,
+      parts: input.parts === undefined ? undefined : structuredClone(input.parts),
+      usage: input.usage === undefined ? undefined : structuredClone(input.usage),
     });
   }
 
-  async function generate(
-    config: LlmRequestConfig,
-    content: LlmRequestContent,
-    control: LlmRequestControl,
-  ): Promise<void> {
-    control.signal.throwIfAborted();
-
+  const provider = createMockProvider((request) => {
     const response = responses.shift();
     if (response === undefined) {
-      throw new Error(`Unexpected generate call #${String(calls.length + 1)}`);
+      return providerHttpError(400, `Unexpected generate call #${String(calls.length + 1)}`);
     }
-
-    const input = generateCallOf(config, content);
-    calls.push(input);
-
-    const emit = control.onEvent;
-    emit?.({ type: 'llm.sent' });
-    emit?.({
-      type: 'llm.streaming.headers',
-      headers:
-        response.requestId !== undefined && response.requestId !== null
-          ? { 'x-trace-id': response.requestId }
-          : {},
-    });
-
-    const scriptedParts = response.parts ?? [];
-    const contentParts = scriptedParts.filter((part) => isContentPart(part));
-    const toolCalls = scriptedParts.filter((part) => isToolCall(part));
-    const message: AssistantMessage = {
-      role: 'assistant',
-      content: structuredClone(contentParts),
-      toolCalls: structuredClone(toolCalls),
-    };
-    const streamed =
-      scriptedParts.length > 0
-        ? normalizeProviderStreamParts(scriptedParts)
-        : partsFromGeneratedMessage(message);
-
-    for (const part of streamed) {
-      emit?.({ type: 'llm.streaming.part', part: structuredClone(part) });
-      await Promise.resolve();
-      control.signal.throwIfAborted();
-    }
-    if (response.usage !== undefined) {
-      emit?.({ type: 'llm.streaming.usage', usage: response.usage });
-    }
-    if (response.error !== undefined) {
-      if (isAbortError(response.error)) throw response.error;
-      throw translateProviderError(response.error);
-    }
-
-    const inferredFinishReason: FinishReason = toolCalls.length > 0 ? 'tool_calls' : 'completed';
-    const finishReason = response.finishReason === undefined ? inferredFinishReason : response.finishReason;
-    emit?.({
-      type: 'llm.streaming.usage',
-      usage: {
-        inputOther: estimateTokensForMessages(normalizeMessagesForTokenEstimates(input.history)),
-        output: estimateTokensForMessages(normalizeMessagesForTokenEstimates([message])),
-        inputCacheRead: 0,
-        inputCacheCreation: 0,
-      },
-    });
-    emit?.({
-      type: 'llm.streaming.finish',
-      finish: {
-        finishReason,
-        rawFinishReason:
-          response.rawFinishReason === undefined
-            ? defaultRawFinishReason(finishReason)
-            : response.rawFinishReason,
-      },
-    });
-    emit?.({ type: 'llm.streaming.message_id', messageId: `mock-${String(calls.length)}` });
-    emit?.({ type: 'llm.done' });
-  }
-
-  const requester: LlmRequester = { generate };
+    calls.push(generateCallOf(request));
+    return response;
+  });
 
   return {
-    requester,
+    provider,
     calls,
     lastInput() {
       const pendingCount = calls.length - assertedCallCount;
@@ -307,7 +239,6 @@ export function createScriptedGenerate() {
             'Call ctx.lastLlmInput() after each LLM call.',
         );
       }
-
       assertedCallCount = calls.length;
       return generateInputSnapshot(calls.at(-1)!, calls.at(-2));
     },
@@ -316,7 +247,6 @@ export function createScriptedGenerate() {
       if (pendingCount === 0) {
         throw new Error('No unasserted LLM inputs. Call ctx.llmInputs() after LLM calls.');
       }
-
       const pending = calls.slice(assertedCallCount);
       const previous = calls[assertedCallCount - 1];
       assertedCallCount = calls.length;
@@ -325,6 +255,622 @@ export function createScriptedGenerate() {
     mockNextResponse,
     mockNextProviderResponse,
   };
+}
+
+function mockAttemptResolver(provider: MockProvider): LlmResolver {
+  return {
+    id: 'mock-provider',
+    resolve: async (request, control) => {
+      void Promise.resolve(provider.respond(request, control.signal));
+      return request;
+    },
+  };
+}
+
+export function withMockProvider(
+  initial: InitializedLlmRequester,
+  provider: MockProvider,
+): InitializedLlmRequester {
+  return {
+    [requesterContents]: contentsOf(initial),
+    with: ((part: LlmRequestPart) =>
+      withMockProvider(initial.with(part as never), provider)) as InitializedLlmRequester['with'],
+    request: (rest): LlmRequest => {
+      const request = initial.with({ endpoint: { fetch: provider.fetch } }).request(rest);
+      const previous = request.policy?.resolvers;
+      return {
+        ...request,
+        policy: {
+          ...request.policy,
+          resolvers: () => [
+            ...(typeof previous === 'function' ? previous() : (previous ?? [])),
+            mockAttemptResolver(provider),
+          ],
+        },
+      };
+    },
+    generate: async (rest, control) => {
+      let directError: Error | undefined;
+      const directAbort = new AbortController();
+      const signal = AbortSignal.any([control.signal, directAbort.signal]);
+      const interceptFetch: typeof fetch = async (input, init) => {
+        try {
+          return await provider.fetch(input, init);
+        } catch (error) {
+          if (isError2(error) && !(error instanceof ChatProviderError)) {
+            directError = error;
+            directAbort.abort(error);
+          }
+          throw error;
+        }
+      };
+      const outcome = await initial.with(rest).with({ endpoint: { fetch: interceptFetch } }).generate({}, {
+        ...control,
+        signal,
+        onEvent: (event) => {
+          if (directError !== undefined && event.type === 'llm.ended') return;
+          control.onEvent?.(event);
+        },
+        onAttempt: (request, context) => {
+          void Promise.resolve(provider.respond(request, control.signal));
+          control.onAttempt?.(request, context);
+        },
+      });
+      if (directError !== undefined) throw directError;
+      return outcome;
+    },
+  };
+}
+
+function mockProviderError(error: unknown): Error {
+  const message = llmMessageFromError(error);
+  if (message !== undefined) return errorFromLlmMessage(message);
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+function mockProviderFetch(pending: Promise<PreparedAttempt>[]): typeof fetch {
+  return async (input, init) => {
+    const pendingAttempt = pending.shift();
+    if (pendingAttempt === undefined) {
+      throw new Error('mock provider received an unscheduled fetch');
+    }
+    const attempt = await pendingAttempt;
+    if (attempt.fetch !== undefined) return attempt.fetch(input, init);
+    const headers = new Headers({ 'content-type': 'application/json' });
+    const requestId = attempt.result.requestId ?? attempt.httpError?.requestId;
+    const traceId = attempt.httpError?.traceId ?? requestId;
+    if (traceId !== undefined && traceId !== null) headers.set('x-trace-id', traceId);
+    if (requestId !== undefined && requestId !== null) headers.set('x-request-id', requestId);
+    if (attempt.httpError?.retryAfterMs !== undefined && attempt.httpError.retryAfterMs !== null) {
+      headers.set('retry-after-ms', String(attempt.httpError.retryAfterMs));
+    }
+    if (attempt.httpError !== undefined && attempt.parts.length > 0) {
+      return streamFailure(attempt, headers, init?.signal ?? undefined);
+    }
+    if (attempt.httpError !== undefined) {
+      return new Response(
+        JSON.stringify({
+          error: {
+            message: attempt.httpError.message,
+            type: 'provider_error',
+            code: attempt.httpError.code ?? attempt.httpError.statusCode,
+            status: googleErrorStatus(attempt.httpError.statusCode),
+            requestId: attempt.httpError.requestId,
+          },
+        }),
+        { status: attempt.httpError.statusCode, headers },
+      );
+    }
+    if (attempt.error !== undefined) {
+      if (attempt.parts.length > 0 || (attempt.result.requestId !== undefined && attempt.result.requestId !== null)) {
+        return streamFailure(attempt, headers, init?.signal ?? undefined);
+      }
+      let resolvedError: unknown;
+      try {
+        resolvedError = await Promise.resolve(attempt.error);
+      } catch (caught) {
+        resolvedError = caught;
+      }
+      throw mockProviderError(resolvedError);
+    }
+    const result = attempt.result;
+    const kind = protocolKind(attempt.request);
+    if (attempt.request.protocol.stream === false) {
+      return new Response(JSON.stringify(nonStreamingBody(attempt, kind, result), replacer), {
+        status: 200,
+        headers,
+      });
+    }
+    const chunks = streamingChunks(attempt, kind, result);
+    headers.set('content-type', 'text/event-stream');
+    return chunkedResponse(attempt, chunks, headers, init?.signal ?? undefined);
+  };
+}
+
+function streamFailure(attempt: PreparedAttempt, headers: Headers, signal?: AbortSignal): Response {
+  const kind = protocolKind(attempt.request);
+  const result = attempt.result;
+  const chunks = kind === 'openai'
+    ? [
+        openAIChunk(attempt, result, { role: 'assistant' }),
+        ...openAIStreamParts(attempt.parts).map((part) => openAIChunk(attempt, result, openAIDelta(part))),
+        openAIChunk(attempt, result, {}, null, openAIUsage(result.usage)),
+      ]
+    : kind === 'anthropic'
+      ? [
+          ...anthropicChunks(attempt, result).slice(0, -2),
+          {
+            type: 'message_delta',
+            delta: { stop_reason: null, stop_sequence: null },
+            usage: anthropicUsage(result.usage),
+          },
+        ]
+      : kind === 'responses'
+        ? responsesChunks(attempt, result)
+        : [googleResponse(attempt, result)];
+  headers.set('content-type', 'text/event-stream');
+  return chunkedResponse(attempt, chunks, headers, signal);
+}
+
+function chunkedResponse(
+  attempt: PreparedAttempt,
+  chunks: readonly Record<string, unknown>[],
+  headers: Headers,
+  signal?: AbortSignal,
+): Response {
+  const hasTerminalFailure = attempt.httpError !== undefined || attempt.error !== undefined;
+  const events = chunks.map((chunk) => {
+    const event = protocolKind(attempt.request) === 'anthropic' ? `event: ${String(chunk['type'])}\n` : '';
+    return `${event}data: ${JSON.stringify(chunk, replacer)}\n\n`;
+  });
+  if (protocolKind(attempt.request) !== 'google' && !hasTerminalFailure) {
+    events.push('data: [DONE]\n\n');
+  }
+  const streamPauseIndex =
+    attempt.onStream === undefined
+      ? -1
+      : hasTerminalFailure
+        ? events.length
+        : Math.max(0, events.length - 2);
+  const isSignalAborted = (): boolean => signal?.aborted === true;
+  let onStreamCalled = false;
+  let index = 0;
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        await Promise.resolve();
+        if (isSignalAborted()) {
+          controller.error(signal?.reason);
+          return;
+        }
+        if (!onStreamCalled && index === streamPauseIndex) {
+          onStreamCalled = true;
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+          await attempt.onStream?.();
+          if (isSignalAborted()) {
+            controller.error(signal?.reason);
+            return;
+          }
+        }
+        if (index < events.length) {
+          controller.enqueue(new TextEncoder().encode(events[index++]!));
+          return;
+        }
+        if (attempt.httpError !== undefined) {
+          controller.error(new RawOpenAISDKAPIError(
+            attempt.httpError.statusCode,
+            {
+              message: attempt.httpError.message,
+              code: attempt.httpError.statusCode,
+              type: 'provider_error',
+            },
+            attempt.httpError.message,
+            headers,
+          ));
+          return;
+        }
+        if (attempt.error !== undefined) {
+          let resolvedError: unknown;
+          try {
+            resolvedError = await Promise.resolve(attempt.error);
+          } catch (caught) {
+            resolvedError = caught;
+          }
+          if (isSignalAborted()) {
+            controller.error(signal?.reason);
+            return;
+          }
+          controller.error(mockProviderError(resolvedError));
+          return;
+        }
+        controller.close();
+      },
+    }, { highWaterMark: 0 }),
+    { status: 200, headers },
+  );
+}
+
+function googleErrorStatus(statusCode: number): string {
+  switch (statusCode) {
+    case 401:
+      return 'UNAUTHENTICATED';
+    case 403:
+      return 'PERMISSION_DENIED';
+    case 413:
+    case 429:
+      return 'RESOURCE_EXHAUSTED';
+    case 529:
+      return 'OVERLOADED';
+    case 503:
+      return 'UNAVAILABLE';
+    default:
+      return 'INVALID_ARGUMENT';
+  }
+}
+
+function protocolKind(request: LlmRequest): 'openai' | 'anthropic' | 'responses' | 'google' {
+  const base = request.protocol.base;
+  if (base.client === anthropicProtocol.client || base.client === kimiAnthropicProtocol.client) return 'anthropic';
+  if (base.client === openAIResponsesProtocol.client || base.client === kimiResponsesProtocol.client) return 'responses';
+  if (base.client === googleGenAIProtocol.client) return 'google';
+  return 'openai';
+}
+
+function googleResponse(
+  attempt: PreparedAttempt,
+  result: PreparedAttempt['result'],
+): Record<string, unknown> {
+  return {
+    responseId: result.id ?? undefined,
+    candidates: [
+      {
+        content: { role: 'model', parts: attempt.parts.flatMap(googlePart) },
+        finishReason: result.rawFinishReason ?? undefined,
+      },
+    ],
+    usageMetadata: googleUsage(result.usage),
+  };
+}
+
+function googlePart(part: StreamedMessagePart): Record<string, unknown>[] {
+  switch (part.type) {
+    case 'text':
+      return [{ text: part.text, thoughtSignature: part.meta?.['thought_signature_b64'] }];
+    case 'think':
+      return [{ text: part.think, thought: true, thoughtSignature: part.encrypted }];
+    case 'function':
+      return [{
+        functionCall: {
+          id: part.rawId,
+          name: part.name,
+          args: JSON.parse(part.arguments ?? '{}') as Record<string, unknown>,
+        },
+        thoughtSignature: part.extras?.['thought_signature_b64'],
+      }];
+    case 'tool_call_part':
+      return [];
+    case 'image_url':
+      return [googleMediaPart(part.imageUrl.url, 'image/jpeg')];
+    case 'audio_url':
+      return [googleMediaPart(part.audioUrl.url, 'audio/mpeg')];
+    case 'video_url':
+      return [googleMediaPart(part.videoUrl.url, 'video/mp4')];
+  }
+}
+
+function googleMediaPart(url: string, mimeType: string): Record<string, unknown> {
+  if (url.startsWith('data:')) {
+    const commaIndex = url.indexOf(',');
+    const metadata = commaIndex === -1 ? '' : url.slice(0, commaIndex);
+    const data = commaIndex === -1 ? url : url.slice(commaIndex + 1);
+    const mediaType = metadata.split(':')[1]?.split(';')[0] ?? mimeType;
+    return { inlineData: { mimeType: mediaType, data } };
+  }
+  return { fileData: { fileUri: url, mimeType } };
+}
+
+function googleUsage(usage: Partial<TokenUsage> | null): Record<string, unknown> | undefined {
+  if (usage === null) return undefined;
+  return {
+    promptTokenCount: (usage.inputOther ?? 0) + (usage.inputCacheRead ?? 0) + (usage.inputCacheCreation ?? 0),
+    candidatesTokenCount: usage.output ?? 0,
+    cachedContentTokenCount: usage.inputCacheRead,
+  };
+}
+
+function nonStreamingBody(
+  attempt: PreparedAttempt,
+  kind: 'openai' | 'anthropic' | 'responses' | 'google',
+  result: PreparedAttempt['result'],
+): Record<string, unknown> {
+  const content = result.message.content.filter(isContentPart);
+  const text = content.filter((part) => part.type === 'text').map((part) => part.text).join('');
+  const thinking = content.filter((part) => part.type === 'think').map((part) => part.think).join('');
+  const toolCalls = result.message.toolCalls;
+  if (kind === 'google') return googleResponse(attempt, result);
+  if (kind === 'anthropic') {
+    return {
+      id: result.id ?? 'mock',
+      type: 'message',
+      role: 'assistant',
+      model: attempt.request.model.spec.name,
+      content: anthropicBlocks(attempt.parts),
+      stop_reason: anthropicStopReason(result),
+      usage: anthropicUsage(result.usage),
+    };
+  }
+  if (kind === 'responses') {
+    return {
+      id: result.id ?? 'mock',
+      object: 'response',
+      created: 0,
+      model: attempt.request.model.spec.name,
+      output: [
+        {
+          type: 'message',
+          id: result.id ?? 'mock',
+          role: 'assistant',
+          content: text.length > 0 ? [{ type: 'output_text', text }] : [],
+        },
+      ],
+      status: 'completed',
+      usage: openAIUsage(result.usage),
+    };
+  }
+  return {
+    id: result.id ?? 'mock',
+    object: 'chat.completion',
+    created: 0,
+    model: attempt.request.model.spec.name,
+    choices: [
+      {
+        index: 0,
+        finish_reason: openAIFinishReason(result),
+        message: {
+          role: 'assistant',
+          content: text,
+          reasoning_content: thinking.length > 0 ? thinking : undefined,
+          tool_calls: toolCalls.length > 0
+            ? toolCalls.map((part, index) => openAIToolCall({ ...part, _streamIndex: part._streamIndex ?? index }))
+            : undefined,
+        },
+      },
+    ],
+    usage: openAIUsage(result.usage),
+  };
+}
+
+function streamingChunks(
+  attempt: PreparedAttempt,
+  kind: 'openai' | 'anthropic' | 'responses' | 'google',
+  result: PreparedAttempt['result'],
+): Record<string, unknown>[] {
+  if (kind === 'google') return [googleResponse(attempt, result)];
+  if (kind === 'anthropic') return anthropicChunks(attempt, result);
+  if (kind === 'responses') return responsesChunks(attempt, result);
+  const chunks: Record<string, unknown>[] = [
+    openAIChunk(attempt, result, { role: 'assistant' }),
+    ...openAIStreamParts(attempt.parts).map((part) => openAIChunk(attempt, result, openAIDelta(part))),
+    openAIChunk(attempt, result, {}, openAIFinishReason(result), openAIUsage(result.usage)),
+  ];
+  return chunks;
+}
+
+function openAIStreamParts(parts: readonly StreamedMessagePart[]): StreamedMessagePart[] {
+  let toolCallIndex = 0;
+  return parts.map((part) =>
+    part.type === 'function'
+      ? { ...part, _streamIndex: part._streamIndex ?? toolCallIndex++ }
+      : part
+  );
+}
+
+function openAIChunk(
+  attempt: PreparedAttempt,
+  result: PreparedAttempt['result'],
+  delta: Record<string, unknown>,
+  finishReason?: string | null,
+  usage?: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    id: result.id ?? 'mock',
+    object: 'chat.completion.chunk',
+    created: 0,
+    model: attempt.request.model.spec.name,
+    choices: [{ index: 0, delta, finish_reason: finishReason ?? null }],
+    usage,
+  };
+}
+
+function openAIDelta(part: StreamedMessagePart): Record<string, unknown> {
+  switch (part.type) {
+    case 'text':
+      return { content: part.text };
+    case 'think':
+      if (part.encrypted !== undefined || part.reasoningKey === 'reasoning_details') {
+        return {
+          reasoning_details: [
+            {
+              type: 'summary',
+              index: part.detailsIndex ?? 0,
+              summary: part.think,
+            },
+            {
+              type: 'encrypted',
+              index: part.detailsIndex ?? 0,
+              summary: '',
+              encrypted: part.encrypted,
+            },
+          ],
+        };
+      }
+      return { reasoning_content: part.think };
+    case 'function':
+      return { tool_calls: [openAIToolCall(part)] };
+    case 'tool_call_part':
+      return {
+        tool_calls: [
+          {
+            index: part.index ?? 0,
+            function: { arguments: part.argumentsPart },
+          },
+        ],
+      };
+    default:
+      return { content: '' };
+  }
+}
+
+function openAIToolCall(part: Extract<StreamedMessagePart, { type: 'function' }>): Record<string, unknown> {
+  return {
+    index: part._streamIndex ?? 0,
+    id: part.id,
+    type: 'function',
+    function: { name: part.name, arguments: part.arguments },
+    extras: part.extras,
+  };
+}
+
+function anthropicChunks(
+  attempt: PreparedAttempt,
+  result: PreparedAttempt['result'],
+): Record<string, unknown>[] {
+  const chunks: Record<string, unknown>[] = [
+    {
+      type: 'message_start',
+      message: {
+        id: result.id ?? 'mock',
+        type: 'message',
+        role: 'assistant',
+        model: attempt.request.model.spec.name,
+        content: [],
+        stop_reason: null,
+        stop_sequence: null,
+        usage: { input_tokens: 0, output_tokens: 0 },
+      },
+    },
+  ];
+  for (const [index, part] of attempt.parts.entries()) {
+    const block = anthropicBlock(part);
+    if (block === undefined) continue;
+    chunks.push({ type: 'content_block_start', index, content_block: block });
+    const delta = anthropicDelta(part);
+    if (delta !== undefined) chunks.push({ type: 'content_block_delta', index, delta });
+    chunks.push({ type: 'content_block_stop', index });
+  }
+  chunks.push({
+    type: 'message_delta',
+    delta: { stop_reason: anthropicStopReason(result), stop_sequence: null },
+    usage: anthropicUsage(result.usage),
+  });
+  chunks.push({ type: 'message_stop' });
+  return chunks;
+}
+
+function anthropicBlocks(parts: readonly StreamedMessagePart[]): Record<string, unknown>[] {
+  return parts.flatMap((part) => {
+    const block = anthropicBlock(part);
+    return block === undefined ? [] : [block];
+  });
+}
+
+function anthropicBlock(part: StreamedMessagePart): Record<string, unknown> | undefined {
+  switch (part.type) {
+    case 'text':
+      return { type: 'text', text: part.text };
+    case 'think':
+      return { type: 'thinking', thinking: part.think, signature: part.encrypted };
+    case 'function':
+      return { type: 'tool_use', id: part.id, name: part.name, input: JSON.parse(part.arguments ?? '{}') };
+    default:
+      return undefined;
+  }
+}
+
+function anthropicDelta(part: StreamedMessagePart): Record<string, unknown> | undefined {
+  switch (part.type) {
+    case 'text':
+      return { type: 'text_delta', text: part.text };
+    case 'think':
+      return { type: 'thinking_delta', thinking: part.think };
+    case 'tool_call_part':
+      return { type: 'input_json_delta', partial_json: part.argumentsPart };
+    default:
+      return undefined;
+  }
+}
+
+function responsesChunks(
+  attempt: PreparedAttempt,
+  result: PreparedAttempt['result'],
+): Record<string, unknown>[] {
+  const text = attempt.parts
+    .filter((part) => part.type === 'text')
+    .map((part) => part.text)
+    .join('');
+  return [
+    {
+      type: 'response.output_text.delta',
+      item_id: result.id ?? 'mock',
+      output_index: 0,
+      content_index: 0,
+      delta: text,
+    },
+    {
+      type: 'response.completed',
+      response: nonStreamingBody(attempt, 'responses', result),
+    },
+  ];
+}
+
+function openAIUsage(usage: Partial<TokenUsage> | null): Record<string, unknown> | undefined {
+  if (usage === null) return undefined;
+  const inputOther = usage.inputOther ?? 0;
+  const inputCacheRead = usage.inputCacheRead ?? 0;
+  const inputCacheCreation = usage.inputCacheCreation ?? 0;
+  const output = usage.output ?? 0;
+  return {
+    prompt_tokens: inputOther + inputCacheRead + inputCacheCreation,
+    completion_tokens: output,
+    total_tokens: inputOther + inputCacheRead + inputCacheCreation + output,
+    prompt_tokens_details: { cached_tokens: inputCacheRead },
+    completion_tokens_details: { reasoning_tokens: 0 },
+  };
+}
+
+function anthropicUsage(usage: Partial<TokenUsage> | null): Record<string, unknown> {
+  return {
+    input_tokens: usage === null ? 0 : (usage.inputOther ?? 0) + (usage.inputCacheRead ?? 0) + (usage.inputCacheCreation ?? 0),
+    output_tokens: usage?.output ?? 0,
+    cache_read_input_tokens: usage?.inputCacheRead ?? 0,
+    cache_creation_input_tokens: usage?.inputCacheCreation ?? 0,
+  };
+}
+
+function openAIFinishReason(result: PreparedAttempt['result']): string | null {
+  if (result.rawFinishReason !== null) return result.rawFinishReason;
+  if (result.finishReason === 'filtered') return 'content_filter';
+  if (result.finishReason === null) return null;
+  return result.finishReason === 'completed' ? 'stop' : result.finishReason;
+}
+
+function anthropicStopReason(result: PreparedAttempt['result']): string | null {
+  if (result.rawFinishReason !== null) return result.rawFinishReason;
+  if (result.finishReason === null) return null;
+  switch (result.finishReason) {
+    case 'completed':
+      return 'end_turn';
+    case 'tool_calls':
+      return 'tool_use';
+    case 'truncated':
+      return 'max_tokens';
+    case 'filtered':
+      return 'refusal';
+    case 'paused':
+      return 'pause_turn';
+    default:
+      return 'other';
+  }
 }
 
 function partsFromGeneratedMessage(message: AssistantMessage): StreamedMessagePart[] {
@@ -383,353 +929,45 @@ function normalizeMessagesForTokenEstimates(messages: readonly Message[]): Messa
   }));
 }
 
-function defaultRawFinishReason(finishReason: FinishReason | null): string | null {
+function defaultRawFinishReason(
+  finishReason: FinishReason | null,
+  kind: 'openai' | 'anthropic' | 'responses' | 'google',
+): string | null {
   if (finishReason === null) return null;
+  if (kind === 'google') {
+    switch (finishReason) {
+      case 'completed':
+      case 'tool_calls':
+        return 'STOP';
+      case 'truncated':
+        return 'MAX_TOKENS';
+      case 'filtered':
+        return 'SAFETY';
+      default:
+        return 'OTHER';
+    }
+  }
+  if (kind === 'anthropic') {
+    switch (finishReason) {
+      case 'completed':
+        return 'end_turn';
+      case 'tool_calls':
+        return 'tool_use';
+      case 'truncated':
+        return 'max_tokens';
+      case 'filtered':
+        return 'refusal';
+      case 'paused':
+        return 'pause_turn';
+      default:
+        return 'other';
+    }
+  }
+  if (finishReason === 'filtered') return 'content_filter';
   if (finishReason === 'completed') return 'stop';
   return finishReason;
 }
 
-
-export function coreRequesterFromA(
-  initial: InitializedLlmRequester,
-  requester: LlmRequester,
-): InitializedLlmRequester {
-  return {
-    [requesterContents]: contentsOf(initial),
-    with: ((part: LlmRequestPart) => {
-      const merged = mergeFields(contentsOf(initial), contentsOf(part)) as LlmRequestPart;
-      return coreRequesterFromA(createRequester().with(merged as never) as InitializedLlmRequester, requester);
-    }) as InitializedLlmRequester['with'],
-    request: (rest) => initial.with(rest).request({}),
-    generate: (rest, control) =>
-      runLlmRequest(initial.with(rest).request({}), control, (request, settleControl) =>
-        runLegacyRequester(request, requester, settleControl),
-      ),
-  };
-}
-
-async function runLegacyRequester(
-  request: ReturnType<InitializedLlmRequester['request']>,
-  requester: LlmRequester,
-  control: LlmSettleControl,
-): Promise<LlmOutcome> {
-  const endpoint = await resolveEndpoint(request.endpoint);
-  const options = request.protocol.options as { readonly extras?: unknown } | undefined;
-  const config: LlmRequestConfig = {
-    model: {
-      provider: request.model.spec.provider,
-      model: request.model.spec.name,
-      capability: legacyCapability(request.model.spec),
-      maxContextSize: request.model.spec.maxContextSize,
-      maxInputSize: request.model.spec.maxInputSize,
-      baseUrl: endpoint.baseUrl,
-      defaultHeaders: endpoint.headers,
-      apiKey: endpoint.apiKey,
-    },
-    systemPrompt: request.profile?.systemPrompt,
-    tools: request.profile?.tools?.filter((tool) => tool.deferred !== true),
-    cacheKey: request.model.cacheKey,
-    thinking: request.model.thinking,
-    responseFormat: request.model.responseFormat,
-    maxCompletionTokens:
-      request.model.maxOutputTokens === 'none' ? 0 : request.model.maxOutputTokens,
-    maxContextTokens: request.model.spec.maxContextSize,
-    extraParams:
-      options?.extras === undefined
-        ? undefined
-        : ({ openai: options.extras } as LlmRequestConfig['extraParams']),
-    stream: request.protocol.stream,
-  };
-  const content: LlmRequestContent = {
-    messages: request.content.messages,
-    usedContextTokens: request.content.usedTokens,
-  };
-  let requestStartedAt = Date.now();
-  let requestSentAt: number | undefined;
-  let firstChunkAt: number | undefined;
-  let serverDecodeMs = 0;
-  let clientConsumeMs = 0;
-  let lastResumeAt = 0;
-  let decodeEluStart: EventLoopUtilization | undefined;
-  let decodeEluEnd: EventLoopUtilization | undefined;
-  let headers: Record<string, string> | undefined;
-  let requestId: string | undefined;
-  let usage: Parameters<typeof mergeUsagePatch>[0];
-  let finish: FinishInfo | undefined;
-  let messageId: string | undefined;
-  let failure: { readonly error: import('#human/llm/response').LlmErrorMessage; readonly rawError?: unknown } | undefined;
-  const failed = (
-    current: { error: import('#human/llm/response').LlmErrorMessage; rawError?: unknown },
-  ): LlmOutcome => ({
-    type: 'failed',
-    ...current,
-    message: accumulator.finish(),
-    usage,
-    headers,
-    finish,
-    messageId,
-    requestId,
-    timing:
-      firstChunkAt === undefined
-        ? undefined
-        : buildStreamTiming(
-            requestStartedAt,
-            requestSentAt,
-            firstChunkAt,
-            Date.now(),
-            finalizeDecodeStats(decodeEluEnd, { serverDecodeMs, clientConsumeMs }),
-          ) as LlmTiming,
-    diagnostics:
-      errorDiagnostics(current.rawError) ??
-      request.protocol.base.diagnoseError?.({
-        error: current.error,
-        rawError: current.rawError,
-        headers,
-      }),
-  });
-  const accumulator = createMessageAccumulator();
-  try {
-    await requester.generate(config, content, {
-      signal: control.signal,
-      onEvent: (event) => {
-        switch (event.type) {
-          case 'llm.sent':
-            if (requestSentAt !== undefined) requestStartedAt = Date.now();
-            requestSentAt = Date.now();
-            control.onEvent?.(event);
-            return;
-          case 'llm.streaming.headers':
-            headers = event.headers;
-            requestId = request.protocol.base.requestId?.(event.headers);
-            control.onEvent?.(event);
-            return;
-          case 'llm.streaming.part': {
-            const arrivedAt = Date.now();
-            if (firstChunkAt === undefined) {
-              firstChunkAt = arrivedAt;
-              decodeEluStart = performance.eventLoopUtilization();
-            } else {
-              serverDecodeMs += arrivedAt - lastResumeAt;
-            }
-            const accumulated = accumulator.push(event.part);
-            const part = event.part.type === 'think' && accumulated.part.type === 'think'
-              ? { ...event.part, hidden: accumulated.part.hidden }
-              : event.part;
-            control.onEvent?.({ ...event, part, block: accumulated.block });
-            lastResumeAt = Date.now();
-            clientConsumeMs += lastResumeAt - arrivedAt;
-            return;
-          }
-          case 'llm.streaming.usage':
-            usage = mergeUsagePatch(usage, event.usage);
-            return;
-          case 'llm.streaming.finish':
-            finish = event.finish;
-            return;
-          case 'llm.streaming.message_id':
-            messageId = event.messageId;
-            return;
-          case 'llm.failed.syntax':
-          case 'llm.failed.remote':
-            failure = { error: event.error, rawError: 'rawError' in event ? event.rawError : undefined };
-            return;
-          case 'llm.request.retrying':
-            return;
-          case 'llm.done':
-            return;
-        }
-      },
-    });
-  } catch (error) {
-    if (control.signal.aborted || isAbortError(error)) {
-      return { type: 'aborted', message: usableOutputOf(accumulator.finish()), reason: error };
-    }
-    const raw = unwrapErrorCause(error);
-    const classified = llmMessageFromError(raw);
-    const normalized =
-      classified?.kind === 'status' && isImageFormatError(raw)
-        ? { ...classified, kind: 'image_format' as const }
-        : classified?.kind === 'status' && isRecoverableRequestStructureError(raw)
-          ? { ...classified, kind: 'request_structure' as const }
-          : classified;
-    return failed({ error: normalized ?? toLlmErrorMessage(raw), rawError: error });
-  }
-  if (failure !== undefined) {
-    return failed(failure);
-  }
-  const message = accumulator.finish();
-  const empty = emptyResponseError(message, config.model, finish ?? NO_FINISH);
-  if (empty !== null) return failed({ error: empty });
-  const streamEndedAt = Date.now();
-  if (firstChunkAt !== undefined) {
-    serverDecodeMs += streamEndedAt - lastResumeAt;
-    if (decodeEluStart !== undefined) decodeEluEnd = performance.eventLoopUtilization(decodeEluStart);
-  }
-  return {
-    type: 'done',
-    message,
-    usage,
-    headers,
-    requestId,
-    finish,
-    messageId,
-    timing:
-      firstChunkAt === undefined
-        ? undefined
-        : buildStreamTiming(
-            requestStartedAt,
-            requestSentAt,
-            firstChunkAt,
-            streamEndedAt,
-            finalizeDecodeStats(decodeEluEnd, { serverDecodeMs, clientConsumeMs }),
-          ) as LlmTiming,
-  };
-}
-
-
-function legacyCapability(
-  spec: ReturnType<InitializedLlmRequester['request']>['model']['spec'],
-): LlmRequestConfig['model']['capability'] {
-  const capability = spec.capability;
-  if (capability === undefined) return UNKNOWN_CAPABILITY;
-  return {
-    image_in: capability.image_in === true,
-    video_in: capability.video_in === true,
-    audio_in: capability.audio_in === true,
-    thinking: capability.thinking === true,
-    tool_use: capability.tool_use ?? true,
-    dynamically_loaded_tools: capability.dynamically_loaded_tools === true,
-  };
-}
-
-
-export interface ModelEventRequester {
-  readonly model: Model;
-  request(
-    input: ModelRequestInput,
-    signal?: AbortSignal,
-    params?: ModelRequestParams,
-  ): AsyncIterable<ModelRequestEvent>;
-}
-
-export function aRequesterFromModelEvents(requester: ModelEventRequester): LlmRequester {
-  return {
-    async generate(config, content, control) {
-      const input: ModelRequestInput = {
-        systemPrompt: config.systemPrompt ?? '',
-        tools: config.tools ?? [],
-        messages: content.messages,
-        responseFormat: config.responseFormat,
-      };
-      const params: ModelRequestParams = {
-        cacheKey: config.cacheKey,
-        sampling: samplingFromExtraParams(config.extraParams),
-        thinkingEffort: config.thinking?.effort,
-        thinkingKeep: config.thinking?.keep,
-        maxCompletionTokens: config.maxCompletionTokens,
-        usedContextTokens: content.usedContextTokens,
-        maxContextTokens: config.maxContextTokens,
-        stream: config.stream,
-        onRequestId: (requestId) => {
-          control.onEvent?.({
-            type: 'llm.streaming.headers',
-            headers:
-              requestId === undefined
-                ? {}
-                : { 'x-request-id': requestId, 'x-trace-id': requestId },
-          });
-        },
-      };
-      let sawPart = false;
-      for await (const event of requester.request(input, control.signal, params)) {
-        switch (event.type) {
-          case 'part':
-            sawPart = true;
-            control.onEvent?.({ type: 'llm.streaming.part', part: event.part });
-            break;
-          case 'usage':
-            control.onEvent?.({
-              type: 'llm.streaming.usage',
-              usage: event.usage,
-            });
-            break;
-          case 'finish': {
-            if (!sawPart) {
-              for (const part of partsFromGeneratedMessage(event.message)) {
-                control.onEvent?.({ type: 'llm.streaming.part', part });
-              }
-            }
-            if (event.requestId !== undefined) {
-              control.onEvent?.({
-                type: 'llm.streaming.headers',
-                headers: { 'x-request-id': event.requestId, 'x-trace-id': event.requestId },
-              });
-            }
-            control.onEvent?.({
-              type: 'llm.streaming.finish',
-              finish: {
-                finishReason: event.providerFinishReason ?? null,
-                rawFinishReason: event.rawFinishReason ?? null,
-              },
-            });
-            if (event.id !== undefined) {
-              control.onEvent?.({ type: 'llm.streaming.message_id', messageId: event.id });
-            }
-            break;
-          }
-          case 'timing':
-            break;
-        }
-      }
-      control.onEvent?.({ type: 'llm.done' });
-    },
-  };
-}
-
-
-interface StreamDecodeStats {
-  readonly serverDecodeMs: number;
-  readonly clientConsumeMs: number;
-  readonly clientBlockedMs?: number;
-}
-
-function finalizeDecodeStats(
-  elu: EventLoopUtilization | undefined,
-  raw: StreamDecodeStats,
-): StreamDecodeStats {
-  if (elu === undefined) return raw;
-  return {
-    serverDecodeMs: raw.serverDecodeMs,
-    clientConsumeMs: raw.clientConsumeMs,
-    clientBlockedMs: Math.max(0, Math.round(elu.active) - raw.clientConsumeMs),
-  };
-}
-
-type MutableModelRequestTiming = { -readonly [K in keyof ModelRequestTiming]: ModelRequestTiming[K] };
-
-export function buildStreamTiming(
-  requestStartedAt: number,
-  requestSentAt: number | undefined,
-  firstChunkAt: number,
-  streamEndedAt: number | undefined,
-  decodeStats: StreamDecodeStats | undefined,
-): ModelRequestTiming {
-  const outputEndedAt = streamEndedAt ?? Date.now();
-  const timing: MutableModelRequestTiming = {
-    firstTokenLatencyMs: Math.max(0, firstChunkAt - requestStartedAt),
-    streamDurationMs: Math.max(0, outputEndedAt - firstChunkAt),
-  };
-  if (requestSentAt !== undefined) {
-    const sentAt = Math.min(Math.max(requestSentAt, requestStartedAt), firstChunkAt);
-    timing.requestBuildMs = sentAt - requestStartedAt;
-    timing.serverFirstTokenMs = firstChunkAt - sentAt;
-  }
-  if (decodeStats !== undefined) {
-    timing.serverDecodeMs = Math.max(0, decodeStats.serverDecodeMs);
-    timing.clientConsumeMs = Math.max(0, decodeStats.clientConsumeMs);
-    if (decodeStats.clientBlockedMs !== undefined) {
-      timing.clientBlockedMs = Math.max(0, decodeStats.clientBlockedMs);
-    }
-  }
-  return timing;
+function replacer(_key: string, value: unknown): unknown {
+  return value === undefined ? null : value;
 }

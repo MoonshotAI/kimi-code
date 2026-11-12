@@ -330,8 +330,9 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           }, promptMetadataTextFromContentParts(parts, clientMetadata));
           const status = resolved.prompt.snapshot();
           const entry = {
-            message: { role: 'user' as const, content: parts },
-            meta: {
+            role: 'user' as const,
+            content: parts,
+            attributes: {
               promptId: attempt.id,
               origin: { kind: 'user', attachments: promptAttachments, clientMetadata } as PromptOrigin,
             },
@@ -530,15 +531,16 @@ function projectPromptList(loop: IAgentLoopService) {
   return {
     active: active === undefined ? null : projectPromptSnapshot(active),
     queued: snapshot.queue
-      .map((item) =>
-        projectPromptSnapshot({
-          id: item.meta?.promptId ?? '',
-          userMessageId: item.meta?.userMessageId ?? '',
-          createdAt: item.meta?.createdAt ?? '',
+      .map((item) => {
+        const { attributes: _attributes, ...coreMessage } = item;
+        return projectPromptSnapshot({
+          id: item.attributes?.promptId ?? '',
+          userMessageId: item.attributes?.userMessageId ?? '',
+          createdAt: item.attributes?.createdAt ?? '',
           state: 'pending',
-          message: { ...item.message, origin: item.meta?.origin as PromptOrigin | undefined },
-        }),
-      ),
+          message: { ...coreMessage, origin: item.attributes?.origin as PromptOrigin | undefined },
+        });
+      }),
   };
 }
 

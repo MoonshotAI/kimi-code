@@ -2,18 +2,40 @@ import { randomUUID } from 'node:crypto';
 
 import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { IInstantiationService } from '#/_base/di/instantiation';
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import { ILogService } from '#/_base/log/log';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
 import { abortError, isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
 import { toErrorMessage } from '#/_base/errors/errorMessage';
-import { AgentLoopRequestFactory } from './requester';
+import { parseBooleanEnv } from '#/_base/utils/env';
 import { AgentLoopRequestObserver } from './requestObservation';
-import { createAgentMediaPolicy } from './mediaPolicy';
-import type { LoopRequester } from './requesterContract';
+import { createAgentMediaPolicy, type AgentMediaPolicy, type AgentMediaPolicyFactory } from './mediaPolicy';
+import {
+  agentLLMRequestLogFields,
+  type CoreLoopRequester,
+  type CoreLoopRequesterOptions,
+  type LoopRequester,
+  type RequesterBinding,
+  type RequestConfigSnapshot,
+  type ResolvedRequestContext,
+} from './requesterContract';
+import { AgentLoopProjector } from './projector';
+import { createStructureRecovery, createStructureResolver } from './projectionPolicy';
+import { createToolSelectResolver } from './toolSelectPolicy';
+import { RequestMetadataTracker, requestMetadataHeaders } from './requestMetadata';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
+import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
+import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
+import { READ_MEDIA_FILE_TOOL_NAME } from '#/agent/tools/read-media-file/read-media-file';
+import { IModelCatalog } from '#/llm-adapter/model/catalog';
+import type { ModelOverrides } from '#/llm-adapter/model/model.types';
+import { resolveCompletionBudget } from '#/llm-adapter/model/completion-budget';
+import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
+import { getProviderDefinition } from '#/llm-adapter/provider/provider-definition';
+import { ISessionRequestAttributionService } from '#/session/requestAttribution/requestAttribution';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { credentialRecovery } from '@moonshot-ai/core/llm/policy/credentials';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { agentTaskInfo } from '#/agent/task/handler';
 import { IAgentTaskHistoryService } from '#/agent/task/taskService';
@@ -22,9 +44,16 @@ import { TaskStarted, TaskTerminated } from '#/agent/task/taskOps';
 import { TERMINAL_STATUSES } from '#/agent/task/types';
 import { IAgentTaskOutputService } from '#/agent/task/taskOutput';
 import { restoreTaskCompletions } from '#/agent/task/completionRestore';
-import { completionEntry as coreCompletionEntry, type ToolCompletionInput } from './core/tool/outcome';
+import { completionMessage as coreCompletionMessage, type ToolCompletionInput } from '@moonshot-ai/core/loop/tool/outcome';
 import { IConfigService } from '#/app/config/config';
-import { type ContentPart, type ToolDescription as Tool, type UserMessage } from '#human/llm/message';
+import {
+  createUserMessage,
+  type ContentPart,
+  type Message,
+  type SystemMessage,
+  type ToolDescription as Tool,
+  type UserMessage,
+} from '@moonshot-ai/core/llm/message';
 import { BugIndicatingError, ErrorCodes, Error2 } from '#/errors';
 import { OrderedHookSlot } from '#/hooks';
 import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
@@ -46,9 +75,22 @@ import {
   type ResolvedAgentProfile,
   type SystemPromptContext,
 } from '#/agent/profile/profile';
+import type {
+  LlmRequest as CoreLlmRequest,
+  LlmRequestModel,
+  ModelCapability as LlmModelCapability,
+  ThinkingEffort,
+} from '@moonshot-ai/core/llm/request';
 import type { ModelCapability } from '#/llm-adapter/contract/capability';
-import type { ModelRequestParams } from '#/llm-adapter/model/generate';
-import type { ThinkingEffort } from '#human/llm-requester/thinking';
+import {
+  contentsOf,
+  mergeFields,
+  type InitializedLlmRequestPart,
+  type LlmDimension,
+  type LlmRequestRest,
+} from '@moonshot-ai/core/llm/requester';
+import { createLlmRequesterExecution, type LlmPolicy, type LlmRunControl } from '@moonshot-ai/core/llm/policy/policy';
+import type { LlmOutcome } from '@moonshot-ai/core/llm/response';
 import { IProviderDiscoveryService } from '#/app/kosongConfig/discovery';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { IAgentInterruptionReminderService } from '#/agent/interruptionReminder/interruptionReminder';
@@ -76,7 +118,7 @@ import {
   type LoopErrorHandler,
   type LoopErrorHandlerRegistrationOptions,
   type LoopNotify,
-  type LoopNotifyEntry,
+  type LoopNotifyMessage,
   type LoopNotifyHandle,
   type LoopSnapshot,
   type LoopSubmitResult,
@@ -87,17 +129,19 @@ import {
   type SteerResult,
   type TurnResult,
 } from './loop';
-import { createUserEntry, type HistoryMessage, type UserEntry } from '#human/agent/turn';
 import { TurnCancel, turnKey } from './turnOps';
 import { EMPTY_LOOP_PROMPT, historyEntryFromContext } from './history';
 import {
   createLoop,
   createMaxStepsHook,
+  type HookRegistration,
   type Loop,
   type LoopEmitted,
+  type LoopLlmRequester,
+  type LoopHooks,
   type MessageAppendingEvent,
   type TurnStartingEvent,
-} from './core/index';
+} from '@moonshot-ai/core/loop/index';
 import { LoopJournal, type LoopJournalSnapshot } from './journal';
 import { AgentPromptProjection } from './promptProjection';
 import { AgentTurnProjection, loopLastRequestIdKey } from './turnProjection';
@@ -106,6 +150,16 @@ import { AgentLoopProfileAdapter } from './profileAdapter';
 
 export type LoopInterruptReason = 'aborted' | 'max_steps' | 'error' | 'steered';
 
+const KIMI_CODE_INFINITE_RETRY_ENV = 'KIMI_CODE_INFINITE_RETRY';
+
+type CoreRequestRest = LlmRequestRest<LlmDimension>;
+type Fields = Readonly<Record<string, unknown>>;
+
+interface PreparedCoreRequest {
+  readonly resolved: ResolvedRequestContext;
+  readonly request: CoreLlmRequest;
+}
+
 export { loopLastRequestIdKey } from './turnProjection';
 export const loopDisposingKey = defineState<boolean>('loop.disposing', () => false);
 
@@ -113,7 +167,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   declare readonly _serviceBrand: undefined;
 
   readonly requester: LoopRequester;
-  private readonly requestFactory: AgentLoopRequestFactory;
+  private readonly requesterExecution = createLlmRequesterExecution();
+  private readonly observer: AgentLoopRequestObserver;
+  private readonly projector: AgentLoopProjector;
+  private readonly requestMetadata: RequestMetadataTracker;
+  private readonly mediaPolicyFactory: AgentMediaPolicyFactory;
   readonly hooks: IAgentLoopService['hooks'] = {
     onWillBeginStep: new OrderedHookSlot(),
     onDidFinishStep: new OrderedHookSlot(),
@@ -121,9 +179,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   };
 
   private readonly errorHandlers: LoopErrorHandler[] = [];
-  private readonly pendingSubmissions: UserEntry[] = [];
-  private readonly pendingReminders: HistoryMessage[] = [];
-  private readonly pendingNotifications: UserEntry[] = [];
+  private readonly pendingSubmissions: UserMessage[] = [];
+  private readonly pendingReminders: Message[] = [];
+  private readonly pendingNotifications: UserMessage[] = [];
   private readonly pendingSendNowNotifications = new Set<string>();
   private readonly settleWaiters: Array<() => void> = [];
   private quiescenceDepth = 0;
@@ -132,7 +190,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private initialized = false;
   private startPromise: Promise<void> | undefined;
   private closePromise: Promise<void> | undefined;
-  private readonly batchStartingHooks = new Map<string, import('./core/index').HookRegistration>();
+  private readonly batchStartingHooks = new Map<string, HookRegistration>();
   private readonly journal: LoopJournal;
   private readonly prompts: AgentPromptProjection;
   private readonly turns: AgentTurnProjection;
@@ -153,6 +211,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     @IAgentStateService private readonly states: IAgentStateService,
     @IWireService private readonly wire: IWireService,
     @IInstantiationService private readonly instantiation: IInstantiationService,
+    @ISessionTokenCountingService private readonly tokenCounting: ISessionTokenCountingService,
+    @IModelCatalog private readonly modelCatalog: IModelCatalog,
+    @IProtocolAdapterRegistry private readonly protocolRegistry: IProtocolAdapterRegistry,
+    @IBootstrapService private readonly bootstrap: IBootstrapService,
+    @ISessionRequestAttributionService attribution: ISessionRequestAttributionService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @ISessionAgentProfileCatalog private readonly catalog: ISessionAgentProfileCatalog,
     @IProviderDiscoveryService private readonly discovery: IProviderDiscoveryService,
@@ -165,24 +228,24 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     super();
     const space = this.scopeContext.agentContext.space;
     if (space instanceof AgentSpaceImpl) this._register(space._setHistoryProvider(() => this.history()));
-    const observer = instantiation.createInstance(AgentLoopRequestObserver);
-    this.requestFactory = instantiation.createInstance(
-      new SyncDescriptor(AgentLoopRequestFactory, [observer, () => this]),
-    ) as AgentLoopRequestFactory;
-    const requester = this.requestFactory;
-    requester.registerMediaPolicy((model, request) => createAgentMediaPolicy(mediaResolver, model, request));
-    requester.bindHistory(() => this.history());
+    this.observer = instantiation.createInstance(AgentLoopRequestObserver);
+    this.projector = new AgentLoopProjector((anomalies) => this.observer.reportProjectionRepairs(anomalies));
+    this.requestMetadata = new RequestMetadataTracker(scopeContext, dispatcher, attribution);
+    this.mediaPolicyFactory = (model, request) => createAgentMediaPolicy(mediaResolver, model, request);
     this.requester = {
-      createTurnExecution: (input) => requester.createTurnExecution(input),
+      coreRequester: (options) => this.coreRequester(options),
       prepareOperation: async (options, signal) => {
         if (this.loop === undefined) throw new BugIndicatingError('Agent loop is not started');
-        const config = requester.requestConfigSnapshot();
+        const config = this.requestConfigSnapshot();
         const baseline = options.tools ?? this.loop.state.profile.tools;
         const visible = options.tools === undefined && baseline !== undefined
-          ? requester.operationTools(baseline, config.resolved.modelCapabilities)
+          ? this.operationTools(baseline, config.resolved.model.capability)
           : baseline;
-        const tools = await requester.prepareTools(signal, config.resolved.modelCapabilities, visible);
-        return this.loop.operation((runtime) => requester.coreRequester({ ...options, runtime, tools, config }));
+        const tools = await this.prepareTools(signal, config.resolved.model.capability, visible);
+        return this.loop.operation((runtime) => {
+          const requester = this.coreRequester({ ...options, runtime, tools, config });
+          return requester.snapshot?.() ?? requester;
+        });
       },
     };
     this.journal = new LoopJournal(wire, scopeContext.agentId, dispatcher);
@@ -249,7 +312,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   baselineTools(): readonly Tool[] {
-    return this.loop?.state.profile.tools ?? this.requestFactory.baselineTools();
+    return this.loop?.state.profile.tools ?? this.toolSelect.initialTools();
+  }
+
+  private get toolSelect(): IAgentToolSelectService {
+    return this.instantiation.invokeFunction((accessor) => accessor.get(IAgentToolSelectService));
   }
 
   data(): ProfileData {
@@ -276,7 +343,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return this.profileAdapter.resolveModelContext();
   }
 
-  resolveRequestParams(): ModelRequestParams {
+  resolveRequestParams(): InitializedLlmRequestPart {
     return this.profileAdapter.resolveRequestParams();
   }
 
@@ -365,7 +432,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return this.loop?.historyRevision ?? 0;
   }
 
-  replaceHistory(messages: readonly HistoryMessage[], reason?: string, onAccepted?: () => void): boolean {
+  replaceHistory(messages: readonly Message[], reason?: string, onAccepted?: () => void): boolean {
     const previous = this.history();
     const ack = this.loop?.setContext([...messages], reason);
     if (ack?.type !== 'context.settled') return false;
@@ -380,7 +447,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   private async initializeLoop(
-    seededMessages?: readonly HistoryMessage[],
+    seededMessages?: readonly Message[],
     initialTools?: readonly Tool[],
   ): Promise<void> {
     if (this.initialized) return;
@@ -389,7 +456,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       await this.wire.drainPersisted().catch(() => undefined);
       const snapshot = this.journal.snapshot();
       this.profileAdapter.restore(snapshot);
-      const tools = initialTools === undefined ? this.requestFactory.baselineTools() : [...initialTools];
+      const tools = initialTools === undefined ? this.toolSelect.initialTools() : [...initialTools];
       const taskHistory = this.instantiation.invokeFunction((accessor) => accessor.get(IAgentTaskHistoryService));
       await taskHistory.reconcile();
       const completions = await restoreTaskCompletions({
@@ -409,37 +476,30 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private createLoopFromSnapshot(
     snapshot: LoopJournalSnapshot,
     tools: readonly Tool[],
-    completions: readonly UserEntry[],
-    seededMessages?: readonly HistoryMessage[],
+    completions: readonly UserMessage[],
+    seededMessages?: readonly Message[],
     minimumNextTurnId = 0,
     historyRevision?: number,
   ): void {
     this.initialized = true;
     const loop = createLoop({
-      completionEntry: (input: ToolCompletionInput) => {
+      completionMessage: (input: ToolCompletionInput) => {
         const handler = this.toolExecutor.handlerForCall(input.toolCall.id);
         if (handler?.snapshot().fields.task === undefined) {
-          return coreCompletionEntry(input.toolCall, input.outcome, input.result);
+          return coreCompletionMessage(input.toolCall, input.outcome, input.result);
         }
         return this.taskOutputs.createCompletion(agentTaskInfo(handler), input.toolCall.id);
       },
-      createTurnExecution: (input) => {
-        const execution = this.requester.createTurnExecution({
-          ...input,
-          onTrace: (trace) => {
-            this.turns.requestTrace = trace;
-          },
-          onOutcome: (outcome, source) => this.turns.recordOutcome(outcome, source),
-        });
-        this.turns.thinkingEffort = execution.thinkingEffort;
-        return execution;
-      },
       executor: this.toolExecutor.executor,
-      toolContext: () => ({
-        steerSignal: this.turns.steerSignal,
-        trace: this.turns.requestTrace,
-        remind: (message) => this.remind(historyEntryFromContext(message)),
-      }),
+      toolContext: () => {
+        const context = {
+          steerSignal: this.turns.steerSignal,
+          requestId: this.turns.requestTrace?.requestId,
+          trace: this.turns.requestTrace,
+          remind: (message: SystemMessage | UserMessage) => this.remind(historyEntryFromContext(message)),
+        };
+        return context;
+      },
       input: {
         ...snapshot.input,
         profile: {
@@ -467,6 +527,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         { point: 'step.stopping', hook: (event) => this.turns.stepStopping(event) },
       ],
     });
+    loop.setRequester(this.createLoopRequester(loop));
     this.loop = loop;
     loop.subscribe((event) => {
       const enriched = this.turns.enrich(event, this.toolExecutor);
@@ -482,6 +543,246 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     });
     this.drainPendingToLoop();
     this.maybeSettle();
+  }
+
+  private createLoopRequester(loop: Loop): LoopLlmRequester {
+    return loop.operation((runtime) => this.requester.coreRequester({
+      source: () => {
+        const turn = loop.state.turn;
+        if (turn === undefined) throw new BugIndicatingError('Turn request requires an active turn');
+        return { type: 'turn', turnId: turn.id, step: turn.step };
+      },
+      runtime,
+      dynamicTools: true,
+      onSnapshot: (config) => {
+        this.turns.thinkingEffort = config.resolved.thinkingLevel;
+      },
+      onTrace: (trace) => {
+        this.turns.requestTrace = trace;
+      },
+      onOutcome: (outcome, source) => this.turns.recordOutcome(outcome, source),
+    }));
+  }
+
+  private requestConfigSnapshot(): RequestConfigSnapshot {
+    return {
+      resolved: this.resolveModelContext(),
+      params: this.resolveRequestParams(),
+      systemPrompt: this.getSystemPrompt(),
+      maxCompletionTokensCap: this.config.get<ModelOverrides>('modelOverrides')?.maxCompletionTokens,
+    };
+  }
+
+  private operationTools(
+    baseline: readonly Tool[],
+    capabilities: LlmModelCapability | undefined,
+  ): readonly Tool[] {
+    const disclosure = this.toolSelect.enabled(capabilities);
+    const active = new Set(this.toolSelect.defaultTools(disclosure).map((tool) => tool.name));
+    return baseline.filter((tool) => active.has(tool.name));
+  }
+
+  private async prepareTools(
+    signal: AbortSignal,
+    capabilities: LlmModelCapability | undefined,
+    base?: readonly Tool[],
+  ): Promise<readonly Tool[]> {
+    await this.toolSelect.prepareForRequest(signal);
+    return this.toolsForCapabilities(capabilities, base);
+  }
+
+  private toolsForCapabilities(
+    capabilities: LlmModelCapability | undefined,
+    base?: readonly Tool[],
+  ): readonly Tool[] {
+    const disclosure = this.toolSelect.enabled(capabilities);
+    const tools = base ?? this.toolSelect.defaultTools(disclosure);
+    if (capabilities?.image_in === true || capabilities?.video_in === true) return tools;
+    return tools.filter((tool) => tool.name !== READ_MEDIA_FILE_TOOL_NAME);
+  }
+
+  private coreRequester(options: CoreLoopRequesterOptions): CoreLoopRequester {
+    return {
+      generate: (rest, control) => this.generateCoreRequest(options, rest, control),
+      snapshot: () => {
+        const config = options.config ?? this.requestConfigSnapshot();
+        const binding = options.binding ?? this.bindRequester(options, config);
+        options.onSnapshot?.(config);
+        return this.coreRequester({ ...options, config, binding });
+      },
+    };
+  }
+
+  private prepareCoreRequest(
+    options: CoreLoopRequesterOptions,
+    rest: CoreRequestRest,
+    source: ResolvedRequestContext['source'],
+    config: RequestConfigSnapshot,
+  ): PreparedCoreRequest {
+    const resolved = this.resolveRequest(options, rest, source, config);
+    const mediaPolicy = this.mediaPolicyFactory(resolved.model, resolved.request);
+    const hostPolicy = this.corePolicy(resolved, mediaPolicy);
+    const base = mergeFields(contentsOf(resolved.request) as Fields, {
+      profile: { systemPrompt: resolved.systemPrompt, tools: resolved.tools },
+      content: { messages: resolved.messages, usedTokens: resolved.usedContextTokens },
+    } as Fields);
+    const request = mergeFields(base, rest as Fields) as unknown as CoreLlmRequest;
+    return {
+      resolved,
+      request: {
+        ...request,
+        profile: { ...request.profile, tools: resolved.tools },
+        policy: mergeCorePolicies(hostPolicy, rest.policy),
+      },
+    };
+  }
+
+  private corePolicy(request: ResolvedRequestContext, mediaPolicy: AgentMediaPolicy): LlmPolicy {
+    return {
+      retry: {
+        maxAttemptsPerStep:
+          request.source.type === 'operation'
+            ? 1
+            : this.config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxAttemptsPerStep,
+        infiniteRetry: this.infiniteRetryEnabled,
+      },
+      recoveries: [
+        credentialRecovery,
+        createStructureRecovery(this.projector),
+        mediaPolicy.recovery,
+      ],
+      resolvers: [
+        createToolSelectResolver(this.toolSelect, request.dynamicTools),
+        mediaPolicy.toolResolver,
+        createStructureResolver(this.projector),
+        mediaPolicy.resolver,
+      ],
+    };
+  }
+
+  private async generateCoreRequest(
+    options: CoreLoopRequesterOptions,
+    rest: CoreRequestRest,
+    control: LlmRunControl,
+  ): Promise<LlmOutcome> {
+    const source = options.source();
+    const config = options.config ?? this.requestConfigSnapshot();
+    const observation = this.observer.start(source, config, options.onTrace);
+    try {
+      const prepared = this.prepareCoreRequest(options, rest, source, config);
+      const { resolved, request } = prepared;
+      observation.prepare(resolved);
+      const outcome = await resolved.request.with({
+        protocol: request.protocol,
+        endpoint: request.endpoint,
+        model: request.model,
+        content: request.content,
+        profile: request.profile,
+        policy: request.policy,
+      }).generate(
+        {},
+        {
+          signal: control.signal,
+          onAttempt: (attemptRequest, { appliedRecoveries }) => {
+            this.observer.recordAttempt(observation, attemptRequest, appliedRecoveries);
+          },
+          onEvent: (event) => {
+            this.observer.reportEvent(observation, event, this.infiniteRetryEnabled);
+            if (event.type === 'llm.ended' && event.outcome.type === 'done') {
+              options.onOutcome?.(event.outcome, source);
+            }
+            control.onEvent?.(event);
+          },
+        },
+      );
+      if (outcome.type === 'done') this.observer.completeRequest(observation, outcome);
+      else if (outcome.type === 'failed') this.observer.failRequest(observation, outcome.error, control.signal, outcome.requestId);
+      else observation.setRequestId(undefined);
+      return outcome;
+    } catch (error) {
+      this.observer.failRequest(observation, error, control.signal);
+      throw error;
+    }
+  }
+
+  private bindRequester(
+    options: CoreLoopRequesterOptions,
+    config: RequestConfigSnapshot,
+  ): RequesterBinding {
+    const resolved = config.resolved;
+    const model = this.modelCatalog.get(resolved.modelAlias);
+    const budget = resolveCompletionBudget({
+      maxOutputSize: options.maxOutputSize ?? resolved.maxOutputSize,
+      maxCompletionTokensCap: config.maxCompletionTokensCap,
+    });
+    const maxCompletionTokensCap = config.maxCompletionTokensCap;
+    const optedOut = maxCompletionTokensCap !== undefined && maxCompletionTokensCap <= 0;
+    const maxOutputTokens: LlmRequestModel['maxOutputTokens'] = optedOut
+      ? 'none'
+      : budget === undefined
+        ? undefined
+        : Math.max(1, budget);
+    const params: InitializedLlmRequestPart = {
+      ...config.params,
+      model: {
+        ...config.params.model,
+        spec: {
+          ...model.spec,
+          maxContextSize: resolved.model.maxContextSize,
+          maxInputSize: resolved.model.maxInputSize,
+        },
+        maxOutputTokens,
+      },
+    };
+    const provider = model.providerType === undefined
+      ? undefined
+      : getProviderDefinition(model.providerType, model.protocol);
+    return {
+      request: this.protocolRegistry.request(model, params, this.requesterExecution),
+      model,
+      requestMetadata: provider?.requestMetadata === true,
+    };
+  }
+
+  private resolveRequest(
+    options: CoreLoopRequesterOptions,
+    rest: CoreRequestRest,
+    source: ResolvedRequestContext['source'],
+    config: RequestConfigSnapshot,
+  ): ResolvedRequestContext {
+    const resolved = config.resolved;
+    const binding = options.binding ?? this.bindRequester(options, config);
+    const usedContextTokens =
+      rest.content?.usedTokens ??
+      (rest.content?.messages === undefined
+        ? this.tokenCounting.get(this.scopeContext.agentContext).size
+        : undefined);
+    const messages = rest.content?.messages ?? this.history().map(historyEntryFromContext);
+    const tools = rest.profile?.tools ?? options.tools;
+    return {
+      request: binding.requestMetadata
+        ? binding.request.with({
+            endpoint: { headers: requestMetadataHeaders(this.requestMetadata.resolve(source)) },
+          })
+        : binding.request,
+      model: binding.model,
+      modelAlias: resolved.modelAlias,
+      thinkingEffort: resolved.thinkingLevel,
+      systemPrompt: rest.profile?.systemPrompt ?? config.systemPrompt,
+      tools: tools === undefined ? undefined : [...tools],
+      messages: [...messages],
+      usedContextTokens,
+      contextRevision: options.runtime.historyRevision(),
+      promptCacheProbe: options.promptCacheProbe,
+      source,
+      logFields: agentLLMRequestLogFields(source),
+      dynamicTools: options.dynamicTools ?? false,
+      runtime: options.runtime,
+    };
+  }
+
+  private get infiniteRetryEnabled(): boolean {
+    return parseBooleanEnv(this.bootstrap.getEnv(KIMI_CODE_INFINITE_RETRY_ENV)) === true;
   }
 
   private projectTaskEvent(event: LoopEmitted): void {
@@ -508,7 +809,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     void this.dispatcher.dispatch(new TaskTerminated({ agentId: this.scopeContext.agentId, info }));
   }
 
-  async initializeHistory(messages: readonly HistoryMessage[]): Promise<void> {
+  async initializeHistory(messages: readonly Message[]): Promise<void> {
     if (this.history().length > 0 || this.hasPendingRequests()) {
       throw new BugIndicatingError('Loop history initialization requires an empty quiescent loop');
     }
@@ -518,12 +819,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     }
   }
 
-  async resetLoop(seededMessages?: readonly HistoryMessage[]): Promise<void> {
+  async resetLoop(seededMessages?: readonly Message[]): Promise<void> {
     if (this.disposing) return;
     const loop = this.loop;
     if (loop === undefined) {
       this.initialized = false;
       await this.initializeLoop(seededMessages);
+      this.requesterExecution.recoveries.clear();
       return;
     }
     if (loop.state.turn !== undefined || loop.state.resetting) {
@@ -565,6 +867,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         };
         return input.input;
       });
+      this.requesterExecution.recoveries.clear();
+      loop.setRequester(this.createLoopRequester(loop));
       this.turns.invalidateHistory();
       this.drainPendingToLoop();
       this.maybeSettle();
@@ -599,8 +903,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   submit(payload: PromptPayload): Promise<PromptLaunchResult | undefined>;
-  submit(input: UserEntry): LoopSubmitResult;
-  submit(input: UserEntry | PromptPayload): LoopSubmitResult | Promise<PromptLaunchResult | undefined> {
+  submit(input: UserMessage): LoopSubmitResult;
+  submit(input: UserMessage | PromptPayload): LoopSubmitResult | Promise<PromptLaunchResult | undefined> {
     if ('input' in input) return this.submitClient(input);
     const { id, entry } = this.admit(input);
     if (this.loop !== undefined && this.quiescenceDepth === 0) this.loop.submit(entry);
@@ -613,16 +917,17 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     await this.updatePromptMetadata(promptMetadataTextFromContentParts(payload.input));
     const status = this.snapshot();
     const { id } = this.submit({
-      message: { role: 'user', content: [...payload.input] },
-      meta: { promptId: payload.promptId, origin: { kind: 'user' } },
+      role: 'user',
+      content: [...payload.input],
+      attributes: { promptId: payload.promptId, origin: { kind: 'user' } },
     });
     if (status.state === 'running' || status.paused || status.queue.length > 0) return undefined;
     return this.launchResult(id);
   }
 
-  async notifyClient(input: LoopNotifyEntry): Promise<SteerResult> {
-    this.telemetry.track2('input_steer', { parts: input.message.content.length });
-    await this.updatePromptMetadata(promptMetadataTextFromContentParts(input.message.content));
+  async notifyClient(input: LoopNotifyMessage): Promise<SteerResult> {
+    this.telemetry.track2('input_steer', { parts: input.content.length });
+    await this.updatePromptMetadata(promptMetadataTextFromContentParts(input.content));
     const status = this.snapshot();
     const steerable = status.state === 'running';
     const queued = status.state === 'running' || status.paused || status.queue.length > 0;
@@ -665,7 +970,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return turn.id === undefined ? undefined : { turn_id: turn.id };
   }
 
-  private admit(input: UserEntry): { readonly id: string; readonly entry: UserEntry } {
+  private admit(input: UserMessage): { readonly id: string; readonly entry: UserMessage } {
     if (this.disposing) throw abortError('Agent loop disposed');
     this.runGate.begin();
     const snapshot = this.snapshot();
@@ -678,16 +983,16 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const loop = this.loop;
     if (loop?.state.turn === undefined) throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'no active prompt to steer into');
     const activeTurnId = loop.state.turn.id;
-    const queued = new Map(loop.state.inbox.normal.map((entry) => [entry.meta?.promptId, entry] as const));
+    const queued = new Map(loop.state.inbox.normal.map((entry) => [entry.attributes?.promptId, entry] as const));
     const ids = new Set(promptIds);
     if (ids.size !== promptIds.length || ![...ids].every((id) => queued.has(id))) {
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are not pending');
     }
     for (const id of ids) {
       const entry = queued.get(id);
-      if (entry !== undefined) await this.materializeDaemonRefs(entry.message);
+      if (entry !== undefined) await this.materializeDaemonRefs(entry);
     }
-    const pending = new Set(loop.state.inbox.normal.map((entry) => entry.meta?.promptId));
+    const pending = new Set(loop.state.inbox.normal.map((entry) => entry.attributes?.promptId));
     if (loop.state.turn?.id !== activeTurnId || ![...ids].every((id) => pending.has(id))) {
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are no longer pending');
     }
@@ -698,10 +1003,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return this.prompts.handle(id);
   }
 
-  notify(input: LoopNotifyEntry): LoopSubmitResult;
+  notify(input: LoopNotifyMessage): LoopSubmitResult;
   notify(note?: LoopNotify): LoopNotifyHandle;
-  notify(note: LoopNotify | LoopNotifyEntry = {}): LoopSubmitResult | LoopNotifyHandle {
-    if ('meta' in note) {
+  notify(note: LoopNotify | LoopNotifyMessage = {}): LoopSubmitResult | LoopNotifyHandle {
+    if ('role' in note) {
       const { id, entry } = this.admit(note);
       this.sendNotification(entry);
       this.maybeSettle();
@@ -709,7 +1014,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     }
     if (this.disposing) throw abortError('Agent loop disposed');
     const id = note.message?.id ?? newMessageId();
-    const entry = createUserEntry(machineUserMessage(note.message), {
+    const entry = createUserMessage(machineUserMessage(note.message).content, {
       promptId: id,
       origin: note.message?.origin,
       bypassMaxSteps: note.bypassMaxSteps === true,
@@ -727,11 +1032,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     };
   }
 
-  sendNow(input: LoopNotifyEntry): LoopSubmitResult;
+  sendNow(input: LoopNotifyMessage): LoopSubmitResult;
   sendNow(promptIds: readonly string[]): Promise<void>;
-  sendNow(input: LoopNotifyEntry | readonly string[]): LoopSubmitResult | Promise<void> {
+  sendNow(input: LoopNotifyMessage | readonly string[]): LoopSubmitResult | Promise<void> {
     if (Array.isArray(input)) return this.sendNowEntries(input);
-    const entry = input as LoopNotifyEntry;
+    const entry = input as LoopNotifyMessage;
     const { id, entry: admitted } = this.admit(entry);
     this.sendNotification(admitted, true);
     this.maybeSettle();
@@ -744,28 +1049,28 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const loop = this.loop;
     if (loop?.state.turn === undefined) throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'no active prompt to send now');
     const activeTurnId = loop.state.turn.id;
-    const normal = new Map(loop.state.inbox.normal.map((entry) => [entry.meta?.promptId, entry] as const));
-    const notify = new Set(loop.state.inbox.notify.map((entry) => entry.meta?.promptId));
+    const normal = new Map(loop.state.inbox.normal.map((entry) => [entry.attributes?.promptId, entry] as const));
+    const notify = new Set(loop.state.inbox.notify.map((entry) => entry.attributes?.promptId));
     const ids = new Set(promptIds);
     if (ids.size !== promptIds.length || ![...ids].every((id) => normal.has(id) || notify.has(id))) {
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are not pending');
     }
     for (const id of ids) {
       const entry = normal.get(id);
-      if (entry !== undefined) await this.materializeDaemonRefs(entry.message);
+      if (entry !== undefined) await this.materializeDaemonRefs(entry);
     }
-    const pendingNormal = new Set(loop.state.inbox.normal.map((entry) => entry.meta?.promptId));
-    const pendingNotify = new Set(loop.state.inbox.notify.map((entry) => entry.meta?.promptId));
+    const pendingNormal = new Set(loop.state.inbox.normal.map((entry) => entry.attributes?.promptId));
+    const pendingNotify = new Set(loop.state.inbox.notify.map((entry) => entry.attributes?.promptId));
     if (loop.state.turn?.id !== activeTurnId || ![...ids].every((id) => pendingNormal.has(id) || pendingNotify.has(id))) {
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are no longer pending');
     }
     loop.sendNow(promptIds);
   }
 
-  remind(...entries: readonly HistoryMessage[]): void {
+  remind(...messages: readonly Message[]): void {
     if (this.disposing) throw abortError('Agent loop disposed');
-    if (this.loop !== undefined && this.quiescenceDepth === 0) this.loop.remind(...entries);
-    else this.pendingReminders.push(...entries);
+    if (this.loop !== undefined && this.quiescenceDepth === 0) this.loop.remind(...messages);
+    else this.pendingReminders.push(...messages);
   }
 
   flushReminders(): void {
@@ -775,21 +1080,21 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     loop.flushReminders();
   }
 
-  private sendNotification(entry: UserEntry, sendNow = false): void {
+  private sendNotification(entry: UserMessage, sendNow = false): void {
     if (this.loop !== undefined && this.quiescenceDepth === 0) {
       if (sendNow) this.loop.sendNow(entry);
       else this.loop.notify(entry);
       return;
     }
     this.pendingNotifications.push(entry);
-    const id = entry.meta?.promptId;
+    const id = entry.attributes?.promptId;
     if (sendNow && id !== undefined) this.pendingSendNowNotifications.add(id);
   }
 
   private dropNotification(id: string): void {
     if (this.notifications.isMaterialized(id) || this.notifications.isDropped(id)) return;
     for (let index = this.pendingNotifications.length - 1; index >= 0; index -= 1) {
-      if (this.pendingNotifications[index]!.meta?.promptId === id) this.pendingNotifications.splice(index, 1);
+      if (this.pendingNotifications[index]!.attributes?.promptId === id) this.pendingNotifications.splice(index, 1);
     }
     this.pendingSendNowNotifications.delete(id);
     this.loop?.cancel(id);
@@ -801,10 +1106,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const loop = this.loop;
     const machineQueue = loop?.state.inbox.normal ?? [];
     const inFlight = this.prompts.pendingEntries().filter(
-      (entry) => !machineQueue.some((item) => item.meta?.promptId === entry.meta?.promptId),
+      (entry) => !machineQueue.some((item) => item.attributes?.promptId === entry.attributes?.promptId),
     );
     const parked = this.pendingSubmissions.filter(
-      (entry) => !machineQueue.some((item) => item.meta?.promptId === entry.meta?.promptId),
+      (entry) => !machineQueue.some((item) => item.attributes?.promptId === entry.attributes?.promptId),
     );
     const queue = [...machineQueue, ...inFlight, ...parked];
     const notificationCount =
@@ -825,9 +1130,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (pending === undefined) return undefined;
     const promptMessage: ContextMessage = {
       role: 'user',
-      content: [...pending.entry.message.content],
-      id: pending.entry.meta?.promptId,
-      origin: pending.entry.meta?.origin as PromptOrigin | undefined,
+      content: [...pending.entry.content],
+      id: pending.entry.attributes?.promptId,
+      origin: pending.entry.attributes?.origin as PromptOrigin | undefined,
     };
     const ctx: PromptSubmitContext = { promptMessage, isSteer: false, hookParts: [], block: false };
     try {
@@ -835,7 +1140,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       if (ctx.block) return { type: 'blocked' as const, cause: { by: 'prompt', reason: 'blocked' } };
       await this.materializeDaemonRefs(promptMessage);
       pending.message = {
-        role: 'user',
+        ...pending.entry,
         content: [
           ...ctx.hookParts,
           ...gateImageFormatParts(promptMessage.content, this.getModelProviderType()),
@@ -851,17 +1156,14 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private messageAppending(event: MessageAppendingEvent, _signal: AbortSignal) {
     if (event.item.kind === 'normal') {
       const pending = this.prompts.pending(event.turnId);
-      if (pending !== undefined) return { entry: { ...event.item.entry, message: pending.message } };
+      if (pending !== undefined) return { message: { ...event.item.message, content: pending.message.content } };
       return undefined;
     }
     if (event.item.kind === 'notify') {
       return {
-        entry: {
-          ...event.item.entry,
-          message: {
-            ...event.item.entry.message,
-            content: gateImageFormatParts(event.item.entry.message.content, this.getModelProviderType()),
-          },
+        message: {
+          ...event.item.message,
+          content: gateImageFormatParts(event.item.message.content, this.getModelProviderType()),
         },
       };
     }
@@ -883,7 +1185,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, `prompt ${target.promptId} not found`);
       }
       for (let index = this.pendingSubmissions.length - 1; index >= 0; index -= 1) {
-        if (this.pendingSubmissions[index]!.meta?.promptId === target.promptId) this.pendingSubmissions.splice(index, 1);
+        if (this.pendingSubmissions[index]!.attributes?.promptId === target.promptId) this.pendingSubmissions.splice(index, 1);
       }
       this.loop?.cancel(target.promptId);
       this.prompts.cancel(target.promptId);
@@ -913,7 +1215,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.loop?.abortTool(toolCallId, reason);
   }
 
-  registerToolBatchStarting(hook: import('./core/index').LoopHooks['tool.batch-starting']): IDisposable {
+  registerToolBatchStarting(hook: LoopHooks['tool.batch-starting']): IDisposable {
     const registration = { point: 'tool.batch-starting' as const, id: randomUUID(), hook };
     this.batchStartingHooks.set(registration.id, registration);
     this.loop?.hooks.add(registration);
@@ -950,15 +1252,15 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private drainPendingToLoop(): void {
     const loop = this.loop;
     if (loop === undefined) return;
-    const normal = new Set(loop.state.inbox.normal.map((item) => item.meta?.promptId));
+    const normal = new Set(loop.state.inbox.normal.map((item) => item.attributes?.promptId));
     for (const entry of this.pendingSubmissions.splice(0)) {
-      const id = entry.meta?.promptId;
+      const id = entry.attributes?.promptId;
       if (id === undefined || normal.has(id)) continue;
       loop.submit(entry);
     }
-    const notify = new Set(loop.state.inbox.notify.map((item) => item.meta?.promptId));
+    const notify = new Set(loop.state.inbox.notify.map((item) => item.attributes?.promptId));
     for (const entry of this.pendingNotifications.splice(0)) {
-      const id = entry.meta?.promptId;
+      const id = entry.attributes?.promptId;
       const sendNow = id !== undefined && this.pendingSendNowNotifications.delete(id);
       if (id === undefined || notify.has(id)) continue;
       if (sendNow) loop.sendNow(entry);
@@ -991,9 +1293,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     }
     this.turns.abort(activeTurnId, cancellation);
     const hasUserContinuation =
-      this.pendingSubmissions.some((entry) => entry.meta?.origin?.kind === 'user') ||
-      loop.state.inbox.normal.some((entry) => entry.meta?.origin?.kind === 'user') ||
-      loop.state.inbox.notify.some((entry) => entry.meta?.origin?.kind === 'user');
+      this.pendingSubmissions.some((entry) => entry.attributes?.origin?.kind === 'user') ||
+      loop.state.inbox.normal.some((entry) => entry.attributes?.origin?.kind === 'user') ||
+      loop.state.inbox.notify.some((entry) => entry.attributes?.origin?.kind === 'user');
     loop.abort(cancellation, { continue: !isUserCancellation(cancellation) || hasUserContinuation });
     return true;
   }
@@ -1001,8 +1303,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private cancelQueuedSkillActivations(cancellation: unknown): void {
     const entries = [...(this.loop?.state.inbox.normal ?? []), ...this.pendingSubmissions];
     for (const entry of entries) {
-      if (entry.meta?.origin?.kind !== 'skill_activation') continue;
-      const id = entry.meta.promptId;
+      if (entry.attributes?.origin?.kind !== 'skill_activation') continue;
+      const id = entry.attributes.promptId;
       if (id !== undefined) this.cancel({ promptId: id }, cancellation);
     }
   }
@@ -1071,6 +1373,26 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.errorHandlers.splice(index, 1);
     return true;
   }
+}
+
+type PolicyList<T> = readonly T[] | (() => readonly T[]) | undefined;
+
+function policyList<T>(value: PolicyList<T>): readonly T[] {
+  return typeof value === 'function' ? value() : (value ?? []);
+}
+
+function mergePolicyLists<T>(host: PolicyList<T>, extra: PolicyList<T>): () => readonly T[] {
+  return () => [...policyList(host), ...policyList(extra)];
+}
+
+function mergeCorePolicies(host: LlmPolicy, extra: LlmPolicy | undefined): LlmPolicy {
+  if (extra === undefined) return host;
+  return {
+    retry: extra.retry === undefined ? host.retry : { ...host.retry, ...extra.retry },
+    recoveries: mergePolicyLists(host.recoveries, extra.recoveries),
+    resolvers: mergePolicyLists(host.resolvers, extra.resolvers),
+    retryables: mergePolicyLists(host.retryables, extra.retryables),
+  };
 }
 
 function machineUserMessage(message: ContextMessage | undefined): UserMessage {

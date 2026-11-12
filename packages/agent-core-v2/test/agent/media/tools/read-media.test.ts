@@ -1,9 +1,9 @@
 import * as posixPath from 'node:path/posix';
 import { Readable } from 'node:stream';
 
-import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/llm-adapter/contract/capability';
-import type { ContentPart } from '#human/llm/message';
-import { mediaUrlOf } from '#human/llm/protocol/kit/media';
+import type { ModelCapability } from '@moonshot-ai/core/llm/request';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
+import { mediaUrlOf } from '@moonshot-ai/core/llm/protocol/kit/media';
 import { Jimp } from 'jimp';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -35,7 +35,7 @@ import type { IFileService } from '#/app/file/fileService';
 import type { IBlobStore } from '#/persistence/interface/blobStore';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
-import type { LlmFiles } from '#human/llm/request';
+import type { LlmFiles } from '@moonshot-ai/core/llm/request';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { makeSessionContext } from '#/session/sessionContext/sessionContext';
@@ -140,7 +140,6 @@ function capabilities(overrides: Partial<ModelCapability> = {}): ModelCapability
     audio_in: false,
     thinking: false,
     tool_use: true,
-    max_context_tokens: 0,
     ...overrides,
   };
 }
@@ -774,14 +773,16 @@ describe('ReadMediaFileTool', () => {
     const files: LlmFiles = { kinds: new Set(['video']), upload };
     const model: Model = {
       id: 'm',
-      name: 'stub',
       aliases: [],
       protocol: 'openai',
-      baseUrl: 'https://example.test',
-      headers: {},
-      capabilities: capabilities(),
-      maxContextSize: 1000,
-      alwaysThinking: false,
+      spec: {
+        provider: 'kimi',
+        name: 'stub',
+        capability: capabilities(),
+        thinking: { alwaysThinking: false },
+        maxContextSize: 1000,
+      },
+      endpoint: { baseUrl: 'https://example.test', headers: {} },
       providerName: 'p',
       providerType: 'kimi',
     };
@@ -945,14 +946,14 @@ describe('AgentMediaToolsRegistrar', () => {
       attachmentStore ?? testMediaStore(),
       undefined,
     );
-    const bindModel = (alias: string, caps: ModelCapability): void => {
+    const bindModel = (alias: string, caps: ModelCapability | undefined): void => {
       state.alias = alias;
-      state.capabilities = caps;
+      state.capabilities = caps ?? {};
       eventBus.publish(
         new AgentStatusUpdated({
           agentId: 'main',
           model: alias,
-          maxContextTokens: caps.max_context_tokens,
+          maxContextTokens: 0,
         }),
         agentContext,
       );
@@ -1074,7 +1075,7 @@ describe('AgentMediaToolsRegistrar', () => {
 
   it('stays registered for unknown model capabilities', () => {
     const { registry, bindModel } = createRegistrarHarness();
-    bindModel('unconfigured-model', UNKNOWN_CAPABILITY);
+    bindModel('unconfigured-model', undefined);
     const first = registry.resolve('ReadMediaFile');
     expect(first).toBeInstanceOf(ReadMediaFileTool);
 

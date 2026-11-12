@@ -3,19 +3,21 @@ import { IInstantiationService } from '#/_base/di/instantiation';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
-import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/llm-adapter/contract/capability';
-import { type ThinkingEffort } from '#human/llm-requester/thinking';
-import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
-import { type ModelOverrides } from '#/llm-adapter/model/model.types';
-import { type ModelRequestParams, type SamplingOptions } from '#/llm-adapter/model/generate';
-import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
+import type { LlmSampling, ThinkingEffort } from '@moonshot-ai/core/llm/request';
+import { fromLlmModelSpec, UNKNOWN_CAPABILITY, type ModelCapability } from '#/llm-adapter/contract/capability';
+import type { InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
 import {
-  drivesThinkingThroughTraits,
   modelSupportsThinkingEffort,
   normalizeRequestedThinkingEffort,
   resolveForcedThinkingEffort,
   resolveThinkingEffortForModel,
   resolveThinkingKeep,
+} from '@moonshot-ai/core/llm/thinking';
+import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
+import { type ModelOverrides } from '#/llm-adapter/model/model.types';
+import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
+import {
+  drivesThinkingThroughTraits,
   requiresStrictThinkingValidation,
   type ThinkingConfig,
 } from '#/llm-adapter/model/thinking';
@@ -387,7 +389,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   ): void {
     const normalized = normalizeRequestedThinkingEffort(requested);
     if (normalized === undefined || this.supportsThinkingEffort(normalized, model)) return;
-    const efforts = model?.supportEfforts ?? [];
+    const efforts = model?.spec.thinking?.supportEfforts ?? [];
     const supported = efforts.length === 0 ? 'off' : ['off', ...efforts].join(', ');
     throw new ProfileError(
       ProfileErrors.codes.MODEL_CONFIG_INVALID,
@@ -451,7 +453,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     const model = this.tryResolveRawModel(snapshot.modelAlias);
     return {
       modelAlias: snapshot.modelAlias,
-      modelCapabilities: model?.capabilities ?? UNKNOWN_CAPABILITY,
+      modelCapabilities: model === undefined ? UNKNOWN_CAPABILITY : fromLlmModelSpec(model.spec),
       profileName: snapshot.profileName,
       thinkingLevel: this.thinkingLevelFor(snapshot),
       systemPrompt: snapshot.systemPrompt,
@@ -475,9 +477,9 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     const loopControl = this.config.get<LoopControl>('loopControl');
     return {
       modelAlias,
-      modelCapabilities: model.capabilities,
+      model: model.spec,
       maxOutputSize: model.maxOutputSize,
-      alwaysThinking: model.alwaysThinking || undefined,
+      alwaysThinking: model.spec.thinking?.alwaysThinking || undefined,
       thinkingLevel: this.resolveThinkingState(model, snapshot).effective,
       reservedContextSize: loopControl?.reservedContextSize,
       compactionTriggerRatio: loopControl?.compactionTriggerRatio,
@@ -485,30 +487,35 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     };
   }
 
-  resolveRequestParams(snapshot: ProfileBindingSnapshot = this.profileState): ModelRequestParams {
+  resolveRequestParams(snapshot: ProfileBindingSnapshot = this.profileState): InitializedLlmRequestPart {
     const model = this.tryResolveRawModel(snapshot.modelAlias);
     const thinking = this.resolveThinkingState(model, snapshot);
     const thinkingConfig = this.config.get<ThinkingConfig>(THINKING_SECTION);
     const overrides = this.config.get<ModelOverrides>('modelOverrides');
-    const sampling: SamplingOptions = {
+    const sampling: LlmSampling = {
       temperature: overrides?.temperature,
       topP: overrides?.topP,
     };
     return {
-      cacheKey: this.sessionContext.sessionId,
-      sampling:
-        sampling.temperature === undefined && sampling.topP === undefined ? undefined : sampling,
-      thinkingEffort: thinking.effective,
-      thinkingKeep: resolveThinkingKeep(
-        overrides?.thinkingKeep,
-        thinkingConfig?.keep,
-        thinking.effective,
-      ),
+      model: {
+        cacheKey: this.sessionContext.sessionId,
+        sampling:
+          sampling.temperature === undefined && sampling.topP === undefined ? undefined : sampling,
+        thinking: {
+          effort: thinking.effective,
+          keep: resolveThinkingKeep(
+            overrides?.thinkingKeep,
+            thinkingConfig?.keep,
+            thinking.effective,
+          ),
+        },
+      },
     };
   }
 
   getModelCapabilities(snapshot: ProfileBindingSnapshot = this.profileState): ModelCapability {
-    return this.tryResolveRawModel(snapshot.modelAlias)?.capabilities ?? UNKNOWN_CAPABILITY;
+    const model = this.tryResolveRawModel(snapshot.modelAlias);
+    return model === undefined ? UNKNOWN_CAPABILITY : fromLlmModelSpec(model.spec);
   }
 
   getModelProviderType(
@@ -606,13 +613,13 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       let code: string;
       let message: string;
       let knownEfforts = '';
-      const efforts = model.supportEfforts?.filter((value) => value.length > 0);
+      const efforts = model.spec.thinking?.supportEfforts?.filter((value) => value.length > 0);
       if (efforts === undefined || efforts.length === 0 || efforts.includes(effort)) return;
       knownEfforts = efforts.join(',');
       code = 'anthropic-thinking-effort-not-listed';
-      message = `Thinking effort "${effort}" is not listed for model "${model.name}" (known: ${efforts.join(', ')}). The configured value will be sent unchanged to the Anthropic-compatible backend.`;
+      message = `Thinking effort "${effort}" is not listed for model "${model.spec.name}" (known: ${efforts.join(', ')}). The configured value will be sent unchanged to the Anthropic-compatible backend.`;
 
-      const key = [code, model.id, model.name, effort, knownEfforts].join('\u0000');
+      const key = [code, model.id, model.spec.name, effort, knownEfforts].join('\u0000');
       if (this.emittedThinkingEffortWarnings.has(key)) return;
       this.emittedThinkingEffortWarnings.add(key);
       void this.dispatcher.dispatch(new WarningIssued({ agentId: this.scopeContext.agentId, code, message }));
@@ -630,8 +637,8 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       return;
     }
     if (current.modelAlias === undefined) return;
-    const capabilities = this.tryResolveRawModel(current.modelAlias)?.capabilities;
-    const maxContextTokens = capabilities?.max_input_tokens ?? capabilities?.max_context_tokens;
+    const model = this.tryResolveRawModel(current.modelAlias);
+    const maxContextTokens = model?.spec.maxInputSize ?? model?.spec.maxContextSize;
     void this.dispatcher.dispatch(
       new AgentStatusUpdated({
         agentId: this.scopeContext.agentId,
@@ -663,7 +670,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   private thinkingLevelFor(snapshot: ProfileBindingSnapshot): ThinkingEffort {
     const model = this.tryResolveRawModel(snapshot.modelAlias);
-    if (snapshot.thinkingLevel === 'off' && model?.alwaysThinking === true) {
+    if (snapshot.thinkingLevel === 'off' && model?.spec.thinking?.alwaysThinking === true) {
       return this.resolveThinkingEffort(snapshot.thinkingLevel, model);
     }
     return snapshot.thinkingLevel as ThinkingEffort;
@@ -701,13 +708,13 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     return resolveThinkingEffortForModel(
       requested,
       this.config.get<ThinkingConfig>(THINKING_SECTION),
-      model,
+      model?.spec,
       this.strictThinkingValidation(model),
     );
   }
 
   private supportsThinkingEffort(effort: ThinkingEffort, model: Model | undefined): boolean {
-    return modelSupportsThinkingEffort(effort, model, this.strictThinkingValidation(model));
+    return modelSupportsThinkingEffort(effort, model?.spec, this.strictThinkingValidation(model));
   }
 
   private tryResolveRawModel(alias = this.modelAlias): Model | undefined {

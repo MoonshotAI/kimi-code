@@ -1,1 +1,1 @@
-export { isVacuousContentPart } from '#human/llm/message';
+export { isVacuousContentPart } from '@moonshot-ai/core/llm/message';

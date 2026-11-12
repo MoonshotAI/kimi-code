@@ -167,6 +167,7 @@ function baseAgentState(
       cwd: '/tmp/proj-a',
       modelAlias: 'k2',
       provider: undefined,
+      model: { provider: 'test', name: 'k2', maxContextSize: 100 },
       modelCapabilities: {
         image_in: false,
         video_in: false,

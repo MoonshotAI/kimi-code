@@ -7,21 +7,13 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import type { IAgentJournal } from '#/wire/journal';
 import type {
   AgentLLMRequestSource,
-  AgentTurnExecutionInput,
   CoreLoopRequester,
+  CoreLoopRequesterOptions,
   LoopRequester,
   OperationLoopRequesterOptions,
 } from '#/agent/loop/requesterContract';
-import type { TurnExecution } from '#/agent/loop/core/request';
-import type {
-  LlmRequestConfig,
-  LlmRequester,
-} from '#human/llm-requester/requester';
-import {
-  contentsOf,
-  requesterContents,
-  type LlmRequestPart,
-} from '#human/llm/requester';
+import type { LlmRequest } from '@moonshot-ai/core/llm/request';
+import type { MockProvider } from './scripted-generate';
 
 import { generateCallOf } from './scripted-generate';
 import { findGenerateCallPrefixBreak, type GenerateCall } from './snapshots';
@@ -67,16 +59,12 @@ export class PromptCacheGuardedLoopRequester implements LoopRequester {
     private readonly ready?: () => Promise<void>,
   ) {}
 
-  createTurnExecution(input: AgentTurnExecutionInput): TurnExecution {
-    const execution = this.inner.createTurnExecution(input);
-    return {
-      ...execution,
-      requester: this.guard(
-        execution.requester,
-        () => ({ type: 'turn', turnId: input.turnId, step: input.step() }),
-        input.historyRevision,
-      ),
-    };
+  coreRequester(options: CoreLoopRequesterOptions): CoreLoopRequester {
+    return this.guard(
+      this.inner.coreRequester(options),
+      options.source,
+      options.runtime.historyRevision,
+    );
   }
 
   async prepareOperation(options: OperationLoopRequesterOptions, signal: AbortSignal): Promise<CoreLoopRequester> {
@@ -91,10 +79,7 @@ export class PromptCacheGuardedLoopRequester implements LoopRequester {
     revision: () => number,
   ): CoreLoopRequester {
     const wrap = (inner: CoreLoopRequester): CoreLoopRequester => ({
-      [requesterContents]: contentsOf(inner),
-      with: ((next: LlmRequestPart | CoreLoopRequester) =>
-        wrap(inner.with(next as never))) as CoreLoopRequester['with'],
-      request: (rest) => inner.request(rest),
+      snapshot: () => wrap(inner.snapshot?.() ?? inner),
       generate: (rest, control) => {
         const scope: RequestScope = {
           agent: this,
@@ -110,22 +95,37 @@ export class PromptCacheGuardedLoopRequester implements LoopRequester {
   }
 }
 
-export function guardPromptCachePrefix(requester: LlmRequester): LlmRequester {
+export function guardPromptCachePrefix(provider: MockProvider): MockProvider {
   return {
-    async generate(config, content, control) {
+    ...provider,
+    respond: async (input, signal) => {
       const scope = requestScope.getStore();
-      if (scope === undefined) return requester.generate(config, content, control);
+      if (scope === undefined) return provider.respond(input, signal);
+      const protocolOptions = input.protocol.options as Record<string, unknown> | undefined;
+      const profile = {
+        cacheKey: input.model.cacheKey,
+        thinking: input.model.thinking,
+        extraParams:
+          protocolOptions === undefined
+            ? undefined
+            : Object.fromEntries(
+                Object.entries(protocolOptions).filter(([key, value]) => key !== 'detectedReasoningKey' && typeof value !== 'function'),
+              ),
+        responseFormat: input.model.responseFormat,
+        toolMessageConversion: protocolOptions?.['toolMessageConversion'],
+      };
       const request: RecordedRequest = {
         branch: scope.branch,
         contextRevision: scope.contextRevision,
-        model: modelIdentity(config),
-        profile: Object.fromEntries(PROFILE_FIELDS.map((field) => [field, config[field]])) as RecordedRequest['profile'],
-        call: generateCallOf(config, content),
+        model: modelIdentity(input),
+        profile: Object.fromEntries(PROFILE_FIELDS.map((field) => [field, profile[field]])) as RecordedRequest['profile'],
+        call: generateCallOf(input),
       };
       scope.attempts += 1;
       checkPrefixExtension(scope, request);
-      await requester.generate(config, content, control);
+      const attempt = await provider.respond(input, signal);
       if (scope.source?.type === 'turn') lastTurnRequests.set(scope.agent, request);
+      return attempt;
     },
   };
 }
@@ -196,6 +196,10 @@ function sameToolNames(previous: GenerateCall, next: GenerateCall): boolean {
   return isDeepStrictEqual(names(previous), names(next));
 }
 
-function modelIdentity(config: LlmRequestConfig): string {
-  return JSON.stringify([config.model.provider, config.model.baseUrl, config.model.model]);
+function modelIdentity(request: LlmRequest): string {
+  return JSON.stringify([
+    request.model.spec.provider,
+    request.endpoint?.baseUrl,
+    request.model.spec.name,
+  ]);
 }

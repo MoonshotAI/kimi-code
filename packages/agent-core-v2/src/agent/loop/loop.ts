@@ -3,11 +3,10 @@ import type { IDisposable } from '#/_base/di/lifecycle';
 import { Error2, isError2, type Error2Options } from '#/_base/errors/errors';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { AgentTaskInfo } from '#/agent/task/types';
-import type { FinishReason } from '#human/llm-requester/finish-reason';
-import type { ContentPart, TextPart, ToolCall, ToolDescription as Tool } from '#human/llm/message';
-import type { TokenUsage } from '#human/llm-requester/usage';
+import type { FinishReason } from '@moonshot-ai/core/llm/response';
+import type { ContentPart, Message, TextPart, ToolCall, ToolDescription as Tool, UserMessage } from '@moonshot-ai/core/llm/message';
+import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
 import type { Hooks } from '#/hooks';
-import type { HistoryMessage, UserEntry } from '#human/agent/turn';
 import type { LoopRequester } from './requesterContract';
 import type {
   BindAgentInput,
@@ -20,9 +19,9 @@ import type {
   ApplyProfileOptions,
 } from '#/agent/profile/profile';
 import { LoopErrors } from './errors';
-import type { ToolCompletionFactory } from './core/tool/outcome';
-import type { ToolCallOutcome } from './core/contract/outcome';
-import type { LoopHooks } from './core/contract/hook';
+import type { ToolCompletionFactory } from '@moonshot-ai/core/loop/tool/outcome';
+import type { ToolCallOutcome } from '@moonshot-ai/core/loop/contract/outcome';
+import type { LoopHooks } from '@moonshot-ai/core/loop/contract/hook';
 export interface AgentActivityRetrySnapshot {
   readonly failedAttempt: number;
   readonly nextAttempt: number;
@@ -56,7 +55,7 @@ export interface LoopSnapshot {
   readonly state: 'idle' | 'running';
   readonly activeTurnId?: number;
   readonly activePromptId?: string;
-  readonly queue: readonly UserEntry[];
+  readonly queue: readonly UserMessage[];
   readonly notificationCount: number;
   readonly paused: boolean;
   readonly hasPendingRequests: boolean;
@@ -231,7 +230,7 @@ export interface LoopNotify {
   readonly onDrop?: () => void;
 }
 
-export type LoopNotifyEntry = UserEntry & { readonly meta: NonNullable<UserEntry['meta']> };
+export type LoopNotifyMessage = UserMessage;
 
 export interface LoopNotifyHandle {
   readonly dropped: boolean;
@@ -280,12 +279,12 @@ export interface IAgentLoopService extends EffectiveProfileReader {
 
   historyRevision(): number;
 
-  replaceHistory(messages: readonly HistoryMessage[], reason?: string, onAccepted?: () => void): boolean;
+  replaceHistory(messages: readonly Message[], reason?: string, onAccepted?: () => void): boolean;
 
-  initializeHistory(messages: readonly HistoryMessage[]): Promise<void>;
+  initializeHistory(messages: readonly Message[]): Promise<void>;
 
   submit(payload: PromptPayload): Promise<PromptLaunchResult | undefined>;
-  submit(input: UserEntry): LoopSubmitResult;
+  submit(input: UserMessage): LoopSubmitResult;
 
   steer(promptIds: readonly string[]): Promise<void>;
 
@@ -310,13 +309,13 @@ export interface IAgentLoopService extends EffectiveProfileReader {
 
   tryAcquireHistorySnapshot(): IDisposable | undefined;
 
-  notifyClient(input: LoopNotifyEntry): Promise<SteerResult>;
-  notify(input: LoopNotifyEntry): LoopSubmitResult;
+  notifyClient(input: LoopNotifyMessage): Promise<SteerResult>;
+  notify(input: LoopNotifyMessage): LoopSubmitResult;
   notify(note?: LoopNotify): LoopNotifyHandle;
-  sendNow(input: LoopNotifyEntry): LoopSubmitResult;
+  sendNow(input: LoopNotifyMessage): LoopSubmitResult;
   sendNow(promptIds: readonly string[]): Promise<void>;
 
-  remind(...entries: readonly HistoryMessage[]): void;
+  remind(...messages: readonly Message[]): void;
 
   flushReminders(): void;
 

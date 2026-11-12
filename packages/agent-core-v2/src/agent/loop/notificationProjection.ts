@@ -1,4 +1,4 @@
-import type { LoopEmitted } from './core/index';
+import type { LoopEmitted } from '@moonshot-ai/core/loop/index';
 
 interface NotificationState {
   readonly onConsume?: () => void;
@@ -40,7 +40,7 @@ export class AgentNotificationProjection {
     switch (event.type) {
       case 'message.appended': {
         if (event.source !== 'notify' && event.source !== 'remind') return;
-        const promptId = (event.entry.meta as { readonly promptId?: string } | undefined)?.promptId;
+        const promptId = (event.message.attributes as { readonly promptId?: string } | undefined)?.promptId;
         if (promptId === undefined) return;
         const state = this.states.get(promptId);
         if (state === undefined || state.materialized || state.dropped) return;

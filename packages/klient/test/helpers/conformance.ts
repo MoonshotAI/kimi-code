@@ -23,9 +23,11 @@ import { IWireService } from '@moonshot-ai/agent-core-v2/wire/wire';
 import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import { IModelService } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model';
 import { IProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocol';
-import { generateModel } from '@moonshot-ai/agent-core-v2/llm-adapter/model/generate';
-import type { LlmRequester } from '@moonshot-ai/agent-core-v2/human/llm-requester/requester';
-import { coreRequesterFromA } from '../../../agent-core-v2/test/harness/scripted-generate.js';
+import { streamLlmRequest } from '@moonshot-ai/core/llm/stream';
+import {
+  createMockProvider,
+  withMockProvider,
+} from '../../../agent-core-v2/test/harness/scripted-generate.js';
 import {
   resetModelsDevUpstreamForTest,
   setModelsDevUpstreamForTest,
@@ -158,11 +160,9 @@ export function defineKlientConformance(
         const mainHandle = parentHandle.accessor.get(IAgentLifecycleService).handleOf(main.agentId)!;
         const loop = mainHandle.accessor.get(IAgentLoopService);
         loop.submit({
-          message: {
-            role: 'user',
-            content: [{ type: 'text', text: 'fork through this turn' }],
-          },
-          meta: { origin: { kind: 'user' } },
+          role: 'user',
+          content: [{ type: 'text', text: 'fork through this turn' }],
+          attributes: { origin: { kind: 'user' } },
         });
         await loop.settled();
         await mainHandle.accessor.get(IWireService).flush();
@@ -497,7 +497,7 @@ export function defineKlientConformance(
       const consume = async (stream: AsyncIterable<unknown>): Promise<void> => {
         let finished = false;
         for await (const event of stream) {
-          if ((event as { readonly type?: string }).type === 'finish') finished = true;
+          if ((event as { readonly type?: string }).type === 'llm.ended') finished = true;
         }
         expect(finished).toBe(true);
       };
@@ -514,7 +514,6 @@ export function defineKlientConformance(
                 imageUrl: { url: 'data:image/png;base64,QUJD', id: 'image-1' },
               },
             ],
-            toolCalls: [],
           },
         ],
       };
@@ -535,20 +534,24 @@ export function defineKlientConformance(
         ],
       };
       try {
-        await consume(kosong.generate(kimiId, publicInput, { thinkingEffort: 'on' }));
-        await consume(kosong.generate(kimiId, publicInput, { thinkingEffort: 'max' }));
+        await consume(kosong.generate(kimiId, publicInput, { model: { thinking: { effort: 'on' } } }));
+        await consume(kosong.generate(kimiId, publicInput, { model: { thinking: { effort: 'max' } } }));
         const catalog = target.app.accessor.get(IModelCatalog);
         const registry = target.app.accessor.get(IProtocolAdapterRegistry);
-        await consume(
-          generateModel(registry.request(catalog.get(kimiId), { thinkingEffort: 'on' }), coreInput, undefined, {
-            thinkingEffort: 'on',
-          }),
-        );
-        await consume(
-          generateModel(registry.request(catalog.get(kimiId), { thinkingEffort: 'max' }), coreInput, undefined, {
-            thinkingEffort: 'max',
-          }),
-        );
+        const directGenerate = (effort: string) => {
+          const requester = registry.request(catalog.get(kimiId), {
+            model: { thinking: { effort } },
+          });
+          return streamLlmRequest(
+            requester.request({
+              profile: { systemPrompt: coreInput.systemPrompt, tools: coreInput.tools },
+              content: { messages: coreInput.messages },
+            }),
+            { signal: new AbortController().signal },
+          );
+        };
+        await consume(directGenerate('on'));
+        await consume(directGenerate('max'));
         expect(bodies.map((body) => body['thinking'])).toEqual([
           { type: 'enabled' },
           { type: 'enabled', effort: 'max' },
@@ -572,50 +575,39 @@ export function defineKlientConformance(
           expect(body['messages']).toEqual(expectedMessages);
         }
 
-        const responsePart = {
-          type: 'image_url' as const,
-          imageUrl: { url: 'data:image/png;base64,QUJD', id: 'response-image', name: 'pixel.png' },
-        };
-        const fakeRequester: LlmRequester = {
-          generate: (_config, _content, control) => {
-            control.onEvent?.({ type: 'llm.streaming.part', part: responsePart });
-            control.onEvent?.({
-              type: 'llm.streaming.finish',
-              finish: { finishReason: 'completed', rawFinishReason: 'stop' },
-            });
-            control.onEvent?.({ type: 'llm.done' });
-            return Promise.resolve();
-          },
-        };
+        const responsePart = { type: 'text' as const, text: 'ok' };
+        const fakeRequester = createMockProvider(async () => ({
+          id: 'response-1',
+          message: { role: 'assistant', content: [responsePart], toolCalls: [] },
+          usage: null,
+          finishReason: 'completed',
+          rawFinishReason: 'stop',
+        }));
         const request = registry.request.bind(registry);
         const generate = vi.spyOn(registry, 'request').mockImplementation((model, params) =>
-          coreRequesterFromA(request(model, params), fakeRequester),
+          withMockProvider(request(model, params), fakeRequester),
         );
         try {
           const responseEvents: unknown[] = [];
           for await (const event of kosong.generate(kimiId, publicInput)) {
             responseEvents.push(event);
           }
-          const publicPart = {
-            type: 'image_url',
-            imageUrl: {
-              url: 'data:image/png;base64,QUJD',
-              id: 'response-image',
-              name: 'pixel.png',
-            },
-          };
-          expect(responseEvents).toStrictEqual([
-            { type: 'part', part: publicPart },
+          expect(responseEvents).toContainEqual(
+            expect.objectContaining({ type: 'llm.streaming.part', part: responsePart }),
+          );
+          expect(responseEvents).toContainEqual(
             expect.objectContaining({
-              type: 'finish',
-              message: { role: 'assistant', content: [publicPart], toolCalls: [] },
+              type: 'llm.ended',
+              outcome: expect.objectContaining({
+                type: 'done',
+                message: expect.objectContaining({
+                  role: 'assistant',
+                  content: [responsePart],
+                  toolCalls: [],
+                }),
+              }),
             }),
-            expect.objectContaining({
-              type: 'timing',
-              firstTokenLatencyMs: expect.any(Number),
-              streamDurationMs: expect.any(Number),
-            }),
-          ]);
+          );
         } finally {
           generate.mockRestore();
         }

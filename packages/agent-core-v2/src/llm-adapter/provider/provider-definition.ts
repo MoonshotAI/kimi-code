@@ -1,17 +1,19 @@
 import { BugIndicatingError } from '#/_base/errors/errors';
-import type { ModelCapability as HumanModelCapability } from '#human/llm-requester/capability';
-import type { DefaultHeadersResolver, ProtocolEndpoint } from '#human/llm-requester/connection';
+import {
+  resolveEndpointDeclaration,
+  type LlmEndpointDeclaration,
+  type ResolvedLlmEndpointDeclaration,
+} from '@moonshot-ai/core/llm/endpoint';
 import {
   anthropicEndpoint,
   geminiEndpoint,
   kimiEndpoint,
   openAIEndpoint,
   vertexEndpoint,
-} from '#human/llm-requester/endpoints';
-import type { LlmErrorClassifier } from '#human/llm-requester/requester';
-import type { LlmRequester } from '#human/llm/requester';
-import { kimiRequesters } from '#human/llm/builtin/provider/kimi/index';
-import { classifyKimiQuotaError } from '#human/llm/builtin/provider/kimi/errors';
+} from '@moonshot-ai/core/llm/builtin/provider/endpoints';
+import type { ModelCapability } from '@moonshot-ai/core/llm/request';
+import type { LlmRequester } from '@moonshot-ai/core/llm/requester';
+import { kimiRequesters } from '@moonshot-ai/core/llm/builtin/provider/kimi/index';
 
 import type { Protocol } from '../protocol/protocol';
 import type { ModelSource } from './provider';
@@ -22,11 +24,9 @@ export interface ProviderDefinition<N extends Protocol = Protocol> {
   readonly requester?: LlmRequester<'protocol'>;
   readonly thinkingDriven?: boolean;
   readonly strictThinkingValidation?: boolean;
-  readonly classifyError?: LlmErrorClassifier;
-  readonly capability?: (modelName: string) => HumanModelCapability | undefined;
-  readonly endpoint?: ProtocolEndpoint;
-  readonly endpoints?: readonly ProtocolEndpoint[];
-  readonly defaultHeaders?: DefaultHeadersResolver;
+  readonly capability?: (modelName: string) => ModelCapability | undefined;
+  readonly endpoint?: LlmEndpointDeclaration;
+  readonly endpoints?: readonly LlmEndpointDeclaration[];
   readonly hostHeaders?: 'full' | 'user-agent';
   readonly requestMetadata?: boolean;
   readonly modelSource?: ModelSource;
@@ -85,35 +85,14 @@ export interface ResolvedProviderEndpoint {
   readonly baseUrl?: string;
 }
 
-export interface ExplainedProviderEndpoint {
-  readonly apiKey?: string;
-  readonly apiKeyEnvName?: string;
-  readonly baseUrl?: string;
-  readonly baseUrlEnvName?: string;
-  readonly baseUrlIsDefault?: boolean;
-}
+export type ExplainedProviderEndpoint = ResolvedLlmEndpointDeclaration;
 
 export function explainProviderEndpoint(
   providerType: string,
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): ExplainedProviderEndpoint {
   const definition = getProviderDefinition(providerType);
-  if (definition === undefined) return {};
-  const endpoint =
-    normalizeEndpointDeclaration(definition.endpoint) ?? aggregateEndpoints(definition.endpoints);
-  if (endpoint === undefined) return {};
-  const apiKeyHit = firstEnvHit(endpoint.apiKeyEnv, env);
-  const baseUrlHit = firstEnvHit(endpoint.baseUrlEnv, env);
-  return {
-    ...(apiKeyHit !== undefined
-      ? { apiKey: apiKeyHit.value, apiKeyEnvName: apiKeyHit.name }
-      : undefined),
-    ...(baseUrlHit !== undefined
-      ? { baseUrl: baseUrlHit.value, baseUrlEnvName: baseUrlHit.name }
-      : endpoint.defaultBaseUrl !== undefined
-        ? { baseUrl: endpoint.defaultBaseUrl, baseUrlIsDefault: true }
-        : undefined),
-  };
+  return resolveEndpointDeclaration(definition?.endpoint ?? definition?.endpoints, env);
 }
 
 export function resolveProviderEndpoint(
@@ -121,53 +100,7 @@ export function resolveProviderEndpoint(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): ResolvedProviderEndpoint {
   const { apiKey, baseUrl } = explainProviderEndpoint(providerType, env);
-  return {
-    ...(apiKey !== undefined ? { apiKey } : undefined),
-    ...(baseUrl !== undefined ? { baseUrl } : undefined),
-  };
-}
-
-interface AggregatedEndpointDeclaration {
-  readonly apiKeyEnv: readonly string[];
-  readonly baseUrlEnv: readonly string[];
-  readonly defaultBaseUrl?: string;
-}
-
-function normalizeEndpointDeclaration(
-  endpoint: ProtocolEndpoint | undefined,
-): AggregatedEndpointDeclaration | undefined {
-  if (endpoint === undefined) return undefined;
-  return {
-    apiKeyEnv: endpoint.apiKeyEnv === undefined ? [] : [endpoint.apiKeyEnv],
-    baseUrlEnv: endpoint.baseUrlEnv === undefined ? [] : [endpoint.baseUrlEnv],
-    defaultBaseUrl: endpoint.defaultBaseUrl,
-  };
-}
-
-function aggregateEndpoints(
-  endpoints: readonly ProtocolEndpoint[] | undefined,
-): AggregatedEndpointDeclaration | undefined {
-  if (endpoints === undefined || endpoints.length === 0) return undefined;
-  const apiKeyEnv: string[] = [];
-  const baseUrlEnv: string[] = [];
-  let defaultBaseUrl: string | undefined;
-  for (const endpoint of endpoints) {
-    if (endpoint.apiKeyEnv !== undefined) apiKeyEnv.push(endpoint.apiKeyEnv);
-    if (endpoint.baseUrlEnv !== undefined) baseUrlEnv.push(endpoint.baseUrlEnv);
-    if (endpoint.defaultBaseUrl !== undefined) defaultBaseUrl = endpoint.defaultBaseUrl;
-  }
-  return { apiKeyEnv, baseUrlEnv, defaultBaseUrl };
-}
-
-function firstEnvHit(
-  names: readonly string[],
-  env: Readonly<Record<string, string | undefined>>,
-): { readonly name: string; readonly value: string } | undefined {
-  for (const name of names) {
-    const value = env[name];
-    if (value !== undefined && value.length > 0) return { name, value };
-  }
-  return undefined;
+  return { apiKey, baseUrl };
 }
 
 registerProviderDefinition({
@@ -200,7 +133,6 @@ registerProviderDefinition({
   requester: kimiRequesters.openai,
   thinkingDriven: true,
   strictThinkingValidation: true,
-  classifyError: classifyKimiQuotaError,
   endpoint: kimiEndpoint,
   hostHeaders: 'full',
   requestMetadata: true,
@@ -212,7 +144,6 @@ registerProviderDefinition({
   baseProtocol: 'anthropic',
   requester: kimiRequesters.anthropic,
   thinkingDriven: true,
-  classifyError: classifyKimiQuotaError,
   endpoint: kimiEndpoint,
   hostHeaders: 'full',
   requestMetadata: true,
@@ -224,7 +155,6 @@ registerProviderDefinition({
   baseProtocol: 'openai_responses',
   requester: kimiRequesters.openai_responses,
   thinkingDriven: true,
-  classifyError: classifyKimiQuotaError,
   endpoint: kimiEndpoint,
   hostHeaders: 'full',
   requestMetadata: true,

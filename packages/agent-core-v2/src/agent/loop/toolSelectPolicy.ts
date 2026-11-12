@@ -1,5 +1,5 @@
-import type { LlmResolver } from '#human/llm/policy/resolver';
-import { withProtocolCapabilities } from '#human/llm/protocol/rules/model';
+import type { LlmResolver } from '@moonshot-ai/core/llm/policy/resolver';
+import { withProtocolCapabilities } from '@moonshot-ai/core/llm/protocol/rules/model';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 
 export function createToolSelectResolver(toolSelect: IAgentToolSelectService, dynamic = false): LlmResolver {

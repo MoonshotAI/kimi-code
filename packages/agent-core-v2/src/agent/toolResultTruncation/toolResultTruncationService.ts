@@ -13,7 +13,7 @@ import {
 } from '#/tool/toolContract';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { AGENT_WIRE_RECORD_KEY } from '#/wire/record';
-import type { ContentPart } from '#human/llm/message';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { basename, join, normalize } from 'pathe';
 import {

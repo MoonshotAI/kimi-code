@@ -2,13 +2,13 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { isUserPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
-import { annotateBundledSkillParts, isSkillActivationPart } from '#human/agent/origin';
+import { annotateBundledSkillParts, isSkillActivationPart } from '@moonshot-ai/core/llm/origin';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import {
   promptMetadataTextFromContentParts,
   promptMetadataTextFromText,
 } from '#/agent/prompt/promptMetadataText';
-import type { ContentPart } from '#human/llm/message';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 
 import {
   IAgentTitlePromptSource,
@@ -92,11 +92,11 @@ export class AgentTitlePromptSourceService implements IAgentTitlePromptSource {
         : this.loop.promptHandle(snapshot.activePromptId);
     if (activeHandle !== undefined) all.push(activeHandle.message);
     for (const item of snapshot.queue) {
-      if (item.meta?.origin?.kind !== 'user') continue;
+      if (item.attributes?.origin?.kind !== 'user') continue;
       all.push({
         role: 'user',
-        content: [...item.message.content],
-        origin: item.meta?.origin as PromptOrigin | undefined,
+        content: [...item.content],
+        origin: item.attributes?.origin as PromptOrigin | undefined,
       });
     }
     return all;

@@ -1,48 +1,72 @@
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
-import type { HistoryMessage } from '#human/agent/turn';
-import type { UserMessage } from '#human/llm/message';
-import { emptyUsage } from '#human/llm-requester/usage';
+import type {
+  AssistantMessageAttributes,
+  Message,
+  MessageAttributes,
+  ToolMessageAttributes,
+  UserMessage,
+  UserMessageAttributes,
+} from '@moonshot-ai/core/llm/message';
+import { emptyUsage } from '@moonshot-ai/core/llm/usage';
 
 export const EMPTY_LOOP_PROMPT: UserMessage = { role: 'user', content: [] };
+
+function compactAttributes<T extends object>(attributes: T): T | undefined {
+  const entries = Object.entries(attributes).filter(([, value]) => value !== undefined);
+  return entries.length === 0 ? undefined : (Object.fromEntries(entries) as T);
+}
 
 function historyEntryFromContextWithOptions(
   entry: ContextMessage,
   preserveToolNotes: boolean,
-): HistoryMessage {
-  const meta = {
-    promptId: entry.id,
+): Message {
+  const base: MessageAttributes = {
     origin: entry.origin,
-    messageId: entry.providerMessageId,
-    usage: entry.usage,
-    isError: entry.isError === true ? true as const : undefined,
-    partial: entry.partial === true ? true as const : undefined,
+    partial: entry.partial === true ? true : undefined,
     llmTiming: entry.llmTiming,
     note: entry.note,
     durationMs: entry.durationMs,
   };
-  const message = { ...entry };
-  delete message.id;
-  delete message.origin;
-  delete message.providerMessageId;
-  delete message.usage;
-  delete message.isError;
-  delete message.partial;
-  delete message.llmTiming;
-  delete message.note;
-  delete message.durationMs;
-  delete message.toolCallDisplays;
   switch (entry.role) {
-    case 'system':
-      return { message: { ...message, role: 'system' }, meta };
-    case 'user':
-      return { message: { ...message, role: 'user' }, meta };
-    case 'assistant':
+    case 'system': {
+      const attributes = compactAttributes(base);
       return {
-        message: { ...message, role: 'assistant', toolCalls: entry.toolCalls },
-        meta: { ...meta, usage: entry.usage ?? (entry.partial === true ? undefined : emptyUsage()) },
+        role: 'system',
+        content: entry.content,
+        ...(entry.tools === undefined ? {} : { tools: entry.tools }),
+        ...(attributes === undefined ? {} : { attributes }),
       };
+    }
+    case 'user': {
+      const attributes = compactAttributes<UserMessageAttributes>({
+        ...base,
+        promptId: entry.id,
+      });
+      return {
+        role: 'user',
+        content: entry.content,
+        ...(attributes === undefined ? {} : { attributes }),
+      };
+    }
+    case 'assistant': {
+      const attributes = compactAttributes<AssistantMessageAttributes>({
+        ...base,
+        messageId: entry.providerMessageId,
+        usage: entry.usage ?? (entry.partial === true ? undefined : emptyUsage()),
+      });
+      return {
+        role: 'assistant',
+        content: entry.content,
+        toolCalls: entry.toolCalls,
+        ...(attributes === undefined ? {} : { attributes }),
+      };
+    }
     case 'tool': {
+      const attributes = compactAttributes<ToolMessageAttributes>({
+        ...base,
+        isError: entry.isError === true ? true : undefined,
+      });
       let content = entry.content;
       if (preserveToolNotes && entry.note !== undefined && entry.note.length > 0) {
         const last = content.at(-1);
@@ -50,30 +74,35 @@ function historyEntryFromContextWithOptions(
           (last.text === entry.note || last.text.endsWith(`\n${entry.note}`));
         if (!rendered) content = [...content, { type: 'text', text: entry.note }];
       }
-      return { message: { ...message, role: 'tool', content, toolCallId: entry.toolCallId }, meta };
+      return {
+        role: 'tool',
+        content,
+        toolCallId: entry.toolCallId,
+        ...(attributes === undefined ? {} : { attributes }),
+      };
     }
   }
 }
 
-export function historyEntryFromContext(entry: ContextMessage): HistoryMessage {
+export function historyEntryFromContext(entry: ContextMessage): Message {
   return historyEntryFromContextWithOptions(entry, false);
 }
 
-export function historyFromContext(messages: readonly ContextMessage[]): HistoryMessage[] {
+export function historyFromContext(messages: readonly ContextMessage[]): Message[] {
   return messages.map(historyEntryFromContext);
 }
 
 export function historyFromContextPreservingToolNotes(
   messages: readonly ContextMessage[],
-): HistoryMessage[] {
+): Message[] {
   return messages.map((entry) => historyEntryFromContextWithOptions(entry, true));
 }
 
 export function contextFromHistoryEntry(
-  entry: HistoryMessage,
+  entry: Message,
   toolCallDisplays?: Record<string, ToolInputDisplay>,
 ): ContextMessage {
-  const meta = entry.meta as {
+  const attributes = entry.attributes as {
     readonly promptId?: string;
     readonly origin?: ContextMessage['origin'];
     readonly messageId?: string;
@@ -84,13 +113,13 @@ export function contextFromHistoryEntry(
     readonly note?: string;
     readonly durationMs?: number;
   } | undefined;
-  const message = entry.message as ContextMessage;
+  const legacy = entry as ContextMessage;
   const displays = toolCallDisplays !== undefined && Object.keys(toolCallDisplays).length > 0
     ? toolCallDisplays
     : undefined;
-  const note = meta?.note ?? message.note;
-  let content = message.content;
-  if (message.role === 'tool' && note !== undefined && note.length > 0) {
+  const note = attributes?.note ?? legacy.note;
+  let content = entry.content;
+  if (entry.role === 'tool' && note !== undefined && note.length > 0) {
     const last = content.at(-1);
     if (last?.type === 'text' && last.text === note) {
       content = content.slice(0, -1);
@@ -99,19 +128,20 @@ export function contextFromHistoryEntry(
       content = text.length === 0 ? content.slice(0, -1) : [...content.slice(0, -1), { ...last, text }];
     }
   }
+  const { attributes: _attributes, ...coreMessage } = entry;
   return Object.fromEntries(
     Object.entries({
-      ...message,
+      ...coreMessage,
       content,
-      id: meta?.promptId ?? message.id,
-      origin: meta?.origin ?? message.origin,
-      providerMessageId: meta?.messageId ?? message.providerMessageId,
-      usage: meta?.usage,
-      isError: meta?.isError ?? message.isError,
-      partial: meta?.partial ?? message.partial,
-      llmTiming: meta?.llmTiming ?? message.llmTiming,
+      id: attributes?.promptId ?? legacy.id,
+      origin: attributes?.origin ?? legacy.origin,
+      providerMessageId: attributes?.messageId ?? legacy.providerMessageId,
+      usage: attributes?.usage,
+      isError: attributes?.isError ?? legacy.isError,
+      partial: attributes?.partial ?? legacy.partial,
+      llmTiming: attributes?.llmTiming ?? legacy.llmTiming,
       note,
-      durationMs: meta?.durationMs ?? message.durationMs,
+      durationMs: attributes?.durationMs ?? legacy.durationMs,
       toolCallDisplays: displays,
     }).filter(([, value]) => value !== undefined),
   ) as ContextMessage;

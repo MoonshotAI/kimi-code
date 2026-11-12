@@ -15,7 +15,7 @@ import {
 } from '#/agent/tokenCounting/tokenCountingOps';
 import { TokenCountingAgentModelDefinition } from '#/session/tokenCounting/tokenCountingAgentModel';
 import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
-import { grandTotal, type TokenUsage } from '#human/llm-requester/usage';
+import { grandTotal, type TokenUsage } from '@moonshot-ai/core/llm/usage';
 import { IWireService } from '#/wire/wire';
 
 import { createTestAgent, InMemoryWireRecordPersistence, type TestAgentContext } from '../../harness';

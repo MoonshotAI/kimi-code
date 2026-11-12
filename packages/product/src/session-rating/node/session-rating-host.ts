@@ -339,7 +339,7 @@ function resumedAgentSeeds(
 function modelRouteOf(agent: IAgentScopeHandle, alias: string): RatingEnvironment['model'] {
   try {
     const model = agent.accessor.get(IModelCatalog).get(alias);
-    return { modelId: model.name, baseUrl: model.baseUrl };
+    return { modelId: model.spec.name, baseUrl: model.endpoint.baseUrl };
   } catch {
     return { modelId: undefined, baseUrl: undefined };
   }

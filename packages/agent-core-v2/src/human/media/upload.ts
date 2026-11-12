@@ -1,5 +1,5 @@
-import type { ImageURLPart, VideoURLPart } from '#/llm/message';
-import type { LlmModel } from '#/llm-requester/model';
+import type { ImageURLPart, VideoURLPart } from '@moonshot-ai/core/llm/message';
+import type { LlmModelSpec } from '@moonshot-ai/core/llm/request';
 
 export interface VideoUploadInput {
   readonly data: Uint8Array;
@@ -8,7 +8,7 @@ export interface VideoUploadInput {
 }
 
 export interface MediaVideoUploadOptions {
-  readonly model: LlmModel;
+  readonly model: LlmModelSpec;
   readonly signal?: AbortSignal;
 }
 

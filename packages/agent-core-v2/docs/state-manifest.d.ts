@@ -967,12 +967,12 @@ export interface AgentStateSnapshot {
     readonly inputTokens: number;
     readonly startedAt: number;
     readonly finishedAt: number;
-    readonly thinkingEffort: /* ThinkingEffort — packages/agent-core-v2/src/human/llm-requester/thinking.ts */ 'off' | 'on' | (string & {});
+    readonly thinkingEffort: /* ThinkingEffort — packages/core/src/llm/request.ts */ 'off' | 'on' | (string & {});
     readonly requestKind?: string;
     readonly turnId?: number;
     readonly step?: number;
     readonly traceId?: string;
-    readonly usage: /* TokenUsage — packages/agent-core-v2/src/human/llm-requester/usage.ts */ {
+    readonly usage: /* TokenUsage — packages/core/src/llm/usage.ts */ {
       inputOther: number;
       output: number;
       inputCacheRead?: number;
@@ -1013,15 +1013,15 @@ export interface AgentStateSnapshot {
   'mcp.mcpToolsByServer': Map<string, string[]>;
   // src/agent/media/mediaResolverService.ts
   'media.budgetDropped': Set<string>;
-  'media.resolved': Map<string, /* ContentPart — packages/agent-core-v2/src/human/llm/message.ts */ /* TextPart — packages/agent-core-v2/src/human/llm/message.ts */ {
+  'media.resolved': Map<string, /* ContentPart — packages/core/src/llm/message.ts */ /* TextPart — packages/core/src/llm/message.ts */ {
     type: 'text';
     text: string;
     contentType?: string;
-    meta?: /* ContentPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
+    meta?: /* ContentPartMeta — packages/core/src/llm/message.ts */ {
       readonly kind?: string;
       [key: string]: unknown;
     };
-  } | /* ThinkPart — packages/agent-core-v2/src/human/llm/message.ts */ {
+  } | /* ThinkPart — packages/core/src/llm/message.ts */ {
     type: 'think';
     think: string;
     encrypted?: string;
@@ -1029,24 +1029,24 @@ export interface AgentStateSnapshot {
     hidden?: boolean;
     reasoningKey?: string;
     contentType?: string;
-    meta?: /* ContentPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
+    meta?: /* ContentPartMeta — packages/core/src/llm/message.ts */ {
       readonly kind?: string;
       [key: string]: unknown;
     };
-  } | /* ImageURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
+  } | /* ImageURLPart — packages/core/src/llm/message.ts */ {
     type: 'image_url';
     imageUrl: {
       url: string;
       id?: string;
       name?: string;
     };
-  } | /* AudioURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
+  } | /* AudioURLPart — packages/core/src/llm/message.ts */ {
     type: 'audio_url';
     audioUrl: {
       url: string;
       id?: string;
     };
-  } | /* VideoURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
+  } | /* VideoURLPart — packages/core/src/llm/message.ts */ {
     type: 'video_url';
     videoUrl: {
       url: string;

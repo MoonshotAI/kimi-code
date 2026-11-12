@@ -12,6 +12,7 @@
   "include": [
     "src/**/*.ts",
     "../agent-core-v2/src/**/*.ts",
+    "../core/src/**/*.ts",
     "../klient/src/**/*.ts",
     "../oauth/src/**/*.ts",
     "../protocol/src/**/*.ts"

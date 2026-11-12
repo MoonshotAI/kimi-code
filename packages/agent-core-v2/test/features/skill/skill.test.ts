@@ -10,7 +10,6 @@ import { IAgentSkillService } from '#/features/skill/skillService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { DEFAULT_TOOL_RESULT_MAX_CHARS } from '#/tool/toolContract';
-import type { LlmRequester } from '#human/llm-requester/requester';
 import {
   ISkillTool,
   MAX_SKILL_QUERY_DEPTH,
@@ -22,12 +21,14 @@ import { executeTool } from '../../tools/fixtures/execute-tool';
 import { stubSkill } from './catalog/stubs';
 import {
   createTestAgent,
+  createMockProvider,
   InMemoryWireRecordPersistence,
   skillServices,
   type TestAgentContext,
+  type TestAgentOptions,
 } from '../../harness';
 
-type GenerateFn = LlmRequester;
+type GenerateFn = NonNullable<TestAgentOptions['generate']>;
 
 const COMMIT_SKILL = stubSkill('commit', {
   description: 'commit changes',
@@ -327,27 +328,19 @@ describe('AgentSkillService busy delivery (harness)', () => {
 
     const gate = createControlledPromise<void>();
     let generateCalls = 0;
-    const generate: GenerateFn = {
-      generate: async (_config, _content, control) => {
-        generateCalls += 1;
-        const n = generateCalls;
-        control.onEvent?.({ type: 'llm.sent' });
-        if (n === 1) await gate;
-        control.signal.throwIfAborted();
-        const text = `response-${String(n)}`;
-        control.onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text } });
-        control.onEvent?.({
-          type: 'llm.streaming.usage',
-          usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
-        });
-        control.onEvent?.({
-          type: 'llm.streaming.finish',
-          finish: { finishReason: 'completed', rawFinishReason: 'stop' },
-        });
-        control.onEvent?.({ type: 'llm.streaming.message_id', messageId: `mock-${String(n)}` });
-        control.onEvent?.({ type: 'llm.done' });
-      },
-    };
+    const generate = createMockProvider(async () => {
+      generateCalls += 1;
+      const n = generateCalls;
+      if (n === 1) await gate;
+      const text = `response-${String(n)}`;
+      return {
+        id: `mock-${String(n)}`,
+        message: { role: 'assistant', content: [{ type: 'text', text }], toolCalls: [] },
+        usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+        finishReason: 'completed',
+        rawFinishReason: 'stop',
+      };
+    });
 
     const persistence = new InMemoryWireRecordPersistence();
     ctx = createTestAgent(skillServices(catalog), { generate, persistence });
@@ -390,18 +383,17 @@ describe('AgentSkillService busy delivery (harness)', () => {
     catalog.register(stubSkill('tower'));
     const gate = createControlledPromise<void>();
     let generateCalls = 0;
-    const generate: GenerateFn = {
-      generate: async (_config, _content, control) => {
-        generateCalls += 1;
-        control.onEvent?.({ type: 'llm.sent' });
-        await gate;
-        control.signal.throwIfAborted();
-        control.onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'done' } });
-        control.onEvent?.({ type: 'llm.streaming.finish', finish: { finishReason: 'completed', rawFinishReason: 'stop' } });
-        control.onEvent?.({ type: 'llm.streaming.message_id', messageId: 'mock-depth-reset' });
-        control.onEvent?.({ type: 'llm.done' });
-      },
-    };
+    const generate = createMockProvider(async () => {
+      generateCalls += 1;
+      await gate;
+      return {
+        id: 'mock-depth-reset',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'done' }], toolCalls: [] },
+        usage: null,
+        finishReason: 'completed',
+        rawFinishReason: 'stop',
+      };
+    });
     ctx = createTestAgent(skillServices(catalog), { generate });
     const promptPromise = ctx.rpc.prompt({ input: [{ type: 'text', text: 'start' }] });
     await vi.waitFor(() => { expect(generateCalls).toBe(1); });

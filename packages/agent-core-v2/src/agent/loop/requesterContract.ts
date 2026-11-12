@@ -1,13 +1,12 @@
-import type { ToolDescription as Tool, Message } from '#human/llm/message';
+import type { Message, ToolDescription as Tool } from '@moonshot-ai/core/llm/message';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import type { LogContext } from '#/_base/log/log';
-import type { LlmOutcome } from '#human/llm/response';
-import type { LlmDimension, LlmRequester } from '#human/llm/requester';
+import type { LlmOutcome } from '@moonshot-ai/core/llm/response';
+import type { InitializedLlmRequester, InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
 import type { ProfileModelContext } from '#/agent/profile/profile';
 import type { Model } from '#/llm-adapter/model/catalog';
-import type { InitializedLlmRequester, ModelRequestParams } from '#/llm-adapter/model/generate';
-import type { ThinkingEffort } from '#human/llm-requester/thinking';
-import type { LoopRequestRuntime, TurnExecution, TurnExecutionInput } from './core/request';
+import type { ThinkingEffort } from '@moonshot-ai/core/llm/request';
+import type { LoopLlmRequester, LoopRequestRuntime } from '@moonshot-ai/core/loop/request';
 
 export type AgentLLMRequestLogFields = Readonly<LogContext>;
 
@@ -27,20 +26,26 @@ export type AgentLLMRequestSource =
 
 export interface RequestConfigSnapshot {
   readonly resolved: ProfileModelContext;
-  readonly params: ModelRequestParams;
+  readonly params: InitializedLlmRequestPart;
   readonly systemPrompt: string;
   readonly maxCompletionTokensCap?: number;
+}
+
+export interface RequesterBinding {
+  readonly request: InitializedLlmRequester;
+  readonly model: Model;
+  readonly requestMetadata: boolean;
 }
 
 export interface ResolvedRequestContext {
   readonly request: InitializedLlmRequester;
   readonly model: Model;
-  readonly params: ModelRequestParams;
   readonly modelAlias: string;
   readonly thinkingEffort: ThinkingEffort;
   readonly systemPrompt: string;
   readonly tools?: readonly Tool[];
   readonly messages: Message[];
+  readonly usedContextTokens?: number;
   readonly contextRevision: number;
   readonly promptCacheProbe: 'compaction' | undefined;
   readonly source: AgentLLMRequestSource;
@@ -53,6 +58,8 @@ export interface CoreLoopRequesterOptions {
   readonly source: () => AgentLLMRequestSource;
   readonly runtime: LoopRequestRuntime;
   readonly config?: RequestConfigSnapshot;
+  readonly binding?: RequesterBinding;
+  readonly onSnapshot?: (config: RequestConfigSnapshot) => void;
   readonly dynamicTools?: boolean;
   readonly maxOutputSize?: number;
   readonly promptCacheProbe?: 'compaction';
@@ -64,20 +71,12 @@ export interface CoreLoopRequesterOptions {
   ) => void;
 }
 
-export interface AgentTurnExecutionInput extends TurnExecutionInput {
-  readonly onTrace?: (trace: LLMRequestTrace) => void;
-  readonly onOutcome?: (
-    outcome: Extract<LlmOutcome, { type: 'done' }>,
-    source: AgentLLMRequestSource,
-  ) => void;
-}
-
 export type OperationLoopRequesterOptions = Omit<CoreLoopRequesterOptions, 'runtime'>;
 
-export type CoreLoopRequester = LlmRequester<LlmDimension>;
+export type CoreLoopRequester = LoopLlmRequester;
 
 export interface LoopRequester {
-  createTurnExecution(input: AgentTurnExecutionInput): TurnExecution;
+  coreRequester(options: CoreLoopRequesterOptions): CoreLoopRequester;
   prepareOperation(options: OperationLoopRequesterOptions, signal: AbortSignal): Promise<CoreLoopRequester>;
 }
 
