@@ -196,6 +196,162 @@ describe('conversation fold', () => {
     expect(turn?.items[3]).toMatchObject({ name: 'Bash', input: { command: 'ls' }, output: 'a\nb', outcome: 'completed', step_index: 1 });
   });
 
+  it('coalesces legacy per-delta content parts without a block into one item per kind', () => {
+    const state = fold([
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'hello'),
+      stepBegin(0, 1, 's1'),
+      contentPart(0, 1, 's1', { type: 'think', think: 'plan the work' }),
+      contentPart(0, 1, 's1', { type: 'text', text: 'par' }),
+      contentPart(0, 1, 's1', { type: 'think', think: '' }),
+      contentPart(0, 1, 's1', { type: 'text', text: 't one' }),
+      contentPart(0, 1, 's1', { type: 'think', think: '' }),
+      contentPart(0, 1, 's1', { type: 'text', text: ' and two' }),
+      stepEnd(0, 1, 's1', { finishReason: 'end_turn', usage: { inputOther: 1, output: 1 } }),
+      turnEnded(0, 'completed'),
+    ]);
+
+    const [turn] = state.turns;
+    expect(shape(turn)).toEqual(['opener:hello', 'reasoning:plan the work', 'assistant_message:part one and two']);
+    expect(turn?.items.map((item) => item.item_id)).toEqual(['p1', 's1:0', 's1:1']);
+  });
+
+  it('keeps legacy fragments of different steps as separate items', () => {
+    const state = fold([
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'hello'),
+      stepBegin(0, 1, 's1'),
+      contentPart(0, 1, 's1', { type: 'text', text: 'first ' }),
+      contentPart(0, 1, 's1', { type: 'text', text: 'step' }),
+      stepEnd(0, 1, 's1', { finishReason: 'tool_use', usage: { inputOther: 1, output: 1 } }),
+      stepBegin(0, 2, 's2'),
+      contentPart(0, 2, 's2', { type: 'text', text: 'second ' }),
+      contentPart(0, 2, 's2', { type: 'text', text: 'step' }),
+      stepEnd(0, 2, 's2', { finishReason: 'end_turn', usage: { inputOther: 1, output: 1 } }),
+      turnEnded(0, 'completed'),
+    ]);
+
+    const [turn] = state.turns;
+    expect(shape(turn)).toEqual(['opener:hello', 'assistant_message:first step', 'assistant_message:second step']);
+  });
+
+  it('does not merge legacy fragments across an intervening tool call', () => {
+    const state = fold([
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'hello'),
+      stepBegin(0, 1, 's1'),
+      contentPart(0, 1, 's1', { type: 'text', text: 'before' }),
+      toolCall(0, 1, 's1', 'call-1', 'Bash', { command: 'ls' }),
+      toolResult('call-1', 'a\nb'),
+      contentPart(0, 1, 's1', { type: 'text', text: 'after' }),
+      stepEnd(0, 1, 's1', { finishReason: 'tool_use', usage: { inputOther: 1, output: 1 } }),
+      turnEnded(0, 'completed'),
+    ]);
+
+    const [turn] = state.turns;
+    expect(shape(turn)).toEqual(['opener:hello', 'assistant_message:before', 'tool:call-1:ended', 'assistant_message:after']);
+  });
+
+  it('keeps block-keyed content parts as separate items per block', () => {
+    const state = fold([
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'hello'),
+      stepBegin(0, 1, 's1'),
+      contentPart(0, 1, 's1', { type: 'text', text: 'one' }, 0),
+      contentPart(0, 1, 's1', { type: 'text', text: 'two' }, 1),
+      stepEnd(0, 1, 's1', { finishReason: 'end_turn', usage: { inputOther: 1, output: 1 } }),
+      turnEnded(0, 'completed'),
+    ]);
+
+    const [turn] = state.turns;
+    expect(shape(turn)).toEqual(['opener:hello', 'assistant_message:one', 'assistant_message:two']);
+    expect(turn?.items.map((item) => item.item_id)).toEqual(['p1', 's1:0', 's1:1']);
+  });
+
+  it('coalesces fragmented content of a legacy assistant message', () => {
+    const state = fold([
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'hello'),
+      record('context.append_message', {
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'think', think: 'why' },
+            { type: 'text', text: 'hel' },
+            { type: 'think', think: '' },
+            { type: 'text', text: ' ' },
+            { type: 'text', text: 'lo' },
+          ],
+          toolCalls: [],
+        },
+      }),
+      turnEnded(0, 'completed'),
+    ]);
+
+    const [turn] = state.turns;
+    expect(shape(turn)).toEqual(['opener:hello', 'reasoning:why', 'assistant_message:hel lo']);
+  });
+
+  it('preserves whitespace-only legacy text fragments', () => {
+    const state = fold([
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'hello'),
+      stepBegin(0, 1, 's1'),
+      contentPart(0, 1, 's1', { type: 'text', text: 'hello' }),
+      contentPart(0, 1, 's1', { type: 'text', text: ' ' }),
+      contentPart(0, 1, 's1', { type: 'text', text: 'world' }),
+      contentPart(0, 1, 's1', { type: 'think', think: '' }),
+      contentPart(0, 1, 's1', { type: 'text', text: '\n\nagain' }),
+      stepEnd(0, 1, 's1', { finishReason: 'end_turn', usage: { inputOther: 1, output: 1 } }),
+      turnEnded(0, 'completed'),
+    ]);
+
+    const [turn] = state.turns;
+    expect(shape(turn)).toEqual(['opener:hello', 'assistant_message:hello world\n\nagain']);
+  });
+
+  it('does not merge legacy fragments across an intervening turn item', () => {
+    const state = fold([
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'hello'),
+      stepBegin(0, 1, 's1'),
+      contentPart(0, 1, 's1', { type: 'text', text: 'before' }),
+      userMessage(undefined, notificationXml('a'), { kind: 'task', taskId: 'a' }),
+      contentPart(0, 1, 's1', { type: 'text', text: 'after' }),
+      stepEnd(0, 1, 's1', { finishReason: 'end_turn', usage: { inputOther: 1, output: 1 } }),
+      turnEnded(0, 'completed'),
+    ]);
+
+    const [turn] = state.turns;
+    expect(turn?.items.map((item) => item.type)).toEqual([
+      'user_message',
+      'assistant_message',
+      'notification',
+      'assistant_message',
+    ]);
+    expect(turn?.items.filter((item) => item.type === 'assistant_message').map((item) => item.text)).toEqual([
+      'before',
+      'after',
+    ]);
+  });
+
+  it('keeps consecutive legacy assistant messages as separate items', () => {
+    const assistant = (text: string): WireRecord =>
+      record('context.append_message', {
+        message: { role: 'assistant', content: [{ type: 'text', text }], toolCalls: [] },
+      });
+    const state = fold([
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'hello'),
+      assistant('one'),
+      assistant('two'),
+      turnEnded(0, 'completed'),
+    ]);
+
+    const [turn] = state.turns;
+    expect(shape(turn)).toEqual(['opener:hello', 'assistant_message:one', 'assistant_message:two']);
+  });
+
   it('attaches the request debug to the last item of each step only when debugging', () => {
     const records = [
       turnPrompt(0, 'p1'),
@@ -1001,6 +1157,30 @@ async function runningTurn(h: FeedHarness): Promise<void> {
 }
 
 describe('conversation feed', () => {
+  it('coalesces blockless legacy content parts through the replay path', async () => {
+    const h = feedHarness([
+      prompt(0, 'p1').serialize(),
+      userPrompt('p1', 'hello').serialize(),
+      loopEvent({ type: 'step.begin', uuid: 's1', turnId: '0', step: 1 }).serialize(),
+      loopEvent({ type: 'content.part', turnId: '0', step: 1, stepUuid: 's1', part: { type: 'think', think: 'plan' } }).serialize(),
+      loopEvent({ type: 'content.part', turnId: '0', step: 1, stepUuid: 's1', part: { type: 'text', text: 'hel' } }).serialize(),
+      loopEvent({ type: 'content.part', turnId: '0', step: 1, stepUuid: 's1', part: { type: 'think', think: '' } }).serialize(),
+      loopEvent({ type: 'content.part', turnId: '0', step: 1, stepUuid: 's1', part: { type: 'text', text: 'lo world' } }).serialize(),
+      loopEvent({ type: 'step.end', uuid: 's1', turnId: '0', step: 1 }).serialize(),
+      new TurnEnded({ agentId: 'main', turnId: 0, reason: 'completed' }).serialize(),
+    ]);
+    await h.dispatcher.restore();
+
+    const [turn] = h.feed.turns();
+    const items = turn?.items ?? [];
+    expect(items.map((item) => item.type)).toEqual(['user_message', 'reasoning', 'assistant_message']);
+    expect(items.filter((item) => item.type === 'assistant_message' || item.type === 'reasoning').map((item) => item.text)).toEqual([
+      'plan',
+      'hello world',
+    ]);
+    h.dispatcher.dispose();
+  });
+
   it('rejects ready when the first replay fails', async () => {
     const h = feedHarness([prompt(0, 'p1').serialize()]);
     h.failNextReplay();

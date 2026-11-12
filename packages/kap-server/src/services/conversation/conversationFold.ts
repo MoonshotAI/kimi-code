@@ -9,16 +9,18 @@ import type { LoopRecordedEvent } from '@moonshot-ai/agent-core-v2/agent/context
 import { LoopErrors } from '@moonshot-ai/agent-core-v2/agent/loop/errors';
 import { isUndoAnchorOrigin } from '@moonshot-ai/agent-core-v2/agent/undo/turnUndo';
 import { stripBundledSkillBlocks } from '@moonshot-ai/agent-core-v2/human/agent/origin';
-import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
+import { type ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
 import type { WireRecord } from '@moonshot-ai/agent-core-v2/wire/record';
 
 import type {
+  AssistantMessageItem,
   CompactionItem,
   ConversationItem,
   ConversationOutcome,
   ConversationTurn,
   ErrorInfo,
   NotificationItem,
+  ReasoningItem,
   ToolCallItem,
   TurnEndReason,
   UserMessageItem,
@@ -105,6 +107,7 @@ export interface ConversationState {
   provisionalEnds: Record<string, TurnEnd>;
   recordsTurnEnds: boolean;
   stepParts: Record<string, number>;
+  legacyMerge?: { stepUuid: string; itemId: string };
   compaction?: CompactionDetails;
 }
 
@@ -369,9 +372,19 @@ function applyLegacyAssistant(
   const open = openTurn(state);
   const ownerless = open === undefined && state.pendingPrompt === undefined;
   const turn = open ?? (ownerless ? addTurn(state, time) : startTurn(state, time));
+  let lastItem: AssistantMessageItem | ReasoningItem | undefined;
   for (const part of message.content) {
+    if (isEmptyLegacyPart(part)) continue;
     const item = contentItem(part, nextItemId(turn), undefined, time);
-    if (item !== undefined) turn.items.push(item);
+    if (item === undefined) continue;
+    if (lastItem === undefined || lastItem.type !== item.type) {
+      turn.items.push(item);
+      lastItem = item;
+      continue;
+    }
+    const merged = { ...lastItem, text: lastItem.text + item.text };
+    turn.items[turn.items.length - 1] = merged;
+    lastItem = merged;
   }
   for (const call of message.toolCalls ?? []) {
     upsertToolCall(
@@ -425,14 +438,21 @@ function applyLoopEvent(state: ConversationState, event: LoopRecordedEvent | und
       const position = state.stepParts[event.stepUuid] ?? 0;
       state.stepParts[event.stepUuid] = position + 1;
       const startedAt = event.startedAt ?? findStep(state, event.stepUuid)?.step.startedAt ?? time;
+      const block = numberField(event.block);
       const item = contentItem(
         event.part,
-        `${event.stepUuid}:${event.block ?? position}`,
+        `${event.stepUuid}:${block ?? position}`,
         event.step,
         startedAt,
         event.durationMs,
       );
-      if (item !== undefined) upsertItem(turn, item);
+      if (item === undefined) return;
+      if (block === undefined) {
+        if (isEmptyLegacyPart(event.part)) return;
+        foldLegacyPart(state, turn, event.stepUuid, item);
+        return;
+      }
+      upsertItem(turn, item);
       return;
     }
     case 'tool.call': {
@@ -863,6 +883,36 @@ function upsertItem(turn: ConversationTurn, item: ConversationItem): void {
   const index = turn.items.findIndex((candidate) => candidate.item_id === item.item_id);
   if (index === -1) turn.items.push(item);
   else turn.items[index] = item;
+}
+
+function foldLegacyPart(
+  state: ConversationState,
+  turn: ConversationTurn,
+  stepUuid: string,
+  item: AssistantMessageItem | ReasoningItem,
+): void {
+  const tail = turn.items.at(-1);
+  const last = state.legacyMerge;
+  if (
+    last !== undefined &&
+    last.stepUuid === stepUuid &&
+    tail !== undefined &&
+    tail.item_id === last.itemId &&
+    tail.type === item.type
+  ) {
+    const merged = { ...tail, text: tail.text + item.text };
+    state.legacyMerge = { stepUuid, itemId: tail.item_id };
+    upsertItem(turn, merged);
+    return;
+  }
+  state.legacyMerge = { stepUuid, itemId: item.item_id };
+  upsertItem(turn, item);
+}
+
+function isEmptyLegacyPart(part: ContentPart): boolean {
+  if (part.type === 'text') return part.text.length === 0;
+  if (part.type === 'think') return part.think.length === 0;
+  return false;
 }
 
 function nextItemId(turn: ConversationTurn): string {
