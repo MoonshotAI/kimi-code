@@ -439,7 +439,7 @@ describe('kimi provider definitions', () => {
       ['status=ready (200)', 200, { id: 'file_ready_2', status: 'ready', status_details: '' }, 'file_ready_2'],
       ['status=ok (200)', 200, { id: 'file_ok_1', status: 'ok', status_details: '' }, 'file_ok_1'],
       ['status=processed (200)', 200, { id: 'file_proc_ok', status: 'processed' }, 'file_proc_ok'],
-      ['status=uploaded (200)', 200, { id: 'file_up_ok', status: 'uploaded' }, 'file_up_ok'],
+      ['status=uploaded with extract_status=ready (200)', 200, { id: 'file_up_ready', status: 'uploaded', extract_status: 'ready' }, 'file_up_ready'],
       ['minimal id-only payload (200)', 200, { id: 'file_min_1' }, 'file_min_1'],
     ])('accepts %s and returns an ms:// reference', async (_label, httpStatus, payload, expectedId) => {
       const { model, request, seenUrls } = kimiUploadRequest('openai', payload, httpStatus);
@@ -497,6 +497,12 @@ describe('kimi provider definitions', () => {
         'openai' as const,
         { id: 'file_not_ready_1', extract_status: 'processing' },
         /file_not_ready_1.*not ready.*extract_status=processing/,
+      ],
+      [
+        'non-ready status=uploaded without extract_status=ready',
+        'openai' as const,
+        { id: 'file_not_ready_up', status: 'uploaded' },
+        /file_not_ready_up.*not ready.*status=uploaded/,
       ],
       [
         'non-ready status=processing',

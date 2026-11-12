@@ -3,7 +3,7 @@ import type { LlmFiles, UploadedMedia } from '#/llm/request';
 
 import { kimiOpenAIProtocol } from './protocol';
 
-const READY_FILE_OBJECT_STATUSES = new Set(['ready', 'ok', 'processed', 'uploaded']);
+const READY_FILE_OBJECT_STATUSES = new Set(['ready', 'ok', 'processed']);
 
 function readNonEmptyString(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
@@ -58,9 +58,11 @@ function parseUploadedKimiFile(uploaded: unknown): UploadedMedia {
     );
   }
   const status = record['status'];
+  const allowUploadedWithReadyExtract = extractStatus === 'ready' && status === 'uploaded';
   if (
     status !== undefined &&
     status !== null &&
+    !allowUploadedWithReadyExtract &&
     (typeof status !== 'string' || !READY_FILE_OBJECT_STATUSES.has(status))
   ) {
     throw formatUploadStatusError(id, 'status', status, readUploadFailureDetail(record));
