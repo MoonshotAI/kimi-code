@@ -660,21 +660,15 @@ export class GuiStoreService implements IGuiStoreService {
         this.minRevisionFloor = latest.floor;
       }
       quarantinePath = latest.path;
-    } catch {
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw toPersistenceError(error, `Failed to inspect GUI store directory ${this.homeDir}`);
+      }
     }
     return {
       state: { revision: this.minRevisionFloor, entries: emptyRecord() },
       quarantinePath,
     };
-  }
-
-  private async hasLegacyToml(): Promise<boolean> {
-    try {
-      const st = await stat(this.legacyTomlPath);
-      return st.isFile();
-    } catch {
-      return false;
-    }
   }
 
   private async migrateLegacyTomlUnlocked(lock: AcquiredGuiStoreLock): Promise<InternalState | undefined> {
@@ -689,6 +683,10 @@ export class GuiStoreService implements IGuiStoreService {
     const { state: floorState, quarantinePath: existingQuarantine } =
       await this.emptyStateWithFloor();
     if (existingQuarantine !== undefined || floorState.revision > 0) {
+      await unlink(this.legacyTomlPath).catch((error: unknown) => {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+        throw toPersistenceError(error, `Failed to remove superseded ${this.legacyTomlPath}`);
+      });
       return undefined;
     }
     const migratedEntries = emptyRecord<GuiStoreEntry>();
@@ -699,8 +697,11 @@ export class GuiStoreService implements IGuiStoreService {
       try {
         parsedToml = parseToml(tomlText) as Record<string, unknown>;
       } catch (parseError) {
-        const suffix = `${Date.now()}-${process.pid}-${randomBytes(3).toString('hex')}`;
-        const quarantinePath = `${this.legacyTomlPath}.corrupt-${suffix}`;
+        const nextFloor = Math.max(Date.now(), this.minRevisionFloor + 1);
+        this.minRevisionFloor = nextFloor;
+        const suffix = `${nextFloor}-${process.pid}-${randomBytes(3).toString('hex')}`;
+        const quarantinePath = `${this.filePath}.corrupt-${suffix}`;
+        await lock.assertOwned();
         await renameWithRetry(this.legacyTomlPath, quarantinePath).catch((error: unknown) => {
           throw toPersistenceError(error, `Failed to quarantine ${this.legacyTomlPath}`);
         });
@@ -736,26 +737,17 @@ export class GuiStoreService implements IGuiStoreService {
     };
 
     this.selfWriting += 1;
-    const backupSuffix = `${Date.now()}-${process.pid}-${randomBytes(3).toString('hex')}`;
-    const backupPath = `${this.legacyTomlPath}.migrated-${backupSuffix}`;
-    let movedLegacy = false;
     try {
-      await lock.assertOwned();
-      await renameWithRetry(this.legacyTomlPath, backupPath).catch((error: unknown) => {
-        throw toPersistenceError(error, `Failed to archive migrated ${this.legacyTomlPath}`);
-      });
-      movedLegacy = true;
       await writeAtomicDurable(
         this.filePath,
         serializePersistedState(migratedState),
         () => lock.assertOwned(),
       );
+      await unlink(this.legacyTomlPath).catch((error: unknown) => {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+        throw toPersistenceError(error, `Failed to remove migrated ${this.legacyTomlPath}`);
+      });
       await syncDirSafe(this.homeDir);
-    } catch (error) {
-      if (movedLegacy) {
-        await renameWithRetry(backupPath, this.legacyTomlPath).catch(() => undefined);
-      }
-      throw error;
     } finally {
       this.selfWriting -= 1;
     }
@@ -772,19 +764,9 @@ export class GuiStoreService implements IGuiStoreService {
       text = await readFile(this.filePath, 'utf-8');
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        if (await this.hasLegacyToml()) {
-          return this.withCrossProcessLock((lock) =>
-            this.readUnlocked(lock, failIfUnrecoveredQuarantine),
-          );
-        }
-        const { state, quarantinePath } = await this.emptyStateWithFloor();
-        if (failIfUnrecoveredQuarantine && quarantinePath !== undefined) {
-          throw new GuiStoreCorruptError(
-            `GUI store remains quarantined at ${quarantinePath} until recovered`,
-            quarantinePath,
-          );
-        }
-        return state;
+        return this.withCrossProcessLock((lock) =>
+          this.readUnlocked(lock, failIfUnrecoveredQuarantine),
+        );
       }
       throw toPersistenceError(error, `Failed to read GUI store at ${this.filePath}`);
     }
@@ -899,10 +881,18 @@ export class GuiStoreService implements IGuiStoreService {
       text = await readFile(this.filePath, 'utf-8');
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        if (await this.hasLegacyToml()) return { kind: 'skip' };
-        const { state: emptyFloor, quarantinePath } = await this.emptyStateWithFloor();
-        if (quarantinePath !== undefined || emptyFloor.revision > 0) return { kind: 'skip' };
-        return { kind: 'ok', state: emptyFloor };
+        const legacyExists = await stat(this.legacyTomlPath).then(
+          (st) => st.isFile(),
+          () => false,
+        );
+        if (legacyExists) return { kind: 'skip' };
+        try {
+          const { state: emptyFloor, quarantinePath } = await this.emptyStateWithFloor();
+          if (quarantinePath !== undefined || emptyFloor.revision > 0) return { kind: 'skip' };
+          return { kind: 'ok', state: emptyFloor };
+        } catch {
+          return { kind: 'io_error' };
+        }
       }
       return { kind: 'io_error' };
     }
