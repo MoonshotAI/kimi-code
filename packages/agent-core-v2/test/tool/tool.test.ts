@@ -15,6 +15,7 @@ import type { TokenUsage } from '#human/llm-requester/usage';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { applyPrintModeConfigDefaults } from '#/agent/task/printDefaults';
 import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { makeHookRunner } from '../features/externalHooks/runner-stub';
@@ -3790,13 +3791,21 @@ describe('Agent tool execution contract', () => {
     expect(context.get(IAgentTaskService).getTask(handler.taskId)?.status).toBe('completed');
   });
 
-  it('treats timeoutMs=0 as an immediate deadline and preserves the metadata', async () => {
+  it('treats timeoutMs=0 as no deadline for background subagents and preserves the metadata', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const completion = deferred<{ readonly summary: string }>();
     const lifecycle = createAgentLifecycleStub({
       createAgentIds: ['agent-child'],
       runCompletion: (_agentId, _request, options) =>
-        new Promise((_resolve, reject) => {
-          options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true });
+        new Promise((resolve, reject) => {
+          options.signal.addEventListener(
+            'abort',
+            () => {
+              reject(options.signal.reason);
+            },
+            { once: true },
+          );
+          void completion.promise.then(resolve, reject);
         }),
     });
     const context = createAgentToolContext(lifecycle, {
@@ -3808,12 +3817,113 @@ describe('Agent tool execution contract', () => {
       run_in_background: true,
     });
     await handler;
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(DEFAULT_SUBAGENT_TIMEOUT_MS + 1_000);
+
+    expect(context.get(IAgentTaskService).getTask(handler.taskId)).toMatchObject({
+      status: 'running',
+      detached: true,
+      timeoutMs: 0,
+    });
+
+    completion.resolve({ summary: 'background child result' });
     await handler.wait();
 
     expect(context.get(IAgentTaskService).getTask(handler.taskId)).toMatchObject({
-      status: 'timed_out',
+      status: 'completed',
       timeoutMs: 0,
+      stopReason: undefined,
+    });
+    expect(handler.output().preview).toBe('background child result');
+  });
+
+  it('runs foreground subagents without a deadline under print mode defaults', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const completion = deferred<{ readonly summary: string }>();
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: (_agentId, _request, options) =>
+        new Promise((resolve, reject) => {
+          options.signal.addEventListener(
+            'abort',
+            () => {
+              reject(options.signal.reason);
+            },
+            { once: true },
+          );
+          void completion.promise.then(resolve, reject);
+        }),
+    });
+    const context = createAgentToolContext(lifecycle);
+    await applyPrintModeConfigDefaults(context.get(IConfigService));
+
+    const handler = agentHandler(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+    });
+    await vi.waitFor(() => {
+      expect(context.get(IAgentTaskService).list(false)).toHaveLength(1);
+    });
+    await vi.advanceTimersByTimeAsync(DEFAULT_SUBAGENT_TIMEOUT_MS + 1_000);
+    expect(context.get(IAgentTaskService).list(false)[0]).toMatchObject({
+      status: 'running',
+      timeoutMs: 0,
+    });
+
+    completion.resolve({ summary: 'foreground child result' });
+    const response = await handler;
+    const output = response.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+
+    expect('outcome' in response && response.outcome.type).toBe('success');
+    expect(output).toContain('foreground child result');
+    expect(output).not.toContain('Agent timed out after 0 hours.');
+    expect(handler.snapshot().fields['task']).toMatchObject({
+      timeoutMs: 0,
+      timedOut: undefined,
+      stopReason: undefined,
+    });
+  });
+
+  it('runs background subagents without a deadline under print mode defaults', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const completion = deferred<{ readonly summary: string }>();
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: (_agentId, _request, options) =>
+        new Promise((resolve, reject) => {
+          options.signal.addEventListener(
+            'abort',
+            () => {
+              reject(options.signal.reason);
+            },
+            { once: true },
+          );
+          void completion.promise.then(resolve, reject);
+        }),
+    });
+    const context = createAgentToolContext(lifecycle);
+    await applyPrintModeConfigDefaults(context.get(IConfigService));
+
+    const handler = agentHandler(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+      run_in_background: true,
+    });
+    await handler;
+    await vi.advanceTimersByTimeAsync(DEFAULT_SUBAGENT_TIMEOUT_MS + 1_000);
+
+    expect(context.get(IAgentTaskService).getTask(handler.taskId)).toMatchObject({
+      status: 'running',
+      detached: true,
+      timeoutMs: 0,
+    });
+
+    completion.resolve({ summary: 'print background result' });
+    await handler.wait();
+
+    expect(context.get(IAgentTaskService).getTask(handler.taskId)).toMatchObject({
+      status: 'completed',
+      timeoutMs: 0,
+      stopReason: undefined,
     });
   });
 });
