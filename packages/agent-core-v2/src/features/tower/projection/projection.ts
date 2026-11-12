@@ -146,7 +146,10 @@ function missionClosedAt(
   let closedAt: string | undefined;
   for (const event of events) {
     if (mission.status === 'merged') {
-      if (event.kind === 'merge' && event.fields['branch'] === mission.branch) {
+      if (
+        (event.kind === 'merge' || event.kind === 'merge.noop') &&
+        event.fields['branch'] === mission.branch
+      ) {
         closedAt = event.at;
       }
       continue;

@@ -8,6 +8,7 @@ import type {
 
 import { TRUNCATION_ELLIPSIS } from '#/tui/constant/rendering';
 import { currentTheme, type ColorToken } from '#/tui/theme';
+import { sanitizeShellOutput } from '#/tui/utils/shell-output';
 
 const LEFT_EDGE = '│';
 const SIDE_PADDING = 1;
@@ -30,7 +31,9 @@ const EVENT_SYMBOLS: Readonly<Record<string, string>> = {
   died: '☠',
   revived: '↻',
   merge: '✅',
+  'merge.advanced': '⛔',
   'merge.blocked': '⛔',
+  'merge.noop': '✅',
   'review.write': '👁',
   'mission.update': '●',
   plan: '▤',
@@ -107,7 +110,7 @@ function renderHeader(projection: TowerProjection, width: number): string {
   const title =
     projection.base === undefined
       ? currentTheme.boldFg('primary', '⚡ tower')
-      : `${currentTheme.boldFg('primary', '⚡ tower')}${currentTheme.fg('textDim', ' · ')}${currentTheme.fg('textDim', projection.base)}`;
+      : `${currentTheme.boldFg('primary', '⚡ tower')}${currentTheme.fg('textDim', ' · ')}${currentTheme.fg('textDim', sanitizeShellOutput(projection.base))}`;
   const live = projection.workersLive + projection.reviewersLive;
   const liveToken: ColorToken = live > 0 ? 'success' : 'textMuted';
   return joinSides(title, currentTheme.fg(liveToken, `${live} live`), width);
@@ -122,11 +125,11 @@ function joinSides(left: string, right: string, width: number): string {
 
 function renderMissionStatusLine(mission: TowerProjectionOpenMission, width: number): string {
   const dot = currentTheme.fg(MISSION_STATUS_COLORS[mission.status], '●');
-  const prefix = `${dot} ${currentTheme.fg('textMuted', mission.id)} `;
+  const prefix = `${dot} ${currentTheme.fg('textMuted', sanitizeShellOutput(mission.id))} `;
   const titleWidth = Math.max(0, width - visibleWidth(prefix));
   const title = currentTheme.fg(
     'text',
-    truncateToWidth(mission.title, titleWidth, TRUNCATION_ELLIPSIS),
+    truncateToWidth(sanitizeShellOutput(mission.title), titleWidth, TRUNCATION_ELLIPSIS),
   );
   return prefix + title;
 }
@@ -143,8 +146,9 @@ function renderMissionProgressLine(mission: TowerProjectionOpenMission, width: n
     currentTheme.fg('primary', '▓'.repeat(filled)) +
     currentTheme.fg('textMuted', '░'.repeat(TASKS_BAR_CELLS - filled));
   const parts = [`  ${bar} ${currentTheme.fg('textDim', `${mission.tasksDone}/${mission.tasksTotal}`)}`];
-  if (mission.owner !== undefined && mission.owner.length > 0) {
-    parts.push(currentTheme.fg('textMuted', mission.owner));
+  const owner = mission.owner === undefined ? undefined : sanitizeShellOutput(mission.owner);
+  if (owner !== undefined && owner.length > 0) {
+    parts.push(currentTheme.fg('textMuted', owner));
   }
   let line = parts.join(currentTheme.fg('textDim', ' · '));
   if (mission.blockers > 0) {
@@ -160,8 +164,11 @@ function renderEventLine(event: TowerActivityEvent, now: number): string {
   const segments: string[] = [];
   if (time.length > 0) segments.push(currentTheme.fg('textMuted', time));
   segments.push(currentTheme.fg('accent', symbol));
-  segments.push(currentTheme.fg('text', event.actor));
-  if (key !== undefined && key.length > 0) segments.push(currentTheme.fg('textMuted', key));
+  segments.push(currentTheme.fg('text', sanitizeShellOutput(event.actor)));
+  if (key !== undefined) {
+    const text = sanitizeShellOutput(key);
+    if (text.length > 0) segments.push(currentTheme.fg('textMuted', text));
+  }
   return segments.join(' ');
 }
 
@@ -174,7 +181,7 @@ function renderClosedMissionLine(
     mission.status === 'merged'
       ? currentTheme.fg('success', '✅')
       : currentTheme.fg('error', '❌');
-  const left = `${mark} ${currentTheme.fg('textMuted', mission.id)} ${currentTheme.fg('text', mission.title)}`;
+  const left = `${mark} ${currentTheme.fg('textMuted', sanitizeShellOutput(mission.id))} ${currentTheme.fg('text', sanitizeShellOutput(mission.title))}`;
   const relative = formatTowerRelativeTime(mission.closedAt, now);
   if (relative.length === 0) return truncateToWidth(left, width, TRUNCATION_ELLIPSIS);
   return joinSides(left, currentTheme.fg('textMuted', relative), width);

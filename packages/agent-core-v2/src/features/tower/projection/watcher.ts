@@ -73,6 +73,7 @@ export function watchTower(
     rearmTimer = setTimeout(() => {
       rearmTimer = undefined;
       arm();
+      emit({ stateChanged: true, logAppended: true });
     }, REARM_DELAY_MS);
     rearmTimer.unref?.();
   };

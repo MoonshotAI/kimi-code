@@ -314,11 +314,12 @@ describe('missions', () => {
     expect(projection.openMissions.some((mission) => mission.id === 'M1')).toBe(false);
   });
 
-  it('derives closedAt from the last matching merge and mission.update events', async () => {
+  it('derives closedAt from the last matching merge, merge.noop, and mission.update events', async () => {
     const missions = [
       missionFixture({ id: 'M1', status: 'merged', branch: 'feat/one' }),
       missionFixture({ id: 'M2', status: 'abandoned', branch: 'feat/two' }),
       missionFixture({ id: 'M3', status: 'merged', branch: 'feat/three' }),
+      missionFixture({ id: 'M4', kind: 'survey', status: 'merged', branch: 'feat/four' }),
     ];
     await writeState(stateFixture({ missions }));
     await writeActivityLog([
@@ -333,11 +334,16 @@ describe('missions', () => {
         id: 'M2',
         status: 'active',
       }),
+      logLine('2026-11-08T06:00:00.000Z', 'tower', 'merge.noop', {
+        branch: 'feat/four',
+        kind: 'survey',
+      }),
     ]);
 
     const projection = await readTowerProjection(root);
 
     expect(projection.recentClosed).toEqual([
+      { id: 'M4', title: 'Mission M4', status: 'merged', closedAt: '2026-11-08T06:00:00.000Z' },
       { id: 'M1', title: 'Mission M1', status: 'merged', closedAt: '2026-11-08T03:00:00.000Z' },
       { id: 'M2', title: 'Mission M2', status: 'abandoned', closedAt: '2026-11-08T02:00:00.000Z' },
       { id: 'M3', title: 'Mission M3', status: 'merged', closedAt: undefined },
@@ -453,6 +459,7 @@ describe('parseTowerActivityLine', () => {
       'died',
       'revived',
       'merge',
+      'merge.advanced',
       'merge.blocked',
       'merge.noop',
       'mission.update',
@@ -561,6 +568,20 @@ describe('readTowerLogTail', () => {
     expect(tail.offset).toBe(size);
     expect(tail.lines).toEqual(lines.slice(startLine + 1));
   });
+
+  it('leaves the offset before a trailing partial line', async () => {
+    await writeActivityLogRaw('one\npart');
+
+    const tail = await readTowerLogTail(root, 1024);
+
+    expect(tail).toEqual({ offset: Buffer.byteLength('one\n'), lines: ['one'] });
+
+    await appendFile(logPath(), 'ial\n');
+    expect(await readTowerLogFrom(root, tail.offset)).toEqual({
+      offset: Buffer.byteLength('one\npartial\n'),
+      lines: ['partial'],
+    });
+  });
 });
 
 describe('watchTower', () => {
@@ -619,18 +640,22 @@ describe('watchTower', () => {
     expect(hints).toHaveLength(seen);
   });
 
-  it('re-arms after the tower directories appear in a bare repository root', async () => {
+  it('reports changes made while re-arming after tower directories appear', async () => {
     const bare = await mkdtemp(join(tmpdir(), 'tower-projection-bare-'));
     const hints: TowerWatchHint[] = [];
     const dispose = watchTower(bare, (hint) => hints.push(hint), 20);
     try {
       await mkdir(join(bare, '.tower/comms/log'), { recursive: true });
-      await delay(200);
       await writeFile(join(bare, '.tower/comms/state.json'), '{"version":1}\n');
+      await writeFile(join(bare, '.tower/comms/log/activity.log'), 'line\n');
 
-      await vi.waitFor(() => expect(hints.some((hint) => hint.stateChanged)).toBe(true), {
-        timeout: 3_000,
-      });
+      await vi.waitFor(
+        () => {
+          expect(hints.some((hint) => hint.stateChanged)).toBe(true);
+          expect(hints.some((hint) => hint.logAppended)).toBe(true);
+        },
+        { timeout: 3_000 },
+      );
     } finally {
       dispose();
       await rm(bare, { recursive: true, force: true });

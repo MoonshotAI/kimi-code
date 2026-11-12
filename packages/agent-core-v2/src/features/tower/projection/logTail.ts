@@ -66,12 +66,19 @@ export async function readTowerLogTail(repoRoot: string, maxBytes: number): Prom
     if (length <= 0) return { offset: size, lines: [] };
     const chunk = await readRange(handle, start, length);
     let content = chunk;
+    let contentStart = start;
     if (start > 0) {
       const firstNewline = content.indexOf(NEWLINE);
-      if (firstNewline < 0) return { offset: size, lines: [] };
+      if (firstNewline < 0) return { offset: start, lines: [] };
+      contentStart += firstNewline + 1;
       content = content.subarray(firstNewline + 1);
     }
-    return { offset: size, lines: decodeLines(content, true) };
+    const lastNewline = content.lastIndexOf(NEWLINE);
+    if (lastNewline < 0) return { offset: contentStart, lines: [] };
+    return {
+      offset: contentStart + lastNewline + 1,
+      lines: decodeLines(content.subarray(0, lastNewline + 1), true),
+    };
   } finally {
     await handle.close();
   }

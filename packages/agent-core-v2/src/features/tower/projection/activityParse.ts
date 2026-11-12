@@ -12,6 +12,7 @@ export const TOWER_ACTIVITY_FEED_KINDS: ReadonlySet<string> = new Set([
   'died',
   'revived',
   'merge',
+  'merge.advanced',
   'merge.blocked',
   'merge.noop',
   'mission.update',
