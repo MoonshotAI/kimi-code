@@ -1,10 +1,10 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createKimiConfigRpc } from '#/index';
+import { createKimiConfigRpc, KimiAuthFacade } from '#/index';
 import { configToTomlData, parseConfigString } from '#/config/index';
 
 const toPosix = (p: string): string => p.replaceAll('\\', '/');
@@ -163,5 +163,114 @@ retirement_at = "2030-01-01T00:00:00Z"
       { upgrade?: Record<string, unknown> }
     >;
     expect(withoutUpgrade['acme/current']).not.toHaveProperty('upgrade');
+  });
+
+  it('preserves and removes provider search_url and feedback_url', () => {
+    const config = parseConfigString(`
+[providers.acme]
+type = "kimi"
+base_url = "https://registry.example.test/v1"
+api_key = "YOUR_API_KEY"
+search_url = "https://registry.example.test/v1/search"
+feedback_url = "https://registry.example.test/v1/feedback"
+`);
+
+    expect(config.providers['acme']).toMatchObject({
+      searchUrl: 'https://registry.example.test/v1/search',
+      feedbackUrl: 'https://registry.example.test/v1/feedback',
+    });
+
+    config.providers['acme'] = {
+      type: 'kimi',
+      baseUrl: 'https://registry.example.test/v1',
+      apiKey: 'YOUR_API_KEY',
+      searchUrl: 'https://registry.example.test/v1/search',
+    };
+    const updatedProviders = configToTomlData(config)['providers'] as Record<
+      string,
+      Record<string, unknown>
+    >;
+    expect(updatedProviders['acme']).toMatchObject({
+      search_url: 'https://registry.example.test/v1/search',
+    });
+    expect(updatedProviders['acme']).not.toHaveProperty('feedback_url');
+  });
+
+  it('submits feedback and uploads to provider feedbackUrl with provider apiKey', async () => {
+    const dir = await makeTempDir();
+    const configPath = join(dir, 'config.toml');
+    await writeFile(
+      configPath,
+      `
+[providers.acme]
+type = "kimi"
+base_url = "https://registry.example.test/v1"
+api_key = "YOUR_API_KEY"
+feedback_url = "https://registry.example.test/v1/feedback"
+`,
+      'utf8',
+    );
+
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.endsWith('/feedback')) {
+        return new Response(JSON.stringify({ feedback_id: 99 }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (url.endsWith('/upload_url')) {
+        return new Response(
+          JSON.stringify({
+            upload: {
+              id: 55,
+              parts: [{ part_number: 1, url: 'https://storage.example.test/p1', method: 'PUT', size: 4 }],
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return new Response('{}', { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const facade = new KimiAuthFacade({ homeDir: dir, configPath });
+      const submitted = await facade.submitFeedback(
+        {
+          content: 'test',
+          sessionId: 's1',
+          version: 'kimi-code-1.0.0',
+          os: 'Darwin',
+          model: 'acme/k3',
+        },
+        'acme',
+      );
+      expect(submitted).toEqual({ kind: 'ok', feedbackId: 99 });
+
+      const upload = await facade.createFeedbackUploadUrl(
+        { feedbackId: 99, filename: 'session.zip', size: 4, sha256: 'abc' },
+        'acme',
+      );
+      expect(upload).toMatchObject({ kind: 'ok', uploadId: 55 });
+
+      const completed = await facade.completeFeedbackUpload(
+        { uploadId: 55, parts: [{ partNumber: 1, etag: '"e1"' }] },
+        'acme',
+      );
+      expect(completed).toEqual({ kind: 'ok' });
+
+      const calls = fetchMock.mock.calls as unknown as [string, RequestInit][];
+      expect(calls.map(([u]) => u)).toEqual([
+        'https://registry.example.test/v1/feedback',
+        'https://registry.example.test/v1/feedback/upload_url',
+        'https://registry.example.test/v1/feedback/upload_complete',
+      ]);
+      for (const [, init] of calls) {
+        expect((init.headers as Record<string, string>)['Authorization']).toBe(
+          'Bearer YOUR_API_KEY',
+        );
+      }
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

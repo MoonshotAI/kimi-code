@@ -31,8 +31,9 @@ export async function submitFeedbackWithAttachments(
   host: SlashCommandHost,
   feedbackId: number,
   level: FeedbackAttachmentLevel,
+  providerName?: string,
 ): Promise<boolean> {
-  const api = createFeedbackUploadApi(host);
+  const api = createFeedbackUploadApi(host, providerName);
 
   if (level === 'logs') {
     const uploaded = await prepareAndUploadSessionArchive(host, api, feedbackId);
@@ -169,10 +170,16 @@ async function logFeedbackUploadError(error: unknown): Promise<void> {
   }
 }
 
-function createFeedbackUploadApi(host: SlashCommandHost): FeedbackUploadUrlApi {
+function createFeedbackUploadApi(
+  host: SlashCommandHost,
+  providerName?: string,
+): FeedbackUploadUrlApi {
   return {
     async createUploadUrl(input) {
-      const res = await host.harness.auth.createFeedbackUploadUrl(input);
+      const res =
+        providerName === undefined
+          ? await host.harness.auth.createFeedbackUploadUrl(input)
+          : await host.harness.auth.createFeedbackUploadUrl(input, providerName);
       if (res.kind !== 'ok') throw new Error(res.message);
       return {
         uploadId: res.uploadId,
@@ -180,10 +187,14 @@ function createFeedbackUploadApi(host: SlashCommandHost): FeedbackUploadUrlApi {
       };
     },
     async completeUpload(input) {
-      const res = await host.harness.auth.completeFeedbackUpload({
+      const payload = {
         uploadId: input.uploadId,
         parts: input.parts.map((part) => ({ partNumber: part.partNumber, etag: part.etag })),
-      });
+      };
+      const res =
+        providerName === undefined
+          ? await host.harness.auth.completeFeedbackUpload(payload)
+          : await host.harness.auth.completeFeedbackUpload(payload, providerName);
       if (res.kind !== 'ok') throw new Error(res.message);
     },
   };

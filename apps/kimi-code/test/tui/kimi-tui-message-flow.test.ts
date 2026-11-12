@@ -3520,6 +3520,51 @@ command = "vim"
     expect(harness.track).not.toHaveBeenCalledWith('feedback_submitted', undefined);
   });
 
+  it('submits feedback via custom registry feedbackUrl without requiring OAuth sign-in', async () => {
+    const { driver, harness } = await makeDriver(makeSession());
+    harness.auth.status.mockResolvedValueOnce({
+      providers: [{ providerName: 'managed:kimi-code', hasToken: false }],
+    });
+    driver.state.appState.model = 'registry_kimi/k3';
+    driver.state.appState.availableModels = {
+      'registry_kimi/k3': {
+        provider: 'registry_kimi',
+        model: 'k3',
+        maxContextSize: 131072,
+        displayName: 'K3',
+        capabilities: [],
+      },
+    };
+    harness.getConfig.mockResolvedValueOnce({
+      providers: {
+        registry_kimi: {
+          type: 'kimi',
+          baseUrl: 'https://registry.example.test/v1',
+          apiKey: 'YOUR_API_KEY',
+          feedbackUrl: 'https://registry.example.test/v1/feedback',
+        },
+      },
+      models: {},
+    } as never);
+    const feedbackDriver = driver as unknown as FeedbackDriver;
+    vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'custom feedback' }));
+    vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'none');
+    harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 11 });
+
+    await handleFeedbackCommand(feedbackDriver as any);
+
+    expect(harness.auth.status).not.toHaveBeenCalled();
+    expect(harness.auth.submitFeedback).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: 'custom feedback',
+        model: 'registry_kimi/k3',
+      }),
+      'registry_kimi',
+    );
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('Feedback ID: 11');
+  });
+
   it('tracks blocked slash commands as invalid without counting them as executed commands', async () => {
     const { driver, harness } = await makeDriver();
     driver.state.appState.streamingPhase = 'waiting';

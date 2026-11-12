@@ -151,4 +151,40 @@ describe('fetchCompleteFeedbackUpload', () => {
       ],
     });
   });
+
+  it('derives upload_url and upload_complete directly from an explicit feedbackUrl', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.endsWith('/upload_url')) {
+        return new Response(
+          JSON.stringify({
+            upload: {
+              id: 42,
+              parts: [{ part_number: 1, url: 'https://storage.example.test/p1', method: 'PUT', size: 10 }],
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return new Response('{}', { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const created = await fetchCreateFeedbackUploadUrl('YOUR_API_KEY', SAMPLE_BODY, {
+      feedbackUrl: 'https://registry.example.test/v1/feedback/',
+    });
+    expect(created.kind).toBe('ok');
+
+    const completed = await fetchCompleteFeedbackUpload(
+      'YOUR_API_KEY',
+      { upload_id: 42, parts: [{ part_number: 1, etag: '"e1"' }] },
+      { feedbackUrl: 'https://registry.example.test/v1/feedback/' },
+    );
+    expect(completed).toEqual({ kind: 'ok' });
+
+    const urls = (fetchMock.mock.calls as unknown as [string][]).map(([url]) => url);
+    expect(urls).toEqual([
+      'https://registry.example.test/v1/feedback/upload_url',
+      'https://registry.example.test/v1/feedback/upload_complete',
+    ]);
+  });
 });
