@@ -466,5 +466,6 @@ agent 自身的状态由四种帧同步。每帧都带完整的值，客户端�
 | `event.model_catalog.changed` | `__global__` | `changed: [{ provider_id, provider_name, added, removed }]`, `unchanged`, `failed: [{ provider, reason }]`, `retired_default?: { from, to, from_display_name }` | 模型目录刷新完成 |
 | `event.plugin.changed` | `__global__` | 无 | 插件变化，客户端重新读取插件列表 |
 | `event.capability.changed` | `__global__` | `capability_id`, `install: { running, step?, percent?, error?, note? }` | 内置能力的安装状态变化 |
+| `event.gui_store.updated` | `__global__` | `revision`, `entries: { [key]: { value, revision } \| null }` | GUI 存储键值变化（本进程 `PATCH /api/v1/gui/store` 或外部进程更新 `gui.json`） |
 
 这些事件只覆盖本服务进程内的变化。其他进程（例如写入同一 home 目录的 CLI）的变化，要等索引对账（约一分钟）后才可见，所以概览客户端应保留低频的兜底轮询。

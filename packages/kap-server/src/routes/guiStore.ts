@@ -1,16 +1,13 @@
-import { z } from 'zod';
-
-import { okEnvelope } from '../envelope';
+import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
-import { IGuiStoreService } from '../services/guiStore/guiStore';
 import { ErrorCode } from '../protocol/error-codes';
 import {
-  guiStoreGetItemQuerySchema,
-  guiStoreGetItemResponseSchema,
-  guiStoreLengthResponseSchema,
-  guiStoreRemoveItemBodySchema,
-  guiStoreSetItemBodySchema,
+  guiStoreGetQuerySchema,
+  guiStorePatchBodySchema,
+  guiStorePatchResponseSchema,
+  guiStoreSnapshotSchema,
 } from '../protocol/rest-guiStore';
+import { GuiStoreCorruptError, IGuiStoreService } from '../services/guiStore/guiStore';
 
 interface GuiStoreRouteHost {
   get(
@@ -21,7 +18,7 @@ interface GuiStoreRouteHost {
       reply: { send(payload: unknown): void },
     ) => Promise<void> | void,
   ): unknown;
-  post(
+  patch(
     path: string,
     options: { schema?: Record<string, unknown> },
     handler: (
@@ -32,105 +29,92 @@ interface GuiStoreRouteHost {
 }
 
 export function registerGuiStoreRoutes(app: GuiStoreRouteHost, store: IGuiStoreService): void {
-  const getItemRoute = defineRoute(
+  const getSnapshotRoute = defineRoute(
     {
       method: 'GET',
-      path: '/gui/store/getItem',
-      querystring: guiStoreGetItemQuerySchema,
-      success: { data: guiStoreGetItemResponseSchema },
-      errors: { [ErrorCode.VALIDATION_FAILED]: {} },
-      description: 'Read a value by key (mirrors localStorage.getItem).',
+      path: '/gui/store',
+      querystring: guiStoreGetQuerySchema,
+      success: { data: guiStoreSnapshotSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: {},
+        [ErrorCode.PERSISTENCE_FAILURE]: {},
+      },
+      description: 'Read a versioned snapshot of persisted GUI store entries.',
       tags: ['gui-store'],
     },
     async (req, reply) => {
-      const value = await store.getItem((req.query as { key: string }).key);
-      reply.send(okEnvelope({ value }, req.id));
+      const query = (req.query ?? {}) as { prefix?: string; keys?: string | string[] };
+      const keys =
+        query.keys === undefined
+          ? undefined
+          : Array.isArray(query.keys)
+            ? query.keys
+            : [query.keys];
+      try {
+        const snapshot = await store.getSnapshot({ prefix: query.prefix, keys });
+        reply.send(okEnvelope(snapshot, req.id));
+      } catch (error) {
+        if (error instanceof GuiStoreCorruptError) {
+          reply.send(
+            errEnvelope(ErrorCode.PERSISTENCE_FAILURE, error.message, req.id, {
+              quarantine_path: error.quarantinePath,
+            }),
+          );
+          return;
+        }
+        throw error;
+      }
     },
   );
   app.get(
-    getItemRoute.path,
-    getItemRoute.options,
-    getItemRoute.handler as Parameters<GuiStoreRouteHost['get']>[2],
+    getSnapshotRoute.path,
+    getSnapshotRoute.options,
+    getSnapshotRoute.handler as Parameters<GuiStoreRouteHost['get']>[2],
   );
 
-  const setItemRoute = defineRoute(
+  const patchRoute = defineRoute(
     {
-      method: 'POST',
-      path: '/gui/store/setItem',
-      body: guiStoreSetItemBodySchema,
-      success: { data: z.null() },
-      errors: { [ErrorCode.VALIDATION_FAILED]: {} },
-      description: 'Write a value by key (mirrors localStorage.setItem).',
+      method: 'PATCH',
+      path: '/gui/store',
+      body: guiStorePatchBodySchema,
+      success: { data: guiStorePatchResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: {},
+        [ErrorCode.PERSISTENCE_FAILURE]: {},
+      },
+      description:
+        'Atomically upsert or delete GUI store entries with optional per-key optimistic concurrency checks.',
       tags: ['gui-store'],
     },
     async (req, reply) => {
-      const body = req.body as { key: string; value: string };
-      await store.setItem(body.key, body.value);
-      reply.send(okEnvelope(null, req.id));
+      const body = req.body as {
+        mutations: Array<{ key: string; value: string | null; if_revision?: number }>;
+      };
+      try {
+        const result = await store.patch(
+          body.mutations.map((item) => ({
+            key: item.key,
+            value: item.value,
+            ifRevision: item.if_revision,
+          })),
+        );
+        reply.send(okEnvelope(result, req.id));
+      } catch (error) {
+        if (error instanceof GuiStoreCorruptError) {
+          reply.send(
+            errEnvelope(ErrorCode.PERSISTENCE_FAILURE, error.message, req.id, {
+              quarantine_path: error.quarantinePath,
+            }),
+          );
+          return;
+        }
+        throw error;
+      }
     },
   );
-  app.post(
-    setItemRoute.path,
-    setItemRoute.options,
-    setItemRoute.handler as Parameters<GuiStoreRouteHost['post']>[2],
-  );
-
-  const removeItemRoute = defineRoute(
-    {
-      method: 'POST',
-      path: '/gui/store/removeItem',
-      body: guiStoreRemoveItemBodySchema,
-      success: { data: z.null() },
-      errors: { [ErrorCode.VALIDATION_FAILED]: {} },
-      description: 'Delete a value by key (mirrors localStorage.removeItem).',
-      tags: ['gui-store'],
-    },
-    async (req, reply) => {
-      await store.removeItem((req.body as { key: string }).key);
-      reply.send(okEnvelope(null, req.id));
-    },
-  );
-  app.post(
-    removeItemRoute.path,
-    removeItemRoute.options,
-    removeItemRoute.handler as Parameters<GuiStoreRouteHost['post']>[2],
-  );
-
-  const clearRoute = defineRoute(
-    {
-      method: 'POST',
-      path: '/gui/store/clear',
-      success: { data: z.null() },
-      description: 'Delete all values (mirrors localStorage.clear).',
-      tags: ['gui-store'],
-    },
-    async (_req, reply) => {
-      await store.clear();
-      reply.send(okEnvelope(null, _req.id));
-    },
-  );
-  app.post(
-    clearRoute.path,
-    clearRoute.options,
-    clearRoute.handler as Parameters<GuiStoreRouteHost['post']>[2],
-  );
-
-  const lengthRoute = defineRoute(
-    {
-      method: 'GET',
-      path: '/gui/store/length',
-      success: { data: guiStoreLengthResponseSchema },
-      description: 'Number of stored keys (mirrors localStorage.length).',
-      tags: ['gui-store'],
-    },
-    async (req, reply) => {
-      const length = await store.length();
-      reply.send(okEnvelope({ length }, req.id));
-    },
-  );
-  app.get(
-    lengthRoute.path,
-    lengthRoute.options,
-    lengthRoute.handler as Parameters<GuiStoreRouteHost['get']>[2],
+  app.patch(
+    patchRoute.path,
+    patchRoute.options,
+    patchRoute.handler as Parameters<GuiStoreRouteHost['patch']>[2],
   );
 }

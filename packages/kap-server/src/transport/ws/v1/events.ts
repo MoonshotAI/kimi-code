@@ -1,4 +1,5 @@
 import type { ConfigResponse } from '../../../protocol/rest-config';
+import type { GuiStoreEntryWire } from '../../../protocol/rest-guiStore';
 import type { Session, SessionPendingInteraction } from '../../../protocol/session';
 import type { Workspace } from '../../../protocol/workspace';
 
@@ -110,6 +111,12 @@ export interface CapabilityChangedEvent {
   };
 }
 
+export interface GuiStoreUpdatedEvent {
+  readonly type: 'event.gui_store.updated';
+  readonly revision: number;
+  readonly entries: Record<string, GuiStoreEntryWire | null>;
+}
+
 export type PushEvent =
   | SessionMetaUpdatedEvent
   | SessionCreatedEvent
@@ -124,6 +131,7 @@ export type PushEvent =
   | ConfigWarningEvent
   | ModelCatalogChangedEvent
   | PluginChangedEvent
-  | CapabilityChangedEvent;
+  | CapabilityChangedEvent
+  | GuiStoreUpdatedEvent;
 
 export type Event = PushEvent & { agentId: string; sessionId: string; readonly time?: number };
