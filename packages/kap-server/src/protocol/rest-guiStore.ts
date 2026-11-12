@@ -2,6 +2,8 @@ import { z } from 'zod';
 
 const MAX_VALUE_CHARS = 65_536;
 const MAX_BATCH_MUTATIONS = 128;
+const MAX_QUERY_KEYS = 16;
+const MAX_QUERY_ENCODED_BYTES = 4_096;
 const MAX_BATCH_UTF8_BYTES = 524_288;
 
 const keySchema = z.string().min(1).max(256);
@@ -16,7 +18,24 @@ export type GuiStoreEntryWire = z.infer<typeof guiStoreEntrySchema>;
 
 export const guiStoreGetQuerySchema = z.object({
   prefix: z.string().max(256).optional(),
-  keys: z.union([keySchema, z.array(keySchema).max(MAX_BATCH_MUTATIONS)]).optional(),
+  keys: z
+    .union([keySchema, z.array(keySchema).max(MAX_QUERY_KEYS)])
+    .optional()
+    .superRefine((keys, ctx) => {
+      if (keys === undefined) return;
+      const list = Array.isArray(keys) ? keys : [keys];
+      let encodedBytes = 0;
+      for (const item of list) {
+        encodedBytes += encodeURIComponent(item).length + 6;
+      }
+      if (encodedBytes > MAX_QUERY_ENCODED_BYTES) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Encoded keys query exceeds ${MAX_QUERY_ENCODED_BYTES} bytes`,
+          path: [],
+        });
+      }
+    }),
 });
 
 export const guiStoreSnapshotSchema = z.object({

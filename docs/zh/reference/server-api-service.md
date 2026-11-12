@@ -1208,7 +1208,7 @@ cloud-only 条目不能在本机安装。旧 `kimi-webbridge` 条目不再返回
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `prefix` | query | string | 可选。仅返回键名以该前缀开头的条目，最长 256 个字符 |
-| `keys` | query | string \| string[] | 可选。仅返回指定键名集合中的条目，最多 128 个 |
+| `keys` | query | string \| string[] | 可选。仅返回指定键名集合中的条目，最多 16 个且 URL 编码总长度不超过 4,096 字节 |
 
 成功时 `data` 为 `{ revision, entries }`，其中 `entries` 为 `{ [key]: { value, revision } }`。若磁盘上的 `gui.json` 损坏或被截断为空文件，原文件会被隔离重命名为 `gui.json.corrupt-*` 并返回错误码 `50003`（`details.quarantine_path` 指出备份路径），后续写入将从不低于历史水位线的单调版本号恢复。
 

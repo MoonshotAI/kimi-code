@@ -1208,7 +1208,7 @@ Reads the persisted snapshot and store revision. Returns `{ revision: 0, entries
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `prefix` | query | string | Optional. Only return entries whose key starts with this prefix, up to 256 characters |
-| `keys` | query | string \| string[] | Optional. Only return entries matching these keys, up to 128 items |
+| `keys` | query | string \| string[] | Optional. Only return entries matching these keys, up to 16 items and 4,096 URL-encoded query bytes |
 
 On success, `data` is `{ revision, entries }`, where `entries` maps each key to `{ value, revision }`. If `gui.json` on disk is corrupt or truncated to zero bytes, it is quarantined to `gui.json.corrupt-*` and error code `50003` is returned with `details.quarantine_path`; subsequent writes recover with a monotonically higher revision floor.
 

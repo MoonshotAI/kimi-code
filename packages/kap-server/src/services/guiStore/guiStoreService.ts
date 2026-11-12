@@ -895,6 +895,9 @@ export class GuiStoreService implements IGuiStoreService {
   ): void {
     if (this.listeners.size === 0) return;
     const prev = this.watchedState;
+    if (prev !== undefined && nextState.revision <= prev.revision) {
+      return;
+    }
     this.watchedState = nextState;
     if (prev !== undefined && nextState.revision > prev.revision) {
       const mergedDiff = diffSnapshots(prev, nextState);
