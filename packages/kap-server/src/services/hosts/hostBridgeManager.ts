@@ -1,13 +1,9 @@
 import { IConfigService, type Scope } from '@moonshot-ai/agent-core-v2';
 
-import { localHostCredential, type HostCredentialUpdate } from './hostAuth';
 import { collectSharedProviders, sendSharedProviders, type ProviderCopyResult } from './hostProviders';
 import { HOSTS_SECTION, type HostEntry, type HostsSection } from './hostsConfig';
 import { HostConnectError, SshKapBridge, type BridgeLogger, type HostStatus } from './sshKapBridge';
 import type { HostSession } from './hostSession';
-
-const MIN_CREDENTIAL_DELAY_MS = 30_000;
-const CREDENTIAL_RETRY_SECONDS = 60;
 
 interface BridgeRecord {
   readonly fingerprint: string;
@@ -58,8 +54,6 @@ export function hostSnapshots(manager: HostBridgeManager): HostSnapshot[] {
 export class HostBridgeManager {
   private readonly records = new Map<string, BridgeRecord>();
   private readonly subscription: { dispose(): void };
-  private credentialQueue: Promise<void> = Promise.resolve();
-  private credentialTimer: ReturnType<typeof setTimeout> | undefined;
   private active = false;
 
   constructor(
@@ -69,7 +63,6 @@ export class HostBridgeManager {
   ) {
     this.subscription = core.accessor.get(IConfigService).onDidSectionChange((event) => {
       if (event.domain === HOSTS_SECTION) this.reconcile();
-      if (event.domain === 'providers') void this.syncCredentials();
     });
   }
 
@@ -101,20 +94,6 @@ export class HostBridgeManager {
     });
   }
 
-  syncCredentials(): Promise<void> {
-    return this.serialize(async () => {
-      const sessions = [...this.records.values()]
-        .map(({ bridge }) => bridge.session)
-        .filter((session): session is HostSession => session !== undefined);
-      if (sessions.length === 0) {
-        this.schedule(undefined);
-        return;
-      }
-      const update = await this.currentUpdate();
-      await Promise.all(sessions.map((session) => this.sendQuietly(session, update)));
-    });
-  }
-
   async copyProviders(id: string, only?: readonly string[]): Promise<ProviderCopyResult> {
     const session = await this.connect(id);
     const { shared, skipped } = await collectSharedProviders(this.core, only);
@@ -130,55 +109,8 @@ export class HostBridgeManager {
   close(): void {
     this.active = false;
     this.subscription.dispose();
-    this.schedule(undefined);
     for (const { bridge } of this.records.values()) bridge.dispose();
     this.records.clear();
-  }
-
-  private provision(session: HostSession): Promise<void> {
-    return this.serialize(async () => {
-      await this.sendQuietly(session, await this.currentUpdate());
-    });
-  }
-
-  private serialize(task: () => Promise<void>): Promise<void> {
-    const next = this.credentialQueue.then(task).catch((error: unknown) => {
-      this.logger.warn({ err: error instanceof Error ? error.message : String(error) }, 'unable to share the account with SSH hosts');
-    });
-    this.credentialQueue = next;
-    return next;
-  }
-
-  private async currentUpdate(): Promise<HostCredentialUpdate> {
-    let local: Awaited<ReturnType<typeof localHostCredential>>;
-    try {
-      local = await localHostCredential(this.core);
-    } catch (error) {
-      this.schedule(Math.floor(Date.now() / 1000) + CREDENTIAL_RETRY_SECONDS);
-      throw error;
-    }
-    this.schedule(local?.refreshAt);
-    return local === undefined ? { action: 'revoke' } : { action: 'put', credential: local.credential };
-  }
-
-  private schedule(refreshAt: number | undefined): void {
-    if (this.credentialTimer !== undefined) clearTimeout(this.credentialTimer);
-    this.credentialTimer = undefined;
-    if (refreshAt === undefined) return;
-    const delay = Math.max(MIN_CREDENTIAL_DELAY_MS, refreshAt * 1000 - Date.now());
-    this.credentialTimer = setTimeout(() => {
-      this.credentialTimer = undefined;
-      void this.syncCredentials();
-    }, delay);
-    this.credentialTimer.unref?.();
-  }
-
-  private async sendQuietly(session: HostSession, update: HostCredentialUpdate): Promise<void> {
-    try {
-      await sendHostCredentialUpdate(session, update);
-    } catch (error) {
-      this.logger.warn({ err: error instanceof Error ? error.message : String(error) }, 'unable to share the account with an SSH host');
-    }
   }
 
   private record(id: string, entry: HostEntry): BridgeRecord {
@@ -191,7 +123,6 @@ export class HostBridgeManager {
       bridge: new SshKapBridge(entry, {
         logger: this.logger,
         onChange: () => this.onChange?.(),
-        onSession: (session) => this.provision(session),
       }),
     };
     this.records.set(id, created);
@@ -208,14 +139,7 @@ export class HostBridgeManager {
       if (next === fingerprint && entry?.enabled !== false) continue;
       this.records.delete(id);
       changed = true;
-      const session = bridge.session;
-      if (entry === undefined && session !== undefined) {
-        void this.sendQuietly(session, { action: 'revoke' }).finally(() => {
-          bridge.dispose();
-        });
-      } else {
-        bridge.dispose();
-      }
+      bridge.dispose();
     }
     if (changed) this.onChange?.();
     this.startPending();
@@ -227,19 +151,5 @@ export class HostBridgeManager {
       if (entry.enabled === false || this.records.has(id)) continue;
       this.record(id, entry).bridge.start();
     }
-  }
-}
-
-export async function sendHostCredentialUpdate(session: HostSession, update: HostCredentialUpdate): Promise<void> {
-  const response = await session.request({
-    method: 'POST',
-    path: '/api/v1/oauth/host-credential',
-    headers: { 'content-type': 'application/json' },
-    body: Buffer.from(JSON.stringify(update)),
-    timeoutMs: 60_000,
-  });
-  const body = JSON.parse(response.body.toString('utf8')) as { code?: number; msg?: string };
-  if (response.status !== 200 || body.code !== 0) {
-    throw new Error(body.msg ?? 'Unable to share the account with the SSH host');
   }
 }

@@ -257,7 +257,6 @@ export interface SshKapBridgeOptions {
   readonly env?: NodeJS.ProcessEnv;
   readonly logger?: BridgeLogger;
   readonly onChange?: () => void;
-  readonly onSession?: (session: HostSession) => Promise<void>;
 }
 
 export class SshKapBridge {
@@ -368,7 +367,6 @@ export class SshKapBridge {
       }
       this.remoteVersionValue = active.session.version;
       this.sessionValue = active;
-      await this.options.onSession?.(active.session);
       this.update('ready');
       return active.session;
     } catch (error) {

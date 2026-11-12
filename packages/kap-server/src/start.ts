@@ -18,7 +18,6 @@ import {
   IPluginService,
   IEnvironmentService,
   IWorkspaceService,
-  IOAuthToolkit,
   IAgentLifecycleService,
   IAgentEnvironmentBindingService,
   ISessionContext,
@@ -36,7 +35,6 @@ import {
 import {
   createKimiDefaultHeaders,
   KIMI_CODE_PROVIDER_NAME,
-  KimiOAuthToolkit,
   type KimiHostIdentity,
 } from '@moonshot-ai/kimi-code-oauth';
 import { RemoteEnvironmentProviderFactory } from '@moonshot-ai/agent-core-v2/remote';
@@ -91,7 +89,6 @@ import { createServerSessionRating } from './services/sessionRating';
 import { ConversationService } from './services/conversation/conversationService';
 import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
 import { HostBridgeManager, hostSnapshots } from './services/hosts/hostBridgeManager';
-import { HostCredentialStore, HostCredentialToolkit } from './services/hosts/hostAuth';
 import { hostSources } from './services/hosts/hostFanout';
 import { matchHostProxyPath, proxyHostWebSocket, registerHostProxyRoutes } from './services/hosts/hostProxy';
 import { DEFAULT_MANAGED_IDLE_EXIT_MS, ManagedIdleExit } from './services/managedIdleExit';
@@ -221,11 +218,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const logging = resolveLoggingConfig({ homeDir, env: process.env });
   let boundPort = port;
   const localOriginHost = host.includes(':') ? `[${host}]` : host;
-  const hostCredentials = opts.managedBy === 'ensure-daemon' ? new HostCredentialStore() : undefined;
-  const hostCredentialSeed: ScopeSeed =
-    hostCredentials === undefined
-      ? []
-      : [[IOAuthToolkit, new HostCredentialToolkit(new KimiOAuthToolkit({ homeDir, identity: opts.hostIdentity }), hostCredentials)]];
   const { app: core } = bootstrap(
     {
       homeDir,
@@ -246,7 +238,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
         uiCapabilities: [NOTIFY_USER_UI_CAPABILITY],
       },
     },
-    [...logSeed(logging), ...hostCredentialSeed, ...(opts.seeds ?? [])],
+    [...logSeed(logging), ...(opts.seeds ?? [])],
   );
   const environments = core.accessor.get(IEnvironmentService);
   const remoteEnvironmentProvider = await environments.addProvider(
@@ -571,7 +563,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     conversations,
     sessionRating,
     dangerousBypassAuth: opts.disableAuth === true,
-    hostCredentials,
+    managedHost: opts.managedBy === 'ensure-daemon',
     webTitle: opts.webTitle,
   });
 

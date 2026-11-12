@@ -36,7 +36,6 @@ import { registerSessionRatingRoutes } from './sessionRating';
 import { registerSessionExportRoute } from './sessionExport';
 import { registerSessionsRoutes } from './sessions';
 import type { HostBridgeManager } from '../services/hosts/hostBridgeManager';
-import { registerHostCredentialRoute, type HostCredentialStore } from '../services/hosts/hostAuth';
 import { registerImportProvidersRoute } from '../services/hosts/hostProviders';
 import { registerHostsRoutes } from './hosts';
 import { registerShutdownRoutes } from './shutdown';
@@ -76,7 +75,7 @@ export interface RegisterApiV1RoutesOptions {
   readonly sessionRating: SessionRatingHost;
   readonly remoteControl: RemoteControlRouteOptions;
   readonly dangerousBypassAuth?: boolean;
-  readonly hostCredentials?: HostCredentialStore;
+  readonly managedHost?: boolean;
   readonly webTitle?: string;
 }
 
@@ -139,8 +138,7 @@ export async function registerApiV1Routes(
       );
       registerEnvironmentRoutes(apiV1 as unknown as Parameters<typeof registerEnvironmentRoutes>[0], core);
       registerHostsRoutes(apiV1 as unknown as Parameters<typeof registerHostsRoutes>[0], core, opts.hostBridges);
-      if (opts.hostCredentials !== undefined) {
-        registerHostCredentialRoute(apiV1 as unknown as Parameters<typeof registerHostCredentialRoute>[0], core, opts.hostCredentials);
+      if (opts.managedHost === true) {
         registerImportProvidersRoute(apiV1 as unknown as Parameters<typeof registerImportProvidersRoute>[0], core);
       }
       registerSessionRatingRoutes(

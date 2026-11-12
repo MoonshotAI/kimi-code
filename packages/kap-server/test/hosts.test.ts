@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createConnection } from 'node:net';
 import { Duplex } from 'node:stream';
@@ -10,14 +10,13 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 import Fastify from 'fastify';
 import { FileTokenStorage, KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
-import { IBootstrapService, IConfigService, IOAuthService, IOAuthToolkit } from '@moonshot-ai/agent-core-v2';
+import { IBootstrapService, IConfigService, IOAuthService } from '@moonshot-ai/agent-core-v2';
 import { describe, expect, it, vi } from 'vitest';
 import WebSocketClient, { WebSocketServer, type WebSocket as NodeWebSocket } from 'ws';
 
 import { HOST_API_LEVEL, HOST_PROTOCOL_VERSION } from '../src/services/hosts/hostProtocol';
 import { matchHostProxyPath, proxyHostWebSocket, registerHostProxyRoutes, upstreamHeaders } from '../src/services/hosts/hostProxy';
-import type { HostCredential } from '../src/services/hosts/hostAuth';
-import { HostBridgeManager, sendHostCredentialUpdate } from '../src/services/hosts/hostBridgeManager';
+import { HostBridgeManager } from '../src/services/hosts/hostBridgeManager';
 import { hostsSectionSchema, hostWireSchema, isValidHostId } from '../src/services/hosts/hostsConfig';
 import { HostRequestError, type HostHttpRequest, type HostHttpResponse, type HostSession } from '../src/services/hosts/hostSession';
 import { StdioHostSession } from '../src/services/hosts/stdioHostSession';
@@ -837,22 +836,38 @@ describe('host HTTP proxy', () => {
   });
 });
 
-describe('host credentials', () => {
-  it.skipIf(process.platform === 'win32')('shares only the local access token and never refreshes on the remote host', async () => {
+describe('host account', () => {
+  it.skipIf(process.platform === 'win32')('lets a managed host sign in and renew with its own Kimi login', async () => {
     const localHome = await mkdtemp(join(tmpdir(), 'kimi-host-local-'));
     const remoteHome = await mkdtemp(join(tmpdir(), 'kimi-host-remote-'));
     const localStorage = new FileTokenStorage(join(localHome, 'credentials'));
+    const remoteStorage = new FileTokenStorage(join(remoteHome, 'credentials'));
     const now = Math.floor(Date.now() / 1000);
     await localStorage.save('kimi-code', {
       accessToken: 'local-access', refreshToken: 'local-refresh', expiresAt: now + 3600, expiresIn: 3600, scope: '', tokenType: 'Bearer',
     });
+    await remoteStorage.save('kimi-code', {
+      accessToken: 'remote-access', refreshToken: 'remote-refresh', expiresAt: now + 10, expiresIn: 3600, scope: '', tokenType: 'Bearer',
+    });
     const refreshRequests: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (input: unknown, init?: RequestInit) => {
       const url = String(input);
+      if (url.endsWith('/api/oauth/device_authorization')) {
+        return Response.json({
+          user_code: 'ABCD-1234',
+          device_code: 'device-code',
+          verification_uri: 'https://auth.example.test/device',
+          verification_uri_complete: 'https://auth.example.test/device?user_code=ABCD-1234',
+          expires_in: 600,
+          interval: 600,
+        });
+      }
       if (url.endsWith('/api/oauth/token')) {
         if (typeof init?.body !== 'string') throw new TypeError('expected form body');
-        refreshRequests.push(new URLSearchParams(init.body).get('refresh_token') ?? '');
-        return Response.json({ access_token: `local-access-${String(refreshRequests.length + 1)}`, refresh_token: 'local-refresh-next', expires_in: 3600, token_type: 'Bearer', scope: '' });
+        const form = new URLSearchParams(init.body);
+        if (form.get('grant_type') !== 'refresh_token') return Response.json({ error: 'authorization_pending' }, { status: 400 });
+        refreshRequests.push(form.get('refresh_token') ?? '');
+        return Response.json({ access_token: 'remote-access-2', refresh_token: 'remote-refresh-next', expires_in: 3600, token_type: 'Bearer', scope: '' });
       }
       if (url.endsWith('/models')) return Response.json({ data: [{ id: 'test-model', limit: { context: 100_000 } }] });
       throw new Error(`unexpected request ${url}`);
@@ -873,13 +888,12 @@ describe('host credentials', () => {
       pending.delete(frame.id);
     });
     let requestId = 0;
-    const shared: HostCredential[] = [];
+    const paths: string[] = [];
     const session: HostSession = {
       version: 'test',
       request: (input: HostHttpRequest) => new Promise<HostHttpResponse>((resolve) => {
-        const id = `credential-${String(++requestId)}`;
-        const update = JSON.parse(input.body?.toString('utf8') ?? '{}') as { action?: string; credential?: HostCredential };
-        if (update.credential !== undefined) shared.push(update.credential);
+        const id = `account-${String(++requestId)}`;
+        paths.push(input.path);
         pending.set(id, resolve);
         client.write(`${JSON.stringify({ type: 'http.req', id, method: input.method, path: input.path, headers: input.headers, body: input.body?.toString('base64') })}\n`);
       }),
@@ -888,51 +902,35 @@ describe('host credentials', () => {
     vi.spyOn(SshKapBridge.prototype, 'connect').mockResolvedValue(session);
     vi.spyOn(SshKapBridge.prototype, 'session', 'get').mockReturnValue(session);
     const manager = local.hostBridges;
-    const remoteAccess = () => remote.core.accessor.get(IOAuthService).resolveTokenProvider(KIMI_CODE_PROVIDER_NAME)!.getAccessToken({ force: true });
-    const remoteCached = () => remote.core.accessor.get(IOAuthToolkit).getCachedAccessToken(KIMI_CODE_PROVIDER_NAME);
+    const remoteJson = async (method: string, path: string, body?: unknown) => {
+      const response = await session.request({
+        method,
+        path,
+        headers: body === undefined ? {} : { 'content-type': 'application/json' },
+        body: body === undefined ? undefined : Buffer.from(JSON.stringify(body)),
+      });
+      return { status: response.status, body: JSON.parse(response.body.toString('utf8')) as { code: number; data?: Record<string, unknown> } };
+    };
     try {
       await manager.connect('dev');
-      await manager.syncCredentials();
-      expect(shared.at(-1)).toMatchObject({ access_token: 'local-access' });
-      expect(shared.at(-1)).not.toHaveProperty('refresh_token');
-      expect(existsSync(join(remoteHome, 'server', 'host-credential.json'))).toBe(false);
-      await expect(new FileTokenStorage(join(remoteHome, 'credentials')).load('kimi-code')).resolves.toBeUndefined();
-      await expect(remoteAccess()).resolves.toBe('local-access');
+      expect(paths).toEqual([]);
 
-      await localStorage.save('kimi-code', { accessToken: 'local-access', refreshToken: 'local-refresh', expiresAt: now + 10, expiresIn: 3600, scope: '', tokenType: 'Bearer' });
-      await manager.syncCredentials();
-      expect(refreshRequests).toEqual(['local-refresh']);
-      await expect(remoteAccess()).resolves.toBe('local-access-2');
+      await expect(
+        remote.core.accessor.get(IOAuthService).resolveTokenProvider(KIMI_CODE_PROVIDER_NAME)!.getAccessToken({ force: true }),
+      ).resolves.toBe('remote-access-2');
+      expect(refreshRequests).toEqual(['remote-refresh']);
+      await expect(remoteStorage.load('kimi-code')).resolves.toMatchObject({ refreshToken: 'remote-refresh-next' });
+      await expect(localStorage.load('kimi-code')).resolves.toMatchObject({ accessToken: 'local-access', refreshToken: 'local-refresh' });
 
-      await sendHostCredentialUpdate(session, { action: 'put', credential: { ...shared.at(-1)!, access_token: 'stale', expires_at: now + 60 } });
-      await expect(remoteAccess()).resolves.toBe('local-access-2');
-
-      vi.useFakeTimers({ toFake: ['Date'], now: (now + 7200) * 1000 });
-      await expect(remoteAccess()).rejects.toThrow(/expired/);
-      vi.useRealTimers();
-      expect(refreshRequests).toEqual(['local-refresh']);
-
-      const remoteProvider = remote.core.accessor.get(IConfigService).get<Record<string, unknown>>('providers')?.[KIMI_CODE_PROVIDER_NAME];
-      await local.core.accessor.get(IConfigService).replace('providers', { [KIMI_CODE_PROVIDER_NAME]: remoteProvider });
-      await vi.waitFor(async () => {
-        expect(await remoteCached()).toBe('local-access-2');
-      });
-      await local.core.accessor.get(IOAuthService).logout();
-      await vi.waitFor(async () => {
-        expect(await remoteCached()).toBeUndefined();
-      });
-      await expect(remoteAccess()).rejects.toThrow(/No Kimi credential/);
-
-      await localStorage.save('kimi-code', { accessToken: 'next-account', refreshToken: 'next-refresh', expiresAt: now + 3600, expiresIn: 3600, scope: '', tokenType: 'Bearer' });
-      await manager.syncCredentials();
-      await expect(remoteAccess()).resolves.toBe('next-account');
-      await local.core.accessor.get(IConfigService).replace('hosts', {});
-      await vi.waitFor(async () => {
-        expect(await remoteCached()).toBeUndefined();
-      });
-      expect(refreshRequests).toEqual(['local-refresh']);
+      await expect(remoteJson('POST', '/api/v1/oauth/login', {})).resolves.toMatchObject({ status: 200, body: { data: { status: 'authenticated' } } });
+      await expect(remoteJson('POST', '/api/v1/oauth/logout', {})).resolves.toMatchObject({ status: 200, body: { code: 0 } });
+      await expect(remoteStorage.load('kimi-code')).resolves.toBeUndefined();
+      await expect(localStorage.load('kimi-code')).resolves.toMatchObject({ refreshToken: 'local-refresh' });
+      const started = await remoteJson('POST', '/api/v1/oauth/login', {});
+      expect(started).toMatchObject({ status: 200, body: { code: 0 } });
+      expect(JSON.stringify(started.body.data)).toContain('ABCD-1234');
+      await expect(remoteJson('DELETE', '/api/v1/oauth/login')).resolves.toMatchObject({ status: 200 });
     } finally {
-      vi.useRealTimers();
       client.destroy();
       vi.unstubAllGlobals();
       vi.restoreAllMocks();
