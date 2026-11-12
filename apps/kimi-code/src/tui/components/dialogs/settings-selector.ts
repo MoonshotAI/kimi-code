@@ -12,6 +12,7 @@ export type SettingsSelection =
   | 'copyOnSelect'
   | 'mermaid'
   | 'editor'
+  | 'followUpBehavior'
   | 'permission'
   | 'survey'
   | 'experiments'
@@ -65,6 +66,11 @@ const SETTINGS_OPTIONS: readonly ChoiceOption[] = [
     description: 'Set the external editor command.',
   },
   {
+    value: 'followUpBehavior',
+    label: 'Follow-up behavior',
+    description: 'Choose whether Enter queues or steers a message while Kimi is working.',
+  },
+  {
     value: 'survey',
     label: 'Feedback survey',
     description: 'Turn the occasional session rating prompt on or off.',
@@ -96,6 +102,7 @@ function isSettingsSelection(value: string): value is SettingsSelection {
     value === 'copyOnSelect' ||
     value === 'mermaid' ||
     value === 'editor' ||
+    value === 'followUpBehavior' ||
     value === 'permission' ||
     value === 'survey' ||
     value === 'experiments' ||
