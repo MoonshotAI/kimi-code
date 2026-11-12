@@ -26,8 +26,9 @@ import {
 } from '@moonshot-ai/core/llm/requester';
 import type { FinishReason } from '@moonshot-ai/core/llm/response';
 import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
+import { isError2 } from '#/_base/errors/errors';
 import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
-import { errorFromLlmMessage, llmMessageFromError } from '#/llm-adapter/contract/errors';
+import { ChatProviderError, errorFromLlmMessage, llmMessageFromError } from '#/llm-adapter/contract/errors';
 
 import {
   generateInputSnapshot,
@@ -56,7 +57,7 @@ export interface MockProviderResponse {
   readonly httpError?: MockProviderHttpError;
   readonly error?: unknown;
   readonly fetch?: typeof fetch;
-  readonly onStream?: () => void;
+  readonly onStream?: () => void | Promise<void>;
 }
 
 export type MockProviderHandler = (
@@ -78,7 +79,7 @@ interface PreparedAttempt {
   readonly httpError?: MockProviderHttpError;
   readonly error?: unknown;
   readonly fetch?: typeof fetch;
-  readonly onStream?: () => void;
+  readonly onStream?: () => void | Promise<void>;
 }
 
 export interface MockProvider {
@@ -218,7 +219,7 @@ export function createScriptedGenerate() {
   const provider = createMockProvider((request) => {
     const response = responses.shift();
     if (response === undefined) {
-      throw new Error(`Unexpected generate call #${String(calls.length + 1)}`);
+      return providerHttpError(400, `Unexpected generate call #${String(calls.length + 1)}`);
     }
     calls.push(generateCallOf(request));
     return response;
@@ -288,14 +289,36 @@ export function withMockProvider(
         },
       };
     },
-    generate: (rest, control) =>
-      initial.with(rest).with({ endpoint: { fetch: provider.fetch } }).generate({}, {
+    generate: async (rest, control) => {
+      let directError: Error | undefined;
+      const directAbort = new AbortController();
+      const signal = AbortSignal.any([control.signal, directAbort.signal]);
+      const interceptFetch: typeof fetch = async (input, init) => {
+        try {
+          return await provider.fetch(input, init);
+        } catch (error) {
+          if (isError2(error) && !(error instanceof ChatProviderError)) {
+            directError = error;
+            directAbort.abort(error);
+          }
+          throw error;
+        }
+      };
+      const outcome = await initial.with(rest).with({ endpoint: { fetch: interceptFetch } }).generate({}, {
         ...control,
+        signal,
+        onEvent: (event) => {
+          if (directError !== undefined && event.type === 'llm.ended') return;
+          control.onEvent?.(event);
+        },
         onAttempt: (request, context) => {
           void Promise.resolve(provider.respond(request, control.signal));
           control.onAttempt?.(request, context);
         },
-      }),
+      });
+      if (directError !== undefined) throw directError;
+      return outcome;
+    },
   };
 }
 
@@ -342,7 +365,13 @@ function mockProviderFetch(pending: Promise<PreparedAttempt>[]): typeof fetch {
       if (attempt.parts.length > 0 || (attempt.result.requestId !== undefined && attempt.result.requestId !== null)) {
         return streamFailure(attempt, headers, init?.signal ?? undefined);
       }
-      throw mockProviderError(attempt.error);
+      let resolvedError: unknown;
+      try {
+        resolvedError = await Promise.resolve(attempt.error);
+      } catch (caught) {
+        resolvedError = caught;
+      }
+      throw mockProviderError(resolvedError);
     }
     const result = attempt.result;
     const kind = protocolKind(attempt.request);
@@ -389,27 +418,44 @@ function chunkedResponse(
   headers: Headers,
   signal?: AbortSignal,
 ): Response {
+  const hasTerminalFailure = attempt.httpError !== undefined || attempt.error !== undefined;
   const events = chunks.map((chunk) => {
     const event = protocolKind(attempt.request) === 'anthropic' ? `event: ${String(chunk['type'])}\n` : '';
     return `${event}data: ${JSON.stringify(chunk, replacer)}\n\n`;
   });
-  if (protocolKind(attempt.request) !== 'google' && attempt.httpError === undefined && attempt.error === undefined) {
+  if (protocolKind(attempt.request) !== 'google' && !hasTerminalFailure) {
     events.push('data: [DONE]\n\n');
   }
+  const streamPauseIndex =
+    attempt.onStream === undefined
+      ? -1
+      : hasTerminalFailure
+        ? events.length
+        : Math.max(0, events.length - 2);
+  const isSignalAborted = (): boolean => signal?.aborted === true;
+  let onStreamCalled = false;
   let index = 0;
   return new Response(
     new ReadableStream<Uint8Array>({
       async pull(controller) {
-        await new Promise<void>((resolve) => setTimeout(resolve, 0));
-        if (signal?.aborted === true) {
-          controller.error(signal.reason);
+        await Promise.resolve();
+        if (isSignalAborted()) {
+          controller.error(signal?.reason);
           return;
+        }
+        if (!onStreamCalled && index === streamPauseIndex) {
+          onStreamCalled = true;
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+          await attempt.onStream?.();
+          if (isSignalAborted()) {
+            controller.error(signal?.reason);
+            return;
+          }
         }
         if (index < events.length) {
           controller.enqueue(new TextEncoder().encode(events[index++]!));
           return;
         }
-        attempt.onStream?.();
         if (attempt.httpError !== undefined) {
           controller.error(new RawOpenAISDKAPIError(
             attempt.httpError.statusCode,
@@ -424,12 +470,22 @@ function chunkedResponse(
           return;
         }
         if (attempt.error !== undefined) {
-          controller.error(mockProviderError(attempt.error));
+          let resolvedError: unknown;
+          try {
+            resolvedError = await Promise.resolve(attempt.error);
+          } catch (caught) {
+            resolvedError = caught;
+          }
+          if (isSignalAborted()) {
+            controller.error(signal?.reason);
+            return;
+          }
+          controller.error(mockProviderError(resolvedError));
           return;
         }
         controller.close();
       },
-    }),
+    }, { highWaterMark: 0 }),
     { status: 200, headers },
   );
 }

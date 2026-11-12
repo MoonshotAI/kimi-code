@@ -174,6 +174,7 @@ function baseAgentState(
         audio_in: false,
         thinking: false,
         tool_use: true,
+        max_context_tokens: 100,
       },
       thinkingEffort: 'off',
       systemPrompt: '',

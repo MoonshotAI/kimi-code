@@ -2415,14 +2415,14 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       );
     }
     const message = buildImportContextMessage(input.content, input.source);
-    const model = agent.accessor.get(IAgentLoopService).resolveModelContext().model;
+    const capability = agent.accessor.get(IAgentLoopService).data().modelCapabilities;
     const currentTokenCount = agent.accessor
       .get(ISessionTokenCountingService)
       .get(agentContextOf(agent)).size;
     assertImportFits(
       message,
       currentTokenCount,
-      model.maxInputSize ?? model.maxContextSize ?? 0,
+      capability.max_input_tokens ?? capability.max_context_tokens,
     );
     const loop = agent.accessor.get(IAgentLoopService);
     loop.remind(historyEntryFromContext(message));

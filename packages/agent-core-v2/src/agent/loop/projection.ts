@@ -297,12 +297,19 @@ function projectedContent(
     : undefined;
   const toolAttributes = source.role === 'tool' ? source.attributes : undefined;
   const durationMs = source.durationMs ?? toolAttributes?.durationMs;
+  const rawNote = source.note ?? toolAttributes?.note;
+  const lastPart = source.content.at(-1);
+  const noteRendered =
+    rawNote !== undefined &&
+    rawNote.length > 0 &&
+    lastPart?.type === 'text' &&
+    (lastPart.text === rawNote || lastPart.text.endsWith(`\n${rawNote}`));
   const content =
     source.role === 'tool'
       ? renderToolResultForModel({
           output: outputFromToolContent(source.content),
           isError: source.isError ?? toolAttributes?.isError,
-          note: source.note ?? toolAttributes?.note,
+          note: noteRendered ? undefined : rawNote,
           durationMs: toolName !== undefined && shouldRenderWallTime(toolName) ? durationMs : undefined,
         })
       : source.content;

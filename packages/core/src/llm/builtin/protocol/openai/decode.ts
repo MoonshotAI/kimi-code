@@ -398,7 +398,7 @@ function isOpenAIInsufficientQuotaError(error: RawOpenAISDKAPIError): boolean {
   );
 }
 
-export function decodeError(error: unknown, _source?: 'stream'): LlmRemoteErrorMessage {
+export function decodeError(error: unknown, source?: 'stream'): LlmRemoteErrorMessage {
   if (error instanceof RawOpenAISDKConnectionTimeoutError) {
     return { kind: 'timeout', message: error.message, retryable: true };
   }
@@ -424,7 +424,7 @@ export function decodeError(error: unknown, _source?: 'stream'): LlmRemoteErrorM
       error.code ?? (typeof body?.code === 'string' ? body.code : undefined);
     const type =
       error.type ?? (typeof body?.type === 'string' ? body.type : undefined);
-    const statusCode = error.status;
+    const statusCode = source === 'stream' ? undefined : error.status;
     const statusInfo = {
       requestId: error.requestID ?? null,
       retryAfterMs: parseRetryAfterMs(error.headers),
@@ -458,7 +458,7 @@ export function decodeError(error: unknown, _source?: 'stream'): LlmRemoteErrorM
         ...statusInfo,
       });
     }
-    if (_source === 'stream') {
+    if (source === 'stream') {
       return toLlmStreamErrorMessage({
         businessCode: error.status,
         message: '',

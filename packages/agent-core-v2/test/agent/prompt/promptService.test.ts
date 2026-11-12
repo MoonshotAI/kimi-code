@@ -426,25 +426,23 @@ describe('prompt queue', () => {
       };
       histories.push(structuredClone(history));
       requests += 1;
-      const content = requests === 1
-        ? [{ type: 'text' as const, text: 'partial answer' }, { type: 'text' as const, text: 'after steer' }]
-        : [{ type: 'text' as const, text: 'after steer' }];
       if (requests === 1) {
-        
-        requestStarted();
-        await new Promise<void>((resolve) => {
-          if (options!.signal!.aborted) {
-            resolve();
-            return;
-          }
-          options!.signal!.addEventListener('abort', () => resolve(), { once: true });
-        });
-        if (options!.signal!.aborted) throw options!.signal!.reason;
+        return {
+          id: 'mock-1',
+          parts: [{ type: 'text', text: 'partial answer' }],
+          error: new Promise<unknown>((resolve) => {
+            if (options.signal.aborted) {
+              resolve(options.signal.reason);
+              return;
+            }
+            options.signal.addEventListener('abort', () => resolve(options.signal.reason), { once: true });
+          }),
+          onStream: requestStarted,
+        };
       }
-      
       return {
         id: 'mock-1',
-        message: { role: 'assistant', content, toolCalls: [] },
+        message: { role: 'assistant', content: [{ type: 'text', text: 'after steer' }], toolCalls: [] },
         usage: emptyUsage(),
         finishReason: 'completed',
         rawFinishReason: 'stop',
@@ -1101,17 +1099,18 @@ describe('prompt queue', () => {
       requests += 1;
       if (requests === 1) {
         const toolCall = { type: 'function' as const, id: 'call-work', name: 'Work', arguments: '{}' };
-        
-        options!.signal!.addEventListener('abort', () => { aborted = true; }, { once: true });
-        requestStarted();
-        await requestGate;
-        if (options!.signal!.aborted) throw options!.signal!.reason;
+        options.signal.addEventListener('abort', () => { aborted = true; }, { once: true });
         return {
           id: 'mock-tool-call',
           message: { role: 'assistant', content: [], toolCalls: [toolCall] },
+          parts: [toolCall],
           usage: emptyUsage(),
           finishReason: 'tool_calls',
           rawFinishReason: 'tool_calls',
+          onStream: async () => {
+            requestStarted();
+            await requestGate;
+          },
         };
       }
       

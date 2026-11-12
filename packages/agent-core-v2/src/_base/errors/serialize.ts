@@ -142,6 +142,7 @@ function llmErrorCode(error: LlmErrorMessage): ErrorCode | undefined {
     case 'image_format':
     case 'provider':
     case 'quota_exhausted':
+    case 'syntax':
     case 'unknown':
       return 'provider.api_error' as ErrorCode;
     default:
