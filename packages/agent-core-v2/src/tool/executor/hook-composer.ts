@@ -10,6 +10,19 @@ export function composeToolExecutorHooks<TContext = unknown, TPrepared = unknown
   hooks: readonly ToolExecutorHook<TContext, TPrepared>[],
 ): ToolExecutorHook<TContext, TPrepared> {
   return {
+    validating(context) {
+      let current = context;
+      let rewritten = false;
+      for (const hook of hooks) {
+        if (hook.validating === undefined) continue;
+        const decision = hook.validating.call(hook, current);
+        if (decision === undefined) continue;
+        if ('reject' in decision) return decision;
+        current = { ...current, args: decision.args };
+        rewritten = true;
+      }
+      return rewritten ? { args: current.args } : undefined;
+    },
     async starting(context) {
       let current = context;
       let rewritten = false;
