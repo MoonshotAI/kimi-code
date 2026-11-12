@@ -39,8 +39,16 @@ export function historyEntryFromContext(entry: ContextMessage): HistoryMessage {
         message: { ...message, role: 'assistant', toolCalls: entry.toolCalls },
         meta: { ...meta, usage: entry.usage ?? (entry.partial === true ? undefined : emptyUsage()) },
       };
-    case 'tool':
-      return { message: { ...message, role: 'tool', toolCallId: entry.toolCallId }, meta };
+    case 'tool': {
+      let content = entry.content;
+      if (entry.note !== undefined && entry.note.length > 0) {
+        const last = content.at(-1);
+        const rendered = last?.type === 'text' &&
+          (last.text === entry.note || last.text.endsWith(`\n${entry.note}`));
+        if (!rendered) content = [...content, { type: 'text', text: entry.note }];
+      }
+      return { message: { ...message, role: 'tool', content, toolCallId: entry.toolCallId }, meta };
+    }
   }
 }
 
