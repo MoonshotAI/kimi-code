@@ -391,8 +391,12 @@ function diffSnapshots(
   return count > 0 ? changes : undefined;
 }
 
-function extractCorruptFloor(names: readonly string[]): number {
+function findLatestCorruptFile(
+  homeDir: string,
+  names: readonly string[],
+): { floor: number; path: string | undefined } {
   let maxFloor = 0;
+  let latestName: string | undefined;
   for (const name of names) {
     if (!name.startsWith(CORRUPT_PREFIX)) continue;
     const rest = name.slice(CORRUPT_PREFIX.length);
@@ -401,9 +405,13 @@ function extractCorruptFloor(names: readonly string[]): number {
     const parsed = Number(numText);
     if (Number.isSafeInteger(parsed) && parsed > maxFloor) {
       maxFloor = parsed;
+      latestName = name;
     }
   }
-  return maxFloor;
+  return {
+    floor: maxFloor,
+    path: latestName === undefined ? undefined : join(homeDir, latestName),
+  };
 }
 
 export class GuiStoreService implements IGuiStoreService {
@@ -441,7 +449,7 @@ export class GuiStoreService implements IGuiStoreService {
   }
 
   async getSnapshot(query?: GuiStoreQuery): Promise<GuiStoreSnapshot> {
-    const state = await this.readOrQuarantine();
+    const state = await this.readOrQuarantine(true);
     this.advanceWatchedStateAndEmit(state);
     return {
       revision: state.revision,
@@ -451,7 +459,7 @@ export class GuiStoreService implements IGuiStoreService {
 
   async patch(mutations: readonly GuiStoreMutation[]): Promise<GuiStorePatchResult> {
     if (mutations.length === 0) {
-      const state = await this.readOrQuarantine();
+      const state = await this.readOrQuarantine(true);
       this.advanceWatchedStateAndEmit(state);
       return {
         applied: true,
@@ -462,7 +470,7 @@ export class GuiStoreService implements IGuiStoreService {
     }
 
     const outcome = await this.withCrossProcessLock(async (lock) => {
-      const state = await this.readUnlocked(lock);
+      const state = await this.readUnlocked(lock, false);
       const conflicts = emptyRecord<GuiStoreEntry | null>();
       let hasConflict = false;
 
@@ -640,16 +648,24 @@ export class GuiStoreService implements IGuiStoreService {
     }
   }
 
-  private async emptyStateWithFloor(): Promise<InternalState> {
+  private async emptyStateWithFloor(): Promise<{
+    state: InternalState;
+    quarantinePath: string | undefined;
+  }> {
+    let quarantinePath: string | undefined;
     try {
       const names = await readdir(this.homeDir);
-      const diskFloor = extractCorruptFloor(names);
-      if (diskFloor > this.minRevisionFloor) {
-        this.minRevisionFloor = diskFloor;
+      const latest = findLatestCorruptFile(this.homeDir, names);
+      if (latest.floor > this.minRevisionFloor) {
+        this.minRevisionFloor = latest.floor;
       }
+      quarantinePath = latest.path;
     } catch {
     }
-    return { revision: this.minRevisionFloor, entries: emptyRecord() };
+    return {
+      state: { revision: this.minRevisionFloor, entries: emptyRecord() },
+      quarantinePath,
+    };
   }
 
   private async hasLegacyToml(): Promise<boolean> {
@@ -670,7 +686,11 @@ export class GuiStoreService implements IGuiStoreService {
       throw toPersistenceError(error, `Failed to read legacy ${this.legacyTomlPath}`);
     }
 
-    const floorState = await this.emptyStateWithFloor();
+    const { state: floorState, quarantinePath: existingQuarantine } =
+      await this.emptyStateWithFloor();
+    if (existingQuarantine !== undefined || floorState.revision > 0) {
+      return undefined;
+    }
     const migratedEntries = emptyRecord<GuiStoreEntry>();
     let migratedRevision = floorState.revision;
 
@@ -716,15 +736,26 @@ export class GuiStoreService implements IGuiStoreService {
     };
 
     this.selfWriting += 1;
+    const backupSuffix = `${Date.now()}-${process.pid}-${randomBytes(3).toString('hex')}`;
+    const backupPath = `${this.legacyTomlPath}.migrated-${backupSuffix}`;
+    let movedLegacy = false;
     try {
+      await lock.assertOwned();
+      await renameWithRetry(this.legacyTomlPath, backupPath).catch((error: unknown) => {
+        throw toPersistenceError(error, `Failed to archive migrated ${this.legacyTomlPath}`);
+      });
+      movedLegacy = true;
       await writeAtomicDurable(
         this.filePath,
         serializePersistedState(migratedState),
         () => lock.assertOwned(),
       );
-      const backupPath = `${this.legacyTomlPath}.migrated-${Date.now()}-${process.pid}`;
-      await renameWithRetry(this.legacyTomlPath, backupPath).catch(() => undefined);
       await syncDirSafe(this.homeDir);
+    } catch (error) {
+      if (movedLegacy) {
+        await renameWithRetry(backupPath, this.legacyTomlPath).catch(() => undefined);
+      }
+      throw error;
     } finally {
       this.selfWriting -= 1;
     }
@@ -735,16 +766,25 @@ export class GuiStoreService implements IGuiStoreService {
     return migratedState;
   }
 
-  private async readOrQuarantine(): Promise<InternalState> {
+  private async readOrQuarantine(failIfUnrecoveredQuarantine: boolean): Promise<InternalState> {
     let text: string;
     try {
       text = await readFile(this.filePath, 'utf-8');
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         if (await this.hasLegacyToml()) {
-          return this.withCrossProcessLock((lock) => this.readUnlocked(lock));
+          return this.withCrossProcessLock((lock) =>
+            this.readUnlocked(lock, failIfUnrecoveredQuarantine),
+          );
         }
-        return this.emptyStateWithFloor();
+        const { state, quarantinePath } = await this.emptyStateWithFloor();
+        if (failIfUnrecoveredQuarantine && quarantinePath !== undefined) {
+          throw new GuiStoreCorruptError(
+            `GUI store remains quarantined at ${quarantinePath} until recovered`,
+            quarantinePath,
+          );
+        }
+        return state;
       }
       throw toPersistenceError(error, `Failed to read GUI store at ${this.filePath}`);
     }
@@ -755,11 +795,16 @@ export class GuiStoreService implements IGuiStoreService {
       }
       return parsed;
     } catch {
-      return this.withCrossProcessLock((lock) => this.readUnlocked(lock));
+      return this.withCrossProcessLock((lock) =>
+        this.readUnlocked(lock, failIfUnrecoveredQuarantine),
+      );
     }
   }
 
-  private async readUnlocked(lock: AcquiredGuiStoreLock): Promise<InternalState> {
+  private async readUnlocked(
+    lock: AcquiredGuiStoreLock,
+    failIfUnrecoveredQuarantine: boolean,
+  ): Promise<InternalState> {
     let text: string;
     try {
       text = await readFile(this.filePath, 'utf-8');
@@ -767,7 +812,14 @@ export class GuiStoreService implements IGuiStoreService {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         const migrated = await this.migrateLegacyTomlUnlocked(lock);
         if (migrated !== undefined) return migrated;
-        return this.emptyStateWithFloor();
+        const { state, quarantinePath } = await this.emptyStateWithFloor();
+        if (failIfUnrecoveredQuarantine && quarantinePath !== undefined) {
+          throw new GuiStoreCorruptError(
+            `GUI store remains quarantined at ${quarantinePath} until recovered`,
+            quarantinePath,
+          );
+        }
+        return state;
       }
       throw toPersistenceError(error, `Failed to read GUI store at ${this.filePath}`);
     }
@@ -779,7 +831,7 @@ export class GuiStoreService implements IGuiStoreService {
       return parsed;
     } catch (parseError) {
       const names = await readdir(this.homeDir).catch(() => [] as string[]);
-      const existingFloor = extractCorruptFloor(names);
+      const existingFloor = findLatestCorruptFile(this.homeDir, names).floor;
       let rawRev = 0;
       const revMatch = /"revision"\s*:\s*(\d+)/.exec(text);
       if (revMatch !== null) {
@@ -848,8 +900,8 @@ export class GuiStoreService implements IGuiStoreService {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         if (await this.hasLegacyToml()) return { kind: 'skip' };
-        const emptyFloor = await this.emptyStateWithFloor();
-        if (emptyFloor.revision > 0) return { kind: 'skip' };
+        const { state: emptyFloor, quarantinePath } = await this.emptyStateWithFloor();
+        if (quarantinePath !== undefined || emptyFloor.revision > 0) return { kind: 'skip' };
         return { kind: 'ok', state: emptyFloor };
       }
       return { kind: 'io_error' };

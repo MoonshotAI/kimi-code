@@ -299,6 +299,10 @@ describe('server-v2 gui store', () => {
     const backupBytes = await readFile(quarantinePath as string, 'utf-8');
     expect(backupBytes).toContain('"broken');
 
+    const secondFailedRead = envelopeOf<SnapshotData>((await getStore(api)).json());
+    expect(secondFailedRead.code).toBe(50003);
+    expect(secondFailedRead.details?.['quarantine_path']).toBe(quarantinePath);
+
     const recoveredPatch = envelopeOf<PatchData>(
       (
         await patchStore(api, [
@@ -591,7 +595,19 @@ describe('server-v2 gui store', () => {
         )
       ).json(),
     );
-    expect(oversizedBatch.code).toBe(40001);
+    const escapedControlBatch = envelopeOf<PatchData>(
+      (
+        await patchStore(
+          api,
+          Array.from({ length: 7 }, (_, idx) => ({
+            key: `nul-${idx}`,
+            value: '\u0000'.repeat(65_536),
+          })),
+        )
+      ).json(),
+    );
+    expect(escapedControlBatch.code).toBe(0);
+    expect(escapedControlBatch.data?.applied).toBe(true);
 
     const protoPatch = envelopeOf<PatchData>(
       (

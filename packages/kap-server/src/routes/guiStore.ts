@@ -13,6 +13,8 @@ import {
   IGuiStoreService,
 } from '../services/guiStore/guiStore';
 
+const PATCH_BODY_LIMIT_BYTES = 8 * 1_048_576;
+
 interface GuiStoreRouteHost {
   get(
     path: string,
@@ -24,7 +26,7 @@ interface GuiStoreRouteHost {
   ): unknown;
   patch(
     path: string,
-    options: { schema?: Record<string, unknown> },
+    options: { schema?: Record<string, unknown>; bodyLimit?: number },
     handler: (
       req: { id: string; body?: unknown },
       reply: { send(payload: unknown): void },
@@ -126,7 +128,7 @@ export function registerGuiStoreRoutes(app: GuiStoreRouteHost, store: IGuiStoreS
   );
   app.patch(
     patchRoute.path,
-    patchRoute.options,
+    { ...patchRoute.options, bodyLimit: PATCH_BODY_LIMIT_BYTES },
     patchRoute.handler as Parameters<GuiStoreRouteHost['patch']>[2],
   );
 }
