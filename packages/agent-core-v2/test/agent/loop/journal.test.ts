@@ -316,4 +316,92 @@ describe('loop journal restore', () => {
     ].map((record, index) => ({ record, line: index + 1 }));
     expect(() => computeForkLine(mixed, new Set(), 2)).toThrow('insufficient');
   });
+
+  it('restores multi-step tool exchanges and mid-step compaction without mutating input records', () => {
+    const records: WireRecord[] = [
+      { type: 'turn.prompt', turnId: 0, input: [], trigger: 'normal', origin: { kind: 'user' } },
+      { type: 'context.append_message', message: contextFromHistoryEntry(prompt('run checks')) },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.begin', uuid: 's1', turnId: '0', step: 1 },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'content.part',
+          stepUuid: 's1',
+          turnId: '0',
+          step: 1,
+          block: 0,
+          part: { type: 'text', text: 'checking' },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.call',
+          stepUuid: 's1',
+          turnId: '0',
+          step: 1,
+          toolCallId: 'call_1',
+          name: 'Read',
+          args: { path: 'a.ts' },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.result',
+          toolCallId: 'call_1',
+          result: { output: 'file-a', durationMs: 4 },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.end', uuid: 's1', turnId: '0', step: 1, finishReason: 'tool_calls' },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.begin', uuid: 's2', turnId: '0', step: 2 },
+      },
+      {
+        type: 'context.apply_compaction',
+        summary: 'compacted summary',
+        compactedCount: 3,
+        keptUserMessageCount: 0,
+        tokensBefore: 1000,
+        tokensAfter: 200,
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'content.part',
+          stepUuid: 's2',
+          turnId: '0',
+          step: 2,
+          block: 0,
+          part: { type: 'text', text: 'done after compaction' },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.end', uuid: 's2', turnId: '0', step: 2, finishReason: 'stop' },
+      },
+      { type: 'turn.ended', turnId: 0, reason: 'completed' },
+    ];
+    const beforeSnapshot = JSON.stringify(records);
+
+    const restored = restoreLoopJournal(records);
+
+    expect(JSON.stringify(records)).toBe(beforeSnapshot);
+    expect(restored.input.nextTurnId).toBe(1);
+    expect(restored.input.messages!.map((entry) => entry.message)).toMatchObject([
+      { role: 'user', content: [{ type: 'text', text: 'run checks' }] },
+      { role: 'user', content: [{ type: 'text', text: 'compacted summary' }] },
+      { role: 'user' },
+      { role: 'assistant', content: [{ type: 'text', text: 'done after compaction' }] },
+    ]);
+    expect(Object.isFrozen(restored.input.messages![0]!.message.content)).toBe(true);
+    expect(Object.isFrozen(restored.input.messages![3]!.message.content)).toBe(true);
+  });
 });
