@@ -1003,6 +1003,134 @@ describe('AgentMediaResolverService image upload', () => {
     }
   });
 
+  it('does not cache or send an ms:// reference when Kimi /v1/files returns extract_status=error, and retries cleanly on the next resolve', async () => {
+    const storage = new InMemoryStorageService();
+    const mediaStore = new SessionMediaStoreService(
+      makeSessionContext({ sessionId: 's1', workspaceId: 'w1', sessionDir, sessionScope: 's1', cwd: sessionDir }),
+      storage,
+      new JsonAtomicDocumentStore(storage),
+    );
+    const blobs = blobStore();
+    const refUrl = await mediaStore.put({
+      bytes: PNG_BYTES,
+      mimeType: 'image/png',
+      filename: 'diagram.png',
+    });
+    const messages: Message[] = [
+      {
+        role: 'tool',
+        toolCallId: 'call_read_media',
+        content: [
+          { type: 'text', text: '<image path="diagram.png">' },
+          { type: 'image_url', imageUrl: { url: refUrl } },
+          { type: 'text', text: '</image>' },
+        ],
+      },
+    ];
+    let uploadAttempt = 0;
+    const chatBodies: string[] = [];
+    const mockFetch: typeof fetch = async (input, init) => {
+      const httpRequest = new Request(input, init);
+      const path = new URL(httpRequest.url).pathname;
+      if (path === '/v1/files') {
+        uploadAttempt += 1;
+        if (uploadAttempt === 1) {
+          return Response.json({
+            id: 'file_bad_extract',
+            extract_status: 'error',
+            status_details: 'corrupted image',
+          });
+        }
+        if (uploadAttempt === 2) {
+          return Response.json({
+            id: 'file_bad_legacy_status',
+            status: 'error',
+            status_details: 'invalid image format',
+          });
+        }
+        return Response.json(
+          {
+            id: 'file_ready_extract',
+            extract_status: 'ready',
+          },
+          { status: 201 },
+        );
+      }
+      expect(path).toBe('/v1/chat/completions');
+      chatBodies.push(await httpRequest.text());
+      return Response.json({
+        id: 'completion_1',
+        model: 'stub',
+        object: 'chat.completion',
+        choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: 'Done.' } }],
+      });
+    };
+    const { model } = requester({
+      providerType: 'kimi',
+      baseUrl: 'https://example.test/v1',
+      credentialProvider: createStaticCredentialProvider('YOUR_API_KEY'),
+    });
+    const routed = new ProtocolAdapterRegistry().request(model, { stream: false }).with({ endpoint: { fetch: mockFetch } });
+    const firstResolver = new AgentMediaResolverService(
+      fileService(new Map()),
+      blobs,
+      telemetry,
+      new AgentStateService(),
+      mediaStore,
+      stubDispatcher,
+      stubScopeContext,
+    );
+    const firstMedia = createAgentMediaPolicy(firstResolver, model, routed);
+    for await (const _event of generateModel(routed, { systemPrompt: '', messages }, undefined, undefined, {
+      recoveries: [firstMedia.recovery],
+      resolvers: [firstMedia.toolResolver, firstMedia.resolver],
+    })) {}
+
+    expect(uploadAttempt).toBe(1);
+    expect(chatBodies).toHaveLength(1);
+    expect(chatBodies[0]).not.toContain('ms://file_bad_extract');
+    expect(chatBodies[0]).toContain(PNG_DATA_URL);
+
+    for await (const _event of generateModel(routed, { systemPrompt: '', messages }, undefined, undefined, {
+      recoveries: [firstMedia.recovery],
+      resolvers: [firstMedia.toolResolver, firstMedia.resolver],
+    })) {}
+
+    expect(uploadAttempt).toBe(2);
+    expect(chatBodies).toHaveLength(2);
+    expect(chatBodies[1]).not.toContain('ms://file_bad_legacy_status');
+    expect(chatBodies[1]).toContain(PNG_DATA_URL);
+
+    for await (const _event of generateModel(routed, { systemPrompt: '', messages }, undefined, undefined, {
+      recoveries: [firstMedia.recovery],
+      resolvers: [firstMedia.toolResolver, firstMedia.resolver],
+    })) {}
+
+    expect(uploadAttempt).toBe(3);
+    expect(chatBodies).toHaveLength(3);
+    expect(chatBodies[2]).toContain('ms://file_ready_extract');
+    expect(chatBodies[2]).not.toContain('data:image/');
+
+    const secondResolver = new AgentMediaResolverService(
+      fileService(new Map()),
+      blobs,
+      telemetry,
+      new AgentStateService(),
+      mediaStore,
+      stubDispatcher,
+      stubScopeContext,
+    );
+    const secondMedia = createAgentMediaPolicy(secondResolver, model, routed);
+    for await (const _event of generateModel(routed, { systemPrompt: '', messages }, undefined, undefined, {
+      recoveries: [secondMedia.recovery],
+      resolvers: [secondMedia.toolResolver, secondMedia.resolver],
+    })) {}
+
+    expect(uploadAttempt).toBe(3);
+    expect(chatBodies).toHaveLength(4);
+    expect(chatBodies[3]).toContain('ms://file_ready_extract');
+  });
+
   it('uploads an image once and serves later resolves from the cached reference', async () => {
     const upload = vi.fn(async (): Promise<ImageURLPart> => msImagePart('img-1'));
     const res = resolver(new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]));

@@ -811,6 +811,68 @@ describe('daemon file references (kimi-file://)', () => {
     expect(imagePart?.image_url?.url ?? '').toBe('ms://file-mock-image');
     expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('completed');
   }, 60_000);
+
+  it('ReadMediaFile image upload falls back inline without caching ms:// when /v1/files returns extract_status=error', async () => {
+    const ctx = await newCase(M_KIMI, 'kimifile-image-extract-error');
+    await writeFile(join(ctx.workDir, 'pixel.png'), Buffer.from(PNG_1X1_BASE64, 'base64'));
+    let fileUploadCount = 0;
+    let chatCallCount = 0;
+    resetMock((req) => {
+      if (req.url === '/v1/files') {
+        fileUploadCount += 1;
+        return fileUploadCount === 1
+          ? {
+              kind: 'json',
+              status: 200,
+              body: {
+                id: 'file-bad-extract',
+                filename: 'pixel.png',
+                mime_type: 'image/png',
+                size_bytes: 68,
+                created_at: '2026-11-12T00:00:00Z',
+                purpose: 'image',
+                extract_status: 'error',
+              },
+            }
+          : {
+              kind: 'json',
+              status: 201,
+              body: {
+                id: 'file-ready-extract',
+                filename: 'pixel.png',
+                mime_type: 'image/png',
+                size_bytes: 68,
+                created_at: '2026-11-12T00:00:01Z',
+                purpose: 'image',
+                extract_status: 'ready',
+              },
+            };
+      }
+      chatCallCount += 1;
+      return chatCallCount === 1
+        ? {
+            kind: 'sse',
+            lines: openAiToolCallSse('call_img_1', 'ReadMediaFile', '{"path":"pixel.png"}'),
+          }
+        : OK_OPENAI;
+    });
+
+    await promptAndWait(ctx, [{ type: 'text', text: 'inspect pixel.png' }]);
+    expect(fileUploadCount).toBe(1);
+    const firstTurnChats = requests.filter((request) => request.url === '/v1/chat/completions');
+    expect(firstTurnChats).toHaveLength(2);
+    const firstToolWire = JSON.stringify(firstTurnChats[1]?.json);
+    expect(firstToolWire).not.toContain('ms://file-bad-extract');
+    expect(firstToolWire).toContain('data:image/png;base64,');
+
+    await promptAndWait(ctx, [{ type: 'text', text: 'inspect again' }]);
+    expect(fileUploadCount).toBe(2);
+    const allChats = requests.filter((request) => request.url === '/v1/chat/completions');
+    expect(allChats).toHaveLength(3);
+    const secondTurnWire = JSON.stringify(allChats[2]?.json);
+    expect(secondTurnWire).toContain('ms://file-ready-extract');
+    expect(secondTurnWire).not.toContain('ms://file-bad-extract');
+  }, 60_000);
 });
 
 // ---------------------------------------------------------------------------

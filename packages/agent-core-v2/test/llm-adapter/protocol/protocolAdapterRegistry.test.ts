@@ -3,7 +3,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
 import { isUnknownCapability } from '#/llm-adapter/contract/capability';
 import { contentsOf } from '#human/llm/requester';
-import { supportsLlmUpload } from '#/llm-adapter/model/media';
+import { supportsLlmUpload, uploadImage, uploadVideo } from '#/llm-adapter/model/media';
 import { generateModel } from '#/llm-adapter/model/generate';
 import type { Model } from '#/llm-adapter/model/catalog';
 import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
@@ -411,5 +411,151 @@ describe('kimi provider definitions', () => {
         baseProtocol: 'openai',
       }),
     ).toThrow(/already registered/);
+  });
+
+  describe('kimi files upload status validation', () => {
+    function kimiUploadRequest(protocol: 'openai' | 'anthropic' | 'openai_responses', responseBody: unknown, status = 200) {
+      const seenUrls: string[] = [];
+      const mockFetch: typeof fetch = async (input, init) => {
+        const httpRequest = new Request(input, init);
+        if (httpRequest.url.startsWith('data:')) {
+          return fetch(input, init);
+        }
+        seenUrls.push(httpRequest.url);
+        return Response.json(responseBody, { status });
+      };
+      const baseModel = modelWith({ protocol, providerType: 'kimi' });
+      const model: Model = {
+        ...baseModel,
+        baseUrl: protocol === 'anthropic' ? 'https://example.test' : 'https://example.test/v1',
+        credentialProvider: { resolve: () => ({ apiKey: 'YOUR_API_KEY' }) },
+      };
+      const request = registry.request(model).with({ endpoint: { fetch: mockFetch } });
+      return { model, request, seenUrls };
+    }
+
+    it.each([
+      ['extract_status=ready (201)', 201, { id: 'file_ready_1', extract_status: 'ready' }, 'file_ready_1'],
+      ['status=ready (200)', 200, { id: 'file_ready_2', status: 'ready', status_details: '' }, 'file_ready_2'],
+      ['status=ok (200)', 200, { id: 'file_ok_1', status: 'ok', status_details: '' }, 'file_ok_1'],
+      ['status=processed (200)', 200, { id: 'file_proc_ok', status: 'processed' }, 'file_proc_ok'],
+      ['status=uploaded with extract_status=ready (200)', 200, { id: 'file_up_ready', status: 'uploaded', extract_status: 'ready' }, 'file_up_ready'],
+      ['minimal id-only payload (200)', 200, { id: 'file_min_1' }, 'file_min_1'],
+    ])('accepts %s and returns an ms:// reference', async (_label, httpStatus, payload, expectedId) => {
+      const { model, request, seenUrls } = kimiUploadRequest('openai', payload, httpStatus);
+      const part = await uploadImage(model, request, {
+        data: new Uint8Array([1, 2, 3]),
+        mimeType: 'image/png',
+        filename: 'sample.png',
+      });
+      expect(seenUrls).toEqual(['https://example.test/v1/files']);
+      expect(part).toEqual({
+        type: 'image_url',
+        imageUrl: { url: `ms://${expectedId}`, id: expectedId },
+      });
+    });
+
+    it.each([
+      [
+        'extract_status=error without details',
+        'openai' as const,
+        { id: 'file_err_1', extract_status: 'error' },
+        /file_err_1.*extract_status=error/,
+      ],
+      [
+        'extract_status=error with status_details on anthropic transport',
+        'anthropic' as const,
+        { id: 'file_err_2', extract_status: 'error', status_details: 'corrupted image stream' },
+        /file_err_2.*extract_status=error.*corrupted image stream/,
+      ],
+      [
+        'extract_status=error with nested error message on responses transport',
+        'openai_responses' as const,
+        { id: 'file_err_3', extract_status: 'error', error: { message: 'unsupported color profile' } },
+        /file_err_3.*extract_status=error.*unsupported color profile/,
+      ],
+      [
+        'status=error with status_details',
+        'openai' as const,
+        { id: 'file_err_4', status: 'error', status_details: 'invalid image format' },
+        /file_err_4.*status=error.*invalid image format/,
+      ],
+      [
+        'extract_status=error alongside status=uploaded',
+        'openai' as const,
+        { id: 'file_err_5', status: 'uploaded', extract_status: 'error' },
+        /file_err_5.*extract_status=error/,
+      ],
+      [
+        'status=error alongside extract_status=ready',
+        'openai' as const,
+        { id: 'file_err_6', status: 'error', extract_status: 'ready', status_details: 'decode failed' },
+        /file_err_6.*status=error.*decode failed/,
+      ],
+      [
+        'non-ready extract_status=processing',
+        'openai' as const,
+        { id: 'file_not_ready_1', extract_status: 'processing' },
+        /file_not_ready_1.*not ready.*extract_status=processing/,
+      ],
+      [
+        'non-ready status=uploaded without extract_status=ready',
+        'openai' as const,
+        { id: 'file_not_ready_up', status: 'uploaded' },
+        /file_not_ready_up.*not ready.*status=uploaded/,
+      ],
+      [
+        'non-ready status=processing',
+        'openai' as const,
+        { id: 'file_not_ready_2', status: 'processing' },
+        /file_not_ready_2.*not ready.*status=processing/,
+      ],
+      [
+        'empty file id',
+        'openai' as const,
+        { id: '', extract_status: 'ready' },
+        /empty file id/,
+      ],
+    ])('rejects %s before creating an ms:// reference', async (_label, protocol, payload, expectedPattern) => {
+      const { model, request, seenUrls } = kimiUploadRequest(protocol, payload, 200);
+      await expect(
+        uploadImage(model, request, {
+          data: new Uint8Array([1, 2, 3]),
+          mimeType: 'image/png',
+          filename: 'sample.png',
+        }),
+      ).rejects.toThrow(expectedPattern);
+      expect(seenUrls).toEqual(['https://example.test/v1/files']);
+    });
+
+    it('validates extract_status for video uploads as well', async () => {
+      const failing = kimiUploadRequest('openai', {
+        id: 'vid_err_1',
+        extract_status: 'error',
+        status_details: 'unsupported video codec',
+      });
+      await expect(
+        uploadVideo(failing.model, failing.request, {
+          data: new Uint8Array([1, 2, 3]),
+          mimeType: 'video/mp4',
+          filename: 'clip.mp4',
+        }),
+      ).rejects.toThrow(/vid_err_1.*extract_status=error.*unsupported video codec/);
+
+      const ready = kimiUploadRequest(
+        'openai',
+        { id: 'vid_ready_1', extract_status: 'ready' },
+        201,
+      );
+      const part = await uploadVideo(ready.model, ready.request, {
+        data: new Uint8Array([1, 2, 3]),
+        mimeType: 'video/mp4',
+        filename: 'clip.mp4',
+      });
+      expect(part).toEqual({
+        type: 'video_url',
+        videoUrl: { url: 'ms://vid_ready_1', id: 'vid_ready_1' },
+      });
+    });
   });
 });
