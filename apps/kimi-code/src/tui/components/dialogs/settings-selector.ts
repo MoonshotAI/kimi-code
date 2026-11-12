@@ -68,7 +68,7 @@ const SETTINGS_OPTIONS: readonly ChoiceOption[] = [
   {
     value: 'followUpBehavior',
     label: 'Follow-up behavior',
-    description: 'Choose whether Enter queues or steers a message while Kimi is working.',
+    description: 'Choose whether to queue follow-ups or steer the current turn.',
   },
   {
     value: 'survey',

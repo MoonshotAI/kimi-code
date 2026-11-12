@@ -31,6 +31,7 @@ import {
   type Component,
   type Focusable,
   getCapabilities,
+  isKittyProtocolActive,
   Key,
   matchesKey,
   Spacer,
@@ -5315,7 +5316,10 @@ export class KimiTUI {
     this.mountEditorReplacement(
       new HelpPanelComponent({
         commands: this.getSlashCommands(),
-        shortcuts: keyboardShortcuts(resolveFollowUpBehavior(this.state.appState.followUpBehavior)),
+        shortcuts: keyboardShortcuts(
+          resolveFollowUpBehavior(this.state.appState.followUpBehavior),
+          isKittyProtocolActive(),
+        ),
         onClose: () => {
           this.hideHelpPanel();
         },

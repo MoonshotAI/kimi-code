@@ -7,7 +7,7 @@ import {
   type Session,
   type ThinkingEffort,
 } from '@moonshot-ai/kimi-code-sdk';
-import { TuiAltScreen } from '@moonshot-ai/pi-tui';
+import { isKittyProtocolActive, TuiAltScreen } from '@moonshot-ai/pi-tui';
 
 import { EditorSelectorComponent } from '../components/dialogs/editor-selector';
 import { EffortSelectorComponent } from '../components/dialogs/effort-selector';
@@ -1285,6 +1285,7 @@ function showFollowUpBehaviorPicker(host: SlashCommandHost): void {
   host.mountEditorReplacement(
     new FollowUpBehaviorSelectorComponent({
       currentValue: resolveFollowUpBehavior(host.state.appState.followUpBehavior),
+      ctrlEnterRecognized: isKittyProtocolActive(),
       onSelect: (value) => {
         host.restoreEditor();
         void applyFollowUpBehaviorChoice(host, value);

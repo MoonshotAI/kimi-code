@@ -1,4 +1,4 @@
-import type { Component } from '@moonshot-ai/pi-tui';
+import { setKittyProtocolActive, type Component } from '@moonshot-ai/pi-tui';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -7,6 +7,7 @@ import {
   showSettingsSelector,
 } from '#/tui/commands/config';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
+import { FollowUpBehaviorSelectorComponent } from '#/tui/components/dialogs/follow-up-behavior-selector';
 import { renderTuiConfig, type FollowUpBehavior, type TuiConfig } from '#/tui/config';
 
 const mocks = vi.hoisted(() => ({
@@ -127,7 +128,12 @@ describe('follow-up behavior preference', () => {
     for (let i = 0; i < 20 && !strip(settings.render(100).join('\n')).includes('❯ Follow-up behavior'); i++) {
       settings.handleInput('\u001B[B');
     }
-    settings.handleInput('\r');
+    setKittyProtocolActive(true);
+    try {
+      settings.handleInput('\r');
+    } finally {
+      setKittyProtocolActive(false);
+    }
 
     const picker = mounted!;
     expect(picker).not.toBe(settings);
@@ -135,6 +141,7 @@ describe('follow-up behavior preference', () => {
     expect(lines).toContain(' Follow-up behavior');
     expect(lines).toContain('  ❯ Queue ← current');
     expect(lines).toContain('    Steer');
+    expect(lines.map((line) => line.trim())).toContain('Enter queues follow-ups until Kimi finishes. Ctrl-Enter steers one.');
 
     picker.handleInput('\u001B[B');
     picker.handleInput('\r');
@@ -142,5 +149,22 @@ describe('follow-up behavior preference', () => {
       expect(host.state.appState.followUpBehavior).toBe('steer');
     });
     expect(savedConfig().followUpBehavior).toBe('steer');
+  });
+
+  it.each([
+    [true, 'Enter queues follow-ups until Kimi finishes. Ctrl-Enter steers one.', 'Enter steers follow-ups into the current turn. Ctrl-Enter queues one.'],
+    [false, 'Enter queues follow-ups until Kimi finishes.', 'Enter steers follow-ups into the current turn. Ctrl-Q queues one.'],
+  ])('names only the keys this terminal reports (Ctrl-Enter recognized: %s)', (ctrlEnterRecognized, queue, steer) => {
+    const picker = new FollowUpBehaviorSelectorComponent({
+      currentValue: 'queue',
+      ctrlEnterRecognized,
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    const lines = picker.render(140).map((line) => strip(line).trim());
+
+    expect(lines).toContain(queue);
+    expect(lines).toContain(steer);
   });
 });

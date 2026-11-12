@@ -11,6 +11,7 @@ import {
   deleteAllKittyImages,
   resetCapabilitiesCache,
   setCapabilities,
+  setKittyProtocolActive,
   type TuiMouseEvent,
 } from '@moonshot-ai/pi-tui';
 import {
@@ -8151,20 +8152,31 @@ command = "vim"
         expect(session.steer).not.toHaveBeenCalled();
       });
 
-      it('describes the submit keys in /help after the chosen behavior', async () => {
-        const { driver } = await makeDriver();
-        driver.state.appState.followUpBehavior = 'steer';
+      it.each([true, false])(
+        'describes the submit keys in /help after the chosen behavior (Ctrl-Enter recognized: %s)',
+        async (ctrlEnterRecognized) => {
+          const { driver } = await makeDriver();
+          driver.state.appState.followUpBehavior = 'steer';
+          setKittyProtocolActive(ctrlEnterRecognized);
 
-        driver.handleUserInput('/help');
+          try {
+            driver.handleUserInput('/help');
 
-        await vi.waitFor(() => {
-          const lines = driver.state.editorContainer.render(120).map(stripSgr);
-          expect(lines).toContainEqual(expect.stringMatching(/^\s+Enter\s+Submit; steers into the running turn$/));
-          expect(lines).toContainEqual(
-            expect.stringMatching(/^\s+Ctrl-Enter \/ Cmd-Enter\s+Submit; queues while Kimi is working$/),
-          );
-        });
-      });
+            await vi.waitFor(() => {
+              expect(driver.state.editorContainer.render(120).map(stripSgr)).toContainEqual(
+                expect.stringMatching(/^\s+Enter\s+Submit; steers into the running turn$/),
+              );
+            });
+            const lines = driver.state.editorContainer.render(120).map(stripSgr);
+            expect(lines).toContainEqual(expect.stringMatching(/^\s+Ctrl-Q\s+Submit; queues while Kimi is working$/));
+            expect(lines.some((line) => /^\s+Ctrl-Enter\s+Submit; queues while Kimi is working$/.test(line))).toBe(
+              ctrlEnterRecognized,
+            );
+          } finally {
+            setKittyProtocolActive(false);
+          }
+        },
+      );
     });
 
     describe('falls back to the plain Enter path', () => {

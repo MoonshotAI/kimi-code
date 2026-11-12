@@ -41,8 +41,18 @@ const SUBMIT_DESCRIPTIONS: Readonly<Record<FollowUpDelivery, string>> = {
 };
 
 /** Static list — keep in sync with the global editor bindings. */
-export function keyboardShortcuts(followUpBehavior: FollowUpBehavior): readonly KeyboardShortcut[] {
+export function keyboardShortcuts(
+  followUpBehavior: FollowUpBehavior,
+  ctrlEnterRecognized: boolean,
+): readonly KeyboardShortcut[] {
   const submit = FOLLOW_UP_KEYMAP[followUpBehavior];
+  const followUpShortcuts: KeyboardShortcut[] = [];
+  if (ctrlEnterRecognized) {
+    followUpShortcuts.push({ keys: 'Ctrl-Enter', description: SUBMIT_DESCRIPTIONS[submit['mod-enter']] });
+  }
+  if (submit['ctrl-q'] !== submit.enter) {
+    followUpShortcuts.push({ keys: 'Ctrl-Q', description: SUBMIT_DESCRIPTIONS[submit['ctrl-q']] });
+  }
   return [
     { keys: 'Shift-Tab', description: 'Toggle plan mode' },
     { keys: 'Ctrl-G', description: 'Edit in external editor ($VISUAL / $EDITOR)' },
@@ -54,12 +64,11 @@ export function keyboardShortcuts(followUpBehavior: FollowUpBehavior): readonly 
     { keys: 'Esc', description: 'Close dialogs / interrupt streaming' },
     { keys: '↑ / ↓', description: 'Browse input history' },
     { keys: 'Enter', description: SUBMIT_DESCRIPTIONS[submit.enter] },
-    { keys: 'Ctrl-Enter / Cmd-Enter', description: SUBMIT_DESCRIPTIONS[submit['mod-enter']] },
-    { keys: 'Ctrl-Q', description: SUBMIT_DESCRIPTIONS[submit['ctrl-q']] },
+    ...followUpShortcuts,
   ];
 }
 
-export const DEFAULT_KEYBOARD_SHORTCUTS = keyboardShortcuts(DEFAULT_FOLLOW_UP_BEHAVIOR);
+export const DEFAULT_KEYBOARD_SHORTCUTS = keyboardShortcuts(DEFAULT_FOLLOW_UP_BEHAVIOR, false);
 
 export interface HelpPanelOptions {
   readonly commands: readonly HelpPanelCommand[];
