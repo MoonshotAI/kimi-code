@@ -33,8 +33,15 @@ export type SharedProviders = z.infer<typeof sharedProvidersSchema>;
 
 export interface ProviderCopyResult {
   readonly copied: readonly string[];
+  readonly updated: readonly string[];
   readonly skipped: readonly SkippedProvider[];
 }
+
+const providerCopyResultSchema = z.object({
+  copied: z.array(z.string()),
+  updated: z.array(z.string()).default([]),
+  skipped: z.array(skippedProviderSchema),
+});
 
 const LOOPBACK_HOSTS = new Set(['localhost', '0.0.0.0', '[::1]', '[::]']);
 
@@ -56,15 +63,20 @@ function skipReason(provider: ProviderConfig): ProviderSkipReason | undefined {
   return undefined;
 }
 
-export async function collectSharedProviders(core: Scope): Promise<{ readonly shared: SharedProviders; readonly skipped: SkippedProvider[] }> {
+export async function collectSharedProviders(
+  core: Scope,
+  only?: readonly string[],
+): Promise<{ readonly shared: SharedProviders; readonly skipped: SkippedProvider[] }> {
   const config = core.accessor.get(IConfigService);
   await config.ready;
   const providers = config.inspect<Record<string, ProviderConfig>>(PROVIDERS_SECTION).userValue ?? {};
   const models = config.inspect<Record<string, ModelRecord>>(MODELS_SECTION).userValue ?? {};
   const shared: SharedProviders = { providers: {}, models: {} };
   const skipped: SkippedProvider[] = [];
+  const selected = only === undefined ? undefined : new Set(only);
   for (const [id, provider] of Object.entries(providers)) {
     if (id.startsWith('managed:')) continue;
+    if (selected !== undefined && !selected.has(id)) continue;
     const reason = skipReason(provider);
     if (reason !== undefined) {
       skipped.push({ id, reason });
@@ -91,30 +103,20 @@ export function importSharedProviders(core: Scope, input: unknown): Promise<Prov
     const providers = config.inspect<Record<string, ProviderConfig>>(PROVIDERS_SECTION).userValue ?? {};
     const models = config.inspect<Record<string, ModelRecord>>(MODELS_SECTION).userValue ?? {};
     const copied: string[] = [];
-    const skipped: SkippedProvider[] = [];
-    const nextProviders: Record<string, ProviderConfig> = {};
-    for (const [id, provider] of Object.entries(incoming.providers)) {
-      if (providers[id] !== undefined) {
-        skipped.push({ id, reason: 'exists' });
-        continue;
-      }
-      nextProviders[id] = provider;
-      copied.push(id);
+    const updated: string[] = [];
+    for (const id of Object.keys(incoming.providers)) {
+      if (providers[id] === undefined) copied.push(id);
+      else updated.push(id);
     }
-    const nextModels: Record<string, ModelRecord> = {};
-    for (const [alias, model] of Object.entries(incoming.models)) {
-      if (model.provider !== undefined && nextProviders[model.provider] !== undefined && models[alias] === undefined) {
-        nextModels[alias] = model;
-      }
-    }
-    if (copied.length > 0) await config.set(PROVIDERS_SECTION, nextProviders);
-    if (Object.keys(nextModels).length > 0) await config.set(MODELS_SECTION, nextModels);
+    const incomingAliases = Object.keys(incoming.models);
+    if (copied.length + updated.length > 0) await config.replace(PROVIDERS_SECTION, { ...providers, ...incoming.providers });
+    if (incomingAliases.length > 0) await config.replace(MODELS_SECTION, { ...models, ...incoming.models });
     const currentDefault = config.inspect<string>(DEFAULT_MODEL_SECTION).userValue;
-    const firstAlias = Object.keys(nextModels)[0];
+    const firstAlias = incomingAliases[0];
     if ((currentDefault === undefined || currentDefault.trim() === '') && firstAlias !== undefined) {
       await config.replace(DEFAULT_MODEL_SECTION, firstAlias);
     }
-    return { copied, skipped };
+    return { copied, updated, skipped: [] };
   });
   importChain = run.catch(() => undefined);
   return run;
@@ -128,11 +130,11 @@ export async function sendSharedProviders(session: HostSession, shared: SharedPr
     body: Buffer.from(JSON.stringify(shared)),
     timeoutMs: 60_000,
   });
-  const body = JSON.parse(response.body.toString('utf8')) as { code?: number; msg?: string; data?: ProviderCopyResult };
+  const body = JSON.parse(response.body.toString('utf8')) as { code?: number; msg?: string; data?: unknown };
   if (response.status !== 200 || body.code !== 0 || body.data === undefined) {
     throw new Error(body.msg ?? 'Unable to copy model providers to the SSH host');
   }
-  return body.data;
+  return providerCopyResultSchema.parse(body.data);
 }
 
 export function registerImportProvidersRoute(app: {
@@ -142,9 +144,9 @@ export function registerImportProvidersRoute(app: {
     {
       method: 'POST',
       path: '/hosts::import-providers',
-      success: { data: z.object({ copied: z.array(z.string()), skipped: z.array(skippedProviderSchema) }) },
+      success: { data: providerCopyResultSchema },
       errors: { [ErrorCode.VALIDATION_FAILED]: {} },
-      description: 'Add model providers copied from the connecting computer; providers that already exist here are left unchanged',
+      description: 'Add model providers copied from the connecting computer; providers with the same name here are replaced',
       tags: ['hosts'],
     },
     async (req: { body: unknown; id: string }, reply: { send(payload: unknown): void }) => {

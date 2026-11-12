@@ -52,6 +52,7 @@ const hostResponseSchema = hostWireObjectSchema.extend({
 
 const hostParamsSchema = z.object({ id: z.string() });
 const connectBodySchema = z.object({ id: z.string() });
+const copyProvidersBodySchema = z.object({ id: z.string(), providers: z.array(z.string()).optional() });
 const testResultSchema = z.object({
   connected: z.boolean(),
   remote_version: z.string().optional(),
@@ -223,20 +224,20 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
     {
       method: 'POST',
       path: '/hosts::copy-providers',
-      body: connectBodySchema,
-      success: { data: z.object({ copied: z.array(z.string()), skipped: z.array(skippedProviderSchema) }) },
+      body: copyProvidersBodySchema,
+      success: { data: z.object({ copied: z.array(z.string()), updated: z.array(z.string()), skipped: z.array(skippedProviderSchema) }) },
       errors: { [ErrorCode.ENVIRONMENT_NOT_FOUND]: {}, [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {} },
-      description: 'Copy the model providers on this computer to a host; providers the host already has are left unchanged',
+      description: 'Copy the chosen model providers on this computer to a host, replacing providers with the same name there',
       tags: ['hosts'],
     },
     async (req: RouteRequest, reply: RouteReply) => {
-      const { id } = req.body as z.infer<typeof connectBodySchema>;
+      const { id, providers } = req.body as z.infer<typeof copyProvidersBodySchema>;
       if (manager.section()[id] === undefined) {
         reply.send(errEnvelope(ErrorCode.ENVIRONMENT_NOT_FOUND, `host "${id}" is not configured`, req.id));
         return;
       }
       try {
-        reply.send(okEnvelope(await manager.copyProviders(id), req.id));
+        reply.send(okEnvelope(await manager.copyProviders(id, providers), req.id));
       } catch (error) {
         reply.send(errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, error instanceof Error ? error.message : String(error), req.id));
       }

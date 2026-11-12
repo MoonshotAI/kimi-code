@@ -115,12 +115,12 @@ export class HostBridgeManager {
     });
   }
 
-  async copyProviders(id: string): Promise<ProviderCopyResult> {
+  async copyProviders(id: string, only?: readonly string[]): Promise<ProviderCopyResult> {
     const session = await this.connect(id);
-    const { shared, skipped } = await collectSharedProviders(this.core);
-    if (Object.keys(shared.providers).length === 0) return { copied: [], skipped };
+    const { shared, skipped } = await collectSharedProviders(this.core, only);
+    if (Object.keys(shared.providers).length === 0) return { copied: [], updated: [], skipped };
     const result = await sendSharedProviders(session, shared);
-    return { copied: result.copied, skipped: [...skipped, ...result.skipped] };
+    return { copied: result.copied, updated: result.updated, skipped: [...skipped, ...result.skipped] };
   }
 
   session(id: string): HostSession | undefined {

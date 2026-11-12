@@ -993,29 +993,46 @@ describe('host model providers', () => {
       'taken/small': { provider: 'taken', model: 'small', maxContextSize: 32_000 },
       'ollama/local': { provider: 'ollama', model: 'local', maxContextSize: 8_000 },
     });
-    await remoteConfig.replace('providers', { taken: { type: 'openai', baseUrl: 'https://taken.example.test/v1', apiKey: 'sk-remote' } });
+    await remoteConfig.replace('providers', {
+      taken: { type: 'openai', baseUrl: 'https://taken.example.test/v1', apiKeyEnv: 'TAKEN_KEY', oauth: { storage: 'file', key: 'taken' } },
+      kept: { type: 'openai', baseUrl: 'https://kept.example.test/v1', apiKey: 'sk-kept' },
+    });
+    await remoteConfig.replace('models', { 'taken/remote-only': { provider: 'taken', model: 'remote-only', maxContextSize: 16_000 } });
     const manager = local.hostBridges;
     try {
       const result = await manager.copyProviders('dev');
       expect(result.copied).toEqual(['gateway']);
+      expect(result.updated).toEqual(['taken']);
       expect(result.skipped).toEqual(expect.arrayContaining([
         { id: 'fromEnv', reason: 'env_key' },
         { id: 'ollama', reason: 'loopback' },
         { id: 'signedIn', reason: 'oauth' },
-        { id: 'taken', reason: 'exists' },
       ]));
-      expect(result.skipped).toHaveLength(4);
+      expect(result.skipped).toHaveLength(3);
       const providers = remoteConfig.inspect<Record<string, Record<string, unknown>>>('providers').userValue ?? {};
       expect(providers['gateway']).toMatchObject({ apiKey: 'sk-gateway', customHeaders: { 'x-team': 'core' } });
-      expect(providers['taken']).toMatchObject({ apiKey: 'sk-remote' });
+      expect(providers['taken']).toEqual({ type: 'openai', baseUrl: 'https://taken.example.test/v1', apiKey: 'sk-local' });
+      expect(providers['kept']).toMatchObject({ apiKey: 'sk-kept' });
       expect(providers).not.toHaveProperty('ollama');
       const models = remoteConfig.inspect<Record<string, Record<string, unknown>>>('models').userValue ?? {};
       expect(models['gateway/large']).toMatchObject({ provider: 'gateway', maxOutputSize: 8_000, adaptiveThinking: true });
-      expect(models).not.toHaveProperty('taken/small');
+      expect(models['taken/small']).toMatchObject({ provider: 'taken', maxContextSize: 32_000 });
+      expect(models['taken/remote-only']).toMatchObject({ provider: 'taken' });
       expect(models).not.toHaveProperty('ollama/local');
 
-      await expect(manager.copyProviders('dev')).resolves.toMatchObject({ copied: [] });
+      await expect(manager.copyProviders('dev')).resolves.toMatchObject({ copied: [], updated: ['gateway', 'taken'] });
       await expect(manager.copyProviders('missing')).rejects.toThrow(/not configured/);
+
+      await remoteConfig.replace('providers', {});
+      await remoteConfig.replace('models', {});
+      await expect(manager.copyProviders('dev', ['taken', 'ollama'])).resolves.toEqual({
+        copied: ['taken'],
+        updated: [],
+        skipped: [{ id: 'ollama', reason: 'loopback' }],
+      });
+      const selected = remoteConfig.inspect<Record<string, Record<string, unknown>>>('providers').userValue ?? {};
+      expect(Object.keys(selected)).toEqual(['taken']);
+      expect(Object.keys(remoteConfig.inspect<Record<string, unknown>>('models').userValue ?? {})).toEqual(['taken/small']);
     } finally {
       client.destroy();
       vi.unstubAllGlobals();
