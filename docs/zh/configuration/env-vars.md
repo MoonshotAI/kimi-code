@@ -5,7 +5,7 @@ Kimi Code CLI 通过环境变量控制少数运行时行为：迁移数据目录
 ::: warning 重要：API 密钥不在这里配置
 `KIMI_API_KEY`、`ANTHROPIC_API_KEY`、`OPENAI_API_KEY` 等密钥变量**不会**从 shell 环境变量自动读取。在终端里 `export KIMI_API_KEY=xxx` 不会让任何供应商获得密钥。密钥必须写在 `config.toml` 的 `[providers.<name>]` 段或 `[providers.<name>.env]` 子表里。
 
-例外有两处：`KIMI_MODEL_*` 系列和供应商的 `api_key_env` 字段，这两个显式通道*确实*会从 shell 读取凭证。详见[用环境变量定义模型](#用环境变量定义模型kimi_model_)和[供应商凭证键](#供应商凭证键写在-configtoml-里)。
+例外包括：`KIMI_MODEL_*` 系列、供应商的 `api_key_env` 字段，以及少数由厂商 SDK 直接从 shell 读取的凭证（`GOOGLE_APPLICATION_CREDENTIALS`，以及 Amazon Bedrock 的 AWS 凭证链）。详见[用环境变量定义模型](#用环境变量定义模型kimi_model_)和[供应商凭证键](#供应商凭证键写在-configtoml-里)。
 
 背景说明见[配置覆盖：供应商凭证](./overrides.md#供应商凭证)。
 :::
@@ -54,7 +54,7 @@ export KIMI_CODE_CUSTOM_HEADERS=$'X-Gateway-Cluster: my-cluster\nX-Custom-Tag: d
 
 ## 供应商凭证键（写在 config.toml 里）
 
-下面这些键名不是直接从 shell 读取的。它们是写在 `config.toml` 的 `[providers.<name>.env]` 子表里、作为 `api_key` / `base_url` 备用来源的键名。CLI 只从配置文件读取，不从 `process.env` 读取。
+下面这些键名写在 `config.toml` 的 `[providers.<name>.env]` 子表里，作为 `api_key` / `base_url` 的备用来源。除非某一行另有说明，CLI 只从配置文件读取这些键名，不从 `process.env` 读取。
 
 上面的惯用键名是按供应商类型固定的。如果更希望把密钥放在 shell 环境里并使用自定义变量名，可以在供应商上设置 [`api_key_env`](./config-files.md#providers)：CLI 会在每次请求时从该变量读取密钥。
 
@@ -76,13 +76,23 @@ KIMI_BASE_URL = "https://api.moonshot.ai/v1"
 | `ANTHROPIC_BASE_URL` | Anthropic | Anthropic SDK 默认值 |
 | `OPENAI_API_KEY` | OpenAI（`openai` 和 `openai_responses`） | 无 |
 | `OPENAI_BASE_URL` | OpenAI（`openai` 和 `openai_responses`） | `https://api.openai.com/v1` |
+| `AWS_BEARER_TOKEN_BEDROCK` | Amazon Bedrock | 无 |
+| `AWS_DEFAULT_REGION` | Amazon Bedrock | shell 中的值（如有） |
+| `AWS_REGION` | Amazon Bedrock | 已配置的 `AWS_DEFAULT_REGION` 或 shell 中的值 |
+| `AWS_BEDROCK_BASE_URL` | Amazon Bedrock | 按区域推导为 `bedrock-runtime.<region>.amazonaws.com` |
+| `AWS_PROFILE` | Amazon Bedrock | 回退到 shell 中的值 |
 | `GOOGLE_API_KEY` | Google GenAI、Vertex AI | 无 |
 | `VERTEXAI_API_KEY` | Vertex AI | 无 |
 | `GOOGLE_CLOUD_PROJECT` | Vertex AI | 无 |
 | `GOOGLE_CLOUD_LOCATION` | Vertex AI | 无 |
 
 ::: warning
-`GOOGLE_APPLICATION_CREDENTIALS`（服务账号 JSON 路径）是唯一走系统环境变量的例外。它由 Google SDK 自身通过 ADC 流程读取，CLI 不参与。其他所有键名都必须写在 `[providers.<name>.env]` 子表里。
+有两类凭证机制绕过配置表，直接从系统环境读取：
+
+- `GOOGLE_APPLICATION_CREDENTIALS`（服务账号 JSON 路径）由 Google SDK 通过 ADC 流程读取，CLI 不参与。
+- 对于 Amazon Bedrock，AWS 秘密凭证（`AWS_ACCESS_KEY_ID`、`AWS_SECRET_ACCESS_KEY`、`AWS_SESSION_TOKEN`、SSO 或 `~/.aws/credentials`）由 AWS SDK 的标准凭证链从 shell 读取。把它们写进 `[providers.<name>.env]` 不受支持、也不生效——CLI 只把区域和 profile 传给令牌生成器，由令牌生成器自行解析凭证。
+
+其他所有键名都必须写在 `[providers.<name>.env]` 子表里。
 :::
 
 供应商类型与字段的完整说明见[平台与模型](./providers.md)。

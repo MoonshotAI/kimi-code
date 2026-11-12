@@ -55,7 +55,7 @@ function anthropicCustomHeaderEnvNames(): string[] {
   return names;
 }
 
-function buildDefaultHeaders(
+export function buildDefaultHeaders(
   headers: Record<string, string> | undefined,
 ): Record<string, string | null> {
   const defaultHeaders: Record<string, string | null> = { authorization: null };

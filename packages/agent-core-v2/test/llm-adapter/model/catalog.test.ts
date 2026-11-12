@@ -813,6 +813,7 @@ describe('wire projection (pure)', () => {
       toProtocolProvider('p1', provider, models, 'a', {
         hasApiKey: true,
         hasOAuthToken: false,
+        supportsAmbientCredential: false,
         hasCredentialConflict: false,
       }),
     ).toEqual({
@@ -834,13 +835,19 @@ describe('wire projection (pure)', () => {
         },
         models,
         'a',
-        { hasApiKey: true, hasOAuthToken: true, hasCredentialConflict: true },
+        {
+          hasApiKey: true,
+          hasOAuthToken: true,
+          supportsAmbientCredential: false,
+          hasCredentialConflict: true,
+        },
       ),
     ).toMatchObject({ status: 'error', has_api_key: true });
     expect(
       toProtocolProvider('p1', { ...provider, defaultModel: 'own' }, models, 'a', {
         hasApiKey: false,
         hasOAuthToken: false,
+        supportsAmbientCredential: false,
         hasCredentialConflict: false,
       }).default_model,
     ).toBe('own');
@@ -848,9 +855,18 @@ describe('wire projection (pure)', () => {
       toProtocolProvider('p1', { ...provider, type: undefined }, models, undefined, {
         hasApiKey: false,
         hasOAuthToken: false,
+        supportsAmbientCredential: false,
         hasCredentialConflict: false,
       }),
     ).toMatchObject({ type: 'openai', status: 'unconfigured', default_model: undefined });
+    expect(
+      toProtocolProvider('bedrock', { type: 'bedrock' }, models, undefined, {
+        hasApiKey: false,
+        hasOAuthToken: false,
+        supportsAmbientCredential: true,
+        hasCredentialConflict: false,
+      }),
+    ).toMatchObject({ type: 'bedrock', status: 'connected' });
   });
 });
 

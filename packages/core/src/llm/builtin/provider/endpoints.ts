@@ -25,6 +25,11 @@ export const vertexEndpoint: LlmEndpointDeclaration = {
   baseUrlEnv: 'GOOGLE_VERTEX_BASE_URL',
 };
 
+export const bedrockEndpoint: LlmEndpointDeclaration = {
+  apiKeyEnv: 'AWS_BEARER_TOKEN_BEDROCK',
+  baseUrlEnv: 'AWS_BEDROCK_BASE_URL',
+};
+
 export const KIMI_API_KEY_ENV = 'KIMI_API_KEY';
 export const KIMI_BASE_URL_ENV = 'KIMI_BASE_URL';
 

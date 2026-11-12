@@ -6,14 +6,17 @@ import {
 } from '@moonshot-ai/core/llm/endpoint';
 import {
   anthropicEndpoint,
+  bedrockEndpoint,
   geminiEndpoint,
   kimiEndpoint,
   openAIEndpoint,
   vertexEndpoint,
 } from '@moonshot-ai/core/llm/builtin/provider/endpoints';
+import { bedrockAnthropicRequester } from '@moonshot-ai/core/llm/builtin/provider/bedrock/anthropic';
+import { bedrockModelCapability } from '@moonshot-ai/core/llm/builtin/provider/bedrock/routing';
+import { kimiRequesters } from '@moonshot-ai/core/llm/builtin/provider/kimi/index';
 import type { ModelCapability } from '@moonshot-ai/core/llm/request';
 import type { LlmRequester } from '@moonshot-ai/core/llm/requester';
-import { kimiRequesters } from '@moonshot-ai/core/llm/builtin/provider/kimi/index';
 
 import type { Protocol } from '../protocol/protocol';
 import type { ModelSource } from './provider';
@@ -90,8 +93,11 @@ export type ExplainedProviderEndpoint = ResolvedLlmEndpointDeclaration;
 export function explainProviderEndpoint(
   providerType: string,
   env: Readonly<Record<string, string | undefined>> = process.env,
+  protocol?: Protocol,
 ): ExplainedProviderEndpoint {
-  const definition = getProviderDefinition(providerType);
+  const definition =
+    getProviderDefinition(providerType, protocol) ??
+    (protocol === undefined ? undefined : getProviderDefinition(providerType));
   return resolveEndpointDeclaration(definition?.endpoint ?? definition?.endpoints, env);
 }
 
@@ -119,6 +125,28 @@ registerProviderDefinition({
   id: 'openai_responses',
   baseProtocol: 'openai_responses',
   endpoint: openAIEndpoint,
+});
+
+registerProviderDefinition({
+  id: 'bedrock',
+  baseProtocol: 'openai',
+  endpoint: bedrockEndpoint,
+  capability: bedrockModelCapability,
+});
+
+registerProviderDefinition({
+  id: 'bedrock',
+  baseProtocol: 'openai_responses',
+  endpoint: bedrockEndpoint,
+  capability: bedrockModelCapability,
+});
+
+registerProviderDefinition({
+  id: 'bedrock',
+  baseProtocol: 'anthropic',
+  requester: bedrockAnthropicRequester,
+  endpoint: bedrockEndpoint,
+  capability: bedrockModelCapability,
 });
 
 registerProviderDefinition({
