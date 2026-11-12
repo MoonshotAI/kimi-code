@@ -848,7 +848,9 @@ export class GuiStoreService implements IGuiStoreService {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         if (await this.hasLegacyToml()) return { kind: 'skip' };
-        return { kind: 'ok', state: await this.emptyStateWithFloor() };
+        const emptyFloor = await this.emptyStateWithFloor();
+        if (emptyFloor.revision > 0) return { kind: 'skip' };
+        return { kind: 'ok', state: emptyFloor };
       }
       return { kind: 'io_error' };
     }
@@ -918,6 +920,7 @@ export class GuiStoreService implements IGuiStoreService {
       });
       watcher.unref?.();
       this.watcher = watcher;
+      void this.reconcileExternalChange();
     } catch {
       this.watcher = undefined;
       this.scheduleWatcherRestart();

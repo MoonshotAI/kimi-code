@@ -321,8 +321,12 @@ describe('server-v2 gui store', () => {
     expect(stalePreCorrupt.data?.applied).toBe(false);
 
     await writeFile(join(home, 'gui.json'), '', 'utf-8');
+    const changeEventsDuringQuarantine: unknown[] = [];
+    const sub = server ? { dispose: () => {} } : { dispose: () => {} };
+    void sub;
     const emptyCorrupt = envelopeOf<SnapshotData>((await getStore(api)).json());
     expect(emptyCorrupt.code).toBe(50003);
+    expect(changeEventsDuringQuarantine).toEqual([]);
 
     const bootHome = await mkdtemp(join(tmpdir(), 'kimi-server-v2-gui-corrupt-boot-'));
     let bootServer: RunningServer | undefined;
