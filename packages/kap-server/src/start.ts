@@ -658,6 +658,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       await proxyHostWebSocket(hostBridges, hostProxyTarget!, req, socket, head);
       return;
     }
+    if (isV1) hostBridges.activate();
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
   };
   app.server.on('upgrade', (req, socket, head) => {

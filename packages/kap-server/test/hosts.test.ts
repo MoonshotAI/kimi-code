@@ -383,6 +383,125 @@ while IFS= read -r line; do :; done
       rmSync(dir, { recursive: true, force: true });
     }
   }, 15_000);
+
+  it.skipIf(process.platform === 'win32')('retries a first connection that failed for a retryable reason', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kimi-fake-ssh-'));
+    try {
+      const ssh = join(dir, 'ssh');
+      const count = join(dir, 'count');
+      writeFileSync(
+        ssh,
+        `#!/bin/sh
+echo x >> '${count}'
+attempt=$(wc -l < '${count}' | tr -d ' ')
+if [ "$attempt" = 1 ]; then
+  echo 'ssh: connect to host dev port 22: Connection refused' >&2
+  exit 255
+fi
+echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"pid":100,"version":"1.2.3"}'
+while IFS= read -r line; do :; done
+`,
+      );
+      chmodSync(ssh, 0o755);
+      const bridge = new SshKapBridge({ host: 'dev' }, { sshProgram: ssh });
+      try {
+        bridge.start();
+        await vi.waitFor(() => {
+          expect(bridge.status).toBe('disconnected');
+          expect(bridge.failure).toBe('connection_refused');
+        });
+        await vi.waitFor(
+          () => {
+            expect(bridge.status).toBe('ready');
+            expect(bridge.session).toBeDefined();
+          },
+          { timeout: 5_000, interval: 50 },
+        );
+      } finally {
+        bridge.dispose();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 10_000);
+
+  it.skipIf(process.platform === 'win32')('does not retry a first connection that failed authentication', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kimi-fake-ssh-'));
+    try {
+      const ssh = join(dir, 'ssh');
+      const count = join(dir, 'count');
+      writeFileSync(ssh, `#!/bin/sh\necho x >> '${count}'\necho 'dev: Permission denied (publickey).' >&2\nexit 255\n`);
+      chmodSync(ssh, 0o755);
+      const bridge = new SshKapBridge({ host: 'dev' }, { sshProgram: ssh });
+      try {
+        bridge.start();
+        await vi.waitFor(() => {
+          expect(bridge.failure).toBe('authentication_failed');
+        });
+        await sleep(1_500);
+        expect(readFileSync(count, 'utf8').trim().split('\n')).toHaveLength(1);
+      } finally {
+        bridge.dispose();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 10_000);
+});
+
+describe('host auto-connect', () => {
+  function managerWith(section: Record<string, { host: string; enabled?: boolean }>) {
+    let listener: ((event: { domain: string }) => void) | undefined;
+    const config = {
+      ready: Promise.resolve(),
+      get: <T,>() => section as T,
+      replace: vi.fn(async () => {}),
+      onDidSectionChange: (next: typeof listener) => {
+        listener = next;
+        return { dispose() {} };
+      },
+    };
+    const core = {
+      accessor: {
+        get: (service: unknown) => {
+          if (service === IConfigService) return config;
+          throw new Error(`unexpected service ${String(service)}`);
+        },
+      },
+    };
+    const manager = new HostBridgeManager(core as never, { warn() {} });
+    return { manager, changeHosts: () => listener?.({ domain: 'hosts' }) };
+  }
+
+  it('connects enabled hosts once a client has connected, including hosts added later', async () => {
+    const started: string[] = [];
+    const start = vi.spyOn(SshKapBridge.prototype, 'start').mockImplementation(function (this: SshKapBridge) {
+      started.push((this as unknown as { entry: { host: string } }).entry.host);
+    });
+    const section: Record<string, { host: string; enabled?: boolean }> = {
+      dev: { host: 'dev-box' },
+      off: { host: 'off-box', enabled: false },
+    };
+    const { manager, changeHosts } = managerWith(section);
+    try {
+      changeHosts();
+      expect(started).toEqual([]);
+      manager.activate();
+      manager.activate();
+      await vi.waitFor(() => {
+        expect(started).toEqual(['dev-box']);
+      });
+      section['added'] = { host: 'added-box' };
+      changeHosts();
+      expect(started).toEqual(['dev-box', 'added-box']);
+      section['off'] = { host: 'off-box' };
+      changeHosts();
+      expect(started).toEqual(['dev-box', 'added-box', 'off-box']);
+    } finally {
+      start.mockRestore();
+      manager.close();
+    }
+  });
 });
 
 describe('host HTTP session', () => {

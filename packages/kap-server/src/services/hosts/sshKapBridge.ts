@@ -310,6 +310,13 @@ export class SshKapBridge {
     return this.establishOnce();
   }
 
+  start(): void {
+    void this.connect().catch((error: unknown) => {
+      if (error instanceof HostConnectError && !RETRYABLE.has(error.failure)) return;
+      void this.reconnect();
+    });
+  }
+
   private establishOnce(): Promise<HostSession> {
     this.connecting ??= this.establish().finally(() => {
       this.connecting = undefined;

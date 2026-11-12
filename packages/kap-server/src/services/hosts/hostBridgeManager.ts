@@ -60,6 +60,7 @@ export class HostBridgeManager {
   private readonly subscription: { dispose(): void };
   private credentialQueue: Promise<void> = Promise.resolve();
   private credentialTimer: ReturnType<typeof setTimeout> | undefined;
+  private active = false;
 
   constructor(
     private readonly core: Scope,
@@ -92,6 +93,14 @@ export class HostBridgeManager {
     return this.record(id, entry).bridge.connect();
   }
 
+  activate(): void {
+    if (this.active) return;
+    this.active = true;
+    void this.core.accessor.get(IConfigService).ready.then(() => {
+      this.startPending();
+    });
+  }
+
   syncCredentials(): Promise<void> {
     return this.serialize(async () => {
       const sessions = [...this.records.values()]
@@ -119,6 +128,7 @@ export class HostBridgeManager {
   }
 
   close(): void {
+    this.active = false;
     this.subscription.dispose();
     this.schedule(undefined);
     for (const { bridge } of this.records.values()) bridge.dispose();
@@ -208,6 +218,15 @@ export class HostBridgeManager {
       }
     }
     if (changed) this.onChange?.();
+    this.startPending();
+  }
+
+  private startPending(): void {
+    if (!this.active) return;
+    for (const [id, entry] of Object.entries(this.section())) {
+      if (entry.enabled === false || this.records.has(id)) continue;
+      this.record(id, entry).bridge.start();
+    }
   }
 }
 
