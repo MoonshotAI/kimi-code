@@ -285,6 +285,8 @@ async function mergePage(
       cursors[buffer.source.key] = { t: buffer.cursor.t, k: buffer.consumed ?? buffer.cursor.k };
     } else if (buffer.hasMore) {
       cursors[buffer.source.key] = { t: buffer.next ?? undefined };
+    } else if (buffer.consumed !== undefined) {
+      cursors[buffer.source.key] = { k: buffer.consumed };
     }
   }
   const hasMore = Object.keys(cursors).length > 0;

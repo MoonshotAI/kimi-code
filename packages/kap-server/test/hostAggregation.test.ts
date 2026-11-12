@@ -151,7 +151,7 @@ describe('sessions across hosts', () => {
       token = (page['next_page_token'] as string | null) ?? undefined;
     } while (token !== undefined);
 
-    expect(pages).toEqual([['l1', 'r1', 'l2'], ['r2', 'r3', 'r4'], ['l3', 'l4']]);
+    expect(pages).toEqual([['l1', 'r1', 'l2'], ['r2', 'l3', 'r3'], ['r4', 'l4']]);
     expect(first).toMatchObject({ total: 8, has_more: true, unavailable_hosts: [] });
     expect((first['items'] as Array<Record<string, unknown>>).map((item) => item['host_id'])).toEqual([undefined, 'dev', undefined]);
   });
@@ -172,6 +172,58 @@ describe('sessions across hosts', () => {
     expect(ids(first)).toEqual(['l1', 'r1', 'l2']);
     expect(rest).toEqual(['r2', 'r3', 'r4', 'l3', 'l4']);
   });
+
+  it('keeps a drained local source in later pages against real servers', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'kimi-host-pagination-'));
+    const localServer = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: join(home, 'local'), logLevel: 'silent' });
+    const remoteServer = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: join(home, 'remote'), logLevel: 'silent' });
+    const create = async (server: typeof localServer): Promise<void> => {
+      const headers = { authorization: `Bearer ${server.authTokenService.getToken()}` };
+      const workspace = (await server.app.inject({ method: 'POST', url: '/api/v1/workspaces', headers, payload: { root: home } })).json().data;
+      for (let i = 0; i < 4; i++) {
+        const response = await server.app.inject({ method: 'POST', url: '/api/v1/sessions', headers, payload: { workspace_id: workspace.id } });
+        expect(response.statusCode).toBe(200);
+      }
+    };
+    await create(localServer);
+    await create(remoteServer);
+    const remoteSession: HostSession = {
+      version: 'test',
+      request: async (req) => {
+        const response = await remoteServer.app.inject({
+          method: req.method as 'GET',
+          url: req.path,
+          headers: { ...req.headers, authorization: `Bearer ${remoteServer.authTokenService.getToken()}` },
+          payload: req.body?.toString('utf8'),
+        });
+        return { status: response.statusCode, headers: response.headers, body: Buffer.from(response.body) };
+      },
+      openWebSocket: () => { throw new Error('unexpected websocket'); },
+    };
+    const list = vi.spyOn(HostBridgeManager.prototype, 'list').mockReturnValue([{ id: 'dev', entry: { host: 'dev' }, bridge: { session: remoteSession } } as never]);
+    const ids: string[] = [];
+    let token: string | undefined;
+    try {
+      do {
+        const response = await localServer.app.inject({
+          method: 'GET',
+          url: `/api/v2/sessions?hosts=include&page_size=3${token === undefined ? '' : `&page_token=${encodeURIComponent(token)}`}`,
+          headers: { authorization: `Bearer ${localServer.authTokenService.getToken()}` },
+        });
+        const body = response.json();
+        expect(body.code).toBe(0);
+        ids.push(...body.data.items.map((item: { id: string }) => item.id));
+        token = body.data.next_page_token ?? undefined;
+      } while (token !== undefined);
+      expect(ids).toHaveLength(8);
+      expect(new Set(ids).size).toBe(8);
+    } finally {
+      list.mockRestore();
+      await localServer.close();
+      await remoteServer.close();
+      await rm(home, { recursive: true, force: true });
+    }
+  }, 30_000);
 
   it('serves a numbered page of the merged order', async () => {
     const hosts = sourcesOf([{ id: 'dev', session: fakeHost(projects, remote) }]);
