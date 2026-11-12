@@ -88,7 +88,7 @@ import {
   type ApprovalPreviewBlock,
 } from './components/dialogs/approval-preview';
 import { CompactionComponent } from './components/dialogs/compaction';
-import { HelpPanelComponent } from './components/dialogs/help-panel';
+import { HelpPanelComponent, keyboardShortcuts } from './components/dialogs/help-panel';
 import { QuestionDialogComponent } from './components/dialogs/question-dialog';
 import { SessionPickerComponent, type SessionRow } from './components/dialogs/session-picker';
 import { TrustPromptComponent, type TrustPromptChoice } from './components/dialogs/trust-prompt';
@@ -123,6 +123,7 @@ import {
 } from './components/panes/activity-pane';
 import {
   removeLegacySurveySetting,
+  resolveFollowUpBehavior,
   transcriptGroupingActive,
   type FollowUpDelivery,
   type TuiConfig,
@@ -5314,6 +5315,7 @@ export class KimiTUI {
     this.mountEditorReplacement(
       new HelpPanelComponent({
         commands: this.getSlashCommands(),
+        shortcuts: keyboardShortcuts(resolveFollowUpBehavior(this.state.appState.followUpBehavior)),
         onClose: () => {
           this.hideHelpPanel();
         },

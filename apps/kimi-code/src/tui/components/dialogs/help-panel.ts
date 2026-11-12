@@ -16,6 +16,12 @@ import {
   type Focusable,
   truncateToWidth,
 } from '@moonshot-ai/pi-tui';
+import {
+  DEFAULT_FOLLOW_UP_BEHAVIOR,
+  FOLLOW_UP_KEYMAP,
+  type FollowUpBehavior,
+  type FollowUpDelivery,
+} from '#/tui/config';
 import { currentTheme } from '#/tui/theme';
 
 export interface KeyboardShortcut {
@@ -29,19 +35,31 @@ export interface HelpPanelCommand {
   readonly description: string;
 }
 
+const SUBMIT_DESCRIPTIONS: Readonly<Record<FollowUpDelivery, string>> = {
+  default: 'Submit; queues while Kimi is working',
+  'steer-draft': 'Submit; steers into the running turn',
+};
+
 /** Static list — keep in sync with the global editor bindings. */
-export const DEFAULT_KEYBOARD_SHORTCUTS: readonly KeyboardShortcut[] = [
-  { keys: 'Shift-Tab', description: 'Toggle plan mode' },
-  { keys: 'Ctrl-G', description: 'Edit in external editor ($VISUAL / $EDITOR)' },
-  { keys: 'Ctrl-O', description: 'Toggle tool output / compaction summary expansion' },
-  { keys: 'Ctrl-S', description: 'Steer — inject a follow-up during streaming' },
-  { keys: 'Shift-Enter / Ctrl-J', description: 'Insert newline' },
-  { keys: 'Ctrl-C', description: 'Interrupt stream / clear input' },
-  { keys: 'Ctrl-D', description: 'Exit (on empty input)' },
-  { keys: 'Esc', description: 'Close dialogs / interrupt streaming' },
-  { keys: '↑ / ↓', description: 'Browse input history' },
-  { keys: 'Enter', description: 'Submit' },
-];
+export function keyboardShortcuts(followUpBehavior: FollowUpBehavior): readonly KeyboardShortcut[] {
+  const submit = FOLLOW_UP_KEYMAP[followUpBehavior];
+  return [
+    { keys: 'Shift-Tab', description: 'Toggle plan mode' },
+    { keys: 'Ctrl-G', description: 'Edit in external editor ($VISUAL / $EDITOR)' },
+    { keys: 'Ctrl-O', description: 'Toggle tool output / compaction summary expansion' },
+    { keys: 'Ctrl-S', description: 'Steer — inject a follow-up during streaming' },
+    { keys: 'Shift-Enter / Ctrl-J', description: 'Insert newline' },
+    { keys: 'Ctrl-C', description: 'Interrupt stream / clear input' },
+    { keys: 'Ctrl-D', description: 'Exit (on empty input)' },
+    { keys: 'Esc', description: 'Close dialogs / interrupt streaming' },
+    { keys: '↑ / ↓', description: 'Browse input history' },
+    { keys: 'Enter', description: SUBMIT_DESCRIPTIONS[submit.enter] },
+    { keys: 'Ctrl-Enter / Cmd-Enter', description: SUBMIT_DESCRIPTIONS[submit['mod-enter']] },
+    { keys: 'Ctrl-Q', description: SUBMIT_DESCRIPTIONS[submit['ctrl-q']] },
+  ];
+}
+
+export const DEFAULT_KEYBOARD_SHORTCUTS = keyboardShortcuts(DEFAULT_FOLLOW_UP_BEHAVIOR);
 
 export interface HelpPanelOptions {
   readonly commands: readonly HelpPanelCommand[];

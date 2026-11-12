@@ -888,3 +888,121 @@ describe('CustomEditor bash mode file completion', () => {
     expect(calls.every((call) => call.force === true)).toBe(true);
   });
 });
+
+describe('CustomEditor alternate submit keys', () => {
+  const CTRL_ENTER = '\u001B[13;5u';
+  const CTRL_Q = '\u0011';
+  const SUPER_ENTER = '\u001B[13;9u';
+
+  function submitting(editor: CustomEditor): Array<readonly [string, string]> {
+    const submits: Array<readonly [string, string]> = [];
+    editor.onSubmit = (text) => {
+      submits.push([text, editor.submitKey]);
+    };
+    return submits;
+  }
+
+  it.each([
+    ['\r', 'enter'],
+    [CTRL_ENTER, 'mod-enter'],
+    ['\u001B[27;5;13~', 'mod-enter'],
+    [SUPER_ENTER, 'mod-enter'],
+    ['\u001B[27;9;13~', 'mod-enter'],
+    [CTRL_Q, 'ctrl-q'],
+    ['\u001B[113;5u', 'ctrl-q'],
+    ['\u001B[81;69u', 'ctrl-q'],
+  ])('submits %j tagged as %s', (data, key) => {
+    const editor = makeEditor();
+    const submits = submitting(editor);
+    editor.setText('look here');
+
+    editor.handleInput(data);
+
+    expect(submits).toEqual([['look here', key]]);
+    expect(editor.getText()).toBe('');
+    expect(editor.submitKey).toBe('enter');
+  });
+
+  it('tags the next plain Enter as enter after an alternate submit', () => {
+    const editor = makeEditor();
+    const submits = submitting(editor);
+
+    editor.setText('first');
+    editor.handleInput(CTRL_Q);
+    editor.setText('second');
+    editor.handleInput('\r');
+
+    expect(submits).toEqual([['first', 'ctrl-q'], ['second', 'enter']]);
+  });
+
+  it.each(['\n', '\u001B\r'])('keeps %j inserting a newline', (data) => {
+    const editor = makeEditor();
+    const submits = submitting(editor);
+    editor.setText('line');
+
+    editor.handleInput(data);
+
+    expect(submits).toEqual([]);
+    expect(editor.getText()).toBe('line\n');
+  });
+
+  it.each([CTRL_ENTER, SUPER_ENTER, CTRL_Q])('turns %j after a trailing backslash into a newline', (data) => {
+    const editor = makeEditor();
+    const submits = submitting(editor);
+    editor.setText('line\\');
+
+    editor.handleInput(data);
+
+    expect(submits).toEqual([]);
+    expect(editor.getText()).toBe('line\n');
+  });
+
+  it.each([CTRL_ENTER, SUPER_ENTER, CTRL_Q])('inserts a newline for %j inside a paste burst', (data) => {
+    const editor = makeEditor();
+    const submits = submitting(editor);
+
+    for (const char of 'pasted text') editor.handleInput(char);
+    editor.handleInput(data);
+
+    expect(submits).toEqual([]);
+    expect(editor.getText()).toBe('pasted text\n');
+  });
+
+  it('accepts an open slash menu the same way Enter does', async () => {
+    const run = async (data: string) => {
+      const editor = makeEditor();
+      const submits = submitting(editor);
+      editor.setAutocompleteProvider(providerReturning([{ value: 'help', label: 'help' }]));
+      editor.handleInput('/');
+      await flushAutocomplete();
+      expect(editor.isShowingAutocomplete()).toBe(true);
+      editor.handleInput(data);
+      return { text: editor.getText(), submits: submits.map(([text]) => text) };
+    };
+
+    expect(await run(CTRL_ENTER)).toEqual(await run('\r'));
+  });
+
+  it('holds Ctrl-Q behind an in-flight image paste and submits it afterwards', async () => {
+    const editor = makeEditor();
+    const submits = submitting(editor);
+    let resolvePaste!: (handled: boolean) => void;
+    editor.onPasteImage = () =>
+      new Promise<boolean>((resolve) => {
+        resolvePaste = (handled) => {
+          editor.insertTextAtCursor?.('[image #1 (1×1)] ');
+          resolve(handled);
+        };
+      });
+
+    editor.handleInput(process.platform === 'win32' ? '\u001Bv' : '\u0016');
+    editor.handleInput('hello');
+    editor.handleInput(CTRL_Q);
+    expect(submits).toEqual([]);
+
+    resolvePaste(true);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(submits).toEqual([['[image #1 (1×1)] hello', 'ctrl-q']]);
+  });
+});

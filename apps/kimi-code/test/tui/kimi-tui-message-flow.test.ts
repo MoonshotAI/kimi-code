@@ -42,7 +42,7 @@ import { MOON_SPINNER_FRAMES } from '#/tui/constant/rendering';
 import { promptApiKey, promptPlatformSelection } from '#/tui/commands/prompts';
 import { applyTranscriptConfigChoice } from '#/tui/commands/config';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
-import type { FollowUpDelivery, TranscriptConfig } from '#/tui/config';
+import type { FollowUpBehavior, FollowUpDelivery, TranscriptConfig } from '#/tui/config';
 import { isReadonlyBash } from '#/utils/readonly-bash';
 import {
   AgentSwarmProgressComponent,
@@ -8073,6 +8073,98 @@ command = "vim"
         now.mockRestore();
         peek.mockRestore();
       }
+    });
+
+    describe('through the editor keys', () => {
+      const CTRL_ENTER = '\u001B[13;5u';
+      const CTRL_Q = '\u0011';
+
+      async function busyDriver(followUpBehavior: FollowUpBehavior | undefined) {
+        const made = await makeDriver();
+        made.driver.state.appState.followUpBehavior = followUpBehavior;
+        made.driver.state.appState.streamingPhase = 'waiting';
+        made.driver.handleUserInput('queued note');
+        return made;
+      }
+
+      function press(driver: MessageDriver, text: string, key: string): void {
+        driver.state.editor.setText(text);
+        driver.state.editor.handleInput(key);
+      }
+
+      it.each([
+        [undefined, '\r'],
+        ['queue', '\r'],
+        ['queue', CTRL_Q],
+        ['steer', CTRL_ENTER],
+        ['steer', CTRL_Q],
+      ] as const)('with follow_up_behavior %s, %j queues behind the running turn', async (followUpBehavior, key) => {
+        const { driver, session } = await busyDriver(followUpBehavior);
+
+        press(driver, 'next step', key);
+        await new Promise((resolve) => setImmediate(resolve));
+
+        expect(session.steer).not.toHaveBeenCalled();
+        expect(driver.state.queuedMessages).toEqual([
+          { text: 'queued note', agentId: 'main' },
+          { text: 'next step', agentId: 'main' },
+        ]);
+      });
+
+      it.each([
+        [undefined, CTRL_ENTER],
+        ['queue', CTRL_ENTER],
+        ['steer', '\r'],
+      ] as const)('with follow_up_behavior %s, %j steers only the draft', async (followUpBehavior, key) => {
+        const { driver, session } = await busyDriver(followUpBehavior);
+
+        press(driver, 'next step', key);
+
+        expect(session.steer).toHaveBeenCalledExactlyOnceWith('next step');
+        await Promise.resolve();
+        expect(driver.state.queuedMessages).toEqual([{ text: 'queued note', agentId: 'main' }]);
+      });
+
+      it.each([undefined, 'queue'] as const)('keeps tower Enter steering the queue with follow_up_behavior %s', async (followUpBehavior) => {
+        const { driver, session } = await makeDriver();
+        driver.state.appState.followUpBehavior = followUpBehavior;
+        driver.state.appState.towerMode = true;
+        driver.state.appState.streamingPhase = 'waiting';
+        driver.state.queuedMessages = [{ text: 'queued objective', agentId: 'main' }];
+
+        press(driver, 'next objective', '\r');
+
+        expect(session.steer).toHaveBeenCalledExactlyOnceWith('queued objective\n\nnext objective');
+        await vi.waitFor(() => {
+          expect(driver.state.queuedMessages).toEqual([]);
+        });
+      });
+
+      it.each(['\r', CTRL_ENTER, CTRL_Q])('sends %j straight away while idle in steer mode', async (key) => {
+        const { driver, session } = await makeDriver();
+        driver.state.appState.followUpBehavior = 'steer';
+
+        press(driver, 'hello', key);
+
+        expect(session.prompt).toHaveBeenCalledOnce();
+        expect(session.prompt.mock.calls[0]?.[0]).toBe('hello');
+        expect(session.steer).not.toHaveBeenCalled();
+      });
+
+      it('describes the submit keys in /help after the chosen behavior', async () => {
+        const { driver } = await makeDriver();
+        driver.state.appState.followUpBehavior = 'steer';
+
+        driver.handleUserInput('/help');
+
+        await vi.waitFor(() => {
+          const lines = driver.state.editorContainer.render(120).map(stripSgr);
+          expect(lines).toContainEqual(expect.stringMatching(/^\s+Enter\s+Submit; steers into the running turn$/));
+          expect(lines).toContainEqual(
+            expect.stringMatching(/^\s+Ctrl-Enter \/ Cmd-Enter\s+Submit; queues while Kimi is working$/),
+          );
+        });
+      });
     });
 
     describe('falls back to the plain Enter path', () => {

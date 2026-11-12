@@ -213,6 +213,15 @@ export const DEFAULT_FOLLOW_UP_BEHAVIOR: FollowUpBehavior = 'queue';
 
 export type FollowUpDelivery = 'default' | 'steer-draft';
 
+export type SubmitKey = 'enter' | 'mod-enter' | 'ctrl-q';
+
+export const FOLLOW_UP_KEYMAP: Readonly<
+  Record<FollowUpBehavior, Readonly<Record<SubmitKey, FollowUpDelivery>>>
+> = {
+  queue: { enter: 'default', 'mod-enter': 'steer-draft', 'ctrl-q': 'default' },
+  steer: { enter: 'steer-draft', 'mod-enter': 'default', 'ctrl-q': 'default' },
+};
+
 export function resolveFollowUpBehavior(value: FollowUpBehavior | undefined): FollowUpBehavior {
   return value ?? DEFAULT_FOLLOW_UP_BEHAVIOR;
 }

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 
 import type { KimiSlashCommand } from '#/tui/commands/index';
-import { HelpPanelComponent } from '#/tui/components/dialogs/help-panel';
+import { HelpPanelComponent, keyboardShortcuts } from '#/tui/components/dialogs/help-panel';
 
 function cmd(name: string, description: string, aliases: string[] = []): KimiSlashCommand {
   return {
@@ -16,6 +16,17 @@ function strip(text: string): string {
 }
 
 describe('HelpPanelComponent', () => {
+  it.each([
+    ['queue', 'Submit; queues while Kimi is working', 'Submit; steers into the running turn'],
+    ['steer', 'Submit; steers into the running turn', 'Submit; queues while Kimi is working'],
+  ] as const)('describes the submit keys for follow_up_behavior %s', (followUpBehavior, enter, modEnter) => {
+    const descriptions = new Map(keyboardShortcuts(followUpBehavior).map((shortcut) => [shortcut.keys, shortcut.description]));
+
+    expect(descriptions.get('Enter')).toBe(enter);
+    expect(descriptions.get('Ctrl-Enter / Cmd-Enter')).toBe(modEnter);
+    expect(descriptions.get('Ctrl-Q')).toBe('Submit; queues while Kimi is working');
+  });
+
   it('renders keyboard shortcuts + slash commands sections', () => {
     const panel = new HelpPanelComponent({
       commands: [cmd('exit', 'Exit', ['quit', 'q'])],

@@ -20,6 +20,7 @@ import {
 } from '../constant/kimi-tui';
 import { isKeyRelease, isKeyRepeat, Key, matchesKey, TuiAltScreen } from '@moonshot-ai/pi-tui';
 import { normalizeCapsLockedCtrl } from '../components/editor/custom-editor';
+import { FOLLOW_UP_KEYMAP, resolveFollowUpBehavior, type FollowUpDelivery } from '../config';
 import { MEDIA_STAGING_TTL_SECONDS } from '../constant/media';
 import { formatErrorMessage } from '../utils/event-payload';
 import type {
@@ -46,7 +47,7 @@ export interface EditorKeyboardHost {
    */
   harness?: KimiHarness | undefined;
 
-  handleUserInput(text: string): void;
+  handleUserInput(text: string, delivery?: FollowUpDelivery): void;
   readonly btwPanelController: BtwPanelController;
   readonly surveyController: SurveyController;
   readonly modelMigration?: ModelMigrationController;
@@ -112,7 +113,8 @@ export class EditorKeyboardController {
     editor.onSubmit = (text: string) => {
       if (host.surveyController.handleSubmit(text)) return;
       host.promptPredictionController?.handleSubmit(text);
-      host.handleUserInput(text);
+      const behavior = resolveFollowUpBehavior(host.state.appState.followUpBehavior);
+      host.handleUserInput(text, FOLLOW_UP_KEYMAP[behavior][editor.submitKey]);
     };
 
     // After dispose (shutdown), consume every key here so no shortcut can fire
