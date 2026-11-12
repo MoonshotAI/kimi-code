@@ -1,4 +1,5 @@
 import { isAbortError, toLlmErrorMessage } from '#human/llm/protocol/errors';
+import { CLIENT_ERROR_STRIP_ACTION } from '#human/llm/builtin/policy/media-degrade';
 import type { LlmModelSpec, LlmRequestProfile } from '#human/llm/request';
 import type { LlmDimension, LlmRequester } from '#human/llm/requester';
 import type { LlmOutcome, LlmRunEvent } from '#human/llm/response';
@@ -25,7 +26,9 @@ export function createMediaRecoveryStore(): MediaRecoveryStore {
       current = {
         modelAlias,
         revision,
-        ledger: ledger.fork((entry) => entry.strategy === 'media-degrade'),
+        ledger: ledger.fork(
+        (entry) => entry.strategy === 'media-degrade' && entry.action !== CLIENT_ERROR_STRIP_ACTION,
+      ),
       };
     },
   };

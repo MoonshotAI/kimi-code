@@ -945,6 +945,114 @@ describe('AgentLoopRequestFactory media-stripped resend', () => {
     expect(calls.value).toBe(1);
   });
 
+  it('resends once with the media-stripped projection when a generic client 400 rejects a request carrying media', async () => {
+    const calls = { value: 0 };
+    const inputs: ModelRequestInput[] = [];
+    const { service } = createService(
+      createRequester(calls, new APIStatusError(400, 'Invalid request Error', false), [], inputs),
+      { contextMessages },
+    );
+
+    const result = await request(service);
+
+    expect(result.message.content).toEqual([{ type: 'text', text: 'ok' }]);
+    expect(calls.value).toBe(2);
+    expect(mediaCounts(inputs)).toEqual([1, 0]);
+  });
+
+  it('does not resend a generic client 400 when the request carries no media', async () => {
+    const calls = { value: 0 };
+    const inputs: ModelRequestInput[] = [];
+    const { service } = createService(
+      createRequester(calls, new APIStatusError(400, 'Invalid request Error', false), [], inputs),
+    );
+
+    await expect(request(service)).rejects.toMatchObject({ statusCode: 400 });
+    expect(calls.value).toBe(1);
+  });
+
+  it('surfaces the generic client 400 when the media-stripped resend still fails', async () => {
+    const calls = { value: 0 };
+    const inputs: ModelRequestInput[] = [];
+    const rejection = new APIStatusError(400, 'Invalid request Error', false);
+    const { service } = createService(
+      createRequester(calls, rejection, [rejection], inputs),
+      { contextMessages },
+    );
+
+    await expect(request(service)).rejects.toMatchObject({ statusCode: 400 });
+    expect(calls.value).toBe(2);
+    expect(mediaCounts(inputs)).toEqual([1, 0]);
+  });
+
+  it('lets a retryable client 400 keep media and use normal retry instead of stripping', async () => {
+    const calls = { value: 0 };
+    const inputs: ModelRequestInput[] = [];
+    const { service } = createService(
+      createRequester(calls, new APIStatusError(400, 'Invalid request Error', true), [], inputs),
+      { contextMessages },
+    );
+
+    await expect(request(service)).rejects.toMatchObject({ statusCode: 400 });
+    expect(calls.value).toBe(1);
+    expect(mediaCounts(inputs)).toEqual([1]);
+  });
+
+  it('does not persist a generic-400 strip to later requests after it succeeds', async () => {
+    const calls = { value: 0 };
+    const inputs: ModelRequestInput[] = [];
+    const { service } = createService(
+      createRequester(calls, new APIStatusError(400, 'Invalid request Error', false), [], inputs),
+      { contextMessages },
+    );
+
+    await request(service, { source: { type: 'turn', turnId: 1, step: 1 } });
+    await request(service, { source: { type: 'turn', turnId: 1, step: 2 } });
+
+    expect(calls.value).toBe(3);
+    expect(mediaCounts(inputs)).toEqual([1, 0, 1]);
+  });
+
+  it('does not persist a generic-400 strip to later requests after the stripped resend fails', async () => {
+    const calls = { value: 0 };
+    const inputs: ModelRequestInput[] = [];
+    const rejection = new APIStatusError(400, 'Invalid request Error', false);
+    const { service } = createService(
+      createRequester(calls, rejection, [rejection], inputs),
+      { contextMessages },
+    );
+
+    await expect(request(service, { source: { type: 'turn', turnId: 1, step: 1 } })).rejects.toMatchObject(
+      { statusCode: 400 },
+    );
+    await request(service, { source: { type: 'turn', turnId: 1, step: 2 } });
+
+    expect(calls.value).toBe(3);
+    expect(mediaCounts(inputs)).toEqual([1, 0, 1]);
+  });
+
+  it('does not persist a generic-400 strip even when the stripped resend fails with a different provider error', async () => {
+    const calls = { value: 0 };
+    const inputs: ModelRequestInput[] = [];
+    const rejection = new APIStatusError(400, 'Invalid request Error', false);
+    const tooLarge = new APIRequestTooLargeError(413, 'Request Entity Too Large');
+    const { service } = createService(
+      createRequester(calls, rejection, [tooLarge], inputs),
+      { contextMessages },
+    );
+
+    await expect(request(service, { source: { type: 'turn', turnId: 1, step: 1 } })).rejects.toMatchObject(
+      { statusCode: 413 },
+    );
+    expect(calls.value).toBe(2);
+    expect(mediaCounts(inputs)).toEqual([1, 0]);
+
+    await request(service, { source: { type: 'turn', turnId: 1, step: 2 } });
+
+    expect(calls.value).toBe(3);
+    expect(mediaCounts(inputs)).toEqual([1, 0, 1]);
+  });
+
   it('warns the user when media are stripped from the retried request', async () => {
     const calls = { value: 0 };
     const { service, dispatcher, events } = createService(

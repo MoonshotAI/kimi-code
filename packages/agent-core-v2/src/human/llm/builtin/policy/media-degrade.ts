@@ -118,6 +118,7 @@ export function stripMediaParts(
 }
 
 const MEDIA_RECOVERY_ID = 'media-degrade';
+export const CLIENT_ERROR_STRIP_ACTION = 'stripped-client-error';
 const IMAGE_FORMAT_PROVIDER_MESSAGE_PATTERNS = [
   /unsupported media type for base64 image/i,
   /invalid data url for image/i,
@@ -160,15 +161,20 @@ function degradeEntry(
   };
 }
 
+function isStrippedRecord(recovery: LlmRecoveryRecord): boolean {
+  return (
+    recovery.strategy === MEDIA_RECOVERY_ID &&
+    (recovery.action === 'stripped' || recovery.action === CLIENT_ERROR_STRIP_ACTION)
+  );
+}
+
 function stripEntry(
   messages: readonly Message[],
   appliedRecoveries: readonly LlmRecoveryRecord[],
   replacement?: MediaReplacement,
 ): MediaRecoveryEntry | undefined {
   const keys = captureMediaKeys(messages);
-  const alreadyStripped = appliedRecoveries.some(
-    (recovery) => recovery.strategy === MEDIA_RECOVERY_ID && recovery.action === 'stripped',
-  );
+  const alreadyStripped = appliedRecoveries.some(isStrippedRecord);
   if (keys.size === 0 && alreadyStripped) return undefined;
   const rewriteWith = (currentReplacement?: MediaReplacement) =>
     keys.size === 0
@@ -200,16 +206,23 @@ export function createMediaDegradeRecovery(replacement?: MediaReplacement): LlmR
         error.kind === 'image_format' ||
         ((error.kind === 'provider' || error.kind === 'syntax') &&
           IMAGE_FORMAT_PROVIDER_MESSAGE_PATTERNS.some((pattern) => pattern.test(error.message)));
-      if (error.kind !== 'request_too_large' && !imageFormat) return undefined;
+      const mediaClientError =
+        error.kind === 'status' &&
+        error.statusCode === 400 &&
+        !error.retryable &&
+        countMediaParts(request.content.messages) > 0;
+      if (error.kind !== 'request_too_large' && !imageFormat && !mediaClientError) return undefined;
       const messages = request.content.messages;
-      const stripped = appliedRecoveries.some(
-        (recovery) => recovery.strategy === MEDIA_RECOVERY_ID && recovery.action === 'stripped',
-      );
+      const stripped = appliedRecoveries.some(isStrippedRecord);
       if (error.kind === 'request_too_large' && !stripped) {
         const degraded = degradeEntry(messages, appliedRecoveries, replacement);
         if (degraded !== undefined) return degraded;
       }
-      return stripEntry(messages, appliedRecoveries, replacement);
+      const strip = stripEntry(messages, appliedRecoveries, replacement);
+      if (strip !== undefined && mediaClientError) {
+        return { ...strip, action: CLIENT_ERROR_STRIP_ACTION };
+      }
+      return strip;
     },
   };
 }
