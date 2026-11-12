@@ -235,7 +235,7 @@ function controlQuestions(ctx: TestAgentContext) {
 describe('AgentTaskService — event emission', () => {
   afterEach(async () => {
     vi.useRealTimers();
-    for (const ctx of contexts.splice(0).reverse()) await ctx.dispose();
+    for (const ctx of contexts.splice(0).toReversed()) await ctx.dispose();
   });
 
   it('emits process task changes and persists only detached tasks', async () => {
@@ -384,7 +384,7 @@ describe('AgentTaskService — event emission', () => {
 
 describe('AgentTaskService — notification delivery', () => {
   afterEach(async () => {
-    for (const ctx of contexts.splice(0).reverse()) await ctx.dispose();
+    for (const ctx of contexts.splice(0).toReversed()) await ctx.dispose();
   });
 
   it('delivers completed agent task notifications through an auto-launched turn', async () => {

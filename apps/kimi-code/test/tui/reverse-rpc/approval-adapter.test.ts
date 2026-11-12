@@ -3,6 +3,31 @@ import { describe, expect, it } from 'vitest';
 import { adaptApprovalRequest, adaptPanelResponse } from '#/tui/reverse-rpc/approval/adapter';
 
 describe('approval adapter', () => {
+  it('places the reviewer reason before the pending command', () => {
+    const adapted = adaptApprovalRequest({
+      toolCallId: 'tc-review',
+      toolName: 'Bash',
+      action: 'run',
+      display: { kind: 'command', command: 'terraform apply' },
+      approvalDetail: {
+        title: 'Auto Review: denied (medium risk)',
+        detail: 'Creating remote resources was not explicitly authorized.',
+      },
+    });
+
+    expect(adapted.display).toEqual([
+      {
+        type: 'review',
+        title: 'Auto Review: denied (medium risk)',
+        detail: 'Creating remote resources was not explicitly authorized.',
+      },
+      { type: 'shell', language: 'bash', command: 'terraform apply', danger: undefined },
+    ]);
+    expect(adapted.approval_detail).toEqual({
+      title: 'Auto Review: denied (medium risk)',
+      detail: 'Creating remote resources was not explicitly authorized.',
+    });
+  });
   it('adapts generic command displays into shell blocks with approval choices', () => {
     const adapted = adaptApprovalRequest(
       {
@@ -40,6 +65,27 @@ describe('approval adapter', () => {
       'Reject',
       'Reject with feedback',
     ]);
+  });
+
+  it('does not cry recursive delete for plain forced removals', () => {
+    const dangerOf = (command: string) => {
+      const adapted = adaptApprovalRequest({
+        toolCallId: 'tc-rm',
+        toolName: 'Bash',
+        action: 'run',
+        display: { kind: 'generic', summary: 'run', detail: { command } },
+      });
+      const block = adapted.display[0];
+      return block?.type === 'shell' ? block.danger : undefined;
+    };
+
+    expect(dangerOf('rm -rf /tmp/cache')).toBe('recursive delete');
+    expect(dangerOf('rm -fr /tmp/cache')).toBe('recursive delete');
+    expect(dangerOf('rm --recursive /tmp/cache')).toBe('recursive delete');
+    expect(dangerOf('rm -f /tmp/cache/file.txt')).toBe('force delete');
+    expect(dangerOf('rm --force /tmp/cache/file.txt')).toBe('force delete');
+    expect(dangerOf('rm /tmp/cache/file.txt')).toBeUndefined();
+    expect(dangerOf('sudo rm -f /tmp/cache/file.txt')).toBe('force delete');
   });
 
   it('emits only a diff block for Edit — no separate file_op title row', () => {

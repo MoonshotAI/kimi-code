@@ -351,6 +351,23 @@ describe('AgentToolApprovalService', () => {
       });
     });
 
+    it('includes the reviewer reason in the approval request', async () => {
+      const request = useBroker(async () => ({ decision: 'approved' }));
+      const svc = make();
+      const approvalDetail = {
+        title: 'Auto Review: denied (medium risk)',
+        detail: 'Creating remote resources was not explicitly authorized.',
+      };
+
+      await svc.requestToolApproval(
+        makeContext('Bash', { command: 'terraform apply' }),
+        ask({ approvalDetail }),
+        'auto-review',
+      );
+
+      expect(request).toHaveBeenCalledWith(expect.objectContaining({ approvalDetail }));
+    });
+
     it('mints one interaction id shared by the broker request and the events', async () => {
       const events = subscribeApprovalEvents();
       const request = useBroker(async () => ({ decision: 'approved' }));

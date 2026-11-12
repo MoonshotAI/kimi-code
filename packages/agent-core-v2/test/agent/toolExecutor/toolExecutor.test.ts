@@ -26,6 +26,7 @@ import { createMcpTool } from '#/agent/mcp/tools/mcp';
 import type { MCPClient } from '#/mcpCore/types';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type {
+  BeforeExecuteDecision,
   BeforeToolExecuteEvent,
   ToolDidExecuteContext,
   ToolExecutionOutcome,
@@ -65,22 +66,21 @@ import type { IAgentLoopService } from '#/agent/loop/loop';
 import type { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { ReadMediaFileTool } from '#/agent/tools/read-media-file/readMediaFileTool';
 import { SessionMediaStoreService } from '#/agent/media/sessionMediaStoreService';
-import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
-import { makeSessionContext } from '#/session/sessionContext/sessionContext';
+import { JsonAtomicDocumentStore, TomlAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
+import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { GlobTool } from '#/agent/tools/os/glob/globTool';
 import { ReadInputSchema, type ReadInput } from '#/agent/tools/os/read/read';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
-import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import type { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { stubWorkspaceContext } from '../../session/workspaceContext/stub-workspace-context';
 import { stubAgentEnvironment } from '../../environment/stubs';
 import { ConfigRegistry, ConfigService } from '#/app/config/configService';
 import { IConfigRegistry, IConfigService } from '#/app/config/config';
 import { IAtomicTomlDocumentStore } from '#/persistence/interface/atomicDocumentStore';
-import { TomlAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { ILogService } from '#/_base/log/log';
 import { makeAgentScopeContext, IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -89,6 +89,22 @@ import { IEventBus } from '#/app/event/eventBus';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IFlagService } from '#/app/flag/flag';
+import { IGitService } from '#/app/git/git';
+import { IHostEnvironment as HostEnvironmentService } from '#/os/interface/hostEnvironment';
+import { createAutoReviewReviewer } from '#/features/autoReview/autoReviewGate';
+import { IAutoReviewService } from '#/features/autoReview/review';
+import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { IAgentPermissionPolicyService } from '#/agent/permissionPolicy/permissionPolicy';
+import { AgentPermissionPolicyService } from '#/agent/permissionPolicy/permissionPolicyService';
+import { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
+import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
+import { AgentPermissionGate } from '#/agent/permissionGate/permissionGateService';
+import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
+import { AgentToolApprovalService } from '#/agent/toolApproval/toolApprovalService';
+import { IEventDispatcher } from '#/state/eventDispatcher';
+import { stubPermissionModeService } from '../permissionMode/stubs';
+import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { registerLogServices, stubLog } from '../../_base/log/stubs';
@@ -154,6 +170,133 @@ beforeEach(() => {
 afterEach(() => {
   disposables.dispose();
 });
+
+describe('AgentToolExecutorService auto review', () => {
+  it('does not execute a tool denied by the reviewer', async () => {
+    installAutoReview({ kind: 'decision', decision: { risk: 'high', decision: 'deny' } });
+    const tool = new TestTool('Write');
+    registry.register(tool);
+
+    const [result] = await execute([toolCall('call_review', 'Write', { path: 'outside.txt' })]);
+
+    expect(result).toMatchObject({ isError: true, output: expect.stringContaining('not executed') });
+    expect(tool.calls).toHaveLength(0);
+  });
+
+  it('executes a tool allowed by the reviewer', async () => {
+    installAutoReview({ kind: 'decision', decision: { risk: 'low', decision: 'allow' } });
+    const tool = new TestTool('Write');
+    registry.register(tool);
+
+    const [result] = await execute([toolCall('call_review', 'Write', { path: 'src/a.ts' })]);
+
+    expect(result).not.toMatchObject({ isError: true });
+    expect(tool.calls).toHaveLength(1);
+  });
+
+  it('starts every review in a batch before waiting for the first decision', async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const release = deferred<import('#/features/autoReview/review').AutoReviewResult>();
+    installAutoReview(async () => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      try {
+        return await release.promise;
+      } finally {
+        inFlight -= 1;
+      }
+    });
+    const tool = new TestTool('Write');
+    registry.register(tool);
+
+    const pending = execute([
+      toolCall('call_a', 'Write', { path: 'outside-a.txt' }),
+      toolCall('call_b', 'Write', { path: 'outside-b.txt' }),
+    ]);
+    await vi.waitFor(() => {
+      expect(maxInFlight).toBe(2);
+    });
+    release.resolve({ kind: 'decision', decision: { risk: 'high', decision: 'deny' } });
+
+    const results = await pending;
+    expect(results).toHaveLength(2);
+    expect(tool.calls).toHaveLength(0);
+  });
+
+  it('cancels each review only after its own approval finishes', async () => {
+    const signals: AbortSignal[] = [];
+    installAutoReview(async (signal) => {
+      signals.push(signal!);
+      return { kind: 'decision', decision: { risk: 'low', decision: 'allow' } };
+    });
+    registry.register(new TestTool('Write'));
+
+    await execute([
+      toolCall('call_a', 'Write', { path: 'outside-a.txt' }),
+      toolCall('call_b', 'Write', { path: 'outside-b.txt' }),
+    ]);
+
+    expect(signals).toHaveLength(2);
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+  });
+});
+
+function installAutoReview(
+  result:
+    | import('#/features/autoReview/review').AutoReviewResult
+    | ((signal?: AbortSignal) => Promise<import('#/features/autoReview/review').AutoReviewResult>),
+): void {
+  const permissions = disposables.add(new TestInstantiationService(undefined, false, ix));
+  permissions.stub(IAgentPermissionModeService, stubPermissionModeService(() => 'auto'));
+  permissions.stub(IFlagService, { enabled: () => true });
+  permissions.stub(IAutoReviewService, {
+    review: typeof result === 'function'
+      ? (_context, _trigger, signal) => result(signal)
+      : async () => result,
+  });
+  permissions.stub(IBootstrapService, stubBootstrap('/tmp', {}, { nonInteractive: true }));
+  permissions.stub(IConfigService, { get: (() => undefined) as IConfigService['get'] });
+  permissions.stub(IAgentPermissionRulesService, { rules: [], sessionApprovalRulePatterns: [] });
+  permissions.stub(ISessionWorkspaceContext, stubWorkspaceContext('/workspace'));
+  permissions.stub(HostEnvironmentService, { pathClass: 'posix' });
+  permissions.stub(IAgentEnvironmentService, stubAgentEnvironment(new FakeEnvironment(
+    { environmentId: 'local', generation: 'test' },
+    { pathClass: 'posix' },
+  ), { workDir: '/workspace' }));
+  permissions.stub(IGitService, { findWorkTree: async () => null });
+  permissions.stub(IAgentToolApprovalService, new AgentToolApprovalService(
+    permissions.get(IAgentScopeContext),
+    permissions.get(IAgentPermissionModeService),
+    permissions.get(IAgentPermissionRulesService),
+    permissions.get(ISessionContext),
+    permissions.get(ITelemetryService),
+    permissions.get(IEventDispatcher),
+    permissions.get(IBootstrapService),
+  ));
+  permissions.set(IAgentPermissionPolicyService, new AgentPermissionPolicyService(
+    permissions,
+    permissions.get(IBootstrapService),
+  ));
+  const gate = new AgentPermissionGate(
+    permissions.get(IAgentPermissionModeService),
+    permissions.get(IAgentPermissionRulesService),
+    permissions.get(IAgentPermissionPolicyService),
+    permissions.get(IAgentToolApprovalService),
+    permissions.get(ITelemetryService),
+    executor,
+  );
+  disposables.add(
+    gate.registerReviewer(
+      createAutoReviewReviewer(
+        permissions.get(IFlagService),
+        permissions.get(IAgentPermissionModeService),
+        () => permissions.get(IAutoReviewService),
+      ),
+    ),
+  );
+  permissions.set(IAgentPermissionGate, gate);
+}
 
 describe('AgentToolExecutorService', () => {
   it('resolves by interface and routes a successful tool call through execute', async () => {
@@ -522,6 +665,56 @@ describe('AgentToolExecutorService', () => {
     });
   });
 
+  it('preserves an unknown tool\'s valid args in the tool.call.started event', async () => {
+    const results = await execute([toolCall('call_unknown', 'missing', { x: 1 })]);
+
+    expect(results).toEqual([
+      expect.objectContaining({
+        output: 'Tool "missing" not found',
+        isError: true,
+      }),
+    ]);
+    const toolCallEvent = protocolEvents.find(
+      (event): event is ToolCallStarted => event.type === 'tool.call.started',
+    );
+    expect(toolCallEvent?.args).toEqual({ x: 1 });
+  });
+
+  it('onBeforeExecuteTool veto with an error result does not invoke execute', async () => {
+    const tool = new TestTool('echo');
+    registry.register(tool);
+    executor.registerLegacyStarting((event) => {
+      event.veto({ output: 'forbidden', isError: true });
+    });
+
+    const results = await execute([toolCall('call_echo', 'echo', { text: 'hi' })]);
+
+    expect(results).toEqual([
+      expect.objectContaining({
+        output: 'forbidden',
+        isError: true,
+      }),
+    ]);
+    expect(tool.calls).toEqual([]);
+    expect(protocolEventTypes()).toEqual(['tool.call.started', 'tool.updated', 'tool.result']);
+  });
+
+  it('resolves a pending veto before reporting the tool call', async () => {
+    const decision = deferred<BeforeExecuteDecision>();
+    executor.registerLegacyStarting((event) => {
+      event.waitUntil(() => decision.promise);
+    });
+    registry.register(new TestTool('echo'));
+
+    const pending = execute([toolCall('call_echo', 'echo', { text: 'hi' })]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(protocolEventTypes()).toEqual([]);
+
+    decision.resolve({ veto: { output: 'forbidden', isError: true } });
+    await pending;
+    expect(protocolEventTypes()).toEqual(['tool.call.started', 'tool.updated', 'tool.result']);
+  });
+
   it('onBeforeExecuteTool veto bypasses execute with synthetic results while hook errors emit no tool events', async () => {
     vi.useFakeTimers();
     const first = new TestTool('first');
@@ -582,9 +775,10 @@ describe('AgentToolExecutorService', () => {
     const results = await execute([
       toolCall('call_first', 'first', {}),
       toolCall('call_second', 'second', {}),
+      toolCall('call_unknown', 'unknown', {}),
     ]);
 
-    expect(results).toHaveLength(2);
+    expect(results).toHaveLength(3);
     expect(results).toEqual(expect.arrayContaining([
       expect.objectContaining({ output: 'first result' }),
       expect.objectContaining({ output: 'second result' }),
@@ -839,7 +1033,7 @@ describe('AgentToolExecutorService', () => {
         expect.objectContaining({ output: 'Tool "first" was aborted', isError: true }),
         expect.objectContaining({ output: 'Tool "second" was aborted', isError: true }),
       ]);
-      expect([...durations].sort((a, b) => a - b)).toEqual([0, 25]);
+      expect([...durations].toSorted((a, b) => a - b)).toEqual([0, 25]);
     } finally {
       vi.useRealTimers();
     }

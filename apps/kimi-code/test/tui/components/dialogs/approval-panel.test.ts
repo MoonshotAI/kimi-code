@@ -124,6 +124,69 @@ describe('ApprovalPanelComponent', () => {
     expect(out).not.toContain('⚠');
   });
 
+  it('renders the reviewer reason before the pending command', () => {
+    const pending: PendingApproval = {
+      data: {
+        id: 'approval_review',
+        tool_call_id: 'tool_review',
+        tool_name: 'Bash',
+        action: 'run',
+        description: '',
+        approval_detail: {
+          title: 'Auto Review: denied (medium risk)',
+          detail: 'Creating remote resources was not explicitly authorized.',
+        },
+        display: [
+          {
+            type: 'review',
+            title: 'Auto Review: denied (medium risk)',
+            detail: 'Creating remote resources was not explicitly authorized.',
+          },
+          { type: 'shell', language: 'bash', command: 'terraform apply' },
+        ],
+        choices: [{ label: 'Approve once', response: 'approved' }],
+      },
+    };
+
+    const rendered = mount(new ApprovalPanelComponent(pending, () => {})).render(100).join('\n');
+    const out = strip(rendered);
+    expect(out).toContain('Auto Review: denied (medium risk)');
+    expect(out).toContain('Creating remote resources was not explicitly authorized.');
+    expect(out.indexOf('Auto Review: denied')).toBeLessThan(out.indexOf('terraform apply'));
+    const titleLine = rendered.split('\n').find((line) => strip(line).includes('Auto Review: denied'));
+    expect(titleLine).toContain(currentTheme.fg('warning', 'Auto Review: denied (medium risk)'));
+  });
+
+  it('caps a long reviewer reason at two lines', () => {
+    const detail = `Creating remote resources was not explicitly authorized. ${'extra context '.repeat(40)}unique-tail`;
+    const pending: PendingApproval = {
+      data: {
+        id: 'approval_review_long',
+        tool_call_id: 'tool_review_long',
+        tool_name: 'Bash',
+        action: 'run',
+        description: '',
+        display: [
+          {
+            type: 'review',
+            title: 'Auto Review failed',
+            detail,
+          },
+          { type: 'shell', language: 'bash', command: 'terraform apply' },
+        ],
+        choices: [{ label: 'Approve once', response: 'approved' }],
+      },
+    };
+
+    const out = strip(mount(new ApprovalPanelComponent(pending, () => {})).render(40).join('\n'));
+    const reasonLines = out.split('\n').filter((line) => line.includes('Creating remote') || line.includes('extra context') || line.endsWith('…'));
+    expect(out).toContain('Auto Review failed');
+    expect(out).toContain('…');
+    expect(out).not.toContain('unique-tail');
+    expect(reasonLines.length).toBeLessThanOrEqual(2);
+    expect(out.indexOf('Auto Review failed')).toBeLessThan(out.indexOf('terraform apply'));
+  });
+
   it('wraps a long single-line shell command instead of truncating it', () => {
     const head = 'approve-long-command-head';
     const tail = 'approve-long-command-tail';

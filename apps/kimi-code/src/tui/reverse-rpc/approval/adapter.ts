@@ -23,8 +23,18 @@ export function adaptApprovalRequest(event: ApprovalRequest): ApprovalPanelData 
     tool_call_id: event.toolCallId,
     tool_name: event.toolName,
     action: event.action,
+    approval_detail: event.approvalDetail,
     description: resolved.description,
-    display: resolved.blocks,
+    display: event.approvalDetail === undefined
+      ? resolved.blocks
+      : [
+          {
+            type: 'review',
+            title: event.approvalDetail.title,
+            detail: event.approvalDetail.detail,
+          },
+          ...resolved.blocks,
+        ],
     choices: adaptChoices(event.toolName, event.display),
   };
 }
@@ -212,8 +222,8 @@ function describeApproval(display: ToolInputDisplay, action: string): string {
 }
 
 const DANGER_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
-  { pattern: /\brm\s+(-[a-zA-Z]*[rRfF][a-zA-Z]*|--recursive|--force)/i, label: 'recursive delete' },
-  { pattern: /\bsudo\b/i, label: 'sudo' },
+  { pattern: /\brm\s+(-[a-zA-Z]*[rR][a-zA-Z]*|--recursive\b)/, label: 'recursive delete' },
+  { pattern: /\brm\s+(-[a-zA-Z]*[fF][a-zA-Z]*|--force\b)/i, label: 'force delete' },
   { pattern: /\b(curl|wget)\b[^|]*\|\s*(sh|bash|zsh)\b/i, label: 'pipe to shell' },
   { pattern: /\bdd\b[^|]*\bof=/i, label: 'dd write' },
   { pattern: /\bmkfs\b/i, label: 'mkfs' },

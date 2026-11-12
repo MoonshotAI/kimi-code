@@ -8,6 +8,12 @@ export type ApprovalDecision = z.infer<typeof approvalDecisionSchema>;
 export const approvalScopeSchema = z.enum(['session']);
 export type ApprovalScope = z.infer<typeof approvalScopeSchema>;
 
+export const approvalDetailSchema = z.object({
+  title: z.string(),
+  detail: z.string(),
+});
+export type ApprovalDetail = z.infer<typeof approvalDetailSchema>;
+
 export const approvalRequestSchema = z.object({
   approval_id: z.string().min(1),
   session_id: z.string().min(1),
@@ -17,6 +23,7 @@ export const approvalRequestSchema = z.object({
   tool_name: z.string().min(1),
   action: z.string(),
   tool_input_display: z.unknown(),
+  approval_detail: approvalDetailSchema.optional(),
   created_at: isoDateTimeSchema,
   expires_at: isoDateTimeSchema,
 });

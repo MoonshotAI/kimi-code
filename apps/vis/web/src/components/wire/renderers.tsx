@@ -777,6 +777,24 @@ export const WIRE_RENDERERS: RendererMap = {
     },
   },
 
+  'auto_review.decision': {
+    tone: 'approval',
+    label: 'review',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Mono>
+            {r.toolName}#{r.toolCallId.slice(-8)}
+          </Mono>
+          <Pill tone={r.decision === 'allow' ? 'success' : 'error'} variant="soft">
+            {r.decision}
+          </Pill>
+          {r.risk === undefined ? null : <Dim>{r.risk}</Dim>}
+        </span>
+      ),
+    }),
+  },
+
   'permission.set_mode': {
     tone: 'approval',
     label: 'perm',

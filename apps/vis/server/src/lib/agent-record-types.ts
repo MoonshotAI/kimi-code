@@ -98,6 +98,7 @@ import type { ChangeNotifierSnapshotEvent } from '@moonshot-ai/agent-core-v2/age
 import type { PermissionSetMode } from '@moonshot-ai/agent-core-v2/agent/permissionMode/permissionModeOps';
 import type { PermissionRecordApprovalResult } from '@moonshot-ai/agent-core-v2/agent/permissionRules/permissionRulesOps';
 import type { EnvironmentSetBinding } from '@moonshot-ai/agent-core-v2/agent/environmentBinding/environmentBindingOps';
+import type { AutoReviewCompleted } from '@moonshot-ai/agent-core-v2/features/autoReview/autoReviewEvents';
 import type { SwarmModeEnter, SwarmModeExit } from '@moonshot-ai/agent-core-v2/features/swarm/swarmOps';
 import type { TowerModeEnter, TowerModeExit } from '@moonshot-ai/agent-core-v2/features/tower/towerOps';
 import type { ToolsUpdateStore } from '@moonshot-ai/agent-core-v2/features/todo/todoOps';
@@ -177,6 +178,7 @@ export interface WireMetadataHeader {
  */
 export type AgentRecord =
   | WireMetadataHeader
+  | WireRecordOf<'auto_review.decision', AutoReviewCompleted>
   | WireRecordOf<'changeNotifier.snapshot', ChangeNotifierSnapshotEvent>
   | WireRecordOf<'config.update', ConfigUpdate>
   | WireRecordOf<'context.append_loop_event', ContextAppendLoopEvent>

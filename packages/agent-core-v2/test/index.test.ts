@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   WIRE_MIN_READER_VERSION,
@@ -9,6 +9,10 @@ import {
   type ContextMessage,
   type WireRecord,
 } from '#/index';
+import { IAutoReviewService } from '#/features/autoReview/review';
+import { AutoReviewCompleted } from '#/features/autoReview/autoReviewEvents';
+import { AUTO_REVIEW_FLAG_ENV, AUTO_REVIEW_FLAG_ID } from '#/features/autoReview/flag';
+import { IFlagService } from '#/app/flag/flag';
 import {
   InMemoryWireRecordPersistence,
   createTestAgent,
@@ -29,8 +33,7 @@ import { InMemoryStorageService } from '#/persistence/backends/memory/inMemorySt
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { TokenCountingMeasured } from '#/agent/tokenCounting/tokenCountingOps';
-import { TurnStepInterrupted } from '#/agent/loop/turnEvents';
-import { TurnStepRetrying } from '#/agent/loop/turnEvents';
+import { TurnStepInterrupted, TurnStepRetrying } from '#/agent/loop/turnEvents';
 import { ToolsUpdateStore } from '#/features/todo/todoOps';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { Event2Class } from '#/app/event/event2';
@@ -80,6 +83,7 @@ const V2_ONLY_RECORD_TYPES: ReadonlySet<string> = new Set([
 ]);
 
 const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
+  'auto_review.decision',
   'tower_mode.enter',
   'tower_mode.exit',
   'task.started',
@@ -118,6 +122,32 @@ const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
   'tool_select.initialized',
   'tool_select.tools_changed',
 ]);
+
+describe('Auto Review assembly', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('creates the reviewer service in an agent scope when enabled', async () => {
+    vi.stubEnv(AUTO_REVIEW_FLAG_ENV, '1');
+    const ctx = createTestAgent();
+    try {
+      expect(ctx.get(IAutoReviewService)).toBeDefined();
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  it('keeps the reviewer disabled by default', async () => {
+    const ctx = createTestAgent();
+    try {
+      expect(ctx.get(IFlagService).enabled(AUTO_REVIEW_FLAG_ID)).toBe(false);
+      expect(ctx.get(IAutoReviewService)).toBeDefined();
+    } finally {
+      await ctx.dispose();
+    }
+  });
+});
 
 describe('v1 wire vocabulary', () => {
   const SCOPE = 'wire';
@@ -158,6 +188,30 @@ describe('v1 wire vocabulary', () => {
         `event "${type}" persists an unregistered record type`,
       ).toBe(true);
     }
+  });
+
+  it('persists the reviewer reason as a readable durable record', async () => {
+    await dispatcher.restore();
+    await dispatcher.dispatch(new AutoReviewCompleted({
+      agentId: 'test-agent',
+      turnId: 1,
+      toolCallId: 'call-1',
+      toolName: 'Bash',
+      triggerPolicy: 'fallback-ask',
+      model: 'review-model',
+      decision: 'deny',
+      risk: 'medium',
+      reason: 'Creating remote resources was not explicitly authorized.',
+      durationMs: 100,
+    }));
+
+    expect(await readRecords()).toContainEqual(expect.objectContaining({
+      type: 'auto_review.decision',
+      toolCallId: 'call-1',
+      decision: 'deny',
+      risk: 'medium',
+      reason: 'Creating remote resources was not explicitly authorized.',
+    }));
   });
 
   it('stamps persisted records with time, except the metadata envelope', async () => {

@@ -329,6 +329,8 @@ export class SessionEventHandler {
       case 'tool.call.started': this.handleToolCall(event); break;
       case 'tool.call.delta': this.handleToolCallDelta(event); break;
       case 'tool.result': this.handleToolResult(event); break;
+      case 'auto_review.started': this.setToolAutoReviewing(event.toolCallId, true); break;
+      case 'auto_review.decision': this.setToolAutoReviewing(event.toolCallId, false); break;
       case 'agent.status.updated': this.handleStatusUpdate(event); break;
       case 'session.meta.updated': this.handleSessionMetaChanged(event); break;
       case 'goal.updated': this.handleGoalUpdated(event); break;
@@ -705,6 +707,12 @@ export class SessionEventHandler {
       pendingApproval: null,
       pendingQuestion: null,
     });
+  }
+
+  private setToolAutoReviewing(toolCallId: string, reviewing: boolean): void {
+    const { streamingUI } = this.host;
+    streamingUI.flushNow();
+    streamingUI.getToolComponent(toolCallId)?.setAutoReviewing(reviewing);
   }
 
   private handleToolCallDelta(event: ToolCallDeltaEvent): void {

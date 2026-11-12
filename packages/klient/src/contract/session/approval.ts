@@ -20,6 +20,7 @@ export const approvalRequestSchema = z.object({
   action: z.string(),
   /** Protocol `ToolInputDisplay` — mirrored as `unknown` (see file header). */
   display: z.unknown(),
+  approvalDetail: z.object({ title: z.string(), detail: z.string() }).optional(),
 });
 
 export const approvalResponseSchema = z.object({

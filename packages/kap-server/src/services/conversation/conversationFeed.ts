@@ -1,4 +1,6 @@
 import {
+  AutoReviewCompleted,
+  AutoReviewStarted,
   CompactionCancelled,
   Error2,
   ErrorCodes,
@@ -212,6 +214,12 @@ export class ConversationFeed implements IDisposable {
       bus.subscribe(ToolCallDelta, (event) => {
         this.onToolCallDelta(event.turnId, event.toolCallId, event.name, event.argumentsPart);
       }),
+      bus.subscribe(AutoReviewStarted, (event) => {
+        this.onAutoReviewStarted(event.turnId, event.toolCallId, event.toolName);
+      }),
+      bus.subscribe(AutoReviewCompleted, (event) => {
+        this.onAutoReviewCompleted(event.toolCallId);
+      }),
       bus.subscribe(ToolUpdated, (event) => {
         this.onToolUpdated(event);
       }),
@@ -419,6 +427,39 @@ export class ConversationFeed implements IDisposable {
       return;
     }
     if (name === undefined || entry !== undefined) return;
+    this.startLiveToolCall(turnNumber, toolCallId, name, 'input', argumentsPart ?? '');
+  }
+
+  private onAutoReviewStarted(turnNumber: number, toolCallId: string, name: string): void {
+    if (this.beforeReplay !== undefined) return;
+    this.flushPending();
+    const entry = this.live.get(toolCallId);
+    if (entry?.item.type === 'tool_call') {
+      if (entry.item.stage === 'auto_review') return;
+      entry.item = { ...entry.item, stage: 'auto_review' };
+      this.emit({ type: 'item.updated', turn_id: entry.turnId, item_id: toolCallId, set: { stage: 'auto_review' } });
+      return;
+    }
+    if (entry !== undefined) return;
+    this.startLiveToolCall(turnNumber, toolCallId, name, 'auto_review', '');
+  }
+
+  private onAutoReviewCompleted(toolCallId: string): void {
+    if (this.beforeReplay !== undefined) return;
+    this.flushPending();
+    const entry = this.live.get(toolCallId);
+    if (entry?.item.type !== 'tool_call' || entry.item.stage !== 'auto_review') return;
+    entry.item = { ...entry.item, stage: 'input' };
+    this.emit({ type: 'item.updated', turn_id: entry.turnId, item_id: toolCallId, set: { stage: 'input' } });
+  }
+
+  private startLiveToolCall(
+    turnNumber: number,
+    toolCallId: string,
+    name: string,
+    stage: 'input' | 'auto_review',
+    inputText: string,
+  ): void {
     const target = this.liveTarget(turnNumber);
     if (target === undefined || target.turn.items.some((item) => item.item_id === toolCallId)) return;
     const now = Date.now();
@@ -429,8 +470,8 @@ export class ConversationFeed implements IDisposable {
       status: 'running',
       created_at: isoTime(now),
       name,
-      stage: 'input',
-      input_text: argumentsPart ?? '',
+      stage,
+      input_text: inputText,
       started_at: isoTime(now),
     };
     this.live.set(toolCallId, { turnId: target.turn.turn_id, stepId: target.stepId, item });

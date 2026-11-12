@@ -62,7 +62,7 @@ export function stubToolExecutorEvents(): ToolExecutorEventStubs {
     didExecuteSlot,
     fireBeforeExecute: async (context) => {
       const beforeDecision = await beforeEmitter.fireBeforeExecute(context);
-      if (beforeDecision !== undefined) return beforeDecision;
+      if (beforeDecision?.veto !== undefined || beforeDecision?.allow === true) return beforeDecision;
       const decisionContext = decisionContextOf(context);
       const starting = await composeToolExecutorHooks(hooks).starting?.(decisionContext);
       if (starting !== undefined && 'skipPermitting' in starting) return { allow: true };

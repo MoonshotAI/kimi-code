@@ -9,7 +9,7 @@ import { errorFromLlmOutcome } from '#/llm-adapter/model/generate';
 import { type Message, type ToolDescription as Tool } from '#human/llm/message';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
 import type { ModelOverrides } from '#/llm-adapter/model/model.types';
-import { completionBudgetParams, resolveCompletionBudget } from '#/llm-adapter/model/completion-budget';
+import { resolveCompletionBudgetParams } from '#/llm-adapter/model/completion-budget';
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { getProviderDefinition } from '#/llm-adapter/provider/provider-definition';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -322,21 +322,16 @@ export class AgentLoopRequestFactory {
       (overrides.messages === undefined
         ? this.tokenCounting.get(this.scopeContext.agentContext).size
         : undefined);
-    const budgetParams = completionBudgetParams({
-      budget: resolveCompletionBudget({
-        maxOutputSize: overrides.maxOutputSize ?? resolved.maxOutputSize,
-        maxCompletionTokensCap: snapshot.maxCompletionTokensCap,
-      }),
+    const budgetParams = resolveCompletionBudgetParams({
+      maxOutputSize: overrides.maxOutputSize ?? resolved.maxOutputSize,
+      maxCompletionTokensCap: snapshot.maxCompletionTokensCap,
       capability: resolved.modelCapabilities,
       usedContextTokens,
     });
-    const maxCompletionTokensCap = snapshot.maxCompletionTokensCap;
-    const optedOut = maxCompletionTokensCap !== undefined && maxCompletionTokensCap <= 0;
     const params = {
       ...snapshot.params,
       ...budgetParams,
       ...(usedContextTokens === undefined ? {} : { usedContextTokens }),
-      ...(optedOut ? { maxCompletionTokens: maxCompletionTokensCap } : {}),
     };
 
     const messages = overrides.messages ?? this.contextMessages();

@@ -39,6 +39,7 @@ import { IAgentToolSelectService, SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSel
 import { WAIT_FOR_FLAG_ID } from '#/agent/tools/task/task-wait/flag';
 import { IWebSearchProviderService } from '#/app/auth/webSearch/webSearch';
 import { IFlagService } from '#/app/flag/flag';
+import { AUTO_REVIEW_FLAG_ID } from '#/features/autoReview/flag';
 import { ISessionNotify } from '#/features/notify/sessionNotify';
 import { ISessionBtwService } from '#/features/btw/btw';
 import { TOWER_WORKER_PROFILE } from '#/features/tower/tower';
@@ -324,7 +325,10 @@ describe('subagent task reminders and fork request parity', () => {
     ctx = testAgent(
       requester === undefined ? [] : llmGenerateServices(requester),
       appService(IAppendLogStore, store),
-      appService(IFlagService, flags),
+      appService(IFlagService, {
+        ...flags,
+        enabled: (id) => id !== AUTO_REVIEW_FLAG_ID && flags.enabled(id),
+      }),
       appService(IWebSearchProviderService, {
         _serviceBrand: undefined,
         hasWebSearchProvider: () => true,

@@ -30,3 +30,27 @@ export function completionBudgetParams(args: {
     maxContextTokens: args.capability?.max_context_tokens,
   };
 }
+
+export function resolveCompletionBudgetParams(args: {
+  readonly maxOutputSize?: number;
+  readonly maxCompletionTokensCap?: number;
+  readonly capability?: ModelCapability;
+  readonly usedContextTokens?: number;
+}): CompletionBudgetParams | undefined {
+  const budget = completionBudgetParams({
+    budget: resolveCompletionBudget({
+      maxOutputSize: args.maxOutputSize,
+      maxCompletionTokensCap: args.maxCompletionTokensCap,
+    }),
+    capability: args.capability,
+    usedContextTokens: args.usedContextTokens,
+  });
+  if (args.maxCompletionTokensCap !== undefined && args.maxCompletionTokensCap <= 0) {
+    return {
+      ...budget,
+      maxCompletionTokens: args.maxCompletionTokensCap,
+      usedContextTokens: args.usedContextTokens,
+    };
+  }
+  return budget;
+}

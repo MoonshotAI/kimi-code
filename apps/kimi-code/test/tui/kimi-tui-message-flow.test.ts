@@ -9165,6 +9165,96 @@ capabilities = ["image_in", "video_in"]
     }
   });
 
+  describe('Auto Review progress on the tool card', () => {
+    const PROGRESS_TEXT = 'Reviewing';
+
+    async function startReview(fullscreen = false): Promise<{ driver: MessageDriver; emit: (event: object) => void }> {
+      const base = makeStartupInput();
+      const { driver } = await makeDriver(makeSession(), {}, fullscreen
+        ? { ...base, tuiConfig: { ...base.tuiConfig, tuiMode: 'fullscreen' } }
+        : base);
+      if (fullscreen) {
+        const session = makeSession();
+        await driver.setSession(session);
+        await driver.syncRuntimeState(session);
+        driver.streamingUI.timeline.turnStarted();
+      }
+      driver.streamingUI.setTurnId('1');
+      driver.streamingUI.setStep(1);
+      const sendQueued = vi.fn();
+      const emit = (event: object): void => {
+        driver.sessionEventHandler.handleEvent(
+          { agentId: 'main', sessionId: 'ses-1', turnId: 1, toolCallId: 'call_bash', ...event } as Event,
+          sendQueued,
+        );
+      };
+      emit({ type: 'tool.call.started', name: 'Bash', args: { command: 'echo hi' } });
+      emit({ type: 'auto_review.started', toolName: 'Bash' });
+      return { driver, emit };
+    }
+
+    it('shows the status until the decision arrives', async () => {
+      const { driver, emit } = await startReview();
+      expect(stripSgr(renderTranscript(driver))).toContain(PROGRESS_TEXT);
+
+      emit({
+        type: 'auto_review.decision',
+        toolName: 'Bash',
+        triggerPolicy: 'fallback-ask',
+        model: 'review-model',
+        decision: 'allow',
+        risk: 'low',
+        durationMs: 1,
+      });
+
+      expect(stripSgr(renderTranscript(driver))).not.toContain(PROGRESS_TEXT);
+    });
+
+    it('clears the status when a cancelled turn ends without a decision', async () => {
+      const { driver, emit } = await startReview();
+
+      emit({ type: 'turn.ended', reason: 'cancelled' });
+
+      expect(stripSgr(renderTranscript(driver))).not.toContain(PROGRESS_TEXT);
+    });
+
+    it('shows the status in fullscreen while expanded or collapsed', async () => {
+      const { driver, emit } = await startReview(true);
+      const collapsed = stripSgr(renderTranscript(driver));
+      expect(collapsed).toContain('Reviewing echo hi');
+      expect(collapsed).toContain('echo hi');
+      expect(collapsed).not.toContain('Auto Review in progress');
+      expect(collapsed.split('Reviewing').length - 1).toBe(1);
+
+      driver.toggleToolOutputExpansion();
+      const expanded = stripSgr(renderTranscript(driver));
+      expect(expanded).toContain('Reviewing…');
+      expect(expanded).toContain('echo hi');
+      expect(expanded).not.toContain('Auto Review in progress');
+      expect(expanded.split('Reviewing').length - 1).toBe(1);
+
+      emit({
+        type: 'auto_review.decision',
+        toolName: 'Bash',
+        triggerPolicy: 'fallback-ask',
+        model: 'review-model',
+        decision: 'allow',
+        risk: 'low',
+        durationMs: 1,
+      });
+      expect(stripSgr(renderTranscript(driver))).not.toContain(PROGRESS_TEXT);
+    });
+
+    it('clears the fullscreen status when a cancelled turn ends without a decision', async () => {
+      const { driver, emit } = await startReview(true);
+      expect(stripSgr(renderTranscript(driver))).toContain(PROGRESS_TEXT);
+
+      emit({ type: 'turn.ended', reason: 'cancelled' });
+
+      expect(stripSgr(renderTranscript(driver))).not.toContain(PROGRESS_TEXT);
+    });
+  });
+
   it('cancels manual compaction from the editor', async () => {
     const { driver, session } = await makeDriver();
     driver.sessionEventHandler.handleEvent(
