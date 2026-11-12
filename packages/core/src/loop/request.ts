@@ -2,7 +2,7 @@
  * Bridges a loop step to an LLM request by combining the active requester, profile, history, and
  * step-scoped abort signal.
  */
-import type { HistoryMessage } from '#/llm/history';
+import type { Message } from '#/llm/message';
 import type { LlmPolicy, LlmRunControl } from '#/llm/policy/policy';
 import { isAbortError, toLlmErrorMessage } from '#/llm/protocol/errors';
 import type { LlmRequestProfile } from '#/llm/request';
@@ -21,7 +21,7 @@ export interface LoopRequestRuntime {
 }
 
 export interface LoopRequestInput {
-  readonly messages: readonly HistoryMessage[];
+  readonly messages: readonly Message[];
   readonly profile: LoopProfile;
   readonly policy?: LlmPolicy;
   readonly signal: AbortSignal;
@@ -71,14 +71,14 @@ export function runLoopRequest(
       };
       end(
         await requester.generate(
-          { content: { entries: input.messages }, profile: requestProfile, policy: input.policy },
+          { content: { messages: input.messages }, profile: requestProfile, policy: input.policy },
           { signal: input.signal, onEvent: forward },
         ),
       );
     } catch (error) {
       end(
         isAborted(input.signal, error)
-          ? { type: 'aborted', entry: null, usage: undefined, reason: input.signal.reason }
+          ? { type: 'aborted', message: null, usage: undefined, reason: input.signal.reason }
           : failedOutcome(error),
       );
     }

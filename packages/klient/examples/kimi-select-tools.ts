@@ -68,7 +68,6 @@ import type { LlmRequestContent, LlmRequestModel, LlmRequestProfile } from '@moo
 import type { InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
 import type { LlmRunEvent } from '@moonshot-ai/core/llm/response';
 import { streamLlmRequest } from '@moonshot-ai/core/llm/stream';
-import { toHistoryEntries } from '@moonshot-ai/core/llm/history';
 import { credentialRecovery } from '@moonshot-ai/core/llm/policy/credentials';
 import { IProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocol';
 import { ProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocolAdapterRegistry';
@@ -93,7 +92,7 @@ function createRequester(model: Model, registry: IProtocolAdapterRegistry): Requ
         initialized.request({
           model: { responseFormat: input.responseFormat },
           profile: { systemPrompt: input.systemPrompt, tools: input.tools },
-          content: { entries: input.entries },
+          content: { messages: input.messages },
           policy: {
             retry: { maxAttemptsPerStep: 1 },
             recoveries: [credentialRecovery],
@@ -248,7 +247,7 @@ async function collect(
     if (event.type === 'llm.streaming.part' && event.part.type === 'text') text += event.part.text;
     if (event.type === 'llm.ended' && event.outcome.type === 'done') {
       finishReason = event.outcome.finish?.finishReason ?? event.outcome.finish?.rawFinishReason ?? undefined;
-      toolCalls = event.outcome.entry.message.toolCalls.map((t) => ({
+      toolCalls = event.outcome.message.toolCalls.map((t) => ({
         id: t.id,
         name: t.name,
         arguments: t.arguments,
@@ -338,11 +337,11 @@ async function probeWireEncoding(): Promise<void> {
   const input: RequestInput = {
     systemPrompt: SYSTEM_PROMPT,
     tools: [SELECT_TOOLS, { ...COMPUTER_USE_TOOLS[0]!, deferred: true }],
-    entries: toHistoryEntries([
+    messages: [
       announcementMessage(COMPUTER_USE_NAMES),
       userMessage('take a screenshot'),
       toolDeclarationMessage([COMPUTER_USE_TOOLS[0]!]),
-    ]),
+    ],
   };
 
   try {
@@ -442,10 +441,10 @@ async function step1Select(requester: Requester, scenario: Scenario): Promise<St
       collect(requester, {
         systemPrompt: SYSTEM_PROMPT,
         tools: [SELECT_TOOLS],
-        entries: toHistoryEntries([
+        messages: [
           announcementMessage(COMPUTER_USE_NAMES),
           userMessage(scenario.prompt),
-        ]),
+        ],
       }),
       60_000,
       'step1',
@@ -490,7 +489,7 @@ async function step2UseLoadedTool(
   const messages = (withDeclaration: boolean): RequestInput => ({
     systemPrompt: SYSTEM_PROMPT,
     tools: [SELECT_TOOLS, { ...loadedTool, deferred: true }],
-    entries: toHistoryEntries([
+    messages: [
       announcementMessage(COMPUTER_USE_NAMES),
       userMessage(scenario.prompt),
       {
@@ -513,7 +512,7 @@ async function step2UseLoadedTool(
       // The schema-injection message — the exact wire shape whose acceptance
       // this probe measures. Dropped entirely in the isolation retry below.
       ...(withDeclaration ? [toolDeclarationMessage([loadedTool])] : []),
-    ]),
+    ],
   });
   try {
     const result = await withTimeout(collect(requester, messages(true)), 60_000, 'step2');

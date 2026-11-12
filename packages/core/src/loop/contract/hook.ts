@@ -3,8 +3,7 @@
  * stop and continue), their event payloads and allowed decisions, registration options, and hook
  * lifecycle events.
  */
-import type { ToolCall } from '#/llm/message';
-import type { HistoryMessage } from '#/llm/history';
+import type { Message, ToolCall } from '#/llm/message';
 import type { ToolResult } from '#/tool/executor';
 import type { QueuedItem, TurnTrigger } from './inbox';
 import type { Cause, StepOutcome } from './outcome';
@@ -25,7 +24,7 @@ export interface MessageAppendingEvent {
 export interface StepStartingEvent {
   readonly turnId: number;
   readonly step: number;
-  readonly messages: readonly HistoryMessage[];
+  readonly messages: readonly Message[];
   readonly profile: LoopProfile;
 }
 
@@ -39,22 +38,22 @@ export interface StepStoppingEvent {
   readonly turnId: number;
   readonly step: number;
   readonly draft: Extract<StepOutcome, { type: 'continue' | 'done' | 'failed' }>;
-  readonly messages: readonly HistoryMessage[];
+  readonly messages: readonly Message[];
 }
 
 export interface StepContinuingEvent {
   readonly turnId: number;
   readonly step: number;
   readonly cause?: Cause;
-  readonly messages: readonly HistoryMessage[];
+  readonly messages: readonly Message[];
 }
 
 export type TurnStartingVerdict = { readonly type: 'blocked'; readonly cause: Cause };
 
-export type MessageAppendingDecision = { readonly entry?: HistoryMessage; readonly blocked?: Cause };
+export type MessageAppendingDecision = { readonly message?: Message; readonly blocked?: Cause };
 
 export type StepStartingDecision = {
-  readonly messages?: readonly HistoryMessage[];
+  readonly messages?: readonly Message[];
   readonly blocked?: Cause;
 };
 

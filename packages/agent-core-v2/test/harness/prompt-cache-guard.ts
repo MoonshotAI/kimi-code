@@ -12,7 +12,7 @@ import type {
   LoopRequester,
   OperationLoopRequesterOptions,
 } from '#/agent/loop/requesterContract';
-import type { LlmProtocolRequest } from '@moonshot-ai/core/llm/request';
+import type { LlmRequest } from '@moonshot-ai/core/llm/request';
 import type { MockProvider } from './scripted-generate';
 
 import { generateCallOf } from './scripted-generate';
@@ -196,7 +196,7 @@ function sameToolNames(previous: GenerateCall, next: GenerateCall): boolean {
   return isDeepStrictEqual(names(previous), names(next));
 }
 
-function modelIdentity(request: LlmProtocolRequest): string {
+function modelIdentity(request: LlmRequest): string {
   return JSON.stringify([
     request.model.spec.provider,
     request.endpoint?.baseUrl,

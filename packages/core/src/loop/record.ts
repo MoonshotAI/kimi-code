@@ -3,7 +3,7 @@
  * the projection that folds a record stream back into the state needed to restore a loop (profile,
  * messages, turns, unfinished turn, pending notifications).
  */
-import type { HistoryMessage, UserEntry, UserMeta } from '#/llm/history';
+import type { Message, UserMessage } from '#/llm/message';
 import type { UnfinishedTurn } from './contract/command';
 import type { LoopEmitted } from './contract/emitted';
 import type { LoopProfile } from './contract/profile';
@@ -80,11 +80,11 @@ export interface TurnPosition {
 
 export interface LoopRecordState {
   readonly profile: LoopProfile;
-  readonly messages: readonly HistoryMessage[];
+  readonly messages: readonly Message[];
   readonly nextTurnId: number;
   readonly turns: readonly TurnPosition[];
   readonly unfinished?: UnfinishedTurn;
-  readonly notify: readonly UserEntry[];
+  readonly notify: readonly UserMessage[];
 }
 
 function withUnfinished(state: LoopRecordState, unfinished: UnfinishedTurn | undefined): LoopRecordState {
@@ -92,22 +92,22 @@ function withUnfinished(state: LoopRecordState, unfinished: UnfinishedTurn | und
   return unfinished === undefined ? rest : { ...rest, unfinished };
 }
 
-function taskOf(entry: UserEntry): string | undefined {
-  return (entry.meta as UserMeta | undefined)?.toolCallId;
+function taskOf(message: UserMessage): string | undefined {
+  return message.attributes?.toolCallId;
 }
 
-function withTask(notify: readonly UserEntry[], toolCallId: string, entry: UserEntry): UserEntry[] {
-  return [...notify.filter((item) => taskOf(item) !== toolCallId), entry];
+function withTask(notify: readonly UserMessage[], toolCallId: string, message: UserMessage): UserMessage[] {
+  return [...notify.filter((item) => taskOf(item) !== toolCallId), message];
 }
 
 function appended(state: LoopRecordState, event: Extract<LoopRecord, { type: 'message.appended' }>): LoopRecordState {
-  const consumed = event.source !== 'tool' && event.entry.message.role === 'user' ? taskOf(event.entry as UserEntry) : undefined;
+  const consumed = event.source !== 'tool' && event.message.role === 'user' ? taskOf(event.message) : undefined;
   const notify = consumed === undefined
     ? state.notify
     : state.notify.filter((item) => taskOf(item) !== consumed);
   const unfinished =
     state.unfinished?.turnId === event.turnId ? { ...state.unfinished, appended: true } : state.unfinished;
-  return withUnfinished({ ...state, messages: [...state.messages, event.entry], notify }, unfinished);
+  return withUnfinished({ ...state, messages: [...state.messages, event.message], notify }, unfinished);
 }
 
 export function loopProjection(): Projection<LoopRecordState, LoopRecord> {
@@ -124,7 +124,7 @@ export function loopProjection(): Projection<LoopRecordState, LoopRecord> {
         case 'tools.settled':
           return { ...state, profile: { ...state.profile, tools: event.tools } };
         case 'tool.async_ended':
-          return { ...state, notify: withTask(state.notify, event.toolCallId, event.entry) };
+          return { ...state, notify: withTask(state.notify, event.toolCallId, event.message) };
         case 'hook.failed':
           return { ...state, nextTurnId: Math.max(state.nextTurnId, event.turnId + 1) };
         case 'turn.started':

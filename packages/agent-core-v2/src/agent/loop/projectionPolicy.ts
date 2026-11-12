@@ -1,6 +1,6 @@
 import type { LlmRecovery, LlmRecoveryRecord } from '@moonshot-ai/core/llm/policy/recovery';
 import type { LlmResolver } from '@moonshot-ai/core/llm/policy/resolver';
-import type { LlmProtocolRequest } from '@moonshot-ai/core/llm/request';
+import type { LlmRequest } from '@moonshot-ai/core/llm/request';
 
 import type { AgentLoopProjector } from './projector';
 
@@ -16,10 +16,10 @@ export function hasStrictStructureRecovery(
 }
 
 function projectRequest(
-  request: LlmProtocolRequest,
+  request: LlmRequest,
   projector: AgentLoopProjector,
   strict: boolean,
-): LlmProtocolRequest {
+): LlmRequest {
   return {
     ...request,
     content: {

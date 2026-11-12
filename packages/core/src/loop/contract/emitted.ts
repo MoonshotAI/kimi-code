@@ -2,12 +2,11 @@
  * Events emitted by the loop: prompt acknowledgements, turn and step lifecycle, appended messages, LLM
  * run events, tool events, hook events, and context and profile settlements.
  */
-import type { ContentPart, ToolCall, ToolDescription } from '#/llm/message';
+import type { ContentPart, Message, ToolCall, ToolDescription, UserMessage } from '#/llm/message';
 import type { LlmRunEvent, LlmTiming } from '#/llm/response';
-import type { HistoryMessage, UserEntry } from '#/llm/history';
 import type { ToolHookPoint, ToolUpdate } from '#/tool/executor';
 import type { HookLifecycleEvent, HookPoint } from './hook';
-import type { MessageSource, RemindEntry, TurnTrigger } from './inbox';
+import type { MessageSource, RemindMessage, TurnTrigger } from './inbox';
 import type { AsyncToolOutcome, Cause, StepOutcome, ToolCallOutcome, TurnOutcome } from './outcome';
 
 export interface ToolStartDisplay {
@@ -45,7 +44,7 @@ export type ToolEvent =
         stopTurnReason?: string;
       };
     }
-  | { type: 'tool.async_ended'; taskId?: string; toolCallId: string; outcome: AsyncToolOutcome; entry: UserEntry };
+  | { type: 'tool.async_ended'; taskId?: string; toolCallId: string; outcome: AsyncToolOutcome; message: UserMessage };
 
 export type HookFailedEvent = {
   type: 'hook.failed';
@@ -58,19 +57,19 @@ export type HookFailedEvent = {
 };
 
 export type LoopEmitted =
-  | { type: 'prompt.submitted'; entry: UserEntry }
-  | { type: 'prompt.notified'; entry: UserEntry }
-  | { type: 'prompt.reminded'; entry: RemindEntry }
-  | { type: 'prompt.steered'; promptIds: string[]; entries?: readonly UserEntry[] }
+  | { type: 'prompt.submitted'; message: UserMessage }
+  | { type: 'prompt.notified'; message: UserMessage }
+  | { type: 'prompt.reminded'; message: RemindMessage }
+  | { type: 'prompt.steered'; promptIds: string[]; messages?: readonly UserMessage[] }
   | { type: 'prompt.canceled'; promptId: string; canceled: boolean }
-  | { type: 'turn.started'; turnId: number; trigger: TurnTrigger; promptOnly?: true; entry?: UserEntry }
+  | { type: 'turn.started'; turnId: number; trigger: TurnTrigger; promptOnly?: true; message?: UserMessage }
   | { type: 'turn.resumed'; turnId: number; step: number }
   | {
       type: 'message.appended';
       turnId: number;
       step: number;
       source: MessageSource;
-      entry: HistoryMessage;
+      message: Message;
       blocked?: Cause;
     }
   | { type: 'step.started'; turnId: number; step: number }
@@ -87,8 +86,8 @@ export type LoopEmitted =
       llmTiming?: LlmMessageTiming;
     }
   | { type: 'turn.ended'; turnId: number; outcome: TurnOutcome; durationMs?: number; stopReason?: string; requestId?: string }
-  | { type: 'context.settled'; messages: HistoryMessage[]; reason?: string }
-  | { type: 'context.rejected'; messages: HistoryMessage[]; reason?: string }
+  | { type: 'context.settled'; messages: Message[]; reason?: string }
+  | { type: 'context.rejected'; messages: Message[]; reason?: string }
   | { type: 'system_prompt.settled'; systemPrompt: string }
   | { type: 'tools.settled'; tools: ToolDescription[] };
 

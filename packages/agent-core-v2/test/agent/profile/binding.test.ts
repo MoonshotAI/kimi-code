@@ -303,7 +303,7 @@ describe('AgentProfileService.bind', () => {
       hostEnvironmentServices(homeDir),
     );
     const svc = ctx.get(IAgentLoopService);
-    svc.remind({ message: { role: 'system', content: [{ type: 'text', text: 'before loop start' }] }, meta: {} });
+    svc.remind({ role: 'system', content: [{ type: 'text', text: 'before loop start' }] });
     svc.flushReminders();
     expect(svc.history()).toHaveLength(0);
     await svc.start();

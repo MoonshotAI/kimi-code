@@ -22,18 +22,16 @@ type PredictionOutcome = Extract<LlmOutcome, { type: 'done' }>;
 
 function finish(
   text: string,
-  toolCalls: PredictionOutcome['entry']['message']['toolCalls'] = [],
+  toolCalls: PredictionOutcome['message']['toolCalls'] = [],
   finishReason: NonNullable<PredictionOutcome['finish']>['finishReason'] = 'completed',
 ): PredictionOutcome {
   return {
     type: 'done',
     finish: { finishReason, rawFinishReason: finishReason },
-    entry: {
-      message: {
-        role: 'assistant',
-        content: text.length === 0 ? [] : [{ type: 'think', think: 'reasoning' }, { type: 'text', text }],
-        toolCalls,
-      },
+    message: {
+      role: 'assistant',
+      content: text.length === 0 ? [] : [{ type: 'think', think: 'reasoning' }, { type: 'text', text }],
+      toolCalls,
     },
     usage: { inputOther: 3, output: 2, inputCacheRead: 5, inputCacheCreation: 1 },
     timing: {
@@ -149,8 +147,8 @@ describe('SessionPromptPredictionService', () => {
       turnId: 0,
       requestKind: 'prompt_prediction',
     });
-    expect(requests[0]?.input?.content?.entries).toHaveLength(2);
-    expect(requests[0]?.input?.content?.entries?.at(-1)?.message).toEqual({
+    expect(requests[0]?.input?.content?.messages).toHaveLength(2);
+    expect(requests[0]?.input?.content?.messages?.at(-1)).toEqual({
       role: 'user',
       content: [{
         type: 'text',

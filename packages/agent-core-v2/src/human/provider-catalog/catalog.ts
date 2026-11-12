@@ -293,7 +293,7 @@ async function runPingProbe(
         systemPrompt: 'You are a connectivity probe. Answer with the single word "pong".',
         tools: [],
       },
-      content: { entries: [{ message: createUserMessage('ping') }] },
+      content: { messages: [createUserMessage('ping')] },
       policy: { recoveries: [], retry: { maxAttemptsPerStep: 1 } },
     });
     const outcome = await requester.generate(

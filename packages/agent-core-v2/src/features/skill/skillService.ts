@@ -158,11 +158,9 @@ export class AgentSkillService implements IAgentSkillService {
     const status = this.loop.snapshot();
     const steerable = input.steerIfActive === true && status.state === 'running';
     const submission = {
-      message: {
-        role: 'user' as const,
-        content: [...prepared.map((activation) => activation.part), ...input.input],
-      },
-      meta: {
+      role: 'user' as const,
+      content: [...prepared.map((activation) => activation.part), ...input.input],
+      attributes: {
         promptId: input.promptId,
         origin: {
           kind: 'user',
@@ -306,8 +304,9 @@ export class AgentSkillService implements IAgentSkillService {
     const status = this.loop.snapshot();
     const running = status.state === 'running';
     const submission = {
-      message: { role: 'user' as const, content: [...input] },
-      meta: { promptId, origin },
+      role: 'user' as const,
+      content: [...input],
+      attributes: { promptId, origin },
     };
     const { id } = running ? this.loop.sendNow(submission) : this.loop.submit(submission);
     return this.loop.promptHandle(id)!.launched;

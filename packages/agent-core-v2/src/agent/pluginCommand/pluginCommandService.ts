@@ -66,8 +66,9 @@ export class AgentPluginCommandService implements IAgentPluginCommandService {
       }),
     );
     this.loop.submit({
-      message: { role: 'user', content: [{ type: 'text', text: expanded }] },
-      meta: { origin },
+      role: 'user',
+      content: [{ type: 'text', text: expanded }],
+      attributes: { origin },
     });
     if (this.scopeContext.agentId === MAIN_AGENT_ID) {
       await applyPromptMetadataUpdate(

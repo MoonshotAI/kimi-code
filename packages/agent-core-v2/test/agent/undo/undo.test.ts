@@ -183,8 +183,9 @@ describe('AgentConversationUndoService', () => {
     });
     ctx.mockNextResponse({ type: 'text', text: 'system result' });
     const turn = submitPromptTurn(loop, {
-      message: { role: 'user', content: [{ type: 'text', text: 'system work' }] },
-      meta: { origin: { kind: 'system_trigger', name: 'test' } as PromptOrigin },
+      role: 'user',
+      content: [{ type: 'text', text: 'system work' }],
+      attributes: { origin: { kind: 'system_trigger', name: 'test' } as PromptOrigin },
     }).turn;
     await didStart;
     const history = ctx.context.history();
@@ -489,19 +490,17 @@ describe('AgentConversationUndoService', () => {
       });
       const runTurn = async (count: number) => {
         const { turn } = submitPromptTurn(ctx.get(IAgentLoopService), {
-          message: {
-            role: 'user',
-            content: [
-              { type: 'text', text: 'describe the images' },
-              ...Array.from({ length: count }, (_, index) => ({
-                type: 'image_url' as const,
-                imageUrl: {
-                  url: `https://example.test/${imageCounts.length}-${index}.png`,
-                },
-              })),
-            ],
-          },
-          meta: { origin: { kind: 'user' } },
+          role: 'user',
+          content: [
+            { type: 'text', text: 'describe the images' },
+            ...Array.from({ length: count }, (_, index) => ({
+              type: 'image_url' as const,
+              imageUrl: {
+                url: `https://example.test/${imageCounts.length}-${index}.png`,
+              },
+            })),
+          ],
+          attributes: { origin: { kind: 'user' } },
         });
         await expect(turn.result).resolves.toMatchObject({ type: 'completed' });
         return turn.id;
@@ -532,8 +531,9 @@ describe('AgentConversationUndoService', () => {
     ): Promise<number | undefined> => {
       target.mockNextResponse({ type: 'text', text: `answer to ${text}` });
       const { turn } = submitPromptTurn(target.get(IAgentLoopService), {
-        message: { role: 'user', content: [{ type: 'text', text }] },
-        meta: { origin: { kind: 'user' } },
+        role: 'user',
+        content: [{ type: 'text', text }],
+        attributes: { origin: { kind: 'user' } },
       });
       await expect(turn.result).resolves.toMatchObject({ type: 'completed' });
       return turn.id;
@@ -587,15 +587,17 @@ describe('AgentConversationUndoService', () => {
 
     ctx.mockNextResponse({ type: 'text', text: 'a1' });
     const userTurn = submitPromptTurn(loop, {
-      message: { role: 'user', content: [{ type: 'text', text: 'u1' }] },
-      meta: { origin: { kind: 'user' } },
+      role: 'user',
+      content: [{ type: 'text', text: 'u1' }],
+      attributes: { origin: { kind: 'user' } },
     }).turn;
     await expect(userTurn.result).resolves.toMatchObject({ type: 'completed' });
 
     ctx.mockNextResponse({ type: 'text', text: 'cron done' });
     const cronTurn = submitPromptTurn(loop, {
-      message: { role: 'user', content: [{ type: 'text', text: 'cron work' }] },
-      meta: { origin: {
+      role: 'user',
+      content: [{ type: 'text', text: 'cron work' }],
+      attributes: { origin: {
         kind: 'cron_job',
         jobId: 'j1',
         cron: '0 9 * * *',
@@ -835,14 +837,12 @@ describe('AgentConversationUndoService', () => {
       activePromptId: undefined,
       queue: [
         {
-          message: {
-            role: 'user',
-            content: [
-              userPromptSubmitHookPart('<hook_result hook_event="UserPromptSubmit">\nhook note\n</hook_result>'),
-              { type: 'text', text: 'queued prompt' },
-            ],
-          },
-          meta: {
+          role: 'user',
+          content: [
+            userPromptSubmitHookPart('<hook_result hook_event="UserPromptSubmit">\nhook note\n</hook_result>'),
+            { type: 'text', text: 'queued prompt' },
+          ],
+          attributes: {
             promptId: 'queued',
             origin: { kind: 'user', clientMetadata: displayText === undefined ? undefined : [{ display_text: displayText }] } as PromptOrigin,
             createdAt: new Date(0).toISOString(),

@@ -12,12 +12,10 @@ import type { ApiErrorEvent, CacheBreakDetectedEvent } from '#/app/telemetry/eve
 import { unwrapErrorCause } from '#/errors';
 import { countMediaParts } from '@moonshot-ai/core/llm/builtin/policy/media-degrade';
 import type { Message, ToolDescription as Tool } from '@moonshot-ai/core/llm/message';
-import { toRequestMessages } from '@moonshot-ai/core/llm/history';
-import type { LlmProtocolRequest } from '@moonshot-ai/core/llm/request';
+import type { LlmRequest, ThinkingEffort } from '@moonshot-ai/core/llm/request';
 import type { LlmRecoveryRecord } from '@moonshot-ai/core/llm/policy/recovery';
 import { llmErrorRequestId, type LlmOutcome, type LlmRunEvent, type LlmTiming } from '@moonshot-ai/core/llm/response';
 import { emptyUsage, grandTotal, inputTotal, type TokenUsage } from '@moonshot-ai/core/llm/usage';
-import type { ThinkingEffort } from '@moonshot-ai/core/llm/request';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import {
   APIStatusError,
@@ -132,15 +130,16 @@ export class AgentLoopRequestObserver {
 
   recordAttempt(
     observation: AgentRequestObservation,
-    attemptRequest: LlmProtocolRequest,
+    attemptRequest: LlmRequest,
     appliedRecoveries: readonly LlmRecoveryRecord[],
   ): void {
     const request = observation.requireContext();
     observation.setRequestId(undefined);
+    const wireMessages = attemptRequest.content.messages.map(({ attributes: _attributes, ...message }) => message);
     const attemptInput = {
       systemPrompt: attemptRequest.profile?.systemPrompt ?? request.systemPrompt,
       tools: attemptRequest.profile?.tools,
-      messages: attemptRequest.content.messages,
+      messages: wireMessages,
     };
     const mediaRecovery = latestMediaRecovery(appliedRecoveries);
     const projection = projectionNameOf(appliedRecoveries, mediaRecovery);
@@ -262,7 +261,7 @@ export class AgentLoopRequestObserver {
   ): void {
     const request = observation.requireContext();
     observation.setRequestId(outcome.requestId);
-    const { entry, usage, timing } = outcome;
+    const { message, usage, timing } = outcome;
     if (request.promptCacheProbe === 'compaction') {
       this.telemetry.track2('prompt_cache_probe', {
         source: 'compaction',
@@ -297,10 +296,11 @@ export class AgentLoopRequestObserver {
     }
     void this.usage.record(this.scopeContext.agentContext, request.modelAlias, usage, request.source);
     if (usage !== undefined) {
+      const { attributes: _attributes, ...responseMessage } = message;
       this.tokenCounting.measured(
         this.scopeContext.agentContext,
-        recorded?.messages ?? toRequestMessages(request.entries),
-        [entry.message],
+        recorded?.messages ?? request.messages.map(({ attributes: _a, ...item }) => item),
+        [responseMessage],
         usage,
       );
     }

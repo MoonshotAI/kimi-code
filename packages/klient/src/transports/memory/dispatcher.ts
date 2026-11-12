@@ -33,7 +33,7 @@ import {
   type InteractionRequest,
 } from '@moonshot-ai/agent-core-v2/human/interaction/interaction';
 import { interactions } from '@moonshot-ai/agent-core-v2/human/interaction/facade';
-import { IAgentLoopService, type LoopNotifyEntry, type PromptPayload } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
+import { IAgentLoopService, type LoopNotifyMessage, type PromptPayload } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import { IProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocol';
 import type { LlmRequestContent, LlmRequestModel, LlmRequestProfile } from '@moonshot-ai/core/llm/request';
@@ -230,10 +230,8 @@ function questionServiceView(sessionId: string): Record<string, unknown> {
 type LegacyPromptPayload = Omit<PromptPayload, 'input'> & {
   readonly input: readonly LegacyContentPart[];
 };
-type LegacySteerEntry = Omit<LoopNotifyEntry, 'message'> & {
-  readonly message: Omit<LoopNotifyEntry['message'], 'content'> & {
-    readonly content: readonly LegacyContentPart[];
-  };
+type LegacySteerEntry = Omit<LoopNotifyMessage, 'content'> & {
+  readonly content: readonly LegacyContentPart[];
 };
 type LegacyPromptWithSkillsInput = Omit<PromptWithSkillsInput, 'input'> & {
   readonly input: readonly LegacyContentPart[];
@@ -259,7 +257,7 @@ function agentLoopServiceView(agent: IAgentScopeHandle): Record<string, unknown>
     notifyClient: (input: LegacySteerEntry) =>
       loop.notifyClient({
         ...input,
-        message: { ...input.message, content: input.message.content.map(toCorePart) },
+        content: input.content.map(toCorePart),
       }),
     get: () => loop.history(),
     cancelFromUser: (turnId?: number) => {
@@ -603,7 +601,7 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
                       systemPrompt: resolvedInput.systemPrompt,
                       tools: resolvedInput.tools,
                     },
-                    content: { entries: resolvedInput.entries },
+                    content: { messages: resolvedInput.messages },
                     policy: {
                       retry: { maxAttemptsPerStep: 1 },
                       recoveries: [credentialRecovery],

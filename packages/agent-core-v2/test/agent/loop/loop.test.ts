@@ -1201,7 +1201,7 @@ describe('Agent loop', () => {
       expect(parkedLoop.snapshot()).toMatchObject({ state: 'idle', hasPendingRequests: true });
       expect(parked.llmCalls).toHaveLength(0);
 
-      const earlyQueueId = parkedLoop.snapshot().queue[0]!.meta!.promptId!;
+      const earlyQueueId = parkedLoop.snapshot().queue[0]!.attributes!.promptId!;
       expect(parkedLoop.cancel({ promptId: earlyQueueId }, new Error('not wanted'))).toBe(true);
       await expect(early.result).resolves.toMatchObject({ type: 'cancelled' });
 
@@ -1309,8 +1309,9 @@ describe('Agent loop', () => {
     try {
       const active = submitTurn(localLoop, 'active').turn;
       const skill = submitPromptTurn(localLoop, {
-        message: { role: 'user', content: [{ type: 'text', text: 'skill continuation' }] },
-        meta: { origin: {
+        role: 'user',
+        content: [{ type: 'text', text: 'skill continuation' }],
+        attributes: { origin: {
           kind: 'skill_activation',
           activationId: 'act_queued',
           skillName: 'queued-skill',
@@ -1318,8 +1319,9 @@ describe('Agent loop', () => {
         } as PromptOrigin },
       }).turn;
       const explicit = submitPromptTurn(localLoop, {
-        message: { role: 'user', content: [{ type: 'text', text: 'explicitly queued' }] },
-        meta: { origin: { kind: 'user' } },
+        role: 'user',
+        content: [{ type: 'text', text: 'explicitly queued' }],
+        attributes: { origin: { kind: 'user' } },
       }).turn;
       await activeStarted;
 
@@ -1397,8 +1399,9 @@ describe('Agent loop', () => {
     ctx.mockNextResponse({ type: 'text', text: 'hi there' });
 
     const system = submitPromptTurn(loop, {
-      message: { role: 'user', content: [{ type: 'text', text: 'continue the goal' }] },
-      meta: { origin: { kind: 'system_trigger', name: 'goal_continuation' } as PromptOrigin },
+      role: 'user',
+      content: [{ type: 'text', text: 'continue the goal' }],
+      attributes: { origin: { kind: 'system_trigger', name: 'goal_continuation' } as PromptOrigin },
     }).turn;
     await system.result;
     const user = submitTurn(loop, 'hi').turn;
@@ -1416,8 +1419,9 @@ describe('Agent loop', () => {
     ctx.mockNextResponse({ type: 'text', text: 'scanned' });
 
     const subagent = submitPromptTurn(loop, {
-      message: { role: 'user', content: [{ type: 'text', text: 'scan the repo' }] },
-      meta: { origin: { kind: 'system_trigger', name: 'subagent' } as PromptOrigin },
+      role: 'user',
+      content: [{ type: 'text', text: 'scan the repo' }],
+      attributes: { origin: { kind: 'system_trigger', name: 'subagent' } as PromptOrigin },
     }).turn;
     await subagent.result;
     subscription.dispose();
@@ -1432,30 +1436,31 @@ describe('Agent loop', () => {
     });
     ctx.mockNextResponse({ type: 'text', text: 'seen' });
 
-    const turn = submitPromptTurn(loop, { message: {
-            role: 'user',
-            content: [
-              {
-                type: 'image_url',
-                imageUrl: { url: 'kimi-file://file_1', id: 'file_1', name: 'photo.png' },
-              },
-              {
-                type: 'video_url',
-                videoUrl: { url: 'kimi-file://file_2', id: 'file_2', name: 'clip.mp4' },
-              },
-              { type: 'image_url', imageUrl: { url: 'kimi-file://file_3' } },
-              {
-                type: 'image_url',
-                imageUrl: { url: 'kimi-file://file_4', id: 'other' },
-              },
-              { type: 'image_url', imageUrl: { url: 'https://example.com/no-id.png' } },
-              {
-                type: 'image_url',
-                imageUrl: { url: 'ms://provider-blob', id: 'prov_1' },
-              },
-              { type: 'text', text: 'look' },
-            ],
-          }, meta: { origin: { kind: 'user' } } }).turn;
+    const turn = submitPromptTurn(loop, {
+      role: 'user',
+      content: [
+        {
+          type: 'image_url',
+          imageUrl: { url: 'kimi-file://file_1', id: 'file_1', name: 'photo.png' },
+        },
+        {
+          type: 'video_url',
+          videoUrl: { url: 'kimi-file://file_2', id: 'file_2', name: 'clip.mp4' },
+        },
+        { type: 'image_url', imageUrl: { url: 'kimi-file://file_3' } },
+        {
+          type: 'image_url',
+          imageUrl: { url: 'kimi-file://file_4', id: 'other' },
+        },
+        { type: 'image_url', imageUrl: { url: 'https://example.com/no-id.png' } },
+        {
+          type: 'image_url',
+          imageUrl: { url: 'ms://provider-blob', id: 'prov_1' },
+        },
+        { type: 'text', text: 'look' },
+      ],
+      attributes: { origin: { kind: 'user' } },
+    }).turn;
     await turn.result;
     subscription.dispose();
 
@@ -1475,23 +1480,24 @@ describe('Agent loop', () => {
     });
     ctx.mockNextResponse({ type: 'text', text: 'seen' });
 
-    const turn = submitPromptTurn(loop, { message: {
-            role: 'user',
-            content: [
-              { type: 'image_url', imageUrl: { url: 'kimi-file://file_1', id: 'file_1' } },
-              { type: 'text', text: 'summarize' },
-            ],
-          }, meta: { origin: {
-            kind: 'user',
-            attachments: [
-              {
-                name: 'report.pdf',
-                mediaType: 'application/pdf',
-                size: 42,
-                path: '/data/report.pdf',
-              },
-            ],
-          } as PromptOrigin } }).turn;
+    const turn = submitPromptTurn(loop, {
+      role: 'user',
+      content: [
+        { type: 'image_url', imageUrl: { url: 'kimi-file://file_1', id: 'file_1' } },
+        { type: 'text', text: 'summarize' },
+      ],
+      attributes: { origin: {
+        kind: 'user',
+        attachments: [
+          {
+            name: 'report.pdf',
+            mediaType: 'application/pdf',
+            size: 42,
+            path: '/data/report.pdf',
+          },
+        ],
+      } as PromptOrigin },
+    }).turn;
     await turn.result;
     subscription.dispose();
 
@@ -1516,23 +1522,24 @@ describe('Agent loop', () => {
     });
     ctx.mockNextResponse({ type: 'text', text: 'seen' });
 
-    const turn = submitPromptTurn(loop, { message: {
-            role: 'user',
-            content: [{ type: 'text', text: 'User activated the skill "check".' }],
-          }, meta: { origin: {
-            kind: 'skill_activation',
-            activationId: 'act_1',
-            skillName: 'check',
-            trigger: 'user-slash',
-            attachments: [
-              {
-                name: 'note.txt',
-                mediaType: 'text/plain',
-                size: 21,
-                path: '/data/note.txt',
-              },
-            ],
-          } as PromptOrigin } }).turn;
+    const turn = submitPromptTurn(loop, {
+      role: 'user',
+      content: [{ type: 'text', text: 'User activated the skill "check".' }],
+      attributes: { origin: {
+        kind: 'skill_activation',
+        activationId: 'act_1',
+        skillName: 'check',
+        trigger: 'user-slash',
+        attachments: [
+          {
+            name: 'note.txt',
+            mediaType: 'text/plain',
+            size: 21,
+            path: '/data/note.txt',
+          },
+        ],
+      } as PromptOrigin },
+    }).turn;
     await turn.result;
     subscription.dispose();
 
@@ -2649,8 +2656,9 @@ describe('aborted step tool execution', () => {
 
 function submitTurn(loop: IAgentLoopService, text: string): { readonly turn: Turn } {
   return submitPromptTurn(loop, {
-    message: { role: 'user', content: [{ type: 'text', text }] },
-    meta: { origin: { kind: 'user' } },
+    role: 'user',
+    content: [{ type: 'text', text }],
+    attributes: { origin: { kind: 'user' } },
   });
 }
 

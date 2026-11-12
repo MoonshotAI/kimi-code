@@ -1,5 +1,4 @@
-import type { ToolDescription as Tool } from '@moonshot-ai/core/llm/message';
-import type { HistoryMessage } from '@moonshot-ai/core/llm/history';
+import type { Message, ToolDescription as Tool } from '@moonshot-ai/core/llm/message';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import type { LogContext } from '#/_base/log/log';
 import type { LlmOutcome } from '@moonshot-ai/core/llm/response';
@@ -45,7 +44,7 @@ export interface ResolvedRequestContext {
   readonly thinkingEffort: ThinkingEffort;
   readonly systemPrompt: string;
   readonly tools?: readonly Tool[];
-  readonly entries: HistoryMessage[];
+  readonly messages: Message[];
   readonly usedContextTokens?: number;
   readonly contextRevision: number;
   readonly promptCacheProbe: 'compaction' | undefined;

@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 
-import { createUserEntry } from '@moonshot-ai/core/llm/history';
 import { createUserMessage } from '@moonshot-ai/core/llm/message';
 import { createMockProviderRequester } from '../../../harness/scripted-generate';
 import { createTestLoop as createLoop } from './factory';
@@ -10,7 +9,7 @@ function echoRequester() {
   return createMockProviderRequester(() => ({ parts: [{ type: 'text', text: 'done' }] }));
 }
 
-const prompt = (text: string) => createUserEntry(createUserMessage(text));
+const prompt = (text: string) => createUserMessage(text);
 
 const noopExecutor = successfulExecutor(['noop']);
 
@@ -43,7 +42,7 @@ describe('loop.wait', () => {
     expect(loop.state.status).toBe('running');
     await loop.waitForIdle();
     const active = loop.runTurn(prompt('four'));
-    loop.submit(createUserEntry(createUserMessage('cancelled'), { promptId: 'cancelled' }));
+    loop.submit(createUserMessage('cancelled', { promptId: 'cancelled' }));
     expect(loop.cancel('cancelled')).toMatchObject({ type: 'prompt.canceled', canceled: true });
     await active;
     await loop.waitForIdle();

@@ -2,19 +2,19 @@
  * Inbox contract: queued user prompts (normal and notify) and reminders, what triggers a turn, and the
  * sources an appended message can come from.
  */
-import type { HistoryMessage, UserEntry } from '#/llm/history';
+import type { Message, UserMessage } from '#/llm/message';
 
-export type RemindEntry = HistoryMessage;
+export type RemindMessage = Message;
 
 export type QueuedItem =
-  | { readonly kind: 'normal'; readonly entry: UserEntry }
-  | { readonly kind: 'notify'; readonly entry: UserEntry }
-  | { readonly kind: 'remind'; readonly entry: RemindEntry };
+  | { readonly kind: 'normal'; readonly message: UserMessage }
+  | { readonly kind: 'notify'; readonly message: UserMessage }
+  | { readonly kind: 'remind'; readonly message: RemindMessage };
 
 export interface Inbox {
-  normal: UserEntry[];
-  notify: UserEntry[];
-  remind: RemindEntry[];
+  normal: UserMessage[];
+  notify: UserMessage[];
+  remind: RemindMessage[];
 }
 
 export type TurnTrigger = 'normal' | 'notify' | 'continue';

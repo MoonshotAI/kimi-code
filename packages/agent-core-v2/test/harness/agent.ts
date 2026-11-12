@@ -47,7 +47,7 @@ import { IAgentPlanService, type PlanData } from '#/features/plan/plan';
 import { IAgentProfileService, type AgentConfigData } from '#/agent/profile/profile';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import type {
-  LoopNotifyEntry,
+  LoopNotifyMessage,
   PromptLaunchResult,
   PromptPayload,
   SteerResult,
@@ -1518,19 +1518,19 @@ export class AgentTestContext {
         return result;
       }) as IAgentLoopService['submit'];
       const notify = loop.notify.bind(loop);
-      loop.notify = ((input: LoopNotifyEntry) => {
+      loop.notify = ((input: LoopNotifyMessage) => {
         const result = notify(input);
         void Promise.resolve().then(restoreAfterWrites);
         return result;
       }) as IAgentLoopService['notify'];
       const sendNow = loop.sendNow.bind(loop);
-      loop.sendNow = ((input: LoopNotifyEntry | readonly string[]) => {
-        const result = sendNow(input as LoopNotifyEntry);
+      loop.sendNow = ((input: LoopNotifyMessage | readonly string[]) => {
+        const result = sendNow(input as LoopNotifyMessage);
         void Promise.resolve().then(restoreAfterWrites);
         return result;
       }) as IAgentLoopService['sendNow'];
       const remind = loop.remind.bind(loop);
-      loop.remind = (...entries: readonly import('@moonshot-ai/core/llm/history').HistoryMessage[]) => {
+      loop.remind = (...entries: readonly import('@moonshot-ai/core/llm/message').Message[]) => {
         remind(...entries);
         void Promise.resolve().then(restoreAfterWrites);
       };
@@ -2343,8 +2343,9 @@ export class AgentTestContext {
       prompt: (payload) => this.get(IAgentLoopService).submit(payload),
       promptWithSkills: (payload) => this.get(IAgentSkillService).promptWithSkills(payload),
       steer: (payload) => this.get(IAgentLoopService).notifyClient({
-        message: { role: 'user', content: [...payload.input] },
-        meta: { origin: { kind: 'user' } },
+        role: 'user',
+        content: [...payload.input],
+        attributes: { origin: { kind: 'user' } },
       }),
       cancel: (payload) =>
         this.get(IAgentLoopService).cancel(
@@ -3013,7 +3014,7 @@ function withMetadata(events: readonly WireRecord[]): readonly WireRecord[] {
 function drainPrompts(loop: IAgentLoopService): void {
   const snapshot = loop.snapshot();
   for (const item of snapshot.queue) {
-    if (item.meta?.promptId !== undefined) loop.cancel({ promptId: item.meta.promptId });
+    if (item.attributes?.promptId !== undefined) loop.cancel({ promptId: item.attributes.promptId });
   }
   if (snapshot.activePromptId !== undefined) {
     loop.cancel({ promptId: snapshot.activePromptId });

@@ -2,7 +2,9 @@
  * Prompt origin metadata for user messages (client metadata, bundled skill activations, file
  * attachments), skill-activation text parts, and merging several steer messages into one user message.
  */
-import type { ContentPart, TextPart } from '#/llm/message';
+import type { ContentPart, PromptOrigin, TextPart } from '#/llm/message';
+
+export type { PromptOrigin } from '#/llm/message';
 
 function promptDisplayTextFromContentParts(parts: readonly ContentPart[]): string {
   const texts: string[] = [];
@@ -84,10 +86,6 @@ export interface UserPromptOrigin {
 }
 
 export const USER_PROMPT_ORIGIN: UserPromptOrigin = { kind: 'user' };
-
-export interface PromptOrigin {
-  readonly kind: string;
-}
 
 export interface SteerMessage {
   readonly content: readonly ContentPart[];

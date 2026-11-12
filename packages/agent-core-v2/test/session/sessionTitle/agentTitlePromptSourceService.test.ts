@@ -60,8 +60,9 @@ describe('AgentTitlePromptSource', () => {
             activeTurnId: undefined,
             activePromptId: queue.active?.id,
             queue: queue.pending.map((item) => ({
-              message: { role: 'user' as const, content: [...item.message.content] },
-              meta: {
+              role: 'user' as const,
+              content: [...item.message.content],
+              attributes: {
                 promptId: item.id,
                 origin: item.message.origin,
                 createdAt: item.createdAt,

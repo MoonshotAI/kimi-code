@@ -1,10 +1,9 @@
 /**
  * `LlmRequest` contract and its dimensions: protocol binding, model spec and request model (thinking,
  * sampling, response format, output cap), endpoint with credentials and file upload, profile (system
- * prompt, tools), content (history entries), and policy.
+ * prompt, tools), content (messages), and policy.
  */
 import type { ResolvedEndpoint } from '#/llm/endpoint';
-import type { HistoryMessage } from '#/llm/history';
 import type { MediaKind, Message, ToolDescription } from '#/llm/message';
 import type { LlmPolicy } from '#/llm/policy/policy';
 import type { Protocol } from '#/llm/protocol/protocol';
@@ -148,11 +147,6 @@ export interface LlmRequestProfile {
 }
 
 export interface LlmRequestContent {
-  readonly entries: readonly HistoryMessage[];
-  readonly usedTokens?: number;
-}
-
-export interface LlmMessageContent {
   readonly messages: readonly Message[];
   readonly usedTokens?: number;
 }
@@ -164,8 +158,4 @@ export interface LlmRequest {
   readonly profile?: LlmRequestProfile;
   readonly content: LlmRequestContent;
   readonly policy?: LlmPolicy;
-}
-
-export interface LlmProtocolRequest extends Omit<LlmRequest, 'content'> {
-  readonly content: LlmMessageContent;
 }

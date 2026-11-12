@@ -1,7 +1,26 @@
 /**
  * Core message model: content parts (text, think, media), tool calls and their streamed fragments, the
- * four message roles, and the accumulator that merges streamed parts into an assistant message.
+ * four message roles with optional runtime `MessageAttributes`, tool-result model rendering, and the
+ * accumulator that merges streamed parts into an assistant message.
  */
+import type { TokenUsage } from '#/llm/usage';
+
+export type FinishReason =
+  | 'completed'
+  | 'tool_calls'
+  | 'truncated'
+  | 'filtered'
+  | 'paused'
+  | 'other';
+
+export interface FinishInfo {
+  readonly finishReason: FinishReason | null;
+  readonly rawFinishReason: string | null;
+}
+
+export interface PromptOrigin {
+  readonly kind: string;
+}
 
 export interface ToolDescription {
   name: string;
@@ -139,27 +158,69 @@ export interface ToolCallPart {
 
 export type StreamedMessagePart = ContentPart | ToolCall | ToolCallPart;
 
+export interface MessageAttributes {
+  source?: string;
+  key?: string;
+  origin?: PromptOrigin;
+  partial?: true;
+  llmTiming?: {
+    llmFirstTokenLatencyMs?: number;
+    llmStreamDurationMs?: number;
+  };
+  note?: string;
+  durationMs?: number;
+}
+
+export type SystemMessageAttributes = MessageAttributes;
+
+export interface UserMessageAttributes extends MessageAttributes {
+  promptId?: string;
+  origin?: PromptOrigin;
+  createdAt?: string;
+  userMessageId?: string;
+  toolCallId?: string;
+  bypassMaxSteps?: boolean;
+}
+
+export interface ToolMessageAttributes extends MessageAttributes {
+  isError?: true;
+  stopTurn?: true;
+  detached?: true;
+}
+
+export interface AssistantMessageAttributes extends MessageAttributes {
+  model?: { provider: string; model: string };
+  usage?: TokenUsage;
+  headers?: Record<string, string>;
+  finish?: FinishInfo;
+  messageId?: string;
+}
+
 export interface SystemMessage {
   readonly role: 'system';
   content: ContentPart[];
   readonly tools?: ToolDescription[];
+  attributes?: SystemMessageAttributes;
 }
 
 export interface UserMessage {
   readonly role: 'user';
   content: ContentPart[];
+  attributes?: UserMessageAttributes;
 }
 
 export interface AssistantMessage {
   readonly role: 'assistant';
   content: ContentPart[];
   toolCalls: ToolCall[];
+  attributes?: AssistantMessageAttributes;
 }
 
 export interface ToolMessage {
   readonly role: 'tool';
   content: ContentPart[];
   readonly toolCallId: string;
+  attributes?: ToolMessageAttributes;
 }
 
 export type Message = SystemMessage | UserMessage | AssistantMessage | ToolMessage;
@@ -184,32 +245,94 @@ export function extractText(message: { readonly content: readonly ContentPart[] 
     .join(sep);
 }
 
-export function createUserMessage(content: string): UserMessage {
+export function createSystemMessage(
+  content: string | ContentPart[],
+  attributes?: SystemMessageAttributes,
+  tools?: ToolDescription[],
+): SystemMessage {
+  return {
+    role: 'system',
+    content: typeof content === 'string' ? [{ type: 'text', text: content }] : content,
+    ...(tools === undefined ? {} : { tools }),
+    ...(attributes === undefined ? {} : { attributes }),
+  };
+}
+
+export function createUserMessage(
+  content: string | ContentPart[],
+  attributes?: UserMessageAttributes,
+): UserMessage {
   return {
     role: 'user',
-    content: [{ type: 'text', text: content }],
+    content: typeof content === 'string' ? [{ type: 'text', text: content }] : content,
+    ...(attributes === undefined ? {} : { attributes }),
   };
 }
 
 export function createAssistantMessage(
   content: ContentPart[],
   toolCalls?: ToolCall[],
+  attributes?: AssistantMessageAttributes,
 ): AssistantMessage {
   return {
     role: 'assistant',
     content,
     toolCalls: toolCalls ?? [],
+    ...(attributes === undefined ? {} : { attributes }),
   };
 }
 
-export function createToolMessage(toolCallId: string, output: string | ContentPart[]): ToolMessage {
+export function createToolMessage(
+  toolCallId: string,
+  output: string | ContentPart[],
+  attributes?: ToolMessageAttributes,
+): ToolMessage {
   const content: ContentPart[] =
     typeof output === 'string' ? [{ type: 'text', text: output }] : output;
   return {
     role: 'tool',
     content,
     toolCallId,
+    ...(attributes === undefined ? {} : { attributes }),
   };
+}
+
+const TOOL_ERROR_STATUS = '<system>ERROR: Tool execution failed.</system>';
+const TOOL_EMPTY_STATUS = '<system>Tool output is empty.</system>';
+const TOOL_EMPTY_ERROR_STATUS = '<system>ERROR: Tool execution failed. Tool output is empty.</system>';
+const TOOL_OUTPUT_EMPTY_TEXT = 'Tool output is empty.';
+
+export interface RenderableToolResult {
+  readonly output: string | readonly ContentPart[];
+  readonly isError?: boolean;
+}
+
+export function renderToolResultForModel(result: RenderableToolResult): ContentPart[] {
+  const output = result.output;
+  const sourcePart = typeof output === 'string' ? undefined : output[0];
+  const single =
+    typeof output === 'string'
+      ? output
+      : output.length === 1 && sourcePart?.type === 'text'
+        ? sourcePart.text
+        : undefined;
+  if (single !== undefined) {
+    if (result.isError === true) {
+      if (single.length === 0) return [{ type: 'text', text: TOOL_EMPTY_ERROR_STATUS }];
+      return [{ type: 'text', text: TOOL_ERROR_STATUS + '\n' + single }];
+    }
+    const trimmed = single.trim();
+    if (trimmed.length === 0 || trimmed === TOOL_OUTPUT_EMPTY_TEXT) {
+      return [{ type: 'text', text: TOOL_EMPTY_STATUS }];
+    }
+    return [sourcePart ?? { type: 'text', text: single }];
+  }
+  const parts = output as readonly ContentPart[];
+  if (parts.every((part) => part.type === 'text' && part.text.trim().length === 0)) {
+    return [{ type: 'text', text: result.isError === true ? TOOL_EMPTY_ERROR_STATUS : TOOL_EMPTY_STATUS }];
+  }
+  if (result.isError === true) return [{ type: 'text', text: TOOL_ERROR_STATUS }, ...parts];
+  return [...parts];
 }
 
 export function isContentPart(part: StreamedMessagePart): part is ContentPart {
@@ -314,7 +437,12 @@ export function mergeInPlace(target: StreamedMessagePart, source: StreamedMessag
 export function salvageInterruptedMessage(message: AssistantMessage): AssistantMessage | null {
   const content = message.content.filter((part) => !isVacuousContentPart(part));
   if (content.length === 0) return null;
-  return { role: 'assistant', content, toolCalls: [] };
+  return {
+    role: 'assistant',
+    content,
+    toolCalls: [],
+    ...(message.attributes === undefined ? {} : { attributes: message.attributes }),
+  };
 }
 
 export interface MessageAccumulator {

@@ -283,7 +283,7 @@ describe('request gateway routes', () => {
         for await (const event of streamLlmRequest(
           routed.request({
             profile: { systemPrompt: '', tools: [] },
-            content: { entries: [{ message: { role: 'user', content: [{ type: 'text', text: 'hi' }] } }] },
+            content: { messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] },
           }),
           { signal: new AbortController().signal },
         )) {

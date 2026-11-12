@@ -394,7 +394,9 @@ function mapEntry(
   value: unknown,
   mapMessage: (message: never) => unknown,
 ): unknown {
-  if (!isRecord(value) || !('message' in value)) return value;
+  if (!isRecord(value)) return value;
+  if ('role' in value) return mapMessage(value as never);
+  if (!('message' in value)) return value;
   return { ...value, message: mapMessage(value['message'] as never) };
 }
 

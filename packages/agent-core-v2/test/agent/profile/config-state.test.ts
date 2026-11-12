@@ -1,5 +1,5 @@
 import { emptyUsage } from '@moonshot-ai/core/llm/usage';
-import type { LlmProtocolRequest } from '@moonshot-ai/core/llm/request';
+import type { LlmRequest } from '@moonshot-ai/core/llm/request';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { LoopRequester } from '#/agent/loop/requesterContract';
@@ -613,7 +613,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
   let requester: LoopRequester;
   let kimiConfig: TestKimiConfig;
   let capturedProvider: unknown;
-  let capturedRequest: LlmProtocolRequest | undefined;
+  let capturedRequest: LlmRequest | undefined;
 
   beforeEach(() => {
     kimiConfig = {

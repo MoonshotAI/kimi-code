@@ -3,7 +3,7 @@
  * to the native shape, then merge turns, annotate, finalize, and flatten into the wire request. Every
  * pass can be traced and can report notices.
  */
-import type { Message, ToolDescription } from '#/llm/message';
+import { renderToolResultForModel, type Message, type ToolDescription } from '#/llm/message';
 import type {
   LlmModelSpec,
   LlmRequestModel,
@@ -73,6 +73,17 @@ export interface PipelineSpec<TOptions, TMessage, TTool, TParams, TRequest> exte
   ) => TRequest;
 }
 
+function lowerableMessage(message: Message): Message {
+  if (message.role !== 'tool') return message;
+  return {
+    ...message,
+    content: renderToolResultForModel({
+      output: message.content,
+      isError: message.attributes?.isError === true,
+    }),
+  };
+}
+
 function convert<TOptions, TMessage, TTool, TParams extends object>(
   module: LlmModule<TOptions>,
   pipeline: PipelineSpec<TOptions, TMessage, TTool, TParams, unknown>,
@@ -97,7 +108,7 @@ function convert<TOptions, TMessage, TTool, TParams extends object>(
   }
   return {
     system: module.profile.systemPrompt,
-    messages: module.content.messages.flatMap((message) => pipeline.message(message, module)),
+    messages: module.content.messages.flatMap((message) => pipeline.message(lowerableMessage(message), module)),
     tools: (module.profile.tools ?? []).filter((tool) => tool.deferred !== true).map(pipeline.tool),
     params,
   };

@@ -1,10 +1,9 @@
 /**
- * Runtime type guards for values that reach the loop from hooks and hosts: history entries, tool
- * calls, LLM outcomes, and tool results.
+ * Runtime type guards for values that reach the loop from hooks and hosts: messages, tool calls, LLM
+ * outcomes, and tool results.
  */
-import type { AssistantMessage, ToolCall } from '#/llm/message';
+import type { AssistantMessage, Message, ToolCall } from '#/llm/message';
 import type { LlmOutcome } from '#/llm/response';
-import type { HistoryMessage } from '#/llm/history';
 
 export { isToolResult } from '#/tool/contract';
 
@@ -32,18 +31,16 @@ function isAssistantMessage(value: unknown): value is AssistantMessage {
   );
 }
 
-export function isEntry(value: unknown): value is HistoryMessage {
-  if (!isObject(value) || !isObject(value['message'])) return false;
-  const message = value['message'];
-  if (!isContent(message['content'])) return false;
-  switch (message['role']) {
+export function isMessage(value: unknown): value is Message {
+  if (!isObject(value) || !isContent(value['content'])) return false;
+  switch (value['role']) {
     case 'system':
     case 'user':
       return true;
     case 'assistant':
-      return isAssistantMessage(message);
+      return isAssistantMessage(value);
     case 'tool':
-      return typeof message['toolCallId'] === 'string';
+      return typeof value['toolCallId'] === 'string';
     default:
       return false;
   }
@@ -53,9 +50,9 @@ export function isLlmOutcome(value: unknown): value is LlmOutcome {
   if (!isObject(value)) return false;
   switch (value['type']) {
     case 'done':
-      return isEntry(value['entry']) && value['entry'].message.role === 'assistant';
+      return isAssistantMessage(value['message']);
     case 'aborted':
-      return value['entry'] === null || (isEntry(value['entry']) && value['entry'].message.role === 'assistant');
+      return value['message'] === null || isAssistantMessage(value['message']);
     case 'failed':
       return (
         isObject(value['error']) &&

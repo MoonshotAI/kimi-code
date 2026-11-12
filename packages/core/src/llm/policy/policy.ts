@@ -4,10 +4,9 @@
  * ends with `llm.ended` and an `LlmOutcome`.
  */
 import { estimateUsedContextTokens } from '#/llm/context-usage';
-import { toRequestMessages } from '#/llm/history';
 import type { ToolDescription } from '#/llm/message';
 import { isAbortError, toLlmErrorMessage } from '#/llm/protocol/errors';
-import type { LlmProtocolRequest, LlmRequest } from '#/llm/request';
+import type { LlmRequest } from '#/llm/request';
 import type { LlmOutcome, LlmRunEvent, LlmRunStarted } from '#/llm/response';
 import { sha256Hex } from '#/utils/hash';
 
@@ -42,7 +41,7 @@ export interface LlmPolicy {
 export interface LlmRunControl {
   readonly signal: AbortSignal;
   readonly onAttempt?: (
-    request: LlmProtocolRequest,
+    request: LlmRequest,
     context: { readonly appliedRecoveries: readonly LlmRecoveryRecord[] },
   ) => void;
   readonly onEvent?: (event: LlmRunEvent) => void;
@@ -84,7 +83,7 @@ function abortedOf(
 ): LlmOutcome {
   return {
     type: 'aborted',
-    entry: result.entry ?? null,
+    message: result.message ?? null,
     reason,
     usage: result.usage,
     headers: result.headers,
@@ -101,7 +100,7 @@ const toolSignature = ({ name, description, parameters }: ToolDescription) => ({
   parameters,
 });
 
-export function llmStartedEvent(request: LlmProtocolRequest): LlmRunStarted {
+export function llmStartedEvent(request: LlmRequest): LlmRunStarted {
   const { model, profile, content } = request;
   const encoder = new TextEncoder();
   const systemPromptHash =
@@ -136,17 +135,20 @@ export async function runLlmRequest(
 ): Promise<LlmOutcome> {
   let outcome: LlmOutcome;
   try {
-    const protocolRequest: LlmProtocolRequest = {
-      ...request,
-      content: {
-        messages: toRequestMessages(request.content.entries),
-        usedTokens: request.content.usedTokens ?? estimateUsedContextTokens(request.content.entries, request.profile),
-      },
-    };
-    outcome = await runAttempts(protocolRequest, control, execution.recoveries);
+    const sizedRequest: LlmRequest =
+      request.content.usedTokens === undefined
+        ? {
+            ...request,
+            content: {
+              ...request.content,
+              usedTokens: estimateUsedContextTokens(request.content.messages, request.profile),
+            },
+          }
+        : request;
+    outcome = await runAttempts(sizedRequest, control, execution.recoveries);
   } catch (error) {
     if (control.signal.aborted || isAbortError(error)) {
-      outcome = { type: 'aborted', entry: null, usage: undefined };
+      outcome = { type: 'aborted', message: null, usage: undefined };
     } else {
       const llmError = toLlmErrorMessage(error);
       outcome = {
@@ -162,7 +164,7 @@ export async function runLlmRequest(
 }
 
 async function runAttempts(
-  request: LlmProtocolRequest,
+  request: LlmRequest,
   control: LlmRunControl,
   recoveries: LlmRecoveryMemory,
 ): Promise<LlmOutcome> {
@@ -173,7 +175,7 @@ async function runAttempts(
   let started = false;
   const pendingNotices: LlmRunEvent[] = [];
   const maxAttempts = resolveMaxAttempts(policy.retry);
-  const start = (resolvedRequest: LlmProtocolRequest): void => {
+  const start = (resolvedRequest: LlmRequest): void => {
     if (started) return;
     started = true;
     onEvent?.(llmStartedEvent(resolvedRequest));
@@ -202,7 +204,7 @@ async function runAttempts(
         if (resolver.recoveryRequest === 'resolved') recoveryRequest = resolvedRequest;
         if (signal.aborted) {
           start(recoveredRequest);
-          return { type: 'aborted', entry: null, usage: undefined };
+          return { type: 'aborted', message: null, usage: undefined };
         }
       }
     } catch (error) {
@@ -234,7 +236,7 @@ async function runAttempts(
         strategy: proposal.strategy,
         action: proposal.action,
         error: result.error,
-        entry: result.entry,
+        message: result.message,
         usage: result.usage,
         headers: result.headers,
         finish: result.finish,
@@ -255,7 +257,7 @@ async function runAttempts(
         maxAttempts,
         delayMs,
         error: result.error,
-        entry: result.entry,
+        message: result.message,
         usage: result.usage,
         headers: result.headers,
         finish: result.finish,
@@ -273,5 +275,5 @@ async function runAttempts(
     return result;
   }
 
-  return { type: 'aborted', entry: null, usage: undefined };
+  return { type: 'aborted', message: null, usage: undefined };
 }

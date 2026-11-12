@@ -7,7 +7,7 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { IEventBus, type ISessionEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { IWireService } from '#/wire/wire';
-import type { HistoryMessage } from '@moonshot-ai/core/llm/history';
+import type { Message } from '@moonshot-ai/core/llm/message';
 import type { IEventDispatcher } from '#/state/eventDispatcher';
 import { TokenCountingRebased } from '#/agent/tokenCounting/tokenCountingOps';
 
@@ -72,7 +72,7 @@ export function stubContextMemory(eventBus?: IEventBus): StubContextMemory {
   const turnStarts: number[] = [];
   let revision = 0;
   const base = stubLoopWithHooks();
-  const replaceHistory = (entries: readonly HistoryMessage[]): boolean => {
+  const replaceHistory = (entries: readonly Message[]): boolean => {
     const previousLength = messages.length;
     const next = entries.map((entry) => contextFromHistoryEntry(entry));
     messages.splice(0, messages.length, ...next);

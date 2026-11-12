@@ -1,14 +1,14 @@
 import { toDisposable } from '#/_base/di/lifecycle';
-import type { IAgentLoopService, LoopErrorHandler, LoopErrorHandlerRegistrationOptions, LoopNotify, LoopNotifyEntry, PromptHandle, PromptPayload, Turn, TurnResult } from '#/agent/loop/loop';
+import type { IAgentLoopService, LoopErrorHandler, LoopErrorHandlerRegistrationOptions, LoopNotify, LoopNotifyMessage, PromptHandle, PromptPayload, Turn, TurnResult } from '#/agent/loop/loop';
 import type { LoopHooks } from '@moonshot-ai/core/loop/contract/hook';
 import { ToolExecutor } from '#/tool/executor';
-import type { HistoryMessage, UserEntry } from '@moonshot-ai/core/llm/history';
+import type { Message, UserMessage } from '@moonshot-ai/core/llm/message';
 import { contextFromHistoryEntry, historyFromContext } from '#/agent/loop/history';
 import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/llm-adapter/contract/capability';
 
 export function submitPromptTurn(
   loop: IAgentLoopService,
-  input: UserEntry,
+  input: UserMessage,
 ): { readonly turn: Turn } {
   void loop.start();
   const { id } = loop.submit(input);
@@ -181,13 +181,14 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
     initializeHistory: async (next) => { stub.replaceHistory(next); },
     queue: { hasPendingRequests: hasPending },
     settleActive(result = { type: 'completed', steps: 0, truncated: false }) { releaseActiveResult?.(result); },
-    submit: ((input: UserEntry | PromptPayload) => {
+    submit: ((input: UserMessage | PromptPayload) => {
       if ('input' in input) throw new Error('client submit is not supported by this stub');
       const turn = startTurn();
-      const id = input.meta?.promptId ?? 'p';
+      const id = input.attributes?.promptId ?? 'p';
+      const { attributes: _attributes, ...coreMessage } = input;
       const message: ContextMessage = {
-        ...input.message,
-        origin: input.meta?.origin as PromptOrigin | undefined,
+        ...coreMessage,
+        origin: input.attributes?.origin as PromptOrigin | undefined,
       };
       pending.push({ kind: 'prompt', message });
       handles.set(id, {
@@ -202,12 +203,12 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
       return { id };
     }) as StubLoop['submit'],
     steer: async () => {},
-    remind(...entries: readonly HistoryMessage[]): void {
+    remind(...entries: readonly Message[]): void {
       for (const entry of entries) {
         pending.push({ kind: 'message', message: contextFromHistoryEntry(entry) });
       }
     },
-    notifyClient: async (input: LoopNotifyEntry) => {
+    notifyClient: async (input: LoopNotifyMessage) => {
       const { id } = stub.notify(input);
       const handle = stub.promptHandle(id);
       const turn = await handle?.launched;
@@ -228,8 +229,8 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
         steered: true,
       };
     },
-    notify: ((note: LoopNotify | LoopNotifyEntry = {}) => {
-      if ('meta' in note) {
+    notify: ((note: LoopNotify | LoopNotifyMessage = {}) => {
+      if ('role' in note) {
         const { id } = stub.submit(note);
         return { id, dropped: false, drop: () => {} };
       }
@@ -252,9 +253,9 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
         },
       };
     }) as unknown as StubLoop['notify'],
-    sendNow: ((input: LoopNotifyEntry | readonly string[]) => {
+    sendNow: ((input: LoopNotifyMessage | readonly string[]) => {
       if (Array.isArray(input)) return Promise.resolve();
-      return stub.submit(input as LoopNotifyEntry);
+      return stub.submit(input as LoopNotifyMessage);
     }) as unknown as StubLoop['sendNow'],
     snapshot() {
       return {

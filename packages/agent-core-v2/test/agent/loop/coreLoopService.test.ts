@@ -190,9 +190,9 @@ describe('core LoopService integration', () => {
     ctx.mockNextResponse({ type: 'text', text: 'two' });
     ctx.mockNextResponse({ type: 'text', text: 'three' });
 
-    const first = submitPromptTurn(loop, { message: { role: 'user', content: [{ type: 'text', text: 'first' }] } }).turn;
-    const second = submitPromptTurn(loop, { message: { role: 'user', content: [{ type: 'text', text: 'second' }] } }).turn;
-    const third = submitPromptTurn(loop, { message: { role: 'user', content: [{ type: 'text', text: 'third' }] } }).turn;
+    const first = submitPromptTurn(loop, { role: 'user', content: [{ type: 'text', text: 'first' }] }).turn;
+    const second = submitPromptTurn(loop, { role: 'user', content: [{ type: 'text', text: 'second' }] }).turn;
+    const third = submitPromptTurn(loop, { role: 'user', content: [{ type: 'text', text: 'third' }] }).turn;
     await Promise.all([first.result, second.result, third.result]);
     subscription.dispose();
 
@@ -280,7 +280,8 @@ describe('core LoopService integration', () => {
     ctx.mockNextResponse({ type: 'text', text: 'bypass answer' });
 
     const { turn } = submitPromptTurn(loop, {
-      message: { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+      role: 'user',
+      content: [{ type: 'text', text: 'hello' }],
     });
     await ctx.untilApproval(true);
     await expect(turn.result).resolves.toMatchObject({
@@ -340,7 +341,8 @@ describe('core LoopService integration', () => {
     ctx.mockNextResponse({ type: 'text', text: 'This should not run.' });
 
     const { turn } = submitPromptTurn(loop, {
-      message: { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+      role: 'user',
+      content: [{ type: 'text', text: 'hello' }],
     });
     await expect(turn.result).resolves.toEqual({ type: 'completed', steps: 1, truncated: false });
     expect(ctx.llmCalls).toHaveLength(1);
@@ -358,20 +360,23 @@ describe('core LoopService integration', () => {
     });
 
     const blocked = loop.submit({
-      message: { role: 'user', content: [{ type: 'text', text: 'block' }] },
-      meta: { promptId: 'blocked' },
+      role: 'user',
+      content: [{ type: 'text', text: 'block' }],
+      attributes: { promptId: 'blocked' },
     });
     await expect(loop.promptHandle(blocked.id)!.completion).resolves.toMatchObject({ state: 'blocked' });
     const failed = loop.submit({
-      message: { role: 'user', content: [{ type: 'text', text: 'fail' }] },
-      meta: { promptId: 'failed' },
+      role: 'user',
+      content: [{ type: 'text', text: 'fail' }],
+      attributes: { promptId: 'failed' },
     });
     await expect(loop.promptHandle(failed.id)!.completion).resolves.toMatchObject({ state: 'failed' });
 
     ctx.mockNextResponse({ type: 'text', text: 'allowed' });
     const allowed = loop.submit({
-      message: { role: 'user', content: [{ type: 'text', text: 'allowed' }] },
-      meta: { promptId: 'allowed' },
+      role: 'user',
+      content: [{ type: 'text', text: 'allowed' }],
+      attributes: { promptId: 'allowed' },
     });
     const allowedCompletion = await loop.promptHandle(allowed.id)!.completion;
     expect(allowedCompletion).toMatchObject({ state: 'completed' });
@@ -446,13 +451,15 @@ describe('core LoopService integration', () => {
       });
     });
     const first = loop.submit({
-      message: { role: 'user', content: [{ type: 'text', text: 'first' }] },
-      meta: { promptId: 'first' },
+      role: 'user',
+      content: [{ type: 'text', text: 'first' }],
+      attributes: { promptId: 'first' },
     });
     await started;
     const second = loop.submit({
-      message: { role: 'user', content: [{ type: 'text', text: 'second' }] },
-      meta: { promptId: 'second' },
+      role: 'user',
+      content: [{ type: 'text', text: 'second' }],
+      attributes: { promptId: 'second' },
     });
     await loop.steer([second.id]);
     ctx.mockNextResponse({ type: 'text', text: 'first answer' });
@@ -481,12 +488,14 @@ describe('core LoopService integration', () => {
       });
     });
     const first = submitPromptTurn(loop, {
-      message: { role: 'user', content: [{ type: 'text', text: 'first' }] },
-      meta: { promptId: 'first' },
+      role: 'user',
+      content: [{ type: 'text', text: 'first' }],
+      attributes: { promptId: 'first' },
     }).turn;
     const second = submitPromptTurn(loop, {
-      message: { role: 'user', content: [{ type: 'text', text: 'second' }] },
-      meta: { promptId: 'second' },
+      role: 'user',
+      content: [{ type: 'text', text: 'second' }],
+      attributes: { promptId: 'second' },
     }).turn;
     await started;
 
@@ -502,8 +511,9 @@ describe('core LoopService integration', () => {
     const lease = loop.tryAcquireQuiescence();
     expect(lease).toBeDefined();
     const held = submitPromptTurn(loop, {
-      message: { role: 'user', content: [{ type: 'text', text: 'held' }] },
-      meta: { promptId: 'held' },
+      role: 'user',
+      content: [{ type: 'text', text: 'held' }],
+      attributes: { promptId: 'held' },
     }).turn;
 
     expect(loop.snapshot().paused).toBe(true);
@@ -576,12 +586,14 @@ describe('core LoopService integration', () => {
         await next();
       });
       const first = loop.submit({
-        message: { role: 'user', content: [{ type: 'text', text: 'first' }] },
-        meta: { promptId: 'first' },
+        role: 'user',
+        content: [{ type: 'text', text: 'first' }],
+        attributes: { promptId: 'first' },
       });
       const second = loop.submit({
-        message: { role: 'user', content: [{ type: 'text', text: 'second' }] },
-        meta: { promptId: 'second' },
+        role: 'user',
+        content: [{ type: 'text', text: 'second' }],
+        attributes: { promptId: 'second' },
       });
       const firstCompletion = loop.promptHandle(first.id)!.completion;
       const secondCompletion = loop.promptHandle(second.id)!.completion;
@@ -620,7 +632,7 @@ describe('core LoopService integration', () => {
 
       expect(second).toBe(first);
       await Promise.all([first, second]);
-      expect(() => loop.submit({ message: { role: 'user', content: [] } })).toThrow();
+      expect(() => loop.submit({ role: 'user', content: [] })).toThrow();
     } finally {
       await subject.dispose();
     }
@@ -633,8 +645,9 @@ describe('core LoopService integration', () => {
       const loop = subject.get(IAgentLoopService);
       const lease = loop.tryAcquireQuiescence();
       const parked = loop.submit({
-        message: { role: 'user', content: [{ type: 'text', text: 'parked' }] },
-        meta: { promptId: 'parked' },
+        role: 'user',
+        content: [{ type: 'text', text: 'parked' }],
+        attributes: { promptId: 'parked' },
       });
       const completion = loop.promptHandle(parked.id)!.completion;
 
@@ -726,8 +739,9 @@ describe('core LoopService integration', () => {
         subject.mockNextResponse({ type: 'text', text: 'detached' });
         subject.mockNextResponse({ type: 'text', text: 'async finished' });
         const submitted = loop.submit({
-          message: { role: 'user', content: [{ type: 'text', text: 'start work' }] },
-          meta: { promptId: 'work' },
+          role: 'user',
+          content: [{ type: 'text', text: 'start work' }],
+          attributes: { promptId: 'work' },
         });
         await subject.untilApproval(true);
         await detached;

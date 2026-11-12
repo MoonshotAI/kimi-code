@@ -1,11 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { createUserEntry } from '@moonshot-ai/core/llm/history';
 import { createUserMessage, extractText } from '@moonshot-ai/core/llm/message';
 import type { LlmRecovery } from '@moonshot-ai/core/llm/policy/recovery';
 import type { LlmResolver } from '@moonshot-ai/core/llm/policy/resolver';
 import type { LlmRetryable } from '@moonshot-ai/core/llm/policy/retry';
-import type { LlmModelSpec, LlmProtocolRequest } from '@moonshot-ai/core/llm/request';
+import type { LlmModelSpec, LlmRequest } from '@moonshot-ai/core/llm/request';
 import { createRequester, type InitializedLlmRequester, type LlmDimension, type LlmRequester, type LlmRequestPart } from '@moonshot-ai/core/llm/requester';
 import { createMockProviderRequester, type MockProviderResponse } from '../../../harness/scripted-generate';
 import { createTestLoop as createLoop } from './factory';
@@ -13,7 +12,7 @@ import { executorFrom, successfulExecutor } from './executor';
 
 const spec: LlmModelSpec = { provider: 'fake', name: 'fake-model' };
 
-function fakeRequester(script: (request: LlmProtocolRequest) => MockProviderResponse, filled: LlmRequestPart = {}): InitializedLlmRequester {
+function fakeRequester(script: (request: LlmRequest) => MockProviderResponse, filled: LlmRequestPart = {}): InitializedLlmRequester {
   return createMockProviderRequester(script).with(filled as never);
 }
 
@@ -29,7 +28,7 @@ function listOf<T>(value: readonly T[] | (() => readonly T[]) | undefined): read
 
 describe('loop.requester', () => {
   it('creates one requester snapshot per turn and fills live history and policies', async () => {
-    const seen: LlmProtocolRequest[] = [];
+    const seen: LlmRequest[] = [];
     let snapshotCount = 0;
     const tools = [{ name: 'baseline', description: 'baseline tool', parameters: { type: 'object', properties: {} } }];
     const requester = fakeRequester((request) => {
@@ -54,7 +53,7 @@ describe('loop.requester', () => {
     const removeResolver = loop.policy.addResolver(resolver);
     const removeRecovery = loop.policy.addRecovery(recovery);
     const removeRetryable = loop.policy.addRetryable(retryable);
-    expect((await loop.runTurn(createUserEntry(createUserMessage('hello')))).type).toBe('done');
+    expect((await loop.runTurn(createUserMessage('hello'))).type).toBe('done');
     expect(snapshotCount).toBe(1);
     expect(seen).toHaveLength(1);
     expect(seen[0]?.model.spec).toEqual(spec);
@@ -69,7 +68,7 @@ describe('loop.requester', () => {
     removeRetryable();
     expect(loop.policy.resolvers).toEqual([]);
 
-    expect((await loop.runTurn(createUserEntry(createUserMessage('again')))).type).toBe('done');
+    expect((await loop.runTurn(createUserMessage('again'))).type).toBe('done');
     expect(snapshotCount).toBe(2);
     expect(seen[1]?.content.messages.map((message) => extractText(message))).toEqual(['hello', 'reply', 'again']);
     expect(listOf(seen[1]?.policy?.resolvers)).toEqual([]);
@@ -79,7 +78,7 @@ describe('loop.requester', () => {
   });
 
   it('setRequester changes only the next turn requester, and with(requester) merges contents', async () => {
-    const seen: LlmProtocolRequest[] = [];
+    const seen: LlmRequest[] = [];
     const models: string[] = [];
     const first = fakeRequester((request) => {
       seen.push(request);
@@ -108,32 +107,32 @@ describe('loop.requester', () => {
       }),
     });
     loop.setRequester(first);
-    expect((await loop.runTurn(createUserEntry(createUserMessage('first')))).type).toBe('done');
+    expect((await loop.runTurn(createUserMessage('first'))).type).toBe('done');
     expect(models).toEqual(['first', 'first']);
     expect(seen[1]?.content.messages.length).toBeGreaterThan(seen[0]!.content.messages.length);
-    expect((await loop.runTurn(createUserEntry(createUserMessage('second')))).type).toBe('done');
+    expect((await loop.runTurn(createUserMessage('second'))).type).toBe('done');
     expect(models).toEqual(['first', 'first', 'second']);
     loop.setRequester(undefined);
-    expect((await loop.runTurn(createUserEntry(createUserMessage('third')))).type).toBe('failed');
+    expect((await loop.runTurn(createUserMessage('third'))).type).toBe('failed');
 
     const other: LlmModelSpec = { provider: 'fake', name: 'other-model' };
-    const source = createRequester().with({ model: { spec } }).with({ content: { entries: [], usedTokens: 5 } });
+    const source = createRequester().with({ model: { spec } }).with({ content: { messages: [], usedTokens: 5 } });
     const merged: LlmRequester<LlmDimension> = createRequester()
       .with({ model: { spec: other, sampling: { temperature: 1 } } })
       .with(source);
     const request = merged.request({});
     expect(request.model?.spec).toEqual(spec);
     expect(request.model?.sampling).toEqual({ temperature: 1 });
-    expect(request.content).toEqual({ entries: [], usedTokens: 5 });
+    expect(request.content).toEqual({ messages: [], usedTokens: 5 });
     const overridden: LlmRequester<LlmDimension> = merged.with({ model: { spec: other } });
     expect(overridden.request({}).model).toEqual({ spec: other, sampling: { temperature: 1 } });
     const fromInitialized = createRequester().with(first);
-    expect(fromInitialized.request({ content: { entries: [], usedTokens: 0 } }).model.spec).toEqual(spec);
+    expect(fromInitialized.request({ content: { messages: [], usedTokens: 0 } }).model.spec).toEqual(spec);
     const fromFacade: LlmRequester<LlmDimension> = createRequester().with(
       source.with({ profile: { systemPrompt: 'side' } }),
     );
     expect(fromFacade.request({}).profile?.systemPrompt).toBe('side');
-    expect(fromFacade.request({}).content?.entries).toEqual([]);
+    expect(fromFacade.request({}).content?.messages).toEqual([]);
     await loop.close();
   });
 });

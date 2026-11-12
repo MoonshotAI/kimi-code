@@ -328,8 +328,9 @@ describe('server-v2 /api/v1 prompts', () => {
       const quiescence = loop.tryAcquireQuiescence();
       expect(quiescence).toBeDefined();
       loop.submit({
-        message: { role: 'user', content: [{ type: 'text', text: 'goal continuation' }] },
-        meta: {
+        role: 'user',
+        content: [{ type: 'text', text: 'goal continuation' }],
+        attributes: {
           promptId: 'goal-queued',
           origin: { kind: 'system_trigger', name: 'goal_continuation' } as PromptOrigin,
         },
@@ -641,7 +642,7 @@ describe('server-v2 /api/v1 prompts', () => {
         prompt_id: 'submission-1',
       });
       await vi.waitFor(() => expect(sendNow).toHaveBeenCalledWith(
-        expect.objectContaining({ message: expect.objectContaining({ content: [{ type: 'text', text: 'direct steer message' }] }) }),
+        expect.objectContaining({ content: [{ type: 'text', text: 'direct steer message' }] }),
       ));
       releaseGate();
       const steered = await pending;

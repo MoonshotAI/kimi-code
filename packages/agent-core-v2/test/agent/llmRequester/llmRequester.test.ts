@@ -5,7 +5,6 @@ import type {
   StreamedMessagePart,
   ToolDescription as Tool,
 } from '@moonshot-ai/core/llm/message';
-import { toHistoryEntries } from '@moonshot-ai/core/llm/history';
 import { emptyUsage } from '@moonshot-ai/core/llm/usage';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -335,8 +334,9 @@ describe('LLMRequester service migration coverage', () => {
         .accessor.get(IAgentLoopService);
       const runChildTurn = async (text: string): Promise<void> => {
         const { id } = childLoop.submit({
-          message: { role: 'user', content: [{ type: 'text', text }] },
-          meta: { origin: { kind: 'user' } },
+          role: 'user',
+          content: [{ type: 'text', text }],
+          attributes: { origin: { kind: 'user' } },
         });
         expect((await childLoop.promptHandle(id)!.completion).state).toBe('completed');
       };
@@ -925,7 +925,7 @@ async function requestCore(
   }, signal);
   const outcome = await operation.generate(
     {
-      content: { entries: overrides.messages === undefined ? undefined : toHistoryEntries(overrides.messages) },
+      content: { messages: overrides.messages },
       profile: { systemPrompt: overrides.systemPrompt, tools: overrides.tools },
       policy: { retry: { maxAttemptsPerStep: 1 } },
     },

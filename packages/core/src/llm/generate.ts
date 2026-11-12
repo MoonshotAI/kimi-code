@@ -7,7 +7,7 @@ import { resolveEndpoint } from '#/llm/endpoint';
 import { isAbortError, toLlmErrorMessage, toLlmSyntaxErrorMessage } from '#/llm/protocol/errors';
 import type { DecodeSink, LlmModule, ProtocolReply } from '#/llm/protocol/protocol';
 import { withProtocolCapabilities } from '#/llm/protocol/rules/model';
-import type { LlmProtocolRequest } from '#/llm/request';
+import type { LlmRequest } from '#/llm/request';
 import type { LlmErrorMessage, LlmRemoteErrorMessage, LlmStreamEvent, LlmTiming } from '#/llm/response';
 import { clock } from '#/utils/clock';
 
@@ -22,7 +22,7 @@ export interface LlmAttemptControl {
   readonly onEvent?: (event: LlmAttemptEvent) => void;
 }
 
-function moduleOf(request: LlmProtocolRequest): LlmModule {
+function moduleOf(request: LlmRequest): LlmModule {
   return {
     model: {
       ...request.model,
@@ -35,7 +35,7 @@ function moduleOf(request: LlmProtocolRequest): LlmModule {
 }
 
 function remoteErrorOf(
-  request: LlmProtocolRequest,
+  request: LlmRequest,
   error: unknown,
   source?: 'stream',
 ): LlmRemoteErrorMessage {
@@ -140,7 +140,7 @@ function createEventSink(
 }
 
 function receive<TBody>(
-  request: LlmProtocolRequest,
+  request: LlmRequest,
   reply: ProtocolReply<TBody>,
   onEvent: ((event: LlmAttemptEvent) => void) | undefined,
 ): TBody {
@@ -154,7 +154,7 @@ function receive<TBody>(
   return reply.body;
 }
 
-export async function generate(request: LlmProtocolRequest, control: LlmAttemptControl): Promise<void> {
+export async function generate(request: LlmRequest, control: LlmAttemptControl): Promise<void> {
   const { base, options, stream = true } = request.protocol;
   const { signal, onEvent } = control;
   const attemptClock = createAttemptClock();

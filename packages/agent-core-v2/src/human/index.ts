@@ -50,7 +50,15 @@ export * from '@moonshot-ai/core/llm/builtin/provider/kimi/schema';
 export * from './credentials';
 export * from '@moonshot-ai/core/tool/executor';
 export * from '@moonshot-ai/core/tool/tool';
-export * from '@moonshot-ai/core/llm/history';
+export {
+  renderToolResultForModel,
+  type AssistantMessageAttributes,
+  type MessageAttributes,
+  type RenderableToolResult,
+  type SystemMessageAttributes,
+  type ToolMessageAttributes,
+  type UserMessageAttributes,
+} from '@moonshot-ai/core/llm/message';
 export * from '@moonshot-ai/core/llm/context-usage';
 export * from './interaction/interaction';
 export * from './interaction/machine';

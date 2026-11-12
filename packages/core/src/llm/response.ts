@@ -2,12 +2,17 @@
  * Request results: finish reasons, the `LlmErrorMessage` union, timing, notices, stream and retry
  * events, the `LlmRunEvent` vocabulary, and the final `LlmOutcome`.
  */
-import type { AssistantEntry, FinishInfo, FinishReason } from '#/llm/history';
-import type { StreamedMessagePart, ToolCall } from '#/llm/message';
+import type {
+  AssistantMessage,
+  FinishInfo,
+  FinishReason,
+  StreamedMessagePart,
+  ToolCall,
+} from '#/llm/message';
 import type { ThinkingEffort } from '#/llm/request';
 import type { TokenUsage } from '#/llm/usage';
 
-export type { FinishInfo, FinishReason } from '#/llm/history';
+export type { FinishInfo, FinishReason } from '#/llm/message';
 export type { TokenUsage };
 
 export const NO_FINISH: FinishInfo = { finishReason: null, rawFinishReason: null };
@@ -176,7 +181,7 @@ export type LlmRetrying =
       readonly type: 'llm.retrying';
       readonly reason: 'backoff';
       readonly error: LlmErrorMessage;
-      readonly entry?: AssistantEntry | null;
+      readonly message?: AssistantMessage | null;
       readonly usage?: TokenUsage;
       readonly headers?: Record<string, string>;
       readonly finish?: FinishInfo;
@@ -192,7 +197,7 @@ export type LlmRetrying =
       readonly type: 'llm.retrying';
       readonly reason: 'recovery';
       readonly error: LlmErrorMessage;
-      readonly entry?: AssistantEntry | null;
+      readonly message?: AssistantMessage | null;
       readonly usage?: TokenUsage;
       readonly headers?: Record<string, string>;
       readonly finish?: FinishInfo;
@@ -204,7 +209,7 @@ export type LlmRetrying =
     };
 
 export interface LlmOutput {
-  readonly entry: AssistantEntry;
+  readonly message: AssistantMessage;
   readonly usage?: TokenUsage;
   readonly headers?: Record<string, string>;
   readonly finish?: FinishInfo;
@@ -223,7 +228,7 @@ export type LlmOutcome =
       readonly rawError?: unknown;
       readonly diagnostics?: LlmErrorDiagnostics;
     } & Partial<LlmOutput>)
-  | ({ readonly type: 'aborted'; readonly entry: AssistantEntry | null; readonly reason?: unknown } & Omit<LlmOutput, 'entry'>);
+  | ({ readonly type: 'aborted'; readonly message: AssistantMessage | null; readonly reason?: unknown } & Omit<LlmOutput, 'message'>);
 
 export interface LlmRequestSummary {
   readonly provider: string;

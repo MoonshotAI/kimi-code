@@ -1,8 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createTestLoop as createLoop } from './core/factory';
-import { createUserEntry, type ToolEntry } from '@moonshot-ai/core/llm/history';
-import { createUserMessage, extractText, type ToolCall } from '@moonshot-ai/core/llm/message';
+import { createUserMessage, extractText, type ToolCall, type ToolMessage } from '@moonshot-ai/core/llm/message';
 import { createMockProviderRequester, type MockProviderResponse } from '../../harness/scripted-generate';
 import type { ToolResult } from '@moonshot-ai/core/tool/executor';
 import { executorFrom } from './core/executor';
@@ -20,7 +19,7 @@ function done(text: string, toolCalls: ToolCall[] = []): MockProviderResponse {
 }
 
 function prompt() {
-  return createUserEntry(createUserMessage('work'));
+  return createUserMessage('work');
 }
 
 function deferred<T>() {
@@ -53,9 +52,9 @@ describe('actor handler execution', () => {
     expect((await loop.runTurn(prompt())).type).toBe('done');
     expect(started).toEqual(['t1', 't2']);
     expect(executed).toEqual(['Bash', 'Read']);
-    const entries = loop.state.messages.filter((entry): entry is ToolEntry => entry.message.role === 'tool');
-    expect(entries.map((entry) => extractText(entry.message))).toEqual(['first', 'second failed']);
-    expect(entries.every((entry) => entry.meta?.stopTurn === undefined)).toBe(true);
+    const entries = loop.state.messages.filter((entry): entry is ToolMessage => entry.role === 'tool');
+    expect(entries.map((entry) => extractText(entry))).toEqual(['first', 'second failed']);
+    expect(entries.every((entry) => entry.attributes?.stopTurn === undefined)).toBe(true);
     await loop.close();
 
     const beforeExecuteError = new Error('beforeExecute blew up');
@@ -78,7 +77,7 @@ describe('actor handler execution', () => {
     });
     expect(await failedLoop.runTurn(prompt())).toMatchObject({ type: 'failed', error: beforeExecuteError });
     expect(failedProjections).toEqual([]);
-    expect(failedLoop.state.messages.some((entry) => entry.message.role === 'tool')).toBe(false);
+    expect(failedLoop.state.messages.some((entry) => entry.role === 'tool')).toBe(false);
     await failedLoop.close();
 
     const vetoedLoop = createLoop({
@@ -92,10 +91,10 @@ describe('actor handler execution', () => {
       }]),
     });
     expect((await vetoedLoop.runTurn(prompt())).type).toBe('done');
-    const vetoed = vetoedLoop.state.messages.find((entry): entry is ToolEntry => entry.message.role === 'tool');
+    const vetoed = vetoedLoop.state.messages.find((entry): entry is ToolMessage => entry.role === 'tool');
     expect(vetoed).toBeDefined();
-    expect(extractText(vetoed!.message)).toBe('synthetic veto');
-    expect(vetoed?.meta?.isError).toBe(true);
+    expect(extractText(vetoed!)).toBe('synthetic veto');
+    expect(vetoed?.attributes?.isError).toBe(true);
     await vetoedLoop.close();
   });
 
@@ -115,13 +114,13 @@ describe('actor handler execution', () => {
     const turn = loop.runTurn(prompt());
 
     const detachedEvent = await detached;
-    expect(extractText(detachedEvent.outcome.entry.message)).toBe('background task_id=task-bg');
+    expect(extractText(detachedEvent.outcome.message)).toBe('background task_id=task-bg');
     expect(await loop.waitForTasks({ taskId: 'bg', timeoutMs: 0 })).toMatchObject({ running: ['bg'] });
     expect((await turn).type).toBe('done');
     gate.resolve();
     expect(await loop.waitForTasks({ taskId: 'bg', timeoutMs: 1000 })).toMatchObject({ completed: ['bg'] });
     await loop.waitForIdle();
-    expect(loop.state.messages.some((entry) => extractText(entry.message).includes('[async tool completed]'))).toBe(true);
+    expect(loop.state.messages.some((entry) => extractText(entry).includes('[async tool completed]'))).toBe(true);
     await loop.close();
 
     const toolGate = deferred<void>();
@@ -149,8 +148,8 @@ describe('actor handler execution', () => {
     const asyncEntries: string[] = [];
     const notifications: string[] = [];
     closingLoop.subscribe((event) => {
-      if (event.type === 'tool.async_ended') asyncEntries.push(extractText(event.entry.message));
-      if (event.type === 'prompt.notified') notifications.push(extractText(event.entry.message));
+      if (event.type === 'tool.async_ended') asyncEntries.push(extractText(event.message));
+      if (event.type === 'prompt.notified') notifications.push(extractText(event.message));
     });
     const started = closingLoop.wait('tool.started');
     const active = closingLoop.runTurn(prompt());
@@ -172,7 +171,7 @@ describe('actor handler execution', () => {
     });
     await Promise.resolve();
     expect(closed).toBe(false);
-    completion.resolve(createUserEntry(createUserMessage('custom closed'), {
+    completion.resolve(createUserMessage('custom closed', {
       source: 'async-tool',
       toolCallId: 'close-bg',
     }));
@@ -204,10 +203,10 @@ describe('actor handler execution', () => {
 
     const rejectedEvent = await asyncRejected;
     expect(rejectedEvent.outcome).toEqual({ type: 'failed', error: rejection });
-    expect(extractText(rejectedEvent.entry.message)).toContain('[async tool failed]');
-    expect(extractText(rejectedEvent.entry.message)).toContain('completion factory rejected');
-    expect(extractText(rejectedEvent.entry.message)).not.toContain('[async tool completed]');
-    expect(extractText((await notifiedRejection).entry.message)).toContain('[async tool failed]');
+    expect(extractText(rejectedEvent.message)).toContain('[async tool failed]');
+    expect(extractText(rejectedEvent.message)).toContain('completion factory rejected');
+    expect(extractText(rejectedEvent.message)).not.toContain('[async tool completed]');
+    expect(extractText((await notifiedRejection).message)).toContain('[async tool failed]');
     expect(rejectedLoop.state.calls).toEqual([]);
     await rejectedLoop.waitForIdle();
     await rejectedLoop.close();
@@ -234,8 +233,8 @@ describe('actor handler execution', () => {
       const asyncEvents: string[] = [];
       const appended: string[] = [];
       resetLoop.subscribe((event) => {
-        if (event.type === 'tool.async_ended') asyncEvents.push(extractText(event.entry.message));
-        if (event.type === 'message.appended' && event.source === 'notify') appended.push(extractText(event.entry.message));
+        if (event.type === 'tool.async_ended') asyncEvents.push(extractText(event.message));
+        if (event.type === 'message.appended' && event.source === 'notify') appended.push(extractText(event.message));
       });
       const detachedReset = resetLoop.wait('tool.ended', { match: (event) => event.detached });
       expect((await resetLoop.runTurn(prompt())).type).toBe('done');
@@ -258,7 +257,7 @@ describe('actor handler execution', () => {
         };
       });
       if (timing === 'during') {
-        resetLoop.notify(createUserEntry(createUserMessage('live before restored'), { promptId: 'live' }));
+        resetLoop.notify(createUserMessage('live before restored', { promptId: 'live' }));
         await resetLoop.wait('tool.async_ended');
         expect(resetLoop.state.turn).toBeUndefined();
         expect(resetLoop.state.resetting).toBe(true);
@@ -320,15 +319,15 @@ describe('actor handler execution', () => {
     gates[0]?.resolve();
     await oldCompleted;
     expect(secondSettled).toBe(false);
-    const pendingEntries = loop.state.messages.filter((entry): entry is ToolEntry => entry.message.role === 'tool');
-    expect(pendingEntries.map((entry) => extractText(entry.message))).toEqual(['old background']);
+    const pendingEntries = loop.state.messages.filter((entry): entry is ToolMessage => entry.role === 'tool');
+    expect(pendingEntries.map((entry) => extractText(entry))).toEqual(['old background']);
 
     gates[1]?.resolve();
     expect((await secondTurn).type).toBe('done');
     await loop.waitForIdle();
-    const entries = loop.state.messages.filter((entry): entry is ToolEntry => entry.message.role === 'tool');
-    expect(entries.map((entry) => extractText(entry.message))).toEqual(['old background', '1:same__2']);
-    expect(loop.state.messages.some((entry) => extractText(entry.message).includes('0:same'))).toBe(true);
+    const entries = loop.state.messages.filter((entry): entry is ToolMessage => entry.role === 'tool');
+    expect(entries.map((entry) => extractText(entry))).toEqual(['old background', '1:same__2']);
+    expect(loop.state.messages.some((entry) => extractText(entry).includes('0:same'))).toBe(true);
     expect(gates).toHaveLength(2);
     await loop.close();
   });
@@ -360,8 +359,8 @@ describe('actor handler execution', () => {
     loop.abortTool('a', 'stop');
     secondRelease.resolve();
     expect((await turn).type).toBe('done');
-    const entries = loop.state.messages.filter((entry): entry is ToolEntry => entry.message.role === 'tool');
-    expect(entries.map((entry) => entry.meta?.isError)).toEqual([true, undefined]);
+    const entries = loop.state.messages.filter((entry): entry is ToolMessage => entry.role === 'tool');
+    expect(entries.map((entry) => entry.attributes?.isError)).toEqual([true, undefined]);
     await loop.close();
 
     const unknownLoop = createLoop({
@@ -369,8 +368,8 @@ describe('actor handler execution', () => {
       executor,
     });
     expect((await unknownLoop.runTurn(prompt())).type).toBe('done');
-    const unknown = unknownLoop.state.messages.find((entry): entry is ToolEntry => entry.message.role === 'tool');
-    expect(unknown?.meta?.isError).toBe(true);
+    const unknown = unknownLoop.state.messages.find((entry): entry is ToolMessage => entry.role === 'tool');
+    expect(unknown?.attributes?.isError).toBe(true);
     await unknownLoop.close();
   });
 });

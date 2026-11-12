@@ -2,7 +2,7 @@
  * Recovery contract, attempt ledger, and requester-scoped memory: a recovery proposes a request rewrite
  * or side effect for a failed attempt; reusable rewrites can be restored by later requests on the same route.
  */
-import type { LlmEndpoint, LlmProtocolRequest } from '#/llm/request';
+import type { LlmEndpoint, LlmRequest } from '#/llm/request';
 import type { LlmErrorMessage } from '#/llm/response';
 
 export interface LlmRecoveryRecord {
@@ -12,12 +12,12 @@ export interface LlmRecoveryRecord {
 
 export interface LlmRecoveryContext {
   readonly error: LlmErrorMessage;
-  readonly request: LlmProtocolRequest;
+  readonly request: LlmRequest;
   readonly appliedRecoveries: readonly LlmRecoveryRecord[];
   readonly endpoint?: LlmEndpoint;
 }
 
-export type LlmRequestRewrite = (request: LlmProtocolRequest) => LlmProtocolRequest;
+export type LlmRequestRewrite = (request: LlmRequest) => LlmRequest;
 
 export interface LlmRecoveryProposal {
   readonly action: string;
@@ -32,8 +32,8 @@ export type LlmRecoveryEntry = LlmRecoveryProposal & LlmRecoveryRecord & {
 };
 
 export interface LlmRecoveryMemory {
-  read(request: LlmProtocolRequest): readonly LlmRecoveryEntry[];
-  record(request: LlmProtocolRequest, entry: LlmRecoveryEntry): void;
+  read(request: LlmRequest): readonly LlmRecoveryEntry[];
+  record(request: LlmRequest, entry: LlmRecoveryEntry): void;
   clear(): void;
 }
 
@@ -43,7 +43,7 @@ export interface LlmRecovery {
 
 export interface LlmRecoveryLedger {
   readonly applied: readonly LlmRecoveryRecord[];
-  apply(request: LlmProtocolRequest): LlmProtocolRequest;
+  apply(request: LlmRequest): LlmRequest;
   record(entry: LlmRecoveryEntry): void;
   fork(filter?: (entry: LlmRecoveryEntry) => boolean): LlmRecoveryLedger;
   map(mapper: (entry: LlmRecoveryEntry) => LlmRecoveryEntry): LlmRecoveryLedger;
@@ -72,7 +72,7 @@ export function createRecoveryMemory(): LlmRecoveryMemory {
   const cached = new Map<string, readonly LlmRecoveryEntry[]>();
   const protocolIds = new WeakMap<object, number>();
   let nextProtocolId = 1;
-  const routeKey = (request: LlmProtocolRequest): string => {
+  const routeKey = (request: LlmRequest): string => {
     const protocol = request.protocol;
     if (protocol.recoveryKey === undefined && !protocolIds.has(protocol.base)) {
       protocolIds.set(protocol.base, nextProtocolId++);

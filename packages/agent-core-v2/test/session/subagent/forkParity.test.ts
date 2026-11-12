@@ -14,7 +14,7 @@ import { INHERITED_IN_FLIGHT_TOOL_OUTPUT } from '#/agent/contextMemory/openToolE
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentTaskService } from '#/agent/task/task';
-import type { LlmMessageContent } from '@moonshot-ai/core/llm/request';
+import type { LlmRequestContent } from '@moonshot-ai/core/llm/request';
 import type { MockProvider } from '../../harness/scripted-generate';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -172,7 +172,7 @@ const STOPPED_CHILD_PROMPT = 'Find why the parser never terminates.';
 const STOPPED_CHILD_FINDING = '已定位 src/parser.ts:42 的循环条件，尚未执行验证。';
 const STOPPED_CHILD_DRAFT = 'Drafting the report: the loop never advances 🔁';
 
-function requestTexts(content: LlmMessageContent, role?: string): string[] {
+function requestTexts(content: LlmRequestContent, role?: string): string[] {
   return content.messages
     .filter((message) => role === undefined || message.role === role)
     .flatMap((message) => message.content)
@@ -245,8 +245,9 @@ describe('subagent task reminders and fork request parity', () => {
 
     const loop = parent.accessor.get(IAgentLoopService);
     const { id } = loop.submit({
-      message: { role: 'user', content: [{ type: 'text', text: 'start the parity probe' }] },
-      meta: { origin: { kind: 'user' } },
+      role: 'user',
+      content: [{ type: 'text', text: 'start the parity probe' }],
+      attributes: { origin: { kind: 'user' } },
     });
     const completion = await loop.promptHandle(id)!.completion;
     expect(completion.state).toBe('completed');
@@ -346,8 +347,9 @@ describe('subagent task reminders and fork request parity', () => {
     ctx.mockNextResponse({ type: 'text', text: CHILD_FINAL_TEXT });
     const loop = agent.accessor.get(IAgentLoopService);
     const { id } = loop.submit({
-      message: { role: 'user', content: [{ type: 'text', text: 'continue the task' }] },
-      meta: { origin: { kind: 'user' } },
+      role: 'user',
+      content: [{ type: 'text', text: 'continue the task' }],
+      attributes: { origin: { kind: 'user' } },
     });
     expect((await loop.promptHandle(id)!.completion).state).toBe('completed');
   }
@@ -376,8 +378,9 @@ describe('subagent task reminders and fork request parity', () => {
 
     const loop = ctx.get(IAgentLoopService);
     const { id } = loop.submit({
-      message: { role: 'user', content: [{ type: 'text', text: 'start the main fork probe' }] },
-      meta: { origin: { kind: 'user' } },
+      role: 'user',
+      content: [{ type: 'text', text: 'start the main fork probe' }],
+      attributes: { origin: { kind: 'user' } },
     });
     const completion = await loop.promptHandle(id)!.completion;
     expect(completion.state).toBe('completed');
@@ -753,8 +756,9 @@ describe('subagent task reminders and fork request parity', () => {
 
     const loop = ctx.get(IAgentLoopService);
     const { id } = loop.submit({
-      message: { role: 'user', content: [{ type: 'text', text: 'investigate the parser loop in the background' }] },
-      meta: { origin: { kind: 'user' } },
+      role: 'user',
+      content: [{ type: 'text', text: 'investigate the parser loop in the background' }],
+      attributes: { origin: { kind: 'user' } },
     });
     expect((await loop.promptHandle(id)!.completion).state).toBe('completed');
     await loop.settled();
@@ -823,8 +827,9 @@ describe('subagent task reminders and fork request parity', () => {
 
     const loop = ctx.get(IAgentLoopService);
     const { id } = loop.submit({
-      message: { role: 'user', content: [{ type: 'text', text: 'investigate the parser loop' }] },
-      meta: { origin: { kind: 'user' } },
+      role: 'user',
+      content: [{ type: 'text', text: 'investigate the parser loop' }],
+      attributes: { origin: { kind: 'user' } },
     });
     await childStreaming;
     expect((await loop.promptHandle(id)!.completion).state).toBe('cancelled');

@@ -16,7 +16,7 @@ export function isDynamicToolSchemaMessage(
 }
 
 export function isLoadableToolsAnnouncement(message: ContextMessage): boolean {
-  const origin = message.origin;
+  const origin = message.origin ?? (message.attributes?.origin as ContextMessage['origin']);
   if (origin?.kind === 'injection') return origin.variant === LOADABLE_TOOLS_VARIANT;
   return origin?.kind === 'system_trigger' && origin.name === LOADABLE_TOOLS_VARIANT;
 }
@@ -35,9 +35,10 @@ export function isToolSelectAnnouncementDisclosure(
 function announcementDisclosure(
   message: ContextMessage,
 ): ToolSelectAnnouncementDisclosure | undefined {
-  if (message.origin?.kind !== 'injection') return undefined;
-  return isToolSelectAnnouncementDisclosure(message.origin.disclosure)
-    ? message.origin.disclosure
+  const origin = message.origin ?? (message.attributes?.origin as ContextMessage['origin']);
+  if (origin?.kind !== 'injection') return undefined;
+  return isToolSelectAnnouncementDisclosure(origin.disclosure)
+    ? origin.disclosure
     : undefined;
 }
 

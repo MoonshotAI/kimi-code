@@ -15,7 +15,7 @@ import {
 import { openAIProtocol } from '@moonshot-ai/core/llm/builtin/protocol/openai/index';
 import { googleGenAIProtocol } from '@moonshot-ai/core/llm/builtin/protocol/google-genai/index';
 import { APIError as RawOpenAISDKAPIError } from 'openai/error';
-import type { LlmProtocolRequest, LlmRequest } from '@moonshot-ai/core/llm/request';
+import type { LlmRequest } from '@moonshot-ai/core/llm/request';
 import type { LlmResolver } from '@moonshot-ai/core/llm/policy/resolver';
 import {
   contentsOf,
@@ -60,12 +60,12 @@ export interface MockProviderResponse {
 }
 
 export type MockProviderHandler = (
-  request: LlmProtocolRequest,
+  request: LlmRequest,
   signal: AbortSignal,
 ) => MockProviderResponse | Promise<MockProviderResponse>;
 
 interface PreparedAttempt {
-  readonly request: LlmProtocolRequest;
+  readonly request: LlmRequest;
   readonly result: {
     readonly id: string | null;
     readonly message: AssistantMessage;
@@ -82,11 +82,11 @@ interface PreparedAttempt {
 }
 
 export interface MockProvider {
-  respond(request: LlmProtocolRequest, signal: AbortSignal): PreparedAttempt | Promise<PreparedAttempt>;
+  respond(request: LlmRequest, signal: AbortSignal): PreparedAttempt | Promise<PreparedAttempt>;
   readonly fetch: typeof fetch;
 }
 
-export function generateCallOf(request: LlmProtocolRequest): GenerateCall {
+export function generateCallOf(request: LlmRequest): GenerateCall {
   return normalizeGenerateInput({
     systemPrompt: request.profile?.systemPrompt ?? '',
     tools: (request.profile?.tools ?? []).filter((tool) => tool.deferred !== true).map(({ name, description, parameters }) => ({
@@ -94,7 +94,9 @@ export function generateCallOf(request: LlmProtocolRequest): GenerateCall {
       description,
       parameters,
     })),
-    history: structuredClone([...request.content.messages]),
+    history: structuredClone(
+      request.content.messages.map(({ attributes: _attributes, ...message }) => message),
+    ),
   });
 }
 
@@ -151,7 +153,7 @@ export function createMockProviderRequester(
 }
 
 function prepareProviderAttempt(
-  request: LlmProtocolRequest,
+  request: LlmRequest,
   response: MockProviderResponse,
   index: number,
 ): PreparedAttempt {
@@ -450,7 +452,7 @@ function googleErrorStatus(statusCode: number): string {
   }
 }
 
-function protocolKind(request: LlmProtocolRequest): 'openai' | 'anthropic' | 'responses' | 'google' {
+function protocolKind(request: LlmRequest): 'openai' | 'anthropic' | 'responses' | 'google' {
   const base = request.protocol.base;
   if (base.client === anthropicProtocol.client || base.client === kimiAnthropicProtocol.client) return 'anthropic';
   if (base.client === openAIResponsesProtocol.client || base.client === kimiResponsesProtocol.client) return 'responses';

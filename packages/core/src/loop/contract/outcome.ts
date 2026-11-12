@@ -2,7 +2,7 @@
  * Outcome types for turns, steps, tool calls, and detached (async) tool calls, plus the standard
  * causes issued by the loop itself.
  */
-import type { ToolEntry } from '#/llm/history';
+import type { ToolMessage } from '#/llm/message';
 import type { Cause } from '#/tool/contract';
 
 export type { Cause } from '#/tool/contract';
@@ -31,10 +31,10 @@ export type StepOutcome =
   | { readonly type: 'blocked'; readonly at: 'step.starting' | StepEndingPoint; readonly cause: Cause };
 
 export type ToolCallOutcome =
-  | { readonly type: 'succeeded'; readonly entry: ToolEntry }
-  | { readonly type: 'failed'; readonly entry: ToolEntry; readonly error: unknown }
-  | { readonly type: 'aborted'; readonly entry: ToolEntry; readonly reason?: unknown }
-  | { readonly type: 'blocked'; readonly entry: ToolEntry; readonly cause: Cause };
+  | { readonly type: 'succeeded'; readonly message: ToolMessage }
+  | { readonly type: 'failed'; readonly message: ToolMessage; readonly error: unknown }
+  | { readonly type: 'aborted'; readonly message: ToolMessage; readonly reason?: unknown }
+  | { readonly type: 'blocked'; readonly message: ToolMessage; readonly cause: Cause };
 
 export type AsyncToolOutcome =
   | { readonly type: 'succeeded' }

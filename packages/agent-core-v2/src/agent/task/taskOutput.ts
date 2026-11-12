@@ -5,7 +5,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { ILogService } from '#/_base/log/log';
 import { escapeXml, escapeXmlAttr, escapeXmlTags } from '#/_base/utils/xml-escape';
 import { userCancellationReason } from '#/_base/utils/abort';
-import { createUserEntry, type UserEntry } from '@moonshot-ai/core/llm/history';
+import { createUserMessage, type UserMessage } from '@moonshot-ai/core/llm/message';
 import type { TaskOrigin } from '#/agent/contextMemory/types';
 import { environmentTempTarget, IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -42,7 +42,7 @@ export interface IAgentTaskOutputService extends ToolOutputStore {
     info: AgentTaskInfo,
     toolCallId: string,
     output?: AgentTaskOutputSnapshot,
-  ): Promise<UserEntry>;
+  ): Promise<UserMessage>;
 }
 
 export const IAgentTaskOutputService = createDecorator<IAgentTaskOutputService>('agentTaskOutputService');
@@ -90,7 +90,7 @@ export class AgentTaskOutputService implements IAgentTaskOutputService {
     info: AgentTaskInfo,
     toolCallId: string,
     output?: AgentTaskOutputSnapshot,
-  ): Promise<UserEntry> {
+  ): Promise<UserMessage> {
     let snapshot = output;
     if (snapshot === undefined) {
       try {
@@ -121,7 +121,7 @@ export function createTaskCompletionEntry(
   info: AgentTaskInfo,
   toolCallId: string,
   output: AgentTaskOutputSnapshot,
-): UserEntry {
+): UserMessage {
   const notification = buildAgentTaskNotification(info, output);
   const origin: TaskOrigin = {
     kind: 'task',
@@ -129,10 +129,7 @@ export function createTaskCompletionEntry(
     status: info.status,
     notificationId: taskNotificationId(info.taskId, info.status),
   };
-  return createUserEntry({
-    role: 'user',
-    content: [{ type: 'text', text: renderNotificationXml(notification) }],
-  }, {
+  return createUserMessage(renderNotificationXml(notification), {
     source: 'async-tool',
     promptId: notification.id,
     toolCallId,

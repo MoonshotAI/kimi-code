@@ -91,8 +91,7 @@ export const toolResultToPlainText: Pattern<Message> = {
       consumed: 1,
       replacement: [
         {
-          role: 'tool',
-          toolCallId: message.toolCallId,
+          ...message,
           content: [
             { type: 'text', text: convertToolResultToPlainText(message) },
             ...message.content.filter((part): part is ThinkPart => part.type === 'think'),

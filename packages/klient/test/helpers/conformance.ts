@@ -24,7 +24,6 @@ import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/cata
 import { IModelService } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model';
 import { IProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocol';
 import { streamLlmRequest } from '@moonshot-ai/core/llm/stream';
-import { toHistoryEntries } from '@moonshot-ai/core/llm/history';
 import {
   createMockProvider,
   withMockProvider,
@@ -161,11 +160,9 @@ export function defineKlientConformance(
         const mainHandle = parentHandle.accessor.get(IAgentLifecycleService).handleOf(main.agentId)!;
         const loop = mainHandle.accessor.get(IAgentLoopService);
         loop.submit({
-          message: {
-            role: 'user',
-            content: [{ type: 'text', text: 'fork through this turn' }],
-          },
-          meta: { origin: { kind: 'user' } },
+          role: 'user',
+          content: [{ type: 'text', text: 'fork through this turn' }],
+          attributes: { origin: { kind: 'user' } },
         });
         await loop.settled();
         await mainHandle.accessor.get(IWireService).flush();
@@ -507,7 +504,7 @@ export function defineKlientConformance(
       const publicInput = {
         systemPrompt: '',
         tools: [],
-        entries: toHistoryEntries([
+        messages: [
           {
             role: 'user' as const,
             content: [
@@ -518,12 +515,12 @@ export function defineKlientConformance(
               },
             ],
           },
-        ]),
+        ],
       };
       const coreInput = {
         systemPrompt: '',
         tools: [],
-        entries: toHistoryEntries([
+        messages: [
           {
             role: 'user' as const,
             content: [
@@ -534,7 +531,7 @@ export function defineKlientConformance(
               },
             ],
           },
-        ]),
+        ],
       };
       try {
         await consume(kosong.generate(kimiId, publicInput, { model: { thinking: { effort: 'on' } } }));
@@ -548,7 +545,7 @@ export function defineKlientConformance(
           return streamLlmRequest(
             requester.request({
               profile: { systemPrompt: coreInput.systemPrompt, tools: coreInput.tools },
-              content: { entries: coreInput.entries },
+              content: { messages: coreInput.messages },
             }),
             { signal: new AbortController().signal },
           );
@@ -603,8 +600,10 @@ export function defineKlientConformance(
               type: 'llm.ended',
               outcome: expect.objectContaining({
                 type: 'done',
-                entry: expect.objectContaining({
-                  message: { role: 'assistant', content: [responsePart], toolCalls: [] },
+                message: expect.objectContaining({
+                  role: 'assistant',
+                  content: [responsePart],
+                  toolCalls: [],
                 }),
               }),
             }),

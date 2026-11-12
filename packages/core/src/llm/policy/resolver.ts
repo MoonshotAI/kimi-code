@@ -1,7 +1,7 @@
 /**
  * `LlmResolver` contract: a per-attempt step that rewrites the request before it is sent.
  */
-import type { LlmProtocolRequest } from '#/llm/request';
+import type { LlmRequest } from '#/llm/request';
 import type { LlmNoticeSink } from '#/llm/response';
 import type { LlmRecoveryRecord } from './recovery';
 
@@ -14,5 +14,5 @@ export interface LlmResolveControl {
 export interface LlmResolver {
   readonly id: string;
   readonly recoveryRequest?: 'resolved';
-  resolve(request: LlmProtocolRequest, ctl: LlmResolveControl): Promise<LlmProtocolRequest>;
+  resolve(request: LlmRequest, ctl: LlmResolveControl): Promise<LlmRequest>;
 }

@@ -1,10 +1,9 @@
 /**
- * Hook failure reporting: failure text and causes, the user entry that tells the model a hook failed,
+ * Hook failure reporting: failure text and causes, the user message that tells the model a hook failed,
  * and the `hook.failed` event.
  */
-import { createUserMessage } from '#/llm/message';
+import { createUserMessage, type UserMessage } from '#/llm/message';
 import { errorText } from '#/llm/protocol/errors';
-import { createUserEntry, type UserEntry } from '#/llm/history';
 import type { ToolHookPoint } from '#/tool/executor';
 import type { HookFailedEvent } from '../contract/emitted';
 import type { HookPoint as LoopHookPoint } from '../contract/hook';
@@ -21,7 +20,7 @@ export interface HookFailure {
 
 export interface HookFailureReport {
   readonly failure: HookFailure;
-  readonly entry: UserEntry;
+  readonly message: UserMessage;
 }
 
 export function hookFailureText(point: HookPoint, error: unknown): string {
@@ -32,12 +31,12 @@ export function hookFailureCause(point: HookPoint, error: unknown, by?: string):
   return { ...(by === undefined ? {} : { by }), reason: 'hook_failed', message: hookFailureText(point, error) };
 }
 
-export function hookFailureEntry(point: HookPoint, error: unknown): UserEntry {
-  return createUserEntry(createUserMessage(hookFailureText(point, error)), { source: 'hook', key: point });
+export function hookFailureMessage(point: HookPoint, error: unknown): UserMessage {
+  return createUserMessage(hookFailureText(point, error), { source: 'hook', key: point });
 }
 
 export function hookFailureReports(point: HookPoint, failures: readonly HookFailure[]): HookFailureReport[] {
-  return failures.map((failure) => ({ failure, entry: hookFailureEntry(point, failure.error) }));
+  return failures.map((failure) => ({ failure, message: hookFailureMessage(point, failure.error) }));
 }
 
 export function runtimeFailure(error: unknown): HookFailure {

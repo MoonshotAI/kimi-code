@@ -4,7 +4,7 @@ llm 是 `@moonshot-ai/core` 内独立的 LLM 请求库（`packages/core/src/llm/
 
 ## 设计原则
 
-1. **最小边界：llm = 「单次请求」**。核心通过 `createRequester().with(...)` 组合请求，并由 `generate` 返回 `LlmOutcome`。catalog 刷新状态、session 用量台账、HistoryMessage/meta、compaction、switch、媒体文件系统和 Tool Message 组装都不在核心内，也不存在第二套 requester 或兼容事件协议。
+1. **最小边界：llm = 「单次请求」**。核心通过 `createRequester().with(...)` 组合请求，并由 `generate` 返回 `LlmOutcome`。请求内容直接使用带可选 `MessageAttributes` 的 `Message`，随行属性在 resolver 与 legalize 阶段全程保留，仅在最终转换为 `NativeModule` 时一次收敛（同时完成工具错误与空输出状态渲染）；返回结果包含带真实 model、usage、finish 等 `attributes` 的 `AssistantMessage`。catalog 刷新状态、session 用量台账、compaction、switch、媒体文件系统和 turn 编排都不在核心内，也不存在外层 `HistoryEntry` 包装、第二套 requester 或兼容事件协议。
 2. **流式优先；outcome 与事件各司其职**。核心执行返回 `done / failed / aborted` 的 `LlmOutcome`，同时按到达顺序发出 `LlmRunEvent`。`streamLlmRequest` 把同一事件联合以 `AsyncIterable` 暴露给 transport，最终以携带 outcome 的 `llm.ended` 收尾。流式与非流式共用解码器：`stream: false` 使用 `send`，再把完整响应经同一解码器 replay。
 3. **pipeline 屏蔽协议差异；协议补丁表达供应商定制**。每个协议都是 `defineProtocol` 对象（`packages/core/src/llm/protocol/protocol.ts`）：`runPipeline` 组合编码阶段（cacheKey → thinking → responseFormat → maxOutputTokens → sampling → tool → message → mergeTurns → annotate → finalize → flatten），前置 legalize 处理媒体、工具调用 id、供应商 pattern、thinking 历史和模型规则。协议同时提供流式 decoder、非流式 replay、错误 decoder 以及 client/send/sendStream 传输。供应商经 `protocol.with(patch)` 派生协议；Kimi 位于 `packages/core/src/llm/builtin/provider/kimi/protocol.ts`。endpoint 声明和环境变量回退统一由 `packages/core/src/llm/endpoint.ts` 解析。
 4. **两层错误模型**。本地校验抛出 `llm/protocol/errors.ts` 的 `SyntaxRequestFormatError`，由 `toLlmSyntaxErrorMessage` 转换。协议与传输失败形成 failed `LlmOutcome` 中的 `LlmErrorMessage`，保留 status 字段、原始错误、request id 和协议诊断。协议可通过可选 `diagnoseError` 从当前 attempt 提取供应商专属信息，不再对外暴露通用 `traceId`。调用方直接消费 core 错误值，不再经过第二套错误联合。

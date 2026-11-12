@@ -18,7 +18,7 @@ import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLi
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import type { PromptPayload } from '#/agent/loop/loop';
-import type { UserEntry } from '@moonshot-ai/core/llm/history';
+import type { UserMessage } from '@moonshot-ai/core/llm/message';
 import { stubLog } from '../../_base/log/stubs';
 import { stubLoopWithHooks, type StubLoop } from '../../agent/loop/stubs';
 
@@ -52,9 +52,10 @@ describe('RestGateway', () => {
     ix = disposables.add(new TestInstantiationService());
     promptCalls = [];
     turnService = stubLoopWithHooks({ hasActiveTurn: true });
-    turnService.submit = ((input: UserEntry | PromptPayload) => {
+    turnService.submit = ((input: UserMessage | PromptPayload) => {
       if ('input' in input) throw new Error('unused in this suite');
-      promptCalls.push({ ...input.message, origin: input.meta?.origin as PromptOrigin | undefined });
+      const { attributes: _attributes, ...coreMessage } = input;
+      promptCalls.push({ ...coreMessage, origin: input.attributes?.origin as PromptOrigin | undefined });
       return { id: 'p' };
     }) as StubLoop['submit'];
 

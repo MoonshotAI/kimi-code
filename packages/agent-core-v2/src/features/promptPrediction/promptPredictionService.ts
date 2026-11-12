@@ -154,7 +154,7 @@ export class SessionPromptPredictionService extends Disposable implements ISessi
       const outcome = await abortable(requester.generate(
         {
           content: {
-            entries: historyFromContext([...contextSnapshot, createUserMessage(PROMPT_PREDICTION_INSTRUCTION)]),
+            messages: historyFromContext([...contextSnapshot, createUserMessage(PROMPT_PREDICTION_INSTRUCTION)]),
           },
           profile: {},
         },
@@ -170,7 +170,7 @@ export class SessionPromptPredictionService extends Disposable implements ISessi
       active.timing = outcome.timing;
       const prediction = predictionText(outcome);
       if (prediction === null) {
-        active.outcome = outcome.entry.message.toolCalls.length > 0 ? 'tool_call' : 'invalid';
+        active.outcome = outcome.message.toolCalls.length > 0 ? 'tool_call' : 'invalid';
         return null;
       }
       active.predictionChars = prediction.length;
@@ -326,8 +326,8 @@ export class SessionPromptPredictionService extends Disposable implements ISessi
 }
 
 function predictionText(outcome: Extract<LlmOutcome, { type: 'done' }>): string | null {
-  if (outcome.finish?.finishReason !== 'completed' || outcome.entry.message.toolCalls.length > 0) return null;
-  const parts = outcome.entry.message.content;
+  if (outcome.finish?.finishReason !== 'completed' || outcome.message.toolCalls.length > 0) return null;
+  const parts = outcome.message.content;
   if (parts.some((part) => part.type !== 'text' && part.type !== 'think')) return null;
   const text = parts.map((part) => part.type === 'text' ? part.text : '').join('').trim();
   if (

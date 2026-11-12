@@ -7,16 +7,14 @@ import { OrderedHookSlot } from '#/hooks';
 import { IEventBus } from '#/app/event/eventBus';
 import type { Event2, Event2Class } from '#/app/event/event2';
 import { IFlagService } from '#/app/flag/flag';
-import type { ModelCapability } from '@moonshot-ai/core/llm/request';
+import type { LlmRequest, ModelCapability } from '@moonshot-ai/core/llm/request';
 import { fromLlmModelSpec, type ModelCapability as LegacyModelCapability } from '#/llm-adapter/contract/capability';
 import type { Message, ToolCall, ToolDescription as Tool } from '@moonshot-ai/core/llm/message';
-import type { LlmProtocolRequest } from '@moonshot-ai/core/llm/request';
 import { IAgentMcpService } from '#/agent/mcp/mcp';
 import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { contextFromHistoryEntry } from '#/agent/loop/history';
 import { AgentSpaceImpl } from '#/agent/agentContext/agentSpace';
-import type { HistoryMessage } from '@moonshot-ai/core/llm/history';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { createReminderHarness } from '../../features/reminder/stubs';
 import {
@@ -260,11 +258,11 @@ class FakeLoopService extends StubEffectiveProfileReader implements IAgentLoopSe
     return 0;
   }
 
-  replaceHistory(_entries: readonly HistoryMessage[]): boolean {
+  replaceHistory(_entries: readonly Message[]): boolean {
     return true;
   }
 
-  async initializeHistory(_entries: readonly HistoryMessage[]): Promise<void> {}
+  async initializeHistory(_entries: readonly Message[]): Promise<void> {}
 
   readonly hooks: IAgentLoopService['hooks'] = {
     onWillBeginStep: new OrderedHookSlot<BeforeStepContext>(),
@@ -355,16 +353,16 @@ class FakeContextMemory extends FakeLoopService {
     return this.messages;
   }
 
-  override replaceHistory(entries: readonly HistoryMessage[], _reason?: string): boolean {
+  override replaceHistory(entries: readonly Message[], _reason?: string): boolean {
     this.messages.splice(0, this.messages.length, ...entries.map((entry) => contextFromHistoryEntry(entry)));
     return true;
   }
 
-  override async initializeHistory(entries: readonly HistoryMessage[]): Promise<void> {
+  override async initializeHistory(entries: readonly Message[]): Promise<void> {
     this.replaceHistory(entries);
   }
 
-  override remind(...entries: readonly HistoryMessage[]): void {
+  override remind(...entries: readonly Message[]): void {
     this.appended.push(...entries.map((entry) => contextFromHistoryEntry(entry)));
   }
 
@@ -490,12 +488,12 @@ function resolveWith(
     readonly inferredCapabilities?: ModelCapability;
     readonly dynamic?: boolean;
   },
-): Promise<LlmProtocolRequest> {
-  const request: LlmProtocolRequest = {
+): Promise<LlmRequest> {
+  const request: LlmRequest = {
     protocol: {
       base: {
         capability: () => input.inferredCapabilities,
-      } as unknown as LlmProtocolRequest['protocol']['base'],
+      } as unknown as LlmRequest['protocol']['base'],
     },
     model: {
       spec: { provider: 'test', name: 'test-model', capability: input.capabilities },

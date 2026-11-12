@@ -2,7 +2,7 @@
  * Runs the active hooks at each loop hook point in registration order, validates their decisions, and
  * applies each hook's failure policy (pause the hook, or block) when it throws or returns an invalid value.
  */
-import type { HistoryMessage } from '#/llm/history';
+import type { Message } from '#/llm/message';
 import type { ToolResult } from '#/tool/executor';
 import type {
   HookPoint,
@@ -19,7 +19,7 @@ import type {
 } from '../contract/hook';
 import type { QueuedItem } from '../contract/inbox';
 import type { Cause, StepEndingPoint, StepOutcome } from '../contract/outcome';
-import { isEntry, isObject, isToolResult } from '../guards';
+import { isMessage, isObject, isToolResult } from '../guards';
 import { hookFailureCause, type HookFailure } from './failure';
 import type { HookItem, HookSource } from './registry';
 
@@ -44,7 +44,7 @@ function isTurnStartingVerdict(value: unknown): value is TurnStartingVerdict {
 function isMessageAppendingDecision(value: unknown): value is MessageAppendingDecision {
   return (
     isObject(value) &&
-    (value['entry'] === undefined || isEntry(value['entry'])) &&
+    (value['message'] === undefined || isMessage(value['message'])) &&
     (value['blocked'] === undefined || isCause(value['blocked']))
   );
 }
@@ -53,7 +53,7 @@ function isStepStartingDecision(value: unknown): value is StepStartingDecision {
   return (
     isObject(value) &&
     (value['messages'] === undefined ||
-      (Array.isArray(value['messages']) && value['messages'].every(isEntry))) &&
+      (Array.isArray(value['messages']) && value['messages'].every(isMessage))) &&
     (value['blocked'] === undefined || isCause(value['blocked']))
   );
 }
@@ -142,7 +142,7 @@ export async function runTurnStarting(
 }
 
 export interface MessageAppendingRun {
-  entry: HistoryMessage;
+  message: Message;
   blocked?: Cause;
   failures: HookFailure[];
 }
@@ -153,21 +153,21 @@ export async function runMessageAppending(
   signal: AbortSignal,
 ): Promise<MessageAppendingRun> {
   const failures: HookFailure[] = [];
-  let entry: HistoryMessage = event.item.entry;
+  let message: Message = event.item.message;
   for (const item of source.active('message.appending')) {
-    const current: MessageAppendingEvent = { ...event, item: { ...event.item, entry } as QueuedItem };
+    const current: MessageAppendingEvent = { ...event, item: { ...event.item, message } as QueuedItem };
     const run = await runItem(item, () => item.hook(current, signal), isMessageAppendingDecision);
     if (run.failure !== undefined) failures.push(run.failure);
-    entry = run.decision?.entry ?? entry;
+    message = run.decision?.message ?? message;
     const decided = run.decision?.blocked;
     const blocked = decided === undefined ? run.blocked : signed(decided, item);
-    if (blocked !== undefined) return { entry, blocked, failures };
+    if (blocked !== undefined) return { message, blocked, failures };
   }
-  return { entry, failures };
+  return { message, failures };
 }
 
 export interface StepStartingRun {
-  messages: readonly HistoryMessage[];
+  messages: readonly Message[];
   rewrittenBy?: string;
   blocked?: Cause;
   failures: HookFailure[];
@@ -221,7 +221,7 @@ export interface StepEndingInput {
   readonly turnId: number;
   readonly step: number;
   readonly draft: StepOutcome;
-  readonly messages: readonly HistoryMessage[];
+  readonly messages: readonly Message[];
 }
 
 export interface StepEndingFailure {

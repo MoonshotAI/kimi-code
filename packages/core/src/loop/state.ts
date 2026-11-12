@@ -3,9 +3,8 @@
  * mutates, and pure helpers over them (turn creation, step outcome drafting, tool settlement,
  * resumability checks).
  */
-import type { HistoryMessage, ToolEntry, UserEntry } from '#/llm/history';
 import { annotateBundledSkillParts, type UserPromptOrigin } from '#/llm/origin';
-import type { AssistantMessage, ToolCall } from '#/llm/message';
+import type { AssistantMessage, Message, ToolCall, ToolMessage, UserMessage } from '#/llm/message';
 import type { LlmOutcome } from '#/llm/response';
 import type { ToolExecutionHandler, ToolResult } from '#/tool/runtime';
 import { withAbort, type AbortScope } from '#/utils/abort';
@@ -39,7 +38,7 @@ export interface LoopState {
   readonly resetting: boolean;
   readonly inbox: Readonly<Inbox>;
   readonly profile: LoopProfile;
-  readonly messages: readonly HistoryMessage[];
+  readonly messages: readonly Message[];
   readonly nextTurnId: number;
   readonly turn?: LoopTurn;
   readonly calls: readonly LoopToolCall[];
@@ -89,7 +88,7 @@ export interface StepState {
   llm?: LlmOutcome;
   partialMessage?: AssistantMessage | null;
   readonly calls: StepCall[];
-  readonly settled: Record<string, ToolEntry | null>;
+  readonly settled: Record<string, ToolMessage | null>;
   outcome?: StepOutcome;
 }
 
@@ -105,8 +104,8 @@ export interface LiveTool {
   done: boolean;
   result?: ToolResult;
   completion?: ToolCompletionFactory;
-  completionEntry?: Promise<UserEntry>;
-  completionEntryValue?: UserEntry;
+  completionMessage?: Promise<UserMessage>;
+  completionMessageValue?: UserMessage;
   completionOutcome?: AsyncToolOutcome;
   completionPending?: boolean;
   readonly waiters: Set<() => void>;
@@ -124,8 +123,8 @@ export interface AgentState {
 }
 
 export type AppendedItem =
-  | { source: MessageSource; entry: HistoryMessage; blocked?: Cause }
-  | { source: 'notify'; entry: UserEntry; failure: HookFailure };
+  | { source: MessageSource; message: Message; blocked?: Cause }
+  | { source: 'notify'; message: UserMessage; failure: HookFailure };
 
 export type StateOutput =
   | { readonly type: 'event'; readonly event: LoopEmitted }
@@ -163,21 +162,21 @@ export function hasTrigger(inbox: Inbox): boolean {
   return inbox.normal.length > 0 || inbox.notify.length > 0;
 }
 
-export function canContinue(messages: readonly HistoryMessage[]): boolean {
-  const role = messages.at(-1)?.message.role;
+export function canContinue(messages: readonly Message[]): boolean {
+  const role = messages.at(-1)?.role;
   return role === 'user' || role === 'tool';
 }
 
-export function trailingCalls(messages: readonly HistoryMessage[]): { unresolved: ToolCall[]; stopped: boolean } {
-  const index = messages.findLastIndex((entry) => entry.message.role === 'assistant');
-  const assistant = messages[index]?.message;
+export function trailingCalls(messages: readonly Message[]): { unresolved: ToolCall[]; stopped: boolean } {
+  const index = messages.findLastIndex((message) => message.role === 'assistant');
+  const assistant = messages[index];
   if (assistant?.role !== 'assistant') return { unresolved: [], stopped: false };
   const after = messages.slice(index + 1);
-  const results = after.filter((entry): entry is ToolEntry => entry.message.role === 'tool');
-  const answered = new Set(results.map((entry) => entry.message.toolCallId));
+  const results = after.filter((message): message is ToolMessage => message.role === 'tool');
+  const answered = new Set(results.map((message) => message.toolCallId));
   return {
     unresolved: assistant.toolCalls.filter((toolCall) => !answered.has(toolCall.id)),
-    stopped: results.length === after.length && results.some((entry) => entry.meta?.stopTurn === true),
+    stopped: results.length === after.length && results.some((message) => message.attributes?.stopTurn === true),
   };
 }
 
@@ -190,8 +189,8 @@ export function isResumable(durable: LoopRecordState): boolean {
 export function restorePending(inbox: Inbox, pending: readonly QueuedItem[]): Inbox {
   const restored: Inbox = { normal: [], notify: [], remind: [] };
   for (const item of pending) {
-    if (item.kind === 'remind') restored.remind.push(item.entry);
-    else restored[item.kind].push(item.entry);
+    if (item.kind === 'remind') restored.remind.push(item.message);
+    else restored[item.kind].push(item.message);
   }
   return {
     normal: [...restored.normal, ...inbox.normal],
@@ -246,7 +245,7 @@ export function settleUnfinished(tx: StateTx, outcome: StepOutcome): void {
   for (const toolCall of trailingCalls(tx.ctx.durable.messages).unresolved) {
     const result = abortedToolOutcome(toolCall, CRASHED);
     record(tx, { type: 'tool.ended', toolCallId: toolCall.id, outcome: result, detached: false });
-    record(tx, { type: 'message.appended', turnId, step, source: 'tool', entry: result.entry });
+    record(tx, { type: 'message.appended', turnId, step, source: 'tool', message: result.message });
   }
   if (unfinished.stepUnfinished) record(tx, { type: 'step.ended', turnId, step, outcome });
 }
@@ -283,8 +282,8 @@ export function schedule(tx: StateTx): void {
       trigger: kind,
       step: 0,
       pending: [
-        { kind, entry: head },
-        ...(promptOnly ? [] : inbox.remind.map((entry) => ({ kind: 'remind' as const, entry }))),
+        { kind, message: head },
+        ...(promptOnly ? [] : inbox.remind.map((message) => ({ kind: 'remind' as const, message }))),
       ],
       promptOnly: promptOnly ? true : undefined,
     }),
@@ -296,41 +295,38 @@ export function release(tx: StateTx): void {
   schedule(tx);
 }
 
-export function queueNotify(tx: StateTx, entries: readonly UserEntry[]): void {
-  if (entries.length === 0) return;
-  patch(tx, { inbox: { ...tx.ctx.inbox, notify: [...tx.ctx.inbox.notify, ...entries] } });
+export function queueNotify(tx: StateTx, messages: readonly UserMessage[]): void {
+  if (messages.length === 0) return;
+  patch(tx, { inbox: { ...tx.ctx.inbox, notify: [...tx.ctx.inbox.notify, ...messages] } });
   release(tx);
 }
 
-export function normalizeUserEntry(entry: UserEntry): UserEntry {
-  const origin = entry.meta?.origin;
+export function normalizeUserMessage(message: UserMessage): UserMessage {
+  const origin = message.attributes?.origin;
   return {
-    ...entry,
-    message: {
-      ...entry.message,
-      content: origin?.kind === 'user'
-        ? annotateBundledSkillParts(entry.message.content, (origin as UserPromptOrigin).skillActivations ?? [])
-        : [...entry.message.content],
-    },
+    ...message,
+    content: origin?.kind === 'user'
+      ? annotateBundledSkillParts(message.content, (origin as UserPromptOrigin).skillActivations ?? [])
+      : [...message.content],
   };
 }
 
 export function steer(tx: StateTx, promptIds: readonly string[]): LoopAck<'prompt.steered'> {
   const { inbox } = tx.ctx;
   const steered = inbox.normal.filter(
-    (entry) => entry.meta?.promptId !== undefined && promptIds.includes(entry.meta.promptId),
+    (message) => message.attributes?.promptId !== undefined && promptIds.includes(message.attributes.promptId),
   );
-  const ids = steered.map((entry) => entry.meta?.promptId as string);
+  const ids = steered.map((message) => message.attributes?.promptId as string);
   if (steered.length === 0) return record(tx, { type: 'prompt.steered', promptIds: ids });
-  const entries = steered;
+  const messages = steered;
   patch(tx, {
     inbox: {
       ...inbox,
       normal: inbox.normal.filter((item) => !steered.includes(item)),
-      notify: [...inbox.notify, ...entries],
+      notify: [...inbox.notify, ...messages],
     },
   });
-  const ack = record(tx, { type: 'prompt.steered', promptIds: ids, entries });
+  const ack = record(tx, { type: 'prompt.steered', promptIds: ids, messages });
   release(tx);
   return ack;
 }
@@ -420,7 +416,7 @@ export function draftOutcome(step: StepState): StepOutcome {
   if (llm.type === 'failed') {
     return { type: 'failed', error: llm.error };
   }
-  if (llm.entry.message.toolCalls.length === 0) return { type: 'done' };
+  if (llm.message.toolCalls.length === 0) return { type: 'done' };
   return { type: 'continue' };
 }
 
@@ -431,5 +427,5 @@ export function allSettled(step: StepState | undefined): boolean {
 export function settle(step: StepState, key: string, outcome: ToolCallOutcome): void {
   const call = step.calls.find((item) => item.key === key);
   if (call === undefined || step.settled[key] !== undefined) return;
-  step.settled[key] = outcome.entry;
+  step.settled[key] = outcome.message;
 }

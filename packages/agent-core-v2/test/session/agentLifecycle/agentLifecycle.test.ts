@@ -110,7 +110,7 @@ import { IWireService } from '#/wire/wire';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { contextFromHistoryEntry } from '#/agent/loop/history';
-import type { HistoryMessage } from '@moonshot-ai/core/llm/history';
+import type { Message } from '@moonshot-ai/core/llm/message';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
@@ -444,14 +444,14 @@ describe('AgentLifecycleService', () => {
       setModel: vi.fn(async (model: string) => ({ model })),
       history: () => loopHistory,
       historyRevision: () => 0,
-      replaceHistory: (entries: readonly HistoryMessage[]) => {
+      replaceHistory: (entries: readonly Message[]) => {
         loopHistory.splice(0, loopHistory.length, ...entries.map((entry) => contextFromHistoryEntry(entry)));
         return true;
       },
-      initializeHistory: async (entries: readonly HistoryMessage[]) => {
+      initializeHistory: async (entries: readonly Message[]) => {
         loopHistory.splice(0, loopHistory.length, ...entries.map((entry) => contextFromHistoryEntry(entry)));
       },
-      remind: (...entries: readonly HistoryMessage[]) => {
+      remind: (...entries: readonly Message[]) => {
         loopHistory.push(...entries.map((entry) => contextFromHistoryEntry(entry)));
       },
       flushReminders: () => {},
@@ -465,8 +465,9 @@ describe('AgentLifecycleService', () => {
         activeTurnId: loopActiveTurnId,
         activePromptId: undefined,
         queue: loopPendingPromptIds.map((promptId) => ({
-          message: { role: 'user', content: [] },
-          meta: { promptId },
+          role: 'user' as const,
+          content: [],
+          attributes: { promptId },
         })),
         notificationCount: 0,
         paused: false,

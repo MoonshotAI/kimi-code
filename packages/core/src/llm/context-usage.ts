@@ -5,8 +5,6 @@
 import type { Message, ToolDescription } from '#/llm/message';
 import { emptyUsage, grandTotal, type TokenUsage } from '#/llm/usage';
 
-import type { AssistantEntry, HistoryMessage } from './history';
-
 const MEDIA_TOKEN_ESTIMATE = 2000;
 
 export interface ContextUsagePrefix {
@@ -58,15 +56,15 @@ export function estimateMessageTokens(message: Message): number {
 }
 
 export function estimateUsedContextTokens(
-  history: readonly HistoryMessage[],
+  history: readonly Message[],
   prefix?: ContextUsagePrefix,
 ): number {
   let lastUsageIndex = -1;
   let usageTokens = 0;
   for (let i = history.length - 1; i >= 0; i--) {
-    const entry = history[i] as HistoryMessage;
-    if (entry.message.role !== 'assistant') continue;
-    const tokens = calculateContextTokens((entry as AssistantEntry).meta?.usage ?? emptyUsage());
+    const message = history[i] as Message;
+    if (message.role !== 'assistant') continue;
+    const tokens = calculateContextTokens(message.attributes?.usage ?? emptyUsage());
     if (tokens !== undefined && tokens > 0) {
       lastUsageIndex = i;
       usageTokens = tokens;
@@ -75,7 +73,7 @@ export function estimateUsedContextTokens(
   }
   let tokens = usageTokens;
   for (let i = lastUsageIndex + 1; i < history.length; i++) {
-    tokens += estimateMessageTokens((history[i] as HistoryMessage).message);
+    tokens += estimateMessageTokens(history[i] as Message);
   }
   if (lastUsageIndex === -1 && prefix !== undefined) {
     if (prefix.systemPrompt !== undefined) {

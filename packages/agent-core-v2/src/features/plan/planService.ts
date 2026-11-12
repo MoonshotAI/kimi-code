@@ -92,7 +92,7 @@ export class AgentPlanService extends Service implements IAgentPlanService {
     this._register(this.context.hooks.onDidFinishStep.register('plan-rejection-stop', (context, next) => {
       for (const tool of context.tools) {
         if (tool.toolCall.name !== 'ExitPlanMode') continue;
-        const text = tool.outcome.entry.message.content
+        const text = tool.outcome.message.content
           .map((part) => part.type === 'text' ? part.text : '')
           .join('\n');
         if (

@@ -681,7 +681,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
             },
           }, signal);
           const outcome = await requester.generate(
-            { content: { entries: historyFromContext(messages), usedTokens: usedContextTokens }, profile: {} },
+            { content: { messages: historyFromContext(messages), usedTokens: usedContextTokens }, profile: {} },
             { signal },
           );
           if (outcome.type === 'failed') throw errorFromLlmMessage(outcome.error, outcome.diagnostics);
@@ -954,7 +954,7 @@ function collectSummary(outcome: Extract<LlmOutcome, { type: 'done' }>): Compact
     throw new CompactionTruncatedError();
   }
 
-  const summary = outcome.entry.message.content
+  const summary = outcome.message.content
     .filter((part) => part.type === 'text')
     .map((part) => part.text)
     .join('')

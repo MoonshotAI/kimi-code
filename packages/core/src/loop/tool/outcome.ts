@@ -1,17 +1,27 @@
 /**
- * Turns tool execution results into history: tool entries for completed, aborted, blocked, and failed
- * calls, and the user entry that reports a detached tool's completion.
+ * Turns tool execution results into messages: tool messages for completed, aborted, blocked, and failed
+ * calls, and the user message that reports a detached tool's completion.
  */
-import { createToolMessage, type ContentPart, type ToolCall } from '#/llm/message';
+import {
+  createToolMessage,
+  createUserMessage,
+  type ContentPart,
+  type ToolCall,
+  type ToolMessage,
+  type UserMessage,
+} from '#/llm/message';
 import { abortedToolOutput } from '#/tool/abort';
 import { errorText } from '#/llm/protocol/errors';
-import { createToolEntry, createUserEntry, type ToolEntry, type UserEntry } from '#/llm/history';
 import type { ToolDetachAck, ToolResult } from '#/tool/runtime';
 import type { AsyncToolOutcome, Cause, ToolCallOutcome } from '../contract/outcome';
 
-export function toolEntry(toolCall: ToolCall, result: ToolResult | ToolDetachAck, detached?: true): ToolEntry {
+export function toolOutcomeMessage(
+  toolCall: ToolCall,
+  result: ToolResult | ToolDetachAck,
+  detached?: true,
+): ToolMessage {
   const failed = 'outcome' in result && result.outcome.type !== 'success';
-  return createToolEntry(createToolMessage(toolCall.id, result.content), {
+  return createToolMessage(toolCall.id, result.content, {
     source: 'tool',
     isError: failed ? true : undefined,
     stopTurn: 'stopTurn' in result && result.stopTurn === true ? true : undefined,
@@ -33,7 +43,7 @@ export function abortedToolOutcome(toolCall: ToolCall, reason?: unknown): ToolCa
     content: [{ type: 'text', text }],
     outcome: { type: 'aborted', error },
   };
-  return { type: 'aborted', entry: toolEntry(toolCall, result), reason };
+  return { type: 'aborted', message: toolOutcomeMessage(toolCall, result), reason };
 }
 
 export function blockedToolOutcome(
@@ -44,7 +54,7 @@ export function blockedToolOutcome(
   const content = result?.content ?? [{ type: 'text', text: cause.message ?? cause.reason }];
   return {
     type: 'blocked',
-    entry: createToolEntry(createToolMessage(toolCall.id, content), { source: 'tool', isError: true }),
+    message: createToolMessage(toolCall.id, content, { source: 'tool', isError: true }),
     cause,
   };
 }
@@ -62,7 +72,7 @@ export function failedToolOutcome(toolCall: ToolCall, error: unknown): ToolCallO
     content: [{ type: 'text', text: errorText(error) }],
     outcome: { type: 'failed', error: failure },
   };
-  return { type: 'failed', entry: toolEntry(toolCall, result), error };
+  return { type: 'failed', message: toolOutcomeMessage(toolCall, result), error };
 }
 
 export interface ToolCompletionInput {
@@ -72,15 +82,15 @@ export interface ToolCompletionInput {
 }
 
 export interface ToolCompletionFactory {
-  (input: ToolCompletionInput): UserEntry | Promise<UserEntry>;
-  onRejected?(error: unknown, input: ToolCompletionInput): UserEntry | Promise<UserEntry>;
+  (input: ToolCompletionInput): UserMessage | Promise<UserMessage>;
+  onRejected?(error: unknown, input: ToolCompletionInput): UserMessage | Promise<UserMessage>;
 }
 
-export function completionEntry(
+export function completionMessage(
   toolCall: ToolCall,
   outcome: AsyncToolOutcome,
   result?: ToolResult,
-): UserEntry {
+): UserMessage {
   const label = `${toolCall.name} (tool_call_id=${toolCall.id})`;
   const content: ContentPart[] =
     outcome.type === 'succeeded'
@@ -88,13 +98,13 @@ export function completionEntry(
       : outcome.type === 'aborted'
         ? [{ type: 'text', text: `[async tool aborted] ${label}` }]
         : [{ type: 'text', text: `[async tool failed] ${label}\n${errorText(outcome.error)}` }];
-  return createUserEntry({ role: 'user', content }, { source: 'async-tool', toolCallId: toolCall.id });
+  return createUserMessage(content, { source: 'async-tool', toolCallId: toolCall.id });
 }
 
-export async function resolveCompletionEntry(
+export async function resolveCompletionMessage(
   input: ToolCompletionInput,
   factory?: ToolCompletionFactory,
-): Promise<UserEntry> {
+): Promise<UserMessage> {
   if (factory !== undefined) return factory(input);
-  return completionEntry(input.toolCall, input.outcome, input.result);
+  return completionMessage(input.toolCall, input.outcome, input.result);
 }

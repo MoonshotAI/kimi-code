@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { createUserEntry, type ToolEntry } from '@moonshot-ai/core/llm/history';
-import { createUserMessage, extractText, type Message, type ToolCall } from '@moonshot-ai/core/llm/message';
+import { createUserMessage, extractText, type Message, type ToolCall, type ToolMessage } from '@moonshot-ai/core/llm/message';
 import type {
   Loop,
   LoopEmitted,
@@ -37,7 +36,7 @@ function once(loop: Loop, match: (event: LoopEmitted) => boolean): Promise<void>
   });
 }
 
-const prompt = (text: string) => createUserEntry(createUserMessage(text));
+const prompt = (text: string) => createUserMessage(text);
 const done = (text: string, toolCalls: ToolCall[] = []): MockProviderResponse => ({
   parts: [{ type: 'text', text }, ...toolCalls],
 });
@@ -70,7 +69,7 @@ describe('step.starting', () => {
     ]);
     expect(seen[0]?.messages).toEqual([entry]);
     expect(seen[0]?.profile).toEqual({ systemPrompt: 'sp', tools: [tool] });
-    expect(seen[1]?.messages.map((item) => item.message.role)).toEqual(['user', 'assistant', 'tool']);
+    expect(seen[1]?.messages.map((item) => item.role)).toEqual(['user', 'assistant', 'tool']);
     await loop.close();
   });
 
@@ -148,7 +147,7 @@ describe('step.starting', () => {
     expect(active.state.messages).toEqual([]);
     finishRequest();
     expect((await running).type).toBe('done');
-    expect(active.state.messages.map((entry) => extractText(entry.message))).toEqual(['late answer']);
+    expect(active.state.messages.map((entry) => extractText(entry))).toEqual(['late answer']);
     await active.close();
   });
 
@@ -250,16 +249,16 @@ describe('tool.batch-starting', () => {
       toolCallId: 'c2',
       outcome: { type: 'blocked', cause: { by: 'swarm', reason: 'denied' } },
     });
-    expect(loop.state.messages.map((entry) => entry.message.role)).toEqual([
+    expect(loop.state.messages.map((entry) => entry.role)).toEqual([
       'user',
       'assistant',
       'tool',
       'tool',
       'assistant',
     ]);
-    const entries = loop.state.messages.filter((entry): entry is ToolEntry => entry.message.role === 'tool');
-    expect(entries.map((entry) => extractText(entry.message))).toEqual(['nope', 'nope']);
-    expect(entries.every((entry) => entry.meta?.isError === true)).toBe(true);
+    const entries = loop.state.messages.filter((entry): entry is ToolMessage => entry.role === 'tool');
+    expect(entries.map((entry) => extractText(entry))).toEqual(['nope', 'nope']);
+    expect(entries.every((entry) => entry.attributes?.isError === true)).toBe(true);
     expect(continuing).toEqual([1]);
     expect(stopping).toEqual([1, 2]);
     await loop.close();
@@ -394,7 +393,7 @@ describe('tool.permitting', () => {
     expect(events.find((event) => event.type === 'tool.ended')).toMatchObject({
       outcome: {
         type: 'failed',
-        entry: { meta: { isError: true } },
+        message: { attributes: { isError: true } },
       },
     });
     await loop.close();
@@ -463,10 +462,10 @@ describe('tool.permitting', () => {
     expect(events.find((event) => event.type === 'tool.ended')).toMatchObject({
       outcome: { type: 'failed' },
     });
-    const entries = loop.state.messages.filter((entry): entry is ToolEntry => entry.message.role === 'tool');
+    const entries = loop.state.messages.filter((entry): entry is ToolMessage => entry.role === 'tool');
     expect(entries).toHaveLength(1);
-    expect(extractText(entries[0]!.message)).toBe('nope');
-    expect(entries[0]?.meta?.isError).toBe(true);
+    expect(extractText(entries[0]!)).toBe('nope');
+    expect(entries[0]?.attributes?.isError).toBe(true);
     await loop.close();
   });
 
@@ -488,9 +487,9 @@ describe('tool.permitting', () => {
     const loop = createLoop({ requester: scripted, executor: tools });
     loop.subscribe((event) => events.push(event));
     expect((await loop.runTurn(prompt('work'))).type).toBe('done');
-    const entry = loop.state.messages.find((item): item is ToolEntry => item.message.role === 'tool');
-    expect(extractText(entry!.message)).toContain('permitting hook failed for "alpha": oops');
-    expect(entry?.meta?.stopTurn).toBeUndefined();
+    const entry = loop.state.messages.find((item): item is ToolMessage => item.role === 'tool');
+    expect(extractText(entry!)).toContain('permitting hook failed for "alpha": oops');
+    expect(entry?.attributes?.stopTurn).toBeUndefined();
     await loop.close();
 
     const failedTools = createExecutor([], async () => {
@@ -502,7 +501,7 @@ describe('tool.permitting', () => {
     failedLoop.subscribe((event) => failedEvents.push(event));
     expect((await failedLoop.runTurn(prompt('work'))).type).toBe('done');
     expect(failedEvents.find((event) => event.type === 'tool.ended')).toMatchObject({
-      outcome: { type: 'failed', entry: { meta: { isError: true } } },
+      outcome: { type: 'failed', message: { attributes: { isError: true } } },
     });
     await failedLoop.close();
   });
@@ -610,8 +609,8 @@ describe('hook failure policies', () => {
     expect(events.findIndex((event) => event.type === 'hook.failed')).toBeGreaterThan(
       events.findLastIndex((event) => event.type === 'tool.ended'),
     );
-    const tools = loop.state.messages.filter((entry) => entry.message.role === 'tool');
-    expect(tools.map((entry) => extractText(entry.message))).toEqual([
+    const tools = loop.state.messages.filter((entry) => entry.role === 'tool');
+    expect(tools.map((entry) => extractText(entry))).toEqual([
       '[hook failed] tool.batch-starting: bang',
       '[hook failed] tool.batch-starting: bang',
     ]);
@@ -670,10 +669,10 @@ describe('notify turn handoff', () => {
       [1, 1],
       [2, 1],
     ]);
-    expect(events.filter((event) => event.type === 'turn.started').map((event) => event.entry?.message)).toEqual([
-      prompt('work').message,
-      prompt('new input').message,
-      prompt('after reset').message,
+    expect(events.filter((event) => event.type === 'turn.started').map((event) => event.message)).toEqual([
+      prompt('work'),
+      prompt('new input'),
+      prompt('after reset'),
     ]);
     await loop.close();
   });
@@ -682,8 +681,8 @@ describe('notify turn handoff', () => {
     const events: LoopEmitted[] = [];
     const starting: number[] = [];
     const scripted = requester([done('', [call('c1', 'alpha')]), done('second')]);
-    const first = createUserEntry(createUserMessage('first'), { promptId: 'first' });
-    const second = createUserEntry(createUserMessage('second'), { promptId: 'second' });
+    const first = createUserMessage('first', { promptId: 'first' });
+    const second = createUserMessage('second', { promptId: 'second' });
     const loop = createLoop({
       requester: scripted,
       executor: createExecutor([]),
@@ -713,11 +712,11 @@ describe('notify turn handoff', () => {
     expect(starting).toEqual([0, 1, 2]);
     expect(events.find((event) => event.type === 'prompt.steered')).toMatchObject({
       promptIds: ['first', 'second'],
-      entries: [first, second],
+      messages: [first, second],
     });
     expect(events.filter((event) => event.type === 'message.appended' && event.source === 'notify')).toMatchObject([
-      { turnId: 1, entry: first },
-      { turnId: 2, entry: second },
+      { turnId: 1, message: first },
+      { turnId: 2, message: second },
     ]);
     expect(events.find((event) => event.type === 'turn.ended' && event.turnId === 1)).toMatchObject({
       outcome: { type: 'done', cause: { by: 'loop', reason: 'prompt_only' } },
@@ -750,7 +749,7 @@ describe('notify turn handoff', () => {
     const reminder = events.findIndex((event) => event.type === 'message.appended' && event.source === 'remind');
     expect(secondStep).toBeGreaterThanOrEqual(0);
     expect(reminder).toBeGreaterThan(secondStep);
-    expect(events[reminder]).toMatchObject({ turnId: 0, step: 2, entry: { message: { role: 'user' } } });
+    expect(events[reminder]).toMatchObject({ turnId: 0, step: 2, message: { role: 'user' } });
     expect(events.filter((event) => event.type === 'turn.ended').map((event) => event.turnId)).toEqual([0]);
     await loop.close();
   });

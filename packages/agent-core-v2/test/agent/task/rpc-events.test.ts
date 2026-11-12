@@ -711,8 +711,9 @@ describe('AgentTaskService — notification delivery', () => {
     try {
       ctx.appendTurnExchange('kept prompt', 'kept answer');
       const active = submitPromptTurn(loop, {
-        message: { role: 'user', content: [{ type: 'text', text: 'remove me' }] },
-        meta: { origin: { kind: 'user' } },
+        role: 'user',
+        content: [{ type: 'text', text: 'remove me' }],
+        attributes: { origin: { kind: 'user' } },
       }).turn;
       await started;
       task.resolve('done');
@@ -840,7 +841,7 @@ describe('AgentTaskService — agent recovery notification bodies', () => {
       'call-agent',
       emptyOutputSnapshot(),
     );
-    const text = entry.message.content.map((part) => part.type === 'text' ? part.text : '').join('');
+    const text = entry.content.map((part) => part.type === 'text' ? part.text : '').join('');
     expect(text).toContain('agent_id="agent-7"');
     expect(text).toMatch(/Agent\(resume="agent-7"/);
     expect(text).toMatch(/agent_id.*NOT source_id|source_id.*NOT agent_id/);
@@ -852,7 +853,7 @@ describe('AgentTaskService — agent recovery notification bodies', () => {
       'call-agent',
       emptyOutputSnapshot(),
     );
-    const text = entry.message.content.map((part) => part.type === 'text' ? part.text : '').join('');
+    const text = entry.content.map((part) => part.type === 'text' ? part.text : '').join('');
     expect(text).toContain('agent_id="agent-8"');
     expect(text).not.toMatch(/Agent\(resume="agent-8"/);
   });
@@ -860,7 +861,7 @@ describe('AgentTaskService — agent recovery notification bodies', () => {
   it('process task body never mentions resume', () => {
     const info = processInfo({ status: 'failed', exitCode: 1 });
     const entry = createTaskCompletionEntry(info, 'call-process', emptyOutputSnapshot());
-    const text = entry.message.content.map((part) => part.type === 'text' ? part.text : '').join('');
+    const text = entry.content.map((part) => part.type === 'text' ? part.text : '').join('');
     expect(text).not.toContain('agent_id=');
     expect(text).not.toMatch(/Agent\(resume=/);
     expect(text).toContain(`source_id="${info.taskId}"`);
