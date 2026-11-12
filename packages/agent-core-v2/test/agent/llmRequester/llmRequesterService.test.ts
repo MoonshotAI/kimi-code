@@ -1025,6 +1025,23 @@ describe('AgentLoopRequestFactory media-stripped resend', () => {
     expect(calls.value).toBe(1);
   });
 
+  it('does not strip for requests whose only media are parts protocols may lower to text', async () => {
+    const calls = { value: 0 };
+    const audioOnly: Message[] = [
+      {
+        role: 'user',
+        content: [{ type: 'audio_url', audioUrl: { url: 'data:audio/wav;base64,AUDIO' } }],
+      },
+    ];
+    const { service } = createService(
+      createRequester(calls, new APIStatusError(400, 'Invalid request Error', false)),
+      { contextMessages: audioOnly },
+    );
+
+    await expect(request(service)).rejects.toMatchObject({ statusCode: 400 });
+    expect(calls.value).toBe(1);
+  });
+
   it('warns the user when media are stripped from the retried request', async () => {
     const calls = { value: 0 };
     const { service, dispatcher, events } = createService(

@@ -195,7 +195,7 @@ export function forkMediaRecovery(
 
 export function createMediaDegradeRecovery(
   replacement?: MediaReplacement,
-  hasWireMedia?: () => boolean,
+  hasWireImage?: () => boolean,
 ): LlmRecovery {
   return {
     propose: ({ error, request, appliedRecoveries }) => {
@@ -208,7 +208,7 @@ export function createMediaDegradeRecovery(
         error.statusCode === 400 &&
         !error.retryable &&
         countMediaParts(request.content.messages) > 0 &&
-        (hasWireMedia?.() ?? true);
+        (hasWireImage?.() ?? true);
       if (error.kind !== 'request_too_large' && !imageFormat && !mediaClientError) return undefined;
       const messages = request.content.messages;
       const stripped = appliedRecoveries.some(
