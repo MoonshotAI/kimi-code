@@ -1,4 +1,4 @@
-import type { ThinkingDisplay, ToolCallDensity, TranscriptConfig } from '../../config';
+import type { FollowUpBehavior, ThinkingDisplay, ToolCallDensity, TranscriptConfig } from '../../config';
 import type { DockLayout } from '../chrome/dock-section';
 import { ChoicePickerComponent, PreviewChoicePickerComponent, type ChoiceOption } from './choice-picker';
 import { TranscriptPreview } from './transcript-preview';
@@ -7,6 +7,7 @@ export type SettingsSelection =
   | 'model'
   | 'theme'
   | 'tuiMode'
+  | 'followUpBehavior'
   | 'toolCallDensity'
   | 'thinking'
   | 'copyOnSelect'
@@ -28,6 +29,11 @@ const SETTINGS_OPTIONS: readonly ChoiceOption[] = [
     value: 'permission',
     label: 'Permission',
     description: 'Choose how tool actions are approved.',
+  },
+  {
+    value: 'followUpBehavior',
+    label: 'Follow-up behavior',
+    description: 'Choose whether Enter queues or steers follow-ups while Kimi is working.',
   },
   {
     value: 'theme',
@@ -91,6 +97,7 @@ function isSettingsSelection(value: string): value is SettingsSelection {
     value === 'model' ||
     value === 'theme' ||
     value === 'tuiMode' ||
+    value === 'followUpBehavior' ||
     value === 'toolCallDensity' ||
     value === 'thinking' ||
     value === 'copyOnSelect' ||
@@ -234,6 +241,40 @@ export class CopyOnSelectSelectorComponent extends ChoicePickerComponent {
       currentValue: opts.currentValue ? 'on' : 'off',
       onSelect: (value) => {
         if (value === 'on' || value === 'off') opts.onSelect(value === 'on');
+      },
+      onCancel: opts.onCancel,
+    });
+  }
+}
+
+const FOLLOW_UP_BEHAVIOR_OPTIONS = [
+  {
+    value: 'queue',
+    label: 'Queue',
+    description: 'Wait for the current turn to finish before sending follow-ups.',
+  },
+  {
+    value: 'steer',
+    label: 'Steer',
+    description: 'Inject the current draft into the running turn immediately.',
+  },
+] as const satisfies readonly (ChoiceOption & { readonly value: FollowUpBehavior })[];
+
+export interface FollowUpBehaviorSelectorOptions {
+  readonly currentValue?: FollowUpBehavior;
+  readonly onSelect: (value: FollowUpBehavior) => void;
+  readonly onCancel: () => void;
+}
+
+export class FollowUpBehaviorSelectorComponent extends ChoicePickerComponent {
+  constructor(opts: FollowUpBehaviorSelectorOptions) {
+    super({
+      title: 'Follow-up behavior',
+      options: FOLLOW_UP_BEHAVIOR_OPTIONS,
+      currentValue: opts.currentValue ?? 'queue',
+      onSelect: (value) => {
+        const option = FOLLOW_UP_BEHAVIOR_OPTIONS.find((candidate) => candidate.value === value);
+        if (option !== undefined) opts.onSelect(option.value);
       },
       onCancel: opts.onCancel,
     });

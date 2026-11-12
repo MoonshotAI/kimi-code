@@ -75,6 +75,7 @@ export async function applyReloadedTuiConfig(
   host.setAppState({
     editorCommand: config.editorCommand,
     tuiMode: config.tuiMode,
+    followUpBehavior: config.followUpBehavior,
     disablePasteBurst: config.disablePasteBurst,
     copyOnSelect: config.copyOnSelect,
     renderLatex: config.renderLatex,

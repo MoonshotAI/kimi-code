@@ -40,11 +40,14 @@ describe('TUI config', () => {
 
     expect(result).toEqual(DEFAULT_TUI_CONFIG);
     expect(result.tuiMode).toBeUndefined();
+    expect(result.followUpBehavior).toBeUndefined();
     const text = readFileSync(filePath, 'utf-8');
     expect(text).toContain('Client preferences for kimi-code.');
     expect(text).toContain('theme = "auto"');
     expect(text).toContain('# tui_mode = "regular"');
     expect(text).not.toContain('\ntui_mode =');
+    expect(text).toContain('\n# follow_up_behavior = "queue" # "queue" | "steer"');
+    expect(text).not.toContain('\nfollow_up_behavior =');
     expect(text).toContain('cache_expiry_hint = true');
     expect(text).not.toContain('disable_feedback_survey');
     expect(text).toContain('auto_session_title = true');
@@ -559,6 +562,54 @@ mermaid = "${value}"
     expect(text).toContain('mermaid = "off"');
     expect((await loadTuiConfig(filePath)).markdown).toEqual({ mermaid: 'off' });
   });
+});
+
+describe('TUI config follow_up_behavior', () => {
+  it('leaves followUpBehavior undefined and commented across unrelated saves', async () => {
+    const parsed = parseTuiConfig('theme = "dark"');
+    expect(parsed.followUpBehavior).toBeUndefined();
+
+    await saveTuiConfig({ ...parsed, theme: 'light', editorCommand: 'vim' }, filePath);
+
+    const text = readFileSync(filePath, 'utf-8');
+    expect(text).toContain('\n# follow_up_behavior = "queue" # "queue" | "steer"');
+    expect(text).not.toContain('\nfollow_up_behavior =');
+    expect((await loadTuiConfig(filePath)).followUpBehavior).toBeUndefined();
+  });
+
+  it.each(['queue', 'steer'] as const)('parses follow_up_behavior = "%s"', (followUpBehavior) => {
+    expect(parseTuiConfig(`follow_up_behavior = "${followUpBehavior}"\n`).followUpBehavior)
+      .toBe(followUpBehavior);
+  });
+
+  it.each([
+    { setting: 'follow_up_behavior = "sometimes"', shown: 'sometimes' },
+    { setting: 'follow_up_behavior = true', shown: 'true' },
+    { setting: 'follow_up_behavior = 1', shown: '1' },
+  ])('warns and leaves followUpBehavior undefined for $setting', ({ setting, shown }) => {
+    const warnings: string[] = [];
+
+    const config = parseTuiConfig(`${setting}\n`, (message) => warnings.push(message));
+
+    expect(config.followUpBehavior).toBeUndefined();
+    expect(warnings).toEqual([`[tui.toml] ignoring unknown follow_up_behavior value: ${shown}`]);
+  });
+
+  it.each(['queue', 'steer'] as const)(
+    'writes an explicit %s preference and preserves it across unrelated saves',
+    async (followUpBehavior) => {
+      await saveTuiConfig({ ...DEFAULT_TUI_CONFIG, followUpBehavior }, filePath);
+
+      const line = `follow_up_behavior = "${followUpBehavior}" # "queue" | "steer"`;
+      expect(readFileSync(filePath, 'utf-8')).toContain(`\n${line}`);
+      const reloaded = await loadTuiConfig(filePath);
+      expect(reloaded.followUpBehavior).toBe(followUpBehavior);
+
+      await saveTuiConfig({ ...reloaded, theme: 'light' }, filePath);
+      expect(readFileSync(filePath, 'utf-8')).toContain(`\n${line}`);
+      expect((await loadTuiConfig(filePath)).followUpBehavior).toBe(followUpBehavior);
+    },
+  );
 });
 
 describe('TUI config tui_mode', () => {

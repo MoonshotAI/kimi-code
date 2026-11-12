@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { applyCopyOnSelectChoice, applyTuiModeChoice } from '#/tui/commands/config';
+import { applyCopyOnSelectChoice, applyFollowUpBehaviorChoice, applyTuiModeChoice } from '#/tui/commands/config';
+import { FollowUpBehaviorSelectorComponent, SettingsSelectorComponent } from '#/tui/components/dialogs/settings-selector';
 
 const mocks = vi.hoisted(() => ({
   saveTuiConfig: vi.fn(),
@@ -19,12 +20,14 @@ vi.mock('../../../src/tui/config', async () => {
 function makeHost(
   tuiMode: 'regular' | 'fullscreen' | undefined,
   runningMode: 'regular' | 'fullscreen' = 'regular',
+  followUpBehavior?: 'queue' | 'steer',
 ) {
   return {
     state: {
       appState: {
         theme: 'auto' as const,
         tuiMode,
+        followUpBehavior,
         editorCommand: null,
         notifications: { enabled: true, condition: 'unfocused' as const },
         upgrade: { autoInstall: true },
@@ -147,7 +150,11 @@ describe('tui mode preference commands', () => {
     await applyCopyOnSelectChoice(host as never, false);
 
     expect(mocks.saveTuiConfig).toHaveBeenCalledWith(
-      expect.objectContaining({ copyOnSelect: false, tuiMode: undefined }),
+      expect.objectContaining({
+        copyOnSelect: false,
+        tuiMode: undefined,
+        followUpBehavior: undefined,
+      }),
     );
   });
 
@@ -191,5 +198,88 @@ describe('tui mode preference commands', () => {
     expect(host.showNotice).toHaveBeenCalledWith(
       'Saved to tui.toml; this terminal automatically falls back to regular mode unless KIMI_CODE_TUI_FULL_SCREEN=1 is set.',
     );
+  });
+});
+
+describe('follow-up behavior preference commands', () => {
+  beforeEach(() => {
+    mocks.saveTuiConfig.mockReset();
+  });
+
+  it('saves steer from an unset preference and mirrors appState', async () => {
+    const host = makeHost(undefined);
+
+    await applyFollowUpBehaviorChoice(host as never, 'steer');
+
+    expect(mocks.saveTuiConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ followUpBehavior: 'steer' }),
+    );
+    expect(host.setAppState).toHaveBeenCalledWith({ followUpBehavior: 'steer' });
+    expect(host.track).toHaveBeenCalledWith('follow_up_behavior_switch', {
+      follow_up_behavior: 'steer',
+    });
+    expect(host.showStatus).toHaveBeenCalledWith('Follow-up behavior set to steer.', 'success');
+  });
+
+  it('persists an explicit queue selection when the preference was unset', async () => {
+    const host = makeHost(undefined);
+
+    await applyFollowUpBehaviorChoice(host as never, 'queue');
+
+    expect(mocks.saveTuiConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ followUpBehavior: 'queue' }),
+    );
+    expect(host.setAppState).toHaveBeenCalledWith({ followUpBehavior: 'queue' });
+    expect(host.track).toHaveBeenCalledWith('follow_up_behavior_switch', {
+      follow_up_behavior: 'queue',
+    });
+    expect(host.showStatus).toHaveBeenCalledWith('Follow-up behavior set to queue.', 'success');
+  });
+
+  it('does not rewrite an explicitly saved value when it is selected again', async () => {
+    const host = makeHost(undefined, 'regular', 'queue');
+
+    await applyFollowUpBehaviorChoice(host as never, 'queue');
+
+    expect(mocks.saveTuiConfig).not.toHaveBeenCalled();
+    expect(host.setAppState).not.toHaveBeenCalled();
+    expect(host.track).not.toHaveBeenCalled();
+    expect(host.showStatus).toHaveBeenCalledWith('Follow-up behavior already queue.');
+  });
+
+  it('reports a save failure without touching appState', async () => {
+    mocks.saveTuiConfig.mockRejectedValueOnce(new Error('disk full'));
+    const host = makeHost(undefined);
+
+    await applyFollowUpBehaviorChoice(host as never, 'steer');
+
+    expect(host.setAppState).not.toHaveBeenCalled();
+    expect(host.track).not.toHaveBeenCalled();
+    expect(host.showStatus).toHaveBeenCalledWith(
+      'Failed to save follow-up behavior: disk full',
+      'error',
+    );
+  });
+
+  it('offers the setting in both layouts and selects steer with the keyboard', () => {
+    for (const fullscreen of [false, true]) {
+      const settings = new SettingsSelectorComponent({
+        fullscreen,
+        onSelect: vi.fn(),
+        onCancel: vi.fn(),
+      });
+      expect(settings.render(120).join('\n')).toContain('Follow-up behavior');
+    }
+    const onSelect = vi.fn();
+    const picker = new FollowUpBehaviorSelectorComponent({
+      onSelect,
+      onCancel: vi.fn(),
+    });
+
+    expect(picker.selectedValue()).toBe('queue');
+    picker.handleInput('\u001B[B');
+    picker.handleInput('\r');
+
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith('steer');
   });
 });

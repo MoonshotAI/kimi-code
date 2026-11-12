@@ -320,6 +320,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     stepRetry: null,
     theme: input.tuiConfig.theme,
     tuiMode: input.tuiConfig.tuiMode,
+    followUpBehavior: input.tuiConfig.followUpBehavior,
     version: input.version,
     editorCommand: input.tuiConfig.editorCommand,
     disablePasteBurst: input.tuiConfig.disablePasteBurst,

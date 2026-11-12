@@ -22,6 +22,7 @@ import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model
 import { PermissionSelectorComponent } from '../components/dialogs/permission-selector';
 import {
   CopyOnSelectSelectorComponent,
+  FollowUpBehaviorSelectorComponent,
   SettingsSelectorComponent,
   ThinkingDisplaySelectorComponent,
   ToolCallDensitySelectorComponent,
@@ -36,6 +37,7 @@ import {
   DEFAULT_TUI_CONFIG,
   resolveTuiMode,
   saveTuiConfig,
+  type FollowUpBehavior,
   type MarkdownConfig,
   type TranscriptConfig,
   type TuiConfig,
@@ -93,6 +95,7 @@ export function currentTuiConfig(host: Pick<SlashCommandHost, 'state'>): TuiConf
   return {
     theme: host.state.appState.theme,
     tuiMode: host.state.appState.tuiMode,
+    followUpBehavior: host.state.appState.followUpBehavior,
     editorCommand: host.state.appState.editorCommand,
     disablePasteBurst: host.state.appState.disablePasteBurst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
     copyOnSelect:
@@ -1147,6 +1150,42 @@ export async function applyCopyOnSelectChoice(
   host.showStatus(`Copy on select ${enabled ? 'enabled' : 'disabled'}.`);
 }
 
+export function showFollowUpBehaviorPicker(host: SlashCommandHost): void {
+  host.mountEditorReplacement(
+    new FollowUpBehaviorSelectorComponent({
+      currentValue: host.state.appState.followUpBehavior,
+      onSelect: (value) => {
+        host.restoreEditor();
+        void applyFollowUpBehaviorChoice(host, value);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+export async function applyFollowUpBehaviorChoice(
+  host: Pick<SlashCommandHost, 'state' | 'setAppState' | 'showStatus' | 'track'>,
+  followUpBehavior: FollowUpBehavior,
+): Promise<void> {
+  if (followUpBehavior === host.state.appState.followUpBehavior) {
+    host.showStatus(`Follow-up behavior already ${followUpBehavior}.`);
+    return;
+  }
+
+  try {
+    await saveTuiConfig({ ...currentTuiConfig(host), followUpBehavior });
+  } catch (error) {
+    host.showStatus(`Failed to save follow-up behavior: ${formatErrorMessage(error)}`, 'error');
+    return;
+  }
+
+  host.setAppState({ followUpBehavior });
+  host.track?.('follow_up_behavior_switch', { follow_up_behavior: followUpBehavior });
+  host.showStatus(`Follow-up behavior set to ${followUpBehavior}.`, 'success');
+}
+
 function showToolCallDensityPicker(host: SlashCommandHost): void {
   host.mountEditorReplacement(
     new ToolCallDensitySelectorComponent({
@@ -1298,6 +1337,7 @@ function handleSettingsSelection(host: SlashCommandHost, value: SettingsSelectio
     case 'permission': showPermissionPicker(host); return;
     case 'theme': showThemePicker(host); return;
     case 'tuiMode': showTuiModePicker(host); return;
+    case 'followUpBehavior': showFollowUpBehaviorPicker(host); return;
     case 'toolCallDensity': showToolCallDensityPicker(host); return;
     case 'thinking': showThinkingDisplayPicker(host); return;
     case 'copyOnSelect': showCopyOnSelectPicker(host); return;

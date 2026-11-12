@@ -12,7 +12,7 @@ import type {
   ToolInputDisplay,
 } from '@moonshot-ai/kimi-code-sdk';
 
-import type { MarkdownConfig, NotificationsConfig, StatusLineConfig, TranscriptConfig, TuiMode, UpgradePreferences } from './config';
+import type { FollowUpBehavior, MarkdownConfig, NotificationsConfig, StatusLineConfig, TranscriptConfig, TuiMode, UpgradePreferences } from './config';
 import type { PendingApproval, PendingQuestion } from './reverse-rpc/types';
 import type { ColorToken, ThemeName } from './theme';
 import type { MediaAttachment, VideoAttachment } from './utils/image-attachment-store';
@@ -82,6 +82,7 @@ export interface AppState {
   stepRetry: StepRetryState | null;
   theme: ThemeName;
   tuiMode?: TuiMode;
+  followUpBehavior?: FollowUpBehavior;
   version: string;
   editorCommand: string | null;
   /** Mirrors the TUI config toggle; defaults to false when absent from older fixtures. */

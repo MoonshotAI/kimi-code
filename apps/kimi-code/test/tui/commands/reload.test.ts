@@ -49,6 +49,7 @@ describe('reload slash commands', () => {
   it('reloads tui.toml without touching Core session state', async () => {
     await writeTuiConfig(`
 theme = "light"
+follow_up_behavior = "steer"
 cache_expiry_hint = false
 
 [editor]
@@ -72,6 +73,7 @@ auto_install = false
     expect(host.state.appState).toMatchObject({
       theme: 'light',
       editorCommand: 'vim',
+      followUpBehavior: 'steer',
       cacheExpiryHint: false,
       notifications: { enabled: false, condition: 'always' },
       upgrade: { autoInstall: false },
@@ -82,8 +84,20 @@ auto_install = false
     );
   });
 
+  it('resets followUpBehavior when a reload removes the setting', async () => {
+    await writeTuiConfig('follow_up_behavior = "steer"\n');
+    const host = makeHost();
+
+    await handleReloadTuiCommand(host);
+    expect(host.state.appState.followUpBehavior).toBe('steer');
+
+    await writeTuiConfig('theme = "dark"\n');
+    await handleReloadTuiCommand(host);
+    expect(host.state.appState.followUpBehavior).toBeUndefined();
+  });
+
   it('reloads the active session, refreshes runtime config, and applies tui.toml', async () => {
-    await writeTuiConfig('theme = "light"\n');
+    await writeTuiConfig('theme = "light"\nfollow_up_behavior = "queue"\n');
     const session = { id: 'ses-1', reloadSession: vi.fn(async () => ({})) };
     const host = makeHost({ session });
 
@@ -103,6 +117,7 @@ auto_install = false
     expect(host.refreshSlashCommandAutocomplete).toHaveBeenCalledOnce();
     expect(isExperimentalFlagEnabled('micro_compaction')).toBe(true);
     expect(host.state.appState.theme).toBe('light');
+    expect(host.state.appState.followUpBehavior).toBe('queue');
     expect(host.state.appState.availableModels).toEqual({
       fresh: { provider: 'test', model: 'fresh-model', maxContextSize: 1000 },
     });

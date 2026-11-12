@@ -207,9 +207,13 @@ export function transcriptGroupingActive(options: TranscriptPresentationOptions)
 export const TuiModeSchema = z.enum(['regular', 'fullscreen']);
 export type TuiMode = z.infer<typeof TuiModeSchema>;
 
+export const FollowUpBehaviorSchema = z.enum(['queue', 'steer']);
+export type FollowUpBehavior = z.infer<typeof FollowUpBehaviorSchema>;
+
 export const TuiConfigFileSchema = z.object({
   theme: TuiThemeSchema.optional(),
   tui_mode: z.string().optional(),
+  follow_up_behavior: z.unknown().optional(),
   copy_on_select: z.boolean().optional(),
   render_latex: z.boolean().optional(),
   disable_paste_burst: z.boolean().optional(),
@@ -249,6 +253,7 @@ export const TuiConfigFileSchema = z.object({
 export const TuiConfigSchema = z.object({
   theme: TuiThemeSchema,
   tuiMode: TuiModeSchema.optional(),
+  followUpBehavior: FollowUpBehaviorSchema.optional(),
   copyOnSelect: z.boolean().optional(),
   /** LaTeX math rendering in Markdown; optional only so older hand-built test
    * fixtures still typecheck. */
@@ -438,9 +443,22 @@ export function normalizeTuiConfig(
       warn(`[tui.toml] ignoring unknown tui_mode value: ${tuiModeValue}`);
     }
   }
+  const followUpBehaviorValue = config.follow_up_behavior;
+  let followUpBehavior: FollowUpBehavior | undefined;
+  if (followUpBehaviorValue !== undefined) {
+    if (followUpBehaviorValue === 'queue' || followUpBehaviorValue === 'steer') {
+      followUpBehavior = followUpBehaviorValue;
+    } else {
+      const shown = typeof followUpBehaviorValue === 'string'
+        ? followUpBehaviorValue
+        : JSON.stringify(followUpBehaviorValue);
+      warn(`[tui.toml] ignoring unknown follow_up_behavior value: ${shown}`);
+    }
+  }
   return TuiConfigSchema.parse({
     theme: config.theme ?? DEFAULT_TUI_CONFIG.theme,
     tuiMode,
+    followUpBehavior,
     copyOnSelect:
       config.copy_on_select ?? DEFAULT_TUI_CONFIG.copyOnSelect,
     renderLatex: config.render_latex ?? DEFAULT_TUI_CONFIG.renderLatex,
@@ -503,6 +521,10 @@ export function renderTuiConfig(config: TuiConfig): string {
     config.tuiMode === undefined
       ? '# tui_mode = "regular" # "regular" | "fullscreen" ("fullscreen" is experimental)'
       : `tui_mode = "${config.tuiMode}" # "regular" | "fullscreen" ("fullscreen" is experimental)`;
+  const followUpBehaviorLine =
+    config.followUpBehavior === undefined
+      ? '# follow_up_behavior = "queue" # "queue" | "steer"'
+      : `follow_up_behavior = "${config.followUpBehavior}" # "queue" | "steer"`;
   const markdownSection =
     config.markdown?.mermaid === 'off'
       ? `[markdown]\nmermaid = "off" # "final" | "off"\n`
@@ -538,6 +560,7 @@ export function renderTuiConfig(config: TuiConfig): string {
 
 theme = "${escapeTomlBasicString(config.theme)}" # "auto" | "dark" | "light" | custom theme name
 ${tuiModeLine}
+${followUpBehaviorLine}
 copy_on_select = ${String(config.copyOnSelect !== false)} # fullscreen only: false copies only when you press Ctrl-C
 render_latex = ${String(config.renderLatex !== false)} # false keeps LaTeX math in assistant messages as raw source
 disable_paste_burst = ${String(config.disablePasteBurst)} # true disables non-bracketed paste-burst fallback
