@@ -197,6 +197,9 @@ export type ToolExecutionEvent<TFields extends object = object, TPrepared = unkn
 } & ({ readonly type: 'created' } | ToolHandlerEvent<TFields, TPrepared>);
 
 export interface ToolExecutorHook<TContext = unknown, TPrepared = unknown> {
+  validating?(
+    context: ToolDecisionContext<any, TContext, TPrepared>,
+  ): ToolDecision | void | Promise<ToolDecision | void>;
   starting?(
     context: ToolDecisionContext<any, TContext, TPrepared>,
   ): ToolStartingDecision | void | Promise<ToolStartingDecision | void>;
