@@ -998,48 +998,59 @@ describe('AgentLoopRequestFactory media-stripped resend', () => {
     expect(mediaCounts(inputs)).toEqual([1]);
   });
 
-  it('does not strip when the resolver already removed media before the request was sent', async () => {
+  it('does not persist a generic-400 strip to later requests after it succeeds', async () => {
     const calls = { value: 0 };
+    const inputs: ModelRequestInput[] = [];
     const { service } = createService(
-      createRequester(calls, new APIStatusError(400, 'Invalid request Error', false)),
-      {
-        contextMessages,
-        mediaResolver: {
-          resolve: async (messages) =>
-            messages.map((message) => ({
-              ...message,
-              content: message.content.map((part) =>
-                part.type === 'image_url'
-                  ? {
-                      type: 'text' as const,
-                      text: '[image omitted: the current model does not support image input]',
-                    }
-                  : part,
-              ),
-            })),
-        },
-      },
+      createRequester(calls, new APIStatusError(400, 'Invalid request Error', false), [], inputs),
+      { contextMessages },
     );
 
-    await expect(request(service)).rejects.toMatchObject({ statusCode: 400 });
-    expect(calls.value).toBe(1);
+    await request(service, { source: { type: 'turn', turnId: 1, step: 1 } });
+    await request(service, { source: { type: 'turn', turnId: 1, step: 2 } });
+
+    expect(calls.value).toBe(3);
+    expect(mediaCounts(inputs)).toEqual([1, 0, 1]);
   });
 
-  it('does not strip for requests whose only media are parts protocols may lower to text', async () => {
+  it('does not persist a generic-400 strip to later requests after the stripped resend fails', async () => {
     const calls = { value: 0 };
-    const audioOnly: Message[] = [
-      {
-        role: 'user',
-        content: [{ type: 'audio_url', audioUrl: { url: 'data:audio/wav;base64,AUDIO' } }],
-      },
-    ];
+    const inputs: ModelRequestInput[] = [];
+    const rejection = new APIStatusError(400, 'Invalid request Error', false);
     const { service } = createService(
-      createRequester(calls, new APIStatusError(400, 'Invalid request Error', false)),
-      { contextMessages: audioOnly },
+      createRequester(calls, rejection, [rejection], inputs),
+      { contextMessages },
     );
 
-    await expect(request(service)).rejects.toMatchObject({ statusCode: 400 });
-    expect(calls.value).toBe(1);
+    await expect(request(service, { source: { type: 'turn', turnId: 1, step: 1 } })).rejects.toMatchObject(
+      { statusCode: 400 },
+    );
+    await request(service, { source: { type: 'turn', turnId: 1, step: 2 } });
+
+    expect(calls.value).toBe(3);
+    expect(mediaCounts(inputs)).toEqual([1, 0, 1]);
+  });
+
+  it('does not persist a generic-400 strip even when the stripped resend fails with a different provider error', async () => {
+    const calls = { value: 0 };
+    const inputs: ModelRequestInput[] = [];
+    const rejection = new APIStatusError(400, 'Invalid request Error', false);
+    const tooLarge = new APIRequestTooLargeError(413, 'Request Entity Too Large');
+    const { service } = createService(
+      createRequester(calls, rejection, [tooLarge], inputs),
+      { contextMessages },
+    );
+
+    await expect(request(service, { source: { type: 'turn', turnId: 1, step: 1 } })).rejects.toMatchObject(
+      { statusCode: 413 },
+    );
+    expect(calls.value).toBe(2);
+    expect(mediaCounts(inputs)).toEqual([1, 0]);
+
+    await request(service, { source: { type: 'turn', turnId: 1, step: 2 } });
+
+    expect(calls.value).toBe(3);
+    expect(mediaCounts(inputs)).toEqual([1, 0, 1]);
   });
 
   it('warns the user when media are stripped from the retried request', async () => {

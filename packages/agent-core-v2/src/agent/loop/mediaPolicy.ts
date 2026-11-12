@@ -92,7 +92,6 @@ export function createAgentMediaPolicy(
   request: InitializedLlmRequester,
 ): AgentMediaPolicy {
   let mediaPaths: ReadonlyMap<string, string> = new Map();
-  let resolvedHasImage = false;
   const replacement: MediaReplacement = (part) => {
     const path = mediaPaths.get(mediaUrlOf(part));
     if (path === undefined) return undefined;
@@ -128,15 +127,12 @@ export function createAgentMediaPolicy(
             ? new Map()
             : await service.displayPaths(current.content.messages);
         const messages = await service.resolve(current.content.messages, model, request, control.signal);
-        resolvedHasImage = messages.some((message) =>
-          message.content.some((part) => part.type === 'image_url'),
-        );
         return messages === current.content.messages
           ? current
           : { ...current, content: { ...current.content, messages } };
       },
     },
-    recovery: createMediaDegradeRecovery(replacement, () => resolvedHasImage),
+    recovery: createMediaDegradeRecovery(replacement),
     refreshRecovery: async (ledger, messages) => {
       mediaPaths = await service.displayPaths(messages);
       return forkMediaRecovery(ledger, replacement);
