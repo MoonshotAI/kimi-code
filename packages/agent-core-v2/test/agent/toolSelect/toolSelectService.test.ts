@@ -917,12 +917,13 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
     expect(next?.content).toContain(`<tools_removed>\n${USER_INLINE}\n</tools_removed>`);
   });
 
-  it('deduplicates historical schemas and drops empty system messages', async () => {
+  it('keeps the first historical schema and drops empty duplicates', async () => {
     const h = createHarness();
     const original = new StubMcpTool(MCP_ALPHA);
     const registration = registerMcp(h, original);
     await h.sut.prepareForRequest();
-    h.contextMemory.messages.push(schemaMessage(MCP_ALPHA));
+    const originalSchemaMessage = schemaMessage(MCP_ALPHA);
+    h.contextMemory.messages.push(originalSchemaMessage);
     h.contextMemory.messages.push({
       role: 'system',
       content: [{ type: 'text', text: 'keep body' }],
@@ -934,7 +935,7 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
     registerMcp(h, updated);
     await h.sut.prepareForRequest();
     h.contextMemory.landAnnouncement(`<tools_removed>\n${MCP_ALPHA}\n</tools_removed>`);
-    expect(h.sut.shapeHistory(h.contextMemory.history())).toHaveLength(2);
+    expect(h.sut.shapeHistory(h.contextMemory.history())).toHaveLength(3);
     h.contextMemory.messages.push({
       role: 'system',
       content: [],
@@ -949,8 +950,9 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
     });
     expect(resolved.profile?.tools).toEqual([]);
     expect(resolved.content.messages).toHaveLength(3);
+    expect(resolved.content.messages[0]).toBe(originalSchemaMessage);
     expect(resolved.content.messages.flatMap((message) => toolsOf(message) ?? []).map((tool) => tool.parameters))
-      .toEqual([updated.parameters]);
+      .toEqual([original.parameters]);
     expect(resolved.content.messages).toContainEqual({
       role: 'system',
       content: [{ type: 'text', text: 'keep body' }],
