@@ -261,14 +261,38 @@ async function acquireDirLock(
       try {
         const st = await stat(lockDir);
         if (Date.now() - st.mtimeMs > opts.lockStaleMs) {
-          const trash = `${lockDir}.stale.${process.pid}.${randomBytes(4).toString('hex')}`;
-          const claimed = await rename(lockDir, trash).then(
+          const reclaimDir = `${lockDir}.reclaim`;
+          let gotReclaim = await mkdir(reclaimDir, { mode: 0o700 }).then(
             () => true,
             () => false,
           );
-          if (claimed) {
-            await rm(trash, { recursive: true, force: true }).catch(() => undefined);
-            continue;
+          if (!gotReclaim) {
+            const reclaimStat = await stat(reclaimDir).catch(() => undefined);
+            if (reclaimStat !== undefined && Date.now() - reclaimStat.mtimeMs > opts.lockStaleMs) {
+              await rm(reclaimDir, { recursive: true, force: true }).catch(() => undefined);
+              gotReclaim = await mkdir(reclaimDir, { mode: 0o700 }).then(
+                () => true,
+                () => false,
+              );
+            }
+          }
+          if (gotReclaim) {
+            try {
+              const verifyStat = await stat(lockDir).catch(() => undefined);
+              if (verifyStat !== undefined && Date.now() - verifyStat.mtimeMs > opts.lockStaleMs) {
+                const trash = `${lockDir}.stale.${process.pid}.${randomBytes(4).toString('hex')}`;
+                const claimed = await rename(lockDir, trash).then(
+                  () => true,
+                  () => false,
+                );
+                if (claimed) {
+                  await rm(trash, { recursive: true, force: true }).catch(() => undefined);
+                  continue;
+                }
+              }
+            } finally {
+              await rmdir(reclaimDir).catch(() => undefined);
+            }
           }
         }
       } catch (statError) {
@@ -563,6 +587,7 @@ export class GuiStoreService implements IGuiStoreService {
             await this.verifyDiskRevisionBeforeCommit(state.revision);
           },
         );
+        await this.archiveResidualLegacyTomlUnlocked();
       } finally {
         this.selfWriting -= 1;
       }
@@ -671,6 +696,24 @@ export class GuiStoreService implements IGuiStoreService {
     };
   }
 
+  private async archiveResidualLegacyTomlUnlocked(): Promise<void> {
+    const exists = await stat(this.legacyTomlPath).then(
+      (st) => st.isFile(),
+      (error: unknown) => {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+        throw toPersistenceError(error, `Failed to stat legacy ${this.legacyTomlPath}`);
+      },
+    );
+    if (!exists) return;
+    const suffix = `${Date.now()}-${process.pid}-${randomBytes(3).toString('hex')}`;
+    const archivePath = `${this.legacyTomlPath}.migrated-${suffix}`;
+    await renameWithRetry(this.legacyTomlPath, archivePath).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw toPersistenceError(error, `Failed to archive migrated ${this.legacyTomlPath}`);
+    });
+    await syncDirSafe(this.homeDir);
+  }
+
   private async migrateLegacyTomlUnlocked(lock: AcquiredGuiStoreLock): Promise<InternalState | undefined> {
     let tomlText: string;
     try {
@@ -683,10 +726,6 @@ export class GuiStoreService implements IGuiStoreService {
     const { state: floorState, quarantinePath: existingQuarantine } =
       await this.emptyStateWithFloor();
     if (existingQuarantine !== undefined || floorState.revision > 0) {
-      await unlink(this.legacyTomlPath).catch((error: unknown) => {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
-        throw toPersistenceError(error, `Failed to remove superseded ${this.legacyTomlPath}`);
-      });
       return undefined;
     }
     const migratedEntries = emptyRecord<GuiStoreEntry>();
@@ -743,11 +782,7 @@ export class GuiStoreService implements IGuiStoreService {
         serializePersistedState(migratedState),
         () => lock.assertOwned(),
       );
-      await unlink(this.legacyTomlPath).catch((error: unknown) => {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
-        throw toPersistenceError(error, `Failed to remove migrated ${this.legacyTomlPath}`);
-      });
-      await syncDirSafe(this.homeDir);
+      await this.archiveResidualLegacyTomlUnlocked();
     } finally {
       this.selfWriting -= 1;
     }
@@ -775,8 +810,19 @@ export class GuiStoreService implements IGuiStoreService {
       if (parsed.revision > this.minRevisionFloor) {
         this.minRevisionFloor = parsed.revision;
       }
+      const residualLegacy = await stat(this.legacyTomlPath).then(
+        (st) => st.isFile(),
+        () => false,
+      );
+      if (residualLegacy) {
+        await this.withCrossProcessLock(async (lock) => {
+          await lock.assertOwned();
+          await this.archiveResidualLegacyTomlUnlocked();
+        });
+      }
       return parsed;
-    } catch {
+    } catch (error) {
+      if (error instanceof GuiStorePersistenceError) throw error;
       return this.withCrossProcessLock((lock) =>
         this.readUnlocked(lock, failIfUnrecoveredQuarantine),
       );
