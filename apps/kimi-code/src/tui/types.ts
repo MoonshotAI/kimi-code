@@ -373,6 +373,8 @@ export function isQueuedCompactionBarrier(message: QueuedMessage): boolean {
   return message.mode === 'compact' || message.mode === 'model-switch';
 }
 
+export type SteerOutcome = 'steered' | 'failed' | 'restored';
+
 /**
  * One unit of Ctrl-S steer input: a queued message or the editor draft,
  * with the media parts extracted at submit/paste time so images and video

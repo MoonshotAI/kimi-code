@@ -211,6 +211,8 @@ export const FollowUpBehaviorSchema = z.enum(['queue', 'steer']);
 export type FollowUpBehavior = z.infer<typeof FollowUpBehaviorSchema>;
 export const DEFAULT_FOLLOW_UP_BEHAVIOR: FollowUpBehavior = 'queue';
 
+export type FollowUpDelivery = 'default' | 'steer-draft';
+
 export function resolveFollowUpBehavior(value: FollowUpBehavior | undefined): FollowUpBehavior {
   return value ?? DEFAULT_FOLLOW_UP_BEHAVIOR;
 }

@@ -42,7 +42,7 @@ import { MOON_SPINNER_FRAMES } from '#/tui/constant/rendering';
 import { promptApiKey, promptPlatformSelection } from '#/tui/commands/prompts';
 import { applyTranscriptConfigChoice } from '#/tui/commands/config';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
-import type { TranscriptConfig } from '#/tui/config';
+import type { FollowUpDelivery, TranscriptConfig } from '#/tui/config';
 import { isReadonlyBash } from '#/utils/readonly-bash';
 import {
   AgentSwarmProgressComponent,
@@ -183,7 +183,7 @@ interface MessageDriver {
     handleEvent(event: Event, sendQueued: (item: QueuedMessage) => void): void;
   };
   init(): Promise<boolean>;
-  handleUserInput(text: string): void;
+  handleUserInput(text: string, delivery?: FollowUpDelivery): void;
   restoreInputText(text: string, inlineSkillActivations?: readonly InlineSkillActivation[]): void;
   toggleToolOutputExpansion(): void;
   appendTranscriptEntry(entry: TranscriptEntry): void;
@@ -7789,6 +7789,361 @@ command = "vim"
     await (driver as unknown as { staging: { drain(): Promise<void> } }).staging.drain();
     expect(harness.deleteFile).not.toHaveBeenCalledWith('file-v1');
     expect(driver.state.queuedMessages).toEqual([]);
+  });
+
+  describe('steer-draft delivery', () => {
+    const occupied = (): KimiError => new KimiError(ErrorCodes.SESSION_OCCUPIED, 'in use');
+    type Picker = { handleInput(data: string): void; render(width: number): string[] };
+    const picker = (driver: MessageDriver): Picker => driver.state.editorContainer.children[0] as Picker;
+    const userEntries = (driver: MessageDriver) =>
+      driver.state.transcriptEntries.filter((entry) => entry.kind === 'user');
+
+    async function reviewSkillDriver(overrides: Record<string, unknown> = {}) {
+      const session = makeSession({
+        listSkills: vi.fn(async () => [
+          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+        ]),
+        ...overrides,
+      });
+      const made = await makeDriver(session);
+      await (
+        made.driver as unknown as { refreshSkillCommands(s: unknown): Promise<void> }
+      ).refreshSkillCommands(session);
+      return made;
+    }
+
+    it('steers only the draft and leaves queued messages in place', async () => {
+      const { driver, session } = await makeDriver();
+      driver.state.appState.streamingPhase = 'waiting';
+      driver.handleUserInput('queued note');
+
+      driver.handleUserInput('look at the failing test first', 'steer-draft');
+
+      expect(session.steer).toHaveBeenCalledExactlyOnceWith('look at the failing test first');
+      await vi.waitFor(() => {
+        expect(userEntries(driver)).toEqual([
+          expect.objectContaining({ content: 'look at the failing test first' }),
+        ]);
+      });
+      expect(driver.state.queuedMessages).toEqual([{ text: 'queued note', agentId: 'main' }]);
+      expect(session.prompt).not.toHaveBeenCalled();
+    });
+
+    it('steers only the draft in tower mode instead of the whole queue', async () => {
+      const steer = pendingSteer();
+      const { driver } = await makeDriver(steer.session);
+      driver.state.appState.towerMode = true;
+      driver.state.appState.streamingPhase = 'waiting';
+      driver.state.queuedMessages = [{ text: 'queued objective', agentId: 'main' }];
+
+      driver.handleUserInput('draft objective', 'steer-draft');
+      steer.resolve();
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(steer.session.steer).toHaveBeenCalledExactlyOnceWith('draft objective');
+      expect(driver.state.queuedMessages).toEqual([{ text: 'queued objective', agentId: 'main' }]);
+    });
+
+    it('steers draft media and releases the upload when the turn ends', async () => {
+      const { driver, session, harness } = await makeDriver();
+      const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+      const attachment = stagedImage(imageStore, 'file-draft');
+      driver.state.appState.streamingPhase = 'waiting';
+      driver.streamingUI.setTurnId('7');
+
+      driver.handleUserInput(`check ${attachment.placeholder}`, 'steer-draft');
+
+      expect(session.steer).toHaveBeenCalledWith([
+        { type: 'text', text: 'check ' },
+        { type: 'image_url', imageUrl: { url: 'kimi-file://file-draft' } },
+      ]);
+      expect(harness.deleteFile).not.toHaveBeenCalled();
+      driver.sessionEventHandler.handleEvent(
+        { type: 'turn.ended', agentId: 'main', turnId: 7, reason: 'completed' } as Event,
+        () => {},
+      );
+      await vi.waitFor(() => {
+        expect(harness.deleteFile).toHaveBeenCalledExactlyOnceWith('file-draft');
+      });
+      expect(driver.state.queuedMessages).toEqual([]);
+    });
+
+    it('steers a skill draft through promptWithSkills', async () => {
+      const { driver, session } = await reviewSkillDriver();
+      driver.state.appState.streamingPhase = 'waiting';
+
+      driver.handleUserInput('/skill:review src/app.ts', 'steer-draft');
+
+      await vi.waitFor(() => {
+        expect(session.promptWithSkills).toHaveBeenCalledWith(
+          '/skill:review src/app.ts',
+          [{ name: 'review', args: 'src/app.ts' }],
+          { steerIfActive: true },
+        );
+      });
+      expect(session.steer).not.toHaveBeenCalled();
+      expect(driver.state.queuedMessages).toEqual([]);
+    });
+
+    it('steers an unknown slash command as a plain message', async () => {
+      const { driver, session } = await makeDriver();
+      driver.state.appState.streamingPhase = 'waiting';
+
+      driver.handleUserInput('/foo bar', 'steer-draft');
+
+      await vi.waitFor(() => {
+        expect(session.steer).toHaveBeenCalledExactlyOnceWith('/foo bar');
+      });
+      expect(driver.state.queuedMessages).toEqual([]);
+    });
+
+    it('queues the draft with an error when the steer fails', async () => {
+      const session = makeSession({
+        steer: vi.fn(async () => {
+          throw new Error('network down');
+        }),
+      });
+      const { driver } = await makeDriver(session);
+      driver.state.appState.streamingPhase = 'waiting';
+      driver.streamingUI.setTurnId('1');
+
+      driver.handleUserInput('look here', 'steer-draft');
+
+      await vi.waitFor(() => {
+        expect(driver.state.queuedMessages).toEqual([{ text: 'look here', agentId: 'main' }]);
+      });
+      expect(stripSgr(renderTranscript(driver))).toContain('Failed to steer: network down');
+      expect(userEntries(driver)).toEqual([]);
+    });
+
+    it('keeps submission order when a draft steer fails after later input was queued', async () => {
+      const steer = pendingSteer();
+      const { driver } = await makeDriver(steer.session);
+      driver.state.appState.streamingPhase = 'waiting';
+      driver.streamingUI.setTurnId('1');
+      driver.handleUserInput('queued before');
+
+      driver.handleUserInput('first draft', 'steer-draft');
+      driver.handleUserInput('second draft', 'steer-draft');
+      expect(steer.session.steer).toHaveBeenCalledOnce();
+      steer.reject(new Error('network down'));
+
+      await vi.waitFor(() => {
+        expect(driver.state.queuedMessages).toEqual([
+          { text: 'queued before', agentId: 'main' },
+          { text: 'first draft', agentId: 'main' },
+          { text: 'second draft', agentId: 'main' },
+        ]);
+      });
+    });
+
+    it('shows a failed skill draft once after it is requeued and dispatched with its media', async () => {
+      process.env['KIMI_CODE_HOME'] = await makeTempHome();
+      const promptWithSkills = vi
+        .fn(async (_input: unknown, _skills: unknown, _options?: unknown) => {})
+        .mockRejectedValueOnce(new Error('network down'));
+      const { driver, session } = await reviewSkillDriver({ promptWithSkills });
+      const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+      const attachment = imageStore.addImage(new Uint8Array([0xaa, 0xbb]), 'image/png', 1, 1);
+      driver.state.appState.streamingPhase = 'waiting';
+      driver.streamingUI.setTurnId('1');
+      const text = `/skill:review ${attachment.placeholder}`;
+
+      driver.handleUserInput(text, 'steer-draft');
+
+      await vi.waitFor(() => {
+        expect(driver.state.queuedMessages).toHaveLength(1);
+      });
+      expect(userEntries(driver)).toEqual([]);
+      driver.sessionEventHandler.handleEvent(
+        { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event,
+        (item) => {
+          driver.sendQueuedMessage(session, item);
+        },
+      );
+
+      await vi.waitFor(() => {
+        expect(promptWithSkills).toHaveBeenCalledTimes(2);
+      });
+      const skills = promptWithSkills.mock.calls[1]?.[1] as Array<{ args?: string }>;
+      const staged = /Attached image file: (\S+)/.exec(skills[0]?.args ?? '')?.[1];
+      expect(staged !== undefined && existsSync(staged)).toBe(true);
+      expect(userEntries(driver)).toEqual([expect.objectContaining({ content: text })]);
+    });
+
+    it('gives an occupied draft back to the editor without queueing it', async () => {
+      const session = makeSession({ steer: vi.fn(async () => {}).mockRejectedValueOnce(occupied()) });
+      const { driver } = await makeDriver(session);
+      driver.state.appState.streamingPhase = 'waiting';
+      driver.streamingUI.setTurnId('1');
+
+      driver.handleUserInput('look here', 'steer-draft');
+      await vi.waitFor(() => {
+        expect(stripSgr(picker(driver).render(80).join(' '))).toContain('Session in use');
+      });
+      picker(driver).handleInput('\u001B[B');
+      picker(driver).handleInput('\r');
+
+      await vi.waitFor(() => {
+        expect(driver.state.editor.getText()).toBe('look here');
+      });
+      expect(driver.state.queuedMessages).toEqual([]);
+      expect(userEntries(driver)).toEqual([]);
+      expect(session.steer).toHaveBeenCalledOnce();
+    });
+
+    it('retries an occupied draft steer', async () => {
+      const session = makeSession({ steer: vi.fn(async () => {}).mockRejectedValueOnce(occupied()) });
+      const { driver } = await makeDriver(session);
+      driver.state.appState.streamingPhase = 'waiting';
+      driver.streamingUI.setTurnId('1');
+
+      driver.handleUserInput('look here', 'steer-draft');
+      await vi.waitFor(() => {
+        expect(stripSgr(picker(driver).render(80).join(' '))).toContain('Session in use');
+      });
+      picker(driver).handleInput('\r');
+
+      await vi.waitFor(() => {
+        expect(session.steer).toHaveBeenCalledTimes(2);
+      });
+      expect(session.steer).toHaveBeenLastCalledWith('look here');
+      await vi.waitFor(() => {
+        expect(userEntries(driver)).toEqual([expect.objectContaining({ content: 'look here' })]);
+      });
+      expect(driver.state.queuedMessages).toEqual([]);
+    });
+
+    it('steers input queued in tower mode while the draft was in flight once it lands', async () => {
+      const steer = pendingSteer();
+      const { driver } = await makeDriver(steer.session);
+      driver.state.appState.towerMode = true;
+      driver.state.appState.streamingPhase = 'waiting';
+
+      driver.handleUserInput('draft objective', 'steer-draft');
+      driver.handleUserInput('next objective');
+      expect(driver.state.queuedMessages).toEqual([{ text: 'next objective', agentId: 'main' }]);
+      steer.resolve();
+
+      await vi.waitFor(() => {
+        expect(steer.session.steer).toHaveBeenCalledTimes(2);
+      });
+      expect(steer.session.steer).toHaveBeenNthCalledWith(2, 'next objective');
+    });
+
+    it('lets the /btw panel take the draft instead of steering', async () => {
+      const { driver, session } = await makeDriver();
+      driver.handleUserInput('/btw');
+      await vi.waitFor(() => {
+        expect(session.startBtw).toHaveBeenCalledWith();
+      });
+      driver.state.appState.streamingPhase = 'waiting';
+
+      driver.handleUserInput('what are you doing?', 'steer-draft');
+
+      await vi.waitFor(() => {
+        expect(session.prompt).toHaveBeenCalledWith('what are you doing?');
+      });
+      expect(session.steer).not.toHaveBeenCalled();
+      expect(driver.state.queuedMessages).toEqual([]);
+    });
+
+    it('lets the idle cache hint intercept the draft instead of steering', async () => {
+      const { driver, session } = await makeDriver();
+      driver.state.appState.availableModels = {
+        k2: { model: 'example-model', provider: 'example-provider', maxContextSize: 100 },
+      };
+      driver.state.appState.availableProviders = {
+        'example-provider': { type: 'kimi', oauth: { key: 'kimi-code', storage: 'file' } },
+      };
+      driver.state.appState.contextTokens = 150000;
+      const peek = vi.spyOn(cacheHintConfig, 'peekCacheHintConfig').mockReturnValue({
+        version: 1,
+        config: { 'example-model': { min_tokens_to_hint: 100000, cache_duration: 600 } },
+      });
+      (driver as unknown as { cacheHint: { recordActivity(): void } }).cacheHint.recordActivity();
+      const now = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1200_000);
+      try {
+        driver.handleUserInput('hello again', 'steer-draft');
+
+        expect(driver.state.editorContainer.children[0]).toBeInstanceOf(CacheHintDialogComponent);
+        expect(session.steer).not.toHaveBeenCalled();
+        expect(session.prompt).not.toHaveBeenCalled();
+      } finally {
+        now.mockRestore();
+        peek.mockRestore();
+      }
+    });
+
+    describe('falls back to the plain Enter path', () => {
+      type Setup = (driver: MessageDriver) => void;
+      const busy: Setup = (driver) => {
+        driver.state.appState.streamingPhase = 'waiting';
+      };
+      const cases: ReadonlyArray<readonly [string, Setup, string]> = [
+        ['while a shell command runs', (driver) => { driver.state.appState.streamingPhase = 'shell'; }, 'note'],
+        ['while compacting', (driver) => { busy(driver); driver.state.appState.isCompacting = true; }, 'note'],
+        ['for a slash command that is not a message', busy, '/compact'],
+      ];
+
+      it.each(cases)('%s', async (_label, setup, text) => {
+        const run = async (delivery: FollowUpDelivery) => {
+          const { driver, session } = await makeDriver();
+          setup(driver);
+          driver.handleUserInput(text, delivery);
+          await new Promise((resolve) => setImmediate(resolve));
+          return {
+            queued: driver.state.queuedMessages,
+            steer: session.steer.mock.calls,
+            prompt: session.prompt.mock.calls,
+          };
+        };
+
+        const steered = await run('steer-draft');
+        expect(steered).toEqual(await run('default'));
+        expect(steered.steer).toEqual([]);
+        expect(steered.queued).toHaveLength(1);
+      });
+
+      it('in bash mode', async () => {
+        const { driver, session } = await makeDriver();
+        busy(driver);
+        driver.state.appState.inputMode = 'bash';
+        driver.state.editor.inputMode = 'bash';
+
+        driver.handleUserInput('ls', 'steer-draft');
+
+        expect(session.steer).not.toHaveBeenCalled();
+        expect(driver.state.queuedMessages).toEqual([{ text: 'ls', agentId: 'main', mode: 'bash' }]);
+      });
+
+      it('while an earlier draft steer is in flight', async () => {
+        const steer = pendingSteer();
+        const { driver } = await makeDriver(steer.session);
+        busy(driver);
+
+        driver.handleUserInput('first', 'steer-draft');
+        driver.handleUserInput('second', 'steer-draft');
+
+        expect(steer.session.steer).toHaveBeenCalledExactlyOnceWith('first');
+        expect(driver.state.queuedMessages).toEqual([{ text: 'second', agentId: 'main' }]);
+        steer.resolve();
+        await vi.waitFor(() => {
+          expect(userEntries(driver)).toEqual([expect.objectContaining({ content: 'first' })]);
+        });
+        expect(driver.state.queuedMessages).toEqual([{ text: 'second', agentId: 'main' }]);
+      });
+
+      it('while idle', async () => {
+        const { driver, session } = await makeDriver();
+
+        driver.handleUserInput('hello', 'steer-draft');
+
+        expect(session.prompt).toHaveBeenCalledOnce();
+        expect(session.prompt.mock.calls[0]?.[0]).toBe('hello');
+        expect(session.steer).not.toHaveBeenCalled();
+      });
+    });
   });
 
   it('drops failed WaitFor input when the session changed meanwhile', async () => {
