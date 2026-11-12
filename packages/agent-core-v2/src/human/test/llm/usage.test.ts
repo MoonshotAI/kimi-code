@@ -19,6 +19,30 @@ function createSink() {
 }
 
 describe('openai decoder stream usage', () => {
+  it('preserves an indexed tool-call id from a function-less delta', () => {
+    const parts: unknown[] = [];
+    const sink: DecodeSink = {
+      onDelta: (part) => parts.push(part),
+      onFinish: () => {},
+      onMessageId: () => {},
+      onUsage: () => {},
+      onError: () => {},
+      onToolCallEnd: () => {},
+    };
+    const decoder = createOpenAIDecoder(sink);
+
+    decoder.push({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_expected' }] } }] });
+    decoder.push({ choices: [{ delta: { tool_calls: [{ index: 0, function: { name: 'echo', arguments: '{}' } }] } }] });
+
+    expect(parts).toEqual([{
+      type: 'function',
+      id: 'call_expected',
+      name: 'echo',
+      arguments: '{}',
+      _streamIndex: 0,
+    }]);
+  });
+
   it('preserves missing cache reads and explicit zeroes from the usage chunk', () => {
     const { sink, usages } = createSink();
     const raw = { prompt_tokens: 120, completion_tokens: 30, total_tokens: 150 };

@@ -234,10 +234,17 @@ export function createDecoder(
   function convertStreamToolCall(
     toolCall: RawStreamToolCallDelta,
   ): StreamedMessagePart[] {
+    const streamIndex = toolCall.index;
+    const buffered = streamIndex === undefined
+      ? undefined
+      : bufferedToolCalls.get(streamIndex) ?? { arguments: '', emitted: false };
+    if (streamIndex !== undefined && buffered !== undefined && toolCall.id !== undefined) {
+      buffered.id = toolCall.id;
+      bufferedToolCalls.set(streamIndex, buffered);
+    }
     if (toolCall.function === undefined || toolCall.function === null) {
       return [];
     }
-    const streamIndex = toolCall.index;
     const functionName = toolCall.function.name;
     const functionArguments = toolCall.function.arguments;
     const hasConcreteName = typeof functionName === 'string' && functionName.length > 0;
@@ -260,29 +267,26 @@ export function createDecoder(
       return [];
     }
 
-    const buffered = bufferedToolCalls.get(streamIndex) ?? { arguments: '', emitted: false };
-    if (toolCall.id !== undefined) {
-      buffered.id = toolCall.id;
-    }
-    if (!buffered.emitted) {
+    const indexedBuffered = buffered!;
+    if (!indexedBuffered.emitted) {
       if (!hasConcreteName) {
         if (hasArguments) {
-          buffered.arguments += functionArguments;
+          indexedBuffered.arguments += functionArguments;
         }
-        bufferedToolCalls.set(streamIndex, buffered);
+        bufferedToolCalls.set(streamIndex, indexedBuffered);
         return [];
       }
-      buffered.emitted = true;
+      indexedBuffered.emitted = true;
       const initialArguments =
-        buffered.arguments.length > 0
-          ? buffered.arguments + (functionArguments ?? '')
+        indexedBuffered.arguments.length > 0
+          ? indexedBuffered.arguments + (functionArguments ?? '')
           : (functionArguments ?? null);
-      buffered.arguments = '';
-      bufferedToolCalls.set(streamIndex, buffered);
+      indexedBuffered.arguments = '';
+      bufferedToolCalls.set(streamIndex, indexedBuffered);
       return [
         {
           type: 'function',
-          id: buffered.id ?? toolCall.id ?? crypto.randomUUID(),
+          id: indexedBuffered.id ?? toolCall.id ?? crypto.randomUUID(),
           name: functionName,
           arguments: initialArguments,
           _streamIndex: streamIndex,
