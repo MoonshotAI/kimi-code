@@ -90,10 +90,11 @@ export class ToolExecutor<TContext = unknown> {
       decider: (
         context: ToolDecisionContext<unknown, TContext, any>,
       ) => T | void | Promise<T | void>,
+      checkAbort = true,
     ): Promise<T | void> => {
       control.enter(phase);
       const decision = await decider(decisionContext());
-      control.signal.throwIfAborted();
+      if (checkAbort) control.signal.throwIfAborted();
       if (decision === undefined) return;
       if ('reject' in decision) {
         throw new ToolStop(rejected(phase, decision.reject, decision.data), decision.result);
@@ -136,7 +137,7 @@ export class ToolExecutor<TContext = unknown> {
         if (tool === undefined) {
           throw new ToolStop(rejected('resolve', `Tool "${call.name}" not found`, undefined, 'resolve'));
         }
-        const validating = await decide('validate', (ctx) => hook?.validating?.(ctx));
+        const validating = await decide('validate', (ctx) => hook?.validating?.(ctx), false);
         if (validating !== undefined && 'args' in validating) {
           const rewritten = await prepare(tool);
           if (rewritten !== undefined) return control.returned(rewritten);
