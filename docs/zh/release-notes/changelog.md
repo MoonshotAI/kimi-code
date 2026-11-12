@@ -6,6 +6,31 @@ outline: 2
 
 本页记录 Kimi Code CLI 每个版本的变更内容。
 
+## 2.6.0（2026-11-12）
+
+建议执行 `/settings -> TUI mode -> Fullscreen` 切换到全屏模式（重启后生效），获得更好的使用体验。
+
+### 新功能
+
+- 全屏模式下自动将连续的工具调用和思考过程折叠为摘要行，不再显示模型加载的技能激活卡片；可在 `/settings` 中调整折叠密度，或在 `tui.toml` 的 `[transcript]` 下设为 `"ungrouped"` 恢复原布局。
+- `@` 文件路径补全默认包含隐藏路径与被 `.gitignore` 忽略的文件，匹配质量相同时优先展示未忽略文件。
+- 多目录工作区支持在独立的 Skills 分组中选择同名技能，并按目录、全局或内置来源标注区分。
+- 全屏模式支持按 `Ctrl-C` 或 `Cmd-C` 复制选中文本，并在 `/settings` 中新增选中即复制（Copy on select）开关。
+- 支持持久化用户级与本地项目级权限规则（保存在 `config.toml` 与已信任工作区的 `.kimi-code/local.toml`）并在会话启动时加载，匹配优先级为 `deny` > `ask` > `allow`。
+- Tower 新增交付物任务（artifact missions），支持关键交付物审阅与人工验收，并在状态与任务视图中展示任务类型。
+
+### 优化
+
+- 非 SSH 和 mosh 环境下复制仅写入系统剪贴板，不再同时发送终端 OSC 52 序列；如需保留旧行为可设置 `KIMI_CODE_CLIPBOARD_OSC52=1`。
+- 允许在 `[secondary_model]` 中将 `primary` 作为普通模型别名；Tower 评审默认改用模型池默认模型，如需使用主模型需显式配置模型池别名或 `default_model`。
+- 新增环境变量 `KIMI_CODE_TUI_ANIMATION_FPS`（`1`–`60` 的整数），可调整终端进行中标题扫光动画的帧率。
+
+### 修复
+
+- 修复会话启动及 print 模式下未生效 `config.toml` 中 `[[permission.rules]]`（含 `deny`、`ask`、`allow`）的问题。
+- 切换工作区主目录后，默认本地工作目录现跟随新的主目录，并同步工具、项目配置与会话索引；如需固定原目录请显式指定 `environmentCwd`。
+- 修复了一些已知问题，并做了若干细节优化。更详细的变更记录见 [GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md)。
+
 ## 2.5.3（2026-11-10）
 
 ### 新功能

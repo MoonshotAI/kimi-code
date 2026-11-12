@@ -471,15 +471,33 @@ describe('WsConnectionV1 outbound buffer', () => {
 });
 
 describe('WsConnectionV1 heartbeat', () => {
+  let stalledMs = 0;
+
   beforeEach(() => {
     vi.useFakeTimers();
+    stalledMs = 0;
+    const monotonicNow = performance.now.bind(performance);
+    vi.spyOn(performance, 'now').mockImplementation(() => monotonicNow() + stalledMs);
   });
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.useRealTimers();
   });
 
   function sentTypes(socket: FakeSocket): string[] {
     return socket.frames().map((f) => (f as { type: string }).type);
+  }
+
+  function advance(ms: number): void {
+    vi.advanceTimersByTime(ms);
+  }
+
+  function settle(): void {
+    vi.advanceTimersByTime(1);
+  }
+
+  function stall(ms: number): void {
+    stalledMs += ms;
   }
 
   it('sends nothing on connect and pings every 10 seconds by default', () => {
@@ -513,15 +531,16 @@ describe('WsConnectionV1 heartbeat', () => {
     const socket = new FakeSocket();
     makeConn(socket, { heartbeatIntervalMs: 10 });
 
-    vi.advanceTimersByTime(10);
+    advance(10);
     expect(sentTypes(socket)).toEqual(['ping']);
     expect(socket.closeCalls).toHaveLength(0);
 
-    vi.advanceTimersByTime(10);
+    advance(10);
+    settle();
     expect(socket.closeCalls).toEqual([{ code: 1001, reason: 'heartbeat timeout' }]);
     expect(sentTypes(socket)).toEqual(['ping']);
 
-    vi.advanceTimersByTime(100);
+    advance(100);
     expect(sentTypes(socket)).toEqual(['ping']);
     expect(socket.closeCalls).toHaveLength(1);
   });
@@ -530,14 +549,15 @@ describe('WsConnectionV1 heartbeat', () => {
     const socket = new FakeSocket();
     makeConn(socket, { heartbeatIntervalMs: 10 });
 
-    vi.advanceTimersByTime(15);
+    advance(15);
     socket.emit('message', JSON.stringify({ type: 'some_future_frame', payload: {} }));
 
-    vi.advanceTimersByTime(20);
+    advance(20);
     expect(sentTypes(socket)).toEqual(['ping', 'ping', 'ping']);
     expect(socket.closeCalls).toHaveLength(0);
 
-    vi.advanceTimersByTime(5);
+    advance(5);
+    settle();
     expect(socket.closeCalls).toEqual([{ code: 1001, reason: 'heartbeat timeout' }]);
   });
 
@@ -552,6 +572,108 @@ describe('WsConnectionV1 heartbeat', () => {
     vi.advanceTimersByTime(100);
     expect(sentTypes(socket)).toEqual(['ping']);
     expect(socket.closeCalls).toHaveLength(0);
+  });
+
+  it('processes a pong queued behind the heartbeat check before reaping', () => {
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { heartbeatIntervalMs: 10 });
+
+    advance(10);
+    expect(sentTypes(socket)).toEqual(['ping']);
+
+    stall(2);
+    advance(10);
+    socket.emit('message', JSON.stringify({ type: 'pong' }));
+    settle();
+
+    expect(socket.closeCalls).toHaveLength(0);
+    expect(sentTypes(socket)).toEqual(['ping', 'ping']);
+    conn.close();
+  });
+
+  it('opens a full new response window after a long event-loop stall', () => {
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { heartbeatIntervalMs: 10 });
+
+    advance(10);
+    socket.emit('message', JSON.stringify({ type: 'pong' }));
+
+    stall(60_000);
+    advance(10);
+    expect(sentTypes(socket)).toEqual(['ping', 'ping']);
+    expect(socket.closeCalls).toHaveLength(0);
+
+    advance(15);
+    socket.emit('message', JSON.stringify({ type: 'pong' }));
+    advance(10);
+    expect(socket.closeCalls).toHaveLength(0);
+    advance(10);
+    expect(socket.closeCalls).toHaveLength(0);
+    expect(sentTypes(socket)).toEqual(['ping', 'ping', 'ping', 'ping', 'ping']);
+    conn.close();
+  });
+
+  it('still reaps a peer that stays silent after a stall', () => {
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { heartbeatIntervalMs: 10 });
+
+    advance(10);
+    stall(60_000);
+    advance(10);
+    expect(socket.closeCalls).toHaveLength(0);
+
+    advance(10);
+    expect(socket.closeCalls).toHaveLength(0);
+    advance(10);
+    settle();
+    expect(socket.closeCalls).toEqual([{ code: 1001, reason: 'heartbeat timeout' }]);
+    expect(sentTypes(socket)).toEqual(['ping', 'ping', 'ping']);
+    conn.close();
+  });
+
+  it('reaps a silent peer when heartbeat callbacks run only slightly late', () => {
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { heartbeatIntervalMs: 10 });
+
+    advance(10);
+    stall(1);
+    advance(10);
+    settle();
+
+    expect(socket.closeCalls).toEqual([{ code: 1001, reason: 'heartbeat timeout' }]);
+    expect(sentTypes(socket)).toEqual(['ping']);
+    conn.close();
+  });
+
+  it('keeps answering peers connected across wall-clock jumps', () => {
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { heartbeatIntervalMs: 10 });
+
+    advance(10);
+    socket.emit('message', JSON.stringify({ type: 'pong' }));
+    vi.setSystemTime(Date.now() + 3_600_000);
+    advance(10);
+    socket.emit('message', JSON.stringify({ type: 'pong' }));
+    vi.setSystemTime(Date.now() - 3_600_000);
+    advance(10);
+
+    expect(socket.closeCalls).toHaveLength(0);
+    expect(sentTypes(socket)).toEqual(['ping', 'ping', 'ping']);
+    conn.close();
+  });
+
+  it('does not keep a silent peer alive after a wall clock jumps forward and back', () => {
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { heartbeatIntervalMs: 10 });
+
+    advance(10);
+    vi.setSystemTime(Date.now() + 3_600_000);
+    advance(10);
+    vi.setSystemTime(Date.now() - 3_600_000);
+    settle();
+
+    expect(socket.closeCalls).toEqual([{ code: 1001, reason: 'heartbeat timeout' }]);
+    conn.close();
   });
 });
 

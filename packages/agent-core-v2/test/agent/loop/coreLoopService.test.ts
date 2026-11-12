@@ -8,6 +8,7 @@ import { LOOP_CONTROL_SECTION } from '#/agent/loop/configSection';
 import { IConfigService } from '#/app/config/config';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { ISessionRunGate } from '#/session/sessionActivity/sessionRunGate';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
@@ -312,6 +313,11 @@ describe('core LoopService integration', () => {
       },
     });
 
+    const lifecycle: string[] = [];
+    const subscriptions = [
+      ctx.get(IEventBus).subscribe(PromptCompleted, (event) => lifecycle.push(event.type)),
+      ctx.get(IEventBus).subscribe(TurnEnded, (event) => lifecycle.push(event.type)),
+    ];
     let handle: ReturnType<IAgentLoopService['promptHandle']>;
     await vi.waitFor(() => {
       handle = loop.promptHandle('seed-1');
@@ -319,6 +325,8 @@ describe('core LoopService integration', () => {
     });
     await expect(handle!.completion).resolves.toMatchObject({ state: 'completed' });
     await loop.settled();
+    expect(lifecycle).toEqual(['turn.ended', 'prompt.completed']);
+    for (const subscription of subscriptions) subscription.dispose();
   });
 
   it('honors afterStep stopTurn without starting another LLM step', async () => {
@@ -381,7 +389,11 @@ describe('core LoopService integration', () => {
     const loop = ctx.get(IAgentLoopService);
     const core = (loop as unknown as { loop: { historyRevision: number } }).loop;
     const previousRevision = core.historyRevision;
+    const begin = vi.spyOn(ctx.get(ISessionRunGate), 'begin');
+    const acquire = vi.spyOn(ctx.get(ISessionRunGate), 'acquire');
     await ctx.get(IAgentConversationUndoService).undo(1);
+    expect(begin).toHaveBeenCalledTimes(2);
+    expect(acquire).toHaveBeenCalledTimes(1);
     expect((loop as unknown as { loop: { historyRevision: number } }).loop).toBe(core);
     expect(core.historyRevision).toBeGreaterThan(previousRevision);
     ctx.mockNextResponse({ type: 'text', text: 'third' });

@@ -630,20 +630,38 @@ describe('subagent task reminders and fork request parity', () => {
     ctx.get(IAgentLoopService).update({ activeToolNames: contributedToolNames() });
     const lifecycle = ctx.get(IAgentLifecycleService);
     const main = lifecycle.handleOf('main')!;
+    main.accessor.get(IAgentPermissionModeService).setMode('yolo');
+    ctx.mockNextResponse({
+      type: 'function',
+      id: 'call_write',
+      name: 'Write',
+      arguments: JSON.stringify({ path: '/tmp/fork-tool-result-note.txt', content: 'probe' }),
+    });
     await runPrompt(main);
+    const projectedToolResult = main.accessor.get(IAgentLoopService).history()
+      .find((message) => message.role === 'tool' && message.toolCallId === 'call_write');
+    expect(projectedToolResult?.note).toBeDefined();
+    expect(projectedToolResult?.content.some((part) => part.type === 'text' && part.text.includes('<system>'))).toBe(false);
     main.accessor.get(IAgentLoopService).update({ activeToolNames: ['Read', 'Grep', 'Glob'] });
     const childId = await ctx.get(ISessionBtwService).start();
     const child = lifecycle.handleOf(childId)!;
 
     await runPrompt(child);
 
-    const parentReq = ctx.llmCalls[0]!;
-    const childReq = ctx.llmCalls[1]!;
+    const childToolResult = child.accessor.get(IAgentLoopService).history()
+      .find((message) => message.role === 'tool' && message.toolCallId === 'call_write');
+    expect(childToolResult?.note).toBeDefined();
+    expect(childToolResult?.content.some((part) => part.type === 'text' && part.text.includes('<system>'))).toBe(false);
+
+    const parentReq = ctx.llmCalls[1]!;
+    const childReq = ctx.llmCalls[2]!;
     expect(parentReq.tools.some((tool) => tool.name === 'WaitFor')).toBe(true);
+    const parentToolResult = parentReq.history.find((message) => message.role === 'tool' && message.toolCallId === 'call_write');
+    expect(parentToolResult?.content.some((part) => part.type === 'text' && part.text.includes('<system>'))).toBe(true);
     expect(childReq.tools).toEqual(parentReq.tools);
     expect(childReq.systemPrompt).toBe(parentReq.systemPrompt);
     expect(childReq.history.slice(0, parentReq.history.length)).toEqual(parentReq.history);
-    expect(ctx.llmCalls).toHaveLength(2);
+    expect(ctx.llmCalls).toHaveLength(3);
   });
 
   it('keeps btw cache probes usage-driven when main compacts', async () => {

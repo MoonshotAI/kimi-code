@@ -20,6 +20,7 @@ import {
   type TestAgentContext,
 } from '../../../harness';
 import { recordingTelemetry } from '../../../app/telemetry/stubs';
+import { stubToolResultTruncationService } from '../../../agent/toolResultTruncation/stubs';
 import { stubSkill } from './stubs';
 
 function makeSkill(name: string, metadata: SkillDefinition['metadata'] = {}): SkillDefinition {
@@ -236,9 +237,11 @@ describe('SkillTool nested variants', () => {
       sessionCatalog,
       skillService,
       { remind: (...entries: unknown[]) => reminders.push(...entries) } as unknown as IAgentLoopService,
+      stubToolResultTruncationService(),
       { skill: 'parent.child' },
       1,
       'session-1',
+      'call_skill',
       '/work/B',
     );
 

@@ -46,7 +46,7 @@ import { abortError } from '#/_base/utils/abort';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
 
-import { historyFromContext } from '#/agent/loop/history';
+import { historyFromContextPreservingToolNotes } from '#/agent/loop/history';
 import { closeTrailingOpenToolExchange } from '#/agent/contextMemory/openToolExchange';
 import { IAgentEnvironmentBindingSeed, IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
 import '#/agent/environmentBinding/environmentBindingService';
@@ -405,7 +405,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     if (sourceMessages.length > 0) {
       await child.accessor
         .get(IAgentLoopService)
-        .initializeHistory(historyFromContext(closeTrailingOpenToolExchange(sourceMessages)));
+        .initializeHistory(historyFromContextPreservingToolNotes(closeTrailingOpenToolExchange(sourceMessages)));
     }
     return childContext;
   }

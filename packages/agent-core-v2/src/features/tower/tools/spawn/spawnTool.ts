@@ -322,12 +322,15 @@ export class TowerSpawnTool implements ITowerSpawnTool {
             });
           };
           setFields();
-          const timeoutHandle = setTimeout(() => {
-            timedOut = true;
-            stopReason = 'Timed out';
-            controller.abort(stopReason);
-          }, timeoutMs);
-          timeoutHandle.unref?.();
+          const timeoutHandle =
+            timeoutMs > 0
+              ? setTimeout(() => {
+                  timedOut = true;
+                  stopReason = 'Timed out';
+                  controller.abort(stopReason);
+                }, timeoutMs)
+              : undefined;
+          timeoutHandle?.unref?.();
           setStop(({ reason, abandon }) => {
             stopReason = typeof reason === 'string' ? reason : reason instanceof Error ? reason.message : undefined;
             controller.abort(reason);
@@ -436,7 +439,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
           try {
             return await settled;
           } finally {
-            clearTimeout(timeoutHandle);
+            if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
             if (forceHandle !== undefined) clearTimeout(forceHandle);
           }
         } finally {
