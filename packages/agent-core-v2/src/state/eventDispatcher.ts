@@ -19,6 +19,7 @@ export interface DurableAgentRuntimeParticipant<State = any> {
   readonly id: string;
   readonly events: readonly Event2Class<any, any>[];
   readonly undoable: boolean;
+  readonly mutableReplay?: boolean;
   readonly transition: StateFold<State>;
   readonly onUndo?: (state: State, count: number) => State;
   onWillReplay?(): void;
