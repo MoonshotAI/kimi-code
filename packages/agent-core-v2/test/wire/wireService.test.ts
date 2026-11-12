@@ -7,7 +7,7 @@ import { resetUnexpectedErrorHandler, setUnexpectedErrorHandler } from '#/_base/
 import { ILogService } from '#/_base/log/log';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
-import type { ContentPart } from '#human/llm/message';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import { toCoreMessage } from '#human/message';
 import { toLlmMessage, type Message as LegacyMessage } from '#/llm-adapter/contract/message';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';

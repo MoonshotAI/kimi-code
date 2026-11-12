@@ -31,7 +31,6 @@ import { TOWER_MODE_USER_ENABLED_ONLY } from '#/features/tower/tools/support';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
-import { UNKNOWN_CAPABILITY } from '#/llm-adapter/contract/capability';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -216,6 +215,7 @@ describe('TowerSpawnTool', () => {
   });
 
   afterEach(async () => {
+    vi.useRealTimers();
     completion.resolve({ summary: 'test cleanup' });
     await lastHandler?.wait();
     disposables.dispose();
@@ -497,6 +497,45 @@ describe('TowerSpawnTool', () => {
     });
   });
 
+  it('treats [subagent].timeout_ms = 0 as no deadline and preserves the metadata', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    subagentTimeoutMs = 0;
+    runAgent = vi.fn(
+      async (agent: AgentContext, _request: unknown, options: { signal: AbortSignal }) =>
+        ({
+          agentId: agent.agentId,
+          turn: undefined,
+          completion: new Promise<{ summary: string }>((resolve, reject) => {
+            options.signal.addEventListener(
+              'abort',
+              () => {
+                reject(options.signal.reason);
+              },
+              { once: true },
+            );
+            void completion.promise.then(resolve, reject);
+          }),
+        }) as unknown as AgentRunHandle,
+    );
+
+    const result = await execute(WORKER_ARGS);
+    await vi.advanceTimersByTimeAsync(DEFAULT_SUBAGENT_TIMEOUT_MS + 1_000);
+
+    expect(result.isError).toBeUndefined();
+    expect(lastHandler?.snapshot()).toMatchObject({
+      detached: true,
+      fields: { task: { timeoutMs: 0, timedOut: undefined } },
+    });
+
+    completion.resolve({ summary: 'worker done' });
+    const settled = await lastHandler?.wait();
+    expect(settled).toMatchObject({ outcome: { type: 'success' } });
+    expect(lastHandler?.snapshot().fields.task).toMatchObject({
+      timeoutMs: 0,
+      timedOut: undefined,
+    });
+  });
+
   it('pins the spawned agent to the auto permission mode', async () => {
     const result = await execute(WORKER_ARGS);
 
@@ -601,9 +640,12 @@ describe('TowerSpawnTool', () => {
   it('falls back to the bound model default_effort when the section declares none', async () => {
     secondaryModel = { model: 'cheap/fast' };
     modelMeta['cheap/fast'] = {
-      capabilities: { ...UNKNOWN_CAPABILITY, thinking: true },
-      supportEfforts: ['low', 'high', 'max'],
-      defaultEffort: 'max',
+      spec: {
+        provider: 'test',
+        name: 'cheap/fast',
+        capability: { thinking: true },
+        thinking: { supportEfforts: ['low', 'high', 'max'], defaultEffort: 'max' },
+      },
     };
 
     const result = await execute(WORKER_ARGS);
@@ -619,9 +661,12 @@ describe('TowerSpawnTool', () => {
     secondaryModel = { model: 'cheap/fast' };
     thinkingEnabled = false;
     modelMeta['cheap/fast'] = {
-      capabilities: { ...UNKNOWN_CAPABILITY, thinking: true },
-      supportEfforts: ['low', 'high', 'max'],
-      defaultEffort: 'max',
+      spec: {
+        provider: 'test',
+        name: 'cheap/fast',
+        capability: { thinking: true },
+        thinking: { supportEfforts: ['low', 'high', 'max'], defaultEffort: 'max' },
+      },
     };
 
     const result = await execute(WORKER_ARGS);

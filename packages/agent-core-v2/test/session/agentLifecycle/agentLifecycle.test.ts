@@ -43,6 +43,7 @@ import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
+import { UNKNOWN_CAPABILITY } from '#/llm-adapter/contract/capability';
 import type { ToolCall } from '#human/message';
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { IHostClock } from '#/os/interface/hostClock';
@@ -109,7 +110,7 @@ import { IWireService } from '#/wire/wire';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { contextFromHistoryEntry } from '#/agent/loop/history';
-import type { HistoryMessage } from '#human/agent/turn';
+import type { Message } from '@moonshot-ai/core/llm/message';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
@@ -418,7 +419,7 @@ describe('AgentLifecycleService', () => {
       baselineTools: () => [],
       data: () => ({
         ...(loopProfileSequence.length > 0 ? loopProfileSequence.shift()! : loopProfile),
-        modelCapabilities: {},
+        modelCapabilities: UNKNOWN_CAPABILITY,
       }),
       setProfile: vi.fn(async (profile: ProfileBindingSnapshot) => {
         loopProfile = { ...profile };
@@ -443,14 +444,14 @@ describe('AgentLifecycleService', () => {
       setModel: vi.fn(async (model: string) => ({ model })),
       history: () => loopHistory,
       historyRevision: () => 0,
-      replaceHistory: (entries: readonly HistoryMessage[]) => {
+      replaceHistory: (entries: readonly Message[]) => {
         loopHistory.splice(0, loopHistory.length, ...entries.map((entry) => contextFromHistoryEntry(entry)));
         return true;
       },
-      initializeHistory: async (entries: readonly HistoryMessage[]) => {
+      initializeHistory: async (entries: readonly Message[]) => {
         loopHistory.splice(0, loopHistory.length, ...entries.map((entry) => contextFromHistoryEntry(entry)));
       },
-      remind: (...entries: readonly HistoryMessage[]) => {
+      remind: (...entries: readonly Message[]) => {
         loopHistory.push(...entries.map((entry) => contextFromHistoryEntry(entry)));
       },
       flushReminders: () => {},
@@ -464,8 +465,9 @@ describe('AgentLifecycleService', () => {
         activeTurnId: loopActiveTurnId,
         activePromptId: undefined,
         queue: loopPendingPromptIds.map((promptId) => ({
-          message: { role: 'user', content: [] },
-          meta: { promptId },
+          role: 'user' as const,
+          content: [],
+          attributes: { promptId },
         })),
         notificationCount: 0,
         paused: false,
@@ -500,7 +502,7 @@ describe('AgentLifecycleService', () => {
     ix.stub(IHostClock, { _serviceBrand: undefined } as IHostClock);
     ix.stub(IModelCatalog, {
       _serviceBrand: undefined,
-      get: () => ({ capabilities: {} }),
+      get: () => ({ spec: { provider: 'stub', name: 'stub', capability: {} } }),
     } as unknown as IModelCatalog);
     ix.stub(ISessionTokenCountingService, {
       estimateText: () => 0,

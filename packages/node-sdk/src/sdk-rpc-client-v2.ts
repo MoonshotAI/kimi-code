@@ -1433,6 +1433,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         cwd: ctx.cwd,
         provider: undefined,
         modelAlias: profile.modelAlias,
+        model:
+          profile.modelAlias === undefined
+            ? undefined
+            : agent.accessor.get(IAgentLoopService).resolveModelContext().model,
         modelCapabilities: profile.modelCapabilities,
         profileName: profile.profileName,
         thinkingEffort: profile.thinkingLevel,
@@ -2274,8 +2278,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       facade.getUsage(),
     ]);
     const profile = agent.accessor.get(IAgentLoopService).data();
-    const capability = profile.modelCapabilities;
-    const maxContextTokens = capability.max_input_tokens ?? capability.max_context_tokens;
+    const model = profile.modelAlias === undefined ? undefined : agent.accessor.get(IAgentLoopService).resolveModelContext().model;
+    const maxContextTokens = model?.maxInputSize ?? model?.maxContextSize ?? 0;
     const contextTokens = context.tokenCount;
     // Deliberately unclamped, same as the base class (>100% is the documented
     // overflow signal on this path).

@@ -1,4 +1,4 @@
-import { providerImagePolicy } from '#human/llm/protocol/kit/media';
+import { providerImagePolicy } from '@moonshot-ai/core/llm/protocol/kit/media';
 
 import { IMAGE_MIME_BY_SUFFIX, sniffMediaFromMagic } from './file-type';
 

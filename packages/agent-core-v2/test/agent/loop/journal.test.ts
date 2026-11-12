@@ -6,12 +6,11 @@ import {
   LoopJournal,
   restoreLoopJournal,
 } from '#/agent/loop/journal';
-import { createLoop } from '#/agent/loop/core/index';
+import { createLoop } from '@moonshot-ai/core/loop/index';
 import { successfulExecutor } from './core/executor';
-import { usableOutputOf } from '#human/llm/policy/settle';
+import { usableOutputOf } from '@moonshot-ai/core/llm/policy/settle';
 import { contextFromHistoryEntry } from '#/agent/loop/history';
-import { createUserEntry, type UserEntry } from '#human/agent/turn';
-import { createAssistantMessage, createUserMessage, type ToolCall } from '#human/llm/message';
+import { createAssistantMessage, createUserMessage, type ToolCall, type UserMessage } from '@moonshot-ai/core/llm/message';
 import type { IWireService } from '#/wire/wire';
 import type { WireRecord } from '#/wire/record';
 import { normalizeLegacyTurnSteerRecords } from '#/wire/human';
@@ -19,12 +18,12 @@ import { computeForkLine, parseTree, restorableChain } from '#/wire/tree/index';
 import { fromPersistentWireRecord, toPersistentWireRecord } from '#/wire/wireService';
 import { recordingWireLog, registerTestAgentWire, registerTestEventDispatcher, stubAgentWire } from '../../wire/stubs';
 
-function prompt(id: string, text = id): UserEntry {
-  return createUserEntry(createUserMessage(text), { source: 'input', promptId: id });
+function prompt(id: string, text = id): UserMessage {
+  return createUserMessage(text, { source: 'input', promptId: id });
 }
 
 function assistant(text: string, toolCalls: ToolCall[] = []) {
-  return { message: createAssistantMessage([{ type: 'text' as const, text }], toolCalls), meta: { source: 'llm' } };
+  return createAssistantMessage([{ type: 'text' as const, text }], toolCalls, { source: 'llm' });
 }
 
 function memoryWire(records: WireRecord[]): IWireService {
@@ -51,14 +50,14 @@ describe('loop journal restore', () => {
       { type: 'agent.turn.started', turnId: 99, trigger: 'normal' },
     ]);
 
-    expect(snapshot.input.messages!.map((entry) => entry.message)).toMatchObject([prompt('old').message]);
+    expect(snapshot.input.messages!).toMatchObject([{ role: 'user', content: prompt('old').content }]);
     expect(snapshot.input.nextTurnId).toBe(3);
     const promptBeforeMessage = restoreLoopJournal([
       { type: 'turn.prompt', input: [], trigger: 'normal', origin: { kind: 'user' }, promptId: 'old', turnId: 0 },
       { type: 'context.append_message', message: contextFromHistoryEntry(prompt('old')) },
       { type: 'turn.ended', turnId: 0, reason: 'completed' },
     ]);
-    expect(promptBeforeMessage.input.messages!.map((entry) => entry.message)).toMatchObject([prompt('old').message]);
+    expect(promptBeforeMessage.input.messages!).toMatchObject([{ role: 'user', content: prompt('old').content }]);
     expect(promptBeforeMessage.input.nextTurnId).toBe(1);
     expect(snapshot.input.profile?.systemPrompt).toBe('from-update');
     expect(snapshot.input.unfinished).toBeUndefined();
@@ -74,11 +73,12 @@ describe('loop journal restore', () => {
       { type: 'agent.tool.async_ended', toolCallId: 'bg', entry: prompt('ignored') },
     ]);
 
-    expect(snapshot.input.messages!.map((entry) => entry.message.role)).toEqual(['user', 'assistant', 'tool']);
-    expect(snapshot.input.messages![1]?.meta?.partial).toBeUndefined();
+    expect(snapshot.input.messages!.map((entry) => entry.role)).toEqual(['user', 'assistant', 'tool']);
+    expect(snapshot.input.messages![1]?.attributes?.partial).toBeUndefined();
     expect(snapshot.input.messages![2]).toMatchObject({
-      message: { role: 'tool', toolCallId: 'bg' },
-      meta: { isError: true },
+      role: 'tool',
+      toolCallId: 'bg',
+      attributes: { isError: true },
     });
     expect(snapshot.input.nextTurnId).toBe(3);
     expect(snapshot.input.unfinished).toBeUndefined();
@@ -114,20 +114,20 @@ describe('loop journal restore', () => {
     const prior = prompt('prior');
     const first = prompt('p1');
     const second = prompt('p2');
-    journal.append({ type: 'message.appended', turnId: 0, step: 0, source: 'remind', entry: prior });
+    journal.append({ type: 'message.appended', turnId: 0, step: 0, source: 'remind', message: prior });
     expect(records).toMatchObject([{ type: 'context.append_message' }]);
-    journal.append({ type: 'prompt.submitted', entry: prompt('active') });
-    journal.append({ type: 'turn.started', turnId: 0, trigger: 'normal', entry: prompt('active') });
-    journal.append({ type: 'message.appended', turnId: 0, step: 0, source: 'normal', entry: prompt('active') });
-    journal.append({ type: 'prompt.submitted', entry: first });
-    journal.append({ type: 'prompt.submitted', entry: second });
-    journal.append({ type: 'prompt.steered', promptIds: ['p1', 'p2'], entries: [first, second] });
+    journal.append({ type: 'prompt.submitted', message: prompt('active') });
+    journal.append({ type: 'turn.started', turnId: 0, trigger: 'normal', message: prompt('active') });
+    journal.append({ type: 'message.appended', turnId: 0, step: 0, source: 'normal', message: prompt('active') });
+    journal.append({ type: 'prompt.submitted', message: first });
+    journal.append({ type: 'prompt.submitted', message: second });
+    journal.append({ type: 'prompt.steered', promptIds: ['p1', 'p2'], messages: [first, second] });
     journal.append({ type: 'turn.ended', turnId: 0, outcome: { type: 'done' } });
-    journal.append({ type: 'turn.started', turnId: 1, trigger: 'notify', promptOnly: true, entry: first });
-    journal.append({ type: 'message.appended', turnId: 1, step: 0, source: 'notify', entry: first });
+    journal.append({ type: 'turn.started', turnId: 1, trigger: 'notify', promptOnly: true, message: first });
+    journal.append({ type: 'message.appended', turnId: 1, step: 0, source: 'notify', message: first });
     journal.append({ type: 'turn.ended', turnId: 1, outcome: { type: 'done' } });
-    journal.append({ type: 'turn.started', turnId: 2, trigger: 'notify', entry: second });
-    journal.append({ type: 'message.appended', turnId: 2, step: 0, source: 'notify', entry: second });
+    journal.append({ type: 'turn.started', turnId: 2, trigger: 'notify', message: second });
+    journal.append({ type: 'message.appended', turnId: 2, step: 0, source: 'notify', message: second });
     journal.append({ type: 'turn.ended', turnId: 2, outcome: { type: 'done' } });
 
     expect(records.filter((record) => record.type === 'turn.steer')).toHaveLength(0);
@@ -137,8 +137,8 @@ describe('loop journal restore', () => {
       { turnId: 2, promptId: 'p2', trigger: 'notify' },
     ]);
     expect(records.every((record) => !record.type.startsWith('agent.'))).toBe(true);
-    expect(journal.snapshot().input.messages!.map((entry) => entry.message.role)).toEqual(['user', 'user', 'user', 'user']);
-    expect(journal.snapshot().input.messages![0]?.message).toMatchObject(prior.message);
+    expect(journal.snapshot().input.messages!.map((entry) => entry.role)).toEqual(['user', 'user', 'user', 'user']);
+    expect(journal.snapshot().input.messages![0]).toMatchObject({ role: 'user', content: prior.content });
 
     const historical = normalizeLegacyTurnSteerRecords([
       { type: 'turn.prompt', turnId: 0, input: [], origin: { kind: 'user' } },
@@ -166,15 +166,13 @@ describe('loop journal restore', () => {
   });
 
   it('round-trips public message media and rich metadata through persistent Wire encoding', () => {
-    const entry = {
-      message: {
-        role: 'user' as const,
-        content: [
-          { type: 'text' as const, text: 'image', contentType: 'text/markdown', meta: { kind: 'skill' } },
-          { type: 'image_url' as const, imageUrl: { url: 'kimi-file://image', id: 'image', name: 'image.png' } },
-        ],
-      },
-      meta: { source: 'input', toolCallId: 'call-1' },
+    const entry: UserMessage = {
+      role: 'user',
+      content: [
+        { type: 'text', text: 'image', contentType: 'text/markdown', meta: { kind: 'skill' } },
+        { type: 'image_url', imageUrl: { url: 'kimi-file://image', id: 'image', name: 'image.png' } },
+      ],
+      attributes: { source: 'input', toolCallId: 'call-1' },
     };
     const record: WireRecord = {
       type: 'context.append_message',
@@ -198,15 +196,13 @@ describe('loop journal restore', () => {
       const wire = registerTestAgentWire(ix, 'wire/loop-journal', { log: recordingWireLog(persisted), agentId: 'main' });
       const dispatcher = registerTestEventDispatcher(ix);
       const journal = new LoopJournal(wire, 'main', dispatcher);
-      const entry: UserEntry = {
-        message: {
-          role: 'user',
-          content: [
-            { type: 'text', text: 'media', contentType: 'text/markdown' },
-            { type: 'image_url', imageUrl: { url: 'kimi-file://image', id: 'image' } },
-          ],
-        },
-        meta: { source: 'input', promptId: 'media' },
+      const entry: UserMessage = {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'media', contentType: 'text/markdown' },
+          { type: 'image_url', imageUrl: { url: 'kimi-file://image', id: 'image' } },
+        ],
+        attributes: { source: 'input', promptId: 'media' },
       };
       const answer = assistant('answer', [
         {
@@ -219,14 +215,14 @@ describe('loop journal restore', () => {
         },
       ]);
       journal.append({ type: 'turn.started', turnId: 0, trigger: 'normal' });
-      journal.append({ type: 'message.appended', turnId: 0, step: 0, source: 'normal', entry });
+      journal.append({ type: 'message.appended', turnId: 0, step: 0, source: 'normal', message: entry });
       journal.append({ type: 'step.started', turnId: 0, step: 1 });
-      journal.append({ type: 'message.appended', turnId: 0, step: 1, source: 'llm', entry: answer });
+      journal.append({ type: 'message.appended', turnId: 0, step: 1, source: 'llm', message: answer });
       journal.append({
         type: 'tool.started',
         turnId: 0,
         step: 1,
-        toolCall: answer.message.toolCalls[0]!,
+        toolCall: answer.toolCalls[0]!,
       });
       journal.append({
         type: 'step.ended',
@@ -273,12 +269,12 @@ describe('loop journal restore', () => {
         }),
       }));
       const restored = journal.snapshot().input.messages!;
-      expect(restored.slice(0, 2).map((item) => item.message)).toMatchObject([
-        entry.message,
-        answer.message,
+      expect(restored.slice(0, 2)).toMatchObject([
+        { role: 'user', content: entry.content },
+        { role: 'assistant', content: answer.content, toolCalls: answer.toolCalls },
       ]);
-      expect(restored[0]?.message.content[0]).not.toHaveProperty('meta');
-      expect(restored.every((item) => item.meta?.llmTiming === undefined)).toBe(true);
+      expect(restored[0]?.content[0]).not.toHaveProperty('meta');
+      expect(restored.every((item) => item.attributes?.llmTiming === undefined)).toBe(true);
     } finally {
       ix.dispose();
     }
@@ -305,7 +301,7 @@ describe('loop journal restore', () => {
     const active = restorableChain([...entries, { record: switched, line: 6 }], tree);
     const restored = restoreLoopJournal(active.map(({ record }) => record));
 
-    expect(restored.input.messages!.map((entry) => entry.message)).toEqual([prompt('first').message]);
+    expect(restored.input.messages!).toMatchObject([{ role: 'user', content: prompt('first').content }]);
     expect(restored.input.nextTurnId).toBe(2);
     expect(restored.input.unfinished).toBeUndefined();
 

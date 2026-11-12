@@ -1,4 +1,4 @@
-import type { ModelCapability as LlmModelCapability } from '#human/llm-requester/capability';
+import type { LlmModelSpec, ModelCapability as CoreModelCapability } from '@moonshot-ai/core/llm/request';
 
 export interface ModelCapability {
   readonly image_in: boolean;
@@ -29,6 +29,20 @@ export const UNKNOWN_CAPABILITY: ModelCapability = Object.freeze(
   ),
 );
 
+export function fromLlmModelSpec(spec: LlmModelSpec | undefined): ModelCapability {
+  if (spec === undefined || spec.capability === undefined) return UNKNOWN_CAPABILITY;
+  return {
+    image_in: spec.capability?.image_in ?? false,
+    video_in: spec.capability?.video_in ?? false,
+    audio_in: spec.capability?.audio_in ?? false,
+    thinking: spec.capability?.thinking ?? false,
+    tool_use: spec.capability?.tool_use ?? false,
+    max_context_tokens: spec.maxContextSize ?? 0,
+    max_input_tokens: spec.maxInputSize,
+    dynamically_loaded_tools: spec.capability?.dynamically_loaded_tools ?? false,
+  };
+}
+
 export function isUnknownCapability(capability: ModelCapability): boolean {
   if (capability === UNKNOWN_CAPABILITY) return true;
   const marked =
@@ -45,7 +59,7 @@ export function isUnknownCapability(capability: ModelCapability): boolean {
   );
 }
 
-export function toLlmCapability(capability: ModelCapability): LlmModelCapability {
+export function toLlmCapability(capability: ModelCapability): CoreModelCapability {
   return {
     image_in: capability.image_in,
     video_in: capability.video_in,

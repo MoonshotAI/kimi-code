@@ -1,4 +1,4 @@
-import type { Message, ToolDescription as Tool } from '#human/llm/message';
+import type { Message, ToolDescription as Tool } from '@moonshot-ai/core/llm/message';
 
 export type TokenCountingStrategy = 'measured+estimated' | 'measured' | 'estimated';
 

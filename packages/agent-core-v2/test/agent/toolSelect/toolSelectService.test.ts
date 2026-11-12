@@ -7,15 +7,14 @@ import { OrderedHookSlot } from '#/hooks';
 import { IEventBus } from '#/app/event/eventBus';
 import type { Event2, Event2Class } from '#/app/event/event2';
 import { IFlagService } from '#/app/flag/flag';
-import type { ModelCapability } from '#/llm-adapter/contract/capability';
-import type { Message, ToolCall, ToolDescription as Tool } from '#human/llm/message';
-import type { LlmRequest } from '#human/llm/request';
+import type { LlmRequest, ModelCapability } from '@moonshot-ai/core/llm/request';
+import { fromLlmModelSpec, type ModelCapability as LegacyModelCapability } from '#/llm-adapter/contract/capability';
+import type { Message, ToolCall, ToolDescription as Tool } from '@moonshot-ai/core/llm/message';
 import { IAgentMcpService } from '#/agent/mcp/mcp';
 import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { contextFromHistoryEntry } from '#/agent/loop/history';
 import { AgentSpaceImpl } from '#/agent/agentContext/agentSpace';
-import type { HistoryMessage } from '#human/agent/turn';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { createReminderHarness } from '../../features/reminder/stubs';
 import {
@@ -56,7 +55,7 @@ import {
   toolSelectKey,
 } from '#/agent/toolSelect/toolSelectOps';
 import { SelectToolsTool } from '#/agent/tools/select-tools/selectToolsTool';
-import { kimiOpenAIProtocol } from '#human/llm/builtin/provider/kimi/protocol';
+import { kimiOpenAIProtocol } from '@moonshot-ai/core/llm/builtin/provider/kimi/protocol';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IWireService } from '#/wire/wire';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -117,7 +116,6 @@ function makeCapabilities(overrides: {
     audio_in: false,
     thinking: false,
     tool_use: overrides.tool_use ?? false,
-    max_context_tokens: 128_000,
     dynamically_loaded_tools: overrides.dynamically_loaded_tools,
   };
 }
@@ -234,8 +232,8 @@ class FakeLoopService extends StubEffectiveProfileReader implements IAgentLoopSe
     return [];
   }
 
-  override getModelCapabilities(): ModelCapability {
-    return capabilities;
+  override getModelCapabilities(): LegacyModelCapability {
+    return fromLlmModelSpec({ provider: 'stub', name: 'stub', capability: capabilities });
   }
 
   bindingSnapshot(): ReturnType<IAgentLoopService['bindingSnapshot']> {
@@ -260,11 +258,11 @@ class FakeLoopService extends StubEffectiveProfileReader implements IAgentLoopSe
     return 0;
   }
 
-  replaceHistory(_entries: readonly HistoryMessage[]): boolean {
+  replaceHistory(_entries: readonly Message[]): boolean {
     return true;
   }
 
-  async initializeHistory(_entries: readonly HistoryMessage[]): Promise<void> {}
+  async initializeHistory(_entries: readonly Message[]): Promise<void> {}
 
   readonly hooks: IAgentLoopService['hooks'] = {
     onWillBeginStep: new OrderedHookSlot<BeforeStepContext>(),
@@ -355,16 +353,16 @@ class FakeContextMemory extends FakeLoopService {
     return this.messages;
   }
 
-  override replaceHistory(entries: readonly HistoryMessage[], _reason?: string): boolean {
+  override replaceHistory(entries: readonly Message[], _reason?: string): boolean {
     this.messages.splice(0, this.messages.length, ...entries.map((entry) => contextFromHistoryEntry(entry)));
     return true;
   }
 
-  override async initializeHistory(entries: readonly HistoryMessage[]): Promise<void> {
+  override async initializeHistory(entries: readonly Message[]): Promise<void> {
     this.replaceHistory(entries);
   }
 
-  override remind(...entries: readonly HistoryMessage[]): void {
+  override remind(...entries: readonly Message[]): void {
     this.appended.push(...entries.map((entry) => contextFromHistoryEntry(entry)));
   }
 
@@ -921,18 +919,25 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
     expect(next?.content).toContain(`<tools_removed>\n${USER_INLINE}\n</tools_removed>`);
   });
 
-  it('keeps old and new schemas in message order across same-name removal and replacement', async () => {
-    const h = createHarness();
+  it('keeps the first schema and converts changed duplicates to reminders', async () => {
+    const h = createExecutorHarness();
     const original = new StubMcpTool(MCP_ALPHA);
     const registration = registerMcp(h, original);
     await h.sut.prepareForRequest();
-    h.contextMemory.messages.push(schemaMessage(MCP_ALPHA));
+    const originalSchemaMessage = schemaMessage(MCP_ALPHA);
+    h.contextMemory.messages.push(originalSchemaMessage);
+    h.contextMemory.messages.push({
+      role: 'system',
+      content: [{ type: 'text', text: 'keep body' }],
+      tools: [{ name: MCP_ALPHA, description: original.description, parameters: original.parameters }],
+      origin: { kind: 'injection', variant: DYNAMIC_TOOL_SCHEMA_VARIANT },
+    });
     registration.dispose();
     const updated = new StubMcpTool(MCP_ALPHA, 'ok', REQUIRED_PAYLOAD_PARAMETERS);
-    registerMcp(h, updated);
+    const updatedRegistration = registerMcp(h, updated);
     await h.sut.prepareForRequest();
     h.contextMemory.landAnnouncement(`<tools_removed>\n${MCP_ALPHA}\n</tools_removed>`);
-    expect(h.sut.shapeHistory(h.contextMemory.history())).toHaveLength(2);
+    expect(h.sut.shapeHistory(h.contextMemory.history())).toHaveLength(3);
     h.contextMemory.messages.push({
       role: 'system',
       content: [],
@@ -946,9 +951,55 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
       dynamic: true,
     });
     expect(resolved.profile?.tools).toEqual([]);
+    expect(resolved.content.messages).toHaveLength(4);
+    expect(resolved.content.messages[0]).toBe(originalSchemaMessage);
     expect(resolved.content.messages.flatMap((message) => toolsOf(message) ?? []).map((tool) => tool.parameters))
-      .toEqual([original.parameters, updated.parameters]);
-    expect(h.contextMemory.history()).toHaveLength(3);
+      .toEqual([original.parameters]);
+    expect(resolved.content.messages).toContainEqual({
+      role: 'system',
+      content: [{ type: 'text', text: 'keep body' }],
+      origin: { kind: 'injection', variant: DYNAMIC_TOOL_SCHEMA_VARIANT },
+    });
+    expect(resolved.content.messages).toContainEqual({
+      role: 'system',
+      content: [{
+        type: 'text',
+        text: `<system-reminder>\nTool "${MCP_ALPHA}" has a schema update, but applying schema updates is not supported in this session. Start a new session to use the updated schema.\n</system-reminder>`,
+      }],
+      origin: { kind: 'injection', variant: DYNAMIC_TOOL_SCHEMA_VARIANT },
+    });
+    expect(h.contextMemory.history()).toHaveLength(4);
+
+    capabilities = makeCapabilities({ tool_use: true, dynamically_loaded_tools: false });
+    const nonDynamic = await execute(h, toolCall('call-non-dynamic', MCP_ALPHA, { payload: 'value' }));
+    expect(nonDynamic).toHaveLength(1);
+    expect(nonDynamic[0]?.result.isError).not.toBe(true);
+    capabilities = makeCapabilities({ tool_use: true, dynamically_loaded_tools: true });
+
+    const rejected = await execute(h, toolCall('call-updated', MCP_ALPHA));
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]?.result).toMatchObject({
+      isError: true,
+      output: `Tool "${MCP_ALPHA}" has a schema update, but applying schema updates is not supported in this session. Start a new session to use the updated schema.`,
+    });
+
+    updatedRegistration.dispose();
+    registerMcp(h, original);
+    await h.sut.prepareForRequest();
+    h.contextMemory.messages.push(schemaMessage(MCP_ALPHA));
+    const reverted = await resolveWith(h, {
+      messages: h.contextMemory.history(),
+      tools: [],
+      capabilities,
+      dynamic: true,
+    });
+    expect(reverted.content.messages[0]).toBe(originalSchemaMessage);
+    expect(reverted.content.messages.flatMap((message) => toolsOf(message) ?? []).map((tool) => tool.parameters))
+      .toEqual([original.parameters]);
+    expect(JSON.stringify(reverted.content.messages)).not.toContain('has a schema update');
+    const accepted = await execute(h, toolCall('call-reverted', MCP_ALPHA));
+    expect(accepted).toHaveLength(1);
+    expect(accepted[0]?.result.isError).not.toBe(true);
   });
 
   it.each(['inline', 'deferred', 'empty'] as const)('uses actual explicit %s tools when shaping historical definitions', async (mode) => {

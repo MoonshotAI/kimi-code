@@ -47,7 +47,7 @@ describe('goal tools', () => {
     const modelCapabilities = loopService.data().modelCapabilities;
     loopService.resolveModelContext = () => ({
       modelAlias: 'mock-model',
-      modelCapabilities,
+      model: { provider: 'mock', name: 'mock-model', capability: modelCapabilities },
       maxOutputSize: undefined,
       alwaysThinking: undefined,
       thinkingLevel: 'off',

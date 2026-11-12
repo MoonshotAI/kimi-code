@@ -1,0 +1,97 @@
+/**
+ * Tool-message conversion patterns for OpenAI Chat Completions: depending on `toolMessageConversion`,
+ * keep tool-result parts, move tool-result media into a following user message, or convert tool
+ * results to plain text.
+ */
+import type { ContentPart, Message, ThinkPart, ToolMessage, UserMessage } from '#/llm/message';
+import { mediaUrlOf } from '#/llm/protocol/kit/media';
+import { toolResultToPlainText } from '#/llm/protocol/patterns';
+import type { Pattern } from '#/llm/protocol/pattern';
+import type { ToolMessageConversion } from '#/llm/protocol/protocol';
+
+export const TOOL_RESULT_MEDIA_PROMPT = 'Attached media from tool result:';
+export const TOOL_RESULT_MEDIA_PLACEHOLDER = '(see attached media)';
+
+function isExtractableMedia(part: ContentPart): boolean {
+  if (part.type === 'image_url') return true;
+  return part.type === 'video_url' && !mediaUrlOf(part).startsWith('data:');
+}
+
+/**
+ * Moves images and non-data-URL videos from a run of tool messages into a following user message
+ * prefixed by an attachment prompt, leaving stripped tool messages with placeholders where needed.
+ *
+ * @example
+ * const image = {
+ *   type: 'image_url',
+ *   imageUrl: { url: 'https://example.com/chart.png' },
+ * };
+ * // Input:
+ * [{ role: 'tool', toolCallId: 'call-1', content: [image] }] // ←
+ * // Output:
+ * [
+ *   {
+ *     role: 'tool',
+ *     toolCallId: 'call-1',
+ *     content: [{ type: 'text', text: '(see attached media)' }], // ←
+ *   },
+ *   {
+ *     role: 'user', // ←
+ *     content: [
+ *       { type: 'text', text: 'Attached media from tool result:' },
+ *       image, // ←
+ *     ],
+ *   },
+ * ]
+ */
+export const extractToolMedia: Pattern<Message> = {
+  name: 'extractToolMedia',
+  rewrite(items, index) {
+    const first = items[index];
+    if (first === undefined || first.role !== 'tool') return null;
+    let end = index;
+    while (end < items.length && items[end]?.role === 'tool') {
+      end += 1;
+    }
+    const run = items.slice(index, end) as ToolMessage[];
+    const media: ContentPart[] = [];
+    for (const message of run) {
+      for (const part of message.content) {
+        if (isExtractableMedia(part)) {
+          media.push(part);
+        }
+      }
+    }
+    if (media.length === 0) return null;
+    const stripped = run.map((message) => {
+      const content = message.content.filter((part) => !isExtractableMedia(part));
+      const hadImage = message.content.some((part) => part.type === 'image_url');
+      const hasText = content.some((part) => part.type === 'text' && part.text.length > 0);
+      const hasAudio = content.some((part) => part.type === 'audio_url');
+      const hasDataVideo = content.some((part) => part.type === 'video_url');
+      if (!hasText && !hasAudio && !hasDataVideo && hadImage) {
+        return {
+          ...message,
+          content: [
+            { type: 'text', text: TOOL_RESULT_MEDIA_PLACEHOLDER } as ContentPart,
+            ...message.content.filter((part): part is ThinkPart => part.type === 'think'),
+          ],
+        };
+      }
+      if (content.length === message.content.length) return message;
+      return { ...message, content };
+    });
+    const mediaUser: UserMessage = {
+      role: 'user',
+      content: [{ type: 'text', text: TOOL_RESULT_MEDIA_PROMPT }, ...media],
+    };
+    return { consumed: run.length, replacement: [...stripped, mediaUser] };
+  },
+};
+
+export function openAIMediaConversionPatterns(
+  conversion: ToolMessageConversion | undefined,
+): readonly Pattern<Message>[] {
+  if (conversion === 'keep_parts') return [];
+  return [conversion === 'extract_text' ? toolResultToPlainText : extractToolMedia];
+}

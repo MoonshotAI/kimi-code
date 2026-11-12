@@ -146,20 +146,20 @@ export {
   type VideoURLPart,
 } from '#human/message';
 export type { ToolDescription as Tool } from '#human/message';
-export { addUsage, emptyUsage, grandTotal, inputTotal, type TokenUsage } from '#human/llm-requester/usage';
-export type { FinishReason } from '#human/llm-requester/finish-reason';
+export { addUsage, emptyUsage, grandTotal, inputTotal, type TokenUsage } from '@moonshot-ai/core/llm/usage';
+export type { FinishReason } from '@moonshot-ai/core/llm/response';
 export type {
   JsonObjectResponseFormat,
   JsonSchemaObject,
   JsonSchemaResponseFormat,
   ResponseFormat,
-} from '#human/llm-requester/response-format';
-export type { ThinkingEffort, ThinkingRequestOptions } from '#human/llm-requester/thinking';
+} from '@moonshot-ai/core/llm/request';
+export type { ThinkingEffort, ThinkingRequestOptions } from '@moonshot-ai/core/llm/request';
 export type { VideoUploadInput } from '#human/media/upload';
-export type { ToolCallIdPolicy } from '#human/llm-requester/requester';
-export type { SamplingOptions } from '#/llm-adapter/model/generate';
+export type { ToolCallIdPolicy } from '@moonshot-ai/core/llm/protocol/rules/tool-call-ids';
+export type { LlmSampling as SamplingOptions } from '@moonshot-ai/core/llm/request';
 export * from '#/llm-adapter/contract/request-trace';
-export type { KimiThinkingConfig } from '#human/llm/builtin/provider/kimi/protocol';
+export type { KimiThinkingConfig } from '@moonshot-ai/core/llm/builtin/provider/kimi/protocol';
 
 export * from '#/app/sessionIndex/sessionIndex';
 export * from '#/app/sessionIndex/sessionIndexService';
@@ -207,7 +207,6 @@ export * from '#/llm-adapter/model/model-service';
 export * from '#/llm-adapter/model/thinking';
 export * from '#/llm-adapter/model/catalog';
 export * from '#/llm-adapter/model/catalog-service';
-export * from '#/llm-adapter/model/generate';
 import '#/llm-adapter/model/errors';
 export {
   MODEL_CATALOG_SECTION,
@@ -612,7 +611,7 @@ export {
   resolveMaxImageEdgePx,
   resolveReadImageByteBudget,
 } from '#/agent/media/image-compress';
-export { providerImagePolicy, type ProviderImagePolicy } from '#human/llm/protocol/kit/media';
+export { providerImagePolicy, type ProviderImagePolicy } from '@moonshot-ai/core/llm/protocol/kit/media';
 export {
   buildImageConversionGuidance,
   buildUnsupportedImageNotice,

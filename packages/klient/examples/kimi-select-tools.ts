@@ -60,34 +60,47 @@ import type { AddressInfo } from 'node:net';
 import { bootstrap, logSeed, resolveLoggingConfig } from '@moonshot-ai/agent-core-v2';
 import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
 import { renderLoadableToolsAnnouncement } from '@moonshot-ai/agent-core-v2/agent/toolSelect/dynamicTools';
-import { UNKNOWN_CAPABILITY } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/capability';
-import type { Message, ToolDescription as Tool } from '@moonshot-ai/agent-core-v2/human/llm/message';
+import type { Message, ToolDescription as Tool } from '@moonshot-ai/core/llm/message';
 import { createStaticCredentialProvider } from '@moonshot-ai/agent-core-v2/human/credentials/credentials';
 import type { Model } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
-import {
-  generateModel,
-  type ModelRequestEvent,
-  type ModelRequestInput,
-  type ModelRequestParams,
-} from '@moonshot-ai/agent-core-v2/llm-adapter/model/generate';
+import type { LlmRequestContent, LlmRequestModel, LlmRequestProfile } from '@moonshot-ai/core/llm/request';
+import type { InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
+import type { LlmRunEvent } from '@moonshot-ai/core/llm/response';
+import { streamLlmRequest } from '@moonshot-ai/core/llm/stream';
+import { credentialRecovery } from '@moonshot-ai/core/llm/policy/credentials';
 import { IProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocol';
 import { ProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocolAdapterRegistry';
+
+type RequestInput = LlmRequestProfile & LlmRequestContent & Pick<LlmRequestModel, 'responseFormat'>;
 
 interface Requester {
   readonly model: Model;
   request(
-    input: ModelRequestInput,
+    input: RequestInput,
     signal?: AbortSignal,
-    params?: ModelRequestParams,
-  ): AsyncIterable<ModelRequestEvent>;
+    params?: InitializedLlmRequestPart,
+  ): AsyncIterable<LlmRunEvent>;
 }
 
 function createRequester(model: Model, registry: IProtocolAdapterRegistry): Requester {
   return {
     model,
-    request: (input, signal, params) =>
-      generateModel(registry.request(model, params), input, signal, params),
+    request: (input, signal, params) => {
+      const initialized = registry.request(model, params);
+      return streamLlmRequest(
+        initialized.request({
+          model: { responseFormat: input.responseFormat },
+          profile: { systemPrompt: input.systemPrompt, tools: input.tools },
+          content: { messages: input.messages },
+          policy: {
+            retry: { maxAttemptsPerStep: 1 },
+            recoveries: [credentialRecovery],
+          },
+        }),
+        { signal: signal ?? new AbortController().signal },
+      );
+    },
   };
 }
 
@@ -224,17 +237,17 @@ interface Collected {
 
 async function collect(
   requester: Requester,
-  input: ModelRequestInput,
+  input: RequestInput,
   signal?: AbortSignal,
 ): Promise<Collected> {
   let text = '';
   let toolCalls: Collected['toolCalls'] = [];
   let finishReason: string | undefined;
   for await (const event of requester.request(input, signal)) {
-    if (event.type === 'part' && event.part.type === 'text') text += event.part.text;
-    if (event.type === 'finish') {
-      finishReason = event.providerFinishReason ?? event.rawFinishReason;
-      toolCalls = event.message.toolCalls.map((t) => ({
+    if (event.type === 'llm.streaming.part' && event.part.type === 'text') text += event.part.text;
+    if (event.type === 'llm.ended' && event.outcome.type === 'done') {
+      finishReason = event.outcome.finish?.finishReason ?? event.outcome.finish?.rawFinishReason ?? undefined;
+      toolCalls = event.outcome.message.toolCalls.map((t) => ({
         id: t.id,
         name: t.name,
         arguments: t.arguments,
@@ -302,22 +315,26 @@ async function probeWireEncoding(): Promise<void> {
   const makeRequester = (providerType?: string): Requester => {
     const model: Model = {
       id: 'probe',
-      name: 'probe-model',
       aliases: [],
       protocol: 'openai',
-      baseUrl: `http://127.0.0.1:${String(port)}`,
-      headers: {},
-      capabilities: { ...UNKNOWN_CAPABILITY, max_context_tokens: 8192 },
-      maxContextSize: 8192,
-      alwaysThinking: false,
+      spec: {
+        provider: providerType ?? 'probe',
+        name: 'probe-model',
+        thinking: { alwaysThinking: false },
+        maxContextSize: 8192,
+      },
+      endpoint: {
+        baseUrl: `http://127.0.0.1:${String(port)}`,
+        headers: {},
+        credentials: createStaticCredentialProvider('sk-probe'),
+      },
       providerType,
       providerName: providerType ?? 'probe',
-      credentialProvider: createStaticCredentialProvider('sk-probe'),
     };
     return createRequester(model, registry);
   };
 
-  const input: ModelRequestInput = {
+  const input: RequestInput = {
     systemPrompt: SYSTEM_PROMPT,
     tools: [SELECT_TOOLS, { ...COMPUTER_USE_TOOLS[0]!, deferred: true }],
     messages: [
@@ -469,7 +486,7 @@ async function step2UseLoadedTool(
     return { kind: 'other', description: `selected names not in announced list: [${step1.names.join(', ')}]` };
   }
   const loadedTool = COMPUTER_USE_TOOLS.find((t) => t.name === loadName)!;
-  const messages = (withDeclaration: boolean): ModelRequestInput => ({
+  const messages = (withDeclaration: boolean): RequestInput => ({
     systemPrompt: SYSTEM_PROMPT,
     tools: [SELECT_TOOLS, { ...loadedTool, deferred: true }],
     messages: [
@@ -554,7 +571,7 @@ async function probeLiveKimiProviders(): Promise<void> {
     const summary: string[] = [];
     for (const m of targets) {
       const model = catalog.get(m.model);
-      const declared = model.capabilities.dynamically_loaded_tools === true;
+      const declared = model.spec.capability?.dynamically_loaded_tools === true;
       const requester = createRequester(model, registry);
 
       for (const scenario of SCENARIOS) {
@@ -662,11 +679,11 @@ async function probeTappedContext(): Promise<void> {
 
     for (const m of targets) {
       const model = catalog.get(m.model);
-      if (model.baseUrl === undefined) {
+      if (model.endpoint.baseUrl === undefined) {
         console.log(`[${m.model}] skip tap: model has no resolved baseUrl`);
         continue;
       }
-      const upstream = model.baseUrl;
+      const upstream = model.endpoint.baseUrl;
       let tapCount = 0;
       const server = createServer((req, res) => {
         const chunks: Buffer[] = [];
@@ -707,7 +724,10 @@ async function probeTappedContext(): Promise<void> {
 
       try {
         const tapped = createRequester(
-          { ...model, baseUrl: `http://127.0.0.1:${String(port)}` },
+          {
+            ...model,
+            endpoint: { ...model.endpoint, baseUrl: `http://127.0.0.1:${String(port)}` },
+          },
           registry,
         );
         // One scenario is enough to show the mechanism: click (has arguments).

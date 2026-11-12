@@ -105,7 +105,7 @@ function bindStatusServices(agent: FakeAgentHandle, model: string): void {
   agent.set(ISessionTokenCountingService, { statusSize: () => 10 });
   agent.set(IAgentLoopService, {
     getModel: () => model,
-    getModelCapabilities: () => ({ max_context_tokens: 128_000 }),
+    resolveModelContext: () => ({ model: { maxContextSize: 128_000 } }),
   });
   agent.set(ISessionUsageService, { status: () => USAGE });
 }

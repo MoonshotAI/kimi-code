@@ -181,8 +181,9 @@ describe('promptWithSkills', () => {
     eventBus.subscribe(PromptCompleted, (event) => promptLifecycle.push(`completed:${event.promptId}`));
     const hold = holdFirstStep();
     const active = loop.submit({
-      message: { role: 'user', content: [{ type: 'text', text: 'goal continuation' }] },
-      meta: {
+      role: 'user',
+      content: [{ type: 'text', text: 'goal continuation' }],
+      attributes: {
         promptId: 'goal-continuation',
         origin: { kind: 'system_trigger', name: 'goal_continuation' } as PromptOrigin,
       },

@@ -14,9 +14,9 @@ import {
   type TokenCountingState,
 } from '#/agent/tokenCounting/tokenCountingOps';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
-import type { Message } from '#human/llm/message';
+import type { Message } from '@moonshot-ai/core/llm/message';
 import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
-import { grandTotal, type TokenUsage } from '#human/llm-requester/usage';
+import { grandTotal, type TokenUsage } from '@moonshot-ai/core/llm/usage';
 import { AgentModel, defineAgentModel, type AgentModelContext } from '#/state/agentModel';
 
 import type { TokenCountingRebaseInput } from './sessionTokenCounting';

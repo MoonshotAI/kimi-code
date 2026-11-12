@@ -1,5 +1,5 @@
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import type { Message } from '#human/llm/message';
+import type { Message } from '@moonshot-ai/core/llm/message';
 import {
   project,
   projectStrict,

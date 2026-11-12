@@ -82,13 +82,11 @@ const HUMAN_VOCABULARY = new Set([
   'agent/origin',
   'message',
   'llm/message',
-  'llm-requester/errors',
-  'llm-requester/usage',
-  'llm-requester/capability',
-  'llm-requester/thinking',
-  'llm-requester/finish-reason',
-  'llm-requester/response-format',
-  'llm-requester/requester',
+  'llm/request',
+  'llm/response',
+  'llm/thinking',
+  'llm/protocol/errors',
+  'llm/protocol/rules/status',
   'media/upload',
   'llm/protocol/kit/media',
   'llm/builtin/provider/kimi/protocol',
@@ -125,6 +123,9 @@ function humanSubpathOf(specifier) {
   if (specifier.startsWith('#human/')) return specifier.slice('#human/'.length);
   if (specifier.startsWith(`${SELF_PACKAGE_PREFIX}human/`)) {
     return specifier.slice(`${SELF_PACKAGE_PREFIX}human/`.length);
+  }
+  if (specifier.startsWith('@moonshot-ai/core/llm/builtin/')) {
+    return specifier.slice('@moonshot-ai/core/'.length);
   }
   return undefined;
 }

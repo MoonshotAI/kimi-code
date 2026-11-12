@@ -1,4 +1,4 @@
-import type { Message, ToolCall } from '#human/llm/message';
+import type { Message, ToolCall } from '@moonshot-ai/core/llm/message';
 import { appendContext } from './stubs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 

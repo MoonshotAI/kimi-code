@@ -53,8 +53,9 @@ export async function runAgentTurn(
   }
 
   const { id } = loop.submit({
-    message: { role: 'user', content: [{ type: 'text', text: request.prompt }] },
-    meta: { origin: AGENT_RUN_PROMPT_ORIGIN },
+    role: 'user',
+    content: [{ type: 'text', text: request.prompt }],
+    attributes: { origin: AGENT_RUN_PROMPT_ORIGIN },
   });
   const output = collectRunOutput(target.accessor.get(IEventBus));
   const turn = await loop.promptHandle(id)?.launched;

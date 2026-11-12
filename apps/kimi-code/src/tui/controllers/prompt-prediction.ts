@@ -201,7 +201,6 @@ export class PromptPredictionController {
       state.livePane.pendingQuestion === null &&
       state.editor.inputMode === 'prompt' &&
       state.editor.getText().length === 0 &&
-      state.editor.terminalFocused &&
       !state.editor.hasAutocompleteActivity()
     );
   }

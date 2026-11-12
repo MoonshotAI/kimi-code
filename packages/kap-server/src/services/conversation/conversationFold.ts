@@ -8,8 +8,8 @@ import { isUserPromptSubmitHookPart } from '@moonshot-ai/agent-core-v2/agent/con
 import type { LoopRecordedEvent } from '@moonshot-ai/agent-core-v2/agent/contextMemory/loopEventFold';
 import { LoopErrors } from '@moonshot-ai/agent-core-v2/agent/loop/errors';
 import { isUndoAnchorOrigin } from '@moonshot-ai/agent-core-v2/agent/undo/turnUndo';
-import { stripBundledSkillBlocks } from '@moonshot-ai/agent-core-v2/human/agent/origin';
-import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
+import { stripBundledSkillBlocks } from '@moonshot-ai/core/llm/origin';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import type { WireRecord } from '@moonshot-ai/agent-core-v2/wire/record';
 
 import type {
@@ -60,6 +60,7 @@ export interface StepTrack {
   readonly index: number;
   readonly startedAt: number;
   ended: boolean;
+  failed?: boolean;
   interruptReason?: string;
 }
 
@@ -399,7 +400,12 @@ function applyLoopEvent(state: ConversationState, event: LoopRecordedEvent | und
       const turn = turnForNumber(state, numberField(event.turnId), time);
       turn.retry = undefined;
       const steps = (state.steps[turn.turn_id] ??= []);
-      steps.push({ id: event.uuid, index: event.step ?? steps.length + 1, startedAt: time, ended: false });
+      const index = event.step ?? steps.length + 1;
+      const previous = steps.at(-1);
+      if (previous?.failed === true && previous.index === index) {
+        turn.items = turn.items.filter((item) => !item.item_id.startsWith(`${previous.id}:`));
+      }
+      steps.push({ id: event.uuid, index, startedAt: time, ended: false });
       return;
     }
     case 'step.end': {
@@ -409,6 +415,7 @@ function applyLoopEvent(state: ConversationState, event: LoopRecordedEvent | und
       const { turn, step } = found;
       turn.retry = undefined;
       step.ended = true;
+      step.failed = event.finishReason === 'error';
       const summary = stepSummary(step.index, step.startedAt, time, step.interruptReason, event);
       turn.steps = [...turn.steps.filter((existing) => existing.index !== step.index), summary].toSorted(
         (a, b) => a.index - b.index,

@@ -5,7 +5,7 @@ import {
   mediaKindOfPart,
   type ContentPart,
   type MediaPart,
-} from '@moonshot-ai/agent-core-v2/human/llm/message';
+} from '@moonshot-ai/core/llm/message';
 
 import type {
   AgentRef,

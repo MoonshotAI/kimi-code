@@ -1,5 +1,5 @@
-import { errorStatusCode } from '#/llm-requester/errors';
-import type { LlmCredentialProvider } from '#/llm-requester/requester';
+import { errorStatusCode } from '@moonshot-ai/core/llm/protocol/errors';
+import type { LlmCredentialProvider } from '@moonshot-ai/core/llm/request';
 
 export interface AccessTokenResolver {
   (options?: { readonly force?: boolean }): Promise<string | undefined>;

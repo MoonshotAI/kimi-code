@@ -463,8 +463,9 @@ describe('session skills routing', () => {
         method: 'notifyClient',
         args: [
           {
-            message: { role: 'user', content: [{ type: 'text', text: 'steer' }] },
-            meta: { origin: { kind: 'user' } },
+            role: 'user',
+            content: [{ type: 'text', text: 'steer' }],
+            attributes: { origin: { kind: 'user' } },
           },
         ],
       },

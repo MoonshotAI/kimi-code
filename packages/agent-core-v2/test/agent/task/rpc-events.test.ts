@@ -14,6 +14,8 @@ import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { ErrorCodes } from '#/errors';
 import { ITaskStopTool } from '#/agent/tools/task/task-stop/task-stop';
 import { IAgentTaskOutputService, createTaskCompletionEntry, emptyOutputSnapshot } from '#/agent/task/taskOutput';
+import { sessionOccupiedError } from '#/persistence/interface/sessionLock';
+import { ISessionRunGate } from '#/session/sessionActivity/sessionRunGate';
 import { interactions } from '#/human/interaction/facade';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
@@ -22,6 +24,8 @@ import type { WireRecord } from '#/wire/record';
 import {
   createTestAgent,
   execEnvServices,
+  InMemoryWireRecordPersistence,
+  sessionService,
   taskServices,
   type TestAgentContext,
 } from '../../harness';
@@ -30,6 +34,7 @@ import { executeTool } from '../../tools/fixtures/execute-tool';
 import {
   restoreTaskHistory,
   startAgentTaskInLoop,
+  taskHistoryRecords,
   startBashTaskInLoop,
   startControlledTaskInLoop,
   startQuestionTaskInLoop,
@@ -552,13 +557,76 @@ describe('AgentTaskService — notification delivery', () => {
     expect(await ctx.get(IAgentTaskService).readOutput(task.handler.taskId)).toContain('persisted partial output');
   });
 
-  it('replays restored terminal agent task notifications when undelivered', async () => {
-    const ctx = track(createTestAgent(taskServices()));
+  it('restores terminal agent task notifications once after a prompt-only crash and session lock retry', async () => {
+    const info = agentInfo();
+    const notificationId = `task:${info.taskId}:${info.status}`;
+    const crashCtx = track(createTestAgent(taskServices()));
+    crashCtx.mockNextResponse({ type: 'text', text: 'restored agent ack' });
+    await restoreTaskHistory(crashCtx, [info], 'main', [{
+      type: 'turn.prompt',
+      agentId: 'main',
+      origin: {
+        kind: 'task', taskId: info.taskId, status: info.status, notificationId,
+      },
+      promptId: notificationId,
+      turnId: 0,
+      trigger: 'notify',
+      input: [{ type: 'text', text: 'notification prompt' }],
+    } as unknown as WireRecord]);
+    await crashCtx.get(IAgentLoopService).settled();
+    expect(taskNotifications(crashCtx, info.taskId)).toHaveLength(1);
+    expect(JSON.stringify(taskNotifications(crashCtx, info.taskId))).toContain('<notification');
+
+    const seeded = track(createTestAgent(taskServices()));
+    await seeded.restorePersisted();
+    const records = [
+      ...await seeded.persistedWireRecords(),
+      ...taskHistoryRecords([info]),
+    ];
+    let occupied = true;
+    const release = vi.fn();
+    const begin = () => {
+      if (occupied) throw sessionOccupiedError('test-session');
+    };
+    const ctx = track(createTestAgent(
+      taskServices(),
+      sessionService(ISessionRunGate, {
+        _serviceBrand: undefined,
+        begin,
+        acquire: () => {
+          begin();
+          return { sessionId: 'test-session', release };
+        },
+      }),
+      { persistence: new InMemoryWireRecordPersistence(records) },
+    ));
+    const loop = ctx.get(IAgentLoopService);
+    const createCompletion = vi.spyOn(ctx.get(IAgentTaskOutputService), 'createCompletion');
     ctx.mockNextResponse({ type: 'text', text: 'restored agent ack' });
-    await restoreTaskHistory(ctx, [agentInfo()]);
-    await ctx.get(IAgentLoopService).settled();
-    expect(taskNotifications(ctx, 'agent-done0000')).toHaveLength(1);
-    expect(JSON.stringify(taskNotifications(ctx, 'agent-done0000'))).toContain('<notification');
+
+    await expect(ctx.restorePersisted()).rejects.toMatchObject({ code: ErrorCodes.SESSION_OCCUPIED });
+    expect((loop as unknown as { loop?: unknown }).loop).toBeUndefined();
+    expect(createCompletion).not.toHaveBeenCalled();
+    expect(release).not.toHaveBeenCalled();
+    expect(taskNotifications(ctx, info.taskId)).toEqual([]);
+    expect(ctx.llmCalls).toEqual([]);
+    expect((await ctx.persistedWireRecords()).filter((record) => record.type === 'turn.prompt')).toEqual([]);
+
+    occupied = false;
+    await loop.start();
+    await loop.settled();
+    await loop.start();
+    await loop.settled();
+
+    expect(createCompletion).toHaveBeenCalledTimes(1);
+    expect(release).toHaveBeenCalledTimes(1);
+    expect(release.mock.invocationCallOrder[0]).toBeGreaterThan(createCompletion.mock.invocationCallOrder[0]!);
+    expect(taskNotifications(ctx, info.taskId)).toHaveLength(1);
+    expect(JSON.stringify(taskNotifications(ctx, info.taskId))).toContain('<notification');
+    expect((await ctx.persistedWireRecords()).filter((record) =>
+      record.type === 'turn.prompt' &&
+      (record['origin'] as { kind?: string } | undefined)?.kind === 'task'
+    )).toHaveLength(1);
   });
 
   it('replays restored terminal process task notifications when undelivered', async () => {
@@ -613,13 +681,14 @@ describe('AgentTaskService — notification delivery', () => {
     expect(taskNotifications(ctx, info.taskId)).toHaveLength(1);
   });
 
-  it('re-delivers a terminal task notification removed by undo when output is unavailable', async () => {
+  it('does not re-deliver a terminal task notification removed by undo when output is unavailable', async () => {
     const ctx = track(createTestAgent());
     const task = await startControlled(ctx);
     await completeControlled(ctx, task);
     await ctx.get(IAgentConversationUndoService).undo(1);
-    await vi.waitFor(() => expect(taskNotifications(ctx, task.handler.taskId)).toHaveLength(1));
-    expect(taskNotifications(ctx)).toHaveLength(1);
+    await ctx.get(IAgentLoopService).settled();
+    expect(taskNotifications(ctx, task.handler.taskId)).toHaveLength(0);
+    expect(taskNotifications(ctx)).toHaveLength(0);
   });
 
   it('preserves a queued notification when undo rejects an active turn', async () => {
@@ -642,8 +711,9 @@ describe('AgentTaskService — notification delivery', () => {
     try {
       ctx.appendTurnExchange('kept prompt', 'kept answer');
       const active = submitPromptTurn(loop, {
-        message: { role: 'user', content: [{ type: 'text', text: 'remove me' }] },
-        meta: { origin: { kind: 'user' } },
+        role: 'user',
+        content: [{ type: 'text', text: 'remove me' }],
+        attributes: { origin: { kind: 'user' } },
       }).turn;
       await started;
       task.resolve('done');
@@ -771,7 +841,7 @@ describe('AgentTaskService — agent recovery notification bodies', () => {
       'call-agent',
       emptyOutputSnapshot(),
     );
-    const text = entry.message.content.map((part) => part.type === 'text' ? part.text : '').join('');
+    const text = entry.content.map((part) => part.type === 'text' ? part.text : '').join('');
     expect(text).toContain('agent_id="agent-7"');
     expect(text).toMatch(/Agent\(resume="agent-7"/);
     expect(text).toMatch(/agent_id.*NOT source_id|source_id.*NOT agent_id/);
@@ -783,7 +853,7 @@ describe('AgentTaskService — agent recovery notification bodies', () => {
       'call-agent',
       emptyOutputSnapshot(),
     );
-    const text = entry.message.content.map((part) => part.type === 'text' ? part.text : '').join('');
+    const text = entry.content.map((part) => part.type === 'text' ? part.text : '').join('');
     expect(text).toContain('agent_id="agent-8"');
     expect(text).not.toMatch(/Agent\(resume="agent-8"/);
   });
@@ -791,7 +861,7 @@ describe('AgentTaskService — agent recovery notification bodies', () => {
   it('process task body never mentions resume', () => {
     const info = processInfo({ status: 'failed', exitCode: 1 });
     const entry = createTaskCompletionEntry(info, 'call-process', emptyOutputSnapshot());
-    const text = entry.message.content.map((part) => part.type === 'text' ? part.text : '').join('');
+    const text = entry.content.map((part) => part.type === 'text' ? part.text : '').join('');
     expect(text).not.toContain('agent_id=');
     expect(text).not.toMatch(/Agent\(resume=/);
     expect(text).toContain(`source_id="${info.taskId}"`);

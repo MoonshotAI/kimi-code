@@ -14,11 +14,8 @@ import { INHERITED_IN_FLIGHT_TOOL_OUTPUT } from '#/agent/contextMemory/openToolE
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentTaskService } from '#/agent/task/task';
-import type {
-  LlmRequestContent,
-  LlmRequestControl,
-  LlmRequester,
-} from '#human/llm-requester/requester';
+import type { LlmRequestContent } from '@moonshot-ai/core/llm/request';
+import type { MockProvider } from '../../harness/scripted-generate';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostProcessService } from '#/os/interface/hostProcess';
@@ -59,6 +56,7 @@ import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment
 import {
   appService,
   agentServices,
+  createMockProvider,
   createScriptedGenerate,
   llmGenerateServices,
   sessionServices,
@@ -181,24 +179,13 @@ function requestTexts(content: LlmRequestContent, role?: string): string[] {
     .flatMap((part) => (part.type === 'text' ? [part.text] : []));
 }
 
-async function streamTextUntilAborted(
-  control: LlmRequestControl,
-  text: string,
-  onStreaming: () => void,
-): Promise<void> {
-  control.onEvent?.({ type: 'llm.streaming.headers', headers: {} });
-  control.onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text } });
-  onStreaming();
-  await new Promise<never>((_resolve, reject) => {
-    const abort = (): void => {
-      reject(control.signal.reason);
-    };
-    if (control.signal.aborted) {
-      abort();
-      return;
-    }
-    control.signal.addEventListener('abort', abort, { once: true });
-  });
+async function waitForAbortReason(signal: AbortSignal): Promise<unknown> {
+  if (!signal.aborted) {
+    await new Promise<void>((resolve) => {
+      signal.addEventListener('abort', () => resolve(), { once: true });
+    });
+  }
+  return signal.reason ?? new DOMException('The operation was aborted.', 'AbortError');
 }
 
 describe('subagent task reminders and fork request parity', () => {
@@ -258,8 +245,9 @@ describe('subagent task reminders and fork request parity', () => {
 
     const loop = parent.accessor.get(IAgentLoopService);
     const { id } = loop.submit({
-      message: { role: 'user', content: [{ type: 'text', text: 'start the parity probe' }] },
-      meta: { origin: { kind: 'user' } },
+      role: 'user',
+      content: [{ type: 'text', text: 'start the parity probe' }],
+      attributes: { origin: { kind: 'user' } },
     });
     const completion = await loop.promptHandle(id)!.completion;
     expect(completion.state).toBe('completed');
@@ -318,7 +306,7 @@ describe('subagent task reminders and fork request parity', () => {
   function createMainForkCtx(
     flags: IFlagService = stubFlag(true),
     telemetry: TelemetryRecord[] = [],
-    requester?: LlmRequester,
+    requester?: MockProvider,
   ): void {
     store = new ScopedAppendLogStore();
     ctx = testAgent(
@@ -359,8 +347,9 @@ describe('subagent task reminders and fork request parity', () => {
     ctx.mockNextResponse({ type: 'text', text: CHILD_FINAL_TEXT });
     const loop = agent.accessor.get(IAgentLoopService);
     const { id } = loop.submit({
-      message: { role: 'user', content: [{ type: 'text', text: 'continue the task' }] },
-      meta: { origin: { kind: 'user' } },
+      role: 'user',
+      content: [{ type: 'text', text: 'continue the task' }],
+      attributes: { origin: { kind: 'user' } },
     });
     expect((await loop.promptHandle(id)!.completion).state).toBe('completed');
   }
@@ -389,8 +378,9 @@ describe('subagent task reminders and fork request parity', () => {
 
     const loop = ctx.get(IAgentLoopService);
     const { id } = loop.submit({
-      message: { role: 'user', content: [{ type: 'text', text: 'start the main fork probe' }] },
-      meta: { origin: { kind: 'user' } },
+      role: 'user',
+      content: [{ type: 'text', text: 'start the main fork probe' }],
+      attributes: { origin: { kind: 'user' } },
     });
     const completion = await loop.promptHandle(id)!.completion;
     expect(completion.state).toBe('completed');
@@ -630,20 +620,38 @@ describe('subagent task reminders and fork request parity', () => {
     ctx.get(IAgentLoopService).update({ activeToolNames: contributedToolNames() });
     const lifecycle = ctx.get(IAgentLifecycleService);
     const main = lifecycle.handleOf('main')!;
+    main.accessor.get(IAgentPermissionModeService).setMode('yolo');
+    ctx.mockNextResponse({
+      type: 'function',
+      id: 'call_write',
+      name: 'Write',
+      arguments: JSON.stringify({ path: '/tmp/fork-tool-result-note.txt', content: 'probe' }),
+    });
     await runPrompt(main);
+    const projectedToolResult = main.accessor.get(IAgentLoopService).history()
+      .find((message) => message.role === 'tool' && message.toolCallId === 'call_write');
+    expect(projectedToolResult?.note).toBeDefined();
+    expect(projectedToolResult?.content.some((part) => part.type === 'text' && part.text.includes('<system>'))).toBe(false);
     main.accessor.get(IAgentLoopService).update({ activeToolNames: ['Read', 'Grep', 'Glob'] });
     const childId = await ctx.get(ISessionBtwService).start();
     const child = lifecycle.handleOf(childId)!;
 
     await runPrompt(child);
 
-    const parentReq = ctx.llmCalls[0]!;
-    const childReq = ctx.llmCalls[1]!;
+    const childToolResult = child.accessor.get(IAgentLoopService).history()
+      .find((message) => message.role === 'tool' && message.toolCallId === 'call_write');
+    expect(childToolResult?.note).toBeDefined();
+    expect(childToolResult?.content.some((part) => part.type === 'text' && part.text.includes('<system>'))).toBe(false);
+
+    const parentReq = ctx.llmCalls[1]!;
+    const childReq = ctx.llmCalls[2]!;
     expect(parentReq.tools.some((tool) => tool.name === 'WaitFor')).toBe(true);
+    const parentToolResult = parentReq.history.find((message) => message.role === 'tool' && message.toolCallId === 'call_write');
+    expect(parentToolResult?.content.some((part) => part.type === 'text' && part.text.includes('<system>'))).toBe(true);
     expect(childReq.tools).toEqual(parentReq.tools);
     expect(childReq.systemPrompt).toBe(parentReq.systemPrompt);
     expect(childReq.history.slice(0, parentReq.history.length)).toEqual(parentReq.history);
-    expect(ctx.llmCalls).toHaveLength(2);
+    expect(ctx.llmCalls).toHaveLength(3);
   });
 
   it('keeps btw cache probes usage-driven when main compacts', async () => {
@@ -684,22 +692,33 @@ describe('subagent task reminders and fork request parity', () => {
     const childScript = createScriptedGenerate();
     const childStreaming = createControlledPromise<void>();
     let childRequests = 0;
-    createMainForkCtx(stubFlag(true), [], {
-      async generate(config, content, control) {
-        if (requestTexts(content, 'user').some((text) => text.includes(STOPPED_CHILD_PROMPT))) {
+    createMainForkCtx(stubFlag(true), [], createMockProvider(async (request, signal) => {
+        if (requestTexts(request.content, 'user').some((text) => text.includes(STOPPED_CHILD_PROMPT))) {
           childRequests += 1;
           if (childRequests === 2) {
-            await streamTextUntilAborted(control, STOPPED_CHILD_DRAFT, () => {
-              childStreaming.resolve();
-            });
-            return;
+            return {
+              request,
+              result: {
+                id: 'stopped-child',
+                message: {
+                  role: 'assistant',
+                  content: [{ type: 'text', text: STOPPED_CHILD_DRAFT }],
+                  toolCalls: [],
+                },
+                usage: null,
+                finishReason: null,
+                rawFinishReason: null,
+              },
+              parts: [{ type: 'text', text: STOPPED_CHILD_DRAFT }],
+              error: waitForAbortReason(signal),
+              onStream: childStreaming.resolve,
+            };
           }
-          await childScript.requester.generate(config, content, control);
-          return;
+          return childScript.provider.respond(request, signal);
         }
         if (parentScript.calls.length === 1) {
           await childStreaming;
-          const taskId = /task_id: (agent-[0-9a-z]+)/.exec(requestTexts(content).join('\n'))?.[1];
+          const taskId = /task_id: (agent-[0-9a-z]+)/.exec(requestTexts(request.content).join('\n'))?.[1];
           parentScript.mockNextResponse({
             type: 'function',
             id: 'call_stop',
@@ -709,9 +728,8 @@ describe('subagent task reminders and fork request parity', () => {
         } else if (parentScript.calls.length === 2) {
           parentScript.mockNextResponse({ type: 'text', text: 'Stopped the subagent.' });
         }
-        await parentScript.requester.generate(config, content, control);
-      },
-    });
+        return parentScript.provider.respond(request, signal);
+    }));
     const profile = ctx.get(IAgentLoopService);
     await ctx.get(IAgentLoopService).bindProfile({ profile: 'agent', model: 'mock-model' });
     profile.update({ activeToolNames: contributedToolNames() });
@@ -738,8 +756,9 @@ describe('subagent task reminders and fork request parity', () => {
 
     const loop = ctx.get(IAgentLoopService);
     const { id } = loop.submit({
-      message: { role: 'user', content: [{ type: 'text', text: 'investigate the parser loop in the background' }] },
-      meta: { origin: { kind: 'user' } },
+      role: 'user',
+      content: [{ type: 'text', text: 'investigate the parser loop in the background' }],
+      attributes: { origin: { kind: 'user' } },
     });
     expect((await loop.promptHandle(id)!.completion).state).toBe('completed');
     await loop.settled();
@@ -769,18 +788,32 @@ describe('subagent task reminders and fork request parity', () => {
     const parentScript = createScriptedGenerate();
     const childStreaming = createControlledPromise<void>();
     let childRequests = 0;
-    createMainForkCtx(stubFlag(true), [], {
-      async generate(config, content, control) {
-        if (requestTexts(content, 'user').some((text) => text.includes(STOPPED_CHILD_PROMPT))) {
+    createMainForkCtx(stubFlag(true), [], createMockProvider(async (request, signal) => {
+        if (requestTexts(request.content, 'user').some((text) => text.includes(STOPPED_CHILD_PROMPT))) {
           childRequests += 1;
-          await streamTextUntilAborted(control, STOPPED_CHILD_FINDING, () => {
-            childStreaming.resolve();
-          });
-          return;
+          return {
+            request,
+            result: {
+              id: 'stopped-child',
+              message: {
+                role: 'assistant',
+                content: [{ type: 'text', text: STOPPED_CHILD_FINDING }],
+                toolCalls: [],
+              },
+              usage: null,
+              finishReason: null,
+              rawFinishReason: null,
+            },
+            parts: [{ type: 'text', text: STOPPED_CHILD_FINDING }],
+            error: waitForAbortReason(signal),
+            onStream: () => {
+              childStreaming.resolve();
+              loop.cancel(undefined, userCancellationReason());
+            },
+          };
         }
-        await parentScript.requester.generate(config, content, control);
-      },
-    });
+        return parentScript.provider.respond(request, signal);
+    }));
     const profile = ctx.get(IAgentLoopService);
     await ctx.get(IAgentLoopService).bindProfile({ profile: 'agent', model: 'mock-model' });
     profile.update({ activeToolNames: contributedToolNames() });
@@ -794,11 +827,11 @@ describe('subagent task reminders and fork request parity', () => {
 
     const loop = ctx.get(IAgentLoopService);
     const { id } = loop.submit({
-      message: { role: 'user', content: [{ type: 'text', text: 'investigate the parser loop' }] },
-      meta: { origin: { kind: 'user' } },
+      role: 'user',
+      content: [{ type: 'text', text: 'investigate the parser loop' }],
+      attributes: { origin: { kind: 'user' } },
     });
     await childStreaming;
-    loop.cancel(undefined, userCancellationReason());
     expect((await loop.promptHandle(id)!.completion).state).toBe('cancelled');
 
     expect(parentScript.calls).toHaveLength(1);
