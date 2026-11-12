@@ -2172,10 +2172,15 @@ describe('ToolExecutor handler kernel', () => {
 
   it('composes hooks in order and seals responses after execute settles', async () => {
     const events: string[] = [];
+    let prepareCalls = 0;
     const afterEntered = deferred<void>();
     const afterRelease = deferred<void>();
     const first = {
       label: 'first',
+      validating() {
+        events.push(`${this.label}:validating`);
+        return { args: { rewritten: true } };
+      },
       starting() {
         events.push(`${this.label}:starting`);
         return { skipPermitting: true as const };
@@ -2193,6 +2198,9 @@ describe('ToolExecutor handler kernel', () => {
     };
     const second = {
       label: 'second',
+      validating() {
+        events.push(`${this.label}:validating`);
+      },
       starting() {
         events.push(`${this.label}:starting`);
       },
@@ -2218,6 +2226,10 @@ describe('ToolExecutor handler kernel', () => {
       name: 'hooked',
       description: 'hooked',
       parameters: { type: 'object' },
+      prepare: () => {
+        prepareCalls += 1;
+        return { type: 'execute' as const, prepared: {} };
+      },
       execute: (context) => {
         executionSignal = context.signal;
         events.push('execute');
@@ -2244,8 +2256,10 @@ describe('ToolExecutor handler kernel', () => {
       outcome: { type: 'success' },
     });
     expect(events).toEqual([
+      'first:validating',
       'first:observe',
       'second:observe',
+      'second:validating',
       'first:starting',
       'first:before',
       'second:before',
@@ -2253,6 +2267,7 @@ describe('ToolExecutor handler kernel', () => {
       'first:after',
       'second:after',
     ]);
+    expect(prepareCalls).toBe(1);
 
     const entered = deferred<void>();
     const release = deferred<void>();

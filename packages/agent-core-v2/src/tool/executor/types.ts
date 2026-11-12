@@ -198,7 +198,7 @@ export type ToolExecutionEvent<TFields extends object = object, TPrepared = unkn
 
 export interface ToolExecutorHook<TContext = unknown, TPrepared = unknown> {
   validating?(
-    context: ToolDecisionContext<any, TContext, TPrepared>,
+    context: ToolPrepareContext<any, TContext>,
   ): ToolDecision | void | Promise<ToolDecision | void>;
   starting?(
     context: ToolDecisionContext<any, TContext, TPrepared>,

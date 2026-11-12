@@ -15,7 +15,7 @@ export function composeToolExecutorHooks<TContext = unknown, TPrepared = unknown
       let rewritten = false;
       for (const hook of hooks) {
         if (hook.validating === undefined) continue;
-        const decision = await hook.validating(current);
+        const decision = await hook.validating.call(hook, current);
         if (decision === undefined) continue;
         if ('reject' in decision) return decision;
         current = { ...current, args: decision.args };

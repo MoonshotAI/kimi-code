@@ -137,11 +137,7 @@ export class ToolExecutor<TContext = unknown> {
         if (tool === undefined) {
           throw new ToolStop(rejected('resolve', `Tool "${call.name}" not found`, undefined, 'resolve'));
         }
-        const validating = await decide('validate', (ctx) => hook?.validating?.(ctx), false);
-        if (validating !== undefined && 'args' in validating) {
-          const rewritten = await prepare(tool);
-          if (rewritten !== undefined) return control.returned(rewritten);
-        }
+        await decide('validate', (ctx) => hook?.validating?.(ctx), false);
         const synthetic = await prepare(tool);
         if (synthetic !== undefined) return control.returned(synthetic);
         if (tool.execute === undefined) {
