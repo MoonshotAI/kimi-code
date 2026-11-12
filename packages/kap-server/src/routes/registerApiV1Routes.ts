@@ -24,6 +24,7 @@ import { registerMessagesRoutes } from './messages';
 import type { IGuiStoreService } from '../services/guiStore/guiStore';
 import { registerDebugRoutes } from '../transport/registerDebugRoutes';
 import { registerMetaRoute } from './meta';
+import { registerMcpRoutes } from './mcp';
 import { registerModelCatalogRoutes } from './modelCatalog';
 import { registerOAuthRoutes } from './oauth';
 import { registerPluginsRoutes } from './plugins';
@@ -34,6 +35,7 @@ import { registerSearchRoutes } from './search';
 import { registerSessionMediaRoutes } from './sessionMedia';
 import { registerSessionRatingRoutes } from './sessionRating';
 import { registerSessionExportRoute } from './sessionExport';
+import { registerSessionListAndBatchRoutes } from './sessionList';
 import { registerSessionsRoutes } from './sessions';
 import { registerShutdownRoutes } from './shutdown';
 import { registerSkillsRoutes } from './skills';
@@ -128,6 +130,10 @@ export async function registerApiV1Routes(
         core,
         opts.conversations,
       );
+      registerSessionListAndBatchRoutes(
+        apiV1 as unknown as Parameters<typeof registerSessionListAndBatchRoutes>[0],
+        core,
+      );
       registerEnvironmentRoutes(apiV1 as unknown as Parameters<typeof registerEnvironmentRoutes>[0], core);
       registerSessionRatingRoutes(
         apiV1 as unknown as Parameters<typeof registerSessionRatingRoutes>[0],
@@ -178,6 +184,7 @@ export async function registerApiV1Routes(
       registerFsRoutes(apiV1 as unknown as Parameters<typeof registerFsRoutes>[0], core);
       registerGuiStoreRoutes(apiV1 as unknown as Parameters<typeof registerGuiStoreRoutes>[0], opts.guiStore);
       registerToolsRoutes(apiV1 as unknown as Parameters<typeof registerToolsRoutes>[0], core);
+      registerMcpRoutes(apiV1 as unknown as Parameters<typeof registerMcpRoutes>[0], core);
       registerFileHistoryRoutes(
         apiV1 as unknown as Parameters<typeof registerFileHistoryRoutes>[0],
         core,

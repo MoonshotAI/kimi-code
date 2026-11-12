@@ -39,6 +39,22 @@ export function emptySessionUsage(): SessionUsage {
 export const sessionPendingInteractionSchema = z.enum(['none', 'approval', 'question']);
 export type SessionPendingInteraction = z.infer<typeof sessionPendingInteractionSchema>;
 
+export const sessionActivitySchema = z.enum(['idle', 'turn', 'background']);
+export type SessionActivity = z.infer<typeof sessionActivitySchema>;
+
+export const sessionPullRequestSchema = z.object({
+  number: z.number().int(),
+  state: z.enum(['open', 'closed', 'merged']),
+  url: z.string(),
+});
+export type SessionPullRequest = z.infer<typeof sessionPullRequestSchema>;
+
+export const sessionGitSchema = z.object({
+  branch: z.string().optional(),
+  pull_request: sessionPullRequestSchema.optional(),
+});
+export type SessionGit = z.infer<typeof sessionGitSchema>;
+
 export const sessionSchema = z.object({
   id: z.string().min(1),
   workspace_id: workspaceIdSchema,
@@ -58,6 +74,7 @@ export const sessionSchema = z.object({
   usage: sessionUsageSchema,
   permission_rules: z.array(permissionRuleSchema),
   message_count: z.number().int().nonnegative(),
+  git: sessionGitSchema.optional(),
 });
 
 export type Session = z.infer<typeof sessionSchema>;

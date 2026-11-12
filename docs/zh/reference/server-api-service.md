@@ -634,14 +634,13 @@
 
 ## Skill、工具与 MCP
 
-查看工作区可见的 Skill 目录、当前生效 Agent 的工具列表和 MCP 服务，以及重启 MCP 服务。会话级的 Skill 目录与 Skill 激活（斜杠命令 `/<skill>` 的 REST 等价形式）见 [会话 Skill](./server-api-sessions.md#会话-skill)。
+查看工作区可见的 Skill 目录与当前生效 Agent 的工具列表。MCP 服务注册表与 OAuth 管理见 [MCP 管理](#mcp-管理)；会话级的 Skill 目录与 Skill 激活（斜杠命令 `/<skill>` 的 REST 等价形式）见 [会话 Skill](./server-api-sessions.md#会话-skill)。
 
 | 方法与路径 | 说明 |
 | --- | --- |
 | `GET /api/v1/workspaces/{workspace_id}/skills` | 无会话的工作区 Skill 目录 |
 | `GET /api/v1/tools` | 列出当前生效 Agent 的工具 |
-| `GET /api/v1/mcp/servers` | 列出 MCP 服务 |
-| `POST /api/v1/mcp/servers/{mcp_server_id}:restart` | 重启 MCP 服务 |
+| `/api/v1/mcp/*` | MCP 服务注册表增删改查、探测与 OAuth 管理，见 [MCP 管理](#mcp-管理) |
 
 ### `GET /api/v1/workspaces/{workspace_id}/skills`
 
@@ -687,35 +686,6 @@
 | `source` | string | `builtin` / `skill` / `mcp` |
 | `mcp_server_id` | string | 仅 MCP 工具携带，从 `mcp__<server>__<tool>` 形式的工具名解析 |
 | `active` | boolean | 可选。工具策略的判定结果 |
-
-### `GET /api/v1/mcp/servers`
-
-列出当前生效 Agent 配置的 MCP 服务。当前生效 Agent 的取法与省略 `session_id` 的 [`GET /api/v1/tools`](#get-api-v1-tools) 相同：取最近创建的会话的 main agent。该会话不在本服务进程中存活时列表为空，不会回退到更早的存活会话。
-
-成功时 `data` 为 `{ servers }`，每项字段如下：
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `id` | string | MCP 服务 id |
-| `name` | string | MCP 服务名称 |
-| `transport` | string | `stdio` / `http` / `sse` |
-| `status` | string | `connected` / `connecting` / `disconnected` / `error`。已停用或已移除的服务报告 `disconnected`；连接失败或需要 OAuth 授权的服务报告 `error` |
-| `last_error` | string | 可选。最近一次失败的信息 |
-| `tool_count` | integer | 该服务提供的工具数量 |
-| `next_retry_at` | number | 可选。服务在等待自动重连时携带，为下一次重连的时间（epoch 毫秒） |
-
-### `POST /api/v1/mcp/servers/{mcp_server_id}:restart`
-
-重新连接当前生效 Agent 的某个 MCP 服务。服务端用路由 `POST /api/v1/mcp/servers/{tail}` 统一分发，`restart` 是唯一动作；只给服务 id 或动作未知时，返回 `40001`。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `mcp_server_id` | path | string | 必填。MCP 服务 id，也就是其配置名称 |
-
-成功时 `data` 为 `{ restarting: true }`。
-
-- `40001`：缺少动作后缀或动作未知
-- `40408`：没有该 id 的 MCP 服务（没有存活会话时同样返回此错误）
 
 ## 能力与插件
 
@@ -1256,10 +1226,10 @@ cloud-only 条目不能在本机安装。旧 `kimi-webbridge` 条目不再返回
 | --- | --- |
 | `POST /api/v1/search` | 跨会话全文搜索，`mode` 为 `terms`（默认）或 `literal`（精确子串），`page_token` 分页 |
 | `GET /api/v1/connections` | 列出当前在线的 WebSocket 连接 |
-| `GET /api/v2/sessions` | 新一代会话列表，见 [`GET /api/v2/sessions`](./server-api-sessions.md#get-api-v2-sessions) |
-| `POST /api/v2/sessions:archive` | 批量归档会话，见 [`POST /api/v2/sessions:archive`](./server-api-sessions.md#post-api-v2-sessions-archive) |
-| `POST /api/v2/sessions:restore` | 批量恢复已归档会话，见 [`POST /api/v2/sessions:restore`](./server-api-sessions.md#post-api-v2-sessions-restore) |
-| `/api/v2/mcp/*` | 统一的 MCP 管理面，见 [MCP 管理](#mcp-管理) |
+| `GET /api/v1/sessions` | 会话列表与分组查询，见 [`GET /api/v1/sessions`](./server-api-sessions.md#get-api-v1-sessions) |
+| `POST /api/v1/sessions:archive` | 批量归档会话，见 [`POST /api/v1/sessions:archive`](./server-api-sessions.md#post-api-v1-sessions-archive) |
+| `POST /api/v1/sessions:restore` | 批量恢复已归档会话，见 [`POST /api/v1/sessions:restore`](./server-api-sessions.md#post-api-v1-sessions-restore) |
+| `/api/v1/mcp/*` | 统一的 MCP 管理面，见 [MCP 管理](#mcp-管理) |
 | `/api/v1/debug/*` | 反射式调试 RPC，仅在 `--debug-endpoints` 且 loopback 时挂载，不属于稳定协议 |
 
 ### `POST /api/v1/search`
@@ -1333,22 +1303,22 @@ cloud-only 条目不能在本机安装。旧 `kimi-webbridge` 条目不再返回
 
 ## MCP 管理
 
-`/api/v2/mcp/*` 是服务统一的 MCP 管理面，独立于任何会话，直接管理 MCP 服务注册表本身。它覆盖用户级配置的增删改查（每条配置写入前校验）、连接测试、按 locator 寻址的检查目录、各服务的授权状态，以及完整的 OAuth 流程。
+`/api/v1/mcp/*` 是服务统一的 MCP 管理面，独立于任何会话，直接管理 MCP 服务注册表本身。它覆盖用户级配置的增删改查（每条配置写入前校验）、连接测试、按 locator 寻址的检查目录、各服务的授权状态，以及完整的 OAuth 流程。
 
 | 方法与路径 | 说明 |
 | --- | --- |
-| `GET /api/v2/mcp/servers` | 列出所有已知 MCP 服务 |
-| `GET /api/v2/mcp/servers/{name}` | 按运行时名称获取单个 MCP 服务 |
-| `POST /api/v2/mcp/servers` | 向用户级 `mcp.json` 添加 MCP 服务 |
-| `PUT /api/v2/mcp/servers/{name}` | 替换一个用户级条目 |
-| `DELETE /api/v2/mcp/servers/{name}` | 删除一个用户级条目 |
-| `POST /api/v2/mcp/servers:test` | 对单个 MCP 服务发起真实连接探测 |
-| `POST /api/v2/mcp/servers:inspect` | 按 locator 寻址的目录，并批量探测连接 |
-| `GET /api/v2/mcp/auth-statuses` | 目录中各 MCP 服务的 OAuth 状态 |
-| `POST /api/v2/mcp/auth:begin` | 开始一次交互式 OAuth 流程 |
-| `POST /api/v2/mcp/auth:complete` | 等待浏览器回调并完成 code 交换 |
-| `POST /api/v2/mcp/auth:cancel` | 终止已开始的 OAuth 流程 |
-| `POST /api/v2/mcp/auth:reset` | 清除某个 MCP 服务已存储的凭据 |
+| `GET /api/v1/mcp/servers` | 列出所有已知 MCP 服务 |
+| `GET /api/v1/mcp/servers/{name}` | 按运行时名称获取单个 MCP 服务 |
+| `POST /api/v1/mcp/servers` | 向用户级 `mcp.json` 添加 MCP 服务 |
+| `PUT /api/v1/mcp/servers/{name}` | 替换一个用户级条目 |
+| `DELETE /api/v1/mcp/servers/{name}` | 删除一个用户级条目 |
+| `POST /api/v1/mcp/servers:test` | 对单个 MCP 服务发起真实连接探测 |
+| `POST /api/v1/mcp/servers:inspect` | 按 locator 寻址的目录，并批量探测连接 |
+| `GET /api/v1/mcp/auth-statuses` | 目录中各 MCP 服务的 OAuth 状态 |
+| `POST /api/v1/mcp/auth:begin` | 开始一次交互式 OAuth 流程 |
+| `POST /api/v1/mcp/auth:complete` | 等待浏览器回调并完成 code 交换 |
+| `POST /api/v1/mcp/auth:cancel` | 终止已开始的 OAuth 流程 |
+| `POST /api/v1/mcp/auth:reset` | 清除某个 MCP 服务已存储的凭据 |
 
 管理面有两种寻址方式：
 
@@ -1361,7 +1331,7 @@ cloud-only 条目不能在本机安装。旧 `kimi-webbridge` 条目不再返回
 
 连接探测与 OAuth 调用会等服务配置加载完成后再执行。
 
-### `GET /api/v2/mcp/servers`
+### `GET /api/v1/mcp/servers`
 
 列出管理面已知的全部 MCP 服务。
 
@@ -1382,7 +1352,7 @@ cloud-only 条目不能在本机安装。旧 `kimi-webbridge` 条目不再返回
 
 - `40001`：校验失败
 
-### `GET /api/v2/mcp/servers/{name}`
+### `GET /api/v1/mcp/servers/{name}`
 
 按运行时名称获取单个 MCP 服务。
 
@@ -1391,12 +1361,12 @@ cloud-only 条目不能在本机安装。旧 `kimi-webbridge` 条目不再返回
 | `name` | path | string | 必填。MCP 服务的运行时名称 |
 | `cwd` | query | string | 并入该目录（须受信任）的项目层 |
 
-成功时 `data` 为单个受管 MCP 服务，字段同 [`GET /api/v2/mcp/servers`](#get-api-v2-mcp-servers)。
+成功时 `data` 为单个受管 MCP 服务，字段同 [`GET /api/v1/mcp/servers`](#get-api-v1-mcp-servers)。
 
 - `40001`：校验失败
 - `40408`：不存在该名称的 MCP 服务
 
-### `POST /api/v2/mcp/servers`
+### `POST /api/v1/mcp/servers`
 
 向用户级 `mcp.json` 添加 MCP 服务。请求体是包含 `name` 的完整服务配置，`transport`（`stdio` / `http` / `sse`）决定配置形状，写入前会校验。
 
@@ -1406,13 +1376,13 @@ cloud-only 条目不能在本机安装。旧 `kimi-webbridge` 条目不再返回
 | --- | --- | --- | --- |
 | `cwd` | query | string | 并入该目录（须受信任）的项目层，返回的列表也包含项目层 |
 
-成功时 `data` 为刷新后的 MCP 服务列表，字段同 [`GET /api/v2/mcp/servers`](#get-api-v2-mcp-servers)。
+成功时 `data` 为刷新后的 MCP 服务列表，字段同 [`GET /api/v1/mcp/servers`](#get-api-v1-mcp-servers)。
 
 - `40001`：校验失败，或目标条目为只读
 
-### `PUT /api/v2/mcp/servers/{name}`
+### `PUT /api/v1/mcp/servers/{name}`
 
-替换一个用户级条目。请求体与 [`POST /api/v2/mcp/servers`](#post-api-v2-mcp-servers) 的配置相同，但不含 `name`，由路径指定条目；与同名条目冲突时的规则也相同。
+替换一个用户级条目。请求体与 [`POST /api/v1/mcp/servers`](#post-api-v1-mcp-servers) 的配置相同，但不含 `name`，由路径指定条目；与同名条目冲突时的规则也相同。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -1424,7 +1394,7 @@ cloud-only 条目不能在本机安装。旧 `kimi-webbridge` 条目不再返回
 - `40001`：校验失败，或目标条目为只读
 - `40408`：不存在该名称的 MCP 服务
 
-### `DELETE /api/v2/mcp/servers/{name}`
+### `DELETE /api/v1/mcp/servers/{name}`
 
 删除一个用户级条目。无请求体。
 
@@ -1438,7 +1408,7 @@ cloud-only 条目不能在本机安装。旧 `kimi-webbridge` 条目不再返回
 - `40001`：校验失败，或目标条目为只读
 - `40408`：不存在该名称的 MCP 服务
 
-### `POST /api/v2/mcp/servers:test`
+### `POST /api/v1/mcp/servers:test`
 
 对单个 MCP 服务发起真实连接探测，不持久化任何内容。传 `name` 探测注册表条目（含插件与受信任的项目层），或传 `server` 按原样探测内联配置；两者必须且只能传一个。
 
@@ -1453,7 +1423,7 @@ cloud-only 条目不能在本机安装。旧 `kimi-webbridge` 条目不再返回
 - `40001`：两种目标形式都传或都不传、内联配置无效，或运行时名称被多个已启用的 MCP 服务共用
 - `40408`：不存在该名称的 MCP 服务
 
-### `POST /api/v2/mcp/servers:inspect`
+### `POST /api/v1/mcp/servers:inspect`
 
 返回按 locator 寻址的目录（配置已脱敏），并对每个 OAuth 候选批量发起真实连接探测。探测遇到过期授权时，可能刷新或作废已存储的凭据。
 
@@ -1470,7 +1440,7 @@ cloud-only 条目不能在本机安装。旧 `kimi-webbridge` 条目不再返回
 | `locator` | object | 该条目的 locator |
 | `runtimeName` | string | 运行时名称 |
 | `canonicalUrl` | string | 可选。远程服务的凭据 URL |
-| `origin` | string | 条目来源，取值与 [`GET /api/v2/mcp/servers`](#get-api-v2-mcp-servers) 的 `source` 相同 |
+| `origin` | string | 条目来源，取值与 [`GET /api/v1/mcp/servers`](#get-api-v1-mcp-servers) 的 `source` 相同 |
 | `config` | object | 脱敏后的配置 |
 | `enabled` | boolean | 是否启用 |
 | `editable` | boolean | 是否可编辑 |
@@ -1481,18 +1451,18 @@ cloud-only 条目不能在本机安装。旧 `kimi-webbridge` 条目不再返回
 - `40001`：校验失败
 - `40408`：`targets` 中有 locator 未匹配到任何条目
 
-### `GET /api/v2/mcp/auth-statuses`
+### `GET /api/v1/mcp/auth-statuses`
 
-读取注册表目录中各 MCP 服务的 OAuth 状态。只需要授权维度时，它比 [`servers:inspect`](#post-api-v2-mcp-servers-inspect) 更轻量。验证探测可能刷新或作废已存储的凭据。
+读取注册表目录中各 MCP 服务的 OAuth 状态。只需要授权维度时，它比 [`servers:inspect`](#post-api-v1-mcp-servers-inspect) 更轻量。验证探测可能刷新或作废已存储的凭据。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `cwd` | query | string | 并入该目录（须受信任）的项目层 |
 | `verify` | query | string | `true`：对每个 OAuth 候选发起真实连接验证。`false`：完全离线，只凭配置与已存储的 token 分类。缺省：保留隐式 OAuth 探测，只探测未固定且没有已存储凭据的远程服务 |
 
-成功时 `data` 是 `{ name, authStatus }` 数组，`authStatus` 的取值与 [`servers:inspect`](#post-api-v2-mcp-servers-inspect) 相同。
+成功时 `data` 是 `{ name, authStatus }` 数组，`authStatus` 的取值与 [`servers:inspect`](#post-api-v1-mcp-servers-inspect) 相同。
 
-### `POST /api/v2/mcp/auth:begin`
+### `POST /api/v1/mcp/auth:begin`
 
 为远程 MCP 服务开始一次交互式 OAuth 流程。目标必须使用远程传输（`http` / `sse`），且不含静态 bearer token；静态请求头仅在配置显式设置 `auth: "oauth"` 时允许。
 
@@ -1513,7 +1483,7 @@ cloud-only 条目不能在本机安装。旧 `kimi-webbridge` 条目不再返回
 - `40408`：locator 未匹配到任何条目
 - `40929`：OAuth 流程本身失败
 
-### `POST /api/v2/mcp/auth:complete`
+### `POST /api/v1/mcp/auth:complete`
 
 等待已开始流程的浏览器回调，并完成 code 交换。等待默认 15 分钟，可用 `timeoutMs` 覆盖；空闲流程无论如何都会在 15 分钟后过期。客户端关闭 HTTP 连接会中止等待。
 
@@ -1527,7 +1497,7 @@ cloud-only 条目不能在本机安装。旧 `kimi-webbridge` 条目不再返回
 - `40001`：校验失败，包括 `flowId` 未知、`timeoutMs` 超出范围
 - `40929`：OAuth 流程本身失败
 
-### `POST /api/v2/mcp/auth:cancel`
+### `POST /api/v1/mcp/auth:cancel`
 
 在未完成的情况下终止已开始的流程。未知流程会被忽略。
 
@@ -1540,7 +1510,7 @@ cloud-only 条目不能在本机安装。旧 `kimi-webbridge` 条目不再返回
 - `40001`：校验失败
 - `40929`：OAuth 流程本身失败
 
-### `POST /api/v2/mcp/auth:reset`
+### `POST /api/v1/mcp/auth:reset`
 
 清除某个 MCP 服务已存储的凭据，失效事件会送达存活的会话。
 

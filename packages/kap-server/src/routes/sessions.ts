@@ -20,7 +20,6 @@ import {
   ISessionTitleService,
   IEventService,
   SessionCreated,
-  IWorkspaceAliases,
   ISessionManager,
   IWorkspaceInstanceManager,
   IWorkspaceService,
@@ -36,15 +35,12 @@ import {
   type IAgentScopeHandle,
   type ISessionScopeHandle,
   type Scope,
-  type SessionSummary,
   type SubagentModelPoolSnapshot,
 } from '@moonshot-ai/agent-core-v2';
 import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/interface/sessionLock';
 import { SessionMetaUpdated } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetaEvents';
 import { ErrorCode } from '../protocol/error-codes';
-import { pageResponseSchema } from '../protocol/pagination';
 import type { ConversationService } from '../services/conversation/conversationService';
-import { loadWorkspaceVisibility } from '../services/workspaceVisibility';
 import {
   archiveSessionResponseSchema,
   cancelPromptPredictionRequestSchema,
@@ -73,9 +69,9 @@ import {
   emptySessionUsage,
   sessionSchema,
   type Session,
+  type SessionGit,
   type SessionPendingInteraction,
 } from '../protocol/session';
-import { workspaceIdSchema } from '../protocol/workspace';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -129,38 +125,6 @@ const booleanQueryParam = z.preprocess((value) => {
   if (value === 'false' || value === '0' || value === 0 || value === false) return false;
   return value;
 }, z.boolean().optional());
-
-const DEFAULT_SESSION_LIST_PAGE_SIZE = 20;
-
-const sessionsListQueryCoercion = z
-  .object({
-    before_id: z.string().min(1).optional(),
-    after_id: z.string().min(1).optional(),
-    page_size: z.coerce.number().int().min(1).max(100).optional(),
-    busy: booleanQueryParam,
-    include_archive: booleanQueryParam,
-    exclude_empty: booleanQueryParam,
-    archived_only: booleanQueryParam,
-    workspace_id: workspaceIdSchema.optional(),
-  })
-  .superRefine((value, ctx) => {
-    if (value.before_id !== undefined && value.after_id !== undefined) {
-      ctx.addIssue({
-        code: 'custom',
-        message: 'before_id and after_id are mutually exclusive',
-        path: ['before_id'],
-        params: { code: ErrorCode.VALIDATION_FAILED },
-      });
-    }
-    if (value.archived_only === true && value.include_archive === true) {
-      ctx.addIssue({
-        code: 'custom',
-        message: 'archived_only and include_archive are mutually exclusive',
-        path: ['archived_only'],
-        params: { code: ErrorCode.VALIDATION_FAILED },
-      });
-    }
-  });
 
 const sessionIdParamSchema = z.object({
   session_id: z.string().min(1),
@@ -320,129 +284,6 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
     createRoute.path,
     createRoute.options,
     createRoute.handler as Parameters<SessionRouteHost['post']>[2],
-  );
-
-  const listRoute = defineRoute(
-    {
-      method: 'GET',
-      path: '/sessions',
-      querystring: sessionsListQueryCoercion,
-      success: { data: pageResponseSchema(sessionSchema) },
-      errors: {
-        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
-        [ErrorCode.WORKSPACE_NOT_FOUND]: {},
-      },
-      description: 'List sessions',
-      tags: ['sessions'],
-    },
-    async (req, reply) => {
-      const raw = req.query;
-      const archivedOnly = raw.archived_only === true;
-
-      const { roots, visibleWorkspaceIds } = await loadWorkspaceVisibility(core);
-
-      if (raw.workspace_id !== undefined && !roots.has(raw.workspace_id)) {
-        reply.send(
-          errEnvelope(
-            ErrorCode.WORKSPACE_NOT_FOUND,
-            `workspace ${raw.workspace_id} does not exist`,
-            req.id,
-          ),
-        );
-        return;
-      }
-
-      const workspaceIds =
-        raw.workspace_id === undefined
-          ? undefined
-          : await core.accessor.get(IWorkspaceAliases).resolveAliasIds(raw.workspace_id);
-      const index = core.accessor.get(ISessionIndex);
-      const includeArchived = archivedOnly ? true : raw.include_archive;
-
-      interface Eligible {
-        readonly summary: SessionSummary;
-        readonly cwd: string;
-        readonly facts?: SessionFacts;
-      }
-
-      const collect = async (pageSize: number): Promise<{ visible: Eligible[]; hasMore: boolean }> => {
-        const wanted = pageSize + 1;
-        const collected: Eligible[] = [];
-        let before = raw.before_id;
-        const after = raw.after_id;
-        const afterCursor = after !== undefined ? await index.get(after) : undefined;
-        const newerThanCursor = (summary: SessionSummary): boolean =>
-          afterCursor === undefined ||
-          summary.updatedAt > afterCursor.updatedAt ||
-          (summary.updatedAt === afterCursor.updatedAt && summary.id > afterCursor.id);
-        while (collected.length < wanted) {
-          const page = await index.listRecent({
-            workspaceIds,
-            includeArchived,
-            limit: wanted - collected.length,
-            before,
-            after: before === undefined ? after : undefined,
-          });
-          if (page.items.length === 0) break;
-          let exhausted = false;
-          for (const summary of page.items) {
-            if (!visibleWorkspaceIds.has(summary.workspaceId)) continue;
-            if (!newerThanCursor(summary)) {
-              exhausted = true;
-              break;
-            }
-            const cwd = summary.cwd ?? roots.get(summary.workspaceId);
-            if (cwd === undefined) continue;
-            if (raw.exclude_empty === true && (summary.lastPrompt ?? '').length === 0) continue;
-            if (archivedOnly && !summary.archived) continue;
-            const facts = raw.busy === undefined ? undefined : resolveSessionFacts(core, summary.id);
-            if (facts !== undefined && facts.busy !== raw.busy) continue;
-            collected.push({ summary, cwd, facts });
-          }
-          if (exhausted || page.nextCursor === undefined) break;
-          before = page.nextCursor;
-        }
-        return { visible: collected.slice(0, pageSize), hasMore: collected.length > pageSize };
-      };
-
-      if (!archivedOnly && raw.page_size === undefined) {
-        const page = await index.listRecent({
-          workspaceIds,
-          includeArchived,
-          before: raw.before_id,
-          after: raw.after_id,
-        });
-        const eligible: Eligible[] = [];
-        for (const summary of page.items) {
-          if (!visibleWorkspaceIds.has(summary.workspaceId)) continue;
-          const cwd = summary.cwd ?? roots.get(summary.workspaceId);
-          if (cwd === undefined) continue;
-          if (raw.exclude_empty === true && (summary.lastPrompt ?? '').length === 0) continue;
-          eligible.push({ summary, cwd });
-        }
-        const projected = eligible.map(({ summary, cwd }) =>
-          toWireSession(summary, cwd, resolveSessionFacts(core, summary.id)),
-        );
-        const items =
-          raw.busy !== undefined
-            ? projected.filter((session) => session.busy === raw.busy)
-            : projected;
-        reply.send(okEnvelope({ items, has_more: false }, req.id));
-        return;
-      }
-
-      const pageSize = raw.page_size ?? DEFAULT_SESSION_LIST_PAGE_SIZE;
-      const { visible, hasMore } = await collect(pageSize);
-      const items = visible.map(({ summary, cwd, facts }) =>
-        toWireSession(summary, cwd, facts ?? resolveSessionFacts(core, summary.id)),
-      );
-      reply.send(okEnvelope({ items, has_more: hasMore }, req.id));
-    },
-  );
-  app.get(
-    listRoute.path,
-    listRoute.options,
-    listRoute.handler as Parameters<SessionRouteHost['get']>[2],
   );
 
   const getRoute = defineRoute(
@@ -1303,6 +1144,7 @@ export function toWireSession(
   fields: SessionWireFields,
   cwd: string,
   facts: SessionFacts,
+  git?: SessionGit,
 ): Session {
   return {
     id: fields.id,
@@ -1324,6 +1166,7 @@ export function toWireSession(
     usage: emptySessionUsage(),
     permission_rules: [],
     message_count: 0,
+    git,
   };
 }
 
