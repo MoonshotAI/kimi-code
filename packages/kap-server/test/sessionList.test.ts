@@ -28,45 +28,43 @@ import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-loca
 import { HostProcessService } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostProcessService';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { Session } from '../src/protocol/session';
+import { mapSessionActivity } from '../src/routes/sessionList';
 import { type RunningServer, startServer } from '../src/start';
-import { mapActivityStatus } from '../src/routes/v2/sessions';
 import { authHeaders, authedFetch } from './helpers/auth';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 
-interface SessionWireV2 {
-  id: string;
-  workspace: { id: string; cwd: string | null };
-  meta: {
-    title: string | null;
-    last_prompt: string | null;
-    created_at: number;
-    updated_at: number;
-    archived: boolean;
-  };
-  activity: { status: 'running' | 'approval' | 'question' | 'failed' | 'idle'; model: string | null };
-  git?: {
-    branch: string | null;
-    pull_request: { number: number; state: 'open' | 'closed' | 'merged'; url: string } | null;
-  };
-}
-
-interface PageWireV2 {
-  items: SessionWireV2[];
+interface PageWire {
+  items: (Session | { id: string; archived: boolean })[];
   total: number;
   has_more: boolean;
-  next_page_token: string | null;
+  next_page_token?: string;
 }
 
-interface EnvelopeWire {
+interface GroupWire {
+  workspace_id: string;
+  sessions: (Session | { id: string; archived: boolean })[];
+  total: number;
+}
+
+interface GroupPageWire {
+  groups: GroupWire[];
+  total: number;
+  has_more: boolean;
+  next_page_token?: string;
+}
+
+interface EnvelopeWire<T = PageWire> {
   code: number;
   msg: string;
-  data: PageWireV2 | null;
+  data: T | null;
   request_id: string;
   details?: { path: string; message: string }[];
 }
 
-const WS_A = 'ws_aaa';
-const WS_B = 'ws_bbb';
+const WS_A = 'wd_aaa_000000000000';
+const WS_B = 'wd_bbb_000000000000';
+const WS_MISSING = 'wm_00000000-0000-0000-0000-000000000000';
 
 const SUMMARIES: SessionSummary[] = [
   {
@@ -108,10 +106,11 @@ const SUMMARIES: SessionSummary[] = [
     createdAt: 500,
     updatedAt: 2_000,
     archived: true,
+    archivedAt: 2_500,
   },
   {
     id: 's-orphan',
-    workspaceId: 'wm_missing',
+    workspaceId: WS_MISSING,
     cwd: '/repo/missing',
     title: 'Orphan',
     lastPrompt: 'orphaned one',
@@ -225,13 +224,13 @@ function hostProcessWithoutGh(): HostProcessService {
   return service;
 }
 
-describe('server /api/v2/sessions', () => {
+describe('server /api/v1/sessions list', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
   let base: string;
 
   beforeAll(async () => {
-    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-sessions-list-'));
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v1-sessions-list-'));
     await bootSeeded();
   });
 
@@ -268,16 +267,24 @@ describe('server /api/v2/sessions', () => {
     }
   });
 
-  async function getPage(query = ''): Promise<{ status: number; body: EnvelopeWire }> {
-    const res = await authedFetch(server as RunningServer, base, `/api/v2/sessions${query}`);
-    return { status: res.status, body: (await res.json()) as EnvelopeWire };
+  async function getPage<T = PageWire>(query = ''): Promise<{ status: number; body: EnvelopeWire<T> }> {
+    const res = await authedFetch(server as RunningServer, base, `/api/v1/sessions${query}`);
+    return { status: res.status, body: (await res.json()) as EnvelopeWire<T> };
   }
 
-  async function getData(query = ''): Promise<PageWireV2> {
+  async function getData(query = ''): Promise<PageWire> {
     const { status, body } = await getPage(query);
     expect(status).toBe(200);
     expect(body.code).toBe(0);
     expect(typeof body.request_id).toBe('string');
+    if (body.data === null) throw new Error('expected a data payload');
+    return body.data;
+  }
+
+  async function getGroupData(query = ''): Promise<GroupPageWire> {
+    const { status, body } = await getPage<GroupPageWire>(query);
+    expect(status).toBe(200);
+    expect(body.code).toBe(0);
     if (body.data === null) throw new Error('expected a data payload');
     return body.data;
   }
@@ -289,32 +296,47 @@ describe('server /api/v2/sessions', () => {
     return body;
   }
 
-  it('lists sessions with domain-grouped shape, default sort, archived excluded', async () => {
-    const page = await getData();
-    expect(page.has_more).toBe(false);
-    expect(page.next_page_token).toBeNull();
-    expect(page.items.map((item) => item.id)).toEqual(['s1', 's2', 's3']);
-
-    const first = page.items[0] as SessionWireV2;
-    expect(first.workspace).toEqual({ id: WS_A, cwd: '/repo/a' });
-    expect(first.meta).toEqual({
-      title: 'Alpha',
-      last_prompt: 'do alpha',
-      created_at: 3_000,
-      updated_at: 5_000,
-      archived: false,
-      archived_at: null,
+  it('drops the legacy /api/v2/sessions routes', async () => {
+    const list = await authedFetch(server as RunningServer, base, '/api/v2/sessions');
+    expect(list.status).toBe(404);
+    const batch = await authedFetch(server as RunningServer, base, '/api/v2/sessions:archive', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ids: ['s1'] }),
     });
-    expect(first.activity).toEqual({ status: 'idle', model: null });
-    expect('git' in first).toBe(false);
-
-    const second = page.items[1] as SessionWireV2;
-    expect(second.meta.title).toBeNull();
-    const third = page.items[2] as SessionWireV2;
-    expect(third.meta.last_prompt).toBeNull();
+    expect(batch.status).toBe(404);
   });
 
-  it('exposes the live session model in the activity domain', async () => {
+  it('lists sessions with the unified Session shape, default sort, archived excluded', async () => {
+    const page = await getData();
+    expect(page.has_more).toBe(false);
+    expect(page.next_page_token).toBeUndefined();
+    expect(page.items.map((item) => item.id)).toEqual(['s1', 's2', 's3']);
+
+    const first = page.items[0] as Session;
+    expect(first).toMatchObject({
+      id: 's1',
+      workspace_id: WS_A,
+      title: 'Alpha',
+      last_prompt: 'do alpha',
+      created_at: new Date(3_000).toISOString(),
+      updated_at: new Date(5_000).toISOString(),
+      archived: false,
+      busy: false,
+      main_turn_active: false,
+      pending_interaction: 'none',
+      metadata: { cwd: '/repo/a' },
+      agent_config: { model: '' },
+    });
+    expect('git' in first).toBe(false);
+
+    const second = page.items[1] as Session;
+    expect(second.title).toBe('');
+    const third = page.items[2] as Session;
+    expect(third.last_prompt).toBeUndefined();
+  });
+
+  it('exposes the live session model on listed sessions', async () => {
     await (server as RunningServer).close();
     await writeFile(
       join(home as string, 'config.toml'),
@@ -360,60 +382,62 @@ describe('server /api/v2/sessions', () => {
     expect(((await bound.json()) as { code: number }).code).toBe(0);
 
     const page = await getData();
-    const item = page.items.find((entry) => entry.id === id);
-    expect(item?.activity).toEqual({ status: 'idle', model: 'stub' });
+    const item = page.items.find((entry) => entry.id === id) as Session | undefined;
+    expect(item?.agent_config).toEqual({ model: 'stub' });
 
     await rm(join(home as string, 'config.toml'), { force: true });
     await (server as RunningServer).close();
     await bootSeeded();
   });
 
-  it('filters by workspace.id (single, repeated OR, unknown)', async () => {
-    const single = await getData(`?workspace.id=${WS_A}`);
+  it('filters by workspace_id (single, repeated OR, unknown)', async () => {
+    const single = await getData(`?workspace_id=${WS_A}`);
     expect(single.items.map((item) => item.id)).toEqual(['s1', 's2']);
 
-    const repeated = await getData(`?workspace.id=${WS_A}&workspace.id=${WS_B}`);
+    const repeated = await getData(`?workspace_id=${WS_A}&workspace_id=${WS_B}`);
     expect(repeated.items.map((item) => item.id)).toEqual(['s1', 's2', 's3']);
 
-    const unknown = await getData('?workspace.id=ws_nope');
+    const unknown = await getData('?workspace_id=ws_nope');
     expect(unknown.items).toEqual([]);
+    expect(unknown.total).toBe(0);
   });
 
-  it('filters by activity.status with OR semantics', async () => {
-    const idle = await getData('?activity.status=idle');
+  it('filters by activity with OR semantics', async () => {
+    const idle = await getData('?activity=idle');
     expect(idle.items.map((item) => item.id)).toEqual(['s1', 's2', 's3']);
 
-    const running = await getData('?activity.status=running&activity.status=approval');
+    const running = await getData('?activity=turn&activity=background');
     expect(running.items).toEqual([]);
 
-    const bogus = await getError('?activity.status=bogus');
+    const bogus = await getError('?activity=bogus');
     expect(bogus.code).toBe(40001);
   });
 
-  it('filters by meta.updated_after (inclusive)', async () => {
-    const page = await getData('?meta.updated_after=4000');
-    expect(page.items.map((item) => item.id)).toEqual(['s1', 's2']);
-  });
+  it('filters by ISO 8601 updated_after and updated_before (inclusive)', async () => {
+    const t3000 = encodeURIComponent(new Date(3_000).toISOString());
+    const t4000 = encodeURIComponent(new Date(4_000).toISOString());
+    const after = await getData(`?updated_after=${t4000}`);
+    expect(after.items.map((item) => item.id)).toEqual(['s1', 's2']);
 
-  it('filters by meta.updated_before (inclusive), combined into a range', async () => {
-    const before = await getData('?meta.updated_before=4000');
+    const before = await getData(`?updated_before=${t4000}`);
     expect(before.items.map((item) => item.id)).toEqual(['s2', 's3']);
     expect(before.total).toBe(2);
 
-    const range = await getData('?meta.updated_after=3000&meta.updated_before=4000');
+    const range = await getData(`?updated_after=${t3000}&updated_before=${t4000}`);
     expect(range.items.map((item) => item.id)).toEqual(['s2', 's3']);
 
-    const bogus = await getError('?meta.updated_before=-1');
+    const bogus = await getError('?updated_before=not-a-date');
     expect(bogus.code).toBe(40001);
   });
 
-  it('binds meta.updated_before into the page_token fingerprint', async () => {
-    const page1 = await getData('?page_size=1&meta.updated_before=4500');
+  it('binds updated_before into the page_token fingerprint', async () => {
+    const t4500 = encodeURIComponent(new Date(4_500).toISOString());
+    const page1 = await getData(`?page_size=1&updated_before=${t4500}`);
     expect(page1.items.map((item) => item.id)).toEqual(['s2']);
     expect(page1.has_more).toBe(true);
 
     const page2 = await getData(
-      `?page_size=1&meta.updated_before=4500&page_token=${page1.next_page_token}`,
+      `?page_size=1&updated_before=${t4500}&page_token=${page1.next_page_token}`,
     );
     expect(page2.items.map((item) => item.id)).toEqual(['s3']);
 
@@ -421,37 +445,37 @@ describe('server /api/v2/sessions', () => {
     expect(drifted.code).toBe(40922);
   });
 
-  it('filters by meta.archived (default false / true / all)', async () => {
-    const only = await getData('?meta.archived=true');
+  it('filters by archived (default false / true / all)', async () => {
+    const only = await getData('?archived=true');
     expect(only.items.map((item) => item.id)).toEqual(['s4']);
 
-    const all = await getData('?meta.archived=all');
+    const all = await getData('?archived=all');
     expect(all.items.map((item) => item.id)).toEqual(['s1', 's2', 's3', 's4']);
 
-    const bogus = await getError('?meta.archived=yes');
+    const bogus = await getError('?archived=yes');
     expect(bogus.code).toBe(40001);
   });
 
   it('hides sessions of missing workspaces from flat, grouped, and id projections', async () => {
-    const flat = await getData('?meta.archived=all');
+    const flat = await getData('?archived=all');
     expect(flat.items.map((item) => item.id)).toEqual(['s1', 's2', 's3', 's4']);
     expect(flat.total).toBe(4);
 
-    const grouped = await getGroupData('?view=by_workspace&meta.archived=all');
+    const grouped = await getGroupData('?view=by_workspace&archived=all');
     expect(grouped.total).toBe(2);
-    expect(grouped.groups.some((group) => group.workspace.id === 'wm_missing')).toBe(false);
-    expect(grouped.groups.find((group) => group.workspace.id === WS_B)?.total).toBe(2);
+    expect(grouped.groups.some((group) => group.workspace_id === WS_MISSING)).toBe(false);
+    expect(grouped.groups.find((group) => group.workspace_id === WS_B)?.total).toBe(2);
 
-    const projected = await getData('?fields=id,archived&meta.archived=all');
+    const projected = await getData('?fields=id,archived&archived=all');
     expect(projected.items.some((item) => item.id === 's-orphan')).toBe(false);
     expect(projected.total).toBe(4);
   });
 
-  it('sorts by meta.updated_at_asc and meta.created_at_desc', async () => {
-    const asc = await getData('?sort=meta.updated_at_asc');
+  it('sorts by updated_at_asc and created_at_desc', async () => {
+    const asc = await getData('?sort=updated_at_asc');
     expect(asc.items.map((item) => item.id)).toEqual(['s3', 's2', 's1']);
 
-    const created = await getData('?sort=meta.created_at_desc');
+    const created = await getData('?sort=created_at_desc');
     expect(created.items.map((item) => item.id)).toEqual(['s1', 's3', 's2']);
 
     const bogus = await getError('?sort=bogus');
@@ -474,7 +498,7 @@ describe('server /api/v2/sessions', () => {
       { id: 's3', archived: false },
     ]);
 
-    const all = await getData('?fields=id,archived&meta.archived=all&sort=meta.updated_at_asc');
+    const all = await getData('?fields=id,archived&archived=all&sort=updated_at_asc');
     expect(all.items).toEqual([
       { id: 's4', archived: true },
       { id: 's3', archived: false },
@@ -531,11 +555,11 @@ describe('server /api/v2/sessions', () => {
     const page2 = await getData(`?page_size=2&page_token=${page1.next_page_token}`);
     expect(page2.items.map((item) => item.id)).toEqual(['s3']);
     expect(page2.has_more).toBe(false);
-    expect(page2.next_page_token).toBeNull();
+    expect(page2.next_page_token).toBeUndefined();
   });
 
   it('paginates every sort order with the same cursor encoding', async () => {
-    for (const sort of ['meta.updated_at_asc', 'meta.created_at_desc']) {
+    for (const sort of ['updated_at_asc', 'created_at_desc']) {
       const page1 = await getData(`?sort=${sort}&page_size=2`);
       expect(page1.has_more).toBe(true);
       const page2 = await getData(
@@ -558,11 +582,11 @@ describe('server /api/v2/sessions', () => {
     const drifted = await getError(`?page_size=3&page_token=${token}`);
     expect(drifted.code).toBe(40922);
 
-    const filtered = await getError(`?page_size=2&workspace.id=${WS_A}&page_token=${token}`);
+    const filtered = await getError(`?page_size=2&workspace_id=${WS_A}&page_token=${token}`);
     expect(filtered.code).toBe(40922);
 
     const resorted = await getError(
-      `?page_size=2&sort=meta.updated_at_asc&page_token=${token}`,
+      `?page_size=2&sort=updated_at_asc&page_token=${token}`,
     );
     expect(resorted.code).toBe(40922);
   });
@@ -571,7 +595,7 @@ describe('server /api/v2/sessions', () => {
     const all = await getData();
     expect(all.total).toBe(3);
 
-    const filtered = await getData(`?workspace.id=${WS_A}`);
+    const filtered = await getData(`?workspace_id=${WS_A}`);
     expect(filtered.total).toBe(2);
 
     const page1 = await getData('?page_size=2');
@@ -585,7 +609,7 @@ describe('server /api/v2/sessions', () => {
     expect(page1.items.map((item) => item.id)).toEqual(['s1', 's2']);
     expect(page1.total).toBe(3);
     expect(page1.has_more).toBe(true);
-    expect(page1.next_page_token).toBeNull();
+    expect(page1.next_page_token).toBeUndefined();
 
     const page2 = await getData('?page=2&page_size=2');
     expect(page2.items.map((item) => item.id)).toEqual(['s3']);
@@ -599,19 +623,19 @@ describe('server /api/v2/sessions', () => {
   });
 
   it('honors filters and sort in page mode', async () => {
-    const page = await getData(`?workspace.id=${WS_A}&sort=meta.updated_at_asc&page=2&page_size=1`);
+    const page = await getData(`?workspace_id=${WS_A}&sort=updated_at_asc&page=2&page_size=1`);
     expect(page.items.map((item) => item.id)).toEqual(['s1']);
     expect(page.total).toBe(2);
     expect(page.has_more).toBe(false);
   });
 
-  it('rejects page combined with page_token (40001), and page=0', async () => {
+  it('rejects mutually exclusive pagination params (40001), page=0, and before_id with by_workspace', async () => {
     const first = await getData('?page_size=2');
-    const both = await getError(`?page=2&page_token=${first.next_page_token}`);
-    expect(both.code).toBe(40001);
-
-    const zero = await getError('?page=0');
-    expect(zero.code).toBe(40001);
+    expect((await getError(`?page=2&page_token=${first.next_page_token}`)).code).toBe(40001);
+    expect((await getError('?page=1&before_id=s1')).code).toBe(40001);
+    expect((await getError('?before_id=s1&after_id=s3')).code).toBe(40001);
+    expect((await getError('?view=by_workspace&before_id=s1')).code).toBe(40001);
+    expect((await getError('?page=0')).code).toBe(40001);
   });
 
   it('rejects a corrupted page_token (40922)', async () => {
@@ -625,7 +649,7 @@ describe('server /api/v2/sessions', () => {
     expect(body.msg).toContain("unknown domain 'metrics'");
   });
 
-  it('attaches the git domain per unique cwd with dedup + cache + null degradation', async () => {
+  it('attaches the git domain per unique cwd with dedup + cache + omitted absent fields', async () => {
     gitState.responses.set('/repo/a', {
       branch: 'main',
       pullRequest: { number: 12, state: 'draft', url: 'https://example.com/pr/12' },
@@ -634,13 +658,13 @@ describe('server /api/v2/sessions', () => {
 
     const page = await getData('?include=git');
 
-    const byId = new Map(page.items.map((item) => [item.id, item]));
+    const byId = new Map(page.items.map((item) => [item.id, item as Session]));
     expect(byId.get('s1')?.git).toEqual({
       branch: 'main',
       pull_request: { number: 12, state: 'open', url: 'https://example.com/pr/12' },
     });
     expect(byId.get('s2')?.git?.branch).toBe('main');
-    expect(byId.get('s3')?.git).toEqual({ branch: 'fix/x', pull_request: null });
+    expect(byId.get('s3')?.git).toEqual({ branch: 'fix/x' });
 
     expect(gitState.calls.toSorted()).toEqual(['/repo/a', '/repo/b']);
 
@@ -649,7 +673,7 @@ describe('server /api/v2/sessions', () => {
   });
 
   it('routes session git by environment even when local and remote cwds collide', async () => {
-    const remoteRepo = await mkdtemp(join(tmpdir(), 'kimi-v2-session-git-remote-'));
+    const remoteRepo = await mkdtemp(join(tmpdir(), 'kimi-v1-session-git-remote-'));
     const remoteSummary: SessionSummary = {
       id: 'remote-git',
       workspaceId: WS_A,
@@ -689,7 +713,7 @@ describe('server /api/v2/sessions', () => {
       );
       try {
         const page = await getData('?include=git');
-        const byId = new Map(page.items.map((item) => [item.id, item]));
+        const byId = new Map(page.items.map((item) => [item.id, item as Session]));
         expect(byId.get('remote-git')?.git?.branch).toBe(remoteBranch);
         expect(byId.get('local-shadow')?.git?.branch).toBe('local-shadow');
         expect(gitState.calls.filter((cwd) => cwd === remoteRepo)).toHaveLength(1);
@@ -705,7 +729,7 @@ describe('server /api/v2/sessions', () => {
   }, 15000);
 
   it('does not cache remote git while its environment is not ready', async () => {
-    const remoteRepo = await mkdtemp(join(tmpdir(), 'kimi-v2-session-git-pending-'));
+    const remoteRepo = await mkdtemp(join(tmpdir(), 'kimi-v1-session-git-pending-'));
     const remoteSummary: SessionSummary = {
       id: 'remote-pending',
       workspaceId: WS_A,
@@ -734,14 +758,16 @@ describe('server /api/v2/sessions', () => {
       );
       try {
         const pending = await getData('?include=git');
-        expect(pending.items.find((item) => item.id === 'remote-pending')?.git).toEqual({
-          branch: null,
-          pull_request: null,
-        });
+        expect(
+          (pending.items.find((item) => item.id === 'remote-pending') as Session | undefined)?.git,
+        ).toEqual({});
 
         environment.setStatus('ready');
         const ready = await getData('?include=git');
-        expect(ready.items.find((item) => item.id === 'remote-pending')?.git?.branch).toBe(remoteBranch);
+        expect(
+          (ready.items.find((item) => item.id === 'remote-pending') as Session | undefined)?.git
+            ?.branch,
+        ).toBe(remoteBranch);
       } finally {
         await registration.remove();
       }
@@ -787,10 +813,9 @@ describe('server /api/v2/sessions', () => {
     try {
       for (let attempt = 0; attempt < 2; attempt += 1) {
         const page = await getData('?include=git');
-        expect(page.items.find((item) => item.id === 'remote-stalled')?.git).toEqual({
-          branch: null,
-          pull_request: null,
-        });
+        expect(
+          (page.items.find((item) => item.id === 'remote-stalled') as Session | undefined)?.git,
+        ).toEqual({});
       }
       expect(spawns).toBe(1);
     } finally {
@@ -799,127 +824,102 @@ describe('server /api/v2/sessions', () => {
     }
   }, 20000);
 
-  it('degrades non-git cwds to null fields without failing the request', async () => {
+  it('degrades non-git cwds to an empty git object without failing the request', async () => {
     await (server as RunningServer).close();
     await bootSeeded();
-    const page = await getData('?include=git&meta.archived=all');
+    const page = await getData('?include=git&archived=all');
     for (const item of page.items) {
-      expect(item.git).toEqual({ branch: null, pull_request: null });
+      expect((item as Session).git).toEqual({});
     }
   });
 
-  it('answers 401 with the shared envelope on v1 and v2 paths alike', async () => {
-    for (const path of ['/api/v1/sessions', '/api/v2/sessions']) {
-      const res = await fetch(`${base}${path}`);
-      expect(res.status).toBe(401);
-      const body = (await res.json()) as { code: number; msg: string };
-      expect(body.code).toBe(40101);
-    }
-  });
+  it('requires bearer auth on /api/v1/sessions', async () => {
+    const unauthed = await fetch(`${base}/api/v1/sessions`);
+    expect(unauthed.status).toBe(401);
+    const body = (await unauthed.json()) as { code: number };
+    expect(body.code).toBe(40101);
 
-  it('requires auth on /api/v2/sessions (bearer accepted)', async () => {
-    const res = await fetch(`${base}/api/v2/sessions`, {
+    const authed = await fetch(`${base}/api/v1/sessions`, {
       headers: authHeaders(server as RunningServer),
     } as never);
-    expect(res.status).toBe(200);
+    expect(authed.status).toBe(200);
   });
-
-  interface GroupWireV2 {
-    workspace: { id: string; cwd: string | null };
-    sessions: (SessionWireV2 | { id: string; archived: boolean })[];
-    total: number;
-  }
-
-  interface GroupPageWireV2 {
-    groups: GroupWireV2[];
-    total: number;
-    has_more: boolean;
-    next_page_token: string | null;
-  }
-
-  async function getGroupData(query = ''): Promise<GroupPageWireV2> {
-    const { status, body } = await getPage(query);
-    expect(status).toBe(200);
-    expect(body.code).toBe(0);
-    if (body.data === null) throw new Error('expected a data payload');
-    return body.data as unknown as GroupPageWireV2;
-  }
 
   it('groups the matching set per workspace with per-group totals (view=by_workspace)', async () => {
     const page = await getGroupData('?view=by_workspace');
     expect(page.total).toBe(2);
     expect(page.has_more).toBe(false);
-    expect(page.next_page_token).toBeNull();
+    expect(page.next_page_token).toBeUndefined();
 
-    expect(page.groups.map((group) => group.workspace.id)).toEqual([WS_A, WS_B]);
-    const [a, b] = page.groups as [GroupWireV2, GroupWireV2];
-    expect(a.workspace).toEqual({ id: WS_A, cwd: '/repo/a' });
+    expect(page.groups.map((group) => group.workspace_id)).toEqual([WS_A, WS_B]);
+    const [a, b] = page.groups as [GroupWire, GroupWire];
+    expect(a.workspace_id).toBe(WS_A);
     expect(a.sessions.map((item) => item.id)).toEqual(['s1', 's2']);
     expect(a.total).toBe(2);
-    expect(b.workspace).toEqual({ id: WS_B, cwd: '/repo/b' });
+    expect(b.workspace_id).toBe(WS_B);
     expect(b.sessions.map((item) => item.id)).toEqual(['s3']);
     expect(b.total).toBe(1);
 
-    const first = a.sessions[0] as SessionWireV2;
-    expect(first.meta.last_prompt).toBe('do alpha');
-    expect(first.activity).toEqual({ status: 'idle', model: null });
+    const first = a.sessions[0] as Session;
+    expect(first.last_prompt).toBe('do alpha');
+    expect(first.metadata.cwd).toBe('/repo/a');
     expect('git' in first).toBe(false);
   });
 
-  it('caps each group at group.page_size while total keeps the full matching count', async () => {
-    const page = await getGroupData('?view=by_workspace&group.page_size=1');
-    const [a, b] = page.groups as [GroupWireV2, GroupWireV2];
+  it('caps each group at group_page_size while total keeps the full matching count', async () => {
+    const page = await getGroupData('?view=by_workspace&group_page_size=1');
+    const [a, b] = page.groups as [GroupWire, GroupWire];
     expect(a.sessions.map((item) => item.id)).toEqual(['s1']);
     expect(a.total).toBe(2);
     expect(b.sessions.map((item) => item.id)).toEqual(['s3']);
     expect(b.total).toBe(1);
   });
 
-  it('matches the per-workspace v1 exclude_empty listing via meta.has_prompt=true', async () => {
-    const flat = await getData('?meta.has_prompt=true');
+  it('filters empty vs non-empty sessions via has_prompt', async () => {
+    const flat = await getData('?has_prompt=true');
     expect(flat.items.map((item) => item.id)).toEqual(['s1', 's2']);
 
-    const inverted = await getData('?meta.has_prompt=false');
+    const inverted = await getData('?has_prompt=false');
     expect(inverted.items.map((item) => item.id)).toEqual(['s3']);
 
-    const grouped = await getGroupData('?view=by_workspace&meta.has_prompt=true');
-    expect(grouped.groups.map((group) => group.workspace.id)).toEqual([WS_A]);
+    const grouped = await getGroupData('?view=by_workspace&has_prompt=true');
+    expect(grouped.groups.map((group) => group.workspace_id)).toEqual([WS_A]);
     expect(grouped.groups[0]?.sessions.map((item) => item.id)).toEqual(['s1', 's2']);
     expect(grouped.groups[0]?.total).toBe(2);
   });
 
-  it('applies sort, workspace.id, and meta.archived to groups with flat-view semantics', async () => {
-    const asc = await getGroupData('?view=by_workspace&sort=meta.updated_at_asc');
-    expect(asc.groups.map((group) => group.workspace.id)).toEqual([WS_B, WS_A]);
+  it('applies sort, workspace_id, and archived to groups with flat-view semantics', async () => {
+    const asc = await getGroupData('?view=by_workspace&sort=updated_at_asc');
+    expect(asc.groups.map((group) => group.workspace_id)).toEqual([WS_B, WS_A]);
     expect(asc.groups[1]?.sessions.map((item) => item.id)).toEqual(['s2', 's1']);
 
-    const filtered = await getGroupData(`?view=by_workspace&workspace.id=${WS_B}`);
-    expect(filtered.groups.map((group) => group.workspace.id)).toEqual([WS_B]);
+    const filtered = await getGroupData(`?view=by_workspace&workspace_id=${WS_B}`);
+    expect(filtered.groups.map((group) => group.workspace_id)).toEqual([WS_B]);
     expect(filtered.total).toBe(1);
 
-    const all = await getGroupData('?view=by_workspace&meta.archived=all');
-    const b = all.groups.find((group) => group.workspace.id === WS_B);
+    const all = await getGroupData('?view=by_workspace&archived=all');
+    const b = all.groups.find((group) => group.workspace_id === WS_B);
     expect(b?.sessions.map((item) => item.id)).toEqual(['s3', 's4']);
     expect(b?.total).toBe(2);
   });
 
   it('paginates groups with the opaque cursor and rejects condition drift (40922)', async () => {
     const page1 = await getGroupData('?view=by_workspace&page_size=1');
-    expect(page1.groups.map((group) => group.workspace.id)).toEqual([WS_A]);
+    expect(page1.groups.map((group) => group.workspace_id)).toEqual([WS_A]);
     expect(page1.total).toBe(2);
     expect(page1.has_more).toBe(true);
 
     const page2 = await getGroupData(
       `?view=by_workspace&page_size=1&page_token=${page1.next_page_token}`,
     );
-    expect(page2.groups.map((group) => group.workspace.id)).toEqual([WS_B]);
+    expect(page2.groups.map((group) => group.workspace_id)).toEqual([WS_B]);
     expect(page2.total).toBe(2);
     expect(page2.has_more).toBe(false);
-    expect(page2.next_page_token).toBeNull();
+    expect(page2.next_page_token).toBeUndefined();
 
     for (const drifted of [
-      `?view=by_workspace&page_size=1&group.page_size=2&page_token=${page1.next_page_token}`,
-      `?view=by_workspace&page_size=1&meta.has_prompt=true&page_token=${page1.next_page_token}`,
+      `?view=by_workspace&page_size=1&group_page_size=2&page_token=${page1.next_page_token}`,
+      `?view=by_workspace&page_size=1&has_prompt=true&page_token=${page1.next_page_token}`,
       `?page_size=1&page_token=${page1.next_page_token}`,
     ]) {
       expect((await getError(drifted)).code).toBe(40922);
@@ -928,10 +928,10 @@ describe('server /api/v2/sessions', () => {
 
   it('paginates groups by 1-based page without minting tokens', async () => {
     const page2 = await getGroupData('?view=by_workspace&page=2&page_size=1');
-    expect(page2.groups.map((group) => group.workspace.id)).toEqual([WS_B]);
+    expect(page2.groups.map((group) => group.workspace_id)).toEqual([WS_B]);
     expect(page2.total).toBe(2);
     expect(page2.has_more).toBe(false);
-    expect(page2.next_page_token).toBeNull();
+    expect(page2.next_page_token).toBeUndefined();
 
     const beyond = await getGroupData('?view=by_workspace&page=7&page_size=1');
     expect(beyond.groups).toEqual([]);
@@ -949,36 +949,36 @@ describe('server /api/v2/sessions', () => {
 
     gitState.responses.set('/repo/a', { branch: 'main', pullRequest: null });
     const withGit = await getGroupData('?view=by_workspace&include=git');
-    const s1 = withGit.groups[0]?.sessions.find((item) => item.id === 's1') as SessionWireV2;
-    expect(s1.git).toEqual({ branch: 'main', pull_request: null });
-    const s3 = withGit.groups[1]?.sessions.find((item) => item.id === 's3') as SessionWireV2;
-    expect(s3.git).toEqual({ branch: null, pull_request: null });
+    const s1 = withGit.groups[0]?.sessions.find((item) => item.id === 's1') as Session;
+    expect(s1.git).toEqual({ branch: 'main' });
+    const s3 = withGit.groups[1]?.sessions.find((item) => item.id === 's3') as Session;
+    expect(s3.git).toEqual({});
   });
 
-  it('rejects group.page_size without the grouped view or beyond the ceiling (40001)', async () => {
-    expect((await getError('?group.page_size=5')).code).toBe(40001);
-    expect((await getError('?view=by_workspace&group.page_size=0')).code).toBe(40001);
-    expect((await getError('?view=by_workspace&group.page_size=101')).code).toBe(40001);
-    expect((await getError('?view=by_workspace&group.page_size=abc')).code).toBe(40001);
+  it('rejects group_page_size without the grouped view or beyond the ceiling (40001)', async () => {
+    expect((await getError('?group_page_size=5')).code).toBe(40001);
+    expect((await getError('?view=by_workspace&group_page_size=0')).code).toBe(40001);
+    expect((await getError('?view=by_workspace&group_page_size=101')).code).toBe(40001);
+    expect((await getError('?view=by_workspace&group_page_size=abc')).code).toBe(40001);
 
     const projected = await getGroupData(
-      '?view=by_workspace&fields=id,archived&group.page_size=10000',
+      '?view=by_workspace&fields=id,archived&group_page_size=10000',
     );
     expect(projected.total).toBe(2);
     expect(
-      (await getError('?view=by_workspace&fields=id,archived&group.page_size=10001')).code,
+      (await getError('?view=by_workspace&fields=id,archived&group_page_size=10001')).code,
     ).toBe(40001);
   });
 
   it('merges legacy split workspace ids into one group via alias canonicalization', async () => {
     await (server as RunningServer).close();
+    const legacyAlias = 'wd_aaa.legacy_000000000000';
     const aliasSummaries: SessionSummary[] = [
       ...SUMMARIES,
       {
         id: 's5',
-        workspaceId: 'ws_aaa_legacy',
-        cwd: '/repo/a',
-        title: 'Legacy bucket',
+        workspaceId: legacyAlias,
+        title: 'Legacy bucket without persisted cwd',
         lastPrompt: 'legacy one',
         createdAt: 6_000,
         updatedAt: 6_000,
@@ -988,7 +988,7 @@ describe('server /api/v2/sessions', () => {
     const aliasStub: IWorkspaceAliases = {
       _serviceBrand: undefined,
       resolveAliasIds: async (id) =>
-        id === WS_A || id === 'ws_aaa_legacy' ? [WS_A, 'ws_aaa_legacy'] : [id],
+        id === WS_A || id === legacyAlias ? [WS_A, legacyAlias] : [id],
     };
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
@@ -1007,13 +1007,14 @@ describe('server /api/v2/sessions', () => {
 
     const page = await getGroupData('?view=by_workspace');
     expect(page.total).toBe(2);
-    const merged = page.groups.find((group) => group.workspace.id === WS_A);
+    const merged = page.groups.find((group) => group.workspace_id === WS_A);
     expect(merged?.sessions.map((item) => item.id)).toEqual(['s5', 's1', 's2']);
+    expect((merged?.sessions[0] as Session | undefined)?.metadata.cwd).toBe('/repo/a');
     expect(merged?.total).toBe(3);
   });
 });
 
-describe('server /api/v2/sessions batch archive/restore', () => {
+describe('server /api/v1/sessions batch archive/restore', () => {
   interface BatchItemWire {
     id: string;
     ok: boolean;
@@ -1039,7 +1040,7 @@ describe('server /api/v2/sessions batch archive/restore', () => {
   let base: string;
 
   beforeAll(async () => {
-    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-sessions-batch-'));
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v1-sessions-batch-'));
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
@@ -1115,7 +1116,7 @@ describe('server /api/v2/sessions batch archive/restore', () => {
   }
 
   async function listedIds(query = ''): Promise<string[]> {
-    const res = await authedFetch(server as RunningServer, base, `/api/v2/sessions${query}`);
+    const res = await authedFetch(server as RunningServer, base, `/api/v1/sessions${query}`);
     const body = (await res.json()) as { code: number; data: { items: { id: string }[] } };
     expect(body.code).toBe(0);
     return body.data.items.map((item) => item.id);
@@ -1129,7 +1130,7 @@ describe('server /api/v2/sessions batch archive/restore', () => {
     const { events, dispose } = collectEvents();
     const before = await readStateJson(created.workspace_id, created.id);
 
-    const body = await postBatch('/api/v2/sessions:archive', { ids: [created.id] });
+    const body = await postBatch('/api/v1/sessions:archive', { ids: [created.id] });
     expect(body.code).toBe(0);
     expect(body.data).toMatchObject({
       succeeded: 1,
@@ -1147,7 +1148,7 @@ describe('server /api/v2/sessions batch archive/restore', () => {
     expect(after['agents']).toEqual(before['agents']);
 
     expect(await indexArchived(created.id)).toBe(true);
-    expect(await listedIds('?meta.archived=true')).toEqual([created.id]);
+    expect(await listedIds('?archived=true')).toEqual([created.id]);
     expect(await listedIds()).toEqual([]);
 
     expect(
@@ -1171,7 +1172,7 @@ describe('server /api/v2/sessions batch archive/restore', () => {
     expect(getLiveSessionById(core(), created.id)).toBeDefined();
     const { events, dispose } = collectEvents();
 
-    const body = await postBatch('/api/v2/sessions:archive', { ids: [created.id] });
+    const body = await postBatch('/api/v1/sessions:archive', { ids: [created.id] });
     expect(body.code).toBe(0);
     expect(body.data?.results).toEqual([{ id: created.id, ok: true }]);
 
@@ -1193,7 +1194,7 @@ describe('server /api/v2/sessions batch archive/restore', () => {
     await closeSessionById(core(), created.id);
 
     const resumePromise = resumeSessionById(core(), created.id);
-    const batchPromise = postBatch('/api/v2/sessions:archive', { ids: [created.id] });
+    const batchPromise = postBatch('/api/v1/sessions:archive', { ids: [created.id] });
 
     const handle = await resumePromise;
     expect(handle).toBeDefined();
@@ -1210,7 +1211,7 @@ describe('server /api/v2/sessions batch archive/restore', () => {
     const cold = await createSession();
     await closeSessionById(core(), cold.id);
 
-    const body = await postBatch('/api/v2/sessions:archive', {
+    const body = await postBatch('/api/v1/sessions:archive', {
       ids: [live.id, cold.id, 'sess_missing'],
     });
     expect(body.code).toBe(0);
@@ -1232,7 +1233,7 @@ describe('server /api/v2/sessions batch archive/restore', () => {
   it('restores a cold session without materializing it and publishes a restored event', async () => {
     const created = await createSession();
     await closeSessionById(core(), created.id);
-    await postBatch('/api/v2/sessions:archive', { ids: [created.id] });
+    await postBatch('/api/v1/sessions:archive', { ids: [created.id] });
     expect(await indexArchived(created.id)).toBe(true);
 
     const { events, dispose } = collectEvents();
@@ -1242,7 +1243,7 @@ describe('server /api/v2/sessions batch archive/restore', () => {
       if (event.type === 'event.session.restored') archivedWhenAnnounced.push(indexArchived(created.id));
     });
 
-    const body = await postBatch('/api/v2/sessions:restore', { ids: [created.id] });
+    const body = await postBatch('/api/v1/sessions:restore', { ids: [created.id] });
     announced.dispose();
     expect(await Promise.all(archivedWhenAnnounced)).toEqual([false]);
     expect(body.code).toBe(0);
@@ -1265,7 +1266,7 @@ describe('server /api/v2/sessions batch archive/restore', () => {
     ).toEqual([{ sessionId: created.id, workspaceId: created.workspace_id }]);
 
     const { events: again, dispose: disposeAgain } = collectEvents();
-    await postBatch('/api/v2/sessions:restore', { ids: [created.id] });
+    await postBatch('/api/v1/sessions:restore', { ids: [created.id] });
     expect(again.filter((event) => event.type === 'event.session.restored')).toEqual([]);
     disposeAgain();
     dispose();
@@ -1273,7 +1274,7 @@ describe('server /api/v2/sessions batch archive/restore', () => {
 
   it('restores a live session through the lifecycle chain and keeps it live', async () => {
     const created = await createSession();
-    await postBatch('/api/v2/sessions:archive', { ids: [created.id] });
+    await postBatch('/api/v1/sessions:archive', { ids: [created.id] });
     expect(await resumeSessionById(core(), created.id)).toBeDefined();
     const { events, dispose } = collectEvents();
     const archivedWhenAnnounced: Promise<boolean | undefined>[] = [];
@@ -1281,7 +1282,7 @@ describe('server /api/v2/sessions batch archive/restore', () => {
       if (event.type === 'event.session.restored') archivedWhenAnnounced.push(indexArchived(created.id));
     });
 
-    const body = await postBatch('/api/v2/sessions:restore', { ids: [created.id] });
+    const body = await postBatch('/api/v1/sessions:restore', { ids: [created.id] });
     announced.dispose();
     expect(await Promise.all(archivedWhenAnnounced)).toEqual([false]);
     expect(body.code).toBe(0);
@@ -1299,17 +1300,17 @@ describe('server /api/v2/sessions batch archive/restore', () => {
 
   it('validates the batch body: empty, missing, over the unique cap, duplicates', async () => {
     for (const body of [{ ids: [] }, {}]) {
-      const rejected = await postBatch('/api/v2/sessions:archive', body);
+      const rejected = await postBatch('/api/v1/sessions:archive', body);
       expect(rejected.code).toBe(40001);
       expect(rejected.data).toBeNull();
     }
 
-    const tooMany = await postBatch('/api/v2/sessions:archive', {
+    const tooMany = await postBatch('/api/v1/sessions:archive', {
       ids: Array.from({ length: 5001 }, (_, i) => `sess_${i}`),
     });
     expect(tooMany.code).toBe(40001);
 
-    const deduped = await postBatch('/api/v2/sessions:archive', {
+    const deduped = await postBatch('/api/v1/sessions:archive', {
       ids: Array.from({ length: 5001 }, () => 'sess_dup'),
     });
     expect(deduped.code).toBe(0);
@@ -1319,69 +1320,16 @@ describe('server /api/v2/sessions batch archive/restore', () => {
   });
 });
 
-describe('mapActivityStatus', () => {
-  it('maps a cold persisted failure to failed, live outcomes still win', () => {
-    const coldIdle = { busy: false, mainTurnActive: false, pendingInteraction: 'none' as const, live: false as const };
-    expect(mapActivityStatus(coldIdle, 'failed')).toBe('failed');
-    expect(mapActivityStatus(coldIdle, 'completed')).toBe('idle');
-    expect(mapActivityStatus(coldIdle, 'cancelled')).toBe('idle');
-    expect(mapActivityStatus(coldIdle)).toBe('idle');
-    expect(mapActivityStatus({ ...coldIdle, live: true }, 'failed')).toBe('idle');
+describe('mapSessionActivity', () => {
+  it('classifies main turn vs background work vs idle', () => {
     expect(
-      mapActivityStatus({ busy: true, mainTurnActive: true, pendingInteraction: 'none', live: true }, 'failed'),
-    ).toBe('running');
-  });
-
-  it('maps pending interactions ahead of an active turn', () => {
+      mapSessionActivity({ busy: false, mainTurnActive: false, pendingInteraction: 'none' }),
+    ).toBe('idle');
     expect(
-      mapActivityStatus({ busy: true, mainTurnActive: true, pendingInteraction: 'approval' }),
-    ).toBe('approval');
+      mapSessionActivity({ busy: true, mainTurnActive: false, pendingInteraction: 'none' }),
+    ).toBe('background');
     expect(
-      mapActivityStatus({ busy: true, mainTurnActive: true, pendingInteraction: 'question' }),
-    ).toBe('question');
-  });
-
-  it('maps busy / mainTurnActive to running', () => {
-    expect(
-      mapActivityStatus({ busy: true, mainTurnActive: false, pendingInteraction: 'none' }),
-    ).toBe('running');
-    expect(
-      mapActivityStatus({ busy: false, mainTurnActive: true, pendingInteraction: 'none' }),
-    ).toBe('running');
-  });
-
-  it('maps a failed last turn to failed only when idle', () => {
-    expect(
-      mapActivityStatus({
-        busy: false,
-        mainTurnActive: false,
-        pendingInteraction: 'none',
-        lastTurnReason: 'failed',
-      }),
-    ).toBe('failed');
-    expect(
-      mapActivityStatus({
-        busy: true,
-        mainTurnActive: true,
-        pendingInteraction: 'none',
-        lastTurnReason: 'failed',
-      }),
-    ).toBe('running');
-  });
-
-  it('maps cold-session defaults (and completed / cancelled) to idle', () => {
-    expect(mapActivityStatus({ busy: false, mainTurnActive: false, pendingInteraction: 'none' })).toBe(
-      'idle',
-    );
-    for (const lastTurnReason of ['completed', 'cancelled'] as const) {
-      expect(
-        mapActivityStatus({
-          busy: false,
-          mainTurnActive: false,
-          pendingInteraction: 'none',
-          lastTurnReason,
-        }),
-      ).toBe('idle');
-    }
+      mapSessionActivity({ busy: true, mainTurnActive: true, pendingInteraction: 'none' }),
+    ).toBe('turn');
   });
 });

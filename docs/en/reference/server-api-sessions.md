@@ -1,6 +1,6 @@
 # Session endpoints
 
-This page lists the REST endpoints under `/api/v1/sessions` (session file system endpoints are in [File endpoints](./server-api-files.md)), plus the session list and batch archive endpoints under `/api/v2/sessions`. For the WebSocket side (conversation frames, [subscribing to a session](./server-api-conversation.md#subscribing-to-a-session), and how a client drives a turn), see [Sessions and conversations](./server-api-conversation.md). For shared conventions such as the response envelope, authentication, error codes, and pagination, see [Server API](./server-api.md).
+This page lists the REST endpoints under `/api/v1/sessions` (session file system endpoints are in [File endpoints](./server-api-files.md)). For the WebSocket side (conversation frames, [subscribing to a session](./server-api-conversation.md#subscribing-to-a-session), and how a client drives a turn), see [Sessions and conversations](./server-api-conversation.md). For shared conventions such as the response envelope, authentication, error codes, and pagination, see [Server API](./server-api.md).
 
 ## Sessions
 
@@ -30,15 +30,18 @@ The live status fields (`busy`, `main_turn_active`, `pending_interaction`, `last
 | `usage` | object | Token rollup: `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_creation_tokens`, `context_tokens`, and the optional `context_limit`, `total_cost_usd`, and `turn_count`. Currently always zeros. The live context size comes with each agent's [`usage` frame](./server-api-conversation.md#agent-state) over the WebSocket |
 | `permission_rules` | array | Session permission rules; currently always `[]` |
 | `message_count` | integer | Message count; currently always `0` |
+| `git` | object | Present only when `GET /api/v1/sessions` is called with `include=git`. Carries optional `branch` (current branch; omitted for detached HEAD or non-Git directories) and optional `pull_request` (`{ number, state: "open" \| "closed" \| "merged", url }`; omitted when none) |
 
 ### Create, read, and update sessions
 
-Create sessions, list and read them, and update a session's title, metadata, and main agent config.
+Create sessions, list and read them, archive or restore sessions in batch, and update a session's title, metadata, and main agent config.
 
 | Method and path | Description |
 | --- | --- |
 | `POST /api/v1/sessions` | Create a session (requires `workspace_id` or `metadata.cwd`) |
-| `GET /api/v1/sessions` | List sessions; cursor pagination with filters such as `busy` and `archived_only` |
+| `GET /api/v1/sessions` | List sessions with filtering, sorting, workspace grouping, `include=git`, and pagination |
+| `POST /api/v1/sessions:archive` | Archive sessions in batch |
+| `POST /api/v1/sessions:restore` | Restore archived sessions in batch |
 | `GET /api/v1/sessions/{session_id}` | Read one session |
 | `GET /api/v1/sessions/{session_id}/profile` | Read the session profile |
 | `POST /api/v1/sessions/{session_id}/profile` | Update the title, metadata, and main agent config |
@@ -81,23 +84,65 @@ On success, `data` is the [session object](#session-object) of the new session.
 
 #### `GET /api/v1/sessions`
 
-Lists sessions across workspaces, newest `updated_at` first. Cursor pagination follows the [Pagination](./server-api.md#pagination) conventions, with one exception: when neither `page_size` nor `archived_only` is given, the response is a single unpaginated window and `has_more` is always `false`. To actually page, pass `page_size`.
+Queries sessions across workspaces with filtering, sorting, workspace grouping, optional Git metadata, and lightweight id projection. Paginate with an opaque `page_token`, a 1-based `page` number, or `before_id` / `after_id` cursors in the flat view (all four are mutually exclusive; see [Pagination](./server-api.md#pagination)).
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
-| `before_id` | query | string | Only sessions older than this id. Mutually exclusive with `after_id` |
-| `after_id` | query | string | Only sessions newer than this id. Mutually exclusive with `before_id` |
-| `page_size` | query | integer | 1–100. Default `20` when paging applies; see above for the behavior without it |
+| `workspace_id` | query | string | Filter by workspace; repeatable, accepts workspace aliases. Unknown workspaces return an empty list |
+| `archived` | query | string | `false` (default, unarchived only) / `true` (archived only) / `all` |
+| `has_prompt` | query | boolean | `true` keeps only sessions with a user prompt; `false` keeps only empty sessions |
 | `busy` | query | boolean | Keep only busy (or only idle) sessions |
-| `include_archive` | query | boolean | List archived sessions alongside active ones. Default `false` |
-| `archived_only` | query | boolean | List only archived sessions. Mutually exclusive with `include_archive`. Enables cursor pagination even without `page_size` |
-| `exclude_empty` | query | boolean | Drop sessions that have no user prompt |
-| `workspace_id` | query | string | List only this workspace's sessions; accepts workspace aliases |
+| `activity` | query | string | Filter by activity: `idle` / `turn` (main agent has an active turn) / `background` (only background work or compaction is active); repeatable |
+| `updated_after` | query | string | Only sessions updated at or after this time (ISO 8601) |
+| `updated_before` | query | string | Only sessions updated at or before this time (ISO 8601) |
+| `sort` | query | string | `updated_at_desc` (default) / `updated_at_asc` / `created_at_desc` |
+| `view` | query | string | `flat` (default) / `by_workspace` |
+| `group_page_size` | query | integer | Sessions returned per workspace under `view=by_workspace`: 1–100, default `5` (up to `10000` with the `id,archived` projection) |
+| `include` | query | string | Comma-separated extra field groups. Currently supports `git` (branch and PR info, deduplicated per environment and working directory and cached for 60 seconds) |
+| `fields` | query | string | Comma-separated field projection. Currently supports only `id,archived`, trimming each item to `{ id, archived }` (for select-all-matching flows) |
+| `page_size` | query | integer | 1–100, default `50`; up to `10000` with the `id,archived` projection. Under `view=by_workspace` it counts groups |
+| `page_token` | query | string | Pagination token returned by the previous page |
+| `page` | query | integer | Stateless page number, starting at 1 |
+| `before_id` | query | string | In the flat view, only sessions ordered after this session |
+| `after_id` | query | string | In the flat view, only sessions ordered before this session |
 
-On success, `data` is `{ items, has_more }`, where each item is a [session object](#session-object).
+In the flat view, `data` is `{ items, total, has_more, next_page_token? }`: each item is a [session object](#session-object) by default (with `git` attached when `include=git` is passed), or `{ id, archived }` when `fields=id,archived` is passed. `total` is the size of the filtered set. `next_page_token` is present only when paging with `page_token` (or default pagination) and `has_more` is `true`; changing any query condition mid-pagination returns `40922`. `page`, `before_id`, and `after_id` modes do not mint tokens.
 
-- `40001`: validation failure, for example `before_id` together with `after_id`, or `archived_only` together with `include_archive`
-- `40410`: unknown `workspace_id`
+With `view=by_workspace`, the filtered and sorted set is grouped by canonical workspace id, and `data` is `{ groups, total, has_more, next_page_token? }`:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `groups[].workspace_id` | string | Workspace id the group belongs to |
+| `groups[].sessions` | array | The workspace's first `group_page_size` sessions, ordered by the requested `sort` |
+| `groups[].total` | integer | Total number of the workspace's sessions that match the filters |
+| `total` | integer | Number of groups in the grouped view |
+
+Only workspaces with at least one matching session appear. Groups are ordered by the sort key of their first session, with ties broken by `workspace_id`. `page` and `page_token` paginate over groups.
+
+- `40001`: validation failure, such as passing more than one pagination cursor parameter, combining `before_id` / `after_id` with `view=by_workspace`, passing `group_page_size` without `view=by_workspace`, or combining `fields=id,archived` with `include=git`
+- `40922`: during pagination, the query conditions (including projection, `view`, and grouping parameters) do not match `page_token`
+
+#### `POST /api/v1/sessions:archive`
+
+Archives sessions in batch, for session management views. Sessions that are still live go through the full lifecycle; cold sessions that are not loaded have their on-disk metadata rewritten directly and are not loaded.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `ids` | body | array | Required. Array of session ids; must not be empty, at most 5000 after deduplication |
+
+Only a body validation failure fails the whole request. Other errors are returned per item:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `results` | array | Result for each id, in input order. A success is `{ id, ok }`; a failure is `{ id, ok: false, error }`. An id that does not exist reports `40401` in its own entry |
+| `succeeded` | integer | Number of successes |
+| `failed` | integer | Number of failures |
+
+- `40001`: request body validation failure
+
+#### `POST /api/v1/sessions:restore`
+
+Restores archived sessions in batch. The request body, the handling of live and cold sessions, the per-item results, and the error codes are the same as [`POST /api/v1/sessions:archive`](#post-api-v1-sessions-archive).
 
 #### `GET /api/v1/sessions/{session_id}`
 
@@ -271,7 +316,7 @@ Turns of agents other than the main agent, such as side conversations, have no p
 
 #### `POST /api/v1/sessions/{session_id}:archive`
 
-Marks the session archived and broadcasts the global `event.session.archived` event. An archived session does not appear in the default session list; it is still listed with `include_archive` or `archived_only`.
+Marks the session archived and broadcasts the global `event.session.archived` event. An archived session does not appear in the default session list; it is still listed with `archived=true` or `archived=all`.
 
 On success, `data` is `{ archived: true }`.
 
@@ -643,113 +688,6 @@ On success, `data` is `{ activated: true, skill_name }`.
 - `40415`: no skill with that name
 - `40912`: the skill exists, but its type cannot be activated by the user
 - `40927`: `prompt_id` is already used by another request, including prompt submission and `/steer` requests
-
-### Session list (v2)
-
-`/api/v2/sessions` is the next-generation API for session list and management views: filtering, sorting, and field groups for list queries all go in query parameters, and batch archive and restore are provided.
-
-| Method and path | Description |
-| --- | --- |
-| `GET /api/v2/sessions` | Query sessions by filter, sort, and field group; can group by workspace |
-| `POST /api/v2/sessions:archive` | Archive sessions in batch |
-| `POST /api/v2/sessions:restore` | Restore sessions in batch |
-
-#### `GET /api/v2/sessions`
-
-A session query for list views, with filtering, sorting, and field groups all in query parameters. Paginate with `page_token` or `page` (see [Pagination](./server-api.md#pagination)).
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `workspace.id` | query | string | Filter by workspace; repeatable |
-| `activity.status` | query | string | Filter by activity status: `running` / `approval` / `question` / `failed` / `idle`; repeatable |
-| `meta.updated_after` | query | integer | Only sessions updated after this time (epoch milliseconds) |
-| `meta.updated_before` | query | integer | Only sessions updated before this time (epoch milliseconds) |
-| `meta.archived` | query | string | `true` / `false` (default) / `all` |
-| `meta.has_prompt` | query | boolean | `true` keeps only sessions with a user prompt, `false` keeps only empty sessions (equivalent to `exclude_empty` in `GET /api/v1/sessions`) |
-| `view` | query | string | `flat` (default) / `by_workspace`; see below |
-| `group.page_size` | query | integer | Sessions returned per workspace under `view=by_workspace`: 1–100, default 5 (up to 10000 with the `id,archived` projection) |
-| `sort` | query | string | `meta.updated_at_desc` (default) / `meta.updated_at_asc` / `meta.created_at_desc` |
-| `include` | query | string | Comma-separated extra field groups. Currently supports `git` (branch and PR info, deduplicated per environment and working directory and cached for 60 seconds) |
-| `fields` | query | string | Comma-separated field projection. Currently supports only `id,archived`, which trims each item to `{ id, archived }` (for select-all-matching flows) |
-| `page_size` | query | integer | 1–100, default 50; up to 10000 with the `id,archived` projection. Under `view=by_workspace` it counts groups |
-| `page_token` | query | string | Pagination token returned by the previous page |
-| `page` | query | integer | Stateless page number, starting at 1. Mutually exclusive with `page_token` |
-
-Every item in the list always carries the `workspace`, `meta`, and `activity` groups, plus the `git` group with `include=git`; with `fields=id,archived`, each item has only `{ id, archived }`. The `activity` group also carries `model`: the session's bound model alias while it is loaded in the current process, `null` for a cold (not loaded) session. For the fields of each group, see the session items in the grouped view example below.
-
-Every page also carries `total`, the size of the filtered set. The pagination token binds the first page's query conditions (including the projection); changing them mid-pagination returns `40922`. `page` mode is a stateless alternative for jumping to arbitrary pages: every request is an independent snapshot, no token is issued, and `next_page_token` is always `null`.
-
-With `view=by_workspace`, the same filtered and sorted set is re-projected into per-workspace groups. An overview page can therefore use one request instead of polling each workspace:
-
-```json
-{
-  "code": 0,
-  "msg": "success",
-  "data": {
-    "groups": [
-      {
-        "workspace": { "id": "wd_my-app_a1b2c3d4e5f6", "cwd": "/Users/dev/my-app" },
-        "sessions": [ { "id": "session_...", "workspace": { "id": "wd_my-app_a1b2c3d4e5f6", "cwd": "/Users/dev/my-app" }, "meta": { "title": "Fix the login page", "last_prompt": "adjust the button spacing", "created_at": 1787000000000, "updated_at": 1787000100000, "archived": false, "archived_at": null }, "activity": { "status": "idle", "model": "kimi-for-coding" } } ],
-        "total": 42
-      }
-    ],
-    "total": 7,
-    "has_more": true,
-    "next_page_token": "eyJ2IjoxLCJmIjoi..."
-  },
-  "request_id": "req_..."
-}
-```
-
-| Field | Type | Description |
-| --- | --- | --- |
-| `groups[].workspace` | object | The workspace the group belongs to |
-| `groups[].sessions` | array | The workspace's first `group.page_size` sessions, ordered by the requested `sort` |
-| `groups[].total` | integer | Total number of the workspace's sessions that match the filters; usable for a "view all" entry |
-| `total` | integer | Number of groups in the grouped view |
-
-Only workspaces with at least one matching session appear. Groups are ordered by the sort key of their first session, with ties broken by workspace id. `page` and `page_token` paginate over groups with the same token fingerprint binding, which also covers `view` and the grouping parameters; changing them mid-pagination also returns `40922`.
-
-- `40001`: `group.page_size` is given without the grouped view; `fields=id,archived` is combined with `include=git`; `page` is combined with `page_token`
-- `40922`: during pagination, the query conditions (including the projection, `view`, and grouping parameters) do not match `page_token`
-
-#### `POST /api/v2/sessions:archive`
-
-Archives sessions in batch, for session management views. Sessions that are still live go through the full lifecycle; cold sessions that are not loaded have their on-disk metadata rewritten directly and are not loaded.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `ids` | body | array | Required. Array of session ids; must not be empty, at most 5000 after deduplication |
-
-Only a body validation failure fails the whole request. Other errors are returned per item:
-
-| Field | Type | Description |
-| --- | --- | --- |
-| `results` | array | Result for each id, in input order. A success is `{ id, ok }`; a failure is `{ id, ok: false, error }`. An id that does not exist reports `40401` in its own entry |
-| `succeeded` | integer | Number of successes |
-| `failed` | integer | Number of failures |
-
-```json
-{
-  "code": 0,
-  "msg": "success",
-  "data": {
-    "results": [
-      { "id": "session_a", "ok": true },
-      { "id": "session_b", "ok": false, "error": { "code": 40401, "message": "session session_b does not exist" } }
-    ],
-    "succeeded": 1,
-    "failed": 1
-  },
-  "request_id": "req_..."
-}
-```
-
-- `40001`: request body validation failure
-
-#### `POST /api/v2/sessions:restore`
-
-Restores archived sessions in batch. The request body, the handling of live and cold sessions, the per-item results, and the error codes are the same as [`POST /api/v2/sessions:archive`](#post-api-v2-sessions-archive).
 
 ## Conversation
 

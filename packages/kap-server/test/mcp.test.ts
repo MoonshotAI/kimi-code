@@ -12,7 +12,7 @@ import {
   type McpServerLocator,
   type McpServerTestTarget,
 } from '@moonshot-ai/agent-core-v2';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { authedFetch } from './helpers/auth';
@@ -168,7 +168,7 @@ function makeMcpStub(): McpStub {
   return { service, calls, state };
 }
 
-describe('server /api/v2/mcp', () => {
+describe('server /api/v1/mcp', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
   let base: string;
@@ -187,7 +187,7 @@ describe('server /api/v2/mcp', () => {
   });
 
   async function boot(stub: McpStub): Promise<void> {
-    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-mcp-'));
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v1-mcp-'));
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
@@ -213,13 +213,16 @@ describe('server /api/v2/mcp', () => {
   }
 
   describe('routes', () => {
-    it('round-trips a server through add/get/update/remove', async () => {
+    it('round-trips a server through add/get/update/remove and drops /api/v2/mcp', async () => {
       const stub = makeMcpStub();
       await boot(stub);
 
+      const legacyV2 = await authedFetch(server as RunningServer, base, '/api/v2/mcp/servers');
+      expect(legacyV2.status).toBe(404);
+
       const added = await call<McpManagedServer[]>(
         'POST',
-        '/api/v2/mcp/servers?cwd=%2Fworkspace%2Fproject',
+        '/api/v1/mcp/servers?cwd=%2Fworkspace%2Fproject',
         STDIO_A,
       );
       expect(added.status).toBe(200);
@@ -239,13 +242,13 @@ describe('server /api/v2/mcp', () => {
         },
       ]);
 
-      const got = await call<McpManagedServer>('GET', '/api/v2/mcp/servers/a');
+      const got = await call<McpManagedServer>('GET', '/api/v1/mcp/servers/a');
       expect(got.body.code).toBe(0);
       expect(got.body.data).toMatchObject({ name: 'a', config: { command: 'run-a' } });
 
       const updated = await call<McpManagedServer[]>(
         'PUT',
-        '/api/v2/mcp/servers/a?cwd=%2Fworkspace%2Fproject',
+        '/api/v1/mcp/servers/a?cwd=%2Fworkspace%2Fproject',
         {
           transport: 'stdio',
           command: 'run-b',
@@ -257,7 +260,7 @@ describe('server /api/v2/mcp', () => {
 
       const removed = await call<McpManagedServer[]>(
         'DELETE',
-        '/api/v2/mcp/servers/a?cwd=%2Fworkspace%2Fproject',
+        '/api/v1/mcp/servers/a?cwd=%2Fworkspace%2Fproject',
       );
       expect(removed.body.code).toBe(0);
       expect(removed.body.data).toEqual([]);
@@ -272,13 +275,13 @@ describe('server /api/v2/mcp', () => {
     it('maps an unknown server name to 40408', async () => {
       const stub = makeMcpStub();
       await boot(stub);
-      const got = await call('GET', '/api/v2/mcp/servers/nope');
+      const got = await call('GET', '/api/v1/mcp/servers/nope');
       expect(got.status).toBe(200);
       expect(got.body.code).toBe(40408);
       expect(got.body.data).toBeNull();
       expect(got.body.msg).toContain('nope');
 
-      const updated = await call('PUT', '/api/v2/mcp/servers/nope', {
+      const updated = await call('PUT', '/api/v1/mcp/servers/nope', {
         transport: 'stdio',
         command: 'run-x',
       });
@@ -289,11 +292,11 @@ describe('server /api/v2/mcp', () => {
       const stub = makeMcpStub();
       await boot(stub);
 
-      const badAdd = await call('POST', '/api/v2/mcp/servers', { name: 'a', command: 'run-a' });
+      const badAdd = await call('POST', '/api/v1/mcp/servers', { name: 'a', command: 'run-a' });
       expect(badAdd.body.code).toBe(40001);
       expect(Array.isArray(badAdd.body.details)).toBe(true);
 
-      const badBegin = await call('POST', '/api/v2/mcp/auth:begin', { source: 'global' });
+      const badBegin = await call('POST', '/api/v1/mcp/auth:begin', { source: 'global' });
       expect(badBegin.body.code).toBe(40001);
 
       expect(stub.calls).toEqual([]);
@@ -302,7 +305,7 @@ describe('server /api/v2/mcp', () => {
     it('maps the engine request.invalid rejection to 40001', async () => {
       const stub = makeMcpStub();
       await boot(stub);
-      const res = await call('POST', '/api/v2/mcp/servers:test', {});
+      const res = await call('POST', '/api/v1/mcp/servers:test', {});
       expect(res.body.code).toBe(40001);
       expect(res.body.data).toBeNull();
       expect(stub.calls).toEqual(['testServer']);
@@ -318,7 +321,7 @@ describe('server /api/v2/mcp', () => {
       };
       await boot(stub);
 
-      const res = await call('POST', '/api/v2/mcp/servers', STDIO_A);
+      const res = await call('POST', '/api/v1/mcp/servers', STDIO_A);
       expect(res.status).toBe(200);
       expect(res.body.code).toBe(40001);
       expect(res.body.data).toBeNull();
@@ -334,7 +337,7 @@ describe('server /api/v2/mcp', () => {
       };
       await boot(stub);
 
-      const res = await call('POST', '/api/v2/mcp/auth:complete', { flowId: 'flow-1' });
+      const res = await call('POST', '/api/v1/mcp/auth:complete', { flowId: 'flow-1' });
       expect(res.status).toBe(200);
       expect(res.body.code).toBe(40929);
       expect(res.body.data).toBeNull();
@@ -347,7 +350,7 @@ describe('server /api/v2/mcp', () => {
       };
       await boot(stub);
 
-      const res = await call('DELETE', '/api/v2/mcp/servers/nope');
+      const res = await call('DELETE', '/api/v1/mcp/servers/nope');
       expect(res.status).toBe(200);
       expect(res.body.code).toBe(40408);
       expect(res.body.data).toBeNull();
@@ -358,7 +361,7 @@ describe('server /api/v2/mcp', () => {
       const stub = makeMcpStub();
       await boot(stub);
       const inline = { name: 'inline', transport: 'http', url: 'https://example.com/mcp' };
-      const res = await call('POST', '/api/v2/mcp/servers:test', { server: inline });
+      const res = await call('POST', '/api/v1/mcp/servers:test', { server: inline });
       expect(res.body).toMatchObject({ code: 0, data: { success: true, output: 'probe ok' } });
       expect(stub.state.lastTestTarget).toEqual({ server: inline });
     });
@@ -366,9 +369,9 @@ describe('server /api/v2/mcp', () => {
     it('inspects the catalog narrowed by locator targets', async () => {
       const stub = makeMcpStub();
       await boot(stub);
-      await call('POST', '/api/v2/mcp/servers', STDIO_A);
+      await call('POST', '/api/v1/mcp/servers', STDIO_A);
 
-      const res = await call<McpServerInspection[]>('POST', '/api/v2/mcp/servers:inspect', {
+      const res = await call<McpServerInspection[]>('POST', '/api/v1/mcp/servers:inspect', {
         targets: [{ source: 'global', name: 'a' }],
       });
       expect(res.body.code).toBe(0);
@@ -396,15 +399,15 @@ describe('server /api/v2/mcp', () => {
       const stub = makeMcpStub();
       await boot(stub);
 
-      await call('POST', '/api/v2/mcp/servers:inspect', {
+      await call('POST', '/api/v1/mcp/servers:inspect', {
         targets: [],
         cwd: '/workspace/project',
       });
-      await call('POST', '/api/v2/mcp/auth:begin?cwd=%2Fworkspace%2Fproject', {
+      await call('POST', '/api/v1/mcp/auth:begin?cwd=%2Fworkspace%2Fproject', {
         source: 'global',
         name: 'a',
       });
-      await call('POST', '/api/v2/mcp/auth:reset?cwd=%2Fworkspace%2Fproject', {
+      await call('POST', '/api/v1/mcp/auth:reset?cwd=%2Fworkspace%2Fproject', {
         source: 'global',
         name: 'a',
       });
@@ -419,20 +422,20 @@ describe('server /api/v2/mcp', () => {
     it('maps ?verify= onto the boolean auth-status query flag', async () => {
       const stub = makeMcpStub();
       await boot(stub);
-      await call('POST', '/api/v2/mcp/servers', STDIO_A);
+      await call('POST', '/api/v1/mcp/servers', STDIO_A);
 
-      const verified = await call('GET', '/api/v2/mcp/auth-statuses?verify=true');
+      const verified = await call('GET', '/api/v1/mcp/auth-statuses?verify=true');
       expect(verified.body).toMatchObject({
         code: 0,
         data: [{ name: 'a', authStatus: 'not-applicable' }],
       });
       expect(stub.state.verifySeen).toBe(true);
 
-      const offline = await call('GET', '/api/v2/mcp/auth-statuses');
+      const offline = await call('GET', '/api/v1/mcp/auth-statuses');
       expect(offline.body.code).toBe(0);
       expect(stub.state.verifySeen).toBeUndefined();
 
-      const bogus = await call('GET', '/api/v2/mcp/auth-statuses?verify=yes');
+      const bogus = await call('GET', '/api/v1/mcp/auth-statuses?verify=yes');
       expect(bogus.body.code).toBe(40001);
     });
 
@@ -440,7 +443,7 @@ describe('server /api/v2/mcp', () => {
       const stub = makeMcpStub();
       await boot(stub);
 
-      const begin = await call('POST', '/api/v2/mcp/auth:begin', { source: 'global', name: 'a' });
+      const begin = await call('POST', '/api/v1/mcp/auth:begin', { source: 'global', name: 'a' });
       expect(begin.body).toMatchObject({
         code: 0,
         data: {
@@ -450,16 +453,16 @@ describe('server /api/v2/mcp', () => {
         },
       });
 
-      const complete = await call('POST', '/api/v2/mcp/auth:complete', { flowId: 'flow-1' });
+      const complete = await call('POST', '/api/v1/mcp/auth:complete', { flowId: 'flow-1' });
       expect(complete.body).toMatchObject({ code: 0, data: null });
 
-      const unknownFlow = await call('POST', '/api/v2/mcp/auth:complete', { flowId: 'nope' });
+      const unknownFlow = await call('POST', '/api/v1/mcp/auth:complete', { flowId: 'nope' });
       expect(unknownFlow.body.code).toBe(40001);
 
-      const cancel = await call('POST', '/api/v2/mcp/auth:cancel', { flowId: 'flow-1' });
+      const cancel = await call('POST', '/api/v1/mcp/auth:cancel', { flowId: 'flow-1' });
       expect(cancel.body).toMatchObject({ code: 0, data: null });
 
-      const reset = await call('POST', '/api/v2/mcp/auth:reset', {
+      const reset = await call('POST', '/api/v1/mcp/auth:reset', {
         source: 'plugin',
         pluginId: 'p',
         serverName: 's',
@@ -472,7 +475,7 @@ describe('server /api/v2/mcp', () => {
       const stub = makeMcpStub();
       await boot(stub);
 
-      const res = await call('POST', '/api/v2/mcp/auth:complete', {
+      const res = await call('POST', '/api/v1/mcp/auth:complete', {
         flowId: 'flow-1',
         timeoutMs: 2 ** 31,
       });
@@ -495,7 +498,7 @@ describe('server /api/v2/mcp', () => {
       await boot(stub);
 
       const controller = new AbortController();
-      const pending = authedFetch(server as RunningServer, base, '/api/v2/mcp/auth:complete', {
+      const pending = authedFetch(server as RunningServer, base, '/api/v1/mcp/auth:complete', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ flowId: 'flow-1' }),

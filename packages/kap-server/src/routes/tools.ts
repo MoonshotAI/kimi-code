@@ -1,35 +1,26 @@
 import {
-  ErrorCodes,
-  IAgentMcpService,
   ISessionIndex,
   IAgentToolRegistryService,
   IAgentToolPolicyService,
   getLiveSessionById,
   resumeSessionById,
-  Error2,
   type ISessionScopeHandle,
   type Scope,
   type ToolInfo,
   type ToolSource,
 } from '@moonshot-ai/agent-core-v2';
 
-import { errEnvelope, okEnvelope } from '../envelope';
+import { okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent } from '../transport/mainAgent';
-import { ErrorCode } from '../protocol/error-codes';
 import {
-  listMcpServersResponseSchema,
   listToolsQuerySchema,
   listToolsResponseSchema,
-  restartMcpServerResultSchema,
 } from '../protocol/rest-tool';
-import type { McpServer, ToolDescriptor } from '../protocol/tool';
-import { parseActionSuffix } from './action-suffix';
+import type { ToolDescriptor } from '../protocol/tool';
 
 const MCP_NAME_PREFIX = 'mcp__';
 const MCP_NAME_SEPARATOR = '__';
-
-type McpEntry = ReturnType<IAgentMcpService['list']>[number];
 
 interface ToolsRouteHost {
   get(
@@ -37,14 +28,6 @@ interface ToolsRouteHost {
     options: { preHandler: unknown[]; schema?: Record<string, unknown> } | undefined,
     handler: (
       req: { id: string; query: unknown; params: unknown },
-      reply: { send(payload: unknown): unknown },
-    ) => Promise<void> | void,
-  ): unknown;
-  post(
-    path: string,
-    options: { preHandler: unknown[]; schema?: Record<string, unknown> },
-    handler: (
-      req: { id: string; body: unknown; params: unknown },
       reply: { send(payload: unknown): unknown },
     ) => Promise<void> | void,
   ): unknown;
@@ -78,84 +61,6 @@ export function registerToolsRoutes(app: ToolsRouteHost, core: Scope): void {
     listToolsRoute.path,
     listToolsRoute.options,
     listToolsRoute.handler as Parameters<ToolsRouteHost['get']>[2],
-  );
-
-  const listMcpServersRoute = defineRoute(
-    {
-      method: 'GET',
-      path: '/mcp/servers',
-      success: { data: listMcpServersResponseSchema },
-      description: 'List configured MCP servers',
-      tags: ['tools'],
-    },
-    async (req, reply) => {
-      const agent = await resolveEffectiveAgent(core, undefined);
-      const servers =
-        agent === undefined
-          ? []
-          : agent.accessor.get(IAgentMcpService).list().map(toProtocolMcpServer);
-      reply.send(okEnvelope({ servers }, req.id));
-    },
-  );
-  app.get(
-    listMcpServersRoute.path,
-    listMcpServersRoute.options,
-    listMcpServersRoute.handler as Parameters<ToolsRouteHost['get']>[2],
-  );
-
-  const restartMcpServerRoute = defineRoute(
-    {
-      method: 'POST',
-      path: '/mcp/servers/{tail}',
-      success: { data: restartMcpServerResultSchema },
-      errors: {
-        [ErrorCode.MCP_SERVER_NOT_FOUND]: {},
-        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
-      },
-      description: 'Restart an MCP server by ID',
-      tags: ['tools'],
-      operationId: 'restartMcpServer',
-    },
-    async (req, reply) => {
-      const { tail } = req.params as { tail: string };
-      const parsed = parseActionSuffix({
-        tail,
-        allowedActions: ['restart'] as const,
-        resourceLabel: 'mcp_server',
-      });
-      if (parsed.kind === 'invalid') {
-        reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, parsed.reason, req.id));
-        return;
-      }
-      if (parsed.kind === 'bare') {
-        reply.send(
-          errEnvelope(ErrorCode.VALIDATION_FAILED, `unsupported action: ${tail}`, req.id),
-        );
-        return;
-      }
-
-      const agent = await resolveEffectiveAgent(core, undefined);
-      if (agent === undefined) {
-        reply.send(mcpServerNotFound(parsed.id, req.id));
-        return;
-      }
-      const mcp = agent.accessor.get(IAgentMcpService);
-      if (!mcp.list().some((entry) => entry.name === parsed.id)) {
-        reply.send(mcpServerNotFound(parsed.id, req.id));
-        return;
-      }
-      try {
-        await mcp.reconnect(parsed.id);
-        reply.send(okEnvelope({ restarting: true }, req.id));
-      } catch (error) {
-        sendMappedError(reply, req.id, error);
-      }
-    },
-  );
-  app.post(
-    restartMcpServerRoute.path,
-    restartMcpServerRoute.options,
-    restartMcpServerRoute.handler as Parameters<ToolsRouteHost['post']>[2],
   );
 }
 
@@ -215,56 +120,4 @@ function toProtocolTool(info: ToolInfo, active: boolean): ToolDescriptor {
     if (serverId !== undefined) return { ...base, mcp_server_id: serverId };
   }
   return base;
-}
-
-function mapMcpStatus(status: McpEntry['status']): McpServer['status'] {
-  switch (status) {
-    case 'pending':
-      return 'connecting';
-    case 'connected':
-      return 'connected';
-    case 'disabled':
-      return 'disconnected';
-    case 'removed':
-      return 'disconnected';
-    case 'failed':
-      return 'error';
-    case 'needs-auth':
-      return 'error';
-  }
-}
-
-function toProtocolMcpServer(entry: McpEntry): McpServer {
-  const base: McpServer = {
-    id: entry.name,
-    name: entry.name,
-    transport: entry.transport,
-    status: mapMcpStatus(entry.status),
-    tool_count: entry.toolCount,
-    next_retry_at: entry.nextRetryAt,
-  };
-  if (entry.error !== undefined && entry.error.length > 0) {
-    return { ...base, last_error: entry.error };
-  }
-  return base;
-}
-
-function mcpServerNotFound(serverId: string, requestId: string): unknown {
-  return errEnvelope(
-    ErrorCode.MCP_SERVER_NOT_FOUND,
-    `MCP server ${serverId} does not exist`,
-    requestId,
-  );
-}
-
-function sendMappedError(
-  reply: { send(payload: unknown): unknown },
-  requestId: string,
-  err: unknown,
-): void {
-  if (err instanceof Error2 && err.code === ErrorCodes.MCP_SERVER_NOT_FOUND) {
-    reply.send(errEnvelope(ErrorCode.MCP_SERVER_NOT_FOUND, err.message, requestId));
-    return;
-  }
-  throw err;
 }

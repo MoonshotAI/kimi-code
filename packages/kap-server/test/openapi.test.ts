@@ -110,9 +110,11 @@ describe('server-v2 OpenAPI', () => {
     expect(Array.isArray(schema['oneOf'])).toBe(true);
   });
 
-  it('documents MCP OAuth failures for auth completion', async () => {
+  it('documents MCP OAuth failures for auth completion under /api/v1/mcp', async () => {
     const doc = await fetchOpenApi();
-    const authCompleteOp = operation(doc, '/api/v2/mcp/auth:complete', 'post');
+    const paths = Object.keys(asRecord(doc['paths']));
+    expect(paths.some((path) => path.startsWith('/api/v2/'))).toBe(false);
+    const authCompleteOp = operation(doc, '/api/v1/mcp/auth:complete', 'post');
     const responses = asRecord(authCompleteOp['responses']);
     const response = asRecord(responses['200']);
     const content = asRecord(response['content']);
