@@ -1,7 +1,7 @@
 import type { FollowUpBehavior } from '../config';
 
 export type EditorSubmitIntent = 'default' | 'opposite' | 'queue';
-export type FollowUpDelivery = 'existing' | 'queue' | 'steer-draft';
+export type FollowUpDelivery = 'queue' | 'steer-draft';
 
 export interface FollowUpRuntimeState {
   readonly streamingPhase: 'idle' | 'waiting' | 'thinking' | 'composing' | 'shell';
@@ -25,7 +25,7 @@ export function resolveFollowUpDelivery(
   intent: EditorSubmitIntent,
   configured: FollowUpBehavior | undefined,
   runtime: FollowUpRuntimeState,
-): FollowUpDelivery {
+): FollowUpDelivery | undefined {
   if (
     !runtime.isCompacting &&
     !runtime.deferUserMessages &&
@@ -33,12 +33,12 @@ export function resolveFollowUpDelivery(
     runtime.streamingPhase === 'idle' &&
     !runtime.goalActive
   ) {
-    return 'existing';
+    return undefined;
   }
   const behavior = configured ?? 'queue';
   if (intent === 'queue') return 'queue';
   if (intent === 'opposite') return behavior === 'queue' ? 'steer-draft' : 'queue';
-  return behavior === 'steer' ? 'steer-draft' : 'existing';
+  return behavior === 'steer' ? 'steer-draft' : undefined;
 }
 
 export function holdsForActiveGoal(

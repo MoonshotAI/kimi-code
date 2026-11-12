@@ -16180,6 +16180,32 @@ describe('KimiTUI follow-up behavior', () => {
     expect(driver.state.queuedMessages).toEqual([]);
   });
 
+  it('recalls a held goal queue item on Up arrow and marks user steer at an idle goal boundary', async () => {
+    const { driver, session } = await makeDriver();
+    driver.state.appState.goal = makeActiveGoalSnapshot();
+    driver.state.appState.followUpBehavior = 'steer';
+    driver.handleUserInput('held during idle goal gap', 'queue');
+
+    expect(driver.state.queuedMessages).toEqual([
+      { text: 'held during idle goal gap', agentId: 'main', delivery: 'prompt-only' },
+    ]);
+    expect(driver.state.editor.onUpArrowEmpty?.()).toBe(true);
+    expect(driver.state.editor.getText()).toBe('held during idle goal gap');
+    expect(driver.state.queuedMessages).toEqual([]);
+
+    driver.state.editor.setText('');
+    const markSpy = vi.spyOn(
+      (driver as unknown as { programStatus: { markUserSteer(): void } }).programStatus,
+      'markUserSteer',
+    );
+    driver.handleUserInput('steer idle goal');
+
+    await vi.waitFor(() => {
+      expect(session.steer).toHaveBeenCalledWith('steer idle goal');
+      expect(markSpy).toHaveBeenCalledOnce();
+    });
+  });
+
   it.each(['opposite', 'queue'] as const)('treats %s as an ordinary submit while idle', async (intent) => {
     const { driver, session } = await makeDriver();
     driver.state.appState.followUpBehavior = intent === 'opposite' ? 'queue' : 'steer';

@@ -1894,46 +1894,16 @@ export class KimiTUI {
         return;
       }
     }
-    const runtime = this.followUpRuntimeState();
-    const delivery = resolveFollowUpDelivery(
-      submitIntent ?? 'default',
-      this.state.appState.followUpBehavior,
-      runtime,
-    );
-    if (delivery === 'queue') {
-      this.enqueueMessage(text, {
+    if (
+      this.applyFollowUpDelivery(session, text, {
         parts: extraction.hasMedia ? extraction.parts : undefined,
         imageAttachmentIds: extraction.imageAttachmentIds,
         videoAttachmentIds: extraction.videoAttachmentIds,
         mediaSnapshots: extraction.mediaSnapshots,
         inlineSkillActivations: activations,
-        delivery: 'prompt-only',
-      });
-      this.updateQueueDisplay();
-      this.state.ui.requestRender();
-      return;
-    }
-    if (delivery === 'steer-draft') {
-      if (canSteerSingleDraft(runtime)) {
-        this.steerMessage(session, [{
-          text,
-          parts: extraction.hasMedia ? extraction.parts : undefined,
-          imageAttachmentIds:
-            extraction.imageAttachmentIds.length > 0 ? extraction.imageAttachmentIds : undefined,
-          videoAttachmentIds:
-            extraction.videoAttachmentIds.length > 0 ? extraction.videoAttachmentIds : undefined,
-          mediaSnapshots: extraction.mediaSnapshots,
-          inlineSkillActivations: activations,
-        }]);
-      } else {
-        this.enqueueMessage(text, {
-          parts: extraction.hasMedia ? extraction.parts : undefined,
-          imageAttachmentIds: extraction.imageAttachmentIds,
-          videoAttachmentIds: extraction.videoAttachmentIds,
-          mediaSnapshots: extraction.mediaSnapshots,
-          inlineSkillActivations: activations,
-        });
-      }
+        submitIntent,
+      })
+    ) {
       this.updateQueueDisplay();
       this.state.ui.requestRender();
       return;
@@ -2772,33 +2742,46 @@ export class KimiTUI {
     };
   }
 
-  private sendMessage(session: Session, input: string, options?: SendMessageOptions): void {
+  private applyFollowUpDelivery(
+    session: Session,
+    input: string,
+    options?: EnqueueMessageOptions,
+  ): boolean {
     const runtime = this.followUpRuntimeState();
     const delivery = resolveFollowUpDelivery(
       options?.submitIntent ?? 'default',
       this.state.appState.followUpBehavior,
       runtime,
     );
+    if (delivery === undefined) return false;
+    this.staging.defer(options?.lease);
     if (delivery === 'queue') {
-      this.staging.defer(options?.lease);
       this.enqueueMessage(input, { ...options, delivery: 'prompt-only' });
-      return;
+      return true;
     }
-    if (delivery === 'steer-draft') {
-      this.staging.defer(options?.lease);
-      if (canSteerSingleDraft(runtime)) {
-        this.steerMessage(session, [{
-          text: input,
-          parts: options?.parts,
-          imageAttachmentIds: options?.imageAttachmentIds,
-          videoAttachmentIds: options?.videoAttachmentIds,
-          mediaSnapshots: options?.mediaSnapshots,
-        }]);
-      } else {
-        this.enqueueMessage(input, options);
-      }
-      return;
+    if (canSteerSingleDraft(runtime)) {
+      this.steerMessage(session, [{
+        text: input,
+        parts: options?.parts,
+        imageAttachmentIds:
+          options?.imageAttachmentIds !== undefined && options.imageAttachmentIds.length > 0
+            ? options.imageAttachmentIds
+            : undefined,
+        videoAttachmentIds:
+          options?.videoAttachmentIds !== undefined && options.videoAttachmentIds.length > 0
+            ? options.videoAttachmentIds
+            : undefined,
+        mediaSnapshots: options?.mediaSnapshots,
+        inlineSkillActivations: options?.inlineSkillActivations,
+      }]);
+    } else {
+      this.enqueueMessage(input, options);
     }
+    return true;
+  }
+
+  private sendMessage(session: Session, input: string, options?: SendMessageOptions): void {
+    if (this.applyFollowUpDelivery(session, input, options)) return;
     // Submission order must survive a mid-turn compaction: objectives queued
     // while compacting stay queued when the turn outlives the compaction, so
     // steering this input ahead of them would reorder the conversation.
@@ -3193,7 +3176,7 @@ export class KimiTUI {
         () => {},
       );
     }
-    if (onSettled === undefined && !startsNewTurn) {
+    if (onSettled === undefined) {
       void request.then(
         () => {
           if (this.session === session) this.programStatus.markUserSteer();
