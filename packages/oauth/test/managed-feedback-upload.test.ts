@@ -171,20 +171,28 @@ describe('fetchCompleteFeedbackUpload', () => {
 
     const created = await fetchCreateFeedbackUploadUrl('YOUR_API_KEY', SAMPLE_BODY, {
       feedbackUrl: 'https://registry.example.test/v1/feedback/',
+      headers: { 'X-Custom-Gateway': 'internal' },
     });
     expect(created.kind).toBe('ok');
 
     const completed = await fetchCompleteFeedbackUpload(
       'YOUR_API_KEY',
       { upload_id: 42, parts: [{ part_number: 1, etag: '"e1"' }] },
-      { feedbackUrl: 'https://registry.example.test/v1/feedback/' },
+      {
+        feedbackUrl: 'https://registry.example.test/v1/feedback/',
+        headers: { 'X-Custom-Gateway': 'internal' },
+      },
     );
     expect(completed).toEqual({ kind: 'ok' });
 
-    const urls = (fetchMock.mock.calls as unknown as [string][]).map(([url]) => url);
-    expect(urls).toEqual([
+    const calls = fetchMock.mock.calls as unknown as [string, RequestInit?][];
+    expect(calls.map(([url]) => url)).toEqual([
       'https://registry.example.test/v1/feedback/upload_url',
       'https://registry.example.test/v1/feedback/upload_complete',
     ]);
+    for (const [, init] of calls) {
+      const headers = new Headers((init?.headers ?? {}) as Record<string, string>);
+      expect(headers.get('x-custom-gateway')).toBe('internal');
+    }
   });
 });

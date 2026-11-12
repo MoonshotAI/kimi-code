@@ -5,11 +5,14 @@ import {
   writeConfigFile,
   type KimiConfig,
   type OAuthRef,
+  type ProviderConfig,
+  type ProviderType,
 } from '#/config/index';
 import {
   apiKeyEnvMissingMessage,
   applyManagedKimiCodeConfig,
   applyManagedKimiCodeLogoutConfig,
+  credentialConflictMessage,
   declaredProviderCredential,
   fetchCompleteFeedbackUpload,
   fetchCreateFeedbackUploadUrl,
@@ -209,7 +212,9 @@ export class KimiAuthFacade {
     const custom = this.resolveCustomFeedbackTarget(providerName);
     if (custom?.kind === 'error') return custom;
     if (custom?.kind === 'custom') {
-      return fetchSubmitFeedback(custom.feedbackUrl, custom.apiKey, body);
+      return fetchSubmitFeedback(custom.feedbackUrl, custom.apiKey, body, {
+        headers: custom.customHeaders,
+      });
     }
     const auth = this.resolveRuntimeManagedAuth(providerName);
     return this.toolkit.submitFeedback(body, providerName, {
@@ -234,6 +239,7 @@ export class KimiAuthFacade {
       custom?.kind === 'custom'
         ? await fetchCreateFeedbackUploadUrl(custom.apiKey, body, {
             feedbackUrl: custom.feedbackUrl,
+            headers: custom.customHeaders,
           })
         : await this.toolkit.createFeedbackUploadUrl(
             body,
@@ -266,6 +272,7 @@ export class KimiAuthFacade {
     if (custom?.kind === 'custom') {
       return fetchCompleteFeedbackUpload(custom.apiKey, body, {
         feedbackUrl: custom.feedbackUrl,
+        headers: custom.customHeaders,
       });
     }
     const auth = this.resolveRuntimeManagedAuth(providerName);
@@ -348,7 +355,12 @@ export class KimiAuthFacade {
   private resolveCustomFeedbackTarget(
     providerName: string | undefined,
   ):
-    | { readonly kind: 'custom'; readonly feedbackUrl: string; readonly apiKey: string }
+    | {
+        readonly kind: 'custom';
+        readonly feedbackUrl: string;
+        readonly apiKey: string;
+        readonly customHeaders?: Readonly<Record<string, string>>;
+      }
     | { readonly kind: 'error'; readonly message: string }
     | undefined {
     if (providerName === undefined) return undefined;
@@ -358,12 +370,13 @@ export class KimiAuthFacade {
     if (provider === undefined || feedbackUrl === undefined || feedbackUrl.length === 0) {
       return undefined;
     }
+    const customHeaders = provider.customHeaders;
     const credential = declaredProviderCredential(provider, providerName);
     if (credential.kind === 'conflict') {
       return { kind: 'error', message: credential.message };
     }
     if (credential.kind === 'inline') {
-      return { kind: 'custom', feedbackUrl, apiKey: credential.apiKey };
+      return { kind: 'custom', feedbackUrl, apiKey: credential.apiKey, customHeaders };
     }
     if (credential.kind === 'env') {
       const value = process.env[credential.apiKeyEnv]?.trim();
@@ -373,8 +386,40 @@ export class KimiAuthFacade {
           message: apiKeyEnvMissingMessage(providerName, credential.apiKeyEnv),
         };
       }
-      return { kind: 'custom', feedbackUrl, apiKey: value };
+      return { kind: 'custom', feedbackUrl, apiKey: value, customHeaders };
+    }
+    const envApiKey = providerEnvApiKey(provider);
+    if (envApiKey !== undefined && provider.oauth !== undefined) {
+      return {
+        kind: 'error',
+        message: credentialConflictMessage('Provider', providerName, 'apiKey', 'oauth'),
+      };
+    }
+    if (envApiKey !== undefined) {
+      return { kind: 'custom', feedbackUrl, apiKey: envApiKey, customHeaders };
     }
     return undefined;
   }
+}
+
+const PROVIDER_ENV_API_KEY_NAMES: Readonly<Record<ProviderType, readonly string[]>> = {
+  anthropic: ['ANTHROPIC_API_KEY'],
+  openai: ['OPENAI_API_KEY'],
+  openai_responses: ['OPENAI_API_KEY'],
+  'google-genai': ['VERTEXAI_API_KEY', 'GOOGLE_API_KEY'],
+  kimi: ['KIMI_API_KEY'],
+  vertexai: [],
+};
+
+function providerEnvApiKey(provider: ProviderConfig): string | undefined {
+  const env = provider.env;
+  if (env === undefined) return undefined;
+  for (const name of PROVIDER_ENV_API_KEY_NAMES[provider.type]) {
+    const value = env[name];
+    if (value !== undefined && value.length > 0) {
+      const trimmed = value.trim();
+      return trimmed.length > 0 ? trimmed : undefined;
+    }
+  }
+  return undefined;
 }
