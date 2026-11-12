@@ -7,7 +7,11 @@ import {
   guiStorePatchResponseSchema,
   guiStoreSnapshotSchema,
 } from '../protocol/rest-guiStore';
-import { GuiStoreCorruptError, IGuiStoreService } from '../services/guiStore/guiStore';
+import {
+  GuiStoreCorruptError,
+  GuiStorePersistenceError,
+  IGuiStoreService,
+} from '../services/guiStore/guiStore';
 
 interface GuiStoreRouteHost {
   get(
@@ -62,6 +66,10 @@ export function registerGuiStoreRoutes(app: GuiStoreRouteHost, store: IGuiStoreS
           );
           return;
         }
+        if (error instanceof GuiStorePersistenceError) {
+          reply.send(errEnvelope(ErrorCode.PERSISTENCE_FAILURE, error.message, req.id));
+          return;
+        }
         throw error;
       }
     },
@@ -106,6 +114,10 @@ export function registerGuiStoreRoutes(app: GuiStoreRouteHost, store: IGuiStoreS
               quarantine_path: error.quarantinePath,
             }),
           );
+          return;
+        }
+        if (error instanceof GuiStorePersistenceError) {
+          reply.send(errEnvelope(ErrorCode.PERSISTENCE_FAILURE, error.message, req.id));
           return;
         }
         throw error;

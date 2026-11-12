@@ -8,6 +8,7 @@ import { WebSocket } from 'ws';
 
 import {
   acquireGuiStoreLockForTest,
+  GuiStorePersistenceError,
   GuiStoreService,
 } from '../src/services/guiStore/guiStoreService';
 import { type RunningServer, startServer } from '../src/start';
@@ -409,11 +410,11 @@ describe('server-v2 gui store', () => {
     }
   });
 
-  it('does not delete a contender lock when an expired lock holder releases late', async () => {
+  it('fences stale lock holders before commit and preserves contender writes', async () => {
     const lockHome = await mkdtemp(join(tmpdir(), 'kimi-gui-lock-owner-'));
     try {
       const lockDir = join(lockHome, '.gui.json.lock');
-      const releaseFirst = await acquireGuiStoreLockForTest(lockDir, {
+      const firstLock = await acquireGuiStoreLockForTest(lockDir, {
         lockStaleMs: 1_000,
         lockHeartbeatMs: 60_000,
         lockTimeoutMs: 2_000,
@@ -421,20 +422,118 @@ describe('server-v2 gui store', () => {
       const expired = new Date(Date.now() - 60_000);
       await utimes(lockDir, expired, expired);
 
-      const releaseSecond = await acquireGuiStoreLockForTest(lockDir, {
+      const secondLock = await acquireGuiStoreLockForTest(lockDir, {
         lockStaleMs: 1_000,
         lockHeartbeatMs: 60_000,
         lockTimeoutMs: 2_000,
       });
       try {
-        await releaseFirst();
+        await expect(firstLock.assertOwned()).rejects.toBeInstanceOf(GuiStorePersistenceError);
+        await firstLock.release();
         expect((await stat(lockDir)).isDirectory()).toBe(true);
       } finally {
-        await releaseSecond();
+        await secondLock.release();
       }
       await expect(stat(lockDir)).rejects.toMatchObject({ code: 'ENOENT' });
+
+      const contender = new GuiStoreService(lockHome, undefined, {
+        lockStaleMs: 1_000,
+        lockHeartbeatMs: 60_000,
+        lockTimeoutMs: 2_000,
+      });
+      const stalledWriter = new GuiStoreService(lockHome, undefined, {
+        lockStaleMs: 1_000,
+        lockHeartbeatMs: 60_000,
+        lockTimeoutMs: 2_000,
+        beforeCommitHook: async () => {
+          const old = new Date(Date.now() - 60_000);
+          await utimes(lockDir, old, old);
+          await contender.patch([{ key: 'contender-key', value: 'contender-wins' }]);
+        },
+      });
+      try {
+        await expect(
+          stalledWriter.patch([{ key: 'stalled-key', value: 'stale-write' }]),
+        ).rejects.toBeInstanceOf(GuiStorePersistenceError);
+        const snap = await contender.getSnapshot();
+        expect(snap.entries['contender-key']?.value).toBe('contender-wins');
+        expect(snap.entries['stalled-key']).toBeUndefined();
+      } finally {
+        await stalledWriter.close();
+        await contender.close();
+      }
     } finally {
       await rm(lockHome, { recursive: true, force: true });
+    }
+  });
+
+  it('migrates legacy gui.toml on first access, restarts watcher on error, and maps storage failures to 50003', async () => {
+    const legacyHome = await mkdtemp(join(tmpdir(), 'kimi-gui-legacy-toml-'));
+    let legacyServer: RunningServer | undefined;
+    try {
+      await writeFile(
+        join(legacyHome, 'gui.toml'),
+        '"kimi-web.pinned-sessions" = "[\\"s-toml-1\\"]"\n"kimi-web.workspace-sort" = "recent"\n',
+        'utf-8',
+      );
+      legacyServer = await startServer({
+        hostIdentity: TEST_HOST_IDENTITY,
+        host: '127.0.0.1',
+        port: 0,
+        homeDir: legacyHome,
+        logLevel: 'silent',
+      });
+      const api = appOf(legacyServer);
+      const snap = envelopeOf<SnapshotData>((await getStore(api)).json());
+      expect(snap.code).toBe(0);
+      expect(snap.data?.revision).toBe(1);
+      expect(snap.data?.entries['kimi-web.pinned-sessions']).toEqual({
+        value: '["s-toml-1"]',
+        revision: 1,
+      });
+      expect(snap.data?.entries['kimi-web.workspace-sort']).toEqual({
+        value: 'recent',
+        revision: 1,
+      });
+
+      const storeSvc = new GuiStoreService(legacyHome);
+      const events: SnapshotData[] = [];
+      const sub = storeSvc.onDidChange((ev) => {
+        events.push({ revision: ev.revision, entries: {} });
+      });
+      try {
+        await viWaitFor(() => {
+          const internalWatcher = (storeSvc as unknown as { watcher?: { emit(ev: string, err: Error): void } }).watcher;
+          expect(internalWatcher).toBeDefined();
+        });
+        const firstWatcher = (storeSvc as unknown as { watcher: { emit(ev: string, err: Error): void } }).watcher;
+        firstWatcher.emit('error', new Error('synthetic watcher error'));
+        await new Promise((resolve) => {
+          setTimeout(resolve, 600);
+        });
+        const peer = new GuiStoreService(legacyHome);
+        try {
+          await peer.patch([{ key: 'kimi-web.after-restart', value: 'ok' }]);
+        } finally {
+          await peer.close();
+        }
+        await viWaitFor(() => {
+          expect(events.length).toBeGreaterThanOrEqual(1);
+        });
+      } finally {
+        sub.dispose();
+        await storeSvc.close();
+      }
+
+      await mkdir(join(legacyHome, 'gui.json.dir-collision'));
+      await rm(join(legacyHome, 'gui.json'), { force: true });
+      await mkdir(join(legacyHome, 'gui.json'));
+      const ioFailRead = envelopeOf<SnapshotData>((await getStore(api)).json());
+      expect(ioFailRead.code).toBe(50003);
+      await rm(join(legacyHome, 'gui.json'), { recursive: true, force: true });
+    } finally {
+      await legacyServer?.close();
+      await rm(legacyHome, { recursive: true, force: true });
     }
   });
 

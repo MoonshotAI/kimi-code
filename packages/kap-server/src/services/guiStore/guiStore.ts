@@ -43,4 +43,4 @@ export interface IGuiStoreService {
 
 export const IGuiStoreService = createDecorator<IGuiStoreService>('guiStoreService');
 
-export { GuiStoreCorruptError } from './guiStoreService';
+export { GuiStoreCorruptError, GuiStorePersistenceError } from './guiStoreService';

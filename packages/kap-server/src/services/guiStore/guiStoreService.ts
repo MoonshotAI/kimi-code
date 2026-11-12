@@ -15,6 +15,7 @@ import {
 import { dirname, join } from 'node:path';
 
 import type { IDisposable } from '@moonshot-ai/agent-core-v2';
+import { parse as parseToml } from 'smol-toml';
 
 import type {
   GuiStoreChangeEvent,
@@ -26,11 +27,18 @@ import type {
   IGuiStoreService,
 } from './guiStore';
 
-export class GuiStoreCorruptError extends Error {
+export class GuiStorePersistenceError extends Error {
+  constructor(message: string, cause?: unknown) {
+    super(message, cause === undefined ? undefined : { cause });
+    this.name = 'GuiStorePersistenceError';
+  }
+}
+
+export class GuiStoreCorruptError extends GuiStorePersistenceError {
   readonly quarantinePath: string;
 
   constructor(message: string, quarantinePath: string, cause?: unknown) {
-    super(message, cause === undefined ? undefined : { cause });
+    super(message, cause);
     this.name = 'GuiStoreCorruptError';
     this.quarantinePath = quarantinePath;
   }
@@ -43,6 +51,7 @@ export interface GuiStoreLogger {
 const noopLogger: GuiStoreLogger = { warn: () => {} };
 
 const STORE_FILENAME = 'gui.json';
+const LEGACY_TOML_FILENAME = 'gui.toml';
 const LOCK_DIRNAME = '.gui.json.lock';
 const CORRUPT_PREFIX = `${STORE_FILENAME}.corrupt-`;
 const SCHEMA_VERSION = 1;
@@ -50,12 +59,19 @@ const LOCK_STALE_MS = 15_000;
 const LOCK_HEARTBEAT_MS = 2_500;
 const LOCK_TIMEOUT_MS = 15_000;
 const WATCH_DEBOUNCE_MS = 80;
+const WATCH_RESTART_MS = 500;
 const WIN32_RENAME_RETRIES = 40;
 
 export interface GuiStoreOptions {
   readonly lockStaleMs?: number;
   readonly lockHeartbeatMs?: number;
   readonly lockTimeoutMs?: number;
+  readonly beforeCommitHook?: () => Promise<void>;
+}
+
+export interface AcquiredGuiStoreLock {
+  assertOwned(): Promise<void>;
+  release(): Promise<void>;
 }
 
 interface InternalState {
@@ -95,6 +111,11 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+function toPersistenceError(error: unknown, message: string): GuiStorePersistenceError {
+  if (error instanceof GuiStorePersistenceError) return error;
+  return new GuiStorePersistenceError(message, error);
 }
 
 function syncFd(fd: number): Promise<void> {
@@ -146,13 +167,17 @@ async function renameWithRetry(src: string, dst: string): Promise<void> {
   }
 }
 
-async function writeAtomicDurable(filePath: string, content: string): Promise<void> {
+async function writeAtomicDurable(
+  filePath: string,
+  content: string,
+  beforeRenameFence?: () => Promise<void>,
+): Promise<void> {
   const dir = dirname(filePath);
-  await mkdir(dir, { recursive: true, mode: 0o700 });
   const suffix = `${process.pid}.${randomBytes(6).toString('hex')}`;
   const tmpPath = `${filePath}.tmp.${suffix}`;
   let renamed = false;
   try {
+    await mkdir(dir, { recursive: true, mode: 0o700 });
     const fh = await open(tmpPath, 'w', 0o600);
     try {
       await fh.writeFile(content, 'utf-8');
@@ -160,9 +185,14 @@ async function writeAtomicDurable(filePath: string, content: string): Promise<vo
     } finally {
       await fh.close();
     }
+    if (beforeRenameFence !== undefined) {
+      await beforeRenameFence();
+    }
     await renameWithRetry(tmpPath, filePath);
     renamed = true;
     await syncDirSafe(dir);
+  } catch (error) {
+    throw toPersistenceError(error, `Failed to persist GUI store at ${filePath}`);
   } finally {
     if (!renamed) {
       await unlink(tmpPath).catch(() => undefined);
@@ -172,9 +202,13 @@ async function writeAtomicDurable(filePath: string, content: string): Promise<vo
 
 async function acquireDirLock(
   lockDir: string,
-  opts: Required<GuiStoreOptions>,
-): Promise<() => Promise<void>> {
-  await mkdir(dirname(lockDir), { recursive: true, mode: 0o700 });
+  opts: { lockStaleMs: number; lockHeartbeatMs: number; lockTimeoutMs: number },
+): Promise<AcquiredGuiStoreLock> {
+  try {
+    await mkdir(dirname(lockDir), { recursive: true, mode: 0o700 });
+  } catch (error) {
+    throw toPersistenceError(error, `Failed to prepare GUI store directory for ${lockDir}`);
+  }
   const deadline = Date.now() + opts.lockTimeoutMs;
   for (;;) {
     try {
@@ -197,19 +231,33 @@ async function acquireDirLock(
           .catch(() => undefined);
       }, opts.lockHeartbeatMs);
       heartbeat.unref?.();
-      return async () => {
-        clearInterval(heartbeat);
-        const stillOwned = await unlink(ownerPath).then(
-          () => true,
-          () => false,
-        );
-        if (stillOwned) {
-          await rmdir(lockDir).catch(() => undefined);
-        }
+      return {
+        assertOwned: async () => {
+          try {
+            await stat(ownerPath);
+          } catch (error) {
+            throw new GuiStorePersistenceError(
+              `Lost GUI store lock ownership before commit: ${lockDir}`,
+              error,
+            );
+          }
+        },
+        release: async () => {
+          clearInterval(heartbeat);
+          const stillOwned = await unlink(ownerPath).then(
+            () => true,
+            () => false,
+          );
+          if (stillOwned) {
+            await rmdir(lockDir).catch(() => undefined);
+          }
+        },
       };
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
-      if (code !== 'EEXIST') throw error;
+      if (code !== 'EEXIST') {
+        throw toPersistenceError(error, `Failed to acquire GUI store lock: ${lockDir}`);
+      }
       try {
         const st = await stat(lockDir);
         if (Date.now() - st.mtimeMs > opts.lockStaleMs) {
@@ -227,7 +275,7 @@ async function acquireDirLock(
         if ((statError as NodeJS.ErrnoException).code === 'ENOENT') continue;
       }
       if (Date.now() >= deadline) {
-        throw new Error(`Timed out acquiring GUI store lock: ${lockDir}`, { cause: error });
+        throw new GuiStorePersistenceError(`Timed out acquiring GUI store lock: ${lockDir}`, error);
       }
       await sleep(8 + Math.floor(Math.random() * 28));
     }
@@ -236,8 +284,8 @@ async function acquireDirLock(
 
 export function acquireGuiStoreLockForTest(
   lockDir: string,
-  opts: Required<GuiStoreOptions>,
-): Promise<() => Promise<void>> {
+  opts: { lockStaleMs: number; lockHeartbeatMs: number; lockTimeoutMs: number },
+): Promise<AcquiredGuiStoreLock> {
   return acquireDirLock(lockDir, opts);
 }
 
@@ -363,21 +411,25 @@ export class GuiStoreService implements IGuiStoreService {
 
   private readonly homeDir: string;
   private readonly filePath: string;
+  private readonly legacyTomlPath: string;
   private readonly lockDir: string;
   private readonly logger: GuiStoreLogger;
-  private readonly lockOpts: Required<GuiStoreOptions>;
+  private readonly lockOpts: { lockStaleMs: number; lockHeartbeatMs: number; lockTimeoutMs: number };
+  private readonly beforeCommitHook: (() => Promise<void>) | undefined;
   private readonly listeners = new Set<(event: GuiStoreChangeEvent) => void>();
   private queue: Promise<void> = Promise.resolve();
   private watchedState: InternalState | undefined;
   private minRevisionFloor = 0;
   private watcher: nodeFs.FSWatcher | undefined;
   private watchTimer: ReturnType<typeof setTimeout> | undefined;
+  private watchRestartTimer: ReturnType<typeof setTimeout> | undefined;
   private selfWriting = 0;
   private closed = false;
 
   constructor(homeDir: string, logger?: GuiStoreLogger, options?: GuiStoreOptions) {
     this.homeDir = homeDir;
     this.filePath = join(homeDir, STORE_FILENAME);
+    this.legacyTomlPath = join(homeDir, LEGACY_TOML_FILENAME);
     this.lockDir = join(homeDir, LOCK_DIRNAME);
     this.logger = logger ?? noopLogger;
     this.lockOpts = {
@@ -385,6 +437,7 @@ export class GuiStoreService implements IGuiStoreService {
       lockHeartbeatMs: options?.lockHeartbeatMs ?? LOCK_HEARTBEAT_MS,
       lockTimeoutMs: options?.lockTimeoutMs ?? LOCK_TIMEOUT_MS,
     };
+    this.beforeCommitHook = options?.beforeCommitHook;
   }
 
   async getSnapshot(query?: GuiStoreQuery): Promise<GuiStoreSnapshot> {
@@ -408,8 +461,8 @@ export class GuiStoreService implements IGuiStoreService {
       };
     }
 
-    const outcome = await this.withCrossProcessLock(async () => {
-      const state = await this.readUnlocked();
+    const outcome = await this.withCrossProcessLock(async (lock) => {
+      const state = await this.readUnlocked(lock);
       const conflicts = emptyRecord<GuiStoreEntry | null>();
       let hasConflict = false;
 
@@ -491,7 +544,17 @@ export class GuiStoreService implements IGuiStoreService {
       };
       this.selfWriting += 1;
       try {
-        await writeAtomicDurable(this.filePath, serializePersistedState(nextState));
+        await writeAtomicDurable(
+          this.filePath,
+          serializePersistedState(nextState),
+          async () => {
+            if (this.beforeCommitHook !== undefined) {
+              await this.beforeCommitHook();
+            }
+            await lock.assertOwned();
+            await this.verifyDiskRevisionBeforeCommit(state.revision);
+          },
+        );
       } finally {
         this.selfWriting -= 1;
       }
@@ -522,7 +585,7 @@ export class GuiStoreService implements IGuiStoreService {
       dispose: () => {
         this.listeners.delete(listener);
         if (this.listeners.size === 0) {
-          this.stopWatcher();
+          this.stopWatcher(true);
           this.watchedState = undefined;
         }
       },
@@ -531,7 +594,7 @@ export class GuiStoreService implements IGuiStoreService {
 
   async close(): Promise<void> {
     this.closed = true;
-    this.stopWatcher();
+    this.stopWatcher(true);
     this.listeners.clear();
     this.watchedState = undefined;
     await this.queue;
@@ -546,15 +609,35 @@ export class GuiStoreService implements IGuiStoreService {
     return run;
   }
 
-  private withCrossProcessLock<T>(fn: () => Promise<T>): Promise<T> {
+  private withCrossProcessLock<T>(fn: (lock: AcquiredGuiStoreLock) => Promise<T>): Promise<T> {
     return this.withQueue(async () => {
-      const release = await acquireDirLock(this.lockDir, this.lockOpts);
+      const lock = await acquireDirLock(this.lockDir, this.lockOpts);
       try {
-        return await fn();
+        return await fn(lock);
       } finally {
-        await release();
+        await lock.release();
       }
     });
+  }
+
+  private async verifyDiskRevisionBeforeCommit(expectedRevision: number): Promise<void> {
+    try {
+      const text = await readFile(this.filePath, 'utf-8');
+      const onDisk = parsePersistedState(text);
+      if (onDisk.revision !== expectedRevision) {
+        throw new GuiStorePersistenceError(
+          `Concurrent GUI store revision drift before commit: expected ${expectedRevision}, got ${onDisk.revision}`,
+        );
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        if (expectedRevision > this.minRevisionFloor) {
+          throw new GuiStorePersistenceError('GUI store disappeared unexpectedly before commit');
+        }
+        return;
+      }
+      if (error instanceof GuiStorePersistenceError) throw error;
+    }
   }
 
   private async emptyStateWithFloor(): Promise<InternalState> {
@@ -569,15 +652,101 @@ export class GuiStoreService implements IGuiStoreService {
     return { revision: this.minRevisionFloor, entries: emptyRecord() };
   }
 
+  private async hasLegacyToml(): Promise<boolean> {
+    try {
+      const st = await stat(this.legacyTomlPath);
+      return st.isFile();
+    } catch {
+      return false;
+    }
+  }
+
+  private async migrateLegacyTomlUnlocked(lock: AcquiredGuiStoreLock): Promise<InternalState | undefined> {
+    let tomlText: string;
+    try {
+      tomlText = await readFile(this.legacyTomlPath, 'utf-8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+      throw toPersistenceError(error, `Failed to read legacy ${this.legacyTomlPath}`);
+    }
+
+    const floorState = await this.emptyStateWithFloor();
+    const migratedEntries = emptyRecord<GuiStoreEntry>();
+    let migratedRevision = floorState.revision;
+
+    if (tomlText.trim().length > 0) {
+      let parsedToml: Record<string, unknown>;
+      try {
+        parsedToml = parseToml(tomlText) as Record<string, unknown>;
+      } catch (parseError) {
+        const suffix = `${Date.now()}-${process.pid}-${randomBytes(3).toString('hex')}`;
+        const quarantinePath = `${this.legacyTomlPath}.corrupt-${suffix}`;
+        await renameWithRetry(this.legacyTomlPath, quarantinePath).catch((error: unknown) => {
+          throw toPersistenceError(error, `Failed to quarantine ${this.legacyTomlPath}`);
+        });
+        await syncDirSafe(this.homeDir);
+        this.logger.warn(
+          { filePath: this.legacyTomlPath, quarantinePath, err: parseError },
+          'gui.toml parse failed during migration; quarantined corrupt file',
+        );
+        throw new GuiStoreCorruptError(
+          `Corrupt gui.toml quarantined to ${quarantinePath}`,
+          quarantinePath,
+          parseError,
+        );
+      }
+
+      const nextRev = floorState.revision + 1;
+      let count = 0;
+      for (const [key, val] of Object.entries(parsedToml)) {
+        if (typeof val === 'string' && key.length > 0) {
+          const sanitized = Buffer.from(val, 'utf-8').toString('utf-8');
+          setOwn(migratedEntries, key, { value: sanitized, revision: nextRev });
+          count += 1;
+        }
+      }
+      if (count > 0) {
+        migratedRevision = nextRev;
+      }
+    }
+
+    const migratedState: InternalState = {
+      revision: migratedRevision,
+      entries: migratedEntries,
+    };
+
+    this.selfWriting += 1;
+    try {
+      await writeAtomicDurable(
+        this.filePath,
+        serializePersistedState(migratedState),
+        () => lock.assertOwned(),
+      );
+      const backupPath = `${this.legacyTomlPath}.migrated-${Date.now()}-${process.pid}`;
+      await renameWithRetry(this.legacyTomlPath, backupPath).catch(() => undefined);
+      await syncDirSafe(this.homeDir);
+    } finally {
+      this.selfWriting -= 1;
+    }
+
+    if (migratedState.revision > this.minRevisionFloor) {
+      this.minRevisionFloor = migratedState.revision;
+    }
+    return migratedState;
+  }
+
   private async readOrQuarantine(): Promise<InternalState> {
     let text: string;
     try {
       text = await readFile(this.filePath, 'utf-8');
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        if (await this.hasLegacyToml()) {
+          return this.withCrossProcessLock((lock) => this.readUnlocked(lock));
+        }
         return this.emptyStateWithFloor();
       }
-      throw error;
+      throw toPersistenceError(error, `Failed to read GUI store at ${this.filePath}`);
     }
     try {
       const parsed = parsePersistedState(text);
@@ -586,19 +755,21 @@ export class GuiStoreService implements IGuiStoreService {
       }
       return parsed;
     } catch {
-      return this.withCrossProcessLock(() => this.readUnlocked());
+      return this.withCrossProcessLock((lock) => this.readUnlocked(lock));
     }
   }
 
-  private async readUnlocked(): Promise<InternalState> {
+  private async readUnlocked(lock: AcquiredGuiStoreLock): Promise<InternalState> {
     let text: string;
     try {
       text = await readFile(this.filePath, 'utf-8');
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        const migrated = await this.migrateLegacyTomlUnlocked(lock);
+        if (migrated !== undefined) return migrated;
         return this.emptyStateWithFloor();
       }
-      throw error;
+      throw toPersistenceError(error, `Failed to read GUI store at ${this.filePath}`);
     }
     try {
       const parsed = parsePersistedState(text);
@@ -606,7 +777,7 @@ export class GuiStoreService implements IGuiStoreService {
         this.minRevisionFloor = parsed.revision;
       }
       return parsed;
-    } catch (error) {
+    } catch (parseError) {
       const names = await readdir(this.homeDir).catch(() => [] as string[]);
       const existingFloor = extractCorruptFloor(names);
       let rawRev = 0;
@@ -621,16 +792,19 @@ export class GuiStoreService implements IGuiStoreService {
       this.minRevisionFloor = nextFloor;
       const suffix = `${nextFloor}-${process.pid}-${randomBytes(3).toString('hex')}`;
       const quarantinePath = `${this.filePath}.corrupt-${suffix}`;
-      await renameWithRetry(this.filePath, quarantinePath);
+      await lock.assertOwned();
+      await renameWithRetry(this.filePath, quarantinePath).catch((error: unknown) => {
+        throw toPersistenceError(error, `Failed to quarantine ${this.filePath}`);
+      });
       await syncDirSafe(this.homeDir);
       this.logger.warn(
-        { filePath: this.filePath, quarantinePath, err: error },
+        { filePath: this.filePath, quarantinePath, err: parseError },
         'gui.json parse failed; quarantined corrupt file',
       );
       throw new GuiStoreCorruptError(
         `Corrupt gui.json quarantined to ${quarantinePath}`,
         quarantinePath,
-        error,
+        parseError,
       );
     }
   }
@@ -671,6 +845,7 @@ export class GuiStoreService implements IGuiStoreService {
       text = await readFile(this.filePath, 'utf-8');
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        if (await this.hasLegacyToml()) return undefined;
         return this.emptyStateWithFloor();
       }
       return undefined;
@@ -686,6 +861,17 @@ export class GuiStoreService implements IGuiStoreService {
     }
   }
 
+  private scheduleWatcherRestart(): void {
+    if (this.closed || this.listeners.size === 0 || this.watchRestartTimer !== undefined) return;
+    this.watchRestartTimer = setTimeout(() => {
+      this.watchRestartTimer = undefined;
+      if (this.closed || this.listeners.size === 0) return;
+      void this.reconcileExternalChange();
+      void this.ensureWatcher();
+    }, WATCH_RESTART_MS);
+    this.watchRestartTimer.unref?.();
+  }
+
   private async ensureWatcher(): Promise<void> {
     if (this.closed || this.watcher !== undefined || this.listeners.size === 0) return;
     try {
@@ -697,6 +883,7 @@ export class GuiStoreService implements IGuiStoreService {
         }
       }
     } catch {
+      this.scheduleWatcherRestart();
       return;
     }
     if (this.closed || this.watcher !== undefined || this.listeners.size === 0) return;
@@ -713,17 +900,24 @@ export class GuiStoreService implements IGuiStoreService {
         }, WATCH_DEBOUNCE_MS);
         this.watchTimer.unref?.();
       });
-      watcher.on('error', () => {
-        this.stopWatcher();
+      watcher.on('error', (error) => {
+        this.logger.warn({ homeDir: this.homeDir, err: error }, 'gui store watcher error; restarting');
+        this.stopWatcher(false);
+        this.scheduleWatcherRestart();
       });
       watcher.unref?.();
       this.watcher = watcher;
     } catch {
       this.watcher = undefined;
+      this.scheduleWatcherRestart();
     }
   }
 
-  private stopWatcher(): void {
+  private stopWatcher(cancelRestart: boolean): void {
+    if (cancelRestart && this.watchRestartTimer !== undefined) {
+      clearTimeout(this.watchRestartTimer);
+      this.watchRestartTimer = undefined;
+    }
     if (this.watchTimer !== undefined) {
       clearTimeout(this.watchTimer);
       this.watchTimer = undefined;
