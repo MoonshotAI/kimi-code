@@ -21,6 +21,7 @@ import {
   createWorkspaceRequestSchema,
   createWorkspaceResponseSchema,
   deleteWorkspaceResponseSchema,
+  listWorkspacesQuerySchema,
   listWorkspacesResponseSchema,
   projectConfigDirsQuerySchema,
   projectConfigDirsResponseSchema,
@@ -32,13 +33,14 @@ import {
   workspaceTrustResponseSchema,
 } from '../protocol/rest-workspace';
 import type { Workspace as WorkspaceWire } from '../protocol/workspace';
+import { collectFromHosts, hostProjects, type HostSources } from '../services/hosts/hostFanout';
 
 interface WorkspaceRouteHost {
   get(
     path: string,
     options: { preHandler: unknown[]; schema?: Record<string, unknown> } | undefined,
     handler: (
-      req: { id: string },
+      req: { id: string; query: unknown },
       reply: { send(payload: unknown): unknown },
     ) => Promise<void> | void,
   ): unknown;
@@ -71,19 +73,28 @@ interface WorkspaceRouteHost {
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 const duplicateDirDetailsSchema = z.array(z.object({ path: z.string(), directory: z.string() }));
 
-export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): void {
+export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope, hosts?: HostSources): void {
   const listRoute = defineRoute(
     {
       method: 'GET',
       path: '/workspaces',
+      querystring: listWorkspacesQuerySchema,
       success: { data: listWorkspacesResponseSchema },
-      description: 'List registered workspaces',
+      description:
+        'List registered workspaces. hosts=include adds the projects created on each SSH host, tagged with host_id; hosts that cannot answer are listed in unavailable_hosts',
       tags: ['workspaces'],
     },
     async (req, reply) => {
       const items = await core.accessor.get(IWorkspaceService).list();
       const projected = await Promise.all(items.map((ws) => toWireWorkspace(core, ws)));
-      reply.send(okEnvelope({ items: projected }, req.id));
+      if (req.query.hosts !== 'include' || hosts === undefined) {
+        reply.send(okEnvelope({ items: projected }, req.id));
+        return;
+      }
+      const remote = await collectFromHosts(hosts, (session) => hostProjects<WorkspaceWire>(session));
+      reply.send(
+        okEnvelope({ items: [...projected, ...remote.items], unavailable_hosts: remote.unavailable }, req.id),
+      );
     },
   );
   app.get(listRoute.path, listRoute.options, listRoute.handler as Parameters<WorkspaceRouteHost['get']>[2]);

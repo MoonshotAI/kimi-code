@@ -45,6 +45,7 @@ import { registerToolsRoutes } from './tools';
 import { registerConversationRoutes } from './conversation';
 import { registerWorkspaceFsRoutes } from './workspaceFs';
 import { registerWorkspacesRoutes } from './workspaces';
+import { hostSources } from '../services/hosts/hostFanout';
 
 interface ApiV1AppHost {
   register(
@@ -134,6 +135,7 @@ export async function registerApiV1Routes(
         apiV1 as unknown as Parameters<typeof registerSessionsRoutes>[0],
         core,
         opts.conversations,
+        hostSources(opts.hostBridges),
       );
       registerEnvironmentRoutes(apiV1 as unknown as Parameters<typeof registerEnvironmentRoutes>[0], core);
       registerHostsRoutes(apiV1 as unknown as Parameters<typeof registerHostsRoutes>[0], core, opts.hostBridges);
@@ -177,6 +179,7 @@ export async function registerApiV1Routes(
       registerWorkspacesRoutes(
         apiV1 as unknown as Parameters<typeof registerWorkspacesRoutes>[0],
         core,
+        hostSources(opts.hostBridges),
       );
       registerWorkspaceFsRoutes(
         apiV1 as unknown as Parameters<typeof registerWorkspaceFsRoutes>[0],

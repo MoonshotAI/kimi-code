@@ -92,6 +92,7 @@ import { ConversationService } from './services/conversation/conversationService
 import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
 import { HostBridgeManager, hostSnapshots } from './services/hosts/hostBridgeManager';
 import { HostCredentialStore, HostCredentialToolkit } from './services/hosts/hostAuth';
+import { hostSources } from './services/hosts/hostFanout';
 import { matchHostProxyPath, proxyHostWebSocket, registerHostProxyRoutes } from './services/hosts/hostProxy';
 import { DEFAULT_MANAGED_IDLE_EXIT_MS, ManagedIdleExit } from './services/managedIdleExit';
 import { SessionIdleReaper, closeIdleSessions, resolveSessionIdleReclaimMs } from './services/sessionIdleReaper';
@@ -574,7 +575,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     webTitle: opts.webTitle,
   });
 
-  await registerApiV2Routes(app, core);
+  await registerApiV2Routes(app, core, hostSources(hostBridges));
 
   const wssV1 = registerWsV1(core, {
     registry: connectionRegistry,

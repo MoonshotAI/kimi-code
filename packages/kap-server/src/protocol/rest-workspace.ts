@@ -7,8 +7,13 @@ import {
   workspaceUpdateSchema,
 } from './workspace';
 
+export const listWorkspacesQuerySchema = z.object({
+  hosts: z.literal('include').optional(),
+});
+
 export const listWorkspacesResponseSchema = z.object({
-  items: z.array(workspaceSchema),
+  items: z.array(workspaceSchema.extend({ host_id: z.string().optional() })),
+  unavailable_hosts: z.array(z.string()).optional(),
 });
 export type ListWorkspacesResponse = z.infer<typeof listWorkspacesResponseSchema>;
 
