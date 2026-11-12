@@ -174,8 +174,13 @@ export function stubSessionRunGate(
   locks: ISessionLockService,
   sessionId = 'test-session',
 ): ISessionRunGate {
+  const begin = () => locks.hold(sessionId);
   return {
     _serviceBrand: undefined,
-    begin: () => locks.hold(sessionId),
+    begin,
+    acquire: () => {
+      begin();
+      return locks.lease(sessionId);
+    },
   };
 }

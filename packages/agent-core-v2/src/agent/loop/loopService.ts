@@ -380,21 +380,26 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     initialTools?: readonly Tool[],
   ): Promise<void> {
     if (this.initialized) return;
-    await this.wire.drainPersisted().catch(() => undefined);
-    const snapshot = this.journal.snapshot();
-    this.profileAdapter.restore(snapshot);
-    const tools = initialTools === undefined ? this.requestFactory.baselineTools() : [...initialTools];
-    const taskHistory = this.instantiation.invokeFunction((accessor) => accessor.get(IAgentTaskHistoryService));
-    await taskHistory.reconcile();
-    const completions = await restoreTaskCompletions({
-      wire: this.wire,
-      agentId: this.scopeContext.agentId,
-      taskOutputs: this.taskOutputs,
-      messages: seededMessages ?? snapshot.input.messages ?? [],
-      pending: snapshot.input.inbox?.notify ?? [],
-      isLive: (taskId) => this.toolExecutor.handler(taskId)?.snapshot().status === 'running',
-    });
-    this.createLoopFromSnapshot(snapshot, tools, completions, seededMessages);
+    const lease = this.runGate.acquire();
+    try {
+      await this.wire.drainPersisted().catch(() => undefined);
+      const snapshot = this.journal.snapshot();
+      this.profileAdapter.restore(snapshot);
+      const tools = initialTools === undefined ? this.requestFactory.baselineTools() : [...initialTools];
+      const taskHistory = this.instantiation.invokeFunction((accessor) => accessor.get(IAgentTaskHistoryService));
+      await taskHistory.reconcile();
+      const completions = await restoreTaskCompletions({
+        wire: this.wire,
+        agentId: this.scopeContext.agentId,
+        taskOutputs: this.taskOutputs,
+        messages: seededMessages ?? snapshot.input.messages ?? [],
+        pending: snapshot.input.inbox?.notify ?? [],
+        isLive: (taskId) => this.toolExecutor.handler(taskId)?.snapshot().status === 'running',
+      });
+      this.createLoopFromSnapshot(snapshot, tools, completions, seededMessages);
+    } finally {
+      lease.release();
+    }
   }
 
   private createLoopFromSnapshot(
@@ -523,40 +528,45 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const minimumNextTurnId = loop.state.nextTurnId;
     const historyRevision = loop.historyRevision + 1;
     const baselineTools = loop.state.profile.tools ?? [];
-    await loop.reset(async () => {
-      this.drainPendingToLoop();
-      await this.wire.drainPersisted().catch(() => undefined);
-      const snapshot = this.journal.snapshot();
-      this.profileAdapter.restore(snapshot);
-      const taskHistory = this.instantiation.invokeFunction((accessor) => accessor.get(IAgentTaskHistoryService));
-      await taskHistory.reconcile();
-      const completions = await restoreTaskCompletions({
-        wire: this.wire,
-        agentId: this.scopeContext.agentId,
-        taskOutputs: this.taskOutputs,
-        messages: seededMessages ?? snapshot.input.messages ?? [],
-        pending: snapshot.input.inbox?.notify ?? [],
-        isLive: (taskId) => this.toolExecutor.handler(taskId)?.snapshot().status === 'running',
-      });
-      const input = {
-        ...snapshot,
-        input: {
-          ...snapshot.input,
-          profile: { systemPrompt: this.getSystemPrompt(), tools: baselineTools },
-          messages: seededMessages === undefined ? snapshot.input.messages : [...seededMessages],
-          inbox: {
-            ...snapshot.input.inbox,
-            notify: [...(snapshot.input.inbox?.notify ?? []), ...completions],
+    const lease = this.runGate.acquire();
+    try {
+      await loop.reset(async () => {
+        this.drainPendingToLoop();
+        await this.wire.drainPersisted().catch(() => undefined);
+        const snapshot = this.journal.snapshot();
+        this.profileAdapter.restore(snapshot);
+        const taskHistory = this.instantiation.invokeFunction((accessor) => accessor.get(IAgentTaskHistoryService));
+        await taskHistory.reconcile();
+        const completions = await restoreTaskCompletions({
+          wire: this.wire,
+          agentId: this.scopeContext.agentId,
+          taskOutputs: this.taskOutputs,
+          messages: seededMessages ?? snapshot.input.messages ?? [],
+          pending: snapshot.input.inbox?.notify ?? [],
+          isLive: (taskId) => this.toolExecutor.handler(taskId)?.snapshot().status === 'running',
+        });
+        const input = {
+          ...snapshot,
+          input: {
+            ...snapshot.input,
+            profile: { systemPrompt: this.getSystemPrompt(), tools: baselineTools },
+            messages: seededMessages === undefined ? snapshot.input.messages : [...seededMessages],
+            inbox: {
+              ...snapshot.input.inbox,
+              notify: [...(snapshot.input.inbox?.notify ?? []), ...completions],
+            },
+            nextTurnId: Math.max(snapshot.input.nextTurnId ?? 0, minimumNextTurnId),
+            historyRevision,
           },
-          nextTurnId: Math.max(snapshot.input.nextTurnId ?? 0, minimumNextTurnId),
-          historyRevision,
-        },
-      };
-      return input.input;
-    });
-    this.turns.invalidateHistory();
-    this.drainPendingToLoop();
-    this.maybeSettle();
+        };
+        return input.input;
+      });
+      this.turns.invalidateHistory();
+      this.drainPendingToLoop();
+      this.maybeSettle();
+    } finally {
+      lease.release();
+    }
   }
 
   close(): Promise<void> {
