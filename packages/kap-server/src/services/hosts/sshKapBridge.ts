@@ -304,16 +304,11 @@ export class SshKapBridge {
   connect(): Promise<HostSession> {
     if (this.disposed) return Promise.reject(new HostConnectError('unknown', 'host bridge disposed'));
     if (this.sessionValue !== undefined) return Promise.resolve(this.sessionValue.session);
-    this.reconnectGeneration += 1;
-    this.reconnecting = false;
     return this.establishOnce();
   }
 
   start(): void {
-    void this.connect().catch((error: unknown) => {
-      if (error instanceof HostConnectError && !RETRYABLE.has(error.failure)) return;
-      void this.reconnect();
-    });
+    void this.connect().catch(() => {});
   }
 
   private establishOnce(): Promise<HostSession> {
@@ -367,6 +362,8 @@ export class SshKapBridge {
       }
       this.remoteVersionValue = active.session.version;
       this.sessionValue = active;
+      this.reconnectGeneration += 1;
+      this.reconnecting = false;
       this.update('ready');
       return active.session;
     } catch (error) {
@@ -378,6 +375,7 @@ export class SshKapBridge {
         this.remoteVersionValue = error.remoteVersion;
       }
       this.update('disconnected', failure, message);
+      if (RETRYABLE.has(failure)) void this.reconnect();
       throw error instanceof HostConnectError ? error : new HostConnectError(failure, message);
     }
   }

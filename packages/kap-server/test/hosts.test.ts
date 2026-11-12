@@ -424,6 +424,47 @@ while IFS= read -r line; do :; done
     }
   }, 10_000);
 
+  it.skipIf(process.platform === 'win32')('keeps retrying in the background after an explicit connect fails', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kimi-fake-ssh-'));
+    try {
+      const ssh = join(dir, 'ssh');
+      const down = join(dir, 'down');
+      writeFileSync(down, '');
+      writeFileSync(
+        ssh,
+        `#!/bin/sh
+if [ -e '${down}' ]; then
+  echo 'ssh: connect to host dev port 22: Connection refused' >&2
+  exit 255
+fi
+echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"pid":100,"version":"1.2.3"}'
+while IFS= read -r line; do :; done
+`,
+      );
+      chmodSync(ssh, 0o755);
+      const bridge = new SshKapBridge({ host: 'dev' }, { sshProgram: ssh });
+      try {
+        bridge.start();
+        await vi.waitFor(() => {
+          expect(bridge.failure).toBe('connection_refused');
+        });
+        await expect(bridge.connect()).rejects.toBeInstanceOf(HostConnectError);
+        rmSync(down);
+        await vi.waitFor(
+          () => {
+            expect(bridge.status).toBe('ready');
+            expect(bridge.session).toBeDefined();
+          },
+          { timeout: 5_000, interval: 50 },
+        );
+      } finally {
+        bridge.dispose();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 10_000);
+
   it.skipIf(process.platform === 'win32')('does not retry a first connection that failed authentication', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'kimi-fake-ssh-'));
     try {
