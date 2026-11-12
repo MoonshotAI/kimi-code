@@ -648,6 +648,11 @@ describe('subagent task reminders and fork request parity', () => {
 
     await runPrompt(child);
 
+    const childToolResult = child.accessor.get(IAgentLoopService).history()
+      .find((message) => message.role === 'tool' && message.toolCallId === 'call_write');
+    expect(childToolResult?.note).toBeDefined();
+    expect(childToolResult?.content.some((part) => part.type === 'text' && part.text.includes('<system>'))).toBe(false);
+
     const parentReq = ctx.llmCalls[1]!;
     const childReq = ctx.llmCalls[2]!;
     expect(parentReq.tools.some((tool) => tool.name === 'WaitFor')).toBe(true);
