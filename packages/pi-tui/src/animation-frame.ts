@@ -1,5 +1,6 @@
-/** Every animation frame lands on a multiple of this many milliseconds of the clock. */
+/** By default, every animation frame lands on a multiple of this many milliseconds of the clock. */
 export const ANIMATION_FRAME_INTERVAL_MS = 120;
+export const MAX_ANIMATION_FRAME_RATE = 60;
 
 /** Time source and timers behind animation frames. Tests pass a manual clock. */
 export interface AnimationClock {
@@ -30,6 +31,7 @@ export class AnimationFrameScheduler {
 	private timer: { readonly handle: unknown } | undefined;
 	private lastFrameTime = Number.NEGATIVE_INFINITY;
 	private paused = false;
+	private intervalMs = ANIMATION_FRAME_INTERVAL_MS;
 	private readonly clock: AnimationClock;
 
 	constructor(clock: AnimationClock = systemClock()) {
@@ -60,6 +62,16 @@ export class AnimationFrameScheduler {
 		this.schedule();
 	}
 
+	setFrameRate(fps: number): void {
+		if (!Number.isInteger(fps) || fps < 1 || fps > MAX_ANIMATION_FRAME_RATE) {
+			throw new RangeError(`An animation frame rate must be a whole number from 1 to ${MAX_ANIMATION_FRAME_RATE}, got ${fps}`);
+		}
+		this.intervalMs = 1000 / fps;
+		if (this.timer !== undefined) this.clock.clearTimeout(this.timer.handle);
+		this.timer = undefined;
+		this.schedule();
+	}
+
 	private schedule(): void {
 		if (this.paused || this.requests.size === 0) {
 			if (this.timer !== undefined) this.clock.clearTimeout(this.timer.handle);
@@ -68,7 +80,7 @@ export class AnimationFrameScheduler {
 		}
 		if (this.timer !== undefined) return;
 		const now = this.clock.now();
-		const time = Math.max(this.lastFrameTime, latestFrameTime(now)) + ANIMATION_FRAME_INTERVAL_MS;
+		const time = Math.max(this.lastFrameTime, latestFrameTime(now, this.intervalMs)) + this.intervalMs;
 		this.timer = { handle: this.clock.setTimeout(() => this.runFrame(time), time - now) };
 	}
 
@@ -76,7 +88,7 @@ export class AnimationFrameScheduler {
 		this.timer = undefined;
 		// A timer can fire a little before its due time or long after it. The frame keeps a grid
 		// time either way, and frames missed while the event loop was busy are skipped.
-		const time = Math.max(scheduledTime, latestFrameTime(this.clock.now()));
+		const time = Math.max(scheduledTime, latestFrameTime(this.clock.now(), this.intervalMs));
 		this.lastFrameTime = time;
 		let failure: { readonly error: unknown } | undefined;
 		for (const handle of [...this.requests.keys()]) {
@@ -99,6 +111,6 @@ export class AnimationFrameScheduler {
 	}
 }
 
-function latestFrameTime(now: number): number {
-	return Math.floor(now / ANIMATION_FRAME_INTERVAL_MS) * ANIMATION_FRAME_INTERVAL_MS;
+function latestFrameTime(now: number, intervalMs: number): number {
+	return Math.floor(now / intervalMs) * intervalMs;
 }

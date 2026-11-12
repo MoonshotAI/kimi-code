@@ -308,12 +308,13 @@ export class TranscriptGroupComponent implements Component {
 
   private syncFrames(): void {
     const now = monotonicNow();
-    if (this.disposed || (!deriveGroupView(this.model, now).live && this.sweep.intensity === 0)) {
+    const view = deriveGroupView(this.model, now);
+    if (this.disposed || (!view.live && this.sweep.intensity === 0)) {
       this.stopFrames();
       return;
     }
     if (this.frameRequest !== undefined) return;
-    this.sweep.start(now);
+    this.sweep.start(now, view.working);
     this.frameRequest = this.interaction.requestAnimationFrame(this.onFrame);
   }
 

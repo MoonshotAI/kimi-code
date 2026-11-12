@@ -3,11 +3,19 @@ import chalk from 'chalk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ThinkingComponent } from '#/tui/components/messages/thinking';
+import { currentTheme, darkColors, lightColors } from '#/tui/theme';
 
 const defaultChalkLevel = chalk.level;
 
 function strip(text: string): string {
   return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
+}
+
+function glyphColors(line: string): string[] {
+  return [...line.matchAll(/\u001B\[38;2;(\d+);(\d+);(\d+)m([^\u001B]*)/g)].flatMap(([, red, green, blue, text = '']) => {
+    const color = `#${[red, green, blue].map((channel) => Number(channel).toString(16).padStart(2, '0')).join('')}`;
+    return Array.from(text, () => color);
+  });
 }
 
 const longThinking = ['line1', 'line2', 'line3', 'line4', 'line5', 'line6', 'line7'].join('\n');
@@ -79,15 +87,27 @@ describe('ThinkingComponent', () => {
     const { ui, requestRender } = frameUi();
     const component = new ThinkingComponent('step', true, 'live', ui);
     const initial = component.render(80)[1];
+    expect(new Set(glyphColors(initial ?? ''))).toEqual(new Set([darkColors.textDim.toLowerCase()]));
 
-    vi.advanceTimersByTime(ANIMATION_FRAME_INTERVAL_MS / 2);
+    vi.advanceTimersByTime(600);
     expect(component.render(80)[1]).toBe(initial);
-    expect(requestRender).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(ANIMATION_FRAME_INTERVAL_MS / 2);
+    vi.advanceTimersByTime(ANIMATION_FRAME_INTERVAL_MS * 5 - ANIMATION_FRAME_INTERVAL_MS / 2);
+    const between = component.render(80)[1];
+    vi.advanceTimersByTime(ANIMATION_FRAME_INTERVAL_MS / 4);
+    expect(component.render(80)[1]).toBe(between);
+    requestRender.mockClear();
+    vi.advanceTimersByTime(ANIMATION_FRAME_INTERVAL_MS / 4);
     expect(requestRender).toHaveBeenCalledTimes(1);
     const swept = component.render(80)[1];
     expect(swept).not.toBe(initial);
+    expect(glyphColors(swept ?? '')).toContain(darkColors.text.toLowerCase());
     expect(strip(swept ?? '')).toBe('● Thinking');
+
+    vi.advanceTimersByTime(2_400 - 1_200);
+    expect(glyphColors(component.render(80)[1] ?? '')).toEqual(glyphColors(initial ?? ''));
+    requestRender.mockClear();
+    vi.advanceTimersByTime(ANIMATION_FRAME_INTERVAL_MS * 4);
+    expect(requestRender).not.toHaveBeenCalled();
 
     component.finalize({ known: true, ms: 1_000 });
     expect(vi.getTimerCount()).toBe(0);
@@ -98,6 +118,22 @@ describe('ThinkingComponent', () => {
     finalizedOnly.finalize({ known: true, ms: 1_000 });
     expect(component.render(80)).toEqual(finalizedOnly.render(80));
     expect(component.render(80).map((line) => strip(line).trimEnd())).toEqual(['', '● step']);
+  });
+
+  it('runs the light live title on the running gray between the background and text', () => {
+    chalk.level = 3;
+    vi.useFakeTimers();
+    const previousPalette = currentTheme.palette;
+    currentTheme.setPalette(lightColors);
+    currentTheme.setTerminalBackground('#FFFFFF');
+    try {
+      const component = new ThinkingComponent('step', true, 'live', frameUi().ui);
+      expect(new Set(glyphColors(component.render(80)[1] ?? ''))).toEqual(new Set(['#767676']));
+      component.dispose();
+    } finally {
+      currentTheme.setPalette(previousPalette);
+      currentTheme.setTerminalBackground(undefined);
+    }
   });
 
   it('stops requesting animation frames on dispose', () => {
