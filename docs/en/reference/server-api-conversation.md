@@ -180,10 +180,10 @@ One tool call. Its `item_id` is the tool call id.
 | `stage` | The call's stage while it runs: `input` while the model streams the arguments, `awaiting_approval` while waiting for approval, and `executing` otherwise |
 | `input` | Tool arguments |
 | `input_text` | The raw argument text while `stage` is `input` |
-| `output` | While running, the tool's live output streams into it; once ended, it is the text of the result |
+| `output` | While running, the tool's live output streams into it; once the call completes, it is the text of the result |
 | `fields` | A JSON object of the handler's latest field snapshot |
-| `media` | After the call ends, the images, videos, and audio in the result: `{ kind, file_id?, url?, media_type? }` |
-| `error` | Present when the result is an error. The item's `outcome` is then `failed`, and it has no `output` |
+| `media` | After the call completes, the images, videos, and audio in the result: `{ kind, file_id?, url?, media_type? }` |
+| `error` | The text of the result when the call failed (`outcome` is `failed`) or was stopped (`interrupted`); the item then has no `output`. For a stopped Bash call, it holds the output produced so far followed by the interruption notice. A call still without a result when its turn ends is also `interrupted`, but has no `error` |
 | `note` | Extra text the tool attached to its result for the model, such as the size and dimensions of an image read by `ReadMediaFile` |
 | `task_id` | Present once the call's work runs as a background task, whether it started in the background or was moved there later. After the task has left `task.list`, it still works with `task.watch` and `task.stop` |
 | `interaction_id` | The approval or question raised for this call. Its content comes with the [`interaction`](#approvals-and-questions) frames |
