@@ -38,6 +38,7 @@ export interface HelpPanelCommand {
 const SUBMIT_DESCRIPTIONS: Readonly<Record<FollowUpDelivery, string>> = {
   default: 'Submit; queues while Kimi is working',
   'steer-draft': 'Submit; steers into the running turn',
+  queue: 'Submit; queues while Kimi is working',
 };
 
 /** Static list — keep in sync with the global editor bindings. */
@@ -50,7 +51,7 @@ export function keyboardShortcuts(
   if (ctrlEnterRecognized) {
     followUpShortcuts.push({ keys: 'Ctrl-Enter', description: SUBMIT_DESCRIPTIONS[submit['mod-enter']] });
   }
-  if (submit['ctrl-q'] !== submit.enter) {
+  if (SUBMIT_DESCRIPTIONS[submit['ctrl-q']] !== SUBMIT_DESCRIPTIONS[submit.enter]) {
     followUpShortcuts.push({ keys: 'Ctrl-Q', description: SUBMIT_DESCRIPTIONS[submit['ctrl-q']] });
   }
   return [

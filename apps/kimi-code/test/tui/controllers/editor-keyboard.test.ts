@@ -718,13 +718,13 @@ describe('EditorKeyboardController follow-up delivery', () => {
   it.each([
     [undefined, 'enter', 'default'],
     [undefined, 'mod-enter', 'steer-draft'],
-    [undefined, 'ctrl-q', 'default'],
+    [undefined, 'ctrl-q', 'queue'],
     ['queue', 'enter', 'default'],
     ['queue', 'mod-enter', 'steer-draft'],
-    ['queue', 'ctrl-q', 'default'],
+    ['queue', 'ctrl-q', 'queue'],
     ['steer', 'enter', 'steer-draft'],
-    ['steer', 'mod-enter', 'default'],
-    ['steer', 'ctrl-q', 'default'],
+    ['steer', 'mod-enter', 'queue'],
+    ['steer', 'ctrl-q', 'queue'],
   ] as const)('with follow_up_behavior %s, %s delivers %s', (followUpBehavior, submitKey, delivery) => {
     const harness = createHarness({ streamingPhase: 'waiting' });
 

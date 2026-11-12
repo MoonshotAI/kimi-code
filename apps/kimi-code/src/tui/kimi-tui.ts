@@ -372,6 +372,7 @@ interface SendMessageOptions {
 
 type EnqueueMessageOptions = SendMessageOptions & {
   readonly inlineSkillActivations?: readonly InlineSkillActivation[];
+  readonly holdUntilTurnEnds?: boolean;
 };
 
 /** How long the one-shot "moved to background" footer hint stays visible. */
@@ -2233,6 +2234,7 @@ export class KimiTUI {
       mode: undefined,
       mediaSnapshots: options?.mediaSnapshots,
       inlineSkillActivations: options?.inlineSkillActivations,
+      holdUntilTurnEnds: options?.holdUntilTurnEnds,
     };
   }
 
@@ -2738,6 +2740,7 @@ export class KimiTUI {
     // new input; a non-steerable backlog (bash, slash-skill, inline-skill
     // bundle) cannot, and then this input queues behind it instead.
     if (
+      delivery !== 'queue' &&
       this.canSteerQueueIntoRunningTurn() &&
       this.state.queuedMessages.every(isSteerableQueuedMessage)
     ) {
@@ -2759,7 +2762,7 @@ export class KimiTUI {
       // A queued message re-leases its staged media at dequeue dispatch; the
       // pre-dispatch lease defers to the queue item's raw ids.
       this.staging.defer(options?.lease);
-      this.enqueueMessage(input, options);
+      this.enqueueMessage(input, delivery === 'queue' ? { ...options, holdUntilTurnEnds: true } : options);
       return;
     }
     this.sendMessageInternal(session, input, options);
@@ -5670,7 +5673,11 @@ export class KimiTUI {
 }
 
 function isSteerableQueuedMessage(message: QueuedMessage): message is QueuedPromptMessage {
-  return isPromptQueuedMessage(message) && message.inlineSkillActivations === undefined;
+  return (
+    isPromptQueuedMessage(message) &&
+    message.inlineSkillActivations === undefined &&
+    message.holdUntilTurnEnds !== true
+  );
 }
 
 function toSteerInputItem(message: QueuedPromptMessage): SteerInputItem {

@@ -335,6 +335,7 @@ export interface QueuedPromptMessage extends QueuedEntryBase {
   readonly inlineSkillActivations?: readonly InlineSkillActivation[];
   /** Resent after the user chose Retry on a session-in-use prompt. */
   readonly occupiedRetry?: boolean;
+  readonly holdUntilTurnEnds?: boolean;
 }
 
 export interface QueuedBashCommand extends QueuedEntryBase {

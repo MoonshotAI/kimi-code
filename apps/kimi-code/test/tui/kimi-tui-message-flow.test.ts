@@ -8106,10 +8106,7 @@ command = "vim"
         await new Promise((resolve) => setImmediate(resolve));
 
         expect(session.steer).not.toHaveBeenCalled();
-        expect(driver.state.queuedMessages).toEqual([
-          { text: 'queued note', agentId: 'main' },
-          { text: 'next step', agentId: 'main' },
-        ]);
+        expect(driver.state.queuedMessages.map((message) => message.text)).toEqual(['queued note', 'next step']);
       });
 
       it.each([
@@ -8124,6 +8121,62 @@ command = "vim"
         expect(session.steer).toHaveBeenCalledExactlyOnceWith('next step');
         await Promise.resolve();
         expect(driver.state.queuedMessages).toEqual([{ text: 'queued note', agentId: 'main' }]);
+      });
+
+      it.each([
+        ['queue', CTRL_Q],
+        ['steer', CTRL_Q],
+        ['steer', CTRL_ENTER],
+      ] as const)('with follow_up_behavior %s, %j queues in tower mode instead of steering', async (followUpBehavior, key) => {
+        const { driver, session } = await makeDriver();
+        driver.state.appState.followUpBehavior = followUpBehavior;
+        driver.state.appState.towerMode = true;
+        driver.state.appState.streamingPhase = 'waiting';
+
+        press(driver, 'after this turn', key);
+        await new Promise((resolve) => setImmediate(resolve));
+
+        expect(session.steer).not.toHaveBeenCalled();
+        expect(driver.state.queuedMessages.map((message) => message.text)).toEqual(['after this turn']);
+      });
+
+      it('queues tower Enter behind a message queued with Ctrl-Q', async () => {
+        const { driver, session } = await makeDriver();
+        driver.state.appState.towerMode = true;
+        driver.state.appState.streamingPhase = 'waiting';
+
+        press(driver, 'after this turn', CTRL_Q);
+        press(driver, 'next objective', '\r');
+        await new Promise((resolve) => setImmediate(resolve));
+
+        expect(session.steer).not.toHaveBeenCalled();
+        expect(driver.state.queuedMessages.map((message) => message.text)).toEqual(['after this turn', 'next objective']);
+      });
+
+      it('keeps a message queued with Ctrl-Q in tower mode once an in-flight draft steer lands', async () => {
+        const steer = pendingSteer();
+        const { driver } = await makeDriver(steer.session);
+        driver.state.appState.towerMode = true;
+        driver.state.appState.streamingPhase = 'waiting';
+
+        press(driver, 'draft objective', CTRL_ENTER);
+        press(driver, 'after this turn', CTRL_Q);
+        steer.resolve();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(steer.session.steer).toHaveBeenCalledExactlyOnceWith('draft objective');
+        expect(driver.state.queuedMessages.map((message) => message.text)).toEqual(['after this turn']);
+      });
+
+      it('steers a message queued with Ctrl-Q when Ctrl-S is pressed in tower mode', async () => {
+        const { driver, session } = await makeDriver();
+        driver.state.appState.towerMode = true;
+        driver.state.appState.streamingPhase = 'waiting';
+
+        press(driver, 'after this turn', CTRL_Q);
+        driver.state.editor.handleInput('\u0013');
+
+        expect(session.steer).toHaveBeenCalledExactlyOnceWith('after this turn');
       });
 
       it.each([undefined, 'queue'] as const)('keeps tower Enter steering the queue with follow_up_behavior %s', async (followUpBehavior) => {

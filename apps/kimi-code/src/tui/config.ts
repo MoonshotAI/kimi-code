@@ -211,15 +211,15 @@ export const FollowUpBehaviorSchema = z.enum(['queue', 'steer']);
 export type FollowUpBehavior = z.infer<typeof FollowUpBehaviorSchema>;
 export const DEFAULT_FOLLOW_UP_BEHAVIOR: FollowUpBehavior = 'queue';
 
-export type FollowUpDelivery = 'default' | 'steer-draft';
+export type FollowUpDelivery = 'default' | 'steer-draft' | 'queue';
 
 export type SubmitKey = 'enter' | 'mod-enter' | 'ctrl-q';
 
 export const FOLLOW_UP_KEYMAP: Readonly<
   Record<FollowUpBehavior, Readonly<Record<SubmitKey, FollowUpDelivery>>>
 > = {
-  queue: { enter: 'default', 'mod-enter': 'steer-draft', 'ctrl-q': 'default' },
-  steer: { enter: 'steer-draft', 'mod-enter': 'default', 'ctrl-q': 'default' },
+  queue: { enter: 'default', 'mod-enter': 'steer-draft', 'ctrl-q': 'queue' },
+  steer: { enter: 'steer-draft', 'mod-enter': 'queue', 'ctrl-q': 'queue' },
 };
 
 export function resolveFollowUpBehavior(value: FollowUpBehavior | undefined): FollowUpBehavior {
