@@ -544,6 +544,9 @@ export class KimiTUI {
     this.state.footer.setExpandHintProvider(() => this.toolOutputExpandHint());
     this.state.footer.setGitBinding((state) => this.footerGitBinding(state));
     this.state.transcriptContainer.setHost({
+      openAgentHistory: (agentId) => {
+        void this.tasksBrowserController.openAgentHistory(agentId);
+      },
       withScrollAnchor: (toggle) => {
         if (this.state.transcriptView === undefined) {
           toggle();

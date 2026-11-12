@@ -1520,6 +1520,106 @@ key = "${titleOAuthRef.key}"
     }
   });
 
+  it('pages a persisted legacy child without loading siblings or requiring turn ids', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-agent-history-'));
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-agent-history-work-'));
+    tempDirs.push(homeDir, workDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      await client.createSession({ id: 'ses_child_history', workDir });
+      await client.importContext({
+        sessionId: 'ses_child_history',
+        content: 'saved main context',
+        source: 'history fixture',
+      });
+      const directory = await findSessionDir(homeDir, 'ses_child_history');
+      await client.closeSession({ sessionId: 'ses_child_history' });
+      const childDirectory = join(directory, 'agents', 'agent-0');
+      await mkdir(childDirectory);
+      const records: unknown[] = [];
+      for (let index = 0; index < 23; index++) {
+        records.push(
+          {
+            type: 'context.append_message',
+            message: {
+              role: 'user',
+              content: [{ type: 'text', text: 'prompt ' + index }],
+              toolCalls: [],
+              origin: index === 0 ? { kind: 'system_trigger', name: 'subagent' } : { kind: 'user' },
+            },
+            time: index * 3,
+          },
+          {
+            type: 'context.append_message',
+            message: {
+              role: 'assistant',
+              content: [{ type: 'text', text: 'answer ' + index }],
+              toolCalls: [],
+            },
+            time: index * 3 + 1,
+          },
+          {
+            type: 'context.append_message',
+            message: {
+              role: 'user',
+              content: [{ type: 'text', text: 'hidden reminder' }],
+              toolCalls: [],
+              origin: { kind: 'injection', variant: 'reminder' },
+            },
+            time: index * 3 + 2,
+          },
+        );
+      }
+      await writeFile(
+        join(childDirectory, 'wire.jsonl'),
+        records.map((record) => JSON.stringify(record)).join('\n') + '\n',
+      );
+      await symlink(childDirectory, join(directory, 'agents', 'agent-link'));
+      const resumed = await client.resumeSession({ id: 'ses_child_history' });
+      expect(Object.keys(resumed.agents)).toEqual(['main']);
+      const input = { sessionId: 'ses_child_history', agentId: 'agent-0' };
+      const pages = [];
+      let page = await client.readAgentHistory(input);
+      expect(
+        page.replay.filter(
+          (record) => record.type === 'message' && record.message.role === 'assistant',
+        ),
+      ).toHaveLength(10);
+      pages.unshift(page.replay);
+      while (page.before !== undefined) {
+        page = await client.readAgentHistory({ ...input, before: page.before });
+        pages.unshift(page.replay);
+      }
+      expect(
+        pages.map(
+          (records) =>
+            records.filter(
+              (record) => record.type === 'message' && record.message.role === 'assistant',
+            ).length,
+        ),
+      ).toEqual([3, 10, 10]);
+      expect(pages.flat()).toEqual(
+        (await foldAgentWireReplay(join(childDirectory, 'wire.jsonl'))).replay,
+      );
+      expect(JSON.stringify(pages[0])).toContain('prompt 0');
+      for (const turnLimit of [0, -1, 101, 1.5, NaN]) {
+        await expect(client.readAgentHistory({ ...input, turnLimit })).rejects.toThrow('turnLimit');
+      }
+      for (const before of [-1, 10000, 1.5, NaN]) {
+        await expect(client.readAgentHistory({ ...input, before })).rejects.toThrow('cursor');
+      }
+      for (const agentId of ['../main', 'agent-absent', 'agent-link']) {
+        await expect(client.readAgentHistory({ ...input, agentId })).rejects.toThrow();
+      }
+      const one = await client.readAgentHistory({ ...input, turnLimit: 1 });
+      expect(JSON.stringify(one.replay)).toContain('prompt 22');
+      expect(JSON.stringify(one.replay)).not.toContain('prompt 21');
+      const again = await client.resumeSession({ id: 'ses_child_history' });
+      expect(Object.keys(again.agents)).toEqual(['main']);
+    } finally {
+      await client.close();
+    }
+  });
   it('folds the resumed main agent replay from the persisted wire on cold and live resumes', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-resume-fold-'));
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));

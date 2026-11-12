@@ -1,4 +1,4 @@
-import type { BackgroundTaskInfo, Session } from '@moonshot-ai/kimi-code-sdk';
+import type { AgentHistoryPage, AgentReplayRecord, BackgroundTaskInfo, Session } from '@moonshot-ai/kimi-code-sdk';
 import type { ProcessTerminal, TUI } from '@moonshot-ai/pi-tui';
 
 import { AgentActivityViewer, formatSubagentActivityPreview } from '../components/dialogs/agent-activity-viewer';
@@ -12,6 +12,7 @@ import {
   endScreenTakeover,
   type ScreenTakeover,
 } from '../utils/screen-takeover';
+import { formatAgentHistory } from '../utils/message-replay';
 import type { SessionEventHandler } from './session-event-handler';
 import type { SubagentActivityRecord } from './subagent-activity-store';
 
@@ -55,6 +56,132 @@ export type TasksBrowserState = {
 };
 
 export class TasksBrowserController {
+  private historyRequest = 0;
+  private history:
+    | {
+        session: Session;
+        agentId: string;
+        replay: readonly AgentReplayRecord[];
+        before: number | undefined;
+        component: TaskOutputViewer;
+        takeover: ScreenTakeover;
+        loading: boolean;
+      }
+    | undefined;
+
+  async openAgentHistory(agentId: string): Promise<boolean> {
+    this.closeAgentHistory();
+    const session = this.host.session;
+    if (session === undefined) return false;
+    const request = this.historyRequest;
+    try {
+      const page = await session.readAgentHistory(agentId);
+      if (request !== this.historyRequest || session !== this.host.session) return false;
+      const component = new TaskOutputViewer(
+        {
+          title: 'Agent history',
+          taskId: agentId,
+          info: undefined,
+          output: formatAgentHistory(page.replay),
+          onClose: () => {
+            this.closeAgentHistory();
+          },
+          onLoadOlder:
+            page.before === undefined
+              ? undefined
+              : () => {
+                  void this.loadOlderAgentHistory();
+                },
+        },
+        this.host.state.terminal,
+      );
+      const takeover = beginScreenTakeover(this.host.state.ui, component);
+      this.history = {
+        session,
+        agentId,
+        replay: page.replay,
+        before: page.before,
+        component,
+        takeover,
+        loading: false,
+      };
+      this.host.state.ui.setFocus(component);
+      this.host.state.ui.requestRender(true);
+      return true;
+    } catch (error) {
+      if (request === this.historyRequest && session === this.host.session) {
+        this.host.showError(
+          'Cannot open agent history: ' + (error instanceof Error ? error.message : String(error)),
+        );
+      }
+      return false;
+    }
+  }
+
+  private async loadOlderAgentHistory(): Promise<void> {
+    const history = this.history;
+    if (history === undefined || history.loading || history.before === undefined) return;
+    history.loading = true;
+    this.updateAgentHistory();
+    try {
+      const page: AgentHistoryPage = await history.session.readAgentHistory(history.agentId, {
+        before: history.before,
+      });
+      if (this.history !== history || this.host.session !== history.session) return;
+      history.replay = [...page.replay, ...history.replay];
+      history.before = page.before;
+      history.loading = false;
+      this.updateAgentHistory(true);
+    } catch (error) {
+      if (this.history === history && this.host.session === history.session) {
+        this.host.showError(
+          'Cannot load older agent history: ' +
+            (error instanceof Error ? error.message : String(error)),
+        );
+      }
+    } finally {
+      if (this.history === history) {
+        history.loading = false;
+        this.updateAgentHistory();
+      }
+    }
+  }
+
+  private updateAgentHistory(showStart = false): void {
+    const history = this.history;
+    if (history === undefined) return;
+    history.component.setProps(
+      {
+        title: 'Agent history',
+        taskId: history.agentId,
+        info: undefined,
+        output: formatAgentHistory(history.replay),
+        loading: history.loading,
+        onClose: () => {
+          this.closeAgentHistory();
+        },
+        onLoadOlder:
+          history.before === undefined
+            ? undefined
+            : () => {
+                void this.loadOlderAgentHistory();
+              },
+      },
+      showStart,
+    );
+    this.host.state.ui.requestRender();
+  }
+
+  private closeAgentHistory(): void {
+    this.historyRequest++;
+    const history = this.history;
+    this.history = undefined;
+    if (history === undefined) return;
+    endScreenTakeover(this.host.state.ui, history.takeover);
+    this.host.state.ui.setFocus(this.host.state.tasksBrowser?.component ?? this.host.state.editor);
+    this.host.state.ui.requestRender(true);
+  }
+
   constructor(private readonly host: TasksBrowserHost) {}
 
   async show(): Promise<void> {
@@ -122,6 +249,7 @@ export class TasksBrowserController {
   }
 
   close(): void {
+    this.closeAgentHistory();
     const { state } = this.host;
     const browser = state.tasksBrowser;
     if (browser === undefined) return;
@@ -344,9 +472,6 @@ export class TasksBrowserController {
     if (browser === undefined) return;
     if (browser.viewer !== undefined) return;
 
-    // Agent tasks get the activity detail view when this process holds a
-    // record for the agent; otherwise (e.g. a `lost` task after resume) fall
-    // through to the captured-output viewer.
     const info = this.host.backgroundTasks.get(taskId);
     if (info !== undefined && info.kind === 'agent' && info.agentId !== undefined) {
       const record = this.host.sessionEventHandler.subAgentEventHandler.activityStore.get(
@@ -356,6 +481,8 @@ export class TasksBrowserController {
         this.openAgentActivityViewer(taskId, info, record);
         return;
       }
+      if (await this.openAgentHistory(info.agentId)) return;
+      if (state.tasksBrowser !== browser) return;
     }
 
     const session = this.host.session;

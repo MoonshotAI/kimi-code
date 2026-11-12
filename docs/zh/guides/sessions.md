@@ -56,6 +56,8 @@ kimi --session
 `--continue` 与 `--session` 互斥。
 :::
 
+在 TUI 中，点击已完成的 subagent 卡片可查看已保存的消息和工具调用。后台 subagent 也可以在 `/tasks` 中选中后按 `Enter` 打开。历史仅在打开时加载，首次显示最近 10 轮；按 `P` 加载更早的轮次，按 `Q` 或 `Esc` 返回。查看已保存的历史不会重新启动 subagent。
+
 ## 在 TUI 中切换会话
 
 不离开当前终端也可以管理会话，以下斜杠命令仅在 Agent 空闲时可用：

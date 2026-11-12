@@ -8,7 +8,7 @@ import type { RemoteEnvironmentEntry } from '@moonshot-ai/agent-core-v2/remote/d
 import type { KimiHostIdentity, OAuthRefreshOutcome } from '@moonshot-ai/kimi-code-oauth';
 import type { ContentPart } from '@moonshot-ai/agent-core-v2';
 
-import type { ResumeSessionResult } from '#/replay';
+import type { AgentReplayRecord, ResumeSessionResult } from '#/replay';
 import type { PermissionMode } from '#/permission';
 import type {
   TelemetryClient,
@@ -387,6 +387,20 @@ export interface GenerateSessionTitleInput {
   readonly force?: boolean;
   /** Conversation excerpt to generate from (default `user_prompts`). */
   readonly source?: 'user_prompts' | 'first_turn' | 'digest';
+}
+
+export interface AgentHistoryOptions {
+  /** Exclusive cursor returned by the previous page. Omit for the latest turns. */
+  readonly before?: number;
+  /** Number of turns per page, from 1 to 100. Defaults to 10. */
+  readonly turnLimit?: number;
+}
+
+export interface AgentHistoryPage {
+  /** Persisted records in chronological order. */
+  readonly replay: readonly AgentReplayRecord[];
+  /** Pass as before to load older turns. Undefined when the beginning is reached. */
+  readonly before?: number;
 }
 
 export interface ResumeSessionInput {

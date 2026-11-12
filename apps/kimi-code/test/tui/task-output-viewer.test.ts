@@ -285,3 +285,27 @@ describe('TaskOutputViewer — live tail via setProps', () => {
     expect(after).toBe(before);
   });
 });
+
+it('loads older history with printable and Kitty P while guarding an in-flight load', () => {
+  const onLoadOlder = vi.fn();
+  const props = {
+    title: 'Agent history',
+    taskId: 'agent-0',
+    info: undefined,
+    output: '你好 saved tool output',
+    onClose: vi.fn(),
+    onLoadOlder,
+  };
+  const viewer = new TaskOutputViewer(props, fakeTerminal(12));
+  viewer.handleInput('p');
+  viewer.handleInput('P');
+  viewer.handleInput('\u001B[112u');
+  expect(onLoadOlder).toHaveBeenCalledTimes(3);
+  viewer.setProps({ ...props, loading: true });
+  viewer.handleInput('p');
+  expect(onLoadOlder).toHaveBeenCalledTimes(3);
+  viewer.setProps({ ...props, onLoadOlder: undefined });
+  viewer.handleInput('p');
+  expect(onLoadOlder).toHaveBeenCalledTimes(3);
+  expect(strip(viewer.render(100).join('\n'))).toContain('你好 saved tool output');
+});

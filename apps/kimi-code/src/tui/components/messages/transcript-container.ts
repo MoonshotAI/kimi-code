@@ -21,6 +21,7 @@ import {
   type TranscriptGroupInteraction,
 } from '#/tui/components/messages/transcript-group';
 import { SkillActivationComponent } from '#/tui/components/messages/skill-activation';
+import { ToolCallComponent } from '#/tui/components/messages/tool-call';
 import { ThinkingComponent } from '#/tui/components/messages/thinking';
 import {
   countedByExpandHint,
@@ -55,6 +56,7 @@ export interface TranscriptGroupingHost {
   viewportRows(): number | undefined;
   track(event: string, properties: Record<string, string | number | boolean>): void;
   foldingChanged(): void;
+  openAgentHistory?(agentId: string): void;
 }
 
 interface ProjectionCache {
@@ -395,7 +397,15 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
     const cache = this.ensureProjection();
     const component = cache.viewChildren[index];
     const sourceIndex = cache.viewSourceIndices[index];
-    if (component === undefined || sourceIndex === undefined || !isExpandable(component)) return undefined;
+    if (component === undefined || sourceIndex === undefined) return undefined;
+    if (component instanceof ToolCallComponent && component.toolResultView !== undefined) {
+      const agentId = component.getSubagentAgentId();
+      if (agentId !== undefined && this.host?.openAgentHistory !== undefined) {
+        this.host.openAgentHistory(agentId);
+        return { handled: true };
+      }
+    }
+    if (!isExpandable(component)) return undefined;
     const openedOutsideGroup = cache.projections.some((projection) =>
       projection.kind === 'single' && projection.item.display === component && this.isOpenedOutsideGroup(projection.item));
     if (!openedOutsideGroup && !hasHiddenContent(component)) return undefined;

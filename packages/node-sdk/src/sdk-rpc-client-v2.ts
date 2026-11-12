@@ -302,6 +302,8 @@ import {
   type UpdateSessionMetadataRpcInput,
 } from '#/rpc';
 import type {
+  AgentHistoryOptions,
+  AgentHistoryPage,
   AddAdditionalDirInput,
   AddAdditionalDirResult,
   AgentCommandInfo,
@@ -377,6 +379,7 @@ import {
 } from '#/v2/config-mapper';
 import { translateGlobalEvent } from '#/v2/event-mapper';
 import { assertImportFits, buildImportContextMessage } from '#/v2/import-context';
+import { isAgentReplayUserTurnMessage } from '#/replay';
 import { foldAgentWireReplay, type FoldedAgentReplay } from '#/v2/resume-replay';
 import {
   mcpConfigWithoutName,
@@ -2785,6 +2788,41 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return agent.getTasks({ activeOnly: input.activeOnly, limit: input.limit }) as Promise<
       readonly BackgroundTaskInfo[]
     >;
+  }
+
+  override async readAgentHistory(
+    input: SessionIdRpcInput & AgentHistoryOptions & { agentId: string },
+  ): Promise<AgentHistoryPage> {
+    if (!/^[a-zA-Z0-9_-]+$/.test(input.agentId)) throw new TypeError('Invalid agent id');
+    const turnLimit = input.turnLimit ?? 10;
+    if (!Number.isSafeInteger(turnLimit) || turnLimit < 1 || turnLimit > 100) {
+      throw new RangeError('turnLimit must be an integer between 1 and 100');
+    }
+    return this.runSessionAccess(input.sessionId, async () => {
+      const handle = this.requireLiveSession(input.sessionId);
+      const directory = join(handle.accessor.get(ISessionContext).sessionDir, 'agents');
+      const entries = await readdir(directory, { withFileTypes: true });
+      if (!entries.some((entry) => entry.isDirectory() && entry.name === input.agentId)) {
+        throw new TypeError('Agent history was not found');
+      }
+      const { replay } = await foldAgentWireReplay(join(directory, input.agentId, 'wire.jsonl'));
+      const end = input.before ?? replay.length;
+      if (!Number.isSafeInteger(end) || end < 0 || end > replay.length) {
+        throw new RangeError('Invalid history cursor');
+      }
+      const turns = replay
+        .slice(0, end)
+        .flatMap((record, index) =>
+          record.type === 'message' &&
+          (isAgentReplayUserTurnMessage(record.message) ||
+            (record.message.origin?.kind === 'system_trigger' &&
+              record.message.origin.name === 'subagent'))
+            ? [index]
+            : [],
+        );
+      const start = turns.length > turnLimit ? turns[turns.length - turnLimit]! : 0;
+      return { replay: replay.slice(start, end), before: start > 0 ? start : undefined };
+    });
   }
 
   /**

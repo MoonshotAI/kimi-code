@@ -1957,3 +1957,67 @@ describe('replayBackgroundProjection', () => {
     expect(meta?.effort).toBeUndefined();
   });
 });
+
+describe('persisted agent history formatting', () => {
+  it('preserves old user messages and tool details while hiding internal reminders', async () => {
+    const { formatAgentHistory } = await import('#/tui/utils/message-replay');
+    const replay: AgentReplayRecord[] = [
+      {
+        type: 'message',
+        time: 0,
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'old prompt' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'message',
+        time: 1,
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'delegated prompt' }],
+          toolCalls: [],
+          origin: { kind: 'system_trigger', name: 'subagent' },
+        },
+      },
+      {
+        type: 'message',
+        time: 2,
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'internal reminder' }],
+          toolCalls: [],
+          origin: { kind: 'injection', variant: 'reminder' },
+        },
+      },
+      {
+        type: 'message',
+        time: 3,
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'saved reasoning-free answer' }],
+          toolCalls: [{ type: 'function', id: 't1', name: 'TaskList', arguments: '{}' }],
+        },
+      },
+      {
+        type: 'message',
+        time: 4,
+        message: {
+          role: 'tool',
+          content: [{ type: 'text', text: 'saved tool output' }],
+          toolCalls: [],
+          toolCallId: 't1',
+        },
+      },
+    ];
+    const output = formatAgentHistory(replay);
+    expect(output).toContain('old prompt');
+    expect(output).toContain('delegated prompt');
+    expect(output).not.toContain('internal reminder');
+    expect(output).toContain('Tool TaskList (t1)');
+    expect(output).toContain('Tool result (t1)');
+    expect(output).toContain('saved tool output');
+  });
+});

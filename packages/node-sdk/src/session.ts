@@ -12,6 +12,8 @@ import {
 } from '#/events';
 import type { SDKRpcClientBase } from '#/rpc';
 import type {
+  AgentHistoryOptions,
+  AgentHistoryPage,
   AddAdditionalDirOptions,
   AddAdditionalDirResult,
   AgentCommandInfo,
@@ -471,6 +473,20 @@ export class Session {
   async importContext(content: string, source: string): Promise<void> {
     this.ensureOpen();
     await this.rpc.importContext({ sessionId: this.id, content, source });
+  }
+
+  /** Read saved agent messages without starting or restoring that agent. */
+  async readAgentHistory(
+    agentId: string,
+    options: AgentHistoryOptions = {},
+  ): Promise<AgentHistoryPage> {
+    this.ensureOpen();
+    return this.rpc.readAgentHistory({
+      sessionId: this.id,
+      agentId,
+      before: options.before,
+      turnLimit: options.turnLimit,
+    });
   }
 
   async getContext(): Promise<AgentContextData> {

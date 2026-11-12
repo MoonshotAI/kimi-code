@@ -9,7 +9,7 @@ import type {
   ToolCall,
   ToolInputDisplay,
 } from '@moonshot-ai/kimi-code-sdk';
-import { limitAgentReplayByTurns } from '@moonshot-ai/kimi-code-sdk';
+import { isAgentReplayUserTurnMessage, limitAgentReplayByTurns } from '@moonshot-ai/kimi-code-sdk';
 
 import type {
   AppState,
@@ -484,4 +484,31 @@ function formatHookResultBlock(event: string, body: string, blocked: boolean): s
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
+}
+
+export function formatAgentHistory(replay: readonly AgentReplayRecord[]): string {
+  const blocks: string[] = [];
+  for (const record of replay) {
+    if (record.type !== 'message') continue;
+    const message = record.message;
+    if (message.role === 'system') continue;
+    if (
+      message.role === 'user' &&
+      !isAgentReplayUserTurnMessage(message) &&
+      !(message.origin?.kind === 'system_trigger' && message.origin.name === 'subagent')
+    )
+      continue;
+    const text = contentPartsToText(message.content);
+    if (message.role === 'tool') {
+      blocks.push('Tool result (' + message.toolCallId + ')\n' + text);
+      continue;
+    }
+    if (text.length > 0) blocks.push('[' + message.role + ']\n' + text);
+    if (message.role === 'assistant') {
+      for (const call of message.toolCalls ?? []) {
+        blocks.push('Tool ' + call.name + ' (' + call.id + ')\n' + call.arguments);
+      }
+    }
+  }
+  return blocks.join('\n\n');
 }
