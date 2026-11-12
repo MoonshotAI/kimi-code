@@ -25,6 +25,7 @@ const COMMAND_TYPES: ReadonlySet<string> = new Set([
 ]);
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 10_000;
 const HEARTBEAT_MISS_LIMIT = 2;
+const HEARTBEAT_STALL_FACTOR = 1.25;
 
 const DEFAULT_FLUSH_INTERVAL_MS = 16;
 const DEFAULT_MAX_BATCH_SIZE = 64;
@@ -73,7 +74,8 @@ export class WsConnectionV1 implements BroadcastTarget {
   private backpressureSince?: number;
 
   private heartbeatTimer?: ReturnType<typeof setInterval>;
-  private lastInboundAt = Date.now();
+  private lastHeartbeatAt = performance.now();
+  private lastInboundAt = performance.now();
 
   constructor(opts: WsConnectionV1Options) {
     this.id = `conn_${ulid()}`;
@@ -125,7 +127,7 @@ export class WsConnectionV1 implements BroadcastTarget {
       return;
     }
     if (typeof frame?.type !== 'string') return;
-    this.lastInboundAt = Date.now();
+    this.lastInboundAt = performance.now();
     if (!COMMAND_TYPES.has(frame.type)) return;
 
     const requestId = frame.request_id;
@@ -148,11 +150,30 @@ export class WsConnectionV1 implements BroadcastTarget {
   }
 
   private onHeartbeat(): void {
-    if (Date.now() - this.lastInboundAt >= this.heartbeatIntervalMs * HEARTBEAT_MISS_LIMIT) {
-      this.close(1001, 'heartbeat timeout');
+    const now = performance.now();
+    const sinceLastHeartbeat = now - this.lastHeartbeatAt;
+    this.lastHeartbeatAt = now;
+    if (!this.heartbeatExpired(now)) {
+      this.sendImmediateFrame(buildPing());
       return;
     }
-    this.sendImmediateFrame(buildPing());
+    if (sinceLastHeartbeat > this.heartbeatIntervalMs * HEARTBEAT_STALL_FACTOR) {
+      this.lastInboundAt = now;
+      this.sendImmediateFrame(buildPing());
+      return;
+    }
+    setImmediate(() => {
+      if (this.closed) return;
+      if (this.heartbeatExpired(performance.now())) {
+        this.close(1001, 'heartbeat timeout');
+        return;
+      }
+      this.sendImmediateFrame(buildPing());
+    });
+  }
+
+  private heartbeatExpired(now: number): boolean {
+    return now - this.lastInboundAt >= this.heartbeatIntervalMs * HEARTBEAT_MISS_LIMIT;
   }
 
   private async onSubscribe(requestId: string, frame: InboundFrame): Promise<void> {

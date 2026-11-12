@@ -71,6 +71,7 @@ import { defineRoute, type RouteDefinition } from '../middleware/defineRoute';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { type ActionTable, resolveActionTarget, runAction } from './action-dispatch';
 import { sendEnvironmentError } from './environment';
+import { applyThinking } from './sessionAgentConfig';
 
 interface PromptRouteHost {
   get(
@@ -147,30 +148,6 @@ async function assertActivatableSkills(
       );
     }
   }
-}
-
-async function applyProfileSelection(
-  profile: IAgentLoopService,
-  loop: IAgentLoopService,
-  profileName: string,
-  model: string | undefined,
-  thinking: string | undefined,
-): Promise<boolean> {
-  if (profile.data().profileName === profileName) return false;
-  try {
-    await loop.bindProfile({
-      profile: profileName,
-      model,
-      thinking,
-      strictThinking: thinking !== undefined,
-    });
-  } catch (error) {
-    if (error instanceof ProfileError) {
-      throw new Error2(ErrorCodes.REQUEST_INVALID, error.message);
-    }
-    throw error;
-  }
-  return true;
 }
 
 export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
@@ -292,20 +269,8 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           const promptAttachments =
             preparedMedia.attachments.length > 0 ? preparedMedia.attachments : undefined;
 
-          let thinkingConsumed = false;
-          if (req.body.profile !== undefined) {
-            thinkingConsumed =
-              (await applyProfileSelection(
-                resolved.profile,
-                resolved.prompt,
-                req.body.profile,
-                req.body.model,
-                req.body.thinking,
-              )) && req.body.thinking !== undefined;
-          }
           if (req.body.model !== undefined) await resolved.prompt.setModel(req.body.model);
-          if (req.body.thinking !== undefined && !thinkingConsumed)
-            resolved.profile.setThinking(req.body.thinking);
+          if (req.body.thinking !== undefined) applyThinking(resolved.profile, req.body.thinking);
           if (req.body.permission_mode !== undefined) resolved.permissionMode.setMode(req.body.permission_mode);
           if (req.body.swarm_mode !== undefined && resolved.swarm.isActive !== req.body.swarm_mode) {
             if (req.body.swarm_mode) resolved.swarm.enter('manual');
@@ -417,6 +382,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.FILE_NOT_FOUND]: {},
         [ErrorCode.PROMPT_ID_CONFLICT]: {},
+        [ErrorCode.AUTH_MODEL_NOT_RESOLVED]: {},
         [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
         [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
         ...sessionConflictErrors,
@@ -443,6 +409,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.FILE_NOT_FOUND]: {},
         [ErrorCode.PROMPT_ID_CONFLICT]: {},
+        [ErrorCode.AUTH_MODEL_NOT_RESOLVED]: {},
         [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
         [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
         ...sessionConflictErrors,

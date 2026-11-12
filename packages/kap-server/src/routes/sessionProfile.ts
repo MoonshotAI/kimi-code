@@ -1,13 +1,38 @@
 import {
+  CHILD_SESSION_KIND_KEY,
   ErrorCodes,
   Error2,
   ISessionContext,
   ISessionMetadata,
+  PARENT_SESSION_ID_KEY,
   resumeSessionById,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import type { SessionWireFields } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionLegacy';
 import type { UpdateSessionProfileRequest } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
+
+const RESERVED_METADATA_KEYS: ReadonlySet<string> = new Set([
+  'cwd',
+  'goal',
+  PARENT_SESSION_ID_KEY,
+  CHILD_SESSION_KIND_KEY,
+]);
+
+export function customSessionMetadata(
+  metadata: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(metadata ?? {}).filter(([key]) => !RESERVED_METADATA_KEYS.has(key)),
+  );
+}
+
+function reservedSessionMetadata(
+  metadata: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(metadata ?? {}).filter(([key]) => RESERVED_METADATA_KEYS.has(key)),
+  );
+}
 
 export async function updateSessionProfile(
   core: Scope,
@@ -24,9 +49,11 @@ export async function updateSessionProfile(
     await metadata.setTitle(body.title);
   }
 
-  const metadataPatch = body.metadata;
-  if (metadataPatch !== undefined && Object.keys(metadataPatch).length > 0) {
-    await metadata.update({ custom: { ...(metadataPatch as Record<string, unknown>) } });
+  if (body.metadata !== undefined && Object.keys(body.metadata).length > 0) {
+    const stored = (await metadata.read()).custom;
+    await metadata.update({
+      custom: { ...customSessionMetadata(body.metadata), ...reservedSessionMetadata(stored) },
+    });
   }
 
   const meta = await metadata.read();

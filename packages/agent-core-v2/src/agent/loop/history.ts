@@ -6,7 +6,10 @@ import { emptyUsage } from '#human/llm-requester/usage';
 
 export const EMPTY_LOOP_PROMPT: UserMessage = { role: 'user', content: [] };
 
-export function historyEntryFromContext(entry: ContextMessage): HistoryMessage {
+function historyEntryFromContextWithOptions(
+  entry: ContextMessage,
+  preserveToolNotes: boolean,
+): HistoryMessage {
   const meta = {
     promptId: entry.id,
     origin: entry.origin,
@@ -39,13 +42,31 @@ export function historyEntryFromContext(entry: ContextMessage): HistoryMessage {
         message: { ...message, role: 'assistant', toolCalls: entry.toolCalls },
         meta: { ...meta, usage: entry.usage ?? (entry.partial === true ? undefined : emptyUsage()) },
       };
-    case 'tool':
-      return { message: { ...message, role: 'tool', toolCallId: entry.toolCallId }, meta };
+    case 'tool': {
+      let content = entry.content;
+      if (preserveToolNotes && entry.note !== undefined && entry.note.length > 0) {
+        const last = content.at(-1);
+        const rendered = last?.type === 'text' &&
+          (last.text === entry.note || last.text.endsWith(`\n${entry.note}`));
+        if (!rendered) content = [...content, { type: 'text', text: entry.note }];
+      }
+      return { message: { ...message, role: 'tool', content, toolCallId: entry.toolCallId }, meta };
+    }
   }
+}
+
+export function historyEntryFromContext(entry: ContextMessage): HistoryMessage {
+  return historyEntryFromContextWithOptions(entry, false);
 }
 
 export function historyFromContext(messages: readonly ContextMessage[]): HistoryMessage[] {
   return messages.map(historyEntryFromContext);
+}
+
+export function historyFromContextPreservingToolNotes(
+  messages: readonly ContextMessage[],
+): HistoryMessage[] {
+  return messages.map((entry) => historyEntryFromContextWithOptions(entry, true));
 }
 
 export function contextFromHistoryEntry(
@@ -67,9 +88,21 @@ export function contextFromHistoryEntry(
   const displays = toolCallDisplays !== undefined && Object.keys(toolCallDisplays).length > 0
     ? toolCallDisplays
     : undefined;
+  const note = meta?.note ?? message.note;
+  let content = message.content;
+  if (message.role === 'tool' && note !== undefined && note.length > 0) {
+    const last = content.at(-1);
+    if (last?.type === 'text' && last.text === note) {
+      content = content.slice(0, -1);
+    } else if (last?.type === 'text' && last.text.endsWith(`\n${note}`)) {
+      const text = last.text.slice(0, -(note.length + 1));
+      content = text.length === 0 ? content.slice(0, -1) : [...content.slice(0, -1), { ...last, text }];
+    }
+  }
   return Object.fromEntries(
     Object.entries({
       ...message,
+      content,
       id: meta?.promptId ?? message.id,
       origin: meta?.origin ?? message.origin,
       providerMessageId: meta?.messageId ?? message.providerMessageId,
@@ -77,7 +110,7 @@ export function contextFromHistoryEntry(
       isError: meta?.isError ?? message.isError,
       partial: meta?.partial ?? message.partial,
       llmTiming: meta?.llmTiming ?? message.llmTiming,
-      note: meta?.note ?? message.note,
+      note,
       durationMs: meta?.durationMs ?? message.durationMs,
       toolCallDisplays: displays,
     }).filter(([, value]) => value !== undefined),

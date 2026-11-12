@@ -39,7 +39,7 @@ import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IEventBus } from '#/app/event/eventBus';
 import { IPluginService } from '#/app/plugin/plugin';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
+import { abortedToolOutput, isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
 
 import {
   agentService,
@@ -724,6 +724,69 @@ describe('Agent loop', () => {
       expect(signals).toHaveLength(1);
       expect(signals[0]?.aborted).toBe(true);
       expect(isUserCancellation(signals[0]?.reason)).toBe(true);
+    } finally {
+      await local.dispose();
+    }
+  });
+
+  it('records the output a stopped tool produced before it was interrupted', async () => {
+    const local = createTestAgent(permissionModeServices('yolo'));
+    try {
+      const started = deferred();
+      const streamTool: ExecutableTool = {
+        name: 'Stream',
+        description: 'Stream until aborted.',
+        parameters: { type: 'object', properties: {}, additionalProperties: false },
+        resolveExecution: () => ({
+          approvalRule: 'Stream',
+          execute: ({ signal }) => {
+            started.resolve();
+            return new Promise((resolve) => {
+              signal.addEventListener(
+                'abort',
+                () => resolve({ output: 'line-1\nInterrupted by user', isError: true }),
+                { once: true },
+              );
+            });
+          },
+        }),
+      };
+      const hangTool: ExecutableTool = {
+        name: 'Hang',
+        description: 'Wait until aborted.',
+        parameters: { type: 'object', properties: {}, additionalProperties: false },
+        resolveExecution: () => ({
+          approvalRule: 'Hang',
+          execute: ({ signal }) =>
+            new Promise((_, reject) => {
+              signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+            }),
+        }),
+      };
+      local.get(IAgentLoopService).update({ activeToolNames: ['Stream', 'Hang'] });
+      local.get(IAgentToolRegistryService).register(streamTool);
+      local.get(IAgentToolRegistryService).register(hangTool);
+      local.mockNextResponse(
+        { type: 'text', text: 'working' },
+        { type: 'function', id: 'call-stream-1', name: 'Stream', arguments: '{}' },
+        { type: 'function', id: 'call-hang-1', name: 'Hang', arguments: '{}' },
+      );
+
+      const loop = local.get(IAgentLoopService);
+      const { turn } = submitTurn(loop, 'stream until cancelled');
+      await started.promise;
+      expect(loop.cancel()).toBe(true);
+      await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
+
+      const outputs = Object.fromEntries(
+        local.allEvents
+          .filter((entry) => entry.type === '[wire]' && entry.event === 'context.append_loop_event')
+          .map((entry) => (entry.args as { event: LoopRecordedEvent }).event)
+          .filter((event): event is Extract<LoopRecordedEvent, { type: 'tool.result' }> => event.type === 'tool.result')
+          .map((event) => [event.toolCallId, event.result.output]),
+      );
+      expect(outputs['call-stream-1']).toBe('line-1\nInterrupted by user');
+      expect(outputs['call-hang-1']).toBe(abortedToolOutput('Hang', userCancellationReason()));
     } finally {
       await local.dispose();
     }

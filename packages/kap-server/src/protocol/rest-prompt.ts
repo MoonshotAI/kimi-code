@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { isoDateTimeSchema } from '@moonshot-ai/agent-core-v2/_base/utils/isoDateTime';
 import { messageContentSchema } from './message';
+import { creationOnlyProfileSchema } from './session';
 import {
   promptPermissionModeSchema,
   promptThinkingSchema,
@@ -21,7 +22,7 @@ export const promptSubmissionSchema = z.object({
   content: z.array(messageContentSchema).min(1),
   metadata: z.record(z.string(), z.unknown()).optional(),
   agent_id: z.string().min(1).optional(),
-  profile: z.string().min(1).optional(),
+  profile: creationOnlyProfileSchema,
   model: z.string().min(1).optional(),
   thinking: promptThinkingSchema.optional(),
   permission_mode: promptPermissionModeSchema.optional(),
