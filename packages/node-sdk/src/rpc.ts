@@ -82,6 +82,7 @@ import type {
   GitStatusSummary,
   SuggestFilesInput,
   SuggestFilesResult,
+  TowerProjection,
   Unsubscribe,
   UploadFileOptions,
   WorkspaceTrustInfo,
@@ -406,6 +407,23 @@ export abstract class SDKRpcClientBase {
     throw new KimiError(
       ErrorCodes.NOT_IMPLEMENTED,
       'Tower status is not implemented for this engine',
+    );
+  }
+
+  async getTowerProjection(_input: SessionIdRpcInput): Promise<TowerProjection> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'Tower projection is not implemented for this engine',
+    );
+  }
+
+  async watchTowerProjection(
+    _input: SessionIdRpcInput,
+    _listener: (projection: TowerProjection) => void,
+  ): Promise<Unsubscribe> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'Tower projection watching is not implemented for this engine',
     );
   }
 

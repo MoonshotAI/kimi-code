@@ -1,5 +1,6 @@
 import {
   Container,
+  HStack,
   ProcessTerminal,
   type Component,
   TuiAltScreen,
@@ -20,10 +21,16 @@ import { GutterContainer } from './components/chrome/gutter-container';
 import type { MoonLoader, SpinnerStyle } from './components/chrome/moon-loader';
 import { NotifyPanelComponent } from './components/chrome/notify-panel';
 import { QueuePaneComponent } from './components/panes/queue-pane';
+import { TowerPaneComponent } from './components/panes/tower-pane';
 import type { SessionRow } from './components/dialogs/session-picker';
 import { CustomEditor } from './components/editor/custom-editor';
 import { DEFAULT_MARKDOWN_CONFIG, DEFAULT_TUI_CONFIG } from './config';
-import { CHROME_GUTTER, DOCK_QUEUE_ROWS, DOCK_UPDATES_ROWS } from './constant/rendering';
+import {
+  CHROME_GUTTER,
+  DOCK_QUEUE_ROWS,
+  DOCK_UPDATES_ROWS,
+  TOWER_PANEL_WIDTH,
+} from './constant/rendering';
 import { CLICK_GUARD_MS } from './constant/terminal';
 import type { TasksBrowserState } from './controllers/tasks-browser';
 import { currentTheme, type Theme } from './theme';
@@ -55,6 +62,13 @@ export interface TUIState {
   notifyPanel: NotifyPanelComponent;
   queueContainer: Container;
   queuePane: QueuePaneComponent;
+  towerPane: TowerPaneComponent;
+  /**
+   * Fullscreen only: whether the tower side panel takes its 44 columns.
+   * The TowerPanelController rebinds this once it exists; the layout calls it
+   * on every frame, so it must stay safe before that (false).
+   */
+  towerPanelVisible: () => boolean;
   btwPanelContainer: Container;
   surveyContainer: Container;
   editorContainer: Container;
@@ -172,6 +186,7 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
   // opaque block and could only clip, not scroll).
   const queueContainer = fullscreen ? new VStack() : new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const queuePane = new QueuePaneComponent(fullscreen ? { maxBodyRows: DOCK_QUEUE_ROWS } : undefined);
+  const towerPane = new TowerPaneComponent();
   const notifyPanelContainer = fullscreen ? new VStack() : new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const notifyPanel = new NotifyPanelComponent(
     fullscreen ? { maxBodyRows: DOCK_UPDATES_ROWS, screenRows: () => ui.terminal.rows } : undefined,
@@ -215,12 +230,24 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     editorSlot = new VStack();
     editorSlot.addChild(editorContainer, EDITOR_SLOT_ENTRY);
     dockContainer.addChild(editorSlot, EDITOR_SLOT_ENTRY);
-    const root = new VStack();
-    root.addChild(fullscreenView, { basis: 0, grow: 1, shrink: 1, minSize: 1 });
-    root.addChild(dockContainer, { basis: 'auto', grow: 0, shrink: 1, minSize: 1 });
-    ui.setLayoutRoot(root);
+    const mainColumn = new VStack();
+    mainColumn.addChild(fullscreenView, { basis: 0, grow: 1, shrink: 1, minSize: 1 });
+    mainColumn.addChild(dockContainer, { basis: 'auto', grow: 0, shrink: 1, minSize: 1 });
+    const towerColumn = new VStack();
+    towerColumn.addChild(towerPane);
+    const layoutRoot = new HStack();
+    layoutRoot.addChild(mainColumn, { basis: 0, grow: 1, shrink: 1, minSize: 1 });
+    layoutRoot.addChild(towerColumn, {
+      basis: TOWER_PANEL_WIDTH,
+      grow: 0,
+      shrink: 0,
+      visible: () => state.towerPanelVisible(),
+    });
+    ui.setLayoutRoot(layoutRoot);
     ui.addLayoutEffect(() => {
-      if (ui.getLayoutRoot() === root && fullscreenView.updateStickyMessage()) ui.requestRender();
+      if (ui.getLayoutRoot() === layoutRoot && fullscreenView.updateStickyMessage()) {
+        ui.requestRender();
+      }
     });
   }
 
@@ -234,6 +261,8 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     notifyPanel,
     queueContainer,
     queuePane,
+    towerPane,
+    towerPanelVisible: () => false,
     btwPanelContainer,
     surveyContainer,
     editorContainer,

@@ -38,6 +38,7 @@ import { registerSessionsRoutes } from './sessions';
 import { registerShutdownRoutes } from './shutdown';
 import { registerSkillsRoutes } from './skills';
 import { registerToolsRoutes } from './tools';
+import { registerTowerRoutes } from './tower';
 import { registerConversationRoutes } from './conversation';
 import { registerWorkspaceFsRoutes } from './workspaceFs';
 import { registerWorkspacesRoutes } from './workspaces';
@@ -164,6 +165,10 @@ export async function registerApiV1Routes(
       );
       registerWorkspacesRoutes(
         apiV1 as unknown as Parameters<typeof registerWorkspacesRoutes>[0],
+        core,
+      );
+      registerTowerRoutes(
+        apiV1 as unknown as Parameters<typeof registerTowerRoutes>[0],
         core,
       );
       registerWorkspaceFsRoutes(

@@ -85,6 +85,7 @@ worker 会在预留的 scope 内提交所有交付物，并将 `reports/q3/summa
 你不需要了解 worker 间的通讯协议，也能查看和干预 Tower。
 
 - **查看状态面板：** `/tower` 或 `/tower status` 会直接读取当前状态，不会触发新的模型请求。可以看到 base、mission、roster、合并检查、inbox 数量、并发情况和近期活动。
+- **看右侧边栏：** 开启 `tui_mode = "fullscreen"`（实验性）后，tower 运行期间终端右侧会常驻一个实时面板——未关闭的 mission 及任务进度、存活 worker 数量、近期活动和最近关闭的 mission。仅在 tower mode 开启且有记录内容时出现，终端宽度不足 120 列时自动隐藏。
 - **调整任务方向：** Tower 开启期间，直接发送普通消息即可补充约束、调整优先级或要求总结。Tower 把消息转给 worker 后，worker 会在下一步看到，不会打断当前工具调用。
 - **检查或停止 Agent：** 打开 `/tasks` 查看后台 Agent 的进展和输出，必要时可以停止其中一个。对于你主动停止的 worker 或 reviewer，Tower 默认不会恢复、改派或替换；除非你另有指示。
 - **切换 base：** 再次输入 `/tower <base-branch>`。Tower 会按新 base 重新检查现有 mission，只有落后的 branch 需要 rebase。合并前，主 checkout 必须位于记录的 base 上。

@@ -6,6 +6,7 @@ import type { AgentTaskInfo } from '@moonshot-ai/agent-core-v2/agent/task/types'
 import { createTaskChannel, startControlledTask } from '../../agent-core-v2/test/agent/task/stubs';
 
 import { TASK_OUTPUT_DEFAULT_TAIL_BYTES, TASK_OUTPUT_MAX_TAIL_BYTES } from '../src/protocol/ws-task';
+import type { TowerWatchService } from '../src/services/tower/towerWatchService';
 import type { IConnectionRegistry } from '../src/transport/ws/connectionRegistry';
 import type { SessionEventBroadcaster } from '../src/transport/ws/v1/sessionEventBroadcaster';
 import type { TaskSource } from '../src/transport/ws/v1/taskRequests';
@@ -77,10 +78,20 @@ function makeRegistry(): IConnectionRegistry {
   };
 }
 
+function makeTowerWatch(): TowerWatchService {
+  return {
+    subscribe: async () => {},
+    unsubscribe: () => {},
+    removeTarget: () => {},
+    dispose: () => {},
+  } as unknown as TowerWatchService;
+}
+
 function makeConn(socket: FakeSocket, opts: Partial<WsConnectionV1Options> = {}): WsConnectionV1 {
   return new WsConnectionV1({
     socket: socket as unknown as WebSocket,
     broadcaster: makeBroadcaster(),
+    towerWatch: makeTowerWatch(),
     taskSource: async () => ({ kind: 'session_not_found' }),
     connectionRegistry: makeRegistry(),
     remoteAddress: null,

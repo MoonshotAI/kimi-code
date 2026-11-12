@@ -151,6 +151,11 @@ import type { PromptPredictionCancelReason } from '@moonshot-ai/agent-core-v2/fe
 import { McpConnectionManager } from '@moonshot-ai/agent-core-v2/mcpCore/connection-manager';
 import { ITowerRateLimitService } from '@moonshot-ai/agent-core-v2/features/tower/towerRateLimit';
 import { readTowerStatusSummary } from '@moonshot-ai/agent-core-v2/features/tower/tools/status/statusReader';
+import {
+  readTowerProjection,
+  watchTower,
+} from '@moonshot-ai/agent-core-v2/features/tower/projection/index';
+import { resolveTowerRepoRoot } from '@moonshot-ai/agent-core-v2/features/tower/protocol/index';
 import { loadMcpServers } from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
 import { IGitService } from '@moonshot-ai/agent-core-v2/app/git/git';
 import { fsSuggestRequestSchema } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
@@ -364,6 +369,7 @@ import type {
   SuggestFilesInput,
   SuggestFilesResult,
   TelemetryClient,
+  TowerProjection,
   Unsubscribe,
   UploadFileOptions,
   WorkspaceTrustInfo,
@@ -2683,6 +2689,54 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       toolExecutor: agent.accessor.get(IAgentToolExecutorService),
       concurrency: () => agent.accessor.get(ITowerRateLimitService).snapshot(),
     });
+  }
+
+  /** Reads the tower mission-control projection for the session's repo root. */
+  override async getTowerProjection(input: SessionIdRpcInput): Promise<TowerProjection> {
+    const agent = await this.materializeMainAgent(this.requireLiveSession(input.sessionId));
+    return readTowerProjection(resolveTowerRepoRoot(agent.accessor.get(ISessionContext).cwd));
+  }
+
+  /**
+   * Watches the tower activity log / state file and publishes a full projection
+   * on every change (the first one immediately). Reads are serialized so a
+   * burst of fs events coalesces into sequential snapshots.
+   */
+  override async watchTowerProjection(
+    input: SessionIdRpcInput,
+    listener: (projection: TowerProjection) => void,
+  ): Promise<Unsubscribe> {
+    const agent = await this.materializeMainAgent(this.requireLiveSession(input.sessionId));
+    const repoRoot = resolveTowerRepoRoot(agent.accessor.get(ISessionContext).cwd);
+    let disposed = false;
+    let queue = Promise.resolve();
+    const publish = (): Promise<void> => {
+      const run = queue.then(async () => {
+        if (disposed) return;
+        const projection = await readTowerProjection(repoRoot);
+        if (!disposed) listener(projection);
+      });
+      queue = run.then(
+        () => undefined,
+        () => undefined,
+      );
+      return run;
+    };
+    const stopWatch = watchTower(repoRoot, () => {
+      void publish().catch(() => {});
+    });
+    try {
+      await publish();
+    } catch (error) {
+      disposed = true;
+      stopWatch();
+      throw error;
+    }
+    return () => {
+      if (disposed) return;
+      disposed = true;
+      stopWatch();
+    };
   }
 
   // -----------------------------------------------------------------------

@@ -50,6 +50,7 @@ import type {
   SkillSummary,
   PluginCommandDef,
   ThinkingEffort,
+  TowerProjection,
   UploadFileOptions,
   Unsubscribe,
 } from '#/types';
@@ -98,6 +99,7 @@ export class Session {
   private readonly rpc: SDKRpcClientBase;
   private readonly onClose?: (() => void | Promise<void>) | undefined;
   private closed = false;
+  private readonly towerProjectionUnsubscribes = new Set<Unsubscribe>();
 
   constructor(options: SessionOptions) {
     this.id = options.id;
@@ -415,6 +417,28 @@ export class Session {
   async getTowerStatus(): Promise<string> {
     this.ensureOpen();
     return this.rpc.getTowerStatus({ sessionId: this.id });
+  }
+
+  async getTowerProjection(): Promise<TowerProjection> {
+    this.ensureOpen();
+    return this.rpc.getTowerProjection({ sessionId: this.id });
+  }
+
+  async watchTowerProjection(
+    listener: (projection: TowerProjection) => void,
+  ): Promise<Unsubscribe> {
+    this.ensureOpen();
+    const unsubscribe = await this.rpc.watchTowerProjection({ sessionId: this.id }, listener);
+    if (this.closed) {
+      unsubscribe();
+      return () => {};
+    }
+    const tracked = (): void => {
+      this.towerProjectionUnsubscribes.delete(tracked);
+      unsubscribe();
+    };
+    this.towerProjectionUnsubscribes.add(tracked);
+    return tracked;
   }
 
   async getPlan(): Promise<SessionPlan> {
@@ -823,6 +847,8 @@ export class Session {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    for (const unsubscribe of this.towerProjectionUnsubscribes) unsubscribe();
+    this.towerProjectionUnsubscribes.clear();
     try {
       await this.rpc.closeSession({ sessionId: this.id });
     } finally {

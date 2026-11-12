@@ -1496,6 +1496,7 @@ Workspaces are the registered project directories sessions live in. These endpoi
 | `GET /api/v1/workspaces/{workspace_id}/trust` | Read the trust state |
 | `POST /api/v1/workspaces/{workspace_id}/trust` | Grant trust |
 | `POST /api/v1/workspaces/{workspace_id}/untrust` | Revoke trust |
+| `GET /api/v1/workspaces/{workspace_id}/tower` | Read-only tower mission-control projection for a workspace |
 
 #### The workspace object
 
@@ -1626,6 +1627,34 @@ Revokes the persisted workspace trust records associated with the current dir se
 | `workspace_id` | path | string | **Required.** Workspace id |
 
 On success, `data` is `{ trusted }`, containing the effective trust state after revocation. It is normally `{ trusted: false }`, but remains `true` when `KIMI_CODE_TRUST_WORKSPACE` or [`[workspace] require_trust = false`](../configuration/config-files.md#workspace-trust) applies.
+
+- `40410`: workspace not found
+
+#### `GET /api/v1/workspaces/{workspace_id}/tower`
+
+Reads a workspace's tower mission-control projection without needing a session: the on-disk `.tower` state reduced to what a progress panel needs. The read is cheap and never runs git, so clients can poll it freely; the same object is pushed over the WebSocket as `tower.state` (see [Events](#events)).
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `workspace_id` | path | string | **Required.** Workspace id |
+
+On success, `data` is the tower projection object:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `status` | string | `"active"` when a session holds tower ownership, `"off"` when tower is initialized but no session owns it, `"lost"` when `.tower/` exists but its state file is gone, `"uninitialized"` when there is no tower |
+| `has_content` | boolean | Whether any mission or roster agent is recorded; clients hide tower UI when this is `false` |
+| `base` | string | Base branch; present unless `uninitialized`/`lost` |
+| `mode` | string | `"branch"` or `"pr"`; present unless `uninitialized`/`lost` |
+| `recovered_at` | string | Set when the state was auto-recovered after a loss |
+| `mission_counts` | object | Mission tally per status: `{ planned, active, completed, blocked, paused, merged, abandoned }` |
+| `workers_live` | integer | Roster workers with no recorded death whose mission is still open; leftover entries on merged or abandoned missions do not count |
+| `reviewers_live` | integer | Roster reviewers with no recorded death on an open mission |
+| `roster_total` | integer | All roster entries, dead ones included |
+| `open_missions` | array | Not-yet-closed missions, ordered active → blocked → paused → completed → planned: `{ id, title, kind, status, owner?, branch, scope, tasks_done, tasks_total, blockers, latest_note_preview?, live_workers }` |
+| `recent_closed` | array | Up to 20 recently merged or abandoned missions, newest first: `{ id, title, status, closed_at? }` |
+| `events` | array | The last 50 status-class activity events (spawns, merges, reviews, mission updates, deaths; internal inbox traffic excluded), oldest first: `{ at, actor, kind, fields }` |
+| `log_offset` | integer | Byte offset into the activity log right after the last returned event; `tower.activity` frames continue from it |
 
 - `40410`: workspace not found
 
@@ -2397,6 +2426,8 @@ Clients send flat JSON frames: the fields sit next to `type`, and every command 
 | --- | --- | --- |
 | `subscribe` | `{ request_id, session_id, agent_ids? }` | Subscribe to a session and start receiving the listed agents; `agent_ids` defaults to `["main"]`, and a later `subscribe` for the same session adds agents. When the session cannot be opened, the response carries the error code — `40401` when it does not exist, others such as `40930` or `40931` say why — and nothing is subscribed. Once the session is open the response is sent right away, before any frame of the subscription; agent conversations load after it. A malformed frame answers `40001` |
 | `unsubscribe` | `{ request_id, session_id, agent_ids? }` | Stop receiving agents; omitting `agent_ids`, or removing the last agent, drops the whole session subscription |
+| `tower.subscribe` | `{ request_id, workspace_id }` | Subscribe to a workspace's tower projection; the response comes right away (`40410` when the workspace does not exist), followed by one full `tower.state` frame, then a fresh `tower.state` on every tower state change and a `tower.activity` on every new status-class activity event |
+| `tower.unsubscribe` | `{ request_id, workspace_id }` | Stop receiving tower frames for the workspace |
 | `task.watch` | `{ request_id, session_id, agent_id, task_id, since_offset?, tail_bytes? }` | Stream one task's output to this connection, no session subscription needed; `agent_id` is the agent that owns the task (the `agent_id` of its `task` frame), `since_offset` resumes after output the client already has, and `tail_bytes` caps the size of the first chunk |
 | `task.unwatch` | `{ request_id, session_id, agent_id, task_id }` | Stop streaming that task's output |
 | `task.stop` | `{ request_id, session_id, agent_id, task_id }` | Stop a task; an ended task just replies with its state |
@@ -2410,6 +2441,9 @@ Global events are envelopes `{ "type", "session_id"?, "timestamp", "payload" }`,
 
 - **Global events**: sent to every established connection, no subscription needed — `session.meta.updated`, `event.session.created`, `event.session.archived`, `event.session.restored`, `event.session.work_changed`, `event.session.status_changed`, `event.workspace.*`, `event.config.*`, `event.model_catalog.*`.
 - **Session frames**: sent only to connections subscribed to that session with `subscribe`, and only for the agents they receive — `turns`, `turns.removed`, `turns.failed`, `turn.*`, `item.*`, and `notice` (see [Conversation protocol](#conversation-protocol)), `task.list`, `task`, `agent`, `usage`, `goal`, `todo`; `interaction` frames go to every subscriber of the session. `task.output` goes only to connections watching that task with `task.watch`.
+- **Workspace tower frames**: sent only to connections subscribed to that workspace with `tower.subscribe` — `tower.state` and `tower.activity`, both envelopes whose `payload` carries `workspace_id`.
+
+Tower frames track a workspace's tower run without any session subscription. `tower.state` carries the full tower projection (the same object as [`GET /api/v1/workspaces/{workspace_id}/tower`](#get-apiv1workspacesworkspace_idtower)) and replaces the client copy. `tower.activity` carries `{ workspace_id, events, offset }`, where `events` are the status-class activity lines appended since the previous frame and `offset` is the new byte offset into the activity log; a client that fell behind (or reconnected) resyncs by resubscribing, there is no replay of missed activity frames.
 
 Several global lifecycle events keep a cross-workspace overview fresh without polling per workspace. `event.session.archived` fires on both the live and the cold archive path; its envelope `session_id` is the global watermark `__global__` and the real session id rides in the payload: `{ "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." }` (payload keys `workspace_id` / `sessionId`). `event.session.restored` fires when an archived session is restored, on the same paths and with the same envelope and payload keys. `event.workspace.created` / `updated` carry the full workspace object (`{ id, root, name, created_at, last_opened_at, session_count }` — an `updated` also fires when a session creation touches the workspace), and `event.workspace.deleted` carries `{ "workspace_id", "root" }`. These events only cover changes made inside this server process; changes from other processes (for example a CLI writing to the same home) surface through the index reconciliation (about a minute), so overview clients should keep a low-frequency fallback poll. There is no session-deleted event.
 
@@ -2426,7 +2460,7 @@ Approvals and questions arrive as `interaction` frames, sent to every subscriber
 
 ### Reconnect and recovery
 
-Subscriptions do not survive a disconnect. After reconnecting, send `subscribe` again for each session: every agent starts again with a `turns` frame holding its latest page, pending interactions are resent after the response, and every agent's `task.list`, `agent`, `usage`, `goal`, and `todo` frames are sent again. Task output watches are dropped as well: send `task.watch` again with `since_offset` set to the end of the output you already have. Global events missed while disconnected are not replayed, so refresh the lists you keep (for example `GET /api/v1/sessions`) over REST.
+Subscriptions do not survive a disconnect. After reconnecting, send `subscribe` again for each session: every agent starts again with a `turns` frame holding its latest page, pending interactions are resent after the response, and every agent's `task.list`, `agent`, `usage`, `goal`, and `todo` frames are sent again. Task output watches are dropped as well: send `task.watch` again with `since_offset` set to the end of the output you already have. Tower subscriptions are dropped too: send `tower.subscribe` again for each workspace — the fresh `tower.state` frame replaces everything, so no activity catch-up is needed. Global events missed while disconnected are not replayed, so refresh the lists you keep (for example `GET /api/v1/sessions`) over REST.
 
 ### Conversation protocol
 

@@ -1494,6 +1494,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `GET /api/v1/workspaces/{workspace_id}/trust` | 读取信任状态 |
 | `POST /api/v1/workspaces/{workspace_id}/trust` | 授予信任 |
 | `POST /api/v1/workspaces/{workspace_id}/untrust` | 撤销信任 |
+| `GET /api/v1/workspaces/{workspace_id}/tower` | 只读获取工作区的 tower 进度快照 |
 
 #### workspace 对象
 
@@ -1628,6 +1629,34 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 - `40410`：工作区不存在
 
 - `40409`：`path` 不存在或不是目录
+- `40410`：工作区不存在
+
+#### `GET /api/v1/workspaces/{workspace_id}/tower`
+
+无需会话即可读取工作区的 tower 进度快照：把盘上的 `.tower` 状态汇总成进度面板所需的形状。该读取开销很低且不执行 git，客户端可以自由轮询；同一对象也会通过 WebSocket 以 `tower.state` 推送（见 [事件](#事件)）。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `workspace_id` | path | string | **必填。** 工作区 id |
+
+成功时 `data` 为 tower 进度快照对象：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `status` | string | `"active"` 表示有会话持有 tower 所有权；`"off"` 表示已初始化但无会话持有；`"lost"` 表示 `.tower/` 还在但状态文件丢失；`"uninitialized"` 表示没有 tower |
+| `has_content` | boolean | 是否已记录任何 mission 或 roster agent；为 `false` 时客户端应隐藏 tower 界面 |
+| `base` | string | base 分支；`uninitialized`/`lost` 时不存在 |
+| `mode` | string | `"branch"` 或 `"pr"`；`uninitialized`/`lost` 时不存在 |
+| `recovered_at` | string | 状态丢失后自动恢复时才有值 |
+| `mission_counts` | object | 按状态统计的 mission 数量：`{ planned, active, completed, blocked, paused, merged, abandoned }` |
+| `workers_live` | integer | 无死亡记录且所属 mission 仍未关闭的 roster worker 数；已合并或已放弃 mission 上的残留条目不计入 |
+| `reviewers_live` | integer | 无死亡记录且挂在未关闭 mission 上的 roster reviewer 数 |
+| `roster_total` | integer | 全部 roster 条目，含已死亡条目 |
+| `open_missions` | array | 未关闭的 mission，按 active → blocked → paused → completed → planned 排序：`{ id, title, kind, status, owner?, branch, scope, tasks_done, tasks_total, blockers, latest_note_preview?, live_workers }` |
+| `recent_closed` | array | 最近合并或放弃的 mission，最多 20 条，新的在前：`{ id, title, status, closed_at? }` |
+| `events` | array | 最近 50 条状态类活动事件（spawn、merge、review、mission 更新、死亡等；内部 inbox 通信已剔除），旧的在前：`{ at, actor, kind, fields }` |
+| `log_offset` | integer | 活动日志中最后一条返回事件之后的字节偏移；`tower.activity` 帧从这里续传 |
+
 - `40410`：工作区不存在
 
 ### 文件系统
@@ -2398,6 +2427,8 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 | --- | --- | --- |
 | `subscribe` | `{ request_id, session_id, agent_ids? }` | 订阅会话，开始接收所列 agent；`agent_ids` 默认为 `["main"]`，之后对同一会话再发 `subscribe` 会追加 agent。会话无法打开时，应答带上错误码——会话不存在时为 `40401`，`40930`、`40931` 等其他错误码说明无法打开的原因——且不建立任何订阅。会话打开后立即应答，先于该订阅的任何帧；各 agent 的对话在应答之后加载。帧格式错误时应答 `40001` |
 | `unsubscribe` | `{ request_id, session_id, agent_ids? }` | 停止接收 agent；省略 `agent_ids` 或移除最后一个 agent 时取消整个会话订阅 |
+| `tower.subscribe` | `{ request_id, workspace_id }` | 订阅工作区的 tower 进度快照；应答立即返回（工作区不存在时应答携带 `40410`），随后先收到一帧全量 `tower.state`，之后每次 tower 状态变化收到新的 `tower.state`、每条新状态类活动事件收到 `tower.activity` |
+| `tower.unsubscribe` | `{ request_id, workspace_id }` | 停止接收该工作区的 tower 帧 |
 | `task.watch` | `{ request_id, session_id, agent_id, task_id, since_offset?, tail_bytes? }` | 把某个任务的输出流式推送到本连接，无需订阅会话；`agent_id` 是任务所属的 agent（即该任务 `task` 帧上的 `agent_id`），`since_offset` 从客户端已有输出之后续传，`tail_bytes` 是首段输出最多包含的字节数 |
 | `task.unwatch` | `{ request_id, session_id, agent_id, task_id }` | 停止推送该任务的输出 |
 | `task.stop` | `{ request_id, session_id, agent_id, task_id }` | 停止任务；已结束的任务直接应答其状态 |
@@ -2411,6 +2442,9 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 
 - **全局事件**：发送到每个已建立连接，无需订阅——`session.meta.updated`、`event.session.created`、`event.session.archived`、`event.session.restored`、`event.session.work_changed`、`event.session.status_changed`、`event.workspace.*`、`event.config.*`、`event.model_catalog.*`。
 - **会话帧**：只发给用 `subscribe` 订阅了该会话的连接，且只包含其接收的 agent——`turns`、`turns.removed`、`turns.failed`、`turn.*`、`item.*` 与 `notice`（见 [对话协议](#对话协议)），以及 `task.list`、`task`、`agent`、`usage`、`goal`、`todo`；`interaction` 帧发给该会话的所有订阅者。`task.output` 只发给用 `task.watch` 订阅了该任务输出的连接。
+- **工作区 tower 帧**：只发给用 `tower.subscribe` 订阅了该工作区的连接——`tower.state` 与 `tower.activity`，两者都是 payload 携带 `workspace_id` 的信封帧。
+
+tower 帧用于在没有任何会话订阅的情况下跟踪工作区的 tower 运行。`tower.state` 携带完整的 tower 进度快照（与 [`GET /api/v1/workspaces/{workspace_id}/tower`](#get-apiv1workspacesworkspace_idtower) 返回的对象相同），客户端整份替换本地副本。`tower.activity` 携带 `{ workspace_id, events, offset }`，其中 `events` 只是上一帧之后追加的状态类活动行，`offset` 是活动日志的新字节偏移；落后（或断线重连）的客户端通过重新订阅来重新同步，错过的 activity 帧不会回放。
 
 以下全局生命周期事件可以让跨工作区概览免掉逐工作区轮询。`event.session.archived` 在在线归档与冷归档两条路径上都会发出；其事件帧 `session_id` 是全局水位 `__global__`，真实会话 id 在 payload 里：`{ "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." }`（payload 字段为 `workspace_id` / `sessionId`）。已归档的会话被恢复时发出 `event.session.restored`，路径、事件帧和 payload 字段都与 `event.session.archived` 相同。`event.workspace.created` / `updated` 携带完整工作区对象（`{ id, root, name, created_at, last_opened_at, session_count }`——会话创建触碰工作区时也会发 `updated`），`event.workspace.deleted` 携带 `{ "workspace_id", "root" }`。这些事件只覆盖本服务进程内的变更；其他进程（例如写同一 home 目录的 CLI）的变更要等索引 reconcile（约一分钟）才可见，因此概览客户端应保留低频兜底轮询。目前没有会话删除事件。
 
@@ -2427,7 +2461,7 @@ Agent 自身的状态由另外四种平铺帧同步，每帧都携带完整的�
 
 ### 断线恢复
 
-订阅不会跨断线保留。重连后对每个会话重新发送 `subscribe`：每个 agent 会重新从一帧携带最新一页的 `turns` 开始；应答之后会补发待处理的交互，并重新收到各 agent 的 `task.list`、`agent`、`usage`、`goal` 与 `todo` 帧。任务输出的订阅同样会丢失：重新发送 `task.watch`，并把 `since_offset` 设为已有输出的末尾。断线期间错过的全局事件不会回放，请通过 REST（例如 `GET /api/v1/sessions`）刷新本地维护的列表。
+订阅不会跨断线保留。重连后对每个会话重新发送 `subscribe`：每个 agent 会重新从一帧携带最新一页的 `turns` 开始；应答之后会补发待处理的交互，并重新收到各 agent 的 `task.list`、`agent`、`usage`、`goal` 与 `todo` 帧。任务输出的订阅同样会丢失：重新发送 `task.watch`，并把 `since_offset` 设为已有输出的末尾。tower 订阅也会丢失：对每个工作区重新发送 `tower.subscribe`——新的 `tower.state` 帧会整份替换，无需补追活动事件。断线期间错过的全局事件不会回放，请通过 REST（例如 `GET /api/v1/sessions`）刷新本地维护的列表。
 
 ### 对话协议
 

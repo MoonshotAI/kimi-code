@@ -149,6 +149,7 @@ import { StagingLeaseTracker, type StagingLease } from './controllers/staging-le
 import { StreamingUIController } from './controllers/streaming-ui';
 import { SurveyController } from './controllers/survey-controller';
 import { TasksBrowserController } from './controllers/tasks-browser';
+import { TowerPanelController } from './controllers/tower-panel';
 import { installRainbowDance } from './easter-eggs/dance';
 import { adaptPanelResponse } from './reverse-rpc/approval/adapter';
 import { ApprovalController } from './reverse-rpc/approval/controller';
@@ -449,6 +450,7 @@ export class KimiTUI {
   readonly sessionReplay: SessionReplayRenderer;
   readonly tasksBrowserController: TasksBrowserController;
   readonly surveyController: SurveyController;
+  readonly towerPanel: TowerPanelController;
   readonly editorKeyboard: EditorKeyboardController;
   readonly modelMigration: ModelMigrationController;
   readonly promptPredictionController: PromptPredictionController;
@@ -540,6 +542,7 @@ export class KimiTUI {
     this.telemetryDisabled = startupInput.telemetryDisabled ?? false;
     this.startupNotice = startupInput.startupNotice;
     this.state = createTUIState(tuiOptions);
+    this.towerPanel = new TowerPanelController(this);
     this.programStatus = new ProgramStatusController(this.state, this.state.terminal);
     this.state.footer.setExpandHintProvider(() => this.toolOutputExpandHint());
     this.state.footer.setGitBinding((state) => this.footerGitBinding(state));
@@ -1360,6 +1363,7 @@ export class KimiTUI {
     // before tearing the UI down, so they can't keep firing requestRender after
     // stop() returns (or leak when stop() runs without process.exit).
     this.tasksBrowserController.close();
+    this.towerPanel.dispose();
     this.btwPanelController.clear();
     this.stopActivitySpinner();
     this.streamingUI.clearActiveCompaction();
@@ -3249,6 +3253,7 @@ export class KimiTUI {
     }
     if (busyChanged || 'sessionTitle' in patch) this.programStatus.refresh();
     if (additionalDirsChanged) this.setupAutocomplete();
+    if ('towerMode' in patch) this.towerPanel.sync();
     this.modelMigration.retry();
     this.state.ui.requestRender();
   }
@@ -3523,6 +3528,7 @@ export class KimiTUI {
     this.harness.setTelemetryContext({ sessionId: session.id });
     this.registerSessionHandlers(session);
     this.syncAdditionalDirs(session);
+    this.towerPanel.sync();
   }
 
   async syncRuntimeState(session: Session = this.requireSession()): Promise<void> {
@@ -3543,6 +3549,9 @@ export class KimiTUI {
       sessionTitle: session.summary?.title ?? null,
       goal: goalResult.goal,
     });
+    // A resumed session may already be in tower mode; start its projection
+    // watcher even when the patch above was a no-op.
+    this.towerPanel.sync();
     this.syncAdditionalDirs(session);
     await this.refreshEnvironmentSlot(session);
   }
@@ -3643,6 +3652,7 @@ export class KimiTUI {
     this.questionController.cancelAll(reason);
     this.resetSteerDeliveries();
     this.session = undefined;
+    this.towerPanel.sync();
     this.state.swarmModeEntry = undefined;
     this.harness.setTelemetryContext({ sessionId: null });
     this.setAppState({ goal: null, environment: undefined });

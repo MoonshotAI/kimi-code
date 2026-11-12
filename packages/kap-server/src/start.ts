@@ -54,6 +54,7 @@ import {
   type ServerLogger,
   type ServerLogLevel,
 } from './services/pinoLoggerService';
+import { TowerWatchService } from './services/tower/towerWatchService';
 import { join } from 'node:path';
 import type { Socket } from 'node:net';
 import type { IncomingMessage } from 'node:http';
@@ -411,6 +412,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     logger,
     conversations,
   });
+  const towerWatch = new TowerWatchService(core);
 
   const configService = core.accessor.get(IConfigService);
   const publishConfigWarnings = (diagnostics: readonly ConfigDiagnostic[]): void => {
@@ -519,6 +521,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const wssV1 = registerWsV1(core, {
     registry: connectionRegistry,
     broadcaster,
+    towerWatch,
   });
   const wssDebug = debugEndpoints ? registerWsDebug() : undefined;
 
@@ -605,6 +608,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     connectionRegistry.closeAll('server shutting down');
     wssV1.close();
     wssDebug?.close();
+    towerWatch.dispose();
     await broadcaster.close();
   });
 

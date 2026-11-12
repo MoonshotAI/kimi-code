@@ -48,6 +48,7 @@ import {
 } from '../../../protocol/interaction-wire';
 import { toWireQuestion } from '../../../protocol/question-wire';
 import type { AgentFeedMessage } from '../../../protocol/ws-agent';
+import type { TowerActivityMessage, TowerStateMessage } from '../../../protocol/ws-control';
 import type { TaskEventMessage, TaskListMessage } from '../../../protocol/ws-task';
 import { toWireWorkspace } from '../../../routes/workspaces';
 import type { ConversationEvent, ConversationFeed } from '../../../services/conversation/conversationFeed';
@@ -81,6 +82,8 @@ export type BroadcastFrame =
   | TaskEventMessage
   | TaskListMessage
   | AgentFeedMessage
+  | TowerStateMessage
+  | TowerActivityMessage
   | ConversationMessage;
 
 export interface BroadcastTarget {
