@@ -18,6 +18,21 @@ export function colorDistance(fromHex: string, toHex: string): number {
   return Math.hypot(from.red - to.red, from.green - to.green, from.blue - to.blue);
 }
 
+export function contrastRatio(firstHex: string, secondHex: string): number {
+  const first = relativeLuminance(requireHexColor(firstHex));
+  const second = relativeLuminance(requireHexColor(secondHex));
+  return (Math.max(first, second) + 0.05) / (Math.min(first, second) + 0.05);
+}
+
+function relativeLuminance({ red, green, blue }: Rgb): number {
+  return 0.2126 * linearChannel(red) + 0.7152 * linearChannel(green) + 0.0722 * linearChannel(blue);
+}
+
+function linearChannel(channel: number): number {
+  const value = channel / 255;
+  return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+}
+
 export function parseHexColor(hex: string): Rgb | undefined {
   const match = /^#?([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(hex);
   if (match === null) return undefined;

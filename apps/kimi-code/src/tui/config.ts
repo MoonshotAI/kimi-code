@@ -10,6 +10,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
+import { MAX_ANIMATION_FRAME_RATE } from '@moonshot-ai/pi-tui';
 import { parse as parseToml } from 'smol-toml';
 import { z } from 'zod';
 
@@ -103,6 +104,23 @@ export function resolveTuiMode(
     }
   }
   return { mode: preferred, config };
+}
+
+export interface AnimationFrameRateResolution {
+  readonly fps?: number;
+  readonly warning?: string;
+}
+
+export function resolveAnimationFrameRate(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): AnimationFrameRateResolution {
+  const value = env['KIMI_CODE_TUI_ANIMATION_FPS']?.trim();
+  if (value === undefined || value.length === 0) return {};
+  const fps = Number(value);
+  if (/^\d+$/.test(value) && fps >= 1 && fps <= MAX_ANIMATION_FRAME_RATE) return { fps };
+  return {
+    warning: `Ignored KIMI_CODE_TUI_ANIMATION_FPS=${JSON.stringify(value)}: expected a whole number from 1 to ${String(MAX_ANIMATION_FRAME_RATE)}.`,
+  };
 }
 
 export const TuiThemeSchema = z.string();
