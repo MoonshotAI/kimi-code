@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve } from 'pathe';
 
@@ -526,6 +526,30 @@ describe('AgentLoopService.applyProfile', () => {
     );
     expect(warnings).toHaveLength(1);
     change.dispose();
+  });
+
+  it('populates repoMap for nested repositories under the workspace', async () => {
+    const subRepo = join(workDir, 'src', 'sub-app');
+    await mkdir(join(subRepo, '.git'), { recursive: true });
+    await writeFile(
+      join(subRepo, 'package.json'),
+      JSON.stringify({ description: 'Frontend application' }),
+      'utf-8',
+    );
+    await writeFile(join(subRepo, 'AGENTS.md'), 'sub-app rules', 'utf-8');
+
+    const repoMapProfile: ResolvedAgentProfile = normalizeAgentProfile({
+      name: 'repo-map-profile',
+      systemPrompt: (context) => `map:${context.repoMap ?? ''}`,
+      tools: [],
+    });
+
+    const { profile: svc } = buildContext();
+    await svc.applyProfile(repoMapProfile);
+
+    expect(svc.getSystemPrompt()).toBe(
+      'map:- `src/sub-app` — Frontend application (`src/sub-app/AGENTS.md`)',
+    );
   });
 });
 

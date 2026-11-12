@@ -129,6 +129,9 @@ export function renderAgentProfilePrompt(
   return { ...rendered, text: `${rendered.text}\n\n${NOTIFY_USER_GUIDANCE}` };
 }
 
+const REPO_MAP_SECTION_PROSE =
+  'The following nested Git repositories are present under the current working directory. Read a sub-repository\'s `AGENTS.md` when working inside it.';
+
 const ADDITIONAL_DIRS_SECTION_PROSE =
   'The following directories have been added to the workspace. You can read, write, search, and glob files in these directories as part of your workspace scope.';
 
@@ -156,6 +159,7 @@ export function systemPromptVars(
   const skillActive = context.skillActive ?? options.skillActive;
   const skills = context.skills ?? '';
   const pluginSections = context.pluginSections ?? '';
+  const repoMap = context.repoMap ?? '';
   const additionalDirsInfo = context.additionalDirsInfo ?? '';
   const agentsMd = context.agentsMd ?? '';
   const todoListGuidance = context.todoListActive === true ? `${TODO_LIST_GUIDANCE}\n\n` : '';
@@ -179,6 +183,11 @@ export function systemPromptVars(
     shell: shellName.length > 0 ? `${shellName} (\`${shellPath}\`)` : '',
     cwd: context.cwd ?? '',
     cwd_listing: context.cwdListing ?? '',
+    repo_map: repoMap,
+    repo_map_section:
+      repoMap.length > 0
+        ? `\n## Repository Map\n\n${REPO_MAP_SECTION_PROSE}\n\n${repoMap}\n`
+        : '',
     agents_md: agentsMd,
     agents_section:
       agentsMd.length > 0 || options.readOnly !== true

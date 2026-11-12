@@ -175,6 +175,7 @@ Like the body of a regular agent file, SYSTEM.md is rendered as a template each 
 | `${agents_md}` | Content of the workspace instruction files (such as `AGENTS.md`) |
 | `${cwd}` | Current working directory |
 | `${cwd_listing}` | Listing of the working directory |
+| `${repo_map}` | Compact map of nested Git repositories under the working directory; empty when there are none |
 | `${os}` | Operating system kind |
 | `${shell}` | Shell name and path, for example `bash (\`/bin/bash\`)` |
 | `${now}` | Current time (ISO format) |
@@ -182,7 +183,7 @@ Like the body of a regular agent file, SYSTEM.md is rendered as a template each 
 | `${base_prompt}` | The default system prompt. Inside `SYSTEM.md` itself this is the built-in default; inside an agent file it is the effective default (the built-in default, or your `SYSTEM.md` override when present) |
 | `${plugin_sections}` | A complete Plugin Instructions block contributed by enabled plugins; empty when no enabled plugin contributes instructions |
 
-Unknown variables stay verbatim, a bare `$` is never special, and a variable with no context value renders as an empty string. Four pre-composed blocks (`${windows_notes}`, `${additional_dirs_section}`, `${skills_section}`, and `${plugin_sections}`) render the matching built-in prompt section, or an empty string when it does not apply. The built-in default prompt already includes `${plugin_sections}`, so do not add it again when `${base_prompt}` already expands to that prompt. The variables are enough to rebuild the skeleton of the built-in prompt, for example:
+Unknown variables stay verbatim, a bare `$` is never special, and a variable with no context value renders as an empty string. Five pre-composed blocks (`${windows_notes}`, `${repo_map_section}`, `${additional_dirs_section}`, `${skills_section}`, and `${plugin_sections}`) render the matching built-in prompt section, or an empty string when it does not apply. The built-in default prompt already includes `${plugin_sections}`, so do not add it again when `${base_prompt}` already expands to that prompt. The variables are enough to rebuild the skeleton of the built-in prompt, for example:
 
 ```markdown
 You are Kimi, running at ${cwd} on ${os}.

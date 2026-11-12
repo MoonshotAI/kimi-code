@@ -41,6 +41,7 @@ describe('systemPromptVars', () => {
         agentsMd: 'AGENTS',
         cwd: '/work',
         cwdListing: 'LISTING',
+        repoMap: '- `src/sub` — Subservice (`src/sub/AGENTS.md`)',
         osKind: 'macOS',
         shellName: 'zsh',
         shellPath: '/bin/zsh',
@@ -55,6 +56,9 @@ describe('systemPromptVars', () => {
     expect(vars['shell']).toBe('zsh (`/bin/zsh`)');
     expect(vars['cwd']).toBe('/work');
     expect(vars['cwd_listing']).toBe('LISTING');
+    expect(vars['repo_map']).toBe('- `src/sub` — Subservice (`src/sub/AGENTS.md`)');
+    expect(vars['repo_map_section']).toContain('## Repository Map');
+    expect(vars['repo_map_section']).toContain('src/sub/AGENTS.md');
     expect(vars['agents_md']).toBe('AGENTS');
     expect(vars['additional_dirs_info']).toBe('/extra');
     expect(vars['skills']).toBe('SKILLS');
@@ -70,6 +74,8 @@ describe('systemPromptVars', () => {
 
     expect(vars['cwd']).toBe('');
     expect(vars['cwd_listing']).toBe('');
+    expect(vars['repo_map']).toBe('');
+    expect(vars['repo_map_section']).toBe('');
     expect(vars['shell']).toBe('');
     expect(vars['agents_md']).toBe('');
     expect(vars['additional_dirs_info']).toBe('');
@@ -268,6 +274,24 @@ describe('renderSystemPromptResult', () => {
     ).toContain('## Additional Directories');
     expect(renderSystemPromptResult('', {}, { skillActive: true }).text).not.toContain(
       '## Additional Directories',
+    );
+  });
+
+  it('shows the repository map section only when nested repositories exist', () => {
+    const withRepos = renderSystemPromptResult(
+      '',
+      { cwdListing: '└── src/', repoMap: '- `src/app` — Client app (`src/app/AGENTS.md`)' },
+      { skillActive: true },
+    ).text;
+    expect(withRepos).toContain('## Repository Map');
+    expect(withRepos).toContain('- `src/app` — Client app (`src/app/AGENTS.md`)');
+    expect(withRepos.indexOf('└── src/')).toBeLessThan(withRepos.indexOf('## Repository Map'));
+    expect(withRepos.indexOf('## Repository Map')).toBeLessThan(
+      withRepos.indexOf('# Project information'),
+    );
+
+    expect(renderSystemPromptResult('', {}, { skillActive: true }).text).not.toContain(
+      '## Repository Map',
     );
   });
 

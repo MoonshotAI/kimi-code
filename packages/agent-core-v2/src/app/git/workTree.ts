@@ -1,11 +1,25 @@
 import { dirname, isAbsolute, join, normalize } from 'pathe';
 
-import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import type { HostDirEntry, IHostFileSystem } from '#/os/interface/hostFileSystem';
 
 export interface GitWorkTree {
   readonly root: string;
   readonly dotGitPath: string;
   readonly controlDirPath: string;
+}
+
+export async function hasGitWorkTreeMarker(
+  fs: IHostFileSystem,
+  dir: string,
+  dotGitEntry?: Pick<HostDirEntry, 'isFile' | 'isDirectory' | 'isSymbolicLink'>,
+): Promise<boolean> {
+  if (dotGitEntry !== undefined) {
+    if (dotGitEntry.isDirectory && dotGitEntry.isSymbolicLink !== true) return true;
+    if (!dotGitEntry.isFile && !dotGitEntry.isDirectory && dotGitEntry.isSymbolicLink !== true) {
+      return false;
+    }
+  }
+  return (await probeGitControlDir(fs, join(dir, '.git'), dir)) !== null;
 }
 
 export async function findGitWorkTree(
