@@ -347,6 +347,8 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `GET /api/v1/config` | 读取全局配置（密钥字段脱敏） |
 | `POST /api/v1/config` | 合并式更新配置，并广播 `event.config.changed` |
 | `POST /api/v1/client_configs` | 读取由 Kimi Code 服务远程控制的指定客户端配置 |
+| `GET /api/v1/global-agents-md` | 读取全局 `AGENTS.md` |
+| `PUT /api/v1/global-agents-md` | 写入全局 `AGENTS.md` |
 
 #### `GET /api/v1/config`
 
@@ -424,6 +426,29 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `name` | body | string | **必填。** `model_switch_confirm`、`effort_switch_confirm` 或 `client_upgrade_policy` |
 
 成功时，`data` 为 `{ name, config }`。名称不在上述范围内或读取失败时，`config` 为 `null`，客户端回退到内置行为。读到的值不会变成 `null`：缺失或格式不对的字段取关闭状态的默认值，例如格式不对的 `model_switch_confirm` 会返回 `{ enable: false, rules: [] }`。
+
+#### `GET /api/v1/global-agents-md`
+
+读取服务端 Kimi 数据目录（`KIMI_CODE_HOME`，默认为 `~/.kimi-code`）中的全局 `AGENTS.md`。
+
+成功时，`data` 为 `{ path, content, exists }`：`path` 是文件的绝对路径，`content` 是原样读取的 UTF-8 文本，`exists` 表示文件是否存在。文件不存在时，`content` 为空字符串，`exists` 为 `false`。
+
+- `40411`：因文件系统权限不足而无法读取文件
+- `40906`：目标路径是目录
+
+#### `PUT /api/v1/global-agents-md`
+
+将全局 `AGENTS.md` 整体替换为请求体中的 UTF-8 文本，并在需要时创建 Kimi 数据目录和文件。传入空字符串会写入空文件，不会删除文件。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `content` | body | string | **必填。** 完整的文件内容，保留原有空白 |
+
+成功时，`data` 为保存后的 `{ path, content, exists }` 快照，其中 `exists` 为 `true`。
+
+- `40001`：缺少 `content`，或其值不是字符串
+- `40411`：因文件系统权限不足而无法写入文件
+- `40906`：目标路径是目录
 
 ### 模型与供应商
 

@@ -19,6 +19,7 @@ import { registerFileHistoryRoutes } from './fileHistory';
 import { registerFilesRoutes } from './files';
 import { registerFsRoutes } from './fs';
 import { registerGuiStoreRoutes } from './guiStore';
+import { registerGlobalAgentsMdRoutes } from './globalAgentsMd';
 import { registerInteractionsRoutes } from './interactions';
 import { registerMessagesRoutes } from './messages';
 import type { IGuiStoreService } from '../services/guiStore/guiStore';
@@ -115,6 +116,7 @@ export async function registerApiV1Routes(
         opts.remoteControl.homeDir,
       );
       registerConfigRoutes(apiV1 as unknown as Parameters<typeof registerConfigRoutes>[0], core);
+      registerGlobalAgentsMdRoutes(apiV1 as unknown as Parameters<typeof registerGlobalAgentsMdRoutes>[0], core);
       registerClientConfigsRoutes(
         apiV1 as unknown as Parameters<typeof registerClientConfigsRoutes>[0],
         core,

@@ -204,6 +204,8 @@ ${plugin_sections}
 
 全局 Kimi 专属指令可放在 `$KIMI_CODE_HOME/AGENTS.md`（默认：`~/.kimi-code/AGENTS.md`）。当你用 `KIMI_CODE_HOME` 移动数据根时，这份全局指令文件也会一起移动。跨工具通用指令仍可放在真实 OS home 下的 `~/.agents/AGENTS.md`，项目级指令仍放在项目目录中，例如 `.kimi-code/AGENTS.md` 或 `AGENTS.md`。
 
+在桌面端和 Web UI 中，打开「设置 → 智能体与会话 → 自定义指令 → 全局 AGENTS.md」即可编辑该文件。编辑器读写的是当前连接服务端上的全局指令文件。
+
 ## 会话目录中的存储位置
 
 subagent 的运行状态持久化到当前会话目录的 `agents/` 子目录下，每个 subagent 实例对应一个独立目录，其中包含按时间顺序记录提示词、消息历史与最终状态的 `wire.jsonl` 文件。后台 subagent 还会通过 `tasks/` 子目录暴露生命周期状态。
