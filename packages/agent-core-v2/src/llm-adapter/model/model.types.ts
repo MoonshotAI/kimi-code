@@ -12,4 +12,10 @@ export interface ResolvedModelAuthMaterial {
   readonly apiKeyEnv?: string;
   readonly oauth?: OAuthRef;
   readonly oauthProviderKey?: string;
+  readonly aws?: AwsAuthMaterial;
+}
+
+export interface AwsAuthMaterial {
+  readonly region?: string;
+  readonly profile?: string;
 }
