@@ -235,6 +235,11 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       expect(binding.environmentId).toBe('local');
       expect(binding).toEqual({ environmentId: 'local' });
       expect(await session.getEnvironment()).toEqual(binding);
+      await expect(session.predictNextPrompt({
+        predictionId: 'prediction-1',
+        expectedTurnId: 0,
+      })).resolves.toBeNull();
+      await expect(session.cancelPromptPrediction('prediction-1', 'escape')).resolves.toBe(false);
     } finally {
       await harness.close();
     }

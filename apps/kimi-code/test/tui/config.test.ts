@@ -12,6 +12,7 @@ import {
   parseTuiConfig,
   renderTuiConfig,
   removeLegacySurveySetting,
+  resolveAnimationFrameRate,
   resolveTuiMode,
   saveTuiConfig,
   TuiConfigParseError,
@@ -764,5 +765,34 @@ describe('resolveTuiMode', () => {
       config: 'fullscreen',
       overriddenByEnv: true,
     });
+  });
+});
+
+describe('resolveAnimationFrameRate', () => {
+  it.each([undefined, '', '   '])('keeps the default frame rate when KIMI_CODE_TUI_ANIMATION_FPS is %j', (value) => {
+    expect(resolveAnimationFrameRate({ KIMI_CODE_TUI_ANIMATION_FPS: value })).toEqual({});
+  });
+
+  it.each([
+    ['1', 1],
+    ['8', 8],
+    [' 30 ', 30],
+    ['60', 60],
+  ])('reads KIMI_CODE_TUI_ANIMATION_FPS=%j as %d frames per second', (value, fps) => {
+    expect(resolveAnimationFrameRate({ KIMI_CODE_TUI_ANIMATION_FPS: value })).toEqual({ fps });
+  });
+
+  it.each(['abc', '0', '61', '-5', '2.5', '1e1', '0x10', '+8'])(
+    'ignores KIMI_CODE_TUI_ANIMATION_FPS=%j and explains why',
+    (value) => {
+      expect(resolveAnimationFrameRate({ KIMI_CODE_TUI_ANIMATION_FPS: value })).toEqual({
+        warning: `Ignored KIMI_CODE_TUI_ANIMATION_FPS="${value}": expected a whole number from 1 to 60.`,
+      });
+    },
+  );
+
+  it('reads process.env by default', () => {
+    vi.stubEnv('KIMI_CODE_TUI_ANIMATION_FPS', '20');
+    expect(resolveAnimationFrameRate()).toEqual({ fps: 20 });
   });
 });

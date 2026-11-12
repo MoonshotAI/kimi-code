@@ -104,6 +104,50 @@ export const startBtwSessionResponseSchema = z.object({
 });
 export type StartBtwSessionResponse = z.infer<typeof startBtwSessionResponseSchema>;
 
+export const predictPromptRequestSchema = z.object({
+  prediction_id: z.string().min(1),
+  expected_turn_id: z.number().int().nonnegative(),
+});
+export type PredictPromptRequest = z.infer<typeof predictPromptRequestSchema>;
+
+export const predictPromptResponseSchema = z.object({
+  prediction: z.string().nullable(),
+});
+export type PredictPromptResponse = z.infer<typeof predictPromptResponseSchema>;
+
+export const cancelPromptPredictionRequestSchema = z.object({
+  prediction_id: z.string().min(1),
+  reason: z.enum([
+    'input',
+    'escape',
+    'new_turn',
+    'session',
+    'dialog',
+    'queue',
+    'submit',
+    'plan',
+    'visibility',
+    'shutdown',
+    'disconnect',
+    'activity_turn_started',
+    'activity_turn_ended',
+    'activity_background',
+    'activity_interaction',
+    'activity_agent_lifecycle',
+    'agent_will_close',
+    'agent_replaced',
+    'agent_closed',
+    'disposed',
+    'unspecified',
+  ]).optional(),
+});
+export type CancelPromptPredictionRequest = z.infer<typeof cancelPromptPredictionRequestSchema>;
+
+export const cancelPromptPredictionResponseSchema = z.object({
+  cancelled: z.boolean(),
+});
+export type CancelPromptPredictionResponse = z.infer<typeof cancelPromptPredictionResponseSchema>;
+
 export const listSessionChildrenQuerySchema = cursorQuerySchema.and(
   z.object({
     busy: booleanQueryParam,

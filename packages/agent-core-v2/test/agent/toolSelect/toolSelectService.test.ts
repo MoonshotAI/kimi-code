@@ -238,6 +238,10 @@ class FakeLoopService extends StubEffectiveProfileReader implements IAgentLoopSe
     return capabilities;
   }
 
+  bindingSnapshot(): ReturnType<IAgentLoopService['bindingSnapshot']> {
+    return { thinkingLevel: 'off', systemPrompt: '' };
+  }
+
   async setProfile(): Promise<void> {}
 
   async bindProfile(): Promise<void> {}

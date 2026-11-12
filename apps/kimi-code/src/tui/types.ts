@@ -422,6 +422,7 @@ export interface KimiTUIOptions {
   initialAppState: AppState;
   startup: TUIStartupOptions;
   resolvedTuiMode?: TuiMode;
+  animationFrameRate?: number;
 }
 
 export interface PendingExit {
