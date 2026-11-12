@@ -187,7 +187,6 @@ import { hasDispose } from './utils/component-capabilities';
 import { isDeadTerminalError } from './utils/dead-terminal';
 import { formatErrorMessage } from './utils/event-payload';
 import {
-  bashInputIsBusy,
   canSteerSingleDraft,
   holdsForActiveGoal,
   resolveFollowUpDelivery,
@@ -1593,7 +1592,7 @@ export class KimiTUI {
     if (wasBashMode) {
       // Only one foreground action at a time: queue the shell command while
       // another shell command is running or an agent turn is in progress.
-      if (bashInputIsBusy(this.followUpRuntimeState())) {
+      if (this.state.appState.streamingPhase !== 'idle') {
         this.enqueueMessage(text, undefined, 'bash');
         this.updateQueueDisplay();
         this.state.ui.requestRender();
@@ -1614,7 +1613,7 @@ export class KimiTUI {
       // creation was in flight (both inputs share the same creation promise);
       // honor the busy gate here, like handleUserInput does before the await,
       // instead of running the shell command concurrently with an agent turn.
-      if (bashInputIsBusy(this.followUpRuntimeState())) {
+      if (this.state.appState.streamingPhase !== 'idle') {
         this.enqueueMessage(command, undefined, 'bash');
         this.updateQueueDisplay();
         this.state.ui.requestRender();
@@ -3124,6 +3123,12 @@ export class KimiTUI {
       });
     } catch (error) {
       if (prepared !== undefined) this.releaseSkillArgumentMedia(prepared);
+      if (onSettled === undefined) {
+        const mediaIds = input.flatMap((item) => [
+          ...new Set([...(item.imageAttachmentIds ?? []), ...(item.videoAttachmentIds ?? [])]),
+        ]);
+        this.staging.releaseMedia(mediaIds, []);
+      }
       this.showError(`Failed to prepare media attachment: ${formatErrorMessage(error)}`);
       onSettled?.(false);
       return;

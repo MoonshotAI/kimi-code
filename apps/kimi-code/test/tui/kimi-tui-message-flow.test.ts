@@ -16087,7 +16087,7 @@ describe('KimiTUI follow-up behavior', () => {
   it.each([undefined, 'opposite', 'queue'] as const)('keeps bash input queued for submit intent %s', async (intent) => {
     const { driver, session } = await makeDriver();
     driver.state.appState.followUpBehavior = 'steer';
-    driver.state.appState.isCompacting = true;
+    driver.state.appState.streamingPhase = 'waiting';
     driver.state.appState.inputMode = 'bash';
     driver.state.editor.inputMode = 'bash';
 
@@ -16098,6 +16098,19 @@ describe('KimiTUI follow-up behavior', () => {
     expect(driver.state.queuedMessages).toEqual([
       { text: 'ls', agentId: 'main', mode: 'bash' },
     ]);
+  });
+
+  it('preserves default Enter auto-steering in Tower and WaitFor when the queue has no held items', async () => {
+    const { driver, session } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
+    startWaitFor(driver);
+
+    driver.handleUserInput('wake wait');
+
+    expect(session.steer).toHaveBeenCalledWith('wake wait');
+    await vi.waitFor(() => {
+      expect(driver.state.queuedMessages).toEqual([]);
+    });
   });
 
   it('keeps explicit queue items out of WaitFor and Tower steering but allows manual Ctrl-S', async () => {

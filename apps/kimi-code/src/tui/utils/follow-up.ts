@@ -11,20 +11,6 @@ export interface FollowUpRuntimeState {
   readonly steeringQueue: boolean;
 }
 
-export function bashInputIsBusy(
-  runtime: Pick<
-    FollowUpRuntimeState,
-    'streamingPhase' | 'isCompacting' | 'deferUserMessages' | 'steeringQueue'
-  >,
-): boolean {
-  return (
-    runtime.streamingPhase !== 'idle' ||
-    runtime.isCompacting ||
-    runtime.deferUserMessages ||
-    runtime.steeringQueue
-  );
-}
-
 export function canSteerSingleDraft(runtime: FollowUpRuntimeState): boolean {
   return (
     !runtime.isCompacting &&

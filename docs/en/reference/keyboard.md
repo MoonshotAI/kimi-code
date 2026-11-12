@@ -65,7 +65,7 @@ While streaming output is active, the input box can still receive input and supp
 | `Esc` | Interrupt the current streaming output |
 | `Ctrl-C` | Interrupt the current streaming output |
 
-When `follow_up_behavior` is `"steer"`, `Enter` steers only the current input without consuming messages already in the queue, and `Ctrl-Enter`, `Cmd-Enter`, or `Ctrl-Q` queues a message instead (`Ctrl-Q` works in terminals that do not forward `Ctrl-Enter`, such as Windows PowerShell). Pressing `Ctrl-S` causes the model to see your message (along with any steerable messages in the queue) at the next interruptible point, without waiting for the current turn to finish. The message text stays faded until the agent reads it. If an interrupted turn carries the message into a later turn, it stays faded until that turn starts.
+When `follow_up_behavior` is `"steer"`, `Enter` steers only the current input without consuming messages already in the queue, and `Ctrl-Enter`, `Cmd-Enter`, or `Ctrl-Q` queues a message instead (`Ctrl-Q` works in terminals that do not forward `Ctrl-Enter`, such as Windows PowerShell). Under the default `"queue"` setting, `Enter` queues during ordinary turns and still steers automatically during `WaitFor`, Tower mode, and active goals; `Ctrl-Q` always holds the message in the queue. While idle, `Ctrl-Enter`, `Cmd-Enter`, and `Ctrl-Q` submit normally like `Enter`. Pressing `Ctrl-S` causes the model to see your message (along with any steerable messages in the queue) at the next interruptible point, without waiting for the current turn to finish. The message text stays faded until the agent reads it. If an interrupted turn carries the message into a later turn, it stays faded until that turn starts.
 
 ## Tool Output
 

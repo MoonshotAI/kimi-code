@@ -61,11 +61,11 @@ Kimi Code CLI 的 TUI 交互模式支持一套键盘快捷键。键位按使用�
 | `Enter` | 按 [`follow_up_behavior`](../configuration/config-files.md#tuitoml) 排队或注入当前输入（默认 `queue`） |
 | `Ctrl-Enter` / `Cmd-Enter` | 对本条消息执行与 `follow_up_behavior` 相反的操作 |
 | `Ctrl-Q` | 将当前输入排入下一轮次队列 |
-| `Ctrl-S` | Steer：将当前输入及队列中的消息立即注入正在运行的轮次 |
+| `Ctrl-S` | Steer：将当前输入及队列中可注入的非 Shell 消息立即注入正在运行的轮次 |
 | `Esc` | 中断当前流式输出 |
 | `Ctrl-C` | 中断当前流式输出 |
 
-将 `follow_up_behavior` 设为 `"steer"` 时，`Enter` 只把当前输入注入正在运行的轮次，不会动用已在队列中的消息；按 `Ctrl-Enter`、`Cmd-Enter` 或 `Ctrl-Q` 可将消息排入队列（`Ctrl-Q` 可在 Windows PowerShell 等不转发 `Ctrl-Enter` 的终端中使用）。按 `Ctrl-S` 时，模型会在下一个可中断的时机立刻看到你的消息（连同队列中可注入的消息），无需等待当前轮次结束。在 Agent 读取这条消息之前，文字保持淡色；如果当前轮次中断，消息转入后续轮次，淡色也会持续到该轮次开始。
+将 `follow_up_behavior` 设为 `"steer"` 时，`Enter` 只把当前输入注入正在运行的轮次，不会动用已在队列中的消息；按 `Ctrl-Enter`、`Cmd-Enter` 或 `Ctrl-Q` 可将消息排入队列（`Ctrl-Q` 可在 Windows PowerShell 等不转发 `Ctrl-Enter` 的终端中使用）。在默认 `"queue"` 设置下，普通轮次按 `Enter` 会排队，而在 `WaitFor`、Tower 模式与活跃目标（Goal）期间按 `Enter` 仍会自动注入；按 `Ctrl-Q` 始终将消息留在队列中。空闲状态下，`Ctrl-Enter`、`Cmd-Enter` 和 `Ctrl-Q` 的行为等同于 `Enter` 正常发送。按 `Ctrl-S` 时，模型会在下一个可中断的时机立刻看到你的消息（连同队列中可注入的非 Shell 消息），无需等待当前轮次结束。在 Agent 读取这条消息之前，文字保持淡色；如果当前轮次中断，消息转入后续轮次，淡色也会持续到该轮次开始。
 
 ## 工具输出
 
