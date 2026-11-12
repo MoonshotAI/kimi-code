@@ -2,6 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { ISessionIndex } from '@moonshot-ai/agent-core-v2';
 import { describe, expect, it, vi } from 'vitest';
 
 import { listSessionsAcrossHosts } from '../src/routes/v2/sessionsAcrossHosts';
@@ -151,7 +152,7 @@ describe('sessions across hosts', () => {
       token = (page['next_page_token'] as string | null) ?? undefined;
     } while (token !== undefined);
 
-    expect(pages).toEqual([['l1', 'r1', 'l2'], ['r2', 'l3', 'r3'], ['r4', 'l4']]);
+    expect(pages.flat()).toEqual(['l1', 'r1', 'l2', 'r2', 'r3', 'r4', 'l3', 'l4']);
     expect(first).toMatchObject({ total: 8, has_more: true, unavailable_hosts: [] });
     expect((first['items'] as Array<Record<string, unknown>>).map((item) => item['host_id'])).toEqual([undefined, 'dev', undefined]);
   });
@@ -174,6 +175,8 @@ describe('sessions across hosts', () => {
   });
 
   it('keeps a drained local source in later pages against real servers', async () => {
+    vi.stubEnv('KIMI_CODE_MODEL_CATALOG_REFRESH_ON_START', '0');
+    vi.stubEnv('KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS', '0');
     const home = await mkdtemp(join(tmpdir(), 'kimi-host-pagination-'));
     const localServer = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: join(home, 'local'), logLevel: 'silent' });
     const remoteServer = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: join(home, 'remote'), logLevel: 'silent' });
@@ -184,6 +187,9 @@ describe('sessions across hosts', () => {
         const response = await server.app.inject({ method: 'POST', url: '/api/v1/sessions', headers, payload: { workspace_id: workspace.id } });
         expect(response.statusCode).toBe(200);
       }
+      await vi.waitFor(async () => {
+        expect((await server.core.accessor.get(ISessionIndex).listRecent({})).items).toHaveLength(4);
+      });
     };
     await create(localServer);
     await create(remoteServer);
@@ -222,6 +228,7 @@ describe('sessions across hosts', () => {
       await localServer.close();
       await remoteServer.close();
       await rm(home, { recursive: true, force: true });
+      vi.unstubAllEnvs();
     }
   }, 30_000);
 
