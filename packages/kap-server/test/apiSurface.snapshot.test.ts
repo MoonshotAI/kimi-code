@@ -106,6 +106,10 @@ describe('API surface snapshot', () => {
     });
     const digest = createHash('sha256').update(contract).digest('hex');
 
+    if (digest !== HOST_CONTRACT.digest) {
+      const { inspect } = await import('node:util');
+      console.error('CONTRACT_DEBUG', inspect({ paths, components: openApi['components'], operations: asyncApi['operations'], messages: asyncApi['components'] }, { depth: null, maxArrayLength: null }));
+    }
     expect(
       { apiLevel: HOST_API_LEVEL, digest },
       'The client-visible API contract changed. If the current client would break against a remote running the previous release, bump HOST_API_LEVEL; then update HOST_CONTRACT to the new level and digest.',
