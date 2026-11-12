@@ -200,7 +200,11 @@ export function createMediaDegradeRecovery(replacement?: MediaReplacement): LlmR
         error.kind === 'image_format' ||
         ((error.kind === 'provider' || error.kind === 'syntax') &&
           IMAGE_FORMAT_PROVIDER_MESSAGE_PATTERNS.some((pattern) => pattern.test(error.message)));
-      if (error.kind !== 'request_too_large' && !imageFormat) return undefined;
+      const mediaClientError =
+        error.kind === 'status' &&
+        error.statusCode === 400 &&
+        countMediaParts(request.content.messages) > 0;
+      if (error.kind !== 'request_too_large' && !imageFormat && !mediaClientError) return undefined;
       const messages = request.content.messages;
       const stripped = appliedRecoveries.some(
         (recovery) => recovery.strategy === MEDIA_RECOVERY_ID && recovery.action === 'stripped',
