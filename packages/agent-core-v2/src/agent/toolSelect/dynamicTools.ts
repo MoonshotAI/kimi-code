@@ -1,6 +1,6 @@
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { ToolDescription } from '#human/llm/message';
-import { isMcpToolName } from '#/tool/toolContract';
+import { isMcpToolName, type ToolInfo } from '#/tool/toolContract';
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 
 import { SELECT_TOOLS_TOOL_NAME, type ToolSelectAnnouncementDisclosure } from './toolSelect';
