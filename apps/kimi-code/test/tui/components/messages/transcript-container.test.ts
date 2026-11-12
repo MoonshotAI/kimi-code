@@ -160,8 +160,8 @@ function workingTurn(container: TranscriptContainer): void {
   liveTurn(container).textDelta();
 }
 
-function settle(timeline: TurnTimeline, call: ToolCallComponent, output = 'ok'): void {
-  call.setResult({ tool_call_id: call.toolCallView.id, output, is_error: false }, { known: true, ms: 1_000 });
+function settle(timeline: TurnTimeline, call: ToolCallComponent, output = 'ok', isError = false): void {
+  call.setResult({ tool_call_id: call.toolCallView.id, output, is_error: isError }, { known: true, ms: 1_000 });
   if (isToolCallId(call.toolCallView.id)) timeline.callResult(call.toolCallView.id);
 }
 
@@ -1802,6 +1802,61 @@ describe('TranscriptRowComponent', () => {
     expect(plain(container.render(80))).not.toContain(DETACH_HINT_TEXT);
     expect(container.foldedBashHintAt()).toBeDefined();
     container.clear();
+  });
+
+  it.each(['compact', 'balanced'] as const)(
+    'shows the authorization link under a running MCP authenticate row in %s, ignores clicks on it, and shows the reason once it fails',
+    (toolCallDensity) => {
+      vi.useFakeTimers();
+      const authenticating = () => {
+        const { container } = makeContainer(options({ toolCallDensity }));
+        const call = runningTool('mcp__linear__authenticate');
+        call.appendProgress('Open this URL in your browser to authorize "linear":\n\nhttps://example.test/oauth/authorize');
+        container.addChild(thought());
+        container.addChild(call);
+        return { container, call, timeline: liveTurn(container) };
+      };
+      const above = ['', '  Thought for 3s', ''];
+
+      const authorized = authenticating();
+      const running = authorized.container.render(80);
+      expect(plain(running.slice(0, 4)).split('\n')).toEqual([...above, '● linear: authenticate']);
+      expect(running.slice(4)).toEqual(authorized.call.renderRowDetail(80));
+      expect(plain(running)).toContain('https://example.test/oauth/authorize');
+      const link = plain(running).split('\n').findIndex((line) => line.includes('https://example.test/oauth/authorize'));
+      expect(click(authorized.container, 3)).toBeUndefined();
+      expect(click(authorized.container, link)).toBeUndefined();
+      settle(authorized.timeline, authorized.call, 'MCP server "linear" authenticated successfully.');
+      expect(plain(authorized.container.render(80)).split('\n')).toEqual([...above, '● linear: authenticate']);
+
+      const failed = authenticating();
+      settle(failed.timeline, failed.call, 'OAuth flow for MCP server "linear" did not complete: Timed out', true);
+      const reason = failed.container.render(80);
+      expect(plain(reason.slice(0, 4)).split('\n')).toEqual([...above, '✗ linear: authenticate · failed']);
+      expect(reason.slice(4)).toEqual(failed.call.renderRowDetail(80));
+      expect(plain(reason)).toContain('did not complete: Timed out');
+      click(failed.container, 3);
+      expect(failed.call.isExpanded()).toBe(true);
+
+      const cancelled = authenticating();
+      cancelled.timeline.turnEnded();
+      expect(plain(cancelled.container.render(80)).split('\n'))
+        .toEqual([...above, '● linear: authenticate · interrupted']);
+      settle(cancelled.timeline, cancelled.call, 'The user manually interrupted "mcp__linear__authenticate".', true);
+      expect(plain(cancelled.container.render(80)).split('\n'))
+        .toEqual([...above, '✗ linear: authenticate · interrupted']);
+    },
+  );
+
+  it('keeps the progress of any other running row inside the closed row', () => {
+    vi.useFakeTimers();
+    const { container } = makeContainer(options({ toolCallDensity: 'balanced' }));
+    const call = runningTool('mcp__linear__list_issues');
+    call.appendProgress('MCP connection lost — reconnecting…');
+    container.addChild(call);
+    liveTurn(container);
+
+    expect(plain(container.render(80)).split('\n')).toEqual(['', '● linear: list_issues']);
   });
 });
 
