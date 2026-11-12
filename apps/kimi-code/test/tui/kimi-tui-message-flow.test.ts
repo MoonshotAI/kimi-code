@@ -16084,6 +16084,30 @@ describe('KimiTUI follow-up behavior', () => {
     expect(stripSgr(renderTranscript(driver))).not.toContain('Failed to steer');
   });
 
+  it('queues a single-draft steer behind a compaction barrier or pending queue dispatch', async () => {
+    const { driver, session } = await makeDriver();
+    driver.state.appState.followUpBehavior = 'steer';
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.handleUserInput('/compact');
+
+    driver.handleUserInput('after compact');
+
+    expect(session.steer).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages.map((m) => m.text)).toEqual(['/compact', 'after compact']);
+
+    driver.state.queuedMessages = [];
+    driver.state.queuedMessageDispatchPending = true;
+    driver.handleUserInput('during pending dispatch', 'opposite');
+    driver.state.appState.followUpBehavior = 'queue';
+    driver.handleUserInput('opposite during pending dispatch', 'opposite');
+
+    expect(session.steer).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages.map((m) => m.text)).toEqual([
+      'during pending dispatch',
+      'opposite during pending dispatch',
+    ]);
+  });
+
   it.each([undefined, 'opposite', 'queue'] as const)('keeps bash input queued for submit intent %s', async (intent) => {
     const { driver, session } = await makeDriver();
     driver.state.appState.followUpBehavior = 'steer';

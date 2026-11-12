@@ -9,6 +9,8 @@ export interface FollowUpRuntimeState {
   readonly deferUserMessages: boolean;
   readonly goalActive: boolean;
   readonly steeringQueue: boolean;
+  readonly hasCompactionBarrier: boolean;
+  readonly dispatchPending: boolean;
 }
 
 export function canSteerSingleDraft(runtime: FollowUpRuntimeState): boolean {
@@ -16,6 +18,8 @@ export function canSteerSingleDraft(runtime: FollowUpRuntimeState): boolean {
     !runtime.isCompacting &&
     !runtime.deferUserMessages &&
     !runtime.steeringQueue &&
+    !runtime.hasCompactionBarrier &&
+    !runtime.dispatchPending &&
     runtime.streamingPhase !== 'shell' &&
     (runtime.streamingPhase !== 'idle' || runtime.goalActive)
   );
@@ -30,6 +34,7 @@ export function resolveFollowUpDelivery(
     !runtime.isCompacting &&
     !runtime.deferUserMessages &&
     !runtime.steeringQueue &&
+    !runtime.dispatchPending &&
     runtime.streamingPhase === 'idle' &&
     !runtime.goalActive
   ) {

@@ -222,6 +222,38 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     ).toEqual(['hello', 'world']);
   });
 
+  it('preserves submitIntent on chained cold-cache submits across normal and skill paths', async () => {
+    const { host } = makeHost();
+    const controller = new CacheHintController(host);
+    controller.recordActivity();
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1200_000);
+    const skill = [{ skillName: 'review', path: '/tmp/review' }];
+
+    expect(controller.maybeInterceptOnSubmit('first')).toBe(true);
+    expect(controller.maybeInterceptOnSubmit('queued second', undefined, undefined, 'queue')).toBe(
+      true,
+    );
+    expect(controller.maybeInterceptOnSubmit('/skill:review', undefined, skill, 'opposite')).toBe(
+      true,
+    );
+    await flush();
+    vi.restoreAllMocks();
+
+    expect(host.sendNormalUserInput).toHaveBeenNthCalledWith(1, 'first', undefined);
+    expect(host.sendNormalUserInput).toHaveBeenNthCalledWith(
+      2,
+      'queued second',
+      undefined,
+      'queue',
+    );
+    expect(host.sendInlineSkillUserInput).toHaveBeenCalledWith(
+      '/skill:review',
+      skill,
+      undefined,
+      'opposite',
+    );
+  });
+
   it('restores chained submits instead of sending when the dialog is dismissed', async () => {
     getMock.mockResolvedValue(CONFIG);
     const { host } = makeHost();

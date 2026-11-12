@@ -1805,7 +1805,7 @@ export class KimiTUI {
     // Idle cache-hint interception sits before session creation; it is
     // synchronous unless a hint actually fires. Aside from the bounded
     // ingestion wait above, the send path stays await-free up to sendMessage.
-    if (this.cacheHint.maybeInterceptOnSubmit(text, extraction)) {
+    if (this.cacheHint.maybeInterceptOnSubmit(text, extraction, undefined, submitIntent)) {
       // The stash owns the extraction from here: its resend re-leases inside
       // the re-entered send path, its restore goes through releaseRecalled
       // (see CacheHintController). Detach so the stash is not double-owned.
@@ -1883,7 +1883,7 @@ export class KimiTUI {
       ], []);
       return;
     }
-    if (this.cacheHint.maybeInterceptOnSubmit(text, extraction, activations)) return;
+    if (this.cacheHint.maybeInterceptOnSubmit(text, extraction, activations, submitIntent)) return;
     let session = this.session;
     if (session === undefined) {
       session = await this.ensureSession();
@@ -2739,6 +2739,8 @@ export class KimiTUI {
       deferUserMessages: this.deferUserMessages,
       goalActive: this.state.appState.goal?.status === 'active',
       steeringQueue: this.steeringQueuedMessages.size > 0,
+      hasCompactionBarrier: this.state.queuedMessages.some(isQueuedCompactionBarrier),
+      dispatchPending: this.state.queuedMessageDispatchPending,
     };
   }
 

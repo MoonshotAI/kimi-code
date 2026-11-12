@@ -251,7 +251,8 @@ const FOLLOW_UP_BEHAVIOR_OPTIONS = [
   {
     value: 'queue',
     label: 'Queue',
-    description: 'Wait for the current turn to finish before sending follow-ups.',
+    description:
+      'Wait for the current turn to finish (WaitFor, Tower, and active goals still auto-steer; Ctrl-Q always queues).',
   },
   {
     value: 'steer',

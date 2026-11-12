@@ -21,6 +21,7 @@ import type { AppState, InlineSkillActivation } from '../types';
 import type { TUIState } from '../tui-state';
 import { evaluateCacheHint } from '../utils/cache-hint';
 import { rebaseInlineSkillActivations } from '../utils/inline-skill-tokens';
+import type { EditorSubmitIntent } from '../utils/follow-up';
 import { formatErrorMessage } from '../utils/event-payload';
 import {
   makeSessionExtractionResendable,
@@ -35,6 +36,7 @@ interface StashedSubmit {
   /** Session that owned any daemon refs inside {@link extraction}. */
   readonly sessionId: string;
   readonly inlineSkillActivations?: readonly InlineSkillActivation[];
+  readonly submitIntent?: EditorSubmitIntent;
 }
 
 export interface CacheHintHost {
@@ -54,11 +56,16 @@ export interface CacheHintHost {
   recallStashedMedia(extraction: ExtractionResult | undefined): void;
   showError(message: string): void;
   createNewSession(): Promise<void>;
-  sendNormalUserInput(text: string, preExtracted?: ExtractionResult): Promise<void>;
+  sendNormalUserInput(
+    text: string,
+    preExtracted?: ExtractionResult,
+    submitIntent?: EditorSubmitIntent,
+  ): Promise<void>;
   sendInlineSkillUserInput(
     text: string,
     activations: readonly InlineSkillActivation[],
     preExtracted?: ExtractionResult,
+    submitIntent?: EditorSubmitIntent,
   ): Promise<void>;
 }
 
@@ -189,6 +196,7 @@ export class CacheHintController {
     text: string,
     extraction?: ExtractionResult,
     inlineSkillActivations?: readonly InlineSkillActivation[],
+    submitIntent?: EditorSubmitIntent,
   ): boolean {
     const { host } = this;
     if (host.session === undefined) return false;
@@ -206,7 +214,13 @@ export class CacheHintController {
     // Coarse floor: configured cache durations are 10min+, so anything
     // fresher than a minute can never hint.
     if (Date.now() - this.lastActivityAt < 60_000) return false;
-    const stash: StashedSubmit = { text, extraction, sessionId: host.session.id, inlineSkillActivations };
+    const stash: StashedSubmit = {
+      text,
+      extraction,
+      sessionId: host.session.id,
+      inlineSkillActivations,
+      submitIntent,
+    };
     const cached = peekCacheHintConfig();
     if (cached !== undefined) {
       const decision = evaluateCacheHint({
@@ -324,10 +338,23 @@ export class CacheHintController {
       }
     }
     if (stash.inlineSkillActivations !== undefined && stash.inlineSkillActivations.length > 0) {
-      await this.host.sendInlineSkillUserInput(stash.text, stash.inlineSkillActivations, extraction);
+      if (stash.submitIntent === undefined) {
+        await this.host.sendInlineSkillUserInput(stash.text, stash.inlineSkillActivations, extraction);
+      } else {
+        await this.host.sendInlineSkillUserInput(
+          stash.text,
+          stash.inlineSkillActivations,
+          extraction,
+          stash.submitIntent,
+        );
+      }
       return;
     }
-    await this.host.sendNormalUserInput(stash.text, extraction);
+    if (stash.submitIntent === undefined) {
+      await this.host.sendNormalUserInput(stash.text, extraction);
+      return;
+    }
+    await this.host.sendNormalUserInput(stash.text, extraction, stash.submitIntent);
   }
 
   /** Restore a stashed input to the editor, appending to anything already

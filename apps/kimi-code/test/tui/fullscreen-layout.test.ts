@@ -1472,7 +1472,7 @@ describe('fullscreen layout', () => {
     await vt.waitForRender();
     rows = screenRows(vt);
     expect(rows.join('\n')).toContain('Page 2/2');
-    expect(rows.join('\n')).toContain('❯ Feedback survey');
+    expect(rows.join('\n')).toContain('❯ Editor');
 
     state.ui.setFocus(state.notifyPanel);
     state.ui.requestRender();
@@ -1491,7 +1491,7 @@ describe('fullscreen layout', () => {
       new Text(Array.from({ length: 40 }, (_, i) => `transcript ${String(i + 1)}`).join('\n'), 0, 0),
     );
     showSettingsSelector(editorReplacementHost(state));
-    for (let i = 0; i < 4; i++) vt.sendInput('\u001B[B');
+    for (let i = 0; i < 5; i++) vt.sendInput('\u001B[B');
     vt.sendInput('\r');
     await vt.waitForRender();
     const panel = (): string[] => screenRows(vt).map((row) => row.replace(/[┃│]$/, '').trim());
@@ -1550,7 +1550,7 @@ describe('fullscreen layout', () => {
       state.ui.stop();
     });
     showSettingsSelector(editorReplacementHost(state));
-    for (let i = 0; i < 5; i++) vt.sendInput('\u001B[B');
+    for (let i = 0; i < 6; i++) vt.sendInput('\u001B[B');
     vt.sendInput('\r');
     await vt.waitForRender();
     vt.sendInput('\u001B[B');
