@@ -3204,21 +3204,24 @@ describe('foldAgentWireReplay', () => {
     }
   });
 
-  it('degrades to an empty fold on a missing or corrupt journal', async () => {
+  it('degrades to an empty fold on a missing journal and tolerates a truncated tail', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-fold-'));
     tempDirs.push(dir);
     const empty = { replay: [], toolStore: {} };
     await expect(foldAgentWireReplay(join(dir, 'missing.jsonl'))).resolves.toEqual(empty);
+    await expect(foldAgentWireReplay(dir)).resolves.toMatchObject({
+      ...empty,
+      error: expect.stringMatching(/EISDIR/i),
+    });
+    const unrecoverable = join(dir, 'unrecoverable.jsonl');
+    await writeFile(unrecoverable, '{not json\n', 'utf-8');
+    await expect(foldAgentWireReplay(unrecoverable)).resolves.toMatchObject({
+      ...empty,
+      error: expect.stringContaining('line 1'),
+    });
     const emptyFile = join(dir, 'empty.jsonl');
     await writeFile(emptyFile, '', 'utf-8');
     await expect(foldAgentWireReplay(emptyFile)).resolves.toEqual({ ...empty, userTurnCount: 0 });
-    const corrupt = join(dir, 'corrupt.jsonl');
-    await writeFile(
-      corrupt,
-      '{"type":"metadata","protocol_version":"1.5","created_at":1}\n{not json\n{"type":"permission.set_mode","mode":"auto"}\n',
-      'utf-8',
-    );
-    await expect(foldAgentWireReplay(corrupt)).resolves.toEqual(empty);
     // A truncated TAIL line is tolerated: everything before it still folds.
     const truncatedTail = join(dir, 'truncated.jsonl');
     await writeFile(
@@ -3228,6 +3231,39 @@ describe('foldAgentWireReplay', () => {
     );
     const folded = await foldAgentWireReplay(truncatedTail);
     expect(folded.replay).toEqual([{ type: 'permission_updated', mode: 'auto', time: 2 }]);
+  });
+
+  it('preserves valid history and reports corrupt records in the middle of a journal', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-fold-'));
+    tempDirs.push(dir);
+    const wirePath = join(dir, 'corrupt.jsonl');
+    await writeFile(
+      wirePath,
+      '{"type":"metadata","protocol_version":"1.5","created_at":1}\n' +
+        '{"type":"permission.set_mode","mode":"auto","time":2}\n' +
+        '{not json\n' +
+        '{"type":"context.append_message","message":null,"time":3}\n' +
+        '{"type":"context.append_message","message":{"role":"user","content":[{"type":"text","text":"still here"}]},"time":4}\n',
+      'utf-8',
+    );
+
+    for (const turnLimit of [undefined, 1]) {
+      const folded = await foldAgentWireReplay(wirePath, turnLimit);
+      expect(folded.replay).toEqual([
+        { type: 'permission_updated', mode: 'auto', time: 2 },
+        {
+          type: 'message',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'still here' }],
+            toolCalls: [],
+          },
+          time: 4,
+        },
+      ]);
+      expect(folded.warning).toContain('lines 3, 4');
+      expect(folded.error).toBeUndefined();
+    }
   });
 });
 

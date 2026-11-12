@@ -10,6 +10,11 @@ import { STREAMING_UI_FLUSH_MS, UNNAMED_TOOL_CALL_NAME } from '../constant/strea
 import { hasDispose } from '../utils/component-capabilities';
 import { appendStreamingArgsPreview, parseStreamingArgs } from '../utils/event-payload';
 import { notifyTerminalOnce } from '../utils/terminal-notification';
+import {
+  getTranscriptComponentTurnId,
+  markTranscriptComponent,
+  markTranscriptComponentTurnId,
+} from '../utils/transcript-component-metadata';
 import { nextTranscriptId } from '../utils/transcript-id';
 import { TurnTimeline } from '../utils/turn-timeline';
 import type {
@@ -634,8 +639,9 @@ export class StreamingUIController {
     };
     const component = new AssistantMessageComponent();
     this._streamingBlock = { component, entry };
-    this.host.pushTranscriptEntry(entry);
+    markTranscriptComponent(component, entry);
     state.transcriptContainer.addChild(component);
+    this.host.pushTranscriptEntry(entry);
     state.ui.requestRender();
   }
 
@@ -673,6 +679,7 @@ export class StreamingUIController {
         state.ui,
       );
       if (state.transcriptContainer.toolOutputExpanded) this._activeThinkingComponent.setExpanded(true);
+      markTranscriptComponentTurnId(this._activeThinkingComponent, this._currentTurnId);
       state.transcriptContainer.addChild(this._activeThinkingComponent);
     } else {
       this._activeThinkingComponent.setText(fullText);
@@ -700,6 +707,7 @@ export class StreamingUIController {
       state.appState.workDir,
     );
     if (state.transcriptContainer.toolOutputExpanded) tc.setExpanded(true);
+    markTranscriptComponentTurnId(tc, toolCall.turnId ?? this._currentTurnId);
     this._pendingToolComponents.set(toolCall.id, tc);
 
     if (toolCall.name !== 'Agent') this._pendingAgentGroup = null;
@@ -747,6 +755,7 @@ export class StreamingUIController {
         state.appState.workDir,
       );
       if (state.transcriptContainer.toolOutputExpanded) completed.setExpanded(true);
+      markTranscriptComponentTurnId(completed, matchedCall.turnId ?? this._currentTurnId);
       state.transcriptContainer.addChild(completed);
       state.ui.requestRender();
     }
@@ -783,6 +792,7 @@ export class StreamingUIController {
 
   private mountCompactionBlock(block: CompactionComponent): void {
     const { state } = this.host;
+    markTranscriptComponentTurnId(block, this._currentTurnId);
     state.transcriptContainer.addChild(block);
     if (state.transcriptContainer.toolOutputExpanded) block.setExpanded(true);
   }
@@ -862,6 +872,7 @@ export class StreamingUIController {
   private upgradeSoloAgentToGroup(solo: ToolCallComponent): AgentGroupComponent {
     const { state } = this.host;
     const group = new AgentGroupComponent(state.ui);
+    markTranscriptComponentTurnId(group, getTranscriptComponentTurnId(solo) ?? this._currentTurnId);
     if (state.transcriptContainer.children.includes(solo)) {
       state.transcriptContainer.replaceChild(solo, group);
     } else {
@@ -916,6 +927,7 @@ export class StreamingUIController {
   private upgradeSoloReadToGroup(solo: ToolCallComponent): ReadGroupComponent {
     const { state } = this.host;
     const group = new ReadGroupComponent(state.ui);
+    markTranscriptComponentTurnId(group, getTranscriptComponentTurnId(solo) ?? this._currentTurnId);
     if (state.transcriptContainer.toolOutputExpanded) group.setExpanded(true);
     if (state.transcriptContainer.children.includes(solo)) {
       state.transcriptContainer.replaceChild(solo, group);
