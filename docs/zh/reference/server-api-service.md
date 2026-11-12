@@ -1208,9 +1208,9 @@ cloud-only 条目不能在本机安装。旧 `kimi-webbridge` 条目不再返回
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `prefix` | query | string | 可选。仅返回键名以该前缀开头的条目，最长 256 个字符 |
-| `keys` | query | string \| string[] | 可选。仅返回指定键名集合中的条目，最多 256 个 |
+| `keys` | query | string \| string[] | 可选。仅返回指定键名集合中的条目，最多 128 个 |
 
-成功时 `data` 为 `{ revision, entries }`，其中 `entries` 为 `{ [key]: { value, revision } }`。若磁盘上的 `gui.json` 损坏，原文件会被隔离重命名为 `gui.json.corrupt-*` 并返回错误码 `50003`（`details.quarantine_path` 指出备份路径）。
+成功时 `data` 为 `{ revision, entries }`，其中 `entries` 为 `{ [key]: { value, revision } }`。若磁盘上的 `gui.json` 损坏或被截断为空文件，原文件会被隔离重命名为 `gui.json.corrupt-*` 并返回错误码 `50003`（`details.quarantine_path` 指出备份路径），后续写入将从不低于历史水位线的单调版本号恢复。
 
 ### `PATCH /api/v1/gui/store`
 
@@ -1218,7 +1218,7 @@ cloud-only 条目不能在本机安装。旧 `kimi-webbridge` 条目不再返回
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
-| `mutations` | body | array | 必填。1–256 条变更，键名不得重复。每项为 `{ key, value, if_revision? }`：`key` 为 1–256 个字符；`value` 为字符串（最长 1 MiB）表示写入，`null` 表示删除；`if_revision` 为非负整数（`0` 表示断言该键当前不存在） |
+| `mutations` | body | array | 必填。1–128 条变更，键名不得重复，单批键值 UTF-8 总字节数不超过 512 KiB。每项为 `{ key, value, if_revision? }`：`key` 为 1–256 个字符；`value` 为字符串（最长 65,536 个字符）表示写入，`null` 表示删除；`if_revision` 为非负整数（`0` 表示断言该键当前不存在） |
 
 成功时 `data` 为 `{ applied, revision, entries, conflicts }`：
 - 所有 `if_revision` 均匹配时，`applied` 为 `true`，`entries` 返回本次涉及键的最新 `{ value, revision }`（删除项为 `null`），`conflicts` 为 `{}`；若有实际变更，同时广播全局事件 `event.gui_store.updated`。

@@ -1,6 +1,17 @@
 import { randomBytes } from 'node:crypto';
 import * as nodeFs from 'node:fs';
-import { mkdir, open, readFile, rename, rm, rmdir, stat, unlink, utimes } from 'node:fs/promises';
+import {
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  rmdir,
+  stat,
+  unlink,
+  utimes,
+} from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import type { IDisposable } from '@moonshot-ai/agent-core-v2';
@@ -33,12 +44,19 @@ const noopLogger: GuiStoreLogger = { warn: () => {} };
 
 const STORE_FILENAME = 'gui.json';
 const LOCK_DIRNAME = '.gui.json.lock';
+const CORRUPT_PREFIX = `${STORE_FILENAME}.corrupt-`;
 const SCHEMA_VERSION = 1;
 const LOCK_STALE_MS = 15_000;
 const LOCK_HEARTBEAT_MS = 2_500;
 const LOCK_TIMEOUT_MS = 15_000;
 const WATCH_DEBOUNCE_MS = 80;
 const WIN32_RENAME_RETRIES = 40;
+
+export interface GuiStoreOptions {
+  readonly lockStaleMs?: number;
+  readonly lockHeartbeatMs?: number;
+  readonly lockTimeoutMs?: number;
+}
 
 interface InternalState {
   revision: number;
@@ -152,27 +170,49 @@ async function writeAtomicDurable(filePath: string, content: string): Promise<vo
   }
 }
 
-async function acquireDirLock(lockDir: string): Promise<() => Promise<void>> {
+async function acquireDirLock(
+  lockDir: string,
+  opts: Required<GuiStoreOptions>,
+): Promise<() => Promise<void>> {
   await mkdir(dirname(lockDir), { recursive: true, mode: 0o700 });
-  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+  const deadline = Date.now() + opts.lockTimeoutMs;
   for (;;) {
     try {
       await mkdir(lockDir, { mode: 0o700 });
+      const ownerToken = `owner-${process.pid}-${randomBytes(8).toString('hex')}`;
+      const ownerPath = join(lockDir, ownerToken);
+      try {
+        const fh = await open(ownerPath, 'wx', 0o600);
+        await fh.close();
+      } catch (tokenError) {
+        await rmdir(lockDir).catch(() => undefined);
+        throw tokenError;
+      }
       const heartbeat = setInterval(() => {
-        const now = new Date();
-        void utimes(lockDir, now, now).catch(() => undefined);
-      }, LOCK_HEARTBEAT_MS);
+        void stat(ownerPath)
+          .then(() => {
+            const now = new Date();
+            return utimes(lockDir, now, now);
+          })
+          .catch(() => undefined);
+      }, opts.lockHeartbeatMs);
       heartbeat.unref?.();
       return async () => {
         clearInterval(heartbeat);
-        await rmdir(lockDir).catch(() => rm(lockDir, { recursive: true, force: true }).catch(() => undefined));
+        const stillOwned = await unlink(ownerPath).then(
+          () => true,
+          () => false,
+        );
+        if (stillOwned) {
+          await rmdir(lockDir).catch(() => undefined);
+        }
       };
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code !== 'EEXIST') throw error;
       try {
         const st = await stat(lockDir);
-        if (Date.now() - st.mtimeMs > LOCK_STALE_MS) {
+        if (Date.now() - st.mtimeMs > opts.lockStaleMs) {
           const trash = `${lockDir}.stale.${process.pid}.${randomBytes(4).toString('hex')}`;
           const claimed = await rename(lockDir, trash).then(
             () => true,
@@ -194,7 +234,17 @@ async function acquireDirLock(lockDir: string): Promise<() => Promise<void>> {
   }
 }
 
+export function acquireGuiStoreLockForTest(
+  lockDir: string,
+  opts: Required<GuiStoreOptions>,
+): Promise<() => Promise<void>> {
+  return acquireDirLock(lockDir, opts);
+}
+
 function parsePersistedState(text: string): InternalState {
+  if (text.trim().length === 0) {
+    throw new Error('gui.json is empty');
+  }
   const raw: unknown = JSON.parse(text);
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     throw new Error('gui.json root must be an object');
@@ -293,6 +343,21 @@ function diffSnapshots(
   return count > 0 ? changes : undefined;
 }
 
+function extractCorruptFloor(names: readonly string[]): number {
+  let maxFloor = 0;
+  for (const name of names) {
+    if (!name.startsWith(CORRUPT_PREFIX)) continue;
+    const rest = name.slice(CORRUPT_PREFIX.length);
+    const dash = rest.indexOf('-');
+    const numText = dash === -1 ? rest : rest.slice(0, dash);
+    const parsed = Number(numText);
+    if (Number.isSafeInteger(parsed) && parsed > maxFloor) {
+      maxFloor = parsed;
+    }
+  }
+  return maxFloor;
+}
+
 export class GuiStoreService implements IGuiStoreService {
   readonly _serviceBrand: undefined;
 
@@ -300,23 +365,31 @@ export class GuiStoreService implements IGuiStoreService {
   private readonly filePath: string;
   private readonly lockDir: string;
   private readonly logger: GuiStoreLogger;
+  private readonly lockOpts: Required<GuiStoreOptions>;
   private readonly listeners = new Set<(event: GuiStoreChangeEvent) => void>();
   private queue: Promise<void> = Promise.resolve();
-  private lastKnownState: InternalState = { revision: 0, entries: emptyRecord() };
+  private watchedState: InternalState | undefined;
+  private minRevisionFloor = 0;
   private watcher: nodeFs.FSWatcher | undefined;
   private watchTimer: ReturnType<typeof setTimeout> | undefined;
   private selfWriting = 0;
   private closed = false;
 
-  constructor(homeDir: string, logger?: GuiStoreLogger) {
+  constructor(homeDir: string, logger?: GuiStoreLogger, options?: GuiStoreOptions) {
     this.homeDir = homeDir;
     this.filePath = join(homeDir, STORE_FILENAME);
     this.lockDir = join(homeDir, LOCK_DIRNAME);
     this.logger = logger ?? noopLogger;
+    this.lockOpts = {
+      lockStaleMs: options?.lockStaleMs ?? LOCK_STALE_MS,
+      lockHeartbeatMs: options?.lockHeartbeatMs ?? LOCK_HEARTBEAT_MS,
+      lockTimeoutMs: options?.lockTimeoutMs ?? LOCK_TIMEOUT_MS,
+    };
   }
 
   async getSnapshot(query?: GuiStoreQuery): Promise<GuiStoreSnapshot> {
     const state = await this.readOrQuarantine();
+    this.advanceWatchedStateAndEmit(state);
     return {
       revision: state.revision,
       entries: filterEntries(state.entries, query),
@@ -326,6 +399,7 @@ export class GuiStoreService implements IGuiStoreService {
   async patch(mutations: readonly GuiStoreMutation[]): Promise<GuiStorePatchResult> {
     if (mutations.length === 0) {
       const state = await this.readOrQuarantine();
+      this.advanceWatchedStateAndEmit(state);
       return {
         applied: true,
         revision: state.revision,
@@ -363,14 +437,15 @@ export class GuiStoreService implements IGuiStoreService {
             entries: emptyRecord<GuiStoreEntry | null>(),
             conflicts,
           },
-          changeEvent: undefined,
+          finalState: state,
+          directDiff: undefined,
         };
       }
 
       const nextEntries = cloneEntries(state.entries);
       const changedEntries = emptyRecord<GuiStoreEntry | null>();
       const resultEntries = emptyRecord<GuiStoreEntry | null>();
-      const nextStoreRevision = state.revision + 1;
+      const nextStoreRevision = Math.max(state.revision, this.minRevisionFloor) + 1;
       let anyChanged = false;
 
       for (const mutation of mutations) {
@@ -398,7 +473,6 @@ export class GuiStoreService implements IGuiStoreService {
       }
 
       if (!anyChanged) {
-        this.lastKnownState = state;
         return {
           result: {
             applied: true,
@@ -406,7 +480,8 @@ export class GuiStoreService implements IGuiStoreService {
             entries: resultEntries,
             conflicts: emptyRecord<GuiStoreEntry | null>(),
           },
-          changeEvent: undefined,
+          finalState: state,
+          directDiff: undefined,
         };
       }
 
@@ -420,7 +495,9 @@ export class GuiStoreService implements IGuiStoreService {
       } finally {
         this.selfWriting -= 1;
       }
-      this.lastKnownState = nextState;
+      if (nextState.revision > this.minRevisionFloor) {
+        this.minRevisionFloor = nextState.revision;
+      }
 
       return {
         result: {
@@ -429,16 +506,12 @@ export class GuiStoreService implements IGuiStoreService {
           entries: resultEntries,
           conflicts: emptyRecord<GuiStoreEntry | null>(),
         },
-        changeEvent: {
-          revision: nextState.revision,
-          entries: changedEntries,
-        },
+        finalState: nextState,
+        directDiff: changedEntries,
       };
     });
 
-    if (outcome.changeEvent !== undefined) {
-      this.emitChange(outcome.changeEvent);
-    }
+    this.advanceWatchedStateAndEmit(outcome.finalState, outcome.directDiff);
     return outcome.result;
   }
 
@@ -450,6 +523,7 @@ export class GuiStoreService implements IGuiStoreService {
         this.listeners.delete(listener);
         if (this.listeners.size === 0) {
           this.stopWatcher();
+          this.watchedState = undefined;
         }
       },
     };
@@ -459,6 +533,7 @@ export class GuiStoreService implements IGuiStoreService {
     this.closed = true;
     this.stopWatcher();
     this.listeners.clear();
+    this.watchedState = undefined;
     await this.queue;
   }
 
@@ -473,7 +548,7 @@ export class GuiStoreService implements IGuiStoreService {
 
   private withCrossProcessLock<T>(fn: () => Promise<T>): Promise<T> {
     return this.withQueue(async () => {
-      const release = await acquireDirLock(this.lockDir);
+      const release = await acquireDirLock(this.lockDir, this.lockOpts);
       try {
         return await fn();
       } finally {
@@ -482,23 +557,32 @@ export class GuiStoreService implements IGuiStoreService {
     });
   }
 
+  private async emptyStateWithFloor(): Promise<InternalState> {
+    try {
+      const names = await readdir(this.homeDir);
+      const diskFloor = extractCorruptFloor(names);
+      if (diskFloor > this.minRevisionFloor) {
+        this.minRevisionFloor = diskFloor;
+      }
+    } catch {
+    }
+    return { revision: this.minRevisionFloor, entries: emptyRecord() };
+  }
+
   private async readOrQuarantine(): Promise<InternalState> {
     let text: string;
     try {
       text = await readFile(this.filePath, 'utf-8');
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        return { revision: 0, entries: emptyRecord() };
+        return this.emptyStateWithFloor();
       }
       throw error;
     }
-    if (text.trim().length === 0) {
-      return { revision: 0, entries: emptyRecord() };
-    }
     try {
       const parsed = parsePersistedState(text);
-      if (parsed.revision >= this.lastKnownState.revision) {
-        this.lastKnownState = parsed;
+      if (parsed.revision > this.minRevisionFloor) {
+        this.minRevisionFloor = parsed.revision;
       }
       return parsed;
     } catch {
@@ -512,19 +596,30 @@ export class GuiStoreService implements IGuiStoreService {
       text = await readFile(this.filePath, 'utf-8');
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        return { revision: 0, entries: emptyRecord() };
+        return this.emptyStateWithFloor();
       }
       throw error;
     }
-    if (text.trim().length === 0) {
-      return { revision: 0, entries: emptyRecord() };
-    }
     try {
       const parsed = parsePersistedState(text);
-      this.lastKnownState = parsed;
+      if (parsed.revision > this.minRevisionFloor) {
+        this.minRevisionFloor = parsed.revision;
+      }
       return parsed;
     } catch (error) {
-      const suffix = `${Date.now()}-${process.pid}-${randomBytes(3).toString('hex')}`;
+      const names = await readdir(this.homeDir).catch(() => [] as string[]);
+      const existingFloor = extractCorruptFloor(names);
+      let rawRev = 0;
+      const revMatch = /"revision"\s*:\s*(\d+)/.exec(text);
+      if (revMatch !== null) {
+        const candidate = Number(revMatch[1]);
+        if (Number.isSafeInteger(candidate) && candidate > 0) {
+          rawRev = candidate;
+        }
+      }
+      const nextFloor = Math.max(Date.now(), this.minRevisionFloor + 1, existingFloor + 1, rawRev + 1);
+      this.minRevisionFloor = nextFloor;
+      const suffix = `${nextFloor}-${process.pid}-${randomBytes(3).toString('hex')}`;
       const quarantinePath = `${this.filePath}.corrupt-${suffix}`;
       await renameWithRetry(this.filePath, quarantinePath);
       await syncDirSafe(this.homeDir);
@@ -540,6 +635,25 @@ export class GuiStoreService implements IGuiStoreService {
     }
   }
 
+  private advanceWatchedStateAndEmit(
+    nextState: InternalState,
+    directDiff?: Record<string, GuiStoreEntry | null>,
+  ): void {
+    if (this.listeners.size === 0) return;
+    const prev = this.watchedState;
+    this.watchedState = nextState;
+    if (prev !== undefined && nextState.revision > prev.revision) {
+      const mergedDiff = diffSnapshots(prev, nextState);
+      if (mergedDiff !== undefined) {
+        this.emitChange({ revision: nextState.revision, entries: mergedDiff });
+      }
+      return;
+    }
+    if (directDiff !== undefined) {
+      this.emitChange({ revision: nextState.revision, entries: directDiff });
+    }
+  }
+
   private emitChange(event: GuiStoreChangeEvent): void {
     const snapshotListeners = Array.from(this.listeners);
     for (const listener of snapshotListeners) {
@@ -551,13 +665,36 @@ export class GuiStoreService implements IGuiStoreService {
     }
   }
 
+  private async readPassiveWithoutQuarantine(): Promise<InternalState | undefined> {
+    let text: string;
+    try {
+      text = await readFile(this.filePath, 'utf-8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return this.emptyStateWithFloor();
+      }
+      return undefined;
+    }
+    try {
+      const parsed = parsePersistedState(text);
+      if (parsed.revision > this.minRevisionFloor) {
+        this.minRevisionFloor = parsed.revision;
+      }
+      return parsed;
+    } catch {
+      return undefined;
+    }
+  }
+
   private async ensureWatcher(): Promise<void> {
     if (this.closed || this.watcher !== undefined || this.listeners.size === 0) return;
     try {
       await mkdir(this.homeDir, { recursive: true, mode: 0o700 });
-      const initial = await this.readOrQuarantine().catch(() => undefined);
-      if (initial !== undefined && initial.revision > this.lastKnownState.revision) {
-        this.lastKnownState = initial;
+      if (this.watchedState === undefined) {
+        const passive = await this.readPassiveWithoutQuarantine();
+        if (passive !== undefined && this.watchedState === undefined) {
+          this.watchedState = passive;
+        }
       }
     } catch {
       return;
@@ -602,23 +739,10 @@ export class GuiStoreService implements IGuiStoreService {
 
   private async reconcileExternalChange(): Promise<void> {
     if (this.closed || this.selfWriting > 0 || this.listeners.size === 0) return;
-    const previous = this.lastKnownState;
-    let current: InternalState;
-    try {
-      const text = await readFile(this.filePath, 'utf-8');
-      current = text.trim().length === 0 ? { revision: 0, entries: emptyRecord() } : parsePersistedState(text);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        current = { revision: 0, entries: emptyRecord() };
-      } else {
-        return;
-      }
-    }
-    if (current.revision <= previous.revision) return;
-    const changes = diffSnapshots(previous, current);
-    this.lastKnownState = current;
-    if (changes !== undefined) {
-      this.emitChange({ revision: current.revision, entries: changes });
-    }
+    const current = await this.readPassiveWithoutQuarantine();
+    if (current === undefined) return;
+    this.watchedState ??= { revision: 0, entries: emptyRecord() };
+    if (current.revision <= this.watchedState.revision) return;
+    this.advanceWatchedStateAndEmit(current);
   }
 }

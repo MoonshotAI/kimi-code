@@ -1208,9 +1208,9 @@ Reads the persisted snapshot and store revision. Returns `{ revision: 0, entries
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `prefix` | query | string | Optional. Only return entries whose key starts with this prefix, up to 256 characters |
-| `keys` | query | string \| string[] | Optional. Only return entries matching these keys, up to 256 items |
+| `keys` | query | string \| string[] | Optional. Only return entries matching these keys, up to 128 items |
 
-On success, `data` is `{ revision, entries }`, where `entries` maps each key to `{ value, revision }`. If `gui.json` on disk is corrupt, it is quarantined to `gui.json.corrupt-*` and error code `50003` is returned with `details.quarantine_path`.
+On success, `data` is `{ revision, entries }`, where `entries` maps each key to `{ value, revision }`. If `gui.json` on disk is corrupt or truncated to zero bytes, it is quarantined to `gui.json.corrupt-*` and error code `50003` is returned with `details.quarantine_path`; subsequent writes recover with a monotonically higher revision floor.
 
 ### `PATCH /api/v1/gui/store`
 
@@ -1218,7 +1218,7 @@ Atomically upserts or deletes a batch of entries under a cross-process lock, wit
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
-| `mutations` | body | array | Required. 1–256 unique-key mutations of `{ key, value, if_revision? }`: `key` is 1–256 characters; `value` is a string (up to 1 MiB) to upsert or `null` to delete; `if_revision` is a non-negative integer (`0` asserts the key is currently absent) |
+| `mutations` | body | array | Required. 1–128 unique-key mutations totaling at most 512 KiB of UTF-8 key/value bytes, each `{ key, value, if_revision? }`: `key` is 1–256 characters; `value` is a string (up to 65,536 characters) to upsert or `null` to delete; `if_revision` is a non-negative integer (`0` asserts the key is currently absent) |
 
 On success, `data` is `{ applied, revision, entries, conflicts }`:
 - When every `if_revision` check matches, `applied` is `true`, `entries` holds the resulting `{ value, revision }` (or `null` when deleted) for each mutated key, `conflicts` is `{}`, and `event.gui_store.updated` is broadcast when any value changed.

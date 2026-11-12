@@ -6,7 +6,10 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 
-import { GuiStoreService } from '../src/services/guiStore/guiStoreService';
+import {
+  acquireGuiStoreLockForTest,
+  GuiStoreService,
+} from '../src/services/guiStore/guiStoreService';
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 
@@ -283,7 +286,7 @@ describe('server-v2 gui store', () => {
     expect(Object.keys(snap.data?.entries ?? {})).toHaveLength(40);
   });
 
-  it('quarantines corrupt gui.json without losing backup data and allows subsequent writes', async () => {
+  it('quarantines corrupt or zero-length gui.json including startup corruption and keeps revisions monotonic after recovery', async () => {
     const api = appOf(server);
     await patchStore(api, [{ key: 'kimi-web.pinned-sessions', value: '["important-session"]' }]);
     await writeFile(join(home, 'gui.json'), '{"schema_version":1,"broken', 'utf-8');
@@ -296,13 +299,54 @@ describe('server-v2 gui store', () => {
     expect(backupBytes).toContain('"broken');
 
     const recoveredPatch = envelopeOf<PatchData>(
-      (await patchStore(api, [{ key: 'kimi-web.workspace-sort', value: 'recent' }])).json(),
+      (
+        await patchStore(api, [
+          { key: 'kimi-web.pinned-sessions', value: '["recreated"]', if_revision: 0 },
+        ])
+      ).json(),
     );
     expect(recoveredPatch.code).toBe(0);
     expect(recoveredPatch.data?.applied).toBe(true);
+    const recoveredRev = recoveredPatch.data?.entries['kimi-web.pinned-sessions']?.revision ?? 0;
+    expect(recoveredRev).toBeGreaterThan(1);
+
+    const stalePreCorrupt = envelopeOf<PatchData>(
+      (
+        await patchStore(api, [
+          { key: 'kimi-web.pinned-sessions', value: '["stale-pre-corrupt"]', if_revision: 1 },
+        ])
+      ).json(),
+    );
+    expect(stalePreCorrupt.data?.applied).toBe(false);
+
+    await writeFile(join(home, 'gui.json'), '', 'utf-8');
+    const emptyCorrupt = envelopeOf<SnapshotData>((await getStore(api)).json());
+    expect(emptyCorrupt.code).toBe(50003);
+
+    const bootHome = await mkdtemp(join(tmpdir(), 'kimi-server-v2-gui-corrupt-boot-'));
+    let bootServer: RunningServer | undefined;
+    try {
+      await writeFile(join(bootHome, 'gui.json'), '{not-valid-json', 'utf-8');
+      bootServer = await startServer({
+        hostIdentity: TEST_HOST_IDENTITY,
+        host: '127.0.0.1',
+        port: 0,
+        homeDir: bootHome,
+        logLevel: 'silent',
+      });
+      await new Promise((resolve) => {
+        setTimeout(resolve, 60);
+      });
+      const firstBootGet = envelopeOf<SnapshotData>((await getStore(appOf(bootServer))).json());
+      expect(firstBootGet.code).toBe(50003);
+      expect(typeof firstBootGet.details?.['quarantine_path']).toBe('string');
+    } finally {
+      await bootServer?.close();
+      await rm(bootHome, { recursive: true, force: true });
+    }
   });
 
-  it('broadcasts event.gui_store.updated over WebSocket for local and external updates', async () => {
+  it('broadcasts event.gui_store.updated over WebSocket including peer deltas raced by local reads or writes', async () => {
     const wsUrl = `ws://127.0.0.1:${server.port}/api/v1/ws`;
     const token = server.authTokenService.getToken();
     const received: Array<{ revision: number; entries: Record<string, unknown> }> = [];
@@ -336,30 +380,61 @@ describe('server-v2 gui store', () => {
       await viWaitFor(() => {
         expect(received).toHaveLength(1);
       });
-      expect(received[0]).toMatchObject({
-        revision: 1,
-        entries: {
-          'kimi-web.pinned-sessions': { value: '["s1"]', revision: 1 },
-        },
-      });
 
       const peer = new GuiStoreService(home);
       try {
         await peer.patch([{ key: 'kimi-web.workspace-sort', value: 'recent' }]);
+        await getStore(appOf(server));
+        await viWaitFor(() => {
+          expect(received).toHaveLength(2);
+        });
+        expect(received[1]).toMatchObject({
+          entries: {
+            'kimi-web.workspace-sort': { value: 'recent', revision: 2 },
+          },
+        });
+
+        await peer.patch([{ key: 'kimi-web.hidden-workspace-ids', value: '["ws-h"]' }]);
+        await patchStore(appOf(server), [{ key: 'kimi-web.manual-unread', value: '{"s1":true}' }]);
+        await viWaitFor(() => {
+          const allKeys = new Set(received.slice(2).flatMap((e) => Object.keys(e.entries)));
+          expect(allKeys.has('kimi-web.hidden-workspace-ids')).toBe(true);
+          expect(allKeys.has('kimi-web.manual-unread')).toBe(true);
+        });
       } finally {
         await peer.close();
       }
-      await viWaitFor(() => {
-        expect(received).toHaveLength(2);
-      });
-      expect(received[1]).toMatchObject({
-        revision: 2,
-        entries: {
-          'kimi-web.workspace-sort': { value: 'recent', revision: 2 },
-        },
-      });
     } finally {
       ws.close();
+    }
+  });
+
+  it('does not delete a contender lock when an expired lock holder releases late', async () => {
+    const lockHome = await mkdtemp(join(tmpdir(), 'kimi-gui-lock-owner-'));
+    try {
+      const lockDir = join(lockHome, '.gui.json.lock');
+      const releaseFirst = await acquireGuiStoreLockForTest(lockDir, {
+        lockStaleMs: 1_000,
+        lockHeartbeatMs: 60_000,
+        lockTimeoutMs: 2_000,
+      });
+      const expired = new Date(Date.now() - 60_000);
+      await utimes(lockDir, expired, expired);
+
+      const releaseSecond = await acquireGuiStoreLockForTest(lockDir, {
+        lockStaleMs: 1_000,
+        lockHeartbeatMs: 60_000,
+        lockTimeoutMs: 2_000,
+      });
+      try {
+        await releaseFirst();
+        expect((await stat(lockDir)).isDirectory()).toBe(true);
+      } finally {
+        await releaseSecond();
+      }
+      await expect(stat(lockDir)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await rm(lockHome, { recursive: true, force: true });
     }
   });
 
@@ -380,6 +455,24 @@ describe('server-v2 gui store', () => {
       ).json(),
     );
     expect(dupKey.code).toBe(40001);
+
+    const oversizedValue = envelopeOf(
+      (await patchStore(api, [{ key: 'huge', value: 'x'.repeat(70_000) }])).json(),
+    );
+    expect(oversizedValue.code).toBe(40001);
+
+    const oversizedBatch = envelopeOf(
+      (
+        await patchStore(
+          api,
+          Array.from({ length: 10 }, (_, idx) => ({
+            key: `batch-${idx}`,
+            value: 'y'.repeat(60_000),
+          })),
+        )
+      ).json(),
+    );
+    expect(oversizedBatch.code).toBe(40001);
 
     const protoPatch = envelopeOf<PatchData>(
       (
