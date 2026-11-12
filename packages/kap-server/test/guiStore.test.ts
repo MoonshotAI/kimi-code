@@ -458,6 +458,22 @@ describe('server-v2 gui store', () => {
         const snap = await contender.getSnapshot();
         expect(snap.entries['contender-key']?.value).toBe('contender-wins');
         expect(snap.entries['stalled-key']).toBeUndefined();
+
+        const corruptBeforeFence = new GuiStoreService(lockHome, undefined, {
+          beforeCommitHook: async () => {
+            await writeFile(join(lockHome, 'gui.json'), '{truncated-external-edit', 'utf-8');
+          },
+        });
+        try {
+          await expect(
+            corruptBeforeFence.patch([{ key: 'after-corrupt', value: 'blocked' }]),
+          ).rejects.toBeInstanceOf(GuiStorePersistenceError);
+          expect(await readFile(join(lockHome, 'gui.json'), 'utf-8')).toBe(
+            '{truncated-external-edit',
+          );
+        } finally {
+          await corruptBeforeFence.close();
+        }
       } finally {
         await stalledWriter.close();
         await contender.close();

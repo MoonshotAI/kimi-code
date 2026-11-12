@@ -636,7 +636,7 @@ export class GuiStoreService implements IGuiStoreService {
         }
         return;
       }
-      if (error instanceof GuiStorePersistenceError) throw error;
+      throw toPersistenceError(error, `Failed to validate GUI store before commit: ${this.filePath}`);
     }
   }
 
@@ -839,26 +839,38 @@ export class GuiStoreService implements IGuiStoreService {
     }
   }
 
-  private async readPassiveWithoutQuarantine(): Promise<InternalState | undefined> {
+  private async readPassiveWithoutQuarantine(): Promise<
+    { kind: 'ok'; state: InternalState } | { kind: 'skip' } | { kind: 'io_error' }
+  > {
     let text: string;
     try {
       text = await readFile(this.filePath, 'utf-8');
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        if (await this.hasLegacyToml()) return undefined;
-        return this.emptyStateWithFloor();
+        if (await this.hasLegacyToml()) return { kind: 'skip' };
+        return { kind: 'ok', state: await this.emptyStateWithFloor() };
       }
-      return undefined;
+      return { kind: 'io_error' };
     }
     try {
       const parsed = parsePersistedState(text);
       if (parsed.revision > this.minRevisionFloor) {
         this.minRevisionFloor = parsed.revision;
       }
-      return parsed;
+      return { kind: 'ok', state: parsed };
     } catch {
-      return undefined;
+      return { kind: 'skip' };
     }
+  }
+
+  private scheduleWatchDebounce(): void {
+    if (this.closed || this.listeners.size === 0) return;
+    if (this.watchTimer !== undefined) clearTimeout(this.watchTimer);
+    this.watchTimer = setTimeout(() => {
+      this.watchTimer = undefined;
+      void this.reconcileExternalChange();
+    }, WATCH_DEBOUNCE_MS);
+    this.watchTimer.unref?.();
   }
 
   private scheduleWatcherRestart(): void {
@@ -878,8 +890,12 @@ export class GuiStoreService implements IGuiStoreService {
       await mkdir(this.homeDir, { recursive: true, mode: 0o700 });
       if (this.watchedState === undefined) {
         const passive = await this.readPassiveWithoutQuarantine();
-        if (passive !== undefined && this.watchedState === undefined) {
-          this.watchedState = passive;
+        if (passive.kind === 'io_error') {
+          this.scheduleWatcherRestart();
+          return;
+        }
+        if (passive.kind === 'ok' && this.watchedState === undefined) {
+          this.watchedState = passive.state;
         }
       }
     } catch {
@@ -889,16 +905,11 @@ export class GuiStoreService implements IGuiStoreService {
     if (this.closed || this.watcher !== undefined || this.listeners.size === 0) return;
     try {
       const watcher = nodeFs.watch(this.homeDir, { persistent: false }, (_eventType, filename) => {
-        if (this.closed || this.selfWriting > 0) return;
+        if (this.closed) return;
         if (filename !== null && filename !== STORE_FILENAME && !filename.startsWith(STORE_FILENAME)) {
           return;
         }
-        if (this.watchTimer !== undefined) clearTimeout(this.watchTimer);
-        this.watchTimer = setTimeout(() => {
-          this.watchTimer = undefined;
-          void this.reconcileExternalChange();
-        }, WATCH_DEBOUNCE_MS);
-        this.watchTimer.unref?.();
+        this.scheduleWatchDebounce();
       });
       watcher.on('error', (error) => {
         this.logger.warn({ homeDir: this.homeDir, err: error }, 'gui store watcher error; restarting');
@@ -932,9 +943,18 @@ export class GuiStoreService implements IGuiStoreService {
   }
 
   private async reconcileExternalChange(): Promise<void> {
-    if (this.closed || this.selfWriting > 0 || this.listeners.size === 0) return;
-    const current = await this.readPassiveWithoutQuarantine();
-    if (current === undefined) return;
+    if (this.closed || this.listeners.size === 0) return;
+    if (this.selfWriting > 0) {
+      this.scheduleWatchDebounce();
+      return;
+    }
+    const passive = await this.readPassiveWithoutQuarantine();
+    if (passive.kind === 'io_error') {
+      this.scheduleWatcherRestart();
+      return;
+    }
+    if (passive.kind !== 'ok') return;
+    const current = passive.state;
     this.watchedState ??= { revision: 0, entries: emptyRecord() };
     if (current.revision <= this.watchedState.revision) return;
     this.advanceWatchedStateAndEmit(current);
