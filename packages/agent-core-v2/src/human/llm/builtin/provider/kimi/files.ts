@@ -17,7 +17,22 @@ function createKimiFiles(filesBaseUrl: (baseUrl: string | undefined) => string |
       const body = new File([new Uint8Array(file.data)], uploadFilename(file), {
         type: file.mimeType,
       });
-      const uploaded = await client.files.create({ file: body, purpose: file.kind as never }, { signal });
+      const uploaded = (await client.files.create({ file: body, purpose: file.kind as never }, { signal })) as {
+        id: string;
+        extract_status?: string;
+        extract_error?: unknown;
+      };
+      if (uploaded.extract_status === 'error') {
+        const reason =
+          typeof uploaded.extract_error === 'string'
+            ? uploaded.extract_error
+            : uploaded.extract_error === undefined
+              ? undefined
+              : JSON.stringify(uploaded.extract_error);
+        throw new Error(
+          `Kimi ${file.kind} upload failed with extract_status "error" for file "${uploaded.id}"${reason === undefined ? '' : `: ${reason}`}`,
+        );
+      }
       return { url: `ms://${uploaded.id}`, id: uploaded.id };
     },
   };

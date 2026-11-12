@@ -39,6 +39,7 @@ import {
 } from '../../harness/scripted-generate';
 import { uploadImage, uploadVideo } from '#/llm-adapter/model/media';
 import type { LlmFiles } from '#human/llm/request';
+import { kimiFiles } from '#human/llm/builtin/provider/kimi/files';
 
 class FakeLlmRequester implements LlmRequester {
   readonly calls: Array<{
@@ -466,7 +467,7 @@ describe('generateModel request execution', () => {
     expect(seen).toEqual(['sk-1']);
   });
 
-  it('uploadImage presence is the capability declaration', async () => {
+  it('uploadImage uses the capability declaration and rejects failed Kimi extraction', async () => {
     const model = modelWith(createStaticCredentialProvider('sk-1'));
     const initial = new ProtocolAdapterRegistry().request(model);
     await expect(
@@ -475,22 +476,47 @@ describe('generateModel request execution', () => {
 
     const seen: Array<string | undefined> = [];
     const files: LlmFiles = {
-      kinds: new Set(['image']),
-      upload: (_file, { endpoint }) => {
-        seen.push(endpoint.apiKey);
-        return Promise.resolve({ url: 'ms://img-1', id: 'img-1' });
+      kinds: kimiFiles.kinds,
+      upload: (file, ctx) => {
+        seen.push(ctx.endpoint.apiKey);
+        return kimiFiles.upload(file, ctx);
       },
     };
+    const responses = [
+      Response.json({
+        id: 'img-1',
+        extract_status: 'error',
+        extract_error: 'Formula image could not be decoded',
+      }),
+      Response.json({ id: 'img-1', extract_status: 'ready' }),
+    ];
+    const mockFetch: typeof fetch = async (input) => {
+      if (new Request(input).url === 'data:,') return new Response();
+      return responses.shift()!;
+    };
+    const input = { data: new Uint8Array([1]), mimeType: 'image/png' };
+
+    await expect(
+      kimiFiles.upload(
+        { ...input, kind: 'image' },
+        {
+          endpoint: { baseUrl: 'https://example.test/v1', fetch: mockFetch },
+          signal: new AbortController().signal,
+        },
+      ),
+    ).rejects.toThrow(/extract_status "error".*Formula image could not be decoded/);
     const part = await uploadImage(
       model,
-      initial.with({ endpoint: { files } }),
-      { data: new Uint8Array([1]), mimeType: 'image/png' },
+      initial.with({ endpoint: { files, fetch: mockFetch } }),
+      input,
     );
+
     expect(part).toEqual({
       type: 'image_url',
       imageUrl: { url: 'ms://img-1', id: 'img-1' },
     });
     expect(seen).toEqual(['sk-1']);
+    expect(responses).toHaveLength(0);
   });
 
   it('reports the event-loop-busy overlap of the decode window as clientBlockedMs', async () => {
