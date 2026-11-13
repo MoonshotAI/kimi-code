@@ -7,7 +7,7 @@ onMounted(() => redirectLegacyServerApiAnchor('zh'))
 
 # 服务 API【测试版】
 
-`kimi web` 启动的本地服务提供两组接口：REST API（`/api/v1`，另有 `/api/v2/sessions` 和 `/api/v2/mcp`）和 WebSocket 事件流（`/api/v1/ws`）。脚本和第三方客户端可以用它们创建会话、提交提示词、实时接收对话内容，以及管理配置、模型和工作区。启动服务的方法和命令行选项见 [kimi 命令](./kimi-command.md#kimi-web)。
+`kimi web` 启动的本地服务提供两组接口：REST API（`/api/v1`）和 WebSocket 事件流（`/api/v1/ws`）。脚本和第三方客户端可以用它们创建会话、提交提示词、实时接收对话内容，以及管理配置、模型和工作区。启动服务的方法和命令行选项见 [kimi 命令](./kimi-command.md#kimi-web)。
 
 ::: warning 注意
 这些接口是实验性特性，不保证稳定：端点、字段和事件类型可能在任何版本中变化。集成时以你所用版本服务的 `/openapi.json` 和 `/asyncapi.json` 为准。
@@ -101,8 +101,8 @@ HTTP 状态码几乎总是 200，业务结果以 `code` 为准。例外情况如
 
 列表接口有两种分页方式：
 
-- **游标分页**：`before_id` 和 `after_id`（二选一）加 `page_size`（1–100），响应为 `{ items, has_more }`。会话列表、消息列表等接口用这种方式。Agent 的轮次例外，按轮次的 `ordinal` 分页（`before_ordinal` 加 `page_size`）。
-- **`page_token` 分页**：令牌不透明，绑定了查询条件。`POST /api/v1/search` 和 `GET /api/v2/sessions` 用这种方式。翻页过程中改变任何查询条件，令牌就会失效：`/api/v2/sessions` 返回 `40922`，搜索返回 `40001`。`GET /api/v2/sessions` 另外提供无状态的 `page` 页码模式。
+- **游标分页**：`before_id` 和 `after_id`（二选一）加 `page_size`（1–100），响应带 `items` 与 `has_more`。消息列表、子会话列表和扁平视图下的会话列表支持这种方式。Agent 的轮次例外，按轮次的 `ordinal` 分页（`before_ordinal` 加 `page_size`）。
+- **`page_token` 分页**：令牌不透明，绑定了查询条件。`GET /api/v1/sessions` 和 `POST /api/v1/search` 用这种方式。翻页过程中改变任何查询条件，令牌就会失效：`/api/v1/sessions` 返回 `40922`，搜索返回 `40001`。`GET /api/v1/sessions` 另外提供无状态的 `page` 页码模式。
 
 ## 动作路径
 

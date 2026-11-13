@@ -47,7 +47,6 @@ import { transformOpenApiDocument } from './openapi/transforms';
 import { registerRequestLogging } from './requestLogging';
 import { resolveRequestId } from './request-id';
 import { registerApiV1Routes } from './routes/registerApiV1Routes';
-import { registerApiV2Routes } from './routes/registerApiV2Routes';
 import { registerWebAssetRoutes } from './routes/webAssets';
 import {
   createServerLogger,
@@ -463,13 +462,13 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
           { name: 'models', description: 'Configured model aliases' },
           { name: 'providers', description: 'Configured providers' },
           { name: 'sessions', description: 'Session lifecycle' },
-          { name: 'v2-sessions', description: 'Domain-grouped session list query (API v2)' },
           { name: 'workspaces', description: 'Workspace registry + folder picker' },
           { name: 'messages', description: 'Message history' },
           { name: 'search', description: 'Global message search' },
           { name: 'prompts', description: 'Prompt submission & abort' },
           { name: 'interactions', description: 'Approval and question responses' },
-          { name: 'tools', description: 'Tool & MCP server management' },
+          { name: 'tools', description: 'Tool listing' },
+          { name: 'mcp', description: 'MCP server registry & OAuth management' },
           { name: 'tasks', description: 'Task management' },
           { name: 'fs', description: 'Filesystem operations' },
           { name: 'files', description: 'File upload & download' },
@@ -513,8 +512,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     dangerousBypassAuth: opts.disableAuth === true,
     webTitle: opts.webTitle,
   });
-
-  await registerApiV2Routes(app, core);
 
   const wssV1 = registerWsV1(core, {
     registry: connectionRegistry,
