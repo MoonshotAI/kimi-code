@@ -1,4 +1,5 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 
@@ -293,40 +294,70 @@ describe('runStatusLineCommand', () => {
     async () => {
       const dir = join(tmpdir(), `sl-kill-tree-${process.pid}-${Math.random().toString(36).slice(2)}`);
       mkdirSync(dir, { recursive: true });
-      let childPid = 0;
+      const activeSockets: Socket[] = [];
+      let resolveConnected: (() => void) | null = null;
+      let resolveClosed: (() => void) | null = null;
+      const connected = new Promise<void>((resolve) => {
+        resolveConnected = resolve;
+      });
+      const closed = new Promise<void>((resolve) => {
+        resolveClosed = resolve;
+      });
+      const server = createServer((socket) => {
+        activeSockets.push(socket);
+        resolveConnected?.();
+        socket.on('close', () => {
+          resolveClosed?.();
+        });
+      });
+      await new Promise<void>((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(0, '127.0.0.1', () => {
+          resolve();
+        });
+      });
       try {
-        const pidFile = join(dir, 'child.pid');
+        const address = server.address();
+        if (address === null || typeof address === 'string') {
+          throw new Error('Expected TCP server address');
+        }
+        const holder = join(dir, 'holder.mjs');
         const sleeper = join(dir, 'sleeper.sh');
         writeFileSync(
-          sleeper,
-          `#!/bin/sh\nsleep 30 &\nchild=$!\nprintf "%s\\n" "$child" > "${pidFile}"\nwait "$child"\n`,
+          holder,
+          `import { connect } from 'node:net';\nconst s = connect(${String(address.port)}, '127.0.0.1');\ns.on('error', () => {});\nsetInterval(() => {}, 10000);\n`,
         );
+        writeFileSync(sleeper, `#!/bin/sh\n"${process.execPath}" "${holder}" &\nwait\n`);
         chmodSync(sleeper, 0o755);
 
-        const result = await runStatusLineCommand(sleeper, payload, 250);
+        const runPromise = runStatusLineCommand(sleeper, payload, 600);
+        const connectedBeforeTimeout = await Promise.race([
+          connected.then(() => true),
+          runPromise.then(() => false),
+        ]);
+        expect(connectedBeforeTimeout).toBe(true);
+
+        const result = await runPromise;
         expect(result).toBeNull();
 
-        childPid = Number(readFileSync(pidFile, 'utf-8').trim());
-        expect(Number.isInteger(childPid)).toBe(true);
-        expect(childPid).toBeGreaterThan(0);
-
-        let alive = true;
-        for (let attempt = 0; attempt < 25; attempt++) {
-          try {
-            process.kill(childPid, 0);
-            await new Promise((resolve) => setTimeout(resolve, 20));
-          } catch {
-            alive = false;
-            break;
-          }
-        }
-        expect(alive).toBe(false);
+        const closedAfterKill = await Promise.race([
+          closed.then(() => true),
+          new Promise<boolean>((resolve) => {
+            setTimeout(() => {
+              resolve(false);
+            }, 2_000);
+          }),
+        ]);
+        expect(closedAfterKill).toBe(true);
       } finally {
-        if (childPid > 0) {
-          try {
-            process.kill(childPid, 'SIGKILL');
-          } catch {}
+        for (const socket of activeSockets) {
+          socket.destroy();
         }
+        await new Promise<void>((resolve) => {
+          server.close(() => {
+            resolve();
+          });
+        });
         rmSync(dir, { recursive: true, force: true });
       }
     },

@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Avoid searching `PATH` for `sh` on every custom TUI status line refresh on POSIX systems.
+Run `[status_line] command` directly with `/bin/sh` on POSIX instead of resolving `sh` from `PATH`; specify the desired shell path in `[status_line] command` to use a custom shell.
