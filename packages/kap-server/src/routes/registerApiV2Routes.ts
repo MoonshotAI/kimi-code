@@ -1,5 +1,7 @@
 import type { Scope } from '@moonshot-ai/agent-core-v2';
 
+import type { HostSources } from '../services/hosts/hostFanout';
+
 import { registerV2McpRoutes } from './v2/mcp';
 import { registerV2SessionsRoutes } from './v2/sessions';
 
@@ -10,10 +12,10 @@ interface ApiV2AppHost {
   ): unknown;
 }
 
-export async function registerApiV2Routes(app: ApiV2AppHost, core: Scope): Promise<void> {
+export async function registerApiV2Routes(app: ApiV2AppHost, core: Scope, hosts?: HostSources): Promise<void> {
   await app.register(
     async (apiV2) => {
-      registerV2SessionsRoutes(apiV2 as Parameters<typeof registerV2SessionsRoutes>[0], core);
+      registerV2SessionsRoutes(apiV2 as Parameters<typeof registerV2SessionsRoutes>[0], core, hosts);
       registerV2McpRoutes(apiV2 as Parameters<typeof registerV2McpRoutes>[0], core);
     },
     { prefix: '/api/v2' },

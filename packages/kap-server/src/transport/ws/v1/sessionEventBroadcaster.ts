@@ -28,6 +28,7 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import type {
   ConfigWarningItem,
+  HostChangedEvent,
   ModelCatalogRefreshChange,
   ModelCatalogRefreshFailure,
   ModelCatalogRetiredDefault,
@@ -184,6 +185,15 @@ export class SessionEventBroadcaster {
     this.feedSubscription = opts.conversations.onDidCreateFeed((created) => {
       this.onFeedCreated(created);
     });
+  }
+
+  publishHostChanged(hosts: HostChangedEvent['hosts']): void {
+    this.enqueueGlobal('event.host.changed', () => ({
+      type: 'event.host.changed',
+      hosts,
+      agentId: 'main',
+      sessionId: GLOBAL_SESSION_ID,
+    }));
   }
 
   addGlobalTarget(target: BroadcastTarget): void {

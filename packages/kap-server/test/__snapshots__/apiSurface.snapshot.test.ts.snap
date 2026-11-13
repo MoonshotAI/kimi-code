@@ -26,6 +26,18 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "DELETE",
+      "/api/v1/hosts/{id}",
+    ],
+    [
+      "DELETE",
+      "/api/v1/hosts/{id}/proxy",
+    ],
+    [
+      "DELETE",
+      "/api/v1/hosts/{id}/proxy/{*}",
+    ],
+    [
+      "DELETE",
       "/api/v1/oauth/login",
     ],
     [
@@ -131,6 +143,22 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "GET",
       "/api/v1/healthz",
+    ],
+    [
+      "GET",
+      "/api/v1/hosts",
+    ],
+    [
+      "GET",
+      "/api/v1/hosts:ssh-hosts",
+    ],
+    [
+      "GET",
+      "/api/v1/hosts/{id}/proxy",
+    ],
+    [
+      "GET",
+      "/api/v1/hosts/{id}/proxy/{*}",
     ],
     [
       "GET",
@@ -301,6 +329,22 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
       "/openapi.json",
     ],
     [
+      "HEAD",
+      "/api/v1/hosts/{id}/proxy",
+    ],
+    [
+      "HEAD",
+      "/api/v1/hosts/{id}/proxy/{*}",
+    ],
+    [
+      "PATCH",
+      "/api/v1/hosts/{id}/proxy",
+    ],
+    [
+      "PATCH",
+      "/api/v1/hosts/{id}/proxy/{*}",
+    ],
+    [
       "PATCH",
       "/api/v1/remote-control/devices/{id}",
     ],
@@ -359,6 +403,26 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v1/gui/store/setItem",
+    ],
+    [
+      "POST",
+      "/api/v1/hosts:connect",
+    ],
+    [
+      "POST",
+      "/api/v1/hosts:copy-providers",
+    ],
+    [
+      "POST",
+      "/api/v1/hosts:test",
+    ],
+    [
+      "POST",
+      "/api/v1/hosts/{id}/proxy",
+    ],
+    [
+      "POST",
+      "/api/v1/hosts/{id}/proxy/{*}",
     ],
     [
       "POST",
@@ -547,6 +611,18 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v2/sessions:restore",
+    ],
+    [
+      "PUT",
+      "/api/v1/hosts/{id}",
+    ],
+    [
+      "PUT",
+      "/api/v1/hosts/{id}/proxy",
+    ],
+    [
+      "PUT",
+      "/api/v1/hosts/{id}/proxy/{*}",
     ],
     [
       "PUT",

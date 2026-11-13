@@ -1,3 +1,4 @@
+import type { HostSnapshot } from '../../../protocol/events-zod';
 import type { ConfigResponse } from '../../../protocol/rest-config';
 import type { Session, SessionPendingInteraction } from '../../../protocol/session';
 import type { Workspace } from '../../../protocol/workspace';
@@ -110,6 +111,11 @@ export interface CapabilityChangedEvent {
   };
 }
 
+export interface HostChangedEvent {
+  readonly type: 'event.host.changed';
+  readonly hosts: readonly HostSnapshot[];
+}
+
 export type PushEvent =
   | SessionMetaUpdatedEvent
   | SessionCreatedEvent
@@ -124,6 +130,7 @@ export type PushEvent =
   | ConfigWarningEvent
   | ModelCatalogChangedEvent
   | PluginChangedEvent
-  | CapabilityChangedEvent;
+  | CapabilityChangedEvent
+  | HostChangedEvent;
 
 export type Event = PushEvent & { agentId: string; sessionId: string; readonly time?: number };

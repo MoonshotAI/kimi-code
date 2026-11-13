@@ -123,9 +123,10 @@ export function buildWebUrl(origin: string, token: string): string {
 /** Build the `web` command, mounting the runner action on `cmd` itself. */
 export function buildWebCommand(
   cmd: Command,
-  opts: { forceRemoteControl?: boolean } = {},
+  opts: { forceRemoteControl?: boolean; defaultOpen?: boolean } = {},
 ): Command {
   const forceRemoteControl = opts.forceRemoteControl === true;
+  const defaultOpen = opts.defaultOpen ?? true;
   const withServerOptions = cmd
     .option(
       '--port <port>',
@@ -168,6 +169,8 @@ export function buildWebCommand(
       '--web-title <title>',
       'Set a custom browser tab title for this web UI instance (default: "<workspace dir> | Kimi Code").',
     );
+  withServerOptions.addOption(new Option('--socket <path>').hideHelp());
+  withServerOptions.addOption(new Option('--managed-by <owner>').hideHelp());
   if (!forceRemoteControl) {
     withServerOptions.addOption(
       new Option(
@@ -176,9 +179,13 @@ export function buildWebCommand(
       ).default(false),
     );
   }
-  return withServerOptions
-    .option('--no-open', 'Do not open the web UI in the default browser.', true)
-    .action(async (opts: WebCliOptions) => {
+  if (defaultOpen) {
+    withServerOptions.option('--no-open', 'Do not open the web UI in the default browser.', true);
+  } else {
+    withServerOptions.option('--open', 'Open the web UI in the default browser.', false);
+    withServerOptions.addOption(new Option('--no-open').hideHelp());
+  }
+  return withServerOptions.action(async (opts: WebCliOptions) => {
       try {
         await handleWebCommand(
           forceRemoteControl ? { ...opts, remoteControl: true } : opts,
@@ -205,6 +212,7 @@ export async function handleWebCommand(
   let remoteControl: RemoteControlHandle | undefined;
   await run(parsed, {
     onReady: async (origin, controls) => {
+      if (parsed.socketPath !== undefined) return;
       // Resolve the persistent token only once the server is up: a fresh
       // server writes `server.token` on first boot, so reading it beforehand
       // would miss first-time starts and the browser would hit the auth gate.
@@ -395,6 +403,8 @@ async function runServerInProcess(
     allowedHosts: options.allowedHosts,
     disableAuth: options.dangerousBypassAuth,
     webTitle: options.webTitle,
+    socketPath: options.socketPath,
+    managedBy: options.managedBy,
     // Attach the engine's cloud telemetry appender (still gated by the config
     // `telemetry` toggle). Complements the v1 client registered above, which
     // only covers host-level events.
@@ -403,7 +413,8 @@ async function runServerInProcess(
   });
   logger.info('serving the REST/WS API and the bundled web UI');
   running = {
-    address: `http://${v2.host}:${v2.port}`,
+    address:
+      options.socketPath === undefined ? `http://${v2.host}:${v2.port}` : `unix:${options.socketPath}`,
     logger,
     close: () => v2.close(),
   };

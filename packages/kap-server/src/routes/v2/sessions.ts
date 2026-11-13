@@ -23,6 +23,8 @@ import { ErrorCode } from '../../protocol/error-codes';
 import { loadWorkspaceVisibility } from '../../services/workspaceVisibility';
 import { withTimeout } from '../../transport/errors';
 import { resolveSessionFacts, type SessionFacts } from '../sessions';
+import type { HostSources } from '../../services/hosts/hostFanout';
+import { listSessionsAcrossHosts } from './sessionsAcrossHosts';
 
 interface V2SessionsRouteHost {
   get(
@@ -112,6 +114,7 @@ const v2SessionsListQuerySchema = z
     page_size: z.coerce.number().int().min(1).max(IDS_PROJECTION_PAGE_SIZE_MAX).optional(),
     page: z.coerce.number().int().min(1).optional(),
     page_token: z.string().min(1).optional(),
+    hosts: z.literal('include').optional(),
   })
   .superRefine((value, ctx) => {
     if (value.page !== undefined && value.page_token !== undefined) {
@@ -236,11 +239,13 @@ const v2SessionSchema = z.object({
   }),
   activity: z.object({ status: v2ActivityStatusSchema, model: z.string().nullable() }),
   git: v2GitDomainSchema.optional(),
+  host_id: z.string().optional(),
 });
 
 const v2SessionIdProjectionSchema = z.object({
   id: z.string(),
   archived: z.boolean(),
+  host_id: z.string().optional(),
 });
 
 const v2SessionPageSchema = z.object({
@@ -248,12 +253,14 @@ const v2SessionPageSchema = z.object({
   total: z.number().int(),
   has_more: z.boolean(),
   next_page_token: z.string().nullable(),
+  unavailable_hosts: z.array(z.string()).optional(),
 });
 
 const v2SessionGroupSchema = z.object({
   workspace: z.object({ id: z.string(), cwd: z.string().nullable() }),
   sessions: z.array(z.union([v2SessionSchema, v2SessionIdProjectionSchema])),
   total: z.number().int(),
+  host_id: z.string().optional(),
 });
 
 const v2SessionGroupPageSchema = z.object({
@@ -261,6 +268,7 @@ const v2SessionGroupPageSchema = z.object({
   total: z.number().int(),
   has_more: z.boolean(),
   next_page_token: z.string().nullable(),
+  unavailable_hosts: z.array(z.string()).optional(),
 });
 
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
@@ -297,6 +305,12 @@ type V2BatchItemResult = z.infer<typeof v2SessionsBatchResultSchema>['results'][
 type V2GitDomain = z.infer<typeof v2GitDomainSchema>;
 type V2SessionWire = z.infer<typeof v2SessionSchema>;
 type V2SessionIdProjection = z.infer<typeof v2SessionIdProjectionSchema>;
+export type V2SessionsListQuery = z.output<typeof v2SessionsListQuerySchema>;
+export type V2SessionsPageData = z.infer<typeof v2SessionPageSchema>;
+export type V2SessionGroupsPageData = z.infer<typeof v2SessionGroupPageSchema>;
+export type V2SessionsListOutcome =
+  | { readonly ok: true; readonly data: V2SessionsPageData | V2SessionGroupsPageData }
+  | { readonly ok: false; readonly code: number; readonly message: string };
 
 class PageTokenMismatchError extends Error {}
 
@@ -518,7 +532,255 @@ async function runBatchArchive(
     okEnvelope({ results, succeeded, failed: results.length - succeeded }, requestId),
   );
 }
-export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope): void {
+
+async function listSessionsHere(
+  core: Scope,
+  gitResolver: GitDomainResolver,
+  raw: V2SessionsListQuery,
+): Promise<V2SessionsListOutcome> {
+  const query: NormalizedQuery = {
+    workspaceFilter: asArray(raw['workspace.id']),
+    statuses: asArray(raw['activity.status']),
+    updatedAfter: raw['meta.updated_after'],
+    updatedBefore: raw['meta.updated_before'],
+    archived: raw['meta.archived'] ?? 'false',
+    hasPrompt:
+      raw['meta.has_prompt'] === undefined ? undefined : raw['meta.has_prompt'] === 'true',
+    view: raw.view ?? 'flat',
+    groupPageSize: raw['group.page_size'] ?? DEFAULT_GROUP_PAGE_SIZE,
+    sort: raw.sort ?? 'meta.updated_at_desc',
+    includeGit: includeDomains(raw.include).includes('git'),
+    pageSize: raw.page_size ?? DEFAULT_PAGE_SIZE,
+    projection: parseFields(raw.fields).length > 0,
+  };
+
+  const fingerprint = queryFingerprint(query);
+  let cursor: readonly [number, string] | undefined;
+  if (raw.page_token !== undefined) {
+    try {
+      cursor = decodePageToken(raw.page_token, fingerprint);
+    } catch (error) {
+      if (error instanceof PageTokenMismatchError) {
+        return { ok: false, code: ErrorCode.PAGE_TOKEN_MISMATCH, message: error.message };
+      }
+      throw error;
+    }
+  }
+
+  let workspaceIds: string[] | undefined;
+  if (query.workspaceFilter !== undefined) {
+    const aliases = core.accessor.get(IWorkspaceAliases);
+    const sets = await Promise.all(
+      query.workspaceFilter.map((id) => aliases.resolveAliasIds(id)),
+    );
+    workspaceIds = [...new Set(sets.flat())];
+  }
+
+  const { roots, visibleWorkspaceIds } = await loadWorkspaceVisibility(core);
+  const page = await core.accessor.get(ISessionIndex).listRecent({
+    workspaceIds,
+    includeArchived: query.archived !== 'false',
+  });
+
+  const factsById = new Map<string, SessionFacts>();
+  const factsOf = (id: string): SessionFacts => {
+    let facts = factsById.get(id);
+    if (facts === undefined) {
+      facts = resolveSessionFacts(core, id);
+      factsById.set(id, facts);
+    }
+    return facts;
+  };
+
+  const filtered = page.items.filter((summary) => {
+    if (!visibleWorkspaceIds.has(summary.workspaceId)) return false;
+    if (query.archived === 'true' && !summary.archived) return false;
+    if (
+      query.hasPrompt !== undefined &&
+      ((summary.lastPrompt ?? '').length > 0) !== query.hasPrompt
+    ) {
+      return false;
+    }
+    if (query.updatedAfter !== undefined && summary.updatedAt < query.updatedAfter) {
+      return false;
+    }
+    if (query.updatedBefore !== undefined && summary.updatedAt > query.updatedBefore) {
+      return false;
+    }
+    if (
+      query.statuses !== undefined &&
+      !query.statuses.includes(mapActivityStatus(factsOf(summary.id), summary.lastTurnReason))
+    ) {
+      return false;
+    }
+    return true;
+  });
+
+  const comparator = makeComparator(query.sort);
+  const sorted = filtered.toSorted(comparator);
+  const keyOf = sortKeyOf(query.sort);
+  const ascending = query.sort === 'meta.updated_at_asc';
+  const cwdOf = (summary: SessionSummary): string | null =>
+    summary.cwd ?? roots.get(summary.workspaceId) ?? null;
+
+  const buildItems = async (
+    summaries: readonly SessionSummary[],
+    cwdOf: (summary: SessionSummary) => string | null,
+  ): Promise<V2SessionWire[]> => {
+    let gitBySession: ReadonlyMap<string, V2GitDomain> | undefined;
+    if (query.includeGit) {
+      gitBySession = await gitResolver.resolveAll(summaries, cwdOf);
+    }
+    return summaries.map((summary) => {
+      const cwd = cwdOf(summary);
+      const facts = factsOf(summary.id);
+      return {
+        id: summary.id,
+        workspace: { id: summary.workspaceId, cwd },
+        meta: {
+          title: summary.title ?? null,
+          last_prompt: summary.lastPrompt ?? null,
+          created_at: summary.createdAt,
+          updated_at: summary.updatedAt,
+          archived: summary.archived,
+          archived_at: summary.archivedAt ?? null,
+        },
+        activity: {
+          status: mapActivityStatus(facts, summary.lastTurnReason),
+          model: facts.model ?? null,
+        },
+        git: gitBySession === undefined ? undefined : (gitBySession.get(summary.id) ?? GIT_DOMAIN_UNAVAILABLE),
+      };
+    });
+  };
+
+  const projectIds = (summaries: readonly SessionSummary[]): V2SessionIdProjection[] =>
+    summaries.map((summary) => ({ id: summary.id, archived: summary.archived }));
+
+  if (query.view === 'by_workspace') {
+    interface SessionGroup {
+      readonly workspaceId: string;
+      readonly rep: SessionSummary;
+      readonly items: SessionSummary[];
+    }
+    const aliasService = core.accessor.get(IWorkspaceAliases);
+    const canonicalById = new Map<string, string>();
+    const canonicalIdOf = async (workspaceId: string): Promise<string> => {
+      let canonical = canonicalById.get(workspaceId);
+      if (canonical === undefined) {
+        const set = await aliasService.resolveAliasIds(workspaceId);
+        canonical = set.length === 0 ? workspaceId : set.toSorted()[0] as string;
+        for (const id of set) canonicalById.set(id, canonical);
+      }
+      return canonical;
+    };
+    const byWorkspace = new Map<string, SessionGroup>();
+    for (const summary of sorted) {
+      const groupId = await canonicalIdOf(summary.workspaceId);
+      const group = byWorkspace.get(groupId);
+      if (group === undefined) {
+        byWorkspace.set(groupId, {
+          workspaceId: groupId,
+          rep: summary,
+          items: [summary],
+        });
+      } else {
+        group.items.push(summary);
+      }
+    }
+    const groupList = [...byWorkspace.values()];
+    const groupComparator = (a: SessionGroup, b: SessionGroup): number => {
+      const ka = keyOf(a.rep);
+      const kb = keyOf(b.rep);
+      if (ka !== kb) return ascending ? ka - kb : kb - ka;
+      return a.workspaceId < b.workspaceId ? -1 : a.workspaceId > b.workspaceId ? 1 : 0;
+    };
+    groupList.sort(groupComparator);
+
+    let start = 0;
+    if (raw.page !== undefined) {
+      start = (raw.page - 1) * query.pageSize;
+    } else if (cursor !== undefined) {
+      const [cursorKey, cursorId] = cursor;
+      const cursorGroup: SessionGroup = {
+        workspaceId: cursorId,
+        rep: { id: cursorId, updatedAt: cursorKey, createdAt: cursorKey } as SessionSummary,
+        items: [],
+      };
+      start = groupList.findIndex((group) => groupComparator(group, cursorGroup) > 0);
+      if (start === -1) start = groupList.length;
+    }
+
+    const windowGroups = groupList.slice(start, start + query.pageSize);
+    const hasMore = start + query.pageSize < groupList.length;
+    const lastGroup = windowGroups.at(-1);
+    const nextPageToken =
+      raw.page === undefined && hasMore && lastGroup !== undefined
+        ? encodePageToken(fingerprint, keyOf(lastGroup.rep), lastGroup.workspaceId)
+        : null;
+
+    const groups = await Promise.all(
+      windowGroups.map(async (group) => {
+        const served = group.items.slice(0, query.groupPageSize);
+        return {
+          workspace: { id: group.workspaceId, cwd: cwdOf(group.rep) },
+          sessions: query.projection
+            ? projectIds(served)
+            : await buildItems(served, cwdOf),
+          total: group.items.length,
+        };
+      }),
+    );
+
+    return {
+      ok: true,
+      data: { groups, total: groupList.length, has_more: hasMore, next_page_token: nextPageToken },
+    };
+  }
+
+  let start = 0;
+  if (raw.page !== undefined) {
+    start = (raw.page - 1) * query.pageSize;
+  } else if (cursor !== undefined) {
+    const [cursorKey, cursorId] = cursor;
+    const cursorItem = {
+      id: cursorId,
+      updatedAt: cursorKey,
+      createdAt: cursorKey,
+    } as SessionSummary;
+    start = sorted.findIndex((item) => comparator(item, cursorItem) > 0);
+    if (start === -1) start = sorted.length;
+  }
+
+  const window = sorted.slice(start, start + query.pageSize);
+  const hasMore = start + query.pageSize < sorted.length;
+  const lastServed = window.at(-1);
+  const nextPageToken =
+    raw.page === undefined && hasMore && lastServed !== undefined
+      ? encodePageToken(fingerprint, keyOf(lastServed), lastServed.id)
+      : null;
+
+  if (query.projection) {
+    return {
+      ok: true,
+      data: {
+        items: projectIds(window),
+        total: sorted.length,
+        has_more: hasMore,
+        next_page_token: nextPageToken,
+      },
+    };
+  }
+
+  const items = await buildItems(window, cwdOf);
+
+  return {
+    ok: true,
+    data: { items, total: sorted.length, has_more: hasMore, next_page_token: nextPageToken },
+  };
+}
+
+export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope, hosts?: HostSources): void {
   const gitResolver = new GitDomainResolver(core);
 
   const listRoute = defineRoute(
@@ -537,256 +799,11 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
     },
     async (req, reply) => {
       const raw = req.query;
-
-      const query: NormalizedQuery = {
-        workspaceFilter: asArray(raw['workspace.id']),
-        statuses: asArray(raw['activity.status']),
-        updatedAfter: raw['meta.updated_after'],
-        updatedBefore: raw['meta.updated_before'],
-        archived: raw['meta.archived'] ?? 'false',
-        hasPrompt:
-          raw['meta.has_prompt'] === undefined ? undefined : raw['meta.has_prompt'] === 'true',
-        view: raw.view ?? 'flat',
-        groupPageSize: raw['group.page_size'] ?? DEFAULT_GROUP_PAGE_SIZE,
-        sort: raw.sort ?? 'meta.updated_at_desc',
-        includeGit: includeDomains(raw.include).includes('git'),
-        pageSize: raw.page_size ?? DEFAULT_PAGE_SIZE,
-        projection: parseFields(raw.fields).length > 0,
-      };
-
-      const fingerprint = queryFingerprint(query);
-      let cursor: readonly [number, string] | undefined;
-      if (raw.page_token !== undefined) {
-        try {
-          cursor = decodePageToken(raw.page_token, fingerprint);
-        } catch (error) {
-          if (error instanceof PageTokenMismatchError) {
-            reply.send(errEnvelope(ErrorCode.PAGE_TOKEN_MISMATCH, error.message, req.id));
-            return;
-          }
-          throw error;
-        }
-      }
-
-      let workspaceIds: string[] | undefined;
-      if (query.workspaceFilter !== undefined) {
-        const aliases = core.accessor.get(IWorkspaceAliases);
-        const sets = await Promise.all(
-          query.workspaceFilter.map((id) => aliases.resolveAliasIds(id)),
-        );
-        workspaceIds = [...new Set(sets.flat())];
-      }
-
-      const { roots, visibleWorkspaceIds } = await loadWorkspaceVisibility(core);
-      const page = await core.accessor.get(ISessionIndex).listRecent({
-        workspaceIds,
-        includeArchived: query.archived !== 'false',
-      });
-
-      const factsById = new Map<string, SessionFacts>();
-      const factsOf = (id: string): SessionFacts => {
-        let facts = factsById.get(id);
-        if (facts === undefined) {
-          facts = resolveSessionFacts(core, id);
-          factsById.set(id, facts);
-        }
-        return facts;
-      };
-
-      const filtered = page.items.filter((summary) => {
-        if (!visibleWorkspaceIds.has(summary.workspaceId)) return false;
-        if (query.archived === 'true' && !summary.archived) return false;
-        if (
-          query.hasPrompt !== undefined &&
-          ((summary.lastPrompt ?? '').length > 0) !== query.hasPrompt
-        ) {
-          return false;
-        }
-        if (query.updatedAfter !== undefined && summary.updatedAt < query.updatedAfter) {
-          return false;
-        }
-        if (query.updatedBefore !== undefined && summary.updatedAt > query.updatedBefore) {
-          return false;
-        }
-        if (
-          query.statuses !== undefined &&
-          !query.statuses.includes(mapActivityStatus(factsOf(summary.id), summary.lastTurnReason))
-        ) {
-          return false;
-        }
-        return true;
-      });
-
-      const comparator = makeComparator(query.sort);
-      const sorted = filtered.toSorted(comparator);
-      const keyOf = sortKeyOf(query.sort);
-      const ascending = query.sort === 'meta.updated_at_asc';
-      const cwdOf = (summary: SessionSummary): string | null =>
-        summary.cwd ?? roots.get(summary.workspaceId) ?? null;
-
-      const buildItems = async (
-        summaries: readonly SessionSummary[],
-        cwdOf: (summary: SessionSummary) => string | null,
-      ): Promise<V2SessionWire[]> => {
-        let gitBySession: ReadonlyMap<string, V2GitDomain> | undefined;
-        if (query.includeGit) {
-          gitBySession = await gitResolver.resolveAll(summaries, cwdOf);
-        }
-        return summaries.map((summary) => {
-          const cwd = cwdOf(summary);
-          const facts = factsOf(summary.id);
-          return {
-            id: summary.id,
-            workspace: { id: summary.workspaceId, cwd },
-            meta: {
-              title: summary.title ?? null,
-              last_prompt: summary.lastPrompt ?? null,
-              created_at: summary.createdAt,
-              updated_at: summary.updatedAt,
-              archived: summary.archived,
-              archived_at: summary.archivedAt ?? null,
-            },
-            activity: {
-              status: mapActivityStatus(facts, summary.lastTurnReason),
-              model: facts.model ?? null,
-            },
-            git: gitBySession === undefined ? undefined : (gitBySession.get(summary.id) ?? GIT_DOMAIN_UNAVAILABLE),
-          };
-        });
-      };
-
-      const projectIds = (summaries: readonly SessionSummary[]): V2SessionIdProjection[] =>
-        summaries.map((summary) => ({ id: summary.id, archived: summary.archived }));
-
-      if (query.view === 'by_workspace') {
-        interface SessionGroup {
-          readonly workspaceId: string;
-          readonly rep: SessionSummary;
-          readonly items: SessionSummary[];
-        }
-        const aliasService = core.accessor.get(IWorkspaceAliases);
-        const canonicalById = new Map<string, string>();
-        const canonicalIdOf = async (workspaceId: string): Promise<string> => {
-          let canonical = canonicalById.get(workspaceId);
-          if (canonical === undefined) {
-            const set = await aliasService.resolveAliasIds(workspaceId);
-            canonical = set.length === 0 ? workspaceId : set.toSorted()[0] as string;
-            for (const id of set) canonicalById.set(id, canonical);
-          }
-          return canonical;
-        };
-        const byWorkspace = new Map<string, SessionGroup>();
-        for (const summary of sorted) {
-          const groupId = await canonicalIdOf(summary.workspaceId);
-          const group = byWorkspace.get(groupId);
-          if (group === undefined) {
-            byWorkspace.set(groupId, {
-              workspaceId: groupId,
-              rep: summary,
-              items: [summary],
-            });
-          } else {
-            group.items.push(summary);
-          }
-        }
-        const groupList = [...byWorkspace.values()];
-        const groupComparator = (a: SessionGroup, b: SessionGroup): number => {
-          const ka = keyOf(a.rep);
-          const kb = keyOf(b.rep);
-          if (ka !== kb) return ascending ? ka - kb : kb - ka;
-          return a.workspaceId < b.workspaceId ? -1 : a.workspaceId > b.workspaceId ? 1 : 0;
-        };
-        groupList.sort(groupComparator);
-
-        let start = 0;
-        if (raw.page !== undefined) {
-          start = (raw.page - 1) * query.pageSize;
-        } else if (cursor !== undefined) {
-          const [cursorKey, cursorId] = cursor;
-          const cursorGroup: SessionGroup = {
-            workspaceId: cursorId,
-            rep: { id: cursorId, updatedAt: cursorKey, createdAt: cursorKey } as SessionSummary,
-            items: [],
-          };
-          start = groupList.findIndex((group) => groupComparator(group, cursorGroup) > 0);
-          if (start === -1) start = groupList.length;
-        }
-
-        const windowGroups = groupList.slice(start, start + query.pageSize);
-        const hasMore = start + query.pageSize < groupList.length;
-        const lastGroup = windowGroups.at(-1);
-        const nextPageToken =
-          raw.page === undefined && hasMore && lastGroup !== undefined
-            ? encodePageToken(fingerprint, keyOf(lastGroup.rep), lastGroup.workspaceId)
-            : null;
-
-        const groups = await Promise.all(
-          windowGroups.map(async (group) => {
-            const served = group.items.slice(0, query.groupPageSize);
-            return {
-              workspace: { id: group.workspaceId, cwd: cwdOf(group.rep) },
-              sessions: query.projection
-                ? projectIds(served)
-                : await buildItems(served, cwdOf),
-              total: group.items.length,
-            };
-          }),
-        );
-
-        reply.send(
-          okEnvelope(
-            { groups, total: groupList.length, has_more: hasMore, next_page_token: nextPageToken },
-            req.id,
-          ),
-        );
-        return;
-      }
-
-      let start = 0;
-      if (raw.page !== undefined) {
-        start = (raw.page - 1) * query.pageSize;
-      } else if (cursor !== undefined) {
-        const [cursorKey, cursorId] = cursor;
-        const cursorItem = {
-          id: cursorId,
-          updatedAt: cursorKey,
-          createdAt: cursorKey,
-        } as SessionSummary;
-        start = sorted.findIndex((item) => comparator(item, cursorItem) > 0);
-        if (start === -1) start = sorted.length;
-      }
-
-      const window = sorted.slice(start, start + query.pageSize);
-      const hasMore = start + query.pageSize < sorted.length;
-      const lastServed = window.at(-1);
-      const nextPageToken =
-        raw.page === undefined && hasMore && lastServed !== undefined
-          ? encodePageToken(fingerprint, keyOf(lastServed), lastServed.id)
-          : null;
-
-      if (query.projection) {
-        reply.send(
-          okEnvelope(
-            {
-              items: projectIds(window),
-              total: sorted.length,
-              has_more: hasMore,
-              next_page_token: nextPageToken,
-            },
-            req.id,
-          ),
-        );
-        return;
-      }
-
-      const items = await buildItems(window, cwdOf);
-
-      reply.send(
-        okEnvelope(
-          { items, total: sorted.length, has_more: hasMore, next_page_token: nextPageToken },
-          req.id,
-        ),
-      );
+      const outcome =
+        raw.hosts === 'include' && hosts !== undefined
+          ? await listSessionsAcrossHosts(raw, hosts, (query) => listSessionsHere(core, gitResolver, query))
+          : await listSessionsHere(core, gitResolver, raw);
+      reply.send(outcome.ok ? okEnvelope(outcome.data, req.id) : errEnvelope(outcome.code, outcome.message, req.id));
     },
   );
 

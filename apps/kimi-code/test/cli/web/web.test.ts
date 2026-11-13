@@ -7,9 +7,10 @@
  * subcommands against fake deps.
  */
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { lstatSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { PassThrough } from 'node:stream';
 
 import chalk, { Chalk } from 'chalk';
 import { Command } from 'commander';
@@ -17,7 +18,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetCapabilitiesCache, setCapabilities } from '@moonshot-ai/pi-tui';
 
+import { HOST_API_LEVEL, HOST_PROTOCOL_VERSION } from '@moonshot-ai/kap-server';
+
 import { registerWebCommand } from '#/cli/sub/web';
+import {
+  daemonSocketPath,
+  ensureDaemon,
+  type DaemonConnection,
+  type EnsureDaemonDeps,
+} from '#/cli/sub/web/ensure-daemon';
 import type { LegacyKillDeps } from '#/cli/sub/web/legacy-kill';
 import type {
   RemoteControlCloseReason,
@@ -90,9 +99,22 @@ describe('kimi web', () => {
     const program = makeProgram();
     const web = program.commands.find((c) => c.name() === 'web');
     expect(web).toBeDefined();
-    const subs = web?.commands.map((c) => c.name()).toSorted();
+    const subs = web?.commands.map((c) => c.name());
     // Foreground servers stop with Ctrl+C, so there is no kill/ps.
     expect(subs).toEqual(['rotate-token']);
+  });
+
+  it('reports the host protocol from `kimi server ensure-daemon --probe` without starting a server', async () => {
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    try {
+      await makeProgram().parseAsync(['node', 'kimi', 'server', 'ensure-daemon', '--probe']);
+      const line = String(write.mock.calls.at(-1)?.[0]);
+      expect(line.startsWith('__KIMI_ENSURE_DAEMON__')).toBe(true);
+      const payload = JSON.parse(line.slice('__KIMI_ENSURE_DAEMON__'.length)) as Record<string, unknown>;
+      expect(payload).toEqual({ protocol: HOST_PROTOCOL_VERSION, api_level: HOST_API_LEVEL, version: expect.any(String) });
+    } finally {
+      write.mockRestore();
+    }
   });
 
   it('exposes the foreground server options on `web` itself', () => {
@@ -122,36 +144,24 @@ describe('kimi web', () => {
     expect(longs).not.toContain('--allow-remote-terminals');
   });
 
-  it('routes `kimi server` and any legacy subcommand to a deprecation notice', async () => {
-    for (const argv of [
-      ['node', 'kimi', 'server'],
-      ['node', 'kimi', 'server', 'run', '--port', '1'],
-      ['node', 'kimi', 'server', 'status'],
-      ['node', 'kimi', 'server', 'ps', '--json'],
-    ]) {
-      const program = makeProgram();
-      let stderr = '';
-      const exitCalls: number[] = [];
-      const errSpy = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
-        stderr += String(chunk);
-        return true;
-      });
-      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
-        exitCalls.push(code ?? 0);
-        return undefined;
-      }) as never);
+  it('runs `kimi server` with the same options as `kimi web` but `open: false` by default', async () => {
+    const program = makeProgram();
+    const server = program.commands.find((c) => c.name() === 'server');
+    expect(server).toBeDefined();
+    expect(server?.commands.map((c) => c.name()).toSorted()).toEqual([
+      'ensure-daemon',
+      'kill',
+      'rotate-token',
+    ]);
+    let parsedOpts: Record<string, unknown> | undefined;
+    server!.action((opts: Record<string, unknown>) => {
+      parsedOpts = opts;
+    });
+    await program.parseAsync(['node', 'kimi', 'server', '--port', '59000']);
+    expect(parsedOpts).toMatchObject({ port: '59000', open: false });
 
-      await program.parseAsync(argv);
-      errSpy.mockRestore();
-      exitSpy.mockRestore();
-
-      expect(exitCalls).toEqual([1]);
-      expect(stderr).toContain('`kimi server` has been deprecated and no longer works.');
-      expect(stderr).toContain('kimi web');
-      expect(stderr).toContain('kimi server kill');
-      expect(stderr).toContain('0.28.0');
-      expect(stderr).toContain('next major version');
-    }
+    await program.parseAsync(['node', 'kimi', 'server', '--open']);
+    expect(parsedOpts).toMatchObject({ open: true });
   });
 });
 
@@ -872,11 +882,11 @@ function makeLegacyKillDeps(overrides: Partial<LegacyKillDeps> = {}): {
 describe('`kimi server kill` (deprecated, legacy servers only)', () => {
   const legacyLock = { pid: 1234, host: '127.0.0.1', port: 58627 };
 
-  it('is registered as the only working subcommand of the deprecated `server` command', () => {
+  it('is registered as a subcommand of `server`', () => {
     const program = makeProgram();
     const server = program.commands.find((c) => c.name() === 'server');
     expect(server).toBeDefined();
-    expect(server?.commands.map((c) => c.name())).toEqual(['kill']);
+    expect(server?.commands.map((c) => c.name())).toContain('kill');
   });
 
   it('prints a deprecation notice naming the 0.28.0 cutoff on every run', async () => {
@@ -1151,6 +1161,150 @@ describe('browserOpenOrigin', () => {
     expect(browserOpenOrigin('http://127.0.0.1:58627')).toBe('http://127.0.0.1:58627');
     expect(browserOpenOrigin('http://192.168.1.5:58627')).toBe('http://192.168.1.5:58627');
     expect(browserOpenOrigin('http://[::1]:58627')).toBe('http://[::1]:58627');
+  });
+});
+
+describe('`kimi server ensure-daemon`', () => {
+  let homeDir: string;
+
+  beforeEach(() => {
+    homeDir = mkdtempSync(join(tmpdir(), 'kimi-ensure-daemon-'));
+  });
+
+  afterEach(() => {
+    rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  function connection(overrides: Partial<DaemonConnection> = {}): DaemonConnection {
+    return {
+      stream: new PassThrough(),
+      version: '1.0.0',
+      pid: 1234,
+      stopIfIdle: async () => true,
+      close: () => {},
+      ...overrides,
+    };
+  }
+
+  function makeDeps(overrides: Partial<EnsureDaemonDeps> = {}): EnsureDaemonDeps {
+    return {
+      homeDir,
+      version: '1.0.0',
+      connectSocket: async () => connection(),
+      spawnServer: vi.fn(() => 4321),
+      wait: async () => {},
+      ...overrides,
+    };
+  }
+
+  it('reuses a live daemon socket of the same version without spawning', async () => {
+    const conn = connection({ pid: 2 });
+    const deps = makeDeps({
+      connectSocket: async () => conn,
+    });
+
+    await expect(ensureDaemon(deps)).resolves.toEqual({
+      version: '1.0.0',
+      pid: 2,
+      stream: conn.stream,
+    });
+    expect(deps.spawnServer).not.toHaveBeenCalled();
+  });
+
+  it('spawns a new server when the socket is absent and waits until it connects', async () => {
+    let attempts = 0;
+    const spawned = connection({ pid: 4321 });
+    const deps = makeDeps({
+      connectSocket: async () => {
+        attempts += 1;
+        return attempts >= 4 ? spawned : undefined;
+      },
+    });
+
+    await expect(ensureDaemon(deps)).resolves.toEqual({
+      version: '1.0.0',
+      pid: 4321,
+      stream: spawned.stream,
+    });
+    expect(deps.spawnServer).toHaveBeenCalledWith(
+      daemonSocketPath(homeDir),
+      join(homeDir, 'server', 'ensure-daemon.log'),
+      join(homeDir, 'server', 'forwarded-ssh-agent.sock'),
+    );
+  });
+
+  it('replaces an idle daemon of another version after its socket closes', async () => {
+    let state: 'old' | 'draining' | 'closed' | 'new' = 'old';
+    const stopIfIdle = vi.fn(async () => {
+      state = 'draining';
+      return true;
+    });
+    const spawned = connection({ pid: 4321 });
+    const deps = makeDeps({
+      connectSocket: async () => {
+        if (state === 'old') return connection({ pid: 1, version: '0.9.0', stopIfIdle });
+        if (state === 'draining') {
+          state = 'closed';
+          return connection({ pid: 1, version: '0.9.0' });
+        }
+        if (state === 'closed') return undefined;
+        return spawned;
+      },
+      spawnServer: vi.fn(() => {
+        state = 'new';
+        return 4321;
+      }),
+    });
+
+    await expect(ensureDaemon(deps)).resolves.toMatchObject({ pid: 4321, version: '1.0.0' });
+    expect(stopIfIdle).toHaveBeenCalledTimes(1);
+    expect(deps.spawnServer).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses to replace a daemon of another version that still has live work', async () => {
+    const deps = makeDeps({
+      connectSocket: async () =>
+        connection({ pid: 1, version: '0.9.0', stopIfIdle: async () => false }),
+    });
+
+    await expect(ensureDaemon(deps)).rejects.toMatchObject({ code: 'version_mismatch_busy' });
+    expect(deps.spawnServer).not.toHaveBeenCalled();
+  });
+
+  it.skipIf(process.platform === 'win32')('atomically updates the forwarded agent socket symlink when SSH_AUTH_SOCK is present', async () => {
+    const agentSocket = join(homeDir, 'server', 'forwarded-ssh-agent.sock');
+    await ensureDaemon(makeDeps({ sshAuthSock: '/tmp/ssh-1/agent.100' }));
+    expect(lstatSync(agentSocket).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(agentSocket)).toBe('/tmp/ssh-1/agent.100');
+
+    await ensureDaemon(makeDeps({ sshAuthSock: '/tmp/ssh-2/agent.200' }));
+    expect(readlinkSync(agentSocket)).toBe('/tmp/ssh-2/agent.200');
+
+    await ensureDaemon(makeDeps({ sshAuthSock: undefined }));
+    expect(readlinkSync(agentSocket)).toBe('/tmp/ssh-2/agent.200');
+  });
+
+  it('releases the lock after a failure and clears dead or corrupted lock files', async () => {
+    const lockPath = join(homeDir, 'server', 'ensure-daemon.lock');
+    await expect(
+      ensureDaemon(
+        makeDeps({
+          connectSocket: async () =>
+            connection({ version: '0.9.0', stopIfIdle: async () => false }),
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: 'version_mismatch_busy',
+    });
+    expect(existsSync(lockPath)).toBe(false);
+
+    writeFileSync(lockPath, '999999999');
+    await expect(ensureDaemon(makeDeps())).resolves.toMatchObject({ pid: 1234 });
+    expect(existsSync(lockPath)).toBe(false);
+
+    writeFileSync(lockPath, '');
+    await expect(ensureDaemon(makeDeps())).resolves.toMatchObject({ pid: 1234 });
+    expect(existsSync(lockPath)).toBe(false);
   });
 });
 

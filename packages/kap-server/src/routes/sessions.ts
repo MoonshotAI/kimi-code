@@ -44,6 +44,7 @@ import { SessionMetaUpdated } from '@moonshot-ai/agent-core-v2/session/sessionMe
 import { ErrorCode } from '../protocol/error-codes';
 import { pageResponseSchema } from '../protocol/pagination';
 import type { ConversationService } from '../services/conversation/conversationService';
+import { collectFromHosts, findOnHosts, hostGet, hostProjects, HostSourceError, type HostSources } from '../services/hosts/hostFanout';
 import { loadWorkspaceVisibility } from '../services/workspaceVisibility';
 import {
   archiveSessionResponseSchema,
@@ -142,8 +143,23 @@ const sessionsListQueryCoercion = z
     exclude_empty: booleanQueryParam,
     archived_only: booleanQueryParam,
     workspace_id: workspaceIdSchema.optional(),
+    hosts: z.literal('include').optional(),
   })
   .superRefine((value, ctx) => {
+    if (
+      value.hosts === 'include' &&
+      (value.page_size !== undefined ||
+        value.before_id !== undefined ||
+        value.after_id !== undefined ||
+        value.workspace_id !== undefined)
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'hosts=include lists every session at once and cannot be combined with paging or workspace_id',
+        path: ['hosts'],
+        params: { code: ErrorCode.VALIDATION_FAILED },
+      });
+    }
     if (value.before_id !== undefined && value.after_id !== undefined) {
       ctx.addIssue({
         code: 'custom',
@@ -165,6 +181,39 @@ const sessionsListQueryCoercion = z
 const sessionIdParamSchema = z.object({
   session_id: z.string().min(1),
 });
+
+const sessionGetQuerySchema = z.object({ hosts: z.literal('include').optional() });
+
+const hostSessionSchema = sessionSchema.extend({ host_id: z.string().optional() });
+
+const sessionListResponseSchema = pageResponseSchema(hostSessionSchema).extend({
+  unavailable_hosts: z.array(z.string()).optional(),
+});
+
+function sessionsOnHosts(
+  hosts: HostSources,
+  query: { busy?: boolean; include_archive?: boolean; archived_only?: boolean; exclude_empty?: boolean },
+) {
+  return collectFromHosts(hosts, async (session) => {
+    const [projects, page] = await Promise.all([
+      hostProjects<{ id: string; kind: string }>(session),
+      hostGet<{ items: Session[] }>(session, '/api/v1/sessions', query),
+    ]);
+    const managed = new Set(projects.map((project) => project.id));
+    return page.items.filter((item) => managed.has(item.workspace_id));
+  });
+}
+
+async function sessionOnHosts(hosts: HostSources, id: string) {
+  return findOnHosts(hosts, async (session) => {
+    try {
+      return await hostGet<Session>(session, `/api/v1/sessions/${encodeURIComponent(id)}`);
+    } catch (error) {
+      if (error instanceof HostSourceError && error.code === ErrorCode.SESSION_NOT_FOUND) return undefined;
+      throw error;
+    }
+  });
+}
 
 const sessionChildrenListQueryCoercion = z
   .object({
@@ -207,7 +256,12 @@ const sessionActionRequestSchema = z.preprocess(
 
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 
-export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conversations: ConversationService): void {
+export function registerSessionsRoutes(
+  app: SessionRouteHost,
+  core: Scope,
+  conversations: ConversationService,
+  hosts?: HostSources,
+): void {
   const createRoute = defineRoute(
     {
       method: 'POST',
@@ -327,12 +381,13 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
       method: 'GET',
       path: '/sessions',
       querystring: sessionsListQueryCoercion,
-      success: { data: pageResponseSchema(sessionSchema) },
+      success: { data: sessionListResponseSchema },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.WORKSPACE_NOT_FOUND]: {},
       },
-      description: 'List sessions',
+      description:
+        'List sessions. hosts=include (only without paging) adds the sessions of the projects created on each SSH host, tagged with host_id; hosts that cannot answer are listed in unavailable_hosts',
       tags: ['sessions'],
     },
     async (req, reply) => {
@@ -405,7 +460,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
         return { visible: collected.slice(0, pageSize), hasMore: collected.length > pageSize };
       };
 
-      if (!archivedOnly && raw.page_size === undefined) {
+      if (raw.page_size === undefined) {
         const page = await index.listRecent({
           workspaceIds,
           includeArchived,
@@ -418,6 +473,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
           const cwd = summary.cwd ?? roots.get(summary.workspaceId);
           if (cwd === undefined) continue;
           if (raw.exclude_empty === true && (summary.lastPrompt ?? '').length === 0) continue;
+          if (archivedOnly && !summary.archived) continue;
           eligible.push({ summary, cwd });
         }
         const projected = eligible.map(({ summary, cwd }) =>
@@ -427,7 +483,20 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
           raw.busy !== undefined
             ? projected.filter((session) => session.busy === raw.busy)
             : projected;
-        reply.send(okEnvelope({ items, has_more: false }, req.id));
+        if (raw.hosts !== 'include' || hosts === undefined) {
+          reply.send(okEnvelope({ items, has_more: false }, req.id));
+          return;
+        }
+        const remote = await sessionsOnHosts(hosts, {
+          busy: raw.busy,
+          include_archive: raw.include_archive,
+          archived_only: raw.archived_only,
+          exclude_empty: raw.exclude_empty,
+        });
+        const merged = [...items, ...remote.items].toSorted(
+          (a, b) => b.updated_at.localeCompare(a.updated_at) || b.id.localeCompare(a.id),
+        );
+        reply.send(okEnvelope({ items: merged, has_more: false, unavailable_hosts: remote.unavailable }, req.id));
         return;
       }
 
@@ -450,17 +519,37 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
       method: 'GET',
       path: '/sessions/{session_id}',
       params: sessionIdParamSchema,
-      success: { data: sessionSchema },
+      querystring: sessionGetQuerySchema,
+      success: { data: hostSessionSchema },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.HOST_UNAVAILABLE]: {},
       },
-      description: 'Get a session by ID',
+      description:
+        'Get a session by ID. hosts=include also looks the session up on each SSH host and tags it with host_id; when it is not found and a host cannot answer, the result is HOST_UNAVAILABLE',
       tags: ['sessions'],
     },
     async (req, reply) => {
       const { session_id } = req.params;
       const summary = await core.accessor.get(ISessionIndex).get(session_id);
+      if (summary === undefined && req.query.hosts === 'include' && hosts !== undefined) {
+        const lookup = await sessionOnHosts(hosts, session_id);
+        if (lookup.found !== undefined) {
+          reply.send(okEnvelope(lookup.found, req.id));
+        } else if (lookup.unavailable.length > 0) {
+          reply.send(
+            errEnvelope(
+              ErrorCode.HOST_UNAVAILABLE,
+              `session ${session_id} may be on an unavailable host: ${lookup.unavailable.join(', ')}`,
+              req.id,
+            ),
+          );
+        } else {
+          reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${session_id} does not exist`, req.id));
+        }
+        return;
+      }
       if (summary === undefined) {
         reply.send(
           errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${session_id} does not exist`, req.id),

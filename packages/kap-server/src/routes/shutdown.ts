@@ -9,7 +9,7 @@ interface ShutdownRouteHost {
     path: string,
     options: { preHandler: unknown[]; schema?: Record<string, unknown> },
     handler: (
-      req: { id: string },
+      req: { id: string; query: unknown },
       reply: { send(payload: unknown): unknown },
     ) => Promise<void> | void,
   ): unknown;
@@ -17,7 +17,12 @@ interface ShutdownRouteHost {
 
 export interface ShutdownRouteOptions {
   readonly onShutdown: () => void;
+  readonly drainIdleSessions: () => Promise<boolean>;
 }
+
+const shutdownQuerySchema = z.object({
+  if_idle: z.enum(['true', 'false']).optional(),
+});
 
 export function registerShutdownRoutes(
   app: ShutdownRouteHost,
@@ -27,11 +32,17 @@ export function registerShutdownRoutes(
     {
       method: 'POST',
       path: '/shutdown',
-      success: { data: z.object({ ok: z.literal(true) }) },
-      description: 'Gracefully shut down the server',
+      querystring: shutdownQuerySchema,
+      success: { data: z.object({ ok: z.boolean() }) },
+      description: 'Gracefully shut down the server; with if_idle=true, only when it has no live work (ok: false otherwise)',
       tags: ['meta'],
     },
-    (req, reply) => {
+    async (req, reply) => {
+      const query = req.query as z.infer<typeof shutdownQuerySchema>;
+      if (query.if_idle === 'true' && !(await opts.drainIdleSessions())) {
+        reply.send(okEnvelope({ ok: false }, req.id));
+        return;
+      }
       requestLog(req)?.info(
         { remoteAddress: (req as unknown as { ip?: string }).ip },
         'shutdown requested',

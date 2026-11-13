@@ -1,10 +1,11 @@
+import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import { startServer, type RunningServer } from '../src';
+import { HOST_API_LEVEL, startServer, type RunningServer } from '../src';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 
@@ -26,6 +27,8 @@ describe('API surface snapshot', () => {
   let server: RunningServer | undefined;
 
   beforeAll(async () => {
+    vi.stubEnv('KIMI_CODE_MODEL_CATALOG_REFRESH_ON_START', '0');
+    vi.stubEnv('KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS', '0');
     home = mkdtempSync(join(tmpdir(), 'kimi-server-v2-api-surface-'));
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
@@ -38,6 +41,7 @@ describe('API surface snapshot', () => {
   });
 
   afterAll(async () => {
+    vi.unstubAllEnvs();
     if (server !== undefined) {
       try {
         await server.close();
@@ -81,4 +85,45 @@ describe('API surface snapshot', () => {
 
     expect({ routes, meta }).toMatchSnapshot();
   });
+
+  it('pins the host API level to the client-visible contract', async () => {
+    const base = `http://${server!.host}:${server!.port}`;
+    const fetchJson = async (path: string): Promise<Record<string, unknown>> => {
+      const res = await fetch(`${base}${path}`, { headers: authHeaders(server as RunningServer) } as never);
+      expect(res.status).toBe(200);
+      return (await res.json()) as Record<string, unknown>;
+    };
+    const openApi = await fetchJson('/openapi.json');
+    const asyncApi = await fetchJson('/asyncapi.json');
+    const paths = Object.fromEntries(
+      Object.entries(openApi['paths'] as Record<string, unknown>).filter(([path]) => !path.startsWith('/api/v1/debug')),
+    );
+    const contract = canonicalContract({
+      paths,
+      components: openApi['components'],
+      operations: asyncApi['operations'],
+      messages: asyncApi['components'],
+    });
+    const digest = createHash('sha256').update(contract).digest('hex');
+
+    expect(
+      { apiLevel: HOST_API_LEVEL, digest },
+      'The client-visible API contract changed. If the current client would break against a remote running the previous release, bump HOST_API_LEVEL; then update HOST_CONTRACT to the new level and digest.',
+    ).toEqual(HOST_CONTRACT);
+  });
 });
+
+const HOST_CONTRACT = { apiLevel: 1, digest: 'c71397623511f02fe83ad0c06a1ba7715d4e793a8039f5dade1f4aa1fa7745fc' };
+
+const NON_CONTRACT_KEYS = new Set(['description', 'summary', 'example', 'examples']);
+const NAMED_MEMBER_KEYS = new Set(['properties', 'patternProperties']);
+
+function canonicalContract(value: unknown, namedMembers = false): string {
+  if (Array.isArray(value)) return `[${value.map((item) => canonicalContract(item)).join(',')}]`;
+  if (typeof value !== 'object' || value === null) return JSON.stringify(value);
+  const entries = Object.entries(value)
+    .filter(([key, item]) => (namedMembers || !NON_CONTRACT_KEYS.has(key)) && item !== undefined)
+    .toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([key, item]) => `${JSON.stringify(key)}:${canonicalContract(item, !namedMembers && NAMED_MEMBER_KEYS.has(key))}`);
+  return `{${entries.join(',')}}`;
+}
