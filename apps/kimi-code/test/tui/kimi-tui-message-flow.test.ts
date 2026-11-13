@@ -429,14 +429,6 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
       login: vi.fn(),
       logout: vi.fn(),
       getManagedUsage: vi.fn(),
-      submitFeedback: vi.fn(
-        async (): Promise<
-          { kind: 'ok'; feedbackId: number } | { kind: 'error'; status?: number; message: string }
-        > => ({
-          kind: 'ok',
-          feedbackId: 3,
-        }),
-      ),
     },
     ...overrides,
   };

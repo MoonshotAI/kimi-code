@@ -258,7 +258,6 @@ function makeHarness(initialSession: Session) {
       login: vi.fn(),
       logout: vi.fn(),
       getManagedUsage: vi.fn(),
-      submitFeedback: vi.fn(async () => ({ kind: 'ok', feedbackId: 3 })),
     },
   };
 }
