@@ -192,6 +192,16 @@
           "group": "navigation"
         }
       ],
+      "editor/title": [
+        {
+          "command": "kimi.openInTab",
+          "group": "navigation"
+        },
+        {
+          "command": "kimi.newConversation",
+          "group": "navigation"
+        }
+      ],
       "commandPalette": [
         {
           "command": "kimi.clearAllState",

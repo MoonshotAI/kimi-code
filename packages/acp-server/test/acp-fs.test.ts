@@ -87,6 +87,19 @@ describe('AcpHostFileSystem', () => {
     expect(writes).toEqual(['fresh']);
   });
 
+  it('maps a client read resource-not-found failure to a host filesystem error', async () => {
+    const fs = makeFileSystem({
+      readTextFile: async () => {
+        throw RequestError.resourceNotFound('/missing-plan.md');
+      },
+      writeTextFile: async () => {},
+    });
+
+    const rejection = await fs.readText('/missing-plan.md').catch((error: unknown) => error);
+
+    expect(isHostFsNotFound(rejection)).toBe(true);
+  });
+
   it('does not write after a non-not-found client read failure', async () => {
     const writes: string[] = [];
     const failure = new Error('transport failed');
