@@ -123,10 +123,10 @@ export class AgentLoopRequestObserver {
     return new AgentRequestObservation(this, source, config, onTrace);
   }
 
-  setRequestId(source: AgentLLMRequestSource, requestId: string | undefined): void {
+  setRequestId(source: AgentLLMRequestSource, requestId: string | undefined, active = true): void {
     if (source.type !== 'turn') return;
-    this.telemetry.setContext({ request_id: requestId });
-    this.attribution.noteActiveRequest(this.scopeContext.agentId, requestId);
+    this.telemetry.setContext({ request_id: active ? requestId : undefined });
+    this.attribution.noteActiveRequest(this.scopeContext.agentId, requestId, active);
   }
 
   recordAttempt(
@@ -308,12 +308,21 @@ export class AgentLoopRequestObserver {
     this.logResponse(request.logFields, usage ?? emptyUsage(), timing);
   }
 
-  failRequest(observation: AgentRequestObservation, error: unknown, signal: AbortSignal): void {
-    if (!isAbortError(error) && !signal.aborted) {
+  failRequest(
+    observation: AgentRequestObservation,
+    error: unknown,
+    signal: AbortSignal,
+    outcomeRequestId?: string,
+  ): void {
+    const aborted = isAbortError(error) || signal.aborted;
+    const requestId = aborted
+      ? undefined
+      : (outcomeRequestId ?? apiRequestId(error) ?? observation.currentRequestId);
+    if (!aborted) {
       this.logRequestFailure(observation, error);
-      this.trackApiError(observation, error);
+      this.trackApiError(observation, error, requestId);
     }
-    observation.setRequestId(undefined);
+    observation.setRequestId(requestId, false);
   }
 
   reportProjectionRepairs(anomalies: readonly ProjectionAnomaly[]): void {
@@ -431,7 +440,7 @@ export class AgentLoopRequestObserver {
     });
   }
 
-  private trackApiError(observation: AgentRequestObservation, error: unknown): void {
+  private trackApiError(observation: AgentRequestObservation, error: unknown, requestId?: string): void {
     const model = observation.context?.model;
     const modelAlias = observation.context?.modelAlias ?? observation.config.resolved.modelAlias;
     const source = observation.source;
@@ -446,7 +455,7 @@ export class AgentLoopRequestObserver {
       duration_ms: Math.max(0, Date.now() - observation.startedAt),
       turn_id: source.turnId,
       request_kind: requestKindForTelemetry(source),
-      request_id: apiRequestId(error),
+      request_id: requestId,
     };
     if (source.type === 'turn' && source.step !== undefined) properties['step_no'] = source.step;
     const statusCode = apiStatusCode(error);
@@ -555,9 +564,14 @@ export class AgentRequestObservation {
     this.request = request;
   }
 
-  setRequestId(requestId: string | null | undefined): void {
-    this.trace.set(requestId ?? undefined);
-    this.observer.setRequestId(this.source, requestId ?? undefined);
+  get currentRequestId(): string | undefined {
+    return this.trace.requestId;
+  }
+
+  setRequestId(requestId: string | null | undefined, active = true): void {
+    const resolved = requestId ?? undefined;
+    this.trace.set(resolved);
+    this.observer.setRequestId(this.source, resolved, active);
   }
 
   requireContext(): ResolvedRequestContext {
@@ -625,7 +639,15 @@ function apiStatusCode(error: unknown): number | undefined {
 }
 
 function apiRequestId(error: unknown): string | undefined {
-  const diagnostics = errorDiagnostics(error) ?? errorDiagnostics(unwrapErrorCause(error));
-  const requestId = diagnostics?.['requestId'];
-  return typeof requestId === 'string' ? requestId : undefined;
+  const raw = unwrapErrorCause(error);
+  const fromDiagnostics = nonEmptyRequestId((errorDiagnostics(error) ?? errorDiagnostics(raw))?.['requestId']);
+  if (fromDiagnostics !== undefined) return fromDiagnostics;
+  if (raw instanceof APIStatusError) return nonEmptyRequestId(raw.requestId);
+  return undefined;
+}
+
+function nonEmptyRequestId(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }

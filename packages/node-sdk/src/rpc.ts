@@ -243,7 +243,10 @@ export abstract class SDKRpcClientBase {
 
   abstract exportSession(input: ExportSessionInput): Promise<ExportSessionResult>;
 
-  abstract feedbackAvailability(modelAlias?: string): Promise<FeedbackAvailability>;
+  abstract feedbackAvailability(
+    modelAlias?: string,
+    sessionId?: string,
+  ): Promise<FeedbackAvailability>;
 
   abstract submitFeedback(
     input: FeedbackSubmitInput,
