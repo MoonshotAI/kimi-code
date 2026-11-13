@@ -97,6 +97,7 @@ interface SessionWire {
   main_turn_active: boolean;
   pending_interaction: 'none' | 'approval' | 'question';
   last_turn_reason?: 'completed' | 'cancelled' | 'failed';
+  forked_from?: string;
   archived?: boolean;
   metadata: { cwd: string } & Record<string, unknown>;
   agent_config: { model: string };
@@ -2492,6 +2493,7 @@ describe('server-v2 /api/v1/sessions', () => {
     const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const parentId = parent.body.data.id;
     const parentWire = parent.body.data;
+    expect(parentWire.forked_from).toBeUndefined();
     await closeSessionById((server as RunningServer).core.accessor, parentId);
 
     const sessionDir = join(home as string, 'sessions', parentWire.workspace_id, parentId);
@@ -2559,6 +2561,7 @@ describe('server-v2 /api/v1/sessions', () => {
     const elapsedMs = Date.now() - startedAt;
     expect(forked.body.code).toBe(0);
     const forkedId = forked.body.data.id;
+    expect(forked.body.data.forked_from).toBe(parentId);
     process.stdout.write(`fork of ${subagentCount + 1}-agent session completed in ${elapsedMs}ms\n`);
 
     expect(getLiveSessionById((server as RunningServer).core.accessor, forkedId)).toBeUndefined();
@@ -2609,6 +2612,7 @@ describe('server-v2 /api/v1/sessions', () => {
 
     const listed = await getJson<SessionWire>(`/api/v1/sessions/${forkedId}`);
     expect(listed.body.code).toBe(0);
+    expect(listed.body.data.forked_from).toBe(parentId);
 
     const resumed = await resumeSessionById((server as RunningServer).core.accessor, forkedId);
     expect(resumed).toBeDefined();

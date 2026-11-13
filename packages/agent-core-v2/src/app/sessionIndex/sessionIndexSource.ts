@@ -12,7 +12,7 @@ const META_KEY = 'state.json';
 export const SESSION_INDEX_SCAN_CACHE_DIR = '.index-cache';
 
 const SCAN_CACHE_KEY = 'scan.json';
-const SCAN_CACHE_VERSION = 2;
+const SCAN_CACHE_VERSION = 3;
 
 export interface SessionScanCacheEntry {
   readonly ws: string;
@@ -160,6 +160,7 @@ export function buildSessionSummary(fields: {
   cwd?: string;
   environmentId?: string;
   environmentCwd?: string;
+  forkedFrom?: string;
   title?: string;
   lastPrompt?: string;
   createdAt: number;
@@ -175,6 +176,7 @@ export function buildSessionSummary(fields: {
     cwd: fields.cwd,
     environmentId: fields.environmentId,
     environmentCwd: fields.environmentCwd,
+    forkedFrom: fields.forkedFrom,
     title: fields.title,
     lastPrompt: fields.lastPrompt,
     createdAt: fields.createdAt,
@@ -205,6 +207,7 @@ export function summaryEquals(a: SessionSummary, b: SessionSummary): boolean {
     a.cwd === b.cwd &&
     a.environmentId === b.environmentId &&
     a.environmentCwd === b.environmentCwd &&
+    a.forkedFrom === b.forkedFrom &&
     a.title === b.title &&
     a.lastPrompt === b.lastPrompt &&
     a.createdAt === b.createdAt &&
@@ -276,6 +279,7 @@ export async function readSessionSummary(
     cwd,
     environmentId: typeof meta['environmentId'] === 'string' ? meta['environmentId'] : undefined,
     environmentCwd,
+    forkedFrom: typeof meta['forkedFrom'] === 'string' ? meta['forkedFrom'] : undefined,
     title: typeof meta['title'] === 'string' ? meta['title'] : undefined,
     lastPrompt: typeof meta['lastPrompt'] === 'string' ? meta['lastPrompt'] : undefined,
     createdAt: parseTime(meta['createdAt']),

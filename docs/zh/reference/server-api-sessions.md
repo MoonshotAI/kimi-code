@@ -25,6 +25,7 @@
 | `pending_interaction` | string | 正在等待答复的交互：`none` / `approval` / `question`。审批和提问同时待处理时为 `approval` |
 | `last_turn_reason` | string | main agent 最近一轮的结果：`completed` / `cancelled` / `failed`。main agent 开始新一轮时清除 |
 | `last_prompt` | string | 最近一条用户提示词的文本（如有） |
+| `forked_from` | string | 直接来源会话的 id，仅在该会话由 fork 创建时存在 |
 | `metadata` | object | 自定义元数据，始终带 `cwd`（会话的工作目录） |
 | `agent_config` | object | 只含 `model`。会话已加载到当前服务端进程、且 main agent 有模型时，`model` 为 main agent 当前的模型，否则为 `""`。创建会话的响应同样带上该模型，除非创建时没有可用的模型 |
 | `usage` | object | token 汇总：`input_tokens`、`output_tokens`、`cache_read_tokens`、`cache_creation_tokens`、`context_tokens`，以及可选的 `context_limit`、`total_cost_usd`、`turn_count`。目前始终为零。实时的上下文大小由每个 Agent 的 [`usage` 帧](./server-api-conversation.md#agent-状态) 通过 WebSocket 下发 |
