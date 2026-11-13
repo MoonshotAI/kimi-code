@@ -10,6 +10,8 @@ The `type` field in the `providers` table determines which protocol implementati
 | --- | --- | --- |
 | [`kimi`](#kimi) | OpenAI-compatible | Kimi Code managed service, Kimi Platform API key |
 | [`anthropic`](#anthropic) | Anthropic Messages | Claude model family |
+| [`deepseek`](#deepseek) | OpenAI Chat Completions, Anthropic Messages | DeepSeek V4 models |
+| [`glm`](#glm) | OpenAI Chat Completions | Zhipu GLM models, including GLM-5.3 |
 | [`openai`](#openai) | OpenAI Chat Completions | OpenAI and compatible services, DeepSeek, Qwen, etc. |
 | [`openai_responses`](#openai_responses) | OpenAI Responses API | OpenAI's newer Responses interface |
 | [`google-genai`](#google-genai) | Google GenAI | Gemini API |
@@ -96,6 +98,67 @@ model = "claude-opus-4-7"
 max_context_size = 200000
 # max_output_size = 32000  # optional; omit to use the model-inferred default
 ```
+
+## `deepseek`
+
+For connecting directly to DeepSeek's OpenAI Chat Completions or Anthropic Messages API. The current `deepseek-flash` model supports vision and thinking; `deepseek-v4-pro` is text-only. Both support tool calling, a 1M-token context, and up to 393216 output tokens.
+
+- Default `base_url`: `https://api.deepseek.com` for OpenAI, or `https://api.deepseek.com/anthropic` when the model declares `protocol = "anthropic"`
+- Credential key names: `DEEPSEEK_API_KEY`, `DEEPSEEK_BASE_URL`
+- Thinking efforts: `none`, `low`, `high`, and `max`; Thinking can also be disabled
+
+```toml
+[providers.deepseek]
+type = "deepseek"
+api_key_env = "DEEPSEEK_API_KEY"
+
+[models."deepseek-flash"]
+provider = "deepseek"
+model = "deepseek-flash"
+max_context_size = 1000000
+max_output_size = 393216
+capabilities = [ "thinking", "image_in", "tool_use" ]
+support_efforts = [ "none", "low", "high", "max" ]
+default_effort = "high"
+```
+
+To use the Anthropic-compatible endpoint for the same provider, set `protocol = "anthropic"` on the model entry. Its default base URL then changes to `https://api.deepseek.com/anthropic` automatically.
+
+```toml
+[models."deepseek-flash-anthropic"]
+provider = "deepseek"
+model = "deepseek-flash"
+protocol = "anthropic"
+max_context_size = 1000000
+max_output_size = 393216
+capabilities = [ "thinking", "image_in", "tool_use" ]
+support_efforts = [ "none", "low", "high", "max" ]
+default_effort = "high"
+```
+
+## `glm`
+
+For connecting directly to Zhipu's OpenAI Chat Completions API. GLM-5.3 is text-only, always uses Thinking, and accepts the `low`, `high`, and `max` effort levels. It supports a 1M-token context and up to 131072 output tokens. GLM-5.3-Flash supports image and video input.
+
+- Default `base_url`: `https://open.bigmodel.cn/api/paas/v4`
+- Credential key names: `ZAI_API_KEY`, `ZAI_BASE_URL`
+
+```toml
+[providers.glm]
+type = "glm"
+api_key_env = "ZAI_API_KEY"
+
+[models."glm-5.3"]
+provider = "glm"
+model = "glm-5.3"
+max_context_size = 1000000
+max_output_size = 131072
+capabilities = [ "always_thinking", "tool_use" ]
+support_efforts = [ "low", "high", "max" ]
+default_effort = "max"
+```
+
+For Z.AI's international Coding Plan endpoint, override `base_url` with `https://api.z.ai/api/coding/paas/v4`.
 
 ## `openai`
 

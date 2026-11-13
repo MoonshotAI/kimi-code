@@ -21,6 +21,10 @@ const ENV_KEYS = [
   'KIMI_BASE_URL',
   'GOOGLE_API_KEY',
   'VERTEXAI_API_KEY',
+  'DEEPSEEK_API_KEY',
+  'DEEPSEEK_BASE_URL',
+  'ZAI_API_KEY',
+  'ZAI_BASE_URL',
 ] as const;
 
 let envSnapshot: Record<string, string | undefined>;
@@ -120,6 +124,9 @@ describe('resolveAdapterIdentity', () => {
       'openai_responses',
     );
     expect(registry.resolveAdapterIdentity('openai_responses', 'kimi').thinkingDriven).toBe(true);
+    expect(registry.resolveAdapterIdentity('openai', 'deepseek').thinkingDriven).toBe(true);
+    expect(registry.resolveAdapterIdentity('anthropic', 'deepseek').thinkingDriven).toBe(true);
+    expect(registry.resolveAdapterIdentity('openai', 'glm').thinkingDriven).toBe(true);
   });
 
   it('resolves unregistered pairs to the protocol itself with no vendor trait', () => {
@@ -129,12 +136,12 @@ describe('resolveAdapterIdentity', () => {
     const unknown = registry.resolveAdapterIdentity('openai', 'no-such-vendor');
     expect(unknown.baseId).toBe('openai');
     expect(unknown.thinkingDriven).toBeUndefined();
-  });
-
-  it('resolves the no-providerType branch identically', () => {
     const identity = registry.resolveAdapterIdentity('openai');
     expect(identity.baseId).toBe('openai');
     expect(identity.thinkingDriven).toBeUndefined();
+    expect(registry.resolveProviderBaseId('google-genai', 'kimi')).toBe('google-genai');
+    expect(registry.resolveProviderBaseId('openai', 'no-such-vendor')).toBe('openai');
+    expect(registry.resolveProviderBaseId('openai')).toBe('openai');
   });
 });
 
@@ -144,11 +151,6 @@ describe('resolveProviderBaseId', () => {
     expect(registry.resolveProviderBaseId('anthropic', 'kimi')).toBe('anthropic');
   });
 
-  it('returns the protocol itself otherwise', () => {
-    expect(registry.resolveProviderBaseId('google-genai', 'kimi')).toBe('google-genai');
-    expect(registry.resolveProviderBaseId('openai', 'no-such-vendor')).toBe('openai');
-    expect(registry.resolveProviderBaseId('openai')).toBe('openai');
-  });
 });
 
 describe('resolveCapability', () => {
@@ -165,9 +167,13 @@ describe('resolveCapability', () => {
     expect(registry.resolveCapability('anthropic', 'claude-opus-4-1')?.thinking).toBe(true);
   });
 
-  it('kimi declares no vendor-level capability — the base catalog answers instead', () => {
+  it('resolves builtin vendor capabilities before the base catalog', () => {
     expect(registry.resolveCapability('openai', 'kimi-for-coding', 'kimi')).toBeUndefined();
     expect(registry.resolveCapability('openai', 'gpt-4o', 'kimi')?.image_in).toBe(true);
+    expect(registry.resolveCapability('openai', 'deepseek-flash', 'deepseek')?.image_in).toBe(true);
+    expect(registry.resolveCapability('openai', 'deepseek-v4-pro', 'deepseek')?.image_in).toBe(false);
+    expect(registry.resolveCapability('openai', 'glm-5.3', 'glm')?.image_in).toBe(false);
+    expect(registry.resolveCapability('openai', 'glm-5.3-flash', 'glm')?.image_in).toBe(true);
   });
 });
 
@@ -180,7 +186,7 @@ describe('request gateway routes', () => {
     expect(supportsLlmUpload(resolved, 'image')).toBe(true);
   });
 
-  it('routes plain openai without the upload media', () => {
+  it('routes plain and vendor requesters with their own upload media', () => {
     const resolved = registry.request(modelWith({ protocol: 'openai' }));
     expect(contentsOf(resolved).model?.spec?.provider).toBe('openai');
     expect(supportsLlmUpload(resolved, 'video')).toBe(false);
@@ -192,6 +198,21 @@ describe('request gateway routes', () => {
     expect(options.detectedReasoningKey?.()).toBeUndefined();
     options.onReasoningKey?.('reasoning_content');
     expect(options.detectedReasoningKey?.()).toBe('reasoning_content');
+
+    const deepseek = registry.request(modelWith({ protocol: 'openai', providerType: 'deepseek' }));
+    expect(contentsOf(deepseek).endpoint?.defaultBaseUrl).toBe('https://api.deepseek.com');
+    expect(supportsLlmUpload(deepseek, 'image')).toBe(true);
+    expect(supportsLlmUpload(deepseek, 'video')).toBe(false);
+    const deepseekAnthropic = registry.request(
+      modelWith({ protocol: 'anthropic', providerType: 'deepseek' }),
+    );
+    expect(contentsOf(deepseekAnthropic).endpoint?.defaultBaseUrl).toBe(
+      'https://api.deepseek.com/anthropic',
+    );
+    expect(supportsLlmUpload(deepseekAnthropic, 'image')).toBe(true);
+    const glm = registry.request(modelWith({ protocol: 'openai', providerType: 'glm' }));
+    expect(contentsOf(glm).endpoint?.defaultBaseUrl).toBe('https://open.bigmodel.cn/api/paas/v4');
+    expect(supportsLlmUpload(glm, 'image')).toBe(false);
   });
 
   it('keeps stream business codes out of the real HTTP status at the registry boundary', () => {
@@ -334,6 +355,13 @@ describe('resolveProviderEndpoint', () => {
     expect(resolveProviderEndpoint('kimi', { KIMI_BASE_URL: 'https://example.com/v1' })).toEqual({
       baseUrl: 'https://example.com/v1',
     });
+    expect(resolveProviderEndpoint('deepseek', {})).toEqual({ baseUrl: 'https://api.deepseek.com' });
+    expect(resolveProviderEndpoint('deepseek', {}, 'anthropic')).toEqual({
+      baseUrl: 'https://api.deepseek.com/anthropic',
+    });
+    expect(resolveProviderEndpoint('glm', {})).toEqual({
+      baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+    });
   });
 
   it('aggregates the google-genai chain with the legacy vertex precedence', () => {
@@ -389,6 +417,10 @@ describe('kimi provider definitions', () => {
   it('answers id-level queries and reports unregistered pairs', () => {
     expect(getProviderDefinition('kimi')?.baseProtocol).toBe('openai');
     expect(getProviderDefinitions('kimi')).toHaveLength(3);
+    expect(getProviderDefinitions('deepseek')).toHaveLength(2);
+    expect(getProviderDefinition('deepseek', 'openai')?.endpoint?.apiKeyEnv).toBe('DEEPSEEK_API_KEY');
+    expect(getProviderDefinition('deepseek', 'anthropic')?.endpoint?.apiKeyEnv).toBe('DEEPSEEK_API_KEY');
+    expect(getProviderDefinition('glm', 'openai')?.endpoint?.apiKeyEnv).toBe('ZAI_API_KEY');
     expect(hasProviderDefinition('kimi')).toBe(true);
     expect(hasProviderDefinition('no-such-vendor')).toBe(false);
     expect(getProviderDefinition('kimi', 'google-genai')).toBeUndefined();

@@ -10,6 +10,8 @@ Kimi Code CLI 支持同时接入多家模型供应商服务，模型在供应商
 | --- | --- | --- |
 | [`kimi`](#kimi) | OpenAI 兼容 | Kimi Code 托管服务、Kimi Platform API 密钥 |
 | [`anthropic`](#anthropic) | Anthropic Messages | Claude 系列模型 |
+| [`deepseek`](#deepseek) | OpenAI Chat Completions、Anthropic Messages | DeepSeek V4 系列模型 |
+| [`glm`](#glm) | OpenAI Chat Completions | 智谱 GLM 系列模型，包括 GLM-5.3 |
 | [`openai`](#openai) | OpenAI Chat Completions | OpenAI 及兼容服务、DeepSeek、Qwen 等 |
 | [`openai_responses`](#openai_responses) | OpenAI Responses API | OpenAI 较新的 Responses 接口 |
 | [`google-genai`](#google-genai) | Google GenAI | Gemini API |
@@ -96,6 +98,67 @@ model = "claude-opus-4-7"
 max_context_size = 200000
 # max_output_size = 32000  # 可选，省略时使用模型推断的默认值
 ```
+
+## `deepseek`
+
+用于直连 DeepSeek 的 OpenAI Chat Completions 或 Anthropic Messages API。当前 `deepseek-flash` 支持视觉和 Thinking，`deepseek-v4-pro` 仅支持文本。两者都支持工具调用、1M 上下文和最多 393216 个输出 token。
+
+- 默认 `base_url`：OpenAI 协议为 `https://api.deepseek.com`；模型声明 `protocol = "anthropic"` 时为 `https://api.deepseek.com/anthropic`
+- 凭证键名：`DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL`
+- Thinking 档位：`none`、`low`、`high`、`max`，也可以关闭 Thinking
+
+```toml
+[providers.deepseek]
+type = "deepseek"
+api_key_env = "DEEPSEEK_API_KEY"
+
+[models."deepseek-flash"]
+provider = "deepseek"
+model = "deepseek-flash"
+max_context_size = 1000000
+max_output_size = 393216
+capabilities = [ "thinking", "image_in", "tool_use" ]
+support_efforts = [ "none", "low", "high", "max" ]
+default_effort = "high"
+```
+
+同一供应商如需使用 Anthropic 兼容入口，在模型条目中设置 `protocol = "anthropic"`，默认 base URL 会自动切换为 `https://api.deepseek.com/anthropic`。
+
+```toml
+[models."deepseek-flash-anthropic"]
+provider = "deepseek"
+model = "deepseek-flash"
+protocol = "anthropic"
+max_context_size = 1000000
+max_output_size = 393216
+capabilities = [ "thinking", "image_in", "tool_use" ]
+support_efforts = [ "none", "low", "high", "max" ]
+default_effort = "high"
+```
+
+## `glm`
+
+用于直连智谱的 OpenAI Chat Completions API。GLM-5.3 仅支持文本输入，始终启用 Thinking，支持 `low`、`high`、`max` 三档，支持 1M 上下文和最多 131072 个输出 token。GLM-5.3-Flash 支持图像和视频输入。
+
+- 默认 `base_url`：`https://open.bigmodel.cn/api/paas/v4`
+- 凭证键名：`ZAI_API_KEY`、`ZAI_BASE_URL`
+
+```toml
+[providers.glm]
+type = "glm"
+api_key_env = "ZAI_API_KEY"
+
+[models."glm-5.3"]
+provider = "glm"
+model = "glm-5.3"
+max_context_size = 1000000
+max_output_size = 131072
+capabilities = [ "always_thinking", "tool_use" ]
+support_efforts = [ "low", "high", "max" ]
+default_effort = "max"
+```
+
+如需使用 Z.AI 国际站 Coding Plan 入口，将 `base_url` 覆盖为 `https://api.z.ai/api/coding/paas/v4`。
 
 ## `openai`
 
