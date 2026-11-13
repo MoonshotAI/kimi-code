@@ -262,6 +262,17 @@ describe('renderSystemPromptResult', () => {
     ).not.toContain('IMPORTANT: You are on Windows');
   });
 
+  it('instructs the model to create and verify artifacts on file generation requests', () => {
+    const prompt = renderSystemPromptResult('', {}, { skillActive: false }).text;
+
+    expect(prompt).toContain(
+      'A request to generate, create, or configure a file requires creating and verifying the actual artifact on disk before concluding',
+    );
+    expect(prompt).toContain(
+      'files requested to be generated or modified must actually exist on disk with their final contents',
+    );
+  });
+
   it('shows the additional directories section only when directories exist', () => {
     expect(
       renderSystemPromptResult('', { additionalDirsInfo: '/extra' }, { skillActive: true }).text,
