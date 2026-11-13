@@ -44,6 +44,7 @@ import {
   EventBusService,
 } from '@moonshot-ai/agent-core-v2/app/event/eventBusService';
 import type { AgentActivitySnapshot } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
+import { TaskStarted, TaskTerminatedNotice } from '@moonshot-ai/agent-core-v2/agent/task/taskOps';
 import type { AgentTaskInfo } from '@moonshot-ai/agent-core-v2/agent/task/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -1742,6 +1743,27 @@ describe('SessionEventBroadcaster', () => {
       };
     }
 
+    function swarmMemberTask(
+      agentId: string,
+      swarmIndex: number,
+      status: AgentTaskInfo['status'],
+    ): Extract<AgentTaskInfo, { kind: 'agent' }> {
+      return {
+        taskId: agentId,
+        kind: 'agent',
+        description: `3-way explore #${swarmIndex} (explore)`,
+        status,
+        detached: false,
+        startedAt: 1_700_000_001_000,
+        endedAt: status === 'running' ? null : 1_700_000_006_000,
+        agentId,
+        subagentType: 'explore',
+        parentToolCallId: 'call_swarm',
+        swarmIndex,
+        resultSummary: status === 'completed' ? 'explored docs' : undefined,
+      };
+    }
+
     type TaskFrame = { type: string; agent_id: string; task_id?: string; status?: string };
     const taskFramesOf = (view: ReturnType<typeof collectingTarget>): TaskFrame[] =>
       view.envelopes.filter(
@@ -1768,7 +1790,18 @@ describe('SessionEventBroadcaster', () => {
       await bc.subscribe('s1', offView.target, ['agent-9']);
       main.tasks.change(shellTask('bash-2', 'running', false));
       main.tasks.change({ ...shellTask('bash-2', 'running', false), detached: true });
+      main.bus.emit(new TaskStarted({ agentId: 'main', info: shellTask('bash-2', 'running', true) }));
       main.tasks.change(shellTask('bash-2', 'killed'));
+      main.bus.emit(new TaskTerminatedNotice({ agentId: 'main', info: shellTask('bash-2', 'killed', true) }));
+      main.bus.emit(
+        new TaskStarted({
+          agentId: 'main',
+          info: { ...swarmMemberTask('agent-plain', 1, 'running'), swarmIndex: undefined },
+        }),
+      );
+      main.bus.emit(new TaskStarted({ agentId: 'other', info: swarmMemberTask('agent-foreign', 1, 'running') }));
+      main.bus.emit(new TaskStarted({ agentId: 'main', info: swarmMemberTask('agent-0', 1, 'running') }));
+      main.bus.emit(new TaskTerminatedNotice({ agentId: 'main', info: swarmMemberTask('agent-0', 1, 'completed') }));
 
       expect(taskFramesOf(view)).toEqual([
         {
@@ -1811,6 +1844,33 @@ describe('SessionEventBroadcaster', () => {
           status: 'ended',
           outcome: 'killed',
           ended_at: new Date(1_700_000_005_000).toISOString(),
+        }),
+        expect.objectContaining({
+          type: 'task',
+          agent_id: 'main',
+          task_id: 'agent-0',
+          kind: 'subagent',
+          status: 'running',
+          phase: 'working',
+          detached: false,
+          description: '3-way explore #1 (explore)',
+          child_agent_id: 'agent-0',
+          parent_tool_call_id: 'call_swarm',
+          swarm_index: 1,
+        }),
+        expect.objectContaining({
+          type: 'task',
+          agent_id: 'main',
+          task_id: 'agent-0',
+          kind: 'subagent',
+          status: 'ended',
+          outcome: 'completed',
+          detached: false,
+          child_agent_id: 'agent-0',
+          parent_tool_call_id: 'call_swarm',
+          swarm_index: 1,
+          result_summary: 'explored docs',
+          ended_at: new Date(1_700_000_006_000).toISOString(),
         }),
       ]);
       expect(summarize(taskFramesOf(offView))).toEqual(['list:agent-9']);
