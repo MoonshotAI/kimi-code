@@ -103,6 +103,35 @@ describe('AcpHostFileSystem', () => {
     expect(writes).toEqual([]);
   });
 
+  it('maps a client resource-not-found read to os.fs.not_found', async () => {
+    const fs = makeFileSystem({
+      readTextFile: async () => {
+        throw RequestError.resourceNotFound('/plans/missing.md');
+      },
+      writeTextFile: async () => {
+        throw new Error('must not write');
+      },
+    });
+
+    const error = await fs.readText('/plans/missing.md').catch((e: unknown) => e);
+
+    expect(isHostFsNotFound(error)).toBe(true);
+  });
+
+  it('propagates a non-not-found client read failure unchanged', async () => {
+    const failure = new Error('transport failed');
+    const fs = makeFileSystem({
+      readTextFile: async () => {
+        throw failure;
+      },
+      writeTextFile: async () => {
+        throw new Error('must not write');
+      },
+    });
+
+    await expect(fs.readText('/plans/missing.md')).rejects.toBe(failure);
+  });
+
   it('bridges valid UTF-8 writeBytes through client text write', async () => {
     const writes: string[] = [];
     const fs = makeFileSystem({

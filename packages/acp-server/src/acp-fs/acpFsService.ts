@@ -82,9 +82,25 @@ export class AcpHostFileSystem implements IHostFileSystem {
     }
     // ACP `fs.readTextFile` returns already-decoded UTF-8 text, so the
     // `encoding`/`errors` decode options are a no-op here.
-    const { content } = await this.connection
-      .get()
-      .readTextFile({ sessionId: this.ctx.sessionId, path });
+    let content: string;
+    try {
+      ({ content } = await this.connection
+        .get()
+        .readTextFile({ sessionId: this.ctx.sessionId, path }));
+    } catch (error) {
+      // ACP clients surface a missing file as a structured resource-not-found
+      // RequestError rather than an errno. Map it to the same `os.fs.not_found`
+      // HostFsError the node-local backend raises so downstream consumers
+      // (e.g. plan mode reading a not-yet-created plan file) can treat it as
+      // "empty" instead of a hard failure.
+      if (isResourceNotFound(error)) {
+        throw new HostFsError(OsFsErrors.codes.OS_FS_NOT_FOUND, `read failed: path does not exist`, {
+          details: { path, op: 'read' },
+          cause: error,
+        });
+      }
+      throw error;
+    }
     return content;
   }
 
@@ -119,8 +135,11 @@ export class AcpHostFileSystem implements IHostFileSystem {
   /**
    * ACP has no append RPC. When both text capabilities are available, emulate
    * append against the client's current buffer; otherwise preserve local
-   * append semantics. A structured ACP resource-not-found means an empty
-   * client file, while all other read failures are propagated.
+   * append semantics. A missing client file means an empty buffer (so the
+   * first append creates it), while all other read failures are propagated.
+   * `readText` maps a structured resource-not-found into an `os.fs.not_found`
+   * `HostFsError`, so both that mapped error and a raw `RequestError` are
+   * treated as "no existing content".
    */
   async appendText(path: string, data: string): Promise<void> {
     if (!this.connection.fsReadTextFile || !this.connection.fsWriteTextFile) {
@@ -130,7 +149,7 @@ export class AcpHostFileSystem implements IHostFileSystem {
     try {
       existing = await this.readText(path);
     } catch (error) {
-      if (!isResourceNotFound(error)) throw error;
+      if (!isResourceNotFound(error) && !isHostFsNotFound(error)) throw error;
     }
     await this.writeText(path, existing + data);
   }
