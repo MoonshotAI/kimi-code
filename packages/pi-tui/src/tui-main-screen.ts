@@ -289,6 +289,14 @@ export class TuiMainScreen extends TuiBase implements TUI {
 
 		// Extract cursor position before applying line resets (marker must be found first)
 		const cursorPos = this.extractCursorPosition(newLines, height);
+		let hardwareCursorHidden = false;
+		const writeRenderOutput = (data: string): void => {
+			if (!hardwareCursorHidden && cursorPos && this.getShowHardwareCursor()) {
+				this.terminal.hideCursor();
+				hardwareCursorHidden = true;
+			}
+			this.terminal.write(data);
+		};
 
 		// Process raw lines for output. Never write a line wider than the
 		// terminal: truncate defensively instead of crashing. Extremely narrow
@@ -332,7 +340,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		// Helper to clear scrollback and viewport and render all new lines
 		const fullRender = (clear: boolean): void => {
 			this.fullRedrawCount += 1;
-			const output = new BoundedTerminalWriter((data) => this.terminal.write(data));
+			const output = new BoundedTerminalWriter(writeRenderOutput);
 			output.append("\x1b[?2026h"); // Begin synchronized output
 			if (clear) {
 				output.append(this.deleteKittyImages(this.previousKittyImageIds));
@@ -467,7 +475,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		// All changes are in deleted lines (nothing to render, just clear)
 		if (firstChanged >= newLines.length) {
 			if (this.previousLines.length > newLines.length) {
-				const output = new BoundedTerminalWriter((data) => this.terminal.write(data));
+				const output = new BoundedTerminalWriter(writeRenderOutput);
 				output.append("\x1b[?2026h");
 				output.append(this.deleteChangedKittyImages(firstChanged, lastChanged));
 				// Move to end of new content (clamp to 0 for empty content)
@@ -526,7 +534,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 
 		// Render from first changed line to end
 		// Keep updates wrapped in synchronized output while writing bounded chunks.
-		const output = new BoundedTerminalWriter((data) => this.terminal.write(data));
+		const output = new BoundedTerminalWriter(writeRenderOutput);
 		output.append("\x1b[?2026h"); // Begin synchronized output
 		output.append(this.deleteChangedKittyImages(firstChanged, lastChanged));
 		const prevViewportBottom = prevViewportTop + height - 1;

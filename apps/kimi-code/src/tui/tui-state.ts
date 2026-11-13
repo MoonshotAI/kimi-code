@@ -158,6 +158,7 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
           },
         })
       : new TuiMainScreen(terminal);
+  ui.setShowHardwareCursor(process.platform === 'win32');
   if (options.animationFrameRate !== undefined) ui.setAnimationFrameRate(options.animationFrameRate);
 
   setMarkdownAltScreenActive(ui instanceof TuiAltScreen);

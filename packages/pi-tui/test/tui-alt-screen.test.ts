@@ -20,7 +20,7 @@ import {
 	resetCapabilitiesCache,
 	setCapabilities,
 } from "../src/terminal-image.ts";
-import { renderFakeCursor, type TuiMouseEvent } from "../src/tui.ts";
+import { CURSOR_MARKER, renderFakeCursor, type TuiMouseEvent } from "../src/tui.ts";
 import { TuiAltScreen } from "../src/tui-alt-screen.ts";
 import { stripTerminalSequences, visibleWidth } from "../src/utils.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
@@ -43,7 +43,9 @@ class InputOverlay {
 }
 
 class RecordingTerminal extends VirtualTerminal {
-	readonly events: Array<{ type: "write"; data: string } | { type: "start" } | { type: "stop" }> = [];
+	readonly events: Array<
+		{ type: "write"; data: string } | { type: "start" } | { type: "stop" } | { type: "hide" } | { type: "show" }
+	> = [];
 
 	override start(onInput: (data: string) => void, onResize: () => void): void {
 		this.events.push({ type: "start" });
@@ -59,9 +61,43 @@ class RecordingTerminal extends VirtualTerminal {
 		this.events.push({ type: "stop" });
 		super.stop();
 	}
+
+	override hideCursor(): void {
+		this.events.push({ type: "hide" });
+		super.hideCursor();
+	}
+
+	override showCursor(): void {
+		this.events.push({ type: "show" });
+		super.showCursor();
+	}
 }
 
 describe("TuiAltScreen", () => {
+	it("hides a visible hardware cursor only when redrawing content", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const tui = new TuiAltScreen(terminal, true);
+		let text = `ab${CURSOR_MARKER}cd`;
+		tui.setLayoutRoot({ render: () => [text], invalidate() {} });
+		tui.start();
+		await terminal.waitForRender();
+		terminal.events.length = 0;
+
+		text = `abx${CURSOR_MARKER}cd`;
+		tui.renderNow();
+		const redraw = terminal.events.find((event) => event.type === "write");
+		assert.ok(redraw?.type === "write");
+		assert.ok(redraw.data.startsWith("\x1b[?25l\x1b[?2026h"));
+		assert.ok(redraw.data.includes("\x1b[1;4H\x1b[?25h"));
+
+		terminal.events.length = 0;
+		tui.renderNow();
+		const unchanged = terminal.events.find((event) => event.type === "write");
+		assert.ok(unchanged?.type === "write");
+		assert.ok(unchanged.data.startsWith("\x1b[?2026h"));
+		assert.ok(unchanged.data.includes("\x1b[1;4H\x1b[?25h"));
+		tui.stop();
+	});
 	it("preserves word selections when an effect adds or removes leading content padding", async () => {
 		const terminal = new VirtualTerminal(30, 6);
 		const copied: string[] = [];
