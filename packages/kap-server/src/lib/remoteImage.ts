@@ -238,7 +238,8 @@ function remoteImageDispatcherFor(
   dispatchers: Dispatcher[],
 ): Dispatcher | undefined {
   if (useProxy) {
-    const inner = createProxyDispatcher(process.env, {}, { requestTls: { servername: target.host } });
+    const proxyEnv = { ...process.env, no_proxy: '', NO_PROXY: '' };
+    const inner = createProxyDispatcher(proxyEnv, {}, { requestTls: { servername: target.host } });
     if (inner === undefined) throw new RemoteImageError('invalid', 'Remote image proxy configuration is invalid');
     const dispatcher = new HostAuthorityDispatcher(inner, new URL(target.url).host);
     dispatchers.push(dispatcher);

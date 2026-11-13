@@ -134,6 +134,7 @@ describe('remote image network boundaries', () => {
     await new Promise<void>((resolve) => proxy.listen(0, '127.0.0.1', resolve));
     const port = (proxy.address() as AddressInfo).port;
     vi.stubEnv('HTTP_PROXY', `http://127.0.0.1:${port}`);
+    vi.stubEnv('NO_PROXY', '198.51.100.10');
     try {
       const result = await fetchRemoteImage('http://images.example.test:8080/pic.png', {
         lookupImpl: async () => [
