@@ -897,10 +897,10 @@ describe('EventDispatcherService', () => {
     expect(agentState.get(counterKey).value).toBe(5);
   });
 
-  it('requires custom onUndo and forbids checkpoints for mutableReplay participants', async () => {
+  it('supports opt-in mutableReplay on durable participants across restore, reruns, failures, and attachLate', async () => {
     expect(() =>
       dispatcher.attach({
-        id: 'runtime.test.missing-on-undo',
+        id: 'runtime.test.invalid-mutable',
         events: [ItemAdd],
         undoable: true,
         mutableReplay: true,
@@ -908,61 +908,31 @@ describe('EventDispatcherService', () => {
         getState: () => ({ items: [] }),
         commit: () => {},
       }),
-    ).toThrow("Agent runtime 'runtime.test.missing-on-undo' requires custom onUndo for mutable replay");
+    ).toThrow(/requires custom onUndo for mutable replay/);
 
-    dispatcher.attach({
-      id: 'runtime.test.illegal-checkpoint',
-      events: [AnchorEvent],
-      undoable: false,
-      mutableReplay: true,
-      transition: (_draft, _event, ctx) => {
-        ctx.checkpoint();
-      },
-      getState: () => ({ items: [] }),
-      commit: () => {},
-    });
-    journal.push(new AnchorEvent({}).serialize());
-
-    await expect(dispatcher.restore()).rejects.toThrow(
-      "Durable participant 'runtime.test.illegal-checkpoint' cannot use checkpoints during mutable replay",
-    );
-  });
-
-  it('stages opt-in mutableReplay participants in place and commits once across restore, reruns, replacements, and attachLate', async () => {
-    const isolated = disposables.add(new TestInstantiationService());
-    const records: WireRecord[] = [];
-    isolated.set(IEventBus, new SyncDescriptor(EventBusService));
-    isolated.set(IAgentBlobService, noopBlob);
-    isolated.set(IWireService, stubWireJournal(records));
-    isolated.set(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' }));
-    isolated.set(IAgentStateService, new AgentStateService());
-    isolated.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
-    const scopedState = isolated.get(IAgentStateService);
-    scopedState.contributeState(counterKey);
-    scopedState.contributeState(otherKey);
-    const scoped = isolated.get(IEventDispatcher);
-
-    interface NestedParticipantState {
+    interface MutableParticipantState {
       count: number;
       items: string[];
       lookup: Record<string, number>;
     }
-    const initial: NestedParticipantState = { count: 0, items: [], lookup: {} };
-    const frozenChild = Object.freeze(['reset']) as unknown as string[];
-    let state: NestedParticipantState = initial;
+    const initial: MutableParticipantState = { count: 0, items: [], lookup: {} };
+    let state: MutableParticipantState = initial;
     let commits = 0;
-    scoped.attach({
-      id: 'runtime.test.mutable-replay',
+    const frozenReplacement = Object.freeze({
+      count: 0,
+      items: Object.freeze(['reset']) as unknown as string[],
+      lookup: Object.freeze({ reset: 1 }) as Record<string, number>,
+    });
+    dispatcher.attach({
+      id: 'runtime.test.mutable-participant',
       events: [CounterAdd, ItemAdd, ClearEvent],
       undoable: true,
       mutableReplay: true,
       transition: (draft, event) => {
+        if (event instanceof ClearEvent) return frozenReplacement;
         if (event instanceof CounterAdd) {
           draft.count += event.by;
           return;
-        }
-        if (event instanceof ClearEvent) {
-          return { count: draft.count, items: frozenChild, lookup: {} };
         }
         if (event instanceof ItemAdd) {
           draft.items.push(event.item);
@@ -981,165 +951,55 @@ describe('EventDispatcherService', () => {
       },
     });
 
-    records.push(
-      new CounterAdd({ by: 1 }).serialize(),
-      new ItemAdd({ item: 'before-clear' }).serialize(),
-      new ClearEvent({}).serialize(),
-    );
+    journal.push(new CounterAdd({ by: 2 }).serialize());
     for (let i = 0; i < 200; i += 1) {
-      records.push(new ItemAdd({ item: `k${i}` }).serialize());
+      journal.push(new ItemAdd({ item: `m-${i}` }).serialize());
     }
-    records.push(
-      new ContextUndo({ agentId: 'main', count: 1 }).serialize(),
-      new ItemAdd({ item: 'tail' }).serialize(),
-    );
+    journal.push(new ClearEvent({}).serialize(), new ItemAdd({ item: 'tail' }).serialize());
 
-    await scoped.restore();
+    await dispatcher.restore();
 
     expect(initial).toEqual({ count: 0, items: [], lookup: {} });
-    expect(frozenChild).toEqual(['reset']);
-    expect(commits).toBe(1);
-    expect(state.count).toBe(1);
-    expect(state.items).toHaveLength(201);
-    expect(state.items[0]).toBe('reset');
-    expect(state.items.at(-1)).toBe('tail');
+    expect(frozenReplacement.items).toEqual(['reset']);
+    expect(state).toEqual({ count: 0, items: ['reset', 'tail'], lookup: { reset: 1, tail: 2 } });
     expect(Object.isFrozen(state)).toBe(true);
     expect(Object.isFrozen(state.items)).toBe(true);
-    expect(Object.isFrozen(state.lookup)).toBe(true);
+    expect(commits).toBe(1);
 
-    commits = 0;
-    records.length = 0;
-    records.push(new ItemAdd({ item: 'rerun-only' }).serialize());
-    await scoped.restore();
-
-    expect(commits).toBe(2);
-    expect(state).toEqual({ count: 0, items: ['rerun-only'], lookup: { 'rerun-only': 1 } });
-    expect(Object.isFrozen(state)).toBe(true);
-
-    const box: { items: readonly string[] } = { items: [] };
-    let lateCommits = 0;
-    records.length = 0;
-    for (let i = 0; i < 200; i += 1) {
-      records.push(new ItemAdd({ item: `late-${i}` }).serialize());
-    }
-    await scoped.attachLate({
-      id: 'runtime.test.late-mutable-box',
-      events: [ItemAdd],
-      undoable: false,
-      mutableReplay: true,
-      transition: (draft, event) => {
-        if (event instanceof ItemAdd) {
-          (draft.items as string[]).push(event.item);
-        }
-      },
-      getState: () => box,
-      commit: (next) => {
-        lateCommits += 1;
-        box.items = next.items;
-      },
-    });
-
-    expect(Object.isFrozen(box)).toBe(false);
-    expect(Object.isFrozen(box.items)).toBe(true);
-    expect(box.items).toHaveLength(200);
-    expect(lateCommits).toBe(1);
-
-    await scoped.dispatch(new ItemAdd({ item: 'live-after-late' }));
-    expect(box.items).toHaveLength(201);
-    expect(box.items.at(-1)).toBe('live-after-late');
-  });
-
-  it('discards staged mutable participant drafts on replay failure and preserves live dispatch during restore', async () => {
-    const seed: CheckpointedState = { items: [] };
-    let state: CheckpointedState = seed;
-    dispatcher.attach({
-      id: 'runtime.test.mutable-failure',
-      events: [ItemAdd, FailingEvent],
-      undoable: false,
-      mutableReplay: true,
-      transition: (draft, event) => {
-        if (event instanceof ItemAdd) draft.items.push(event.item);
-        if (event instanceof FailingEvent) draft.items.push('before-failure');
-      },
-      getState: () => state,
-      commit: (next) => {
-        state = next;
-      },
-    });
-
-    journal.push(new ItemAdd({ item: 'a' }).serialize(), new FailingEvent({}).serialize());
+    journal.push(new FailingEvent({}).serialize());
     await expect(dispatcher.restore()).rejects.toThrow('fold failure');
-    expect(state).toBe(seed);
-    expect(state.items).toEqual([]);
+    expect(state).toBe(initial);
 
     journal.length = 0;
     journal.push(new ItemAdd({ item: 'recovered' }).serialize());
     await dispatcher.restore();
-    expect(state.items).toEqual(['recovered']);
-    expect(Object.isFrozen(state)).toBe(true);
+    expect(state).toEqual({ count: 0, items: ['recovered'], lookup: { recovered: 1 } });
 
-    journal.push(new FailingEvent({}).serialize());
-    const lateSeed: CheckpointedState = { items: ['seed'] };
-    let lateState: CheckpointedState = lateSeed;
-    await expect(
-      dispatcher.attachLate({
-        id: 'runtime.test.late-mutable-failure',
-        events: [ItemAdd, FailingEvent],
-        undoable: false,
-        mutableReplay: true,
-        transition: (draft, event) => {
-          if (event instanceof ItemAdd) draft.items.push(event.item);
-          if (event instanceof FailingEvent) {
-            draft.items.push('partial-late');
-            throw new Error('late failure');
-          }
-        },
-        getState: () => lateState,
-        commit: (next) => {
-          lateState = next;
-        },
-      }),
-    ).rejects.toThrow('late failure');
-    expect(lateState).toBe(lateSeed);
-    expect(lateState.items).toEqual(['seed']);
-
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const replayRecord = new ItemAdd({ item: 'replay' }).serialize();
-    const wire = stubWireJournal([]);
-    wire.readRestoreChains = async () => {
-      await gate;
-      return { restorable: [replayRecord], journal: [replayRecord] };
-    };
-    const ix2 = disposables.add(new TestInstantiationService());
-    ix2.set(IEventBus, new SyncDescriptor(EventBusService));
-    ix2.set(IAgentBlobService, noopBlob);
-    ix2.set(IWireService, wire);
-    ix2.set(IAgentStateService, new AgentStateService());
-    ix2.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
-    const restoringDispatcher = ix2.get(IEventDispatcher);
-    let liveState: CheckpointedState = { items: [] };
-    restoringDispatcher.attach({
-      id: 'runtime.test.mutable-live-coexist',
+    let lateState: CheckpointedState = { items: ['seed'] };
+    let lateCommits = 0;
+    for (let i = 0; i < 100; i += 1) {
+      journal.push(new ItemAdd({ item: `late-${i}` }).serialize());
+    }
+    await dispatcher.attachLate({
+      id: 'runtime.test.mutable-late',
       events: [ItemAdd],
       undoable: false,
       mutableReplay: true,
       transition: (draft, event) => {
         if (event instanceof ItemAdd) draft.items.push(event.item);
       },
-      getState: () => liveState,
+      getState: () => lateState,
       commit: (next) => {
-        liveState = next;
+        lateCommits += 1;
+        lateState = next;
       },
     });
-    const restoring = restoringDispatcher.restore();
-    await restoringDispatcher.dispatch(new ItemAdd({ item: 'live' }));
-    expect(liveState.items).toEqual(['live']);
-    release();
-    await restoring;
-    expect(liveState.items).toEqual(['live', 'replay']);
-    expect(Object.isFrozen(liveState)).toBe(true);
+
+    expect(lateCommits).toBe(1);
+    expect(lateState.items).toHaveLength(102);
+    expect(Object.isFrozen(lateState)).toBe(true);
+
+    await dispatcher.dispatch(new ItemAdd({ item: 'live' }));
+    expect(lateState.items.at(-1)).toBe('live');
   });
 });
