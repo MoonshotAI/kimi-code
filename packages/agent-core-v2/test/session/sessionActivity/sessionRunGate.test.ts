@@ -203,6 +203,19 @@ describe('SessionRunGateService', () => {
     serviceB.release(SID);
   });
 
+  it('reports an occupied session without acquiring the lock', async () => {
+    await readAll();
+    serviceB.hold(SID);
+    expect(gate().tryAcquire()).toBeUndefined();
+    expect(serviceA.held(SID)).toBe(false);
+    serviceB.release(SID);
+    const lease = gate().tryAcquire();
+    lease?.release();
+    expect(serviceA.held(SID)).toBe(true);
+    serviceA.release(SID);
+    expect(serviceA.held(SID)).toBe(false);
+  });
+
   it('releases a direct hold when idle but retains an operation lease until released', async () => {
     vi.useFakeTimers();
     try {
