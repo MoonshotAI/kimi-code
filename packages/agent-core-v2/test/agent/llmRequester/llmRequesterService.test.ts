@@ -1684,9 +1684,13 @@ describe('AgentLoopRequestFactory request id', () => {
     expect(attribution.of('test-agent')).toEqual({
       userInputId: '任务-1🚀',
       activeRequestId: 'trace-req-1',
+      lastRequestId: 'trace-req-1',
     });
     await dispatcher.dispatch(new TurnEnded({ agentId: 'test-agent', turnId: 1, reason: 'completed' }));
-    expect(attribution.of('test-agent')).toEqual({ userInputId: '任务-1🚀' });
+    expect(attribution.of('test-agent')).toEqual({
+      userInputId: '任务-1🚀',
+      lastRequestId: 'trace-req-1',
+    });
   });
 
   it('reports an absent trace before a request that returns none', async () => {
@@ -1720,17 +1724,17 @@ describe('AgentLoopRequestFactory request id', () => {
         step_no: 2,
       }),
     });
-    expect(request.trace.requestId).toBeUndefined();
+    expect(request.trace.requestId).toBe('trace-fail-1');
   });
 
-  it('uses protocol diagnostics instead of retaining the header request id on failure', async () => {
+  it('retains the protocol diagnostics request id over the header request id on failure', async () => {
     const requester = createTracedRequester(null);
     Object.defineProperty(requester, 'request', {
       value: async function* (...args: unknown[]) {
         const requestOptions = args[2] as
           | { onRequestId?: (requestId: string | null) => void }
           | undefined;
-        requestOptions?.onRequestId?.('trace-mid-stream');
+        requestOptions?.onRequestId?.('trace-header-1');
         const events: ModelRequestEvent[] = [];
         for (const event of events) yield event;
         throw new APIEmptyResponseError('no content, no tool calls', {
@@ -1744,7 +1748,7 @@ describe('AgentLoopRequestFactory request id', () => {
 
     const apiError = telemetryRecords.find((record) => record.event === 'api_error');
     expect(apiError?.properties?.['request_id']).toBe('trace-mid-stream');
-    expect(request.trace.requestId).toBeUndefined();
+    expect(request.trace.requestId).toBe('trace-mid-stream');
   });
 
   it('clears the previous physical request id before a projection retry', async () => {
