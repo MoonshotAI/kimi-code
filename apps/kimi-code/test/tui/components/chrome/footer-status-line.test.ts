@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { FooterComponent } from '#/tui/components/chrome/footer';
 import {
   runStatusLineCommand,
+  STATUS_LINE_COMMAND_TIMEOUT_MS,
   STATUS_LINE_MAX_CAPTURE_BYTES,
   STATUS_LINE_RERUN_INTERVAL_MS,
   StatusLineCommandRunner,
@@ -278,6 +279,79 @@ describe('runStatusLineCommand', () => {
 
         const line = await runStatusLineCommand(absCmd, payload);
         expect(line).toBe('isolated:{"model":"kimi-k2"');
+      } finally {
+        if (originalPath === undefined) {
+          delete process.env['PATH'];
+        } else {
+          process.env['PATH'] = originalPath;
+        }
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'falls back to sh on PATH when /bin/sh is absent such as on Termux',
+    async () => {
+      const dir = join(tmpdir(), `sl-termux-${process.pid}-${Math.random().toString(36).slice(2)}`);
+      mkdirSync(dir, { recursive: true });
+      const originalPath = process.env['PATH'];
+      try {
+        const prefixBin = join(dir, 'usr', 'bin');
+        mkdirSync(prefixBin, { recursive: true });
+        const hitsFile = join(dir, 'termux-sh-hits');
+        const termuxSh = join(prefixBin, 'sh');
+        writeFileSync(termuxSh, `#!/bin/sh\nprintf 'termux-sh\\n' >> "${hitsFile}"\nexec /bin/sh "$@"\n`);
+        chmodSync(termuxSh, 0o755);
+
+        const statusTool = join(prefixBin, 'termux-status');
+        writeFileSync(
+          statusTool,
+          '#!/bin/sh\nIFS= read -r raw\nprintf "termux:%s:%s" "$KIMI_CODE_STATUS_LINE" "${raw%%,*}"\n',
+        );
+        chmodSync(statusTool, 0o755);
+
+        process.env['PATH'] = [prefixBin, '/usr/bin'].join(delimiter);
+
+        const missingBinSh = join(dir, 'missing-bin', 'sh');
+        const line = await runStatusLineCommand(
+          'termux-status',
+          payload,
+          STATUS_LINE_COMMAND_TIMEOUT_MS,
+          missingBinSh,
+        );
+        expect(line).toBe('termux:1:{"model":"kimi-k2"');
+        expect(readFileSync(hitsFile, 'utf-8').trim()).toBe('termux-sh');
+      } finally {
+        if (originalPath === undefined) {
+          delete process.env['PATH'];
+        } else {
+          process.env['PATH'] = originalPath;
+        }
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'returns null when /bin/sh is absent and sh is also missing from PATH',
+    async () => {
+      const dir = join(tmpdir(), `sl-no-sh-${process.pid}-${Math.random().toString(36).slice(2)}`);
+      mkdirSync(dir, { recursive: true });
+      const originalPath = process.env['PATH'];
+      try {
+        const emptyBin = join(dir, 'empty-bin');
+        mkdirSync(emptyBin, { recursive: true });
+        process.env['PATH'] = emptyBin;
+
+        const missingBinSh = join(dir, 'missing-bin', 'sh');
+        const line = await runStatusLineCommand(
+          'printf unreachable',
+          payload,
+          STATUS_LINE_COMMAND_TIMEOUT_MS,
+          missingBinSh,
+        );
+        expect(line).toBeNull();
       } finally {
         if (originalPath === undefined) {
           delete process.env['PATH'];

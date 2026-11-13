@@ -8,7 +8,7 @@
  * JSON in, first line out, 300ms ceiling.
  */
 
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 
 export const STATUS_LINE_COMMAND_TIMEOUT_MS = 300;
 export const STATUS_LINE_RERUN_INTERVAL_MS = 1_000;
@@ -31,6 +31,7 @@ export function runStatusLineCommand(
   command: string,
   payload: StatusLinePayload,
   timeoutMs: number = STATUS_LINE_COMMAND_TIMEOUT_MS,
+  posixShell: string = '/bin/sh',
 ): Promise<string | null> {
   return new Promise((resolve) => {
     let settled = false;
@@ -41,33 +42,22 @@ export function runStatusLineCommand(
     };
 
     const isWin = process.platform === 'win32';
-    let child;
-    try {
-      child = spawn(isWin ? (process.env['ComSpec'] ?? 'cmd.exe') : '/bin/sh', isWin ? ['/d', '/s', '/c', command] : ['-c', command], {
-        stdio: ['pipe', 'pipe', 'ignore'],
-        env: { ...process.env, KIMI_CODE_STATUS_LINE: '1' },
-        // Own process group on POSIX so a timeout can drop the whole tree,
-        // not just the shell wrapper.
-        detached: !isWin,
-      });
-    } catch {
-      finish(null);
-      return;
-    }
+    const payloadJson = JSON.stringify(payload);
+    let activeChild: ChildProcess | undefined;
 
     const killTree = (): void => {
-      if (child.pid === undefined) return;
+      if (activeChild?.pid === undefined) return;
       if (isWin) {
         try {
-          spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+          spawn('taskkill', ['/pid', String(activeChild.pid), '/T', '/F'], { stdio: 'ignore' });
         } catch {
           // best effort
         }
       } else {
         try {
-          process.kill(-child.pid, 'SIGKILL');
+          process.kill(-activeChild.pid, 'SIGKILL');
         } catch {
-          child.kill('SIGKILL');
+          activeChild.kill('SIGKILL');
         }
       }
     };
@@ -78,39 +68,76 @@ export function runStatusLineCommand(
     }, timeoutMs);
     timer.unref?.();
 
-    let stdout = '';
-    child.stdout?.setEncoding('utf-8');
-    child.stdout?.on('data', (chunk: string) => {
-      if (stdout.includes('\n')) return; // first line is complete
-      stdout += chunk;
-      // Only the first line is ever used; stop accumulating past it (and cap
-      // a missing-newline stream) so a chatty command can't grow memory
-      // unboundedly before the timeout lands.
-      const cut = stdout.indexOf('\n');
-      if (cut >= 0) {
-        stdout = stdout.slice(0, cut + 1);
-      } else if (stdout.length > STATUS_LINE_MAX_CAPTURE_BYTES) {
-        stdout = stdout.slice(0, STATUS_LINE_MAX_CAPTURE_BYTES);
-      }
-    });
-    child.on('error', () => {
-      clearTimeout(timer);
-      finish(null);
-    });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      if (code !== 0) {
+    const launch = (posixExecutable: string, allowPathFallback: boolean): void => {
+      if (settled) return;
+      let child: ChildProcess;
+      try {
+        child = spawn(
+          isWin ? (process.env['ComSpec'] ?? 'cmd.exe') : posixExecutable,
+          isWin ? ['/d', '/s', '/c', command] : ['-c', command],
+          {
+            stdio: ['pipe', 'pipe', 'ignore'],
+            env: { ...process.env, KIMI_CODE_STATUS_LINE: '1' },
+            // Own process group on POSIX so a timeout can drop the whole tree,
+            // not just the shell wrapper.
+            detached: !isWin,
+          },
+        );
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (!isWin && allowPathFallback && (code === 'ENOENT' || code === 'ENOTDIR')) {
+          launch('sh', false);
+          return;
+        }
+        clearTimeout(timer);
         finish(null);
         return;
       }
-      const firstLine = (stdout.split('\n')[0] ?? '').trimEnd();
-      finish(firstLine.length > 0 ? firstLine : null);
-    });
 
-    child.stdin?.on('error', () => {
-      // The command closed stdin early (e.g. `true`); nothing more to send.
-    });
-    child.stdin?.end(JSON.stringify(payload));
+      activeChild = child;
+      let stdout = '';
+      child.stdout?.setEncoding('utf-8');
+      child.stdout?.on('data', (chunk: string) => {
+        if (settled || child !== activeChild) return;
+        if (stdout.includes('\n')) return; // first line is complete
+        stdout += chunk;
+        // Only the first line is ever used; stop accumulating past it (and cap
+        // a missing-newline stream) so a chatty command can't grow memory
+        // unboundedly before the timeout lands.
+        const cut = stdout.indexOf('\n');
+        if (cut >= 0) {
+          stdout = stdout.slice(0, cut + 1);
+        } else if (stdout.length > STATUS_LINE_MAX_CAPTURE_BYTES) {
+          stdout = stdout.slice(0, STATUS_LINE_MAX_CAPTURE_BYTES);
+        }
+      });
+      child.on('error', (error: NodeJS.ErrnoException) => {
+        if (settled || child !== activeChild) return;
+        if (!isWin && allowPathFallback && (error.code === 'ENOENT' || error.code === 'ENOTDIR')) {
+          launch('sh', false);
+          return;
+        }
+        clearTimeout(timer);
+        finish(null);
+      });
+      child.on('close', (code) => {
+        if (settled || child !== activeChild) return;
+        clearTimeout(timer);
+        if (code !== 0) {
+          finish(null);
+          return;
+        }
+        const firstLine = (stdout.split('\n')[0] ?? '').trimEnd();
+        finish(firstLine.length > 0 ? firstLine : null);
+      });
+
+      child.stdin?.on('error', () => {
+        // The command closed stdin early (e.g. `true`); nothing more to send.
+      });
+      child.stdin?.end(payloadJson);
+    };
+
+    launch(posixShell, !isWin && posixShell !== 'sh');
   });
 }
 
