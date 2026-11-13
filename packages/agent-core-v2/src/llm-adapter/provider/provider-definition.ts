@@ -11,6 +11,8 @@ import {
   geminiEndpoint,
   glmEndpoint,
   kimiEndpoint,
+  miniMaxAnthropicEndpoint,
+  miniMaxEndpoint,
   openAIEndpoint,
   vertexEndpoint,
 } from '@moonshot-ai/core/llm/builtin/provider/endpoints';
@@ -22,6 +24,10 @@ import {
 } from '@moonshot-ai/core/llm/builtin/provider/deepseek/index';
 import { glmRequester, inferGlmCapability } from '@moonshot-ai/core/llm/builtin/provider/glm/index';
 import { kimiRequesters } from '@moonshot-ai/core/llm/builtin/provider/kimi/index';
+import {
+  inferMiniMaxCapability,
+  miniMaxRequesters,
+} from '@moonshot-ai/core/llm/builtin/provider/minimax/index';
 
 import type { Protocol } from '../protocol/protocol';
 import type { ModelSource } from './provider';
@@ -162,6 +168,24 @@ registerProviderDefinition({
   thinkingDriven: true,
   capability: inferGlmCapability,
   endpoint: glmEndpoint,
+});
+
+registerProviderDefinition({
+  id: 'minimax',
+  baseProtocol: 'openai',
+  requester: miniMaxRequesters.openai,
+  thinkingDriven: true,
+  capability: inferMiniMaxCapability,
+  endpoint: miniMaxEndpoint,
+});
+
+registerProviderDefinition({
+  id: 'minimax',
+  baseProtocol: 'anthropic',
+  requester: miniMaxRequesters.anthropic,
+  thinkingDriven: true,
+  capability: inferMiniMaxCapability,
+  endpoint: miniMaxAnthropicEndpoint,
 });
 
 registerProviderDefinition({

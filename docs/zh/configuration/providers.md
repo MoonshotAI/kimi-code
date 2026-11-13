@@ -12,6 +12,7 @@ Kimi Code CLI 支持同时接入多家模型供应商服务，模型在供应商
 | [`anthropic`](#anthropic) | Anthropic Messages | Claude 系列模型 |
 | [`deepseek`](#deepseek) | OpenAI Chat Completions、Anthropic Messages | DeepSeek V4 系列模型 |
 | [`glm`](#glm) | OpenAI Chat Completions | 智谱 GLM 系列模型，包括 GLM-5.3 |
+| [`minimax`](#minimax) | OpenAI Chat Completions、Anthropic Messages | MiniMax M3.1-Flash、M3 |
 | [`openai`](#openai) | OpenAI Chat Completions | OpenAI 及兼容服务、DeepSeek、Qwen 等 |
 | [`openai_responses`](#openai_responses) | OpenAI Responses API | OpenAI 较新的 Responses 接口 |
 | [`google-genai`](#google-genai) | Google GenAI | Gemini API |
@@ -159,6 +160,33 @@ default_effort = "max"
 ```
 
 如需使用 Z.AI 国际站 Coding Plan 入口，将 `base_url` 覆盖为 `https://api.z.ai/api/coding/paas/v4`。
+
+## `minimax`
+
+用于直连 MiniMax 的 OpenAI Chat Completions 或 Anthropic Messages API。MiniMax-M3.1-Flash 和 MiniMax-M3 支持文本、图像、视频输入、工具调用和 1M 上下文。推荐输出上限为 131072 个 token，最大支持 524288 个 token。
+
+MiniMax-M3.1-Flash 始终启用 adaptive Thinking，支持 `low`、`medium`、`high`、`xhigh`、`max` 五档，不能关闭 Thinking。MiniMax-M3 同样支持 adaptive Thinking，但允许关闭。
+
+- 默认 `base_url`：OpenAI 协议为 `https://api.minimax.cn/v1`；模型声明 `protocol = "anthropic"` 时为 `https://api.minimax.cn/anthropic`
+- 凭证键名：`MINIMAX_API_KEY`、`MINIMAX_BASE_URL`
+- 不支持 Anthropic `cache_control`，请求会自动省略该字段
+
+```toml
+[providers.minimax]
+type = "minimax"
+api_key_env = "MINIMAX_API_KEY"
+
+[models."MiniMax-M3.1-Flash"]
+provider = "minimax"
+model = "MiniMax-M3.1-Flash"
+max_context_size = 1000000
+max_output_size = 131072
+capabilities = [ "always_thinking", "image_in", "video_in", "tool_use" ]
+support_efforts = [ "low", "medium", "high", "xhigh", "max" ]
+default_effort = "max"
+```
+
+MiniMax 推荐使用 Anthropic 兼容 API 以支持 Interleaved Thinking。在模型条目中设置 `protocol = "anthropic"`，默认 base URL 会自动切换为 `https://api.minimax.cn/anthropic`。
 
 ## `openai`
 

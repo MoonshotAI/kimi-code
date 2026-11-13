@@ -12,6 +12,7 @@ The `type` field in the `providers` table determines which protocol implementati
 | [`anthropic`](#anthropic) | Anthropic Messages | Claude model family |
 | [`deepseek`](#deepseek) | OpenAI Chat Completions, Anthropic Messages | DeepSeek V4 models |
 | [`glm`](#glm) | OpenAI Chat Completions | Zhipu GLM models, including GLM-5.3 |
+| [`minimax`](#minimax) | OpenAI Chat Completions, Anthropic Messages | MiniMax M3.1-Flash and M3 |
 | [`openai`](#openai) | OpenAI Chat Completions | OpenAI and compatible services, DeepSeek, Qwen, etc. |
 | [`openai_responses`](#openai_responses) | OpenAI Responses API | OpenAI's newer Responses interface |
 | [`google-genai`](#google-genai) | Google GenAI | Gemini API |
@@ -159,6 +160,33 @@ default_effort = "max"
 ```
 
 For Z.AI's international Coding Plan endpoint, override `base_url` with `https://api.z.ai/api/coding/paas/v4`.
+
+## `minimax`
+
+For connecting directly to MiniMax's OpenAI Chat Completions or Anthropic Messages API. MiniMax-M3.1-Flash and MiniMax-M3 support text, image, and video input, tool calling, and a 1M-token context. The recommended output limit is 131072 tokens, with a maximum of 524288.
+
+MiniMax-M3.1-Flash always uses adaptive Thinking and supports `low`, `medium`, `high`, `xhigh`, and `max` efforts; it cannot be disabled. MiniMax-M3 also supports adaptive Thinking but allows it to be disabled.
+
+- Default `base_url`: `https://api.minimax.cn/v1` for OpenAI, or `https://api.minimax.cn/anthropic` when the model declares `protocol = "anthropic"`
+- Credential key names: `MINIMAX_API_KEY`, `MINIMAX_BASE_URL`
+- Anthropic `cache_control` is not supported and is omitted automatically
+
+```toml
+[providers.minimax]
+type = "minimax"
+api_key_env = "MINIMAX_API_KEY"
+
+[models."MiniMax-M3.1-Flash"]
+provider = "minimax"
+model = "MiniMax-M3.1-Flash"
+max_context_size = 1000000
+max_output_size = 131072
+capabilities = [ "always_thinking", "image_in", "video_in", "tool_use" ]
+support_efforts = [ "low", "medium", "high", "xhigh", "max" ]
+default_effort = "max"
+```
+
+MiniMax recommends its Anthropic-compatible API for Interleaved Thinking. To use it, set `protocol = "anthropic"` on the model entry; the default base URL then changes to `https://api.minimax.cn/anthropic` automatically.
 
 ## `openai`
 

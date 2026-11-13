@@ -25,6 +25,8 @@ const ENV_KEYS = [
   'DEEPSEEK_BASE_URL',
   'ZAI_API_KEY',
   'ZAI_BASE_URL',
+  'MINIMAX_API_KEY',
+  'MINIMAX_BASE_URL',
 ] as const;
 
 let envSnapshot: Record<string, string | undefined>;
@@ -127,6 +129,8 @@ describe('resolveAdapterIdentity', () => {
     expect(registry.resolveAdapterIdentity('openai', 'deepseek').thinkingDriven).toBe(true);
     expect(registry.resolveAdapterIdentity('anthropic', 'deepseek').thinkingDriven).toBe(true);
     expect(registry.resolveAdapterIdentity('openai', 'glm').thinkingDriven).toBe(true);
+    expect(registry.resolveAdapterIdentity('openai', 'minimax').thinkingDriven).toBe(true);
+    expect(registry.resolveAdapterIdentity('anthropic', 'minimax').thinkingDriven).toBe(true);
   });
 
   it('resolves unregistered pairs to the protocol itself with no vendor trait', () => {
@@ -174,6 +178,11 @@ describe('resolveCapability', () => {
     expect(registry.resolveCapability('openai', 'deepseek-v4-pro', 'deepseek')?.image_in).toBe(false);
     expect(registry.resolveCapability('openai', 'glm-5.3', 'glm')?.image_in).toBe(false);
     expect(registry.resolveCapability('openai', 'glm-5.3-flash', 'glm')?.image_in).toBe(true);
+    expect(registry.resolveCapability('openai', 'MiniMax-M3.1-Flash', 'minimax')).toMatchObject({
+      image_in: true,
+      video_in: true,
+      thinking: true,
+    });
   });
 });
 
@@ -213,6 +222,16 @@ describe('request gateway routes', () => {
     const glm = registry.request(modelWith({ protocol: 'openai', providerType: 'glm' }));
     expect(contentsOf(glm).endpoint?.defaultBaseUrl).toBe('https://open.bigmodel.cn/api/paas/v4');
     expect(supportsLlmUpload(glm, 'image')).toBe(false);
+    const miniMax = registry.request(modelWith({ protocol: 'openai', providerType: 'minimax' }));
+    expect(contentsOf(miniMax).endpoint?.defaultBaseUrl).toBe('https://api.minimax.cn/v1');
+    expect(supportsLlmUpload(miniMax, 'video')).toBe(false);
+    const miniMaxAnthropic = registry.request(
+      modelWith({ protocol: 'anthropic', providerType: 'minimax' }),
+    );
+    expect(contentsOf(miniMaxAnthropic).endpoint?.defaultBaseUrl).toBe(
+      'https://api.minimax.cn/anthropic',
+    );
+    expect(supportsLlmUpload(miniMaxAnthropic, 'video')).toBe(false);
   });
 
   it('keeps stream business codes out of the real HTTP status at the registry boundary', () => {
@@ -362,6 +381,11 @@ describe('resolveProviderEndpoint', () => {
     expect(resolveProviderEndpoint('glm', {})).toEqual({
       baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
     });
+    expect(resolveProviderEndpoint('minimax', {})).toEqual({ baseUrl: 'https://api.minimax.cn/v1' });
+    expect(resolveProviderEndpoint('minimax', {}, 'anthropic')).toEqual({
+      baseUrl: 'https://api.minimax.cn/anthropic',
+    });
+    expect(resolveProviderEndpoint('no-such-vendor')).toEqual({});
   });
 
   it('aggregates the google-genai chain with the legacy vertex precedence', () => {
@@ -387,9 +411,6 @@ describe('resolveProviderEndpoint', () => {
     ).toEqual({ baseUrl: 'https://gemini.example.test' });
   });
 
-  it('returns {} for unregistered vendors', () => {
-    expect(resolveProviderEndpoint('no-such-vendor')).toEqual({});
-  });
 });
 
 describe('kimi provider definitions', () => {
@@ -421,6 +442,9 @@ describe('kimi provider definitions', () => {
     expect(getProviderDefinition('deepseek', 'openai')?.endpoint?.apiKeyEnv).toBe('DEEPSEEK_API_KEY');
     expect(getProviderDefinition('deepseek', 'anthropic')?.endpoint?.apiKeyEnv).toBe('DEEPSEEK_API_KEY');
     expect(getProviderDefinition('glm', 'openai')?.endpoint?.apiKeyEnv).toBe('ZAI_API_KEY');
+    expect(getProviderDefinitions('minimax')).toHaveLength(2);
+    expect(getProviderDefinition('minimax', 'openai')?.endpoint?.apiKeyEnv).toBe('MINIMAX_API_KEY');
+    expect(getProviderDefinition('minimax', 'anthropic')?.endpoint?.apiKeyEnv).toBe('MINIMAX_API_KEY');
     expect(hasProviderDefinition('kimi')).toBe(true);
     expect(hasProviderDefinition('no-such-vendor')).toBe(false);
     expect(getProviderDefinition('kimi', 'google-genai')).toBeUndefined();

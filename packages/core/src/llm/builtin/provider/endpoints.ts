@@ -9,6 +9,10 @@ import {
 } from '#/llm/builtin/provider/deepseek/index';
 import { GLM_DEFAULT_BASE_URL } from '#/llm/builtin/provider/glm/index';
 import { KIMI_DEFAULT_BASE_URL } from '#/llm/builtin/provider/kimi/protocol';
+import {
+  MINIMAX_ANTHROPIC_DEFAULT_BASE_URL,
+  MINIMAX_DEFAULT_BASE_URL,
+} from '#/llm/builtin/provider/minimax/index';
 
 export const openAIEndpoint: LlmEndpointDeclaration = {
   apiKeyEnv: 'OPENAI_API_KEY',
@@ -46,6 +50,18 @@ export const glmEndpoint: LlmEndpointDeclaration = {
   apiKeyEnv: 'ZAI_API_KEY',
   baseUrlEnv: 'ZAI_BASE_URL',
   defaultBaseUrl: GLM_DEFAULT_BASE_URL,
+};
+
+export const miniMaxEndpoint: LlmEndpointDeclaration = {
+  apiKeyEnv: 'MINIMAX_API_KEY',
+  baseUrlEnv: 'MINIMAX_BASE_URL',
+  defaultBaseUrl: MINIMAX_DEFAULT_BASE_URL,
+};
+
+export const miniMaxAnthropicEndpoint: LlmEndpointDeclaration = {
+  apiKeyEnv: 'MINIMAX_API_KEY',
+  baseUrlEnv: 'MINIMAX_BASE_URL',
+  defaultBaseUrl: MINIMAX_ANTHROPIC_DEFAULT_BASE_URL,
 };
 
 export const KIMI_API_KEY_ENV = 'KIMI_API_KEY';
