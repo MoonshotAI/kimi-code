@@ -49,5 +49,5 @@ The directory listing of current working directory is:
 ```
 ${cwd_listing}
 ```
-${additional_dirs_section}
+${repo_map_section}${additional_dirs_section}
 ${agents_section}${skills_section}${plugin_sections}

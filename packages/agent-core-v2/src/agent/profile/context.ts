@@ -4,6 +4,13 @@ import { findGitWorkTree } from '#/app/git/workTree';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 
 import type { SystemPromptContext } from './profile';
+import {
+  buildRepoMap,
+  REPO_MAP_MAX_LINES,
+  type BuildRepoMapOptions,
+} from './repoMap';
+
+export { buildRepoMap, REPO_MAP_MAX_LINES, type BuildRepoMapOptions };
 
 export const AGENTS_MD_RECOMMENDED_MAX_BYTES = 32 * 1024;
 
@@ -19,6 +26,7 @@ export type { ProfileContextDeps };
 
 export interface PreparedSystemPromptContext extends SystemPromptContext {
   readonly cwdListing?: string;
+  readonly repoMap?: string;
   readonly agentsMd?: string;
   readonly agentsMdPaths?: readonly string[];
   readonly additionalDirsInfo?: string;
@@ -37,8 +45,9 @@ export async function prepareSystemPromptContext(
   options?: PrepareSystemPromptContextOptions,
 ): Promise<PreparedSystemPromptContext> {
   const additionalDirs = dedupeDirs(options?.additionalDirs ?? []);
-  const [cwdListing, agentsMdResult, additionalDirsInfo] = await Promise.all([
+  const [cwdListing, repoMap, agentsMdResult, additionalDirsInfo] = await Promise.all([
     listDirectory(deps, workDir, { collapseHiddenDirs: true }),
+    buildRepoMap(deps, workDir),
     options?.preloadedAgentsMd !== undefined
       ? Promise.resolve(options.preloadedAgentsMd)
       : loadAgentsMdForRoots(deps, brandHome, [workDir]),
@@ -46,6 +55,7 @@ export async function prepareSystemPromptContext(
   ]);
   return {
     cwdListing,
+    repoMap,
     agentsMd: agentsMdResult.content,
     agentsMdPaths: agentsMdResult.paths,
     additionalDirsInfo,
