@@ -74,6 +74,12 @@ Key names per provider:
 | `KIMI_BASE_URL` | Kimi / Moonshot | `https://api.moonshot.ai/v1` |
 | `ANTHROPIC_API_KEY` | Anthropic | None |
 | `ANTHROPIC_BASE_URL` | Anthropic | Follows Anthropic SDK default |
+| `DEEPSEEK_API_KEY` | DeepSeek | None |
+| `DEEPSEEK_BASE_URL` | DeepSeek | OpenAI: `https://api.deepseek.com`; Anthropic: `https://api.deepseek.com/anthropic` |
+| `ZAI_API_KEY` | GLM / Zhipu | None |
+| `ZAI_BASE_URL` | GLM / Zhipu | `https://open.bigmodel.cn/api/paas/v4` |
+| `MINIMAX_API_KEY` | MiniMax | None |
+| `MINIMAX_BASE_URL` | MiniMax | OpenAI: `https://api.minimax.cn/v1`; Anthropic: `https://api.minimax.cn/anthropic` |
 | `OPENAI_API_KEY` | OpenAI (`openai` and `openai_responses`) | None |
 | `OPENAI_BASE_URL` | OpenAI (`openai` and `openai_responses`) | `https://api.openai.com/v1` |
 | `GOOGLE_API_KEY` | Google GenAI, Vertex AI | None |

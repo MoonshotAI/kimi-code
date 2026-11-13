@@ -41,6 +41,14 @@ describe('deepseek provider', () => {
 
   it('encodes thinking, files, limits and errors for the chat and anthropic formats', async () => {
     expect([flash.capability?.image_in, pro.capability?.image_in]).toEqual([true, false]);
+    expect(
+      withProtocolCapabilities({ provider: 'deepseek', name: 'claude-opus-4-7' }, deepseekAnthropicProtocol)
+        .capability?.image_in,
+    ).toBe(false);
+    expect(
+      withProtocolCapabilities({ provider: 'deepseek', name: 'claude-sonnet-4-5' }, deepseekAnthropicProtocol)
+        .capability?.image_in,
+    ).toBe(true);
 
     const image = (url: string, id?: string) => ({ type: 'image_url', imageUrl: { url, id } }) as const;
     const history: Message[] = [
@@ -69,6 +77,26 @@ describe('deepseek provider', () => {
       { type: 'file', file_id: 'file-api-1' },
     ]);
     expect(max.messages[1]).toMatchObject({ role: 'assistant', reasoning_content: 'plan' });
+
+    const urlImage = encodeChat({}, [
+      { role: 'user', content: [image('https://example.test/a.png', 'client-image-1')] },
+    ]);
+    expect(urlImage.messages[0]?.['content']).toEqual([
+      { type: 'image_url', image_url: { url: 'https://example.test/a.png' } },
+    ]);
+    const toolImage = encodeChat({}, [
+      createToolMessage('c1', [{ type: 'text', text: 'shot' }, image('ms://file-api-1', 'file-api-1')]),
+    ]);
+    expect(toolImage.messages).toEqual([
+      { role: 'tool', tool_call_id: 'c1', content: 'shot' },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Attached media from tool result:' },
+          { type: 'file', file_id: 'file-api-1' },
+        ],
+      },
+    ]);
 
     const off = encodeChat({ thinking: { effort: 'off' } }, [createUserMessage('hi')]);
     expect(off['thinking']).toEqual({ type: 'disabled' });

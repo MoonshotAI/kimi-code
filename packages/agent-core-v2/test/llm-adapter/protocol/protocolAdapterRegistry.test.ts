@@ -386,6 +386,9 @@ describe('resolveProviderEndpoint', () => {
       baseUrl: 'https://api.minimax.cn/anthropic',
     });
     expect(resolveProviderEndpoint('no-such-vendor')).toEqual({});
+    expect(
+      resolveProviderEndpoint('openai', { OPENAI_BASE_URL: 'https://example.com/v1' }, 'anthropic'),
+    ).toEqual({ baseUrl: 'https://example.com/v1' });
   });
 
   it('aggregates the google-genai chain with the legacy vertex precedence', () => {

@@ -33,24 +33,32 @@ const DEEPSEEK_TEXT_CAPABILITY: ModelCapability = Object.freeze({
 
 export function inferDeepSeekCapability(modelName: string): ModelCapability | undefined {
   const normalized = modelName.toLowerCase();
-  if (normalized.startsWith('deepseek-v4-pro')) return DEEPSEEK_TEXT_CAPABILITY;
-  if (normalized === 'deepseek-flash' || normalized.startsWith('deepseek-v4-flash')) {
+  if (normalized.startsWith('deepseek-v4-pro') || normalized.startsWith('claude-opus')) {
+    return DEEPSEEK_TEXT_CAPABILITY;
+  }
+  if (
+    normalized === 'deepseek-flash' ||
+    normalized.startsWith('deepseek-v4-flash') ||
+    normalized.startsWith('claude-')
+  ) {
     return DEEPSEEK_VISION_CAPABILITY;
   }
   return undefined;
 }
 
-const deepseekMedia: MediaSupport = {
-  kinds: {
-    image: {
-      mimes: BASELINE_IMAGE_MIMES,
-      sources: ['inline', 'url', 'file'],
-      url: (url) => /^https?:\/\//i.test(url) && url.length <= MAX_IMAGE_URL_LENGTH,
-      inToolResult: 'native',
-      inlineByteBudget: BASELINE_INLINE_IMAGE_BYTE_BUDGET,
+function deepseekMedia(inToolResult: 'native' | 'relocate'): MediaSupport {
+  return {
+    kinds: {
+      image: {
+        mimes: BASELINE_IMAGE_MIMES,
+        sources: ['inline', 'url', 'file'],
+        url: (url) => /^https?:\/\//i.test(url) && url.length <= MAX_IMAGE_URL_LENGTH,
+        inToolResult,
+        inlineByteBudget: BASELINE_INLINE_IMAGE_BYTE_BUDGET,
+      },
     },
-  },
-};
+  };
+}
 
 function deepseekLegality(
   base: ModelLegality,
@@ -94,8 +102,10 @@ function withDeepSeekOpenAIFiles(native: OpenAINativeMessage): OpenAINativeMessa
     content: native.content.map((part) => {
       if (part.type !== 'image_url') return part;
       const source = part.image_url as { url?: string; id?: string };
-      const id = source.id ?? fileId(source.url ?? '');
-      return id === undefined ? part : { type: 'file', file_id: id };
+      const id = fileId(source.url ?? '');
+      if (id !== undefined) return { type: 'file', file_id: id };
+      if (source.id === undefined) return part;
+      return { ...part, image_url: { url: source.url ?? '' } };
     }),
   } as unknown as OpenAINativeMessage;
 }
@@ -130,7 +140,7 @@ function withDeepSeekAnthropicMessage(native: AnthropicNativeMessage): Anthropic
 }
 
 export const deepseekOpenAIProtocol = openAIProtocol.with((base) => ({
-  media: deepseekMedia,
+  media: deepseekMedia('relocate'),
   capability: inferDeepSeekCapability,
   legality: deepseekLegality(base.legality, ['json_object']),
   cacheKey: undefined,
@@ -148,7 +158,7 @@ export const deepseekOpenAIProtocol = openAIProtocol.with((base) => ({
 }));
 
 export const deepseekAnthropicProtocol = anthropicProtocol.with((base) => ({
-  media: deepseekMedia,
+  media: deepseekMedia('native'),
   capability: inferDeepSeekCapability,
   legality: deepseekLegality(base.legality, []),
   thinking: (thinking) => {

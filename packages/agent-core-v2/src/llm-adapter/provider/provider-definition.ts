@@ -106,7 +106,7 @@ export function explainProviderEndpoint(
   env: Readonly<Record<string, string | undefined>> = process.env,
   protocol?: Protocol,
 ): ExplainedProviderEndpoint {
-  const definition = getProviderDefinition(providerType, protocol);
+  const definition = getProviderDefinition(providerType, protocol) ?? getProviderDefinition(providerType);
   return resolveEndpointDeclaration(definition?.endpoint ?? definition?.endpoints, env);
 }
 

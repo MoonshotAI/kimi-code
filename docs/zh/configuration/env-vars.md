@@ -74,6 +74,12 @@ KIMI_BASE_URL = "https://api.moonshot.ai/v1"
 | `KIMI_BASE_URL` | Kimi / Moonshot | `https://api.moonshot.ai/v1` |
 | `ANTHROPIC_API_KEY` | Anthropic | 无 |
 | `ANTHROPIC_BASE_URL` | Anthropic | Anthropic SDK 默认值 |
+| `DEEPSEEK_API_KEY` | DeepSeek | 无 |
+| `DEEPSEEK_BASE_URL` | DeepSeek | OpenAI：`https://api.deepseek.com`；Anthropic：`https://api.deepseek.com/anthropic` |
+| `ZAI_API_KEY` | GLM / 智谱 | 无 |
+| `ZAI_BASE_URL` | GLM / 智谱 | `https://open.bigmodel.cn/api/paas/v4` |
+| `MINIMAX_API_KEY` | MiniMax | 无 |
+| `MINIMAX_BASE_URL` | MiniMax | OpenAI：`https://api.minimax.cn/v1`；Anthropic：`https://api.minimax.cn/anthropic` |
 | `OPENAI_API_KEY` | OpenAI（`openai` 和 `openai_responses`） | 无 |
 | `OPENAI_BASE_URL` | OpenAI（`openai` 和 `openai_responses`） | `https://api.openai.com/v1` |
 | `GOOGLE_API_KEY` | Google GenAI、Vertex AI | 无 |
