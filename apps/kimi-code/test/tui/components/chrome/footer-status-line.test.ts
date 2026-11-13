@@ -1,6 +1,6 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
@@ -8,6 +8,7 @@ import { FooterComponent } from '#/tui/components/chrome/footer';
 import {
   runStatusLineCommand,
   STATUS_LINE_MAX_CAPTURE_BYTES,
+  STATUS_LINE_RERUN_INTERVAL_MS,
   StatusLineCommandRunner,
   type StatusLinePayload,
 } from '#/tui/utils/status-line-command';
@@ -175,6 +176,200 @@ describe('runStatusLineCommand', () => {
     expect(line).not.toBeNull();
     expect(line!.length).toBeLessThanOrEqual(STATUS_LINE_MAX_CAPTURE_BYTES);
   });
+
+  it.skipIf(process.platform === 'win32')(
+    'spawns /bin/sh directly without searching long PATH prefixes for sh',
+    async () => {
+      const dir = join(tmpdir(), `sl-long-path-${process.pid}-${Math.random().toString(36).slice(2)}`);
+      mkdirSync(dir, { recursive: true });
+      const originalPath = process.env['PATH'];
+      try {
+        const prefixDirs = Array.from({ length: 13 }, (_, idx) => {
+          const entry = join(dir, `p-${idx}`);
+          mkdirSync(entry, { recursive: true });
+          return entry;
+        });
+        const wrapperDir = join(dir, 'sh-wrapper');
+        mkdirSync(wrapperDir, { recursive: true });
+        const hitsFile = join(dir, 'sh-hits');
+        const wrapperSh = join(wrapperDir, 'sh');
+        writeFileSync(wrapperSh, `#!/bin/sh\nprintf 'hit\\n' >> "${hitsFile}"\nexec /bin/sh "$@"\n`);
+        chmodSync(wrapperSh, 0o755);
+
+        const absCmd = join(dir, 'status-cmd.sh');
+        writeFileSync(absCmd, '#!/bin/sh\n/bin/cat >/dev/null\nprintf "abs-%s" "$KIMI_CODE_STATUS_LINE"\n');
+        chmodSync(absCmd, 0o755);
+
+        process.env['PATH'] = [...prefixDirs, wrapperDir, '/bin', '/usr/bin'].join(delimiter);
+
+        const line = await runStatusLineCommand(absCmd, payload);
+        expect(line).toBe('abs-1');
+        expect(existsSync(hitsFile)).toBe(false);
+      } finally {
+        if (originalPath === undefined) {
+          delete process.env['PATH'];
+        } else {
+          process.env['PATH'] = originalPath;
+        }
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'runs relative user commands via PATH and preserves sh -c semantics without resolving outer sh from PATH',
+    async () => {
+      const dir = join(tmpdir(), `sl-rel-cmd-${process.pid}-${Math.random().toString(36).slice(2)}`);
+      mkdirSync(dir, { recursive: true });
+      const originalPath = process.env['PATH'];
+      try {
+        const decoyShDir = join(dir, 'decoy-sh');
+        const toolDir = join(dir, 'tools');
+        mkdirSync(decoyShDir, { recursive: true });
+        mkdirSync(toolDir, { recursive: true });
+        const hitsFile = join(dir, 'decoy-hits');
+        const decoySh = join(decoyShDir, 'sh');
+        writeFileSync(decoySh, `#!/bin/sh\nprintf 'decoy\\n' >> "${hitsFile}"\nexit 97\n`);
+        chmodSync(decoySh, 0o755);
+
+        const relTool = join(toolDir, 'custom-status-tool');
+        writeFileSync(
+          relTool,
+          '#!/bin/sh\nbody=$(/bin/cat)\nprintf "%s|%s|%s" "$1" "$KIMI_CODE_STATUS_LINE" "$body"\n',
+        );
+        chmodSync(relTool, 0o755);
+
+        process.env['PATH'] = [decoyShDir, toolDir, '/bin', '/usr/bin'].join(delimiter);
+
+        const line = await runStatusLineCommand('custom-status-tool "hello world" | tr "a-z" "A-Z"', payload);
+        expect(line).not.toBeNull();
+        expect(line).toContain('HELLO WORLD|1|');
+        expect(line).toContain('"MODEL":"KIMI-K2"');
+        expect(existsSync(hitsFile)).toBe(false);
+      } finally {
+        if (originalPath === undefined) {
+          delete process.env['PATH'];
+        } else {
+          process.env['PATH'] = originalPath;
+        }
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'runs absolute user commands even when PATH omits /bin',
+    async () => {
+      const dir = join(tmpdir(), `sl-isolated-path-${process.pid}-${Math.random().toString(36).slice(2)}`);
+      mkdirSync(dir, { recursive: true });
+      const originalPath = process.env['PATH'];
+      try {
+        const emptyDirs = Array.from({ length: 13 }, (_, idx) => {
+          const entry = join(dir, `empty-${idx}`);
+          mkdirSync(entry, { recursive: true });
+          return entry;
+        });
+        const absCmd = join(dir, 'abs-only.sh');
+        writeFileSync(absCmd, '#!/bin/sh\nIFS= read -r raw\nprintf "isolated:%s" "${raw%%,*}"\n');
+        chmodSync(absCmd, 0o755);
+
+        process.env['PATH'] = emptyDirs.join(delimiter);
+
+        const line = await runStatusLineCommand(absCmd, payload);
+        expect(line).toBe('isolated:{"model":"kimi-k2"');
+      } finally {
+        if (originalPath === undefined) {
+          delete process.env['PATH'];
+        } else {
+          process.env['PATH'] = originalPath;
+        }
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'kills the entire POSIX process group when a command times out',
+    async () => {
+      const dir = join(tmpdir(), `sl-kill-tree-${process.pid}-${Math.random().toString(36).slice(2)}`);
+      mkdirSync(dir, { recursive: true });
+      let childPid = 0;
+      try {
+        const pidFile = join(dir, 'child.pid');
+        const sleeper = join(dir, 'sleeper.sh');
+        writeFileSync(
+          sleeper,
+          `#!/bin/sh\nsleep 30 &\nchild=$!\nprintf "%s\\n" "$child" > "${pidFile}"\nwait "$child"\n`,
+        );
+        chmodSync(sleeper, 0o755);
+
+        const result = await runStatusLineCommand(sleeper, payload, 250);
+        expect(result).toBeNull();
+
+        childPid = Number(readFileSync(pidFile, 'utf-8').trim());
+        expect(Number.isInteger(childPid)).toBe(true);
+        expect(childPid).toBeGreaterThan(0);
+
+        let alive = true;
+        for (let attempt = 0; attempt < 25; attempt++) {
+          try {
+            process.kill(childPid, 0);
+            await new Promise((resolve) => setTimeout(resolve, 20));
+          } catch {
+            alive = false;
+            break;
+          }
+        }
+        expect(alive).toBe(false);
+      } finally {
+        if (childPid > 0) {
+          try {
+            process.kill(childPid, 'SIGKILL');
+          } catch {}
+        }
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'preserves the Windows ComSpec /d /s /c branch when platform is win32',
+    async () => {
+      const dir = join(tmpdir(), `sl-win-comspec-${process.pid}-${Math.random().toString(36).slice(2)}`);
+      mkdirSync(dir, { recursive: true });
+      const originalPlatform = process.platform;
+      const originalComSpec = process.env['ComSpec'];
+      try {
+        const argsFile = join(dir, 'comspec-args.txt');
+        const fakeComSpec = join(dir, 'fake-cmd.sh');
+        writeFileSync(
+          fakeComSpec,
+          `#!/bin/sh\n/bin/cat >/dev/null\nprintf "%s\\n" "$@" > "${argsFile}"\nprintf "win-%s" "$KIMI_CODE_STATUS_LINE"\n`,
+        );
+        chmodSync(fakeComSpec, 0o755);
+
+        Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+        process.env['ComSpec'] = fakeComSpec;
+
+        const line = await runStatusLineCommand('echo custom-win-line', payload);
+        expect(line).toBe('win-1');
+        expect(readFileSync(argsFile, 'utf-8').trim().split('\n')).toEqual([
+          '/d',
+          '/s',
+          '/c',
+          'echo custom-win-line',
+        ]);
+      } finally {
+        Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+        if (originalComSpec === undefined) {
+          delete process.env['ComSpec'];
+        } else {
+          process.env['ComSpec'] = originalComSpec;
+        }
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 describe('FooterComponent status_line command', () => {
@@ -291,4 +486,77 @@ describe('StatusLineCommandRunner', () => {
     expect(line1).toContain('bbb');
     expect(line1).not.toContain('aaa');
   });
+
+  it.skipIf(process.platform === 'win32')(
+    'refreshes multiple instances once per second under a long PATH without PATH sh lookups',
+    async () => {
+      const dir = join(tmpdir(), `sl-multi-${process.pid}-${Math.random().toString(36).slice(2)}`);
+      mkdirSync(dir, { recursive: true });
+      const originalPath = process.env['PATH'];
+      const runners: StatusLineCommandRunner[] = [];
+      try {
+        const prefixDirs = Array.from({ length: 13 }, (_, idx) => {
+          const entry = join(dir, `prefix-${idx}`);
+          mkdirSync(entry, { recursive: true });
+          return entry;
+        });
+        const wrapperDir = join(dir, 'wrapper');
+        mkdirSync(wrapperDir, { recursive: true });
+        const hitsFile = join(dir, 'sh-wrapper-hits');
+        const wrapperSh = join(wrapperDir, 'sh');
+        writeFileSync(wrapperSh, `#!/bin/sh\nprintf 'hit\\n' >> "${hitsFile}"\nexec /bin/sh "$@"\n`);
+        chmodSync(wrapperSh, 0o755);
+
+        const scriptFile = join(dir, 'instance-status.sh');
+        writeFileSync(
+          scriptFile,
+          '#!/bin/sh\n/bin/cat >/dev/null\nn=$(/bin/cat "$1")\nnext=$((n+1))\nprintf "%s\\n" "$next" > "$1"\nprintf "inst-%s-run-%s" "$2" "$next"\n',
+        );
+        chmodSync(scriptFile, 0o755);
+
+        process.env['PATH'] = [...prefixDirs, wrapperDir, '/bin', '/usr/bin'].join(delimiter);
+
+        const instanceCount = 4;
+        for (let idx = 0; idx < instanceCount; idx++) {
+          const counterFile = join(dir, `count-${idx}`);
+          writeFileSync(counterFile, '0');
+          runners.push(new StatusLineCommandRunner(`"${scriptFile}" "${counterFile}" "${idx}"`, () => {}));
+        }
+
+        for (const runner of runners) {
+          runner.maybeRefresh(payload);
+          runner.maybeRefresh(payload);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        for (let idx = 0; idx < instanceCount; idx++) {
+          expect(runners[idx]!.current()).toBe(`inst-${idx}-run-1`);
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, STATUS_LINE_RERUN_INTERVAL_MS));
+        for (let idx = 0; idx < instanceCount; idx++) {
+          expect(runners[idx]!.current()).toBe(`inst-${idx}-run-2`);
+        }
+
+        for (const runner of runners) {
+          runner.maybeRefresh(payload);
+        }
+        await new Promise((resolve) => setTimeout(resolve, STATUS_LINE_RERUN_INTERVAL_MS));
+        for (let idx = 0; idx < instanceCount; idx++) {
+          expect(runners[idx]!.current()).toBe(`inst-${idx}-run-3`);
+        }
+
+        expect(existsSync(hitsFile)).toBe(false);
+      } finally {
+        for (const runner of runners) {
+          runner.dispose();
+        }
+        if (originalPath === undefined) {
+          delete process.env['PATH'];
+        } else {
+          process.env['PATH'] = originalPath;
+        }
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
 });
