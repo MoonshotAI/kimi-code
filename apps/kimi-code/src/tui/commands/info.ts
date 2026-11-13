@@ -22,7 +22,7 @@ import {
   kimiCodeSignupUrl,
   withFeedbackVersionPrefix,
 } from '../constant/feedback';
-import { DEFAULT_OAUTH_PROVIDER_NAME, isManagedUsageProvider } from '../constant/kimi-tui';
+import { isManagedUsageProvider } from '../constant/kimi-tui';
 import { submitFeedbackWithAttachments } from '../../feedback/feedback-attachments';
 import { formatErrorMessage } from '../utils/event-payload';
 import { sessionWorkDir } from '../utils/session-work-dir';
@@ -41,29 +41,26 @@ export async function handleFeedbackCommand(host: SlashCommandHost): Promise<voi
     openUrl(FEEDBACK_ISSUE_URL);
   };
 
-  const customFeedbackProvider = await resolveCustomFeedbackProvider(host);
-  if (customFeedbackProvider === undefined) {
-    // Gate on the OAuth token rather than the active model's provider: a
-    // signed-in user running an API-key model can still submit feedback
-    // through the authenticated channel.
-    let signedIn = false;
-    try {
-      const status = await host.harness.auth.status(DEFAULT_OAUTH_PROVIDER_NAME);
-      signedIn = status.providers.some(
-        (provider) => provider.providerName === DEFAULT_OAUTH_PROVIDER_NAME && provider.hasToken,
-      );
-    } catch {
-      // The sign-in state is unreadable — keep the feedback entry usable by
-      // falling back to GitHub Issues instead of failing the command.
-      fallback(FEEDBACK_STATUS_FALLBACK);
-      return;
-    }
-    if (!signedIn) {
-      host.showStatus(FEEDBACK_STATUS_NOT_SIGNED_IN);
-      host.showStatus(kimiCodeSignupUrl());
-      host.showStatus(FEEDBACK_ISSUE_URL);
-      return;
-    }
+  const modelAlias = host.state.appState.model.length > 0 ? host.state.appState.model : undefined;
+  let availability: Awaited<ReturnType<SlashCommandHost['harness']['feedbackAvailability']>>;
+  try {
+    availability = await host.harness.feedbackAvailability(modelAlias);
+  } catch {
+    // The sign-in state is unreadable — keep the feedback entry usable by
+    // falling back to GitHub Issues instead of failing the command.
+    fallback(FEEDBACK_STATUS_FALLBACK);
+    return;
+  }
+  if (availability.kind === 'needs-login') {
+    host.showStatus(FEEDBACK_STATUS_NOT_SIGNED_IN);
+    host.showStatus(kimiCodeSignupUrl());
+    host.showStatus(FEEDBACK_ISSUE_URL);
+    return;
+  }
+  if (availability.kind === 'error') {
+    host.showStatus(availability.message);
+    fallback(FEEDBACK_STATUS_FALLBACK);
+    return;
   }
 
   // Stage 1: collect the free-form feedback text.
@@ -110,11 +107,14 @@ export async function handleFeedbackCommand(host: SlashCommandHost): Promise<voi
       os: `${osType()} ${osRelease()}`,
       model: host.state.appState.model.length > 0 ? host.state.appState.model : null,
     };
-    const res =
-      customFeedbackProvider === undefined
-        ? await host.harness.auth.submitFeedback(body)
-        : await host.harness.auth.submitFeedback(body, customFeedbackProvider);
+    const res = await host.harness.submitFeedback(body, modelAlias);
 
+    if (res.kind === 'needs-login') {
+      stopSpinner({ ok: false, label: FEEDBACK_STATUS_NOT_SIGNED_IN });
+      host.showStatus(kimiCodeSignupUrl());
+      host.showStatus(FEEDBACK_ISSUE_URL);
+      return;
+    }
     if (res.kind !== 'ok') {
       stopSpinner({ ok: false, label: res.message });
       fallback(FEEDBACK_STATUS_FALLBACK);
@@ -127,12 +127,7 @@ export async function handleFeedbackCommand(host: SlashCommandHost): Promise<voi
     // partial-failure status, never to the GitHub fallback in the outer catch.
     let attachmentFailed = false;
     try {
-      attachmentFailed = await submitFeedbackWithAttachments(
-        host,
-        res.feedbackId,
-        level,
-        customFeedbackProvider,
-      );
+      attachmentFailed = await submitFeedbackWithAttachments(host, res.feedbackId, level, modelAlias);
     } catch {
       attachmentFailed = true;
     }
@@ -148,21 +143,6 @@ export async function handleFeedbackCommand(host: SlashCommandHost): Promise<voi
     stopSpinner({ ok: false, label: FEEDBACK_STATUS_NETWORK_ERROR });
     fallback(FEEDBACK_STATUS_FALLBACK);
     throw error;
-  }
-}
-
-async function resolveCustomFeedbackProvider(host: SlashCommandHost): Promise<string | undefined> {
-  const alias = host.state.appState.model;
-  if (alias.length === 0) return undefined;
-  try {
-    const config = await host.harness.getConfig();
-    const providerKey =
-      host.state.appState.availableModels[alias]?.provider ?? config.models?.[alias]?.provider;
-    if (providerKey === undefined) return undefined;
-    const feedbackUrl = config.providers?.[providerKey]?.feedbackUrl?.trim();
-    return feedbackUrl !== undefined && feedbackUrl.length > 0 ? providerKey : undefined;
-  } catch {
-    return undefined;
   }
 }
 

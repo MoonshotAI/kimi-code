@@ -587,6 +587,8 @@ export * from '#/agent/tools/web-search/web-search';
 import '#/agent/tools/web-search/webSearchTool';
 export * from '#/app/auth/auth';
 export * from '#/app/auth/authService';
+export * from '#/app/auth/feedback';
+export * from '#/app/auth/feedbackService';
 export * from '#/app/region/region';
 export * from '#/app/region/regionService';
 export * from '#/app/auth/configSection';

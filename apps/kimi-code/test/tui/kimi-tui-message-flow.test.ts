@@ -407,6 +407,21 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
       return interactiveAgentScope.run(agentId, fn);
     }),
     getExperimentalFeatures: vi.fn(async () => []),
+    feedbackAvailability: vi.fn(async () => ({ kind: 'ready' as 'ready' | 'needs-login' | 'error' })),
+    submitFeedback: vi.fn(
+      async (): Promise<
+        { kind: 'ok'; feedbackId: number } | { kind: 'error'; message: string } | { kind: 'needs-login' }
+      > => ({
+        kind: 'ok',
+        feedbackId: 3,
+      }),
+    ),
+    createFeedbackUploadUrl: vi.fn(async () => ({
+      kind: 'ok' as const,
+      uploadId: 1,
+      parts: [],
+    })),
+    completeFeedbackUpload: vi.fn(async () => ({ kind: 'ok' as const })),
     auth: {
       status: vi.fn(async () => ({
         providers: [{ providerName: 'managed:kimi-code', hasToken: true }],
@@ -3123,9 +3138,7 @@ command = "vim"
 
   it('prints the sign-up page and GitHub Issues links when not signed in', async () => {
     const { driver, harness } = await makeDriver(makeSession());
-    harness.auth.status.mockResolvedValueOnce({
-      providers: [{ providerName: 'managed:kimi-code', hasToken: false }],
-    });
+    harness.feedbackAvailability.mockResolvedValueOnce({ kind: 'needs-login' });
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
     vi.mocked(openUrl).mockClear();
@@ -3134,7 +3147,7 @@ command = "vim"
 
     expect(openUrl).not.toHaveBeenCalled();
     expect(promptFeedbackInput).not.toHaveBeenCalled();
-    expect(harness.auth.submitFeedback).not.toHaveBeenCalled();
+    expect(harness.submitFeedback).not.toHaveBeenCalled();
     const transcript = stripSgr(renderTranscript(driver));
     expect(transcript).toContain("You're not signed in");
     expect(transcript).toContain('https://www.kimi.com/code');
@@ -3143,7 +3156,7 @@ command = "vim"
 
   it('falls back to GitHub Issues when the sign-in status cannot be read', async () => {
     const { driver, harness } = await makeDriver(makeSession());
-    harness.auth.status.mockRejectedValueOnce(new Error('token storage unavailable'));
+    harness.feedbackAvailability.mockRejectedValueOnce(new Error('token storage unavailable'));
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(promptFeedbackInput).mockClear();
     vi.mocked(openUrl).mockClear();
@@ -3153,7 +3166,7 @@ command = "vim"
     expect(openUrl).toHaveBeenCalledTimes(1);
     expect(openUrl).toHaveBeenCalledWith('https://github.com/MoonshotAI/kimi-code/issues');
     expect(promptFeedbackInput).not.toHaveBeenCalled();
-    expect(harness.auth.submitFeedback).not.toHaveBeenCalled();
+    expect(harness.submitFeedback).not.toHaveBeenCalled();
     const transcript = stripSgr(renderTranscript(driver));
     expect(transcript).toContain('Opening GitHub Issues as fallback');
   });
@@ -3172,11 +3185,11 @@ command = "vim"
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
     vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'none');
-    harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 7 });
+    harness.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 7 });
 
     await handleFeedbackCommand(feedbackDriver as any);
 
-    expect(harness.auth.submitFeedback).toHaveBeenCalledOnce();
+    expect(harness.submitFeedback).toHaveBeenCalledOnce();
     const transcript = stripSgr(renderTranscript(driver));
     expect(transcript).toContain('Feedback ID: 7');
   });
@@ -3187,7 +3200,7 @@ command = "vim"
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
     vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'none');
-    harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 9 });
+    harness.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 9 });
 
     await handleFeedbackCommand(feedbackDriver as any);
 
@@ -3201,18 +3214,19 @@ command = "vim"
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
     vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'none');
-    harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
+    harness.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
     harness.track.mockClear();
 
     await handleFeedbackCommand(feedbackDriver as any);
 
-    expect(harness.auth.submitFeedback).toHaveBeenCalledWith(
+    expect(harness.submitFeedback).toHaveBeenCalledWith(
       expect.objectContaining({
         content: 'useful feedback',
         sessionId: 'ses-1',
         version: 'kimi-code-0.0.0-test',
         model: 'k2',
       }),
+      'k2',
     );
     expect(harness.track).toHaveBeenCalledWith('feedback_submitted', undefined);
     const transcript = stripSgr(renderTranscript(driver));
@@ -3224,7 +3238,7 @@ command = "vim"
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
     vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'logs');
-    harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
+    harness.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
     harness.listSessions.mockResolvedValueOnce([{ id: 'ses-1', sessionDir: '/tmp/session-a' }] as never);
 
     const zipPath = await makeExportedSessionZip();
@@ -3260,10 +3274,11 @@ command = "vim"
         }),
       );
     });
-    expect(harness.auth.submitFeedback).toHaveBeenCalledWith(
+    expect(harness.submitFeedback).toHaveBeenCalledWith(
       expect.objectContaining({ content: 'useful feedback' }),
+      'k2',
     );
-    expect(harness.auth.submitFeedback.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(harness.submitFeedback.mock.invocationCallOrder[0]).toBeLessThan(
       harness.exportSession.mock.invocationCallOrder[0]!,
     );
     expect(settled).toBe(false);
@@ -3281,7 +3296,7 @@ command = "vim"
     vi.mocked(uploadArchive).mockReset();
     vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
     vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'logs+codebase');
-    harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
+    harness.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
     harness.listSessions.mockResolvedValueOnce([
       { id: 'ses-1', sessionDir: '/tmp/session-a' },
     ] as never);
@@ -3341,8 +3356,9 @@ command = "vim"
       3,
       { filename: 'repo.zip' },
     );
-    expect(harness.auth.submitFeedback).toHaveBeenCalledWith(
+    expect(harness.submitFeedback).toHaveBeenCalledWith(
       expect.not.objectContaining({ info: expect.anything() }),
+      'k2',
     );
   });
 
@@ -3355,7 +3371,7 @@ command = "vim"
     vi.mocked(uploadArchive).mockReset();
     vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
     vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'logs+codebase');
-    harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
+    harness.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
     harness.listSessions.mockResolvedValueOnce([{ id: 'ses-1', sessionDir: '/tmp/session-a' }] as never);
     const sessionZipPath = await makeExportedSessionZip();
     vi.mocked(scanCodebase).mockRejectedValueOnce(new Error('scan failed'));
@@ -3388,7 +3404,7 @@ command = "vim"
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
     vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'logs');
-    harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
+    harness.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
     harness.listSessions.mockResolvedValueOnce([{ id: 'ses-1', sessionDir: '/tmp/session-a' }] as never);
     vi.mocked(createFeedbackArchivePath).mockRejectedValueOnce(new Error('cache dir not writable'));
     vi.mocked(openUrl).mockClear();
@@ -3411,7 +3427,7 @@ command = "vim"
     vi.mocked(uploadArchive).mockReset();
     vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
     vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'logs+codebase');
-    harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
+    harness.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
     harness.listSessions.mockResolvedValueOnce([{ id: 'ses-1', sessionDir: '/tmp/session-a' }] as never);
     const sessionZipPath = await makeExportedSessionZip();
 
@@ -3431,7 +3447,7 @@ command = "vim"
 
     await handleFeedbackCommand(feedbackDriver as any);
 
-    const calls = harness.auth.submitFeedback.mock.calls as unknown as Array<[Record<string, unknown>]>;
+    const calls = harness.submitFeedback.mock.calls as unknown as Array<[Record<string, unknown>]>;
     expect(calls[0]?.[0]?.['info']).toBeUndefined();
     expect(uploadArchive).toHaveBeenCalledWith(
       expect.any(Object),
@@ -3449,7 +3465,7 @@ command = "vim"
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
     vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'logs+codebase');
-    harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
+    harness.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
 
     vi.mocked(scanCodebase).mockResolvedValueOnce({
       root: '/tmp/proj-a',
@@ -3468,7 +3484,7 @@ command = "vim"
 
     await handleFeedbackCommand(feedbackDriver as any);
 
-    expect(harness.auth.submitFeedback).toHaveBeenCalledOnce();
+    expect(harness.submitFeedback).toHaveBeenCalledOnce();
     const transcript = stripSgr(renderTranscript(driver));
     expect(transcript).toContain('Feedback ID: 3');
     expect(transcript).toContain('attachment upload failed');
@@ -3479,9 +3495,8 @@ command = "vim"
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
     vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'none');
-    harness.auth.submitFeedback.mockResolvedValueOnce({
+    harness.submitFeedback.mockResolvedValueOnce({
       kind: 'error',
-      status: 500,
       message: 'backend says no',
     });
 
@@ -3498,7 +3513,7 @@ command = "vim"
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
     vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'none');
-    harness.auth.submitFeedback.mockRejectedValueOnce(new Error('socket hangup'));
+    harness.submitFeedback.mockRejectedValueOnce(new Error('socket hangup'));
     vi.mocked(openUrl).mockClear();
 
     await expect(handleFeedbackCommand(feedbackDriver as any)).rejects.toThrow('socket hangup');
@@ -3516,50 +3531,28 @@ command = "vim"
 
     await handleFeedbackCommand(feedbackDriver as any);
 
-    expect(harness.auth.submitFeedback).not.toHaveBeenCalled();
+    expect(harness.submitFeedback).not.toHaveBeenCalled();
     expect(harness.track).not.toHaveBeenCalledWith('feedback_submitted', undefined);
   });
 
-  it('submits feedback via custom registry feedbackUrl without requiring OAuth sign-in', async () => {
+  it('submits feedback through the engine when it reports the channel is ready', async () => {
     const { driver, harness } = await makeDriver(makeSession());
-    harness.auth.status.mockResolvedValueOnce({
-      providers: [{ providerName: 'managed:kimi-code', hasToken: false }],
-    });
+    harness.feedbackAvailability.mockResolvedValueOnce({ kind: 'ready' });
     driver.state.appState.model = 'registry_kimi/k3';
-    driver.state.appState.availableModels = {
-      'registry_kimi/k3': {
-        provider: 'registry_kimi',
-        model: 'k3',
-        maxContextSize: 131072,
-        displayName: 'K3',
-        capabilities: [],
-      },
-    };
-    harness.getConfig.mockResolvedValueOnce({
-      providers: {
-        registry_kimi: {
-          type: 'kimi',
-          baseUrl: 'https://registry.example.test/v1',
-          apiKey: 'YOUR_API_KEY',
-          feedbackUrl: 'https://registry.example.test/v1/feedback',
-        },
-      },
-      models: {},
-    } as never);
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'custom feedback' }));
     vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'none');
-    harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 11 });
+    harness.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 11 });
 
     await handleFeedbackCommand(feedbackDriver as any);
 
     expect(harness.auth.status).not.toHaveBeenCalled();
-    expect(harness.auth.submitFeedback).toHaveBeenCalledWith(
+    expect(harness.submitFeedback).toHaveBeenCalledWith(
       expect.objectContaining({
         content: 'custom feedback',
         model: 'registry_kimi/k3',
       }),
-      'registry_kimi',
+      'registry_kimi/k3',
     );
     const transcript = stripSgr(renderTranscript(driver));
     expect(transcript).toContain('Feedback ID: 11');

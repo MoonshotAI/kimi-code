@@ -31,9 +31,9 @@ export async function submitFeedbackWithAttachments(
   host: SlashCommandHost,
   feedbackId: number,
   level: FeedbackAttachmentLevel,
-  providerName?: string,
+  modelAlias?: string,
 ): Promise<boolean> {
-  const api = createFeedbackUploadApi(host, providerName);
+  const api = createFeedbackUploadApi(host, modelAlias);
 
   if (level === 'logs') {
     const uploaded = await prepareAndUploadSessionArchive(host, api, feedbackId);
@@ -172,30 +172,26 @@ async function logFeedbackUploadError(error: unknown): Promise<void> {
 
 function createFeedbackUploadApi(
   host: SlashCommandHost,
-  providerName?: string,
+  modelAlias?: string,
 ): FeedbackUploadUrlApi {
   return {
     async createUploadUrl(input) {
-      const res =
-        providerName === undefined
-          ? await host.harness.auth.createFeedbackUploadUrl(input)
-          : await host.harness.auth.createFeedbackUploadUrl(input, providerName);
-      if (res.kind !== 'ok') throw new Error(res.message);
+      const res = await host.harness.createFeedbackUploadUrl(input, modelAlias);
+      if (res.kind !== 'ok') throw new Error(res.kind === 'error' ? res.message : 'Not signed in');
       return {
         uploadId: res.uploadId,
         parts: res.parts,
       };
     },
     async completeUpload(input) {
-      const payload = {
-        uploadId: input.uploadId,
-        parts: input.parts.map((part) => ({ partNumber: part.partNumber, etag: part.etag })),
-      };
-      const res =
-        providerName === undefined
-          ? await host.harness.auth.completeFeedbackUpload(payload)
-          : await host.harness.auth.completeFeedbackUpload(payload, providerName);
-      if (res.kind !== 'ok') throw new Error(res.message);
+      const res = await host.harness.completeFeedbackUpload(
+        {
+          uploadId: input.uploadId,
+          parts: input.parts.map((part) => ({ partNumber: part.partNumber, etag: part.etag })),
+        },
+        modelAlias,
+      );
+      if (res.kind !== 'ok') throw new Error(res.kind === 'error' ? res.message : 'Not signed in');
     },
   };
 }

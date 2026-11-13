@@ -4,7 +4,12 @@ import type { ImageLimits } from '#/image';
 import { withTelemetryContext } from '#/telemetry';
 
 import { capabilityRpc, Session } from '#/session';
-import type { KimiAuthFacade } from '#/auth';
+import type {
+  KimiAuthCompleteFeedbackUploadInput,
+  KimiAuthCreateFeedbackUploadUrlInput,
+  KimiAuthFacade,
+  KimiAuthSubmitFeedbackInput,
+} from '#/auth';
 import type { ConfigSectionChange, SDKRpcClientBase } from '#/rpc';
 import type {
   AuthenticateMcpServerOptions,
@@ -316,6 +321,22 @@ export class KimiHarness {
    */
   async generateSessionTitle(input: GenerateSessionTitleInput): Promise<string | undefined> {
     return this.rpc.generateSessionTitle(input);
+  }
+
+  feedbackAvailability(modelAlias?: string) {
+    return this.rpc.feedbackAvailability(modelAlias);
+  }
+
+  submitFeedback(input: KimiAuthSubmitFeedbackInput, modelAlias?: string) {
+    return this.rpc.submitFeedback(input, modelAlias);
+  }
+
+  createFeedbackUploadUrl(input: KimiAuthCreateFeedbackUploadUrlInput, modelAlias?: string) {
+    return this.rpc.createFeedbackUploadUrl(input, modelAlias);
+  }
+
+  completeFeedbackUpload(input: KimiAuthCompleteFeedbackUploadInput, modelAlias?: string) {
+    return this.rpc.completeFeedbackUpload(input, modelAlias);
   }
 
   async exportSession(input: ExportSessionInput): Promise<ExportSessionResult> {

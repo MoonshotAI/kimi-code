@@ -50,10 +50,10 @@ export async function fetchSubmitFeedback(
     const res = await fetch(url, {
       method: 'POST',
       headers: {
+        ...opts.headers,
         Authorization: `Bearer ${accessToken}`,
         Accept: 'application/json',
         'Content-Type': 'application/json',
-        ...opts.headers,
       },
       body: JSON.stringify(body),
       signal: controller.signal,

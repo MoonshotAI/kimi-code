@@ -5,18 +5,10 @@ import {
   writeConfigFile,
   type KimiConfig,
   type OAuthRef,
-  type ProviderConfig,
-  type ProviderType,
 } from '#/config/index';
 import {
-  apiKeyEnvMissingMessage,
   applyManagedKimiCodeConfig,
   applyManagedKimiCodeLogoutConfig,
-  credentialConflictMessage,
-  declaredProviderCredential,
-  fetchCompleteFeedbackUpload,
-  fetchCreateFeedbackUploadUrl,
-  fetchSubmitFeedback,
   KIMI_CODE_PROVIDER_NAME,
   KimiOAuthToolkit,
   kimiRegionLoginHosts,
@@ -200,52 +192,43 @@ export class KimiAuthFacade {
     input: KimiAuthSubmitFeedbackInput,
     providerName?: string | undefined,
   ): Promise<FetchSubmitFeedbackResult> {
-    const body = {
-      session_id: input.sessionId,
-      content: input.content,
-      version: input.version,
-      os: input.os,
-      model: input.model,
-      contact: input.contact,
-      info: input.info,
-    };
-    const custom = this.resolveCustomFeedbackTarget(providerName);
-    if (custom?.kind === 'error') return custom;
-    if (custom?.kind === 'custom') {
-      return fetchSubmitFeedback(custom.feedbackUrl, custom.apiKey, body, {
-        headers: custom.customHeaders,
-      });
-    }
     const auth = this.resolveRuntimeManagedAuth(providerName);
-    return this.toolkit.submitFeedback(body, providerName, {
-      oauthRef: auth.oauthRef,
-      baseUrl: auth.baseUrl,
-    });
+    return this.toolkit.submitFeedback(
+      {
+        session_id: input.sessionId,
+        content: input.content,
+        version: input.version,
+        os: input.os,
+        model: input.model,
+        contact: input.contact,
+        info: input.info,
+      },
+      providerName,
+      {
+        oauthRef: auth.oauthRef,
+        baseUrl: auth.baseUrl,
+      },
+    );
   }
 
   async createFeedbackUploadUrl(
     input: KimiAuthCreateFeedbackUploadUrlInput,
     providerName?: string | undefined,
   ): Promise<KimiAuthCreateFeedbackUploadUrlResult> {
-    const body = {
-      file_hash: input.sha256,
-      file_name: input.filename,
-      file_size: input.size,
-      feedback_id: input.feedbackId,
-    };
-    const custom = this.resolveCustomFeedbackTarget(providerName);
-    if (custom?.kind === 'error') return custom;
-    const result =
-      custom?.kind === 'custom'
-        ? await fetchCreateFeedbackUploadUrl(custom.apiKey, body, {
-            feedbackUrl: custom.feedbackUrl,
-            headers: custom.customHeaders,
-          })
-        : await this.toolkit.createFeedbackUploadUrl(
-            body,
-            providerName,
-            this.resolveRuntimeManagedAuth(providerName),
-          );
+    const auth = this.resolveRuntimeManagedAuth(providerName);
+    const result = await this.toolkit.createFeedbackUploadUrl(
+      {
+        file_hash: input.sha256,
+        file_name: input.filename,
+        file_size: input.size,
+        feedback_id: input.feedbackId,
+      },
+      providerName,
+      {
+        oauthRef: auth.oauthRef,
+        baseUrl: auth.baseUrl,
+      },
+    );
     if (result.kind !== 'ok') return result;
     return {
       kind: 'ok',
@@ -263,23 +246,18 @@ export class KimiAuthFacade {
     input: KimiAuthCompleteFeedbackUploadInput,
     providerName?: string | undefined,
   ): Promise<FetchCompleteFeedbackUploadResult> {
-    const body = {
-      upload_id: input.uploadId,
-      parts: input.parts.map((part) => ({ part_number: part.partNumber, etag: part.etag })),
-    };
-    const custom = this.resolveCustomFeedbackTarget(providerName);
-    if (custom?.kind === 'error') return custom;
-    if (custom?.kind === 'custom') {
-      return fetchCompleteFeedbackUpload(custom.apiKey, body, {
-        feedbackUrl: custom.feedbackUrl,
-        headers: custom.customHeaders,
-      });
-    }
     const auth = this.resolveRuntimeManagedAuth(providerName);
-    return this.toolkit.completeFeedbackUpload(body, providerName, {
-      oauthRef: auth.oauthRef,
-      baseUrl: auth.baseUrl,
-    });
+    return this.toolkit.completeFeedbackUpload(
+      {
+        upload_id: input.uploadId,
+        parts: input.parts.map((part) => ({ part_number: part.partNumber, etag: part.etag })),
+      },
+      providerName,
+      {
+        oauthRef: auth.oauthRef,
+        baseUrl: auth.baseUrl,
+      },
+    );
   }
 
   async getCachedAccessToken(
@@ -351,75 +329,4 @@ export class KimiAuthFacade {
       configuredOAuthRef: oauthRef ?? auth.oauthRef,
     }).oauthRef;
   }
-
-  private resolveCustomFeedbackTarget(
-    providerName: string | undefined,
-  ):
-    | {
-        readonly kind: 'custom';
-        readonly feedbackUrl: string;
-        readonly apiKey: string;
-        readonly customHeaders?: Readonly<Record<string, string>>;
-      }
-    | { readonly kind: 'error'; readonly message: string }
-    | undefined {
-    if (providerName === undefined) return undefined;
-    const config = loadRuntimeConfigSafe(this.options.configPath).config;
-    const provider = config.providers[providerName];
-    const feedbackUrl = provider?.feedbackUrl?.trim();
-    if (provider === undefined || feedbackUrl === undefined || feedbackUrl.length === 0) {
-      return undefined;
-    }
-    const customHeaders = provider.customHeaders;
-    const credential = declaredProviderCredential(provider, providerName);
-    if (credential.kind === 'conflict') {
-      return { kind: 'error', message: credential.message };
-    }
-    if (credential.kind === 'inline') {
-      return { kind: 'custom', feedbackUrl, apiKey: credential.apiKey, customHeaders };
-    }
-    if (credential.kind === 'env') {
-      const value = process.env[credential.apiKeyEnv]?.trim();
-      if (value === undefined || value.length === 0) {
-        return {
-          kind: 'error',
-          message: apiKeyEnvMissingMessage(providerName, credential.apiKeyEnv),
-        };
-      }
-      return { kind: 'custom', feedbackUrl, apiKey: value, customHeaders };
-    }
-    const envApiKey = providerEnvApiKey(provider);
-    if (envApiKey !== undefined && provider.oauth !== undefined) {
-      return {
-        kind: 'error',
-        message: credentialConflictMessage('Provider', providerName, 'apiKey', 'oauth'),
-      };
-    }
-    if (envApiKey !== undefined) {
-      return { kind: 'custom', feedbackUrl, apiKey: envApiKey, customHeaders };
-    }
-    return undefined;
-  }
-}
-
-const PROVIDER_ENV_API_KEY_NAMES: Readonly<Record<ProviderType, readonly string[]>> = {
-  anthropic: ['ANTHROPIC_API_KEY'],
-  openai: ['OPENAI_API_KEY'],
-  openai_responses: ['OPENAI_API_KEY'],
-  'google-genai': ['VERTEXAI_API_KEY', 'GOOGLE_API_KEY'],
-  kimi: ['KIMI_API_KEY'],
-  vertexai: [],
-};
-
-function providerEnvApiKey(provider: ProviderConfig): string | undefined {
-  const env = provider.env;
-  if (env === undefined) return undefined;
-  for (const name of PROVIDER_ENV_API_KEY_NAMES[provider.type]) {
-    const value = env[name];
-    if (value !== undefined && value.length > 0) {
-      const trimmed = value.trim();
-      return trimmed.length > 0 ? trimmed : undefined;
-    }
-  }
-  return undefined;
 }
