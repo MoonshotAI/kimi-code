@@ -812,7 +812,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   async initializeHistory(messages: readonly Message[]): Promise<void> {
-    if (this.history().length > 0 || this.hasPendingRequests()) {
+    if (this.history().length > 0 || this.hasActiveOrPendingWork()) {
       throw new BugIndicatingError('Loop history initialization requires an empty quiescent loop');
     }
     await this.resetLoop(messages);
@@ -1229,7 +1229,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   tryAcquireQuiescence(): IDisposable | undefined {
     if (this.disposing) throw abortError('Agent loop disposed');
-    if (this.quiescenceDepth > 0 || this.historySnapshotDepth > 0 || this.hasPendingRequests()) return undefined;
+    if (this.quiescenceDepth > 0 || this.historySnapshotDepth > 0 || this.hasActiveOrPendingWork()) return undefined;
     this.quiescenceDepth += 1;
     return toDisposable(() => this.releaseQuiescence());
   }
@@ -1319,7 +1319,14 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       (this.loop?.state.inbox.normal.length ?? 0) > 0 ||
       (this.loop?.state.inbox.notify.length ?? 0) > 0 ||
       (this.loop?.state.completionPending ?? false) ||
-      (this.loop?.state.resetting ?? false) ||
+      (this.loop?.state.resetting ?? false)
+    );
+  }
+
+  private hasActiveOrPendingWork(): boolean {
+    if (this.disposing) return false;
+    return (
+      this.hasPendingRequests() ||
       (this.loop !== undefined && this.loop.state.status !== 'idle')
     );
   }
@@ -1328,7 +1335,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     await this.startPromise;
     const loop = this.loop;
     if (loop === undefined) {
-      if (!this.hasPendingRequests()) return;
+      if (!this.hasActiveOrPendingWork()) return;
       await new Promise<void>((resolve) => this.settleWaiters.push(resolve));
       return;
     }
@@ -1345,7 +1352,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   private maybeSettle(): void {
-    if (this.hasPendingRequests() || this.settleWaiters.length === 0) return;
+    if (this.hasActiveOrPendingWork() || this.settleWaiters.length === 0) return;
     const waiters = this.settleWaiters.splice(0);
     for (const resolve of waiters) resolve();
   }

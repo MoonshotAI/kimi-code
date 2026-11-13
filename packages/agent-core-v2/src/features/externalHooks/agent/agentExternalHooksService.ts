@@ -12,7 +12,12 @@ import {
   type FullCompactionTask,
 } from '#/agent/fullCompaction/fullCompaction';
 import type { CompactionResult } from '#/agent/fullCompaction/types';
-import { IAgentLoopService, type AfterStepContext, type PromptSubmitContext } from '#/agent/loop/loop';
+import {
+  IAgentLoopService,
+  type AfterStepContext,
+  type LoopNotifyHandle,
+  type PromptSubmitContext,
+} from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { PromptQueued } from '#/agent/prompt/promptEvents';
@@ -106,6 +111,14 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
   private sessionTitle: string | undefined;
 
   private hookFailureWarned = false;
+
+  private pendingStopContinuationTurnId: number | undefined;
+
+  private stopContinuationUnconsumed = false;
+
+  private stopHookContinuation: LoopNotifyHandle | undefined;
+
+  private stopCompletedTurnId: number | undefined;
 
   private withSessionFacts(inputData: Record<string, unknown>): Record<string, unknown> {
     return { sessionTitle: this.sessionTitle, ...inputData };
@@ -249,6 +262,9 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
   }
 
   private notifyTurnStarted(event: TurnStarted): void {
+    if (this.stopCompletedTurnId === event.turnId) {
+      this.stopCompletedTurnId = undefined;
+    }
     this.fireAndForget(
       'TurnStarted',
       {
@@ -268,22 +284,38 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
         if (
           ctx.finishReason === 'tool_calls' ||
           ctx.finishReason === 'filtered' ||
+          ctx.tools.length > 0 ||
           loop.snapshot().hasPendingRequests
         ) {
           return;
         }
         const reason = await this.runStop(ctx);
-        if (reason !== undefined) {
-          this.stopHookContinuationUsed = true;
-          loop.notify({
-            message: {
-              role: 'user',
-              content: [{ type: 'text', text: reason }],
-              origin: { kind: 'system_trigger', name: 'stop_hook' },
-            },
-          });
+        if (reason === undefined || loop.snapshot().hasPendingRequests) {
           return;
         }
+        const sourceTurnId = ctx.turnId;
+        this.stopHookContinuationUsed = true;
+        this.pendingStopContinuationTurnId = sourceTurnId;
+        this.stopContinuationUnconsumed = true;
+        this.stopHookContinuation = loop.notify({
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: reason }],
+            origin: { kind: 'system_trigger', name: 'stop_hook' },
+          },
+          onConsume: () => {
+            this.stopContinuationUnconsumed = false;
+            this.stopHookContinuation = undefined;
+          },
+          onDrop: () => {
+            this.stopContinuationUnconsumed = false;
+            if (this.pendingStopContinuationTurnId === sourceTurnId) {
+              this.pendingStopContinuationTurnId = undefined;
+            }
+            this.stopHookContinuation = undefined;
+            this.stopHookContinuationUsed = false;
+          },
+        });
       }),
     );
   }
@@ -412,11 +444,27 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
   }
 
   private notifyTurnEnded(event: TurnEnded): void {
-    this.stopHookContinuationUsed = false;
+    const stopCompletedForTurn = this.stopCompletedTurnId === event.turnId;
+    if (stopCompletedForTurn) {
+      this.stopCompletedTurnId = undefined;
+    }
+    if (event.reason === 'cancelled') {
+      this.stopHookContinuation?.drop();
+      this.stopContinuationUnconsumed = false;
+      this.pendingStopContinuationTurnId = undefined;
+      this.stopHookContinuation = undefined;
+      this.stopHookContinuationUsed = false;
+    } else if (event.turnId === this.pendingStopContinuationTurnId) {
+      this.pendingStopContinuationTurnId = undefined;
+    } else if (!this.stopContinuationUnconsumed || event.reason !== 'completed') {
+      this.stopContinuationUnconsumed = false;
+      this.stopHookContinuation = undefined;
+      this.stopHookContinuationUsed = false;
+    }
     if (event.reason === 'failed' && event.error !== undefined) {
       this.notifyStopFailure(event.error, new AbortController().signal);
     }
-    if (event.reason === 'cancelled') {
+    if (event.reason === 'cancelled' && !stopCompletedForTurn) {
       this.fireAndForget('Interrupt', { turnId: event.turnId, reason: 'cancelled' });
     }
   }
@@ -436,7 +484,12 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
 
   private async runStop(ctx: AfterStepContext): Promise<string | undefined> {
     ctx.signal.throwIfAborted();
-    if (this.stopHookContinuationUsed) return undefined;
+    if (this.stopHookContinuationUsed) {
+      if (!this.stopContinuationUnconsumed) {
+        this.pendingStopContinuationTurnId = undefined;
+      }
+      return undefined;
+    }
 
     const block = await this.runner.triggerBlock('Stop', {
       signal: ctx.signal,
@@ -445,6 +498,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
       inputData: this.withSessionFacts({ stopHookActive: false }),
     });
     ctx.signal.throwIfAborted();
+    this.stopCompletedTurnId = ctx.turnId;
     return block?.reason;
   }
 
