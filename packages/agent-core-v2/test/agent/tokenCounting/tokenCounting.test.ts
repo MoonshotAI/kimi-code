@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { IAgentLoopService } from '#/index';
-import { compactContext } from '../contextMemory/stubs';
+import {
+  IAgentLoopService,
+  IAgentToolRegistryService,
+  type ExecutableTool,
+} from '#/index';
+import { appendContext, compactContext } from '../contextMemory/stubs';
+import { project } from '#/agent/loop/projection';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import {
   anchorsEqual,
@@ -18,7 +23,13 @@ import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
 import { grandTotal, type TokenUsage } from '@moonshot-ai/core/llm/usage';
 import { IWireService } from '#/wire/wire';
 
-import { createTestAgent, InMemoryWireRecordPersistence, type TestAgentContext } from '../../harness';
+import {
+  createMockProvider,
+  createTestAgent,
+  InMemoryWireRecordPersistence,
+  llmGenerateServices,
+  type TestAgentContext,
+} from '../../harness';
 
 function totalOf(usage: TokenUsage | undefined): number {
   return usage === undefined ? 0 : (grandTotal(usage) ?? 0);
@@ -558,5 +569,223 @@ describe('Agent token counting', () => {
     } finally {
       await live.dispose();
     }
+  });
+
+  it('continues recording measured anchors across live and resumed turns after tool notes, errors, wall times, and empty outputs', async () => {
+    const persistence = new InMemoryWireRecordPersistence();
+    const makeTools = (): readonly ExecutableTool[] => [
+      {
+        name: 'PagedRead',
+        description: 'Reads a page with a pagination note',
+        parameters: { type: 'object', properties: {} },
+        resolveExecution: () => ({
+          approvalRule: 'PagedRead',
+          execute: async () => ({
+            output: '1\talpha\n2\tbeta',
+            note: 'Lines 1-2 of 200; read next page from offset 3.',
+          }),
+        }),
+      },
+      {
+        name: 'FailingCheck',
+        description: 'Returns a tool error with a note',
+        parameters: { type: 'object', properties: {} },
+        resolveExecution: () => ({
+          approvalRule: 'FailingCheck',
+          execute: async () => ({
+            output: 'permission denied',
+            isError: true,
+            note: 'exit code 1',
+          }),
+        }),
+      },
+      {
+        name: 'QuietStep',
+        description: 'Returns empty output',
+        parameters: { type: 'object', properties: {} },
+        resolveExecution: () => ({
+          approvalRule: 'QuietStep',
+          execute: async () => ({ output: '' }),
+        }),
+      },
+      {
+        name: 'mcp__srv__timed',
+        description: 'Renders wall time in projected requests',
+        parameters: { type: 'object', properties: {} },
+        resolveExecution: () => ({
+          approvalRule: 'mcp__srv__timed',
+          execute: async () => ({ output: 'timed ok' }),
+        }),
+      },
+    ];
+
+    let stepNo = 0;
+    const stepTotals = [12_000, 24_000, 36_000, 48_000, 60_000, 75_000];
+    const makeProvider = () =>
+      llmGenerateServices(
+        createMockProvider(async () => {
+          const index = stepNo;
+          stepNo += 1;
+          const total = stepTotals[index] ?? 90_000;
+          const usage: TokenUsage = {
+            inputOther: total - 10,
+            output: 10,
+            inputCacheRead: 0,
+            inputCacheCreation: 0,
+          };
+          const callsByStep = [
+            { id: 'call_paged', name: 'PagedRead' },
+            { id: 'call_fail', name: 'FailingCheck' },
+            { id: 'call_empty', name: 'QuietStep' },
+            { id: 'call_timed', name: 'mcp__srv__timed' },
+          ] as const;
+          const call = callsByStep[index];
+          if (call !== undefined) {
+            return {
+              id: `resp-${String(index)}`,
+              message: {
+                role: 'assistant',
+                content: [],
+                toolCalls: [{ type: 'function', id: call.id, name: call.name, arguments: '{}' }],
+              },
+              usage,
+              finishReason: 'tool_calls',
+              rawFinishReason: 'tool_calls',
+            };
+          }
+          return {
+            id: `resp-${String(index)}`,
+            message: {
+              role: 'assistant',
+              content: [{ type: 'text', text: `done-${String(index)}` }],
+              toolCalls: [],
+            },
+            usage,
+            finishReason: 'completed',
+            rawFinishReason: 'stop',
+          };
+        }),
+      );
+
+    const live = createTestAgent({ persistence }, makeProvider());
+    try {
+      await live.restorePersisted();
+      await live.rpc.setPermission({ mode: 'yolo' });
+      const registry = live.get(IAgentToolRegistryService);
+      for (const tool of makeTools()) {
+        registry.register(tool, { source: tool.name.startsWith('mcp__') ? 'mcp' : 'builtin' });
+      }
+
+      await live.rpc.prompt({ input: [{ type: 'text', text: 'run all four tools' }] });
+      await live.untilTurnEnd();
+
+      expect(stepNo).toBe(5);
+      expect(live.tokenCounting.latestMeasured()).toBe(60_000);
+      expect(tokenCountingState(live).anchors.at(-1)).toEqual({
+        length: live.get(IAgentLoopService).history().length,
+        tokens: 60_000,
+        measured: true,
+      });
+      await live.get(IWireService).flush();
+    } finally {
+      await live.dispose();
+    }
+
+    const resumed = createTestAgent({ persistence }, makeProvider());
+    try {
+      await resumed.restorePersisted();
+      await resumed.rpc.setPermission({ mode: 'yolo' });
+      const registry = resumed.get(IAgentToolRegistryService);
+      for (const tool of makeTools()) {
+        registry.register(tool, { source: tool.name.startsWith('mcp__') ? 'mcp' : 'builtin' });
+      }
+
+      await resumed.rpc.prompt({ input: [{ type: 'text', text: 'follow up after resume' }] });
+      await resumed.untilTurnEnd();
+
+      expect(stepNo).toBe(6);
+      expect(resumed.tokenCounting.latestMeasured()).toBe(75_000);
+      expect(tokenCountingState(resumed).anchors.at(-1)).toEqual({
+        length: resumed.get(IAgentLoopService).history().length,
+        tokens: 75_000,
+        measured: true,
+      });
+    } finally {
+      await resumed.dispose();
+    }
+  });
+
+  it('matches projected tool messages and rejects mismatched note or error metadata', () => {
+    appendContext(
+      context,
+      { role: 'user', content: [{ type: 'text', text: 'inspect files' }] },
+      {
+        role: 'assistant',
+        content: [],
+        toolCalls: [
+          { type: 'function', id: 'call_read', name: 'Read', arguments: '{}' },
+          { type: 'function', id: 'call_bash', name: 'Bash', arguments: '{}' },
+          { type: 'function', id: 'call_err', name: 'Write', arguments: '{}' },
+        ],
+      },
+      {
+        role: 'tool',
+        toolCallId: 'call_read',
+        content: [{ type: 'text', text: '1\thello' }],
+        note: 'More lines follow from offset 2.',
+        durationMs: 12,
+      },
+      {
+        role: 'tool',
+        toolCallId: 'call_bash',
+        content: [{ type: 'text', text: 'Tool output is empty.' }],
+        durationMs: 250,
+      },
+      {
+        role: 'tool',
+        toolCallId: 'call_err',
+        content: [{ type: 'text', text: 'disk full' }],
+        isError: true,
+        note: 'errno ENOSPC',
+      },
+    );
+
+    const history = context.history();
+    const projected = project(history);
+    const mismatchedNote = projected.map((msg) =>
+      msg.role === 'tool' && msg.toolCallId === 'call_read'
+        ? { ...msg, content: [{ type: 'text' as const, text: '1\thello\nWrong note.' }] }
+        : msg,
+    );
+    tokenCounting.measured(mismatchedNote, [], {
+      inputOther: 4_000,
+      output: 10,
+      inputCacheRead: 0,
+      inputCacheCreation: 0,
+    });
+    expect(tokenCountingState(ctx).anchors).toEqual([]);
+
+    const missingError = history.map((msg) =>
+      msg.role === 'tool' && msg.toolCallId === 'call_err'
+        ? { role: 'tool' as const, toolCallId: 'call_err', content: msg.content }
+        : msg,
+    );
+    tokenCounting.measured(missingError, [], {
+      inputOther: 4_000,
+      output: 10,
+      inputCacheRead: 0,
+      inputCacheCreation: 0,
+    });
+    expect(tokenCountingState(ctx).anchors).toEqual([]);
+
+    tokenCounting.measured(projected, [], {
+      inputOther: 8_990,
+      output: 10,
+      inputCacheRead: 0,
+      inputCacheCreation: 0,
+    });
+    expect(tokenCountingState(ctx).anchors).toEqual([
+      { length: history.length, tokens: 9_000, measured: true },
+    ]);
   });
 });
