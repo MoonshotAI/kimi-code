@@ -30,6 +30,7 @@ interface SessionMediaMetadata {
   readonly key: string;
   readonly name: string;
   readonly mediaType: string;
+  readonly createdAt?: string;
 }
 
 export class SessionMediaStoreService implements ISessionMediaStore {
@@ -111,6 +112,7 @@ export class SessionMediaStoreService implements ISessionMediaStore {
       name: metadata?.name ?? key,
       mediaType: metadata?.mediaType ?? this.mediaTypeForKey(key),
       size,
+      createdAt: metadata?.createdAt,
       stream: (range) => this.storage.readStream(this.scope, key, range),
     };
   }
@@ -127,12 +129,17 @@ export class SessionMediaStoreService implements ISessionMediaStore {
         signal: input.signal,
       });
     }
+    const previousMetadata = await this.documents.get<unknown>(this.scope, this.metadataKey(input.fileId));
+    const createdAt = this.isMetadataFor(previousMetadata, input.fileId) && typeof previousMetadata.createdAt === 'string'
+      ? previousMetadata.createdAt
+      : new Date().toISOString();
     input.signal?.throwIfAborted();
     await this.documents.set(this.scope, this.metadataKey(input.fileId), {
       version: 1,
       key,
       name: input.name,
       mediaType: input.mimeType,
+      createdAt,
     });
     return this.storage.pathFor(this.scope, key);
   }

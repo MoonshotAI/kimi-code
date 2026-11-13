@@ -469,11 +469,12 @@ On success, `data` is `{ environments }`:
 
 ### Export and media
 
-These two endpoints return binary streams instead of a JSON envelope. For HTTP behavior such as Range and ETag, see [Binary and streaming endpoints](./server-api-files.md#binary-and-streaming-endpoints).
+Export a session archive, materialize remote images into session media, and download session media files. `POST /api/v1/sessions/{session_id}/export` and `GET /api/v1/sessions/{session_id}/media/{file_id}` return binary streams instead of a JSON envelope; for HTTP behavior such as Range and ETag, see [Binary and streaming endpoints](./server-api-files.md#binary-and-streaming-endpoints).
 
 | Method and path | Description |
 | --- | --- |
 | `POST /api/v1/sessions/{session_id}/export` | Export the session with diagnostics (zip stream, not enveloped) |
+| `POST /api/v1/sessions/{session_id}/media` | Create session media from a remote image URL |
 | `GET /api/v1/sessions/{session_id}/media/{file_id}` | Download prompt media by file id (binary) |
 
 #### `POST /api/v1/sessions/{session_id}/export`
@@ -485,6 +486,25 @@ Exports the session together with diagnostic logs as a zip attachment (`kimi-ses
 | `session_id` | path | string | Required. Session id |
 | `web_log` | body | string | Client log text to include in the archive, at most 256 KB UTF-8 |
 | `desktop` | body | boolean | Also include the desktop host's logs. Default `false` |
+
+#### `POST /api/v1/sessions/{session_id}/media`
+
+Creates a session-canonical media file from a remote HTTP(S) image. The Web Markdown renderer automatically loads remote images through this endpoint, so rendering a session can issue requests to intranet addresses reachable by the daemon.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `session_id` | path | string | Required. Session id |
+| `url` | body | string | Required. Remote image URL, at most 4096 characters; embedded credentials are rejected |
+
+The server follows at most 3 redirects and enforces a 10-second total budget across DNS, redirects, and body reading. Responses are limited to 10 MiB and identified by their bytes as PNG, JPEG, GIF, WebP, or AVIF; `Content-Type` is not trusted, and HTML, SVG, and other formats are rejected. RFC1918 addresses are allowed, while loopback, link-local, multicast, and common cloud metadata targets are blocked and revalidated on every redirect. The upstream request does not forward `Cookie` or `Authorization` headers.
+
+On success, `data` is the stored file metadata `{ id, name, media_type, size, created_at }`. The id is deterministic for the same URL and image bytes, so repeated loads reuse a media record while changed content creates a new one. Download it through `GET /api/v1/sessions/{session_id}/media/{file_id}`.
+
+- `40001`: invalid or disallowed URL, resolution failure, or unsupported image content
+- `40401`: the session does not exist
+- `40930`: the session requires a newer server to read
+- `41301`: image exceeds 10 MiB
+- `50001`: upstream request, redirect, or timeout failure
 
 #### `GET /api/v1/sessions/{session_id}/media/{file_id}`
 

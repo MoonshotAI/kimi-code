@@ -469,11 +469,12 @@
 
 ### 导出与媒体
 
-这两个接口返回二进制流而不是 JSON 信封，Range、ETag 等 HTTP 行为见 [二进制与流式端点](./server-api-files.md#二进制与流式端点)。
+导出会话归档、从远程图片创建会话媒体，以及下载会话媒体文件。其中 `POST /api/v1/sessions/{session_id}/export` 和 `GET /api/v1/sessions/{session_id}/media/{file_id}` 返回二进制流而不是 JSON 信封，Range、ETag 等 HTTP 行为见 [二进制与流式端点](./server-api-files.md#二进制与流式端点)。
 
 | 方法与路径 | 说明 |
 | --- | --- |
 | `POST /api/v1/sessions/{session_id}/export` | 导出会话与诊断信息（zip 流，不走信封） |
+| `POST /api/v1/sessions/{session_id}/media` | 从远程图片 URL 创建会话媒体 |
 | `GET /api/v1/sessions/{session_id}/media/{file_id}` | 按文件 id 下载提示词媒体（二进制） |
 
 #### `POST /api/v1/sessions/{session_id}/export`
@@ -485,6 +486,25 @@
 | `session_id` | path | string | 必填。会话 id |
 | `web_log` | body | string | 要放进归档的客户端日志文本，最多 256 KB UTF-8 |
 | `desktop` | body | boolean | 同时包含桌面宿主的日志。默认 `false` |
+
+#### `POST /api/v1/sessions/{session_id}/media`
+
+从远程 HTTP(S) 图片创建会话内规范媒体文件。Web Markdown 渲染器会自动通过此端点加载远程图片，因此渲染会话可能向 daemon 可达的内网地址发起请求。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `session_id` | path | string | 必填。会话 id |
+| `url` | body | string | 必填。远程图片 URL，最多 4096 个字符；拒绝内嵌凭证 |
+
+服务端最多跟随 3 次重定向，并在 DNS、重定向和正文读取之间共享 10 秒总预算。响应限制为 10 MiB，按实际字节识别 PNG、JPEG、GIF、WebP 或 AVIF；不信任 `Content-Type`，拒绝 HTML、SVG 和其他格式。允许 RFC1918 地址，阻断回环、链路本地、组播和常见云元数据目标，并在每次重定向时重新校验。上游请求不转发 `Cookie` 或 `Authorization` 请求头。
+
+成功时，`data` 为已存储文件的元数据 `{ id, name, media_type, size, created_at }`。相同 URL 和图片字节会生成确定性的 id，重复加载复用媒体记录，内容变化则创建新记录。通过 `GET /api/v1/sessions/{session_id}/media/{file_id}` 下载文件。
+
+- `40001`：URL 无效或目标不允许、解析失败、图片内容不支持
+- `40401`：会话不存在
+- `40930`：会话需要更新版本的服务端才能读取
+- `41301`：图片超过 10 MiB
+- `50001`：上游请求、重定向或超时失败
 
 #### `GET /api/v1/sessions/{session_id}/media/{file_id}`
 
