@@ -13,6 +13,7 @@ export interface SessionSummary {
   readonly cwd?: string;
   readonly environmentId?: string;
   readonly environmentCwd?: string;
+  readonly forkedFrom?: string;
   readonly title?: string;
   readonly lastPrompt?: string;
   readonly createdAt: number;
