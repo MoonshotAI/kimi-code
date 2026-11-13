@@ -18,6 +18,7 @@ import { WIRE_MIN_READER_VERSION, WIRE_PROTOCOL_VERSION } from '#/wire/migration
 import { wireJournalBackupKey } from '#/wire/repair';
 import { WireError, WireErrors } from '#/wire/errors';
 import { IWireService } from '#/wire/wire';
+import type { WireService } from '#/wire/wireService';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 import { normalizeLegacyTurnSteerRecords } from '#/wire/human';
 
@@ -1356,5 +1357,35 @@ describe('WireService readRestoreChains', () => {
     expect(chains).toEqual({ restorable: [envelope], journal: [envelope] });
     expect(await collect(wire.readRestorable())).toEqual([envelope]);
     expect(await readRecords()).toEqual([envelope]);
+  });
+
+  it('shares stable entries within a restore snapshot and invalidates them on append', async () => {
+    const seeded: WireRecord[] = [
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      { type: 'wire.test.one', time: 1 },
+    ];
+    const base = recordingWireLog(seeded);
+    let reads = 0;
+    const counted: IAppendLogStore = {
+      ...base,
+      read: (...args: Parameters<IAppendLogStore['read']>) => {
+        reads++;
+        return base.read(...args);
+      },
+    };
+    const stub = wireOverLog(counted, 'restore-snapshot') as WireService;
+
+    await stub.withRestoreSnapshot(async () => {
+      const first = await stub.readRestoreChains();
+      const nested = await stub.withRestoreSnapshot(() => stub.readRestoreChains());
+      expect(nested.journal).toBe(first.journal);
+      stub.appendRecord({ type: 'wire.test.two', time: 2 });
+      const afterAppend = await stub.readRestoreChains();
+      expect(afterAppend.journal.map((record) => record.type)).toContain('wire.test.two');
+    });
+    expect(reads).toBe(2);
+
+    await stub.readRestoreChains();
+    expect(reads).toBe(3);
   });
 });
