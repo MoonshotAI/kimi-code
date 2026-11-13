@@ -77,6 +77,7 @@ This is a TypeScript monorepo built for agent-assisted development. Keep the roo
 ## Release Workflow
 
 - `main` accumulates changesets; `release/*` maintains `ci: release packages` PRs. Merging the matching version PR authorizes publication after its merge-commit CI succeeds. Ordinary pushes do not publish.
+- Before a stable/hotfix version PR is approved or any Canary is dispatched, the release runner must inspect unconsumed changesets for a direct `"@moonshot-ai/kimi-code": major`. If present, it must stop and identify each file and its source PR; publication requires separate explicit major-version approval bound to the exact target commit, changeset contents, and expected major version. Ordinary release approval is insufficient, and the check must be repeated after the target branch changes.
 - npm publishing and native artifacts retain the existing Changesets flow. CDN upload and routing remain separately approved operations. See `.changeset/README.md` for migration and main synchronization.
 
 ## Workflow Requirements
