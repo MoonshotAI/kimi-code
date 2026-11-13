@@ -4490,28 +4490,94 @@ describe('FullCompaction pre-shrink', () => {
     await ctx.expectResumeMatches();
   });
 
-  it('pre-shrinks the auto compaction triggered before a step', async () => {
-    const ctx = testAgent();
+  it('pre-shrinks the auto compaction triggered before a step from historical usage', async () => {
+    const budgets: {
+      isCompaction: boolean;
+      texts: string[];
+      maxCompletionTokens?: number;
+      maxContextTokens?: number;
+      usedContextTokens?: number;
+    }[] = [];
+    const generate: GenerateFn = requesterFromGenerateFn(async (
+      _provider,
+      _system,
+      _tools,
+      history,
+      callbacks,
+      options,
+    ) => {
+      const isCompaction = messageText(history.at(-1)) === renderCompactionInstruction({});
+      budgets.push({
+        isCompaction,
+        texts: history.map(messageText),
+        maxCompletionTokens: options?.maxCompletionTokens,
+        maxContextTokens: options?.maxContextTokens,
+        usedContextTokens: options?.usedContextTokens,
+      });
+      if (isCompaction) return textResult('Usage-anchored summary.');
+      await callbacks?.onMessagePart?.({ type: 'text', text: 'Recovered reply after compaction.' });
+      return textResult('Recovered reply after compaction.');
+    });
+    const ctx = testAgent({ generate });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
-      modelCapabilities: PRE_SHRINK_CAPABILITIES,
+      modelCapabilities: {
+        ...CATALOGUED_MODEL_CAPABILITIES,
+        max_context_tokens: 1_000_000,
+      },
     });
-    appendPreShrinkHistory(ctx, [14_000, 20_000, 36_000]);
+    const models = (ctx as unknown as MutableKimiConfig).kimiConfig.models;
+    models![CATALOGUED_PROVIDER.model] = {
+      ...models![CATALOGUED_PROVIDER.model]!,
+      maxOutputSize: 64_000,
+    };
+    ctx.notifyModelConfigChanged();
+    for (const [user, assistant, total] of [
+      ['old user one', 'old assistant one', 350_000],
+      ['mid user two', 'mid assistant two', 700_000],
+      ['recent user three', 'recent assistant three', 1_003_601],
+    ] as const) {
+      appendContext(
+        ctx.context,
+        { role: 'user', content: [{ type: 'text', text: user }], origin: { kind: 'user' } },
+        {
+          role: 'assistant',
+          content: [{ type: 'text', text: assistant }],
+          toolCalls: [],
+          usage: { inputOther: total - 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+        },
+      );
+    }
+    expect(ctx.tokenCounting.get().size).toBeLessThan(1_000);
 
-    ctx.mockNextResponse({ type: 'text', text: 'Auto pre-shrunk summary.' });
-    ctx.mockNextResponse({ type: 'text', text: 'Answer after the pre-shrunk compaction.' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue the task' }] });
     const events = await ctx.untilTurnEnd();
 
-    expect(ctx.llmCalls).toHaveLength(2);
-    const [compactionCall, answerCall] = ctx.llmCalls;
-    const compactionTexts = compactionCall!.history.map(messageText);
+    expect(budgets).toHaveLength(2);
+    expect(budgets[0]?.isCompaction).toBe(true);
+    expect(budgets[1]?.isCompaction).toBe(false);
+    expect(budgets[0]!.maxContextTokens! - budgets[0]!.usedContextTokens!).toBeGreaterThan(125_000);
+    expect(budgets[1]?.maxCompletionTokens).toBe(64_000);
+    const compactionTexts = budgets[0]!.texts;
     expect(compactionTexts.some((text) => text.includes('old user one'))).toBe(false);
+    expect(compactionTexts.some((text) => text.includes('old assistant one'))).toBe(false);
     expect(compactionTexts.some((text) => text.includes('mid user two'))).toBe(true);
-    expect(compactionTexts.some((text) => text.includes('recent user three'))).toBe(true);
-    expect(compactionTexts.some((text) => text.includes('continue the task'))).toBe(true);
-    const answerTexts = answerCall!.history.map(messageText);
-    expect(answerTexts.some((text) => text.includes('Auto pre-shrunk summary.'))).toBe(true);
+    expect(compactionTexts.some((text) => text.includes('recent assistant three'))).toBe(true);
+    expect(budgets[1]!.texts.some((text) => text.includes('Usage-anchored summary.'))).toBe(true);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'compaction.completed',
+        args: expect.objectContaining({
+          result: expect.objectContaining({
+            droppedCount: 2,
+            tokensBefore: 1_003_601 + ctx.tokenCounting.estimateMessage({
+              role: 'user',
+              content: [{ type: 'text', text: 'continue the task' }],
+            }),
+          }),
+        }),
+      }),
+    );
     expect(events).toContainEqual(
       expect.objectContaining({
         event: 'turn.ended',
