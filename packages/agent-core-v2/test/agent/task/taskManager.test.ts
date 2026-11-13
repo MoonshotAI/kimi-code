@@ -662,9 +662,14 @@ describe('AgentTaskService', () => {
     task.resolve('');
   });
 
-  it('wait with a zero timeout returns the immediate snapshot before next-tick completion', async () => {
+  it('wait with a zero timeout returns the immediate snapshot before task completion', async () => {
     const fixture = createAgentTaskService();
-    const task = await controlled(fixture, { completion: Promise.resolve('done') });
+    // Delay completion beyond the microtask queue so the zero-timeout snapshot
+    // cannot race Promise.resolve() scheduling in different test runners.
+    const completion = new Promise<string>((resolve) => {
+      setTimeout(() => resolve('done'), 10);
+    });
+    const task = await controlled(fixture, { completion });
     expect((await fixture.manager.wait(task.handler.taskId, 0))?.status).toBe('running');
     expect((await fixture.manager.wait(task.handler.taskId))?.status).toBe('completed');
   });
