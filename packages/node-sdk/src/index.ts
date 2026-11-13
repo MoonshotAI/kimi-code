@@ -139,6 +139,7 @@ export type {
 export type {
   FeedbackAttachmentLevel,
   FeedbackAvailability,
+  FeedbackSessionPreview,
   FeedbackSubmitInput,
   FeedbackSubmitResult,
 } from '@moonshot-ai/agent-core-v2/app/auth/feedback';

@@ -45,7 +45,10 @@ export async function handleFeedbackCommand(host: SlashCommandHost): Promise<voi
   const modelAlias = host.state.appState.model.length > 0 ? host.state.appState.model : undefined;
   let availability: Awaited<ReturnType<SlashCommandHost['harness']['feedbackAvailability']>>;
   try {
-    availability = await host.harness.feedbackAvailability(modelAlias);
+    availability = await host.harness.feedbackAvailability(
+      modelAlias,
+      host.state.appState.sessionId,
+    );
   } catch {
     // The sign-in state is unreadable — keep the feedback entry usable by
     // falling back to GitHub Issues instead of failing the command.
@@ -83,7 +86,7 @@ export async function handleFeedbackCommand(host: SlashCommandHost): Promise<voi
       'Codebase attachment is not supported for remote sessions — the scanner only reads the local filesystem.',
     );
   }
-  const level = await promptFeedbackAttachment(host, remoteSession);
+  const level = await promptFeedbackAttachment(host, remoteSession, availability.session);
   if (level === undefined) {
     host.showStatus(FEEDBACK_STATUS_CANCELLED);
     return;
@@ -109,8 +112,8 @@ export async function handleFeedbackCommand(host: SlashCommandHost): Promise<voi
       model: host.state.appState.model.length > 0 ? host.state.appState.model : null,
       attachmentLevel: level,
       workDir: host.state.appState.workDir,
-      installSource: level === 'none' ? undefined : await detectInstallSource(),
-      shellEnv: level === 'none' ? undefined : detectShellEnvironment(),
+      installSource: await detectInstallSource(),
+      shellEnv: detectShellEnvironment(),
     };
     const res = await host.harness.submitFeedback(body, modelAlias);
 

@@ -15,17 +15,27 @@ import {
 } from './file-source';
 import type { ExportSessionManifest } from './sessionExport';
 
-export async function collectFilesRecursive(root: string): Promise<string[]> {
-  try {
-    const entries = await readdir(root, { recursive: true, withFileTypes: true });
-    return entries
-      .filter((entry) => entry.isFile())
-      .map((entry) => join(entry.parentPath, entry.name))
-      .toSorted((a, b) => a.localeCompare(b));
-  } catch (error) {
-    if (!isMissingPath(error)) throw error;
-    return [];
+export async function collectFilesRecursive(root: string, skipDir?: string): Promise<string[]> {
+  const files: string[] = [];
+  async function walk(dir: string): Promise<void> {
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch (error) {
+      if (!isMissingPath(error)) throw error;
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        if (skipDir !== undefined && entry.name === skipDir) continue;
+        await walk(join(dir, entry.name));
+      } else if (entry.isFile()) {
+        files.push(join(dir, entry.name));
+      }
+    }
   }
+  await walk(root);
+  return files.toSorted((a, b) => a.localeCompare(b));
 }
 
 export type ExtraZipEntry =

@@ -1,4 +1,4 @@
-import { join, resolve } from 'pathe';
+import { join, relative, resolve } from 'pathe';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import type { ISessionScopeHandle } from '#/_base/di/scope';
@@ -15,11 +15,13 @@ import {
 } from '#/workspace/sessionLifecycle/internal/addressing';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { ISessionRequestAttributionService } from '#/session/requestAttribution/requestAttribution';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 
 import { buildExportManifest, type ExportSessionManifestSummary } from './manifest';
 import {
   type ExportSessionPayload,
+  type ExportSessionPreview,
   type ExportSessionResult,
   type ExportSessionOptions,
   ISessionExportService,
@@ -64,7 +66,7 @@ export class SessionExportService implements ISessionExportService {
     }
 
     const summary = await this.index.get(input.sessionId);
-    if (summary === undefined) {
+    if (summary === undefined && input.includeGlobalLog !== true) {
       throw new Error2(
         ErrorCodes.SESSION_NOT_FOUND,
         `Session "${input.sessionId}" does not exist`,
@@ -72,7 +74,13 @@ export class SessionExportService implements ISessionExportService {
       );
     }
 
-    const liveSummary = await this.flushLiveSession(summary);
+    const liveSummary =
+      summary === undefined
+        ? {
+            id: input.sessionId,
+            sessionDir: join(this.bootstrap.homeDir, '.empty-session'),
+          }
+        : await this.flushLiveSession(summary);
     options.signal?.throwIfAborted();
     if (input.includeGlobalLog === true) {
       await this.warnIfFails('export global log flush failed', () => this.log.flush(), {
@@ -91,6 +99,21 @@ export class SessionExportService implements ISessionExportService {
       webLog: options.webLog,
       signal: options.signal,
     });
+  }
+
+  async preview(sessionId: string): Promise<ExportSessionPreview | undefined> {
+    const id = sessionId.trim();
+    if (id.length === 0) return undefined;
+    const summary = await this.index.get(id);
+    if (summary === undefined) return undefined;
+    const liveSummary = await this.flushLiveSession(summary);
+    const files = await collectFilesRecursive(liveSummary.sessionDir, FILE_HISTORY_BLOB_PREFIX);
+    return {
+      sessionId: liveSummary.id,
+      sessionDir: liveSummary.sessionDir,
+      files: files.map((file) => relative(liveSummary.sessionDir, file).split(/[\\/]/).join('/')),
+      requestId: liveSummary.lastRequestId,
+    };
   }
 
   private async flushLiveSession(summary: SessionSummary): Promise<ExportSessionDirectorySummary> {
@@ -136,6 +159,14 @@ export class SessionExportService implements ISessionExportService {
         agentHandle.accessor.get(IWireService).flush(),
       );
     }
+    try {
+      const lastRequestId = handle.accessor
+        .get(ISessionRequestAttributionService)
+        .of('main').lastRequestId;
+      if (lastRequestId !== undefined) {
+        exportSummary = { ...exportSummary, lastRequestId };
+      }
+    } catch {}
 
     return exportSummary;
   }
@@ -164,6 +195,7 @@ export class SessionExportService implements ISessionExportService {
 
 export interface ExportSessionDirectorySummary extends ExportSessionManifestSummary {
   readonly sessionDir: string;
+  readonly lastRequestId?: string;
 }
 
 export async function exportSessionDirectory(input: {
@@ -192,8 +224,12 @@ export async function exportSessionDirectory(input: {
     if (input.desktopLogPath !== undefined) {
       desktopSource = await openOptionalZipSource(input.desktopLogPath, input.signal);
     }
-    const sessionFiles = await collectFilesRecursive(sessionDir);
-    if (sessionFiles.length === 0 && sessionLogSource === undefined) {
+    const sessionFiles = await collectFilesRecursive(sessionDir, FILE_HISTORY_BLOB_PREFIX);
+    if (
+      !input.request.includeGlobalLog &&
+      sessionFiles.length === 0 &&
+      sessionLogSource === undefined
+    ) {
       throw new Error2(
         ErrorCodes.SESSION_EXPORT_NOT_FOUND,
         `Session "${input.summary.id}" has no exportable directory at "${sessionDir}"`,
