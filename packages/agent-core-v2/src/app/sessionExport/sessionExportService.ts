@@ -66,7 +66,8 @@ export class SessionExportService implements ISessionExportService {
     }
 
     const summary = await this.index.get(input.sessionId);
-    if (summary === undefined && input.includeGlobalLog !== true) {
+    const globalLogOnly = input.includeGlobalLog === true && input.sessionId.trim().length === 0;
+    if (summary === undefined && !globalLogOnly) {
       throw new Error2(
         ErrorCodes.SESSION_NOT_FOUND,
         `Session "${input.sessionId}" does not exist`,
