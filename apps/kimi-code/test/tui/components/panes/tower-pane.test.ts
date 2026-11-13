@@ -133,6 +133,56 @@ describe('TowerPaneComponent', () => {
     expect(output).toContain('近期实验');
   });
 
+  it('removes terminal control sequences from projection fields', () => {
+    const pane = new TowerPaneComponent();
+    pane.setProjection(
+      makeProjection({
+        base: 'main\u001B]0;owned\u0007',
+        openMissions: [
+          {
+            id: 'M3\u001Bc',
+            title: 'Safe\u001B[2J title',
+            kind: 'build',
+            status: 'active',
+            owner: 'worker\u001B]8;;https://example.com\u001B\\',
+            branch: 'tower-pane',
+            scope: [],
+            tasksDone: 2,
+            tasksTotal: 4,
+            blockers: 0,
+            liveWorkers: 1,
+          },
+        ],
+        recentClosed: [
+          {
+            id: 'M1',
+            title: 'Old\u001B[2J mission',
+            status: 'merged',
+            closedAt: atMinutesAgo(60),
+          },
+        ],
+        events: [
+          {
+            at: atMinutesAgo(2),
+            actor: 'lead\u0007',
+            kind: 'spawn',
+            fields: { mission: 'M3\u001B[?1049h' },
+          },
+        ],
+      }),
+    );
+
+    const output = pane.render(WIDTH).join('\n');
+
+    expect(output).not.toContain('\u001B]');
+    expect(output).not.toContain('\u001B[2J');
+    expect(output).not.toContain('\u001B[?1049h');
+    expect(output).not.toContain('\u001Bc');
+    expect(output).not.toContain('\u0007');
+    expect(stripAnsi(output)).toContain('Safe title');
+    expect(stripAnsi(output)).toContain('Old mission');
+  });
+
   it('renders nothing without a projection or content', () => {
     expect(render(undefined)).toEqual([]);
     expect(render(makeProjection({ hasContent: false }))).toEqual([]);
