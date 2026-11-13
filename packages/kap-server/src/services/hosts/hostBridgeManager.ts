@@ -1,19 +1,13 @@
 import { IConfigService, type Scope } from '@moonshot-ai/agent-core-v2';
 
+import type { HostSnapshot } from '../../protocol/events-zod';
 import {
   collectSharedProviders,
-  compareProviderDigests,
-  fetchHostProviderDigests,
-  sendProviderRemoval,
   sendSharedProviders,
-  sharedProviderDigests,
   type ProviderCopyResult,
-  type ProviderHostStatus,
-  type ProviderRemoveResult,
-  type SharedProviders,
 } from './hostProviders';
 import { HOSTS_SECTION, type HostEntry, type HostsSection } from './hostsConfig';
-import { HostConnectError, SshKapBridge, type BridgeLogger, type HostStatus } from './sshKapBridge';
+import { HostConnectError, SshKapBridge } from './sshKapBridge';
 import type { HostSession } from './hostSession';
 
 interface BridgeRecord {
@@ -27,20 +21,6 @@ export interface HostInfo {
   readonly bridge: SshKapBridge | undefined;
 }
 
-export interface HostSnapshot {
-  readonly id: string;
-  readonly host: string;
-  readonly identity_file?: string;
-  readonly remote_bin?: string;
-  readonly name?: string;
-  readonly enabled?: boolean;
-  readonly status: HostStatus;
-  readonly connected: boolean;
-  readonly remote_version?: string;
-  readonly connect_error?: string;
-  readonly connect_failure?: string;
-}
-
 export function toHostSnapshot(info: HostInfo): HostSnapshot {
   const disabled = info.entry.enabled === false;
   return {
@@ -51,7 +31,6 @@ export function toHostSnapshot(info: HostInfo): HostSnapshot {
     name: info.entry.name,
     enabled: info.entry.enabled,
     status: disabled ? 'disconnected' : info.bridge?.status ?? 'pending',
-    connected: !disabled && info.bridge?.session !== undefined,
     remote_version: info.bridge?.remoteVersion,
     connect_error: disabled ? `host "${info.id}" is disabled` : info.bridge?.error,
     connect_failure: disabled ? 'unknown' : info.bridge?.failure,
@@ -69,7 +48,6 @@ export class HostBridgeManager {
 
   constructor(
     private readonly core: Scope,
-    private readonly logger: BridgeLogger,
     private readonly onChange?: () => void,
   ) {
     this.subscription = core.accessor.get(IConfigService).onDidSectionChange((event) => {
@@ -105,28 +83,11 @@ export class HostBridgeManager {
     });
   }
 
-  async copyProviders(id: string, only?: readonly string[]): Promise<ProviderCopyResult> {
+  async copyProviders(id: string): Promise<ProviderCopyResult> {
     const session = await this.connect(id);
-    const { shared, skipped } = await collectSharedProviders(this.core, only);
-    if (Object.keys(shared.providers).length === 0) return { copied: [], updated: [], skipped };
-    const result = await sendSharedProviders(session, shared);
-    return { copied: result.copied, updated: result.updated, skipped: [...skipped, ...result.skipped] };
-  }
-
-  async removeProviders(id: string, only: readonly string[]): Promise<ProviderRemoveResult> {
-    const session = await this.connect(id);
-    const { shared } = await collectSharedProviders(this.core, only);
-    const digests = sharedProviderDigests(shared);
-    if (Object.keys(digests).length === 0) return { removed: [] };
-    return sendProviderRemoval(session, digests);
-  }
-
-  async providerStatus(id: string, shared: SharedProviders): Promise<Record<string, ProviderHostStatus>> {
-    const session = await this.connect(id);
-    const local = sharedProviderDigests(shared);
-    const ids = Object.keys(local);
-    if (ids.length === 0) return {};
-    return compareProviderDigests(local, await fetchHostProviderDigests(session, ids));
+    const shared = await collectSharedProviders(this.core);
+    if (Object.keys(shared.providers).length === 0) return { copied: [], updated: [] };
+    return sendSharedProviders(session, shared);
   }
 
   session(id: string): HostSession | undefined {
@@ -148,7 +109,6 @@ export class HostBridgeManager {
     const created = {
       fingerprint,
       bridge: new SshKapBridge(entry, {
-        logger: this.logger,
         onChange: () => this.onChange?.(),
       }),
     };

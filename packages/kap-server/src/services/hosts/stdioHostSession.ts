@@ -24,10 +24,6 @@ interface PendingHttp {
   onCancel?: () => void;
 }
 
-export interface StdioHostSessionOptions {
-  readonly onClose?: (error?: Error) => void;
-}
-
 export class StdioHostSession implements HostSession {
   private nextId = 0;
   private closed = false;
@@ -38,7 +34,6 @@ export class StdioHostSession implements HostSession {
   constructor(
     readonly version: string,
     stream: Duplex,
-    private readonly options: StdioHostSessionOptions = {},
   ) {
     this.rpc = new JsonlRpcStream(
       stream,
@@ -172,6 +167,5 @@ export class StdioHostSession implements HostSession {
     for (const handlers of this.wsChannels.values()) handlers.onClose(1001, 'host connection closed');
     this.wsChannels.clear();
     this.rpc.dispose();
-    this.options.onClose?.(error);
   }
 }

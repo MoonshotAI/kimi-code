@@ -2,9 +2,8 @@ import { createInterface, type Interface } from 'node:readline';
 import type { Duplex } from 'node:stream';
 
 export const HOST_RPC_MAX_BODY_BYTES = 16 * 1024 * 1024;
-export const RPC_MAX_BUFFERED_BYTES = 4 * HOST_RPC_MAX_BODY_BYTES;
+const RPC_MAX_BUFFERED_BYTES = 4 * HOST_RPC_MAX_BODY_BYTES;
 export const RPC_BACKPRESSURE_TIMEOUT_MS = 5_000;
-export const WS_BACKPRESSURE_TIMEOUT_MS = RPC_BACKPRESSURE_TIMEOUT_MS;
 
 const WRITE_CHUNK_BYTES = 64 * 1024;
 

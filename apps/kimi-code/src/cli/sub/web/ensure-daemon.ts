@@ -24,8 +24,8 @@ import { getDataDir } from '#/utils/paths';
 import { detectNativeInstall } from '../../update/source';
 import { getVersion } from '../../version';
 
-export const ENSURE_DAEMON_MARKER = '__KIMI_ENSURE_DAEMON__';
-export const ENSURE_DAEMON_MANAGED_BY = 'ensure-daemon';
+const ENSURE_DAEMON_MARKER = '__KIMI_ENSURE_DAEMON__';
+const ENSURE_DAEMON_MANAGED_BY = 'ensure-daemon';
 
 const LOCK_FILE = 'ensure-daemon.lock';
 const LOG_FILE = 'ensure-daemon.log';
@@ -36,12 +36,12 @@ const LOCK_MAX_ATTEMPTS = 225;
 const START_MAX_ATTEMPTS = 150;
 const SOCKET_TIMEOUT_MS = 2_000;
 
-export type EnsureDaemonErrorCode =
+type EnsureDaemonErrorCode =
   | 'lock_timeout'
   | 'start_timeout'
   | 'version_mismatch_busy';
 
-export class EnsureDaemonError extends Error {
+class EnsureDaemonError extends Error {
   constructor(
     readonly code: EnsureDaemonErrorCode,
     message: string,
@@ -60,7 +60,7 @@ export interface DaemonConnection {
   close(): void;
 }
 
-export interface EnsureDaemonResult {
+interface EnsureDaemonResult {
   readonly version: string;
   readonly pid?: number;
   readonly stream: Duplex;
@@ -323,7 +323,7 @@ async function connectUnixSocket(socketPath: string): Promise<DaemonConnection |
   };
 }
 
-export function relayStdio(
+function relayStdio(
   stdin: NodeJS.ReadableStream,
   stdout: NodeJS.WritableStream,
   stream: Duplex,

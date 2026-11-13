@@ -12,7 +12,7 @@ import { HOST_RPC_MAX_BODY_BYTES, JsonlRpcStream } from './jsonlRpcStream';
 import { WS_DEBUG_PATH } from './ws/debug/registerWsDebug';
 import { WS_PATH as WS_PATH_V1 } from './ws/v1/registerWsV1';
 
-export { HOST_RPC_MAX_BODY_BYTES, WS_BACKPRESSURE_TIMEOUT_MS } from './jsonlRpcStream';
+export { HOST_RPC_MAX_BODY_BYTES } from './jsonlRpcStream';
 
 export interface RpcHttpRequestFrame {
   readonly type: 'http.req';

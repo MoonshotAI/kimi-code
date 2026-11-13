@@ -4,63 +4,25 @@ import { z } from 'zod';
 import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
-import { toHostSnapshot, type HostBridgeManager } from '../services/hosts/hostBridgeManager';
+import { hostSnapshotSchema } from '../protocol/events-zod';
+import { hostSnapshots, toHostSnapshot, type HostBridgeManager } from '../services/hosts/hostBridgeManager';
 import {
   HOSTS_SECTION,
-  hostEntrySchema,
-  hostWireObjectSchema,
+  hostIdSchema,
   hostWireSchema,
-  isValidHostId,
 } from '../services/hosts/hostsConfig';
-import {
-  collectSharedProviders,
-  providerHostStatusSchema,
-  providerRemoveResultSchema,
-  skippedProviderSchema,
-} from '../services/hosts/hostProviders';
+import { providerCopyResultSchema } from '../services/hosts/hostProviders';
 import { readSshConfigHosts } from '../services/hosts/sshConfigHosts';
 import { HostConnectError, SshKapBridge } from '../services/hosts/sshKapBridge';
 
 interface HostsRouteHost {
-  get(path: string, options: { schema?: Record<string, unknown> }, handler: never): unknown;
-  post(path: string, options: { schema?: Record<string, unknown> }, handler: never): unknown;
-  put(path: string, options: { schema?: Record<string, unknown> }, handler: never): unknown;
-  delete(path: string, options: { schema?: Record<string, unknown> }, handler: never): unknown;
+  get(path: string, options: { preHandler: unknown[]; schema?: Record<string, unknown> }, handler: never): unknown;
+  post(path: string, options: { preHandler: unknown[]; schema?: Record<string, unknown> }, handler: never): unknown;
+  put(path: string, options: { preHandler: unknown[]; schema?: Record<string, unknown> }, handler: never): unknown;
+  delete(path: string, options: { preHandler: unknown[]; schema?: Record<string, unknown> }, handler: never): unknown;
 }
 
-interface RouteRequest {
-  readonly id: string;
-  readonly body: unknown;
-  readonly params: unknown;
-  readonly query?: unknown;
-}
-
-interface RouteReply {
-  send(payload: unknown): unknown;
-}
-
-const wireEntrySchema = z.object({
-  host: z.string(),
-  identity_file: z.string().optional(),
-  remote_bin: z.string().optional(),
-  name: z.string().optional(),
-  enabled: z.boolean().optional(),
-});
-
-const hostResponseSchema = hostWireObjectSchema.extend({
-  id: z.string(),
-  status: z.enum(['pending', 'connecting', 'ready', 'disconnected']),
-  connected: z.boolean(),
-  remote_version: z.string().optional(),
-  connect_error: z.string().optional(),
-  connect_failure: z.string().optional(),
-});
-
-const hostParamsSchema = z.object({ id: z.string() });
-const connectBodySchema = z.object({ id: z.string() });
-const copyProvidersBodySchema = z.object({ id: z.string(), providers: z.array(z.string()).optional() });
-const removeProvidersBodySchema = z.object({ id: z.string(), providers: z.array(z.string()) });
-const shareableProvidersQuerySchema = z.object({ host_id: z.string().optional() });
+const hostIdBodySchema = z.object({ id: z.string() });
 const testResultSchema = z.object({
   connected: z.boolean(),
   remote_version: z.string().optional(),
@@ -83,12 +45,12 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
     {
       method: 'GET',
       path: '/hosts',
-      success: { data: z.object({ hosts: z.array(hostResponseSchema) }) },
+      success: { data: z.object({ hosts: z.array(hostSnapshotSchema) }) },
       description: 'List configured SSH hosts and their connection status',
       tags: ['hosts'],
     },
-    async (req: RouteRequest, reply: RouteReply) => {
-      reply.send(okEnvelope({ hosts: manager.list().map(toHostSnapshot) }, req.id));
+    async (req, reply) => {
+      reply.send(okEnvelope({ hosts: hostSnapshots(manager) }, req.id));
     },
   );
   app.get(listRoute.path, listRoute.options, listRoute.handler as never);
@@ -114,7 +76,7 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
       description: 'List concrete Host aliases declared in the local ~/.ssh/config',
       tags: ['hosts'],
     },
-    async (req: RouteRequest, reply: RouteReply) => {
+    async (req, reply) => {
       const result = await readSshConfigHosts(core.accessor.get(IHostFileSystem), bootstrap.osHomeDir);
       reply.send(
         okEnvelope(
@@ -139,21 +101,14 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
     {
       method: 'POST',
       path: '/hosts::test',
-      body: wireEntrySchema,
+      body: hostWireSchema,
       success: { data: testResultSchema },
       errors: { [ErrorCode.VALIDATION_FAILED]: {} },
       description: 'Check SSH connectivity and the remote kimi version without starting a server',
       tags: ['hosts'],
     },
-    async (req: RouteRequest, reply: RouteReply) => {
-      let entry: z.infer<typeof hostEntrySchema>;
-      try {
-        entry = hostWireSchema.parse(req.body);
-      } catch (error) {
-        reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, error instanceof Error ? error.message : String(error), req.id));
-        return;
-      }
-      const bridge = new SshKapBridge(entry);
+    async (req, reply) => {
+      const bridge = new SshKapBridge(req.body);
       try {
         const probe = await bridge.probe();
         reply.send(okEnvelope({ connected: true, remote_version: probe.version }, req.id));
@@ -178,14 +133,14 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
     {
       method: 'POST',
       path: '/hosts::connect',
-      body: connectBodySchema,
-      success: { data: hostResponseSchema },
+      body: hostIdBodySchema,
+      success: { data: hostSnapshotSchema },
       errors: { [ErrorCode.ENVIRONMENT_NOT_FOUND]: {} },
       description: 'Connect a configured host now; failures are reported in the returned status',
       tags: ['hosts'],
     },
-    async (req: RouteRequest, reply: RouteReply) => {
-      const { id } = req.body as z.infer<typeof connectBodySchema>;
+    async (req, reply) => {
+      const { id } = req.body;
       const error = await manager.connect(id).then(
         () => undefined,
         (error: unknown) => (error instanceof Error ? error : new Error('host connection failed')),
@@ -213,62 +168,24 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
   );
   app.post(connectRoute.path, connectRoute.options, connectRoute.handler as never);
 
-  const shareableRoute = defineRoute(
-    {
-      method: 'GET',
-      path: '/hosts::shareable-providers',
-      querystring: shareableProvidersQuerySchema,
-      success: {
-        data: z.object({
-          providers: z.array(z.string()),
-          skipped: z.array(skippedProviderSchema),
-          host_status: z.record(z.string(), providerHostStatusSchema).optional(),
-        }),
-      },
-      errors: { [ErrorCode.ENVIRONMENT_NOT_FOUND]: {}, [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {} },
-      description:
-        'List the model providers on this computer that can be copied to an SSH host, and the ones that cannot. With host_id, also report whether each one is missing on that host, the same there, or different there',
-      tags: ['hosts'],
-    },
-    async (req: RouteRequest, reply: RouteReply) => {
-      const { host_id: hostId } = (req.query ?? {}) as z.infer<typeof shareableProvidersQuerySchema>;
-      const { shared, skipped } = await collectSharedProviders(core);
-      const providers = Object.keys(shared.providers);
-      if (hostId === undefined) {
-        reply.send(okEnvelope({ providers, skipped }, req.id));
-        return;
-      }
-      if (manager.section()[hostId] === undefined) {
-        reply.send(errEnvelope(ErrorCode.ENVIRONMENT_NOT_FOUND, `host "${hostId}" is not configured`, req.id));
-        return;
-      }
-      try {
-        reply.send(okEnvelope({ providers, skipped, host_status: await manager.providerStatus(hostId, shared) }, req.id));
-      } catch (error) {
-        reply.send(errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, error instanceof Error ? error.message : String(error), req.id));
-      }
-    },
-  );
-  app.get(shareableRoute.path, shareableRoute.options, shareableRoute.handler as never);
-
   const copyProvidersRoute = defineRoute(
     {
       method: 'POST',
       path: '/hosts::copy-providers',
-      body: copyProvidersBodySchema,
-      success: { data: z.object({ copied: z.array(z.string()), updated: z.array(z.string()), skipped: z.array(skippedProviderSchema) }) },
+      body: hostIdBodySchema,
+      success: { data: providerCopyResultSchema },
       errors: { [ErrorCode.ENVIRONMENT_NOT_FOUND]: {}, [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {} },
-      description: 'Copy the chosen model providers on this computer to a host, replacing providers with the same name there',
+      description: 'Copy shareable custom model providers on this computer to a host, replacing providers with the same name there',
       tags: ['hosts'],
     },
-    async (req: RouteRequest, reply: RouteReply) => {
-      const { id, providers } = req.body as z.infer<typeof copyProvidersBodySchema>;
+    async (req, reply) => {
+      const { id } = req.body;
       if (manager.section()[id] === undefined) {
         reply.send(errEnvelope(ErrorCode.ENVIRONMENT_NOT_FOUND, `host "${id}" is not configured`, req.id));
         return;
       }
       try {
-        reply.send(okEnvelope(await manager.copyProviders(id, providers), req.id));
+        reply.send(okEnvelope(await manager.copyProviders(id), req.id));
       } catch (error) {
         reply.send(errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, error instanceof Error ? error.message : String(error), req.id));
       }
@@ -276,56 +193,20 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
   );
   app.post(copyProvidersRoute.path, copyProvidersRoute.options, copyProvidersRoute.handler as never);
 
-  const removeProvidersRoute = defineRoute(
-    {
-      method: 'POST',
-      path: '/hosts::remove-providers',
-      body: removeProvidersBodySchema,
-      success: { data: providerRemoveResultSchema },
-      errors: { [ErrorCode.ENVIRONMENT_NOT_FOUND]: {}, [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {} },
-      description:
-        'Remove the chosen model providers from a host, with their models. Only providers still identical to the ones on this computer are removed; the rest are left as they are',
-      tags: ['hosts'],
-    },
-    async (req: RouteRequest, reply: RouteReply) => {
-      const { id, providers } = req.body as z.infer<typeof removeProvidersBodySchema>;
-      if (manager.section()[id] === undefined) {
-        reply.send(errEnvelope(ErrorCode.ENVIRONMENT_NOT_FOUND, `host "${id}" is not configured`, req.id));
-        return;
-      }
-      try {
-        reply.send(okEnvelope(await manager.removeProviders(id, providers), req.id));
-      } catch (error) {
-        reply.send(errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, error instanceof Error ? error.message : String(error), req.id));
-      }
-    },
-  );
-  app.post(removeProvidersRoute.path, removeProvidersRoute.options, removeProvidersRoute.handler as never);
-
   const putRoute = defineRoute(
     {
       method: 'PUT',
       path: '/hosts/{id}',
-      params: hostParamsSchema,
-      body: wireEntrySchema,
+      params: z.object({ id: hostIdSchema }),
+      body: hostWireSchema,
       success: { data: z.object({ ok: z.literal(true) }) },
       errors: { [ErrorCode.VALIDATION_FAILED]: {} },
       description: 'Create or replace a host',
       tags: ['hosts'],
     },
-    async (req: RouteRequest, reply: RouteReply) => {
-      const { id } = req.params as z.infer<typeof hostParamsSchema>;
-      if (!isValidHostId(id)) {
-        reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, `invalid host id "${id}"`, req.id));
-        return;
-      }
-      try {
-        const entry = hostWireSchema.parse(req.body);
-        await mutateHosts(() => config.replace(HOSTS_SECTION, { ...manager.section(), [id]: entry }));
-        reply.send(okEnvelope({ ok: true as const }, req.id));
-      } catch (error) {
-        reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, error instanceof Error ? error.message : String(error), req.id));
-      }
+    async (req, reply) => {
+      await mutateHosts(() => config.replace(HOSTS_SECTION, { ...manager.section(), [req.params.id]: req.body }));
+      reply.send(okEnvelope({ ok: true as const }, req.id));
     },
   );
   app.put(putRoute.path, putRoute.options, putRoute.handler as never);
@@ -334,13 +215,13 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
     {
       method: 'DELETE',
       path: '/hosts/{id}',
-      params: hostParamsSchema,
+      params: hostIdBodySchema,
       success: { data: z.object({ ok: z.literal(true) }) },
       description: 'Remove a host',
       tags: ['hosts'],
     },
-    async (req: RouteRequest, reply: RouteReply) => {
-      const { id } = req.params as z.infer<typeof hostParamsSchema>;
+    async (req, reply) => {
+      const { id } = req.params;
       await mutateHosts(async () => {
         const { [id]: _removed, ...rest } = manager.section();
         await config.replace(HOSTS_SECTION, rest);

@@ -426,7 +426,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const connectionRegistry = new ConnectionRegistry();
   let notifyHosts = (): void => {};
   let hostNotifyTimer: ReturnType<typeof setTimeout> | undefined;
-  const hostBridges = new HostBridgeManager(core, logger, () => notifyHosts());
+  const hostBridges = new HostBridgeManager(core, () => notifyHosts());
   const requestClose = (): void => {
     void close().catch((error: unknown) => logger.error({ err: error }, 'server close failed'));
   };

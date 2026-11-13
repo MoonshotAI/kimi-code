@@ -41,8 +41,12 @@ export interface HostsSection {
   [id: string]: HostEntry;
 }
 
+export const hostIdSchema = z
+  .string()
+  .regex(HOST_ID_PATTERN, 'host id must be 1-64 letters, digits, ".", "_" or "-"');
+
 export const hostsSectionSchema: z.ZodType<HostsSection> = z.record(
-  z.string().regex(HOST_ID_PATTERN, 'host id must be 1-64 letters, digits, ".", "_" or "-"'),
+  hostIdSchema,
   hostEntrySchema,
 );
 

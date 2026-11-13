@@ -1,3 +1,4 @@
+import type { HostSnapshot } from '../../../protocol/events-zod';
 import type { ConfigResponse } from '../../../protocol/rest-config';
 import type { Session, SessionPendingInteraction } from '../../../protocol/session';
 import type { Workspace } from '../../../protocol/workspace';
@@ -110,23 +111,9 @@ export interface CapabilityChangedEvent {
   };
 }
 
-export interface HostChangedHost {
-  readonly id: string;
-  readonly host: string;
-  readonly identity_file?: string;
-  readonly remote_bin?: string;
-  readonly name?: string;
-  readonly enabled?: boolean;
-  readonly status: 'pending' | 'connecting' | 'ready' | 'disconnected';
-  readonly connected: boolean;
-  readonly remote_version?: string;
-  readonly connect_error?: string;
-  readonly connect_failure?: string;
-}
-
 export interface HostChangedEvent {
   readonly type: 'event.host.changed';
-  readonly hosts: readonly HostChangedHost[];
+  readonly hosts: readonly HostSnapshot[];
 }
 
 export type PushEvent =

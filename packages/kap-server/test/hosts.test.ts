@@ -17,11 +17,10 @@ import WebSocketClient, { WebSocketServer, type WebSocket as NodeWebSocket } fro
 import { HOST_API_LEVEL, HOST_PROTOCOL_VERSION } from '../src/services/hosts/hostProtocol';
 import { matchHostProxyPath, proxyHostWebSocket, registerHostProxyRoutes, upstreamHeaders } from '../src/services/hosts/hostProxy';
 import { HostBridgeManager } from '../src/services/hosts/hostBridgeManager';
-import { collectSharedProviders } from '../src/services/hosts/hostProviders';
 import { hostsSectionSchema, hostWireSchema, isValidHostId } from '../src/services/hosts/hostsConfig';
 import { HostRequestError, type HostHttpRequest, type HostHttpResponse, type HostSession } from '../src/services/hosts/hostSession';
 import { StdioHostSession } from '../src/services/hosts/stdioHostSession';
-import { JsonlRpcStream } from '../src/transport/jsonlRpcStream';
+import { JsonlRpcStream, RPC_BACKPRESSURE_TIMEOUT_MS } from '../src/transport/jsonlRpcStream';
 import { startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import {
@@ -37,7 +36,6 @@ import {
   attachRpcStream,
   HOST_RPC_MAX_BODY_BYTES,
   startUnixRpcServer,
-  WS_BACKPRESSURE_TIMEOUT_MS,
 } from '../src/transport/stdioRpc';
 
 function thrown(run: () => unknown): HostConnectError {
@@ -193,7 +191,6 @@ describe('ssh bootstrap', () => {
     ['ssh: connect to host dev port 22: Operation timed out', 255, 'connect_timeout'],
     ['user@dev: Permission denied (publickey).', 255, 'authentication_failed'],
     ['Host key verification failed.', 255, 'host_key_changed'],
-    ['Error: remote port forwarding failed for listen path /s', 255, 'port_forwarding_denied'],
     ['bash: kimi: command not found', 127, 'executor_not_found'],
     ["error: unknown command 'ensure-daemon'", 1, 'executor_outdated'],
     ['`kimi server` has been deprecated and no longer works.', 1, 'executor_outdated'],
@@ -363,41 +360,7 @@ while IFS= read -r line; do :; done
     ),
   15_000);
 
-  it.skipIf(process.platform === 'win32')('retries a first connection that failed for a retryable reason', () =>
-    withFakeSsh(
-      (dir) => `#!/bin/sh
-echo x >> '${join(dir, 'count')}'
-attempt=$(wc -l < '${join(dir, 'count')}' | tr -d ' ')
-if [ "$attempt" = 1 ]; then
-  echo 'ssh: connect to host dev port 22: Connection refused' >&2
-  exit 255
-fi
-echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"pid":100,"version":"1.2.3"}'
-while IFS= read -r line; do :; done
-`,
-      async (ssh) => {
-        const bridge = new SshKapBridge({ host: 'dev' }, { sshProgram: ssh });
-        try {
-          bridge.start();
-          await vi.waitFor(() => {
-            expect(bridge.status).toBe('disconnected');
-            expect(bridge.failure).toBe('connection_refused');
-          });
-          await vi.waitFor(
-            () => {
-              expect(bridge.status).toBe('ready');
-              expect(bridge.session).toBeDefined();
-            },
-            { timeout: 5_000, interval: 50 },
-          );
-        } finally {
-          bridge.dispose();
-        }
-      },
-    ),
-  10_000);
-
-  it.skipIf(process.platform === 'win32')('keeps retrying in the background after an explicit connect fails', () =>
+  it.skipIf(process.platform === 'win32')('keeps retrying in the background after an initial or explicit connect fails', () =>
     withFakeSsh(
       (dir) => `#!/bin/sh
 if [ -e '${join(dir, 'down')}' ]; then
@@ -414,6 +377,7 @@ while IFS= read -r line; do :; done
         try {
           bridge.start();
           await vi.waitFor(() => {
+            expect(bridge.status).toBe('disconnected');
             expect(bridge.failure).toBe('connection_refused');
           });
           await expect(bridge.connect()).rejects.toBeInstanceOf(HostConnectError);
@@ -472,7 +436,7 @@ describe('host auto-connect', () => {
         },
       },
     };
-    const manager = new HostBridgeManager(core as never, { warn() {} });
+    const manager = new HostBridgeManager(core as never);
     return { manager, changeHosts: () => listener?.({ domain: 'hosts' }) };
   }
 
@@ -617,10 +581,8 @@ describe('host WebSocket backpressure', () => {
 });
 
 describe('host management routes', () => {
-  it('tests, creates, updates and removes hosts through the real HTTP API without an experimental flag', async () => {
+  it('tests, creates, updates and removes hosts through the real HTTP API', async () => {
     const home = await mkdtemp(join(tmpdir(), 'kimi-hosts-routes-'));
-    const previousFlag = process.env['KIMI_CODE_EXPERIMENTAL_SSH_FULL_REMOTE'];
-    process.env['KIMI_CODE_EXPERIMENTAL_SSH_FULL_REMOTE'] = '0';
     const server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
@@ -656,10 +618,8 @@ describe('host management routes', () => {
       ] } });
       expect((await request('DELETE', '/api/v1/hosts/dev')).status).toBe(200);
       const remaining = await request('GET', '/api/v1/hosts');
-      expect(await remaining.json()).toEqual({ code: 0, msg: 'success', data: { hosts: [{ id: 'other', host: 'other.example.test', connected: false, status: 'pending' }] }, request_id: expect.any(String) });
+      expect(await remaining.json()).toEqual({ code: 0, msg: 'success', data: { hosts: [{ id: 'other', host: 'other.example.test', status: 'pending' }] }, request_id: expect.any(String) });
     } finally {
-      if (previousFlag === undefined) delete process.env['KIMI_CODE_EXPERIMENTAL_SSH_FULL_REMOTE'];
-      else process.env['KIMI_CODE_EXPERIMENTAL_SSH_FULL_REMOTE'] = previousFlag;
       vi.restoreAllMocks();
       await server.close();
       await rm(home, { recursive: true, force: true });
@@ -850,7 +810,7 @@ describe('host account', () => {
 });
 
 describe('host model providers', () => {
-  it.skipIf(process.platform === 'win32')('copies portable providers with their models, replaces same-name ones whole and reports which ones match', async () => {
+  it.skipIf(process.platform === 'win32')('copies portable providers with their models and replaces same-name ones whole', async () => {
     await withManagedHostPair(
       async () => new Response(null, { status: 404 }),
       async ({ local, remote }) => {
@@ -876,88 +836,24 @@ describe('host model providers', () => {
         });
         await remoteConfig.replace('models', { 'taken/remote-only': { provider: 'taken', model: 'remote-only', maxContextSize: 16_000 } });
         const manager = local.hostBridges;
-        const statusOf = async () => manager.providerStatus('dev', (await collectSharedProviders(local.core)).shared);
-
-        await expect(statusOf()).resolves.toEqual({ gateway: 'missing', taken: 'outdated' });
 
         const result = await manager.copyProviders('dev');
-        expect(result.copied).toEqual(['gateway']);
-        expect(result.updated).toEqual(['taken']);
-        expect(result.skipped).toEqual(expect.arrayContaining([
-          { id: 'fromEnv', reason: 'env_key' },
-          { id: 'ollama', reason: 'loopback' },
-          { id: 'signedIn', reason: 'oauth' },
-        ]));
-        expect(result.skipped).toHaveLength(3);
+        expect(result).toEqual({ copied: ['gateway'], updated: ['taken'] });
         const providers = remoteConfig.inspect<Record<string, Record<string, unknown>>>('providers').userValue ?? {};
         expect(providers['gateway']).toMatchObject({ apiKey: 'sk-gateway', customHeaders: { 'x-team': 'core' } });
         expect(providers['taken']).toEqual({ type: 'openai', baseUrl: 'https://taken.example.test/v1', apiKey: 'sk-local' });
         expect(providers['kept']).toMatchObject({ apiKey: 'sk-kept' });
+        expect(providers).not.toHaveProperty('fromEnv');
         expect(providers).not.toHaveProperty('ollama');
+        expect(providers).not.toHaveProperty('signedIn');
         const models = remoteConfig.inspect<Record<string, Record<string, unknown>>>('models').userValue ?? {};
         expect(models['gateway/large']).toMatchObject({ provider: 'gateway', maxOutputSize: 8_000, adaptiveThinking: true });
         expect(models['taken/small']).toMatchObject({ provider: 'taken', maxContextSize: 32_000 });
         expect(models).not.toHaveProperty('taken/remote-only');
         expect(models).not.toHaveProperty('ollama/local');
-        await expect(statusOf()).resolves.toEqual({ gateway: 'synced', taken: 'synced' });
 
-        await localConfig.replace('providers', {
-          ...localConfig.inspect<Record<string, unknown>>('providers').userValue,
-          gateway: { type: 'openai', baseUrl: 'https://gateway.example.test/v1', apiKey: 'sk-rotated', customHeaders: { 'x-team': 'core' } },
-        });
-        await expect(statusOf()).resolves.toEqual({ gateway: 'outdated', taken: 'synced' });
-
-        await expect(manager.copyProviders('dev')).resolves.toMatchObject({ copied: [], updated: ['gateway', 'taken'] });
+        await expect(manager.copyProviders('dev')).resolves.toEqual({ copied: [], updated: ['gateway', 'taken'] });
         await expect(manager.copyProviders('missing')).rejects.toThrow(/not configured/);
-
-        await remoteConfig.replace('providers', {});
-        await remoteConfig.replace('models', {});
-        await expect(manager.copyProviders('dev', ['taken', 'ollama'])).resolves.toEqual({
-          copied: ['taken'],
-          updated: [],
-          skipped: [{ id: 'ollama', reason: 'loopback' }],
-        });
-        const selected = remoteConfig.inspect<Record<string, Record<string, unknown>>>('providers').userValue ?? {};
-        expect(Object.keys(selected)).toEqual(['taken']);
-        expect(Object.keys(remoteConfig.inspect<Record<string, unknown>>('models').userValue ?? {})).toEqual(['taken/small']);
-      },
-    );
-  }, 30_000);
-
-  it.skipIf(process.platform === 'win32')('removes only the synced providers that still match this computer and moves a default that pointed at them', async () => {
-    await withManagedHostPair(
-      async () => new Response(null, { status: 404 }),
-      async ({ local, remote }) => {
-        const localConfig = local.core.accessor.get(IConfigService);
-        const remoteConfig = remote.core.accessor.get(IConfigService);
-        await localConfig.ready;
-        await remoteConfig.ready;
-        await localConfig.replace('providers', {
-          gateway: { type: 'openai', baseUrl: 'https://gateway.example.test/v1', apiKey: 'sk-gateway' },
-          taken: { type: 'openai', baseUrl: 'https://taken.example.test/v1', apiKey: 'sk-local' },
-        });
-        await localConfig.replace('models', {
-          'gateway/large': { provider: 'gateway', model: 'large', maxContextSize: 200_000 },
-          'taken/small': { provider: 'taken', model: 'small', maxContextSize: 32_000 },
-        });
-        await remoteConfig.replace('providers', { kept: { type: 'openai', baseUrl: 'https://kept.example.test/v1', apiKey: 'sk-kept' } });
-        await remoteConfig.replace('models', { 'kept/base': { provider: 'kept', model: 'base', maxContextSize: 16_000 } });
-        const manager = local.hostBridges;
-        await manager.copyProviders('dev');
-        await remoteConfig.replace('defaultModel', 'gateway/large');
-        await remoteConfig.replace('providers', {
-          ...remoteConfig.inspect<Record<string, unknown>>('providers').userValue,
-          taken: { type: 'openai', baseUrl: 'https://taken.example.test/v1', apiKey: 'sk-host-rotated' },
-        });
-
-        await expect(manager.removeProviders('dev', ['gateway', 'taken', 'unknown'])).resolves.toEqual({ removed: ['gateway'] });
-        expect(Object.keys(remoteConfig.inspect<Record<string, unknown>>('providers').userValue ?? {}).toSorted()).toEqual(['kept', 'taken']);
-        expect(Object.keys(remoteConfig.inspect<Record<string, unknown>>('models').userValue ?? {}).toSorted()).toEqual(['kept/base', 'taken/small']);
-        expect(remoteConfig.inspect<string>('defaultModel').userValue).not.toBe('gateway/large');
-        await expect(manager.providerStatus('dev', (await collectSharedProviders(local.core)).shared)).resolves.toEqual({ gateway: 'missing', taken: 'outdated' });
-
-        await expect(manager.removeProviders('dev', ['gateway'])).resolves.toEqual({ removed: [] });
-        await expect(manager.removeProviders('missing', ['taken'])).rejects.toThrow(/not configured/);
       },
     );
   }, 30_000);
@@ -1134,11 +1030,11 @@ describe('stdio rpc transport', () => {
       connected.send('first');
       stream.emit('drain');
       connected.send('second');
-      await vi.advanceTimersByTimeAsync(WS_BACKPRESSURE_TIMEOUT_MS - 1);
+      await vi.advanceTimersByTimeAsync(RPC_BACKPRESSURE_TIMEOUT_MS - 1);
       expect(connected.readyState).toBe(connected.OPEN);
       stream.emit('drain');
       connected.send('third');
-      await vi.advanceTimersByTimeAsync(WS_BACKPRESSURE_TIMEOUT_MS - 1);
+      await vi.advanceTimersByTimeAsync(RPC_BACKPRESSURE_TIMEOUT_MS - 1);
       expect(connected.readyState).toBe(connected.OPEN);
       await vi.advanceTimersByTimeAsync(2);
       expect(stream.destroyed).toBe(true);

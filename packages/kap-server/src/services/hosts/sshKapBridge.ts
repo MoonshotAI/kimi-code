@@ -16,14 +16,13 @@ export type HostConnectFailure =
   | 'connect_timeout'
   | 'authentication_failed'
   | 'host_key_changed'
-  | 'port_forwarding_denied'
   | 'executor_not_found'
   | 'executor_outdated'
   | 'remote_busy'
   | 'remote_start_failed'
   | 'unknown';
 
-export interface BootstrapResult {
+interface BootstrapResult {
   readonly version: string;
   readonly pid?: number;
 }
@@ -37,13 +36,9 @@ interface BootstrapMarker {
   readonly message?: string;
 }
 
-export interface RemoteProbe {
+interface RemoteProbe {
   readonly version: string;
   readonly protocol: number;
-}
-
-export interface BridgeLogger {
-  warn(context: Record<string, unknown>, message: string): void;
 }
 
 export class HostConnectError extends Error {
@@ -109,7 +104,6 @@ export function classifySshFailure(stderr: string, exitCode: number | null): Hos
   if (/Could not resolve hostname|Name or service not known|nodename nor servname/i.test(stderr)) return 'host_not_found';
   if (/Host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED/i.test(stderr)) return 'host_key_changed';
   if (/Permission denied|Too many authentication failures/i.test(stderr)) return 'authentication_failed';
-  if (/forwarding failed|administratively prohibited/i.test(stderr)) return 'port_forwarding_denied';
   if (/Connection refused/i.test(stderr)) return 'connection_refused';
   if (/No route to host|Network is unreachable/i.test(stderr)) return 'host_unreachable';
   if (/timed out/i.test(stderr)) return 'connect_timeout';
@@ -255,7 +249,6 @@ function createProcessStream(child: ChildProcess, initial: Buffer): Duplex {
 export interface SshKapBridgeOptions {
   readonly sshProgram?: string;
   readonly env?: NodeJS.ProcessEnv;
-  readonly logger?: BridgeLogger;
   readonly onChange?: () => void;
 }
 
