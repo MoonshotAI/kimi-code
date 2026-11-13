@@ -17,7 +17,6 @@ import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { createReminderStub } from '../reminder/stubs';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { PromptSubmitted } from '#/agent/prompt/promptEvents';
@@ -2970,10 +2969,6 @@ describe('AgentTowerService', () => {
         } as unknown as IAgentLifecycleService,
         {
           _serviceBrand: undefined,
-          mode: 'manual',
-        } as unknown as IAgentPermissionModeService,
-        {
-          _serviceBrand: undefined,
           args: { requestHeaders: {}, nonInteractive: false },
         } as unknown as IBootstrapService,
       );
@@ -4246,8 +4241,9 @@ describe('TowerModeInjection', () => {
     expect(text).toContain('kind: "artifact"');
     expect(text).toContain('acceptance-request');
     expect(text).toContain('explicit user approval');
-    expect(text).toContain('auto or noninteractive mode');
-    expect(text).toContain('never self-approve or substitute an independent review');
+    expect(text).toContain('In auto mode, present the key artifacts');
+    expect(text).toContain('In a noninteractive run, leave the mission completed and waiting');
+    expect(text).toContain('never substitute an independent review');
     expect(text).toContain('merged or abandoned');
     expect(text).toContain('background execution is unavailable');
     expect(text).toContain('break-glass');
