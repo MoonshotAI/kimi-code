@@ -966,9 +966,9 @@ describe('Agent loop', () => {
       telemetry: recordingTelemetry(records),
     });
     try {
-      local.mockNextProviderResponse({
-        error: new APIStatusError(429, 'rate limited', true, 'req-status-429'),
-      });
+      local.mockNextProviderResponse(
+        providerHttpError(429, 'rate limited', { requestId: 'req-status-429' }),
+      );
       await local.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
       await local.untilTurnEnd();
 

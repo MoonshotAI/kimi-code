@@ -325,7 +325,6 @@ export class AgentLoopRequestObserver {
     }
     observation.setRequestId(requestId, false);
   }
-  }
 
   reportProjectionRepairs(anomalies: readonly ProjectionAnomaly[]): void {
     const notable = anomalies.filter(
