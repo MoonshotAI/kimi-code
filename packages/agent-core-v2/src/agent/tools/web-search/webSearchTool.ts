@@ -8,6 +8,7 @@ import {
 } from '#/tool/toolContract';
 import { ToolOutputAccumulator } from '#/tool/output-accumulator';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IWebSearchProviderService } from '#/app/auth/webSearch/webSearch';
 
 import {
@@ -25,6 +26,7 @@ export class WebSearchTool implements IWebSearchTool {
 
   constructor(
     @IWebSearchProviderService private readonly providerService: IWebSearchProviderService,
+    @IAgentLoopService private readonly loop: IAgentLoopService,
   ) {}
 
   resolveExecution(args: WebSearchInput): ToolExecution {
@@ -43,7 +45,7 @@ export class WebSearchTool implements IWebSearchTool {
     args: WebSearchInput,
     { toolCallId, signal }: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
-    const provider = this.providerService.getWebSearchProvider();
+    const provider = this.providerService.getWebSearchProvider(this.loop.getModel());
     if (provider === undefined) {
       return {
         isError: true,
@@ -114,5 +116,8 @@ function classifySearchError(error: unknown): string {
 registerAgentToolService(IWebSearchTool, WebSearchTool, {
   name: 'WebSearch',
   domain: 'auth',
-  when: (accessor) => accessor.get(IWebSearchProviderService).hasWebSearchProvider(),
+  when: (accessor) =>
+    accessor
+      .get(IWebSearchProviderService)
+      .hasWebSearchProvider(accessor.get(IAgentLoopService).getModel()),
 });

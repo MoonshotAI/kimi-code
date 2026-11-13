@@ -7,8 +7,8 @@ export type { WebSearchProvider, WebSearchResult } from '#/agent/tools/web-searc
 export interface IWebSearchProviderService {
   readonly _serviceBrand: undefined;
 
-  getWebSearchProvider(): WebSearchProvider | undefined;
-  hasWebSearchProvider(): boolean;
+  getWebSearchProvider(modelAlias?: string): WebSearchProvider | undefined;
+  hasWebSearchProvider(modelAlias?: string): boolean;
 }
 
 export const IWebSearchProviderService: ServiceIdentifier<IWebSearchProviderService> =

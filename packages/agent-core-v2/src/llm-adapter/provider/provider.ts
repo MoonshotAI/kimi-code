@@ -15,6 +15,8 @@ export interface ProviderConfig {
   modelSource?: ModelSource;
 
   baseUrl?: string;
+  searchUrl?: string;
+  feedbackUrl?: string;
   customHeaders?: Record<string, string>;
   defaultModel?: string;
 
