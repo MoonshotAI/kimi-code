@@ -1,45 +1,18 @@
 # 远程环境
 
-远程环境让 Kimi Code 操作另一台机器或容器。
+远程环境让 Agent 在另一台机器或容器中读写文件、执行 Shell 命令，Kimi Code CLI、模型请求、凭据和会话状态仍留在本机。
 
-## 远程环境的工作原理
+## 通过 SSH 使用远程环境
 
-Kimi Code CLI 仍在你的电脑上运行，只把读写文件和执行命令交给目标环境。目标环境上也需要安装一个 Kimi Code CLI 负责执行。
+### 1. 准备远程机器
 
-## 快速开始
+- 将目标平台的 Kimi Code 执行器安装到 `~/.kimi-code/bin/kimi`。
+- 确认本机可以通过 SSH 密钥登录远程机器。
+- 用户、端口、密钥和跳板机可先在 `~/.ssh/config` 中配置。
 
-以一台 SSH 能直接登录的机器 `dev-box` 为例。
+Kimi Code 不会自动安装执行器。找不到执行器或版本不兼容时，请安装或更新为目标平台提供的构建。
 
-1. 在目标机器上安装 Kimi Code CLI：
-
-   ```sh
-   ssh dev-box 'curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash'
-   ```
-
-2. 在本机的 `~/.kimi-code/config.toml` 中加入：
-
-   ```toml
-   [environments.dev-box]
-   type = "ssh"
-   host = "dev-box"
-   defaultCwd = "/home/me/projects"
-   ```
-
-3. 启动会话：
-
-   ```sh
-   kimi --environment dev-box
-   ```
-
-   会话打开后，底部状态栏的工作目录前会显示 `dev-box`。之后 Agent 读写的文件、执行的命令都在 `dev-box` 上。
-
-想让每个新会话都默认在 `dev-box` 上启动，见 [设为默认环境](#设为默认环境)；Docker 容器和其他接入方式见 [声明环境](#声明环境)。
-
-## 声明环境
-
-在 `config.toml` 的 `[environments]` 下声明环境。连接前，目标环境需要[安装 Kimi Code CLI](./getting-started.md#脚本安装-推荐)。
-
-### SSH 主机
+### 2. 在本机 `config.toml` 中声明环境
 
 ```toml
 [environments.dev-box]
@@ -48,9 +21,58 @@ host = "dev-box"
 defaultCwd = "/home/me/projects"
 ```
 
-`host` 由系统 `ssh` 解析，`~/.ssh/config` 中的用户、端口、密钥和跳板机照常生效，认证方式见 [SSH 认证](#ssh-认证)。`defaultCwd` 是会话在目标上的工作目录，需要写目标机器上的绝对路径，不支持相对路径和 `~`。
+执行器不在默认路径时，增加一项：
 
-### Docker 容器
+```toml
+remoteBin = "/path/to/kimi"
+```
+
+### 3. 创建远程会话
+
+```sh
+kimi --environment dev-box
+```
+
+临时更换远程工作目录：
+
+```sh
+kimi --environment dev-box --environment-cwd /home/me/another-project
+```
+
+恢复会话时会自动恢复原来的远程环境和工作目录，无需重复这些参数。
+
+配置完成后：
+
+- 文件操作和 Shell 命令在远程机器执行。
+- CLI、模型请求和凭据留在本机。
+- subagent 继承父 Agent 的远程环境。
+
+#### `kimi --environment` 与 `--environment-cwd`
+
+- 两个参数只用于创建会话，不能与 `--session` 或 `--continue` 组合。
+- `--environment-cwd` 必须与 `--environment` 一起使用。
+- 之后的 `/new` 保留当前环境，不再次应用启动参数。
+
+## SSH 认证
+
+推荐先在本机终端完成一次配置：
+
+- 只有密码的主机：执行 `ssh-copy-id user@host`，之后使用密钥登录。
+- 私钥有口令：先执行 `ssh-add`，让 ssh-agent 保存已解锁的密钥。
+- 需要跳板机或连接共享：在 `~/.ssh/config` 中配置 `ProxyJump` 或 `ControlMaster`。
+
+连接行为：
+
+- 首次连接新主机时会记录主机密钥；之后密钥发生变化会连接失败，需要手动处理。
+- 交互式 CLI 可以在服务器支持时提示输入 SSH 密码。密码只保存在当前进程内存中。
+- 密码提示需要 OpenSSH 8.4 或更高版本，不支持独立 OTP/MFA 或私钥口令提示。
+- `kimi -p` 等非交互方式不会提示输入密码，请提前配置密钥或连接共享。
+
+## 声明 Docker 与自定义命令环境
+
+除 SSH 外，还可以声明 Docker 兼容容器或自定义启动命令。
+
+Docker 示例：
 
 ```toml
 [environments.dev-container]
@@ -59,86 +81,69 @@ container = "myapp-dev"
 defaultCwd = "/workspace"
 ```
 
-`container` 填正在运行的容器名或 id，Kimi Code 通过 `docker exec` 进入容器。使用 OrbStack 等非默认 Docker context 时，加上 `context = "orbstack"`。
-
-### 其他环境
-
-可以通过 `command` 和 `args` 配置其他环境，例如 `kubectl exec`、WSL、Apple Container、受管沙箱，例如：
+自定义命令示例：
 
 ```toml
-[environments.k8s-pod]
-command = "kubectl"
-args = ["exec", "-i", "my-pod", "--"]
-remoteBin = "/root/.kimi-code/bin/kimi"
-defaultCwd = "/app"
-
-[environments.wsl]
-command = 'C:\Program Files\WSL\wsl.exe'
-args = ["--exec"]
-remoteBin = "/home/me/.kimi-code/bin/kimi"
-defaultCwd = "/home/me/projects"
+[environments.sandbox]
+command = "sandbox"
+args = ["ssh", "i-1234567890", "--"]
+defaultCwd = "/home/me/kimi-code"
 ```
 
-- `kubectl exec`、`wsl --exec` 这类不经 Shell、原样传递参数的命令不会展开 `~`，需要用 `remoteBin` 写出 Kimi Code 在目标上的绝对路径。
-- 含反斜杠的 Windows 路径用单引号包裹，TOML 不会转义其中的 `\`。
-- 启动命令需要的凭据可以写在 `env` 里，例如 `env = { SANDBOX_TOKEN = "..." }`。这些变量只提供给本机的启动命令，不会传到 Agent 在目标上执行的命令中。
+常用规则：
 
-### 设为默认环境
+- `defaultCwd` 必须是目标环境中的绝对路径。
+- `type` 与 `command` 在同一条目内互斥。
+- 可选的 `[environments] default = "dev-box"` 指定新会话的默认环境。
+- 修改启动方式后，下次使用会按新配置重新连接；正在运行的远程命令会终止。
 
-```toml
-[environments]
-default = "dev-box"
-```
+完整字段见 [`environments` 配置参考](../configuration/config-files.md#environments)。
 
-设置后，新会话直接在该环境上启动。默认环境的条目必须写 `defaultCwd`。
-在 TUI 中用 `/new` 新建会话时，沿用当前会话的环境和工作目录。
+## Windows 目标
 
-### Windows 目标环境
+远程目标为 Windows 机器时：
 
-Windows 目标上需要安装 [Git for Windows](https://gitforwindows.org/)（`Bash` 工具通过 Git Bash 执行）。
-
-`defaultCwd` 使用 `C:\work\project` 这样的驱动器路径：
+- 安装 [Git for Windows](https://gitforwindows.org/) 和 Windows 版执行器。
+- 默认执行器路径为 `~/.kimi-code/bin/kimi.exe`。
+- `defaultCwd` 使用 `C:\work\project` 这类原生驱动器路径。
+- 支持 SSH 和自定义命令，不支持 Docker 容器。
 
 ```toml
 [environments.windows-dev]
 type = "ssh"
 host = "windows-dev"
+remoteBin = "kimi"
 defaultCwd = 'C:\work\project'
 ```
 
-## 临时指定环境
+## 断线与重连
 
-在启动时用 `--environment` 指定这次新会话的环境，用 `--environment-cwd` 覆盖工作目录。
+- 下一个工具调用会尝试重新连接。
+- 不会静默回退到本机，远程命令不会误在本机执行。
+- 断线时正在执行的调用会失败，不会自动重试。
+- 目标持续不可达时，工具调用会报错，请先检查网络、SSH 和执行器。
 
-```sh
-kimi --environment dev-box --environment-cwd /home/me/projects -p "Run the test suite"
-```
+## 限制
 
-目前只有 Kimi Code CLI 支持临时指定环境。Web UI 等其他客户端新建的会话使用[默认环境](#设为默认环境)，未设置默认环境时在本机运行。
+- `WebSearch` 和 `FetchURL` 始终从本机发起。
+- Hooks 和未设置 `environment_id` 的 stdio MCP server 默认在本机运行。
+- 远程会话不读取目标环境的项目级 Agent 文件。
+- 远程 `AGENTS.md` 和项目级 Skills 不热重载；新建、恢复会话或执行 `/reload` 时重新读取。
+- 提示词中的文件路径按远程环境解析；本机路径不能直接读取，粘贴图片不受影响。
+- 远程工作区不支持 Tower 模式。
 
-## SSH 认证
+<details>
+<summary>更多限制</summary>
 
-Kimi Code 以非交互方式连接 SSH 主机。在终端里执行下面的命令，不报错就说明 Kimi Code 能连上：
+- `/feedback` 的代码库扫描器不支持远程工作区。
+- 远程目录超过 50,000 个条目时会报错，请改用较小的子目录。
+- 大量小文件会增加远程会话的启动时间。
+- 两台主机上的相同根路径会共用一个工作区条目。
+- Windows 主进程退出后，遗留的子进程可能不会自动清理；请先停止后台任务。
 
-```sh
-ssh -o BatchMode=yes dev-box true
-```
-
-- **密钥**：`~/.ssh/config` 中的密钥、ssh-agent 和跳板机照常生效。带口令的密钥先在终端执行一次 `ssh-add`。
-- **密码**：在 TUI 中，Kimi Code CLI 会提示输入 SSH 密码（需要 OpenSSH 8.4 或更高版本）。`kimi -p` 不支持密码登录。
-- **主机密钥**：首次连接时自动信任并写入 `known_hosts`；之后主机密钥变化时连接会失败，需要手动删除 `known_hosts` 中的对应条目。
-
-## 注意事项
-
-- **恢复会话会连回原环境**：环境已被删除或无法连接时，恢复会失败。
-- **修改环境配置会断开连接**：正在目标环境上运行的命令会被终止，下次使用时按新配置连接。
-- **目标环境上的 Kimi Code CLI 版本过旧时无法连接**：在目标环境上重新运行安装命令升级即可。
-- **Hooks 和 MCP server 默认在本机运行**：它们看不到目标环境的文件；stdio MCP server 可通过 `environment_id` 改到目标环境运行，见 [MCP](../customization/mcp.md)。
-- **联网工具在本机发起**：`WebSearch` 和 `FetchURL` 访问的是你电脑所在的网络。
-- **提示词里的文件路径按目标环境解析**：写 `/tmp/x.png` 读的是目标环境上的文件；本机图片请直接粘贴。
-- **不支持 Tower 模式**。
+</details>
 
 ## 下一步
 
-- [`environments` 配置参考](../configuration/config-files.md#environments)——`[environments]` 节的全部字段
-- [远程控制](./remote-control.md)——相反方向：从另一台设备操控本机的会话
+- [`environments` 配置参考](../configuration/config-files.md#environments)：查看全部字段。
+- [远程控制](./remote-control.md)：从另一台设备操控本机会话。

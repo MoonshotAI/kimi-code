@@ -202,6 +202,25 @@ auto_install = false
     );
   });
 
+  it('applies follow_up_behavior from tui.toml', async () => {
+    await writeTuiConfig('follow_up_behavior = "steer"\n');
+    const host = makeHost();
+
+    await handleReloadTuiCommand(host);
+
+    expect(host.state.appState.followUpBehavior).toBe('steer');
+  });
+
+  it('returns follow_up_behavior to unset when the key is removed from tui.toml', async () => {
+    await writeTuiConfig('theme = "dark"\n');
+    const host = makeHost();
+    host.state.appState.followUpBehavior = 'steer';
+
+    await handleReloadTuiCommand(host);
+
+    expect(host.state.appState.followUpBehavior).toBeUndefined();
+  });
+
   it('notices a required restart when tui_mode differs from the running UI mode', async () => {
     await writeTuiConfig('tui_mode = "fullscreen"\n');
     const host = makeHost();

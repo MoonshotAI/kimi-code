@@ -426,7 +426,7 @@ disabled = ["WebSearch", "FetchURL", "mcp__github__*"]
 ```
 
 ::: warning 注意
-与 Agent 文件中的 `tools` / `disallowedTools` 一样，本节不仅决定模型能"看到"哪些工具，还会在执行前再次强制检查。[权限规则](#permission)仍是独立的控制层，用于决定哪些操作需要审批。
+与 Agent 文件中的 `tools` / `disallowedTools` 一样，本节不仅决定模型能 "看到" 哪些工具，还会在执行前再次强制检查。[权限规则](#permission)仍是独立的控制层，用于决定哪些操作需要审批。
 :::
 
 ## `read`
@@ -578,7 +578,7 @@ MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-cod
 
 每个条目以环境 id 为键：不超过 64 个字符，首尾不能有空白，`local` 和 `default` 是保留字。同一条目内 `type` 与 `command` 互斥。
 
-远端工作目录必须是 POSIX 绝对路径或 Windows 驱动器路径，相对路径和 `~` 不会展开。Git Bash 和启动器的要求见 [Windows 目标环境](../guides/remote-environment.md#windows-目标环境)。
+远端工作目录必须是 POSIX 绝对路径或 Windows 驱动器路径，相对路径和 `~` 不会展开。Git Bash 和启动器的要求见 [Windows 目标](../guides/remote-environment.md#windows-目标)。
 
 可选的顶层 `default` 指定创建会话时未显式给出绑定时使用的环境。它必须指向一个已配置的条目，且该条目必须设置 `defaultCwd`——绑定由环境和工作目录成对构成，缺了工作目录的默认绑定会悬空。未设置 `default` 时，这些会话从 `local` 开始。TUI 的 `/new` 不用这个 default，而是保留当前环境。详见 [远程环境](../guides/remote-environment.md)。
 
@@ -652,6 +652,7 @@ defaultCwd = "/workspace"
 | `disable_paste_burst` | `boolean` | `false` | 禁用非 bracketed paste 的粘贴突发兜底；默认开启，避免快速多行粘贴被逐行提交 |
 | `cache_expiry_hint` | `boolean` | `true` | resume 或长时间空闲后发消息时，若上下文缓存可能过期则提醒，可先压缩或新建会话（仅 v2 引擎） |
 | `auto_session_title` | `boolean` | `true` | 首个完成的轮次后由 TUI 自动生成会话标题；设为 `false` 只关闭 TUI 的触发，不影响 `config.toml` 中的全局 `auto_session_title` |
+| `follow_up_behavior` | `string` | `queue` | Agent 工作期间按 `Enter` 是将消息排队（`queue`）还是注入正在运行的轮次（`steer`） |
 | `[editor].command` | `string` | `""` | 编写长输入用的外部编辑器命令；留空则回退到 `$VISUAL` / `$EDITOR` |
 | `[notifications].enabled` | `boolean` | `true` | 是否发送桌面通知 |
 | `[notifications].notification_condition` | `string` | `unfocused` | 何时通知：`unfocused`（仅终端失去焦点时）或 `always`（总是） |
@@ -677,6 +678,7 @@ render_latex = true # false 表示消息中的 LaTeX 公式保留原始源码
 disable_paste_burst = false # true 表示禁用非 bracketed paste 的粘贴突发兜底
 cache_expiry_hint = true # false 表示关闭 resume / 空闲提交时的"缓存已过期"提醒弹窗
 auto_session_title = true # false 表示 TUI 不在首个完成的轮次后自动生成会话标题
+# follow_up_behavior = "queue" # "queue" | "steer"
 
 [editor]
 command = "" # 留空则使用 $VISUAL / $EDITOR

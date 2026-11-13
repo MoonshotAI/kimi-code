@@ -80,6 +80,7 @@ export async function applyReloadedTuiConfig(
     renderLatex: config.renderLatex,
     cacheExpiryHint: config.cacheExpiryHint,
     autoSessionTitle: config.autoSessionTitle,
+    followUpBehavior: config.followUpBehavior,
     notifications: config.notifications,
     upgrade: config.upgrade,
     statusLine: config.statusLine,
