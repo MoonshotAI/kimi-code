@@ -79,10 +79,12 @@ describe('QuestionDialog', () => {
     expect(screen.getByText('Question 1 of 3')).toBeTruthy();
     expect(screen.getByText('Setup')).toBeTruthy();
     expect(screen.getByText('- First option')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Back' })).toBeNull();
+    expect((screen.getByRole('button', { name: 'Back' }) as HTMLButtonElement).disabled).toBe(true);
 
     fireEvent.click(optionButton('Alpha'));
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     fireEvent.click(optionButton('Gamma'));
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     expect(screen.getByText('Final question')).toBeTruthy();
     expect(respondQuestion).not.toHaveBeenCalled();
 
@@ -97,6 +99,7 @@ describe('QuestionDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     fireEvent.click(optionButton('No'));
+    fireEvent.click(screen.getByRole('button', { name: 'Submit answers' }));
 
     await waitFor(() => {
       expect(respondQuestion).toHaveBeenCalledWith({
@@ -114,6 +117,7 @@ describe('QuestionDialog', () => {
     ]);
 
     fireEvent.click(optionButton('Alpha'));
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     fireEvent.click(customResponseButton());
     fireEvent.change(customInput(), { target: { value: 'Second draft' } });
 
@@ -139,9 +143,12 @@ describe('QuestionDialog', () => {
     ]);
 
     fireEvent.click(optionButton('Alpha'));
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     fireEvent.click(screen.getByRole('button', { name: 'Back' }));
     fireEvent.click(optionButton('Beta'));
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     fireEvent.click(optionButton('Delta'));
+    fireEvent.click(screen.getByRole('button', { name: 'Submit answers' }));
 
     await waitFor(() => {
       expect(respondQuestion).toHaveBeenCalledWith({
@@ -154,7 +161,7 @@ describe('QuestionDialog', () => {
   it('toggles multi-select options and submits them in selection order', async () => {
     renderQuestion([makeQuestion('Pick several', ['Alpha', 'Beta', 'Gamma'], true)]);
 
-    const submit = screen.getByRole('button', { name: 'Submit' }) as HTMLButtonElement;
+    const submit = screen.getByRole('button', { name: 'Submit answers' }) as HTMLButtonElement;
     expect(submit.disabled).toBe(true);
     expect(screen.getByText('Select all that apply')).toBeTruthy();
 
@@ -195,6 +202,7 @@ describe('QuestionDialog', () => {
     fireEvent.click(optionButton('Alpha'));
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     fireEvent.click(optionButton('No'));
+    fireEvent.click(screen.getByRole('button', { name: 'Submit answers' }));
 
     await waitFor(() => {
       expect(respondQuestion).toHaveBeenCalledWith({
@@ -218,6 +226,8 @@ describe('QuestionDialog', () => {
     fireEvent.change(input, { target: { value: '  My answer  ' } });
     expect(send.disabled).toBe(false);
     fireEvent.keyDown(input, { key: 'Enter' });
+    expect(screen.getByRole('button', { name: /Custom response: My answer/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Submit answers' }));
 
     await waitFor(() => {
       expect(respondQuestion).toHaveBeenCalledWith({ 'Custom single': 'My answer' });
@@ -254,7 +264,7 @@ describe('QuestionDialog', () => {
 
     fireEvent.click(optionButton('Extra'));
     expect(screen.queryByText('Extra')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Submit answers' }));
 
     await waitFor(() => {
       expect(respondQuestion).toHaveBeenCalledWith({ 'Custom multi': 'Alpha' });
@@ -277,6 +287,7 @@ describe('QuestionDialog', () => {
     fireEvent.click(customResponseButton());
     expect(customInput().value).toBe('  Draft answer  ');
     fireEvent.keyDown(customInput(), { key: 'Enter' });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit answers' }));
 
     await waitFor(() => {
       expect(respondQuestion).toHaveBeenCalledWith({ Keyboard: 'Draft answer' });
@@ -292,7 +303,9 @@ describe('QuestionDialog', () => {
     ]);
 
     fireEvent.click(optionButton('Alpha'));
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     fireEvent.click(optionButton('Delta'));
+    fireEvent.click(screen.getByRole('button', { name: 'Submit answers' }));
 
     const back = screen.getByRole('button', { name: 'Back' }) as HTMLButtonElement;
     expect(back.disabled).toBe(true);
@@ -322,12 +335,13 @@ describe('QuestionDialog', () => {
     ]);
 
     fireEvent.click(optionButton('One'));
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     fireEvent.click(optionButton('Alpha'));
     fireEvent.click(customResponseButton());
     fireEvent.change(customInput(), { target: { value: 'Draft' } });
     const back = screen.getByRole('button', { name: 'Back' }) as HTMLButtonElement;
     const send = screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement;
-    const submit = screen.getByRole('button', { name: 'Submit' }) as HTMLButtonElement;
+    const submit = screen.getByRole('button', { name: 'Submit answers' }) as HTMLButtonElement;
     fireEvent.click(submit);
 
     expect(back.disabled).toBe(true);
@@ -356,6 +370,7 @@ describe('QuestionDialog', () => {
       makeQuestion('Old second', ['Two']),
     ], 'old-request');
     fireEvent.click(optionButton('One'));
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     expect(screen.getByText('Old second')).toBeTruthy();
     fireEvent.click(customResponseButton());
     fireEvent.change(customInput(), { target: { value: 'Old draft' } });
@@ -371,6 +386,7 @@ describe('QuestionDialog', () => {
     fireEvent.keyDown(customInput(), { key: 'Escape' });
 
     fireEvent.click(optionButton('Three'));
+    fireEvent.click(screen.getByRole('button', { name: 'Submit answers' }));
     await waitFor(() => {
       expect(respondQuestion).toHaveBeenCalledExactlyOnceWith({ 'New first': 'Three' });
     });
