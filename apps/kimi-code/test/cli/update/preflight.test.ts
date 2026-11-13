@@ -10,6 +10,7 @@ import {
   writeUpdateInstallState,
 } from '#/cli/update/install-state';
 import { installCommandFor, installUpdate, runUpdatePreflight } from '#/cli/update/preflight';
+import { runForcedUpgradePreflight } from '#/cli/update/forced';
 import { promptForInstallChoice } from '#/cli/update/prompt';
 import type * as PromptModule from '#/cli/update/prompt';
 import { refreshUpdateCache } from '#/cli/update/refresh';
@@ -35,6 +36,8 @@ const mocks = vi.hoisted(() => ({
   loadTuiConfig: vi.fn(),
   detectInstallSource: vi.fn(),
   promptForInstallChoice: vi.fn(),
+  promptForForcedUpgradeChoice: vi.fn(),
+  fetchClientConfig: vi.fn(),
   refreshUpdateCache: vi.fn(),
   resolveUpdateDeviceId: vi.fn(),
   appendRolloutDecisionLog: vi.fn(),
@@ -89,6 +92,14 @@ vi.mock('../../../src/cli/update/prompt', async () => {
     promptForInstallChoice: mocks.promptForInstallChoice,
   };
 });
+
+vi.mock('../../../src/cli/update/forced-prompt', () => ({
+  promptForForcedUpgradeChoice: mocks.promptForForcedUpgradeChoice,
+}));
+
+vi.mock('../../../src/utils/client-configs', () => ({
+  clientConfigs: { fetch: mocks.fetchClientConfig },
+}));
 
 vi.mock('../../../src/cli/update/refresh', async () => {
   const actual = await vi.importActual<typeof RefreshModule>('../../../src/cli/update/refresh.js');
@@ -192,6 +203,7 @@ function tuiConfig(overrides: Partial<TuiConfig> = {}): TuiConfig {
     editorCommand: null,
     notifications: { enabled: true, condition: 'unfocused' },
     upgrade: { autoInstall: true },
+    transcript: { toolCallDensity: 'compact', thinking: 'grouped' },
     ...overrides,
   };
 }
@@ -1463,5 +1475,74 @@ describe('runUpdatePreflight', () => {
         expect.objectContaining({ stdio: 'inherit' }),
       );
     });
+  });
+});
+
+
+describe('runForcedUpgradePreflight', () => {
+  beforeEach(() => {
+    mocks.fetchClientConfig.mockResolvedValue({ cliMinVersion: '0.6.0', desktopMinVersion: null });
+    mocks.promptForForcedUpgradeChoice.mockResolvedValue('skip');
+    mocks.detectInstallSource.mockResolvedValue('npm-global');
+    mocks.refreshUpdateCache.mockResolvedValue(cacheWithManifest(heldForEveryone('0.6.0')));
+  });
+
+  afterEach(() => { vi.clearAllMocks(); });
+
+  it('does not fetch or prompt in non-interactive mode', async () => {
+    await expect(runForcedUpgradePreflight('0.5.0', { isTTY: false })).resolves.toBe('continue');
+    expect(mocks.fetchClientConfig).not.toHaveBeenCalled();
+    expect(mocks.refreshUpdateCache).not.toHaveBeenCalled();
+    expect(mocks.promptForForcedUpgradeChoice).not.toHaveBeenCalled();
+  });
+
+  it('falls back to passive updates for an unsupported install source', async () => {
+    mocks.detectInstallSource.mockResolvedValue('unsupported');
+    const track = vi.fn();
+
+    await expect(runForcedUpgradePreflight('0.5.0', { isTTY: true, track })).resolves.toBe('continue');
+
+    expect(mocks.refreshUpdateCache).not.toHaveBeenCalled();
+    expect(mocks.promptForForcedUpgradeChoice).not.toHaveBeenCalled();
+    expect(track).not.toHaveBeenCalled();
+  });
+
+  it('allows a version equal to the minimum without checking the update feed', async () => {
+    await expect(runForcedUpgradePreflight('0.6.0', { isTTY: true })).resolves.toBe('continue');
+    expect(mocks.refreshUpdateCache).not.toHaveBeenCalled();
+    expect(mocks.promptForForcedUpgradeChoice).not.toHaveBeenCalled();
+  });
+
+  it('bypasses rollout and skips only the current launch', async () => {
+    const track = vi.fn();
+    await expect(runForcedUpgradePreflight('0.5.0', { isTTY: true, track })).resolves.toBe('skip-passive');
+
+    expect(mocks.fetchClientConfig).toHaveBeenCalledWith(
+      'client_upgrade_policy',
+      expect.anything(),
+      { timeoutMs: 2_000 },
+    );
+    expect(mocks.refreshUpdateCache).toHaveBeenCalledWith({ channel: 'stable', timeoutMs: 10_000 });
+    expect(mocks.promptForForcedUpgradeChoice).toHaveBeenCalledWith(expect.objectContaining({
+      currentVersion: '0.5.0',
+      minimumVersion: '0.6.0',
+      targetVersion: '0.6.0',
+    }));
+    expect(track).toHaveBeenCalledWith('forced_upgrade_prompt_shown', expect.objectContaining({ client: 'cli' }));
+    expect(track).toHaveBeenCalledWith('forced_upgrade_action', expect.objectContaining({
+      action: 'skip',
+      trigger: 'initial',
+    }));
+  });
+
+  it('does not install a target below the required minimum', async () => {
+    mocks.fetchClientConfig.mockResolvedValue({ cliMinVersion: '0.7.0', desktopMinVersion: null });
+    const track = vi.fn();
+    await expect(runForcedUpgradePreflight('0.5.0', { isTTY: true, track })).resolves.toBe('skip-passive');
+
+    expect(mocks.spawn).not.toHaveBeenCalled();
+    expect(track).toHaveBeenCalledWith('forced_upgrade_state_changed', expect.objectContaining({
+      error_class: 'target_below_minimum',
+    }));
   });
 });

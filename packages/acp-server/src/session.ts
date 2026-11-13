@@ -48,7 +48,7 @@ import type { ToolResultEvent } from '@moonshot-ai/agent-core-v2/events';
 import type {
   ToolCallDeltaEvent,
   ToolCallStartedEvent,
-  ToolProgressEvent,
+  ToolUpdatedEvent,
 } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
 import type { ToolInputDisplay } from '@moonshot-ai/agent-core-v2/tool/toolInputDisplay';
 
@@ -76,7 +76,7 @@ import {
   toolCallLocations,
   toolCallStartedUpgradeToSessionUpdate,
   toolCallStartToSessionUpdate,
-  toolProgressToSessionUpdate,
+  toolUpdatedToSessionUpdate,
   toolResultToSessionUpdate,
   turnEndReasonToStopReason,
   usageUpdateNotification,
@@ -233,6 +233,7 @@ export class AcpSession {
    * content that includes the initial args. Cleaned at `tool.result`.
    */
   private readonly toolCallStreamArgs = new Map<string, { args: string }>();
+  private readonly toolStatuses = new Map<string, string>();
   /**
    * Locations derived at `tool.call.started`, keyed by the ACP wire
    * toolCallId, re-attached to the terminal `tool_call_update`
@@ -314,9 +315,9 @@ export class AcpSession {
           this.onToolCallDelta(event);
         });
       }),
-      events.on('tool.progress', (event) => {
+      events.on('tool.updated', (event) => {
         this.dispatchTurnEvent(event.turnId, () => {
-          this.onToolProgress(event);
+          this.onToolUpdated(event);
         });
       }),
       events.on('tool.result', (event) => {
@@ -838,17 +839,22 @@ export class AcpSession {
     this.emit(toolCallDeltaToSessionUpdate(this.sessionId, mapped, acc));
   }
 
-  private onToolProgress(event: AgentEventPayloads['tool.progress']): void {
+  private onToolUpdated(event: AgentEventPayloads['tool.updated']): void {
     if (this.driverFor(event.turnId) === undefined) return;
-    // The klient payload mirrors `ToolProgressEvent` field-for-field; the
+    const key = acpToolCallId(event.turnId, event.toolCallId);
+    const status = event.fields['status'];
+    if (typeof status !== 'string' || status.length === 0 || this.toolStatuses.get(key) === status) return;
+    this.toolStatuses.set(key, status);
+    // The klient payload mirrors `ToolUpdatedEvent` field-for-field; the
     // helper forwards only `status` updates with text (as a title refresh)
     // and returns null for everything else, which `emit` drops.
-    this.emit(toolProgressToSessionUpdate(this.sessionId, event as unknown as ToolProgressEvent));
+    this.emit(toolUpdatedToSessionUpdate(this.sessionId, event as unknown as ToolUpdatedEvent));
   }
 
   private onToolResult(event: AgentEventPayloads['tool.result']): void {
     if (this.driverFor(event.turnId) === undefined) return;
     const key = acpToolCallId(event.turnId, event.toolCallId);
+    this.toolStatuses.delete(key);
     const locations = this.toolLocations.get(key);
     this.toolLocations.delete(key);
     this.bashCallsAwaitingTerminal.delete(key);

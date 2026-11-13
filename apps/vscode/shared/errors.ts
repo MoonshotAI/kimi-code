@@ -81,7 +81,7 @@ export const ERROR_MESSAGES: Record<string, string> = {
   "session.state_invalid": "Session data is invalid.",
   "session.init_failed": "Failed to initialize the session.",
   "session.closed": "Session was closed.",
-  "session.fork_active_turn": "Wait for the current response before forking.",
+  "session.fork_active_turn": "Another session history operation is in progress. Try again shortly.",
   "session.occupied":
     "This session is in use by another Kimi Code process. Stop the session in that process or exit it, then try again.",
   "session.stale": "Session was updated by another client. Reopen the session to load the latest updates.",

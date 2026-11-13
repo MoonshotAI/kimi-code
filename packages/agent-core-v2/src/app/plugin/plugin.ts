@@ -4,10 +4,12 @@ import type { HookDef } from '#/features/externalHooks/internal/types';
 import type { SkillRoot } from '#/features/skill/catalog/types';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 
+import type { PluginMarketplace } from './marketplace';
 import type {
   EnabledPluginSessionStart,
   EnabledPluginSystemPrompt,
   PluginAgentRoot,
+  PluginCapabilities,
   PluginCommandDef,
   PluginInfo,
   PluginMcpServerEntry,
@@ -18,9 +20,15 @@ import type {
   ReloadSummary,
 } from './types';
 
-export interface InstallPluginInput {
-  readonly source: string;
-}
+export type InstallPluginInput =
+  | { readonly source: string }
+  | {
+      readonly marketplaceId: string;
+      readonly expectedVersion?: string;
+      readonly expectedSha256?: string;
+      readonly marketplaceSource?: string;
+      readonly migrateFrom?: string;
+    };
 
 export interface SetPluginEnabledInput {
   readonly id: string;
@@ -39,6 +47,14 @@ export interface RemovePluginInput {
 
 export interface GetPluginInfoInput {
   readonly id: string;
+  readonly locale?: string;
+}
+
+export interface PreviewPluginInput {
+  readonly marketplaceId: string;
+  readonly expectedVersion?: string;
+  readonly expectedSha256?: string;
+  readonly locale?: string;
 }
 
 export interface IPluginService {
@@ -50,7 +66,10 @@ export interface IPluginService {
   setPluginMcpServerEnabled(input: SetPluginMcpServerEnabledInput): Promise<void>;
   removePlugin(input: RemovePluginInput): Promise<void>;
   reloadPlugins(): Promise<ReloadSummary>;
+  withMcpServersSuspended<T>(id: string, task: () => Promise<T>): Promise<T>;
+  reconcileAvailability(marketplace: PluginMarketplace): Promise<void>;
   getPluginInfo(input: GetPluginInfoInput): Promise<PluginInfo>;
+  previewPlugin(input: PreviewPluginInput): Promise<PluginCapabilities>;
   listPluginCommands(): Promise<readonly PluginCommandDef[]>;
   checkUpdates(): Promise<readonly PluginUpdateStatus[]>;
   pluginSkillRoots(): Promise<readonly SkillRoot[]>;

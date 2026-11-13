@@ -7,21 +7,27 @@ import {
   visibleWidth,
   type Focusable,
 } from '@moonshot-ai/pi-tui';
-import type {
-  CapabilityStatus,
-  PluginInfo,
-  PluginMcpServerInfo,
-  PluginSummary,
+import {
+  marketplaceEntryVisibleOnHost,
+  type CapabilityStatus,
+  type PluginInfo,
+  type PluginMcpServerInfo,
+  type PluginSummary,
 } from '@moonshot-ai/kimi-code-sdk';
 import chalk from 'chalk';
 
 import { SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
+import {
+  capabilityIdForMarketplaceEntry,
+  dedupeCapabilityMarketplaceEntries,
+  installedPluginForMarketplaceEntry,
+} from '#/tui/utils/capability-marketplace';
 import { formatPluginSourceLabel, pluginTrustLabel } from '#/tui/utils/plugin-source-label';
 import { printableChar } from '#/tui/utils/printable-key';
 import { renderTabStrip } from '#/tui/utils/tab-strip';
-import { computeUpdateStatus, type PluginMarketplaceEntry } from '#/utils/plugin-marketplace';
+import { computeUpdateStatus, pluginMarketplaceCliDescription, type PluginMarketplaceEntry } from '#/utils/plugin-marketplace';
 
 import { ChoicePickerComponent } from './choice-picker';
 
@@ -32,28 +38,6 @@ const REMOVE_CONFIRM_REMOVE = 'remove';
 const INSTALL_TRUST_EXIT = 'exit';
 const INSTALL_TRUST_TRUST = 'trust';
 const ELLIPSIS = '…';
-
-// Hardcoded Web Bridge promotion: a built-in fallback shown only while the
-// marketplace catalog is loading, unreachable, or predates the real
-// `kimi-webbridge` entry. Selecting it opens the install page in the browser;
-// once the catalog carries the real entry, that row wins and installs
-// normally.
-const WEB_BRIDGE_URL = 'https://www.kimi.com/features/webbridge#local-agent';
-const WEB_BRIDGE_ENTRY: PluginMarketplaceEntry = {
-  id: 'kimi-webbridge',
-  displayName: 'Kimi Browser Extension',
-  source: WEB_BRIDGE_URL,
-  tier: 'official',
-  homepage: WEB_BRIDGE_URL,
-  description: 'Control your real browser from Kimi Code — navigate, click, type, and screenshot',
-};
-
-// Only the hardcoded pinned row should open the WebBridge install page. Match
-// by reference (not id) so a catalog entry on another tab that happens to
-// reuse the same id still installs normally instead of being hijacked.
-function isPinnedWebBridgeEntry(entry: PluginMarketplaceEntry): boolean {
-  return entry === WEB_BRIDGE_ENTRY;
-}
 
 interface PluginsOverviewItem {
   readonly value: string;
@@ -271,6 +255,30 @@ export class PluginInstallTrustConfirmComponent extends ChoicePickerComponent {
   }
 }
 
+export class PluginStopProcessesConfirmComponent extends ChoicePickerComponent {
+  constructor(opts: { readonly label: string; readonly onDone: (confirmed: boolean) => void }) {
+    super({
+      title: `Stop running processes for ${opts.label}?`,
+      hint: '↑↓ navigate · Enter select · Esc cancel',
+      formatHint: mutedHintLine,
+      notice:
+        'Continuing will stop the running plugin processes and interrupt any computer operations in progress.',
+      noticeTone: 'warning',
+      spaceSelect: false,
+      options: [
+        { value: 'cancel', label: 'Cancel', description: 'Leave running processes untouched.' },
+        { value: 'confirm', label: 'Stop processes and continue', tone: 'danger' },
+      ],
+      onSelect: (value) => {
+        opts.onDone(value === 'confirm');
+      },
+      onCancel: () => {
+        opts.onDone(false);
+      },
+    });
+  }
+}
+
 function overviewPluginDescription(plugin: PluginSummary): string {
   const state = plugin.state === 'ok' ? '' : ` · state ${plugin.state}`;
   const skills = `${plugin.skillCount} skill${plugin.skillCount === 1 ? '' : 's'}`;
@@ -295,7 +303,9 @@ function marketplaceStatusStyle(status: string, colors: ColorPalette): (text: st
   // warning — the two used to share near-identical green-ish treatments in
   // the same column and read as interchangeable.
   if (status.startsWith('update')) return chalk.hex(colors.warning);
-  if (status.startsWith('installed')) return chalk.hex(colors.textDim);
+  if (status.startsWith('installed') || status === 'cloud only') {
+    return chalk.hex(colors.textDim);
+  }
   return chalk.hex(colors.primary);
 }
 
@@ -333,18 +343,11 @@ export type PluginsPanelSelection =
   | { readonly kind: 'details'; readonly id: string }
   | { readonly kind: 'reload' }
   | { readonly kind: 'install'; readonly entry: PluginMarketplaceEntry }
-  | { readonly kind: 'install-source'; readonly source: string }
-  | { readonly kind: 'open-url'; readonly url: string; readonly label: string };
+  | { readonly kind: 'install-source'; readonly source: string };
 
 export interface PluginsPanelOptions {
-  readonly installed: readonly PluginSummary[];
-  readonly installedIds: ReadonlySet<string>;
+  installed: readonly PluginSummary[];
   readonly capabilities?: readonly CapabilityStatus[];
-  /**
-   * False when the marketplace was explicitly replaced (slash-command
-   * source or env override): built-in rows then stay out of the Official
-   * tab entirely. Undefined means the default catalog.
-   */
   readonly catalogIsDefault?: boolean;
   readonly initialTab?: PluginsPanelTabId;
   readonly selectedId?: string;
@@ -378,6 +381,7 @@ export class PluginsPanelComponent extends Container implements Focusable {
   private selectedIndex = 0;
   private market: MarketState = { status: 'idle' };
   private installing: string | undefined;
+  private catalogVersions = new Map<string, string | undefined>();
 
   constructor(opts: PluginsPanelOptions) {
     super();
@@ -400,12 +404,29 @@ export class PluginsPanelComponent extends Container implements Focusable {
     return this.market.status;
   }
 
+  marketplaceSource(): string | undefined {
+    return this.market.status === 'loaded' ? this.market.source : undefined;
+  }
+
   setMarketplaceLoading(): void {
     this.market = { status: 'loading' };
   }
 
+  setInstalled(plugins: readonly PluginSummary[]): void {
+    this.opts.installed = plugins;
+  }
+
   setMarketplace(entries: readonly PluginMarketplaceEntry[], source: string): void {
     this.market = { status: 'loaded', entries, source };
+  }
+
+  setMarketplaceCatalogVersions(entries: readonly PluginMarketplaceEntry[]): void {
+    this.catalogVersions = new Map(entries.map((entry) => [entry.id, entry.version]));
+  }
+
+  expectedMarketplaceVersion(entry: PluginMarketplaceEntry): string | undefined {
+    if (this.catalogVersions.has(entry.id)) return this.catalogVersions.get(entry.id);
+    return entry.version;
   }
 
   setMarketplaceError(message: string): void {
@@ -427,70 +448,52 @@ export class PluginsPanelComponent extends Container implements Focusable {
   }
 
   private get marketplaceEntries(): readonly PluginMarketplaceEntry[] {
-    if (this.market.status !== 'loaded') return [];
-    return this.market.entries.toSorted(
-      (a, b) =>
-        Number(this.isMarketplaceEntryInstalled(b)) -
-        Number(this.isMarketplaceEntryInstalled(a)),
+    const entries = this.market.status === 'loaded' ? this.market.entries : this.pendingBuiltInEntries;
+    return dedupeCapabilityMarketplaceEntries(
+      entries.filter(marketplaceEntryIsVisible),
+      this.opts.capabilities ?? [],
+      this.catalogIsDefault,
     );
   }
 
-  private get installedVersions(): ReadonlyMap<string, string | undefined> {
-    return new Map(this.opts.installed.map((plugin) => [plugin.id, plugin.version]));
+  private get pendingBuiltInEntries(): readonly PluginMarketplaceEntry[] {
+    if (!this.catalogIsDefault) return [];
+    return (this.opts.capabilities ?? [])
+      .filter((capability) => capability.supported)
+      .map((capability) => ({
+        id: capability.pluginId ?? capability.id,
+        displayName: capability.displayName,
+        description: capability.description,
+        tier: 'official',
+        source: `capability:${capability.id}`,
+        builtIn: true,
+      }));
   }
 
-  private capabilityFor(id: string): CapabilityStatus | undefined {
-    return this.opts.capabilities?.find((capability) => capability.id === id);
+  private get catalogIsDefault(): boolean {
+    return this.opts.catalogIsDefault !== false;
   }
 
-  /** Capability state for a MARKETPLACE row: only our own injected rows
-   * (flagged `builtIn` — a custom catalog cannot forge the flag) may show
-   * capability status, matching how Enter routes them. */
   private capabilityForEntry(entry: PluginMarketplaceEntry): CapabilityStatus | undefined {
-    return entry.builtIn === true ? this.capabilityFor(entry.id) : undefined;
+    const capabilityId = capabilityIdForMarketplaceEntry(entry.id, this.catalogIsDefault);
+    return this.opts.capabilities?.find((capability) => capability.id === capabilityId);
   }
 
-  private installedPluginId(entry: PluginMarketplaceEntry): string {
-    return this.capabilityForEntry(entry)?.pluginId ?? entry.id;
+  private installedPluginForEntry(entry: PluginMarketplaceEntry): PluginSummary | undefined {
+    return installedPluginForMarketplaceEntry(
+      entry.id,
+      this.opts.installed,
+      this.capabilityForEntry(entry),
+      this.catalogIsDefault,
+    );
   }
 
   private isMarketplaceEntryInstalled(entry: PluginMarketplaceEntry): boolean {
-    return this.opts.installedIds.has(this.installedPluginId(entry));
+    return this.installedPluginForEntry(entry) !== undefined;
   }
 
   private get officialEntries(): readonly PluginMarketplaceEntry[] {
-    // While the catalog is loading or unreachable, the locally-known
-    // capability rows still render and install — built-in runtime setup
-    // must never be blocked by an unrelated catalog fetch.
-    if (this.market.status !== 'loaded') {
-      return this.pendingBuiltInEntries.some((entry) => entry.id === WEB_BRIDGE_ENTRY.id)
-        ? this.pendingBuiltInEntries
-        : [...this.pendingBuiltInEntries, WEB_BRIDGE_ENTRY];
-    }
-    // The real catalog entry wins when present (it installs the actual
-    // plugin); the hardcoded promo row is only a fallback while the catalog
-    // is loading, unreachable, or predates it — never a duplicate row.
-    return this.officialCatalogEntries.some((entry) => entry.id === WEB_BRIDGE_ENTRY.id)
-      ? this.officialCatalogEntries
-      : [WEB_BRIDGE_ENTRY, ...this.officialCatalogEntries];
-  }
-
-  /** Capability rows synthesized from the engine's registry, independent of
-   * the marketplace state; unsupported platforms hide them entirely. Only
-   * the default catalog gets built-in rows — an explicitly overridden
-   * marketplace must be able to fully replace the Official tab. */
-  private get pendingBuiltInEntries(): readonly PluginMarketplaceEntry[] {
-    if (this.opts.catalogIsDefault === false) return [];
-    return (this.opts.capabilities ?? [])
-      .filter((capability) => capability.supported)
-      .map(capabilityMarketplaceEntry);
-  }
-
-  private get officialCatalogEntries(): readonly PluginMarketplaceEntry[] {
-    return this.marketplaceEntries.filter((entry) => {
-      if (entry.tier !== 'official') return false;
-      return this.capabilityForEntry(entry)?.supported !== false;
-    });
+    return this.marketplaceEntries.filter((entry) => entry.tier === 'official');
   }
 
   private get thirdPartyEntries(): readonly PluginMarketplaceEntry[] {
@@ -596,18 +599,12 @@ export class PluginsPanelComponent extends Container implements Focusable {
       return;
     }
     if (matchesKey(data, Key.down)) {
-      // Clamp to 0 while the catalog is still loading (entries empty); otherwise
-      // `entries.length - 1` is -1 and a later Enter reads `entries[-1]`.
       this.selectedIndex = entries.length === 0 ? 0 : Math.min(entries.length - 1, this.selectedIndex + 1);
       return;
     }
     if (matchesKey(data, Key.enter)) {
       const entry = entries[this.selectedIndex];
-      if (entry === undefined) return;
-      if (isPinnedWebBridgeEntry(entry)) {
-        this.opts.onSelect({ kind: 'open-url', url: WEB_BRIDGE_URL, label: entry.displayName });
-        return;
-      }
+      if (entry === undefined || marketplaceEntryIsCloudOnly(entry)) return;
       this.opts.onSelect({ kind: 'install', entry });
     }
   }
@@ -628,7 +625,7 @@ export class PluginsPanelComponent extends Container implements Focusable {
         ? this.installedHint()
         : tab === 'custom'
           ? ' Tab switch · Enter install · Esc cancel'
-          : ' Tab switch · ↑↓ navigate · Enter open/install · Esc cancel';
+          : this.marketplaceHint();
     const lines: string[] = [
       chalk.hex(colors.primary)('─'.repeat(width)),
       chalk.hex(colors.primary).bold(' Plugins'),
@@ -666,6 +663,13 @@ export class PluginsPanelComponent extends Container implements Focusable {
     lines.push(mutedHintLine(` ${installed.length} installed`, colors));
   }
 
+  private marketplaceHint(): string {
+    const entries = this.activeTab.id === 'official' ? this.officialEntries : this.thirdPartyEntries;
+    const entry = entries[this.selectedIndex];
+    const install = entry !== undefined && marketplaceEntryIsCloudOnly(entry) ? '' : ' · Enter install';
+    return ` Tab switch · ↑↓ navigate${install} · Esc cancel`;
+  }
+
   private installedHint(): string {
     const plugin = this.opts.installed[this.selectedIndex];
     const hasUpdate = plugin !== undefined && this.installedUpdateStatus(plugin) !== undefined;
@@ -677,11 +681,9 @@ export class PluginsPanelComponent extends Container implements Focusable {
     plugin: PluginSummary,
   ): { entry: PluginMarketplaceEntry; local: string; latest: string } | undefined {
     if (this.market.status !== 'loaded') return undefined;
-    const entry = this.market.entries.find(
-      (candidate) =>
-        candidate.id === plugin.id ||
-        (candidate.builtIn === true &&
-          this.capabilityForEntry(candidate)?.pluginId === plugin.id),
+    const entries = this.marketplaceEntries.filter((entry) => !marketplaceEntryIsCloudOnly(entry));
+    const entry = entries.find(
+      (candidate) => this.installedPluginForEntry(candidate)?.id === plugin.id,
     );
     if (entry === undefined) return undefined;
     const status = computeUpdateStatus(entry.version, plugin.version, true);
@@ -719,60 +721,44 @@ export class PluginsPanelComponent extends Container implements Focusable {
     lines: string[],
     width: number,
     entries: readonly PluginMarketplaceEntry[],
-    indexOffset = 0,
-    // Counts (installed/available footer) are computed over this list:
-    // the Official tab renders the pinned promo as a row but excludes it
-    // from the catalog counts, matching its pre-catalog semantics.
-    entriesForCount: readonly PluginMarketplaceEntry[] = entries,
   ): void {
     const colors = currentTheme.palette;
     if (this.market.status === 'loading' || this.market.status === 'idle') {
       lines.push(chalk.hex(colors.textMuted)('  Loading marketplace…'));
-      return;
-    }
-    if (this.market.status === 'error') {
+      if (entries.length === 0) return;
+    } else if (this.market.status === 'error') {
       lines.push(chalk.hex(colors.warning)(`  Marketplace unavailable: ${this.market.message}`));
       lines.push(mutedHintLine('  Use the Custom tab to install from a URL.', colors));
-      return;
+      if (entries.length === 0) return;
     }
     if (entries.length === 0) {
       lines.push(chalk.hex(colors.textMuted)('  No plugins found.'));
     } else {
       for (let i = 0; i < entries.length; i++) {
-        lines.push(...this.renderMarketplaceRow(entries[i]!, i + indexOffset, width));
+        lines.push(...this.renderMarketplaceRow(entries[i]!, i, width));
       }
     }
-    const installedCount = entriesForCount.filter((entry) =>
+    const installedCount = entries.filter((entry) =>
       this.isMarketplaceEntryInstalled(entry),
     ).length;
     lines.push('');
     lines.push(
       mutedHintLine(
-        ` ${installedCount} installed · ${entriesForCount.length - installedCount} available`,
+        ` ${installedCount} installed · ${entries.length - installedCount} available`,
         colors,
       ),
     );
-    lines.push(mutedHintLine(` Source: ${this.market.source}`, colors));
+    if (this.market.status === 'loaded') {
+      lines.push(mutedHintLine(` Source: ${this.market.source}`, colors));
+    }
   }
 
   private renderOfficial(lines: string[], width: number): void {
-    // Loading / error: `officialEntries` carries the locally-known
-    // capability rows (plus the promo fallback when webbridge is not among
-    // them), so built-in setup works before the catalog arrives. Once
-    // loaded, the promo appears only when the catalog lacks the real entry.
-    if (this.market.status !== 'loaded') {
-      const entries = this.officialEntries;
-      for (let i = 0; i < entries.length; i += 1) {
-        lines.push(...this.renderMarketplaceRow(entries[i]!, i, width));
-      }
-      this.renderMarketplaceTab(lines, width, [], entries.length);
-      return;
-    }
-    this.renderMarketplaceTab(lines, width, this.officialEntries, 0, this.officialCatalogEntries);
+    this.renderMarketplaceTab(lines, width, this.officialEntries);
   }
 
   private renderThirdParty(lines: string[], width: number): void {
-    if (this.opts.catalogIsDefault !== false) {
+    if (this.catalogIsDefault) {
       const colors = currentTheme.palette;
       lines.push(mutedHintLine(' Third-party plugins from our partners.', colors));
       lines.push('');
@@ -787,25 +773,26 @@ export class PluginsPanelComponent extends Container implements Focusable {
     const labelStyle = selected ? chalk.hex(colors.primary).bold : chalk.hex(colors.text);
     const prefix = chalk.hex(selected ? colors.primary : colors.textDim)(`  ${pointer} `);
     const capability = this.capabilityForEntry(entry);
-    const status = isPinnedWebBridgeEntry(entry)
-      ? 'open in browser'
+    const status = marketplaceEntryIsCloudOnly(entry)
+      ? 'cloud only'
       : capability?.install.running === true
         ? 'installing…'
-        : marketplaceEntryStatus(
-            entry,
-            this.installedVersions,
-            this.installedPluginId(entry),
-          );
+        : marketplaceEntryStatus(entry, this.installedPluginForEntry(entry));
     const line =
       prefix + labelStyle(entry.displayName) + '  ' + marketplaceStatusStyle(status, colors)(status);
     const descWidth = Math.max(1, width - 4);
     const out = [line];
-    const description =
-      this.activeTab.id === 'official'
-        ? officialMarketplaceEntryDescription(entry)
-        : marketplaceEntryDescription(entry);
+    const isOfficial = this.activeTab.id === 'official';
+    const description = isOfficial
+      ? officialMarketplaceEntryDescription(entry)
+      : marketplaceEntryDescription(entry);
     for (const descLine of wrapOverviewDescription(description, descWidth)) {
       out.push(mutedHintLine(`    ${descLine}`, colors));
+    }
+    if (!isOfficial) {
+      for (const metadataLine of wrapOverviewDescription(marketplaceEntryMetadata(entry), descWidth)) {
+        out.push(mutedHintLine(`    ${metadataLine}`, colors));
+      }
     }
     return out;
   }
@@ -865,19 +852,23 @@ function mcpItemServerName(item: PluginsOverviewItem): string | undefined {
 }
 
 function marketplaceEntryDescription(entry: PluginMarketplaceEntry): string {
-  const tier = marketplaceTierLabel(entry.tier);
-  const description = entry.description ?? tier;
+  return pluginMarketplaceCliDescription(entry) ?? marketplaceTierLabel(entry.tier);
+}
+
+function marketplaceEntryMetadata(entry: PluginMarketplaceEntry): string {
   const version = entry.version !== undefined ? ` · v${entry.version}` : '';
+  const tier = pluginMarketplaceCliDescription(entry) !== undefined
+    ? ` · ${marketplaceTierLabel(entry.tier)}`
+    : '';
   const keywords =
     entry.keywords !== undefined && entry.keywords.length > 0
       ? ` · ${entry.keywords.join(', ')}`
       : '';
-  const tierSuffix = entry.description !== undefined ? ` · ${tier}` : '';
-  return `${description} · id ${entry.id}${version}${tierSuffix}${keywords}`;
+  return `id ${entry.id}${version}${tier}${keywords}`;
 }
 
 function officialMarketplaceEntryDescription(entry: PluginMarketplaceEntry): string {
-  return entry.description ?? '';
+  return pluginMarketplaceCliDescription(entry) ?? '';
 }
 
 function marketplaceTierLabel(tier: PluginMarketplaceEntry['tier']): string {
@@ -886,15 +877,13 @@ function marketplaceTierLabel(tier: PluginMarketplaceEntry['tier']): string {
   return 'Plugin';
 }
 
-function capabilityMarketplaceEntry(capability: CapabilityStatus): PluginMarketplaceEntry {
-  return {
-    id: capability.id,
-    displayName: capability.displayName,
-    source: `capability:${capability.id}`,
-    tier: 'official',
-    description: capability.description,
-    builtIn: true,
-  };
+function marketplaceEntryIsVisible(entry: PluginMarketplaceEntry): boolean {
+  return marketplaceEntryVisibleOnHost(entry, 'cli', process.platform);
+}
+
+function marketplaceEntryIsCloudOnly(entry: PluginMarketplaceEntry): boolean {
+  const platforms: readonly string[] | undefined = entry.platforms;
+  return platforms?.every((platform) => platform === 'cloud') === true;
 }
 
 function installStatus(entry: PluginMarketplaceEntry): string {
@@ -903,14 +892,9 @@ function installStatus(entry: PluginMarketplaceEntry): string {
 
 function marketplaceEntryStatus(
   entry: PluginMarketplaceEntry,
-  installed: ReadonlyMap<string, string | undefined>,
-  installedPluginId = entry.id,
+  installed: PluginSummary | undefined,
 ): string {
-  const status = computeUpdateStatus(
-    entry.version,
-    installed.get(installedPluginId),
-    installed.has(installedPluginId),
-  );
+  const status = computeUpdateStatus(entry.version, installed?.version, installed !== undefined);
   switch (status.kind) {
     case 'update':
       return `update ${status.local} → ${status.latest}`;

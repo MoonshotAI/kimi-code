@@ -4,7 +4,7 @@ import { jsonSchema, openApiDocumentJsonSchema } from './schema';
 import { validateBody, validateParams, validateQuery } from './validate';
 
 function toFastifyPath(openApiPath: string): string {
-  return openApiPath.replace(/\{([^}]+)\}/g, ':$1');
+  return openApiPath.replaceAll(/\{([^}]+)\}/g, ':$1');
 }
 
 function buildErrorEnvelopeSchema(
@@ -46,7 +46,7 @@ function buildUnifiedResponseSchema(
 ): Record<string, unknown> {
   const errorEntries = Object.entries(errors)
     .map(([code, cfg]) => [Number(code), cfg] as const)
-    .sort((a, b) => a[0] - b[0]);
+    .toSorted((a, b) => a[0] - b[0]);
 
   if (errorEntries.length === 0) {
     return openApiDocumentJsonSchema(
@@ -94,6 +94,7 @@ export interface DefineRouteOptions<
   success?: { data: TSuccessData };
   errors?: Record<number, { dataSchema?: z.ZodTypeAny; detailsSchema?: z.ZodTypeAny }>;
   rawResponse?: Record<number, Record<string, unknown>>;
+  rawErrorStatus?: boolean;
   description?: string;
   summary?: string;
   tags?: string[];
@@ -135,13 +136,13 @@ export function defineRoute<
   const preHandler: unknown[] = [];
 
   if (options.params) {
-    preHandler.push(validateParams(options.params));
+    preHandler.push(validateParams(options.params, options.rawErrorStatus === true));
   }
   if (options.body) {
     preHandler.push(validateBody(options.body));
   }
   if (options.querystring) {
-    preHandler.push(validateQuery(options.querystring));
+    preHandler.push(validateQuery(options.querystring, options.rawErrorStatus === true));
   }
 
   const schema: Record<string, unknown> = {};

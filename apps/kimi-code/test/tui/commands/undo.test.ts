@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { handleUndoCommand } from '#/tui/commands/undo';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
 import type { TranscriptEntry } from '#/tui/types';
+import type { UndoSelectorOptions } from '#/tui/components/dialogs/undo-selector';
 
 function entry(partial: Partial<TranscriptEntry> & Pick<TranscriptEntry, 'kind' | 'content'>): TranscriptEntry {
   return {
@@ -98,6 +99,35 @@ describe('/undo with bundled prompts', () => {
 
     expect(host.session?.undoHistory).toHaveBeenCalledWith(2);
     expect(entries).toHaveLength(0);
+  });
+
+  it('restores the selected skill activation metadata with the undone prompt', async () => {
+    const activations = [{ skillName: 'review', path: '/work/B/review/SKILL.md' }];
+    const entries = [
+      entry({ kind: 'assistant', content: 'earlier answer' }),
+      entry({
+        kind: 'user',
+        content: '/skill:review',
+        skillNames: ['review'],
+        inlineSkillActivations: activations,
+      }),
+    ];
+    const host = hostWith(entries);
+    const restoreInputText = vi.fn();
+    let options: UndoSelectorOptions | undefined;
+    host.restoreInputText = restoreInputText;
+    host.mountEditorReplacement = vi.fn((component) => {
+      options = (component as unknown as { opts: UndoSelectorOptions }).opts;
+    });
+
+    await handleUndoCommand(host);
+
+    expect(options?.choices).toHaveLength(1);
+    const selector = options as UndoSelectorOptions;
+    selector.onSelect(selector.choices[0]!);
+    await vi.waitFor(() => {
+      expect(restoreInputText).toHaveBeenCalledWith('/skill:review', activations);
+    });
   });
 });
 

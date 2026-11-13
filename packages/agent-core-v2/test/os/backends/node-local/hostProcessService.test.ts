@@ -3,8 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { join as nativeJoin } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
-import { join } from 'pathe';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
@@ -59,7 +59,7 @@ describe('HostProcessService', () => {
     expect(await proc.wait()).toBe(0);
   });
 
-  it('throws a coded error when the command does not exist', async () => {
+  it.skipIf(process.platform === 'win32')('throws a coded error when the command does not exist', async () => {
     const svc = ix.get(IHostProcessService);
     await expect(svc.spawn('definitely-not-a-real-command-42')).rejects.toSatisfy((err: unknown) => {
       expect(err).toBeInstanceOf(HostProcessError);
@@ -90,18 +90,65 @@ describe('HostProcessService', () => {
     const code = await proc.wait();
     expect(code).not.toBe(0);
   });
+
+  it.skipIf(process.platform !== 'win32')('executes a batch script resolved from PATH', async () => {
+    const svc = ix.get(IHostProcessService);
+    const dir = await mkdtemp(nativeJoin(tmpdir(), 'kimi-spawn-cmd-'));
+    try {
+      await writeFile(nativeJoin(dir, 'echo-args.cmd'), '@echo %*\r\n');
+      const proc = await svc.spawn('echo-args', ['hello', 'a b'], { env: { PATH: dir } });
+      const out = await collect(proc.stdout);
+      expect(out.trim()).toBe('"hello" "a b"');
+      expect(await proc.wait()).toBe(0);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('HostProcessService on Windows', () => {
   let savedPlatform: string;
   let spawnedCommands: string[];
+  let crossSpawnCalls: Array<{
+    command: string;
+    args: readonly string[];
+    options: { cwd?: string; env?: Record<string, string> };
+  }>;
+  let crossSpawnError: (Error & { code: string }) | undefined;
+  let autoSpawn: boolean;
+  let crossSpawnChild: (EventEmitter & { stdin: PassThrough; stdout: PassThrough; stderr: PassThrough }) | undefined;
   let taskkills: Array<{ kill: ReturnType<typeof vi.fn>; unref: ReturnType<typeof vi.fn> }>;
 
   beforeEach(() => {
     savedPlatform = process.platform;
     Object.defineProperty(process, 'platform', { value: 'win32' });
     spawnedCommands = [];
+    crossSpawnCalls = [];
+    crossSpawnError = undefined;
+    autoSpawn = true;
+    crossSpawnChild = undefined;
     taskkills = [];
+    vi.doMock('cross-spawn', () => ({
+      default: (
+        command: string,
+        args: readonly string[],
+        options: { cwd?: string; env?: Record<string, string> },
+      ) => {
+        crossSpawnCalls.push({ command, args, options });
+        if (crossSpawnError !== undefined) throw crossSpawnError;
+        const child = Object.assign(new EventEmitter(), {
+          pid: 4242,
+          stdin: new PassThrough(),
+          stdout: new PassThrough(),
+          stderr: new PassThrough(),
+          kill: vi.fn(() => true),
+          unref: vi.fn(),
+        });
+        crossSpawnChild = child;
+        if (autoSpawn) queueMicrotask(() => child.emit('spawn'));
+        return child;
+      },
+    }));
     vi.doMock('node:child_process', async (importOriginal) => ({
       ...(await importOriginal<typeof import('node:child_process')>()),
       spawn: (command: string, args: readonly string[]) => {
@@ -125,6 +172,7 @@ describe('HostProcessService on Windows', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.doUnmock('cross-spawn');
     vi.doUnmock('node:child_process');
     vi.resetModules();
     Object.defineProperty(process, 'platform', { value: savedPlatform });
@@ -148,5 +196,94 @@ describe('HostProcessService on Windows', () => {
     expect(taskkills[0]?.kill).toHaveBeenCalled();
     expect(taskkills[0]?.unref).toHaveBeenCalled();
     await kill;
+  });
+
+  it('delegates spawning to cross-spawn with env and cwd forwarded', async () => {
+    const dir = await mkdtemp(nativeJoin(tmpdir(), 'kimi-spawn-cmd-'));
+    try {
+      const { HostProcessService: WindowsHostProcessService } = await import(
+        '#/os/backends/node-local/hostProcessService'
+      );
+      await new WindowsHostProcessService().spawn('fake-tool', ['-y', 'some value'], {
+        cwd: dir,
+        env: { FOO: 'bar' },
+      });
+      expect(crossSpawnCalls).toHaveLength(1);
+      const call = crossSpawnCalls[0]!;
+      expect(call.command).toBe('fake-tool');
+      expect(call.args).toEqual(['-y', 'some value']);
+      expect(call.options.cwd).toBe(dir);
+      expect(call.options.env?.['FOO']).toBe('bar');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('uses native spawn for commands with an explicit shell option', async () => {
+    const { HostProcessService: WindowsHostProcessService } = await import(
+      '#/os/backends/node-local/hostProcessService'
+    );
+    await new WindowsHostProcessService().spawn('fake-tool', [], { shell: true });
+    expect(crossSpawnCalls).toEqual([]);
+    expect(spawnedCommands).toEqual(['fake-tool']);
+  });
+
+  it('normalizes a synchronous spawn failure into HostProcessError', async () => {
+    crossSpawnError = Object.assign(new Error('The operation is not permitted'), { code: 'EINVAL' });
+    const { HostProcessService: WindowsHostProcessService } = await import(
+      '#/os/backends/node-local/hostProcessService'
+    );
+    const { HostProcessError: WindowsHostProcessError } = await import('#/os/interface/hostProcess');
+    await expect(new WindowsHostProcessService().spawn('fake-tool.cmd')).rejects.toSatisfy((err: unknown) => {
+      expect(err).toBeInstanceOf(WindowsHostProcessError);
+      const error = err as HostProcessError;
+      expect(error.code).toBe(HostProcessErrorCode.SpawnFailed);
+      expect(error.details).toMatchObject({ command: 'fake-tool.cmd', errno: 'EINVAL' });
+      expect(error.cause).toBe(crossSpawnError);
+      return true;
+    });
+  });
+
+  it('keeps the child spawn error as cause and handles pipe errors until cleanup closes them', async () => {
+    autoSpawn = false;
+    const { HostProcessService: WindowsHostProcessService } = await import(
+      '#/os/backends/node-local/hostProcessService'
+    );
+    const svc = new WindowsHostProcessService();
+    const pending = svc.spawn('fake-tool');
+    const child = crossSpawnChild!;
+    const pipes = [child.stdin, child.stdout, child.stderr];
+    const pipeError = Object.assign(new Error('read ENOTCONN'), { code: 'ENOTCONN' });
+    const spawnError = Object.assign(new Error('spawn fake-tool ENOENT'), { code: 'ENOENT' });
+    for (const pipe of pipes) expect(() => pipe.emit('error', pipeError)).not.toThrow();
+    child.emit('error', spawnError);
+    for (const pipe of pipes) expect(() => pipe.emit('error', pipeError)).not.toThrow();
+    await expect(pending).rejects.toSatisfy((error: HostProcessError) => {
+      expect(error.code).toBe(HostProcessErrorCode.SpawnFailed);
+      expect(error.details).toMatchObject({ command: 'fake-tool', errno: 'ENOENT' });
+      expect(error.cause).toBe(spawnError);
+      return true;
+    });
+    await vi.runAllTimersAsync();
+    for (const pipe of pipes) {
+      expect(pipe.destroyed).toBe(true);
+      expect(pipe.listenerCount('error')).toBe(0);
+      expect(pipe.listenerCount('close')).toBe(0);
+    }
+    autoSpawn = true;
+    const next = await svc.spawn('fake-tool');
+    await next.dispose();
+  });
+
+  it('hands successful pipes to the process without retaining startup listeners', async () => {
+    const { HostProcessService: WindowsHostProcessService } = await import(
+      '#/os/backends/node-local/hostProcessService'
+    );
+    const proc = await new WindowsHostProcessService().spawn('fake-tool');
+    expect(crossSpawnChild!.stdin.listenerCount('error')).toBe(0);
+    expect(crossSpawnChild!.stdin.listenerCount('close')).toBe(0);
+    expect(crossSpawnChild!.stdout.listenerCount('error')).toBe(1);
+    expect(crossSpawnChild!.stderr.listenerCount('error')).toBe(1);
+    await proc.dispose();
   });
 });

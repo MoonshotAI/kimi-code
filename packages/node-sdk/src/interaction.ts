@@ -1,5 +1,5 @@
 import type { ToolInputDisplay } from '@moonshot-ai/agent-core-v2/tool/toolInputDisplay';
-import type { ContentPart } from '@moonshot-ai/kosong';
+import type { ContentPart } from '@moonshot-ai/agent-core-v2';
 import type { QuestionRequest as CoreQuestionRequest } from '@moonshot-ai/agent-core-v2/agent/interaction/question';
 
 export type {

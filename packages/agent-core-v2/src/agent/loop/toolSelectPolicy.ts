@@ -1,8 +1,8 @@
-import type { LlmResolver } from '#human/llm/policy/resolver';
-import { withProtocolCapabilities } from '#human/llm/protocol/rules/model';
+import type { LlmResolver } from '@moonshot-ai/core/llm/policy/resolver';
+import { withProtocolCapabilities } from '@moonshot-ai/core/llm/protocol/rules/model';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 
-export function createToolSelectResolver(toolSelect: IAgentToolSelectService): LlmResolver {
+export function createToolSelectResolver(toolSelect: IAgentToolSelectService, dynamic = false): LlmResolver {
   return {
     id: 'tool-select',
     recoveryRequest: 'resolved',
@@ -11,10 +11,7 @@ export function createToolSelectResolver(toolSelect: IAgentToolSelectService): L
       const capabilities =
         withProtocolCapabilities(request.model.spec, request.protocol.base).capability ?? {};
       const disclosure = toolSelect.enabled(capabilities);
-      const tools =
-        request.profile?.tools === undefined
-          ? toolSelect.defaultTools(disclosure)
-          : request.profile.tools;
+      const tools = toolSelect.requestTools(request.profile?.tools, disclosure, dynamic, request.content.messages);
       return {
         ...request,
         profile: {
@@ -23,7 +20,7 @@ export function createToolSelectResolver(toolSelect: IAgentToolSelectService): L
         },
         content: {
           ...request.content,
-          messages: toolSelect.shapeHistory(request.content.messages, disclosure),
+          messages: toolSelect.shapeHistory(request.content.messages, disclosure, tools),
         },
       };
     },

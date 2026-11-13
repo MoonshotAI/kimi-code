@@ -2,7 +2,6 @@ Execute a `${SHELL_NAME}` command. Use this for shell semantics — pipes, env, 
 
 **Translate these to a dedicated tool instead:**
 - `cat` / `head` / `tail` (known path) → `Read`
-- `sed` / `awk` (in-place edit) → `Edit`
 - `echo > file` / `cat <<EOF` → `Write`
 - `find` / recursive `ls` to locate files by name pattern → `Glob` (plain `ls <known-directory>` is fine for listing a directory)
 - `grep` / `rg` (search file contents) → `Grep`

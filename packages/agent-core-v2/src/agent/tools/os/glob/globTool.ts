@@ -1,4 +1,4 @@
-import { normalize, resolve } from 'pathe';
+import { dirname, normalize, relative, resolve } from 'pathe';
 
 import { ensureRgPath, rgUnavailableMessage, type RgProbe } from '#/os/backends/node-local/tools/rgLocator';
 import type { Environment } from '#/environment/environment';
@@ -100,6 +100,7 @@ export class GlobTool implements IGlobTool {
       if (args.path !== undefined) {
         path = resolvePathAccessPath(args.path, {
           env,
+          shellPathBridge: view.shellPathBridge,
           workspace,
           operation: 'search',
           policy: { guardMode: 'absolute-outside-allowed', checkSensitive: false },
@@ -182,7 +183,7 @@ export class GlobTool implements IGlobTool {
 
     let rgPath: string;
     try {
-      const resolution = await ensureRgPath(createRgProbe(processService, workspace.workspaceDir), {
+      const resolution = await ensureRgPath(createRgProbe(processService, globSearchCwd(workspace.workspaceDir, env.pathClass)), {
         signal,
         allowCachedFallback: true,
         environment,
@@ -203,9 +204,10 @@ export class GlobTool implements IGlobTool {
       return { isError: true, output: rgUnavailableMessage(error, environment) };
     }
 
+    const searchCwd = globSearchCwd(searchRoot, env.pathClass);
     let run;
     try {
-      run = await runRgOnce(processService, buildRgArgs(rgPath, args), signal, { cwd: searchRoot });
+      run = await runRgOnce(processService, buildRgArgs(rgPath, args, false, searchRoot, searchCwd), signal, { cwd: searchCwd });
     } catch (error) {
       return { isError: true, output: formatSpawnError(error, environment) };
     }
@@ -215,7 +217,7 @@ export class GlobTool implements IGlobTool {
 
     if (shouldRetryRipgrepEagain(run)) {
       try {
-        run = await runRgOnce(processService, buildRgArgs(rgPath, args, true), signal, { cwd: searchRoot });
+        run = await runRgOnce(processService, buildRgArgs(rgPath, args, true, searchRoot, searchCwd), signal, { cwd: searchCwd });
       } catch (error) {
         return { isError: true, output: formatSpawnError(error, environment) };
       }
@@ -227,7 +229,7 @@ export class GlobTool implements IGlobTool {
     const { exitCode, stdoutText, stderrText, bufferTruncated, timedOut } = run;
 
     let traversalWarning: string | undefined;
-    if (exitCode !== 0 && exitCode !== 1 && !timedOut) {
+    if (exitCode !== 0 && exitCode !== 1 && !timedOut && !bufferTruncated) {
       const rawPathsBeforeError = splitCompletePaths(stdoutText, true);
       if (rawPathsBeforeError.length === 0) {
         return { isError: true, output: formatGlobError(searchRoot, stderrText) };
@@ -367,19 +369,44 @@ function createRgProbe(processService: IHostProcessService, cwd: string): RgProb
   };
 }
 
-function buildRgArgs(rgPath: string, args: GlobInput, singleThreaded = false): string[] {
+function globSearchCwd(searchRoot: string, pathClass: PathClass): string {
+  let cwd = searchRoot;
+  while (pathClass === 'win32' && cwd.length >= 260) {
+    const parent = dirname(cwd);
+    if (parent === cwd) break;
+    cwd = parent;
+  }
+  return cwd;
+}
+
+function buildRgArgs(
+  rgPath: string,
+  args: GlobInput,
+  singleThreaded = false,
+  searchRoot = '.',
+  cwd = searchRoot,
+): string[] {
+  const prefix = relative(cwd, searchRoot).replace(/[\\*?[\]{}!]/g, '\\$&');
+  const searchGlob = (pattern: string): string => {
+    if (cwd === searchRoot) return pattern;
+    const negative = pattern.startsWith('!');
+    const body = negative ? pattern.slice(1) : pattern;
+    if (body.length === 0) return pattern;
+    const anchored = body.startsWith('/') || body.replace(/\/$/, '').includes('/');
+    return `${negative ? '!' : ''}${prefix}/${anchored ? body.replace(/^\//, '') : `**/${body}`}`;
+  };
   const cmd: string[] = [rgPath];
   if (singleThreaded) cmd.push('-j', '1');
   cmd.push('--files', '--hidden', '--sortr=modified');
   for (const dir of VCS_DIRECTORIES_TO_EXCLUDE) {
-    cmd.push('--glob', `!${dir}`);
+    cmd.push('--glob', searchGlob(`!${dir}`));
   }
-  cmd.push('--glob', args.pattern);
+  cmd.push('--glob', searchGlob(args.pattern));
   for (const glob of SENSITIVE_GLOBS_TO_EXCLUDE) {
-    cmd.push('--glob', `!${glob}`);
+    cmd.push('--glob', searchGlob(`!${glob}`));
   }
   if (args.include_ignored) cmd.push('--no-ignore');
-  cmd.push('.');
+  cmd.push(cwd === searchRoot ? '.' : searchRoot);
   return cmd;
 }
 

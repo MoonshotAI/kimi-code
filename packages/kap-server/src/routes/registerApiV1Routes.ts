@@ -9,7 +9,7 @@ import { ulid } from 'ulid';
 import { okEnvelope } from '../envelope';
 import type { MetaFeature } from '../protocol/rest-meta';
 import { type IConnectionRegistry } from '../transport/ws/connectionRegistry';
-import type { TranscriptService } from '../services/transcript/transcriptService';
+import type { ConversationService } from '../services/conversation/conversationService';
 import { registerAuthRoute } from './auth';
 import { registerCapabilitiesRoutes } from './capabilities';
 import { registerClientConfigsRoutes } from './clientConfigs';
@@ -37,9 +37,8 @@ import { registerSessionExportRoute } from './sessionExport';
 import { registerSessionsRoutes } from './sessions';
 import { registerShutdownRoutes } from './shutdown';
 import { registerSkillsRoutes } from './skills';
-import { registerTasksRoutes } from './tasks';
 import { registerToolsRoutes } from './tools';
-import { registerTranscriptRoutes } from './transcript';
+import { registerConversationRoutes } from './conversation';
 import { registerWorkspaceFsRoutes } from './workspaceFs';
 import { registerWorkspacesRoutes } from './workspaces';
 
@@ -66,10 +65,8 @@ export interface RegisterApiV1RoutesOptions {
   readonly guiStore: IGuiStoreService;
   readonly onShutdown: () => void;
   readonly connectionRegistry: IConnectionRegistry;
-  readonly transcriptService: TranscriptService;
+  readonly conversations: ConversationService;
   readonly sessionRating: SessionRatingHost;
-  readonly pluginMarketplaceUrl: () => string | Promise<string>;
-  readonly pluginMarketplaceIsDefault: boolean;
   readonly remoteControl: RemoteControlRouteOptions;
   readonly dangerousBypassAuth?: boolean;
   readonly webTitle?: string;
@@ -129,13 +126,13 @@ export async function registerApiV1Routes(
       registerSessionsRoutes(
         apiV1 as unknown as Parameters<typeof registerSessionsRoutes>[0],
         core,
+        opts.conversations,
       );
       registerEnvironmentRoutes(apiV1 as unknown as Parameters<typeof registerEnvironmentRoutes>[0], core);
       registerSessionRatingRoutes(
         apiV1 as unknown as Parameters<typeof registerSessionRatingRoutes>[0],
         opts.sessionRating,
-        opts.transcriptService,
-        core,
+        opts.conversations,
       );
       registerSessionExportRoute(
         apiV1 as unknown as Parameters<typeof registerSessionExportRoute>[0],
@@ -147,16 +144,12 @@ export async function registerApiV1Routes(
         apiV1 as unknown as Parameters<typeof registerCapabilitiesRoutes>[0],
         core,
       );
-      registerPluginsRoutes(apiV1 as unknown as Parameters<typeof registerPluginsRoutes>[0], core, {
-        marketplaceUrl: opts.pluginMarketplaceUrl,
-        marketplaceIsDefault: opts.pluginMarketplaceIsDefault,
-      });
+      registerPluginsRoutes(apiV1 as unknown as Parameters<typeof registerPluginsRoutes>[0], core);
       registerMessagesRoutes(
         apiV1 as unknown as Parameters<typeof registerMessagesRoutes>[0],
         core,
       );
       registerSearchRoutes(apiV1 as unknown as Parameters<typeof registerSearchRoutes>[0], core);
-      registerTasksRoutes(apiV1 as unknown as Parameters<typeof registerTasksRoutes>[0], core);
       registerInteractionsRoutes(
         apiV1 as unknown as Parameters<typeof registerInteractionsRoutes>[0],
         core,
@@ -193,10 +186,10 @@ export async function registerApiV1Routes(
         apiV1 as unknown as Parameters<typeof registerConnectionsRoutes>[0],
         opts.connectionRegistry,
       );
-      registerTranscriptRoutes(apiV1 as unknown as Parameters<typeof registerTranscriptRoutes>[0], {
-        core,
-        transcriptService: opts.transcriptService,
-      });
+      registerConversationRoutes(
+        apiV1 as unknown as Parameters<typeof registerConversationRoutes>[0],
+        opts.conversations,
+      );
       if (opts.enableShutdown !== false) {
         registerShutdownRoutes(apiV1 as unknown as Parameters<typeof registerShutdownRoutes>[0], {
           onShutdown: opts.onShutdown,

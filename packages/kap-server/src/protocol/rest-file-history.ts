@@ -1,12 +1,14 @@
 import { z } from 'zod';
 
+const turnNumberParam = z.coerce.number().int().nonnegative();
+
 export const fileHistoryChangesQuerySchema = z.object({
-  turn_id: z.coerce.number().int().nonnegative(),
+  turn_number: turnNumberParam,
 });
 export type FileHistoryChangesQuery = z.infer<typeof fileHistoryChangesQuerySchema>;
 
 export const fileHistoryContentQuerySchema = z.object({
-  turn_id: z.coerce.number().int().nonnegative(),
+  turn_number: turnNumberParam,
   path: z.string().min(1),
   phase: z.enum(['start', 'end']).optional(),
 });

@@ -14,7 +14,7 @@ import type { IAgentEnvironmentBindingService } from '@moonshot-ai/agent-core-v2
 
 import type { ISessionTokenCountingService } from '@moonshot-ai/agent-core-v2/session/tokenCounting/sessionTokenCounting';
 import type { IAgentPlanService } from '@moonshot-ai/agent-core-v2/features/plan/plan';
-import type { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
+import type { IAgentLoopService } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import type { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommand';
 import type { IAgentSkillService } from '@moonshot-ai/agent-core-v2/features/skill/skillService';
 import type { IAgentTaskService } from '@moonshot-ai/agent-core-v2/agent/task/task';
@@ -33,7 +33,7 @@ import type {
   PromptOrigin,
 } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
 import type { ToolInputDisplay } from '@moonshot-ai/agent-core-v2/tool/toolInputDisplay';
-import type { TokenUsage } from '@moonshot-ai/agent-core-v2/human/llm-requester/usage';
+import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
 import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
 
 import type { ScopeRef } from '../channel.js';
@@ -42,13 +42,19 @@ import type { ScopedCaller } from './session.js';
 // Wire-type aliases derived through the engine service interfaces (keeps
 // klient free of protocol-package imports).
 export type PromptLaunchResult = import('@moonshot-ai/agent-core-v2/agent/loop/loop').PromptLaunchResult | undefined;
+export type SteerResult = import('@moonshot-ai/agent-core-v2/agent/loop/loop').SteerResult;
+export type AgentSteerEntry = {
+  readonly role: 'user';
+  readonly content: readonly ContentPart[];
+  readonly attributes: { readonly origin: { readonly kind: 'user' } };
+};
 export type PromptWithSkillsInput = Omit<Parameters<IAgentSkillService['promptWithSkills']>[0], 'input'> & {
   input: readonly ContentPart[];
 };
 export type PromptWithSkillsResult = Awaited<ReturnType<IAgentSkillService['promptWithSkills']>>;
 export type ShellCommandResult = Awaited<ReturnType<IAgentShellCommandService['run']>>;
-export type SetModelResult = Awaited<ReturnType<IAgentProfileService['setModel']>>;
-export type ThinkingLevel = ReturnType<IAgentProfileService['getEffectiveThinkingLevel']>;
+export type SetModelResult = Awaited<ReturnType<IAgentLoopService['setModel']>>;
+export type ThinkingLevel = ReturnType<IAgentLoopService['getEffectiveThinkingLevel']>;
 export type UsageStatus = Awaited<ReturnType<ISessionUsageService['status']>>;
 type AgentContextMessage = LegacyMessage & {
   readonly id?: string;
@@ -94,14 +100,14 @@ export interface AgentFacade {
    * `queued` when the submission queued behind a running turn.
    */
   promptWithSkills(input: PromptWithSkillsInput): Promise<PromptWithSkillsResult>;
-  steer(input: { input: readonly ContentPart[] }): Promise<PromptLaunchResult>;
+  steer(input: { input: readonly ContentPart[] }): Promise<SteerResult>;
   /**
    * Activate a skill as a user-slash activation: the engine renders the skill
    * prompt and drives it as a normal turn (same settlement/event flow as
    * `prompt`). Resolves with the launched turn id; rejects when the skill is
    * unknown or the agent is busy.
    */
-  activateSkill(input: { name: string; args?: string }): Promise<PromptLaunchResult>;
+  activateSkill(input: { name: string; path?: string; args?: string }): Promise<PromptLaunchResult>;
   cancel(input?: { turnId?: number }): Promise<void>;
   runShellCommand(input: { command: string; commandId?: string }): Promise<ShellCommandResult>;
   cancelShellCommand(input: { commandId: string }): Promise<void>;
@@ -139,11 +145,17 @@ export interface AgentFacade {
 export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFacade {
   return {
     prompt: (input) =>
-      call(scope, 'agentPromptService', 'submit', [input]) as Promise<PromptLaunchResult>,
+      call(scope, 'agentLoopService', 'submit', [input]) as Promise<PromptLaunchResult>,
     promptWithSkills: (input) =>
       call(scope, 'agentSkillService', 'promptWithSkills', [input]) as Promise<PromptWithSkillsResult>,
-    steer: (input) =>
-      call(scope, 'agentPromptService', 'submitSteer', [input]) as Promise<PromptLaunchResult>,
+    steer: (input) => {
+      const entry: AgentSteerEntry = {
+        role: 'user',
+        content: input.input,
+        attributes: { origin: { kind: 'user' } },
+      };
+      return call(scope, 'agentLoopService', 'notifyClient', [entry]) as Promise<SteerResult>;
+    },
     activateSkill: (input) =>
       call(scope, 'agentSkillService', 'activate', [input]) as Promise<PromptLaunchResult>,
     cancel: (input) =>

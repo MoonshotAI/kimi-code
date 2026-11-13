@@ -335,7 +335,7 @@ export class SurveyController {
       sessionId: appState.sessionId ?? '',
       currentModel: appState.model,
       model: modelRoute(appState),
-      cumulativeTokens: appState.cumulativeTokens ?? 0,
+      cumulativeTokens: appState.cumulativeTokens,
       contextTokens: appState.contextTokens,
       permissionMode: appState.permissionMode,
       thinkingEffort: appState.thinkingEffort,

@@ -30,7 +30,7 @@ vi.mock("vscode", () => ({
 import {
   createFakeProviderHarness,
   type FakeProviderHarness,
-} from "../../../packages/kosong/test/e2e/fake-provider-harness";
+} from "./fake-provider-harness";
 import { Events, Methods } from "../shared/bridge";
 import {
   MCP_SECRET_MASK,

@@ -12,7 +12,7 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { TurnStarted, type TurnEndReason } from '#/agent/loop/turnEvents';
 import { TurnEnded, turnKey } from '#/agent/loop/turnOps';
-import { IAgentTaskService } from '#/agent/task/task';
+import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { TaskStarted, TaskTerminatedNotice } from '#/agent/task/taskOps';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import {
@@ -244,7 +244,7 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
 
 function seedFold(handle: IAgentScopeHandle): AgentWorkFold {
   const loop = handle.accessor.get(IAgentLoopService) as IAgentLoopService | undefined;
-  const tasks = handle.accessor.get(IAgentTaskService) as IAgentTaskService | undefined;
+  const toolExecutor = handle.accessor.get(IAgentToolExecutorService) as IAgentToolExecutorService | undefined;
   const compaction = handle.accessor.get(IAgentFullCompactionService) as
     | IAgentFullCompactionService
     | undefined;
@@ -255,7 +255,9 @@ function seedFold(handle: IAgentScopeHandle): AgentWorkFold {
       : undefined;
   return {
     turnActive: loop?.snapshot().state === 'running',
-    background: new Set(tasks?.list(true).map((task) => task.taskId) ?? []),
+    background: new Set(toolExecutor?.handlers().flatMap((handler) =>
+      handler.snapshot().fields.task === undefined ? [] : [handler.taskId]
+    ) ?? []),
     compacting: (compaction?.compacting ?? null) !== null,
     lastTurnReason:
       loop?.snapshot().state === 'running' ? undefined : mapTurnReason(lastEnded?.reason),

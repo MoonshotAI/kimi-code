@@ -1,16 +1,13 @@
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { Readable } from 'node:stream';
-import type { Writable } from 'node:stream';
 import { join } from 'pathe';
 
-import type { IHostProcess } from '#/os/interface/hostProcess';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { IAgentTaskService } from '#/agent/task/task';
+import { IAgentTaskService, type AgentTaskInfo } from '#/agent/task/task';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { TERMINAL_STATUSES } from '#/agent/task/types';
-import { ProcessTask } from '#/agent/tools/os/bash/process-task';
+import { IAgentTaskOutputService } from '#/agent/task/taskOutput';
 import {
   taskServices,
   createTestAgent,
@@ -20,92 +17,26 @@ import {
 import {
   TASK_TEST_AGENT_SCOPE,
   createAgentTaskPersistence,
+  startControlledTaskInLoop,
 } from './stubs';
 
 const MAX_OUTPUT_BYTES = 1024 * 1024;
-
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 5));
-
-function immediateProcess(exitCode: number, stdoutText = ''): IHostProcess {
-  return {
-    _serviceBrand: undefined,
-    stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
-    stdout: Readable.from(stdoutText ? [stdoutText] : []),
-    stderr: Readable.from([]),
-    pid: 60000 + exitCode,
-    exitCode,
-    wait: vi.fn().mockResolvedValue(exitCode) as IHostProcess['wait'],
-    kill: vi.fn().mockResolvedValue(undefined) as IHostProcess['kill'],
-    dispose: vi.fn().mockResolvedValue(undefined) as IHostProcess['dispose'],
-  };
-}
-
-function controllableProcess(): {
-  proc: IHostProcess;
-  pushStdout: (text: string) => void;
-  finish: (exitCode: number) => void;
-} {
-  const stdout = new Readable({ read() {} });
-  let resolveWait!: (code: number) => void;
-  const waitPromise = new Promise<number>((resolve) => {
-    resolveWait = resolve;
-  });
-  const proc: IHostProcess = {
-    _serviceBrand: undefined,
-    stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
-    stdout,
-    stderr: Readable.from([]),
-    pid: 61000,
-    exitCode: null,
-    wait: vi.fn(() => waitPromise) as IHostProcess['wait'],
-    kill: vi.fn().mockResolvedValue(undefined) as IHostProcess['kill'],
-    dispose: vi.fn().mockResolvedValue(undefined) as IHostProcess['dispose'],
-  };
-  return {
-    proc,
-    pushStdout: (text) => stdout.push(text),
-    finish: (exitCode) => {
-      (proc as { exitCode: number | null }).exitCode = exitCode;
-      stdout.push(null);
-      resolveWait(exitCode);
-    },
-  };
-}
-
-function registerForeground(
-  background: IAgentTaskService,
-  proc: IHostProcess,
-  command: string,
-  description: string,
-): string {
-  return background.registerTask(new ProcessTask(proc, command, description), {
-    detached: false,
-  });
-}
 
 async function drainPendingNotifications(
   ctx: TestAgentContext,
   background: IAgentTaskService,
 ): Promise<void> {
-  const expectsNotification = background
-    .list(false)
-    .some(
-      (task) =>
-        TERMINAL_STATUSES.has(task.status) &&
-        task.detached !== false &&
-        task.terminalNotificationSuppressed !== true,
-    );
-  if (!expectsNotification) return;
-  ctx.mockNextResponse({ type: 'text', text: 'notification drain ack' });
-  await vi.waitFor(() => {
-    const delivered = ctx.allEvents.filter((e) => e.event === 'task.notified').length;
-    expect(delivered).toBeGreaterThanOrEqual(1);
-  });
-  await vi.waitFor(() => {
-    const loop = ctx.get(IAgentLoopService);
-    expect(loop.snapshot().state).toBe('idle');
-    expect(loop.snapshot().hasPendingRequests).toBe(false);
-  });
+  const expectsNotification = background.list(false).some(
+    (task) => TERMINAL_STATUSES.has(task.status) && task.detached !== false,
+  );
+  if (expectsNotification) {
+    ctx.mockNextResponse({ type: 'text', text: 'notification drain ack' });
+    await vi.waitFor(() => {
+      expect(ctx.context.history().some((message) => message.origin?.kind === 'task')).toBe(true);
+    });
+  }
+  await ctx.get(IAgentLoopService).settled();
 }
 
 describe('AgentTaskService — foreground persistence', () => {
@@ -134,48 +65,68 @@ describe('AgentTaskService — foreground persistence', () => {
   const taskJsonPath = (taskId: string): string =>
     join(sessionDir, TASK_TEST_AGENT_SCOPE, 'tasks', `${taskId}.json`);
 
-  it('writes nothing to disk for a foreground task that does not spill or detach', async () => {
-    const taskId = registerForeground(background, immediateProcess(0, 'hello\n'), 'echo', 'demo');
+  it('writes only output.log for a foreground task that does not spill or detach', async () => {
+    const changes: AgentTaskInfo[] = [];
+    background.onDidChangeTask((info) => changes.push(info));
+    const controlled = await startControlledTaskInLoop(ctx, {
+      description: 'demo',
+      detached: false,
+      output: 'hello\n',
+      completion: Promise.resolve(''),
+    });
+    const taskId = controlled.handler.taskId;
 
     await background.wait(taskId);
+    await vi.waitFor(() => {
+      expect(changes.at(-1)).toMatchObject({ taskId, status: 'completed', detached: false });
+    });
 
     expect(existsSync(taskJsonPath(taskId))).toBe(false);
-    expect(existsSync(persistence.taskOutputFile(taskId))).toBe(false);
+    expect(existsSync(persistence.taskOutputFile(taskId))).toBe(true);
 
     const snapshot = await background.getOutputSnapshot(taskId, 1_000);
-    expect(snapshot.fullOutputAvailable).toBe(false);
+    expect(snapshot.fullOutputAvailable).toBe(true);
     expect(snapshot.preview).toContain('hello');
   });
 
   it('flushes complete pre-detach output to disk when a foreground task detaches', async () => {
-    const { proc, pushStdout, finish } = controllableProcess();
-    const taskId = registerForeground(background, proc, 'stream', 'demo');
+    const controlled = await startControlledTaskInLoop(ctx, {
+      description: 'demo',
+      detached: false,
+    });
+    const taskId = controlled.handler.taskId;
 
-    pushStdout('before-detach\n');
+    controlled.write('before-detach\n');
+    await ctx.get(IAgentTaskOutputService).open(taskId).flush();
     await tick();
-    expect(existsSync(persistence.taskOutputFile(taskId))).toBe(false);
+    expect(existsSync(persistence.taskOutputFile(taskId))).toBe(true);
 
     expect(background.detach(taskId)?.detached).toBe(true);
 
-    pushStdout('after-detach\n');
-    await tick();
-    finish(0);
+    controlled.write('after-detach\n');
+    controlled.resolve('');
     await background.wait(taskId);
 
     expect(await background.readOutput(taskId)).toBe('before-detach\nafter-detach\n');
-    expect(existsSync(taskJsonPath(taskId))).toBe(true);
+    expect(existsSync(taskJsonPath(taskId))).toBe(false);
   });
 
   it('spills to disk and keeps the log when foreground output exceeds the buffer', async () => {
     const big = 'a'.repeat(MAX_OUTPUT_BYTES + 1024);
-    const taskId = registerForeground(background, immediateProcess(0, big), 'flood', 'demo');
+    const controlled = await startControlledTaskInLoop(ctx, {
+      description: 'demo',
+      detached: false,
+      output: big,
+      completion: Promise.resolve(''),
+    });
+    const taskId = controlled.handler.taskId;
 
     await background.wait(taskId);
 
     const snapshot = await background.getOutputSnapshot(taskId, 1_000);
 
     expect(existsSync(persistence.taskOutputFile(taskId))).toBe(true);
-    expect(existsSync(taskJsonPath(taskId))).toBe(true);
+    expect(existsSync(taskJsonPath(taskId))).toBe(false);
     expect(snapshot.fullOutputAvailable).toBe(true);
     expect(snapshot.outputSizeBytes).toBe(big.length);
   });

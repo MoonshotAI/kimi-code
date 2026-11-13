@@ -1,6 +1,6 @@
 import type { IDisposable } from '#/_base/di/lifecycle';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import type { ContentPart, ToolDescription as Tool } from '#human/llm/message';
+import type { ContentPart, ToolDescription as Tool } from '@moonshot-ai/core/llm/message';
 
 export interface ContextInjectionContext<D = unknown> {
   readonly injectedPositions: readonly number[];
@@ -25,6 +25,7 @@ export type ContextInjectionContent =
 export interface ContextInjectionResult<D = unknown> {
   readonly content: ContextInjectionContent;
   readonly disclosure?: D;
+  readonly ownerPromptId?: string;
 }
 
 export type ContextInjectionProvider<D = unknown> = (

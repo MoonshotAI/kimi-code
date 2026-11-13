@@ -27,7 +27,7 @@ export {
   toolCallLazyCreateToSessionUpdate,
   toolCallStartedUpgradeToSessionUpdate,
   toolCallStartToSessionUpdate,
-  toolProgressToSessionUpdate,
+  toolUpdatedToSessionUpdate,
   toolResultToSessionUpdate,
   turnEndReasonToStopReason,
 } from './events-map';

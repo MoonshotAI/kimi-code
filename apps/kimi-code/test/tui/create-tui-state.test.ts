@@ -32,6 +32,7 @@ function fakeInitialAppState(): AppState {
     editorCommand: null,
     notifications: { enabled: true, condition: 'unfocused' },
     upgrade: { autoInstall: true },
+    transcript: { toolCallDensity: 'compact', thinking: 'grouped' },
     availableModels: {},
     availableProviders: {},
     sessionTitle: null,
@@ -83,7 +84,7 @@ describe('createTUIState', () => {
     expect(state.queuedMessages).toHaveLength(0);
 
     // Boolean, counter, and optional-field defaults.
-    expect(state.toolOutputExpanded).toBe(false);
+    expect(state.transcriptContainer.toolOutputExpanded).toBe(false);
     expect(state.activeDialog).toBeNull();
     expect(state.externalEditorRunning).toBe(false);
     expect(state.loadingSessions).toBe(false);
@@ -105,6 +106,36 @@ describe('createTUIState', () => {
     expect(state.ui).toBeInstanceOf(TuiMainScreen);
     expect(state.ui.mode).toBe('regular');
     expect(state.dockContainer).toBeUndefined();
+  });
+
+  it('uses resolvedTuiMode without mutating appState.tuiMode when tui.toml left tui_mode unset', () => {
+    const state = createTUIState({
+      initialAppState: fakeInitialAppState(),
+      resolvedTuiMode: 'fullscreen',
+      startup: {
+        continueLast: false,
+        yolo: false,
+        auto: false,
+        plan: false,
+      },
+    });
+
+    expect(state.ui).toBeInstanceOf(TuiAltScreen);
+    expect(state.ui.mode).toBe('fullscreen');
+    expect(state.appState.tuiMode).toBeUndefined();
+  });
+
+  it('starts the fullscreen renderer with the saved copy-on-select choice', () => {
+    const startWith = (copyOnSelect: boolean | undefined): boolean => {
+      const state = createTUIState({
+        initialAppState: { ...fakeInitialAppState(), tuiMode: 'fullscreen', copyOnSelect },
+        startup: { continueLast: false, yolo: false, auto: false, plan: false },
+      });
+      return (state.ui as TuiAltScreen).getCopyOnSelect();
+    };
+
+    expect(startWith(undefined)).toBe(true);
+    expect(startWith(false)).toBe(false);
   });
 
   it('builds an alternate-screen renderer with a docked layout in fullscreen mode', () => {

@@ -4,10 +4,16 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { ILogService, type ILogger } from '#/_base/log/log';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { AgentLoopProjector } from '#/agent/loop/projector';
+import { AgentLoopRequestObserver } from '#/agent/loop/requestObservation';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { IEventDispatcher } from '#/state/eventDispatcher';
+import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
+import { ISessionUsageService } from '#/session/usage/sessionUsage';
+import { SessionRequestAttributionService } from '#/session/requestAttribution/requestAttributionService';
 import { AgentStateService } from '#/agent/state/agentStateService';
-import type { ContentPart, MediaPart, Message } from '#human/llm/message';
-import { mediaUrlOf } from '#human/llm/protocol/kit/media';
+import type { ContentPart, MediaPart, Message } from '@moonshot-ai/core/llm/message';
+import { mediaUrlOf } from '@moonshot-ai/core/llm/protocol/kit/media';
 import {
   MEDIA_DEGRADE_KEEP_RECENT,
   captureMediaKeys,
@@ -15,7 +21,7 @@ import {
   degradeLeadingMediaParts,
   degradeOlderMediaParts,
   stripMediaParts,
-} from '#human/llm/builtin/policy/media-degrade';
+} from '@moonshot-ai/core/llm/builtin/policy/media-degrade';
 import { buildMediaPathTag, mediaKindOfPart } from '#/agent/media/mediaRef';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
@@ -66,11 +72,11 @@ function reminder(text: string): ContextMessage {
   };
 }
 
-function assistant(text: string, toolCallIds: readonly string[] = []): ContextMessage {
+function assistant(text: string, toolCallIds: readonly string[] = [], toolName = 'Lookup'): ContextMessage {
   return {
     role: 'assistant',
     content: text === '' ? [] : [{ type: 'text', text }],
-    toolCalls: toolCallIds.map((id) => ({ type: 'function', id, name: 'Lookup', arguments: '{}' })),
+    toolCalls: toolCallIds.map((id) => ({ type: 'function', id, name: toolName, arguments: '{}' })),
   };
 }
 
@@ -106,11 +112,17 @@ describe('projector tool-exchange normalization', () => {
     disposables = new DisposableStore();
     warnings = [];
     telemetryRecords = [];
-    projector = new AgentLoopProjector(
+    const observer = new AgentLoopRequestObserver(
       createCapturingLog(warnings),
       recordingTelemetry(telemetryRecords),
+      {} as IEventDispatcher,
+      {} as ISessionUsageService,
+      {} as ISessionTokenCountingService,
+      {} as IAgentScopeContext,
       new AgentStateService(),
+      new SessionRequestAttributionService(),
     );
+    projector = new AgentLoopProjector((anomalies) => observer.reportProjectionRepairs(anomalies));
   });
 
   afterEach(() => disposables.dispose());
@@ -139,12 +151,18 @@ describe('projector tool-exchange normalization', () => {
     expect(project(history)).toHaveLength(4);
     const timed = project([
       user('go'),
-      assistant('', ['c1']),
+      assistant('', ['c1'], 'Bash'),
       { ...toolResult('c1', 'one'), durationMs: 42 },
     ]);
     expect(timed.at(-1)?.content).toEqual([
       { type: 'text', text: 'Wall time: 0.042 seconds\none' },
     ]);
+    const untimed = project([
+      user('go'),
+      assistant('', ['c1']),
+      { ...toolResult('c1', 'one'), durationMs: 42 },
+    ]);
+    expect(untimed.at(-1)?.content).toEqual([{ type: 'text', text: 'one' }]);
   });
 
   it('synthesizes a result for a trailing unanswered call', () => {

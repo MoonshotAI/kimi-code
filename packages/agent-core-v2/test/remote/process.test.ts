@@ -562,4 +562,59 @@ describe('finished process-group ownership', () => {
       expect(internals.exitedGroups.size).toBe(0);
     } finally { manager.dispose(); kill.mockRestore(); vi.useRealTimers(); }
   });
+
+  it('does not retain POSIX process groups for a Windows executor', async () => {
+    vi.useFakeTimers();
+    const platform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    const manager = new ProcessManager(() => {}, new HostProcessService());
+    const internals = manager as unknown as {
+      processes: Map<string, unknown>;
+      exitedGroups: Map<string, unknown>;
+      maybeClose(entry: unknown): void;
+    };
+    try {
+      const entry = {
+        processId: 'windows',
+        pid: 123,
+        exitCode: 0,
+        openStreams: 0,
+        closed: false,
+        killTimer: setTimeout(() => {}, 1_000),
+      };
+      internals.processes.set(entry.processId, entry);
+      internals.maybeClose(entry);
+      expect(internals.exitedGroups.size).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(kill).not.toHaveBeenCalled();
+    } finally {
+      manager.dispose();
+      kill.mockRestore();
+      Object.defineProperty(process, 'platform', { value: platform });
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not schedule a grace kill for a Windows executor', async () => {
+    vi.useFakeTimers();
+    const platform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    const manager = new ProcessManager(() => {}, new HostProcessService());
+    const internals = manager as unknown as {
+      beginTermination(entry: unknown): Promise<void>;
+    };
+    const entry = { child: { kill: vi.fn(async () => {}) }, killTimer: undefined };
+    try {
+      await internals.beginTermination(entry);
+      expect(entry.child.kill).toHaveBeenCalledWith('SIGTERM');
+      expect(entry.killTimer).toBeUndefined();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      manager.dispose();
+      Object.defineProperty(process, 'platform', { value: platform });
+      vi.useRealTimers();
+    }
+  });
 });

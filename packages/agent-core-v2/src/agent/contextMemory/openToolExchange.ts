@@ -1,4 +1,4 @@
-import { createToolMessage } from '#human/llm/message';
+import { createToolMessage } from '@moonshot-ai/core/llm/message';
 
 import type { ContextMessage } from './types';
 

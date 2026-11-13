@@ -6,7 +6,12 @@ import { Readable, Writable } from 'node:stream';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import type { IPluginService } from '#/app/plugin/plugin';
+import type { InstallPluginInput, IPluginService } from '#/app/plugin/plugin';
+import type {
+  IPluginMarketplaceService,
+  MarketplacePluginInstall,
+} from '#/app/plugin/marketplaceService';
+import type { ResolvedMarketplacePluginInstallOptions } from '#/app/plugin/pluginService';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import {
   __kimiWebbridgeInternals,
@@ -56,12 +61,67 @@ function fakeHostProcess(script?: Array<{ match: string; code: number; stdout?: 
   return { service, calls };
 }
 
-function fakePlugins(installed: Array<{ id: string; enabled: boolean; state: string; version?: string }>): {
+function fakeMarketplace(
+  entries: readonly { id: string; version?: string; sha256sum?: string }[] = [
+    { id: 'kimi-browser-extension', version: '1.11.3', sha256sum: '0'.repeat(64) },
+  ],
+): IPluginMarketplaceService {
+  return {
+    _serviceBrand: undefined,
+    listMarketplace: () =>
+      Promise.resolve({
+        source: 'https://marketplace.example.test/catalog',
+        plugins: entries.map((entry) => ({
+          id: entry.id,
+          displayName: entry.id,
+          version: entry.version,
+          sha256sum: entry.sha256sum,
+          source: `https://marketplace.example.test/${entry.id}.zip`,
+        })),
+      }),
+    isDefaultMarketplace: () => Promise.resolve(true),
+    resolveInstall: (marketplaceId, expectedVersion, expectedSha256) => {
+      const entry = entries.find((candidate) => candidate.id === marketplaceId);
+      if (entry === undefined) {
+        return Promise.reject(
+          new Error(`Marketplace plugin "${marketplaceId}" was not found in the current catalog`),
+        );
+      }
+      if (entry.version === undefined) {
+        return Promise.reject(
+          new Error(`Marketplace plugin "${marketplaceId}" has no version in the current catalog`),
+        );
+      }
+      if (expectedVersion !== undefined && entry.version !== expectedVersion) {
+        return Promise.reject(new Error('marketplace catalog changed'));
+      }
+      if (entry.sha256sum !== undefined && entry.sha256sum !== expectedSha256) {
+        return Promise.reject(new Error('marketplace digest changed'));
+      }
+      const resolved: MarketplacePluginInstall = {
+        source: `https://marketplace.example.test/${marketplaceId}.zip`,
+        version: entry.version,
+        sha256sum: entry.sha256sum,
+        catalogId: marketplaceId,
+        origin: 'marketplace',
+        expectedPluginId: marketplaceId,
+        fetchImpl: () => Promise.reject(new Error('unexpected marketplace artifact fetch')),
+      };
+      return Promise.resolve(resolved);
+    },
+  };
+}
+
+function fakePlugins(
+  installed: Array<{ id: string; enabled: boolean; state: string; version?: string }>,
+): {
   service: IPluginService;
-  installs: string[];
+  installs: InstallPluginInput[];
+  installOptions: Array<ResolvedMarketplacePluginInstallOptions | undefined>;
   enabledCalls: Array<{ id: string; enabled: boolean }>;
 } {
-  const installs: string[] = [];
+  const installs: InstallPluginInput[] = [];
+  const installOptions: Array<ResolvedMarketplacePluginInstallOptions | undefined> = [];
   const enabledCalls: Array<{ id: string; enabled: boolean }> = [];
   const service = {
     listPlugins: () =>
@@ -81,16 +141,35 @@ function fakePlugins(installed: Array<{ id: string; enabled: boolean; state: str
           source: 'zip-url',
         })),
       ),
-    installPlugin: (input: { source: string }) => {
-      installs.push(input.source);
-      const existing = installed.find((p) => p.id === 'kimi-webbridge');
-      if (existing === undefined) {
-        installed.push({ id: 'kimi-webbridge', enabled: true, state: 'ok', version: '1.11.3' });
-        return Promise.resolve({ enabled: true } as never);
+    installPlugin: async (
+      input: InstallPluginInput,
+      options?: ResolvedMarketplacePluginInstallOptions,
+    ) => {
+      installs.push(input);
+      installOptions.push(options);
+      if (!('marketplaceId' in input)) throw new Error('expected a marketplace install');
+      const legacy =
+        input.migrateFrom === undefined
+          ? undefined
+          : installed.find((p) => p.id === input.migrateFrom);
+      const existing = installed.find((p) => p.id === input.marketplaceId);
+      const enabled = existing?.enabled ?? legacy?.enabled ?? true;
+      if (input.migrateFrom !== undefined) {
+        const legacyIndex = installed.findIndex((p) => p.id === input.migrateFrom);
+        if (legacyIndex !== -1) installed.splice(legacyIndex, 1);
       }
-      existing.state = 'ok';
-      existing.version = '1.11.3';
-      return Promise.resolve({ enabled: existing.enabled } as never);
+      if (existing === undefined) {
+        installed.push({
+          id: input.marketplaceId,
+          enabled,
+          state: 'ok',
+          version: input.expectedVersion,
+        });
+      } else {
+        existing.state = 'ok';
+        existing.version = input.expectedVersion;
+      }
+      return { enabled } as never;
     },
     setPluginEnabled: (input: { id: string; enabled: boolean }) => {
       enabledCalls.push(input);
@@ -99,7 +178,7 @@ function fakePlugins(installed: Array<{ id: string; enabled: boolean; state: str
       return Promise.resolve();
     },
   } as unknown as IPluginService;
-  return { service, installs, enabledCalls };
+  return { service, installs, installOptions, enabledCalls };
 }
 
 function fakeFetch(opts: {
@@ -144,6 +223,7 @@ describe('kimi-webbridge entry', () => {
       kimiHomeDir: path.join(root, 'kimi-home'),
       userHomeDir: path.join(root, 'user-home'),
       plugins: fakePlugins([]).service,
+      marketplace: fakeMarketplace(),
       hostProcess: fakeHostProcess().service,
       ...overrides,
     };
@@ -188,7 +268,7 @@ describe('kimi-webbridge entry', () => {
     const binPath = path.join(userHome, '.kimi-webbridge', 'bin', 'kimi-webbridge');
     await writeFile(binPath, 'bin');
     await chmod(binPath, 0o755);
-    const plugins = fakePlugins([{ id: 'kimi-webbridge', enabled: true, state: 'ok', version: '1.11.3' }]);
+    const plugins = fakePlugins([{ id: 'kimi-browser-extension', enabled: true, state: 'ok', version: '1.11.3' }]);
     const { fetchImpl } = fakeFetch({
       statusSequence: [{ running: true, version: 'v1.11.3', extension_connected: false }],
     });
@@ -211,7 +291,7 @@ describe('kimi-webbridge entry', () => {
     await writeFile(path.join(kimiHome, 'skills', 'kimi-webbridge', 'SKILL.md'), 'old');
     await mkdir(path.join(userHome, '.agents', 'skills', 'kimi-webbridge'), { recursive: true });
     await writeFile(path.join(userHome, '.agents', 'skills', 'kimi-webbridge', 'SKILL.md'), 'old');
-    const plugins = fakePlugins([{ id: 'kimi-webbridge', enabled: true, state: 'ok' }]);
+    const plugins = fakePlugins([{ id: 'kimi-browser-extension', enabled: true, state: 'ok' }]);
     const { fetchImpl } = fakeFetch({
       statusSequence: [{ running: true, version: 'v1.11.3', extension_connected: true }],
     });
@@ -229,7 +309,11 @@ describe('kimi-webbridge entry', () => {
     const note = await entry.install((step) => reports.push(step));
 
     expect(plugins.installs).toEqual([
-      'https://code.kimi.com/kimi-code/plugins/official/kimi-webbridge.zip',
+      {
+        marketplaceId: 'kimi-browser-extension',
+        expectedVersion: '1.11.3',
+        migrateFrom: undefined,
+      },
     ]);
     expect(note).toBe('user-skill-migrated');
     expect(reports).toContain('standalone-skill-migration');
@@ -268,14 +352,18 @@ describe('kimi-webbridge entry', () => {
     await access(binPath);
     expect(host.calls.map((c) => `${c.command} ${c.args.join(' ')}`)).toEqual([`${binPath} start`]);
     expect(plugins.installs).toEqual([
-      'https://code.kimi.com/kimi-code/plugins/official/kimi-webbridge.zip',
+      {
+        marketplaceId: 'kimi-browser-extension',
+        expectedVersion: '1.11.3',
+        migrateFrom: undefined,
+      },
     ]);
     expect(reports[0]).toEqual(['download', 0]);
     expect(reports.some(([step]) => step === 'daemon')).toBe(true);
     expect(reports.some(([step]) => step === 'skill')).toBe(true);
   });
 
-  it('installs the plugin zip from the global CDN when the region is global', async () => {
+  it('uses the marketplace version for canonical plugin installation', async () => {
     const plugins = fakePlugins([]);
     const host = fakeHostProcess();
     const { fetchImpl } = fakeFetch({
@@ -284,17 +372,78 @@ describe('kimi-webbridge entry', () => {
     const entry = createKimiWebbridgeEntry(
       makeCtx({
         plugins: plugins.service,
+        marketplace: fakeMarketplace([{ id: 'kimi-browser-extension', version: '9.8.7' }]),
         hostProcess: host.service,
         fetchImpl,
-        resolveRegion: () => 'global',
       }),
     );
 
     await entry.install(() => {});
 
     expect(plugins.installs).toEqual([
-      'https://code.kimi.ai/kimi-code/plugins/official/kimi-webbridge.zip',
+      {
+        marketplaceId: 'kimi-browser-extension',
+        expectedVersion: '9.8.7',
+        migrateFrom: undefined,
+      },
     ]);
+  });
+
+  it('uses the fixed official CDN when the marketplace catalog is unavailable', async () => {
+    const plugins = fakePlugins([]);
+    const host = fakeHostProcess();
+    const { fetchImpl } = fakeFetch({
+      statusSequence: [{ running: true, version: 'v1.11.3', extension_connected: true }],
+    });
+    const marketplace = fakeMarketplace();
+    const entry = createKimiWebbridgeEntry(
+      makeCtx({
+        plugins: plugins.service,
+        marketplace: {
+          ...marketplace,
+          listMarketplace: () => Promise.reject(new Error('catalog unavailable')),
+        },
+        hostProcess: host.service,
+        fetchImpl,
+      }),
+    );
+
+    await entry.install(() => {});
+
+    expect(plugins.installOptions).toHaveLength(1);
+    expect(plugins.installOptions[0]?.resolved).toMatchObject({
+      source: expect.stringContaining('plugins/official/kimi-webbridge.zip'),
+      sha256sum: undefined,
+      expectedPluginId: 'kimi-browser-extension',
+    });
+  });
+
+  it('uses the fixed official CDN when a custom catalog lacks the capability entry', async () => {
+    const plugins = fakePlugins([]);
+    const host = fakeHostProcess();
+    const { fetchImpl } = fakeFetch({
+      statusSequence: [{ running: true, version: 'v1.11.3', extension_connected: true }],
+    });
+    const marketplace = fakeMarketplace();
+    const entry = createKimiWebbridgeEntry(
+      makeCtx({
+        plugins: plugins.service,
+        marketplace: {
+          ...marketplace,
+          isDefaultMarketplace: () => Promise.resolve(false),
+          listMarketplace: () => Promise.resolve({ source: 'custom', plugins: [] }),
+        },
+        hostProcess: host.service,
+        fetchImpl,
+      }),
+    );
+
+    await entry.install(() => {});
+
+    expect(plugins.installOptions[0]?.resolved).toMatchObject({
+      source: expect.stringContaining('plugins/official/kimi-webbridge.zip'),
+      expectedPluginId: 'kimi-browser-extension',
+    });
   });
 
   it('never starts the daemon when one is already running (coexistence)', async () => {
@@ -318,7 +467,7 @@ describe('kimi-webbridge entry', () => {
     const binPath = path.join(userHome, '.kimi-webbridge', 'bin', 'kimi-webbridge');
     await writeFile(binPath, 'old-bin');
     await chmod(binPath, 0o755);
-    const plugins = fakePlugins([{ id: 'kimi-webbridge', enabled: true, state: 'ok', version: '1.11.3' }]);
+    const plugins = fakePlugins([{ id: 'kimi-browser-extension', enabled: true, state: 'ok', version: '1.11.3' }]);
     const host = fakeHostProcess();
     const { fetchImpl } = fakeFetch({
       statusSequence: [{ running: true, version: 'v1.11.3', extension_connected: true }],
@@ -335,7 +484,11 @@ describe('kimi-webbridge entry', () => {
     expect(reports).toContain('skill');
     expect(host.calls).toEqual([]);
     expect(plugins.installs).toEqual([
-      'https://code.kimi.com/kimi-code/plugins/official/kimi-webbridge.zip',
+      {
+        marketplaceId: 'kimi-browser-extension',
+        expectedVersion: '1.11.3',
+        migrateFrom: undefined,
+      },
     ]);
     expect(await readFile(binPath, 'utf8')).toBe('latest-bin');
   });
@@ -370,7 +523,7 @@ describe('kimi-webbridge entry', () => {
     await writeFile(binPath, 'bin');
     await chmod(binPath, 0o755);
     const plugins = fakePlugins([
-      { id: 'kimi-webbridge', enabled: true, state: 'ok', version: '1.11.3' },
+      { id: 'kimi-browser-extension', enabled: true, state: 'ok', version: '1.11.3' },
     ]);
     const host = fakeHostProcess();
     const { fetchImpl } = fakeFetch({
@@ -387,7 +540,11 @@ describe('kimi-webbridge entry', () => {
     await entry.install(() => {});
 
     expect(plugins.installs).toEqual([
-      'https://code.kimi.com/kimi-code/plugins/official/kimi-webbridge.zip',
+      {
+        marketplaceId: 'kimi-browser-extension',
+        expectedVersion: '1.11.3',
+        migrateFrom: undefined,
+      },
     ]);
     expect(host.calls.map((call) => `${call.command} ${call.args.join(' ')}`)).toEqual([
       `${binPath} start`,
@@ -429,13 +586,197 @@ describe('kimi-webbridge entry', () => {
   });
 
   it('re-enables a previously disabled wiring plugin during setup', async () => {
-    const plugins = fakePlugins([{ id: 'kimi-webbridge', enabled: false, state: 'ok', version: '1.11.3' }]);
+    const plugins = fakePlugins([
+      { id: 'kimi-browser-extension', enabled: false, state: 'ok', version: '1.11.3' },
+    ]);
     const { fetchImpl } = fakeFetch({
       statusSequence: [{ running: true, version: 'v1.11.3', extension_connected: true }],
     });
     const entry = createKimiWebbridgeEntry(makeCtx({ plugins: plugins.service, fetchImpl }));
 
     await entry.install(() => {});
-    expect(plugins.enabledCalls).toEqual([{ id: 'kimi-webbridge', enabled: true }]);
+    expect(plugins.enabledCalls).toEqual([{ id: 'kimi-browser-extension', enabled: true }]);
+  });
+
+  it('keeps the capability id while using the canonical wiring plugin id', () => {
+    const entry = createKimiWebbridgeEntry(makeCtx());
+    expect(entry.id).toBe('kimi-webbridge');
+    expect(entry.pluginId).toBe('kimi-browser-extension');
+  });
+
+  it('detects legacy wiring and prefers the canonical plugin when both exist', async () => {
+    const { fetchImpl } = fakeFetch({
+      statusSequence: [{ running: true, version: 'v1.11.3', extension_connected: true }],
+    });
+    const legacyPlugins = fakePlugins([
+      { id: 'kimi-webbridge', enabled: true, state: 'ok', version: '1.0.0' },
+    ]);
+    const legacyEntry = createKimiWebbridgeEntry(
+      makeCtx({ plugins: legacyPlugins.service, fetchImpl }),
+    );
+
+    const legacyDetected = await legacyEntry.detect();
+    expect(legacyDetected.steps.find((step) => step.id === 'skill')).toEqual({
+      id: 'skill',
+      state: 'ok',
+      detail: '1.0.0',
+    });
+
+    const bothPlugins = fakePlugins([
+      { id: 'kimi-webbridge', enabled: true, state: 'ok', version: '1.0.0' },
+      { id: 'kimi-browser-extension', enabled: true, state: 'ok', version: '1.11.3' },
+    ]);
+    const bothEntry = createKimiWebbridgeEntry(
+      makeCtx({ plugins: bothPlugins.service, fetchImpl }),
+    );
+
+    const bothDetected = await bothEntry.detect();
+    expect(bothDetected.steps.find((step) => step.id === 'skill')).toEqual({
+      id: 'skill',
+      state: 'ok',
+      detail: '1.11.3',
+    });
+  });
+
+  it('migrates the legacy plugin through marketplace installation', async () => {
+    const plugins = fakePlugins([
+      { id: 'kimi-webbridge', enabled: true, state: 'ok', version: '1.0.0' },
+    ]);
+    const { fetchImpl } = fakeFetch({
+      statusSequence: [{ running: true, version: 'v1.11.3', extension_connected: true }],
+    });
+    const entry = createKimiWebbridgeEntry(makeCtx({ plugins: plugins.service, fetchImpl }));
+
+    await entry.install(() => {});
+
+    expect(plugins.installs).toEqual([
+      {
+        marketplaceId: 'kimi-browser-extension',
+        expectedVersion: '1.11.3',
+        migrateFrom: 'kimi-webbridge',
+      },
+    ]);
+    expect(plugins.installOptions[0]).toMatchObject({
+      requiredSkill: 'kimi-webbridge',
+      resolved: {
+        version: '1.11.3',
+        catalogId: 'kimi-browser-extension',
+        expectedPluginId: 'kimi-browser-extension',
+      },
+    });
+    const installed = await plugins.service.listPlugins();
+    expect(installed.map((plugin) => plugin.id)).toEqual(['kimi-browser-extension']);
+    expect(installed[0]).toMatchObject({ enabled: true, version: '1.11.3' });
+  });
+
+  it('leaves only the canonical plugin when legacy and canonical records both exist', async () => {
+    const plugins = fakePlugins([
+      { id: 'kimi-webbridge', enabled: false, state: 'ok', version: '1.0.0' },
+      { id: 'kimi-browser-extension', enabled: true, state: 'ok', version: '1.11.2' },
+    ]);
+    const { fetchImpl } = fakeFetch({
+      statusSequence: [{ running: true, version: 'v1.11.3', extension_connected: true }],
+    });
+    const entry = createKimiWebbridgeEntry(makeCtx({ plugins: plugins.service, fetchImpl }));
+
+    await entry.install(() => {});
+
+    expect(plugins.installs).toEqual([
+      {
+        marketplaceId: 'kimi-browser-extension',
+        expectedVersion: '1.11.3',
+        migrateFrom: 'kimi-webbridge',
+      },
+    ]);
+    const installed = await plugins.service.listPlugins();
+    expect(installed.map((plugin) => plugin.id)).toEqual(['kimi-browser-extension']);
+    expect(installed[0]).toMatchObject({ enabled: true, version: '1.11.3' });
+  });
+
+  it('keeps the legacy plugin and runtime untouched when the canonical marketplace entry is missing', async () => {
+    const plugins = fakePlugins([
+      { id: 'kimi-webbridge', enabled: true, state: 'ok', version: '1.0.0' },
+    ]);
+    const host = fakeHostProcess();
+    const { fetchImpl } = fakeFetch({
+      statusSequence: [{ running: true, version: 'v1.11.3', extension_connected: true }],
+    });
+    const entry = createKimiWebbridgeEntry(
+      makeCtx({
+        plugins: plugins.service,
+        marketplace: fakeMarketplace([]),
+        hostProcess: host.service,
+        fetchImpl,
+      }),
+    );
+
+    await expect(entry.install(() => {})).rejects.toThrow(
+      'Marketplace plugin "kimi-browser-extension" was not found in the current catalog',
+    );
+    expect(plugins.installs).toEqual([]);
+    expect(host.calls).toEqual([]);
+    await expect(
+      access(path.join(root, 'user-home', '.kimi-webbridge', 'bin', 'kimi-webbridge')),
+    ).rejects.toThrow();
+    await expect(plugins.service.listPlugins()).resolves.toMatchObject([
+      { id: 'kimi-webbridge', enabled: true, state: 'ok', version: '1.0.0' },
+    ]);
+  });
+
+  it('fails without runtime side effects when the canonical marketplace entry has no version', async () => {
+    const plugins = fakePlugins([]);
+    const host = fakeHostProcess();
+    const { fetchImpl } = fakeFetch({
+      statusSequence: [{ running: true, version: 'v1.11.3', extension_connected: true }],
+    });
+    const entry = createKimiWebbridgeEntry(
+      makeCtx({
+        plugins: plugins.service,
+        marketplace: fakeMarketplace([{ id: 'kimi-browser-extension' }]),
+        hostProcess: host.service,
+        fetchImpl,
+      }),
+    );
+
+    await expect(entry.install(() => {})).rejects.toThrow(
+      'Marketplace plugin "kimi-browser-extension" has no version in the current catalog',
+    );
+    expect(plugins.installs).toEqual([]);
+    expect(host.calls).toEqual([]);
+    await expect(
+      access(path.join(root, 'user-home', '.kimi-webbridge', 'bin', 'kimi-webbridge')),
+    ).rejects.toThrow();
+  });
+
+  it('fails without binary or daemon side effects when marketplace resolution fails', async () => {
+    const plugins = fakePlugins([
+      { id: 'kimi-webbridge', enabled: true, state: 'ok', version: '1.0.0' },
+    ]);
+    const host = fakeHostProcess();
+    const marketplace = fakeMarketplace();
+    const { fetchImpl } = fakeFetch({
+      statusSequence: [{ running: false }, { running: false }],
+    });
+    const entry = createKimiWebbridgeEntry(
+      makeCtx({
+        plugins: plugins.service,
+        marketplace: {
+          ...marketplace,
+          resolveInstall: () => Promise.reject(new Error('platform or SHA validation failed')),
+        },
+        hostProcess: host.service,
+        fetchImpl,
+      }),
+    );
+
+    await expect(entry.install(() => {})).rejects.toThrow('platform or SHA validation failed');
+    expect(plugins.installs).toEqual([]);
+    expect(host.calls).toEqual([]);
+    await expect(
+      access(path.join(root, 'user-home', '.kimi-webbridge', 'bin', 'kimi-webbridge')),
+    ).rejects.toThrow();
+    await expect(plugins.service.listPlugins()).resolves.toMatchObject([
+      { id: 'kimi-webbridge', enabled: true, state: 'ok', version: '1.0.0' },
+    ]);
   });
 });

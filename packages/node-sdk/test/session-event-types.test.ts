@@ -19,6 +19,13 @@ describe('Event public types', () => {
     expectTypeOf<EventByType<'tool.call.started'>['toolCallId']>().toEqualTypeOf<string>();
     expectTypeOf<EventByType<'tool.call.started'>['name']>().toEqualTypeOf<string>();
     expectTypeOf<EventByType<'tool.call.started'>['args']>().toEqualTypeOf<unknown>();
+    expectTypeOf<EventByType<'tool.updated'>['taskId']>().toEqualTypeOf<string>();
+    expectTypeOf<EventByType<'tool.updated'>['fields']>().toEqualTypeOf<
+      Readonly<Record<string, unknown>>
+    >();
+    expectTypeOf<EventByType<'tool.updated'>['output']>().toEqualTypeOf<
+      { readonly offset: number; readonly text: string } | undefined
+    >();
     expectTypeOf<EventByType<'mcp.server.status'>['server']['nextRetryAt']>().toEqualTypeOf<
       number | undefined
     >();
@@ -104,7 +111,7 @@ describe('Event public types', () => {
         case 'thinking.delta':
         case 'tool.call.delta':
         case 'tool.call.started':
-        case 'tool.progress':
+        case 'tool.updated':
         case 'shell.output':
         case 'shell.started':
         case 'shell.completed':

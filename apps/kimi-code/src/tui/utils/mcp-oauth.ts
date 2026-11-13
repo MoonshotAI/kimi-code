@@ -1,8 +1,7 @@
 import {
   MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE,
   type McpOAuthAuthorizationUrlUpdateData,
-  type ToolProgressEvent,
-  type ToolUpdate,
+  type ToolUpdatedEvent,
 } from '@moonshot-ai/kimi-code-sdk';
 
 export type OpenUrl = (url: string) => void;
@@ -12,8 +11,8 @@ export class McpOAuthAuthorizationUrlOpener {
 
   constructor(private readonly openUrl: OpenUrl) {}
 
-  handleToolProgress(event: Pick<ToolProgressEvent, 'toolCallId' | 'update'>): void {
-    const update = parseMcpOAuthAuthorizationUrlUpdate(event.update);
+  handleToolUpdated(event: Pick<ToolUpdatedEvent, 'toolCallId' | 'fields'>): void {
+    const update = parseMcpOAuthAuthorizationUrlUpdate(event.fields);
     if (update === undefined) return;
     const key = `${event.toolCallId}\0${update.authorizationUrl}`;
     if (this.openedAuthorizationUrls.has(key)) return;
@@ -23,11 +22,9 @@ export class McpOAuthAuthorizationUrlOpener {
 }
 
 export function parseMcpOAuthAuthorizationUrlUpdate(
-  update: ToolUpdate,
-): McpOAuthAuthorizationUrlUpdateData | undefined {
-  if (update.kind !== 'custom') return undefined;
-  if (update.customKind !== MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE) return undefined;
-  const data = update.customData;
+  fields: Readonly<Record<string, unknown>>,
+): Pick<McpOAuthAuthorizationUrlUpdateData, 'serverName' | 'authorizationUrl'> | undefined {
+  const data = fields[MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE];
   if (!isRecord(data)) return undefined;
   const serverName = data['serverName'];
   const authorizationUrl = data['authorizationUrl'];

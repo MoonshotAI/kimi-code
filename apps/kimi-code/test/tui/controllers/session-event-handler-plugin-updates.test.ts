@@ -2,12 +2,14 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { PluginUpdateNotifier } from '#/tui/controllers/plugin-update-notifier';
 import { SessionEventHandler } from '#/tui/controllers/session-event-handler';
+import { TurnTimeline } from '#/tui/utils/turn-timeline';
 import { getBuiltInPalette } from '#/tui/theme';
 
 const DATASOURCE_TOOL = 'mcp__plugin-kimi-datasource_data__call_data_source_tool';
 
 function makeHost() {
   const streamingUI = {
+    timeline: new TurnTimeline(),
     setTurnId: vi.fn(),
     flushNow: vi.fn(),
     resetToolUi: vi.fn(),
@@ -48,7 +50,6 @@ function makeHost() {
     updateActivityPane: vi.fn(),
     track: vi.fn(),
     recordSessionActivity: vi.fn(),
-    noteStepUsage: vi.fn(),
     noteCompactionFinished: vi.fn(),
     mountEditorReplacement: vi.fn(),
     restoreEditor: vi.fn(),

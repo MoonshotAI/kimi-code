@@ -1,5 +1,8 @@
 import type { PluginSummary } from '@moonshot-ai/kimi-code-sdk';
 
+type PluginSourceSummary = Partial<PluginSummary> &
+  Pick<PluginSummary, 'source' | 'originalSource' | 'github'>;
+
 export const OFFICIAL_BADGE = 'official';
 export const CURATED_BADGE = 'curated';
 export const THIRD_PARTY_BADGE = 'third-party';
@@ -21,7 +24,7 @@ const CONTENT_CDN_HOSTS = new Set(['cdn.kimi.com', 'cdn.kimi.ai']);
  * - zip-url with parseable URL → `via <host[:port]>`
  * - everything else → raw source kind (`local-path`, `zip-url`)
  */
-export function formatPluginSourceLabel(plugin: PluginSummary): string {
+export function formatPluginSourceLabel(plugin: PluginSourceSummary): string {
   if (plugin.source === 'github' && plugin.github !== undefined) {
     return `github ${plugin.github.owner}/${plugin.github.repo}@${plugin.github.ref.value}`;
   }
@@ -36,7 +39,7 @@ export function formatPluginSourceLabel(plugin: PluginSummary): string {
  * Returns one of three trust labels for a plugin. Only Kimi-hosted plugin zip
  * paths receive official or curated badges. Everything else is third-party.
  */
-export function pluginTrustLabel(plugin: PluginSummary): PluginTrustLabel {
+export function pluginTrustLabel(plugin: PluginSourceSummary): PluginTrustLabel {
   if (plugin.source !== 'zip-url' || plugin.originalSource === undefined) {
     return 'third-party';
   }
@@ -80,7 +83,7 @@ export function isOfficialPluginSource(source: string): boolean {
  * GitHub repos, and third-party URLs do not qualify, even when their manifest
  * id matches an official plugin.
  */
-export function isOfficialPluginInstall(plugin: PluginSummary): boolean {
+export function isOfficialPluginInstall(plugin: PluginSourceSummary): boolean {
   return (
     plugin.source === 'zip-url' &&
     plugin.originalSource !== undefined &&

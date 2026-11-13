@@ -58,7 +58,7 @@ export class TowerPlanTool implements ITowerPlanTool {
               '| -- | ------- | ---- | ------ | -------- | ----- |',
               ...rows,
               '',
-              'Next: TowerSpawn one worker per mission (workers get their worktree path and mission briefing automatically), plus reviewers for the branches. Survey missions need no reviewer — they close with a zero-diff TowerMerge.',
+              'Next: TowerSpawn one worker per mission (workers get their worktree path and mission briefing automatically). Build missions also need independent reviewers. Artifact missions instead present their key artifacts for explicit human acceptance of the entire committed tip before TowerMerge. Survey missions need no reviewer — they close with a zero-diff TowerMerge.',
             ].join('\n'),
           };
         }),

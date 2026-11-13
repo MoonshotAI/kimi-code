@@ -54,6 +54,7 @@ async function runInjectionBoundary(ctx: TestAgentContext): Promise<void> {
     firstStepOfTurn: true,
     signal: new AbortController().signal,
   });
+  ctx.get(IAgentLoopService).flushReminders();
 }
 
 describe('AgentPluginService plugin session-start wiring', () => {
@@ -356,6 +357,8 @@ describe('AgentPluginService plugin-change reminder', () => {
       errors: [],
       mutation: { kind: 'enable', id: 'demo' },
     });
+    await ctx.restorePersisted();
+    ctx.get(IAgentLoopService).flushReminders();
 
     const messages = findPluginChangeMessages(ctx);
     expect(messages).toHaveLength(1);
@@ -471,6 +474,8 @@ describe('AgentPluginService plugin-change reminder', () => {
     sinkChange.fire('plugin');
     sinkChange.fire('plugin');
     await new Promise((resolve) => setTimeout(resolve, 0));
+    await ctx.restorePersisted();
+    ctx.get(IAgentLoopService).flushReminders();
 
     expect(findPluginChangeMessages(ctx)).toHaveLength(2);
     expect(findPluginSessionStartEventMessages(ctx)).toHaveLength(1);

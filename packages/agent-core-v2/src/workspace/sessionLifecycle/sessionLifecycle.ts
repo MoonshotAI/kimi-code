@@ -18,6 +18,7 @@ export interface CreateSessionOptions {
   readonly environmentId?: string;
   readonly environmentCwd?: string;
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
+  readonly prepare?: (session: ISessionScopeHandle) => Promise<void>;
 }
 
 export interface ForkSessionOptions {

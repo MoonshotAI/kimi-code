@@ -98,15 +98,24 @@ async function setupMission(input: {
   file: string;
   content: string;
   deps?: string[];
+  kind?: TowerMission['kind'];
   status?: TowerMission['status'];
 }): Promise<TowerMission> {
   const missions = await store.plan([
-    { title: input.title, scope: [input.scope], deps: input.deps },
+    { title: input.title, scope: [input.scope], deps: input.deps, kind: input.kind },
   ]);
   const mission = missions[0]!;
   const state = await store.load();
   await store.addWorktree(mission.worktree, mission.branch, state.base);
   await commitFile(worktreeOf(mission), input.file, input.content, `work on ${mission.id}`);
+  if (input.kind === 'artifact' && (input.status ?? 'completed') === 'completed') {
+    const worker = `worker-${mission.id}`;
+    await store.registerAgent(
+      rosterEntry({ name: worker, kind: 'worker', missionId: mission.id }),
+    );
+    await store.complete(worker, `Key artifact: ${input.file}`, [input.file]);
+    return mission;
+  }
   await store.updateMission(
     'tower',
     mission.id,
@@ -128,10 +137,25 @@ async function spliceMissionIntoState(mission: TowerMission): Promise<void> {
 }
 
 async function completeMission(mission: TowerMission): Promise<void> {
+  if (mission.kind === 'artifact') {
+    const base = (await store.load()).base;
+    const changed = await git(repo, 'diff', '--name-only', `${base}...${mission.branch}`);
+    const keyArtifacts = changed.split('\n').filter((path) => path.length > 0);
+    await store.complete(`worker-${mission.id}`, `Key artifacts:\n${changed}`, keyArtifacts);
+    return;
+  }
   await store.updateMission('tower', mission.id, { status: 'completed' }, { silent: true });
 }
 
 async function cleanReview(reviewer: string, target: string): Promise<void> {
+  const state = await store.load();
+  const acceptanceTip = state.missions.find(
+    (mission) =>
+      mission.branch === target &&
+      mission.kind === 'artifact' &&
+      mission.status !== 'merged' &&
+      mission.status !== 'abandoned',
+  )?.completionTip;
   await store.submitReview(reviewer, {
     target,
     status: 'clean',
@@ -139,6 +163,7 @@ async function cleanReview(reviewer: string, target: string): Promise<void> {
     findings: 'none',
     checks: ['tests pass'],
     decision: 'looks good',
+    acceptanceTip,
   });
 }
 
@@ -766,6 +791,27 @@ describe('plan', () => {
     expect(missionFile).toContain('# Mission M1: Build engine');
     expect(missionFile).toContain('- [ ] scaffold');
     expect(missionFile).toContain('- [ ] implement');
+  });
+
+  it('renders the mission kind in MISSIONS.md and the mission file', async () => {
+    await store.plan([
+      { title: 'Artifact engine', scope: ['artifacts/**'], kind: 'artifact' },
+    ]);
+
+    const index = await readFile(join(repo, '.tower/comms/MISSIONS.md'), 'utf8');
+    expect(index).toContain('| ID | Mission | Branch | Worktree | Status | Owner | Kind |');
+    expect(index).toContain(
+      '| M1 | Artifact engine | feat/artifact-engine | wt-1 | 🟡 | — | artifact |',
+    );
+
+    const missionFile = await readFile(
+      join(repo, '.tower/comms/missions/M1-artifact-engine.md'),
+      'utf8',
+    );
+    expect(missionFile).toContain('| Branch | Worktree | Status | Scope | Owner | Kind |');
+    expect(missionFile).toContain(
+      '| feat/artifact-engine | wt-1 | 🟡 | artifacts/** | — | artifact |',
+    );
   });
 
   it('carries the mission context into state and renders it in the mission file', async () => {
@@ -1456,6 +1502,320 @@ describe('merge gate', () => {
     expect(conflictsWith).toEqual([
       { branch: second.branch, files: ['src/a/shared.ts'] },
     ]);
+  });
+
+  it('requires mission-matching tower acceptance for an artifact and performs a real merge', async () => {
+    const mission = await setupMission({
+      title: 'render summary',
+      scope: 'reports/**',
+      file: 'reports/summary.html',
+      content: '<h1>Summary</h1>\n',
+      kind: 'artifact',
+    });
+
+    await expect(store.merge(mission.branch, { activeAgentIds: new Set() })).rejects.toThrow(
+      /waiting for explicit human acceptance/,
+    );
+
+    await store.registerAgent(
+      rosterEntry({
+        name: 'rev',
+        kind: 'reviewer',
+        reviewTarget: mission.branch,
+        reviewMissionId: mission.id,
+      }),
+    );
+    await cleanReview('rev', mission.branch);
+    await expect(store.merge(mission.branch, { activeAgentIds: new Set() })).rejects.toThrow(
+      /recorded by reviewer=tower/,
+    );
+
+    await store.submitReview('tower', {
+      target: mission.branch,
+      status: 'clean',
+      merge: 'fix-then-merge',
+      findings: 'none',
+      decision: 'not merge acceptance',
+    });
+    await expect(store.merge(mission.branch, { activeAgentIds: new Set() })).rejects.toThrow(
+      /merge verdict "fix-then-merge"/,
+    );
+
+    await cleanReview('tower', mission.branch);
+    const acceptedTip = await git(repo, 'rev-parse', mission.branch);
+    const result = await store.merge(mission.branch, { activeAgentIds: new Set() });
+
+    expect(result.status).toBe('merged');
+    expect(result.noop).toBeUndefined();
+    expect(result.evaluatedBranchTip).toBe(acceptedTip);
+    expect(result.mergeCommit).toBe(await git(repo, 'rev-parse', 'HEAD'));
+    expect(await git(repo, 'rev-parse', 'HEAD^2')).toBe(acceptedTip);
+    expect(await readFile(join(repo, 'reports/summary.html'), 'utf8')).toBe('<h1>Summary</h1>\n');
+    expect((await store.load()).missions.find((m) => m.id === mission.id)?.status).toBe('merged');
+  });
+
+  it('rejects unstamped legacy tower acceptance for an artifact', async () => {
+    const mission = await setupMission({
+      title: 'render legacy summary',
+      scope: 'reports/**',
+      file: 'reports/legacy.html',
+      content: '<h1>Legacy</h1>\n',
+      kind: 'artifact',
+    });
+    await cleanReview('tower', mission.branch);
+    const review = (await store.latestReview(mission.branch))!;
+    const raw = await readFile(store.abs(review.file), 'utf8');
+    await writeFile(store.abs(review.file), raw.replace(/^mission:.*\r?\n/m, ''));
+
+    await expect(store.merge(mission.branch, { activeAgentIds: new Set() })).rejects.toThrow(
+      /mission-matching explicit human acceptance/,
+    );
+
+    await store.submitReview('tower', {
+      target: mission.branch,
+      status: 'clean',
+      merge: 'merge',
+      findings: 'none',
+      decision: 'fresh explicit approval for this mission',
+      acceptanceTip: (await store.load()).missions.find((m) => m.id === mission.id)!.completionTip,
+    });
+    await store.merge(mission.branch, { activeAgentIds: new Set() });
+    expect((await store.load()).missions.find((m) => m.id === mission.id)?.status).toBe('merged');
+  });
+
+  it('refuses artifact acceptance that does not match the completion tip', async () => {
+    const mission = await setupMission({
+      title: 'render accepted summary',
+      scope: 'reports/**',
+      file: 'reports/accepted.html',
+      content: '<h1>Accepted</h1>\n',
+      kind: 'artifact',
+    });
+    await cleanReview('tower', mission.branch);
+    const completionTip = (await store.load()).missions.find((m) => m.id === mission.id)!
+      .completionTip;
+    await commitFile(worktreeOf(mission), 'reports/extra.csv', 'name,value\na,1\n', 'add data');
+    const advancedTip = await git(repo, 'rev-parse', mission.branch);
+    const review = (await store.latestReview(mission.branch))!;
+    const raw = await readFile(store.abs(review.file), 'utf8');
+    await writeFile(
+      store.abs(review.file),
+      raw.replace(/^reviewed_commit:.*$/m, `reviewed_commit: ${advancedTip}`),
+    );
+
+    await expect(store.merge(mission.branch, { activeAgentIds: new Set() })).rejects.toThrow(
+      new RegExp(`acceptance-request covered ${completionTip!.slice(0, 7)}`),
+    );
+    expect((await store.load()).missions.find((m) => m.id === mission.id)?.status).toBe(
+      'completed',
+    );
+  });
+
+  it('requires fresh completion and artifact acceptance after a tip move and a clean rebase', async () => {
+    const mission = await setupMission({
+      title: 'render rebased summary',
+      scope: 'reports/**',
+      file: 'reports/rebased.html',
+      content: '<h1>Rebased</h1>\n',
+      kind: 'artifact',
+    });
+    await cleanReview('tower', mission.branch);
+
+    await commitFile(worktreeOf(mission), 'reports/extra.csv', 'name,value\na,1\n', 'add data');
+    await expect(store.merge(mission.branch, { activeAgentIds: new Set() })).rejects.toThrow(
+      /fresh explicit human acceptance/,
+    );
+    await expect(cleanReview('tower', mission.branch)).rejects.toThrow(
+      /advanced after the artifact acceptance-request/,
+    );
+    expect(await store.reviewsFor(mission.branch)).toHaveLength(1);
+
+    await completeMission(mission);
+    await cleanReview('tower', mission.branch);
+    const completionTip = (await store.load()).missions.find((m) => m.id === mission.id)!
+      .completionTip;
+    await commitFile(repo, 'docs/base.md', 'base moves\n', 'base moves on');
+    await expect(store.merge(mission.branch, { activeAgentIds: new Set() })).rejects.toThrow(
+      /behind base "main"/,
+    );
+    const rebased = await store.rebaseMission('tower', mission.id, {
+      activeAgentIds: new Set(),
+    });
+    expect(rebased.status).toBe('rebased');
+
+    await expect(store.merge(mission.branch, { activeAgentIds: new Set() })).rejects.toThrow(
+      /rebase never waives artifact acceptance/,
+    );
+    const state = await store.load();
+    const current = state.missions.find((m) => m.id === mission.id)!;
+    expect(current.completionTip).toBe(completionTip);
+    expect(current.completionTip).not.toBe(rebased.toCommit);
+    const gate = await store.missionGate(state, current);
+    expect(gate.reviewBinding).toBe('stale-tip');
+    await expect(cleanReview('tower', mission.branch)).rejects.toThrow(
+      /advanced after the artifact acceptance-request/,
+    );
+
+    await completeMission(mission);
+    await cleanReview('tower', mission.branch);
+    await store.merge(mission.branch, { activeAgentIds: new Set() });
+    expect((await store.load()).missions.find((m) => m.id === mission.id)?.status).toBe('merged');
+  });
+
+  it('keeps artifact scope, checkout-base, and dirty-base checks after acceptance', async () => {
+    const mission = await setupMission({
+      title: 'render guarded summary',
+      scope: 'reports/**',
+      file: 'reports/guarded.html',
+      content: '<h1>Guarded</h1>\n',
+      kind: 'artifact',
+    });
+    await commitFile(worktreeOf(mission), 'README.md', '# outside the key artifacts\n', 'auxiliary change');
+    await store.complete(`worker-${mission.id}`, 'Key artifact: reports/guarded.html', [
+      'reports/guarded.html',
+    ]);
+    await cleanReview('tower', mission.branch);
+
+    await expect(store.merge(mission.branch, { activeAgentIds: new Set() })).rejects.toThrow(
+      /outside mission M1 scope/,
+    );
+    await store.updateMission('tower', mission.id, { scope: ['reports/**', 'README.md'] });
+
+    await git(repo, 'checkout', '-b', 'hotfix');
+    await expect(store.merge(mission.branch, { activeAgentIds: new Set() })).rejects.toThrow(
+      /not the recorded base/,
+    );
+    await git(repo, 'checkout', 'main');
+
+    await writeFile(join(repo, 'README.md'), 'local wip\n');
+    await expect(store.merge(mission.branch, { activeAgentIds: new Set() })).rejects.toThrow(
+      /uncommitted changes in file\(s\)/,
+    );
+    await git(repo, 'checkout', '--', 'README.md');
+
+    await store.merge(mission.branch, { activeAgentIds: new Set() });
+    expect((await store.load()).missions.find((m) => m.id === mission.id)?.status).toBe('merged');
+  });
+
+  it('keeps artifact dependencies blocking the real merge', async () => {
+    const dependency = await setupMission({
+      title: 'source artifact',
+      scope: 'reports/source/**',
+      file: 'reports/source/data.csv',
+      content: 'name,value\na,1\n',
+      kind: 'artifact',
+    });
+    const consumer = await setupMission({
+      title: 'downstream artifact',
+      scope: 'reports/downstream/**',
+      file: 'reports/downstream/summary.html',
+      content: '<h1>Downstream</h1>\n',
+      deps: [dependency.id],
+      kind: 'artifact',
+    });
+    await cleanReview('tower', consumer.branch);
+
+    await expect(store.merge(consumer.branch, { activeAgentIds: new Set() })).rejects.toThrow(
+      new RegExp(`dependencies not merged yet \\(${dependency.id}\\)`),
+    );
+
+    await store.updateMission('tower', dependency.id, { status: 'abandoned' });
+    await store.merge(consumer.branch, { activeAgentIds: new Set() });
+    expect((await store.load()).missions.find((m) => m.id === consumer.id)?.status).toBe('merged');
+  });
+
+  it('does not bind acceptance to a generic artifact completion', async () => {
+    const [mission] = await store.plan([
+      { title: 'render generic summary', scope: ['reports/**'], kind: 'artifact' },
+    ]);
+    const state = await store.load();
+    await store.addWorktree(mission!.worktree, mission!.branch, state.base);
+    await commitFile(worktreeOf(mission!), 'reports/generic.html', '<h1>Generic</h1>\n', 'render');
+
+    const completed = await store.updateMission('tower', mission!.id, { status: 'completed' });
+    expect(completed.completionTip).toBeUndefined();
+    await expect(cleanReview('tower', mission!.branch)).rejects.toThrow(
+      /has no completion tip recorded/,
+    );
+
+    await store.registerAgent(
+      rosterEntry({ name: 'late-worker', kind: 'worker', missionId: mission!.id }),
+    );
+    await store.complete('late-worker', 'Key artifact: reports/generic.html', [
+      'reports/generic.html',
+    ]);
+    await cleanReview('tower', mission!.branch);
+    await store.merge(mission!.branch, { activeAgentIds: new Set() });
+    expect((await store.load()).missions.find((m) => m.id === mission!.id)?.status).toBe('merged');
+  });
+
+  it('refreshes the completion tip and rejects an older acceptance request identity', async () => {
+    const mission = await setupMission({
+      title: 'render revised summary',
+      scope: 'reports/**',
+      file: 'reports/revised.html',
+      content: '<h1>Initial</h1>\n',
+      kind: 'artifact',
+    });
+    const report = 'Key artifact: reports/revised.html';
+    const keyArtifacts = ['reports/revised.html'];
+    const initialTip = (await store.load()).missions.find((m) => m.id === mission.id)!
+      .completionTip;
+    const initialRequest = (await store.readInbox('tower', 20)).find(
+      (item) => item.subject === 'acceptance-request',
+    );
+    await commitFile(worktreeOf(mission), 'reports/revised.html', '<h1>Revised</h1>\n', 'revise');
+    const currentTip = await git(repo, 'rev-parse', mission.branch);
+    expect(currentTip).not.toBe(initialTip);
+
+    const completed = await store.complete(`worker-${mission.id}`, report, keyArtifacts);
+
+    expect(completed.notificationCreated).toBe(true);
+    expect(completed.mission?.completionTip).toBe(currentTip);
+    expect(completed.message?.item.body).toContain(`Completion tip: ${currentTip}`);
+    expect(completed.message?.item.body).not.toBe(initialRequest?.body);
+    await expect(
+      store.submitReview('tower', {
+        target: mission.branch,
+        status: 'clean',
+        merge: 'merge',
+        findings: 'none',
+        decision: 'stale approval',
+        acceptanceTip: initialTip,
+      }),
+    ).rejects.toThrow(/acceptance references.*latest acceptance-request/s);
+    await expect(
+      store.submitReview('tower', {
+        target: mission.branch,
+        status: 'clean',
+        merge: 'merge',
+        findings: 'none',
+        decision: 'missing request identity',
+      }),
+    ).rejects.toThrow(/requires acceptance_tip/);
+    await cleanReview('tower', mission.branch);
+    await store.merge(mission.branch, { activeAgentIds: new Set() });
+    expect(await readFile(join(repo, 'reports/revised.html'), 'utf8')).toBe('<h1>Revised</h1>\n');
+  });
+
+  it('keeps the recorded completion tip when a generic patch re-completes after the tip moves', async () => {
+    const mission = await setupMission({
+      title: 'render re-completed summary',
+      scope: 'reports/**',
+      file: 'reports/recompleted.html',
+      content: '<h1>Recompleted</h1>\n',
+      kind: 'artifact',
+    });
+    const recorded = (await store.load()).missions.find((m) => m.id === mission.id)!.completionTip;
+    await commitFile(worktreeOf(mission), 'reports/extra.csv', 'name,value\na,1\n', 'add data');
+
+    await store.updateMission('tower', mission.id, { status: 'completed' }, { silent: true });
+
+    const updated = (await store.load()).missions.find((m) => m.id === mission.id)!;
+    expect(updated.completionTip).toBe(recorded);
+    await expect(cleanReview('tower', mission.branch)).rejects.toThrow(
+      /advanced after the artifact acceptance-request/,
+    );
   });
 
   it('closes a zero-diff survey with a noop merge — no review, no git ceremony', async () => {
@@ -3044,9 +3404,9 @@ describe('updateMission', () => {
     const updated = await store.updateMission('tower', 'M1', { owner: 'w1' });
     expect(updated.owner).toBe('w1');
     const file = await readFile(join(repo, '.tower/comms/missions/M1-alpha.md'), 'utf8');
-    expect(file).toContain('| feat/alpha | wt-1 | 🟡 | src/alpha/** | w1 |');
+    expect(file).toContain('| feat/alpha | wt-1 | 🟡 | src/alpha/** | w1 | build |');
     const index = await readFile(join(repo, '.tower/comms/MISSIONS.md'), 'utf8');
-    expect(index).toContain('| M1 | alpha | feat/alpha | wt-1 | 🟡 | w1 |');
+    expect(index).toContain('| M1 | alpha | feat/alpha | wt-1 | 🟡 | w1 | build |');
   });
 
   it('lets only the tower abandon a mission, and logs it', async () => {
@@ -3278,7 +3638,7 @@ describe('completion invariants', () => {
     title: string,
     options: {
       tasks?: string[];
-      kind?: 'build' | 'survey';
+      kind?: TowerMission['kind'];
       withWorktree?: boolean;
       withCommit?: boolean;
     } = {},
@@ -3450,6 +3810,120 @@ describe('completion invariants', () => {
     ).rejects.toThrow(/does not exist, so no work has landed/);
   });
 
+  it('requires committed key artifacts and emits whole-tip acceptance-request only after a nonzero diff', async () => {
+    const mission = await seedMission('render report', { kind: 'artifact' });
+    await store.registerAgent(
+      rosterEntry({
+        name: 'w1',
+        kind: 'worker',
+        missionId: mission.id,
+        worktree: mission.worktree,
+        branch: mission.branch,
+      }),
+    );
+
+    await expect(
+      store.complete('w1', 'render the report', ['src/render-report/result.html']),
+    ).rejects.toThrow(/does not exist, so no work has landed/);
+    const state = await store.load();
+    await store.addWorktree(mission.worktree, mission.branch, state.base);
+    await expect(
+      store.complete('w1', 'render the report', ['src/render-report/result.html']),
+    ).rejects.toThrow(/has no changes vs "main"/);
+
+    await commitFile(
+      worktreeOf(mission),
+      'src/render-report/result.html',
+      '<h1>Result</h1>\n',
+      'render result',
+    );
+    await commitFile(
+      worktreeOf(mission),
+      'src/render-report/result',
+      'supporting data\n',
+      'add supporting data',
+    );
+    await expect(store.complete('w1', 'delivery without key artifacts')).rejects.toThrow(
+      /must name at least one committed key deliverable/,
+    );
+    await writeFile(join(worktreeOf(mission), 'src/render-report/uncommitted.html'), 'not included\n');
+    await expect(
+      store.complete('w1', 'wrong key artifact', ['src/render-report/uncommitted.html']),
+    ).rejects.toThrow(/must name paths from the committed branch diff.*uncommitted\.html/s);
+    await commitFile(worktreeOf(mission), 'README.md', '# auxiliary\n', 'auxiliary change');
+    await expect(store.complete('w1', 'out of scope key artifact', ['README.md'])).rejects.toThrow(
+      /must stay inside its scope.*README\.md/s,
+    );
+
+    const result = await store.complete(
+      'w1',
+      'Key deliverable for acceptance:\n- src/render-report/result.html',
+      ['./src/render-report/result.html'],
+    );
+
+    expect(result.notificationCreated).toBe(true);
+    expect(result.mission?.status).toBe('completed');
+    expect(result.mission?.keyArtifacts).toEqual(['src/render-report/result.html']);
+    expect(result.message?.item).toMatchObject({
+      subject: 'acceptance-request',
+      scope: mission.id,
+      action: 'complete',
+    });
+    expect(result.message?.item.body).toContain('Approval authorizes the entire current mission tip presented for acceptance');
+    expect(result.message?.item.body).toContain('Additional committed files included in this approval: 2.');
+    expect(result.message?.item.body).toContain('Optional full manifest:');
+    expect(result.message?.item.body).not.toContain('- src/render-report/result\n');
+    expect(result.message?.item.body).not.toContain('uncommitted.html');
+    const messages = await store.readInbox('tower', 20);
+    expect(messages.filter((item) => item.action === 'complete')).toHaveLength(1);
+    expect(messages.some((item) => item.subject === 'review-request')).toBe(false);
+  });
+
+  it('accepts key artifacts whose paths git would quote in default output', async () => {
+    const mission = await seedMission('non-ascii report', { kind: 'artifact', withWorktree: true });
+    await store.registerAgent(
+      rosterEntry({
+        name: 'w1',
+        kind: 'worker',
+        missionId: mission.id,
+        worktree: mission.worktree,
+        branch: mission.branch,
+      }),
+    );
+    const artifact = 'src/non-ascii-report/结果.html';
+    await commitFile(worktreeOf(mission), artifact, '<h1>结果</h1>\n', 'render non-ascii report');
+
+    const result = await store.complete('w1', `Key deliverable:\n- ${artifact}`, [artifact]);
+
+    expect(result.mission?.keyArtifacts).toEqual([artifact]);
+    expect(result.message?.item.body).toContain(artifact);
+  });
+
+  it('rejects a deleted file as a key artifact at the completion tip', async () => {
+    await commitFile(repo, 'src/remove-report/old.html', '<h1>Old</h1>\n', 'seed old artifact');
+    const mission = await seedMission('remove report', { kind: 'artifact', withWorktree: true });
+    await store.registerAgent(
+      rosterEntry({
+        name: 'w1',
+        kind: 'worker',
+        missionId: mission.id,
+        worktree: mission.worktree,
+        branch: mission.branch,
+      }),
+    );
+    await rm(join(worktreeOf(mission), 'src/remove-report/old.html'));
+    await git(worktreeOf(mission), 'add', '-A');
+    await git(worktreeOf(mission), 'commit', '-m', 'remove old artifact');
+
+    await expect(
+      store.complete('w1', 'Deleted the old artifact', ['src/remove-report/old.html']),
+    ).rejects.toThrow(/must name files present at completion tip.*old\.html/s);
+    expect((await store.load()).missions.find((m) => m.id === mission.id)?.status).toBe('planned');
+    expect((await store.readInbox('tower', 20)).some((item) => item.action === 'complete')).toBe(
+      false,
+    );
+  });
+
   it('lets a survey mission complete with no branch and no diff', async () => {
     const mission = await seedMission('scan layer', { kind: 'survey' });
 
@@ -3533,6 +4007,48 @@ describe('review round cap', () => {
     expect(reviews).toHaveLength(MAX_REVIEW_ROUNDS + 1);
     expect(reviews.at(-1)?.reviewer).toBe('rev-2');
     expect(reviews.at(-1)?.round).toBe(1);
+  });
+
+  it('allows tower artifact acceptance and feedback beyond five rounds with ordinary rework', async () => {
+    const mission = await setupMission({
+      title: 'artifact feedback loop',
+      scope: 'reports/**',
+      file: 'reports/feedback.html',
+      content: '<h1>Feedback</h1>\n',
+      kind: 'artifact',
+    });
+    await store.registerAgent(
+      rosterEntry({ name: 'w1', kind: 'worker', missionId: mission.id }),
+    );
+    await store.updateMission('tower', mission.id, { owner: 'w1' }, { silent: true });
+
+    for (let round = 1; round <= MAX_REVIEW_ROUNDS + 1; round += 1) {
+      await store.submitReview('tower', {
+        target: mission.branch,
+        status: 'clean',
+        merge: 'merge',
+        findings: 'none',
+        decision: `human acceptance round ${String(round)}`,
+        acceptanceTip: (await store.load()).missions.find((m) => m.id === mission.id)!
+          .completionTip,
+      });
+    }
+
+    const accepted = await store.reviewsFor(mission.branch);
+    expect(accepted).toHaveLength(MAX_REVIEW_ROUNDS + 1);
+    expect(accepted.map((review) => review.round)).toEqual([1, 2, 3, 4, 5, 6]);
+
+    const feedback = await store.submitReview('tower', {
+      target: mission.branch,
+      status: 'p1-1items',
+      merge: 'hold',
+      findings: 'the summary needs a correction',
+      decision: 'human requested rework',
+    });
+
+    expect(feedback.review.round).toBe(MAX_REVIEW_ROUNDS + 2);
+    expect(feedback.storedMessages.map((message) => message.item.to)).toContain('w1');
+    expect((await store.load()).missions.find((m) => m.id === mission.id)?.status).toBe('active');
   });
 });
 

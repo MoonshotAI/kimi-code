@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 
+import { Jimp } from 'jimp';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
@@ -14,27 +15,33 @@ import {
 import { LifecycleScope } from '#/app/scopes';
 import { createScopedTestHost, createServices, stubPair } from '#/_base/di/test';
 import type { Event2 } from '#/app/event/event2';
+import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
+import { createAgentMediaPolicy } from '#/agent/loop/mediaPolicy';
 import { buildKimiFileUrl } from '#/agent/media/kimiFileUrl';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
+import { mcpResultToExecutableOutput } from '#/agent/mcp/output';
 import type { ImageUploader, VideoUploader } from '#/llm-adapter/model/media';
 import type { Model } from '#/llm-adapter/model/catalog';
 import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
-import type { LlmFiles } from '#human/llm/request';
-import type { InitializedLlmRequester, LlmRequestInitialization } from '#/llm-adapter/model/generate';
-import { contentsOf, createRequester } from '#human/llm/requester';
+import type { LlmFiles } from '@moonshot-ai/core/llm/request';
+import type { InitializedLlmRequester } from '@moonshot-ai/core/llm/requester';
+import { streamLlmRequest } from '@moonshot-ai/core/llm/stream';
 import { AgentMediaResolverService } from '#/agent/media/mediaResolverService';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
+import { SessionMediaStoreService } from '#/agent/media/sessionMediaStoreService';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { type GetResult, IFileService } from '#/app/file/fileService';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import type { ModelCapability } from '#/llm-adapter/contract/capability';
-import type { ContentPart, ImageURLPart, Message, VideoURLPart } from '#human/llm/message';
-import type { LlmCredentialProvider } from '#human/llm-requester/requester';
+import type { ContentPart, ImageURLPart, Message, VideoURLPart } from '@moonshot-ai/core/llm/message';
+import type { LlmCredentialProvider } from '@moonshot-ai/core/llm/request';
 import type { Protocol } from '#/llm-adapter/protocol/protocol';
+import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
+import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { IBlobStore } from '#/persistence/interface/blobStore';
+import { makeSessionContext } from '#/session/sessionContext/sessionContext';
 
 import { registerStateServices } from '../../state/stubs';
 import { createStaticCredentialProvider } from '#human/credentials/credentials';
@@ -197,55 +204,53 @@ function requester(opts: {
 }): TestMediaResolution {
   const model: TestMediaResolution['model'] = {
     id: 'm',
-    name: 'stub',
     aliases: [],
     protocol: opts.protocol ?? 'openai',
-    baseUrl: opts.baseUrl,
-    headers: opts.headers ?? {},
-    capabilities: {
-      video_in: opts.videoIn ?? true,
-      image_in: opts.imageIn ?? true,
-    } as unknown as ModelCapability,
-    maxContextSize: 1000,
-    alwaysThinking: false,
+    spec: {
+      provider: opts.providerType ?? 'kimi',
+      name: 'stub',
+      capability: {
+        video_in: opts.videoIn ?? true,
+        image_in: opts.imageIn ?? true,
+      },
+      thinking: { alwaysThinking: false },
+      maxContextSize: 1000,
+    },
+    endpoint: {
+      baseUrl: opts.baseUrl,
+      headers: opts.headers ?? {},
+      credentials: opts.credentialProvider,
+    },
     providerName: 'p',
     providerType: opts.providerType ?? 'kimi',
-    credentialProvider: opts.credentialProvider,
   };
-  const files: LlmFiles | undefined =
-    opts.uploadVideo === undefined && opts.uploadImage === undefined
-      ? undefined
-      : {
-          kinds: new Set([
-            ...(opts.uploadVideo === undefined ? [] : ['video' as const]),
-            ...(opts.uploadImage === undefined ? [] : ['image' as const]),
-          ]),
-          upload: async (file, { signal }) => {
-            if (file.kind === 'video') {
-              const part = await opts.uploadVideo!(
-                { data: file.data, mimeType: file.mimeType, filename: file.filename },
-                { signal },
-              );
-              return part.videoUrl;
-            }
-            if (file.kind === 'image') {
-              const part = await opts.uploadImage!(
-                { data: file.data, mimeType: file.mimeType, filename: file.filename },
-                { signal },
-              );
-              return part.imageUrl;
-            }
-            throw new Error('unused audio upload');
-          },
-        };
+  const files: LlmFiles = {
+    kinds: new Set([
+      ...(opts.uploadVideo === undefined ? [] : ['video' as const]),
+      ...(opts.uploadImage === undefined ? [] : ['image' as const]),
+    ]),
+    upload: async (file, { signal }) => {
+      if (file.kind === 'video' && opts.uploadVideo !== undefined) {
+        const part = await opts.uploadVideo(
+          { data: file.data, mimeType: file.mimeType, filename: file.filename },
+          { signal },
+        );
+        return part.videoUrl;
+      }
+      if (file.kind === 'image' && opts.uploadImage !== undefined) {
+        const part = await opts.uploadImage(
+          { data: file.data, mimeType: file.mimeType, filename: file.filename },
+          { signal },
+        );
+        return part.imageUrl;
+      }
+      throw new Error(`unexpected ${file.kind} upload`);
+    },
+  };
   const initial = new ProtocolAdapterRegistry().request(model);
   return {
     model,
-    requester: createRequester().with({
-      protocol: contentsOf(initial).protocol as LlmRequestInitialization['protocol'],
-      model: contentsOf(initial).model as LlmRequestInitialization['model'],
-      endpoint: { ...contentsOf(initial).endpoint, files },
-    }),
+    requester: initial.with({ endpoint: { files } }),
   };
 }
 
@@ -916,6 +921,94 @@ describe('AgentMediaResolverService image strategy', () => {
 });
 
 describe('AgentMediaResolverService image upload', () => {
+  it('uploads an MCP screenshot once and sends its ms reference in both Kimi requests', async () => {
+    const storage = new InMemoryStorageService();
+    const mediaStore = new SessionMediaStoreService(
+      makeSessionContext({ sessionId: 's1', workspaceId: 'w1', sessionDir, sessionScope: 's1', cwd: sessionDir }),
+      storage,
+      new JsonAtomicDocumentStore(storage),
+    );
+    const screenshot = await new Jimp({ width: 1600, height: 900, color: 0x3366ccff }).getBuffer('image/png');
+    const toolName = 'mcp__example__screenshot';
+    const result = await mcpResultToExecutableOutput({
+      isError: false,
+      content: [{ type: 'image', mimeType: 'image/png', data: screenshot.toString('base64') }],
+    }, toolName, { attachmentStore: mediaStore, providerType: 'kimi' });
+    const messages: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'Take a screenshot.' }] },
+      { role: 'assistant', content: [], toolCalls: [{ type: 'function', id: 'call_1', name: toolName, arguments: '{}' }] },
+      { role: 'tool', toolCallId: 'call_1', content: renderToolResultForModel(result) },
+    ];
+    const urls: string[] = [];
+    const bodies: string[] = [];
+    const mockFetch: typeof fetch = async (input, init) => {
+      const httpRequest = new Request(input, init);
+      const path = new URL(httpRequest.url).pathname;
+      expect(httpRequest.method).toBe('POST');
+      urls.push(path);
+      if (path === '/v1/files') {
+        const form = await httpRequest.formData();
+        const image = form.get('file');
+        expect(form.get('purpose')).toBe('image');
+        expect(image).toBeInstanceOf(File);
+        if (!(image instanceof File)) throw new Error('Expected a multipart image file');
+        expect(image.type).toBe('image/png');
+        expect(Buffer.from(await image.arrayBuffer())).toEqual(screenshot);
+        return Response.json({ id: 'uploaded-screenshot' });
+      }
+      expect(path).toBe('/v1/chat/completions');
+      bodies.push(await httpRequest.text());
+      return Response.json({
+        id: 'completion_1',
+        model: 'stub',
+        object: 'chat.completion',
+        choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: 'Done.' } }],
+      });
+    };
+    const { model } = requester({
+      providerType: 'kimi',
+      baseUrl: 'https://example.test/v1',
+      credentialProvider: createStaticCredentialProvider('YOUR_API_KEY'),
+    });
+    const routed = new ProtocolAdapterRegistry()
+      .request(model, { protocol: { stream: false } })
+      .with({ endpoint: { fetch: mockFetch } });
+    const media = createAgentMediaPolicy(resolver(new Map(), sessionDir, mediaStore), model, routed);
+    for (const history of [
+      messages,
+      [...messages, { role: 'assistant', content: [{ type: 'text', text: 'Done.' }], toolCalls: [] }] satisfies Message[],
+    ]) {
+      const events = streamLlmRequest(
+        routed.request({
+          profile: { systemPrompt: '' },
+          content: { messages: history },
+          policy: {
+            recoveries: [media.recovery],
+            resolvers: [media.toolResolver, media.resolver],
+          },
+        }),
+        { signal: new AbortController().signal },
+      );
+      const eventTypes: string[] = [];
+      for await (const event of events) eventTypes.push(event.type);
+      expect(eventTypes).toContain('llm.ended');
+    }
+    expect(urls).toEqual(['/v1/files', '/v1/chat/completions', '/v1/chat/completions']);
+    for (const body of bodies) {
+      const { messages: wireMessages } = JSON.parse(body) as { messages: unknown[] };
+      expect(wireMessages).toContainEqual(expect.objectContaining({
+        role: 'tool',
+        tool_call_id: 'call_1',
+        content: expect.arrayContaining([{
+          type: 'image_url',
+          image_url: { url: 'ms://uploaded-screenshot', id: 'uploaded-screenshot' },
+        }]),
+      }));
+      expect(body).not.toContain('data:image/');
+      expect(body).not.toContain(screenshot.toString('base64'));
+    }
+  });
+
   it('uploads an image once and serves later resolves from the cached reference', async () => {
     const upload = vi.fn(async (): Promise<ImageURLPart> => msImagePart('img-1'));
     const res = resolver(new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]));

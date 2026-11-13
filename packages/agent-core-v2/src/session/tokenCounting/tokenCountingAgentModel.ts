@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { contextMemoryKey } from '#/agent/contextMemory/contextOps';
+import { ContextClear } from '#/agent/contextMemory/contextEvents';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { ContextSize, TokenCountingStrategy } from '#/agent/tokenCounting/tokenCounting';
 import {
@@ -14,9 +14,9 @@ import {
   type TokenCountingState,
 } from '#/agent/tokenCounting/tokenCountingOps';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
-import type { Message } from '#human/llm/message';
+import type { Message } from '@moonshot-ai/core/llm/message';
 import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
-import type { TokenUsage } from '#human/llm-requester/usage';
+import { grandTotal, type TokenUsage } from '@moonshot-ai/core/llm/usage';
 import { AgentModel, defineAgentModel, type AgentModelContext } from '#/state/agentModel';
 
 import type { TokenCountingRebaseInput } from './sessionTokenCounting';
@@ -60,6 +60,12 @@ export class TokenCountingAgentModel extends AgentModel<TokenCountingState> {
       }
       void this.emit(new AgentStatusUpdated({ agentId: event.agentId, contextTokens: tokens }));
     });
+    this.on(ContextClear, (event) => {
+      const committed = this._state();
+      if (committed.anchors.length !== 1 || committed.anchors[0] !== ZERO_ANCHOR) this.state.anchors = [ZERO_ANCHOR];
+      if (committed.tokens !== 0) this.state.tokens = 0;
+      void this.emit(new AgentStatusUpdated({ agentId: event.agentId, contextTokens: 0 }));
+    });
     this.on(TokenCountingTurnRecorded, (event) => {
       const length = normalizeAnchorLength(event.length);
       const tokens = Math.max(0, event.tokens);
@@ -100,12 +106,13 @@ export class TokenCountingAgentModel extends AgentModel<TokenCountingState> {
     usage: TokenUsage,
   ): Promise<void> {
     const context = this.context();
-    if (!matchesContext(input, context)) return Promise.resolve();
+    const tokens = tokenUsageTotal(usage);
+    if (!matchesContext(input, context) || tokens === undefined) return Promise.resolve();
     return this.emit(
       new TokenCountingMeasured({
         agentId: this.agent.agentId,
         length: context.length,
-        tokens: tokenUsageTotal(usage),
+        tokens,
       }),
     );
   }
@@ -160,7 +167,7 @@ export class TokenCountingAgentModel extends AgentModel<TokenCountingState> {
   }
 
   private context(): readonly ContextMessage[] {
-    return this.readLegacy(contextMemoryKey) as readonly ContextMessage[];
+    return this.readHistory() as readonly ContextMessage[];
   }
 
   private latestAnchor(contextLength: number): TokenAnchor {
@@ -181,6 +188,7 @@ export const TokenCountingAgentModelDefinition = defineAgentModel({
     schema: z.custom<TokenCountingState>(),
   },
   events: [
+    ContextClear,
     TokenCountingMeasured,
     TokenCountingTruncated,
     TokenCountingRebased,
@@ -189,15 +197,22 @@ export const TokenCountingAgentModelDefinition = defineAgentModel({
 });
 
 function matchesContext(input: readonly Message[], context: readonly ContextMessage[]): boolean {
-  if (input.length !== context.length) return false;
+  if (input.length > context.length) return false;
   for (let index = 0; index < input.length; index += 1) {
-    if (input[index] !== context[index]) return false;
+    const left = input[index]!;
+    const right = context[index]!;
+    if (left.role !== right.role) return false;
+    if (JSON.stringify(left.content) !== JSON.stringify(right.content)) return false;
+    const leftToolCalls = left.role === 'assistant' ? left.toolCalls : [];
+    const rightToolCalls = right.role === 'assistant' ? right.toolCalls : [];
+    if (JSON.stringify(leftToolCalls) !== JSON.stringify(rightToolCalls)) return false;
+    if ((left.role === 'tool' ? left.toolCallId : undefined) !== (right.role === 'tool' ? right.toolCallId : undefined)) return false;
   }
   return true;
 }
 
-function tokenUsageTotal(usage: TokenUsage): number {
-  return usage.inputCacheRead + usage.inputCacheCreation + usage.inputOther + usage.output;
+function tokenUsageTotal(usage: TokenUsage): number | undefined {
+  return grandTotal(usage);
 }
 
 function normalizeSliceIndex(index: number, length: number): number {

@@ -5,6 +5,7 @@ import { collection } from '#/_base/di/collection';
 import { BugIndicatingError } from '#/_base/errors/errors';
 import type { StateKey } from '#/_base/state/stateRegistry';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
+import type { Message } from '@moonshot-ai/core/llm/message';
 import { registerEvent2Class, type Event2, type Event2Class } from '#/app/event/event2';
 
 import type { FoldContext } from './state';
@@ -17,6 +18,7 @@ export interface DomainResourceRuntime {
 export interface AgentModelBridge {
   dispatch(event: Event2<any>): Promise<void>;
   readLegacy(key: StateKey<any>): unknown;
+  readHistory(): readonly Message[];
   initialState(): unknown;
 }
 
@@ -87,6 +89,10 @@ export abstract class AgentModel<S> implements DomainResourceRuntime {
 
   protected readLegacy<T>(key: StateKey<T>): T {
     return this.bridge.readLegacy(key) as T;
+  }
+
+  protected readHistory(): readonly Message[] {
+    return this.bridge.readHistory();
   }
 
   onUndo?(count: number): void;

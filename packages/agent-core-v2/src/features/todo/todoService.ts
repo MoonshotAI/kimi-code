@@ -11,7 +11,6 @@ import {
   type AgentActorContext,
   type AgentActorRestoreEvent,
 } from '#/agent/actorService/agentActorService';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
@@ -25,7 +24,7 @@ import { TODO_LIST_TOOL_NAME, readTodoItems, todoProgress, type TodoItem } from 
 import { TODO_LIST_REMINDER_VARIANT, todoListStaleReminder } from './todoListReminder';
 import { ToolsUpdateStore, type TodoState } from './todoOps';
 
-import '#/agent/contextMemory/conversationTime';
+import '#/agent/loop/turnOps';
 
 registerEvent2Class(ToolsUpdateStore);
 
@@ -50,7 +49,7 @@ const todoReminder = fromCallback(({
 }) => {
   const runtime = input.runtime;
   if (runtime.agent.agentId !== MAIN_AGENT_ID) return;
-  const memory = runtime.get(IAgentContextMemoryService);
+  const memory = runtime.get(IAgentLoopService);
   const toolPolicy = runtime.get(IAgentToolPolicyService);
   const telemetry = runtime.get(ITelemetryService);
   const bus = runtime.get(IEventBus);
@@ -59,7 +58,7 @@ const todoReminder = fromCallback(({
     const todos = runtime.getState();
     const reminder = todoListStaleReminder({
       active: toolPolicy.isToolActive(TODO_LIST_TOOL_NAME, 'builtin'),
-      history: memory.get(),
+      history: memory.history(),
       todos,
     });
     if (reminder === undefined) return undefined;

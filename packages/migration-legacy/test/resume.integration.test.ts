@@ -5,8 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
-import { reduceContextTranscript } from '@moonshot-ai/agent-core-v2';
-import { groupMessagesIntoSnapshot } from '@moonshot-ai/transcript';
+import { reduceContextTranscript, type ContextMessage } from '@moonshot-ai/agent-core-v2';
 
 import { migrateOneSession, type MigrateOneResult } from '../src/sessions/migrate-one.js';
 import { importedSessionDir, writeImportedSession } from '../src/imported-session.js';
@@ -14,6 +13,10 @@ import { computeWorkdirBucket } from '../src/sessions/workdir-bucket.js';
 import { listSessionsV2, readSessionSummaryV2 } from './v2-session-scan.js';
 
 const FIXTURES = fileURLToPath(new URL('./fixtures', import.meta.url));
+
+function openedTurns(messages: readonly ContextMessage[]): number {
+  return messages.filter((message) => message.role === 'user' && message.origin?.kind !== 'injection').length;
+}
 const WORK_DIR = '/Users/example/proj';
 
 let targetHome: string;
@@ -101,7 +104,7 @@ describe('migrated session is discoverable by agent-core-v2', () => {
     expect(wire).toContain('汇报结论');
   });
 
-  it('turn structure survives a v2 context-transcript round trip and aligns with transcript grouping', async () => {
+  it('turn structure survives a v2 context-transcript round trip and opens one turn per prompt', async () => {
     const result = await migrateFixture('turn-structure', 'with-tool-calls');
 
     const wire = await readFile(join(result.targetDir, 'agents', 'main', 'wire.jsonl'), 'utf-8');
@@ -134,13 +137,10 @@ describe('migrated session is discoverable by agent-core-v2', () => {
     // The invariant that keeps a live turn from hijacking an imported one:
     // every turn.prompt advances the restored turn clock by one, so the number
     // of synthesized turn.prompt records must equal the number of turns the
-    // transcript grouping derives from the same messages. The first live turn
+    // imported user messages open. The first live turn
     // after resume then gets an id past every imported turn.
     const promptCount = records.filter((r) => r.type === 'turn.prompt').length;
-    const groupedTurns = groupMessagesIntoSnapshot([...transcript.entries]).items.filter(
-      (item) => item.kind === 'turn',
-    ).length;
-    expect(promptCount).toBe(groupedTurns);
+    expect(promptCount).toBe(openedTurns(transcript.entries));
     expect(promptCount).toBeGreaterThan(0);
 
     const endedTurnIds = records
@@ -201,10 +201,7 @@ describe('imported external session is discoverable by agent-core-v2', () => {
     const transcript = reduceContextTranscript(records);
     expect([...transcript.entries]).toEqual(messages.map((message) => ({ ...message, toolCalls: [] })));
     const promptCount = records.filter((r) => r.type === 'turn.prompt').length;
-    const groupedTurns = groupMessagesIntoSnapshot([...transcript.entries]).items.filter(
-      (item) => item.kind === 'turn',
-    ).length;
     expect(promptCount).toBe(3);
-    expect(groupedTurns).toBe(promptCount);
+    expect(openedTurns(transcript.entries)).toBe(promptCount);
   });
 });

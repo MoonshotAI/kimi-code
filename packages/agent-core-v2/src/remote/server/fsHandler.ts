@@ -1,6 +1,7 @@
 import { isAbsolute } from 'node:path';
 
-import type { HostFileSystem } from '#/os/backends/node-local/hostFsService';
+import { type HostFileSystem, walkDirectoryTree } from '#/os/backends/node-local/hostFsService';
+import type { HostFileStat } from '#/os/interface/hostFileSystem';
 import { HostFsError, OsFsErrors, toHostFsError } from '#/os/interface/hostFsErrors';
 
 import { RpcError, RpcErrorCode } from '#/remote/protocol/errors';
@@ -12,6 +13,12 @@ import {
   type FsGetMetadataResult,
   type FsReadDirectoryResult,
   type FsReadFileResult,
+  FS_WALK_DEFAULT_TIMEOUT_MS,
+  FS_WALK_ENTRY_OVERHEAD_BYTES,
+  FS_WALK_MAX_RESPONSE_BYTES,
+  FS_WALK_MAX_TIMEOUT_MS,
+  type FsWalkEntry,
+  type FsWalkResult,
 } from '#/remote/protocol/methods';
 
 type Params = Record<string, unknown>;
@@ -33,7 +40,11 @@ export function requireString(params: Params, name: string): string {
 
 export function requireAbsolutePath(params: Params, name: string): string {
   const value = requireString(params, name);
-  if (!isAbsolute(value)) {
+  if (process.platform === 'win32') {
+    if (!/^[A-Za-z]:[\\/]/.test(value)) {
+      throw new RpcError(RpcErrorCode.InvalidRequest, `${name} must be an absolute Windows drive path such as C:\\work`);
+    }
+  } else if (!isAbsolute(value)) {
     throw new RpcError(RpcErrorCode.InvalidRequest, `${name} must be an absolute path`);
   }
   return value;
@@ -62,6 +73,26 @@ function optionalInteger(
   return value;
 }
 
+function optionalStringArray(params: Params, name: string): readonly string[] | undefined {
+  const value = params[name];
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
+    throw new RpcError(RpcErrorCode.InvalidParams, `${name} must be an array of strings`);
+  }
+  return value;
+}
+
+function toMetadata(stat: HostFileStat): FsGetMetadataResult {
+  return {
+    isDirectory: stat.isDirectory,
+    isFile: stat.isFile,
+    isSymlink: stat.isSymbolicLink ?? false,
+    size: stat.size,
+    modifiedAtMs: stat.mtimeMs ?? 0,
+    mode: stat.mode,
+  };
+}
+
 function fsDomainError(error: unknown, ctx: { path: string; op: string }): RpcError {
   const hostError = toHostFsError(error, ctx);
   const code =
@@ -87,8 +118,14 @@ export class FsHandler {
     const path = requireAbsolutePath(params, 'path');
     const offset = optionalInteger(params, 'offset', 0, Number.MAX_SAFE_INTEGER) ?? 0;
     const maxBytes = optionalInteger(params, 'maxBytes', 1, FS_READ_FILE_MAX_BYTES);
+    const includeMetadata = optionalBoolean(params, 'includeMetadata') ?? false;
     try {
-      const { size } = await this.fs.stat(path);
+      const stat = await this.fs.stat(path);
+      const metadata = includeMetadata ? toMetadata(stat) : undefined;
+      if (metadata !== undefined && !stat.isFile) {
+        return { dataBase64: '', eof: true, metadata };
+      }
+      const { size } = stat;
       const length = maxBytes ?? size - offset;
       if (length > FS_READ_FILE_WHOLE_MAX_BYTES) {
         throw new RpcError(
@@ -97,10 +134,10 @@ export class FsHandler {
         );
       }
       if (offset >= size) {
-        return { dataBase64: '', eof: true };
+        return { dataBase64: '', eof: true, metadata };
       }
       const data = await this.fs.readBytes(path, Math.min(length, size - offset), offset);
-      return { dataBase64: Buffer.from(data).toString('base64'), eof: offset + data.byteLength >= size };
+      return { dataBase64: Buffer.from(data).toString('base64'), eof: offset + data.byteLength >= size, metadata };
     } catch (error) {
       if (error instanceof RpcError) throw error;
       throw fsDomainError(error, { path, op: 'read' });
@@ -153,15 +190,7 @@ export class FsHandler {
     const path = requireAbsolutePath(params, 'path');
     const followSymlinks = optionalBoolean(params, 'followSymlinks') ?? true;
     try {
-      const result = followSymlinks ? await this.fs.stat(path) : await this.fs.lstat(path);
-      return {
-        isDirectory: result.isDirectory,
-        isFile: result.isFile,
-        isSymlink: result.isSymbolicLink ?? false,
-        size: result.size,
-        modifiedAtMs: result.mtimeMs ?? 0,
-        mode: result.mode,
-      };
+      return toMetadata(followSymlinks ? await this.fs.stat(path) : await this.fs.lstat(path));
     } catch (error) {
       throw fsDomainError(error, { path, op: 'stat' });
     }
@@ -191,6 +220,36 @@ export class FsHandler {
         })),
         truncated: entries.length > FS_READ_DIRECTORY_MAX_ENTRIES,
       };
+    } catch (error) {
+      throw fsDomainError(error, { path, op: 'readdir' });
+    }
+  }
+
+  async walk(rawParams: unknown): Promise<FsWalkResult> {
+    const params = requireParams(rawParams);
+    const path = requireAbsolutePath(params, 'path');
+    const ignore = optionalStringArray(params, 'ignore');
+    const timeoutMs = optionalInteger(params, 'timeoutMs', 1, FS_WALK_MAX_TIMEOUT_MS) ?? FS_WALK_DEFAULT_TIMEOUT_MS;
+    const entries: FsWalkEntry[] = [];
+    let responseBytes = 0;
+    const readdir = async (directory: string) => {
+      const children = await this.fs.readdir(directory);
+      if (children.length > FS_READ_DIRECTORY_MAX_ENTRIES) {
+        throw new HostFsError(
+          OsFsErrors.codes.OS_FS_DIRECTORY_TOO_LARGE,
+          `readdir ${directory} exceeds the ${FS_READ_DIRECTORY_MAX_ENTRIES}-entry limit`,
+          { details: { path: directory, op: 'readdir', limit: FS_READ_DIRECTORY_MAX_ENTRIES } },
+        );
+      }
+      return children;
+    };
+    try {
+      const { truncated } = await walkDirectoryTree({ readdir }, path, { ignore, deadlineMs: Date.now() + timeoutMs }, (entry) => {
+        responseBytes += Buffer.byteLength(entry.path) + FS_WALK_ENTRY_OVERHEAD_BYTES;
+        if (responseBytes > FS_WALK_MAX_RESPONSE_BYTES) return false;
+        entries.push(entry);
+      });
+      return { entries, truncated };
     } catch (error) {
       throw fsDomainError(error, { path, op: 'readdir' });
     }

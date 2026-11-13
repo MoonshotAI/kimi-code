@@ -2,7 +2,7 @@ import {
   BUDGET_THINKING_EFFORTS,
   matchKnownAnthropicModelProfile,
   matchUnknownClaudeProfile,
-} from '@moonshot-ai/kosong/providers/anthropic-profile';
+} from '@moonshot-ai/core/llm/builtin/protocol/anthropic/legalize';
 
 import type { ModelAlias, ProviderType } from './schema';
 
@@ -31,11 +31,13 @@ export function effectiveModelAlias(
 }
 
 function withAnthropicProfile(model: ModelAlias, providerType?: ProviderType): ModelAlias {
+  const modelName: string | undefined = model.model;
+  if (modelName === undefined) return model;
   const protocol = model.protocol ?? providerType;
   const profile =
     providerType !== undefined && providerType !== 'kimi' && protocol === 'anthropic'
-      ? (matchKnownAnthropicModelProfile(model.model) ?? matchUnknownClaudeProfile(model.model))
-      : matchKnownAnthropicModelProfile(model.model);
+      ? (matchKnownAnthropicModelProfile(modelName) ?? matchUnknownClaudeProfile(modelName))
+      : matchKnownAnthropicModelProfile(modelName);
   if (profile === undefined) return model;
 
   const capability = profile.canDisableThinking ? 'thinking' : 'always_thinking';

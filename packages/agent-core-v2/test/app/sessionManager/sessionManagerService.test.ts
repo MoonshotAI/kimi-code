@@ -57,6 +57,11 @@ function makeSessionManager(
   const environments = {
     ready: Promise.resolve(),
     current: (id: string) => environmentRegistryOf(workspaces)?.current(id),
+    acquireWhenReady: (binding: { environmentId: string }, required: never) => {
+      const registry = environmentRegistryOf(workspaces);
+      if (registry === undefined) throw new Error('environment registry is not stubbed');
+      return registry.acquireWhenReady(binding, required);
+    },
     acquire: (binding: { environmentId: string }, required: never) => {
       const registry = environmentRegistryOf(workspaces);
       if (registry === undefined) throw new Error('environment registry is not stubbed');
@@ -1050,10 +1055,44 @@ describe('SessionManager creation environment', () => {
     });
   });
 
+  it.each(['/remote//project', 'C:/remote//project'])('resolves trust-check cwd %s without requesting SSH authentication', async (defaultCwd) => {
+    const { options } = setup(configWith({
+      default: 'password-only',
+      'password-only': { type: 'ssh', host: 'example.test', defaultCwd },
+    }));
+    const connect = vi.fn(async () => { throw new Error('password input is not available yet'); });
+    connectableEnvironment(registry, { environmentId: 'password-only', connect });
+    const acquire = vi.spyOn(registry, 'acquireWhenReady');
+
+    const resolved = await manager.resolveCreationEnvironment({ workDir: '/workspace' });
+
+    expect(resolved).toEqual({
+      workspaceId: 'workspace-1',
+      environmentId: 'password-only',
+      environmentCwd: defaultCwd.startsWith('C:') ? String.raw`C:\remote\project` : '/remote/project',
+    });
+    expect(acquire).not.toHaveBeenCalled();
+    expect(connect).not.toHaveBeenCalled();
+    expect(options).toEqual([]);
+  });
+
   it('normalizes a declared remote cwd before handing it to the controller', async () => {
     const { options } = setup(configWith({ sandbox: { command: 'sandbox', defaultCwd: '/remote//project/./sub/..' } }), true);
     await manager.create({ workDir: '/workspace', environmentId: 'sandbox' });
     expect(options[0]).toMatchObject({ environmentId: 'sandbox', environmentCwd: '/remote/project' });
+  });
+
+  it('normalizes Windows drive cwd without changing POSIX double-slash inputs', async () => {
+    const { options } = setup(configWith({
+      drive: { command: 'sandbox', defaultCwd: 'C:/remote//project/./sub/..' },
+      posix: { command: 'sandbox', defaultCwd: '//remote/project' },
+    }), true);
+    await manager.create({ workDir: '/workspace', environmentId: 'drive' });
+    await manager.create({ workDir: '/workspace', environmentId: 'posix' });
+    expect(options).toMatchObject([
+      { environmentId: 'drive', environmentCwd: 'C:\\remote\\project' },
+      { environmentId: 'posix', environmentCwd: '/remote/project' },
+    ]);
   });
 
   it('requires a cwd for a registered environment that is not declared', async () => {

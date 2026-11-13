@@ -1071,6 +1071,67 @@ describe('projects.json migration and patch', () => {
     );
   }
 
+  it('shares a parsed catalog across repeated reads until the file changes', async () => {
+    await writeProjects({ schema_version: 2, projects: {}, deleted_project_ids: [] });
+    const storage = new FileStorageService(homeDir);
+    const docs = new JsonAtomicDocumentStore(storage);
+    const get = vi.spyOn(docs, 'get');
+    const persistence = new FileWorkspacePersistence(docs, storage, stubBootstrap(homeDir));
+    try {
+      const first = await persistence.load();
+      for (let index = 0; index < 64; index += 1) {
+        expect(await persistence.load()).toEqual(first);
+      }
+      expect(get.mock.calls.filter(([, key]) => key === 'projects.json')).toHaveLength(1);
+      await persistence.update((catalog) => ({ ...catalog, deletedIds: ['wd_removed'] }));
+      expect((await persistence.load())?.deletedIds).toEqual(['wd_removed']);
+    } finally {
+      persistence.dispose();
+    }
+  });
+
+  it('observes same-sized atomic replacement even when the modification time is preserved', async () => {
+    const original = { schema_version: 2, projects: {}, deleted_project_ids: ['old'] };
+    await writeProjects(original);
+    const persistence = createPersistence();
+    try {
+      expect((await persistence.load())?.deletedIds).toEqual(['old']);
+      const target = join(homeDir, 'projects.json');
+      const metadata = await fsp.stat(target);
+      const replacement = join(homeDir, 'replacement.json');
+      await fsp.writeFile(replacement, JSON.stringify({ ...original, deleted_project_ids: ['new'] }));
+      await fsp.utimes(replacement, metadata.atime, metadata.mtime);
+      await fsp.rename(replacement, target);
+      expect((await persistence.load())?.deletedIds).toEqual(['new']);
+      await fsp.writeFile(target, '{invalid');
+      await expect(persistence.load()).rejects.toThrow();
+      await writeProjects(original);
+      expect((await persistence.load())?.deletedIds).toEqual(['old']);
+    } finally {
+      persistence.dispose();
+    }
+  });
+
+  it('does not cache a snapshot when the file is atomically replaced during its read', async () => {
+    const original = { schema_version: 2, projects: {}, deleted_project_ids: ['old'] };
+    await writeProjects(original);
+    const storage = new FileStorageService(homeDir);
+    const docs = new JsonAtomicDocumentStore(storage);
+    const get = docs.get.bind(docs);
+    vi.spyOn(docs, 'get').mockImplementationOnce(async (scope, key) => {
+      const value = await get(scope, key);
+      await docs.set(scope, key, { ...original, deleted_project_ids: ['new'] });
+      return value;
+    });
+    const persistence = new FileWorkspacePersistence(docs, storage, stubBootstrap(homeDir));
+    try {
+      expect((await persistence.load())?.deletedIds).toEqual(['old']);
+      expect((await persistence.load())?.deletedIds).toEqual(['new']);
+    } finally {
+      persistence.dispose();
+    }
+  });
+
   it('migrates once, preserves source bytes, and ignores later legacy writes', async () => {
     const id = 'wm_legacy';
     const legacy = {

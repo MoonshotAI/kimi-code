@@ -2,7 +2,7 @@ import type { Component, Focusable } from '@moonshot-ai/pi-tui';
 import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
 import type { ReverseRpcModalOwner } from '../reverse-rpc/modal-coordinator';
 
-import type { KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
+import type { KimiHarness, Session, ThinkingEffort } from '@moonshot-ai/kimi-code-sdk';
 
 import type { ColorToken, ThemeName } from '#/tui/theme';
 
@@ -19,6 +19,7 @@ import type {
   AppState,
   InlineSkillActivation,
   LoginProgressSpinnerHandle,
+  ModelSwitchPersistence,
   QueuedMessage,
   TranscriptEntry,
 } from '../types';
@@ -136,7 +137,7 @@ export interface SlashCommandHost {
     owner?: ReverseRpcModalOwner,
   ): void;
   restoreEditor(): void;
-  restoreInputText(text: string): void;
+  restoreInputText(text: string, inlineSkillActivations?: readonly InlineSkillActivation[]): void;
   refreshSlashCommandAutocomplete(): void;
   /**
    * Rebuild the plugin slash-command list. With no session (v2 session-less
@@ -174,12 +175,16 @@ export interface SlashCommandHost {
   beginSessionRequest(): void;
   failSessionRequest(message: string): void;
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
+  drainQueueIfIdle(): void;
+  completedCompactionSerial: number;
   /** Queue a `/compact` for FIFO dispatch; false when one is already queued. */
   enqueueCompactCommand(args: string): boolean;
+  enqueueModelSwitch(
+    alias: string,
+    thinking: ThinkingEffort,
+    persist: ModelSwitchPersistence,
+  ): void;
   requestQueuedGoalPromotion?(): void;
-  /** Reset the client-side cache-break baseline after the context was cut
-   *  (/undo): the next step's cache-read drop is expected, not a break. */
-  noteContextCut?(): void;
 
   // UI
   showLoginProgressSpinner(label: string): LoginProgressSpinnerHandle;
@@ -220,6 +225,8 @@ export interface SlashCommandHost {
   ): void;
   readonly skillCommandMap: Map<string, string>;
   readonly pluginCommandMap: Map<string, string>;
+  readonly skillVariantPathForCommand?: (commandName: string, tokenStart: number) => string | undefined;
+  readonly defaultSkillPathForCommand?: (commandName: string) => string | undefined;
 
   // Controller refs
   readonly streamingUI: StreamingUIController;
@@ -240,8 +247,14 @@ export function dispatchInput(host: SlashCommandHost, text: string): void {
     pluginCommandMap: host.pluginCommandMap,
     isStreaming: host.state.appState.streamingPhase !== 'idle',
     isCompacting: host.state.appState.isCompacting,
+    skillVariantPathForCommand: host.skillVariantPathForCommand === undefined
+      ? undefined
+      : (commandName, tokenStart) => host.skillVariantPathForCommand!(commandName, tokenStart),
+    defaultSkillPathForCommand: host.defaultSkillPathForCommand === undefined
+      ? undefined
+      : (commandName) => host.defaultSkillPathForCommand!(commandName),
   });
-  if (intent.kind === 'skill' || activations.length > 0) {
+  if (intent.kind === 'skill' || (activations.length > 0 && intent.kind !== 'builtin')) {
     const leading = activations[0];
     if (intent.kind === 'skill' && leading?.args !== undefined && host.state.appState.model.trim().length > 0) {
       host.track('input_command', {
@@ -253,7 +266,7 @@ export function dispatchInput(host: SlashCommandHost, text: string): void {
     return;
   }
   if (intent.kind !== 'not-command') {
-    void executeSlashCommand(host, text, intent);
+    void executeSlashCommand(host, text, intent, activations);
     return;
   }
   host.sendNormalUserInput(text);
@@ -263,6 +276,7 @@ async function executeSlashCommand(
   host: SlashCommandHost,
   input: string,
   intent: Exclude<SlashCommandIntent, { readonly kind: 'skill' | 'not-command' }>,
+  activations: readonly InlineSkillActivation[],
 ): Promise<void> {
   const parsedCommand = parseSlashInput(input);
 
@@ -328,7 +342,7 @@ async function executeSlashCommand(
         host.track('clear');
       }
       try {
-        await handleBuiltInSlashCommand(host, intent.name, intent.args, input);
+        await handleBuiltInSlashCommand(host, intent.name, intent.args, input, activations);
       } catch (error) {
         host.showError(formatErrorMessage(error));
       }
@@ -365,13 +379,14 @@ async function handleBuiltInSlashCommand(
   name: BuiltinSlashCommandName,
   args: string,
   input: string,
+  activations: readonly InlineSkillActivation[],
 ): Promise<void> {
   if (host.session === undefined && SESSION_REQUIRING_COMMANDS.has(name)) {
     const session = await ensureSessionForCommand(host);
     if (session === undefined) {
       // Creation failed after submit cleared the buffer; give the input
       // back unless the user moved on — a newer draft or an opened panel.
-      if (canRestoreSubmittedInput(host)) host.restoreInputText(input);
+      if (canRestoreSubmittedInput(host)) host.restoreInputText(input, activations);
       return;
     }
     // A first prompt may have started a turn while the session was being
@@ -498,7 +513,7 @@ async function handleBuiltInSlashCommand(
       await handleFeedbackCommand(host);
       return;
     case 'btw':
-      await handleBtwCommand(host, args);
+      await handleBtwCommand(host, args, activations);
       return;
     case 'title':
       await handleTitleCommand(host, args);

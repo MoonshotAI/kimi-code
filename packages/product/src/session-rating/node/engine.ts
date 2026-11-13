@@ -52,7 +52,7 @@ export interface RatingEnvironment {
   readonly sessionId: string;
   readonly currentModel: string;
   readonly model: RatingModelRoute;
-  readonly cumulativeTokens: number;
+  readonly cumulativeTokens: number | undefined;
   readonly contextTokens: number;
   readonly permissionMode: string;
   readonly thinkingEffort: string;

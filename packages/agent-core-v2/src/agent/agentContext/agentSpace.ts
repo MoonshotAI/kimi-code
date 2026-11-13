@@ -1,6 +1,8 @@
 import { BugIndicatingError } from '#/_base/errors/errors';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import type { StateKey } from '#/_base/state/stateRegistry';
+import type { IDisposable } from '#/_base/di/lifecycle';
+import type { Message } from '@moonshot-ai/core/llm/message';
 import type { Event2 } from '#/app/event/event2';
 import {
   type AgentModel,
@@ -24,6 +26,7 @@ export interface AgentSpaceHost {
   registerModel(definition: AgentModelDefinition<any, any>, model: AgentModel<any>): void;
   dispatchModelEvent(event: Event2<any>): Promise<void>;
   readLegacyState(key: StateKey<any>): unknown;
+  readHistory(): readonly Message[];
 }
 
 interface ModelEntry {
@@ -38,9 +41,23 @@ export class AgentSpaceImpl implements AgentSpace {
   private readonly instances = new Map<AgentModelDefinition<any, any>, ModelEntry>();
   private host: AgentSpaceHost | undefined;
   private context: AgentContext | undefined;
+  private historyProvider: (() => readonly Message[]) | undefined;
   private dead = false;
 
   constructor(private readonly agentId: string) {}
+
+  _setHistoryProvider(provider: () => readonly Message[]): IDisposable {
+    this.historyProvider = provider;
+    return {
+      dispose: () => {
+        if (this.historyProvider === provider) this.historyProvider = undefined;
+      },
+    };
+  }
+
+  readHistory(): readonly Message[] {
+    return this.historyProvider?.() ?? [];
+  }
 
   _bindContext(context: AgentContext): void {
     this.context = context;
@@ -96,6 +113,7 @@ export class AgentSpaceImpl implements AgentSpace {
     const bridge: AgentModelBridge = {
       dispatch: (event) => host.dispatchModelEvent(event),
       readLegacy: (key) => host.readLegacyState(key),
+      readHistory: () => host.readHistory(),
       initialState: () => Object.freeze(definition.state.initial()),
     };
     const model = new definition.model({ agent: context, bridge });

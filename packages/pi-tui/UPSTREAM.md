@@ -133,11 +133,23 @@ Each card: **decision** and **why not in the app**. Status is `keep` or `absorbe
 
 **Why not in the app:** The file walker is inside the combined autocomplete provider.
 
+### opt-in-gitignored-at-completion — keep
+
+**Decision:** `CombinedAutocompleteProvider` accepts a default-off `includeGitignoredFiles` option. When enabled, `@` completion scores ordinary fd matches first, supplements them with deduplicated `--no-ignore-vcs` matches unless the 20-item cap is already filled with the highest-scoring ordinary matches, and then ranks by score before ignored status. The existing signal, hidden-file arguments, `.git` exclusions, root fan-out, scoring, and 20-item cap are shared by both phases.
+
+**Why not in the app:** The ordinary and supplemental fd walkers feed the same internal absolute-path dedupe and ranking pipeline. An app wrapper would have to replace that pipeline and could not avoid duplicate scans when the ordinary result already fills the list.
+
 ### autocomplete-preserves-literal-wrappers — keep
 
 **Decision:** Path completion tries the prose-stripped token first, then retries the original token when no file matches. Unmatched leading wrappers in real filenames therefore remain valid path characters.
 
 **Why not in the app:** Token extraction and file lookup both live inside the combined autocomplete provider.
+
+### autocomplete-provider-preview-scheduling — keep
+
+**Decision:** Providers may set `autocompleteDebounceMs` and `getAutocompletePreview`. The editor retains the last authoritative suggestions with their input context, applies a provider preview while the existing debounce timer is pending, and always runs the trailing request. Previews never replace the authoritative cache; cancellation clears it. Providers without these optional members retain the upstream 20ms debounce and no-preview behavior.
+
+**Why not in the app:** Debounce, abort/start-token invalidation, request sequencing, and authoritative response acceptance are private editor state. An app-side timer or preview cache would create a second scheduler that could race the editor's own requests.
 
 ### opt-in-inline-slash-autocomplete — keep
 
@@ -222,3 +234,9 @@ Each card: **decision** and **why not in the app**. Status is `keep` or `absorbe
 **Decision:** In tmux, program-status reports and clears use DCS passthrough. Auto mode uses the Rex environment fallback and does not send a support query in tmux, screen, or zellij; explicit enablement still reports the root record.
 
 **Why not in the app:** The terminal owns capability detection, replay, stop, and direct-exit restoration. An app wrapper around ordinary reports would leave the other lifecycle paths unwrapped.
+
+### shared-animation-frames — keep
+
+**Decision:** `requestAnimationFrame` and `cancelAnimationFrame` on the TUI work like the browser's. A request runs once; every callback of a frame gets the same timestamp on the `performance.now()` clock; frames are never replayed after a late wake. By default they land on a fixed `ANIMATION_FRAME_INTERVAL_MS` grid. `setAnimationFrameRate` on `TuiBase` takes a whole number of frames per second from 1 to `MAX_ANIMATION_FRAME_RATE` and throws `RangeError` on anything else; after it, the next frame comes one new interval after the last frame. One unref'd timer serves all requests and exists only while a request is pending. A throwing callback does not stop the other callbacks or later frames, and the first error is rethrown in a microtask. `stop()` pauses frames and keeps the requests; `start()` resumes on the next frame. An optional constructor clock lets tests drive frames by hand. Without one, each scheduler keeps the global timers and `performance.now` it found when it was created, so a running frame chain never moves onto fake timers that a later test installs. With no requests, behavior matches upstream.
+
+**Why not in the app:** Pausing and resuming must follow the renderer's own `stop()` and `start()`, which hosts such as the external editor call directly. One clock in the renderer also lets every animated component share one timer and one frame time. The host sets the frame rate there for the same reason: the timer and the grid belong to the renderer, and no component sees the others' requests.

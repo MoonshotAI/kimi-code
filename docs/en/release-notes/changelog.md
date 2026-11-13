@@ -6,6 +6,82 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 2.6.0 (2026-11-12)
+
+We recommend switching to fullscreen mode via `/settings -> TUI mode -> Fullscreen` (takes effect after restarting) for a better experience.
+
+### Features
+
+- Fold consecutive tool calls and thinking into summary lines in fullscreen mode and hide Activated skill cards for model-loaded skills; adjust folding in `/settings`, or set `tool_call_density = "ungrouped"` and `thinking = "ungrouped"` under `[transcript]` in `tui.toml` to keep the previous layout.
+- Include hidden and `.gitignore`-ignored paths by default in `@` file path completion, ranking non-ignored files first at equal match quality.
+- Keep same-name workspace skills selectable in a dedicated TUI Skills group, with directory, global, or built-in labels distinguishing their sources.
+- Support copying selected text with `Ctrl-C` or `Cmd-C` in fullscreen mode, and add a Copy on select toggle in `/settings`.
+- Persist user and local-project permission rules (in `config.toml` and trusted `.kimi-code/local.toml`) and apply them when sessions start, with `deny` taking precedence over `ask` and `allow`.
+- Add artifact missions in Tower with key-deliverable review and human acceptance, and show mission kinds in status and mission views.
+
+### Polish
+
+- Copy only to the system clipboard outside SSH and mosh instead of also sending OSC 52 through the terminal; set `KIMI_CODE_CLIPBOARD_OSC52=1` to keep the old behavior.
+- Allow `primary` as an ordinary `[secondary_model]` model alias; Tower reviewers now use the pool default instead of the primary model, so using the primary model requires selecting an explicit pool alias or setting `default_model`.
+- Add the `KIMI_CODE_TUI_ANIMATION_FPS` environment variable (an integer from `1` to `60`) to adjust the frame rate of in-progress title shimmer animations.
+
+### Bug Fixes
+
+- Apply `[[permission.rules]]` from `config.toml` when a session starts, including `deny`, `ask`, and `allow` rules in print mode.
+- Follow the current primary directory for default local workdirs after a primary swap while keeping tools, project configuration, and session indexes in sync; pass an explicit `environmentCwd` to retain pinned-directory behavior.
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
+## 2.5.3 (2026-11-10)
+
+### Features
+
+- Improve steer interruption logic.
+
+### Bug Fixes
+
+- web: Improved interactions and fixed known bugs.
+- Fix stdio MCP servers configured with script commands such as `npx` failing to start on Windows.
+
+## 2.5.2 (2026-11-06)
+
+### Bug Fixes
+
+- Fix duplicate tool declaration errors in select_tools when MCP tool definitions change.
+- web: Fix steered messages being incorrectly queued while a session is running.
+- web: Fix project creation when accessing the Web UI over HTTP.
+
+## 2.5.1 (2026-11-05)
+
+### Bug Fixes
+
+- Fix repeated HTTP 400 errors in sessions caused by empty system messages for dynamic tool schemas.
+- Fix missing image and video previews in live and reloaded tool results.
+- Hide sessions belonging to deleted workspaces from session lists.
+- web: Fix session titles not being generated automatically after the first turn of a new session.
+- web: Fix local images not displaying when their paths contain spaces.
+- web: Fix the session info panel automatically floating over and covering chat messages in narrow layouts.
+- web: Hide stale empty implicit workspaces from the workspace list.
+- web: Fix tool call summaries repeatedly expanding and collapsing while a response is in progress.
+
+## 2.5.0 (2026-11-04)
+
+### Features
+
+- Use `/model` and `/effort` while the agent is working; changes apply from the next turn.
+- Merge project-level Skills from the primary and remembered additional directories; the primary wins name conflicts.
+- Create remote sessions in SSH, Docker, or custom-command environments.
+- `[workspace] require_trust = false` treats every workspace as trusted and skips trust prompts after `/reload`; use it only when every workspace is trusted.
+
+### Polish
+
+- Web cross-session full-text search is off by default; set `[database] global_search = true` to enable it.
+- With only `default_model` configured, newly spawned Agent and AgentSwarm subagents use that model; the legacy `force` key is ignored with a warning.
+- Agent and AgentSwarm remove the implicit `primary`; list the main model explicitly in the pool to use it. Without `[secondary_model]`, subagents still inherit the caller's model.
+
+### Bug Fixes
+
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
 ## 2.4.1 (2026-10-30)
 
 ### Polish

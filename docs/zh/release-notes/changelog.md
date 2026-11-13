@@ -6,6 +6,82 @@ outline: 2
 
 本页记录 Kimi Code CLI 每个版本的变更内容。
 
+## 2.6.0（2026-11-12）
+
+建议执行 `/settings -> TUI mode -> Fullscreen` 切换到全屏模式（重启后生效），获得更好的使用体验。
+
+### 新功能
+
+- 全屏模式下自动将连续的工具调用和思考过程折叠为摘要行，不再显示模型加载的技能激活卡片；可在 `/settings` 中调整折叠密度，或在 `tui.toml` 的 `[transcript]` 下设为 `"ungrouped"` 恢复原布局。
+- `@` 文件路径补全默认包含隐藏路径与被 `.gitignore` 忽略的文件，匹配质量相同时优先展示未忽略文件。
+- 多目录工作区支持在独立的 Skills 分组中选择同名技能，并按目录、全局或内置来源标注区分。
+- 全屏模式支持按 `Ctrl-C` 或 `Cmd-C` 复制选中文本，并在 `/settings` 中新增选中即复制（Copy on select）开关。
+- 支持持久化用户级与本地项目级权限规则（保存在 `config.toml` 与已信任工作区的 `.kimi-code/local.toml`）并在会话启动时加载，匹配优先级为 `deny` > `ask` > `allow`。
+- Tower 新增交付物任务（artifact missions），支持关键交付物审阅与人工验收，并在状态与任务视图中展示任务类型。
+
+### 优化
+
+- 非 SSH 和 mosh 环境下复制仅写入系统剪贴板，不再同时发送终端 OSC 52 序列；如需保留旧行为可设置 `KIMI_CODE_CLIPBOARD_OSC52=1`。
+- 允许在 `[secondary_model]` 中将 `primary` 作为普通模型别名；Tower 评审默认改用模型池默认模型，如需使用主模型需显式配置模型池别名或 `default_model`。
+- 新增环境变量 `KIMI_CODE_TUI_ANIMATION_FPS`（`1`–`60` 的整数），可调整终端进行中标题扫光动画的帧率。
+
+### 修复
+
+- 修复会话启动及 print 模式下未生效 `config.toml` 中 `[[permission.rules]]`（含 `deny`、`ask`、`allow`）的问题。
+- 切换工作区主目录后，默认本地工作目录现跟随新的主目录，并同步工具、项目配置与会话索引；如需固定原目录请显式指定 `environmentCwd`。
+- 修复了一些已知问题，并做了若干细节优化。更详细的变更记录见 [GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md)。
+
+## 2.5.3（2026-11-10）
+
+### 新功能
+
+- 优化 steer 插话逻辑。
+
+### 修复
+
+- Web：优化交互体验并修复已知问题。
+- 修复 Windows 上配置为 `npx` 等脚本命令的 stdio MCP 服务器无法启动的问题。
+
+## 2.5.2（2026-11-06）
+
+### 修复
+
+- 修复 MCP 工具定义变化时 select_tools 重复声明工具导致的错误。
+- web: 修复会话运行期间 steer 消息被错误排队的问题。
+- web: 修复通过 HTTP 访问 Web UI 时无法创建项目的问题。
+
+## 2.5.1（2026-11-05）
+
+### 修复
+
+- 修复动态工具 schema 产生的空系统消息导致会话反复出现 HTTP 400 错误的问题。
+- 修复实时及重新加载的工具结果中图片和视频预览缺失的问题。
+- 修复已删除工作区的会话仍出现在会话列表中的问题。
+- web: 修复新会话首轮对话后不自动生成标题的问题。
+- web: 修复包含空格的本地图片路径无法显示的问题。
+- web: 修复窄屏下信息面板自动悬浮并遮挡聊天消息的问题。
+- web: 修复旧的空隐式工作区仍出现在工作区列表中的问题。
+- web: 修复回答过程中工具调用汇总反复展开和收起的问题。
+
+## 2.5.0（2026-11-04）
+
+### 新功能
+
+- 支持在 Agent 工作时使用 `/model` 和 `/effort`，设置从下一轮生效。
+- 多目录工作区可合并主目录和已记住的附加目录中的项目级 Skills，同名时主目录优先。
+- 支持在 SSH、Docker 或自定义命令环境中创建远程会话。
+- 新增 `[workspace] require_trust = false`，将所有工作区视为可信并跳过信任提示（`/reload` 后生效），仅在全部工作区可信时使用。
+
+### 优化
+
+- Web 跨会话全文搜索默认关闭，可在 `[database]` 设置 `global_search = true` 开启。
+- 仅配置 `default_model` 时，Agent 和 AgentSwarm 新派生的子 Agent 固定使用该模型；旧 `force` 配置会被忽略并警告。
+- 调整 Agent 和 AgentSwarm 的模型选择：隐式 `primary` 不再可用，使用主模型时需显式加入模型池；未配置 `[secondary_model]` 时仍继承主会话模型。
+
+### 修复
+
+- 修复了一些已知问题，并做了若干细节优化。更详细的变更记录见 [GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md)。
+
 ## 2.4.1（2026-10-30）
 
 ### 优化

@@ -19,7 +19,7 @@ export class FileEditService implements IFileEditService {
 
   async edit(input: FileEditInput, fs: IHostFileSystem = this.fs): Promise<FileEditResult> {
     try {
-      const raw = await fs.readText(input.path, { errors: 'strict' });
+      const raw = await fs.readText(input.path, { errors: 'strict', preserveBOM: true });
       const model = new TextModel(raw);
       const result = this.editor.apply(model, {
         path: input.displayPath,

@@ -53,6 +53,7 @@ export interface ReplayRenderContext {
 export interface SkillActivationProjection {
   readonly activationId: string;
   readonly skillName: string;
+  readonly skillPath?: string;
   readonly skillArgs?: string;
   readonly skillSource?: string;
   readonly trigger: SkillActivationTrigger;
@@ -73,7 +74,8 @@ export interface ReplayBackgroundProjection {
 }
 
 export function appStateFromResumeAgent(agent: ResumedAgentState): Partial<AppState> {
-  const maxContextTokens = agent.config.modelCapabilities?.max_context_tokens ?? 0;
+  const maxContextTokens =
+    agent.config.model?.maxInputSize ?? agent.config.model?.maxContextSize ?? 0;
   const contextTokens = agent.context.tokenCount;
   const contextUsage = maxContextTokens > 0 ? contextTokens / maxContextTokens : 0;
   return {
@@ -325,6 +327,7 @@ export function skillActivationFromOrigin(
   return {
     activationId: origin.activationId,
     skillName: origin.skillName,
+    skillPath: origin.skillPath,
     skillArgs: origin.skillArgs,
     skillSource: origin.skillSource,
     trigger: origin.trigger,
@@ -349,6 +352,7 @@ export function bundledSkillsFromOrigin(
       readonly skillActivations?: readonly {
         readonly activationId: string;
         readonly skillName: string;
+        readonly skillPath?: string;
         readonly skillArgs?: string;
       }[];
     }
@@ -357,6 +361,7 @@ export function bundledSkillsFromOrigin(
   return activations.map((activation) => ({
     activationId: activation.activationId,
     skillName: activation.skillName,
+    skillPath: activation.skillPath,
     skillArgs: activation.skillArgs,
     trigger: 'user-slash' as const,
     bundled: true,

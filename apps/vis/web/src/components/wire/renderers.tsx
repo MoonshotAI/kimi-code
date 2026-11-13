@@ -1081,7 +1081,10 @@ export const WIRE_RENDERERS: RendererMap = {
       return {
         main: (
           <span className="flex items-center gap-2 min-w-0">
-            <Pill tone={r.kind === 'compaction' ? 'compaction' : 'turn'} variant="soft">
+            <Pill
+              tone={r.kind === 'compaction' ? 'compaction' : r.kind === 'prediction' ? 'subagent' : 'turn'}
+              variant="soft"
+            >
               {r.kind}
             </Pill>
             <Mono>{r.model}</Mono>
@@ -1577,6 +1580,12 @@ export const WIRE_RENDERERS: RendererMap = {
     tone: 'meta',
     label: 'interrupted',
     headline: (r) => ({ main: <Dim>interruption reminder · turn {r.turnId}</Dim> }),
+  },
+
+  'interruptionReminder.requested': {
+    tone: 'meta',
+    label: 'interrupt requested',
+    headline: (r) => ({ main: <Dim>interruption requested · turn {r.turnId}</Dim> }),
   },
 };
 

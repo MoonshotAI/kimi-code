@@ -14,6 +14,7 @@ import type {
   SetDefaultModelResponse,
 } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import type { Envelope } from '@moonshot-ai/kap-server/protocol/envelope';
+import type { ConversationTurnsPage } from '@moonshot-ai/kap-server/protocol/conversation';
 import type { Message } from '@moonshot-ai/kap-server/protocol/message';
 import type {
   InteractionRespondRequest,
@@ -245,7 +246,7 @@ export class HttpClient {
   }
   undoSession(
     sid: string,
-    body: UndoSessionRequest = { count: 1 },
+    body: UndoSessionRequest,
   ): Promise<UndoSessionResponse> {
     return this.request(
       'POST',
@@ -329,6 +330,9 @@ export class HttpClient {
     query?: { page_size?: number; before_id?: string; after_id?: string; role?: string },
   ): Promise<{ items: Message[]; has_more: boolean }> {
     return this.request('GET', `/sessions/${encodeURIComponent(sid)}/messages${qs(query)}`, undefined);
+  }
+  listTurns(sid: string): Promise<ConversationTurnsPage> {
+    return this.request('GET', `/sessions/${encodeURIComponent(sid)}/agents/main/turns`, undefined);
   }
 
   // ── Prompts ─────────────────────────────────────────────────────────────

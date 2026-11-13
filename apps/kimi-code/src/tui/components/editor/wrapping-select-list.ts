@@ -6,6 +6,8 @@ import {
   type SelectItem,
   type SelectListLayoutOptions,
   type SelectListTheme,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
 } from '@moonshot-ai/pi-tui';
 
 // Mirror pi-tui's private select-list layout constants
@@ -66,6 +68,9 @@ export class WrappingSelectList extends SelectList {
     for (let i = startIndex; i < endIndex; i++) {
       const item = filteredItems[i];
       if (!item) continue;
+      if (item.data?.['group'] === 'skill' && filteredItems[i - 1]?.data?.['group'] !== 'skill') {
+        lines.push(theme.description('  Skills'));
+      }
       lines.push(...this.renderItemLines(item, i === selectedIndex, width, primaryColumnWidth));
     }
 
@@ -74,6 +79,35 @@ export class WrappingSelectList extends SelectList {
       lines.push(theme.scrollInfo(truncatePlainToWidth(scrollText, width - 2)));
     }
     return lines;
+  }
+
+  override handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    const { filteredItems, selectedIndex, maxVisible } = this.internals();
+    if (filteredItems.length === 0 || event.type === 'wheel') return super.handleMouse(event);
+    if (event.button !== 'left' || (event.type !== 'press' && event.type !== 'click')) {
+      return super.handleMouse(event);
+    }
+    const startIndex = Math.max(
+      0,
+      Math.min(selectedIndex - Math.floor(maxVisible / 2), filteredItems.length - maxVisible),
+    );
+    const endIndex = Math.min(startIndex + maxVisible, filteredItems.length);
+    const primaryColumnWidth = this.primaryColumnWidth();
+    let row = 0;
+    for (let i = startIndex; i < endIndex; i++) {
+      const item = filteredItems[i];
+      if (!item) continue;
+      if (item.data?.['group'] === 'skill' && filteredItems[i - 1]?.data?.['group'] !== 'skill') {
+        if (event.y === row) return undefined;
+        row += 1;
+      }
+      const lineCount = this.renderItemLines(item, i === selectedIndex, event.width, primaryColumnWidth).length;
+      if (event.y >= row && event.y < row + lineCount) {
+        return super.handleMouse({ ...event, y: i - startIndex });
+      }
+      row += lineCount;
+    }
+    return undefined;
   }
 
   private renderItemLines(
@@ -88,6 +122,11 @@ export class WrappingSelectList extends SelectList {
     const description = item.description
       ? item.description.replaceAll(/[\r\n]+/g, ' ').trim()
       : undefined;
+    const workspaceLabel = item.data?.['workspaceLabel'];
+
+    if (typeof workspaceLabel === 'string' && workspaceLabel.length > 0) {
+      return [this.renderWorkspaceItemLine(item, isSelected, width, primaryColumnWidth, workspaceLabel)];
+    }
 
     if (description && width > 40) {
       const effectivePrimaryColumnWidth = Math.max(
@@ -124,6 +163,42 @@ export class WrappingSelectList extends SelectList {
     const maxWidth = width - prefixWidth - 2;
     const truncatedValue = this.truncatePrimaryValue(item, isSelected, maxWidth, maxWidth);
     return [isSelected ? theme.selectedText(`${prefix}${truncatedValue}`) : prefix + truncatedValue];
+  }
+
+  private renderWorkspaceItemLine(
+    item: SelectItem,
+    isSelected: boolean,
+    width: number,
+    primaryColumnWidth: number,
+    workspaceLabel: string,
+  ): string {
+    const { theme } = this.internals();
+    const prefix = isSelected ? '→ ' : '  ';
+    const prefixWidth = visibleWidth(prefix);
+    const suffix = ` ${truncatePlainToWidth(workspaceLabel, Math.min(24, Math.max(1, Math.floor(width / 4))))}`;
+    const effectivePrimaryColumnWidth = Math.max(
+      1,
+      Math.min(primaryColumnWidth, width - prefixWidth - visibleWidth(suffix) - 4),
+    );
+    const truncatedValue = this.truncatePrimaryValue(
+      item,
+      isSelected,
+      Math.max(1, effectivePrimaryColumnWidth - PRIMARY_COLUMN_GAP),
+      effectivePrimaryColumnWidth,
+    );
+    const spacing = ' '.repeat(Math.max(1, effectivePrimaryColumnWidth - visibleWidth(truncatedValue)));
+    const description = item.description?.replaceAll(/[\r\n]+/g, ' ').trim() ?? '';
+    const descriptionWidth = Math.max(
+      1,
+      width - prefixWidth - visibleWidth(truncatedValue) - visibleWidth(spacing) - visibleWidth(suffix) - 2,
+    );
+    const renderedDescription = truncatePlainToWidth(description, descriptionWidth);
+    const body = `${truncatedValue}${spacing}${renderedDescription}`;
+    const padding = ' '.repeat(
+      Math.max(1, width - prefixWidth - visibleWidth(body) - visibleWidth(suffix) - 2),
+    );
+    if (isSelected) return theme.selectedText(`${prefix}${body}${padding}${suffix}`);
+    return prefix + truncatedValue + theme.description(`${spacing}${renderedDescription}${padding}${suffix}`);
   }
 
   private truncatePrimaryValue(

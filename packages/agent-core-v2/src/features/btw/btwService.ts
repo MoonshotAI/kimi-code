@@ -3,6 +3,7 @@ import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { registerLegacyStarting } from '#/agent/toolExecutor/legacyHooks';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
@@ -29,11 +30,14 @@ export class SessionBtwService extends Disposable implements ISessionBtwService 
           handle.accessor.get(IAgentToolApprovalService)?.formatDenyMessage(
             TOOL_CALL_DISABLED_MESSAGE,
           ) ?? TOOL_CALL_DISABLED_MESSAGE;
-        handle.accessor.get(IAgentToolExecutorService)?.onBeforeExecuteTool((event) => {
-          if (!BTW_READONLY_TOOLS.has(event.toolCall.name)) {
-            event.veto(denyToolExecution(reason));
-          }
-        });
+        const toolExecutor = handle.accessor.get(IAgentToolExecutorService);
+        if (toolExecutor !== undefined) {
+          this._register(registerLegacyStarting(toolExecutor, (event) => {
+            if (!BTW_READONLY_TOOLS.has(event.toolCall.name)) {
+              event.veto(denyToolExecution(reason));
+            }
+          }));
+        }
       }),
     );
   }

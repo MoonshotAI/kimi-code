@@ -1,5 +1,17 @@
 # @moonshot-ai/kimi-code-sdk
 
+## 0.23.1
+
+### Patch Changes
+
+- [#4427](https://github.com/MoonshotAI/kimi-code/pull/4427) [`1c259c8`](https://github.com/MoonshotAI/kimi-code/commit/1c259c8d35ff648ce8aa3f77169d9887e2a16384) Thanks [@tpoisonooo](https://github.com/tpoisonooo)! - Allow `primary` as an ordinary `[secondary_model]` model alias and remove the reserved `PRIMARY_SUBAGENT_MODEL_CHOICE` SDK export; Tower reviewers now use the pool default instead of the primary model and no longer accept the special `model: "primary"` escape hatch, so primary-model reviews require explicitly selecting a pool alias for the primary model or setting it as `default_model` for all spawns.
+
+## 0.23.0
+
+### Minor Changes
+
+- [#4525](https://github.com/MoonshotAI/kimi-code/pull/4525) [`8019337`](https://github.com/MoonshotAI/kimi-code/commit/80193374ebb47973a97d21d0b4ce4c27128eee82) Thanks [@liruifengv](https://github.com/liruifengv)! - Add structured plugin marketplace installs and marketplace helpers to the SDK.
+
 ## 0.22.0
 
 ### Minor Changes

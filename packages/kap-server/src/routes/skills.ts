@@ -34,10 +34,10 @@ import {
   type SkillDefinition,
   type ExtraSkillDirsConfig,
   type MergeAllAvailableSkillsConfig,
-  IAgentProfileService,
+  IAgentLoopService,
 } from '@moonshot-ai/agent-core-v2';
 import { join } from 'node:path';
-import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -64,6 +64,7 @@ import { workspaceIdParamSchema } from '../protocol/rest-workspace';
 import type { SkillDescriptor } from '../protocol/skill';
 import { parseActionSuffix } from './action-suffix';
 import { sendEnvironmentError } from './environment';
+import { beginPromptAttempt, type PromptAttempt } from './prompts';
 import {
   sendMappedError as sendSessionMappedError,
   sessionConflictErrors,
@@ -126,6 +127,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
       success: { data: listSkillsResponseSchema },
       errors: {
         [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
       },
       description: 'List the skills available to a session',
       tags: ['skills'],
@@ -201,6 +203,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
         [ErrorCode.SKILL_NOT_FOUND]: {},
         [ErrorCode.SKILL_NOT_ACTIVATABLE]: {},
         [ErrorCode.FILE_NOT_FOUND]: {},
+        [ErrorCode.PROMPT_ID_CONFLICT]: {},
         [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
         [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
         ...sessionConflictErrors,
@@ -227,12 +230,21 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
         return;
       }
 
-      const activateOnce = async (): Promise<void> => {
-        const resolved = await resolveActivatedSession(core, session_id, req.id);
-        if ('envelope' in resolved) {
-          reply.send(resolved.envelope);
+      let attempt: PromptAttempt;
+      try {
+        attempt = beginPromptAttempt(session_id, req.body.prompt_id, { route: 'skills', tail, body: req.body });
+        if (attempt.earlier !== undefined) {
+          reply.send(okEnvelope(await attempt.earlier, req.id));
           return;
         }
+      } catch (error) {
+        sendMappedError(reply, req, error);
+        return;
+      }
+
+      const activateOnce = async (): Promise<unknown> => {
+        const resolved = await resolveActivatedSession(core, session_id, req.id);
+        if ('envelope' in resolved) throw new Error2(ErrorCodes.SESSION_NOT_FOUND, resolved.envelope.msg);
 
         let preparedMedia: PromptMediaPreparation | undefined;
         try {
@@ -250,7 +262,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
             }
             const catalog = resolved.handle.accessor.get(ISessionSkillCatalog);
             await catalog.ready;
-            const skill = catalog.catalog.getSkill(parsed.id);
+            const skill = catalog.catalog.getSkill(parsed.id, req.body.path);
             if (skill === undefined) {
               throw new Error2(ErrorCodes.SKILL_NOT_FOUND, `Skill "${parsed.id}" was not found`);
             }
@@ -281,7 +293,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
                 {
                   telemetry,
                   providerType: mainAgent.accessor
-                    .get(IAgentProfileService)
+                    .get(IAgentLoopService)
                     .getModelProviderType(),
                   resolveOriginalsTarget: environmentMedia.resolveOriginalsTarget ?? (async () => ({
                     dir: sessionMediaOriginalsDir(sessionDir),
@@ -303,23 +315,29 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
               : undefined;
           await mainAgent.accessor.get(IAgentSkillService).activate({
             name: parsed.id,
+            path: req.body.path,
             args: req.body.args,
+            promptId: attempt.id,
             clientMetadata: req.body.metadata === undefined ? undefined : [structuredClone(req.body.metadata)],
             content: attachmentParts,
             attachments: promptAttachments,
           });
+          attempt.enqueued();
           await preparedMedia?.discard();
           preparedMedia = undefined;
           requestLog(req)?.info({ session_id, skill_name: parsed.id }, 'skill activated');
-          reply.send(okEnvelope({ activated: true, skill_name: parsed.id }, req.id));
+          return { activated: true, skill_name: parsed.id };
         } catch (error) {
           await preparedMedia?.discardStaged();
           throw error;
         }
       };
       try {
-        await reloadOnStale(core.accessor, session_id, activateOnce);
+        const response = await reloadOnStale(core.accessor, session_id, activateOnce);
+        attempt.succeed(response);
+        reply.send(okEnvelope(response, req.id));
       } catch (error) {
+        attempt.fail(error);
         sendMappedError(reply, req, error);
       }
     },
@@ -369,19 +387,22 @@ async function listWorkspaceSkillsForRoots(
   ]);
 
   const catalog = new InMemorySkillCatalog();
+  const builtinSkills = visibleBuiltinSkills(builtinProductSkillsEnabled(config), flags);
   const ordered = [
     {
-      skills: visibleBuiltinSkills(builtinProductSkillsEnabled(config), flags),
+      skills: builtinSkills,
+      variants: builtinSkills,
       priority: SKILL_SOURCE_PRIORITY.builtin,
     },
-    { skills: plugin.skills, priority: SKILL_SOURCE_PRIORITY.plugin },
-    { skills: extra.skills, priority: SKILL_SOURCE_PRIORITY.extra },
-    { skills: user.skills, priority: SKILL_SOURCE_PRIORITY.user },
-    { skills: explicit.skills, priority: SKILL_SOURCE_PRIORITY.user },
-    { skills: project.skills, priority: SKILL_SOURCE_PRIORITY.workspace },
+    { skills: plugin.skills, variants: plugin.variants, priority: SKILL_SOURCE_PRIORITY.plugin },
+    { skills: extra.skills, variants: extra.variants, priority: SKILL_SOURCE_PRIORITY.extra },
+    { skills: user.skills, variants: user.variants, priority: SKILL_SOURCE_PRIORITY.user },
+    { skills: explicit.skills, variants: explicit.variants, priority: SKILL_SOURCE_PRIORITY.user },
+    { skills: project.skills, variants: project.variants, priority: SKILL_SOURCE_PRIORITY.workspace },
   ].toSorted((a, b) => a.priority - b.priority);
-  for (const { skills } of ordered) {
+  for (const { skills, variants } of ordered) {
     for (const skill of skills) catalog.register(skill, { replace: true });
+    catalog.registerVariants(variants, { replace: true });
   }
   return catalog.listSkills();
 }
@@ -394,6 +415,7 @@ function toProtocolSkill(skill: SkillElement): SkillDescriptor {
     description: skill.description,
     path: skill.path,
     source: skill.source,
+    workspace_dir: skill.workspaceDir,
   };
   const type = skill.metadata.type;
   const disableModelInvocation = skill.metadata.disableModelInvocation;

@@ -1,11 +1,8 @@
-import { createUserMessage } from '#/llm/message';
-import type { LlmEndpoint } from '#/llm/request';
-import type { LlmRequester as CoreLlmRequester } from '#/llm/requester';
-import { isUnknownCapability, UNKNOWN_CAPABILITY, type ModelCapability } from '#/llm-requester/capability';
+import { createUserMessage } from '@moonshot-ai/core/llm/message';
+import type { ProtocolName } from '@moonshot-ai/core/llm/protocol/protocol';
+import type { LlmEndpoint, LlmModelSpec, ModelCapability } from '@moonshot-ai/core/llm/request';
+import type { LlmRequester as CoreLlmRequester } from '@moonshot-ai/core/llm/requester';
 import type { ProviderMediaContribution } from '#/media/upload';
-import type { LlmModel } from '#/llm-requester/model';
-import type { ProtocolName } from '#/llm-requester/requester';
-import { thinkingMetadataOf } from '#/llm-requester/thinking';
 import { assign, createActor, emit, enqueueActions, fromPromise, setup, type Actor } from '#/xstate2';
 
 export type ProviderRequesterSource =
@@ -13,9 +10,7 @@ export type ProviderRequesterSource =
   | Readonly<Record<string, CoreLlmRequester<'protocol'>>>
   | ((protocol?: ProtocolName, model?: CatalogModelDefinition) => CoreLlmRequester<'protocol'> | undefined);
 
-export type CatalogModelSeed = Omit<CatalogModelDefinition, 'capability'> & {
-  readonly capability?: ModelCapability;
-};
+export type CatalogModelSeed = CatalogModelDefinition;
 
 export interface CatalogProviderHandle {
   readonly id: string;
@@ -47,17 +42,17 @@ export interface CatalogModelOverrides {
   readonly alwaysThinking?: boolean;
 }
 
-export interface CatalogModelDefinition extends LlmModel {
+export interface CatalogModelDefinition {
+  readonly id: string;
+  readonly spec: LlmModelSpec;
+  readonly endpoint?: LlmEndpoint;
+  readonly apiKey?: string;
   readonly displayName?: string;
   readonly maxOutputSize?: number;
   readonly reasoningKey?: string;
-  readonly supportEfforts?: readonly string[];
-  readonly offEffort?: string;
-  readonly alwaysThinking?: boolean;
   readonly protocol?: ProtocolName;
-  readonly defaultEffort?: string;
-  readonly adaptiveThinking?: boolean;
-  readonly name?: string;
+  readonly betaApi?: boolean;
+  readonly vertexai?: boolean;
   readonly aliases?: readonly string[];
   readonly oauth?: CatalogOAuthRef;
   readonly overrides?: CatalogModelOverrides;
@@ -164,7 +159,7 @@ function applyPullResults(
       [result.providerId]: {
         info: entry?.info,
         override: entry?.override ?? {},
-        discovered: Object.fromEntries(result.models.map((model) => [model.model, model])),
+        discovered: Object.fromEntries(result.models.map((model) => [model.id, model])),
         pingErrors: entry?.pingErrors,
       },
     };
@@ -229,16 +224,16 @@ function resolveCatalogModel(
 
 function mergeEntryModels(entry: CatalogProviderEntry): CatalogModel[] {
   const attach = (model: CatalogModelDefinition): CatalogModel => {
-    const pingError = entry.pingErrors?.[model.model];
+    const pingError = entry.pingErrors?.[model.id];
     return pingError === undefined ? model : { ...model, pingError };
   };
   const merged = Object.values(entry.override).map((record) =>
-    attach(mergeModel(record, entry.discovered[record.model])),
+    attach(mergeModel(record, entry.discovered[record.id])),
   );
   const discoveredOnly = Object.values(entry.discovered)
-    .filter((model) => entry.override[model.model] === undefined)
+    .filter((model) => entry.override[model.id] === undefined)
     .map((model) => attach(mergeModel({ ...model }, undefined)));
-  return [...merged, ...discoveredOnly].toSorted((a, b) => a.model.localeCompare(b.model));
+  return [...merged, ...discoveredOnly].toSorted((a, b) => a.id.localeCompare(b.id));
 }
 
 function enqueuePing(
@@ -246,7 +241,7 @@ function enqueuePing(
   queue: readonly PingRequest[],
   request: PingRequest,
 ): readonly PingRequest[] {
-  const keyOf = (ping: PingRequest): string => `${ping.provider.id}#${ping.model.model}`;
+  const keyOf = (ping: PingRequest): string => `${ping.provider.id}#${ping.model.id}`;
   if (active !== undefined && keyOf(active) === keyOf(request)) return queue;
   if (queue.some((ping) => keyOf(ping) === keyOf(request))) return queue;
   return [...queue, request];
@@ -289,38 +284,26 @@ async function runPingProbe(
 ): Promise<string | undefined> {
   try {
     const base = baseRequesterOf(provider, model);
-    if (base === undefined) return `No requester configured for ${provider.id}/${model.model}`;
+    if (base === undefined) return `No requester configured for ${provider.id}/${model.id}`;
     const requester = base.with({
       protocol: { options: protocolOptionsOf(model) },
-      endpoint: provider.endpoint,
+      endpoint: { ...provider.endpoint, ...model.endpoint },
+      model: { spec: model.spec, maxOutputTokens: 512 },
+      profile: {
+        systemPrompt: 'You are a connectivity probe. Answer with the single word "pong".',
+        tools: [],
+      },
+      content: { messages: [createUserMessage('ping')] },
+      policy: { recoveries: [], retry: { maxAttemptsPerStep: 1 } },
     });
     const outcome = await requester.generate(
       {
         endpoint: {
-          baseUrl: model.baseUrl,
-          headers: model.defaultHeaders,
           credentials:
             model.apiKey === undefined
               ? undefined
               : { resolve: () => ({ apiKey: model.apiKey }) },
         },
-        model: {
-          spec: {
-            provider: model.provider,
-            name: model.model,
-            capability: isUnknownCapability(model.capability) ? undefined : model.capability,
-            thinking: thinkingMetadataOf(model),
-            maxContextSize: model.maxContextSize,
-            maxInputSize: model.maxInputSize,
-          },
-          maxOutputTokens: 512,
-        },
-        profile: {
-          systemPrompt: 'You are a connectivity probe. Answer with the single word "pong".',
-          tools: [],
-        },
-        content: { messages: [createUserMessage('ping')] },
-        policy: { recoveries: [], retry: { maxAttemptsPerStep: 1 } },
       },
       { signal: new AbortController().signal },
     );
@@ -359,7 +342,7 @@ export function createProviderCatalogMachine() {
       ),
       pingModel: fromPromise<PingOutcome, PingRequest>(async ({ input }) => ({
         providerId: input.provider.id,
-        model: input.model.model,
+        model: input.model.id,
         error: await runPingProbe(input.provider, input.model),
       })),
     },
@@ -385,7 +368,7 @@ export function createProviderCatalogMachine() {
                   info: event.info,
                   discovered: {},
                   override: Object.fromEntries(
-                    (event.models ?? []).map((model) => [model.model, model]),
+                    (event.models ?? []).map((model) => [model.id, model]),
                   ),
                 },
               },
@@ -645,31 +628,32 @@ export function createMemoryProviderCatalogStore(): ProviderCatalogStore {
 function mergeCapability(
   discovered: ModelCapability | undefined,
   override: ModelCapability | undefined,
-): ModelCapability {
-  if (discovered === undefined) {
-    return override ?? UNKNOWN_CAPABILITY;
-  }
-  if (override === undefined) {
-    return discovered;
-  }
+): ModelCapability | undefined {
+  if (discovered === undefined) return override;
+  if (override === undefined) return discovered;
+  const either = (left: boolean | undefined, right: boolean | undefined): boolean | undefined =>
+    left === undefined && right === undefined ? undefined : left === true || right === true;
   return {
-    image_in: discovered.image_in || override.image_in,
-    video_in: discovered.video_in || override.video_in,
-    audio_in: discovered.audio_in || override.audio_in,
-    thinking: discovered.thinking || override.thinking,
-    tool_use: discovered.tool_use || override.tool_use,
-    dynamically_loaded_tools:
-      discovered.dynamically_loaded_tools === true || override.dynamically_loaded_tools === true,
+    image_in: either(discovered.image_in, override.image_in),
+    video_in: either(discovered.video_in, override.video_in),
+    audio_in: either(discovered.audio_in, override.audio_in),
+    thinking: either(discovered.thinking, override.thinking),
+    tool_use: either(discovered.tool_use, override.tool_use),
+    dynamically_loaded_tools: either(
+      discovered.dynamically_loaded_tools,
+      override.dynamically_loaded_tools,
+    ),
   };
 }
 
 function clampMaxInputSize(model: CatalogModelDefinition): CatalogModelDefinition {
+  const { maxInputSize, maxContextSize } = model.spec;
   if (
-    model.maxInputSize !== undefined &&
-    model.maxContextSize !== undefined &&
-    model.maxInputSize > model.maxContextSize
+    maxInputSize !== undefined &&
+    maxContextSize !== undefined &&
+    maxInputSize > maxContextSize
   ) {
-    return { ...model, maxInputSize: model.maxContextSize };
+    return { ...model, spec: { ...model.spec, maxInputSize: maxContextSize } };
   }
   return model;
 }
@@ -679,15 +663,55 @@ function applyModelOverrides(
   overrides: CatalogModelOverrides | undefined,
 ): CatalogModelDefinition {
   if (overrides === undefined) return model;
-  const effective: CatalogModelDefinition = { ...model, ...overrides };
+  const {
+    capability,
+    maxContextSize,
+    maxInputSize,
+    supportEfforts,
+    defaultEffort,
+    offEffort,
+    alwaysThinking,
+    adaptiveThinking,
+    ...modelOverrides
+  } = overrides;
+  const hasThinkingOverride =
+    supportEfforts !== undefined ||
+    defaultEffort !== undefined ||
+    offEffort !== undefined ||
+    alwaysThinking !== undefined ||
+    adaptiveThinking !== undefined;
+  const effective: CatalogModelDefinition = {
+    ...model,
+    ...modelOverrides,
+    spec: {
+      ...model.spec,
+      capability: capability ?? model.spec.capability,
+      maxContextSize: maxContextSize ?? model.spec.maxContextSize,
+      maxInputSize: maxInputSize ?? model.spec.maxInputSize,
+      thinking:
+        model.spec.thinking === undefined && !hasThinkingOverride
+          ? undefined
+          : {
+              supportEfforts: supportEfforts ?? model.spec.thinking?.supportEfforts,
+              defaultEffort: defaultEffort ?? model.spec.thinking?.defaultEffort,
+              offEffort: offEffort ?? model.spec.thinking?.offEffort,
+              alwaysThinking: alwaysThinking ?? model.spec.thinking?.alwaysThinking,
+              adaptiveThinking: adaptiveThinking ?? model.spec.thinking?.adaptiveThinking,
+            },
+    },
+  };
+  const effectiveDefault = effective.spec.thinking?.defaultEffort;
   if (
-    overrides.supportEfforts !== undefined &&
-    overrides.defaultEffort === undefined &&
-    effective.defaultEffort !== undefined &&
-    !overrides.supportEfforts.includes(effective.defaultEffort)
+    supportEfforts !== undefined &&
+    defaultEffort === undefined &&
+    effectiveDefault !== undefined &&
+    !supportEfforts.includes(effectiveDefault)
   ) {
-    const { defaultEffort: _dropped, ...rest } = effective;
-    return clampMaxInputSize(rest);
+    const { defaultEffort: _dropped, ...thinking } = effective.spec.thinking!;
+    return clampMaxInputSize({
+      ...effective,
+      spec: { ...effective.spec, thinking },
+    });
   }
   return clampMaxInputSize(effective);
 }
@@ -696,27 +720,33 @@ function mergeModel(
   record: CatalogModelSeed,
   discovered: CatalogModelSeed | undefined,
 ): CatalogModelDefinition {
+  const endpoint =
+    record.endpoint === undefined && discovered?.endpoint === undefined
+      ? undefined
+      : {
+          ...discovered?.endpoint,
+          ...record.endpoint,
+          baseUrl: record.endpoint?.baseUrl ?? discovered?.endpoint?.baseUrl,
+          headers: record.endpoint?.headers ?? discovered?.endpoint?.headers,
+        };
   const merged: CatalogModelDefinition = {
-    provider: record.provider,
-    model: record.model,
-    capability: mergeCapability(discovered?.capability, record.capability),
-    maxContextSize: record.maxContextSize ?? discovered?.maxContextSize,
-    maxInputSize: record.maxInputSize ?? discovered?.maxInputSize,
-    baseUrl: record.baseUrl ?? discovered?.baseUrl,
+    id: record.id,
+    spec: {
+      provider: record.spec.provider,
+      name: record.spec.name,
+      capability: mergeCapability(discovered?.spec.capability, record.spec.capability),
+      thinking: record.spec.thinking,
+      maxContextSize: record.spec.maxContextSize ?? discovered?.spec.maxContextSize,
+      maxInputSize: record.spec.maxInputSize ?? discovered?.spec.maxInputSize,
+    },
+    endpoint,
     apiKey: record.apiKey ?? discovered?.apiKey,
-    defaultHeaders: record.defaultHeaders ?? discovered?.defaultHeaders,
     displayName: record.displayName,
     maxOutputSize: record.maxOutputSize,
     reasoningKey: record.reasoningKey,
-    supportEfforts: record.supportEfforts,
-    offEffort: record.offEffort,
-    alwaysThinking: record.alwaysThinking,
     protocol: record.protocol,
-    defaultEffort: record.defaultEffort,
-    adaptiveThinking: record.adaptiveThinking,
     betaApi: record.betaApi,
     vertexai: record.vertexai,
-    name: record.name,
     aliases: record.aliases,
     oauth: record.oauth,
     extras: record.extras,

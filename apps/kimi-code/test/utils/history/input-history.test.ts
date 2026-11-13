@@ -55,7 +55,7 @@ describe('input-history', () => {
 
   it('appends a new entry and creates the parent directory', async () => {
     const nested = join(dir, 'nested', 'sub', 'history.jsonl');
-    const written = await appendInputHistory(nested, 'hello');
+    const written = await appendInputHistory(nested, { content: 'hello' });
     expect(written).toBe(true);
     const raw = readFileSync(nested, 'utf-8').trim().split('\n');
     expect(raw).toHaveLength(1);
@@ -63,22 +63,64 @@ describe('input-history', () => {
   });
 
   it('skips empty / whitespace-only entries', async () => {
-    expect(await appendInputHistory(file, '')).toBe(false);
-    expect(await appendInputHistory(file, '   ')).toBe(false);
+    expect(await appendInputHistory(file, { content: '' })).toBe(false);
+    expect(await appendInputHistory(file, { content: '   ' })).toBe(false);
     expect(await loadInputHistory(file)).toEqual([]);
   });
 
-  it('skips when content equals the previous entry (consecutive dedup)', async () => {
-    expect(await appendInputHistory(file, 'a')).toBe(true);
-    expect(await appendInputHistory(file, 'a', 'a')).toBe(false);
-    expect(await appendInputHistory(file, 'b', 'a')).toBe(true);
+  it('skips when the complete entry equals the previous entry', async () => {
+    expect(await appendInputHistory(file, { content: 'a' })).toBe(true);
+    expect(await appendInputHistory(file, { content: 'a' }, { content: 'a' })).toBe(false);
+    expect(await appendInputHistory(file, { content: 'b' }, { content: 'a' })).toBe(true);
     const entries = await loadInputHistory(file);
     expect(entries).toEqual([{ content: 'a' }, { content: 'b' }]);
   });
 
   it('trims whitespace before persisting', async () => {
-    expect(await appendInputHistory(file, '  hi  ')).toBe(true);
+    expect(await appendInputHistory(file, { content: '  hi  ' })).toBe(true);
     const entries = await loadInputHistory(file);
     expect(entries).toEqual([{ content: 'hi' }]);
+  });
+
+  it('persists selected skill paths without deduplicating different variants', async () => {
+    const first = {
+      content: '/skill:review',
+      inlineSkillActivations: [{
+        skillName: 'review',
+        path: '/work/A/review/SKILL.md',
+        start: 0,
+        occurrences: [{ commandName: 'skill:review', start: 0 }],
+      }],
+    };
+    const second = {
+      ...first,
+      inlineSkillActivations: [{
+        skillName: 'review',
+        path: '/work/B/review/SKILL.md',
+        start: 0,
+        occurrences: [{ commandName: 'skill:review', start: 0 }],
+      }],
+    };
+
+    expect(await appendInputHistory(file, first)).toBe(true);
+    expect(await appendInputHistory(file, first, first)).toBe(false);
+    expect(await appendInputHistory(file, second, first)).toBe(true);
+    expect(await loadInputHistory(file)).toEqual([first, second]);
+  });
+
+  it('deduplicates reloaded entries with optional fields omitted', async () => {
+    const entry = {
+      content: '/skill:review src/app.ts',
+      inlineSkillActivations: [{
+        skillName: 'review',
+        path: undefined,
+        start: 0,
+        args: 'src/app.ts',
+      }],
+    };
+    expect(await appendInputHistory(file, entry)).toBe(true);
+    const [persisted] = await loadInputHistory(file);
+
+    expect(await appendInputHistory(file, entry, persisted)).toBe(false);
   });
 });

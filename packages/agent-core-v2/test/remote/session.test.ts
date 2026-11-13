@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
 
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ConnectionClosedError } from '#/remote/protocol/errors';
 import { RemoteSession } from '#/remote/client/remoteSession';
@@ -44,7 +44,7 @@ describe('RemoteSession over a subprocess loopback', () => {
     try {
       expect(session.executorVersion).toBe(TEST_VERSION);
       expect(session.host.osKind.length).toBeGreaterThan(0);
-      expect(session.host.pathClass).toBe('posix');
+      expect(session.host.pathClass).toBe(process.platform === 'win32' ? 'win32' : 'posix');
       expect(session.host.shellPath.length).toBeGreaterThan(0);
       expect(session.host.homeDir.length).toBeGreaterThan(0);
       expect(session.host.cwd.length).toBeGreaterThan(0);
@@ -54,7 +54,11 @@ describe('RemoteSession over a subprocess loopback', () => {
 
       const file = join(workDir, 'chain.txt');
       await session.fs.writeText(file, 'chain-data');
-      const proc = await session.process.spawn('cat', [file], { cwd: workDir });
+      const proc = await session.process.spawn(process.execPath, [
+        '-e',
+        'process.stdout.write(require("node:fs").readFileSync(process.argv[1], "utf8"))',
+        file,
+      ], { cwd: workDir });
       const chunks: Buffer[] = [];
       proc.stdout.on('data', (chunk: Buffer) => {
         chunks.push(chunk);
@@ -103,11 +107,11 @@ describe('RemoteSession over a subprocess loopback', () => {
     session.connection.onDidClose((info) => {
       closed.push(info.kind ?? 'other');
     });
-    const proc = await session.process.spawn('sleep', ['300']);
+    const proc = await session.process.spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)']);
     expect(proc.pid).toBeGreaterThan(0);
     await session.dispose();
     expect(closed).toEqual(['client_closed']);
-    await expect(session.process.spawn('true')).rejects.toThrow(ConnectionClosedError);
+    await expect(session.process.spawn(process.execPath)).rejects.toThrow(ConnectionClosedError);
   });
 
   it.skipIf(process.platform === 'win32')('uses the real askpass helper for a password retry', { timeout: 60_000 }, async () => {
@@ -125,6 +129,11 @@ provided="$("$SSH_ASKPASS" 'Password:')"
 if [ "$provided" != "$EXPECTED_SSH_PASSWORD" ]; then
   printf 'Permission denied (publickey,password)\\n' >&2
   exit 255
+fi
+for command in "$@"; do :; done
+if [ "$command" = 'uname -s' ]; then
+  printf 'Linux\\n'
+  exit 0
 fi
 exec "$TEST_NODE" "$TEST_TSX" "$TEST_SERVER"
 `);
@@ -164,5 +173,100 @@ exec "$TEST_NODE" "$TEST_TSX" "$TEST_SERVER"
       vi.unstubAllEnvs();
       await rm(binDir, { recursive: true, force: true });
     }
+  });
+});
+
+
+describe.skipIf(process.platform === 'win32')('SSH platform detection before executor launch', () => {
+  let binDir: string;
+  let callsPath: string;
+
+  beforeEach(async () => {
+    binDir = await mkdtemp(join(tmpdir(), 'kimi-ssh-probe-'));
+    callsPath = join(binDir, 'calls');
+    const fakeSsh = join(binDir, 'ssh');
+    await writeFile(fakeSsh, `#!${process.execPath}
+import { appendFileSync } from 'node:fs';
+const command = process.argv.at(-1);
+appendFileSync(process.env.TEST_SSH_CALLS, JSON.stringify(command) + '\\n');
+const mode = process.env.TEST_SSH_MODE;
+if (mode === 'authentication') {
+  process.stderr.write('Permission denied (publickey,password)');
+  process.exit(255);
+}
+if (mode === 'timeout') {
+  setInterval(() => {}, 1000);
+} else if (command === 'uname -s') {
+  if (mode === 'windows' || mode === 'unknown') process.exit(1);
+  process.stdout.write(mode === 'msys' ? 'MINGW64_NT-10.0\\n' : 'Linux\\n');
+} else if (command.startsWith('powershell ') && Buffer.from(command.split(' ').at(-1), 'base64').toString('utf16le').includes('KIMI_WINDOWS')) {
+  if (mode === 'unknown') { process.stderr.write('powershell unavailable'); process.exit(127); }
+  process.stdout.write('KIMI_WINDOWS\\r\\n');
+} else {
+  process.stderr.write('executor failed');
+  process.exit(23);
+}
+`);
+    await chmod(fakeSsh, 0o700);
+    vi.stubEnv('PATH', `${binDir}:${process.env['PATH'] ?? ''}`);
+    vi.stubEnv('TEST_SSH_CALLS', callsPath);
+  });
+
+  afterEach(async () => {
+    vi.unstubAllEnvs();
+    await rm(binDir, { recursive: true, force: true });
+  });
+
+  async function calls(): Promise<string[]> {
+    return (await readFile(callsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as string);
+  }
+
+  it.each(['posix', 'windows', 'msys'])('launches exactly once after probing %s and preserves its failure', async (mode) => {
+    vi.stubEnv('TEST_SSH_MODE', mode);
+    await expect(RemoteSession.connect({
+      environmentId: 'example', launcher: { type: 'ssh', host: 'example.test' },
+    })).rejects.toMatchObject({ kind: 'executor-exit', exitCode: 23, message: expect.stringContaining('executor failed') });
+    const commands = await calls();
+    expect(commands).toHaveLength(mode === 'windows' ? 3 : 2);
+    expect(commands[0]).toBe('uname -s');
+    if (mode === 'posix') {
+      expect(commands[1]).toBe(`"$HOME"'/.kimi-code/bin/kimi' 'exec-server' '--listen' 'stdio'`);
+    } else {
+      expect(commands.at(-1)).toMatch(/^powershell .* -EncodedCommand [A-Za-z0-9+/=]+$/);
+      expect(Buffer.from(commands.at(-1)!.split(' ').at(-1)!, 'base64').toString('utf16le')).toContain('/.kimi-code/bin/kimi.exe');
+    }
+  });
+
+  it('keeps a bare executor invocation free of probes', async () => {
+    await expect(RemoteSession.connect({
+      environmentId: 'example', launcher: { type: 'ssh', host: 'example.test', remoteBin: 'kimi.exe' },
+    })).rejects.toMatchObject({ kind: 'executor-exit', exitCode: 23 });
+    expect(await calls()).toEqual(['kimi.exe exec-server --listen stdio']);
+  });
+
+  it('stops on authentication failure before probing another shell', async () => {
+    vi.stubEnv('TEST_SSH_MODE', 'authentication');
+    await expect(RemoteSession.connect({
+      environmentId: 'example', launcher: { type: 'ssh', host: 'example.test' },
+    })).rejects.toMatchObject({ kind: 'authentication', exitCode: 255 });
+    expect(await calls()).toEqual(['uname -s']);
+  });
+
+  it('bounds a stalled probe and never starts the executor', async () => {
+    vi.stubEnv('TEST_SSH_MODE', 'timeout');
+    await expect(RemoteSession.connect({
+      environmentId: 'example', launcher: { type: 'ssh', host: 'example.test' }, initializeTimeoutMs: 300,
+    })).rejects.toMatchObject({ kind: 'timeout' });
+    expect(await calls()).toEqual(['uname -s']);
+  });
+
+  it('reports unsupported shells without passing remoteBin to a probe', async () => {
+    vi.stubEnv('TEST_SSH_MODE', 'unknown');
+    await expect(RemoteSession.connect({
+      environmentId: 'example', launcher: { type: 'ssh', host: 'example.test', remoteBin: '/opt/$(printf INJECTED)/kimi' },
+    })).rejects.toMatchObject({ kind: 'executor-exit', message: expect.stringContaining('powershell unavailable') });
+    const commands = await calls();
+    expect(commands).toHaveLength(2);
+    expect(commands.join(' ')).not.toContain('INJECTED');
   });
 });

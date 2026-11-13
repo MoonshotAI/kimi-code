@@ -63,7 +63,6 @@ max_attempts_per_step = 10
 reserved_context_size = 50000
 
 [task]
-max_running_tasks = 4
 keep_alive_on_exit = false
 
 [services.moonshot_search]
@@ -108,7 +107,7 @@ timeout = 5
 | [`providers`](#providers) | `table` | `{}` | API 供应商表 |
 | [`models`](#models) | `table` | — | 模型别名表 |
 | [`thinking`](#thinking) | `table` | — | Thinking 模式默认参数 |
-| [`loop_control`](#loop_control) | `table` | — | Agent 循环控制参数 |
+| [`loop_control`](#loop-control) | `table` | — | Agent 循环控制参数 |
 | [`task`](#task) | `table` | — | 后台任务与 Tower Agent 运行参数；`background` 为 legacy 配置节名称 |
 | [`tools`](#tools) | `table` | — | 全局工具开关 |
 | [`image`](#image) | `table` | — | 图片压缩参数 |
@@ -190,7 +189,7 @@ display_name = "Kimi for Coding (custom)"
 
 `[models."<alias>".overrides]` 接受普通模型字段，例如 `max_context_size`、`max_input_size`、`max_output_size`、`capabilities`、`display_name`、`reasoning_key`、`adaptive_thinking`、`support_efforts`、`default_effort` 和 `off_effort`。不接受身份 / 路由字段（`provider`、`model`、`protocol`、`beta_api` 和 `base_url`），也不接受由 registry 管理的 `upgrade` 元数据。
 
-无需修改配置文件也可以临时切换模型：通过 `KIMI_MODEL_*` 环境变量在内存里合成一个临时供应商，详见[用环境变量定义模型](./env-vars.md#用环境变量定义模型kimi_model_)。
+无需修改配置文件也可以临时切换模型：通过 `KIMI_MODEL_*` 环境变量在内存里合成一个临时供应商，详见[用环境变量定义模型](./env-vars.md#用环境变量定义模型-kimi-model)。
 
 ## `secondary_model`
 
@@ -218,7 +217,6 @@ default_model = "kimi-code/kimi-for-coding-highspeed"
 - `default_model`：配置 `models` 表时必填，且必须是其中的 key。
 - `models`：value 中英文均可；空字符串表示只列出别名、不给提示。
 - `default_effort` 是节级设置：无论派生绑定到池中哪个条目都生效。想按条目区分档位时不要设置它，改用下文的模型「变体」。
-- `primary` 是保留字，不能作为池中 key。
 
 池别名引用的是 `[models]` 表的当前内容：如果之后删除供应商、登出账号，或其刷新后的模型列表不再包含某个别名，会话启动时会报出指明失效别名的配置错误，修正或移除对应条目即可恢复。系统不会自动改写 `[secondary_model]` 节。
 
@@ -342,7 +340,6 @@ k3-max = "同一模型的 max Thinking 档位。适合最难的子任务。"
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `max_running_tasks` | `integer` | — | 同时运行的最大后台任务数；也限制 Tower worker 和 reviewer，Tower 默认上限为 256 |
 | `keep_alive_on_exit` | `boolean` | `false` | 会话关闭时是否保留仍在运行的后台任务；print 模式下仅作 `print_background_mode` 的回退：`true` 等价于 `drain` |
 | `kill_grace_period_ms` | `integer` | `5000` | 任务被请求正常终止后，等待自行结束的宽限时间（毫秒），超时后强制停止 |
 | `bash_auto_background_on_timeout` | `boolean` | `true` | 前台 `Bash` 命令超时后转为后台任务而非终止；设为 `false` 恢复超时即终止 |
@@ -351,9 +348,7 @@ k3-max = "同一模型的 max Thinking 档位。适合最难的子任务。"
 | `print_wait_ceiling_s` | `integer` | `2147483` | 等待/steer 循环的墙钟上限（秒），非 print 模式或 `"exit"` 时无效 |
 | `print_max_turns` | `integer` | `100000` | steer 模式下后台任务触发新 turn 的数量上限，防止 steer 循环失控 |
 
-对 Tower 而言，`max_running_tasks` 同时限制 worker 和 reviewer 的总运行数量。如果两个配置节与 `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS` 都未设置该值，默认合计最多运行 256 个。
-
-`keep_alive_on_exit` 可被环境变量 `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` 覆盖，`max_running_tasks` 可被 `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS` 覆盖，`bash_task_timeout_s` 可被 `KIMI_CODE_BACKGROUND_BASH_TASK_TIMEOUT_S` 覆盖，`print_background_mode`、`print_wait_ceiling_s`、`print_max_turns` 可分别被 `KIMI_CODE_BACKGROUND_PRINT_BACKGROUND_MODE`、`KIMI_CODE_BACKGROUND_PRINT_WAIT_CEILING_S`、`KIMI_CODE_BACKGROUND_PRINT_MAX_TURNS` 覆盖，优先级均高于两个配置节。
+`keep_alive_on_exit` 可被环境变量 `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` 覆盖，`bash_task_timeout_s` 可被 `KIMI_CODE_BACKGROUND_BASH_TASK_TIMEOUT_S` 覆盖，`print_background_mode`、`print_wait_ceiling_s`、`print_max_turns` 可分别被 `KIMI_CODE_BACKGROUND_PRINT_BACKGROUND_MODE`、`KIMI_CODE_BACKGROUND_PRINT_WAIT_CEILING_S`、`KIMI_CODE_BACKGROUND_PRINT_MAX_TURNS` 覆盖，优先级均高于两个配置节。
 
 在 print 模式（`kimi -p "<prompt>"`）下，只要还有未决的后台任务，Kimi Code 在 main agent 的 turn 结束后不会退出：每个任务完成都会以合成 user 消息回馈给 main agent，steer 出新的 turn（默认 `print_background_mode = "steer"`），直到某 turn 结束时没有任何未决任务才退出。该循环受 `print_wait_ceiling_s` 与 `print_max_turns` 约束，默认值都近似不设限。print 模式下后台工作也不会被墙钟超时杀掉：后台 `Bash` 任务默认无超时（`bash_task_timeout_s = 0`），subagent 默认无超时（`[subagent] timeout_ms` 与 `[swarm] timeout_ms` 未显式设置时均为 `0`），只有模型自己能停止任务。将 `print_background_mode` 设为 `"drain"` 可等待任务结束但不回馈结果，设为 `"exit"` 则在 main agent 结束后立即退出。
 
@@ -498,7 +493,7 @@ require_trust = false
 ```
 
 ::: warning 注意
-关闭首次打开的信任确认后，项目级 MCP server 和其他受信任机制控制的项目配置都会不经确认直接加载。仅应在所有工作区均已可信时使用该配置。它不会改变权限模式、工具审批或危险命令保护。
+关闭首次打开的信任确认后，项目级 MCP server 和其他受信任机制控制的项目配置都会不经确认直接加载。仅应在所有工作区均已可信时使用该配置。权限模式和 `dangerous_command_guard` 配置本身不变，但从 `.kimi-code/local.toml` 加载的[项目 `allow` 规则](#permission)可能跳过工具审批提示，包括敏感文件和 git 控制路径保护。
 :::
 
 配置变更在 `/reload` 后生效；已经运行的 TUI 不会补弹启动信任提示。`KIMI_CODE_TRUST_WORKSPACE=1` 仍是独立的进程级信任覆盖，假值不会在 `require_trust` 为 `false` 时恢复首次打开的信任确认。已有信任记录会保留，恢复该要求后继续使用。
@@ -538,14 +533,18 @@ api_key = "sk-xxx"
 
 ## `permission`
 
-`permission` 设置会话启动时自动加载的权限规则，控制 Agent 调用工具时是否需要用户确认。规则用 `[[permission.rules]]` 数组表写出，按顺序匹配，第一条命中即生效。
+`permission` 设置会话启动时自动加载的权限规则，控制 Agent 调用工具时是否需要用户确认。规则用 `[[permission.rules]]` 数组表写出。命中的 `deny` 规则优先于 `ask` 规则，`ask` 规则优先于 `allow` 规则。
+
+用户规则在会话启动时从用户 `config.toml` 加载。为兼容旧配置，用户 `config.toml` 中的 `turn-override` 和 `session-runtime` 规则会静默忽略，不产生警告。
+
+项目规则仅在本地环境且 workspace 已信任时从 `.kimi-code/local.toml` 读取，省略 `scope` 时默认为 `project`。远程环境不支持项目规则。项目规则修改后需要新建会话生效，不会热重载。
 
 也可以在 `[permission]` 下设置 `dangerous_command_guard = false` 完全关闭所有内置 guard 确认策略：危险命令、敏感文件（如 `.env`、`id_rsa`）访问、git 控制路径访问在 "Always Ask" 和 "Ask When Needed" 模式下不再触发审批（"Never Ask" 模式本就不启用这些策略），默认 `true`。环境变量 `KIMI_CODE_DANGEROUS_COMMAND_GUARD=false` 会覆盖文件设置。全部内置 guard 关闭后，"Ask When Needed" 模式下只有你自己配置的 `ask` 规则仍会要求确认；"Always Ask" 模式下未被自动放行的工具照旧逐个询问。`Read`/`Write`/`Edit` 对秘密文件的硬阻断保持不变。此开关只适用于已经在 Agent 之外统一命令限权的环境。
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `decision` | `string` | 是 | 匹配后的处置：`allow`（直接放行）、`deny`（直接拒绝）、`ask`（每次询问） |
-| `scope` | `string` | 否 | 规则有效范围：`turn-override`、`session-runtime`、`project`、`user`，默认 `user` |
+| `scope` | `string` | 否 | 规则有效范围：`turn-override`、`session-runtime`、`project`、`user`，在用户配置中默认 `user`；项目配置仅接受 `project` 和 `user` |
 | `pattern` | `string` | 是 | 匹配模式，格式为 `工具名` 或 `工具名(参数模式)`，如 `Read`、`Bash(rm -rf*)` |
 | `reason` | `string` | 否 | 规则说明，仅用于调试和审计 |
 
@@ -579,7 +578,7 @@ MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-cod
 
 每个条目以环境 id 为键：不超过 64 个字符，首尾不能有空白，`local` 和 `default` 是保留字。同一条目内 `type` 与 `command` 互斥。
 
-远端工作目录必须是 POSIX 绝对路径，相对路径和 `~` 不会展开。
+远端工作目录必须是 POSIX 绝对路径或 Windows 驱动器路径，相对路径和 `~` 不会展开。Git Bash 和启动器的要求见 [Windows 目标环境](../guides/remote-environment.md#windows-目标环境)。
 
 可选的顶层 `default` 指定创建会话时未显式给出绑定时使用的环境。它必须指向一个已配置的条目，且该条目必须设置 `defaultCwd`——绑定由环境和工作目录成对构成，缺了工作目录的默认绑定会悬空。未设置 `default` 时，这些会话从 `local` 开始。TUI 的 `/new` 不用这个 default，而是保留当前环境。详见 [远程环境](../guides/remote-environment.md)。
 
@@ -589,7 +588,7 @@ MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-cod
 | --- | --- | --- | --- |
 | `type` | `string` | 是 | `"ssh"` |
 | `host` | `string` | 是 | SSH 主机；经系统 `ssh` 启动，`~/.ssh/config`（用户、端口、密钥、`ProxyJump`、`ControlMaster`）照常生效 |
-| `remoteBin` | `string` | 否 | 目标上的执行器路径，默认 `~/.kimi-code/bin/kimi` |
+| `remoteBin` | `string` | 否 | 目标环境上 `kimi` 的路径，POSIX 默认 `~/.kimi-code/bin/kimi`，Windows 默认 `~/.kimi-code/bin/kimi.exe`。支持含空格的绝对路径、目标账户主目录下的 `~/` 路径或目标 `PATH` 中的裸名称（如 `kimi`） |
 | `defaultCwd` | `string` | 否 | 绑定会话时工作目录的预填值，不在本机校验 |
 
 ### Docker 条目
@@ -599,7 +598,7 @@ MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-cod
 | `type` | `string` | 是 | `"docker"` |
 | `container` | `string` | 是 | 运行中的容器名或 id，经 `docker exec` 接入 |
 | `context` | `string` | 否 | Docker context（例如 `orbstack`） |
-| `remoteBin` | `string` | 否 | 容器内的执行器路径，默认为容器用户 home 下的 `~/.kimi-code/bin/kimi`；启动命令经 `docker exec … sh -c` 执行，`~` 前缀由容器内的 shell 展开 |
+| `remoteBin` | `string` | 否 | 容器内 `kimi` 的路径，默认为容器用户 home 下的 `~/.kimi-code/bin/kimi`；启动命令经 `docker exec … sh -c` 执行，`~` 前缀由容器内的 shell 展开 |
 | `defaultCwd` | `string` | 否 | 绑定会话时工作目录的预填值 |
 
 ### command 条目
@@ -611,7 +610,7 @@ MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-cod
 | `command` | `string` | 是 | 启动器可执行文件：按 `PATH` 解析的名称，或绝对路径。解析结果落在工作目录内会被拒绝，项目无法用同名二进制冒名顶替启动器 |
 | `args` | `array<string>` | 否 | 进入目标的启动器参数。某个参数已经调用 `exec-server` 时（例如 `--command "~/.kimi-code/bin/kimi exec-server"`），不再追加，按原样执行 |
 | `env` | `table<string, string>` | 否 | 本机启动器进程的环境变量，不会传播到目标环境执行的命令中 |
-| `remoteBin` | `string` | 否 | 目标上的执行器路径，追加在 `args` 之后，默认 `~/.kimi-code/bin/kimi`。应为不含空格和 shell 特殊字符的路径。只有经目标上的 shell 执行参数的启动器（如 ssh）会展开 `~`；`kubectl exec`、`docker exec` 这类原样传递参数的启动器需要绝对路径 |
+| `remoteBin` | `string` | 否 | 目标环境上 `kimi` 的路径，追加在 `args` 之后，默认 `~/.kimi-code/bin/kimi`。应为不含空格和 shell 特殊字符的路径。只有经目标上的 shell 执行参数的启动器（如 ssh）会展开 `~`；`kubectl exec`、`docker exec` 这类原样传递参数的启动器需要绝对路径 |
 | `defaultCwd` | `string` | 否 | 绑定会话时工作目录的预填值 |
 
 ```toml
@@ -648,6 +647,7 @@ defaultCwd = "/workspace"
 | --- | --- | --- | --- |
 | `theme` | `string` | `auto` | 配色主题：`auto`、`dark`、`light` 或[自定义主题](../customization/themes.md)名 |
 | `tui_mode` | `string` | `regular` | 界面布局：`regular` 渲染进终端滚动缓冲区；`fullscreen`（实验性）部分组件支持鼠标交互，交互更顺手 |
+| `copy_on_select` | `boolean` | `true` | 仅全屏模式：选中文本即复制；也可以按 `Ctrl-C` 复制 |
 | `render_latex` | `boolean` | `true` | 将 Markdown 中的 LaTeX 公式渲染为 Unicode 文本；`false` 保留原始源码 |
 | `disable_paste_burst` | `boolean` | `false` | 禁用非 bracketed paste 的粘贴突发兜底；默认开启，避免快速多行粘贴被逐行提交 |
 | `cache_expiry_hint` | `boolean` | `true` | resume 或长时间空闲后发消息时，若上下文缓存可能过期则提醒，可先压缩或新建会话（仅 v2 引擎） |
@@ -656,6 +656,8 @@ defaultCwd = "/workspace"
 | `[notifications].enabled` | `boolean` | `true` | 是否发送桌面通知 |
 | `[notifications].notification_condition` | `string` | `unfocused` | 何时通知：`unfocused`（仅终端失去焦点时）或 `always`（总是） |
 | `[upgrade].auto_install` | `boolean` | `true` | 是否自动安装新版本 |
+| `[transcript].tool_call_density` | `string` | `compact` | `fullscreen` 模式下的工具调用密度：`compact`、`balanced` 或 `detailed` |
+| `[transcript].thinking` | `string` | `grouped` | `fullscreen` 模式下的思考折叠：`grouped` 或 `ungrouped` |
 | `[status_line].items` | `string[]` | `[]` | 底部状态栏第一行的内置槽位及顺序：`mode`、`goal`、`model`、`tasks`、`cwd`、`git`、`tips`，未知 id 跳过并告警 |
 | `[status_line].command` | `string` | `""` | 自定义状态栏命令：stdout 首行替换状态栏，stdin 收 JSON 快照；上限 300ms、每秒一次，失败回退内置布局 |
 
@@ -669,7 +671,8 @@ model、cwd、git 分支、permission 模式、plan 模式、上下文用量、s
 ```toml
 # ~/.kimi-code/tui.toml
 theme = "auto" # "auto" | "dark" | "light" | 自定义主题名
-tui_mode = "regular" # "regular" | "fullscreen"（"fullscreen" 为实验性）
+# tui_mode = "regular" # "regular" | "fullscreen"（"fullscreen" 为实验性）
+copy_on_select = true # 仅全屏模式：false 表示按 Ctrl-C 才复制
 render_latex = true # false 表示消息中的 LaTeX 公式保留原始源码
 disable_paste_burst = false # true 表示禁用非 bracketed paste 的粘贴突发兜底
 cache_expiry_hint = true # false 表示关闭 resume / 空闲提交时的"缓存已过期"提醒弹窗
@@ -685,6 +688,10 @@ notification_condition = "unfocused" # "unfocused" | "always"
 [upgrade]
 auto_install = true
 
+[transcript] # 仅 fullscreen 模式生效
+tool_call_density = "compact" # "compact" | "balanced" | "detailed"
+thinking = "grouped" # "grouped" | "ungrouped"
+
 # [status_line]
 # items = ["mode", "goal", "model", "tasks", "cwd", "git", "tips"]
 # command = "~/.kimi-code/statusline.sh"
@@ -696,7 +703,7 @@ auto_install = true
 
 除了 `~/.kimi-code` 下的用户级文件，Kimi Code 还会读取位于 `<项目根目录>/.kimi-code/local.toml` 的项目级本地配置文件。它保存的是与某一个项目检出相关、通常不应与队友共享的设置。
 
-早期版本的 [`/add-dir`](../reference/slash-commands.md) 会把「记住此目录」写入这个文件；现版本改为记入 `~/.kimi-code/projects.json` 中的工作区注册表，`local.toml` 随之成为只读的存量兼容字段，任何组件都不会再写入它。隐式工作区（终端按目录进入）的会话仍把其中的 `additional_dir` 并入额外目录；显式创建（managed）工作区的会话不再读取它。要把旧配置搬进注册表，可在客户端的新建/编辑工作区弹窗中使用导入功能（底层为 [`GET /api/v1/workspaces/project-config-dirs`](../reference/server-api.md#get-apiv1workspacesproject-config-dirs)），导入后即由注册表管理，删除即时生效。
+早期版本的 [`/add-dir`](../reference/slash-commands.md) 会把「记住此目录」写入这个文件；现版本改为记入 `~/.kimi-code/projects.json` 中的工作区注册表，`local.toml` 随之成为只读的存量兼容字段，任何组件都不会再写入它。隐式工作区（终端按目录进入）的会话仍把其中的 `additional_dir` 并入额外目录；显式创建（managed）工作区的会话不再读取它。要把旧配置搬进注册表，可在客户端的新建/编辑工作区弹窗中使用导入功能（底层为 [`GET /api/v1/workspaces/project-config-dirs`](../reference/server-api-service.md#get-api-v1-workspaces-project-config-dirs)），导入后即由注册表管理，删除即时生效。
 
 ### `[workspace]`
 

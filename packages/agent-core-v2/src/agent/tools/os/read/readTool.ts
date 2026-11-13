@@ -5,11 +5,11 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { isTaskOutputFilePath } from '#/agent/task/persist';
-import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { type HostFileHead, IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { isHostFsNotDirectory, isHostFsNotFound } from '#/os/interface/hostFsErrors';
 import { acquireOrWhenReady, IAgentEnvironmentService, pinnedGeneration } from '#/agent/environmentBinding/agentEnvironment';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPlanService, type PlanFileTarget } from '#/features/plan/plan';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -227,7 +227,7 @@ export class ReadTool implements IReadTool {
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
     @IAgentToolResultTruncationService private readonly resultTruncation: IAgentToolResultTruncationService,
     @IConfigService private readonly config: IConfigService,
-    @IAgentProfileService private readonly profile: IAgentProfileService,
+    @IAgentLoopService private readonly profile: IAgentLoopService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @ISessionMediaStore private readonly attachmentStore?: ISessionMediaStore,
@@ -272,6 +272,7 @@ export class ReadTool implements IReadTool {
       const workspace = this.workspaceConfig(view);
       const path = resolvePathAccessPath(args.path, {
         env,
+        shellPathBridge: view.shellPathBridge,
         workspace,
         operation: 'read',
       });
@@ -358,26 +359,26 @@ export class ReadTool implements IReadTool {
     eventLog: boolean,
   ): Promise<ExecutableToolResult> {
     try {
-      let stat: Awaited<ReturnType<IHostFileSystem['stat']>>;
+      let head: HostFileHead;
       try {
-        stat = await source.stat();
+        head = await source.readHead(MEDIA_SNIFF_BYTES);
       } catch (error) {
         if (isHostFsNotFound(error) || isHostFsNotDirectory(error)) {
           return { isError: true, output: `"${args.path}" does not exist.` };
         }
         throw error;
       }
+      const { stat, bytes: header } = head;
       if (!stat.isFile) {
         return { isError: true, output: `"${args.path}" is not a file.` };
       }
 
-      const header = await source.readBytes(MEDIA_SNIFF_BYTES);
       const fileType = detectFileType(source.name, header);
       if (fileType.kind === 'image' || fileType.kind === 'video') {
         const kind = fileType.kind;
         const article = kind === 'image' ? 'an' : 'a';
         const capabilities = this.profile.getModelCapabilities();
-        const supported = kind === 'image' ? capabilities.image_in : capabilities.video_in;
+        const supported = kind === 'image' ? capabilities?.image_in === true : capabilities?.video_in === true;
         if (!supported) {
           return {
             isError: true,

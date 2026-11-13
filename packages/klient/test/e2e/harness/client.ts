@@ -4,8 +4,7 @@
  * Wraps the server's HTTP REST + WS surfaces (`/api/v1/...` + `/api/v1/ws`)
  * into a single, typed object that scenarios can drive. Handles:
  *   - Envelope unwrap + typed REST helpers
- *   - WS `server_hello` → `client_hello` → ack handshake
- *   - `subscribe_v2` / `unsubscribe_v2` ack correlation
+ *   - WS `subscribe` / `unsubscribe` response correlation
  *   - Approval + question reverse-RPC auto-resolve via per-event handlers
  *   - `waitForFrame` / `waitForSessionBusy` / `runUntilIdle` convenience waits
  *
@@ -41,6 +40,7 @@ import type {
   PromptSubmitResult,
   PromptThinking,
 } from '@moonshot-ai/kap-server/protocol/rest-prompt';
+import type { ConversationTurnsPage } from '@moonshot-ai/kap-server/protocol/conversation';
 import type {
   CompactSessionRequest,
   CompactSessionResponse,
@@ -59,7 +59,6 @@ import type {
   WorkspaceCreate,
   WorkspaceUpdate,
 } from '@moonshot-ai/kap-server/protocol/workspace';
-import type { ServerHelloMessage } from '@moonshot-ai/kap-server/protocol/ws-control';
 import { ulid } from 'ulid';
 import { WebSocket as WsWebSocket } from 'ws';
 
@@ -72,14 +71,12 @@ export interface DaemonClientOptions {
   baseUrl?: string;
   /** Default `/api/v1`. WS endpoint is `${apiPrefix}/ws`. */
   apiPrefix?: string;
-  /** Default `server-e2e-<ulid>` — used as the `client_hello.client_id`. */
-  clientId?: string;
   fetchImpl?: typeof fetch;
   wsImpl?: typeof WsWebSocket;
   logger?: (level: 'info' | 'warn' | 'error' | 'debug', msg: string, meta?: unknown) => void;
   /** Directory for JSONL trace events and generated HTML reports. */
   reportDir?: string;
-  /** Default 5s. Applies to handshake + subscribe acks. */
+  /** Default 5s. Applies to subscribe and unsubscribe responses. */
   controlAckTimeoutMs?: number;
 }
 
@@ -135,7 +132,6 @@ function fillPromptDefaults(input: PromptSubmitInput): PromptSubmission {
 export class DaemonClient {
   readonly baseUrl: string;
   readonly apiPrefix: string;
-  readonly clientId: string;
   readonly http: HttpClient;
 
   private readonly _wsImpl: typeof WsWebSocket;
@@ -147,14 +143,13 @@ export class DaemonClient {
   private readonly _reportDir: string | undefined;
   private readonly _controlAckTimeoutMs: number;
   private _ws: WsClient | null = null;
-  private _serverHello: ServerHelloMessage['payload'] | null = null;
+  private _connecting: Promise<void> | null = null;
   private readonly _subscribed = new Set<string>();
   private readonly _disposers: Array<() => void> = [];
 
   constructor(opts: DaemonClientOptions = {}) {
     this.baseUrl = (opts.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, '');
     this.apiPrefix = opts.apiPrefix ?? DEFAULT_API_PREFIX;
-    this.clientId = opts.clientId ?? `server-e2e-${ulid()}`;
     this._wsImpl = opts.wsImpl ?? WsWebSocket;
     this._logger = opts.logger ?? noopLogger;
     this._reportDir = opts.reportDir;
@@ -210,7 +205,7 @@ export class DaemonClient {
   }
   undoSession(
     sid: string,
-    body: UndoSessionRequest = { count: 1 },
+    body: UndoSessionRequest,
   ): Promise<UndoSessionResponse> {
     return this.http.undoSession(sid, body);
   }
@@ -263,6 +258,9 @@ export class DaemonClient {
   ): Promise<{ items: Message[]; has_more: boolean }> {
     return this.http.listMessages(sid, query);
   }
+  listTurns(sid: string): Promise<ConversationTurnsPage> {
+    return this.http.listTurns(sid);
+  }
   submitPrompt(sid: string, input: PromptSubmitInput): Promise<PromptSubmitResult> {
     return this.http.submitPrompt(sid, fillPromptDefaults(input));
   }
@@ -304,13 +302,18 @@ export class DaemonClient {
 
   // ── WS lifecycle ────────────────────────────────────────────────────────
   /**
-   * Open the WS socket, wait for `server_hello`, send `client_hello`, await
-   * the ack. Returns the server's hello payload (connection id, heartbeat).
-   * Every connection receives the global events, including
-   * `event.session.work_changed`, without subscribing.
+   * Open the WS socket. There is no handshake: every connection receives the
+   * global events, including `event.session.work_changed`, without subscribing.
    */
-  async connect(): Promise<ServerHelloMessage['payload']> {
-    if (this._serverHello) return this._serverHello;
+  connect(): Promise<void> {
+    this._connecting ??= this._open().catch((error: unknown) => {
+      this._connecting = null;
+      throw error;
+    });
+    return this._connecting;
+  }
+
+  private async _open(): Promise<void> {
     const wsUrl = `${this.baseUrl.replace(/^http/, 'ws')}${this.apiPrefix}/ws`;
     const ws = new WsClient({
       url: wsUrl,
@@ -318,68 +321,38 @@ export class DaemonClient {
       logger: this._logger,
       reportDir: this._reportDir,
     });
-    this._ws = ws;
     await ws.open();
-
-    const helloFrame = await ws.waitForFrame(
-      (f) => f.type === 'server_hello',
-      this._controlAckTimeoutMs,
-    );
-    const helloPayload = helloFrame.payload as ServerHelloMessage['payload'];
-    this._serverHello = helloPayload;
-
-    const helloId = `hello-${ulid()}`;
-    const ack = await ws.sendAndAwaitAck(
-      {
-        type: 'client_hello',
-        id: helloId,
-        payload: { client_id: this.clientId },
-      },
-      this._controlAckTimeoutMs,
-    );
-    if (ack.code !== 0) {
-      throw new Error(`client_hello rejected (code=${ack.code}): ${ack.msg ?? 'no message'}`);
-    }
-    this._logger('debug', 'ws: handshake complete', {
-      wsConnectionId: helloPayload.ws_connection_id,
-      clientId: this.clientId,
-    });
-    return helloPayload;
+    this._ws = ws;
   }
 
   /**
-   * Send `subscribe_v2` for the session's transcript stream and await its
-   * ack. Throws when the server reports the session as not found.
+   * Send `subscribe` for the session's main agent and await its response.
+   * Throws when the server rejects it, for example with 40401 for an unknown
+   * session.
    */
   async subscribe(sid: string): Promise<void> {
     const ws = this._requireWs();
     if (this._subscribed.has(sid)) return;
-    const id = `sub-${ulid()}`;
-    const ack = await ws.sendAndAwaitAck(
-      { type: 'subscribe_v2', id, payload: { session_id: sid, transcript: { '*': 'turn' } } },
+    const response = await ws.sendCommand(
+      { type: 'subscribe', request_id: `sub-${ulid()}`, session_id: sid },
       this._controlAckTimeoutMs,
     );
-    if (ack.code !== 0) {
-      throw new Error(`subscribe rejected (code=${ack.code}): ${ack.msg ?? 'no message'}`);
-    }
-    const accepted = (ack.payload as { accepted?: string[] } | undefined)?.accepted ?? [];
-    if (!accepted.includes(sid)) {
-      throw new Error(`subscribe rejected: session ${sid} not found`);
+    if (response.code !== 0) {
+      throw new Error(`subscribe rejected (code=${response.code}): ${response.msg ?? 'no message'}`);
     }
     this._subscribed.add(sid);
   }
 
-  /** Send `unsubscribe_v2` and await its ack. */
+  /** Send `unsubscribe` and await its response. */
   async unsubscribe(sid: string): Promise<void> {
     const ws = this._requireWs();
     if (!this._subscribed.has(sid)) return;
-    const id = `unsub-${ulid()}`;
-    const ack = await ws.sendAndAwaitAck(
-      { type: 'unsubscribe_v2', id, payload: { session_id: sid } },
+    const response = await ws.sendCommand(
+      { type: 'unsubscribe', request_id: `unsub-${ulid()}`, session_id: sid },
       this._controlAckTimeoutMs,
     );
-    if (ack.code !== 0) {
-      throw new Error(`unsubscribe rejected (code=${ack.code}): ${ack.msg ?? 'no message'}`);
+    if (response.code !== 0) {
+      throw new Error(`unsubscribe rejected (code=${response.code}): ${response.msg ?? 'no message'}`);
     }
     this._subscribed.delete(sid);
   }
@@ -393,11 +366,13 @@ export class DaemonClient {
         // ignore
       }
     }
+    const connecting = this._connecting;
+    this._connecting = null;
+    await connecting?.catch(() => undefined);
     if (this._ws) {
       await this._ws.close();
       this._ws = null;
     }
-    this._serverHello = null;
     this._subscribed.clear();
   }
 

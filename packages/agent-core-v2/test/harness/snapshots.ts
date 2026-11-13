@@ -1,4 +1,4 @@
-import type { Message, ToolDescription as LLMTool } from '#human/llm/message';
+import type { Message, ToolDescription as LLMTool } from '@moonshot-ai/core/llm/message';
 import { expect } from 'vitest';
 
 import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
@@ -49,12 +49,23 @@ export function eventSnapshot(
 ) {
   const normalized = events.map((event) => {
     let stableEvent = event;
+    if (event.type === '[wire]' && event.event === 'tool_select.initialized') {
+      const args = event.args as { readonly tools: readonly { readonly name: string }[] };
+      stableEvent = {
+        ...event,
+        args: { ...args, tools: args.tools.map((tool) => tool.name) },
+      };
+    }
     if (event.type === '[wire]' && event.event === 'llm.tools_snapshot') {
       const args = event.args as { readonly tools: readonly { readonly name: string }[] };
       stableEvent = {
         ...event,
         args: { ...args, hash: '<tools-hash>', tools: args.tools.map((tool) => tool.name) },
       };
+    }
+    if (event.type === '[rpc]' && event.event === 'tool.updated') {
+      const args = event.args as { readonly taskId: string };
+      stableEvent = { ...event, args: { ...args, taskId: '<taskId>' } };
     }
     if (
       event.type === '[wire]' &&
@@ -359,7 +370,7 @@ function normalizeValue(value: unknown, labels: SnapshotLabels): unknown {
 
 function normalizeObjectField(key: string, value: unknown, labels: SnapshotLabels): unknown {
   if (
-    (key === 'time' || key === 'created_at' || key === 'since' || key === 'at') &&
+    (key === 'time' || key === 'created_at' || key === 'since' || key === 'at' || key === 'startedAt') &&
     typeof value === 'number'
   ) {
     return '<time>';

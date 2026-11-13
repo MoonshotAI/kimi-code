@@ -12,7 +12,7 @@ export function stubPermissionRulesService(
       return rules();
     },
     sessionApprovalRulePatterns: [],
-    addRules: () => {},
+    addRules: () => Promise.resolve(),
     recordApprovalResult: () => {},
   };
 }

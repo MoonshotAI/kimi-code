@@ -56,6 +56,28 @@ describe('Session.prompt input normalization', () => {
     expect(prompt).not.toHaveBeenCalled();
   });
 
+  it('returns the core steer identity and delivery state', async () => {
+    const submission = {
+      promptId: 'prompt-steer-1',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      state: 'running',
+      steered: true,
+      turnId: 4,
+    } as const;
+    const steer = vi.fn(async () => submission);
+    const session = new Session({
+      id: 'ses_steer_result',
+      workDir: '/tmp/work',
+      rpc: { steer } as unknown as SDKRpcClientBase,
+    });
+
+    await expect(session.steer('focus on tests')).resolves.toEqual(submission);
+    expect(steer).toHaveBeenCalledWith({
+      sessionId: 'ses_steer_result',
+      input: [{ type: 'text', text: 'focus on tests' }],
+    });
+  });
+
   it('starts btw and returns the forked agent id', async () => {
     const startBtw = vi.fn(async () => 'agent-btw');
     const session = new Session({

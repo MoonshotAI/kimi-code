@@ -7,13 +7,17 @@ import { type Entry, fromBuffer as yauzlFromBuffer } from 'yauzl';
 
 import { Error2, ErrorCodes } from '#/errors';
 
-export async function downloadZip(url: string, signal?: AbortSignal): Promise<Buffer> {
+export async function downloadZip(
+  url: string,
+  signal?: AbortSignal,
+  fetchImpl: typeof fetch = fetch,
+): Promise<Buffer> {
   const controller = new AbortController();
   const timeoutHandle = setTimeout(() => {
     controller.abort();
   }, 5 * 60 * 1000);
   try {
-    const resp = await fetch(url, { signal: signal ?? controller.signal });
+    const resp = await fetchImpl(url, { signal: signal ?? controller.signal });
     if (!resp.ok) {
       throw new Error2(
         ErrorCodes.PLUGIN_LOAD_FAILED,

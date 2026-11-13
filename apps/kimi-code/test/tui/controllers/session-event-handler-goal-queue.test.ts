@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 
 import { SessionEventHandler } from '#/tui/controllers/session-event-handler';
+import { TurnTimeline } from '#/tui/utils/turn-timeline';
 import { getBuiltInPalette } from '#/tui/theme';
 import { readGoalQueue, removeGoalQueueItem, restoreGoalQueueItem } from '#/tui/goal-queue-store';
 
@@ -64,6 +65,7 @@ function makeHost(options: { createGoalRejects?: boolean } = {}) {
     aborted: false,
     sessionEventUnsubscribe: undefined,
     streamingUI: {
+      timeline: new TurnTimeline(),
       setTurnId: vi.fn(),
       flushNow: vi.fn(),
       resetToolUi: vi.fn(),
@@ -88,7 +90,6 @@ function makeHost(options: { createGoalRejects?: boolean } = {}) {
     showNotice: vi.fn(),
     track: vi.fn(),
     recordSessionActivity: vi.fn(),
-    noteStepUsage: vi.fn(),
     noteCompactionFinished: vi.fn(),
     mountEditorReplacement: vi.fn(),
     restoreEditor: vi.fn(),

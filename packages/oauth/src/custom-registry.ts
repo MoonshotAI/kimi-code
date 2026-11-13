@@ -56,14 +56,15 @@ export interface FetchCustomRegistryOptions {
 }
 
 /**
- * The kosong `ProviderConfig` union (`packages/kosong/src/providers/index.ts`)
- * mirrors these literal values. `kimi` is included because the api.json schema
- * permits it even though kokub itself only emits the other three.
+ * `kimi` is included because the api.json schema permits it even though kokub
+ * itself only emits the other three. `google-genai` is the Gemini generateContent
+ * type registries emit for that protocol.
  */
 export type CustomRegistryProviderType =
   | 'anthropic'
   | 'openai'
   | 'openai_responses'
+  | 'google-genai'
   | 'kimi';
 
 export interface CustomRegistryModelUpgrade {
@@ -108,6 +109,7 @@ const ALLOWED_PROVIDER_TYPES: ReadonlySet<CustomRegistryProviderType> = new Set(
   'anthropic',
   'openai',
   'openai_responses',
+  'google-genai',
   'kimi',
 ]);
 

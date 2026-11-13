@@ -1,14 +1,12 @@
 import {
   buildContextCompactionShape,
 } from '@moonshot-ai/agent-core-v2/agent/contextMemory/compactionHandoff';
-import {
-  computeUndoCut,
-  isFullyUndoable,
-  readContextCompactionShapeInput,
-} from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextOps';
+import { readContextCompactionShapeInput } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextOps';
+import { cutTurnUndo } from '@moonshot-ai/agent-core-v2/agent/undo/turnUndo';
+import type { WireRecord } from '@moonshot-ai/agent-core-v2/wire/record';
 import { createLoopEventFold } from '@moonshot-ai/agent-core-v2/agent/contextMemory/loopEventFold';
 import { renderToolResultForModel } from '@moonshot-ai/agent-core-v2/agent/contextMemory/toolResultRender';
-import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import type {
   ContextMessage,
   PermissionMode,
@@ -30,7 +28,7 @@ export interface ProjectedMessage {
 }
 
 export interface UsageTotals {
-  byScope: { session: TokenUsage; turn: TokenUsage };
+  byScope: { session: TokenUsage; turn: TokenUsage; prediction: TokenUsage };
   byModel: Record<string, TokenUsage>;
 }
 
@@ -80,8 +78,8 @@ const ZERO: TokenUsage = { inputOther: 0, output: 0, inputCacheRead: 0, inputCac
  *    user / tool messages and any explicit assistant injections).
  *  - `step.begin` settles a preceding attempt and opens a fresh assistant;
  *    later `content.part` and `tool.call` events on the same step grow that
- *    message. A normal `step.end` seals it (or drops it when vacuous), while
- *    interrupted/error steps stay partial until the next attempt.
+ *    message. A `step.end` seals it (or drops it when vacuous), including
+ *    interrupted and error endings.
  *  - pending tool calls defer appended messages; matching `tool.result`
  *    events close them, and an attempt that settles first gets synthetic
  *    interrupted results, exactly like engine replay.
@@ -113,7 +111,7 @@ export function projectContext(
   let messages: ProjectedMessage[] = [];
   let modelMessages: ProjectedMessage[] = [];
   const usage: UsageTotals = {
-    byScope: { session: { ...ZERO }, turn: { ...ZERO } },
+    byScope: { session: { ...ZERO }, turn: { ...ZERO }, prediction: { ...ZERO } },
     byModel: {},
   };
   const config: ConfigSnapshot = {};
@@ -216,7 +214,7 @@ export function projectContext(
     openMessage = undefined;
   };
 
-  for (const entry of entries) {
+  for (const [entryIndex, entry] of entries.entries()) {
     currentEntry = entry;
     syntheticToolOrdinal = 0;
     const rec = entry.data;
@@ -245,11 +243,13 @@ export function projectContext(
           // resetting to 0 — so guard against a false drop here too.
           if ('usage' in ev && ev.usage !== undefined) {
             const fill =
-              ev.usage.inputCacheRead +
-              ev.usage.inputCacheCreation +
-              ev.usage.inputOther +
-              ev.usage.output;
-            if (fill > 0) contextTokens = fill;
+              ev.usage.inputCacheRead === undefined
+                ? undefined
+                : ev.usage.inputCacheRead +
+                  ev.usage.inputCacheCreation +
+                  ev.usage.inputOther +
+                  ev.usage.output;
+            if (fill !== undefined && fill > 0) contextTokens = fill;
           }
         }
         break;
@@ -394,7 +394,7 @@ export function projectContext(
         // byScope keeps per-scope cumulative spend. This is NOT the live context-window
         // fill — that is `contextTokens` (latest step.end.usage). The web TokenBar shows
         // contextTokens; byScope/byModel are for the cumulative breakdown only.
-        const scope = (rec.usageScope ?? 'session') as 'session' | 'turn';
+        const scope = rec.usageScope ?? 'session';
         addUsage(usage.byScope[scope], rec.usage);
         usage.byModel[rec.model] ??= { ...ZERO };
         addUsage(usage.byModel[rec.model]!, rec.usage);
@@ -433,26 +433,28 @@ export function projectContext(
       case 'plan_mode.exit':
         planActive = false; planId = undefined; break;
       case 'context.undo': {
-        // Mirror the engine's `undo`: locate the requested user anchor while
-        // skipping injections, stop at a compaction summary, include an
-        // immediately preceding prompt-owned injection in the cut, then remove
-        // the entire suffix from that cut. The UI adds a marker afterwards.
-        //
-        // `computeUndoCut` is the engine's single source of truth for that
-        // skip/stop walk; only the visible removal is gated on `'model'` mode.
-        const cut = computeUndoCut(
-          modelMessages.map((message) => message.message),
+        // Mirror the engine's turn-based undo: locate the requested turn start,
+        // include an immediately preceding prompt-owned injection in the cut,
+        // then remove projected messages from that Wire line onward. The UI adds
+        // a marker afterwards. Only visible removal is gated on 'model' mode.
+        const result = cutTurnUndo(
+          entries.slice(0, entryIndex).map((candidate) => ({
+            record: candidate.data as WireRecord,
+            line: candidate.lineNo,
+          })),
+          new Set(),
           rec.count,
         );
-        const applied = isFullyUndoable(cut, rec.count);
-        const removedMessageCount = applied ? modelMessages.length - cut.cutIndex : 0;
+        const applied = result.cut !== undefined;
+        const removedMessageCount = applied
+          ? modelMessages.filter((message) => message.lineNo > result.cut!.line).length
+          : 0;
         if (applied) {
-          const firstRemoved = modelMessages[cut.cutIndex];
-          modelMessages = modelMessages.slice(0, cut.cutIndex);
+          const cutLine = result.cut!.line;
+          modelMessages = modelMessages.filter((message) => message.lineNo <= cutLine);
           resetFold();
           if (mode === 'model') {
-            const displayCutoff = firstRemoved === undefined ? -1 : messages.indexOf(firstRemoved);
-            messages = displayCutoff === -1 ? [...modelMessages] : messages.slice(0, displayCutoff);
+            messages = messages.filter((message) => message.lineNo <= cutLine);
           }
         }
         if (mode === 'model') {
@@ -504,6 +506,7 @@ export function projectContext(
           const prev: GoalSnapshot = goal;
           goal = {
             ...prev,
+            objective: rec.objective ?? prev.objective,
             status: rec.status ?? prev.status,
             actor: rec.actor ?? prev.actor,
             reason: rec.reason ?? prev.reason,
@@ -571,6 +574,7 @@ export function projectContext(
       case 'staleGuard.recorded':
       case 'staleGuard.cleared':
       case 'interruptionReminder.recorded':
+      case 'interruptionReminder.requested':
       case 'permission.record_approval_result':
       case 'full_compaction.begin':
       case 'full_compaction.cancel':

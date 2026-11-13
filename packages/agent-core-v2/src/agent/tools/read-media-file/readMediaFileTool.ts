@@ -1,4 +1,4 @@
-import type { ContentPart } from '#human/llm/message';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { isDaemonFileUrl } from '#/agent/media/mediaRef';
@@ -183,6 +183,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
       const workspace = { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
       const path = resolvePathAccessPath(args.path, {
         env,
+        shellPathBridge: view.shellPathBridge,
         workspace,
         operation: 'read',
       });

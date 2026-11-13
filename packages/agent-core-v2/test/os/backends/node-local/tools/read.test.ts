@@ -19,7 +19,7 @@ import { estimateTokens } from '#/llm-adapter/contract/tokens';
 import { stubToolResultTruncationService } from '../../../../agent/toolResultTruncation/stubs';
 import { stubConfigService } from '../../../../app/config/stubs';
 import type { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
-import type { IAgentProfileService } from '#/agent/profile/profile';
+import type { IAgentLoopService } from '#/agent/loop/loop';
 import type { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import type { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
@@ -75,10 +75,10 @@ function createTestEnv(home = '/home'): IHostEnvironment {
 function stubProfileService(capabilities: {
   image_in: boolean;
   video_in: boolean;
-}): IAgentProfileService {
+}): IAgentLoopService {
   return {
     getModelCapabilities: () => capabilities,
-  } as unknown as IAgentProfileService;
+  } as unknown as IAgentLoopService;
 }
 
 function createReadTool(
@@ -89,7 +89,7 @@ function createReadTool(
     catalog: { getSkillRoots: () => [] },
   } as unknown as ISessionSkillCatalog,
   truncation: IAgentToolResultTruncationService = stubToolResultTruncationService(),
-  profile: IAgentProfileService = stubProfileService({ image_in: true, video_in: true }),
+  profile: IAgentLoopService = stubProfileService({ image_in: true, video_in: true }),
   toolPolicy: IAgentToolPolicyService = { isToolActive: () => true } as unknown as IAgentToolPolicyService,
   toolRegistry: IAgentToolRegistryService = { resolve: () => ({}) } as unknown as IAgentToolRegistryService,
   config: IConfigService = stubConfigService(),
@@ -112,8 +112,12 @@ function createSpiedFs(content: string) {
   );
   const readLines = vi.fn().mockImplementation(() => generateLines(content));
   const readText = vi.fn(async () => content);
-  const stat = vi.fn(async () => ({ isFile: true, isDirectory: false, size: bytes.length }));
-  const fs = { cwd: '/', readBytes, readLines, readText, stat } as unknown as IHostFileSystem;
+  const stat = vi.fn(async (_path: string) => ({ isFile: true, isDirectory: false, size: bytes.length }));
+  const readFileHead = async (path: string, maxBytes: number) => {
+    const fileStat = await stat(path);
+    return { stat: fileStat, bytes: fileStat.isFile ? await readBytes(path, maxBytes) : new Uint8Array() };
+  };
+  const fs = { cwd: '/', readBytes, readFileHead, readLines, readText, stat } as unknown as IHostFileSystem;
   return { fs, readBytes, readLines, readText, stat };
 }
 
@@ -155,7 +159,11 @@ function createSpiedMapFs(files: Record<string, FakeFile>) {
       size: file.size ?? file.bytes.length,
     };
   });
-  const fs = { cwd: '/', readBytes, readLines, readText, stat } as unknown as IHostFileSystem;
+  const readFileHead = async (path: string, maxBytes: number) => {
+    const fileStat = await stat(path);
+    return { stat: fileStat, bytes: fileStat.isFile ? await readBytes(path, maxBytes) : new Uint8Array() };
+  };
+  const fs = { cwd: '/', readBytes, readFileHead, readLines, readText, stat } as unknown as IHostFileSystem;
   return { fs, readBytes, readLines, readText, stat };
 }
 
@@ -1451,8 +1459,9 @@ describe('ReadTool', () => {
     const readBytes = vi.fn(async (_path: string, n?: number) =>
       n === undefined ? bytes : bytes.subarray(0, n),
     );
-    const stat = vi.fn(async () => ({ isFile: true, isDirectory: false, size: bytes.length }));
-    const fs = { cwd: '/', readBytes, readLines, readText, stat } as unknown as IHostFileSystem;
+    const stat = { isFile: true, isDirectory: false, size: bytes.length };
+    const readFileHead = async (path: string, maxBytes: number) => ({ stat, bytes: await readBytes(path, maxBytes) });
+    const fs = { cwd: '/', readBytes, readFileHead, readLines, readText } as unknown as IHostFileSystem;
     const tool = createReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, { path: '/tmp/large.txt' });

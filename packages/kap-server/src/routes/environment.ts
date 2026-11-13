@@ -48,7 +48,10 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
       path: '/sessions/{session_id}/environment',
       params: sessionEnvironmentParamsSchema,
       success: { data: environmentBindingResponseSchema },
-      errors: { [ErrorCode.SESSION_NOT_FOUND]: {} },
+      errors: {
+        [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
+      },
       description: 'Get the main agent environment binding',
       tags: ['sessions'],
     },
@@ -72,6 +75,7 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
       errors: {
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.WORKSPACE_NOT_FOUND]: {},
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
       },
       description: 'List the environments available to the session',
       tags: ['sessions'],

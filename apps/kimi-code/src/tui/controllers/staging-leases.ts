@@ -46,7 +46,7 @@ import type { TurnEndedEvent, TurnStartedEvent } from '@moonshot-ai/kimi-code-sd
 
 import { MAIN_AGENT_ID } from '../constant/kimi-tui';
 
-import type { QueuedMessage } from '../types';
+import { isPromptQueuedMessage, type QueuedMessage } from '../types';
 
 export type StagingLeaseOrigin = 'user' | 'skill_activation' | 'plugin_command';
 
@@ -235,7 +235,7 @@ export class StagingLeaseTracker {
   }
 
   releaseQueued(items: readonly QueuedMessage[]): void {
-    const fileIds = items.flatMap((item) =>
+    const fileIds = items.filter(isPromptQueuedMessage).flatMap((item) =>
       this.effects.takeFileIds([
         ...(item.imageAttachmentIds ?? []),
         ...(item.videoAttachmentIds ?? []),

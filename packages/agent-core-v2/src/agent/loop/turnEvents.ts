@@ -2,13 +2,13 @@
 import { z } from 'zod';
 
 import type { PromptOrigin } from '#/agent/contextMemory/types';
-import { annotateBundledSkillParts, isSkillActivationPart } from '#human/agent/origin';
+import { annotateBundledSkillParts, isSkillActivationPart } from '@moonshot-ai/core/llm/origin';
 import { parseDaemonFileUrl } from '#/agent/media/mediaRef';
 import { AgentEvent2, registerEvent2Class } from '#/app/event/event2';
-import type { FinishReason } from '#human/llm-requester/finish-reason';
-import type { ContentPart, MediaPart, TextPart } from '#human/llm/message';
-import { mediaFileIdOf, mediaUrlOf } from '#human/llm/protocol/kit/media';
-import type { TokenUsage } from '#human/llm-requester/usage';
+import type { FinishReason } from '@moonshot-ai/core/llm/response';
+import type { ContentPart, MediaPart, TextPart } from '@moonshot-ai/core/llm/message';
+import { mediaFileIdOf, mediaUrlOf } from '@moonshot-ai/core/llm/protocol/kit/media';
+import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
 
 export type TurnEndReason = 'completed' | 'cancelled' | 'failed' | 'blocked';
 
@@ -95,15 +95,6 @@ export function turnPromptAttachments(
   return attachments.length > 0 ? attachments : undefined;
 }
 
-export function isDisplayablePromptOrigin(origin: PromptOrigin): boolean {
-  if (origin.kind === 'user') return true;
-  if (origin.kind === 'system_trigger' && origin.name === 'subagent') return true;
-  return (
-    (origin.kind === 'skill_activation' || origin.kind === 'plugin_command') &&
-    origin.trigger === 'user-slash'
-  );
-}
-
 export interface TurnStepStartedPayload {
   readonly agentId: string;
   readonly turnId: number;
@@ -161,7 +152,7 @@ const turnStepInterruptedSchema = z.object({
 
 export class TurnStepInterrupted extends AgentEvent2<TurnStepInterruptedPayload> {
   static override readonly type = 'turn.step.interrupted';
-  static override readonly durable = true;
+  static override readonly durable = false;
   static override readonly observable = true;
   static override readonly schema = turnStepInterruptedSchema;
 }
@@ -197,7 +188,7 @@ const turnStepRetryingSchema = z.object({
 
 export class TurnStepRetrying extends AgentEvent2<TurnStepRetryingPayload> {
   static override readonly type = 'turn.step.retrying';
-  static override readonly durable = true;
+  static override readonly durable = false;
   static override readonly observable = true;
   static override readonly schema = turnStepRetryingSchema;
 }
@@ -207,6 +198,7 @@ export interface AssistantDeltaPayload {
   readonly agentId: string;
   readonly turnId: number;
   readonly delta: string;
+  readonly block?: number;
 }
 
 export class AssistantDelta extends AgentEvent2<AssistantDeltaPayload> {
@@ -219,6 +211,7 @@ export interface ThinkingDeltaPayload {
   readonly agentId: string;
   readonly turnId: number;
   readonly delta: string;
+  readonly block?: number;
 }
 
 export class ThinkingDelta extends AgentEvent2<ThinkingDeltaPayload> {
@@ -226,6 +219,19 @@ export class ThinkingDelta extends AgentEvent2<ThinkingDeltaPayload> {
   static override readonly observable = true;
 }
 export interface ThinkingDelta extends ThinkingDeltaPayload {}
+
+export interface TurnStepStreamResetPayload {
+  readonly agentId: string;
+  readonly turnId: number;
+  readonly step: number;
+  readonly stepId: string;
+}
+
+export class TurnStepStreamReset extends AgentEvent2<TurnStepStreamResetPayload> {
+  static override readonly type = 'turn.step.stream_reset';
+  static override readonly observable = true;
+}
+export interface TurnStepStreamReset extends TurnStepStreamResetPayload {}
 
 export interface ToolCallDeltaPayload {
   readonly agentId: string;

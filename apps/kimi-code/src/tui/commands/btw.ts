@@ -1,9 +1,13 @@
 import { LLM_NOT_SET_MESSAGE } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
-import { extractInlineSkillActivations } from '../utils/inline-skill-tokens';
+import type { InlineSkillActivation } from '../types';
 import type { SlashCommandHost } from './dispatch';
 
-export async function handleBtwCommand(host: SlashCommandHost, args: string): Promise<void> {
+export async function handleBtwCommand(
+  host: SlashCommandHost,
+  args: string,
+  activations: readonly InlineSkillActivation[],
+): Promise<void> {
   const prompt = args.trim();
   const session = host.session;
   if (host.state.appState.model.trim().length === 0 || session === undefined) {
@@ -14,9 +18,6 @@ export async function handleBtwCommand(host: SlashCommandHost, args: string): Pr
 
   try {
     const agentId = await session.startBtw();
-    const activations = extractInlineSkillActivations(prompt, host.skillCommandMap, {
-      includeLeading: true,
-    });
     host.btwPanelController.open(
       agentId,
       prompt,

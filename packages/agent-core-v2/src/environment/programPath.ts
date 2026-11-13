@@ -12,8 +12,9 @@ function isExecutableFile(path: string): boolean {
 }
 
 function isInsideCwd(path: string, cwd: string): boolean {
-  const relativeCwd = resolve(cwd);
-  const resolved = resolve(path);
+  const fold = (value: string): string => (process.platform === 'win32' ? value.toLowerCase() : value);
+  const relativeCwd = fold(resolve(cwd));
+  const resolved = fold(resolve(path));
   return resolved === relativeCwd || resolved.startsWith(relativeCwd + sep);
 }
 

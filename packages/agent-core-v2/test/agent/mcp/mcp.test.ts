@@ -33,11 +33,12 @@ import type { WireRecord } from '#/wire/record';
 import { mcpDiscoveryKey } from '#/agent/mcp/mcpDiscoveryOps';
 import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { IAgentTaskOutputService } from '#/agent/task/taskOutput';
+import { memoryOutputStore } from '#/tool/executor';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 
@@ -252,10 +253,10 @@ describe('AgentMcpService', () => {
     ix.stub(ITelemetryService, recordingTelemetry(telemetryEvents));
     ix.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
     ix.set(IAgentToolExecutorService, new SyncDescriptor(AgentToolExecutorService));
+    ix.stub(IAgentTaskOutputService, { open: memoryOutputStore().open } as unknown as IAgentTaskOutputService);
     ix.stub(IAgentToolResultTruncationService, stubToolResultTruncationService());
     ix.stub(IAgentLoopService, stubLoopWithHooks());
     ix.set(IAgentStateService, new AgentStateService());
-    ix.stub(IAgentProfileService, { getModelProviderType: () => undefined });
     wire = registerTestAgentWire(ix, 'mcp-test', {
       eventBus: ix.get(IEventBus),
       log: recordingWireLog(records, (record) => {
@@ -572,10 +573,13 @@ describe('AgentMcpService', () => {
     expect(events.filter((event) => event.type === 'error')).toHaveLength(1);
   });
 
-  it('re-registering the same server replaces its previous tool set', async () => {
+  it('re-registering the same server applies additions, removals and same-name replacements', async () => {
     const manager = new FakeMcpManager();
-    const firstClient = fakeMcpClient();
+    const firstClient = fakeMcpClient([
+      { name: 'echo', description: 'first', inputSchema: { type: 'object', properties: {} } },
+    ]);
     const secondClient = fakeMcpClient([
+      { name: 'echo', description: 'second', inputSchema: { type: 'object', properties: {} } },
       { name: 'only', description: 'Sole tool', inputSchema: { type: 'object', properties: {} } },
     ]);
     manager.setResolved('s', firstClient, await discoverTools(firstClient));
@@ -585,8 +589,9 @@ describe('AgentMcpService', () => {
     manager.setResolved('s', secondClient, await discoverTools(secondClient));
     manager.connect('s');
 
-    const names = ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp').map((tool) => tool.name);
-    expect(names).toEqual(['mcp__s__only']);
+    const tools = ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp');
+    expect(tools.map((tool) => tool.name)).toEqual(['mcp__s__echo', 'mcp__s__only']);
+    expect(tools.find((tool) => tool.name === 'mcp__s__echo')?.description).toBe('second');
   });
 
   it('executing a wrapped MCP tool dispatches to client.callTool', async () => {
@@ -1569,14 +1574,14 @@ describe('AgentMcpService', () => {
 describe('AgentMcpService + AgentProfileService', () => {
   let ctx: TestAgentContext;
   let manager: FakeMcpManager;
-  let profile: IAgentProfileService;
+  let profile: IAgentLoopService;
 
   beforeEach(() => {
     manager = new FakeMcpManager();
     ctx = createTestAgent(mcpServices({ manager: manager as unknown as McpConnectionManager }));
     const mcp = ctx.get(IAgentMcpService);
     mcp.list();
-    profile = ctx.get(IAgentProfileService);
+    profile = ctx.get(IAgentLoopService);
   });
 
   afterEach(async () => {

@@ -7,7 +7,12 @@ import type { WireRecord } from '#/wire/record';
 import { fromCoreMessage } from '#human/message';
 import { fromLlmMessage } from '#/llm-adapter/contract/message';
 
-const METADATA: WireRecord = { type: 'metadata', protocol_version: '1.5', created_at: 0 };
+const METADATA: WireRecord = {
+  type: 'metadata',
+  protocol_version: '1.5',
+  min_protocol_version: '1.0',
+  created_at: 0,
+};
 
 function fold(records: readonly WireRecord[]) {
   return foldWireRecords([METADATA, ...records]);
@@ -55,6 +60,7 @@ describe('foldWireRecords', () => {
           type: 'tool.call',
           stepUuid: 's1',
           toolCallId: 'tc1',
+          rawId: 'call_native',
           name: 'Shell',
           args: { command: 'ls' },
           display,
@@ -76,7 +82,14 @@ describe('foldWireRecords', () => {
     if (assistant.message.role !== 'assistant') throw new Error('expected assistant message');
     expect(assistant.message.content).toEqual([{ type: 'text', text: 'working' }]);
     expect(assistant.message.toolCalls).toEqual([
-      { type: 'function', id: 'tc1', name: 'Shell', arguments: '{"command":"ls"}', extras: undefined },
+      {
+        type: 'function',
+        id: 'tc1',
+        rawId: 'call_native',
+        name: 'Shell',
+        arguments: '{"command":"ls"}',
+        extras: undefined,
+      },
     ]);
     expect(assistant.message.toolCallDisplays).toEqual({ tc1: display });
     if (tool?.type !== 'message') throw new Error('expected message record');
@@ -294,6 +307,20 @@ describe('foldWireRecords', () => {
     });
   });
 
+  it('carries an edited objective into later goal_updated records without a transcript entry', () => {
+    const folded = fold([
+      { type: 'goal.create', goalId: 'g1', objective: 'old task', time: 1 },
+      { type: 'goal.update', objective: 'new task', actor: 'user', time: 2 },
+      { type: 'goal.update', status: 'paused', reason: 'wait', time: 3 },
+    ]);
+    expect(folded.replay).toHaveLength(2);
+    expect(folded.replay[1]).toMatchObject({
+      type: 'goal_updated',
+      time: 3,
+      snapshot: { goalId: 'g1', objective: 'new task', status: 'paused' },
+    });
+  });
+
   it('clears the goal and appends the fork reminder on forked', () => {
     const folded = fold([
       { type: 'goal.create', goalId: 'g1', objective: 'ship it', time: 1 },
@@ -385,9 +412,37 @@ describe('foldWireRecords', () => {
       { type: 'totally.unknown.op', time: 13 },
     ]);
     expect(folded).toEqual({ replay: [], toolStore: {} });
+
+    const turnClock = fold([
+      { type: 'turn.prompt', turnId: 4, input: [{ type: 'text', text: 'current' }], origin: { kind: 'user' }, time: 1 },
+      { type: 'turn.steer', input: [{ type: 'text', text: 'steered' }], origin: { kind: 'user' }, time: 2 },
+      { type: 'turn.cancel', turnId: 5, time: 3 },
+      appendMessage(userMessage('current', { kind: 'user' }), 4),
+      appendMessage(userMessage('steered', { kind: 'user' }), 4.5),
+      { type: 'turn.cancel', turnId: 5, target: 'queued', time: 5 },
+      { type: 'turn.prompt', input: [{ type: 'text', text: 'next' }], origin: { kind: 'user' }, time: 6 },
+      appendMessage(userMessage('next', { kind: 'user' }), 7),
+    ]);
+    expect(messageRecords(turnClock.replay).map((record) => record.type === 'message' ? record.turnId : undefined)).toEqual([4, 5, 6]);
+
+    const mixed = fold([
+      { type: 'turn.prompt', turnId: 7, input: [{ type: 'text', text: 'persistent' }], origin: { kind: 'user' }, time: 1 },
+      appendMessage(userMessage('persistent', { kind: 'user' }), 2),
+      { type: 'turn.ended', turnId: 7, reason: 'completed', time: 3 },
+      appendMessage(userMessage('legacy tail', { kind: 'user' }), 4),
+      appendMessage({ role: 'assistant', content: [], toolCalls: [] }, 5),
+    ]);
+    expect(messageRecords(mixed.replay).map((record) => record.type === 'message' ? record.turnId : undefined)).toEqual([7, undefined, undefined]);
+
+    const ordered = fold([
+      appendMessage(userMessage('same', { kind: 'user' }), 1),
+      { type: 'turn.prompt', turnId: 7, input: [{ type: 'text', text: 'same' }], origin: { kind: 'user' }, time: 2 },
+      appendMessage(userMessage('same', { kind: 'user' }), 3),
+    ]);
+    expect(messageRecords(ordered.replay).map((record) => record.type === 'message' ? record.turnId : undefined)).toEqual([undefined, 7]);
   });
 
-  it('migrates older protocol journals before folding', () => {
+  it('validates reader compatibility and migrates older protocol journals before folding', () => {
     const legacy: WireRecord[] = [
       { type: 'metadata', protocol_version: '1.0', created_at: 0 },
       {
@@ -422,6 +477,16 @@ describe('foldWireRecords', () => {
     expect(decoded[2]?.['message']).toMatchObject({
       toolCalls: [{ id: 'call_legacy', name: 'Bash', arguments: '{}' }],
     });
+    expect(() =>
+      foldWireRecords([
+        {
+          type: 'metadata',
+          protocol_version: '9.9',
+          min_protocol_version: '9.9',
+          created_at: 0,
+        },
+      ]),
+    ).toThrow('Upgrade Kimi Code');
   });
 
   it('clears replay-visible state on context.clear without touching earlier replay records', () => {

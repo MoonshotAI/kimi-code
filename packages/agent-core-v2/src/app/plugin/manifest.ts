@@ -9,6 +9,7 @@ import {
   type PluginCommandEntry,
   type PluginDiagnostic,
   type PluginInterface,
+  type PluginInterfaceOverride,
   type PluginManifest,
   type PluginManifestKind,
 } from './types';
@@ -29,6 +30,7 @@ const UNSUPPORTED_RUNTIME_FIELDS = [
 
 export interface ParsedManifestResult {
   readonly manifest?: PluginManifest;
+  readonly interfaceLocales?: Readonly<Record<string, PluginInterface>>;
   readonly manifestKind?: PluginManifestKind;
   readonly manifestPath?: string;
   readonly shadowedManifestPath?: string;
@@ -142,7 +144,8 @@ export async function parseManifest(pluginRoot: string): Promise<ParsedManifestR
     systemPrompt,
   };
 
-  return { manifest, manifestKind, manifestPath, shadowedManifestPath, diagnostics };
+  const interfaceLocales = await readInterfaceLocales(pluginRoot, manifest, diagnostics);
+  return { manifest, interfaceLocales, manifestKind, manifestPath, shadowedManifestPath, diagnostics };
 }
 
 function recordUnsupportedRuntimeFields(
@@ -525,9 +528,88 @@ function readInterface(raw: unknown): PluginInterface | undefined {
     longDescription: stringField(raw, 'longDescription'),
     developerName: stringField(raw, 'developerName'),
     websiteURL: stringField(raw, 'websiteURL'),
+    defaultLocale: stringField(raw, 'defaultLocale'),
+    locales: stringField(raw, 'locales'),
+    mcpOverrides: readInterfaceOverrides(raw['mcpOverrides']),
+    skillOverrides: readInterfaceOverrides(raw['skillOverrides']),
   };
   const hasAny = Object.values(out).some((value) => value !== undefined);
   return hasAny ? out : undefined;
+}
+
+function readInterfaceOverrides(raw: unknown): PluginInterface['mcpOverrides'] {
+  if (!isObject(raw)) return undefined;
+  const entries: Array<[string, PluginInterfaceOverride]> = [];
+  for (const [name, value] of Object.entries(raw)) {
+    if (!isObject(value)) continue;
+    const override: PluginInterfaceOverride = {
+      displayName: stringField(value, 'displayName'),
+      description: stringField(value, 'description'),
+      iconUrl: stringField(value, 'iconUrl'),
+    };
+    if (Object.values(override).some((field) => field !== undefined)) {
+      entries.push([name, override]);
+    }
+  }
+  return entries.length === 0 ? undefined : Object.fromEntries(entries);
+}
+
+async function readInterfaceLocales(
+  pluginRoot: string,
+  manifest: PluginManifest,
+  diagnostics: PluginDiagnostic[],
+): Promise<Readonly<Record<string, PluginInterface>> | undefined> {
+  const value = manifest.interface?.locales;
+  if (value === undefined) return undefined;
+  const localeRoot = await resolvePluginPathField({
+    pluginRoot,
+    field: 'interface.locales',
+    value,
+    diagnostics,
+  });
+  if (localeRoot === undefined) return undefined;
+  if (!(await isDir(localeRoot))) {
+    diagnostics.push({ severity: 'warn', message: '"interface.locales" path is not a directory' });
+    return undefined;
+  }
+  let files: string[];
+  try {
+    files = await readdir(localeRoot);
+  } catch (error) {
+    diagnostics.push({
+      severity: 'warn',
+      message: `Failed to read "interface.locales": ${(error as Error).message}`,
+    });
+    return undefined;
+  }
+  const entries: Array<[string, PluginInterface]> = [];
+  for (const file of files) {
+    if (!file.endsWith('.json')) continue;
+    const locale = file.slice(0, -'.json'.length);
+    const real = await realpath(path.join(localeRoot, file)).catch(() => undefined);
+    if (real === undefined || !isWithin(real, localeRoot) || !(await isFile(real))) {
+      diagnostics.push({ severity: 'warn', message: `"interface.locales" file is invalid (${file})` });
+      continue;
+    }
+    try {
+      const raw: unknown = JSON.parse(await readFile(real, 'utf8'));
+      const localized = readInterface(raw);
+      if (localized === undefined) {
+        diagnostics.push({
+          severity: 'warn',
+          message: `"interface.locales" file has no supported display fields (${file})`,
+        });
+        continue;
+      }
+      entries.push([locale, localized]);
+    } catch (error) {
+      diagnostics.push({
+        severity: 'warn',
+        message: `Failed to parse interface locale "${locale}": ${(error as Error).message}`,
+      });
+    }
+  }
+  return entries.length === 0 ? undefined : Object.fromEntries(entries);
 }
 
 function stringField(raw: Record<string, unknown>, key: string): string | undefined {

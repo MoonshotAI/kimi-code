@@ -19,7 +19,7 @@ export interface SurveyEventProperties {
   kfc_model_id?: string;
   kfc_trace_id?: string;
   user_turn_count?: number;
-  cumulative_tokens: number;
+  cumulative_tokens?: number;
   virtual_context_tokens: number;
   tool_call_count: number;
   compaction_count: number;
@@ -53,7 +53,7 @@ export interface SurveyEventEnvironmentFields {
   readonly kfc_model_id?: string;
   readonly kfc_trace_id?: string;
   readonly user_turn_count?: number;
-  readonly cumulative_tokens: number;
+  readonly cumulative_tokens?: number;
   readonly virtual_context_tokens: number;
   readonly tool_call_count: number;
   readonly compaction_count: number;
@@ -77,7 +77,7 @@ const surveyEventPropertyDescriptions: {
   kfc_trace_id: 'Trace id of the turn that triggered the prompt, present only with kfc_model_id',
   user_turn_count:
     'User turns in the session when the prompt appeared, absent when the history count is unknown',
-  cumulative_tokens: 'Cumulative session token usage when the prompt appeared',
+  cumulative_tokens: 'Cumulative session token usage when the prompt appeared, absent when cache usage is unreported',
   virtual_context_tokens: 'Tokens in the context window when the prompt appeared',
   tool_call_count: 'Main-agent tool calls observed since the session mount began',
   compaction_count: 'Compactions observed since the session mount began',

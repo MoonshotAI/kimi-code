@@ -6,7 +6,6 @@ import {
   type AgentActorContext,
   type AgentActorRestoreEvent,
 } from '#/agent/actorService/agentActorService';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -49,7 +48,7 @@ const notifyUserNudgeReminders = fromCallback(({
       if (runtime.get(IAgentToolRegistryService).resolve(NOTIFY_USER_TOOL_NAME) === undefined) {
         return undefined;
       }
-      const history = runtime.get(IAgentContextMemoryService).get();
+      const history = runtime.get(IAgentLoopService).history();
       const streak = notifyStreak(history);
       const roundsSinceLastNudge =
         lastInjectedAt === null ? null : toolCallRoundsSincePosition(history, lastInjectedAt);

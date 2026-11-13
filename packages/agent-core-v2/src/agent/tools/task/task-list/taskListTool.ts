@@ -3,8 +3,11 @@ import { matchesGlobRuleSubject } from '#/tool/rule-match';
 import { type ToolExecution } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
-import { IAgentTaskService } from '#/agent/task/task';
+import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { IAgentTaskHistoryService } from '#/agent/task/taskService';
+import { agentTaskInfo } from '#/agent/task/handler';
 import type { AgentTaskInfo } from '#/agent/task/task';
+import { TERMINAL_STATUSES } from '#/agent/task/types';
 import { formatTaskRecord } from '#/agent/task/tools/format';
 import { ITaskListTool, TaskListInputSchema, type TaskListInput } from './task-list';
 import TASK_LIST_DESCRIPTION from './task-list.md?raw';
@@ -22,7 +25,10 @@ export class TaskListTool implements ITaskListTool {
   readonly description = TASK_LIST_DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(TaskListInputSchema);
 
-  constructor(@IAgentTaskService private readonly tasks: IAgentTaskService) {}
+  constructor(
+    @IAgentToolExecutorService private readonly toolExecutor: IAgentToolExecutorService,
+    @IAgentTaskHistoryService private readonly history: IAgentTaskHistoryService,
+  ) {}
 
   resolveExecution(args: TaskListInput): ToolExecution {
     const listScope = (args.active_only ?? true) ? 'active' : 'all';
@@ -32,9 +38,20 @@ export class TaskListTool implements ITaskListTool {
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, listScope),
       execute: async () => {
         const activeOnly = args.active_only ?? true;
-        const tasks = this.tasks.list(activeOnly, args.limit ?? 20);
+        const tasks = this.toolExecutor.handlers().flatMap((handler) => {
+          if (handler.snapshot().fields.task === undefined) return [];
+          const info = agentTaskInfo(handler);
+          return activeOnly && TERMINAL_STATUSES.has(info.status) ? [] : [info];
+        });
+        const ids = new Set(tasks.map((task) => task.taskId));
+        for (const info of this.history.list(false)) {
+          if (ids.has(info.taskId)) continue;
+          if (activeOnly && TERMINAL_STATUSES.has(info.status)) continue;
+          tasks.push(info);
+        }
+        const limited = tasks.slice(0, args.limit ?? 20);
         return {
-          output: formatTaskList(tasks, activeOnly),
+          output: formatTaskList(limited, activeOnly),
           isError: false,
         };
       },

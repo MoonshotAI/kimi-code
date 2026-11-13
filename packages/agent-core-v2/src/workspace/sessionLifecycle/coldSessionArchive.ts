@@ -12,7 +12,7 @@ import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { normalizeSessionMeta, encodeSessionMeta } from '#/session/sessionMetadata/sessionMetadataService';
 
 import { sessionScopeOf, legacySessionMetaScopeOf, workspacePersistenceScope } from './internal/addressing';
-import { SessionArchived } from './sessionLifecycleEvents';
+import { SessionArchived, SessionRestored } from './sessionLifecycleEvents';
 
 export type ColdSessionArchiveOutcome = 'updated' | 'not_found';
 
@@ -50,6 +50,8 @@ export async function setColdSessionArchived(
         id: sessionId,
         workspaceId: summary.workspaceId,
         cwd: nextMeta.cwd ?? summary.cwd,
+        environmentId: nextMeta.environmentId,
+        environmentCwd: nextMeta.environmentCwd,
         title: nextMeta.title,
         lastPrompt: nextMeta.lastPrompt,
         createdAt: nextMeta.createdAt,
@@ -60,10 +62,11 @@ export async function setColdSessionArchived(
         lastTurnReason: nextMeta.lastTurnReason,
       }),
     );
+    const payload = { sessionId, workspaceId: summary.workspaceId };
     if (archived) {
-      accessor
-        .get(IEventService)
-        .publish(new SessionArchived({ payload: { sessionId, workspaceId: summary.workspaceId } }));
+      accessor.get(IEventService).publish(new SessionArchived({ payload }));
+    } else if (persisted.archived) {
+      accessor.get(IEventService).publish(new SessionRestored({ payload }));
     }
     return 'updated';
   } finally {

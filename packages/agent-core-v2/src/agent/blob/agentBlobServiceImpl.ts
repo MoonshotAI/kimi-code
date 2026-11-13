@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { ContentPart } from '#human/llm/message';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 import {

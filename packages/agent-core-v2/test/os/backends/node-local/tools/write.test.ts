@@ -244,17 +244,32 @@ describe('WriteTool', () => {
     expect(result.output).toContain('Appended 5 bytes');
   });
 
-  it('creates missing parent directories automatically before writing', async () => {
+  it('creates missing parent directories after the first write misses', async () => {
     const enoent = Object.assign(new Error('ENOENT: no such file or directory'), {
       code: 'ENOENT',
     });
-    const { tool, mkdir, writeText } = makeTool({ stat: vi.fn().mockRejectedValue(enoent) });
+    const { tool, mkdir, writeText } = makeTool({
+      stat: vi.fn().mockRejectedValue(enoent),
+      writeText: vi.fn().mockRejectedValueOnce(enoent).mockResolvedValue(undefined),
+    });
 
     const result = await execute(tool, { path: '/tmp/missing-dir/file.txt', content: 'data' });
 
     expect(result.isError).toBeFalsy();
     expect(mkdir).toHaveBeenCalledWith('/tmp/missing-dir', { recursive: true });
-    expect(writeText).toHaveBeenCalledWith('/tmp/missing-dir/file.txt', 'data');
+    expect(writeText).toHaveBeenCalledTimes(2);
+    expect(writeText).toHaveBeenLastCalledWith('/tmp/missing-dir/file.txt', 'data');
+  });
+
+  it('writes without probing the parent when it already exists', async () => {
+    const { tool, stat, mkdir, writeText } = makeTool();
+
+    const result = await execute(tool, { path: '/tmp/exists/file.txt', content: 'data' });
+
+    expect(result.isError).toBeUndefined();
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(stat).not.toHaveBeenCalled();
+    expect(mkdir).not.toHaveBeenCalled();
   });
 
   it('surfaces mkdir failures when a missing parent cannot be created', async () => {
@@ -263,25 +278,28 @@ describe('WriteTool', () => {
     });
     const { tool, writeText } = makeTool({
       stat: vi.fn().mockRejectedValue(enoent),
+      writeText: vi.fn().mockRejectedValue(enoent),
       mkdir: vi.fn().mockRejectedValue(new Error('permission denied')),
     });
 
     const result = await execute(tool, { path: '/tmp/missing-dir/file.txt', content: 'data' });
 
     expect(result).toMatchObject({ isError: true, output: 'permission denied' });
-    expect(writeText).not.toHaveBeenCalled();
+    expect(writeText).toHaveBeenCalledTimes(1);
   });
 
   it('rejects writing when the parent path is not a directory', async () => {
+    const enotdir = Object.assign(new Error('ENOTDIR: not a directory'), { code: 'ENOTDIR' });
     const { tool, writeText } = makeTool({
       stat: vi.fn().mockResolvedValue({ isFile: true, isDirectory: false, size: 0 }),
+      writeText: vi.fn().mockRejectedValue(enotdir),
     });
 
     const result = await execute(tool, { path: '/tmp/a-file/child.txt', content: 'data' });
 
     expect(result).toMatchObject({ isError: true });
     expect(result.output).toMatch(/not a directory/i);
-    expect(writeText).not.toHaveBeenCalled();
+    expect(writeText).toHaveBeenCalledTimes(1);
   });
 
   it('writes when the parent directory exists', async () => {

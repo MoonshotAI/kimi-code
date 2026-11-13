@@ -1,12 +1,13 @@
 import {
   ErrorCodes,
-  PRIMARY_SUBAGENT_MODEL_CHOICE,
+  isKimiError,
   type ExperimentalFeatureState,
   type ModelAlias,
   type PermissionMode,
   type Session,
   type ThinkingEffort,
 } from '@moonshot-ai/kimi-code-sdk';
+import { TuiAltScreen } from '@moonshot-ai/pi-tui';
 
 import { EditorSelectorComponent } from '../components/dialogs/editor-selector';
 import { EffortSelectorComponent } from '../components/dialogs/effort-selector';
@@ -19,12 +20,27 @@ import { modelDisplayName, segmentsFor } from '../components/dialogs/model-selec
 import { ModelSwitchConfirmDialogComponent } from '../components/dialogs/model-switch-confirm-dialog';
 import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model-selector';
 import { PermissionSelectorComponent } from '../components/dialogs/permission-selector';
-import { SettingsSelectorComponent, type SettingsSelection } from '../components/dialogs/settings-selector';
+import {
+  CopyOnSelectSelectorComponent,
+  SettingsSelectorComponent,
+  ThinkingDisplaySelectorComponent,
+  ToolCallDensitySelectorComponent,
+  type SettingsSelection,
+} from '../components/dialogs/settings-selector';
 import { SurveyPreferenceSelectorComponent } from '../components/dialogs/survey-preference-selector';
 import { ThemeSelectorComponent } from '../components/dialogs/theme-selector';
 import { TuiModeSelectorComponent } from '../components/dialogs/tui-mode-selector';
 import { UpdatePreferenceSelectorComponent } from '../components/dialogs/update-preference-selector';
-import { DEFAULT_MARKDOWN_CONFIG, DEFAULT_TUI_CONFIG, saveTuiConfig, type MarkdownConfig, type TuiConfig, type TuiMode } from '../config';
+import {
+  DEFAULT_MARKDOWN_CONFIG,
+  DEFAULT_TUI_CONFIG,
+  resolveTuiMode,
+  saveTuiConfig,
+  type MarkdownConfig,
+  type TranscriptConfig,
+  type TuiConfig,
+  type TuiMode,
+} from '../config';
 import type { ThemeName } from '#/tui/theme';
 import { currentTheme, isBuiltInTheme, lightColors, loadCustomThemeMerged } from '#/tui/theme';
 import {
@@ -45,7 +61,9 @@ import {
   type EffortSwitchRule,
 } from '#/utils/effort-switch-config';
 import { DEFAULT_OAUTH_PROVIDER_NAME } from '#/constant/app';
-import { NO_ACTIVE_SESSION_MESSAGE, TUI_MODE_RESTART_NOTICE } from '../constant/kimi-tui';
+import { MAIN_AGENT_ID, NO_ACTIVE_SESSION_MESSAGE, TUI_MODE_RESTART_NOTICE } from '../constant/kimi-tui';
+import { DOCK_PREVIEW_ROWS } from '../constant/rendering';
+import type { QueuedModelSwitch } from '../types';
 import { formatErrorMessage } from '../utils/event-payload';
 import { setMarkdownMermaidMode, type MermaidRenderMode } from '../utils/markdown-options';
 import {
@@ -77,6 +95,8 @@ export function currentTuiConfig(host: Pick<SlashCommandHost, 'state'>): TuiConf
     tuiMode: host.state.appState.tuiMode,
     editorCommand: host.state.appState.editorCommand,
     disablePasteBurst: host.state.appState.disablePasteBurst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
+    copyOnSelect:
+      host.state.appState.copyOnSelect ?? DEFAULT_TUI_CONFIG.copyOnSelect,
     renderLatex: host.state.appState.renderLatex ?? DEFAULT_TUI_CONFIG.renderLatex ?? true,
     cacheExpiryHint: host.state.appState.cacheExpiryHint ?? DEFAULT_TUI_CONFIG.cacheExpiryHint,
     autoSessionTitle: host.state.appState.autoSessionTitle ?? DEFAULT_TUI_CONFIG.autoSessionTitle,
@@ -84,7 +104,15 @@ export function currentTuiConfig(host: Pick<SlashCommandHost, 'state'>): TuiConf
     upgrade: host.state.appState.upgrade,
     statusLine: host.state.appState.statusLine ?? DEFAULT_TUI_CONFIG.statusLine,
     markdown: host.state.appState.markdown ?? DEFAULT_MARKDOWN_CONFIG,
+    transcript: host.state.appState.transcript,
   };
+}
+
+export function applyTranscriptPresentation(host: SlashCommandHost): void {
+  host.state.transcriptContainer.setPresentationOptions({
+    ...host.state.appState.transcript,
+    fullscreen: host.state.ui.mode === 'fullscreen',
+  });
 }
 
 export async function handlePlanCommand(host: SlashCommandHost, args: string): Promise<void> {
@@ -198,15 +226,6 @@ export async function handleSecondaryModelCommand(host: SlashCommandHost, args: 
   const alias = args.trim();
   await refreshModelsForPicker(host);
   const models = pickerModelsForHost(host);
-  // The pool reserves `primary` for Tower spawn's symbolic "tower's own model"
-  // choice — a user alias with that name can never be the subagent default.
-  delete models[PRIMARY_SUBAGENT_MODEL_CHOICE];
-  if (alias === PRIMARY_SUBAGENT_MODEL_CHOICE) {
-    host.showError(
-      `"${PRIMARY_SUBAGENT_MODEL_CHOICE}" is reserved by the subagent model pool — rename the [models] alias to use it here.`,
-    );
-    return;
-  }
   if (Object.keys(models).length === 0) {
     host.showNotice(
       'No models configured',
@@ -295,8 +314,7 @@ async function confirmThenPerformEffortSwitch(
   const model = host.state.appState.availableModels[alias];
   if (
     model?.provider !== DEFAULT_OAUTH_PROVIDER_NAME ||
-    thinking === host.state.appState.thinkingEffort ||
-    host.state.appState.streamingPhase !== 'idle'
+    thinking === host.state.appState.thinkingEffort
   ) {
     await performModelSwitch(host, alias, thinking, persist);
     return;
@@ -523,7 +541,7 @@ function matchedEffortSwitchRule(host: SlashCommandHost, thinking: ThinkingEffor
   const previous = host.state.appState.thinkingEffort;
   const model = host.state.appState.availableModels[host.state.appState.model];
   if (model?.provider !== DEFAULT_OAUTH_PROVIDER_NAME) return undefined;
-  if (thinking === previous || host.state.appState.streamingPhase !== 'idle') return undefined;
+  if (thinking === previous) return undefined;
   return matchEffortSwitchRule(
     peekEffortSwitchConfig(),
     previous,
@@ -534,10 +552,8 @@ function matchedEffortSwitchRule(host: SlashCommandHost, thinking: ThinkingEffor
 
 export function matchedModelSwitchRule(host: SlashCommandHost, alias: string): ModelSwitchRule | undefined {
   const prevAlias = host.state.appState.model;
-  // Same-alias effort changes use matchedEffortSwitchRule instead. Streaming
-  // switches keep the existing error path without a preceding dialog.
+  // Same-alias effort changes use matchedEffortSwitchRule instead.
   if (alias === prevAlias) return undefined;
-  if (host.state.appState.streamingPhase !== 'idle') return undefined;
   const fromModelId = host.state.appState.availableModels[prevAlias]?.model;
   const toModelId = host.state.appState.availableModels[alias]?.model;
   if (fromModelId === undefined || toModelId === undefined) return undefined;
@@ -552,9 +568,8 @@ export function matchedModelSwitchRule(host: SlashCommandHost, alias: string): M
 /**
  * Fire a compaction and wait for it to settle before the model switch. The
  * compact RPC resolves as soon as the engine *starts* compacting — the
- * completed/cancelled/failed outcome arrives later as an event — and
- * performModelSwitch rejects any switch while the session is busy, so the
- * switch must hold until one of those events lands. True only when the
+ * completed/cancelled/failed outcome arrives later as an event. The switch
+ * must wait because compaction reads the current model. True only when the
  * compaction completed on the same session; any other outcome shows a
  * message and leaves the model unchanged.
  */
@@ -568,6 +583,7 @@ export async function compactForModelSwitch(
     settle = resolve;
   });
   const unsubscribe = session.onEvent((event) => {
+    if (event.agentId !== MAIN_AGENT_ID) return;
     if (event.type === 'compaction.completed') settle('completed');
     else if (event.type === 'compaction.cancelled') settle('cancelled');
     else if (event.type === 'error' && event.code === ErrorCodes.COMPACTION_FAILED) {
@@ -592,7 +608,13 @@ export async function compactForModelSwitch(
     }
     return false;
   } catch (error) {
-    host.showError(`Failed to compact: ${formatErrorMessage(error)}. Model unchanged.`);
+    if (isKimiError(error) && error.code === ErrorCodes.COMPACTION_UNABLE) {
+      host.showError(
+        "Couldn't compact while the agent is still running — model unchanged. Pause the goal or switch with Continue as-is.",
+      );
+    } else {
+      host.showError(`Failed to compact: ${formatErrorMessage(error)}. Model unchanged.`);
+    }
     return false;
   } finally {
     clearTimeout(timer);
@@ -607,20 +629,71 @@ async function runModelSwitchAction(
   thinking: ThinkingEffort,
   persist: ModelSwitchPersistence,
 ): Promise<void> {
+  const busy = host.state.appState.streamingPhase !== 'idle' || host.state.appState.isCompacting;
   switch (action) {
     case 'cancel':
       return;
     case 'continue':
       await performModelSwitch(host, alias, thinking, persist);
       return;
-    case 'compact': {
-      // Compact with the current model first, then switch: the new model
-      // starts from the compacted context.
-      if (host.session !== undefined && !(await compactForModelSwitch(host, host.session))) {
+    case 'compact':
+      if (busy) {
+        host.enqueueModelSwitch(alias, thinking, persist);
         return;
       }
-      await performModelSwitch(host, alias, thinking, persist);
+      await runModelSwitchWithQueueHeld(host, () =>
+        compactThenPerformModelSwitch(host, alias, thinking, persist),
+      );
       return;
+  }
+}
+
+export async function runQueuedModelSwitch(
+  host: SlashCommandHost,
+  item: QueuedModelSwitch,
+): Promise<void> {
+  await runModelSwitchWithQueueHeld(host, async () => {
+    if (item.queuedAfterCompactionSerial === host.completedCompactionSerial) {
+      await compactThenPerformModelSwitch(host, item.alias, item.thinking, item.persist);
+      return;
+    }
+    host.showNotice('Skipped compaction — context was already compacted. Switching model.');
+    await performModelSwitch(host, item.alias, item.thinking, item.persist, {
+      appliesNextTurn: false,
+    });
+  });
+}
+
+async function compactThenPerformModelSwitch(
+  host: SlashCommandHost,
+  alias: string,
+  thinking: ThinkingEffort,
+  persist: ModelSwitchPersistence,
+): Promise<void> {
+  if (host.session !== undefined && !(await compactForModelSwitch(host, host.session))) return;
+  await performModelSwitch(host, alias, thinking, persist, { appliesNextTurn: false });
+}
+
+async function runModelSwitchWithQueueHeld(
+  host: SlashCommandHost,
+  action: () => Promise<unknown>,
+): Promise<void> {
+  const session = host.session;
+  host.state.queuedMessageDispatchPending = true;
+  host.setAppState({ streamingPhase: 'waiting', streamingStartTime: Date.now() });
+  try {
+    await action();
+  } finally {
+    host.state.queuedMessageDispatchPending = false;
+    if (
+      (session === undefined || host.session === session) &&
+      !host.streamingUI.hasActiveTurn() &&
+      host.state.appState.streamingPhase !== 'shell' &&
+      !host.state.appState.isCompacting
+    ) {
+      host.resetLivePane();
+      host.setAppState({ streamingPhase: 'idle' });
+      host.drainQueueIfIdle();
     }
   }
 }
@@ -1038,10 +1111,118 @@ export async function applyMermaidPreferenceChoice(
   host.showStatus(`Mermaid diagrams ${enabled ? 'enabled' : 'disabled'}.`);
 }
 
+function showCopyOnSelectPicker(host: SlashCommandHost): void {
+  host.mountEditorReplacement(
+    new CopyOnSelectSelectorComponent({
+      currentValue: host.state.appState.copyOnSelect !== false,
+      onSelect: (enabled) => {
+        host.restoreEditor();
+        void applyCopyOnSelectChoice(host, enabled);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+export async function applyCopyOnSelectChoice(
+  host: Pick<SlashCommandHost, 'state' | 'setAppState' | 'showStatus'>,
+  enabled: boolean,
+): Promise<void> {
+  if (enabled === (host.state.appState.copyOnSelect !== false)) {
+    host.showStatus(`Copy on select already ${enabled ? 'enabled' : 'disabled'}.`);
+    return;
+  }
+
+  try {
+    await saveTuiConfig({ ...currentTuiConfig(host), copyOnSelect: enabled });
+  } catch (error) {
+    host.showStatus(`Failed to save copy on select setting: ${formatErrorMessage(error)}`, 'error');
+    return;
+  }
+
+  host.setAppState({ copyOnSelect: enabled });
+  if (host.state.ui instanceof TuiAltScreen) host.state.ui.setCopyOnSelect(enabled);
+  host.showStatus(`Copy on select ${enabled ? 'enabled' : 'disabled'}.`);
+}
+
+function showToolCallDensityPicker(host: SlashCommandHost): void {
+  host.mountEditorReplacement(
+    new ToolCallDensitySelectorComponent({
+      current: host.state.appState.transcript,
+      layout: host.state.dockContainer === undefined ? undefined : { maxBodyRows: DOCK_PREVIEW_ROWS },
+      onSelect: (toolCallDensity) => {
+        host.restoreEditor();
+        void applyTranscriptConfigChoice(host, {
+          ...host.state.appState.transcript,
+          toolCallDensity,
+        });
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+function showThinkingDisplayPicker(host: SlashCommandHost): void {
+  host.mountEditorReplacement(
+    new ThinkingDisplaySelectorComponent({
+      current: host.state.appState.transcript,
+      layout: host.state.dockContainer === undefined ? undefined : { maxBodyRows: DOCK_PREVIEW_ROWS },
+      onSelect: (thinking) => {
+        host.restoreEditor();
+        void applyTranscriptConfigChoice(host, {
+          ...host.state.appState.transcript,
+          thinking,
+        });
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+export async function applyTranscriptConfigChoice(
+  host: SlashCommandHost,
+  transcript: TranscriptConfig,
+): Promise<void> {
+  const current = host.state.appState.transcript;
+  if (
+    transcript.toolCallDensity === current.toolCallDensity &&
+    transcript.thinking === current.thinking
+  ) {
+    host.showStatus('Transcript display settings unchanged.');
+    return;
+  }
+  try {
+    await saveTuiConfig({
+      ...currentTuiConfig(host),
+      transcript,
+    });
+  } catch (error) {
+    host.showStatus(
+      `Failed to save transcript display settings: ${formatErrorMessage(error)}`,
+      'error',
+    );
+    return;
+  }
+  host.setAppState({ transcript });
+  applyTranscriptPresentation(host);
+  host.track('transcript_display_settings', {
+    tool_call_density: transcript.toolCallDensity,
+    thinking: transcript.thinking,
+    source: 'settings',
+  });
+  host.showStatus('Transcript display settings updated.', 'success');
+}
+
 export function showTuiModePicker(host: SlashCommandHost): void {
   host.mountEditorReplacement(
     new TuiModeSelectorComponent({
-      currentValue: host.state.appState.tuiMode ?? 'regular',
+      currentValue: host.state.appState.tuiMode ?? host.state.ui.mode,
       onSelect: (value) => {
         host.restoreEditor();
         void applyTuiModeChoice(host, value);
@@ -1061,27 +1242,37 @@ type TuiModeHost = {
   setAppState(patch: Pick<SlashCommandHost['state']['appState'], 'tuiMode'>): void;
   showStatus(msg: string, color?: string): void;
   showNotice(msg: string): void;
+  track?: SlashCommandHost['track'];
 };
 
 export async function applyTuiModeChoice(host: TuiModeHost, tuiMode: TuiMode): Promise<void> {
-  if (tuiMode === (host.state.appState.tuiMode ?? 'regular')) {
+  const resolved = resolveTuiMode(tuiMode);
+  if (tuiMode === host.state.appState.tuiMode) {
     host.showStatus(`TUI mode already ${tuiMode}.`);
+  } else {
+    try {
+      await saveTuiConfig({
+        ...currentTuiConfig(host as unknown as SlashCommandHost),
+        tuiMode,
+      });
+    } catch (error) {
+      host.showStatus(`Failed to save TUI mode: ${formatErrorMessage(error)}`, 'error');
+      return;
+    }
+
+    host.setAppState({ tuiMode });
+    host.track?.('tui_mode_switch', { tui_mode: tuiMode });
+    host.showStatus(`TUI mode set to ${tuiMode}.`, 'success');
+  }
+  if (resolved.mode !== tuiMode) {
+    host.showNotice(
+      resolved.overriddenByEnv
+        ? 'Saved to tui.toml; unset KIMI_CODE_TUI_FULL_SCREEN for it to take effect.'
+        : 'Saved to tui.toml; this terminal automatically falls back to regular mode unless KIMI_CODE_TUI_FULL_SCREEN=1 is set.',
+    );
     return;
   }
-
-  try {
-    await saveTuiConfig({
-      ...currentTuiConfig(host as unknown as SlashCommandHost),
-      tuiMode,
-    });
-  } catch (error) {
-    host.showStatus(`Failed to save TUI mode: ${formatErrorMessage(error)}`, 'error');
-    return;
-  }
-
-  host.setAppState({ tuiMode });
-  host.showStatus(`TUI mode set to ${tuiMode}.`, 'success');
-  if (tuiMode !== host.state.ui.mode) {
+  if (resolved.mode !== host.state.ui.mode) {
     host.showNotice(TUI_MODE_RESTART_NOTICE);
   }
 }
@@ -1089,6 +1280,7 @@ export async function applyTuiModeChoice(host: TuiModeHost, tuiMode: TuiMode): P
 export function showSettingsSelector(host: SlashCommandHost): void {
   host.mountEditorReplacement(
     new SettingsSelectorComponent({
+      fullscreen: host.state.ui.mode === 'fullscreen',
       onSelect: (value) => {
         handleSettingsSelection(host, value);
       },
@@ -1106,6 +1298,9 @@ function handleSettingsSelection(host: SlashCommandHost, value: SettingsSelectio
     case 'permission': showPermissionPicker(host); return;
     case 'theme': showThemePicker(host); return;
     case 'tuiMode': showTuiModePicker(host); return;
+    case 'toolCallDensity': showToolCallDensityPicker(host); return;
+    case 'thinking': showThinkingDisplayPicker(host); return;
+    case 'copyOnSelect': showCopyOnSelectPicker(host); return;
     case 'mermaid': showMermaidPreferencePicker(host); return;
     case 'editor': showEditorPicker(host); return;
     case 'survey': showSurveyPreferencePicker(host); return;

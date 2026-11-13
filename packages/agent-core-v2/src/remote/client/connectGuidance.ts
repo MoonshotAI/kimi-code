@@ -1,7 +1,7 @@
 import { MIN_EXECUTOR_VERSION } from '#/remote/protocol/methods';
 
 import { HandshakeError } from './connection';
-import { launcherRemoteBin, type LauncherSpec } from './launchers';
+import { isBareRemoteBin, launcherRemoteBin, type LauncherSpec } from './launchers';
 
 export type HandshakeFailureClass = 'missing' | 'timeout' | 'incompatible' | 'other';
 
@@ -19,7 +19,9 @@ function launcherLabel(launcher: LauncherSpec): string {
 export function classifyHandshakeFailure(error: unknown): HandshakeFailureClass {
   if (!(error instanceof HandshakeError)) return 'other';
   if (error.kind === 'executor-exit') {
-    return error.exitCode === 127 || error.exitCode === 126 ? 'missing' : 'other';
+    const missingStatus = error.exitCode === 127 || error.exitCode === 126 || error.exitCode === 9009;
+    const windowsSshMissing = error.exitCode === 49 && /not recognized as an internal or external command|command not found/i.test(error.message);
+    return missingStatus || windowsSshMissing ? 'missing' : 'other';
   }
   if (error.kind === 'timeout') return 'timeout';
   if (error.kind === 'incompatible') return 'incompatible';
@@ -33,6 +35,9 @@ function expectedPathSuffix(launcher: LauncherSpec): string {
 
 function executorAction(launcher: LauncherSpec): string {
   const remoteBin = launcherRemoteBin(launcher);
+  if (remoteBin !== undefined && isBareRemoteBin(remoteBin)) {
+    return `download the \`kimi\` binary for the target platform from the Kimi Code release CDN and install it as \`${remoteBin}\` on the target's PATH`;
+  }
   const location =
     remoteBin === undefined
       ? 'the absolute path your launcher command invokes'

@@ -176,7 +176,7 @@ function opts(overrides: Record<string, unknown> = {}) {
   } as const;
 }
 
-function makeFakeHarness() {
+function makeFakeHarness(toolUpdates = false) {
   // Native event listeners registered on the main agent's IEventBus; the turn
   // emits a streaming assistant delta before completing.
   const eventListeners = new Set<(event: Event2<any>) => void>();
@@ -190,9 +190,6 @@ function makeFakeHarness() {
       IAgentProfileService,
       {
         bind: vi.fn(async () => {}),
-        setModel: vi.fn(async () => ({ model: 'k2' })),
-        getModel: () => 'k2',
-        data: () => ({ profileName: profileState.profileName }),
       },
     ],
     [IAgentPermissionModeService, { mode: 'auto', setMode: vi.fn() }],
@@ -217,16 +214,32 @@ function makeFakeHarness() {
         }),
       },
     ],
-    [IAgentTaskService, { list: vi.fn(() => []), stopAllOnExit: vi.fn(async () => []) }],
+    [IAgentTaskService, { list: vi.fn(() => []), stop: vi.fn(async () => {}) }],
     [IAgentCronService, { getNextFireTime: vi.fn(() => null) }],
     [IAgentGoalService, goal],
     [IEventDispatcher, { flush: vi.fn(async () => {}) }],
     [
       IAgentLoopService,
       {
+        setModel: vi.fn(async () => ({ model: 'k2' })),
+        getModel: () => 'k2',
+        data: () => ({ profileName: profileState.profileName }),
         submit: vi.fn(() => {
           // Emit a native assistant delta on the main agent bus, then complete.
           for (const listener of [...eventListeners]) {
+            if (toolUpdates) {
+              const base = {
+                type: 'tool.updated',
+                turnId: 1,
+                toolCallId: 'call-1',
+                taskId: 'task-1',
+                status: 'running',
+                detached: false,
+              };
+              listener({ ...base, fields: { status: 'working' } } as unknown as Event2<any>);
+              listener({ ...base, fields: { status: 'working' } } as unknown as Event2<any>);
+              listener({ ...base, fields: {}, output: { offset: 0, text: 'chunk' } } as unknown as Event2<any>);
+            }
             listener({ type: 'assistant.delta', turnId: 1, delta: 'hello world' } as unknown as Event2<any>);
           }
           return { id: 'p1' };
@@ -428,7 +441,7 @@ describe('runV2Print', () => {
   it('submits a prompt, renders native events, awaits completion, and drains', async () => {
     const stdout = writer();
     const stderr = writer();
-    const { app, agent, agentServices } = makeFakeHarness();
+    const { app, agent, agentServices } = makeFakeHarness(true);
 
     mocks.bootstrap.mockReturnValue({ app });
     mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
@@ -437,11 +450,14 @@ describe('runV2Print', () => {
 
     const promptService = agentServices.get(IAgentLoopService) as { submit: ReturnType<typeof vi.fn> };
     expect(promptService.submit).toHaveBeenCalledWith({
-      message: { role: 'user', content: [{ type: 'text', text: 'say hello' }] },
-      meta: { origin: { kind: 'user' }, tracked: true },
+      role: 'user',
+      content: [{ type: 'text', text: 'say hello' }],
+      attributes: { origin: { kind: 'user' } },
     });
     // Version banner is first, then the rendered assistant output.
     expect(stderr.write).toHaveBeenNthCalledWith(1, 'kimi version 1.2.3-test\n');
+    expect(stderr.text().match(/working/g)).toHaveLength(1);
+    expect(stderr.text()).toContain('chunk\n');
     expect(stdout.text()).toContain('hello world');
     expect(app.dispose).toHaveBeenCalled();
   });
@@ -722,10 +738,12 @@ describe('runV2Print', () => {
 
     const profile = agentServices.get(IAgentProfileService) as {
       bind: ReturnType<typeof vi.fn>;
+    };
+    const loop = agentServices.get(IAgentLoopService) as {
       setModel: ReturnType<typeof vi.fn>;
     };
     expect(profile.bind).not.toHaveBeenCalled();
-    expect(profile.setModel).not.toHaveBeenCalled();
+    expect(loop.setModel).not.toHaveBeenCalled();
   });
 
   it('switches the model when resuming with the already-bound profile and an explicit model', async () => {
@@ -748,10 +766,12 @@ describe('runV2Print', () => {
 
     const profile = agentServices.get(IAgentProfileService) as {
       bind: ReturnType<typeof vi.fn>;
+    };
+    const loop = agentServices.get(IAgentLoopService) as {
       setModel: ReturnType<typeof vi.fn>;
     };
     expect(profile.bind).not.toHaveBeenCalled();
-    expect(profile.setModel).toHaveBeenCalledWith('new-model');
+    expect(loop.setModel).toHaveBeenCalledWith('new-model');
   });
 
   it('skips default_plan_mode for a new print session and says so on stderr', async () => {
@@ -955,7 +975,7 @@ describe('runV2Print', () => {
     const { app, appServices, agentServices } = makeFakeHarness();
 
     // The resumed session's stored model differs from the configured default.
-    const profile = agentServices.get(IAgentProfileService) as { getModel: () => string };
+    const profile = agentServices.get(IAgentLoopService) as { getModel: () => string };
     profile.getModel = () => 'resumed-model';
     const index = appServices.get(ISessionIndex) as { get: ReturnType<typeof vi.fn> };
     index.get.mockResolvedValue({ id: 'ses_1', cwd: process.cwd() });
@@ -1101,11 +1121,12 @@ describe('runV2Print', () => {
     const guardDispose = vi.fn();
     loop.tryAcquireQuiescence = vi.fn(() => ({ dispose: guardDispose }));
     const taskService = agentServices.get(IAgentTaskService) as {
-      stopAllOnExit: ReturnType<typeof vi.fn>;
+      list: ReturnType<typeof vi.fn>;
+      stop: ReturnType<typeof vi.fn>;
     };
-    taskService.stopAllOnExit = vi.fn(async () => {
+    taskService.list = vi.fn(() => [{ taskId: 'task-1' }]);
+    taskService.stop = vi.fn(async () => {
       if (!order.includes('stop')) order.push('stop');
-      return [];
     });
     const dispatcher = agentServices.get(IEventDispatcher) as {
       flush: ReturnType<typeof vi.fn>;

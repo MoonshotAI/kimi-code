@@ -43,7 +43,31 @@ describe('SessionSubagentModelsValidationService', () => {
             { details: { model: id } },
           );
         }
-        return { id, ...modelMeta.get(id) } as Model;
+        const {
+          capabilities,
+          supportEfforts,
+          defaultEffort,
+          offEffort,
+          alwaysThinking,
+          adaptiveThinking,
+          ...rest
+        } = modelMeta.get(id) ?? {};
+        return {
+          ...rest,
+          id,
+          spec: {
+            provider: 'stub',
+            name: id,
+            capability: capabilities,
+            thinking: {
+              supportEfforts,
+              defaultEffort,
+              offEffort,
+              alwaysThinking,
+              adaptiveThinking,
+            },
+          },
+        } as Model;
       },
     } as unknown as IModelCatalog);
     ix.set(
@@ -158,20 +182,15 @@ describe('SessionSubagentModelsValidationService', () => {
     );
   });
 
-  it('fails session creation when a pool key uses the reserved "primary" alias', () => {
+  it('accepts "primary" as an ordinary pool alias', () => {
     modelIds.add('primary').add('provider/fast');
     setup({
       [SECONDARY_MODEL_SECTION]: {
-        defaultModel: 'provider/fast',
-        models: { primary: 'looks like a model', 'provider/fast': 'fast and cheap' },
+        defaultModel: 'primary',
+        models: { primary: 'ordinary alias', 'provider/fast': 'fast and cheap' },
       },
     });
-    const error = resolve();
-    expect(isError2(error)).toBe(true);
-    expect((error as Error2).code).toBe(ErrorCodes.CONFIG_INVALID);
-    expect((error as Error2).message).toContain(
-      '[secondary_model.models] key "primary" is reserved',
-    );
+    expect(resolve()).toBeUndefined();
   });
 
   it('fails session creation when a pool key does not resolve, naming the key', () => {

@@ -244,7 +244,76 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
 
     // Nothing was sent; both inputs are back in the editor, newline-joined.
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
-    expect(host.restoreInputText).toHaveBeenLastCalledWith('hello\nworld');
+    expect(host.restoreInputText).toHaveBeenLastCalledWith('hello\nworld', undefined);
+  });
+
+  it('rebases every activation when restoring chained skill drafts', async () => {
+    getMock.mockResolvedValue(CONFIG);
+    const { host } = makeHost();
+    const controller = new CacheHintController(host);
+    controller.recordActivity();
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1200_000);
+    const first = [{
+      skillName: 'review',
+      path: '/work/B/review/SKILL.md',
+      start: 0,
+      occurrences: [{ commandName: 'skill:review', start: 0 }],
+    }];
+    const second = [{
+      skillName: 'review',
+      path: '/work/A/review/SKILL.md',
+      start: 0,
+      occurrences: [{ commandName: 'skill:review', start: 0 }],
+    }];
+
+    expect(controller.maybeInterceptOnSubmit('/skill:review', undefined, first)).toBe(true);
+    expect(controller.maybeInterceptOnSubmit('/skill:review', undefined, second)).toBe(true);
+    await vi.waitFor(() => {
+      expect(host.mountEditorReplacement).toHaveBeenCalled();
+    });
+    vi.restoreAllMocks();
+    const dialog = (host.mountEditorReplacement as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
+      handleInput: (data: string) => void;
+    };
+    dialog.handleInput('');
+    await flush();
+
+    expect(host.restoreInputText).toHaveBeenLastCalledWith('/skill:review\n/skill:review', [
+      {
+        skillName: 'review',
+        path: '/work/B/review/SKILL.md',
+        start: 0,
+        occurrences: [{ commandName: 'skill:review', start: 0 }],
+      },
+      {
+        skillName: 'review',
+        path: '/work/A/review/SKILL.md',
+        start: 14,
+        occurrences: [{ commandName: 'skill:review', start: 14 }],
+      },
+    ]);
+  });
+
+  it('returns a stashed skill draft with its selected variant activations', async () => {
+    getMock.mockResolvedValue(CONFIG);
+    const { host } = makeHost();
+    const controller = new CacheHintController(host);
+    controller.recordActivity();
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1200_000);
+    const activations = [{ skillName: 'review', path: '/work/B/review/SKILL.md' }];
+
+    expect(controller.maybeInterceptOnSubmit('/skill:review', undefined, activations)).toBe(true);
+    await vi.waitFor(() => {
+      expect(host.mountEditorReplacement).toHaveBeenCalled();
+    });
+    vi.restoreAllMocks();
+    const dialog = (host.mountEditorReplacement as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
+      handleInput: (data: string) => void;
+    };
+    dialog.handleInput('\u001B');
+    await flush();
+
+    expect(host.restoreInputText).toHaveBeenLastCalledWith('/skill:review', activations);
   });
 
   it('releases stashed media with recall semantics when the dialog is dismissed', async () => {
@@ -271,7 +340,7 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     // retains go through recall — without this the retain count never
     // returns to zero and the upload can never be lease-deleted.
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
-    expect(host.restoreInputText).toHaveBeenCalledWith('describe [image #1 (1×1)]');
+    expect(host.restoreInputText).toHaveBeenCalledWith('describe [image #1 (1×1)]', undefined);
     expect(host.recallStashedMedia).toHaveBeenCalledWith(extraction);
   });
 
@@ -285,7 +354,7 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     await flush();
     vi.restoreAllMocks();
 
-    expect(host.restoreInputText).toHaveBeenCalledWith('hello');
+    expect(host.restoreInputText).toHaveBeenCalledWith('hello', undefined);
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
 
@@ -382,7 +451,7 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     };
     dialog.handleInput('\u001B');
     await flush();
-    expect(host.restoreInputText).toHaveBeenCalledWith('hello');
+    expect(host.restoreInputText).toHaveBeenCalledWith('hello', undefined);
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
 
@@ -485,7 +554,7 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     if (fails) {
       expect(host.sendNormalUserInput).not.toHaveBeenCalled();
       expect(host.showError).toHaveBeenCalledWith(expect.stringContaining('disk full'));
-      expect(host.restoreInputText).toHaveBeenCalledWith('describe image');
+      expect(host.restoreInputText).toHaveBeenCalledWith('describe image', undefined);
     } else {
       expect(vi.mocked(host.sendNormalUserInput).mock.calls[0]?.[1]?.parts).toContainEqual({
         type: 'text', text: expect.stringContaining('kimi-file://f_original'),
@@ -545,106 +614,8 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     dialog.handleInput('\r');
     await flush();
     expect(state.appState.sessionId).toBe('s1');
-    expect(host.restoreInputText).toHaveBeenCalledWith('hello');
+    expect(host.restoreInputText).toHaveBeenCalledWith('hello', undefined);
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
-  });
-});
-
-describe('CacheHintController cache-break detection', () => {
-  const u = (inputCacheRead: number) => ({
-    inputOther: 100,
-    output: 50,
-    inputCacheRead,
-    inputCacheCreation: 0,
-  });
-
-  it('does not judge the first measured step', () => {
-    const { host } = makeHost();
-    const controller = new CacheHintController(host);
-    controller.noteStepUsage(u(10000));
-    expect(host.track).not.toHaveBeenCalled();
-  });
-
-  it('records cache activity on a completed step, even one without usage', () => {
-    peekMock.mockReturnValue(CONFIG);
-    const { host } = makeHost();
-    const controller = new CacheHintController(host);
-    controller.recordActivity();
-    // 20 min later a step completes — the provider round trip refreshed the
-    // server-side cache…
-    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1200_000);
-    controller.noteStepUsage(undefined);
-    // …so a submit right after is fresh and must not be intercepted.
-    expect(controller.maybeInterceptOnSubmit('hello')).toBe(false);
-    vi.restoreAllMocks();
-  });
-
-  it('reports a drop beyond the ratio and token gates with both usages', () => {
-    const { host } = makeHost();
-    const controller = new CacheHintController(host);
-    controller.noteStepUsage(u(10000));
-    controller.noteStepUsage(u(7000));
-
-    expect(host.track).toHaveBeenCalledWith(
-      'cache_break_detected',
-      expect.objectContaining({
-        prev_model: 'k2',
-        curr_model: 'k2',
-        prev_input_cache_read: 10000,
-        curr_input_cache_read: 7000,
-        cache_read_drop_ratio: 0.3,
-      }),
-    );
-  });
-
-  it('stays quiet within the ratio gate or under the token threshold', () => {
-    const a = makeHost();
-    const controllerA = new CacheHintController(a.host);
-    controllerA.noteStepUsage(u(100000));
-    controllerA.noteStepUsage(u(96000)); // 4% drop — inside the ratio gate
-    expect(a.host.track).not.toHaveBeenCalled();
-
-    const b = makeHost();
-    const controllerB = new CacheHintController(b.host);
-    controllerB.noteStepUsage(u(4000));
-    controllerB.noteStepUsage(u(2500)); // drop 1500 ≤ 2000 — under the token threshold
-    expect(b.host.track).not.toHaveBeenCalled();
-  });
-
-  it('skips unmeasured usage without touching the baseline', () => {
-    const { host } = makeHost();
-    const controller = new CacheHintController(host);
-    controller.noteStepUsage(u(10000));
-    controller.noteStepUsage(undefined);
-    controller.noteStepUsage({ inputOther: 0, output: 0, inputCacheRead: 0, inputCacheCreation: 0 });
-    controller.noteStepUsage(u(5000));
-    expect(host.track).toHaveBeenCalledWith(
-      'cache_break_detected',
-      expect.objectContaining({ prev_input_cache_read: 10000, curr_input_cache_read: 5000 }),
-    );
-  });
-
-  it('resets the baseline on compaction, but records a mid-session model/effort switch', () => {
-    const { host, state } = makeHost();
-    const controller = new CacheHintController(host);
-    controller.noteStepUsage(u(10000));
-    controller.resetCacheBreakBaseline();
-    controller.noteStepUsage(u(100)); // post-compaction drop is expected
-    expect(host.track).not.toHaveBeenCalled();
-
-    // A model switch busts the cache key — that drop IS the signal to record.
-    controller.noteStepUsage(u(10000));
-    state.appState.model = 'other-model';
-    controller.noteStepUsage(u(100));
-    expect(host.track).toHaveBeenCalledWith(
-      'cache_break_detected',
-      expect.objectContaining({
-        prev_model: 'k2',
-        curr_model: 'other-model',
-        prev_input_cache_read: 10000,
-        curr_input_cache_read: 100,
-      }),
-    );
   });
 });
 

@@ -1,17 +1,22 @@
+import { spawnSync } from 'node:child_process';
 import { accessSync, constants as fsConstants, type Dirent, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, join, resolve } from 'node:path';
+import { basename, join, relative, resolve } from 'node:path';
 
 import {
   CombinedAutocompleteProvider,
   fuzzyMatch,
   type AutocompleteItem,
+  type AutocompletePreviewContext,
   type AutocompleteProvider,
   type AutocompleteSuggestions,
   type SlashCommand,
 } from '@moonshot-ai/pi-tui';
+import type { SkillSummary } from '@moonshot-ai/kimi-code-sdk';
 
 import { findInlineSkillTokens } from '../../utils/inline-skill-tokens';
+import { skillSourceLabel } from '../../commands/skills';
+import { resolveCommandPath } from '../../../utils/process/resolve-command';
 
 const PATH_DELIMITERS = new Set([' ', '\t', '"', "'", '=']);
 const MAX_FALLBACK_SCAN = 2000;
@@ -19,12 +24,18 @@ const MAX_FALLBACK_SUGGESTIONS = 50;
 
 export interface SlashAutocompleteCommand extends SlashCommand {
   readonly aliases?: readonly string[];
+  readonly skillPath?: string;
+  readonly skillSource?: SkillSummary['source'];
+  readonly isSkill?: boolean;
+  readonly workspaceDir?: string;
 }
 
 interface FsMentionCandidate {
   readonly path: string;
   readonly absolutePath: string;
   readonly isDirectory: boolean;
+  readonly root?: string;
+  readonly ignored?: boolean;
 }
 
 export interface RemoteMentionCandidate {
@@ -48,8 +59,10 @@ export type RemoteMentionSuggest = (
  * wrapper also keeps Kimi-specific slash-command guards.
  */
 export class FileMentionProvider implements AutocompleteProvider {
+  readonly autocompleteDebounceMs = 80;
   private readonly inner: CombinedAutocompleteProvider;
   private readonly additionalDirs: readonly string[];
+  private readonly workspaceLabels: ReadonlyMap<string, string>;
 
   constructor(
     private readonly slashCommands: SlashAutocompleteCommand[],
@@ -59,7 +72,9 @@ export class FileMentionProvider implements AutocompleteProvider {
     private readonly getInputMode: () => 'prompt' | 'bash' = () => 'prompt',
     private readonly skillCommandNames?: ReadonlySet<string>,
     private readonly remoteSuggest?: RemoteMentionSuggest,
+    private readonly onSkillVariantSelected?: (selection: { commandName: string; path: string; start: number }) => void,
   ) {
+    this.workspaceLabels = workspaceLabelsForCommands(slashCommands);
     this.additionalDirs = additionalDirs.map((dir) => resolveMentionDirectory(workDir, dir));
     // Build an expanded list that includes alias entries so that
     // inner's argument completion can find commands by alias too.
@@ -70,7 +85,9 @@ export class FileMentionProvider implements AutocompleteProvider {
         expanded.push({ ...cmd, name: alias });
       }
     }
-    this.inner = new CombinedAutocompleteProvider(expanded, workDir, fdPath, this.additionalDirs);
+    this.inner = new CombinedAutocompleteProvider(expanded, workDir, fdPath, this.additionalDirs, {
+      includeGitignoredFiles: true,
+    });
   }
 
   async getSuggestions(
@@ -201,7 +218,11 @@ export class FileMentionProvider implements AutocompleteProvider {
         }
 
         // Primary-name matches outrank alias matches on score ties.
-        matches.sort((a, b) => a.score - b.score || Number(a.viaAlias) - Number(b.viaAlias));
+        matches.sort((a, b) =>
+          Number(a.cmd.isSkill === true) - Number(b.cmd.isSkill === true) ||
+          a.score - b.score ||
+          Number(a.viaAlias) - Number(b.viaAlias),
+        );
 
         if (matches.length === 0) return null;
         return {
@@ -209,6 +230,13 @@ export class FileMentionProvider implements AutocompleteProvider {
             value: m.cmd.name,
             label: m.label,
             description: formatSlashCommandDescription(m.cmd),
+            data: {
+              group: m.cmd.isSkill === true ? 'skill' : undefined,
+              skillPath: m.cmd.skillPath,
+              workspaceLabel: m.cmd.workspaceDir === undefined
+                ? skillSourceLabel(m.cmd.skillSource)
+                : this.workspaceLabels.get(m.cmd.workspaceDir) ?? m.cmd.workspaceDir,
+            },
           })),
           prefix: textBeforeCursor,
         };
@@ -279,10 +307,54 @@ export class FileMentionProvider implements AutocompleteProvider {
         value: m.cmd.name,
         label: m.cmd.name,
         description: formatSlashCommandDescription(m.cmd),
-        data: { inlineSkill: true },
+        data: {
+          group: m.cmd.isSkill === true ? 'skill' : undefined,
+          inlineSkill: true,
+          skillPath: m.cmd.skillPath,
+          workspaceLabel: m.cmd.workspaceDir === undefined
+            ? skillSourceLabel(m.cmd.skillSource)
+            : this.workspaceLabels.get(m.cmd.workspaceDir) ?? m.cmd.workspaceDir,
+        },
       })),
       prefix,
     };
+  }
+
+  getAutocompletePreview(context: AutocompletePreviewContext): AutocompleteSuggestions | null {
+    const { previous } = context;
+    if (context.cursorLine !== previous.cursorLine || context.lines.length !== previous.lines.length) {
+      return null;
+    }
+    const previousLine = previous.lines[previous.cursorLine] ?? '';
+    const currentLine = context.lines[context.cursorLine] ?? '';
+    const previousPrefix = extractAtPrefix(previousLine.slice(0, previous.cursorCol));
+    const currentPrefix = extractAtPrefix(currentLine.slice(0, context.cursorCol));
+    if (
+      previousPrefix === null ||
+      currentPrefix === null ||
+      previous.suggestions.prefix !== previousPrefix ||
+      currentPrefix.length <= previousPrefix.length ||
+      !currentPrefix.startsWith(previousPrefix)
+    ) {
+      return null;
+    }
+    const appended = currentPrefix.slice(previousPrefix.length);
+    if (appended.includes('/') || appended.includes('\\')) return null;
+    if (context.cursorCol !== previous.cursorCol + appended.length) return null;
+    const expectedLine = `${previousLine.slice(0, previous.cursorCol)}${appended}${previousLine.slice(previous.cursorCol)}`;
+    if (currentLine !== expectedLine) return null;
+    for (let index = 0; index < context.lines.length; index += 1) {
+      if (index !== context.cursorLine && context.lines[index] !== previous.lines[index]) return null;
+    }
+
+    const query = currentPrefix.startsWith('@"') ? currentPrefix.slice(2) : currentPrefix.slice(1);
+    const items = previous.suggestions.items.filter((item) => {
+      const path = item.value.startsWith('@"') && item.value.endsWith('"')
+        ? item.value.slice(2, -1)
+        : item.value.slice(1);
+      return fuzzyMatch(query, path).matches;
+    });
+    return { prefix: currentPrefix, items };
   }
 
   applyCompletion(
@@ -292,6 +364,15 @@ export class FileMentionProvider implements AutocompleteProvider {
     item: AutocompleteItem,
     prefix: string,
   ): { lines: string[]; cursorLine: number; cursorCol: number } {
+    const skillPath = item.data?.['skillPath'];
+    if (typeof skillPath === 'string' && skillPath.length > 0) {
+      const lineStart = lines.slice(0, cursorLine).reduce((start, line) => start + line.length + 1, 0);
+      this.onSkillVariantSelected?.({
+        commandName: item.value,
+        path: skillPath,
+        start: lineStart + cursorCol - prefix.length,
+      });
+    }
     // Inline skill selection mid-input: pi-tui's default applyCompletion
     // treats mid-line slash prefixes as file paths and drops the `/`. Preserve
     // the slash and add a trailing space so the completed token stays a valid
@@ -422,6 +503,27 @@ function isExecutableFd(fdPath: string): boolean {
  * starts with `.` (see registry.ts). pi-tui's path completer sets `label` to
  * the entry basename, with a trailing `/` for directories.
  */
+function workspaceLabelsForCommands(
+  commands: readonly SlashAutocompleteCommand[],
+): ReadonlyMap<string, string> {
+  const counts = new Map<string, number>();
+  const dirs = new Set<string>();
+  for (const command of commands) {
+    if (command.workspaceDir !== undefined) dirs.add(command.workspaceDir);
+  }
+  for (const dir of dirs) {
+    const label = basename(dir) || dir;
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  const labels = new Map<string, string>();
+  for (const command of commands) {
+    if (command.workspaceDir === undefined) continue;
+    const label = basename(command.workspaceDir) || command.workspaceDir;
+    labels.set(command.workspaceDir, counts.get(label)! > 1 ? command.workspaceDir : label);
+  }
+  return labels;
+}
+
 function isDotPrefixedEntry(item: AutocompleteItem): boolean {
   const name = item.label.endsWith('/') ? item.label.slice(0, -1) : item.label;
   return name.startsWith('.');
@@ -498,8 +600,10 @@ function getFsMentionSuggestions(
 
   const isQuotedPrefix = atPrefix.startsWith('@"');
   const query = isQuotedPrefix ? atPrefix.slice(2) : atPrefix.slice(1);
-  const candidates = collectFsMentionCandidates(workDir, additionalDirs, signal);
-  if (candidates.length === 0 || signal.aborted) return null;
+  const collected = collectFsMentionCandidates(workDir, additionalDirs, signal);
+  if (collected.length === 0 || signal.aborted) return null;
+  const candidates = markGitignoredCandidates(collected, signal);
+  if (signal.aborted) return null;
 
   const ranked = rankFsMentionCandidates(candidates, query).slice(0, MAX_FALLBACK_SUGGESTIONS);
   if (ranked.length === 0) return null;
@@ -580,6 +684,8 @@ function collectFsMentionCandidates(
           path: state.isAdditionalDir ? absolutePath : relativePath,
           absolutePath,
           isDirectory,
+          root: state.root,
+          ignored: false,
         });
       }
       if (isDirectory && !isSymlink) {
@@ -589,6 +695,43 @@ function collectFsMentionCandidates(
   }
 
   return [...candidatesByAbsolutePath.values()];
+}
+
+function markGitignoredCandidates(
+  candidates: readonly FsMentionCandidate[],
+  signal: AbortSignal,
+): FsMentionCandidate[] {
+  const pathsByRoot = new Map<string, string[]>();
+  for (const candidate of candidates) {
+    if (candidate.root === undefined) continue;
+    const path = normalizePath(relative(candidate.root, candidate.absolutePath));
+    if (path === '' || path === '..' || path.startsWith('../')) continue;
+    const paths = pathsByRoot.get(candidate.root) ?? [];
+    paths.push(path);
+    pathsByRoot.set(candidate.root, paths);
+  }
+
+  const ignoredPaths = new Set<string>();
+  for (const [root, paths] of pathsByRoot) {
+    if (signal.aborted) break;
+    const git = resolveCommandPath('git', root);
+    if (git === undefined) continue;
+    const result = spawnSync(git, ['check-ignore', '--no-index', '--stdin', '-z'], {
+      cwd: root,
+      input: `${paths.join('\0')}\0`,
+      encoding: 'utf8',
+      maxBuffer: 4 * 1024 * 1024,
+      timeout: 1000,
+    });
+    if (result.status !== 0) continue;
+    for (const path of result.stdout.split('\0')) {
+      if (path !== '') ignoredPaths.add(normalizePath(join(root, path)));
+    }
+  }
+  if (ignoredPaths.size === 0) return [...candidates];
+  return candidates.map((candidate) =>
+    ignoredPaths.has(candidate.absolutePath) ? { ...candidate, ignored: true } : candidate,
+  );
 }
 
 function rankFsMentionCandidates(
@@ -605,6 +748,9 @@ function rankFsMentionCandidates(
 
   scored.sort((a, b) => {
     if (a.score !== b.score) return b.score - a.score;
+    if (a.candidate.ignored !== b.candidate.ignored) {
+      return Number(a.candidate.ignored === true) - Number(b.candidate.ignored === true);
+    }
     if (a.candidate.isDirectory !== b.candidate.isDirectory) {
       return a.candidate.isDirectory ? -1 : 1;
     }

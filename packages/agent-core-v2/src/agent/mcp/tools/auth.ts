@@ -13,6 +13,7 @@ import { qualifyMcpToolName } from '#/mcpCore/tool-naming';
 export { MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE } from '#/tool/toolContract';
 
 export interface McpOAuthAuthorizationUrlUpdateData {
+  readonly waitId: string;
   readonly serverName: string;
   readonly authorizationUrl: string;
   readonly expiresAt?: number;
@@ -80,15 +81,15 @@ export function createMcpAuthTool(options: CreateMcpAuthToolOptions): Executable
 
     const urlText = flow.authorizationUrl.toString();
     const waitTimeoutMs = timeoutMs ?? DEFAULT_AUTH_TIMEOUT_MS;
-    const customData: McpOAuthAuthorizationUrlUpdateData = {
+    const authorization: McpOAuthAuthorizationUrlUpdateData = {
+      waitId: flow.waitId,
       serverName,
       authorizationUrl: urlText,
       expiresAt: Date.now() + waitTimeoutMs,
     };
     onUpdate?.({
       kind: 'custom',
-      customKind: MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE,
-      customData,
+      fields: { [MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE]: authorization },
     });
     onUpdate?.({
       kind: 'status',

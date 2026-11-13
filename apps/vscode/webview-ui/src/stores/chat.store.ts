@@ -51,6 +51,7 @@ export interface ChatMessage {
   steps?: UIStep[];
   status?: StatusUpdate;
   inlineError?: InlineError;
+  turnIndex?: number;
   /** False for host-only commands that do not create a forkable core turn. */
   forkable?: boolean;
 }

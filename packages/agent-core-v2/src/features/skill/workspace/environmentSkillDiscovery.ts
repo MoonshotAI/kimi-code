@@ -37,6 +37,8 @@ async function discoverEnvironmentSkills(
   warn?: (message: string, payload?: LogPayload) => void,
 ): Promise<SkillDiscoveryResult> {
   const byDiscoveryKey = new Map<string, SkillDefinition>();
+  const bySkillPath = new Map<string, SkillDefinition>();
+  const seenVariantKeys = new Set<string>();
   const skipped: SkippedSkill[] = [];
   const scannedDirectories: string[] = [];
 
@@ -47,12 +49,15 @@ async function discoverEnvironmentSkills(
     try {
       if (content?.status === 'rejected') throw content.reason;
       const text = content?.status === 'fulfilled' ? content.value : await fs.readText(input.skillMdPath);
-      const parsed = parseSkillText({
-        skillMdPath: input.skillMdPath,
-        skillDirName: input.skillDirName,
-        source: input.root.source,
-        text,
-      });
+      const parsed = {
+        ...parseSkillText({
+          skillMdPath: input.skillMdPath,
+          skillDirName: input.skillDirName,
+          source: input.root.source,
+          text,
+        }),
+        workspaceDir: input.root.workspaceDir,
+      };
       const skill = input.subSkillParentName === undefined
         ? parsed
         : {
@@ -65,6 +70,11 @@ async function discoverEnvironmentSkills(
         ? normalizeSkillName(discovered.name)
         : `${input.root.plugin.id}\0${normalizeSkillName(discovered.name)}`;
       if (!byDiscoveryKey.has(key)) byDiscoveryKey.set(key, discovered);
+      const variantKey = `${key}\0${input.root.workspaceDir ?? ''}`;
+      if (!seenVariantKeys.has(variantKey) && !bySkillPath.has(discovered.path)) {
+        seenVariantKeys.add(variantKey);
+        bySkillPath.set(discovered.path, discovered);
+      }
       return discovered;
     } catch (error) {
       if (error instanceof UnsupportedSkillTypeError) {
@@ -200,6 +210,7 @@ async function discoverEnvironmentSkills(
   for (const root of roots) await walk(root.path, root, true, 0);
   return {
     skills: [...byDiscoveryKey.values()].toSorted((a, b) => a.name.localeCompare(b.name)),
+    variants: [...bySkillPath.values()].toSorted((a, b) => a.name.localeCompare(b.name)),
     skipped,
     scannedRoots: roots.map((root) => root.path),
     scannedDirectories,

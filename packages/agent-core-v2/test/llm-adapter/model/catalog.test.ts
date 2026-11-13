@@ -5,9 +5,8 @@ import { isErrorCode } from '#/_base/errors/codes';
 import { isError2 } from '#/_base/errors/errors';
 import { IConfigService } from '#/app/config/config';
 import { ConfigErrors } from '#/app/config/errors';
-import { UNKNOWN_CAPABILITY } from '#/llm-adapter/contract/capability';
-import { emptyUsage } from '#human/llm-requester/usage';
-import type { LlmRequester } from '#human/llm-requester/requester';
+import { emptyUsage } from '@moonshot-ai/core/llm/usage';
+import { streamLlmRequest } from '@moonshot-ai/core/llm/stream';
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import '#/llm-adapter/protocol/protocolAdapterRegistry';
 import {
@@ -27,8 +26,7 @@ import {
 } from '#/llm-adapter/model/catalog';
 import { ModelCatalog } from '#/llm-adapter/model/catalog-service';
 import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
-import { generateModel } from '#/llm-adapter/model/generate';
-import { coreRequesterFromA } from '../../harness/scripted-generate';
+import { createMockProvider, withMockProvider } from '../../harness/scripted-generate';
 import { ProviderCatalogRuntimeService } from '#/llm-adapter/model/catalog-runtime';
 import '#/llm-adapter/model/errors';
 import { IHostRequestHeaders } from '#/llm-adapter/model/host-request-headers';
@@ -124,14 +122,13 @@ describe('Model assembly (pure data)', () => {
     try {
       const model = catalog.get('k1');
       expect(model.id).toBe('k1');
-      expect(model.name).toBe('kimi-k2');
+      expect(model.spec.name).toBe('kimi-k2');
       expect(model.protocol).toBe('openai');
       expect(model.providerType).toBe('kimi');
       expect(model.providerName).toBe('kimi');
-      expect(model.baseUrl).toBe('https://api.moonshot.ai/v1');
-      expect(model.maxContextSize).toBe(262144);
-      expect(model.capabilities.max_context_tokens).toBe(262144);
-      expect(model.headers).toMatchObject({
+      expect(model.endpoint.baseUrl).toBe('https://api.moonshot.ai/v1');
+      expect(model.spec.maxContextSize).toBe(262144);
+      expect(model.endpoint.headers).toMatchObject({
         'User-Agent': 'kimi-test/1.0',
         'X-Msh-Device-Id': 'device-1',
       });
@@ -166,7 +163,7 @@ describe('Model assembly (pure data)', () => {
       const model = catalog.get('gpt');
       expect(model.protocol).toBe('openai');
       expect(model.providerType).toBe('openai');
-      expect(model.headers).toEqual({ 'User-Agent': 'kimi-test/1.0' });
+      expect(model.endpoint.headers).toEqual({ 'User-Agent': 'kimi-test/1.0' });
     } finally {
       host.dispose();
     }
@@ -190,7 +187,7 @@ describe('Model assembly (pure data)', () => {
         identitySlug: 'acme-dev',
       });
       try {
-        expect(catalog.get('gpt').headers).toEqual({ 'User-Agent': 'acme-dev/1.0' });
+        expect(catalog.get('gpt').endpoint.headers).toEqual({ 'User-Agent': 'acme-dev/1.0' });
       } finally {
         host.dispose();
       }
@@ -202,7 +199,7 @@ describe('Model assembly (pure data)', () => {
         identitySlug: 'acme-dev',
       });
       try {
-        expect(catalog.get('gpt').headers).toEqual({ 'User-Agent': 'acme-dev/1.0 (web)' });
+        expect(catalog.get('gpt').endpoint.headers).toEqual({ 'User-Agent': 'acme-dev/1.0 (web)' });
       } finally {
         host.dispose();
       }
@@ -214,7 +211,7 @@ describe('Model assembly (pure data)', () => {
         identitySlug: 'acme-dev',
       });
       try {
-        expect(catalog.get('k2').headers).toEqual(HOST_HEADERS);
+        expect(catalog.get('k2').endpoint.headers).toEqual(HOST_HEADERS);
       } finally {
         host.dispose();
       }
@@ -223,7 +220,7 @@ describe('Model assembly (pure data)', () => {
     it('changes nothing when no identity is configured', () => {
       const { host, catalog } = createHost(THIRD_PARTY);
       try {
-        expect(catalog.get('gpt').headers).toEqual({ 'User-Agent': 'kimi-test/1.0' });
+        expect(catalog.get('gpt').endpoint.headers).toEqual({ 'User-Agent': 'kimi-test/1.0' });
       } finally {
         host.dispose();
       }
@@ -235,7 +232,7 @@ describe('Model assembly (pure data)', () => {
         identitySlug: 'acme-dev',
       });
       try {
-        expect(catalog.get('gpt').headers).toEqual({});
+        expect(catalog.get('gpt').endpoint.headers).toEqual({});
       } finally {
         host.dispose();
       }
@@ -247,7 +244,7 @@ describe('Model assembly (pure data)', () => {
         identitySlug: 'acme-dev',
       });
       try {
-        expect(catalog.get('gpt').headers).toEqual({ 'User-Agent': 'acme-dev/1.0' });
+        expect(catalog.get('gpt').endpoint.headers).toEqual({ 'User-Agent': 'acme-dev/1.0' });
       } finally {
         host.dispose();
       }
@@ -265,8 +262,8 @@ describe('Model assembly (pure data)', () => {
       const model = catalog.get('k2');
       expect(model.protocol).toBe('anthropic');
       expect(model.providerType).toBe('kimi');
-      expect(model.baseUrl).toBe('https://api.example.test');
-      expect(model.supportEfforts).toBeUndefined();
+      expect(model.endpoint.baseUrl).toBe('https://api.example.test');
+      expect(model.spec.thinking?.supportEfforts).toBeUndefined();
     } finally {
       host.dispose();
     }
@@ -282,9 +279,9 @@ describe('Model assembly (pure data)', () => {
     try {
       const model = catalog.get('sonnet');
       expect(model.protocol).toBe('anthropic');
-      expect(model.supportEfforts).toEqual(['low', 'medium', 'high']);
-      expect(model.defaultEffort).toBe('high');
-      expect(model.capabilities.thinking).toBe(true);
+      expect(model.spec.thinking?.supportEfforts).toEqual(['low', 'medium', 'high']);
+      expect(model.spec.thinking?.defaultEffort).toBe('high');
+      expect(model.spec.capability?.thinking).toBe(true);
     } finally {
       host.dispose();
     }
@@ -303,7 +300,7 @@ describe('Model assembly (pure data)', () => {
       },
     });
     try {
-      expect(catalog.get('custom').adaptiveThinking).toBe(true);
+      expect(catalog.get('custom').spec.thinking?.adaptiveThinking).toBe(true);
     } finally {
       host.dispose();
     }
@@ -322,8 +319,8 @@ describe('Model assembly (pure data)', () => {
     });
     try {
       const kimi = catalog.get('k1');
-      expect(kimi.baseUrl).toBe('https://kimi-env.example.test/v1');
-      return expect(await kimi.credentialProvider?.resolve()).toEqual({ apiKey: 'env-token' });
+      expect(kimi.endpoint.baseUrl).toBe('https://kimi-env.example.test/v1');
+      return expect(await kimi.endpoint.credentials?.resolve()).toEqual({ apiKey: 'env-token' });
     } finally {
       host.dispose();
     }
@@ -416,7 +413,7 @@ describe('Model assembly (pure data)', () => {
       const model = catalog.get('flat');
       expect(model.providerName).toBe('flat.example.test');
       expect(model.providerType).toBe('openai');
-      expect(model.baseUrl).toBe('https://flat.example.test/v1');
+      expect(model.endpoint.baseUrl).toBe('https://flat.example.test/v1');
     } finally {
       host.dispose();
     }
@@ -448,7 +445,7 @@ describe('Model assembly (pure data)', () => {
       const model = catalog.get('m');
       expect(model.providerType).toBe('my-vendor');
       expect(model.protocol).toBe('openai');
-      expect(model.headers).toEqual({ 'User-Agent': 'kimi-test/1.0' });
+      expect(model.endpoint.headers).toEqual({ 'User-Agent': 'kimi-test/1.0' });
     } finally {
       host.dispose();
     }
@@ -509,10 +506,10 @@ describe('Model assembly (pure data)', () => {
     );
     try {
       const model = catalog.get('k1');
-      expect(model.credentialProvider?.canRecover?.(Object.assign(new Error('x'), { status: 401 }))).toBe(
+      expect(model.endpoint.credentials?.canRecover?.(Object.assign(new Error('x'), { status: 401 }))).toBe(
         true,
       );
-      await expect(model.credentialProvider?.resolve()).resolves.toEqual({ apiKey: 'tok-1' });
+      await expect(model.endpoint.credentials?.resolve()).resolves.toEqual({ apiKey: 'tok-1' });
     } finally {
       host.dispose();
     }
@@ -528,9 +525,9 @@ describe('Model assembly (pure data)', () => {
     });
     try {
       const model = catalog.get('m');
-      expect(await model.credentialProvider?.resolve()).toEqual({ apiKey: 'sk-first' });
+      expect(await model.endpoint.credentials?.resolve()).toEqual({ apiKey: 'sk-first' });
       vi.stubEnv('KIMI_TEST_ACME_ENV_KEY', 'sk-rotated');
-      expect(await model.credentialProvider?.resolve()).toEqual({ apiKey: 'sk-rotated' });
+      expect(await model.endpoint.credentials?.resolve()).toEqual({ apiKey: 'sk-rotated' });
     } finally {
       host.dispose();
     }
@@ -545,12 +542,12 @@ describe('Model assembly (pure data)', () => {
     });
     try {
       const model = catalog.get('m');
-      expect(() => model.credentialProvider?.resolve()).toThrowError(
+      expect(() => model.endpoint.credentials?.resolve()).toThrowError(
         expect.objectContaining({ code: ConfigErrors.codes.CONFIG_INVALID }),
       );
-      expect(() => model.credentialProvider?.resolve()).toThrowError(/acme[\s\S]*KIMI_TEST_ACME_ENV_KEY/);
+      expect(() => model.endpoint.credentials?.resolve()).toThrowError(/acme[\s\S]*KIMI_TEST_ACME_ENV_KEY/);
       vi.stubEnv('KIMI_TEST_ACME_ENV_KEY', '   ');
-      expect(() => model.credentialProvider?.resolve()).toThrowError(
+      expect(() => model.endpoint.credentials?.resolve()).toThrowError(
         expect.objectContaining({ code: ConfigErrors.codes.CONFIG_INVALID }),
       );
     } finally {
@@ -590,7 +587,7 @@ describe('ModelCatalog caching and config-event invalidation', () => {
       expect(catalog.get('gpt')).toBe(gptBefore);
 
       await providers.set('kimi', { type: 'kimi', apiKey: 'sk-2', baseUrl: 'https://other.example.test/v1' });
-      expect(catalog.get('k1').baseUrl).toBe('https://other.example.test/v1');
+      expect(catalog.get('k1').endpoint.baseUrl).toBe('https://other.example.test/v1');
       expect(catalog.get('gpt')).toBe(gptBefore);
     } finally {
       host.dispose();
@@ -632,7 +629,7 @@ describe('headers merge order', () => {
     });
     try {
       const model: Model = catalog.get('k1');
-      expect(model.headers).toEqual({
+      expect(model.endpoint.headers).toEqual({
         'User-Agent': 'custom-ua',
         'X-Msh-Device-Id': 'device-1',
         'X-Custom': 'c',
@@ -647,46 +644,44 @@ describe('direct generate', () => {
   it('returns the streamed text and usage on a live success', async () => {
     const { host, catalog } = createHost(kimiSections, stubModelOAuthTokens());
     try {
-      const fakeRequester: LlmRequester = {
-        generate: (_config, _content, control) => {
-          control.onEvent?.({ type: 'llm.sent' });
-          control.onEvent?.({ type: 'llm.streaming.headers', headers: {} });
-          control.onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'pong' } });
-          control.onEvent?.({ type: 'llm.streaming.usage', usage: emptyUsage() });
-          control.onEvent?.({
-            type: 'llm.streaming.finish',
-            finish: { finishReason: 'completed', rawFinishReason: 'stop' },
-          });
-          control.onEvent?.({ type: 'llm.streaming.message_id', messageId: 'msg-1' });
-          control.onEvent?.({ type: 'llm.done' });
-          return Promise.resolve();
-        },
-      };
+      const fakeRequester = createMockProvider(async () => ({
+        id: 'msg-1',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'pong' }], toolCalls: [] },
+        usage: emptyUsage(),
+        finishReason: 'completed',
+        rawFinishReason: 'stop',
+      }));
       const model = catalog.get('k1');
-      const requester = coreRequesterFromA(
-        new ProtocolAdapterRegistry().request(model, { maxCompletionTokens: 512 }),
+      const requester = withMockProvider(
+        new ProtocolAdapterRegistry().request(model, { model: { maxOutputTokens: 512 } }),
         fakeRequester,
       );
       const events = [];
-      for await (const event of generateModel(
-        requester,
-        {
-          systemPrompt: 'You are a connectivity probe. Answer with the single word "pong".',
-          tools: [],
-          messages: [{ role: 'user', content: [{ type: 'text', text: 'ping' }] }],
-        },
-        undefined,
-        { maxCompletionTokens: 512 },
+      for await (const event of streamLlmRequest(
+        requester.request({
+          profile: {
+            systemPrompt: 'You are a connectivity probe. Answer with the single word "pong".',
+            tools: [],
+          },
+          content: { messages: [{ role: 'user', content: [{ type: 'text', text: 'ping' }] }] },
+          policy: { retry: { maxAttemptsPerStep: 1 } },
+        }),
+        { signal: new AbortController().signal },
       )) {
         events.push(event);
       }
-      expect(events.find((event) => event.type === 'part')).toMatchObject({
+      expect(events.find((event) => event.type === 'llm.streaming.part')).toMatchObject({
         part: { type: 'text', text: 'pong' },
       });
-      expect(events.find((event) => event.type === 'usage')).toMatchObject({ usage: emptyUsage() });
-      expect(events.find((event) => event.type === 'finish')).toMatchObject({
-        providerFinishReason: 'completed',
-        id: 'msg-1',
+      expect(events.find((event) => event.type === 'llm.streaming.usage')).toMatchObject({
+        usage: emptyUsage(),
+      });
+      expect(events.find((event) => event.type === 'llm.ended')).toMatchObject({
+        outcome: {
+          type: 'done',
+          finish: { finishReason: 'completed' },
+          messageId: 'msg-1',
+        },
       });
     } finally {
       host.dispose();
@@ -708,17 +703,20 @@ describe('direct generate', () => {
     try {
       const model = catalog.get('flat');
       const failure = await (async () => {
-        try {
-          for await (const _event of generateModel(
-            new ProtocolAdapterRegistry().request(model),
-            { systemPrompt: 'ping', tools: [], messages: [] },
-            undefined,
-          )) {
+        const requester = new ProtocolAdapterRegistry().request(model);
+        for await (const event of streamLlmRequest(
+          requester.request({
+            profile: { systemPrompt: 'ping', tools: [] },
+            content: { messages: [] },
+            policy: { retry: { maxAttemptsPerStep: 1 } },
+          }),
+          { signal: new AbortController().signal },
+        )) {
+          if (event.type === 'llm.ended' && event.outcome.type === 'failed') {
+            return event.outcome.error;
           }
-          return undefined;
-        } catch (error) {
-          return error;
         }
+        return undefined;
       })();
       expect(failure).toBeTruthy();
     } finally {

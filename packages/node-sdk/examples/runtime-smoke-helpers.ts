@@ -226,7 +226,7 @@ function logEvent(event: Event): void {
     case 'turn.step.interrupted':
     case 'tool.call.delta':
     case 'tool.call.started':
-    case 'tool.progress':
+    case 'tool.updated':
     case 'tool.result':
     case 'tool.list.updated':
     case 'mcp.server.status':

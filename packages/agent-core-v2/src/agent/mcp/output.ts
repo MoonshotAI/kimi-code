@@ -2,12 +2,13 @@ import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { isDeepStrictEqual } from 'node:util';
 
-import type { ContentPart } from '#human/llm/message';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 import { textExtensionForMime } from '#/_base/utils/fileMeta';
 
 import { compressImageContentParts, gateImageFormatParts } from '#/agent/media/image-compress';
+import { sniffMediaFromMagic } from '#/agent/media/file-type';
 import {
   buildUnsupportedImageNotice,
   isModelAcceptedImageMime,
@@ -137,26 +138,32 @@ export async function mcpResultToExecutableOutput(
   options.signal?.throwIfAborted();
   const converted: ContentPart[] = [];
   const attachmentNotices: string[] = [];
-  const preservedUrls = new Set<string>();
+  const preservedUrls = new Map<string, string | undefined>();
   let omittedAttachment = false;
-  const preserveInlineMedia = async (url: string): Promise<void> => {
+  const preserveInlineMedia = async (url: string): Promise<string | undefined> => {
     options.signal?.throwIfAborted();
-    if (preservedUrls.has(url)) return;
+    if (preservedUrls.has(url)) return preservedUrls.get(url);
     const parsed = parseImageDataUrl(url);
     if (parsed === null) return;
-    preservedUrls.add(url);
     const mime = parsed.mimeType.startsWith('image/')
       ? resolveEffectiveImageMime(parsed.mimeType, decodeBase64Prefix(parsed.base64))
       : parsed.mimeType;
-    attachmentNotices.push(await preserveAttachment(parsed.base64, mime, options));
+    const { notice, reference } = await preserveAttachment(parsed.base64, mime, options);
+    attachmentNotices.push(notice);
+    preservedUrls.set(url, reference);
+    return reference;
   };
   for (const block of result.content) {
     options.signal?.throwIfAborted();
     const part = convertMCPContentBlock(block, options.providerType);
-    if (part.type === 'image_url' && options.attachmentStore !== undefined) await preserveInlineMedia(part.imageUrl.url);
+    const gated = gateImageFormatParts([part], options.providerType);
+    if (part.type === 'image_url' && options.attachmentStore !== undefined) {
+      const reference = await preserveInlineMedia(part.imageUrl.url);
+      const image = gated[0];
+      if (image?.type === 'image_url') preservedUrls.set(image.imageUrl.url, reference);
+    }
     if (part.type === 'audio_url') await preserveInlineMedia(part.audioUrl.url);
     if (part.type === 'video_url') await preserveInlineMedia(part.videoUrl.url);
-    const gated = gateImageFormatParts([part], options.providerType);
     converted.push(...gated);
     if (part.type === 'image_url' && gated[0]?.type === 'text') {
       omittedAttachment = true;
@@ -165,11 +172,12 @@ export async function mcpResultToExecutableOutput(
     if (part.type === 'text' && block.type === 'resource' &&
       typeof block.resource?.blob === 'string' && typeof block.resource.text !== 'string') {
       omittedAttachment = true;
-      attachmentNotices.push(await preserveAttachment(
+      const { notice } = await preserveAttachment(
         block.resource.blob,
         block.resource.mimeType ?? 'application/octet-stream',
         options,
-      ));
+      );
+      attachmentNotices.push(notice);
     }
   }
 
@@ -225,10 +233,13 @@ export async function mcpResultToExecutableOutput(
     },
   });
   const capped = await applyBinaryPartCap(compressed.parts, preserveInlineMedia);
+  const parts: ContentPart[] = [];
+  for (const part of capped.parts) {
+    parts.push(await referenceInlineImage(part, options, preservedUrls));
+  }
   const notices = await attachmentDetails(
     [...compressed.captions, ...attachmentNotices, ...capped.notices], options,
   );
-  const parts = [...capped.parts];
   if (notices.content.length > 0) parts.push({ type: 'text', text: notices.content });
   const output = collapseSingleText(parts);
   const base = {
@@ -237,6 +248,29 @@ export async function mcpResultToExecutableOutput(
     spill: notices.suffix.length > 0 ? { suffix: notices.suffix } : undefined,
   };
   return result.isError ? { ...base, isError: true } : base;
+}
+
+async function referenceInlineImage(
+  part: ContentPart,
+  options: McpOutputOptions,
+  preservedUrls: ReadonlyMap<string, string | undefined>,
+): Promise<ContentPart> {
+  if (part.type !== 'image_url' || options.attachmentStore === undefined) return part;
+  const url = part.imageUrl.url;
+  const image = parseImageDataUrl(url);
+  if (image === null || sniffMediaFromMagic(decodeBase64Prefix(image.base64))?.kind !== 'image') return part;
+  options.signal?.throwIfAborted();
+  let reference = preservedUrls.get(url);
+  if (reference === undefined && preservedUrls.has(url)) return part;
+  try {
+    reference ??= (await saveAttachment(
+      decodeAttachment(image.base64), image.mimeType, options.attachmentStore, options.signal,
+    )).reference;
+    return { ...part, imageUrl: { ...part.imageUrl, url: reference } };
+  } catch {
+    options.signal?.throwIfAborted();
+    return part;
+  }
 }
 
 async function attachmentDetails(
@@ -267,22 +301,29 @@ async function preserveAttachment(
   base64: string,
   mimeType: string,
   options: McpOutputOptions,
-): Promise<string> {
+): Promise<{ readonly notice: string; readonly reference?: string }> {
   options.signal?.throwIfAborted();
   try {
     if (options.attachmentStore === undefined) throw new Error('Session attachment storage is unavailable');
-    const compact = base64.replaceAll(/\s/g, '');
-    const bytes = Buffer.from(compact, 'base64');
-    const canonical = bytes.toString('base64');
-    if (canonical !== compact && canonical.replace(/=+$/, '') !== compact) {
-      throw new Error('Invalid base64 attachment');
-    }
+    const bytes = decodeAttachment(base64);
     const saved = await saveAttachment(bytes, mimeType, options.attachmentStore, options.signal);
-    return attachmentNotice(saved, mimeType, bytes.length);
+    return { notice: attachmentNotice(saved, mimeType, bytes.length), reference: saved.reference };
   } catch (error) {
     options.signal?.throwIfAborted();
-    return `Original attachment could not be saved (${JSON.stringify(mimeType)}): ${error instanceof Error ? error.message : String(error)}. No readable original path is available; original attachment preservation is incomplete. Do not repeat the MCP call automatically.`;
+    return {
+      notice: `Original attachment could not be saved (${JSON.stringify(mimeType)}): ${error instanceof Error ? error.message : String(error)}. No readable original path is available; original attachment preservation is incomplete. Do not repeat the MCP call automatically.`,
+    };
   }
+}
+
+function decodeAttachment(base64: string): Buffer {
+  const compact = base64.replaceAll(/\s/g, '');
+  const bytes = Buffer.from(compact, 'base64');
+  const canonical = bytes.toString('base64');
+  if (canonical !== compact && canonical.replace(/=+$/, '') !== compact) {
+    throw new Error('Invalid base64 attachment');
+  }
+  return bytes;
 }
 
 interface SavedAttachment {
@@ -379,7 +420,7 @@ function wrapMediaOnly(parts: readonly ContentPart[], qualifiedToolName: string)
 
 async function applyBinaryPartCap(
   parts: readonly ContentPart[],
-  preserve: (url: string) => Promise<void>,
+  preserve: (url: string) => Promise<unknown>,
 ): Promise<{
   readonly parts: ContentPart[];
   readonly truncated: boolean;

@@ -3,19 +3,26 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  IAgentContextMemoryService,
+  IAgentLoopService,
   IAgentLifecycleService,
+  IEventDispatcher,
   IWireService,
   getLiveSessionById,
   IModelCatalog,
   type ContextMessage,
   type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
+import { ContextApplyCompaction } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
+import { historyEntryFromContext } from '@moonshot-ai/agent-core-v2/agent/loop/history';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
+
+function historyEntries(messages: readonly ContextMessage[]) {
+  return messages.map(historyEntryFromContext);
+}
 
 interface Envelope<T> {
   code: number;
@@ -121,7 +128,8 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
       agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
     }
     if (messages.length > 0) {
-      agent.accessor.get(IAgentContextMemoryService).append(...messages);
+      const loop = agent.accessor.get(IAgentLoopService);
+      loop.replaceHistory(historyEntries([...loop.history(), ...messages]), 'fork');
       await agent.accessor.get(IWireService).flush();
     }
   }
@@ -281,8 +289,8 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
     if (session === undefined) throw new Error(`session ${id} not found`);
     await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
     const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
-    const ctx = agent.accessor.get(IAgentContextMemoryService);
-    ctx.append(
+    const ctx = agent.accessor.get(IAgentLoopService);
+    ctx.replaceHistory(historyEntries([
       { role: 'user', content: [{ type: 'text', text: 'm0' }] },
       { role: 'assistant', content: [{ type: 'text', text: 'm1' }], toolCalls: [] },
       {
@@ -292,13 +300,14 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
           { type: 'image_url', imageUrl: { url: 'data:image/png;base64,QUJD' } },
         ],
       },
-    );
-    ctx.applyCompaction({
+    ]), 'fork');
+    await agent.accessor.get(IEventDispatcher).dispatch(new ContextApplyCompaction({
+      agentId: 'main',
       summary: 'summary',
       contextSummary: 'summary',
       compactedCount: 3,
       tokensBefore: 100,
-    });
+    }));
     await agent.accessor.get(IWireService).flush();
 
     const livePage = await getJson<PageWire>(`/api/v1/sessions/${id}/messages?page_size=100`);

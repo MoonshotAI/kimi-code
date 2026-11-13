@@ -121,6 +121,9 @@ importers:
       '@moonshot-ai/session-import':
         specifier: workspace:^
         version: link:../../packages/session-import
+      '@moonshot-ai/tree-sitter-bash':
+        specifier: workspace:^
+        version: link:../../packages/tree-sitter-bash
       '@moonshot-ai/vis-server':
         specifier: workspace:^
         version: link:../vis/server
@@ -194,6 +197,9 @@ importers:
       '@moonshot-ai/agent-core-v2':
         specifier: workspace:^
         version: link:../../../packages/agent-core-v2
+      '@moonshot-ai/core':
+        specifier: workspace:^
+        version: link:../../../packages/core
       hono:
         specifier: ^4.7.7
         version: 4.12.14
@@ -456,6 +462,9 @@ importers:
       '@moonshot-ai/agent-core-v2':
         specifier: workspace:^
         version: link:../agent-core-v2
+      '@moonshot-ai/core':
+        specifier: workspace:^
+        version: link:../core
       '@moonshot-ai/klient':
         specifier: workspace:^
         version: link:../klient
@@ -477,6 +486,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(zod@4.3.6)
+      '@moonshot-ai/core':
+        specifier: workspace:^
+        version: link:../core
       '@moonshot-ai/kimi-code-oauth':
         specifier: workspace:^
         version: link:../oauth
@@ -501,6 +513,9 @@ importers:
       chokidar:
         specifier: ^4.0.3
         version: 4.0.3
+      cross-spawn:
+        specifier: ^7.0.6
+        version: 7.0.6
       ignore:
         specifier: ^5.3.2
         version: 5.3.2
@@ -565,6 +580,9 @@ importers:
         specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
+      '@types/cross-spawn':
+        specifier: ^6.0.6
+        version: 6.0.6
       '@types/js-yaml':
         specifier: ^4.0.9
         version: 4.0.9
@@ -602,6 +620,33 @@ importers:
         specifier: ^4.21.0
         version: 4.21.0
 
+  packages/core:
+    dependencies:
+      '@anthropic-ai/sdk':
+        specifier: ^0.95.2
+        version: 0.95.2(zod@4.3.6)
+      '@google/genai':
+        specifier: ^1.49.0
+        version: 1.49.0(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))
+      '@noble/hashes':
+        specifier: ^2.0.0
+        version: 2.4.0
+      ajv:
+        specifier: ^8.18.0
+        version: 8.18.0
+      ajv-formats:
+        specifier: ^3.0.1
+        version: 3.0.1(ajv@8.18.0)
+      openai:
+        specifier: ^6.34.0
+        version: 6.34.0(ws@8.20.0)(zod@4.3.6)
+      radashi:
+        specifier: ^12.9.1
+        version: 12.9.1
+      undici:
+        specifier: ^7.27.1
+        version: 7.27.1
+
   packages/kap-server:
     dependencies:
       '@fastify/multipart':
@@ -613,6 +658,9 @@ importers:
       '@moonshot-ai/agent-core-v2':
         specifier: workspace:^
         version: link:../agent-core-v2
+      '@moonshot-ai/core':
+        specifier: workspace:^
+        version: link:../core
       '@moonshot-ai/kimi-code-oauth':
         specifier: workspace:^
         version: link:../oauth
@@ -625,9 +673,6 @@ importers:
       '@moonshot-ai/remote-control':
         specifier: workspace:^
         version: link:../remote-control
-      '@moonshot-ai/transcript':
-        specifier: workspace:^
-        version: link:../transcript
       bcryptjs:
         specifier: ^2.4.3
         version: 2.4.3
@@ -674,6 +719,9 @@ importers:
       '@moonshot-ai/agent-core-v2':
         specifier: workspace:^
         version: link:../agent-core-v2
+      '@moonshot-ai/core':
+        specifier: workspace:^
+        version: link:../core
       zod:
         specifier: 'catalog:'
         version: 4.3.6
@@ -691,31 +739,6 @@ importers:
         specifier: ^8.18.0
         version: 8.20.0
 
-  packages/kosong:
-    dependencies:
-      '@anthropic-ai/sdk':
-        specifier: ^0.95.2
-        version: 0.95.2(zod@4.3.6)
-      '@google/genai':
-        specifier: ^1.49.0
-        version: 1.49.0(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))
-      openai:
-        specifier: ^6.34.0
-        version: 6.34.0(ws@8.20.0)(zod@4.3.6)
-      zod:
-        specifier: ^4.3.6
-        version: 4.3.6
-      zod-to-json-schema:
-        specifier: ^3.25.2
-        version: 3.25.2(zod@4.3.6)
-    devDependencies:
-      ajv:
-        specifier: ^8.18.0
-        version: 8.18.0
-      ajv-formats:
-        specifier: ^3.0.1
-        version: 3.0.1(ajv@8.18.0)
-
   packages/migration-legacy:
     dependencies:
       '@moonshot-ai/agent-core-v2':
@@ -727,10 +750,6 @@ importers:
       zod:
         specifier: ^4.3.6
         version: 4.3.6
-    devDependencies:
-      '@moonshot-ai/transcript':
-        specifier: workspace:^
-        version: link:../transcript
 
   packages/minidb: {}
 
@@ -749,9 +768,18 @@ importers:
         specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
+      '@anthropic-ai/sdk':
+        specifier: ^0.95.2
+        version: 0.95.2(zod@4.3.6)
+      '@google/genai':
+        specifier: ^1.49.0
+        version: 1.49.0(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))
       '@moonshot-ai/agent-core-v2':
         specifier: workspace:^
         version: link:../agent-core-v2
+      '@moonshot-ai/core':
+        specifier: workspace:^
+        version: link:../core
       '@moonshot-ai/kimi-code-oauth':
         specifier: workspace:^
         version: link:../oauth
@@ -761,15 +789,15 @@ importers:
       '@moonshot-ai/klient':
         specifier: workspace:^
         version: link:../klient
-      '@moonshot-ai/kosong':
-        specifier: workspace:^
-        version: link:../kosong
       '@types/yazl':
         specifier: ^2.4.6
         version: 2.4.6
       jimp:
         specifier: ^1.6.1
         version: 1.6.1
+      openai:
+        specifier: ^6.34.0
+        version: 6.34.0(ws@8.20.0)(zod@4.3.6)
 
   packages/oauth:
     dependencies:
@@ -811,9 +839,16 @@ importers:
       '@moonshot-ai/kimi-code-oauth':
         specifier: workspace:^
         version: link:../oauth
+      semver:
+        specifier: ^7.7.4
+        version: 7.7.4
       zod:
         specifier: 'catalog:'
         version: 4.3.6
+    devDependencies:
+      '@types/semver':
+        specifier: ^7.7.0
+        version: 7.7.1
 
   packages/remote-control:
     dependencies:
@@ -834,12 +869,6 @@ importers:
   packages/session-import: {}
 
   packages/telemetry: {}
-
-  packages/transcript:
-    dependencies:
-      zod:
-        specifier: 'catalog:'
-        version: 4.3.6
 
   packages/tree-sitter-bash:
     devDependencies:
@@ -4175,6 +4204,9 @@ packages:
 
   '@types/chai@5.2.3':
     resolution: {integrity: sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==}
+
+  '@types/cross-spawn@6.0.6':
+    resolution: {integrity: sha512-fXRhhUkG4H3TQk5dBhQ7m/JDdSNHKwR2BBia62lhwEIq9xGiQKLxd6LymNhn47SjXhsUEPmxi+PKw2OkW4LLjA==}
 
   '@types/d3-array@3.2.2':
     resolution: {integrity: sha512-hOLWVbm7uRza0BYXpIIW5pxfrKe0W+D5lrFiAEYR+pb6w3N2SwSMaJbXdUfSEv+dT4MfHBLtn5js0LAWaO6otw==}
@@ -12874,6 +12906,10 @@ snapshots:
       '@types/deep-eql': 4.0.2
       assertion-error: 2.0.1
 
+  '@types/cross-spawn@6.0.6':
+    dependencies:
+      '@types/node': 22.19.17
+
   '@types/d3-array@3.2.2': {}
 
   '@types/d3-axis@3.0.6':
@@ -13227,7 +13263,7 @@ snapshots:
       obug: 2.1.1
       std-env: 4.0.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(jsdom@30.0.1(@noble/hashes@2.4.0))(msw@2.15.0(@types/node@22.19.17)(typescript@7.0.2))(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3))
+      vitest: 4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(jsdom@30.0.1(@noble/hashes@2.4.0))(msw@2.15.0(@types/node@22.19.17)(typescript@7.0.2))(vite@8.0.8(@types/node@22.19.17)(esbuild@0.27.7)(jiti@2.6.1)(tsx@4.21.0)(yaml@2.8.3))
 
   '@vitest/expect@4.1.4':
     dependencies:

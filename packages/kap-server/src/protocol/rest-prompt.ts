@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { isoDateTimeSchema } from '@moonshot-ai/agent-core-v2/_base/utils/isoDateTime';
 import { messageContentSchema } from './message';
+import { creationOnlyProfileSchema } from './session';
 import {
   promptPermissionModeSchema,
   promptThinkingSchema,
@@ -12,6 +13,7 @@ export type { PromptPermissionMode, PromptThinking } from '@moonshot-ai/agent-co
 
 export const promptSkillActivationSchema = z.object({
   name: z.string().min(1),
+  path: z.string().optional(),
   args: z.string().optional(),
 });
 export type PromptSkillActivation = z.infer<typeof promptSkillActivationSchema>;
@@ -20,7 +22,7 @@ export const promptSubmissionSchema = z.object({
   content: z.array(messageContentSchema).min(1),
   metadata: z.record(z.string(), z.unknown()).optional(),
   agent_id: z.string().min(1).optional(),
-  profile: z.string().min(1).optional(),
+  profile: creationOnlyProfileSchema,
   model: z.string().min(1).optional(),
   thinking: promptThinkingSchema.optional(),
   permission_mode: promptPermissionModeSchema.optional(),
@@ -34,14 +36,14 @@ export const promptSubmissionSchema = z.object({
 });
 export type PromptSubmission = z.infer<typeof promptSubmissionSchema>;
 
-export const promptStatusSchema = z.enum(['running', 'queued', 'blocked']);
+export const promptStatusSchema = z.enum(['running', 'queued', 'blocked', 'failed']);
 export type PromptStatus = z.infer<typeof promptStatusSchema>;
 
 export const promptItemSchema = z.object({
   prompt_id: z.string().min(1),
   user_message_id: z.string().min(1),
   status: promptStatusSchema,
-  content: z.array(messageContentSchema).min(1),
+  content: z.array(messageContentSchema),
   created_at: isoDateTimeSchema,
   metadata: z.record(z.string(), z.unknown()).optional(),
 });

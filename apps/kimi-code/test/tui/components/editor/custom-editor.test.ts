@@ -6,6 +6,7 @@ import {
   type AutocompleteProvider,
   type AutocompleteSuggestions,
   type TUI,
+  visibleWidth,
 } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
@@ -316,7 +317,12 @@ describe('CustomEditor @ mention completion refresh', () => {
 });
 
 describe('CustomEditor Tab key handling', () => {
-  it('does not open autocomplete when Tab is pressed with the dropdown closed', async () => {
+  it('keeps native completion closed and accepts a full prediction beyond its narrow preview', async () => {
+    const previousLevel = chalk.level;
+    chalk.level = 3;
+    onTestFinished(() => {
+      chalk.level = previousLevel;
+    });
     const editor = makeEditor();
     const provider = providerReturning([{ value: '@src/file.ts', label: 'file.ts' }]);
     editor.setAutocompleteProvider(provider);
@@ -327,6 +333,17 @@ describe('CustomEditor Tab key handling', () => {
 
     expect(provider.getSuggestions).not.toHaveBeenCalled();
     expect(editor.isShowingAutocomplete()).toBe(false);
+
+    const prediction = '请继续修复这个很长的 English prompt prediction，不要截断原文\n第二行也要保留';
+    editor.setPromptPrediction(prediction);
+    const rendered = editor.render(24);
+    const muted = currentTheme.fg('textMuted', 'x').split('x')[0]!;
+    expect(rendered.every((line) => visibleWidth(line) <= 24)).toBe(true);
+    expect(rendered.join('\n')).toContain('…');
+    expect(rendered.join('\n')).toContain(muted);
+    expect(editor.acceptPromptPrediction()).toBe(true);
+    expect(editor.getText()).toBe(prediction);
+    expect(editor.getPromptPrediction()).toBeUndefined();
   });
 });
 

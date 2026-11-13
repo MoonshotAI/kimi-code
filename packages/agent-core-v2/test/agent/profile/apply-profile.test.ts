@@ -6,7 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Emitter, Event } from '#/_base/event';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
-import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
+import { type ResolvedAgentProfile } from '#/agent/profile/profile';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentChangeNotifierService } from '#/agent/changeNotifier/changeNotifier';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -83,7 +84,7 @@ const exactProfile: ResolvedAgentProfile = normalizeAgentProfile({
   tools: ['Read', 'Write'],
 });
 
-describe('AgentProfileService.applyProfile', () => {
+describe('AgentLoopService.applyProfile', () => {
   let ctx: TestAgentContext;
   let homeDir: string;
   let workDir: string;
@@ -101,7 +102,7 @@ describe('AgentProfileService.applyProfile', () => {
 
   function buildContext(
     ...extra: readonly (TestAgentServiceOverride | TestAgentOptions)[]
-  ): { ctx: TestAgentContext; profile: IAgentProfileService } {
+  ): { ctx: TestAgentContext; profile: IAgentLoopService } {
     const fs = new HostFileSystem();
     ctx = createTestAgent(
       execEnvServices({ hostFs: fs }),
@@ -109,7 +110,7 @@ describe('AgentProfileService.applyProfile', () => {
       { cwd: workDir },
       ...extra,
     );
-    return { ctx, profile: ctx.get(IAgentProfileService) };
+    return { ctx, profile: ctx.get(IAgentLoopService) };
   }
 
   describe('custom identity', () => {
@@ -555,6 +556,7 @@ function pluginStub(
     enabledSessionStarts: async () => [],
     enabledSystemPrompts: async () => sections.value,
     enabledMcpServers: async () => ({}),
+    mcpServerEntries: async () => [],
     enabledHooks: async () => [],
     listPluginCommands: async () => [],
   } as unknown as IPluginService;

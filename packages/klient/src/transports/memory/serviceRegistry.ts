@@ -31,15 +31,13 @@ import { ISessionMetadata } from '@moonshot-ai/agent-core-v2/session/sessionMeta
 import { ISessionSkillCatalog } from '@moonshot-ai/agent-core-v2/features/skill/session/skillCatalog';
 import { ISessionTitleService } from '@moonshot-ai/agent-core-v2/session/sessionTitle/sessionTitle';
 import { IAgentLoopService } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
-import { IAgentPromptChannel } from '@moonshot-ai/agent-core-v2/agent/loop/promptChannel';
 import { IAgentPermissionModeService } from '@moonshot-ai/agent-core-v2/agent/permissionMode/permissionMode';
 import { IAgentCommandService } from '@moonshot-ai/agent-core-v2/agent/command/agentCommand';
 import { IAgentEnvironmentBindingService } from '@moonshot-ai/agent-core-v2/agent/environmentBinding/environmentBinding';
-import { IAgentContextMemoryService } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextMemory';
 import { ISessionTokenCountingService } from '@moonshot-ai/agent-core-v2/session/tokenCounting/sessionTokenCounting';
 import { ISessionActivityView } from '@moonshot-ai/agent-core-v2/session/sessionActivity/sessionActivity';
+import { ISessionPromptPredictionService } from '@moonshot-ai/agent-core-v2/features/promptPrediction/promptPrediction';
 import { IAgentPlanService } from '@moonshot-ai/agent-core-v2/features/plan/plan';
-import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
 import { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommand';
 import { IAgentTaskService } from '@moonshot-ai/agent-core-v2/agent/task/task';
 import { ISessionUsageService } from '@moonshot-ai/agent-core-v2/session/usage/sessionUsage';
@@ -70,16 +68,15 @@ export const serviceTokens: Readonly<Record<string, ServiceIdentifier<unknown>>>
   sessionMetadata: ISessionMetadata,
   sessionSkillCatalog: ISessionSkillCatalog,
   sessionTitleService: ISessionTitleService,
-  agentPromptService: IAgentPromptChannel,
   agentLoopService: IAgentLoopService,
   agentPermissionModeService: IAgentPermissionModeService,
   agentCommandService: IAgentCommandService,
   agentEnvironmentBindingService: IAgentEnvironmentBindingService,
-  agentContextMemoryService: IAgentContextMemoryService,
   agentTokenCountingService: ISessionTokenCountingService,
   sessionActivityView: ISessionActivityView,
+  sessionPromptPredictionService: ISessionPromptPredictionService,
   agentShellCommandService: IAgentShellCommandService,
-  agentProfileService: IAgentProfileService,
+  agentProfileService: IAgentLoopService,
   agentUsageService: ISessionUsageService,
   agentPlanService: IAgentPlanService,
   agentTaskService: IAgentTaskService,

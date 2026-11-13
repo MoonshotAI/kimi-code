@@ -9,6 +9,7 @@ import {
   resolveKimiRegion,
 } from '@moonshot-ai/kimi-code-oauth';
 
+import { installResolvedMarketplacePlugin } from '../../plugin/pluginService';
 import { downloadToFile, runCommand } from '../host';
 import type {
   CapabilityDetectResult,
@@ -18,7 +19,8 @@ import type {
 } from '../types';
 import type { CapabilityEntryContext } from './context';
 
-const PLUGIN_ID = 'kimi-webbridge';
+const PLUGIN_ID = 'kimi-browser-extension';
+const LEGACY_PLUGIN_ID = 'kimi-webbridge';
 const PLUGIN_ZIP_PATH = 'plugins/official/kimi-webbridge.zip';
 const BINARY_CDN_PATH = 'webbridge/latest/releases';
 const DEFAULT_DAEMON_BASE_URL = 'http://127.0.0.1:10086';
@@ -138,7 +140,9 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
     });
 
     const installed = await ctx.plugins.listPlugins();
-    const plugin = installed.find((p) => p.id === PLUGIN_ID);
+    const plugin =
+      installed.find((p) => p.id === PLUGIN_ID) ??
+      installed.find((p) => p.id === LEGACY_PLUGIN_ID);
     const mcpGap =
       plugin !== undefined && plugin.enabledMcpServerCount < plugin.mcpServerCount
         ? `mcp ${plugin.enabledMcpServerCount}/${plugin.mcpServerCount} enabled`
@@ -198,6 +202,31 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
       throw new Error(`kimi-webbridge is not supported on ${ctx.platform}/${ctx.arch}`);
     }
 
+    const defaultCatalog = await ctx.marketplace.isDefaultMarketplace().catch(() => false);
+    const marketplace = defaultCatalog
+      ? await ctx.marketplace.listMarketplace().catch(() => undefined)
+      : undefined;
+    const entry = marketplace?.plugins.find((candidate) => candidate.id === PLUGIN_ID);
+    if (marketplace !== undefined && entry === undefined) {
+      throw new Error(`Marketplace plugin "${PLUGIN_ID}" was not found in the current catalog`);
+    }
+    const resolved = marketplace === undefined
+      ? {
+          source: `${kimiRegionProfile((await ctx.resolveRegion?.()) ?? resolveKimiRegion()).cdnBase}/${PLUGIN_ZIP_PATH}`,
+          version: undefined,
+          sha256sum: undefined,
+          catalogId: PLUGIN_ID,
+          marketplaceSource: undefined,
+          origin: 'marketplace' as const,
+          expectedPluginId: PLUGIN_ID,
+          fetchImpl: fetch,
+        }
+      : await ctx.marketplace.resolveInstall(PLUGIN_ID, entry!.version, entry!.sha256sum);
+    const installed = await ctx.plugins.listPlugins();
+    const migrateFrom = installed.some((plugin) => plugin.id === LEGACY_PLUGIN_ID)
+      ? LEGACY_PLUGIN_ID
+      : undefined;
+
     const before = await detect();
     const stepStates = new Map(before.steps.map((step) => [step.id, step.state]));
     const readyBefore = before.steps
@@ -222,10 +251,16 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
     }
 
     report('skill');
-    const region = (await ctx.resolveRegion?.()) ?? resolveKimiRegion();
-    const summary = await ctx.plugins.installPlugin({
-      source: `${kimiRegionProfile(region).cdnBase}/${PLUGIN_ZIP_PATH}`,
-    });
+    const summary = await installResolvedMarketplacePlugin(
+      ctx.plugins,
+      {
+        marketplaceId: PLUGIN_ID,
+        expectedVersion: resolved.version,
+        migrateFrom,
+      },
+      resolved,
+      LEGACY_PLUGIN_ID,
+    );
     if (!summary.enabled) {
       await ctx.plugins.setPluginEnabled({ id: PLUGIN_ID, enabled: true });
     }

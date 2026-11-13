@@ -917,7 +917,7 @@ describe('dispatchInput /goal integration', () => {
     dispatchInput(host, '/goal Ship feature X');
 
     await vi.waitFor(() => {
-      expect(host.restoreInputText).toHaveBeenCalledWith('/goal Ship feature X');
+      expect(host.restoreInputText).toHaveBeenCalledWith('/goal Ship feature X', []);
     });
     expect(session.createGoal).not.toHaveBeenCalled();
   });

@@ -321,7 +321,7 @@ interface LocalityFixture {
   readonly registry: EnvironmentRegistry;
   readonly program: Program;
   readonly local: () => GenerationAccess;
-  readonly workdir: (cwd: string) => Promise<ProgramWorkdir>;
+  readonly workdir: (cwd: string, environmentId?: string, followsPrimary?: boolean) => Promise<ProgramWorkdir>;
   readonly controllerInputs: ProgramSessionControllerInput[];
   readonly profileRegistry: AgentProfileRegistryService;
   readonly profileRegistrations: { readonly sourceId: string; readonly profiles: readonly string[] }[];
@@ -347,12 +347,14 @@ function scopedFs(base: string, realBase: string, inner: IHostFileSystem, additi
     writeText: (path, data) => { assert(path); return inner.writeText(path, data); },
     appendText: (path, data) => { assert(path); return inner.appendText(path, data); },
     readBytes: (path, n, offset) => { assert(path); return inner.readBytes(path, n, offset); },
+    readFileHead: (path, maxBytes) => { assert(path); return inner.readFileHead(path, maxBytes); },
     writeBytes: (path, data) => { assert(path); return inner.writeBytes(path, data); },
     readLines: (path, options) => { assert(path); return inner.readLines(path, options); },
     createExclusive: (path, data) => { assert(path); return inner.createExclusive(path, data); },
     stat: (path) => { assert(path); return inner.stat(path); },
     lstat: inner.lstat.bind(inner),
     readdir: (path) => { assert(path); return inner.readdir(path); },
+    walk: (path, options, visit) => { assert(path); return inner.walk(path, options, visit); },
     mkdir: (path, options) => { assert(path); return inner.mkdir(path, options); },
     remove: (path) => { assert(path); return inner.remove(path); },
     realpath: inner.realpath.bind(inner),
@@ -466,10 +468,15 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
         resolved: async () => ({ slug: 'kimi-code' }),
       },
       log: noopLogger,
-      oauth: { onEvent: () => () => {} },
+      oauth: {
+        onEvent: () => () => {},
+        setConfigurationSource: () => {},
+        removeConfigurationSource: () => {},
+      },
       configStore: { onDidWrite: () => ({ dispose: () => {} }) },
       plugins: {
         enabledMcpServers: async () => ({}),
+        mcpServerEntries: async () => [],
         onDidReload: () => ({ dispose: () => {} }),
         pluginAgentRoots: async () => [],
         pluginSkillRoots: async () => [],
@@ -534,9 +541,9 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
   };
   const workdirs: ProgramWorkdir[] = [];
   let controller: { dispose(): void } | undefined;
-  const workdir = async (cwd: string): Promise<ProgramWorkdir> => {
+  const workdir = async (cwd: string, environmentId = 'remote', followsPrimary?: boolean): Promise<ProgramWorkdir> => {
     controller ??= program.createSessionController();
-    const created = await controllerInputs[0]!.acquireWorkdir('remote', cwd);
+    const created = await controllerInputs[0]!.acquireWorkdir(environmentId, cwd, followsPrimary);
     workdirs.push(created);
     return created;
   };
@@ -685,6 +692,28 @@ describe('Program local generation and remote workdirs', () => {
       const remote = await fixture.workdir(fixture.remoteRoot);
       await awaitWorkdir(remote);
       expect(remote.dirs.additionalDirs).toEqual([join(fixture.remoteHomeDir, 'shared')]);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it('separates pinned and primary-following local workdirs for the same environment and cwd', async () => {
+    const fixture = await localityFixture();
+    try {
+      const pinnedRoot = join(fixture.localRoot, 'pinned');
+      await mkdir(pinnedRoot);
+      await writeFile(join(pinnedRoot, 'AGENTS.md'), 'pinned project instructions');
+      const following = await fixture.workdir(pinnedRoot, 'local', true);
+      const pinned = await fixture.workdir(pinnedRoot, 'local', false);
+      await Promise.all([awaitWorkdir(following), awaitWorkdir(pinned)]);
+
+      expect(following.contextKey).not.toBe(pinned.contextKey);
+      expect(following.dirs.primary).toBe(fixture.localRoot);
+      expect(pinned.dirs.primary).toBe(pinnedRoot);
+      expect(following.instructions.snapshot.agentsMd).toContain('local project instructions');
+      expect(following.instructions.snapshot.agentsMd).not.toContain('pinned project instructions');
+      expect(pinned.instructions.snapshot.agentsMd).toContain('pinned project instructions');
+      expect(pinned.instructions.snapshot.agentsMd).not.toContain('local project instructions');
     } finally {
       await fixture.cleanup();
     }

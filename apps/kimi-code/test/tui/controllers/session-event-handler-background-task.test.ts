@@ -2,6 +2,7 @@ import type { Event } from '@moonshot-ai/kimi-code-sdk';
 import { describe, expect, it, vi } from 'vitest';
 
 import { SessionEventHandler } from '#/tui/controllers/session-event-handler';
+import { TurnTimeline } from '#/tui/utils/turn-timeline';
 import {
   SubAgentEventHandler,
   type SubagentLifecycleEvent,
@@ -10,6 +11,7 @@ import { getBuiltInPalette } from '#/tui/theme';
 
 function makeStreamingUIStub() {
   return {
+    timeline: new TurnTimeline(),
     getToolComponent: vi.fn(() => undefined),
     getActiveToolCall: vi.fn(() => undefined),
     onToolCallStart: vi.fn(),
@@ -216,7 +218,6 @@ function makeSessionEventHost() {
     track: vi.fn(),
     recordSessionActivity: vi.fn(),
     updateActivityPane: vi.fn(),
-    noteStepUsage: vi.fn(),
     noteCompactionFinished: vi.fn(),
     handleBackgroundTaskStatus: vi.fn(),
     mountEditorReplacement: vi.fn(),

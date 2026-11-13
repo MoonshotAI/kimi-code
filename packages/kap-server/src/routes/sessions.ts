@@ -1,12 +1,10 @@
 import {
   ErrorCodes,
   IAgentChangeNotifierService,
-  IAgentContextMemoryService,
-  IAgentProfileService,
-  IAgentConversationUndoService,
+  IAgentGoalService,
+  IAgentLoopService,
   IAgentFullCompactionService,
   IAgentLifecycleService,
-  IAgentLoopService,
   IAgentPluginService,
   IAuthSummaryService,
   IConfigService,
@@ -18,6 +16,7 @@ import {
   ISessionIndex,
   ISessionMetadata,
   ISessionLegacyService,
+  ISessionPromptPredictionService,
   ISessionTitleService,
   IEventService,
   SessionCreated,
@@ -26,6 +25,7 @@ import {
   IWorkspaceInstanceManager,
   IWorkspaceService,
   closeSessionById,
+  ensureMainAgent as ensureMainAgentContext,
   getLiveSessionById,
   programForSession,
   resolveSubagentModelPool,
@@ -33,7 +33,6 @@ import {
   resumeSessionById,
   setSessionArchived,
   Error2,
-  type ContextMessage,
   type IAgentScopeHandle,
   type ISessionScopeHandle,
   type Scope,
@@ -44,19 +43,25 @@ import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/inte
 import { SessionMetaUpdated } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetaEvents';
 import { ErrorCode } from '../protocol/error-codes';
 import { pageResponseSchema } from '../protocol/pagination';
-import { toProtocolMessage } from '../services/messages/messageProjection';
+import type { ConversationService } from '../services/conversation/conversationService';
+import { loadWorkspaceVisibility } from '../services/workspaceVisibility';
 import {
   archiveSessionResponseSchema,
+  cancelPromptPredictionRequestSchema,
+  cancelPromptPredictionResponseSchema,
   compactSessionRequestSchema,
   compactSessionResponseSchema,
   createSessionChildRequestSchema,
   createSessionRequestSchema,
   deleteSessionResponseSchema,
   forkSessionRequestSchema,
+  editSessionGoalRequestSchema,
+  editSessionGoalResponseSchema,
   getSessionGoalResponseSchema,
   listSessionChildrenResponseSchema,
+  predictPromptRequestSchema,
+  predictPromptResponseSchema,
   sessionAbortResponseSchema,
-  sessionStatusResponseSchema,
   sessionWarningsResponseSchema,
   startBtwSessionResponseSchema,
   takeoverSessionResponseSchema,
@@ -84,8 +89,13 @@ import {
   sendMappedError as sendSessionMappedError,
   sessionConflictErrors,
 } from './sessionErrors';
-import { applySessionAgentConfig } from './sessionAgentConfig';
-import { updateSessionProfile } from './sessionProfile';
+import {
+  agentConfigErrors,
+  applyAgentConfigToSession,
+  applySessionAgentConfig,
+  creationMainAgentBinding,
+} from './sessionAgentConfig';
+import { customSessionMetadata, updateSessionProfile } from './sessionProfile';
 
 interface SessionRouteHost {
   post(
@@ -101,6 +111,14 @@ interface SessionRouteHost {
     options: { preHandler: unknown[]; schema?: Record<string, unknown> } | undefined,
     handler: (
       req: { id: string; query: unknown; params: unknown },
+      reply: { send(payload: unknown): unknown },
+    ) => Promise<void> | void,
+  ): unknown;
+  patch(
+    path: string,
+    options: { preHandler: unknown[]; schema?: Record<string, unknown> },
+    handler: (
+      req: { id: string; body: unknown; params: unknown; headers: Record<string, unknown> },
       reply: { send(payload: unknown): unknown },
     ) => Promise<void> | void,
   ): unknown;
@@ -175,15 +193,21 @@ const sessionActionRequestSchema = z.preprocess(
   z.object({
     title: z.string().min(1).optional(),
     metadata: z.record(z.string(), z.unknown()).optional(),
+    turn_index: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
     instruction: z.string().optional(),
-    count: z.number().int().positive().optional(),
-    page_size: z.number().int().min(1).max(100).optional(),
+    turn_id: z.string().min(1).optional(),
+    agent_id: z.string().min(1).optional(),
+     count: z.number().int().positive().optional(),
+     page_size: z.number().int().min(1).max(100).optional(),
+    prediction_id: z.string().min(1).optional(),
+    expected_turn_id: z.number().int().nonnegative().optional(),
+    reason: cancelPromptPredictionRequestSchema.shape.reason,
   }),
 );
 
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 
-export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void {
+export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conversations: ConversationService): void {
   const createRoute = defineRoute(
     {
       method: 'POST',
@@ -196,6 +220,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
         [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
         [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
+        ...agentConfigErrors,
       },
       description: 'Create a new session',
       tags: ['sessions'],
@@ -254,21 +279,33 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           bucket === undefined
             ? await registry.createOrTouch(workDir)
             : ((await registry.touch(bucket.id)) ?? bucket);
+        const custom = customSessionMetadata(body.metadata);
+        const agentConfig = body.agent_config ?? {};
+        const mainAgentBinding = await creationMainAgentBinding(core, agentConfig);
+        const { profile: _profile, model: _model, thinking: _thinking, ...settings } = agentConfig;
+        const appliesSettings = Object.keys(settings).some((key) => key !== 'tower_base');
         const handle = await core.accessor.get(ISessionManager).create({
           workspaceId: resolved.id,
           workDir,
           environmentId: body.environment_id,
           environmentCwd: body.environment_cwd,
+          mainAgentBinding,
           ensureMainAgent: body.environment_id !== undefined && body.environment_id !== 'local',
+          prepare: async (session) => {
+            if (Object.keys(custom).length > 0) {
+              await session.accessor.get(ISessionMetadata).update({ custom });
+            }
+            if (appliesSettings) await applyAgentConfigToSession(session, settings);
+          },
         });
-        if (typeof body.title === 'string') {
-          await handle.accessor.get(ISessionMetadata).setTitle(body.title);
-        }
-        const meta = await handle.accessor.get(ISessionMetadata).read();
+        const metadata = handle.accessor.get(ISessionMetadata);
+        if (typeof body.title === 'string') await metadata.setTitle(body.title);
+        const meta = await metadata.read();
+        const sessionId = meta.id;
         const session = toWireSession(
           { ...meta, workspaceId: resolved.id },
           resolved.root,
-          { busy: false, mainTurnActive: false, pendingInteraction: 'none' },
+          resolveSessionFacts(core, sessionId),
         );
         core.accessor.get(IEventService).publish(
           new SessionCreated({ payload: { agentId: 'main', sessionId: session.id, session } }),
@@ -302,8 +339,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
       const raw = req.query;
       const archivedOnly = raw.archived_only === true;
 
-      const workspaces = await core.accessor.get(IWorkspaceService).list();
-      const roots = new Map(workspaces.map((w) => [w.id, w.root]));
+      const { roots, visibleWorkspaceIds } = await loadWorkspaceVisibility(core);
 
       if (raw.workspace_id !== undefined && !roots.has(raw.workspace_id)) {
         reply.send(
@@ -350,6 +386,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           if (page.items.length === 0) break;
           let exhausted = false;
           for (const summary of page.items) {
+            if (!visibleWorkspaceIds.has(summary.workspaceId)) continue;
             if (!newerThanCursor(summary)) {
               exhausted = true;
               break;
@@ -357,14 +394,10 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
             const cwd = summary.cwd ?? roots.get(summary.workspaceId);
             if (cwd === undefined) continue;
             if (raw.exclude_empty === true && (summary.lastPrompt ?? '').length === 0) continue;
-            if (archivedOnly) {
-              if (!summary.archived) continue;
-              const facts = resolveSessionFacts(core, summary.id);
-              if (raw.busy !== undefined && facts.busy !== raw.busy) continue;
-              collected.push({ summary, cwd, facts });
-            } else {
-              collected.push({ summary, cwd });
-            }
+            if (archivedOnly && !summary.archived) continue;
+            const facts = raw.busy === undefined ? undefined : resolveSessionFacts(core, summary.id);
+            if (facts !== undefined && facts.busy !== raw.busy) continue;
+            collected.push({ summary, cwd, facts });
           }
           if (exhausted || page.nextCursor === undefined) break;
           before = page.nextCursor;
@@ -381,6 +414,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         });
         const eligible: Eligible[] = [];
         for (const summary of page.items) {
+          if (!visibleWorkspaceIds.has(summary.workspaceId)) continue;
           const cwd = summary.cwd ?? roots.get(summary.workspaceId);
           if (cwd === undefined) continue;
           if (raw.exclude_empty === true && (summary.lastPrompt ?? '').length === 0) continue;
@@ -399,13 +433,9 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
 
       const pageSize = raw.page_size ?? DEFAULT_SESSION_LIST_PAGE_SIZE;
       const { visible, hasMore } = await collect(pageSize);
-      const projected = visible.map(({ summary, cwd, facts }) =>
+      const items = visible.map(({ summary, cwd, facts }) =>
         toWireSession(summary, cwd, facts ?? resolveSessionFacts(core, summary.id)),
       );
-      const items =
-        raw.busy !== undefined && !archivedOnly
-          ? projected.filter((session) => session.busy === raw.busy)
-          : projected;
       reply.send(okEnvelope({ items, has_more: hasMore }, req.id));
     },
   );
@@ -515,6 +545,8 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.TOWER_MODE_INVALID]: {},
+        ...agentConfigErrors,
         ...sessionConflictErrors,
       },
       description: 'Update session profile (title, metadata, agent_config)',
@@ -622,6 +654,8 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           undoSessionResponseSchema,
           sessionAbortResponseSchema,
           startBtwSessionResponseSchema,
+          predictPromptResponseSchema,
+          cancelPromptPredictionResponseSchema,
           archiveSessionResponseSchema,
           deleteSessionResponseSchema,
           takeoverSessionResponseSchema,
@@ -634,6 +668,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         ...sessionConflictErrors,
         [ErrorCode.COMPACTION_UNABLE]: {},
         [ErrorCode.SESSION_UNDO_UNAVAILABLE]: {},
+        [ErrorCode.TURN_NOT_FOUND]: {},
       },
       description: 'Run a session action',
       tags: ['sessions'],
@@ -645,7 +680,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           tail: req.params.tail,
           actions: sessionActions,
           resourceLabel: 'session',
-          extra: { core, req, reply },
+          extra: { core, conversations, req, reply },
           body: req.body,
           onUnsupported: (message) => {
             reply.send(buildValidationEnvelope([{ path: 'session_id', message }], req.id));
@@ -773,35 +808,6 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
     createChildRoute.handler as Parameters<SessionRouteHost['post']>[2],
   );
 
-  const statusRoute = defineRoute(
-    {
-      method: 'GET',
-      path: '/sessions/{session_id}/status',
-      params: sessionIdParamSchema,
-      success: { data: sessionStatusResponseSchema },
-      errors: {
-        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
-        [ErrorCode.SESSION_NOT_FOUND]: {},
-      },
-      description: 'Get realtime session status (best-effort in this slice)',
-      tags: ['sessions'],
-    },
-    async (req, reply) => {
-      try {
-        const { session_id } = req.params;
-        const status = await core.accessor.get(ISessionLegacyService).status(session_id);
-        reply.send(okEnvelope(status, req.id));
-      } catch (error) {
-        sendMappedError(reply, req, error);
-      }
-    },
-  );
-  app.get(
-    statusRoute.path,
-    statusRoute.options,
-    statusRoute.handler as Parameters<SessionRouteHost['get']>[2],
-  );
-
   const goalRoute = defineRoute(
     {
       method: 'GET',
@@ -811,6 +817,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
       },
       description: 'Get the current session goal (null when none is active)',
       tags: ['sessions'],
@@ -831,6 +838,51 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
     goalRoute.handler as Parameters<SessionRouteHost['get']>[2],
   );
 
+  const editGoalRoute = defineRoute(
+    {
+      method: 'PATCH',
+      path: '/sessions/{session_id}/goal',
+      params: sessionIdParamSchema,
+      body: editSessionGoalRequestSchema,
+      success: { data: editSessionGoalResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+        [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.GOAL_NOT_FOUND]: {},
+        [ErrorCode.GOAL_STATUS_INVALID]: {},
+        [ErrorCode.GOAL_OBJECTIVE_EMPTY]: {},
+        [ErrorCode.GOAL_OBJECTIVE_TOO_LONG]: {},
+      },
+      description: 'Edit the objective of the current session goal in place',
+      tags: ['sessions'],
+    },
+    async (req, reply) => {
+      try {
+        const { session_id } = req.params;
+        const session = await resumeSessionById(core.accessor, session_id);
+        if (session === undefined) {
+          throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${session_id} does not exist`);
+        }
+        const { agentId } = await ensureMainAgentContext(session);
+        const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentId);
+        if (agent === undefined) {
+          throw new Error2(ErrorCodes.AGENT_NOT_FOUND, 'Main agent was not found');
+        }
+        const goal = await agent.accessor
+          .get(IAgentGoalService)
+          .editGoalObjective({ objective: req.body.objective });
+        reply.send(okEnvelope(goal, req.id));
+      } catch (error) {
+        sendMappedError(reply, req, error);
+      }
+    },
+  );
+  app.patch(
+    editGoalRoute.path,
+    editGoalRoute.options,
+    editGoalRoute.handler as Parameters<SessionRouteHost['patch']>[2],
+  );
+
   const sessionWarningsRoute = defineRoute(
     {
       method: 'GET',
@@ -840,6 +892,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
       },
       description: 'Get session-level warnings (e.g. oversized AGENTS.md)',
       tags: ['sessions'],
@@ -855,7 +908,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
       }
       try {
         const agent = await ensureMainAgent(session);
-        const agentsMdWarning = agent.accessor.get(IAgentProfileService).getAgentsMdWarning();
+        const agentsMdWarning = agent.accessor.get(IAgentLoopService).getAgentsMdWarning();
         const warnings =
           agentsMdWarning === undefined
             ? []
@@ -885,6 +938,8 @@ type SessionAction =
   | 'undo'
   | 'abort'
   | 'btw'
+  | 'predict-prompt'
+  | 'cancel-prompt-prediction'
   | 'restore'
   | 'archive'
   | 'delete'
@@ -893,8 +948,23 @@ type SessionAction =
 
 interface SessionActionExtra {
   readonly core: Scope;
-  readonly req: { readonly id: string };
-  readonly reply: { readonly send: (payload: unknown) => unknown };
+  readonly conversations: ConversationService;
+  readonly req: {
+    readonly id: string;
+    readonly raw?: {
+      readonly aborted: boolean;
+      once(event: 'aborted', listener: () => void): unknown;
+      off(event: 'aborted', listener: () => void): unknown;
+    };
+  };
+  readonly reply: {
+    readonly send: (payload: unknown) => unknown;
+    readonly raw?: {
+      readonly destroyed: boolean;
+      once(event: 'close', listener: () => void): unknown;
+      off(event: 'close', listener: () => void): unknown;
+    };
+  };
 }
 
 type SessionActionCtx<TBody = unknown> = SessionActionExtra & {
@@ -908,6 +978,14 @@ const sessionActions: ActionTable<SessionAction, SessionActionExtra> = {
   undo: { body: undoSessionRequestSchema, handle: undoSessionAction },
   abort: { handle: abortSessionAction },
   btw: { handle: btwSessionAction },
+  'predict-prompt': {
+    body: predictPromptRequestSchema,
+    handle: predictPromptAction,
+  },
+  'cancel-prompt-prediction': {
+    body: cancelPromptPredictionRequestSchema,
+    handle: cancelPromptPredictionAction,
+  },
   restore: { handle: restoreSessionAction },
   archive: { handle: archiveSessionAction },
   delete: { handle: deleteSessionAction },
@@ -928,6 +1006,7 @@ async function forkSessionAction(
       sourceSessionId: id,
       title: body.title,
       metadata: body.metadata,
+      turnIndex: body.turn_index,
     });
     const session = toWireSession(
       { ...meta, workspaceId: lease.instance.program.workspaceId },
@@ -953,9 +1032,15 @@ async function compactSessionAction(
   const { core, req, reply, id, body } = ctx;
   await reloadOnStale(core.accessor, id, async () => {
     const agent = await resolveMainAgent(core, id);
-    agent.accessor
+    const started = agent.accessor
       .get(IAgentFullCompactionService)
       .begin({ source: 'manual', instruction: normalizeOptional(body.instruction) });
+    if (!started) {
+      throw new Error2(
+        ErrorCodes.COMPACTION_UNABLE,
+        'A compaction is already running. Wait for it to finish, then retry.',
+      );
+    }
   });
   requestLog(req)?.info({ session_id: id, action: 'compact' }, 'session action completed');
   reply.send(okEnvelope({}, req.id));
@@ -964,30 +1049,15 @@ async function compactSessionAction(
 async function undoSessionAction(
   ctx: SessionActionCtx<z.infer<typeof undoSessionRequestSchema>>,
 ): Promise<void> {
-  const { core, req, reply, id, body } = ctx;
-  const agent = await resolveMainAgent(core, id);
-  await reloadOnStale(
+  const { core, conversations, req, reply, id, body } = ctx;
+  const removed = await reloadOnStale(
     core.accessor,
     id,
-    () => agent.accessor.get(IAgentConversationUndoService).undo(body.count),
+    async () => (await conversations.feed(id, body.agent_id ?? MAIN_AGENT_ID)).undo(body.turn_id),
     { retry: false },
   );
-  const history = agent.accessor.get(IAgentContextMemoryService).get();
   requestLog(req)?.info({ session_id: id, action: 'undo' }, 'session action completed');
-  const legacy = core.accessor.get(ISessionLegacyService);
-  const [summary, status] = await Promise.all([
-    core.accessor.get(ISessionIndex).get(id),
-    legacy.status(id),
-  ]);
-  reply.send(
-    okEnvelope(
-      {
-        messages: pageUndoMessages(id, summary?.createdAt ?? 0, history, body.page_size),
-        status,
-      },
-      req.id,
-    ),
-  );
+  reply.send(okEnvelope({ removed_turn_ids: removed }, req.id));
 }
 
 async function abortSessionAction(ctx: SessionActionCtx): Promise<void> {
@@ -1005,10 +1075,54 @@ async function btwSessionAction(ctx: SessionActionCtx): Promise<void> {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
   }
   const agent = await ensureMainAgent(session);
-  const sessionModel = agent.accessor.get(IAgentProfileService).getModel();
+  const sessionModel = agent.accessor.get(IAgentLoopService).getModel();
   await core.accessor.get(IAuthSummaryService).ensureReady(sessionModel || undefined);
   const agentId = await session.accessor.get(ISessionBtwService).start();
   reply.send(okEnvelope({ agent_id: agentId }, req.id));
+}
+
+async function predictPromptAction(
+  ctx: SessionActionCtx<z.infer<typeof predictPromptRequestSchema>>,
+): Promise<void> {
+  const { core, req, reply, id, body } = ctx;
+  const session = await resumeSessionById(core.accessor, id);
+  if (session === undefined) {
+    throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
+  }
+  const service = session.accessor.get(ISessionPromptPredictionService);
+  const disconnected = (): boolean => req.raw?.aborted === true || reply.raw?.destroyed === true;
+  const onAborted = (): void => {
+    service.cancel(body.prediction_id, 'disconnect');
+  };
+  req.raw?.once('aborted', onAborted);
+  reply.raw?.once('close', onAborted);
+  try {
+    if (disconnected()) return;
+    const prediction = await service.predict({
+      predictionId: body.prediction_id,
+      expectedTurnId: body.expected_turn_id,
+    });
+    if (!disconnected()) {
+      reply.send(okEnvelope(predictPromptResponseSchema.parse({ prediction }), req.id));
+    }
+  } finally {
+    req.raw?.off('aborted', onAborted);
+    reply.raw?.off('close', onAborted);
+  }
+}
+
+async function cancelPromptPredictionAction(
+  ctx: SessionActionCtx<z.infer<typeof cancelPromptPredictionRequestSchema>>,
+): Promise<void> {
+  const { core, req, reply, id, body } = ctx;
+  const session = await resumeSessionById(core.accessor, id);
+  if (session === undefined) {
+    throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
+  }
+  const cancelled = session.accessor
+    .get(ISessionPromptPredictionService)
+    .cancel(body.prediction_id, body.reason);
+  reply.send(okEnvelope(cancelPromptPredictionResponseSchema.parse({ cancelled }), req.id));
 }
 
 async function restoreSessionAction(ctx: SessionActionCtx): Promise<void> {
@@ -1137,6 +1251,7 @@ async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
     await notifier.notifySkillChanges();
     await notifier.notifySubagentChanges({ previousSubagentNames, previousModelPool });
     await notifier.notifyWorkspaceDirsChanges();
+    main.accessor.get(IAgentLoopService).flushReminders();
   }
   const meta = await handle.accessor.get(ISessionMetadata).read();
   const sessionCtx = handle.accessor.get(ISessionContext);
@@ -1256,29 +1371,6 @@ function normalizeOptional(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   const trimmed = value.trim();
   return trimmed.length === 0 ? undefined : trimmed;
-}
-
-const DEFAULT_UNDO_MESSAGE_PAGE_SIZE = 50;
-const MAX_UNDO_MESSAGE_PAGE_SIZE = 100;
-
-function pageUndoMessages(
-  sessionId: string,
-  sessionCreatedAtMs: number,
-  history: readonly ContextMessage[],
-  requestedPageSize: number | undefined,
-): { items: ReturnType<typeof toProtocolMessage>[]; has_more: boolean } {
-  const pageSize = Math.min(
-    Math.max(requestedPageSize ?? DEFAULT_UNDO_MESSAGE_PAGE_SIZE, 1),
-    MAX_UNDO_MESSAGE_PAGE_SIZE,
-  );
-  const all = history.map((message, index) =>
-    toProtocolMessage(sessionId, index, message, sessionCreatedAtMs),
-  );
-  const desc = all.toReversed();
-  return {
-    items: desc.slice(0, pageSize),
-    has_more: desc.length > pageSize,
-  };
 }
 
 function buildWireMetadata(

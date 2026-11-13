@@ -1,7 +1,7 @@
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { Readable, Writable } from 'node:stream';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LifecycleScope } from '#/app/scopes';
 import {
   ScopeActivation,
@@ -15,9 +15,12 @@ import { EnvironmentError } from '#/environment/environmentRegistry';
 import { HandshakeError } from '#/remote/client/connection';
 import { type HostDirEntry, IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { HostFsError } from '#/os/interface/hostFsErrors';
+import { walkDirectoryTree } from '#/os/backends/node-local/hostFsService';
 import { IHostProcessService, type IHostProcess } from '#/os/interface/hostProcess';
 import { IWorkspaceFsService } from '#/workspace/workspaceFs/fs';
 import { WorkspaceFsService } from '#/workspace/workspaceFs/fsService';
+import { suggestWithFd } from '#/workspace/workspaceFs/internal/fdSuggest';
+import { POSIX_ENVIRONMENT_PATH } from '#/environment/environmentDefaults';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
@@ -25,8 +28,19 @@ import { ITelemetryService, type TelemetryProperties } from '#/app/telemetry/tel
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
+import { WorkspaceGitService } from '#/workspace/workspaceGit/workspaceGitService';
 
 const WORK_DIR = '/repo';
+const WALK_GREP_REQUEST = {
+  pattern: 'hello',
+  regex: false,
+  case_sensitive: true,
+  follow_gitignore: false,
+  max_files: 200,
+  max_matches_per_file: 50,
+  max_total_matches: 5000,
+  context_lines: 0,
+};
 
 function stubWorkspaceContext(): IWorkspaceContext {
   return {
@@ -43,6 +57,7 @@ function stubWorkspaceDirs(additionalDirs: readonly string[] = []): IWorkspaceDi
   return {
     _serviceBrand: undefined,
     ready: Promise.resolve(),
+    primary: WORK_DIR,
     additionalDirs: [...additionalDirs],
     sharedAdditionalDirs: [...additionalDirs],
     primaryByWorkspace: {},
@@ -158,7 +173,7 @@ function fakeFs(
     }
     throw enoent(p);
   };
-  return {
+  const fs: IHostFileSystem = {
     _serviceBrand: undefined,
     readText: async (p) => {
       const c = fileMap.get(resolveSymlinks(p));
@@ -172,6 +187,12 @@ function fakeFs(
       if (c === undefined) throw enoent(p);
       const buf = Buffer.isBuffer(c) ? c : Buffer.from(c);
       return buf.subarray(offset, n === undefined ? buf.length : offset + n);
+    },
+    readFileHead: async (p, maxBytes) => {
+      const stat = await lstatImpl(resolveSymlinks(p));
+      const c = fileMap.get(resolveSymlinks(p));
+      const buf = c === undefined ? Buffer.alloc(0) : Buffer.isBuffer(c) ? c : Buffer.from(c);
+      return { stat, bytes: stat.isFile ? buf.subarray(0, maxBytes) : new Uint8Array() };
     },
     readLines: async function* (): AsyncGenerator<string> {
     },
@@ -214,6 +235,7 @@ function fakeFs(
       for (const s of symlinkSet) visit(s, 'symlink');
       return [...children.values()];
     },
+    walk: (path, options, visit) => walkDirectoryTree(fs, path, options, visit),
     mkdir: async (p, options) => {
       const recursive = options?.recursive ?? false;
       const exists = isDir(p) || fileMap.has(p);
@@ -266,6 +288,7 @@ function fakeFs(
       return current;
     },
   };
+  return fs;
 }
 
 function fakeProcess(stdout: string, stderr: string, exitCode: number): IHostProcess {
@@ -371,6 +394,7 @@ let host: ReturnType<typeof createScopedTestHost> | undefined;
 afterEach(() => {
   host?.dispose();
   host = undefined;
+  vi.restoreAllMocks();
 });
 
 function defaultGitStub(): IGitService {
@@ -426,7 +450,9 @@ function makeSession(
     stubPair(ITelemetryService, telemetryStub(events)),
     stubPair(IWorkspaceGitService, workspaceGitStub(git)),
   ]);
-  return workspace.accessor.get(IWorkspaceFsService);
+  const service = workspace.accessor.get(IWorkspaceFsService);
+  Object.defineProperty(service, 'fdResolution', { value: null, configurable: true, writable: true });
+  return service;
 }
 
 const emptyHandler: RunHandler = () => ({ stdout: '', exitCode: 0 });
@@ -454,7 +480,7 @@ function makeRemoteSession(
   );
   Object.defineProperty(environment, 'process', { value: fakeRunner(handler) });
   const resolver = resolverFor(environment);
-  return new WorkspaceFsService(
+  const service = new WorkspaceFsService(
     stubWorkspaceContext(),
     stubWorkspaceDirs(),
     hostFs ?? fakeFs(files),
@@ -463,7 +489,42 @@ function makeRemoteSession(
     workspaceGitStub(defaultGitStub()),
     environmentId,
   );
+  Object.defineProperty(service, 'fdResolution', { value: null, configurable: true, writable: true });
+  return service;
 }
+
+function makeRemoteWalkSession(backend: IHostFileSystem): IWorkspaceFsService {
+  return makeRemoteSession({}, () => ({ stdout: '', exitCode: 127 }), [], 'ssh-dev', '/home/target', backend);
+}
+
+describe('WorkspaceGitService', () => {
+  it('uses the latest primary for status and diff', async () => {
+    const cwds: string[] = [];
+    const git = {
+      status: async (cwd: string) => {
+        cwds.push(cwd);
+        return {};
+      },
+      diff: async (cwd: string) => {
+        cwds.push(cwd);
+        return {};
+      },
+    } as unknown as IGitService;
+    const dirs = { primary: WORK_DIR };
+    const service = new WorkspaceGitService(dirs, {
+      current: git,
+      onDidChange: () => ({ dispose: () => {} }),
+    });
+
+    await service.status();
+    await service.diff('a.txt', join(WORK_DIR, 'a.txt'));
+    dirs.primary = '/other';
+    await service.status();
+    await service.diff('b.txt', '/other/b.txt');
+
+    expect(cwds).toEqual([WORK_DIR, WORK_DIR, '/other', '/other']);
+  });
+});
 
 describe('WorkspaceFsService.gitStatus', () => {
   it('delegates to IWorkspaceGitService with the handler root and a confined filter', async () => {
@@ -765,15 +826,53 @@ describe('WorkspaceFsService.diff', () => {
 });
 
 describe('WorkspaceFsService.search', () => {
-  it('finds files by fuzzy query and respects the result cap', async () => {
-    const fs = makeSession(
-      { 'src/foo.ts': '', 'src/bar.ts': '', 'README.md': '' },
-      emptyHandler,
-    );
-    const result = await fs.search({ query: 'foo', limit: 50, follow_gitignore: false });
-    const paths = result.items.map((i) => i.path);
-    expect(paths).toContain('src/foo.ts');
-    expect(paths).not.toContain('src/bar.ts');
+  it('ranks match quality before ignored status when applying the result cap', async () => {
+    const backend = fakeFs({
+      '.gitignore': 'b.ts\n',
+      'a.ts': '',
+      'b.ts': '',
+      'm.ts': '',
+      'z.ts': '',
+    });
+    let walks = 0;
+    const walk = backend.walk.bind(backend);
+    backend.walk = async (...args) => {
+      walks += 1;
+      return walk(...args);
+    };
+    const fs = makeRemoteWalkSession(backend);
+
+    const capped = await fs.search({ query: 'ts', limit: 2, follow_gitignore: false });
+    expect(capped.items.map((item) => item.path)).toEqual(['a.ts', 'm.ts']);
+    expect(capped.truncated).toBe(true);
+    expect(walks).toBe(2);
+
+    const all = await fs.search({ query: 'ts', limit: 50, follow_gitignore: false });
+    expect(all.items.map((item) => item.path)).toEqual(['a.ts', 'm.ts', 'z.ts', 'b.ts']);
+    expect(walks).toBe(4);
+
+    const filtered = await fs.search({ query: 'ts', limit: 50, follow_gitignore: true });
+    expect(filtered.items.map((item) => item.path)).toEqual(['a.ts', 'm.ts', 'z.ts']);
+    expect(walks).toBe(5);
+
+    const dotBackend = fakeFs({
+      '.gitignore': '.tmp/**\n',
+      '.tmp/ignored.ts': '',
+      'src/ordinary.ts': '',
+      'weak-one.tmp.ts': '',
+      'weak-two.tmp.ts': '',
+    });
+    const dotFs = makeRemoteWalkSession(dotBackend);
+    const exact = await dotFs.search({ query: '.tmp', limit: 1, follow_gitignore: false });
+    expect(exact.items.map((item) => item.path)).toEqual(['.tmp']);
+    expect(exact.truncated).toBe(true);
+
+    const direct = await dotFs.search({ query: '.tmp/ignored.ts', limit: 1, follow_gitignore: false });
+    expect(direct.items.map((item) => item.path)).toEqual(['.tmp/ignored.ts']);
+    const filteredDirect = await dotFs.search({ query: '.tmp/ignored.ts', limit: 1, follow_gitignore: true });
+    expect(filteredDirect.items).toEqual([]);
+    const ordinary = await dotFs.search({ query: 'src/ordinary.ts', limit: 1, follow_gitignore: true });
+    expect(ordinary.items.map((item) => item.path)).toEqual(['src/ordinary.ts']);
   });
 
   it('reports symlinks as kind symlink and does not recurse into them', async () => {
@@ -789,6 +888,26 @@ describe('WorkspaceFsService.search', () => {
     expect(paths).toContain('src/link');
     expect(result.items.find((i) => i.path === 'src/link')?.kind).toBe('symlink');
     expect(paths.some((p) => p.startsWith('src/link/'))).toBe(false);
+  });
+
+  it('keeps the original deep-directory boundary', async () => {
+    const files: Record<string, string> = {};
+    let current = 'root';
+    files[`${current}/match.ts`] = '';
+    for (let depth = 1; depth <= 66; depth += 1) {
+      current = `${current}/level-${depth}`;
+      if (depth === 63 || depth === 64 || depth === 65) files[`${current}/match.ts`] = '';
+    }
+    const fs = makeSession(files, emptyHandler);
+    const deepPath = Array.from({ length: 63 }, (_, index) => `level-${index + 1}`).join('/');
+
+    const result = await fs.search({ query: 'match', limit: 50, follow_gitignore: false });
+
+    expect(result.items.map((item) => item.path).toSorted()).toEqual([
+      'root/match.ts',
+      `root/${deepPath}/match.ts`,
+    ].toSorted());
+    expect(result.items.some((item) => item.path.includes('level-64/'))).toBe(false);
   });
 
   it('lists the workspace root top-level entries when the query is empty', async () => {
@@ -814,18 +933,31 @@ describe('WorkspaceFsService.search', () => {
     expect(result.truncated).toBe(true);
   });
 
-  it('respects .gitignore in the empty-query listing', async () => {
+  it('groups ignored entries after ordinary entries in the empty-query listing', async () => {
     const fs = makeSession(
       { '.gitignore': 'ignored.ts\n', 'ignored.ts': '', 'kept.ts': '' },
       emptyHandler,
     );
-    const result = await fs.search({ query: '', limit: 50, follow_gitignore: true });
-    expect(result.items.map((i) => i.path)).toEqual(['kept.ts']);
+    const included = await fs.search({ query: '', limit: 50, follow_gitignore: false });
+    expect(included.items.map((i) => i.path)).toEqual(['kept.ts', 'ignored.ts']);
+
+    const capped = await fs.search({ query: '', limit: 1, follow_gitignore: false });
+    expect(capped.items.map((i) => i.path)).toEqual(['kept.ts']);
+    expect(capped.truncated).toBe(true);
+
+    const filtered = await fs.search({ query: '', limit: 50, follow_gitignore: true });
+    expect(filtered.items.map((i) => i.path)).toEqual(['kept.ts']);
   });
 
-  it('searches additional roots with absolute result paths', async () => {
+  it('searches additional roots with absolute result paths and global ignored grouping', async () => {
     const fs = makeSession(
-      { 'src/foo.ts': '', '/extra/lib/foo.ts': '', '/extra/top.ts': '' },
+      {
+        'src/foo.ts': '',
+        '/extra/.gitignore': 'ignored-foo.ts\n',
+        '/extra/ignored-foo.ts': '',
+        '/extra/lib/foo.ts': '',
+        '/extra/top.ts': '',
+      },
       emptyHandler,
       [],
       defaultGitStub(),
@@ -836,12 +968,16 @@ describe('WorkspaceFsService.search', () => {
     );
 
     const matches = await fs.search({ query: 'foo', limit: 50, follow_gitignore: false });
-    expect(matches.items.map((item) => item.path)).toContain('src/foo.ts');
-    expect(matches.items.map((item) => item.path)).toContain('/extra/lib/foo.ts');
+    const paths = matches.items.map((item) => item.path);
+    expect(paths).toContain('src/foo.ts');
+    expect(paths).toContain('/extra/lib/foo.ts');
+    expect(paths.indexOf('src/foo.ts')).toBeLessThan(paths.indexOf('/extra/ignored-foo.ts'));
+    expect(paths.indexOf('/extra/lib/foo.ts')).toBeLessThan(paths.indexOf('/extra/ignored-foo.ts'));
 
     const topLevel = await fs.search({ query: '', limit: 50, follow_gitignore: false });
     expect(topLevel.items.map((item) => item.path)).toContain('src');
     expect(topLevel.items.map((item) => item.path)).toContain('/extra/top.ts');
+    expect(topLevel.items.at(-1)?.path).toBe('/extra/ignored-foo.ts');
   });
 });
 
@@ -864,6 +1000,30 @@ describe('WorkspaceFsService.suggest', () => {
     return { stdout: '', exitCode: 0 };
   }
 
+  function fdLinesHandler(lines: readonly string[], captured?: string[][]): RunHandler {
+    return (args) => {
+      if (args[0] === 'fd' && args[1] === '--version') return { stdout: 'fd 10.4.2', exitCode: 0 };
+      if (args[0] === 'fd') {
+        captured?.push([...args]);
+        return { stdout: lines.map((line) => `${line}\n`).join(''), exitCode: 0 };
+      }
+      return { stdout: '', exitCode: 1 };
+    };
+  }
+
+  function fdMultiRootHandler(perRoot: Record<string, readonly string[]>, captured?: string[][]): RunHandler {
+    return (args) => {
+      if (args[0] === 'fd' && args[1] === '--version') return { stdout: 'fd 10.4.2', exitCode: 0 };
+      if (args[0] === 'fd') {
+        captured?.push([...args]);
+        const baseDir = args[args.indexOf('--base-directory') + 1] ?? '';
+        const lines = perRoot[baseDir] ?? [];
+        return { stdout: lines.map((line) => `${line}\n`).join(''), exitCode: 0 };
+      }
+      return { stdout: '', exitCode: 1 };
+    };
+  }
+
   function rgMultiRootHandler(perRoot: Record<string, readonly string[]>, captured?: string[][]): RunHandler {
     return (args) => {
       captured?.push([...args]);
@@ -884,10 +1044,11 @@ describe('WorkspaceFsService.suggest', () => {
     };
   }
 
-  it('matches path segments in order and ranks the matched directory first', async () => {
+  it('matches path segments across the whole workspace without narrowing the fuzzy root', async () => {
+    const captured: string[][] = [];
     const fs = makeSession(
-      {},
-      rgLinesHandler(['apps/desktop/package.json', 'apps/mobile/app.ts', 'src/api/index.ts']),
+      { 'apps/desktop/package.json': '', 'examples/apps/demo.ts': '' },
+      rgLinesHandler(['apps/desktop/package.json', 'examples/apps/demo.ts'], captured),
     );
     const result = await fs.suggest({
       query: 'apps/de',
@@ -901,6 +1062,9 @@ describe('WorkspaceFsService.suggest', () => {
       kind: 'directory',
     });
     expect(result.items.map((i) => i.path)).toContain('apps/desktop/package.json');
+    expect(result.items.map((i) => i.path)).toContain('examples/apps/demo.ts');
+    const filesArgs = captured.find((args) => args.includes('--files'))!;
+    expect(filesArgs).not.toContain('/repo/apps');
   });
 
   it('allows skipping segments when consuming the query', async () => {
@@ -943,20 +1107,94 @@ describe('WorkspaceFsService.suggest', () => {
     expect(result.items[0]?.path).toBe('apps');
   });
 
-  it('returns an empty list when a path-form query has no match', async () => {
-    const fs = makeSession({}, rgLinesHandler(['apps/desktop/package.json']));
+  it('uses the local fd strategy for scoped ignored suggestions', async () => {
+    const captured: string[][] = [];
+    const fs = makeSession(
+      { '.gitignore': 'apps/desktop/package.json\n', 'apps/desktop/package.json': '' },
+      (args) => {
+        if (args[0] === 'fd' && args[1] === '--version') return { stdout: 'fd 10.4.2', exitCode: 0 };
+        if (args[0] === 'fd') {
+          captured.push([...args]);
+          return { stdout: args.includes('--no-ignore-vcs') ? 'package.json\n' : '', exitCode: 0 };
+        }
+        return { stdout: '', exitCode: 1 };
+      },
+    );
+    Object.defineProperty(fs, 'fdResolution', { value: undefined });
     const result = await fs.suggest({
-      query: 'zzz/qqq',
+      query: 'apps/desktop/package.json',
       limit: 50,
-      follow_gitignore: true,
+      follow_gitignore: false,
       show_hidden: false,
     });
-    expect(result.items).toEqual([]);
+    expect(result.items.map((item) => item.path)).toEqual(['apps/desktop/package.json']);
     expect(result.truncated).toBe(false);
+    expect(captured).toHaveLength(4);
+    for (const args of captured) {
+      expect(args).toContain('--max-results');
+      expect(args).toContain('100');
+      expect(args).toContain('--hidden');
+      expect(args).not.toContain('--follow');
+    }
+    expect(captured.slice(2).every((args) => args.includes('--no-ignore-vcs'))).toBe(true);
+
+    const streamFs = makeSession(
+      { 'apps/desktop/package.json': '' },
+      (args) => {
+        if (args[0] === 'fd') {
+          return { stdout: args.includes('--no-ignore-vcs') ? 'package.json\n' : 'package-helper.ts\n', exitCode: 0 };
+        }
+        return { stdout: '', exitCode: 1 };
+      },
+    );
+    Object.defineProperty(streamFs, 'fdResolution', { value: { path: 'fd', source: 'system-path' } });
+    const phases: string[] = [];
+    const previews: string[][] = [];
+    const finals: string[][] = [];
+    for await (const event of streamFs.suggestStream!({
+      query: 'apps/desktop/package',
+      limit: 50,
+      follow_gitignore: false,
+      show_hidden: false,
+    })) {
+      phases.push(event.phase);
+      if (event.phase === 'preview') previews.push(event.response.items.map((item) => item.path));
+      if (event.phase === 'final') finals.push(event.response.items.map((item) => item.path));
+    }
+    expect(phases).toEqual(['preview', 'final']);
+    expect(previews).toEqual([['apps/desktop/package-helper.ts']]);
+    expect(finals[0]).toEqual(['apps/desktop/package-helper.ts', 'apps/desktop/package.json']);
+
+    const controller = new AbortController();
+    const runner: IHostProcessService = {
+      _serviceBrand: undefined,
+      spawn: async (_command, args) => {
+        if (args?.includes('--no-ignore-vcs')) {
+          controller.abort();
+          return fakeProcess('', '', -1);
+        }
+        return fakeProcess('ordinary.ts\n', '', 0);
+      },
+    };
+    const partial = await suggestWithFd({
+      fdBinary: 'fd',
+      query: 'ordinary',
+      cap: 20,
+      followGitignore: false,
+      roots: [{ dir: WORK_DIR, real: WORK_DIR, primary: true }],
+      path: POSIX_ENVIRONMENT_PATH,
+      hostFs: fakeFs({}),
+      process: runner,
+      workDir: WORK_DIR,
+      signal: controller.signal,
+    });
+    expect(partial.items.map((item) => item.path)).toEqual(['ordinary.ts']);
+    expect(partial.truncated).toBe(true);
   });
 
-  it('matches basenames across the whole workspace in name mode', async () => {
-    const fs = makeSession({}, rgLinesHandler(['docs/README.md', 'src/app.ts']));
+  it('applies fd matching, hidden, and bounded result semantics', async () => {
+    const fs = makeSession({}, fdLinesHandler(['docs/README.md', 'src/app.ts']));
+    Object.defineProperty(fs, 'fdResolution', { value: undefined });
     const result = await fs.suggest({
       query: 'readme',
       limit: 50,
@@ -966,6 +1204,21 @@ describe('WorkspaceFsService.suggest', () => {
     expect(result.items.map((i) => i.path)).toEqual(['docs/README.md']);
     expect(result.items[0]).toMatchObject({ name: 'README.md', kind: 'file' });
     expect(result.items[0]?.match_positions).toEqual([5, 6, 7, 8, 9, 10]);
+
+    const captured: string[][] = [];
+    const hiddenFs = makeSession({}, fdLinesHandler(['.hidden/note.ts'], captured));
+    Object.defineProperty(hiddenFs, 'fdResolution', { value: { path: 'fd', source: 'system-path' } });
+    const hidden = await hiddenFs.suggest({ query: 'note', limit: 50, follow_gitignore: true, show_hidden: false });
+    expect(hidden.items.map((item) => item.path)).toEqual(['.hidden/note.ts']);
+    expect(captured[0]).toContain('--hidden');
+
+    const weak = Array.from({ length: 100 }, (_, index) => `weak-zzz-${index}.ts`);
+    const boundedFs = makeSession({}, fdLinesHandler(weak));
+    Object.defineProperty(boundedFs, 'fdResolution', { value: { path: 'fd', source: 'system-path' } });
+    const bounded = await boundedFs.suggest({ query: 'zzz', limit: 50, follow_gitignore: false, show_hidden: false });
+    expect(bounded.items).toHaveLength(20);
+    expect(bounded.items.some((item) => item.path === 'zzz')).toBe(false);
+    expect(bounded.truncated).toBe(true);
   });
 
   it('ranks a shallow prefix hit before a deeper one and varies scores', async () => {
@@ -1001,17 +1254,61 @@ describe('WorkspaceFsService.suggest', () => {
     expect(filesArgs).toContain('--no-require-git');
     expect(filesArgs).toContain('--hidden');
     expect(filesArgs).not.toContain('--no-ignore');
+    expect(filesArgs).not.toContain('--iglob');
     expect(filesArgs).toContain('!.git/**');
   });
 
-  it('passes --no-ignore to rg when follow_gitignore is false', async () => {
+  it('uses a second no-ignore rg pass for ignored suggestions when follow_gitignore is false', async () => {
     const captured: string[][] = [];
-    const fs = makeSession({}, rgLinesHandler([], captured));
-    await fs.suggest({ query: 'x', limit: 50, follow_gitignore: false, show_hidden: false });
-    const filesArgs = captured.find((a) => a.includes('--files'))!;
-    expect(filesArgs).toContain('--no-ignore');
-    expect(filesArgs).not.toContain('--no-require-git');
-    expect(filesArgs).not.toContain('--hidden');
+    const fs = makeSession({}, (args) => {
+      if (args[0] === 'rg' && args[1] === '--version') {
+        return { stdout: 'ripgrep 15.0.0', exitCode: 0 };
+      }
+      if (args[0] === 'rg' && args.includes('--files')) {
+        captured.push([...args]);
+        const lines = args.includes('--no-ignore') ? ['visible.ts', 'ignored.ts'] : ['visible.ts'];
+        return { stdout: `${lines.join('\n')}\n`, exitCode: 0 };
+      }
+      return { stdout: '', exitCode: 0 };
+    });
+    const result = await fs.suggest({ query: 'ts', limit: 50, follow_gitignore: false, show_hidden: false });
+
+    expect(result.items.map((item) => item.path)).toEqual(['visible.ts', 'ignored.ts']);
+    expect(captured).toHaveLength(2);
+    expect(captured[0]).toContain('--no-require-git');
+    expect(captured[0]).not.toContain('--no-ignore');
+    expect(captured[0]).not.toContain('--iglob');
+    expect(captured[1]).toContain('--no-ignore');
+    expect(captured[1]).toContain('--no-require-git');
+    expect(captured[1]).toContain('--iglob');
+    expect(captured[1]).toContain('**/*t*s*');
+    expect(captured[1]).toContain('**/*t*s*/**');
+
+    const dotFs = makeSession({}, (args) => {
+      if (args[0] === 'rg' && args[1] === '--version') return { stdout: 'ripgrep 15.0.0', exitCode: 0 };
+      if (args[0] === 'rg' && args.includes('--files')) {
+        captured.push([...args]);
+        const lines = args.includes('--no-ignore')
+          ? ['weak-one.tmp.ts', 'weak-two.tmp.ts', '.tmp/ignored.ts']
+          : ['weak-one.tmp.ts', 'weak-two.tmp.ts'];
+        return { stdout: `${lines.join('\n')}\n`, exitCode: 0 };
+      }
+      return { stdout: '', exitCode: 0 };
+    });
+    const exact = await dotFs.suggest({ query: '.tmp', limit: 1, follow_gitignore: false, show_hidden: false });
+    expect(exact.items.map((item) => item.path)).toEqual(['.tmp']);
+    expect(captured).toHaveLength(4);
+    expect(captured[2]).toContain('--hidden');
+    expect(captured[3]).toContain('--hidden');
+
+    const pathFs = makeSession(
+      { '.tmp/ignored.ts': '' },
+      rgLinesHandler(['.tmp/ignored.ts'], captured),
+    );
+    const pathResult = await pathFs.suggest({ query: '.tmp/', limit: 50, follow_gitignore: false, show_hidden: false });
+    expect(pathResult.items.map((item) => item.path)).toContain('.tmp/ignored.ts');
+    expect(captured.filter((args) => args.includes('--files'))).toHaveLength(6);
+    expect(captured.filter((args) => args.includes('--files')).at(-1)).not.toContain('/repo/.tmp');
   });
 
   it('hides dot-prefixed entries at any depth unless show_hidden is set', async () => {
@@ -1036,7 +1333,7 @@ describe('WorkspaceFsService.suggest', () => {
     expect(on.items.map((i) => i.path)).toContain('sub/.secret/x.ts');
   });
 
-  it('never returns VCS metadata entries even with show_hidden', async () => {
+  it('keeps fuzzy VCS-like names while excluding actual metadata', async () => {
     const fs = makeSession({}, rgLinesHandler(['.git/x.ts', 'src/.jj/y.ts', 'ok.ts']));
     const result = await fs.suggest({
       query: 'ts',
@@ -1045,6 +1342,40 @@ describe('WorkspaceFsService.suggest', () => {
       show_hidden: true,
     });
     expect(result.items.map((i) => i.path)).toEqual(['ok.ts']);
+
+    const files = {
+      '.git/config': '',
+      '.gitignore': '',
+      '.gitattributes': '',
+      '.github/workflows/ci.yml': '',
+      'src/.jj/y.ts': '',
+    };
+    const rgFs = makeSession(files, rgLinesHandler(Object.keys(files)));
+    const rgResult = await rgFs.suggest({ query: '.git', limit: 20, follow_gitignore: false, show_hidden: true });
+    expect(rgResult.items.map((item) => item.path)).toContain('.gitignore');
+    expect(rgResult.items.map((item) => item.path)).toContain('.gitattributes');
+    expect(rgResult.items.map((item) => item.path)).toContain('.github');
+    expect(rgResult.items.some((item) => item.path === '.git' || item.path.startsWith('.git/'))).toBe(false);
+
+    const backend = fakeFs(files);
+    const readdir = backend.readdir.bind(backend);
+    const reads: string[] = [];
+    backend.readdir = async (path) => {
+      reads.push(path);
+      return readdir(path);
+    };
+    const nodeFs = makeRemoteWalkSession(backend);
+    const searched = await nodeFs.search({ query: '.git', limit: 20, follow_gitignore: false });
+    const suggested = await nodeFs.suggest({ query: '.git', limit: 20, follow_gitignore: false, show_hidden: true });
+    for (const response of [searched, suggested]) {
+      expect(response.items.map((item) => item.path)).toContain('.gitignore');
+      expect(response.items.map((item) => item.path)).toContain('.gitattributes');
+      expect(response.items.map((item) => item.path)).toContain('.github');
+      expect(response.items.some((item) => item.path === '.git' || item.path.startsWith('.git/'))).toBe(false);
+      expect(response.items.some((item) => item.path.includes('/.jj/'))).toBe(false);
+    }
+    expect(reads).not.toContain('/repo/.git');
+    expect(reads).not.toContain('/repo/src/.jj');
   });
 
   it('lists root entries for an empty query and never lists VCS dirs', async () => {
@@ -1076,16 +1407,18 @@ describe('WorkspaceFsService.suggest', () => {
     expect(hidden.items.map((i) => i.path)).not.toContain('.hidden.ts');
   });
 
-  it('truncates at the limit and reports it', async () => {
-    const fs = makeSession({}, rgLinesHandler(['a1.ts', 'a2.ts', 'a3.ts', 'a4.ts']));
+  it('skips the ignored supplement only when highest-quality matches already fill the cap', async () => {
+    const captured: string[][] = [];
+    const fs = makeSession({}, rgLinesHandler(['a.ts', 'dir/a.ts'], captured));
     const result = await fs.suggest({
-      query: 'a',
-      limit: 2,
-      follow_gitignore: true,
+      query: 'a.ts',
+      limit: 1,
+      follow_gitignore: false,
       show_hidden: false,
     });
-    expect(result.items).toHaveLength(2);
+    expect(result.items).toHaveLength(1);
     expect(result.truncated).toBe(true);
+    expect(captured.filter((args) => args.includes('--files'))).toHaveLength(1);
   });
 
   it('applies include_globs and exclude_globs after matching', async () => {
@@ -1115,14 +1448,19 @@ describe('WorkspaceFsService.suggest', () => {
       {
         'src/foo.ts': '',
         'src/nested/bar.ts': '',
+        'src/ignored-long.ts': '',
         '.gitignore': 'ignored.ts\n',
         'ignored.ts': '',
+        '/outside/secret.ts': '',
       },
       rgMissingHandler,
       events,
       defaultGitStub(),
       ['src/link'],
+      undefined,
+      { 'src/link': '/outside' },
     );
+    Object.defineProperty(fs, 'fdResolution', { value: undefined });
     const result = await fs.suggest({
       query: 'foo',
       limit: 50,
@@ -1152,6 +1490,14 @@ describe('WorkspaceFsService.suggest', () => {
     expect(linkResult.items.find((i) => i.path === 'src/link')?.kind).toBe('symlink');
     expect(linkResult.items.some((i) => i.path.startsWith('src/link/'))).toBe(false);
 
+    const external = await fs.suggest({
+      query: 'src/link/secret',
+      limit: 50,
+      follow_gitignore: false,
+      show_hidden: false,
+    });
+    expect(external.items).toEqual([]);
+
     const ignored = await fs.suggest({
       query: 'ignored',
       limit: 50,
@@ -1159,6 +1505,14 @@ describe('WorkspaceFsService.suggest', () => {
       show_hidden: false,
     });
     expect(ignored.items.map((i) => i.path)).not.toContain('ignored.ts');
+
+    const withIgnored = await fs.suggest({
+      query: 'ignored',
+      limit: 50,
+      follow_gitignore: false,
+      show_hidden: false,
+    });
+    expect(withIgnored.items.map((i) => i.path)).toEqual(['src/ignored-long.ts', 'ignored.ts']);
   });
 
   it('hides dot entries in the fallback walk unless show_hidden is set', async () => {
@@ -1177,6 +1531,77 @@ describe('WorkspaceFsService.suggest', () => {
       show_hidden: true,
     });
     expect(on.items.map((i) => i.path)).toContain('.secret.ts');
+  });
+
+  it('keeps parent ignore rules for path queries and reports inventory truncation', async () => {
+    const backend = fakeFs({ '.gitignore': 'node_modules/\n', 'node_modules/app.ts': '' });
+    let receivedIgnore: readonly string[] | undefined;
+    const walked: string[] = [];
+    backend.walk = async (path, options) => {
+      walked.push(path);
+      receivedIgnore = options.ignore;
+      return { truncated: true };
+    };
+    const fs = makeRemoteWalkSession(backend);
+
+    const result = await fs.suggest({
+      query: 'node_modules/app',
+      limit: 50,
+      show_hidden: false,
+      follow_gitignore: true,
+    });
+
+    expect(walked).toEqual([WORK_DIR]);
+    expect(receivedIgnore).toEqual(['node_modules/', '', '.git', '.jj', '.svn', '.hg', '.bzr']);
+    expect(result).toEqual({ items: [], truncated: true });
+  });
+
+  it('keeps file enumeration order and prunes .git through the backend walk', async () => {
+    const backend = fakeFs({
+      '.git/config': 'hello\n',
+      'a/first.ts': 'hello\n',
+      'a/nested/second.ts': 'hello\n',
+      'z.ts': 'hello\n',
+    });
+    const readdir = backend.readdir.bind(backend);
+    const reads: string[] = [];
+    backend.readdir = async (path) => {
+      reads.push(path);
+      return readdir(path);
+    };
+    const fs = makeRemoteWalkSession(backend);
+
+    const result = await fs.grep({ ...WALK_GREP_REQUEST });
+
+    expect(result.files.map((file) => file.path)).toEqual([
+      'a/nested/second.ts',
+      'a/first.ts',
+      'z.ts',
+    ]);
+    expect(result.files.some((file) => file.path.startsWith('.git/'))).toBe(false);
+    expect(reads).toEqual(['/repo', '/repo/a', '/repo/a/nested']);
+  });
+
+  it.each([false, true])('skips a linked-worktree .git file when follow_gitignore is %s', async (followGitignore) => {
+    const backend = fakeFs({ '.git': 'gitdir: /elsewhere/.git/worktrees/repo\n', 'src/gitdir.ts': 'gitdir\n' });
+    const fs = makeRemoteWalkSession(backend);
+
+    const search = await fs.search({ query: 'git', limit: 50, follow_gitignore: followGitignore });
+    const grep = await fs.grep({ ...WALK_GREP_REQUEST, pattern: 'gitdir', follow_gitignore: followGitignore });
+
+    expect(search.items.map((item) => item.path)).toEqual(['src/gitdir.ts']);
+    expect(grep.files.map((file) => file.path)).toEqual(['src/gitdir.ts']);
+  });
+
+  it.each(['search', 'suggest', 'grep'] as const)('handles dot-only filenames during %s with gitignore disabled', async (operation) => {
+    const fs = makeRemoteWalkSession(fakeFs({ '...': 'hello\n', 'kept.ts': 'hello\n', '.git/config': 'hello\n' }));
+    const result = operation === 'search'
+      ? await fs.search({ query: 'kept', limit: 50, follow_gitignore: false })
+      : operation === 'suggest'
+        ? await fs.suggest({ query: 'kept', limit: 50, follow_gitignore: false, show_hidden: false })
+        : await fs.grep({ ...WALK_GREP_REQUEST, include_globs: ['**/*.ts'] });
+
+    expect(('items' in result ? result.items : result.files).map((item) => item.path)).toEqual(['kept.ts']);
   });
 
   it('falls back to the node walk when rg fails to spawn', async () => {
@@ -1262,6 +1687,7 @@ describe('WorkspaceFsService.suggest', () => {
   });
 
   it('merges rg candidates across roots with relative paths for the primary root only', async () => {
+    const captured: string[][] = [];
     const fs = makeSession(
       {
         'apps/desktop/package.json': '',
@@ -1271,7 +1697,7 @@ describe('WorkspaceFsService.suggest', () => {
       rgMultiRootHandler({
         '/repo': ['apps/desktop/package.json'],
         '/extra': ['lib/util.ts', 'README.md'],
-      }),
+      }, captured),
       [],
       defaultGitStub(),
       [],
@@ -1286,6 +1712,9 @@ describe('WorkspaceFsService.suggest', () => {
       show_hidden: false,
     });
     expect(pathResult.items[0]?.path).toBe('apps/desktop');
+    const filesArgs = captured.find((args) => args.includes('--files'))!;
+    expect(filesArgs).toContain('/repo');
+    expect(filesArgs).not.toContain('/repo/apps');
     const nameResult = await fs.suggest({
       query: 'util',
       limit: 50,
@@ -1301,6 +1730,31 @@ describe('WorkspaceFsService.suggest', () => {
     });
     const item = readme.items.find((i) => i.path === '/extra/README.md');
     expect(item?.match_positions).toEqual([7, 8, 9, 10, 11, 12]);
+
+    const fdCaptured: string[][] = [];
+    const fdFs = makeSession(
+      {
+        'apps/desktop/package.json': '',
+        '/extra/lib/util.ts': '',
+        '/extra/README.md': '',
+      },
+      fdMultiRootHandler({
+        '/repo/apps': ['desktop/', 'desktop/package.json'],
+        '/extra': ['lib/util.ts', 'README.md'],
+      }, fdCaptured),
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      {},
+      ['/extra'],
+    );
+    Object.defineProperty(fdFs, 'fdResolution', { value: { path: 'fd', source: 'system-path' } });
+    const fdPathResult = await fdFs.suggest({ query: 'apps/de', limit: 50, follow_gitignore: true, show_hidden: false });
+    expect(fdPathResult.items[0]?.path).toBe('apps/desktop');
+    const fdNameResult = await fdFs.suggest({ query: 'util', limit: 50, follow_gitignore: true, show_hidden: false });
+    expect(fdNameResult.items.map((entry) => entry.path)).toContain('/extra/lib/util.ts');
+    expect(fdCaptured.some((args) => args.includes('/repo/apps'))).toBe(true);
   });
 
   it('passes every root to rg as a path argument', async () => {
@@ -1491,6 +1945,84 @@ describe('WorkspaceFsService.suggest', () => {
       show_hidden: false,
     });
     expect(skipped.items.map((i) => i.path)).toEqual([]);
+  });
+
+  it('keeps partial candidates at the shared deadline without walking later roots', async () => {
+    const backend = fakeFs({ 'src/foo.ts': '', '/extra/foo-extra.ts': '' });
+    let clock = 1_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    let deadline: number | undefined;
+    const roots: string[] = [];
+    backend.walk = async (path, options, visit) => {
+      roots.push(path);
+      deadline = options.deadlineMs;
+      await visit({ path: 'src', kind: 'directory' });
+      await visit({ path: 'src/foo.ts', kind: 'file' });
+      clock += 10_000;
+      expect(await visit({ path: 'src/foo-late.ts', kind: 'file' })).toBe(false);
+      return { truncated: true };
+    };
+    const fs = makeRemoteWalkSession(backend);
+    Object.defineProperty(fs, 'suggestRoots', {
+      value: async () => [
+        { dir: WORK_DIR, real: WORK_DIR, primary: true },
+        { dir: '/extra', real: '/extra', primary: false },
+      ],
+    });
+
+    const result = await fs.suggest({
+      query: 'foo',
+      limit: 50,
+      follow_gitignore: false,
+      show_hidden: false,
+    });
+
+    expect(result.items.map((item) => item.path)).toEqual(['src/foo.ts']);
+    expect(result.truncated).toBe(true);
+    expect(roots).toEqual([WORK_DIR]);
+    expect(deadline).toBe(11_000);
+  });
+
+  it('includes direct-path probing and rg in the same suggest budget', async () => {
+    const backend = fakeFs({ 'src/foo.ts': '' });
+    let clock = 1_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    let deadline: number | undefined;
+    let probed = false;
+    const lstat = backend.lstat.bind(backend);
+    backend.lstat = async (path) => {
+      probed = true;
+      clock += 4_000;
+      return lstat(path);
+    };
+    backend.walk = async (_path, options) => {
+      deadline = options.deadlineMs;
+      return { truncated: false };
+    };
+    const runner: IHostProcessService = {
+      _serviceBrand: undefined,
+      spawn: async (_command, args) => {
+        if (args?.[0] === '--version') return fakeProcess('ripgrep 15.0.0', '', 0);
+        clock += 4_000;
+        throw new Error('spawn failed');
+      },
+    };
+    const fs = makeRemoteWalkSession(backend);
+    Object.defineProperty(fs, 'resolver', {
+      value: {
+        acquire: () => ({
+          environment: { process: runner },
+          track: (resource: unknown) => resource,
+          dispose: () => {},
+        }),
+      },
+    });
+    Object.defineProperty(fs, 'rgResolution', { value: { path: 'rg' } });
+
+    await fs.suggest({ query: 'src/foo', limit: 50, follow_gitignore: false, show_hidden: false });
+
+    expect(probed).toBe(true);
+    expect(deadline).toBe(11_000);
   });
 
   it('lists top-level entries of every root for an empty query', async () => {
@@ -1773,6 +2305,59 @@ describe('WorkspaceFsService.grep', () => {
 
     expect(result.files.map((file) => file.path)).toEqual(['src/a.ts', '/extra/b.ts']);
     expect(result.files_scanned).toBe(2);
+  });
+
+  it('times out without scanning when the inventory consumes the deadline', async () => {
+    const backend = fakeFs({ 'src/a.ts': 'hello primary\n', '/extra/b.ts': 'hello extra\n' });
+    let clock = 1_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    const roots: string[] = [];
+    const readText = vi.spyOn(backend, 'readText');
+    backend.walk = async (path, _options, visit) => {
+      roots.push(path);
+      await visit({ path: 'src', kind: 'directory' });
+      await visit({ path: 'src/a.ts', kind: 'file' });
+      clock += 30_000;
+      return { truncated: true };
+    };
+    const fs = makeRemoteWalkSession(backend);
+    Object.defineProperty(fs, 'suggestRoots', {
+      value: async () => [
+        { dir: WORK_DIR, real: WORK_DIR, primary: true },
+        { dir: '/extra', real: '/extra', primary: false },
+      ],
+    });
+
+    await expect(fs.grep({ ...WALK_GREP_REQUEST })).rejects.toMatchObject({
+      code: ErrorCodes.FS_GREP_TIMEOUT,
+      message: 'grep timed out after 30000ms',
+    });
+    expect(roots).toEqual([WORK_DIR]);
+    expect(readText.mock.calls.some(([path]) => path.endsWith('/src/a.ts'))).toBe(false);
+  });
+
+  it('returns partial matches when the deadline passes after scanning started', async () => {
+    const backend = fakeFs({ 'src/a.ts': 'hello first\n', 'src/b.ts': 'hello second\n' });
+    let clock = 1_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    const readText = backend.readText.bind(backend);
+    backend.readText = async (path, options) => {
+      const content = await readText(path, options);
+      if (path.endsWith('/src/a.ts')) clock += 30_000;
+      return content;
+    };
+    backend.walk = async (_path, _options, visit) => {
+      await visit({ path: 'src/a.ts', kind: 'file' });
+      await visit({ path: 'src/b.ts', kind: 'file' });
+      return { truncated: false };
+    };
+    const fs = makeRemoteWalkSession(backend);
+
+    const result = await fs.grep({ ...WALK_GREP_REQUEST });
+
+    expect(result.files.map((file) => file.path)).toEqual(['src/a.ts']);
+    expect(result.files_scanned).toBe(1);
+    expect(result.truncated).toBe(true);
   });
 });
 
@@ -2348,6 +2933,26 @@ describe('WorkspaceFsService.list', () => {
 });
 
 describe('WorkspaceFsService.read', () => {
+  it('resolves relative paths against the latest primary', async () => {
+    const dirs = { primary: WORK_DIR, additionalDirs: [] as readonly string[] };
+    const environment = new FakeEnvironment(
+      { environmentId: 'local', generation: 'test' },
+      { capabilities: ['fs', 'process'] },
+    );
+    const fs = new WorkspaceFsService(
+      stubWorkspaceContext(),
+      dirs,
+      fakeFs({ 'a.txt': 'old primary', '/other/b.txt': 'new primary' }),
+      resolverFor(environment),
+      telemetryStub([]),
+      workspaceGitStub(defaultGitStub()),
+    );
+    expect((await fs.read({ path: 'a.txt', offset: 0, length: 100, encoding: 'utf-8' })).content).toBe('old primary');
+
+    dirs.primary = '/other';
+    expect((await fs.read({ path: 'b.txt', offset: 0, length: 100, encoding: 'utf-8' })).content).toBe('new primary');
+  });
+
   it('reads utf-8 content with metadata', async () => {
     const fs = makeSession({ 'src/a.ts': 'hello\nworld\n' }, emptyHandler);
     const result = await fs.read({

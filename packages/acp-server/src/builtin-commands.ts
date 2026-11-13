@@ -147,8 +147,15 @@ function usageText(
   if (total === undefined) {
     lines.push('Session total: no LLM calls yet');
   } else {
-    const input = total.inputOther + total.inputCacheRead + total.inputCacheCreation;
-    lines.push(`Session total: ${input} input, ${total.output} output`);
+    const input =
+      total.inputCacheRead === undefined
+        ? undefined
+        : total.inputOther + total.inputCacheRead + total.inputCacheCreation;
+    lines.push(
+      input === undefined
+        ? `Session total: input unknown, ${total.output} output`
+        : `Session total: ${input} input, ${total.output} output`,
+    );
   }
   return lines.join('\n');
 }

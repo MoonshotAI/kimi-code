@@ -1,4 +1,5 @@
-import type { IAgentTaskService } from '#/agent/task/task';
+import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { agentTaskInfo } from '#/agent/task/handler';
 import {
   mapWithConcurrency,
   resolveTowerRepoRoot,
@@ -66,7 +67,7 @@ export interface ReadTowerStatusInput {
   readonly active: boolean;
   readonly cwd: string;
   readonly agentId: string;
-  readonly tasks: IAgentTaskService;
+  readonly toolExecutor: IAgentToolExecutorService;
   readonly concurrency: () => TowerStatusConcurrency;
 }
 
@@ -85,11 +86,11 @@ export async function readTowerStatus(input: ReadTowerStatusInput): Promise<Towe
   const activeAgentIds =
     pending.length > 0 && input.agentId === 'main'
       ? new Set(
-          input.tasks
-            .list(true)
-            .flatMap((task) =>
-              task.kind === 'agent' && task.agentId !== undefined ? [task.agentId] : [],
-            ),
+          input.toolExecutor.handlers().flatMap((handler) => {
+            if (handler.snapshot().fields.task === undefined) return [];
+            const info = agentTaskInfo(handler);
+            return info.kind === 'agent' && info.agentId !== undefined ? [info.agentId] : [];
+          }),
         )
       : undefined;
   const gate = await mapWithConcurrency(
@@ -171,7 +172,7 @@ function summaryMissions(state: TowerStatusState): string[] {
   if (state.missions.length === 0) return ['  (none)'];
   return state.missions.map(
     (mission) =>
-      `  ${mission.id} ${mission.title} — ${mission.status} · owner ${mission.owner ?? '—'} · ${mission.branch}`,
+      `  ${mission.id} ${mission.title} — ${mission.status} · owner ${mission.owner ?? '—'} · ${mission.branch} · kind ${mission.kind}`,
   );
 }
 

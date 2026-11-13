@@ -13,11 +13,9 @@ import { Ledger } from '#/_base/lifecycle/ledger';
 import '#/agent/permissionMode/permissionModeService';
 import { ILogService } from '#/_base/log/log';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import '#/agent/contextMemory/contextMemoryService';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService, type LoopSnapshot } from '#/agent/loop/loop';
-import type { MachineEngine, MachineEngineAttachBundle } from '#/agent/loop/machine/engine';
 import { IAgentMediaToolsRegistrar } from '#/agent/media/mediaTools';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { SessionMediaStoreService } from '#/agent/media/sessionMediaStoreService';
@@ -73,6 +71,7 @@ import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkdir } from '#/session/workdir/workdir';
+import { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
@@ -97,11 +96,11 @@ import {
 import { SessionSubagentScopeCacheService } from '#/session/subagent/subagentScopeCacheService';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
-import type { AgentEventStore } from '#human/agent/slices';
 
 import { stubAgentContext } from '../../agent/agentContext/stubs';
 import { stubProviderDiscovery } from '../../stubs';
@@ -162,73 +161,9 @@ const pluginServiceStub = {
   pluginSkillRoots: async () => [],
   enabledSessionStarts: async () => [],
   enabledMcpServers: async () => ({}),
+  mcpServerEntries: async () => [],
   enabledHooks: async () => [],
 } as unknown as IPluginService;
-
-function stubAttachStore(): AgentEventStore {
-  return {
-    ref: { tree: 'test', branch: 'main' },
-    getState: () => ({
-      history: [],
-      queue: [],
-      notifications: [],
-      reminders: [],
-      turnIndex: { nextTurnId: 0 },
-    }),
-    subscribe: () => () => {},
-    dispatch: () => Promise.resolve({ kind: 'entry', seq: 0, ts: 0, type: 'noop', payload: null }),
-    registerSlice: () => Promise.resolve(() => {}),
-    reset: () => Promise.resolve(),
-    flush: () => Promise.resolve(),
-    close: () => Promise.resolve(),
-  } as unknown as AgentEventStore;
-}
-
-function stubAttachEngine(): MachineEngine {
-  return {
-    submit: () => {},
-    steer: () => {},
-    notify: () => {},
-    remind: () => {},
-    cancelQueueItem: () => {},
-    abort: () => {},
-    pause: () => {},
-    resume: () => {},
-    resetHistory: () => Promise.resolve(),
-    resetJournal: () => Promise.resolve(),
-    stop: () => {},
-    snapshot: () => ({
-      running: false,
-      aborting: false,
-      waitingForBackground: false,
-      paused: false,
-      queue: [],
-      queueLength: 0,
-      queueIds: [],
-      notificationCount: 0,
-      reminderCount: 0,
-      backgroundCount: 0,
-    }),
-    currentStep: () => 0,
-    lastFinish: () => undefined,
-    toolExtras: new Map(),
-    handleToolProgress: () => {},
-  };
-}
-
-function stubAttachBundle(): MachineEngineAttachBundle {
-  return {
-    store: stubAttachStore(),
-    request: { model: { provider: 'test', model: 'test' } },
-  } as unknown as MachineEngineAttachBundle;
-}
-
-interface SessionActorView {
-  getSnapshot(): {
-    children: Record<string, { getSnapshot(): { status: string } } | undefined>;
-    context: { agents: Record<string, unknown> };
-  };
-}
 
 function recordingAppendLog(initial: readonly WireRecord[] = []): {
   readonly appended: WireRecord[];
@@ -360,11 +295,19 @@ describe('SessionSubagentScopeCacheService', () => {
       workspaceId: 'ws_test',
       sessionDir: '/tmp/kimi-subagentScopeCache-test',
       metaScope: 'test',
+      cwd: '/tmp/kimi-subagentScopeCache-work',
       scope: (subKey?: string) =>
         subKey === undefined || subKey === ''
           ? 'sessions/ws_test/sess_test'
           : `sessions/ws_test/sess_test/${subKey}`,
     } as unknown as ISessionContext);
+    ix.stub(ISessionWorkspaceInfo, {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      primaryByWorkspace: {},
+      additionalDirs: [],
+      onDidChange: Event.None,
+    } as ISessionWorkspaceInfo);
     ix.stub(IEnvironmentService, {
       onDidChange: () => ({ dispose: () => {} }),
       _serviceBrand: undefined,
@@ -380,6 +323,9 @@ describe('SessionSubagentScopeCacheService', () => {
       environmentId: 'local',
       fs: undefined,
     } as unknown as ISessionWorkdir);
+    ix.stub(IWorkspaceTrust, {
+      get: async () => false,
+    } as unknown as IWorkspaceTrust);
     ix.stub(IWorkspaceInstanceManager, {
       _serviceBrand: undefined,
       onDidChange: () => ({ dispose: () => {} }),
@@ -452,6 +398,7 @@ describe('SessionSubagentScopeCacheService', () => {
     } as IAgentMediaToolsRegistrar);
     ix.stub(IAgentToolExecutorService, {
       _serviceBrand: undefined,
+      handlers: () => [],
       onBeforeExecuteTool: () => ({ dispose: () => {} }),
       onWillExecuteTool: () => ({ dispose: () => {} }),
       hooks: {
@@ -467,6 +414,7 @@ describe('SessionSubagentScopeCacheService', () => {
         onDidFinishStep: { register: () => ({ dispose: () => {} }) },
       },
       registerLoopErrorHandler: () => ({ dispose: () => {} }),
+      start: async () => {},
       snapshot: () => ({
         state: 'idle',
         queue: [],
@@ -477,8 +425,9 @@ describe('SessionSubagentScopeCacheService', () => {
       cancel: () => true,
       settled: async () => {},
       tryAcquireQuiescence: () => ({ dispose: () => {} }),
-      buildAttachBundle: () => stubAttachBundle(),
-      attachEngine: () => stubAttachEngine(),
+      close: async () => {
+        await Promise.all(ix.get(IAgentToolExecutorService).handlers().map(async (handler) => handler.stop()));
+      },
     } as unknown as IAgentLoopService);
     ix.stub(ITelemetryService, {
       _serviceBrand: undefined,
@@ -661,12 +610,10 @@ describe('SessionSubagentScopeCacheService', () => {
   it('defers eviction while the scope has active background tasks', async () => {
     cacheService('1');
     const svc = ix.get(IAgentLifecycleService);
-    ix.stub(IAgentTaskService, {
+    ix.stub(IAgentToolExecutorService, {
       _serviceBrand: undefined,
-      list: (activeOnly?: boolean) => (activeOnly === true ? [{ taskId: 'task-1' }] : []),
-      stopAllOnExit: async () => [],
-      suppressAllTerminalNotifications: async () => {},
-    } as unknown as IAgentTaskService);
+      handlers: () => [{ snapshot: () => ({ status: 'running' }) }],
+    } as unknown as IAgentToolExecutorService);
     await svc.create({ agentId: 'agent-1' });
     await svc.create({ agentId: 'agent-2' });
 
@@ -774,12 +721,13 @@ describe('SessionSubagentScopeCacheService', () => {
     cacheService('1');
     const stopAll = createControlledPromise<never[]>();
     let stopAllCalls = 0;
-    ix.stub(IAgentTaskService, {
+    ix.stub(IAgentToolExecutorService, {
       _serviceBrand: undefined,
-      list: () => [],
-      stopAllOnExit: () => (stopAllCalls++ === 0 ? stopAll : Promise.resolve([])),
-      suppressAllTerminalNotifications: async () => {},
-    } as unknown as IAgentTaskService);
+      handlers: () => [{
+        snapshot: () => ({ status: 'success' }),
+        stop: () => (stopAllCalls++ === 0 ? stopAll : Promise.resolve([])),
+      }],
+    } as unknown as IAgentToolExecutorService);
     const svc = ix.get(IAgentLifecycleService);
     await svc.create({ agentId: 'agent-1' });
     await svc.create({ agentId: 'agent-2' });
@@ -803,12 +751,13 @@ describe('SessionSubagentScopeCacheService', () => {
     cacheService('1');
     const stopAll = createControlledPromise<never[]>();
     let stopAllCalls = 0;
-    ix.stub(IAgentTaskService, {
+    ix.stub(IAgentToolExecutorService, {
       _serviceBrand: undefined,
-      list: () => [],
-      stopAllOnExit: () => (stopAllCalls++ === 0 ? stopAll : Promise.resolve([])),
-      suppressAllTerminalNotifications: async () => {},
-    } as unknown as IAgentTaskService);
+      handlers: () => [{
+        snapshot: () => ({ status: 'success' }),
+        stop: () => (stopAllCalls++ === 0 ? stopAll : Promise.resolve([])),
+      }],
+    } as unknown as IAgentToolExecutorService);
     const svc = ix.get(IAgentLifecycleService);
     await svc.create({ agentId: 'agent-1' });
     await svc.create({ agentId: 'agent-2' });
@@ -831,12 +780,13 @@ describe('SessionSubagentScopeCacheService', () => {
     cacheService('1');
     const stopAll = createControlledPromise<never[]>();
     let stopAllCalls = 0;
-    ix.stub(IAgentTaskService, {
+    ix.stub(IAgentToolExecutorService, {
       _serviceBrand: undefined,
-      list: () => [],
-      stopAllOnExit: () => (stopAllCalls++ === 0 ? stopAll : Promise.resolve([])),
-      suppressAllTerminalNotifications: async () => {},
-    } as unknown as IAgentTaskService);
+      handlers: () => [{
+        snapshot: () => ({ status: 'success' }),
+        stop: () => (stopAllCalls++ === 0 ? stopAll : Promise.resolve([])),
+      }],
+    } as unknown as IAgentToolExecutorService);
     const svc = ix.get(IAgentLifecycleService);
     await svc.create({ agentId: 'agent-1' });
     await svc.create({ agentId: 'agent-2' });
@@ -878,14 +828,15 @@ describe('SessionSubagentScopeCacheService', () => {
     );
   });
 
-  it('eviction releases the evicted agent actor from the session machine', async () => {
+  it('eviction disposes only the evicted agent scope', async () => {
     cacheService('1');
     const svc = ix.get(IAgentLifecycleService);
     await svc.create({ agentId: 'agent-1' });
     await svc.create({ agentId: 'agent-2' });
-    const sessionActor = (svc as unknown as { sessionActor: SessionActorView }).sessionActor;
-    const evictedRef = sessionActor.getSnapshot().children['agent-1'];
-    expect(evictedRef).toBeDefined();
+    const evicted = svc.handleOf('agent-1')!;
+    const retained = svc.handleOf('agent-2')!;
+    const evictedDispose = vi.spyOn(evicted, 'dispose');
+    const retainedDispose = vi.spyOn(retained, 'dispose');
 
     completed('agent-1');
     completed('agent-2');
@@ -893,11 +844,9 @@ describe('SessionSubagentScopeCacheService', () => {
       expect(svc.handleOf('agent-1')).toBeUndefined();
     });
 
-    const snapshot = sessionActor.getSnapshot();
-    expect(snapshot.context.agents['agent-1']).toBeUndefined();
-    expect(snapshot.children['agent-1']).toBeUndefined();
-    expect(snapshot.children['agent-2']).toBeDefined();
-    expect(evictedRef?.getSnapshot().status).toBe('done');
+    expect(evictedDispose).toHaveBeenCalledOnce();
+    expect(retainedDispose).not.toHaveBeenCalled();
+    expect(svc.handleOf('agent-2')).toBe(retained);
   });
 });
 
@@ -973,7 +922,9 @@ describe('SessionSubagentScopeCacheService eviction guards', () => {
         get: (serviceId: unknown) =>
           serviceId === IAgentLoopService
             ? ({ _serviceBrand: undefined, snapshot } as unknown as IAgentLoopService)
-            : serviceId === IAgentTaskService
+            : serviceId === IAgentToolExecutorService
+              ? ({ _serviceBrand: undefined, handlers: () => [] } as unknown as IAgentToolExecutorService)
+              : serviceId === IAgentTaskService
               ? ({ _serviceBrand: undefined, list: () => [] } as unknown as IAgentTaskService)
               : serviceId === IEventDispatcher
                 ? ({ _serviceBrand: undefined, flush } as unknown as IEventDispatcher)

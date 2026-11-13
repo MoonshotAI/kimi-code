@@ -1,112 +1,70 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
-import type {
-  IAgentToolExecutorService,
-  ToolExecutionResult,
-} from '#/agent/toolExecutor/toolExecutor';
-import { createMachineTools } from '#/agent/loop/machine/tools';
-import type { ToolCall } from '#human/message';
-import type { ToolExecuteInput } from '#human/tool/executor';
-import type { ToolInfo } from '#/tool/toolContract';
+import { createUserMessage, extractText, type ToolCall, type ToolMessage } from '@moonshot-ai/core/llm/message';
+import { createMockProviderRequester, type MockProviderResponse } from '../../harness/scripted-generate';
+import { createTestLoop as createLoop } from './core/factory';
+import { executorFrom } from './core/executor';
 
-function call(id: string, name: string): ToolCall {
+function call(id: string, name = 'Bash'): ToolCall {
   return { type: 'function', id, name, arguments: '{}' };
 }
 
-function input(toolCall: ToolCall): ToolExecuteInput {
-  return { toolCall, signal: new AbortController().signal };
+function requester(responses: MockProviderResponse[]) {
+  return createMockProviderRequester(responses);
 }
 
-function createRecordingExecutor(): {
-  toolExecutor: IAgentToolExecutorService;
-  batches: string[][];
-} {
-  const batches: string[][] = [];
-  const toolExecutor = {
-    execute: async function* (calls: ToolCall[]) {
-      batches.push(calls.map((toolCall) => toolCall.id));
-      for (const toolCall of calls) {
-        yield {
-          toolCallId: toolCall.id,
-          toolName: toolCall.name,
-          result: { output: `ok:${toolCall.id}` },
-          durationMs: 7,
-        } satisfies ToolExecutionResult;
-      }
-    },
-  } as unknown as IAgentToolExecutorService;
-  return { toolExecutor, batches };
+function done(text: string, toolCalls: ToolCall[] = []): MockProviderResponse {
+  return { parts: [{ type: 'text', text }, ...toolCalls] };
 }
 
-const toolInfos: ToolInfo[] = [
-  { name: 'Bash', description: 'run a command', source: 'builtin' },
-  { name: 'Read', description: 'read a file', source: 'builtin' },
-];
+function prompt() {
+  return createUserMessage('work');
+}
 
-describe('createMachineTools duplicate tool call ids', () => {
-  it('runs one batch per unique id and settles the superseded pending entry', async () => {
-    const { toolExecutor, batches } = createRecordingExecutor();
-    const onBatchError = vi.fn();
-    const onToolResult = vi.fn();
-    const tools = createMachineTools({
-      toolExecutor,
-      toolInfos: () => toolInfos,
-      turnId: () => 1,
-      onBatchError,
-      onToolResult,
+describe('handler tool execution', () => {
+  it('executes duplicate calls independently and preserves model result order', async () => {
+    let bashCalls = 0;
+    const executor = executorFrom(['Bash', 'Read'], async ({ toolCall }) => {
+      if (toolCall.name === 'Read') return { content: [{ type: 'text', text: 'read' }] };
+      bashCalls += 1;
+      return bashCalls === 2
+        ? { content: [{ type: 'text', text: 'second failed' }], isError: true }
+        : { content: [{ type: 'text', text: 'first ok' }] };
     });
-    tools.sync();
-    const bash = tools.tools.find((tool) => tool.name === 'Bash');
-    const read = tools.tools.find((tool) => tool.name === 'Read');
-    if (bash === undefined || read === undefined) throw new Error('missing tool definitions');
+    const scripted = requester([
+      done('', [call('t1'), call('t1'), call('t2', 'Read')]),
+      done('final'),
+    ]);
+    const loop = createLoop({
+      requester: scripted,
+      executor,
+    });
 
-    tools.beginBatch([call('t1', 'Bash'), call('t1', 'Bash'), call('t2', 'Read')]);
-    const first = bash.execute(input(call('t1', 'Bash')));
-    const second = bash.execute(input(call('t1', 'Bash')));
-    const third = read.execute(input(call('t2', 'Read')));
-
-    const [firstResult, secondResult, thirdResult] = await Promise.all([first, second, third]);
-
-    expect(batches).toEqual([['t1', 't2']]);
-    expect(onBatchError).not.toHaveBeenCalled();
-    expect(onToolResult).toHaveBeenCalledWith('t1', { output: 'ok:t1' }, 7);
-    expect(onToolResult).toHaveBeenCalledWith('t2', { output: 'ok:t2' }, 7);
-    expect(firstResult.isError).toBe(true);
-    expect(secondResult.content).toEqual([{ type: 'text', text: 'ok:t1' }]);
-    expect(secondResult.isError).toBeUndefined();
-    expect(thirdResult.content).toEqual([{ type: 'text', text: 'ok:t2' }]);
-    expect(tools.extras.has('t1')).toBe(true);
-    expect(tools.extras.has('t2')).toBe(true);
+    expect((await loop.runTurn(prompt())).type).toBe('done');
+    const entries = loop.state.messages.filter((entry): entry is ToolMessage => entry.role === 'tool');
+    expect(entries.map((entry) => extractText(entry))).toEqual(['first ok', 'second failed', 'read']);
+    expect(entries.map((entry) => entry.attributes?.isError)).toEqual([undefined, true, undefined]);
+    expect(bashCalls).toBe(2);
+    await loop.close();
   });
 
-  it('reports executor failures through onBatchError and settles every pending call', async () => {
-    const toolExecutor = {
-      execute: (): AsyncIterable<ToolExecutionResult> => ({
-        [Symbol.asyncIterator]() {
-          return { next: () => Promise.reject(new Error('executor exploded')) };
-        },
-      }),
-    } as unknown as IAgentToolExecutorService;
-    const onBatchError = vi.fn();
-    const tools = createMachineTools({
-      toolExecutor,
-      toolInfos: () => toolInfos,
-      turnId: () => 1,
-      onBatchError,
+  it('contains one tool failure without failing its sibling or the step', async () => {
+    const executor = executorFrom(['Bash', 'Read'], async ({ toolCall }) => {
+      if (toolCall.name === 'Bash') throw new Error('executor exploded');
+      return { content: [{ type: 'text', text: 'read ok' }] };
     });
-    tools.sync();
-    const bash = tools.tools.find((tool) => tool.name === 'Bash');
-    const read = tools.tools.find((tool) => tool.name === 'Read');
-    if (bash === undefined || read === undefined) throw new Error('missing tool definitions');
+    const scripted = requester([done('', [call('t1'), call('t2', 'Read')]), done('final')]);
+    const loop = createLoop({
+      requester: scripted,
+      executor,
+    });
 
-    tools.beginBatch([call('t1', 'Bash'), call('t2', 'Read')]);
-    const [firstResult, secondResult] = await Promise.all([
-      bash.execute(input(call('t1', 'Bash'))),
-      read.execute(input(call('t2', 'Read'))),
-    ]);
-
-    expect(onBatchError).toHaveBeenCalledTimes(1);
-    expect(firstResult.isError).toBe(true);
-    expect(secondResult.isError).toBe(true);
+    expect((await loop.runTurn(prompt())).type).toBe('done');
+    const entries = loop.state.messages.filter((entry): entry is ToolMessage => entry.role === 'tool');
+    expect(entries).toHaveLength(2);
+    expect(entries[0]?.attributes?.isError).toBe(true);
+    expect(entries[1]?.attributes?.isError).toBeUndefined();
+    expect(extractText(entries[1]!)).toBe('read ok');
+    await loop.close();
   });
 });

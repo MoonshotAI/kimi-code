@@ -19,10 +19,11 @@ import {
   type Event2Class,
 } from '#/app/event/event2';
 import { IEventBus } from '#/app/event/eventBus';
-import type { ContentPart } from '#human/llm/message';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import { OrderedHookSlot } from '#/hooks';
 import { IWireService } from '#/wire/wire';
 import { WireError, WireErrors } from '#/wire/errors';
+import { ContextAppendMessage } from '#/agent/contextMemory/contextEvents';
 import { isHumanRecordType } from '#/wire/human';
 import { AGENT_SWITCHED_TYPE } from '#/wire/tree/index';
 import type { PartsTransformer, WireRecord } from '#/wire/record';
@@ -33,7 +34,12 @@ import {
   type AgentModel,
   type AgentModelDefinition,
 } from './agentModel';
-import { IEventDispatcher, type DurableAgentRuntimeParticipant, type RestorePhase } from './eventDispatcher';
+import {
+  IEventDispatcher,
+  type DurableAgentRuntimeParticipant,
+  type ReplayOutcome,
+  type RestorePhase,
+} from './eventDispatcher';
 import { StateError, StateErrors } from './errors';
 import {
   expandedModelAppliers,
@@ -101,9 +107,11 @@ interface ParticipantAttachment {
   readonly appliers: ReadonlyMap<Event2Class<any, any>, ParticipantApplier>;
   readonly meta: StateMeta;
   readonly undoable: boolean;
+  readonly mutableReplay: boolean;
   readonly initial: unknown;
   readonly getState: () => any;
   readonly commit: (state: any) => void;
+  readonly participant?: DurableAgentRuntimeParticipant;
 }
 
 interface PreparedParticipant {
@@ -170,6 +178,9 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
   private readonly replayFreshKeys = new Set<ReplayableStateKey<any>>();
   private readonly replayFreshAttachments = new Set<ParticipantAttachment>();
   private readonly replayMutableStates = new Map<ReplayableStateKey<any>, any>();
+  private readonly replayMutableParticipants = new Map<ParticipantAttachment, any>();
+  private readonly preRestoreProjectedKeys = new Set<ReplayableStateKey<any>>();
+  private readonly preRestoreProjectedAttachments = new Set<ParticipantAttachment>();
   private folded: FoldedEventStateRegistry;
 
   private activeModelDefs = new Map<string, AgentModelDefinition<any, any>>();
@@ -188,6 +199,7 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     registerModel: (definition, model) => this.registerModel(definition, model),
     dispatchModelEvent: (event) => this.dispatch(event),
     readLegacyState: (key) => this.agentState.get(key),
+    readHistory: () => this.space()?.readHistory() ?? [],
   };
 
   restorePhase: RestorePhase = 'new';
@@ -334,9 +346,14 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
         if (event === undefined) continue;
         const applier = attachment.appliers.get(event.constructor as Event2Class);
         if (applier === undefined) continue;
+        if (attachment.mutableReplay) {
+          const prepared = this.prepareParticipantEvent(attachment, applier, event, true);
+          this.commitParticipant(attachment, prepared.ctx, prepared.next);
+          continue;
+        }
         const ctx = new FoldContextImpl(this, true);
         const next = produce(
-          attachment.getState(),
+          structuredClone(attachment.getState()),
           (draft: any) => applier(draft, event, ctx),
         );
         if (ctx.pendingUndo !== undefined && next !== attachment.getState()) {
@@ -347,10 +364,19 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
         sanitizePendingUndo(ctx, attachment.meta);
         this.commitParticipant(attachment, ctx, next);
       }
+      if (attachment.mutableReplay && this.replayFreshAttachments.delete(attachment)) {
+        this.freezeParticipantAttachment(attachment);
+      } else {
+        this.replayFreshAttachments.delete(attachment);
+        this.replayMutableParticipants.delete(attachment);
+      }
       this.attachParticipant(attachment);
     } catch (error) {
+      this.replayFreshAttachments.delete(attachment);
+      this.replayMutableParticipants.delete(attachment);
       replayFailure = { error };
     }
+    this.notifyDidReplay([attachment], { ok: replayFailure === undefined });
     try {
       if (this.restorePhase !== 'restoring') this.drainQueue();
     } catch (error) {
@@ -374,7 +400,14 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
   ): ParticipantAttachment {
     const base = new Map<Event2Class<any, any>, StateFold<any, any>>();
     for (const cls of participant.events) base.set(cls, participant.transition);
-    const folds = expandedRuntimeFolds(participant.id, participant.undoable, base);
+    const mutableReplay = participant.mutableReplay === true;
+    const folds = expandedRuntimeFolds(
+      participant.id,
+      participant.undoable,
+      base,
+      participant.onUndo,
+      mutableReplay,
+    );
     const appliers = new Map<Event2Class<any, any>, ParticipantApplier>();
     for (const [cls, fold] of folds) {
       appliers.set(cls, (state, event, ctx) => fold(state, event, ctx));
@@ -384,9 +417,11 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
       appliers,
       meta: { checkpoints: [] },
       undoable: participant.undoable,
+      mutableReplay,
       initial: participant.getState(),
       getState: () => participant.getState(),
       commit: (state) => { participant.commit(state); },
+      participant,
     };
   }
 
@@ -405,6 +440,9 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
   private detachParticipant(attachment: ParticipantAttachment): void {
     if (this.participantAttachments.get(attachment.id) !== attachment) return;
     this.participantAttachments.delete(attachment.id);
+    this.replayMutableParticipants.delete(attachment);
+    this.replayFreshAttachments.delete(attachment);
+    this.preRestoreProjectedAttachments.delete(attachment);
     for (const cls of attachment.appliers.keys()) {
       const list = this.participantTargets.get(cls.type);
       if (list === undefined) continue;
@@ -498,6 +536,7 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
       appliers,
       meta: { checkpoints: [] },
       undoable: definition.undoable,
+      mutableReplay: false,
       initial: model._state(),
       getState: () => model._state(),
       commit: (state) => { model._commitState(state); },
@@ -651,18 +690,7 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
         if (replayUndoable !== undefined && attachment.undoable !== replayUndoable) continue;
         const applier = attachment.appliers.get(event.constructor as Event2Class);
         if (applier === undefined) continue;
-        const ctx = new FoldContextImpl(this, silent);
-        const next = produceFor(
-          attachment.getState(),
-          (draft: any) => applier(draft, event, ctx),
-        );
-        if (ctx.pendingUndo !== undefined && next !== attachment.getState()) {
-          throw new BugIndicatingError(
-            `Fold of event '${event.type}' on durable participant '${attachment.id}' both mutates and undoes to a checkpoint`,
-          );
-        }
-        sanitizePendingUndo(ctx, attachment.meta);
-        preparedParticipants.push({ attachment, ctx, next });
+        preparedParticipants.push(this.prepareParticipantEvent(attachment, applier, event, silent));
       }
     }
     for (const p of prepared) {
@@ -671,6 +699,10 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     for (const p of preparedParticipants) {
       this.commitParticipant(p.attachment, p.ctx, p.next);
     }
+    if (this.restorePhase === 'new' && (event.constructor as Event2Class).durable) {
+      for (const p of prepared) this.preRestoreProjectedKeys.add(p.key);
+      for (const p of preparedParticipants) this.preRestoreProjectedAttachments.add(p.attachment);
+    }
     if (silent) return;
     const cls = event.constructor as Event2Class;
     if (cls.durable) {
@@ -678,7 +710,9 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
         .replayable.blobs?.dehydrate;
       this.wire.appendRecord(event.serialize(), dehydrator);
     }
-    if (cls.observable && !this.disposed) {
+    const observable = cls.observable ||
+      (event instanceof ContextAppendMessage && event.message.origin?.kind === 'task');
+    if (observable && !this.disposed) {
       this.eventBus.publish(event, this.agentScope?.agentContext);
     }
   }
@@ -725,11 +759,71 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     }
   }
 
+  private prepareParticipantEvent(
+    attachment: ParticipantAttachment,
+    applier: ParticipantApplier,
+    event: Event2<any>,
+    silent: boolean,
+  ): PreparedParticipant {
+    if (!silent && this.replayMutableParticipants.has(attachment)) {
+      this.freezeParticipantAttachment(attachment);
+    }
+    const ctx = new FoldContextImpl(this, silent);
+    if (silent && attachment.mutableReplay) {
+      if (this.replayMutableParticipants.has(attachment)) {
+        const current = this.replayMutableParticipants.get(attachment);
+        const produced = applier(current, event, ctx);
+        if (ctx.pendingCheckpoint || ctx.pendingUndo !== undefined) {
+          throw new BugIndicatingError(
+            `Durable participant '${attachment.id}' cannot use checkpoints during mutable replay`,
+          );
+        }
+        const next =
+          produced === undefined || Object.is(produced, current)
+            ? current
+            : typeof produced === 'object' && produced !== null
+              ? structuredClone(produced)
+              : produced;
+        return { attachment, ctx, next };
+      }
+      const current = attachment.getState();
+      const produced = replayImmer.produce(current, (draft: any) => applier(draft, event, ctx));
+      if (ctx.pendingCheckpoint || ctx.pendingUndo !== undefined) {
+        throw new BugIndicatingError(
+          `Durable participant '${attachment.id}' cannot use checkpoints during mutable replay`,
+        );
+      }
+      const next =
+        !Object.is(produced, current) && typeof produced === 'object' && produced !== null
+          ? structuredClone(produced)
+          : produced;
+      return { attachment, ctx, next };
+    }
+    const produceFor = silent ? replayImmer.produce : produce;
+    const current = attachment.getState();
+    const next = produceFor(current, (draft: any) => applier(draft, event, ctx));
+    if (ctx.pendingUndo !== undefined && next !== current) {
+      throw new BugIndicatingError(
+        `Fold of event '${event.type}' on durable participant '${attachment.id}' both mutates and undoes to a checkpoint`,
+      );
+    }
+    sanitizePendingUndo(ctx, attachment.meta);
+    return { attachment, ctx, next };
+  }
+
   private commitParticipant(
     attachment: ParticipantAttachment,
     ctx: FoldContextImpl,
     next: any,
   ): void {
+    if (ctx.silent && attachment.mutableReplay) {
+      const staged = this.replayMutableParticipants.has(attachment);
+      if (staged || !Object.is(next, attachment.getState())) {
+        this.replayMutableParticipants.set(attachment, next);
+        this.replayFreshAttachments.add(attachment);
+      }
+      return;
+    }
     const meta = attachment.meta;
     if (ctx.pendingUndo !== undefined) {
       const targetIndex = meta.checkpoints.length - ctx.pendingUndo;
@@ -748,6 +842,15 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     if (ctx.pendingCheckpoint) {
       meta.checkpoints.push(next);
     }
+  }
+
+  private freezeParticipantAttachment(attachment: ParticipantAttachment): void {
+    const target = this.replayMutableParticipants.has(attachment)
+      ? this.replayMutableParticipants.get(attachment)
+      : structuredClone(attachment.getState());
+    this.replayMutableParticipants.delete(attachment);
+    this.replayFreshAttachments.delete(attachment);
+    attachment.commit(freeze(target, true));
   }
 
   private ensureMeta(key: ReplayableStateKey<any>): StateMeta {
@@ -771,12 +874,14 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
       this.dispatching = true;
       this.dispatchingSince = Date.now();
     }
+    let replayed = false;
     try {
       if (this.lateAttachmentTail !== undefined) await this.lateAttachmentTail;
       if (rerun) {
         await this.wire.flush();
-        this.resetReplayState();
+        this.notifyWillReplay();
       }
+      this.resetReplayState(!rerun);
       await this.replayRecords();
       this.freezeReplayedStates();
       await this.rehydrateStates();
@@ -785,17 +890,23 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
         await this.hooks.onDidRestore.run({});
         this.didRunRestoreHooks = true;
       }
+      replayed = true;
+      this.notifyDidReplay(this.participantAttachments.values(), { ok: true });
       if (rerun) {
         this.drainQueue();
       }
       await this.drainLateAttachments();
     } catch (error) {
       this.replayMutableStates.clear();
+      this.replayMutableParticipants.clear();
+      this.replayFreshKeys.clear();
+      this.replayFreshAttachments.clear();
       this.restorePhase = 'failed';
       for (const pending of this.lateAttachments.splice(0)) pending.reject(error);
       if (rerun) {
         for (const entry of this.queue.splice(0)) entry.reject(error);
       }
+      if (!replayed) this.notifyDidReplay(this.participantAttachments.values(), { ok: false });
       throw error;
     } finally {
       if (rerun) {
@@ -818,16 +929,46 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     }
   }
 
-  private resetReplayState(): void {
+  private notifyWillReplay(): void {
+    for (const attachment of this.participantAttachments.values()) {
+      try {
+        attachment.participant?.onWillReplay?.();
+      } catch (error) {
+        onUnexpectedError(error);
+      }
+    }
+  }
+
+  private notifyDidReplay(attachments: Iterable<ParticipantAttachment>, outcome: ReplayOutcome): void {
+    for (const attachment of attachments) {
+      const participant = attachment.participant;
+      if (participant?.onDidReplay === undefined) continue;
+      try {
+        participant.onDidReplay(attachment.getState(), outcome);
+      } catch (error) {
+        onUnexpectedError(error);
+      }
+    }
+  }
+
+  private resetReplayState(initial: boolean): void {
     this.replayMutableStates.clear();
+    this.replayMutableParticipants.clear();
     for (const key of this.agentState.replayableKeys()) {
-      this.agentState.set(key, key.initial());
+      if (!initial || this.preRestoreProjectedKeys.has(key)) this.agentState.set(key, key.initial());
     }
     for (const attachment of this.participantAttachments.values()) {
+      if (initial && !this.preRestoreProjectedAttachments.has(attachment)) continue;
       attachment.commit(attachment.initial);
       attachment.meta.checkpoints.length = 0;
     }
-    this.metas.clear();
+    if (!initial) {
+      this.metas.clear();
+      return;
+    }
+    for (const key of this.preRestoreProjectedKeys) this.metas.delete(key);
+    this.preRestoreProjectedKeys.clear();
+    this.preRestoreProjectedAttachments.clear();
   }
 
   private async replayRecords(): Promise<void> {
@@ -839,6 +980,7 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     const resolved = new Map<WireRecord, ResolvedRecord>();
     this.replayFreshKeys.clear();
     this.replayFreshAttachments.clear();
+    this.replayMutableParticipants.clear();
     this.replayPass(chains.restorable, true, resolved);
     this.replayPass(chains.journal, false, resolved);
   }
@@ -908,9 +1050,10 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     }
     this.replayFreshKeys.clear();
     for (const attachment of this.replayFreshAttachments) {
-      attachment.commit(freeze(attachment.getState(), true));
+      this.freezeParticipantAttachment(attachment);
     }
     this.replayFreshAttachments.clear();
+    this.replayMutableParticipants.clear();
     this.replayMutableStates.clear();
   }
 

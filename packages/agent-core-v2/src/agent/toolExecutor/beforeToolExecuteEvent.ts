@@ -1,6 +1,6 @@
 import { Emitter } from '#/_base/event';
 import { BugIndicatingError } from '#/errors';
-import type { ToolCall } from '#human/llm/message';
+import type { ToolCall } from '@moonshot-ai/core/llm/message';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import type {
   ExecutableTool,
@@ -105,7 +105,7 @@ export class BeforeToolExecuteEmitter extends Emitter<BeforeToolExecuteEvent> {
     const event = new BeforeToolExecuteEventImpl(context);
     for (const entry of Array.from(this._listeners)) {
       await entry.listener.call(entry.thisArg, event);
-      if (event.finalAllowed) return undefined;
+      if (event.finalAllowed) return { allow: true };
       if (event.vetoResult !== undefined) return { veto: event.vetoResult };
     }
     event.closeRegistration();

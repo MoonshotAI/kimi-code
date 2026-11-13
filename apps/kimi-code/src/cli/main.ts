@@ -10,8 +10,10 @@
 
 import {
   createKimiHarness,
+  ErrorCodes,
   flushDiagnosticLogs,
   installGlobalProxyDispatcher,
+  isKimiError,
   log,
   resolveGlobalLogPath,
   resolveKimiHome,
@@ -47,6 +49,7 @@ import { runUpdateDownloadCommand } from './sub/update-download';
 import { handleUpgrade } from './sub/upgrade';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
 import { runUpdatePreflight } from './update/preflight';
+import { runForcedUpgradePreflight } from './update/forced';
 import { detectNativeInstall } from './update/source';
 import { maybeRelaunchWithStagedNativeUpdate } from './update/native-swap';
 import { createKimiCodeHostIdentity } from './host-identity';
@@ -81,10 +84,17 @@ export async function handleMainCommand(
   }
 
   startupTrace('preflight:begin');
-  const preflightResult = await runUpdatePreflight(
-    version,
-    validated.uiMode === 'print' ? { track, isTTY: false } : { track },
-  );
+  const updateOptions = validated.uiMode === 'print' ? { track, isTTY: false } : { track };
+  const forcedResult = await runForcedUpgradePreflight(version, updateOptions);
+  if (forcedResult === 'interrupt') {
+    process.exit(130);
+  }
+  if (forcedResult === 'exit') {
+    process.exit(0);
+  }
+  const preflightResult = forcedResult === 'skip-passive'
+    ? 'continue'
+    : await runUpdatePreflight(version, updateOptions);
   startupTrace('preflight:end');
   if (preflightResult === 'exit') {
     process.exit(0);
@@ -316,7 +326,14 @@ function bootstrap(): void {
 }
 
 async function logStartupFailure(operation: string, error: unknown): Promise<void> {
-  log.error('startup failed', { operation, error });
+  log.error('startup failed', {
+    operation,
+    error,
+    details:
+      isKimiError(error) && error.code === ErrorCodes.WIRE_VERSION_TOO_LOW
+        ? error.details
+        : undefined,
+  });
   try {
     await flushDiagnosticLogs();
   } catch {

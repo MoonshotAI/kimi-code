@@ -11,15 +11,16 @@ import { toInputJsonSchema } from '#/tool/input-schema';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { createHooks } from '#/hooks';
 import type { ToolCall } from '#human/message';
-import type { TokenUsage } from '#human/llm-requester/usage';
+import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { applyPrintModeConfigDefaults } from '#/agent/task/printDefaults';
 import { IAgentTaskService } from '#/agent/task/task';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { makeHookRunner } from '../features/externalHooks/runner-stub';
-import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
+import { stubLoopWithHooks } from '../agent/loop/stubs';
+import type { ProfileData } from '#/agent/profile/profile';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
@@ -27,8 +28,6 @@ import { ToolAccesses, type ExecutableTool } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { agentContextOf, IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { createActor } from '#human/xstate2';
-import { createAgentMachine } from '#human/agent/machine';
 import { IAgentUserToolService, type UserToolRegistration } from '#/agent/userTool/userTool';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 import {
@@ -36,11 +35,11 @@ import {
   type AgentSwarmToolInput,
 } from '#/features/swarm/tools/agent-swarm/agent-swarm';
 import {
+  ISubagentTool,
   SubagentToolInputSchema,
   type SubagentToolInput,
 } from '#/agent/tools/agent/agent';
 import {
-  FORK_EXPERIMENTAL_UNAVAILABLE,
   FORK_WITH_MODEL_UNAVAILABLE,
   FORK_WITH_RESUME_UNAVAILABLE,
   FORK_WITH_TYPE_UNAVAILABLE,
@@ -50,12 +49,11 @@ import { DEFAULT_SUBAGENT_TIMEOUT_MS, SECONDARY_MODEL_SECTION, SUBAGENT_SECTION 
 import { SUBAGENT_FORK_FLAG_ID } from '#/session/subagent/flag';
 import { Error2, ErrorCodes } from '#/errors';
 import { SUBAGENT_SCOPE_EVICT_TIMEOUT_ENV } from '#/session/subagent/subagentScopeCache';
-import type { AgentTaskSettlement } from '#/agent/task/types';
 import {
   NO_PARTIAL_OUTPUT,
   PARTIAL_OUTPUT_NOTICE,
-  SubagentTask,
-} from '#/agent/tools/agent/subagent-task';
+} from '#/agent/tools/agent/agentTool';
+import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { runAgentTurn } from '#/session/subagent/runAgentTurn';
 import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
@@ -213,10 +211,18 @@ function modelCatalogResolving(...aliases: readonly string[]): IModelCatalog {
           { details: { model: alias } },
         );
       }
-      return { id: alias } as Model;
+      return {
+        id: alias,
+        spec: { provider: 'test', name: alias },
+        endpoint: {},
+      } as Model;
     },
     getRequester: (alias: string) => ({
-      model: { id: alias } as Model,
+      model: {
+        id: alias,
+        spec: { provider: 'test', name: alias },
+        endpoint: {},
+      } as Model,
       request: async function* () {},
     }),
     notifyConfigChanged: () => {},
@@ -283,27 +289,11 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
             scope: (subKey?: string) => subKey ?? '',
           } as never;
         }
-        if (serviceId === IAgentContextMemoryService) {
-          return {
-            _serviceBrand: undefined,
-            get: () => [],
-          } as never;
-        }
-        if (serviceId === IAgentProfileService) {
-          return {
-            _serviceBrand: undefined,
-            data: () => ({ profileName: profileByAgentId.get(agentId) }),
-            update: () => {},
-            republishStatus: () => {},
-            getEffectiveThinkingLevel: () => 'off',
-            getActiveToolNames: () => [],
-            isToolActive: () => false,
-          } as never;
-        }
         if (serviceId === IAgentLoopService) {
+          const loop = stubLoopWithHooks();
           return {
-            _serviceBrand: undefined,
-            snapshot: () => ({ state: 'idle' }),
+            ...loop,
+            data: () => ({ ...loop.data(), profileName: profileByAgentId.get(agentId) }),
           } as never;
         }
         if (serviceId === IAgentEnvironmentBindingService) {
@@ -448,23 +438,6 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
     adopt: vi.fn((adopted) => {
       const adoptedHandle = adopted as IAgentScopeHandle;
       handles.set(adoptedHandle.id, adoptedHandle);
-      const loop = adoptedHandle.accessor.get(IAgentLoopService);
-      const bundle = loop.buildAttachBundle();
-      const ref = createActor(createAgentMachine({}), {
-        input: {
-          request: bundle.request,
-          scopeFactory: () =>
-            Promise.resolve({
-              store: bundle.store,
-              turnLogic: bundle.turnLogic,
-              toolLogic: bundle.toolLogic,
-              tools: bundle.tools,
-              request: bundle.request,
-            }),
-        },
-      });
-      ref.start();
-      loop.attachEngine(ref, bundle);
       return agentContextOf(adoptedHandle);
     }),
     broadcastPermissionMode: vi.fn(),
@@ -495,7 +468,7 @@ function wireRealSubagentService(ctx: TestAgentContext, lifecycle: AgentLifecycl
     'main',
     'agent',
     new Map<unknown, unknown>([
-      [IAgentProfileService, ctx.get(IAgentProfileService)],
+      [IAgentLoopService, ctx.get(IAgentLoopService)],
       [IAgentEnvironmentService, ctx.get(IAgentEnvironmentService)],
     ]),
     ctx.get(IAgentScopeContext).agentContext,
@@ -519,17 +492,44 @@ function agentSwarmToolInSwarmMode(ctx: TestAgentContext): ExecutableTool<AgentS
   return agentSwarmTool(ctx);
 }
 
-function executeAgentTool(
+async function executeAgentTool(
   ctx: TestAgentContext,
   args: SubagentToolInput,
   inputSignal: AbortSignal = signal,
 ) {
-  return executeTool(agentTool(ctx), {
-    turnId: 0,
-    toolCallId: 'call_agent',
-    args,
-    signal: inputSignal,
-  });
+  const handler = agentHandler(ctx, args, inputSignal);
+  const onAbort = (): void => {
+    void handler.stop(inputSignal.reason);
+  };
+  if (inputSignal.aborted) onAbort();
+  else inputSignal.addEventListener('abort', onAbort, { once: true });
+  try {
+    const response = await handler;
+    return {
+      output: response.content.every((part) => part.type === 'text')
+        ? response.content.map((part) => part.type === 'text' ? part.text : '').join('')
+        : response.content,
+      isError: 'detached' in response
+        ? false
+        : response.outcome.type === 'success' ? undefined : true,
+    };
+  } finally {
+    inputSignal.removeEventListener('abort', onAbort);
+  }
+}
+
+function agentHandler(ctx: TestAgentContext, args: SubagentToolInput, inputSignal?: AbortSignal) {
+  const handler = ctx.get(IAgentToolExecutorService).executor.execute({
+    type: 'function',
+    id: 'call_agent_timeout',
+    name: 'Agent',
+    arguments: JSON.stringify(args),
+  }, { turnId: 0 });
+  if (inputSignal?.aborted === true) void handler.stop(inputSignal.reason);
+  else inputSignal?.addEventListener('abort', () => {
+    void handler.stop(inputSignal.reason);
+  }, { once: true });
+  return handler;
 }
 
 function currentAgentHandle(ctx: TestAgentContext, agentId: string): IAgentScopeHandle {
@@ -548,6 +548,7 @@ function sessionMetadataStub(agents: Readonly<Record<string, AgentMeta>>): ISess
   return {
     _serviceBrand: undefined,
     ready: Promise.resolve(),
+    effectiveCwd: '/tmp',
     onDidChangeMetadata: Event.None as ISessionMetadata['onDidChangeMetadata'],
     read: async () => ({
       id: 'test-session',
@@ -736,7 +737,7 @@ describe('Agent tool description', () => {
     { enabled: true, primary: true, secondary: false, fork: false, expected: false },
     { enabled: true, primary: true, secondary: false, fork: true, expected: false },
     { enabled: true, primary: false, secondary: true, fork: false, expected: true },
-  ])('describes select_tools for eligible subagent models: $enabled/$primary/$secondary/$fork', ({
+  ])('describes select_tools for eligible subagent models: $enabled/$primary/$secondary/$fork', async ({
     enabled, primary, secondary, fork, expected,
   }) => {
     ctx = createTestAgent(
@@ -763,13 +764,13 @@ describe('Agent tool description', () => {
     );
     ctx.configure({
       modelCapabilities: {
-        ...ctx.get(IAgentProfileService).getModelCapabilities(),
+        ...ctx.get(IAgentLoopService).getModelCapabilities(),
         tool_use: true,
         dynamically_loaded_tools: primary,
       },
     });
-    const profile = ctx.get(IAgentProfileService);
-    profile.applyBindingSnapshot({ ...profile.data(), subagents: ['reviewer'] });
+    const profile = ctx.get(IAgentLoopService);
+    await profile.applyBindingSnapshot({ ...profile.data(), subagents: ['reviewer'] });
 
     const tools = agentDescription().match(/- reviewer: [^\n]*\n  Tools: ([^\n]*)/)?.[1];
     expect(tools).toBeDefined();
@@ -830,7 +831,7 @@ describe('Agent tool description', () => {
         audio_in: false,
         thinking: false,
         tool_use: true,
-        max_context_tokens: 0,
+        maxContextSize: 0,
       },
     });
     await ctx.get(IEventDispatcher).flush();
@@ -918,7 +919,7 @@ describe('Agent tool description', () => {
         audio_in: false,
         thinking: false,
         tool_use: true,
-        max_context_tokens: 0,
+        maxContextSize: 0,
       },
     });
     await ctx.get(IEventDispatcher).flush();
@@ -1029,7 +1030,7 @@ describe('Agent tool description', () => {
 
   it('lists discovered custom agents for the main agent alongside the builtin allowlist', async () => {
     ctx = createTestAgent(sessionService(ISessionAgentProfileCatalog, discoveredCatalog()));
-    await ctx.get(IAgentProfileService).bind({ profile: 'agent', model: 'mock-model' });
+    await ctx.get(IAgentLoopService).bindProfile({ profile: 'agent', model: 'mock-model' });
 
     const description = agentDescription();
 
@@ -1062,14 +1063,15 @@ describe('Agent tool description', () => {
       disallowedTools: [],
       subagents: ['agent'],
     } as unknown as ProfileData;
+    const loop = stubLoopWithHooks();
     ctx = createTestAgent(
       { autoConfigure: false },
-      agentService(IAgentProfileService, {
-        _serviceBrand: undefined,
+      agentService(IAgentLoopService, {
+        ...loop,
         data: () => callerData,
         getModelCapabilities: () => ({}),
         onDidChange: Event.None,
-      } as unknown as IAgentProfileService),
+      } as unknown as IAgentLoopService),
       configServices(() => ({
         providers: {},
         tools: { disabled: ['Write'] },
@@ -1162,7 +1164,7 @@ describe('Agent tool description', () => {
     expect(description).not.toContain('- coder: Coder');
   });
 
-  it('lists subagent types from the persisted binding instead of the current catalog profile', () => {
+  it('lists subagent types from the persisted binding instead of the current catalog profile', async () => {
     const caller: AgentProfile = normalizeAgentProfile({
       name: 'orchestrator',
       description: 'Orchestrator',
@@ -1191,7 +1193,7 @@ describe('Agent tool description', () => {
       reload: async () => {},
     };
     ctx = createTestAgent(sessionService(ISessionAgentProfileCatalog, catalog));
-    ctx.get(IAgentProfileService).applyBindingSnapshot({
+    await ctx.get(IAgentLoopService).applyBindingSnapshot({
       profileName: 'deleted-profile',
       thinkingLevel: 'off',
       systemPrompt: 'persisted prompt',
@@ -1204,7 +1206,7 @@ describe('Agent tool description', () => {
     expect(description).not.toContain('- coder: Coder');
   });
 
-  it('freezes the subagent type list once the profile catalog is ready', async () => {
+  it('freezes the subagent type list once the profile catalog is ready until invalidated', async () => {
     const caller: AgentProfile = normalizeAgentProfile({
       name: 'orchestrator',
       description: 'Orchestrator',
@@ -1239,10 +1241,14 @@ describe('Agent tool description', () => {
     const frozen = agentDescription();
     expect(frozen).toContain('- coder: Coder');
 
-    profiles.push(explore);
+    profiles.splice(0, 1, { ...coder, description: 'Updated coder' }, explore);
     const after = agentDescription();
     expect(after).toBe(frozen);
     expect(after).not.toContain('- explore: Explorer');
+
+    ctx.get(ISubagentTool).invalidateProfileDescriptions();
+    expect(agentDescription()).toContain('- coder: Updated coder');
+    expect(agentDescription()).toContain('- explore: Explorer');
   });
 
   it('reflects the current catalog list in the description before the catalog is ready', async () => {
@@ -1547,7 +1553,7 @@ describe('Agent tool execution contract', () => {
       lifecycle,
       sessionService(ISessionAgentProfileCatalog, allowlistCatalog(['coder'])),
     );
-    context.get(IAgentProfileService).applyBindingSnapshot({
+    await context.get(IAgentLoopService).applyBindingSnapshot({
       profileName: 'deleted-profile',
       thinkingLevel: 'off',
       systemPrompt: 'persisted prompt',
@@ -1605,7 +1611,7 @@ describe('Agent tool execution contract', () => {
       lifecycle,
       sessionService(ISessionAgentProfileCatalog, catalog),
     );
-    context.get(IAgentProfileService).applyBindingSnapshot({
+    await context.get(IAgentLoopService).applyBindingSnapshot({
       modelAlias: 'mock-model',
       profileName: 'coder',
       thinkingLevel: 'off',
@@ -1648,7 +1654,7 @@ describe('Agent tool execution contract', () => {
     });
 
     expect(result).toEqual({
-      output: 'subagent error: process capability is no longer available',
+      output: 'permitting hook failed for "Agent": process capability is no longer available',
       isError: true,
     });
     expect(lifecycle.create).not.toHaveBeenCalled();
@@ -1725,75 +1731,48 @@ describe('Agent tool execution contract', () => {
   });
 
   it('settles a repeat-breaker completion with a stop code and a task reason', async () => {
-    const task = new SubagentTask(
-      {
-        agentId: 'agent-child',
-        profileName: 'coder',
-        completion: Promise.resolve({ result: 'handoff', stopReason: 'repeat_breaker' }),
-      },
-      'Find cause',
-      new AbortController(),
-    );
-    const settlements: AgentTaskSettlement[] = [];
-    const output: string[] = [];
-    await task.start({
-      signal: new AbortController().signal,
-      appendOutput: (chunk) => {
-        output.push(chunk);
-      },
-      settle: async (settlement) => {
-        settlements.push(settlement);
-        return true;
-      },
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: async () => ({ summary: 'handoff', stopReason: 'repeat_breaker' }),
     });
-
-    expect(output).toEqual(['handoff']);
-    expect(settlements).toEqual([
-      { status: 'completed', stopReason: expect.stringContaining('repeat breaker') },
-    ]);
-    const info = task.toInfo({
-      taskId: 'agent-1',
+    const context = createAgentToolContext(lifecycle);
+    const handler = agentHandler(context, {
+      prompt: 'Investigate',
       description: 'Find cause',
-      status: 'completed',
-      startedAt: 0,
-      endedAt: 1,
+      run_in_background: true,
     });
-    expect(info.stopCode).toBe('repeat_breaker');
+    await handler.wait();
+
+    expect(handler.output().preview).toBe('handoff');
+    expect(context.get(IAgentTaskService).getTask(handler.taskId)).toMatchObject({
+      status: 'completed',
+      stopReason: expect.stringContaining('repeat breaker'),
+      stopCode: 'repeat_breaker',
+    });
   });
 
   it('derives the stop code from the stop reason of a missing-handoff failure', async () => {
-    const task = new SubagentTask(
-      {
-        agentId: 'agent-child',
-        profileName: 'coder',
-        completion: Promise.reject(
-          new Error2(ErrorCodes.AGENT_NO_FINAL_MESSAGE, 'no handoff', {
-            details: { stopReason: 'repeat_breaker' },
-          }),
-        ),
-      },
-      'Find cause',
-      new AbortController(),
-    );
-    const settlements: AgentTaskSettlement[] = [];
-    await task.start({
-      signal: new AbortController().signal,
-      appendOutput: () => {},
-      settle: async (settlement) => {
-        settlements.push(settlement);
-        return true;
-      },
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: () => Promise.reject(
+        new Error2(ErrorCodes.AGENT_NO_FINAL_MESSAGE, 'no handoff', {
+          details: { stopReason: 'repeat_breaker' },
+        }),
+      ),
     });
-
-    expect(settlements).toEqual([{ status: 'failed', stopReason: 'no handoff' }]);
-    const info = task.toInfo({
-      taskId: 'agent-1',
+    const context = createAgentToolContext(lifecycle);
+    const handler = agentHandler(context, {
+      prompt: 'Investigate',
       description: 'Find cause',
-      status: 'failed',
-      startedAt: 0,
-      endedAt: 1,
+      run_in_background: true,
     });
-    expect(info.stopCode).toBe('repeat_breaker');
+    await handler.wait();
+
+    expect(context.get(IAgentTaskService).getTask(handler.taskId)).toMatchObject({
+      status: 'failed',
+      stopReason: 'no handoff',
+      stopCode: 'repeat_breaker',
+    });
   });
 
   it('reports a missing final message as a failure with stop_reason no_final_message', async () => {
@@ -1987,7 +1966,7 @@ describe('Agent tool execution contract', () => {
   it('labels fork launches with the caller profile for display and approval rules', async () => {
     const lifecycle = createAgentLifecycleStub();
     const context = createAgentToolContext(lifecycle, forkFlags());
-    context.get(IAgentProfileService).update({ profileName: 'orchestrator' });
+    context.get(IAgentLoopService).update({ profileName: 'orchestrator' });
 
     const execution = await agentTool(context).resolveExecution({
       prompt: 'Continue',
@@ -2040,7 +2019,7 @@ describe('Agent tool execution contract', () => {
   it('rejects fork with a different subagent type', async () => {
     const lifecycle = createAgentLifecycleStub();
     const context = createAgentToolContext(lifecycle, forkFlags());
-    context.get(IAgentProfileService).update({ profileName: 'coder' });
+    context.get(IAgentLoopService).update({ profileName: 'coder' });
 
     const result = await executeAgentTool(context, {
       prompt: 'Investigate',
@@ -2056,7 +2035,14 @@ describe('Agent tool execution contract', () => {
 
   it('rejects fork with a model override', async () => {
     const lifecycle = createAgentLifecycleStub();
-    const context = createAgentToolContext(lifecycle, forkFlags());
+    const context = createAgentToolContext(lifecycle, forkFlags(), {
+      initialConfig: {
+        secondaryModel: {
+          defaultModel: 'provider/fast',
+          models: { 'provider/fast': 'fast and cheap', 'provider/smart': 'hard tasks' },
+        },
+      },
+    });
 
     const result = await executeAgentTool(context, {
       prompt: 'Investigate',
@@ -2075,7 +2061,14 @@ describe('Agent tool execution contract', () => {
       createAgentIds: ['agent-child'],
       runCompletion: async () => ({ summary: 'child result' }),
     });
-    const context = createAgentToolContext(lifecycle, forkFlags());
+    const context = createAgentToolContext(lifecycle, forkFlags(), {
+      initialConfig: {
+        secondaryModel: {
+          defaultModel: 'provider/fast',
+          models: { 'provider/fast': 'fast and cheap', 'mock-model': 'the main model' },
+        },
+      },
+    });
 
     const rejected = await executeAgentTool(context, {
       prompt: 'Continue the analysis',
@@ -2106,7 +2099,7 @@ describe('Agent tool execution contract', () => {
       runCompletion: async () => ({ summary: 'child result' }),
     });
     const context = createAgentToolContext(lifecycle, forkFlags());
-    context.get(IAgentProfileService).update({ profileName: 'coder' });
+    context.get(IAgentLoopService).update({ profileName: 'coder' });
 
     const result = await executeAgentTool(context, {
       prompt: 'Continue the analysis',
@@ -2132,7 +2125,7 @@ describe('Agent tool execution contract', () => {
       runCompletion: async () => ({ summary: 'child result' }),
     });
     const context = createAgentToolContext(lifecycle, forkFlags());
-    context.get(IAgentProfileService).update({ profileName: 'withdrawn-profile' });
+    context.get(IAgentLoopService).update({ profileName: 'withdrawn-profile' });
 
     const result = await executeAgentTool(context, {
       prompt: 'Continue the analysis',
@@ -2158,7 +2151,10 @@ describe('Agent tool execution contract', () => {
       fork: true,
     });
 
-    expect(result).toMatchObject({ isError: true, output: FORK_EXPERIMENTAL_UNAVAILABLE });
+    expect(result).toMatchObject({
+      isError: true,
+      output: 'Invalid args for tool "Agent": must NOT have additional property \'fork\'',
+    });
     expect(lifecycle.create).not.toHaveBeenCalled();
     expect(lifecycle.fork).not.toHaveBeenCalled();
     expect(lifecycle.run).not.toHaveBeenCalled();
@@ -2404,19 +2400,23 @@ describe('Agent tool execution contract', () => {
     );
   });
 
-  it('rejects a pool that gained the reserved "primary" key through a runtime config edit', async () => {
+  it('accepts a pool that gained a "primary" key through a runtime config edit', async () => {
     const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
-    const context = createAgentToolContext(lifecycle, {
-      initialConfig: {
-        secondaryModel: {
-          defaultModel: 'provider/fast',
-          models: { 'provider/fast': 'fast and cheap' },
+    const context = createAgentToolContext(
+      lifecycle,
+      modelProviderServices(modelCatalogResolving('mock-model', 'provider/fast', 'primary')),
+      {
+        initialConfig: {
+          secondaryModel: {
+            defaultModel: 'provider/fast',
+            models: { 'provider/fast': 'fast and cheap' },
+          },
         },
       },
-    });
+    );
     await (context.get(IConfigService) as StubConfigService).replace(SECONDARY_MODEL_SECTION, {
       defaultModel: 'primary',
-      models: { primary: 'reserved word' },
+      models: { primary: 'ordinary alias' },
     });
 
     const result = await executeAgentTool(context, {
@@ -2424,9 +2424,12 @@ describe('Agent tool execution contract', () => {
       description: 'Find cause',
     });
 
-    expect(result.isError).toBe(true);
-    expect(result.output).toContain('[secondary_model.models] key "primary" is reserved');
-    expect(lifecycle.create).not.toHaveBeenCalled();
+    expect(result.isError).toBeFalsy();
+    expect(lifecycle.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        binding: expect.objectContaining({ model: 'primary' }),
+      }),
+    );
   });
 
   it('points at the [secondary_model.models] config when the bound alias stops resolving', async () => {
@@ -2868,6 +2871,7 @@ describe('Agent tool execution contract', () => {
 
   it('keeps a rebuilt tower worker on its pinned permission mode', async () => {
     const setMode = vi.fn();
+    const loop = stubLoopWithHooks();
     const lifecycle = createAgentLifecycleStub({
       runCompletion: async () => ({ summary: 'worker resumed' }),
       handleServices: new Map<string, ReadonlyMap<unknown, unknown>>([
@@ -2875,15 +2879,10 @@ describe('Agent tool execution contract', () => {
           'agent-existing',
           new Map<unknown, unknown>([
             [
-              IAgentProfileService,
+              IAgentLoopService,
               {
-                _serviceBrand: undefined,
-                data: () => ({ profileName: TOWER_WORKER_PROFILE }),
-                update: () => {},
-                republishStatus: () => {},
-                getEffectiveThinkingLevel: () => 'off',
-                getActiveToolNames: () => [],
-                isToolActive: () => false,
+                ...loop,
+                data: () => ({ ...loop.data(), profileName: TOWER_WORKER_PROFILE }),
               },
             ],
             [
@@ -2982,7 +2981,7 @@ describe('Agent tool execution contract', () => {
         [
           IAgentLoopService,
           {
-            _serviceBrand: undefined,
+            ...stubLoopWithHooks(),
             snapshot: () => ({ state: 'running' }),
           },
         ],
@@ -3005,13 +3004,13 @@ describe('Agent tool execution contract', () => {
 
   it('keeps a directly resumed subagent on its own recorded model', async () => {
     const targetProfile = {
-      _serviceBrand: undefined,
+      ...stubLoopWithHooks(),
       data: () => ({ profileName: 'explore', modelAlias: 'stale-model' }),
       update: vi.fn(),
       republishStatus: vi.fn(),
       getEffectiveThinkingLevel: () => 'medium',
       isToolActive: () => false,
-    } as unknown as IAgentProfileService;
+    } as unknown as IAgentLoopService;
     const lifecycle = createAgentLifecycleStub({
       runCompletion: async () => ({ summary: 'resumed result' }),
     });
@@ -3025,7 +3024,7 @@ describe('Agent tool execution contract', () => {
     lifecycle.addHandle(
       'agent-existing',
       'explore',
-      new Map([[IAgentProfileService, targetProfile]]),
+      new Map([[IAgentLoopService, targetProfile]]),
     );
 
     await executeAgentTool(context, {
@@ -3072,7 +3071,7 @@ describe('Agent tool execution contract', () => {
   it('rejects background subagents when background execution is disabled', async () => {
     const lifecycle = createAgentLifecycleStub();
     const context = createAgentToolContext(lifecycle);
-    context.get(IAgentProfileService).update({ activeToolNames: ['Agent'] });
+    context.get(IAgentLoopService).update({ activeToolNames: ['Agent'] });
 
     const result = await executeAgentTool(context, {
       prompt: 'Investigate',
@@ -3098,7 +3097,6 @@ describe('Agent tool execution contract', () => {
       lifecycle,
       configServices(() => ({
         providers: {},
-        task: { maxRunningTasks: 1 },
       })),
     );
 
@@ -3124,15 +3122,16 @@ describe('Agent tool execution contract', () => {
     completion.resolve({ summary: 'finished later' });
   });
 
-  it('returns an error when background registration hits the task limit', async () => {
+  it('allows background registration beyond the removed task limit', async () => {
     const completions = [
       deferred<{ readonly summary: string }>(),
       deferred<{ readonly summary: string }>(),
     ];
+    const pending = [...completions];
     const lifecycle = createAgentLifecycleStub({
       createAgentIds: ['agent-first', 'agent-second'],
       runCompletion: (_agentId, _request, options) => {
-        const next = completions.shift();
+        const next = pending.shift();
         if (next === undefined) throw new Error('unexpected run');
         options.signal.addEventListener(
           'abort',
@@ -3148,7 +3147,6 @@ describe('Agent tool execution contract', () => {
       lifecycle,
       configServices(() => ({
         providers: {},
-        task: { maxRunningTasks: 1 },
       })),
     );
 
@@ -3164,23 +3162,22 @@ describe('Agent tool execution contract', () => {
     });
 
     expect(first.output).toContain('status: running');
-    expect(second).toMatchObject({
-      isError: true,
-      output: 'Too many background tasks are already running.',
-    });
+    expect(second.isError).not.toBe(true);
+    expect(second.output).toContain('status: running');
     expect(lifecycle.create).toHaveBeenCalledTimes(2);
-    completions[0]?.resolve({ summary: 'finished later' });
+    for (const completion of completions) completion.resolve({ summary: 'finished later' });
   });
 
-  it('rejects one of two concurrent background subagents when the task limit is reached', async () => {
+  it('allows two concurrent background subagents after the task limit is removed', async () => {
     const completions = [
       deferred<{ readonly summary: string }>(),
       deferred<{ readonly summary: string }>(),
     ];
+    const pending = [...completions];
     const lifecycle = createAgentLifecycleStub({
       createAgentIds: ['agent-first', 'agent-second'],
       runCompletion: (_agentId, _request, options) => {
-        const next = completions.shift();
+        const next = pending.shift();
         if (next === undefined) throw new Error('unexpected run');
         options.signal.addEventListener('abort', () => next.reject(options.signal.reason), {
           once: true,
@@ -3192,7 +3189,6 @@ describe('Agent tool execution contract', () => {
       lifecycle,
       configServices(() => ({
         providers: {},
-        task: { maxRunningTasks: 1 },
       })),
     );
 
@@ -3210,28 +3206,25 @@ describe('Agent tool execution contract', () => {
     const results = await Promise.all([first, second]);
 
     expect(lifecycle.create).toHaveBeenCalledTimes(2);
-    expect(results).toContainEqual(
-      expect.objectContaining({ output: expect.stringContaining('status: running') }),
-    );
-    expect(results).toContainEqual(
-      expect.objectContaining({
-        isError: true,
-        output: 'Too many background tasks are already running.',
-      }),
-    );
-    completions[0]?.resolve({ summary: 'finished later' });
+    expect(results).toHaveLength(2);
+    for (const result of results) {
+      expect(result.isError).not.toBe(true);
+      expect(result.output).toContain('status: running');
+    }
+    for (const completion of completions) completion.resolve({ summary: 'finished later' });
   });
 
-  it('logs background registration failures', async () => {
+  it('does not log background registration failures after the task limit is removed', async () => {
     const { entries, logger } = captureLogs();
     const completions = [
       deferred<{ readonly summary: string }>(),
       deferred<{ readonly summary: string }>(),
     ];
+    const pending = [...completions];
     const lifecycle = createAgentLifecycleStub({
       createAgentIds: ['agent-first', 'agent-second'],
       runCompletion: (_agentId, _request, options) => {
-        const next = completions.shift();
+        const next = pending.shift();
         if (next === undefined) throw new Error('unexpected run');
         options.signal.addEventListener('abort', () => next.reject(options.signal.reason), {
           once: true,
@@ -3243,33 +3236,30 @@ describe('Agent tool execution contract', () => {
       lifecycle,
       configServices(() => ({
         providers: {},
-        task: { maxRunningTasks: 1 },
       })),
       sessionService(ILogService, logger),
     );
 
-    await executeAgentTool(context, {
-      prompt: 'Investigate first',
-      description: 'Find first',
-      run_in_background: true,
-    });
-    await executeAgentTool(context, {
-      prompt: 'Investigate second',
-      description: 'Find second',
-      run_in_background: true,
-    });
-
-    expect(entries).toContainEqual({
-      level: 'warn',
-      message: 'background agent task registration failed',
-      payload: expect.objectContaining({
-        toolCallId: 'call_agent',
-        agentId: 'agent-second',
-        subagentType: 'coder',
-        error: expect.any(Error),
+    const results = await Promise.all([
+      executeAgentTool(context, {
+        prompt: 'Investigate first',
+        description: 'Find first',
+        run_in_background: true,
       }),
-    });
-    completions[0]?.resolve({ summary: 'finished later' });
+      executeAgentTool(context, {
+        prompt: 'Investigate second',
+        description: 'Find second',
+        run_in_background: true,
+      }),
+    ]);
+
+    expect(lifecycle.create).toHaveBeenCalledTimes(2);
+    for (const result of results) {
+      expect(result.isError).not.toBe(true);
+      expect(result.output).toContain('status: running');
+    }
+    expect(entries.some((entry) => entry.message === 'background agent task registration failed')).toBe(false);
+    for (const completion of completions) completion.resolve({ summary: 'finished later' });
   });
 
   it('returns tool errors and logs when spawning fails', async () => {
@@ -3291,7 +3281,7 @@ describe('Agent tool execution contract', () => {
       level: 'warn',
       message: 'subagent launch failed',
       payload: expect.objectContaining({
-        toolCallId: 'call_agent',
+        toolCallId: 'call_agent_timeout',
         runInBackground: false,
         operation: 'spawn',
         subagentType: 'coder',
@@ -3346,7 +3336,7 @@ describe('Agent tool execution contract', () => {
       runCompletion: () => completion.promise,
     });
     const context = createAgentToolContext(lifecycle);
-    context.get(IAgentProfileService).update({ activeToolNames: ['Agent'] });
+    context.get(IAgentLoopService).update({ activeToolNames: ['Agent'] });
     const tasks = context.get(IAgentTaskService);
 
     const running = executeAgentTool(context, {
@@ -3605,6 +3595,7 @@ describe('Agent tool execution contract', () => {
     });
     const context = createAgentToolContext(lifecycle);
 
+    const timeoutSpy = vi.spyOn(globalThis, 'setTimeout');
     const resultPromise = executeAgentTool(context, {
       prompt: 'Investigate',
       description: 'Find cause',
@@ -3612,8 +3603,11 @@ describe('Agent tool execution contract', () => {
     await vi.waitFor(() => {
       expect(context.get(IAgentTaskService).list(false)).toHaveLength(1);
     });
-    await vi.advanceTimersByTimeAsync(DEFAULT_SUBAGENT_TIMEOUT_MS);
+    const deadline = timeoutSpy.mock.calls.find(([, delay]) => delay === DEFAULT_SUBAGENT_TIMEOUT_MS)?.[0];
+    expect(deadline).toBeDefined();
+    (deadline as () => void)();
     const result = await resultPromise;
+    timeoutSpy.mockRestore();
 
     expect(result).toMatchObject({ isError: true });
     expect(result.output).toContain('agent_id: agent-child');
@@ -3657,6 +3651,288 @@ describe('Agent tool execution contract', () => {
 
     expect(result).toMatchObject({ isError: true });
     expect(result.output).toContain('subagent error: Agent timed out after 1 second.');
+  });
+  it('assigns an agent-prefixed id from the real AgentTool handler', async () => {
+    const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
+    const context = createAgentToolContext(lifecycle);
+    const handler = agentHandler(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+      run_in_background: true,
+    });
+    await handler;
+
+    expect(handler.taskId).toMatch(/^agent-[0-9a-z]{8}$/);
+    await handler.wait();
+  });
+
+  it('marks an external subagent deadline as timed_out', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: (_agentId, _request, options) =>
+        new Promise((_resolve, reject) => {
+          options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true });
+        }),
+    });
+    const context = createAgentToolContext(lifecycle, {
+      initialConfig: { subagent: { timeoutMs: 2_000 } },
+    });
+    const handler = agentHandler(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+      run_in_background: true,
+    });
+    await handler;
+    const terminal = handler.wait();
+    await vi.advanceTimersByTimeAsync(2_000);
+    await terminal;
+
+    expect(context.get(IAgentTaskService).getTask(handler.taskId)).toMatchObject({
+      status: 'timed_out',
+      timeoutMs: 2_000,
+    });
+  });
+
+  it('hands over partial output when a subagent ignores cancellation past the grace period', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    let finishLate!: (value: { summary: string }) => void;
+    const completion = new Promise<{ summary: string }>((resolve) => {
+      finishLate = resolve;
+    });
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: () => completion,
+      partialOutput: () => 'Found the loop at src/parser.ts:42.',
+    });
+    const context = createAgentToolContext(lifecycle, {
+      initialConfig: { subagent: { timeoutMs: 2_000 } },
+    });
+    const handler = agentHandler(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+      run_in_background: true,
+    });
+    await handler;
+    const terminal = handler.wait();
+    await vi.advanceTimersByTimeAsync(7_100);
+    await terminal;
+    finishLate({ summary: 'Late summary.' });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(context.get(IAgentTaskService).getTask(handler.taskId)?.status).toBe('timed_out');
+    expect(handler.output().preview).toBe(`${PARTIAL_OUTPUT_NOTICE}\n\nFound the loop at src/parser.ts:42.`);
+  });
+
+  it('lets a subagent finish with the default timeout metadata', async () => {
+    const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
+    const context = createAgentToolContext(lifecycle);
+    const handler = agentHandler(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+      run_in_background: true,
+    });
+    await handler.wait();
+
+    expect(context.get(IAgentTaskService).getTask(handler.taskId)).toMatchObject({
+      status: 'completed',
+      timeoutMs: DEFAULT_SUBAGENT_TIMEOUT_MS,
+      stopReason: undefined,
+    });
+  });
+
+  it('treats an internal TimeoutError as a generic failure with its reason', async () => {
+    const internalErr = new Error('aiohttp sock_read timeout');
+    internalErr.name = 'TimeoutError';
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: () => Promise.reject(internalErr),
+    });
+    const context = createAgentToolContext(lifecycle, {
+      initialConfig: { subagent: { timeoutMs: 900_000 } },
+    });
+    const handler = agentHandler(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+      run_in_background: true,
+    });
+    await handler.wait();
+
+    expect(context.get(IAgentTaskService).getTask(handler.taskId)).toMatchObject({
+      status: 'failed',
+      stopReason: 'aiohttp sock_read timeout',
+    });
+  });
+
+  it('persists an explicit subagent timeout on the task info', async () => {
+    const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
+    const context = createAgentToolContext(lifecycle, {
+      initialConfig: { subagent: { timeoutMs: 1_800_000 } },
+    });
+    const handler = agentHandler(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+      run_in_background: true,
+    });
+    await handler;
+
+    expect(context.get(IAgentTaskService).getTask(handler.taskId)?.timeoutMs).toBe(1_800_000);
+    await expect(handler.wait()).resolves.toBeDefined();
+    expect(context.get(IAgentTaskService).getTask(handler.taskId)?.status).toBe('completed');
+  });
+
+  it('uses the configured default subagent timeout when no override exists', async () => {
+    const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
+    const context = createAgentToolContext(lifecycle);
+    const handler = agentHandler(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+      run_in_background: true,
+    });
+    await handler;
+
+    expect(context.get(IAgentTaskService).getTask(handler.taskId)).toMatchObject({
+      detached: true,
+      timeoutMs: DEFAULT_SUBAGENT_TIMEOUT_MS,
+    });
+    await expect(handler.wait()).resolves.toBeDefined();
+    expect(context.get(IAgentTaskService).getTask(handler.taskId)?.status).toBe('completed');
+  });
+
+  it('treats timeoutMs=0 as no deadline for background subagents and preserves the metadata', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const completion = deferred<{ readonly summary: string }>();
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: (_agentId, _request, options) =>
+        new Promise((resolve, reject) => {
+          options.signal.addEventListener(
+            'abort',
+            () => {
+              reject(options.signal.reason);
+            },
+            { once: true },
+          );
+          void completion.promise.then(resolve, reject);
+        }),
+    });
+    const context = createAgentToolContext(lifecycle, {
+      initialConfig: { subagent: { timeoutMs: 0 } },
+    });
+    const handler = agentHandler(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+      run_in_background: true,
+    });
+    await handler;
+    await vi.advanceTimersByTimeAsync(DEFAULT_SUBAGENT_TIMEOUT_MS + 1_000);
+
+    expect(context.get(IAgentTaskService).getTask(handler.taskId)).toMatchObject({
+      status: 'running',
+      detached: true,
+      timeoutMs: 0,
+    });
+
+    completion.resolve({ summary: 'background child result' });
+    await handler.wait();
+
+    expect(context.get(IAgentTaskService).getTask(handler.taskId)).toMatchObject({
+      status: 'completed',
+      timeoutMs: 0,
+      stopReason: undefined,
+    });
+    expect(handler.output().preview).toBe('background child result');
+  });
+
+  it('runs foreground subagents without a deadline under print mode defaults', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const completion = deferred<{ readonly summary: string }>();
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: (_agentId, _request, options) =>
+        new Promise((resolve, reject) => {
+          options.signal.addEventListener(
+            'abort',
+            () => {
+              reject(options.signal.reason);
+            },
+            { once: true },
+          );
+          void completion.promise.then(resolve, reject);
+        }),
+    });
+    const context = createAgentToolContext(lifecycle);
+    await applyPrintModeConfigDefaults(context.get(IConfigService));
+
+    const handler = agentHandler(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+    });
+    await vi.waitFor(() => {
+      expect(context.get(IAgentTaskService).list(false)).toHaveLength(1);
+    });
+    await vi.advanceTimersByTimeAsync(DEFAULT_SUBAGENT_TIMEOUT_MS + 1_000);
+    expect(context.get(IAgentTaskService).list(false)[0]).toMatchObject({
+      status: 'running',
+      timeoutMs: 0,
+    });
+
+    completion.resolve({ summary: 'foreground child result' });
+    const response = await handler;
+    const output = response.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+
+    expect('outcome' in response && response.outcome.type).toBe('success');
+    expect(output).toContain('foreground child result');
+    expect(output).not.toContain('Agent timed out after 0 hours.');
+    expect(handler.snapshot().fields['task']).toMatchObject({
+      timeoutMs: 0,
+      timedOut: undefined,
+      stopReason: undefined,
+    });
+  });
+
+  it('runs background subagents without a deadline under print mode defaults', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const completion = deferred<{ readonly summary: string }>();
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: (_agentId, _request, options) =>
+        new Promise((resolve, reject) => {
+          options.signal.addEventListener(
+            'abort',
+            () => {
+              reject(options.signal.reason);
+            },
+            { once: true },
+          );
+          void completion.promise.then(resolve, reject);
+        }),
+    });
+    const context = createAgentToolContext(lifecycle);
+    await applyPrintModeConfigDefaults(context.get(IConfigService));
+
+    const handler = agentHandler(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+      run_in_background: true,
+    });
+    await handler;
+    await vi.advanceTimersByTimeAsync(DEFAULT_SUBAGENT_TIMEOUT_MS + 1_000);
+
+    expect(context.get(IAgentTaskService).getTask(handler.taskId)).toMatchObject({
+      status: 'running',
+      detached: true,
+      timeoutMs: 0,
+    });
+
+    completion.resolve({ summary: 'print background result' });
+    await handler.wait();
+
+    expect(context.get(IAgentTaskService).getTask(handler.taskId)).toMatchObject({
+      status: 'completed',
+      timeoutMs: 0,
+      stopReason: undefined,
+    });
   });
 });
 
@@ -4432,7 +4708,7 @@ describe('AgentSwarm tool execution contract', () => {
     expect(runSwarm).not.toHaveBeenCalled();
     expect(swarmModeUpdates).toEqual([]);
     expect(ctx.get(IAgentSwarmService).isActive).toBe(false);
-    expect(JSON.stringify(ctx.get(IAgentContextMemoryService).get())).toContain(
+    expect(JSON.stringify(ctx.get(IAgentLoopService).history())).toContain(
       'Swarm mode is off, so AgentSwarm did not run',
     );
   });
@@ -4468,9 +4744,9 @@ describe('AgentSwarm tool execution contract', () => {
 });
 
 describe('Agent tools', () => {
-  let context: IAgentContextMemoryService;
+  let context: IAgentLoopService;
   let ctx: TestAgentContext;
-  let profile: IAgentProfileService;
+  let profile: IAgentLoopService;
   let tools: IAgentToolRegistryService;
   let tempHomeDirs: string[] = [];
 
@@ -4519,8 +4795,8 @@ describe('Agent tools', () => {
         execEnvServices({ processRunner: createFakeProcessRunner({ spawn: exec as unknown as IHostProcessService['spawn'] }) }),
         externalHookServices(hookEngine),
       );
-      context = ctx.get(IAgentContextMemoryService);
-      profile = ctx.get(IAgentProfileService);
+      context = ctx.get(IAgentLoopService);
+      profile = ctx.get(IAgentLoopService);
       profile.update({ activeToolNames: ['Bash'] });
     });
 
@@ -4536,7 +4812,7 @@ describe('Agent tools', () => {
         ['PreToolUse', 'Bash', 1],
         ['PostToolUseFailure', 'Bash', 1],
       ]);
-      expect(JSON.stringify(context.get())).toContain('blocked by PreToolUse');
+      expect(JSON.stringify(context.history())).toContain('blocked by PreToolUse');
     });
   });
 
@@ -4579,7 +4855,7 @@ describe('Agent tools', () => {
         execEnvServices({ processRunner: createCommandRunner('hook-output') }),
         externalHookServices(hookEngine),
       );
-      profile = ctx.get(IAgentProfileService);
+      profile = ctx.get(IAgentLoopService);
       profile.update({ activeToolNames: ['Bash'] });
       await ctx.rpc.setPermission({ mode: 'auto' });
     });
@@ -4629,7 +4905,7 @@ describe('Agent tools', () => {
         execEnvServices({ processRunner: createFailingCommandRunner('hook-output') }),
         externalHookServices(hookEngine),
       );
-      profile = ctx.get(IAgentProfileService);
+      profile = ctx.get(IAgentLoopService);
       profile.update({ activeToolNames: ['Bash'] });
       await ctx.rpc.setPermission({ mode: 'auto' });
     });
@@ -4650,7 +4926,7 @@ describe('Agent tools', () => {
   describe('Bash tool call start event', () => {
     beforeEach(async () => {
       ctx = createTestAgent(execEnvServices({ processRunner: createCommandRunner('ok') }));
-      profile = ctx.get(IAgentProfileService);
+      profile = ctx.get(IAgentLoopService);
       profile.update({ activeToolNames: ['Bash'] });
       await ctx.rpc.setPermission({ mode: 'yolo' });
     });
@@ -4796,7 +5072,7 @@ describe('Agent tools', () => {
   describe('active builtin tool set', () => {
     beforeEach(() => {
       ctx = createTestAgent();
-      profile = ctx.get(IAgentProfileService);
+      profile = ctx.get(IAgentLoopService);
       profile.update({ activeToolNames: ['Write', 'Bash'] });
     });
 
@@ -4817,7 +5093,7 @@ describe('Agent tools', () => {
   describe('Bash background mode', () => {
     beforeEach(() => {
       ctx = createTestAgent();
-      profile = ctx.get(IAgentProfileService);
+      profile = ctx.get(IAgentLoopService);
       tools = ctx.get(IAgentToolRegistryService);
       profile.update({ activeToolNames: ['Bash'] });
     });
@@ -4851,7 +5127,7 @@ describe('Agent tools', () => {
   describe('AgentSwarm visibility', () => {
     beforeEach(() => {
       ctx = createTestAgent();
-      profile = ctx.get(IAgentProfileService);
+      profile = ctx.get(IAgentLoopService);
       profile.update({ activeToolNames: ['AgentSwarm'] });
     });
 
@@ -4895,39 +5171,39 @@ describe('Agent tools', () => {
           output: 'moon-result',
         }),
       ).toMatchInlineSnapshot(`
+        [emit] agent.status.updated        { "time": "<time>", "agentId": "main", "model": "mock-model", "thinkingEffort": "off", "maxContextTokens": 1000000 }
         [wire] permission.set_mode         { "agentId": "main", "mode": "auto", "time": "<time>" }
         [emit] agent.status.updated        { "time": "<time>", "agentId": "main", "permission": "auto" }
         [wire] tools.register_user_tool    { "name": "Lookup", "description": "Look up a short test value.", "parameters": { "type": "object", "properties": { "query": { "type": "string" } }, "required": [ "query" ], "additionalProperties": false }, "agentId": "main", "time": "<time>" }
         [emit] prompt.submitted            { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Look up moon" } ], "createdAt": "<time>" }
-        [wire] turn.prompt                 { "agentId": "main", "input": [ { "type": "text", "text": "Look up moon" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0, "time": "<time>" }
-        [emit] turn.prompt                 { "time": "<time>", "agentId": "main", "input": [ { "type": "text", "text": "Look up moon" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0 }
-        [emit] turn.started                { "time": "<time>", "agentId": "main", "turnId": 0, "promptId": "<msg-1>", "origin": { "kind": "user" }, "prompt": "Look up moon" }
+        [wire] turn.prompt                 { "agentId": "main", "input": [ { "type": "text", "text": "Look up moon" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0, "trigger": "normal", "time": "<time>" }
         [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ], "id": "<msg-1>", "origin": { "kind": "user" } } ] }
-        [emit] prompt.started              { "time": "<time>", "agentId": "main", "promptId": "<msg-1>" }
-        [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 1, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "<auto-mode-enter-reminder>" } ], "origin": { "kind": "injection", "variant": "permission_mode" } } ] }
         [wire] context.append_message      { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ], "toolCalls": [], "id": "<msg-1>", "origin": { "kind": "user" } }, "time": "<time>" }
-        [wire] agent.message.appended      { "message": { "message": { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ] }, "meta": { "source": "input", "promptId": "<msg-1>", "origin": { "kind": "user" }, "tracked": true, "createdAt": "<time>", "userMessageId": "<msg-1>" } }, "time": "<time>", "kind": "event" }
-        [wire] context.append_message      { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "<auto-mode-enter-reminder>" } ], "toolCalls": [], "origin": { "kind": "injection", "variant": "permission_mode" } }, "time": "<time>" }
-        [wire] agent.turn.started          { "turnId": 0, "queueItemId": "<msg-1>", "time": "<time>", "kind": "event" }
-        [wire] plugin.session_start        { "agentId": "main", "content": null, "time": "<time>" }
+        [emit] turn.prompt                 { "time": "<time>", "agentId": "main", "input": [ { "type": "text", "text": "Look up moon" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0, "trigger": "normal" }
+        [emit] turn.started                { "time": "<time>", "agentId": "main", "turnId": 0, "promptId": "<msg-1>", "origin": { "kind": "user" }, "prompt": "Look up moon" }
+        [emit] prompt.started              { "time": "<time>", "agentId": "main", "promptId": "<msg-1>" }
         [emit] turn.step.started           { "time": "<time>", "agentId": "main", "turnId": 0, "step": 1, "stepId": "<uuid-1>" }
-        [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "step.begin", "uuid": "<uuid-1>", "turnId": "0", "step": 1 }, "time": "<time>" }
-        [wire] tool_select.initialized     { "agentId": "main", "tools": [ { "name": "Agent", "description": "Launch a subagent to handle a task in its own context.\\n\\nDo not launch a subagent unless the user explicitly asks for one, including delegation, parallel agents, or a named agent type. Explicit instructions in AGENTS.md or a skill, and user-enabled multi-agent modes, also authorize launching. Large or multi-part tasks and requests for depth, thoroughness, research, or investigation do not; do that work yourself. Agent type descriptions below guide selection only after authorization. Resuming already-authorized work needs no new request. Each subagent starts cold and re-derives context, costing time and tokens.\\n\\nWriting the prompt:\\n- Brief it like a colleague who just walked into the room: state the goal, list what you already know, hand over the specifics.\\n- Lookups: put exact paths or commands you already know in the prompt.\\n- Investigations (figure out X, find why Y): give the question, not prescribed steps — fixed steps become dead weight when the premise is wrong.\\n- Do not delegate understanding. If the task hinges on a file path or line number, find it yourself first and write it into the prompt.\\n\\nUsage notes:\\n- When the task continues earlier work a subagent already did, prefer resuming that agent (pass its \`resume\` id) over spawning a fresh instance — the resumed agent keeps its prior context.\\n- A subagent's result is only visible to you, not to the user. When the user needs to see what a subagent produced, summarize the relevant parts yourself in your own reply.\\n\\nOnce a subagent is running, leave that scope to it: do not redo its searches or reads in parallel, and do not abandon it midway and finish the job manually. Both undo the context savings the delegation was meant to buy.\\n\\n\\nWith \`run_in_background=true\`, the subagent runs detached and its result arrives automatically in a later turn; continue with other work or respond to the user, and never fabricate or predict the result. Use it only when you have other work to do meanwhile. When your next step needs the result, run the subagent in the foreground instead of launching it in the background and waiting on it.\\n\\n\\nAvailable agent types (pass via subagent_type):\\n- plan: Read-only implementation planning and architecture design. Use this agent when the parent agent needs a step-by-step implementation plan, key file identification, and architectural trade-off analysis before code changes are made.\\n  Tools: Read, Glob, Grep, FetchURL\\n- coder: General software engineering agent — the only subagent type with file-editing tools; use it for any delegated task that must modify code. Use this agent for non-trivial software engineering work that may require reading files, editing code, running commands, and returning a compact but technically complete summary to the parent agent.\\n  Tools: Bash, CronCreate, CronDelete, CronList, Edit, Glob, Grep, Read, Skill, TaskList, TaskOutput, TaskStop, TodoList, WaitFor, FetchURL, Write, mcp__*\\n- explore: Fast codebase exploration with prompt-enforced read-only behavior. Fast agent specialized for exploring codebases: it finds files by patterns (e.g. \\"src/**/*.yaml\\"), searches code for keywords (e.g. \\"database connection\\"), and answers questions about the codebase (e.g. \\"how does the auth module work?\\"). When calling this agent, specify the desired thoroughness level: \\"quick\\" for basic searches, \\"medium\\" for moderate exploration, or \\"thorough\\" for comprehensive analysis across multiple locations and naming conventions.\\n  Tools: Bash, Read, Glob, Grep, FetchURL", "parameters": { "$schema": "http://json-schema.org/draft-07/schema#", "type": "object", "properties": { "prompt": { "type": "string", "description": "Full task prompt for the subagent" }, "description": { "type": "string", "description": "Short task description (3-5 words) for UI display" }, "subagent_type": { "description": "One of the available agent types (see \\"Available agent types\\" in this tool description). Defaults to \\"coder\\" when omitted.", "type": "string" }, "resume": { "description": "Optional agent ID to resume instead of creating a new instance. When set, do not also pass subagent_type — the resumed agent keeps its own type, and supplying both is rejected.", "type": "string" }, "run_in_background": { "description": "If true, return immediately without waiting for completion. Prefer false unless the task can run independently and there is a clear benefit to not waiting.", "type": "boolean" } }, "required": [ "prompt", "description" ], "additionalProperties": false }, "source": "builtin", "origin": "initial" }, { "name": "AgentSwarm", "description": "Launch multiple subagents from one prompt template, existing agent resumes, or both.\\n\\nAgentSwarm runs only while swarm mode is on, and only the user can turn swarm mode on. When swarm mode is off, do not call AgentSwarm: the call is rejected and no subagents start.\\n\\nUse AgentSwarm when many subagents should run the same kind of task over different inputs. The placeholder is exactly \`{{item}}\`. For example, with \`prompt_template\` set to \`Review {{item}} for likely regressions.\` and \`items\` set to \`[\\"src/a.ts\\", \\"src/b.ts\\"]\`, AgentSwarm launches two new subagents with those two concrete prompts. For a few differently-shaped tasks, make separate \`Agent\` calls in one message instead.\\n\\nUse \`resume_agent_ids\` to continue subagents that already exist from earlier work, such as ones that failed or timed out: map each agent id to the prompt for that resumed subagent (usually \`continue\` if no extra information is needed). You may combine \`resume_agent_ids\` with \`items\` in the same call to resume existing subagents and launch new ones. Do not duplicate resumed work in \`items\`.\\n\\nEach of these is enforced — a violation is rejected before any subagent starts: provide at least 2 \`items\` unless you pass \`resume_agent_ids\`; whenever \`items\` are present, \`prompt_template\` is required and must contain \`{{item}}\`; and the filled-in prompts must be distinct (two items that expand to the same prompt are rejected).\\n\\nUse enough subagents to keep the work focused and parallel. AgentSwarm supports up to 128 subagents, and launches are queued automatically, so it is safe to split large tasks into many clear, independent items.\\n\\nIf \`AgentSwarm\` is called, that call must be the only tool call in the response.\\n", "parameters": { "$schema": "http://json-schema.org/draft-07/schema#", "type": "object", "properties": { "description": { "type": "string", "minLength": 1, "description": "Short description for the whole swarm." }, "subagent_type": { "description": "Subagent type used for every new subagent spawned from items; defaults to coder when omitted. Resumed subagents always keep their original type, so passing subagent_type together with resume_agent_ids is allowed — it only affects the item-based spawns.", "type": "string", "minLength": 1 }, "prompt_template": { "description": "Prompt template for each subagent. The {{item}} placeholder is replaced with each item value.", "type": "string", "minLength": 1 }, "items": { "description": "Values used to fill {{item}}. Each item launches one new subagent.", "maxItems": 128, "type": "array", "items": { "type": "string", "minLength": 1 } }, "resume_agent_ids": { "description": "Map of existing subagent agent_id to the prompt used to resume that subagent. These resumed subagents are launched before new item-based subagents.", "type": "object", "propertyNames": { "type": "string", "minLength": 1 }, "additionalProperties": { "type": "string", "minLength": 1 } } }, "required": [ "description" ], "additionalProperties": false }, "source": "builtin", "origin": "initial" }, { "name": "AskUserQuestion", "description": "Use this tool when you need to ask the user questions with structured options during execution. This allows you to:\\n1. Collect user preferences or requirements before proceeding\\n2. Resolve ambiguous or underspecified instructions\\n3. Let the user decide between implementation approaches as you work\\n4. Present concrete options when multiple valid directions exist\\n\\n**When NOT to use:**\\n- When you can infer the answer from context — be decisive and proceed\\n- Trivial decisions that don't materially affect the outcome\\n\\nOverusing this tool interrupts the user's flow. Only use it when the user's input genuinely changes your next action.\\n\\n**Usage notes:**\\n- Question texts must be unique across the call, and option labels must be unique within each question\\n- Group related questions into one call to minimize interruptions\\n- List a recommended option first\\n- The result is JSON with an \`answers\` object keyed by question text; each value is the chosen option's label (comma-separated labels for multi_select, or the user's own words if they picked \\"Other\\"); if \`answers\` is empty and a \`note\` says the user dismissed it, they chose not to answer — do not treat this as selecting the recommended option; decide based on context and do not re-ask the same question\\n- Set background=true when you can keep working without the answer. This starts a background question task and returns a task_id immediately. The answer arrives automatically in a later turn — you do not need to poll, sleep, or check on it. Continue with other work; never fabricate or predict the answer.", "parameters": { "$schema": "http://json-schema.org/draft-07/schema#", "type": "object", "properties": { "questions": { "minItems": 1, "maxItems": 4, "type": "array", "items": { "type": "object", "properties": { "question": { "type": "string", "minLength": 1, "description": "A specific, actionable question. End with '?'." }, "header": { "default": "", "description": "Short category tag (max 12 chars, e.g. 'Auth', 'Style').", "type": "string" }, "options": { "minItems": 2, "maxItems": 4, "type": "array", "items": { "type": "object", "properties": { "label": { "type": "string", "minLength": 1, "description": "Concise display text (1-5 words). If recommended, append '(Recommended)'." }, "description": { "default": "", "description": "Brief explanation of trade-offs or implications.", "type": "string" } }, "required": [ "label" ], "additionalProperties": false }, "description": "2-4 meaningful, distinct options. Do NOT include an 'Other' option — the system adds one automatically." }, "multi_select": { "default": false, "description": "Whether the user can select multiple options.", "type": "boolean" } }, "required": [ "question", "options" ], "additionalProperties": false }, "description": "The questions to ask the user (1-4 questions)." }, "background": { "default": false, "description": "Set true to ask in the background and return immediately with a background task_id; you are notified automatically when the user answers — do not poll with TaskOutput while the question is pending.", "type": "boolean" } }, "required": [ "questions" ], "additionalProperties": false }, "source": "builtin", "origin": "initial" }, { "name": "Bash", "description": "Execute a \`bash\` command. Use this for shell semantics — pipes, env, processes, git, package managers, build/test runners, anything genuinely interactive or multi-step.\\n\\n**Translate these to a dedicated tool instead:**\\n- \`cat\` / \`head\` / \`tail\` (known path) → \`Read\`\\n- \`sed\` / \`awk\` (in-place edit) → \`Edit\`\\n- \`echo > file\` / \`cat <<EOF\` → \`Write\`\\n- \`find\` / recursive \`ls\` to locate files by name pattern → \`Glob\` (plain \`ls <known-directory>\` is fine for listing a directory)\\n- \`grep\` / \`rg\` (search file contents) → \`Grep\`\\n- \`echo\` / \`printf\` (talk to the user) → just output text directly\\n\\nEach call runs in a fresh shell: variables and \`cd\` do not persist, so pass \`cwd\` or use absolute paths. stdout and stderr are combined and may be truncated; a non-zero exit ends the output with \`Command failed with exit code: N\`. Do not run interactive commands or commands that never exit. Set \`timeout\` for possibly long-running commands. A foreground command that hits its timeout is moved to the background instead of being killed, and you are notified when it completes. The user can also move a running foreground command to the background at any time.\\n\\nFor long-running builds, tests, watchers, or servers that the conversation should not wait on, set \`run_in_background=true\` with a short \`description\`; the call returns a task ID. Set \`disable_timeout=true\` only when the task should run without a timeout. You are notified automatically when the task completes, so return control to the user instead of waiting on it. Use \`TaskOutput\` only for a non-blocking snapshot, and \`TaskStop\` only to cancel.\\n\\n- Use \`&&\` for commands that depend on each other. Issue independent read-only commands (separate \`git show\`, \`ls\`, or status checks) as parallel Bash calls in one response instead of chaining them or stitching their output with \`echo\` separators.\\n- Avoid \`..\` paths outside the working directory, and do not modify files outside it unless explicitly instructed.\\n- Do not use superuser privileges unless explicitly instructed. Run git-mutating commands such as \`git commit\`, \`git push\`, \`git reset\`, and \`git rebase\` only when the user asks for them.\\n- Command availability depends on the host; run \`which <command>\` before relying on an uncommon one. For GitHub work (PRs, issues, CI runs, API queries), prefer the \`gh\` CLI when installed.\\n", "parameters": { "$schema": "http://json-schema.org/draft-07/schema#", "type": "object", "properties": { "command": { "type": "string", "minLength": 1, "description": "The command to execute." }, "cwd": { "description": "The working directory in which to run the command. When omitted, the command runs in the session's working directory.", "type": "string" }, "timeout": { "default": 60, "description": "Optional timeout in seconds for the command to execute. Foreground default 60s, max 300s. Background default 600s, max 86400s. Ignored for background commands when disable_timeout=true.", "type": "integer", "exclusiveMinimum": 0, "maximum": 9007199254740991 }, "description": { "description": "A short description for the background task. Required when run_in_background is true.", "type": "string" }, "run_in_background": { "description": "Whether to run the command as a background task.", "type": "boolean" }, "disable_timeout": { "description": "If true, do not apply a timeout to the command. Only applies when run_in_background is true.", "type": "boolean" } }, "required": [ "command" ], "additionalProperties": false }, "source": "builtin", "origin": "initial" }, { "name": "CreateGoal", "description": "Create a durable goal that the runtime pursues across multiple turns. Call it only when the user explicitly asks you to start a goal or work autonomously toward an outcome, or a host goal-intake prompt asks you to create one. Do not create a goal for greetings, ordinary questions, or requests without a checkable end state.\\n\\nWhen the request is vague, ask the user for the missing completion criterion first; if they clearly insist after you warn them that the wording is vague or risky, create the goal anyway. Include \`completionCriterion\` when the user provides one, or when it can be stated without inventing new requirements. Keep \`objective\` concise and reference long task descriptions by file path. Creating fails if a goal already exists; pass \`replace: true\` only when the user explicitly wants to abandon the current goal and start a new one.\\n", "parameters": { "$schema": "http://json-schema.org/draft-07/schema#", "type": "object", "properties": { "objective": { "type": "string", "minLength": 1, "description": "The objective to pursue. Must have a verifiable end state." }, "completionCriterion": { "description": "How to verify the goal is complete. Include when the user provides one.", "type": "string" }, "replace": { "description": "Replace an existing active, paused, or blocked goal instead of failing.", "type": "boolean" } }, "required": [ "objective" ], "additionalProperties": false }, "source": "builtin", "origin": "initial" }, { "name": "CronCreate", "description": "Schedule a prompt to be enqueued later in this session, recurring or once.\\n\\nWhen the requested time is approximate, avoid minute 0 and 30 so fires from many users do not land at once: \\"around 9\\" → \`57 8 * * *\`, \\"hourly\\" → \`7 * * * *\`.\\n\\nTasks fire only while this session is alive and idle, and never carry over to a new session. Missed fires collapse into one delivery with \`coalescedCount\` > 1: act on the latest state once. The final fire carries \`stale=\\"true\\"\`, so call CronCreate again with the same \`cron\` and \`prompt\` if the schedule is still wanted.\\n\\nUsers cannot manage cron tasks themselves: after creating one, tell the user its \`id\` and that they can ask you to cancel or change it.\\n", "parameters": { "$schema": "http://json-schema.org/draft-07/schema#", "type": "object", "properties": { "cron": { "type": "string", "description": "5-field cron expression in local time: \\"M H DoM Mon DoW\\" (e.g. \\"*/5 * * * *\\" = every 5 minutes; \\"30 14 28 2 *\\" = Feb 28 at 2:30pm local — a pinned date like this repeats yearly unless you also pass recurring: false)." }, "prompt": { "type": "string", "minLength": 1, "maxLength": 8192, "description": "The prompt to enqueue at each fire time. Limited to 8 KiB (UTF-8)." }, "recurring": { "default": true, "description": "true (default) = fire on every cron match until deleted or auto-expired after 7 days. false = fire once at the next match, then auto-delete. Use false for \\"remind me at X\\" one-shot requests with pinned minute/hour/dom/month.", "type": "boolean" } }, "required": [ "cron", "prompt" ], "additionalProperties": false }, "source": "builtin", "origin": "initial" }, { "name": "CronDelete", "description": "Cancel a live cron task by its \`id\`. Fired one-shots and expired tasks are already gone; if an id is not found, call CronList instead of retrying it.\\n", "parameters": { "$schema": "http://json-schema.org/draft-07/schema#", "type": "object", "properties": { "id": { "type": "string", "description": "The cron job id (ULID) returned by CronCreate / CronList." } }, "required": [ "id" ], "additionalProperties": false }, "source": "builtin", "origin": "initial" }, { "name": "CronList", "description": "List this session's cron tasks. Read-only. \`stale: true\` marks a recurring task whose next fire is its last. After a context compaction, call this instead of guessing ids.\\n", "parameters": { "$schema": "http://json-schema.org/draft-07/schema#", "type": "object", "properties": {}, "additionalProperties": false }, "source": "builtin", "origin": "initial" }, { "name": "Edit", "description": "Perform exact replacements in existing files.\\n\\n- Edit is mandatory for every incremental change, especially small edits. DO NOT use Write or Bash \`sed\`.\\n- Drop the line-number prefix and tab; match only file content.\\n- \`old_string\` must be unique unless \`replace_all\` is set.\\n- If \`old_string\` is ambiguous, add surrounding context.\\n- Multiple Edit calls may run in one response only when they do not target the same file.\\n- DO NOT issue consecutive Edit calls on the same file. A previous Edit can invalidate a later Edit's \`old_string\`, causing \`old_string not found\`. Read the file again before the next Edit.\\n", "parameters": { "$schema": "http://json-schema.org/draft-07/schema#", "type": "object", "properties": { "path": { "type": "string", "description": "Path to the text file to edit. Relative paths resolve against the working directory; a path outside the working directory must be absolute." }, "old_string": { "type": "string", "minLength": 1, "description": "Exact content to replace from the Read output view, without the line-number prefix. Use LF for pure CRLF files; use actual \\\\r escapes where Read shows \\\\r." }, "new_string": { "type": "string", "description": "Replacement text in the same Read output view. LF is written back as CRLF only for pure CRLF files." }, "replace_all": { "description": "Set true only when every occurrence of old_string should be replaced.", "type": "boolean" } }, "required": [ "path", "old_string", "new_string" ], "additionalProperties": false }, "source": "builtin", "origin": "initial" }, { "name": "ExitPlanMode", "description": "Request the user's approval of the plan you wrote to the plan file in plan mode. The tool reads the plan from that file and takes no plan content. The user reviews it before plan mode ends, in every permission mode, and can approve it, ask for revisions, or reject it; if they do not approve, revise the plan and call ExitPlanMode again.\\n\\nWrite the plan for a reviewer: they should be able to judge it quickly, and an implementer should be able to carry it out without making further decisions. Keep it concise, usually in these sections:\\n- Context — why the change is needed and the outcome it should produce.\\n- Approach — the approach you recommend. When the user must choose between genuinely different approaches, describe each briefly and pass them as \`options\`.\\n- Key changes — grouped by behavior or subsystem, not file by file. Name a file only when that makes a change unambiguous; for a change repeated across many files, describe the pattern once and list a few representative paths. Point to existing functions or utilities to reuse, with their paths.\\n- Verification — how to check the result end to end: the tests or commands to run and the scenario to exercise.\\n- Assumptions — each decision you made without the user's input, and the default you chose.\\nAvoid vague filler like \\"improve performance\\" or \\"add tests\\"; say what changes and how you will know it works.\\n", "parameters": { "$schema": "http://json-schema.org/draft-07/schema#", "type": "object", "properties": { "options": { "description": "When the plan contains multiple alternative approaches, list them here so the user can choose which one to execute. Provide up to 3 options; 2-3 distinct approaches work best when the plan offers a real choice. Passing a single option is allowed and is equivalent to a plain plan approval. Each option represents a distinct approach from the plan. Do not use \\"Reject\\", \\"Revise\\", \\"Approve\\", or \\"Reject and Exit\\" as labels.", "minItems": 1, "maxItems": 3, "type": "array", "items": { "type": "object", "properties": { "label": { "type": "string", "minLength": 1, "maxLength": 80, "description": "Short name for this option (1-8 words). Append \\"(Recommended)\\" if you recommend this option." }, "description": { "default": "", "description": "Brief summary of this approach and its trade-offs.", "type": "string" } }, "required": [ "label" ], "additionalProperties": false } } }, "additionalProperties": false }, "source": "builtin", "origin": "initial" }, { "name": "FetchURL", "description": "Fetch content from a URL. The content is returned either as the main text extracted from the page, or as the full response body verbatim; a note at the top of the result states which of the two you received, so you can judge how complete it is. Use this when you need to read a specific web page.\\n\\nOnly fully-formed public \`http\`/\`https\` URLs are supported; other schemes and private or loopback addresses are not fetched. Very large pages may be truncated or refused. The fetch carries no login or session for the target site, so pages behind authentication (private repositories, internal dashboards) return a login page or an error instead of the real content — if the text you get back looks like a generic landing or sign-in page, treat that as the login wall, not the answer, and reach the content through a credentialed route (an authenticated CLI or MCP tool) instead.\\n", "parameters": { "$schema": "http://json-schema.org/draft-07/schema#", "type": "object", "properties": { "url": { "type": "string", "description": "The URL to fetch content from." } }, "required": [ "url" ], "additionalProperties": false }, "source": "builtin", "origin": "initial" }, { "name": "GetGoal", "description": "Read the current goal: its objective, completion criterion, status, budgets with what remains of each, and the terminal reason once it has stopped. Returns \`{ \\"goal\\": null }\` when there is no current goal.\\n", "parameters": { "$schema": "http://json-schema.org/draft-07/schema#", "type": "object", "properties": {}, "additionalProperties": false }, "source": "builtin", "origin": "initial" }, { "name": "Glob", "description": "Find files by glob pattern, sorted by modification time (most recent first).\\n\\nPowered by ripgrep. Matches are files only — directories themselves are never listed; to find a directory, glob for a file inside it (e.g. \`**/fixtures/**\`).\\n\\nGood patterns:\\n- \`*.ts\` — recursive from the search root; \`src/*.ts\` — only directly inside \`src/\`\\n- \`src/**/*.ts\` — recursive beneath \`src/\`\\n- \`*.{ts,tsx}\` and \`{src,test}/**/*.ts\` — brace expansion\\n\\nFollow returned continuation offsets with unchanged search arguments. If results are partial, narrow the search and retry.\\n\\nAvoid broad searches in dependency or build-output directories, especially with \`include_ignored\`; prefer a narrow \`path\` or \`pattern\`.\\n", "parameters": { "$schema": "http://json-schema.org/draft-07/schema#", "type": "object", "properties": { "pattern": { "type": "string", "description": "Glob pattern to match files." }, "head_limit": { "description": "Maximum number of matching paths to return after offset. Defaults to 100. Pass 0 to remove the match-count limit. The character limit still applies: large pages are saved for Read, and a continuation offset is provided when more paths remain. Search time and output capture limits still apply.", "type": "integer", "minimum": 0, "maximum": 9007199254740991 }, "offset": { "description": "Number of matching paths to skip. Defaults to 0. Each call searches the current filesystem again; changes can shift results between pages.", "type": "integer", "minimum": 0, "maximum": 9007199254740991 }, "path": { "description": "Directory to search. Accepts an absolute path, or a path relative to the current working directory. Defaults to the current working directory.", "type": "string" }, "include_ignored": { "description": "Also match files excluded by ignore files such as \`.gitignore\`, \`.ignore\`, and \`.rgignore\` (for example \`node_modules\` or build outputs). Sensitive files (such as \`.env\`) remain filtered out for safety. VCS metadata directories (\`.git\` and similar) are always skipped, even when this is true. Defaults to false.", "type": "boolean" }, "include_dirs": { "description": "Deprecated and ignored. Results are always files-only — directories are never listed. Accepted only so older calls that still pass this flag are not rejected by parameter validation.", "type": "boolean" } }, "required": [ "pattern" ], "additionalProperties": false }, "source": "builtin", "origin": "initial" }, { "name": "Grep", "description": "Search file contents using regular expressions (powered by ripgrep).\\n\\nUse Grep to find unknown content or file locations; use Read directly when inspecting a known file's contents. Do not run \`grep\` or \`rg\` via shell: they bypass workspace policy, output limits, and sensitive-file filtering.\\n\\nWrite patterns in ripgrep regex syntax, which differs from POSIX \`grep\` syntax. For example, braces are special, so escape them as \`\\\\{\` to match a literal \`{\`.\\n\\nHidden files are searched by default.\\n", "parameters": { "$schema": "http://json-schema.org/draft-07/schema#", "type": "object", "properties": { "pattern": { "type": "string", "description": "Regular expression to search for." }, "path": { "description": "File or directory to search. Accepts an absolute path, or a path relative to the current working directory. Omit to search the current working directory. Use Read instead when you already know a concrete file path and need its contents.", "type": "string" }, "glob": { "description": "Optional glob filter for which files to search, e.g. \`*.ts\`. Matched against each file's full absolute path, so a path-anchored pattern like \`src/**/*.ts\` silently matches nothing — use a basename pattern (\`*.ts\`), or anchor with \`**/\` (\`**/src/**/*.ts\`). To scope the search to a directory, use \`path\` instead.", "type": "string" }, "type": { "description": "Optional ripgrep file type filter, such as ts or py. Prefer this over \`glob\` when filtering by language or file kind: it is more efficient and less error-prone than an equivalent glob pattern.", "type": "string" }, "output_mode": { "description": "Shape of the result. \`content\` shows matching lines (honors \`-A\`, \`-B\`, \`-C\`, \`-n\`, and \`head_limit\`); \`files_with_matches\` shows only the paths of files that contain a match, most-recently-modified first (honors \`head_limit\`); \`count_matches\` shows per-file match counts as \`path:count\` lines, preceded by an aggregate total line. Defaults to \`files_with_matches\`.", "type": "string", "enum": [ "content", "files_with_matches", "count_matches" ] }, "-i": { "description": "Perform a case-insensitive search. Defaults to false.", "type": "boolean" }, "-n": { "description": "Prefix each matching line with its line number. Applies only when \`output_mode\` is \`content\`. Defaults to true.", "type": "boolean" }, "-A": { "description": "Number of lines to show after each match. Applies only when \`output_mode\` is \`content\`.", "type": "integer", "minimum": 0, "maximum": 9007199254740991 }, "-B": { "description": "Number of lines to show before each match. Applies only when \`output_mode\` is \`content\`.", "type": "integer", "minimum": 0, "maximum": 9007199254740991 }, "-C": { "description": "Number of lines to show before and after each match. Applies only when \`output_mode\` is \`content\`; takes precedence over \`-A\` and \`-B\`.", "type": "integer", "minimum": 0, "maximum": 9007199254740991 }, "head_limit": { "description": "Limit output to the first N lines/entries after offset. Defaults to 250. Pass 0 for unlimited.", "type": "integer", "minimum": 0, "maximum": 9007199254740991 }, "offset": { "description": "Number of leading lines/entries to skip before applying \`head_limit\`. Use it together with \`head_limit\` to page through large result sets. Defaults to 0.", "type": "integer", "minimum": 0, "maximum": 9007199254740991 }, "multiline": { "description": "Enable multiline matching, where the pattern can span line boundaries and \`.\` also matches newlines. Defaults to false.", "type": "boolean" }, "include_ignored": { "description": "Also search files excluded by ignore files such as \`.gitignore\`, \`.ignore\`, and \`.rgignore\` (for example \`node_modules\` or build outputs). Sensitive files (such as \`.env\`) remain filtered out for safety. VCS metadata directories (\`.git\` and similar) are always skipped, even when this is true. Defaults to false.", "type": "boolean" } }, "required": [ "pattern" ], "additionalProperties": false }, "source": "builtin", "origin": "initial" }, { "name": "Lookup", "description": "Look up a short test value.", "parameters": { "type": "object", "properties": { "query": { "type": "string" } }, "required": [ "query" ], "additionalProperties": false }, "source": "user", "origin": "initial" }, { "name": "Read", "description": "Read a UTF-8 or UTF-16 text file from the active environment's filesystem, or a \`kimi-file://\` attachment of this session.\\n\\nThe path may be a \`kimi-file://\` attachment reference. Its bytes come from the current session's storage, independently of the workspace environment. Next Read keeps the reference so pagination also works after a fork. For a binary attachment, the error includes a server-local path when available; a converter must be able to access that filesystem. ReadMediaFile accepts the same reference for images and videos.\\n\\nIf the user provides a concrete file path to a text file, call Read directly. Do not \`Glob\`, \`ls\`, or otherwise pre-check known text file paths; missing or invalid file paths return errors you can handle.\\n\\nWhen you need several files, prefer to read them in parallel: emit multiple \`Read\` calls in a single response instead of reading one file per turn.\\n\\n- Output is \`<line-number>\\\\t<content>\` per line. A \`<system>\` status block may follow; it is not part of the file.\\n- Results are bounded by \`max_chars\`: 100000 by default, up to 100000.\\n- If the status block reports an incomplete range, continue with its \`Next Read\` arguments exactly. Do not answer from a partial page when the task requires the remaining content.\\n- After a successful \`Edit\`/\`Write\`, do not re-read solely to prove the write landed.\\n", "parameters": { "$schema": "http://json-schema.org/draft-07/schema#", "type": "object", "properties": { "path": { "type": "string", "description": "Path to a text file or a kimi-file:// attachment reference in the current session. Relative filesystem paths resolve against the working directory; a path outside the working directory must be absolute. Directories are not supported; use \`ls\` via Bash for a known directory, or Glob for pattern search." }, "line_offset": { "description": "The line number to start reading from. Omit to start at line 1. Negative values read from the end of the file (for example, -100 reads the last 100 lines).", "anyOf": [ { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }, { "type": "integer", "minimum": -9007199254740991, "exclusiveMaximum": 0 } ] }, "column_offset": { "description": "Zero-based character offset within the first line of a forward read, excluding its line-number prefix. Uses JavaScript string length in the displayed text. Copy continuation arguments from the previous result to resume a long line.", "type": "integer", "minimum": 0, "maximum": 9007199254740991 }, "n_lines": { "description": "The number of lines to read. Omit to read toward the end of the file. Results are bounded by max_chars, with continuation arguments when the requested range is incomplete.", "type": "integer", "exclusiveMinimum": 0, "maximum": 9007199254740991 }, "max_chars": { "description": "Maximum characters in the returned text, including line numbers and status. Omit for the configured default; requests above the configured maximum are capped.", "type": "integer", "exclusiveMinimum": 0, "maximum": 9007199254740991 } }, "required": [ "path" ], "additionalProperties": false }, "source": "builtin", "origin": "initial" }, { "name": "ReadMediaFile", "description": "Read media content from a file.\\n\\nAny reported local attachment path belongs to the server; external converters must be able to access that filesystem.\\n\\n- Read multiple files in parallel when possible.\\n- After generating or editing media via commands or scripts, read the result back before continuing.\\n- Maximum size: 100MB.\\n\\n**Capabilities**\\n\\n- This tool supports image and video files.", "parameters": { "$schema": "http://json-schema.org/draft-07/schema#", "type": "object", "properties": { "path": { "type": "string", "description": "Path to an image or video file, or a kimi-file:// attachment reference in the current session. Relative filesystem paths resolve against the working directory; a path outside the working directory must be absolute. Directories and text files are not supported." }, "region": { "description": "Images only: view just this rectangle of the image (original-image pixel coordinates). Use after a downsampled full view to inspect fine detail — a region within the size limits is delivered at full fidelity.", "type": "object", "properties": { "x": { "type": "integer", "minimum": 0, "maximum": 9007199254740991, "description": "Left edge of the crop, in original-image pixels." }, "y": { "type": "integer", "minimum": 0, "maximum": 9007199254740991, "description": "Top edge of the crop, in original-image pixels." }, "width": { "type": "integer", "minimum": 1, "maximum": 9007199254740991, "description": "Crop width, in original-image pixels." }, "height": { "type": "integer", "minimum": 1, "maximum": 9007199254740991, "description": "Crop height, in original-image pixels." } }, "required": [ "x", "y", "width", "height" ], "additionalProperties": false }, "full_resolution": { "description": "Images only: skip the default downscaling and view at native resolution. Fails with an explicit error when the payload would exceed the per-image byte limit; use region for files that large.", "type": "boolean" } }, "required": [ "path" ], "additionalProperties": false }, "source": "builtin", "origin": "initial" }, { "name": "select_tools", "description": "Load one or more tools by name so you can call them. The loadable names are listed in the <tools_added>/<tools_removed> announcements in the system context — fold them in order to get the current list. If you have not seen a <tools_added> announcement in this session, no tools are currently loadable — do not call select_tools. Pass the exact tool name(s) you need — plugin, skill, or category names do not work. The full definitions become available immediately, so you can call them directly in your next tool call. Only announced names are loadable — tools you already have available are called directly, never passed to select_tools.", "parameters": { "$schema": "http://json-schema.org/draft-07/schema#", "type": "object", "properties": { "names": { "minItems": 1, "type": "array", "items": { "type": "string" }, "description": "Exact tool names to load, taken from the latest announced tool list." } }, "required": [ "names" ], "additionalProperties": false }, "source": "builtin", "origin": "initial" }, { "name": "SetGoalBudget", "description": "Set a hard budget for the current goal, only when the user clearly states one, such as \\"stop after 20 turns\\", \\"use no more than 500k tokens\\", or \\"finish within 30 minutes\\". Do not invent limits, and do not set one for vague wording such as \\"spend some time\\" or \\"try to be quick\\". Convert a compound time to one unit first: \\"2 hours and 3 minutes\\" → \`value: 123, unit: \\"minutes\\"\`.\\n", "parameters": { "$schema": "http://json-schema.org/draft-07/schema#", "type": "object", "properties": { "value": { "type": "number", "exclusiveMinimum": 0, "description": "The positive numeric budget value." }, "unit": { "type": "string", "enum": [ "turns", "tokens", "milliseconds", "seconds", "minutes", "hours" ] } }, "required": [ "value", "unit" ], "additionalProperties": false }, "source": "builtin", "origin": "initial" }, { "name": "Skill", "description": "Invoke a registered skill from the current skill listing. BLOCKING REQUIREMENT: when a skill from the listing matches the user's request, you MUST call this tool (not free-form text). Do not re-invoke a skill to repeat work already done: if a \`<skill-loaded>\` block for it with the same \`args\` is already present in the conversation, follow those instructions directly instead of calling the tool again. Do call the tool again when you need the skill with different arguments — the loaded block was expanded with the earlier \`args\` and will not reflect new inputs.", "parameters": { "$schema": "http://json-schema.org/draft-07/schema#", "type": "object", "properties": { "skill": { "type": "string", "description": "The exact name of the skill to invoke, copied verbatim from the current skill listing." }, "args": { "description": "Optional argument string for the skill, written like a command line (e.g. \`-m \\"fix bug\\"\`, \`123\`, a file path). It is split on whitespace (quotes group a token) and expanded into the skill's placeholders ($NAME, $1, $ARGUMENTS); if the skill body has no placeholders, the whole string is still appended as a trailing \`ARGUMENTS:\` line. Omit it only when there is nothing to pass.", "type": "string" } }, "required": [ "skill" ], "additionalProperties": false }, "source": "builtin", "origin": "initial" }, { "name": "TaskList", "description": "List background tasks and their current status, including task IDs for \`TaskOutput\`.\\n\\nAfter context compaction, or whenever unsure which tasks are running, call TaskList instead of guessing IDs. With \`active_only=false\`, \`lost\` tasks from previous processes may appear; treat them as terminated.\\n\\nThis tool is read-only and safe in plan mode; it does not return task output.\\n", "parameters": { "$schema": "http://json-schema.org/draft-07/schema#", "type": "object", "properties": { "active_only": { "default": true, "description": "Whether to list only non-terminal background tasks.", "type": "boolean" }, "limit": { "default": 20, "description": "Maximum number of tasks to return.", "type": "integer", "minimum": 1, "maximum": 100 } }, "additionalProperties": false }, "source": "builtin", "origin": "initial" }, { "name": "TaskOutput", "description": "Retrieve a non-blocking snapshot of a running or completed background task.\\n\\nUse after \`Bash(run_in_background=true)\`, \`Agent(run_in_background=true)\`, or \`AskUserQuestion(background=true)\` to check progress or read completed output. Prefer automatic completion notifications over polling. If your next step depends on task completion, run the task in the foreground instead.\\n", "parameters": { "$schema": "http://json-schema.org/draft-07/schema#", "type": "object", "properties": { "task_id": { "type": "string", "description": "The background task ID to inspect." } }, "required": [ "task_id" ], "additionalProperties": false }, "source": "builtin", "origin": "initial" }, { "name": "TaskStop", "description": "Stop a running background task.\\n\\nOnly use this when a task must genuinely be cancelled — for a task that is\\nfinishing normally, wait for its completion notification or inspect it with\\n\`TaskOutput\` instead of stopping it.\\n\\nGuidelines:\\n- This is a general-purpose stop capability for any background task. It is not\\n  a bash-specific kill.\\n- Stopping a task is destructive: it may leave partial side effects behind.\\n  Use it with care.\\n- If the task has already finished, this tool simply returns its current\\n  status.\\n", "parameters": { "$schema": "http://json-schema.org/draft-07/schema#", "type": "object", "properties": { "task_id": { "type": "string", "description": "The background task ID to stop." }, "reason": { "default": "Stopped by TaskStop", "description": "Short reason recorded when the task is stopped.", "type": "string" } }, "required": [ "task_id" ], "additionalProperties": false }, "source": "builtin", "origin": "initial" }, { "name": "TodoList", "description": "Use this tool to maintain a structured TODO list as you work through a multi-step task. Use it proactively and often when progress tracking helps the current work. The list is shown to the user as a live progress panel, so keep it in step with what you have actually done. This is especially useful in long-running investigations and implementation tasks with several tool calls; in plan mode, write the plan to the plan file rather than tracking it here.\\n\\n**When to use:**\\n- Multi-step tasks that span several tool calls\\n- Tracking investigation progress across a large codebase search\\n- Planning a sequence of edits before making them\\n- After receiving new multi-step instructions, capture the requirements as todos\\n\\n**When NOT to use:**\\n- Single-shot answers that complete in one or two tool calls\\n- Trivial requests where tracking adds no clarity\\n- Purely conversational or informational replies\\n\\n**Keeping it current:**\\n- Before you start a tracked task, mark it \`in_progress\`; while work is underway, keep exactly one task \`in_progress\`.\\n- As soon as a task is finished, mark it \`done\`, before you start the next one. Do not batch completions at the end.\\n- Before you write your final message, make sure the list matches what you actually did.\\n- An update can go in the same response as your next tool call; it does not need a step of its own.\\n- Do not re-send an unchanged list. If you are stuck and no available tool can move any task forward, tell the user instead of re-ordering the same todos.\\n\\n**How to use:**\\n- Call with \`todos: [...]\` to replace the full list. Statuses: pending / in_progress / done.\\n- Call with no \`todos\` argument to retrieve the current list without changing it.\\n- Call with \`todos: []\` to clear the list.\\n- Keep titles short and actionable (e.g. \\"Read session-control.ts\\", \\"Add planMode flag to TurnManager\\").\\n- Never mark a task \`done\` if tests are failing, implementation is partial, unresolved errors remain, or required files/dependencies could not be found.\\n- If you encounter a blocker, keep the blocked task \`in_progress\` or add a new pending task describing what must be resolved.\\n", "parameters": { "$schema": "http://json-schema.org/draft-07/schema#", "type": "object", "properties": { "todos": { "description": "The updated todo list. Omit to read the current todo list without making changes. Pass an empty array to clear the list.", "type": "array", "items": { "type": "object", "properties": { "title": { "type": "string", "minLength": 1, "description": "Short, actionable title for the todo." }, "status": { "type": "string", "enum": [ "pending", "in_progress", "done" ], "description": "Current status of the todo." } }, "required": [ "title", "status" ], "additionalProperties": false } } }, "additionalProperties": false }, "source": "builtin", "origin": "initial" }, { "name": "UpdateGoal", "description": "Set the status of the current goal. \`active\` resumes a paused or blocked goal when the user explicitly asks you to work on it again. \`complete\` and \`blocked\` end autonomous work: while a goal is active, its full reminder states exactly when each one is warranted; later reminders keep the current goal state and point back to those rules. Follow them, and do not call this tool merely because you finished a slice of work. After \`complete\` or \`blocked\`, write the completion summary or the blocker explanation in your next message.\\n", "parameters": { "$schema": "http://json-schema.org/draft-07/schema#", "type": "object", "properties": { "status": { "type": "string", "enum": [ "active", "complete", "blocked" ], "description": "The lifecycle status to set for the current goal. Use \`blocked\` for impossible, unsafe, or contradictory objectives, or after the same non-terminal blocking condition repeats for at least 3 consecutive goal turns." } }, "required": [ "status" ], "additionalProperties": false }, "source": "builtin", "origin": "initial" }, { "name": "WaitFor", "description": "Wait for background tasks to finish without ending the current turn.\\n\\nOnly call this tool when you really have no other work to do and your next step cannot proceed without the result of a running background task (a sub-agent, a background bash command, or a background AskUserQuestion). The call suspends inside the current turn until the task finishes or the timeout elapses, then returns the outcome so you can keep working in the same turn. While waiting, no LLM requests are made, but the user is kept waiting too.\\n\\nWhen background tasks finish, they notify you automatically, so you do not need to busily wait for them.\\n\\nGuidelines:\\n\\n- Before calling WaitFor, think about what else you can do meanwhile: another part of the task, verifying earlier work, or ending your turn with a progress update. If there is anything, do that instead.\\n- Do not call WaitFor right after dispatching work whose result you do not need yet.\\n- After a timeout, prefer moving on to other work over calling WaitFor again; repeated waits keep the user waiting.\\n- Without \`task_id\`, tasks started during the wait are not covered by it; their completion arrives via the usual automatic notification.\\n- With \`task_id\`, the wait ends when that task finishes. An unknown \`task_id\` is an error; a task that has already finished returns immediately.\\n- When no background tasks are running, WaitFor returns immediately without waiting.\\n- Waiting has no side effects on the waited tasks: WaitFor never stops a task, and interrupting the wait (for example, a new user message) leaves every task running.\\n- A finished task's result is delivered exactly once: tasks reported by WaitFor do not also produce an automatic completion notification.\\n- You can only wait for background tasks started by this agent; task IDs belonging to other agents are unknown here.\\n", "parameters": { "$schema": "http://json-schema.org/draft-07/schema#", "type": "object", "properties": { "timeout": { "type": "integer", "exclusiveMinimum": 0, "maximum": 90, "description": "Maximum time to wait, in seconds (1-90). Pick it from how long you expect the task to take, not the maximum. A timeout is not an error: the tool returns the tasks that are still running." }, "task_id": { "description": "The background task ID to wait for. When omitted, the wait ends as soon as any background task that was running at call time finishes.", "type": "string" } }, "required": [ "timeout" ], "additionalProperties": false }, "source": "builtin", "origin": "initial" }, { "name": "Write", "description": "Create, append to, or replace a file entirely.\\n\\n- Use Write only for new files, complete replacements, or content with little continuity; use Edit for every incremental change to an existing file.\\n- Do not create unsolicited documentation files (\`*.md\` write-ups, \`README\`s, summaries) just because a task finished — write one only when the user asks for it, or when a task or project instruction requires it (e.g. the plan-mode plan file, created with Write when plan mode directs you to, or a changeset the repo mandates).\\n- Read before overwriting an existing file.\\n- Write ignores the Read/Edit line-number view. NEVER include line prefixes.\\n- Write outputs content literally, including supplied line endings: \\\\n stays LF, \\\\r\\\\n stays CRLF.\\n- For new content too large for one call, overwrite the first chunk, then append subsequent chunks. Never chunk Write to modify an existing file.\\n", "parameters": { "$schema": "http://json-schema.org/draft-07/schema#", "type": "object", "properties": { "path": { "type": "string", "description": "Path to the file to create, append to, or completely overwrite. Relative paths resolve against the working directory; a path outside the working directory must be absolute. Missing parent directories are created automatically." }, "content": { "type": "string", "description": "Raw full file content to write exactly as provided. This does not use the Read/Edit text view." }, "mode": { "description": "Write mode. Defaults to overwrite. append adds content to the end exactly as provided and does not add a newline.", "type": "string", "enum": [ "overwrite", "append" ] } }, "required": [ "path", "content" ], "additionalProperties": false }, "source": "builtin", "origin": "initial" } ], "time": "<time>" }
-        [wire] llm.tools_snapshot          { "agentId": "main", "hash": "<tools-hash>", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Lookup", "Read", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
-        [wire] llm.request                 { "agentId": "main", "kind": "loop", "provider": "openai", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "<tools-hash>", "messageCount": 2, "turnStep": "0.1", "time": "<time>" }
-        [emit] assistant.delta             { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "I will look it up." }
+        [wire] plugin.session_start        { "agentId": "main", "content": null, "time": "<time>" }
+        [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 1, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "<auto-mode-enter-reminder>" } ], "origin": { "kind": "injection", "variant": "permission_mode" } } ] }
+        [wire] context.append_message      { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "<auto-mode-enter-reminder>" } ], "toolCalls": [], "origin": { "kind": "injection", "variant": "permission_mode" } }, "time": "<time>" }
+        [wire] tool_select.initialized     { "agentId": "main", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Lookup", "Read", "ReadMediaFile", "select_tools", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
+        [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "step.begin", "uuid": "<uuid-2>", "turnId": "0", "step": 1 }, "time": "<time>" }
+        [wire] llm.tools_snapshot          { "agentId": "main", "hash": "<tools-hash>", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Read", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
+        [emit] assistant.delta             { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "I will look it up.", "block": 0 }
         [emit] tool.call.delta             { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "name": "Lookup", "argumentsPart": "{\\"query\\":\\"moon\\"}" }
-        [wire] usage.record                { "agentId": "main", "model": "mock-model", "usage": { "inputOther": 118, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
+        [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 2, "deleteCount": 0, "messages": [ { "role": "assistant", "content": [ { "type": "text", "text": "I will look it up." } ], "toolCalls": [ { "type": "function", "id": "call_lookup", "name": "Lookup", "arguments": "{\\"query\\":\\"moon\\"}" } ], "providerMessageId": "mock-1", "usage": { "inputOther": 118, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 } } ] }
         [emit] agent.status.updated        { "time": "<time>", "agentId": "main", "usage": { "byModel": { "mock-model": { "inputOther": 118, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 118, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 118, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
-        [wire] token_counting.measured     { "agentId": "main", "length": 3, "tokens": 134, "time": "<time>" }
         [emit] agent.status.updated        { "time": "<time>", "agentId": "main", "contextTokens": 134 }
-        [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-2>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "part": { "type": "text", "text": "I will look it up." } }, "time": "<time>" }
+        [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-3>", "turnId": "0", "step": 1, "stepUuid": "<uuid-2>", "block": 0, "part": { "type": "text", "text": "I will look it up." }, "startedAt": "<time>" }, "time": "<time>" }
+        [wire] usage.record                { "agentId": "main", "model": "mock-model", "usage": { "inputOther": 118, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
+        [wire] token_counting.measured     { "agentId": "main", "length": 3, "tokens": 134, "time": "<time>" }
         [emit] tool.call.started           { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "name": "Lookup", "args": { "query": "moon" } }
+        [emit] tool.updated                { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "taskId": "<taskId>", "status": "running", "detached": false, "fields": {} }
         [emit] toolCall                    { "turnId": 0, "toolCallId": "call_lookup", "args": { "query": "moon" } }
       `);
       expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
         system: <system-prompt>
-        tools: Agent, AgentSwarm, AskUserQuestion, Bash, CreateGoal, CronCreate, CronDelete, CronList, Edit, ExitPlanMode, FetchURL, GetGoal, Glob, Grep, Lookup, Read, SetGoalBudget, Skill, TaskList, TaskOutput, TaskStop, TodoList, UpdateGoal, WaitFor, Write
+        tools: Agent, AgentSwarm, AskUserQuestion, Bash, CreateGoal, CronCreate, CronDelete, CronList, Edit, ExitPlanMode, FetchURL, GetGoal, Glob, Grep, Read, SetGoalBudget, Skill, TaskList, TaskOutput, TaskStop, TodoList, UpdateGoal, WaitFor, Write
         messages:
           user: text "Look up moon"
           user: text <auto-mode-enter-reminder>
@@ -4935,29 +5211,26 @@ describe('Agent tools', () => {
 
       ctx.mockNextResponse({ type: 'text', text: 'The lookup result is moon-result.' });
       expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
-        [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "tool.call", "uuid": "<uuid-3>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "toolCallId": "call_lookup", "name": "Lookup", "args": { "query": "moon" } }, "time": "<time>" }
+        [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "tool.call", "uuid": "<uuid-4>", "turnId": "0", "step": 1, "stepUuid": "<uuid-2>", "toolCallId": "call_lookup", "name": "Lookup", "args": { "query": "moon" } }, "time": "<time>" }
         [wire] interaction.request         { "agentId": "main", "id": "<user_tool-1>", "kind": "user_tool", "toolCallId": "call_lookup", "request": { "turnId": 0, "toolCallId": "call_lookup", "name": "Lookup", "args": { "query": "moon" } }, "time": "<time>" }
         [wire] interaction.resolved        { "agentId": "main", "id": "<user_tool-1>", "response": { "content": "moon-result", "output": "moon-result" }, "time": "<time>" }
+        [emit] tool.updated                { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "taskId": "<taskId>", "status": "running", "detached": false, "fields": {} }
+        [emit] tool.updated                { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "taskId": "<taskId>", "status": "success", "detached": false, "fields": {} }
         [emit] tool.result                 { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "output": "moon-result" }
-        [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "tool.result", "parentUuid": "<uuid-3>", "toolCallId": "call_lookup", "result": { "output": "moon-result" } }, "time": "<time>" }
         [emit] turn.step.completed         { "time": "<time>", "agentId": "main", "turnId": 0, "step": 1, "stepId": "<uuid-1>", "usage": { "inputOther": 118, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use", "providerFinishReason": "tool_calls", "rawFinishReason": "tool_calls" }
-        [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "finishReason": "tool_use", "usage": { "inputOther": 118, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-1", "providerFinishReason": "tool_calls", "rawFinishReason": "tool_calls" }, "time": "<time>" }
-        [emit] turn.step.started           { "time": "<time>", "agentId": "main", "turnId": 0, "step": 2, "stepId": "<uuid-4>" }
-        [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "step.begin", "uuid": "<uuid-4>", "turnId": "0", "step": 2 }, "time": "<time>" }
-        [wire] llm.request                 { "agentId": "main", "kind": "loop", "provider": "openai", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "<tools-hash>", "messageCount": 4, "turnStep": "0.2", "time": "<time>" }
-        [emit] assistant.delta             { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "The lookup result is moon-result." }
-        [wire] usage.record                { "agentId": "main", "model": "mock-model", "usage": { "inputOther": 138, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
+        [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 3, "deleteCount": 0, "messages": [ { "role": "tool", "content": [ { "type": "text", "text": "moon-result" } ], "toolCallId": "call_lookup" } ] }
+        [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "tool.result", "parentUuid": "<uuid-4>", "toolCallId": "call_lookup", "result": { "output": "moon-result" } }, "time": "<time>" }
+        [emit] turn.step.started           { "time": "<time>", "agentId": "main", "turnId": 0, "step": 2, "stepId": "<uuid-5>" }
+        [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "step.end", "uuid": "<uuid-2>", "turnId": "0", "step": 1, "finishReason": "tool_use", "usage": { "inputOther": 118, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-1", "providerFinishReason": "tool_calls", "rawFinishReason": "tool_calls" }, "time": "<time>" }
+        [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "step.begin", "uuid": "<uuid-6>", "turnId": "0", "step": 2 }, "time": "<time>" }
+        [emit] assistant.delta             { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "The lookup result is moon-result.", "block": 0 }
+        [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 4, "deleteCount": 0, "messages": [ { "role": "assistant", "content": [ { "type": "text", "text": "The lookup result is moon-result." } ], "toolCalls": [], "providerMessageId": "mock-2", "usage": { "inputOther": 138, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 } } ] }
+        [emit] turn.step.completed         { "time": "<time>", "agentId": "main", "turnId": 0, "step": 2, "stepId": "<uuid-5>", "usage": { "inputOther": 138, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn", "providerFinishReason": "completed", "rawFinishReason": "stop" }
         [emit] agent.status.updated        { "time": "<time>", "agentId": "main", "usage": { "byModel": { "mock-model": { "inputOther": 256, "output": 28, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 256, "output": 28, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 256, "output": 28, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
-        [wire] token_counting.measured     { "agentId": "main", "length": 5, "tokens": 150, "time": "<time>" }
         [emit] agent.status.updated        { "time": "<time>", "agentId": "main", "contextTokens": 150 }
-        [emit] turn.step.completed         { "time": "<time>", "agentId": "main", "turnId": 0, "step": 2, "stepId": "<uuid-4>", "usage": { "inputOther": 138, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn", "providerFinishReason": "completed", "rawFinishReason": "stop" }
-        [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-5>", "turnId": "0", "step": 2, "stepUuid": "<uuid-4>", "part": { "type": "text", "text": "The lookup result is moon-result." } }, "time": "<time>" }
-        [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "step.end", "uuid": "<uuid-4>", "turnId": "0", "step": 2, "finishReason": "end_turn", "usage": { "inputOther": 138, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-2", "providerFinishReason": "completed", "rawFinishReason": "stop" }, "time": "<time>" }
-        [wire] agent.message.appended      { "message": { "message": { "role": "assistant", "content": [ { "type": "text", "text": "I will look it up." } ], "toolCalls": [ { "type": "function", "id": "call_lookup", "name": "Lookup", "arguments": "{\\"query\\":\\"moon\\"}" } ] }, "meta": { "model": { "provider": "agent-loop", "model": "agent-loop" }, "source": "llm", "usage": { "inputOther": 118, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finish": { "finishReason": "tool_calls", "rawFinishReason": "tool_calls" }, "messageId": "mock-1" } }, "time": "<time>", "kind": "event" }
-        [wire] agent.message.appended      { "message": { "message": { "role": "tool", "content": [ { "type": "text", "text": "moon-result" } ], "toolCallId": "call_lookup" }, "meta": { "source": "tool" } }, "time": "<time>", "kind": "event" }
-        [wire] agent.message.appended      { "message": { "message": { "role": "assistant", "content": [ { "type": "text", "text": "The lookup result is moon-result." } ], "toolCalls": [] }, "meta": { "model": { "provider": "agent-loop", "model": "agent-loop" }, "source": "llm", "usage": { "inputOther": 138, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finish": { "finishReason": "completed", "rawFinishReason": "stop" }, "messageId": "mock-2" } }, "time": "<time>", "kind": "event" }
-        [wire] agent.turn.ended            { "turnId": 0, "outcome": "done", "time": "<time>", "kind": "event" }
-        [wire] turn.ended                  { "agentId": "main", "turnId": 0, "reason": "completed", "time": "<time>" }
+        [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-7>", "turnId": "0", "step": 2, "stepUuid": "<uuid-6>", "block": 0, "part": { "type": "text", "text": "The lookup result is moon-result." }, "startedAt": "<time>" }, "time": "<time>" }
+        [wire] usage.record                { "agentId": "main", "model": "mock-model", "usage": { "inputOther": 138, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
+        [wire] token_counting.measured     { "agentId": "main", "length": 5, "tokens": 150, "time": "<time>" }
         [emit] turn.ended                  { "time": "<time>", "agentId": "main", "turnId": 0, "reason": "completed" }
       `);
       expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
@@ -4971,35 +5244,31 @@ describe('Agent tools', () => {
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Can you still use Lookup?' }] });
 
       expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
-        [wire] token_counting.turn_recorded   { "agentId": "main", "turnId": 0, "length": 5, "tokens": 150, "time": "<time>" }
         [emit] agent.status.updated           { "time": "<time>", "agentId": "main", "contextTokens": 150 }
-        [wire] tools.unregister_user_tool     { "agentId": "main", "name": "Lookup", "time": "<time>" }
-        [wire] prompt.completed               { "agentId": "main", "promptId": "<msg-1>", "finishedAt": "<time>", "reason": "completed", "time": "<time>" }
         [emit] prompt.completed               { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "finishedAt": "<time>", "reason": "completed" }
+        [wire] context.append_loop_event      { "agentId": "main", "event": { "type": "step.end", "uuid": "<uuid-6>", "turnId": "0", "step": 2, "finishReason": "end_turn", "usage": { "inputOther": 138, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-2", "providerFinishReason": "completed", "rawFinishReason": "stop" }, "time": "<time>" }
+        [wire] turn.ended                     { "agentId": "main", "turnId": 0, "reason": "completed", "time": "<time>" }
+        [wire] token_counting.turn_recorded   { "agentId": "main", "turnId": 0, "length": 5, "tokens": 150, "time": "<time>" }
+        [wire] prompt.completed               { "agentId": "main", "promptId": "<msg-1>", "finishedAt": "<time>", "reason": "completed", "time": "<time>" }
+        [wire] tools.unregister_user_tool     { "agentId": "main", "name": "Lookup", "time": "<time>" }
         [emit] prompt.submitted               { "time": "<time>", "agentId": "main", "promptId": "<msg-2>", "userMessageId": "<msg-2>", "status": "running", "content": [ { "type": "text", "text": "Can you still use Lookup?" } ], "createdAt": "<time>" }
-        [wire] turn.prompt                    { "agentId": "main", "input": [ { "type": "text", "text": "Can you still use Lookup?" } ], "origin": { "kind": "user" }, "promptId": "<msg-2>", "turnId": 1, "time": "<time>" }
-        [emit] turn.prompt                    { "time": "<time>", "agentId": "main", "input": [ { "type": "text", "text": "Can you still use Lookup?" } ], "origin": { "kind": "user" }, "promptId": "<msg-2>", "turnId": 1 }
-        [emit] turn.started                   { "time": "<time>", "agentId": "main", "turnId": 1, "promptId": "<msg-2>", "origin": { "kind": "user" }, "prompt": "Can you still use Lookup?" }
+        [wire] turn.prompt                    { "agentId": "main", "input": [ { "type": "text", "text": "Can you still use Lookup?" } ], "origin": { "kind": "user" }, "promptId": "<msg-2>", "turnId": 1, "trigger": "normal", "time": "<time>" }
         [emit] context.spliced                { "time": "<time>", "agentId": "main", "start": 5, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Can you still use Lookup?" } ], "id": "<msg-2>", "origin": { "kind": "user" } } ] }
-        [emit] prompt.started                 { "time": "<time>", "agentId": "main", "promptId": "<msg-2>" }
         [wire] context.append_message         { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "Can you still use Lookup?" } ], "toolCalls": [], "id": "<msg-2>", "origin": { "kind": "user" } }, "time": "<time>" }
-        [wire] agent.message.appended         { "message": { "message": { "role": "user", "content": [ { "type": "text", "text": "Can you still use Lookup?" } ] }, "meta": { "source": "input", "promptId": "<msg-2>", "origin": { "kind": "user" }, "tracked": true, "createdAt": "<time>", "userMessageId": "<msg-2>" } }, "time": "<time>", "kind": "event" }
-        [wire] agent.turn.started             { "turnId": 1, "queueItemId": "<msg-2>", "time": "<time>", "kind": "event" }
-        [emit] turn.step.started              { "time": "<time>", "agentId": "main", "turnId": 1, "step": 1, "stepId": "<uuid-6>" }
-        [wire] context.append_loop_event      { "agentId": "main", "event": { "type": "step.begin", "uuid": "<uuid-6>", "turnId": "1", "step": 1 }, "time": "<time>" }
+        [emit] turn.prompt                    { "time": "<time>", "agentId": "main", "input": [ { "type": "text", "text": "Can you still use Lookup?" } ], "origin": { "kind": "user" }, "promptId": "<msg-2>", "turnId": 1, "trigger": "normal" }
+        [emit] turn.started                   { "time": "<time>", "agentId": "main", "turnId": 1, "promptId": "<msg-2>", "origin": { "kind": "user" }, "prompt": "Can you still use Lookup?" }
+        [emit] prompt.started                 { "time": "<time>", "agentId": "main", "promptId": "<msg-2>" }
+        [emit] turn.step.started              { "time": "<time>", "agentId": "main", "turnId": 1, "step": 1, "stepId": "<uuid-8>" }
         [wire] tool_select.tools_changed      { "agentId": "main", "added": [], "removed": [ { "name": "Lookup", "description": "Look up a short test value.", "parameters": { "type": "object", "properties": { "query": { "type": "string" } }, "required": [ "query" ], "additionalProperties": false }, "source": "user", "origin": "initial" } ], "time": "<time>" }
-        [wire] llm.request                    { "agentId": "main", "kind": "loop", "provider": "openai", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "<tools-hash>", "messageCount": 6, "turnStep": "1.1", "time": "<time>" }
-        [emit] assistant.delta                { "time": "<time>", "agentId": "main", "turnId": 1, "delta": "No lookup tool is available." }
-        [wire] usage.record                   { "agentId": "main", "model": "mock-model", "usage": { "inputOther": 158, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
+        [wire] context.append_loop_event      { "agentId": "main", "event": { "type": "step.begin", "uuid": "<uuid-9>", "turnId": "1", "step": 1 }, "time": "<time>" }
+        [emit] assistant.delta                { "time": "<time>", "agentId": "main", "turnId": 1, "delta": "No lookup tool is available.", "block": 0 }
+        [emit] context.spliced                { "time": "<time>", "agentId": "main", "start": 6, "deleteCount": 0, "messages": [ { "role": "assistant", "content": [ { "type": "text", "text": "No lookup tool is available." } ], "toolCalls": [], "providerMessageId": "mock-3", "usage": { "inputOther": 158, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 } } ] }
+        [emit] turn.step.completed            { "time": "<time>", "agentId": "main", "turnId": 1, "step": 1, "stepId": "<uuid-8>", "usage": { "inputOther": 158, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn", "providerFinishReason": "completed", "rawFinishReason": "stop" }
         [emit] agent.status.updated           { "time": "<time>", "agentId": "main", "usage": { "byModel": { "mock-model": { "inputOther": 414, "output": 38, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 414, "output": 38, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 158, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
-        [wire] token_counting.measured        { "agentId": "main", "length": 7, "tokens": 168, "time": "<time>" }
         [emit] agent.status.updated           { "time": "<time>", "agentId": "main", "contextTokens": 168 }
-        [emit] turn.step.completed            { "time": "<time>", "agentId": "main", "turnId": 1, "step": 1, "stepId": "<uuid-6>", "usage": { "inputOther": 158, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn", "providerFinishReason": "completed", "rawFinishReason": "stop" }
-        [wire] context.append_loop_event      { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-7>", "turnId": "1", "step": 1, "stepUuid": "<uuid-6>", "part": { "type": "text", "text": "No lookup tool is available." } }, "time": "<time>" }
-        [wire] context.append_loop_event      { "agentId": "main", "event": { "type": "step.end", "uuid": "<uuid-6>", "turnId": "1", "step": 1, "finishReason": "end_turn", "usage": { "inputOther": 158, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-3", "providerFinishReason": "completed", "rawFinishReason": "stop" }, "time": "<time>" }
-        [wire] agent.message.appended         { "message": { "message": { "role": "assistant", "content": [ { "type": "text", "text": "No lookup tool is available." } ], "toolCalls": [] }, "meta": { "model": { "provider": "agent-loop", "model": "agent-loop" }, "source": "llm", "usage": { "inputOther": 158, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finish": { "finishReason": "completed", "rawFinishReason": "stop" }, "messageId": "mock-3" } }, "time": "<time>", "kind": "event" }
-        [wire] agent.turn.ended               { "turnId": 1, "outcome": "done", "time": "<time>", "kind": "event" }
-        [wire] turn.ended                     { "agentId": "main", "turnId": 1, "reason": "completed", "time": "<time>" }
+        [wire] context.append_loop_event      { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-10>", "turnId": "1", "step": 1, "stepUuid": "<uuid-9>", "block": 0, "part": { "type": "text", "text": "No lookup tool is available." }, "startedAt": "<time>" }, "time": "<time>" }
+        [wire] usage.record                   { "agentId": "main", "model": "mock-model", "usage": { "inputOther": 158, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
+        [wire] token_counting.measured        { "agentId": "main", "length": 7, "tokens": 168, "time": "<time>" }
         [emit] turn.ended                     { "time": "<time>", "agentId": "main", "turnId": 1, "reason": "completed" }
       `);
       expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`

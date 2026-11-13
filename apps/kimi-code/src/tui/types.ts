@@ -12,7 +12,7 @@ import type {
   ToolInputDisplay,
 } from '@moonshot-ai/kimi-code-sdk';
 
-import type { MarkdownConfig, NotificationsConfig, StatusLineConfig, TuiMode, UpgradePreferences } from './config';
+import type { MarkdownConfig, NotificationsConfig, StatusLineConfig, TranscriptConfig, TuiMode, UpgradePreferences } from './config';
 import type { PendingApproval, PendingQuestion } from './reverse-rpc/types';
 import type { ColorToken, ThemeName } from './theme';
 import type { MediaAttachment, VideoAttachment } from './utils/image-attachment-store';
@@ -86,6 +86,7 @@ export interface AppState {
   editorCommand: string | null;
   /** Mirrors the TUI config toggle; defaults to false when absent from older fixtures. */
   disablePasteBurst?: boolean;
+  copyOnSelect?: boolean;
   /** LaTeX math rendering in Markdown; defaults to true when absent from older fixtures. */
   renderLatex?: boolean;
   /** Mirrors the TUI config toggle; defaults to true when absent from older fixtures. */
@@ -98,6 +99,7 @@ export interface AppState {
   /** Footer status line customization from tui.toml; absent means the default layout. */
   statusLine?: StatusLineConfig;
   markdown?: MarkdownConfig;
+  transcript: TranscriptConfig;
   availableModels: Record<string, ModelAlias>;
   availableProviders: Record<string, ProviderConfig>;
   sessionTitle: string | null;
@@ -113,7 +115,8 @@ export interface AppState {
   environment?: EnvironmentSlotState;
 }
 
-export function sumTokenUsage(total: TokenUsage): number {
+export function sumTokenUsage(total: TokenUsage): number | undefined {
+  if (total.inputCacheRead === undefined) return undefined;
   return total.inputOther + total.output + total.inputCacheRead + total.inputCacheCreation;
 }
 
@@ -134,6 +137,10 @@ export interface StepRetryState {
    */
   phase: 'backoff' | 'attempt';
 }
+
+export type Elapsed =
+  | { readonly known: false }
+  | { readonly known: true; readonly ms: number };
 
 export interface ToolCallBlockData {
   id: string;
@@ -268,6 +275,7 @@ export interface TranscriptEntry {
   goalData?: GoalTranscriptData;
   imageAttachmentIds?: readonly number[];
   skillNames?: readonly string[];
+  inlineSkillActivations?: readonly InlineSkillActivation[];
   skillActivationId?: string;
   skillName?: string;
   skillArgs?: string;
@@ -277,6 +285,8 @@ export interface TranscriptEntry {
   /** Entry renders a UserPromptSubmit hook result (sits inside its prompt's group window). */
   hookResult?: boolean;
   pluginCommandData?: PluginCommandTranscriptData;
+  /** Live steer not yet acknowledged by `turn.steer`. Absent after delivery, failure, or replay. */
+  steerPending?: true;
 }
 
 export type LivePaneMode =
@@ -293,7 +303,7 @@ export interface LivePaneState {
 }
 
 export interface PreparedSkillActivations {
-  skills: Array<{ name: string; args?: string }>;
+  skills: Array<{ name: string; path?: string; args?: string }>;
   mediaAttachmentIds: number[];
   stagingPaths: string[];
   cachedVideos: VideoAttachment[];
@@ -301,25 +311,65 @@ export interface PreparedSkillActivations {
 
 export interface InlineSkillActivation {
   readonly skillName: string;
+  readonly path?: string;
   readonly args?: string;
+  readonly start?: number;
+  readonly occurrences?: readonly { commandName: string; start: number }[];
 }
 
-export interface QueuedMessage {
+export type ModelSwitchPersistence = 'session' | 'model' | 'model-and-effort';
+
+interface QueuedEntryBase {
   readonly text: string;
+}
+
+export interface QueuedPromptMessage extends QueuedEntryBase {
+  readonly mode?: 'prompt';
   readonly agentId?: string;
   readonly parts?: readonly PromptPart[];
   readonly imageAttachmentIds?: readonly number[];
   readonly videoAttachmentIds?: readonly number[];
   readonly mediaSnapshots?: readonly MediaAttachment[];
-  readonly mode?: 'prompt' | 'bash' | 'compact';
   /** Skills to activate together with this queued message's prompt. */
   readonly inlineSkillActivations?: readonly InlineSkillActivation[];
-  readonly compactInstruction?: string;
-  readonly compactRetries?: number;
   /** Resent after the user chose Retry on a session-in-use prompt. */
   readonly occupiedRetry?: boolean;
+}
+
+export interface QueuedBashCommand extends QueuedEntryBase {
+  readonly mode: 'bash';
+  readonly agentId?: string;
+}
+
+export interface QueuedCompactCommand extends QueuedEntryBase {
+  readonly mode: 'compact';
+  readonly agentId?: string;
+  readonly compactInstruction?: string;
+  readonly compactRetries?: number;
   /** Auto-compaction serial at enqueue time; a mismatch at dequeue skips the fire. */
   readonly queuedAfterAutoSerial?: number;
+}
+
+export interface QueuedModelSwitch extends QueuedEntryBase {
+  readonly mode: 'model-switch';
+  readonly alias: string;
+  readonly thinking: ThinkingEffort;
+  readonly persist: ModelSwitchPersistence;
+  readonly queuedAfterCompactionSerial: number;
+}
+
+export type QueuedMessage =
+  | QueuedPromptMessage
+  | QueuedBashCommand
+  | QueuedCompactCommand
+  | QueuedModelSwitch;
+
+export function isPromptQueuedMessage(message: QueuedMessage): message is QueuedPromptMessage {
+  return message.mode === undefined || message.mode === 'prompt';
+}
+
+export function isQueuedCompactionBarrier(message: QueuedMessage): boolean {
+  return message.mode === 'compact' || message.mode === 'model-switch';
 }
 
 /**
@@ -371,6 +421,8 @@ export type TUIStartupState = 'pending' | 'ready' | 'picker';
 export interface KimiTUIOptions {
   initialAppState: AppState;
   startup: TUIStartupOptions;
+  resolvedTuiMode?: TuiMode;
+  animationFrameRate?: number;
 }
 
 export interface PendingExit {

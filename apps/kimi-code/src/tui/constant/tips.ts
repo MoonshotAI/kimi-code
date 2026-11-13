@@ -33,6 +33,11 @@ export const WORKING_TIPS: readonly ToolbarTip[] = [
   { text: '! to run a shell command', priority: 2 },
 ];
 
+export const TRANSCRIPT_GROUPING_TIP: ToolbarTip = {
+  text: 'click a group summary to reveal every tool call',
+  priority: 2,
+};
+
 export const ALL_TIPS: readonly ToolbarTip[] = [
   ...WORKING_TIPS,
   { text: 'shift+enter: newline' },

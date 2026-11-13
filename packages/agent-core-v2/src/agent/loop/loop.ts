@@ -2,20 +2,39 @@ import { createDecorator } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { Error2, isError2, type Error2Options } from '#/_base/errors/errors';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import type { FinishReason } from '#human/llm-requester/finish-reason';
-import type { ContentPart, TextPart } from '#human/llm/message';
-import type { TokenUsage } from '#human/llm-requester/usage';
+import type { AgentTaskInfo } from '#/agent/task/types';
+import type { FinishReason } from '@moonshot-ai/core/llm/response';
+import type { ContentPart, Message, TextPart, ToolCall, ToolDescription as Tool, UserMessage } from '@moonshot-ai/core/llm/message';
+import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
 import type { Hooks } from '#/hooks';
-import type { UserEntry } from '#human/agent/turn';
 import type { LoopRequester } from './requesterContract';
-import { LoopErrors } from './errors';
 import type {
-  MachineEngine,
-  MachineEngineAttachBundle,
-  MachineEngineAttachRef,
-  MachineEngineRetrySnapshot,
-  MachineEngineToolCallSnapshot,
-} from './machine/engine';
+  BindAgentInput,
+  EffectiveProfileReader,
+  ProfileBindingSnapshot,
+  ProfileSetModelResult,
+  ProfileUpdateData,
+  ResolvedAgentProfile,
+  SystemPromptContext,
+  ApplyProfileOptions,
+} from '#/agent/profile/profile';
+import { LoopErrors } from './errors';
+import type { ToolCompletionFactory } from '@moonshot-ai/core/loop/tool/outcome';
+import type { ToolCallOutcome } from '@moonshot-ai/core/loop/contract/outcome';
+import type { LoopHooks } from '@moonshot-ai/core/loop/contract/hook';
+export interface AgentActivityRetrySnapshot {
+  readonly failedAttempt: number;
+  readonly nextAttempt: number;
+  readonly maxAttempts: number;
+  readonly delayMs: number;
+  readonly errorName?: string;
+  readonly statusCode?: number;
+}
+
+export interface AgentActivityToolCallSnapshot {
+  readonly toolCallId: string;
+  readonly name: string;
+}
 
 export interface AgentActivityTurnSnapshot {
   readonly turnId: number;
@@ -23,8 +42,8 @@ export interface AgentActivityTurnSnapshot {
   readonly step: number;
   readonly ending: boolean;
   readonly endingReason?: 'aborted';
-  readonly retry?: MachineEngineRetrySnapshot;
-  readonly activeToolCalls: readonly MachineEngineToolCallSnapshot[];
+  readonly retry?: AgentActivityRetrySnapshot;
+  readonly activeToolCalls: readonly AgentActivityToolCallSnapshot[];
   readonly since?: number;
 }
 
@@ -36,7 +55,7 @@ export interface LoopSnapshot {
   readonly state: 'idle' | 'running';
   readonly activeTurnId?: number;
   readonly activePromptId?: string;
-  readonly queue: readonly UserEntry[];
+  readonly queue: readonly UserMessage[];
   readonly notificationCount: number;
   readonly paused: boolean;
   readonly hasPendingRequests: boolean;
@@ -73,10 +92,25 @@ export interface BeforeStepContext {
   readonly signal: AbortSignal;
 }
 
+export interface AfterStepTool {
+  readonly toolCall: ToolCall;
+  readonly outcome: ToolCallOutcome;
+  readonly result?: {
+    readonly output: string | readonly ContentPart[];
+    readonly isError?: boolean;
+    readonly note?: string;
+    readonly durationMs?: number;
+    readonly stopTurn?: boolean;
+    readonly stopTurnReason?: string;
+  };
+}
+
 export interface AfterStepContext extends BeforeStepContext {
   readonly usage: TokenUsage;
   readonly finishReason: FinishReason;
+  readonly tools: readonly AfterStepTool[];
   stopTurn: boolean;
+  stopReason?: string;
 }
 
 export interface LoopErrorContext {
@@ -128,11 +162,6 @@ export interface Turn {
   cancel(reason?: unknown): boolean;
 }
 
-export interface LoopSubmitOptions {
-  readonly steerIfActive?: boolean;
-  readonly onMaterialize?: () => void;
-}
-
 export interface LoopSubmitResult {
   readonly id: string;
 }
@@ -175,12 +204,16 @@ export interface PromptPayload {
   readonly promptId?: string;
 }
 
-export interface SteerPayload {
-  readonly input: readonly ContentPart[];
-}
-
 export interface PromptLaunchResult {
   readonly turn_id: number;
+}
+
+export interface SteerResult {
+  readonly turn_id?: number;
+  readonly prompt_id: string;
+  readonly created_at: string;
+  readonly state: 'running' | 'queued' | 'blocked';
+  readonly steered?: boolean;
 }
 
 export interface PromptSubmitContext {
@@ -192,43 +225,99 @@ export interface PromptSubmitContext {
 
 export interface LoopNotify {
   readonly message?: ContextMessage;
-  readonly turnScoped?: boolean;
   readonly bypassMaxSteps?: boolean;
   readonly onConsume?: () => void;
   readonly onDrop?: () => void;
 }
+
+export type LoopNotifyMessage = UserMessage;
 
 export interface LoopNotifyHandle {
   readonly dropped: boolean;
   drop(): void;
 }
 
-export interface IAgentLoopService {
+export interface LoopDetachedTask {
+  readonly taskId: string;
+  readonly toolCallId: string;
+  info(): AgentTaskInfo;
+  readonly completion: ToolCompletionFactory;
+}
+
+export interface IAgentLoopService extends EffectiveProfileReader {
   readonly _serviceBrand: undefined;
 
   readonly requester: LoopRequester;
 
-  submit(input: UserEntry, options?: LoopSubmitOptions): LoopSubmitResult;
+  start(tools?: readonly Tool[]): Promise<void>;
+
+  baselineTools(): readonly Tool[];
+
+  bindingSnapshot(): ProfileBindingSnapshot;
+
+  setProfile(profile: ProfileBindingSnapshot): Promise<void>;
+
+  bindProfile(input: BindAgentInput): Promise<void>;
+
+  applyBindingSnapshot(profile: ProfileBindingSnapshot): Promise<void>;
+
+  applyProfile(profile: ResolvedAgentProfile, options?: ApplyProfileOptions): Promise<void>;
+
+  useProfile(profile: ResolvedAgentProfile, context: SystemPromptContext): void;
+
+  update(changed: ProfileUpdateData): void;
+
+  setModel(model: string): Promise<ProfileSetModelResult>;
+
+  setThinking(level: string): void;
+
+  addActiveTool(name: string): void;
+
+  removeActiveTool(name: string): void;
+
+  history(): readonly ContextMessage[];
+
+  historyRevision(): number;
+
+  replaceHistory(messages: readonly Message[], reason?: string, onAccepted?: () => void): boolean;
+
+  initializeHistory(messages: readonly Message[]): Promise<void>;
+
+  submit(payload: PromptPayload): Promise<PromptLaunchResult | undefined>;
+  submit(input: UserMessage): LoopSubmitResult;
 
   steer(promptIds: readonly string[]): Promise<void>;
 
   cancel(target?: LoopCancelTarget, reason?: unknown): boolean;
 
+  detachTool(task: LoopDetachedTask, text?: string): void;
+
+
+  abortTool(toolCallId: string, reason?: unknown): void;
+
+  registerToolBatchStarting(hook: LoopHooks['tool.batch-starting']): IDisposable;
+
   snapshot(): LoopSnapshot;
 
   settled(): Promise<void>;
 
+  retry(): Promise<TurnResult | undefined>;
+
+  close(): Promise<void>;
+
   tryAcquireQuiescence(): IDisposable | undefined;
 
+  tryAcquireHistorySnapshot(): IDisposable | undefined;
+
+  notifyClient(input: LoopNotifyMessage): Promise<SteerResult>;
+  notify(input: LoopNotifyMessage): LoopSubmitResult;
   notify(note?: LoopNotify): LoopNotifyHandle;
+  sendNow(input: LoopNotifyMessage): LoopSubmitResult;
+  sendNow(promptIds: readonly string[]): Promise<void>;
 
-  remind(note?: LoopNotify): LoopNotifyHandle;
+  remind(...messages: readonly Message[]): void;
 
-  buildAttachBundle(): MachineEngineAttachBundle;
-
-  attachEngine(ref: MachineEngineAttachRef, bundle: MachineEngineAttachBundle): MachineEngine;
-
-  resetMachineEngine(): Promise<void>;
+  flushReminders(): void;
 
   promptHandle(id: string): PromptHandle | undefined;
 
@@ -239,6 +328,7 @@ export interface IAgentLoopService {
 
   readonly hooks: Hooks<{
     onWillBeginStep: BeforeStepContext;
+    /** After onDidFinishStep, Core consumes queued reminders before assembling the next LLM request. */
     onDidFinishStep: AfterStepContext;
     onBeforeSubmitPrompt: PromptSubmitContext;
   }>;
