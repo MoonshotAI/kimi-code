@@ -7,7 +7,7 @@ import {
   type Session,
   type ThinkingEffort,
 } from '@moonshot-ai/kimi-code-sdk';
-import { TuiAltScreen } from '@moonshot-ai/pi-tui';
+import { isKittyProtocolActive, TuiAltScreen } from '@moonshot-ai/pi-tui';
 
 import { EditorSelectorComponent } from '../components/dialogs/editor-selector';
 import { EffortSelectorComponent } from '../components/dialogs/effort-selector';
@@ -17,6 +17,7 @@ import {
 } from '../components/dialogs/experiments-selector';
 import { MermaidPreferenceSelectorComponent } from '../components/dialogs/mermaid-preference-selector';
 import { modelDisplayName, segmentsFor } from '../components/dialogs/model-selector';
+import { FollowUpBehaviorSelectorComponent } from '../components/dialogs/follow-up-behavior-selector';
 import { ModelSwitchConfirmDialogComponent } from '../components/dialogs/model-switch-confirm-dialog';
 import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model-selector';
 import { PermissionSelectorComponent } from '../components/dialogs/permission-selector';
@@ -34,8 +35,10 @@ import { UpdatePreferenceSelectorComponent } from '../components/dialogs/update-
 import {
   DEFAULT_MARKDOWN_CONFIG,
   DEFAULT_TUI_CONFIG,
+  resolveFollowUpBehavior,
   resolveTuiMode,
   saveTuiConfig,
+  type FollowUpBehavior,
   type MarkdownConfig,
   type TranscriptConfig,
   type TuiConfig,
@@ -100,6 +103,7 @@ export function currentTuiConfig(host: Pick<SlashCommandHost, 'state'>): TuiConf
     renderLatex: host.state.appState.renderLatex ?? DEFAULT_TUI_CONFIG.renderLatex ?? true,
     cacheExpiryHint: host.state.appState.cacheExpiryHint ?? DEFAULT_TUI_CONFIG.cacheExpiryHint,
     autoSessionTitle: host.state.appState.autoSessionTitle ?? DEFAULT_TUI_CONFIG.autoSessionTitle,
+    followUpBehavior: host.state.appState.followUpBehavior,
     notifications: host.state.appState.notifications,
     upgrade: host.state.appState.upgrade,
     statusLine: host.state.appState.statusLine ?? DEFAULT_TUI_CONFIG.statusLine,
@@ -1277,6 +1281,53 @@ export async function applyTuiModeChoice(host: TuiModeHost, tuiMode: TuiMode): P
   }
 }
 
+function showFollowUpBehaviorPicker(host: SlashCommandHost): void {
+  host.mountEditorReplacement(
+    new FollowUpBehaviorSelectorComponent({
+      currentValue: resolveFollowUpBehavior(host.state.appState.followUpBehavior),
+      ctrlEnterRecognized: isKittyProtocolActive(),
+      onSelect: (value) => {
+        host.restoreEditor();
+        void applyFollowUpBehaviorChoice(host, value);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+type FollowUpBehaviorHost = {
+  readonly state: {
+    readonly appState: Pick<SlashCommandHost['state']['appState'], 'followUpBehavior'>;
+  };
+  setAppState(patch: Pick<SlashCommandHost['state']['appState'], 'followUpBehavior'>): void;
+  showStatus(msg: string, color?: string): void;
+};
+
+export async function applyFollowUpBehaviorChoice(
+  host: FollowUpBehaviorHost,
+  followUpBehavior: FollowUpBehavior,
+): Promise<void> {
+  if (followUpBehavior === host.state.appState.followUpBehavior) {
+    host.showStatus(`Follow-up behavior already ${followUpBehavior}.`);
+    return;
+  }
+
+  try {
+    await saveTuiConfig({
+      ...currentTuiConfig(host as unknown as SlashCommandHost),
+      followUpBehavior,
+    });
+  } catch (error) {
+    host.showStatus(`Failed to save follow-up behavior: ${formatErrorMessage(error)}`, 'error');
+    return;
+  }
+
+  host.setAppState({ followUpBehavior });
+  host.showStatus(`Follow-up behavior set to ${followUpBehavior}.`, 'success');
+}
+
 export function showSettingsSelector(host: SlashCommandHost): void {
   host.mountEditorReplacement(
     new SettingsSelectorComponent({
@@ -1303,6 +1354,7 @@ function handleSettingsSelection(host: SlashCommandHost, value: SettingsSelectio
     case 'copyOnSelect': showCopyOnSelectPicker(host); return;
     case 'mermaid': showMermaidPreferencePicker(host); return;
     case 'editor': showEditorPicker(host); return;
+    case 'followUpBehavior': showFollowUpBehaviorPicker(host); return;
     case 'survey': showSurveyPreferencePicker(host); return;
     case 'experiments': void showExperimentsPanel(host); return;
     case 'upgrade': showUpdatePreferencePicker(host); return;
