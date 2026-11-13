@@ -1195,58 +1195,35 @@ On success, `data` is `{ deleted: true }`.
 
 ## GUI store
 
-A server-backed key/value store whose interface mirrors the browser's `localStorage`, with data persisted under the server's home directory. The web UI uses it to keep cross-client UI state. Values are opaque strings, and serialization is the caller's job.
+A server-backed key/value store persisted at `gui.json` under the server's home directory (with a cross-process file lock, durable atomic replacement, and corrupt-file quarantine). Used to synchronize cross-client UI state such as pinned sessions and workspace ordering; values are strings with monotonic per-key `revision` numbers, optional optimistic concurrency checks (`if_revision`), and live `event.gui_store.updated` WebSocket broadcasts.
 
 | Method and path | Description |
 | --- | --- |
-| `GET /api/v1/gui/store/length` | Number of stored keys |
-| `GET /api/v1/gui/store/getItem` | Read a value by key |
-| `POST /api/v1/gui/store/setItem` | Write a value by key |
-| `POST /api/v1/gui/store/removeItem` | Delete a value by key |
-| `POST /api/v1/gui/store/clear` | Delete all values |
+| `GET /api/v1/gui/store` | Read a versioned snapshot of stored entries (optionally filtered by `prefix` or `keys`) |
+| `PATCH /api/v1/gui/store` | Atomically upsert or delete entries with optional per-key `if_revision` checks |
 
-### `GET /api/v1/gui/store/length`
+### `GET /api/v1/gui/store`
 
-Returns the number of stored keys, mirroring `localStorage.length`. No parameters.
-
-On success, `data` is `{ length }`.
-
-### `GET /api/v1/gui/store/getItem`
-
-Reads one value, mirroring `localStorage.getItem`.
+Reads the persisted snapshot and store revision. Returns `{ revision: 0, entries: {} }` when `gui.json` does not exist yet.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
-| `key` | query | string | Required. Key to read, 1–256 characters |
+| `prefix` | query | string | Optional. Only return entries whose key starts with this prefix, up to 256 characters |
+| `keys` | query | string \| string[] | Optional. Only return entries matching these keys, up to 16 items and 4,096 URL-encoded query bytes |
 
-On success, `data` is `{ value }`: the stored string, or `null` when the key does not exist.
+On success, `data` is `{ revision, entries }`, where `entries` maps each key to `{ value, revision }`. If `gui.json` on disk is corrupt or truncated to zero bytes, it is quarantined to `gui.json.corrupt-*` and error code `50003` is returned with `details.quarantine_path`; subsequent writes recover with a monotonically higher revision floor.
 
-### `POST /api/v1/gui/store/setItem`
+### `PATCH /api/v1/gui/store`
 
-Writes one value, mirroring `localStorage.setItem`.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `key` | body | string | Required. Key to write, 1–256 characters |
-| `value` | body | string | Required. Value to store |
-
-On success, `data` is `null`.
-
-### `POST /api/v1/gui/store/removeItem`
-
-Deletes one value, mirroring `localStorage.removeItem`.
+Atomically upserts or deletes a batch of entries under a cross-process lock, with optional per-key optimistic concurrency checks.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
-| `key` | body | string | Required. Key to delete, 1–256 characters |
+| `mutations` | body | array | Required. 1–128 unique-key mutations totaling at most 512 KiB of UTF-8 key/value bytes, each `{ key, value, if_revision? }`: `key` is 1–256 characters; `value` is a string (up to 65,536 characters) to upsert or `null` to delete; `if_revision` is a non-negative integer (`0` asserts the key is currently absent) |
 
-On success, `data` is `null`.
-
-### `POST /api/v1/gui/store/clear`
-
-Deletes every stored value, mirroring `localStorage.clear`. No parameters.
-
-On success, `data` is `null`.
+On success, `data` is `{ applied, revision, entries, conflicts }`:
+- When every `if_revision` check matches, `applied` is `true`, `entries` holds the resulting `{ value, revision }` (or `null` when deleted) for each mutated key, `conflicts` is `{}`, and `event.gui_store.updated` is broadcast when any value changed.
+- When any `if_revision` mismatches, nothing is written, `applied` is `false`, and `conflicts` holds the current server `{ value, revision }` (or `null` when absent) for each conflicting key so the caller can merge and retry.
 
 ## Global search and other endpoints
 

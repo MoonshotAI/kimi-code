@@ -1195,58 +1195,35 @@ cloud-only 条目不能在本机安装。旧 `kimi-webbridge` 条目不再返回
 
 ## GUI 存储
 
-由服务端支撑的键值存储，接口对齐浏览器的 `localStorage`，数据持久化在服务的 home 目录下。web UI 用它保存跨客户端的 UI 状态。值是不透明字符串，序列化由调用方负责。
+服务端持久化的键值存储，落在服务 home 目录下的 `gui.json`（跨进程文件锁 + 原子耐久替换 + 损坏自动隔离备份）。用于跨客户端同步侧栏置顶、工作区排序等 UI 状态；值为字符串，支持单键递增版本号（`revision`）与乐观并发校验（`if_revision`），变更后向所有在线 WebSocket 连接广播 `event.gui_store.updated`。
 
 | 方法与路径 | 说明 |
 | --- | --- |
-| `GET /api/v1/gui/store/length` | 已存键的数量 |
-| `GET /api/v1/gui/store/getItem` | 按键读取值 |
-| `POST /api/v1/gui/store/setItem` | 按键写入值 |
-| `POST /api/v1/gui/store/removeItem` | 按键删除值 |
-| `POST /api/v1/gui/store/clear` | 删除所有值 |
+| `GET /api/v1/gui/store` | 读取键值快照与版本号（支持按 `prefix` 或 `keys` 过滤） |
+| `PATCH /api/v1/gui/store` | 原子批量写入或删除键值（支持按单键 `if_revision` 乐观并发检查） |
 
-### `GET /api/v1/gui/store/length`
+### `GET /api/v1/gui/store`
 
-返回已存键的数量，对齐 `localStorage.length`。无参数。
-
-成功时 `data` 为 `{ length }`。
-
-### `GET /api/v1/gui/store/getItem`
-
-读取一个值，对齐 `localStorage.getItem`。
+读取当前已持久化的键值快照与存储版本号。文件尚未创建时返回 `{ revision: 0, entries: {} }`。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
-| `key` | query | string | 必填。要读取的键，1–256 个字符 |
+| `prefix` | query | string | 可选。仅返回键名以该前缀开头的条目，最长 256 个字符 |
+| `keys` | query | string \| string[] | 可选。仅返回指定键名集合中的条目，最多 16 个且 URL 编码总长度不超过 4,096 字节 |
 
-成功时 `data` 为 `{ value }`：已存的字符串，键不存在时为 `null`。
+成功时 `data` 为 `{ revision, entries }`，其中 `entries` 为 `{ [key]: { value, revision } }`。若磁盘上的 `gui.json` 损坏或被截断为空文件，原文件会被隔离重命名为 `gui.json.corrupt-*` 并返回错误码 `50003`（`details.quarantine_path` 指出备份路径），后续写入将从不低于历史水位线的单调版本号恢复。
 
-### `POST /api/v1/gui/store/setItem`
+### `PATCH /api/v1/gui/store`
 
-写入一个值，对齐 `localStorage.setItem`。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `key` | body | string | 必填。要写入的键，1–256 个字符 |
-| `value` | body | string | 必填。要存储的值 |
-
-成功时 `data` 为 `null`。
-
-### `POST /api/v1/gui/store/removeItem`
-
-删除一个值，对齐 `localStorage.removeItem`。
+在单个跨进程事务中批量更新或删除条目，可选按单键 `if_revision` 做乐观并发校验。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
-| `key` | body | string | 必填。要删除的键，1–256 个字符 |
+| `mutations` | body | array | 必填。1–128 条变更，键名不得重复，单批键值 UTF-8 总字节数不超过 512 KiB。每项为 `{ key, value, if_revision? }`：`key` 为 1–256 个字符；`value` 为字符串（最长 65,536 个字符）表示写入，`null` 表示删除；`if_revision` 为非负整数（`0` 表示断言该键当前不存在） |
 
-成功时 `data` 为 `null`。
-
-### `POST /api/v1/gui/store/clear`
-
-删除所有已存的值，对齐 `localStorage.clear`。无参数。
-
-成功时 `data` 为 `null`。
+成功时 `data` 为 `{ applied, revision, entries, conflicts }`：
+- 所有 `if_revision` 均匹配时，`applied` 为 `true`，`entries` 返回本次涉及键的最新 `{ value, revision }`（删除项为 `null`），`conflicts` 为 `{}`；若有实际变更，同时广播全局事件 `event.gui_store.updated`。
+- 任一 `if_revision` 不匹配时，整批不落盘，`applied` 为 `false`，`conflicts` 返回冲突键在服务端的当前 `{ value, revision }`（不存在时为 `null`），供调用方合并后重试。
 
 ## 全局搜索与其他
 

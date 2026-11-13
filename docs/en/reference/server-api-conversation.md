@@ -466,5 +466,6 @@ Global events are sent to every established connection, with no subscription nee
 | `event.model_catalog.changed` | `__global__` | `changed: [{ provider_id, provider_name, added, removed }]`, `unchanged`, `failed: [{ provider, reason }]`, `retired_default?: { from, to, from_display_name }` | A model catalog refresh finished |
 | `event.plugin.changed` | `__global__` | None | Plugins changed; the client reads the plugin list again |
 | `event.capability.changed` | `__global__` | `capability_id`, `install: { running, step?, percent?, error?, note? }` | A built-in capability's install state changed |
+| `event.gui_store.updated` | `__global__` | `revision`, `entries: { [key]: { value, revision } \| null }` | GUI store entries changed (via `PATCH /api/v1/gui/store` or an external `gui.json` update) |
 
-These events only cover changes made inside this server process. Changes from other processes (for example, a CLI writing to the same home directory) become visible only after index reconciliation (about a minute), so overview clients should keep a low-frequency fallback poll.
+Except for file-watched events (`event.config.changed` and `event.gui_store.updated`), these events only cover changes made inside this server process. Session and workspace changes from other processes (for example, a CLI writing to the same home directory) become visible only after index reconciliation (about a minute), so overview clients should keep a low-frequency fallback poll.
