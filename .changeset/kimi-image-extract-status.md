@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Reject Kimi image references when the server reports image processing failed.
+Reject failed or unfinished Kimi media uploads instead of caching unusable file references.
