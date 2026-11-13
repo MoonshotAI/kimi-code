@@ -1,53 +1,77 @@
+import { z } from 'zod';
+
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
-export type FeedbackAvailability =
-  | { readonly kind: 'ready' }
-  | { readonly kind: 'needs-login' }
-  | { readonly kind: 'error'; readonly message: string };
+const feedbackFailureSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('needs-login') }),
+  z.object({ kind: z.literal('error'), message: z.string() }),
+]);
 
-export interface FeedbackSubmitInput {
-  readonly content: string;
-  readonly sessionId: string;
-  readonly version: string;
-  readonly os: string;
-  readonly model: string | null;
-  readonly contact?: string;
-  readonly info?: Record<string, unknown>;
+function feedbackResultSchema<T extends z.ZodRawShape>(ok: z.ZodObject<T>) {
+  return z.discriminatedUnion('kind', [ok, feedbackFailureSchema.options[0], feedbackFailureSchema.options[1]]);
 }
 
-export type FeedbackSubmitResult =
-  | { readonly kind: 'ok'; readonly feedbackId: number }
-  | { readonly kind: 'needs-login' }
-  | { readonly kind: 'error'; readonly message: string };
+export const feedbackModelAliasQuerySchema = z.object({
+  modelAlias: z.string().optional(),
+});
 
-export interface FeedbackUploadUrlInput {
-  readonly feedbackId: number;
-  readonly filename: string;
-  readonly size: number;
-  readonly sha256: string;
-}
+export const feedbackAvailabilitySchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('ready') }),
+  feedbackFailureSchema.options[0],
+  feedbackFailureSchema.options[1],
+]);
 
-export interface FeedbackUploadPart {
-  readonly partNumber: number;
-  readonly url: string;
-  readonly method: string;
-  readonly size: number;
-}
+export const feedbackSubmitInputSchema = z.object({
+  content: z.string(),
+  sessionId: z.string(),
+  version: z.string(),
+  os: z.string(),
+  model: z.string().nullable(),
+  contact: z.string().optional(),
+  info: z.record(z.string(), z.unknown()).optional(),
+});
 
-export type FeedbackUploadUrlResult =
-  | { readonly kind: 'ok'; readonly uploadId: number; readonly parts: readonly FeedbackUploadPart[] }
-  | { readonly kind: 'needs-login' }
-  | { readonly kind: 'error'; readonly message: string };
+export const feedbackSubmitResultSchema = feedbackResultSchema(
+  z.object({ kind: z.literal('ok'), feedbackId: z.number() }),
+);
 
-export interface FeedbackCompleteUploadInput {
-  readonly uploadId: number;
-  readonly parts: readonly { readonly partNumber: number; readonly etag: string }[];
-}
+export const feedbackUploadPartSchema = z.object({
+  partNumber: z.number(),
+  url: z.string(),
+  method: z.string(),
+  size: z.number(),
+});
 
-export type FeedbackCompleteResult =
-  | { readonly kind: 'ok' }
-  | { readonly kind: 'needs-login' }
-  | { readonly kind: 'error'; readonly message: string };
+export const feedbackUploadUrlInputSchema = z.object({
+  feedbackId: z.number(),
+  filename: z.string(),
+  size: z.number(),
+  sha256: z.string(),
+});
+
+export const feedbackUploadUrlResultSchema = feedbackResultSchema(
+  z.object({
+    kind: z.literal('ok'),
+    uploadId: z.number(),
+    parts: z.array(feedbackUploadPartSchema),
+  }),
+);
+
+export const feedbackCompleteUploadInputSchema = z.object({
+  uploadId: z.number(),
+  parts: z.array(z.object({ partNumber: z.number(), etag: z.string() })),
+});
+
+export const feedbackCompleteResultSchema = feedbackResultSchema(z.object({ kind: z.literal('ok') }));
+
+export type FeedbackAvailability = z.infer<typeof feedbackAvailabilitySchema>;
+export type FeedbackSubmitInput = z.infer<typeof feedbackSubmitInputSchema>;
+export type FeedbackSubmitResult = z.infer<typeof feedbackSubmitResultSchema>;
+export type FeedbackUploadPart = z.infer<typeof feedbackUploadPartSchema>;
+export type FeedbackUploadUrlInput = z.infer<typeof feedbackUploadUrlInputSchema>;
+export type FeedbackUploadUrlResult = z.infer<typeof feedbackUploadUrlResultSchema>;
+export type FeedbackCompleteUploadInput = z.infer<typeof feedbackCompleteUploadInputSchema>;
+export type FeedbackCompleteResult = z.infer<typeof feedbackCompleteResultSchema>;
 
 export interface IFeedbackService {
   readonly _serviceBrand: undefined;

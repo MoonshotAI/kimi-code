@@ -1,84 +1,38 @@
 /**
- * `feedbackService` — app-scope `/feedback` submission. Mirrors
- * `agent-core-v2/app/auth/feedback.ts`.
+ * `feedbackService` — app-scope `/feedback` submission. Schemas live next to
+ * the engine types so the HTTP route and this contract do not each restate them.
  */
 
 import { z } from 'zod';
+import {
+  feedbackAvailabilitySchema,
+  feedbackCompleteResultSchema,
+  feedbackCompleteUploadInputSchema,
+  feedbackSubmitInputSchema,
+  feedbackSubmitResultSchema,
+  feedbackUploadUrlInputSchema,
+  feedbackUploadUrlResultSchema,
+} from '@moonshot-ai/agent-core-v2/app/auth/feedback';
 
 import type { ServiceContract } from '../types.js';
 
-const availabilitySchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('ready') }),
-  z.object({ kind: z.literal('needs-login') }),
-  z.object({ kind: z.literal('error'), message: z.string() }),
-]);
-
-const submitInputSchema = z.object({
-  content: z.string(),
-  sessionId: z.string(),
-  version: z.string(),
-  os: z.string(),
-  model: z.string().nullable(),
-  contact: z.string().optional(),
-  info: z.record(z.string(), z.unknown()).optional(),
-});
-
-const submitResultSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('ok'), feedbackId: z.number() }),
-  z.object({ kind: z.literal('needs-login') }),
-  z.object({ kind: z.literal('error'), message: z.string() }),
-]);
-
-const uploadUrlInputSchema = z.object({
-  feedbackId: z.number(),
-  filename: z.string(),
-  size: z.number(),
-  sha256: z.string(),
-});
-
-const uploadUrlResultSchema = z.discriminatedUnion('kind', [
-  z.object({
-    kind: z.literal('ok'),
-    uploadId: z.number(),
-    parts: z.array(
-      z.object({
-        partNumber: z.number(),
-        url: z.string(),
-        method: z.string(),
-        size: z.number(),
-      }),
-    ),
-  }),
-  z.object({ kind: z.literal('needs-login') }),
-  z.object({ kind: z.literal('error'), message: z.string() }),
-]);
-
-const completeInputSchema = z.object({
-  uploadId: z.number(),
-  parts: z.array(z.object({ partNumber: z.number(), etag: z.string() })),
-});
-
-const completeResultSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('ok') }),
-  z.object({ kind: z.literal('needs-login') }),
-  z.object({ kind: z.literal('error'), message: z.string() }),
-]);
+const modelAlias = z.string().optional();
 
 export const feedbackContract = {
   availability: {
-    input: z.tuple([z.string().optional()]),
-    output: availabilitySchema,
+    input: z.tuple([modelAlias]),
+    output: feedbackAvailabilitySchema,
   },
   submit: {
-    input: z.tuple([submitInputSchema, z.string().optional()]),
-    output: submitResultSchema,
+    input: z.tuple([feedbackSubmitInputSchema, modelAlias]),
+    output: feedbackSubmitResultSchema,
   },
   createUploadUrl: {
-    input: z.tuple([uploadUrlInputSchema, z.string().optional()]),
-    output: uploadUrlResultSchema,
+    input: z.tuple([feedbackUploadUrlInputSchema, modelAlias]),
+    output: feedbackUploadUrlResultSchema,
   },
   completeUpload: {
-    input: z.tuple([completeInputSchema, z.string().optional()]),
-    output: completeResultSchema,
+    input: z.tuple([feedbackCompleteUploadInputSchema, modelAlias]),
+    output: feedbackCompleteResultSchema,
   },
 } satisfies ServiceContract;
