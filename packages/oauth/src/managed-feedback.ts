@@ -40,7 +40,7 @@ export async function fetchSubmitFeedback(
   url: string,
   accessToken: string,
   body: SubmitFeedbackBody,
-  opts: { timeoutMs?: number } = {},
+  opts: { timeoutMs?: number; headers?: Readonly<Record<string, string>> } = {},
 ): Promise<FetchSubmitFeedbackResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => {
@@ -50,6 +50,7 @@ export async function fetchSubmitFeedback(
     const res = await fetch(url, {
       method: 'POST',
       headers: {
+        ...opts.headers,
         Authorization: `Bearer ${accessToken}`,
         Accept: 'application/json',
         'Content-Type': 'application/json',

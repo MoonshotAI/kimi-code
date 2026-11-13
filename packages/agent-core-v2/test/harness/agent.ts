@@ -302,6 +302,8 @@ interface ProviderConfigForConfig {
   readonly type: ProviderConfig['type'];
   readonly apiKey?: string;
   readonly baseUrl?: string;
+  readonly searchUrl?: string;
+  readonly feedbackUrl?: string;
   readonly oauth?: {
     readonly storage: 'file' | 'keyring';
     readonly key: string;
