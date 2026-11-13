@@ -22,8 +22,6 @@ import { IOAuthService } from '#/app/auth/auth';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { ISessionExportService } from '#/app/sessionExport/sessionExport';
-import { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
-import { IWorkspaceService } from '#/app/workspace/workspace';
 import { IModelService, type ModelRecord } from '#/llm-adapter/model/model';
 import {
   nonEmpty,
@@ -74,8 +72,6 @@ export class FeedbackService implements IFeedbackService {
     @IOAuthService private readonly oauth: IOAuthService,
     @IBootstrapService private readonly bootstrap?: IBootstrapService,
     @ISessionExportService private readonly sessionExport?: ISessionExportService,
-    @ISessionIndex private readonly sessionIndex?: ISessionIndex,
-    @IWorkspaceService private readonly workspaces?: IWorkspaceService,
     @ILogService private readonly log?: ILogService,
   ) {}
 
@@ -136,7 +132,7 @@ export class FeedbackService implements IFeedbackService {
       const uploaded = await this.prepareAndUploadSessionArchive(api, feedbackId, input);
       return !uploaded;
     }
-    const workDir = nonEmpty(input.workDir) ?? (await this.resolveSessionWorkDir(input.sessionId));
+    const workDir = nonEmpty(input.workDir);
     const scan =
       workDir === undefined ? undefined : await this.scanCodebaseForFeedback(workDir);
     const [uploadedSession, uploadedCodebase] = await Promise.all([
@@ -272,17 +268,6 @@ export class FeedbackService implements IFeedbackService {
     } finally {
       clearTimeout(timer);
     }
-  }
-
-  private async resolveSessionWorkDir(sessionId: string): Promise<string | undefined> {
-    const id = nonEmpty(sessionId);
-    if (id === undefined || this.sessionIndex === undefined || this.workspaces === undefined) {
-      return undefined;
-    }
-    const summary = await this.sessionIndex.get(id);
-    if (summary === undefined) return undefined;
-    const workspace = await this.workspaces.get(summary.workspaceId);
-    return workspace?.root;
   }
 
   private async logUploadError(error: unknown): Promise<void> {
