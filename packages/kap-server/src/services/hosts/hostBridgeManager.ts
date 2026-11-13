@@ -4,10 +4,12 @@ import {
   collectSharedProviders,
   compareProviderDigests,
   fetchHostProviderDigests,
+  sendProviderRemoval,
   sendSharedProviders,
   sharedProviderDigests,
   type ProviderCopyResult,
   type ProviderHostStatus,
+  type ProviderRemoveResult,
   type SharedProviders,
 } from './hostProviders';
 import { HOSTS_SECTION, type HostEntry, type HostsSection } from './hostsConfig';
@@ -109,6 +111,14 @@ export class HostBridgeManager {
     if (Object.keys(shared.providers).length === 0) return { copied: [], updated: [], skipped };
     const result = await sendSharedProviders(session, shared);
     return { copied: result.copied, updated: result.updated, skipped: [...skipped, ...result.skipped] };
+  }
+
+  async removeProviders(id: string, only: readonly string[]): Promise<ProviderRemoveResult> {
+    const session = await this.connect(id);
+    const { shared } = await collectSharedProviders(this.core, only);
+    const digests = sharedProviderDigests(shared);
+    if (Object.keys(digests).length === 0) return { removed: [] };
+    return sendProviderRemoval(session, digests);
   }
 
   async providerStatus(id: string, shared: SharedProviders): Promise<Record<string, ProviderHostStatus>> {

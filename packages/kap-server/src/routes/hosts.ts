@@ -12,7 +12,12 @@ import {
   hostWireSchema,
   isValidHostId,
 } from '../services/hosts/hostsConfig';
-import { collectSharedProviders, providerHostStatusSchema, skippedProviderSchema } from '../services/hosts/hostProviders';
+import {
+  collectSharedProviders,
+  providerHostStatusSchema,
+  providerRemoveResultSchema,
+  skippedProviderSchema,
+} from '../services/hosts/hostProviders';
 import { readSshConfigHosts } from '../services/hosts/sshConfigHosts';
 import { HostConnectError, SshKapBridge } from '../services/hosts/sshKapBridge';
 
@@ -54,6 +59,7 @@ const hostResponseSchema = hostWireObjectSchema.extend({
 const hostParamsSchema = z.object({ id: z.string() });
 const connectBodySchema = z.object({ id: z.string() });
 const copyProvidersBodySchema = z.object({ id: z.string(), providers: z.array(z.string()).optional() });
+const removeProvidersBodySchema = z.object({ id: z.string(), providers: z.array(z.string()) });
 const shareableProvidersQuerySchema = z.object({ host_id: z.string().optional() });
 const testResultSchema = z.object({
   connected: z.boolean(),
@@ -269,6 +275,32 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
     },
   );
   app.post(copyProvidersRoute.path, copyProvidersRoute.options, copyProvidersRoute.handler as never);
+
+  const removeProvidersRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/hosts::remove-providers',
+      body: removeProvidersBodySchema,
+      success: { data: providerRemoveResultSchema },
+      errors: { [ErrorCode.ENVIRONMENT_NOT_FOUND]: {}, [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {} },
+      description:
+        'Remove the chosen model providers from a host, with their models. Only providers still identical to the ones on this computer are removed; the rest are left as they are',
+      tags: ['hosts'],
+    },
+    async (req: RouteRequest, reply: RouteReply) => {
+      const { id, providers } = req.body as z.infer<typeof removeProvidersBodySchema>;
+      if (manager.section()[id] === undefined) {
+        reply.send(errEnvelope(ErrorCode.ENVIRONMENT_NOT_FOUND, `host "${id}" is not configured`, req.id));
+        return;
+      }
+      try {
+        reply.send(okEnvelope(await manager.removeProviders(id, providers), req.id));
+      } catch (error) {
+        reply.send(errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, error instanceof Error ? error.message : String(error), req.id));
+      }
+    },
+  );
+  app.post(removeProvidersRoute.path, removeProvidersRoute.options, removeProvidersRoute.handler as never);
 
   const putRoute = defineRoute(
     {

@@ -923,6 +923,44 @@ describe('host model providers', () => {
       },
     );
   }, 30_000);
+
+  it.skipIf(process.platform === 'win32')('removes only the synced providers that still match this computer and moves a default that pointed at them', async () => {
+    await withManagedHostPair(
+      async () => new Response(null, { status: 404 }),
+      async ({ local, remote }) => {
+        const localConfig = local.core.accessor.get(IConfigService);
+        const remoteConfig = remote.core.accessor.get(IConfigService);
+        await localConfig.ready;
+        await remoteConfig.ready;
+        await localConfig.replace('providers', {
+          gateway: { type: 'openai', baseUrl: 'https://gateway.example.test/v1', apiKey: 'sk-gateway' },
+          taken: { type: 'openai', baseUrl: 'https://taken.example.test/v1', apiKey: 'sk-local' },
+        });
+        await localConfig.replace('models', {
+          'gateway/large': { provider: 'gateway', model: 'large', maxContextSize: 200_000 },
+          'taken/small': { provider: 'taken', model: 'small', maxContextSize: 32_000 },
+        });
+        await remoteConfig.replace('providers', { kept: { type: 'openai', baseUrl: 'https://kept.example.test/v1', apiKey: 'sk-kept' } });
+        await remoteConfig.replace('models', { 'kept/base': { provider: 'kept', model: 'base', maxContextSize: 16_000 } });
+        const manager = local.hostBridges;
+        await manager.copyProviders('dev');
+        await remoteConfig.replace('defaultModel', 'gateway/large');
+        await remoteConfig.replace('providers', {
+          ...remoteConfig.inspect<Record<string, unknown>>('providers').userValue,
+          taken: { type: 'openai', baseUrl: 'https://taken.example.test/v1', apiKey: 'sk-host-rotated' },
+        });
+
+        await expect(manager.removeProviders('dev', ['gateway', 'taken', 'unknown'])).resolves.toEqual({ removed: ['gateway'] });
+        expect(Object.keys(remoteConfig.inspect<Record<string, unknown>>('providers').userValue ?? {}).toSorted()).toEqual(['kept', 'taken']);
+        expect(Object.keys(remoteConfig.inspect<Record<string, unknown>>('models').userValue ?? {}).toSorted()).toEqual(['kept/base', 'taken/small']);
+        expect(remoteConfig.inspect<string>('defaultModel').userValue).not.toBe('gateway/large');
+        await expect(manager.providerStatus('dev', (await collectSharedProviders(local.core)).shared)).resolves.toEqual({ gateway: 'missing', taken: 'outdated' });
+
+        await expect(manager.removeProviders('dev', ['gateway'])).resolves.toEqual({ removed: [] });
+        await expect(manager.removeProviders('missing', ['taken'])).rejects.toThrow(/not configured/);
+      },
+    );
+  }, 30_000);
 });
 
 function rpcClient(socketPath: string) {

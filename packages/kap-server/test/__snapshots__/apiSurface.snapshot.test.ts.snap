@@ -418,6 +418,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
+      "/api/v1/hosts:remove-providers",
+    ],
+    [
+      "POST",
       "/api/v1/hosts:test",
     ],
     [

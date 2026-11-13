@@ -53,6 +53,14 @@ const providerDigestsBodySchema = z.object({ providers: z.array(z.string()) }).s
 
 const providerDigestsSchema = z.object({ digests: z.record(z.string(), z.string()) });
 
+const removeMatchingProvidersBodySchema = z.object({ providers: z.record(z.string(), z.string()) }).strict();
+
+export const providerRemoveResultSchema = z.object({ removed: z.array(z.string()) });
+
+export interface ProviderRemoveResult {
+  readonly removed: readonly string[];
+}
+
 const LOOPBACK_HOSTS = new Set(['localhost', '0.0.0.0', '[::1]', '[::]']);
 
 function loopback(baseUrl: string | undefined): boolean {
@@ -172,10 +180,44 @@ export function compareProviderDigests(
   );
 }
 
-let importChain: Promise<unknown> = Promise.resolve();
+let providerWrites: Promise<unknown> = Promise.resolve();
+
+function queueProviderWrite<T>(write: () => Promise<T>): Promise<T> {
+  const run = providerWrites.then(write);
+  providerWrites = run.catch(() => undefined);
+  return run;
+}
+
+export function removeMatchingProviders(core: Scope, input: unknown): Promise<ProviderRemoveResult> {
+  return queueProviderWrite(async () => {
+    const expected = removeMatchingProvidersBodySchema.parse(input).providers;
+    const config = core.accessor.get(IConfigService);
+    await config.ready;
+    await core.accessor.get(IKosongConfigService).ready;
+    const providers = config.inspect<Record<string, ProviderConfig>>(PROVIDERS_SECTION).userValue ?? {};
+    const models = config.inspect<Record<string, ModelRecord>>(MODELS_SECTION).userValue ?? {};
+    const removed = Object.entries(expected)
+      .filter(([id, digest]) => providerDigest(id, providers, models) === digest)
+      .map(([id]) => id);
+    if (removed.length === 0) return { removed };
+    const gone = new Set(removed);
+    const removedAliases = Object.entries(models)
+      .filter(([, model]) => model.provider !== undefined && gone.has(model.provider))
+      .map(([alias]) => alias);
+    await config.replace(PROVIDERS_SECTION, Object.fromEntries(Object.entries(providers).filter(([id]) => !gone.has(id))));
+    if (removedAliases.length > 0) {
+      await config.replace(MODELS_SECTION, Object.fromEntries(Object.entries(models).filter(([alias]) => !removedAliases.includes(alias))));
+    }
+    const currentDefault = config.inspect<string>(DEFAULT_MODEL_SECTION).userValue;
+    if (currentDefault !== undefined && removedAliases.includes(currentDefault)) {
+      await config.replace(DEFAULT_MODEL_SECTION, Object.keys(config.get<Record<string, ModelRecord> | undefined>(MODELS_SECTION) ?? {})[0]);
+    }
+    return { removed };
+  });
+}
 
 export function importSharedProviders(core: Scope, input: unknown): Promise<ProviderCopyResult> {
-  const run = importChain.then(async () => {
+  return queueProviderWrite(async () => {
     const incoming = sharedProvidersSchema.parse(input);
     const config = core.accessor.get(IConfigService);
     await config.ready;
@@ -204,8 +246,6 @@ export function importSharedProviders(core: Scope, input: unknown): Promise<Prov
     }
     return { copied, updated, skipped: [] };
   });
-  importChain = run.catch(() => undefined);
-  return run;
 }
 
 export async function sendSharedProviders(session: HostSession, shared: SharedProviders): Promise<ProviderCopyResult> {
@@ -236,6 +276,21 @@ export async function fetchHostProviderDigests(session: HostSession, ids: readon
     throw new Error(body.msg ?? 'Unable to read model providers on the SSH host');
   }
   return providerDigestsSchema.parse(body.data).digests;
+}
+
+export async function sendProviderRemoval(session: HostSession, digests: Readonly<Record<string, string>>): Promise<ProviderRemoveResult> {
+  const response = await session.request({
+    method: 'POST',
+    path: '/api/v1/hosts:remove-matching-providers',
+    headers: { 'content-type': 'application/json' },
+    body: Buffer.from(JSON.stringify({ providers: digests })),
+    timeoutMs: 60_000,
+  });
+  const body = JSON.parse(response.body.toString('utf8')) as { code?: number; msg?: string; data?: unknown };
+  if (response.status !== 200 || body.code !== 0 || body.data === undefined) {
+    throw new Error(body.msg ?? 'Unable to remove model providers from the SSH host');
+  }
+  return providerRemoveResultSchema.parse(body.data);
 }
 
 export function registerImportProvidersRoute(app: {
@@ -275,4 +330,23 @@ export function registerImportProvidersRoute(app: {
     },
   );
   app.post(digestsRoute.path, digestsRoute.options, digestsRoute.handler as never);
+
+  const removeRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/hosts::remove-matching-providers',
+      success: { data: providerRemoveResultSchema },
+      errors: { [ErrorCode.VALIDATION_FAILED]: {} },
+      description: 'Remove the named model providers here, with their models, when each still hashes to the digest the connecting computer sent',
+      tags: ['hosts'],
+    },
+    async (req: { body: unknown; id: string }, reply: { send(payload: unknown): void }) => {
+      try {
+        reply.send(okEnvelope(await removeMatchingProviders(core, req.body), req.id));
+      } catch (error) {
+        reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, error instanceof Error ? error.message : String(error), req.id));
+      }
+    },
+  );
+  app.post(removeRoute.path, removeRoute.options, removeRoute.handler as never);
 }
