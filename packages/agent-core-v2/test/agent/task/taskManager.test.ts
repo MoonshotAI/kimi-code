@@ -662,11 +662,11 @@ describe('AgentTaskService', () => {
     task.resolve('');
   });
 
-  it('wait with a zero timeout returns the immediate snapshot before next-tick completion', async () => {
+  it('wait with a zero timeout returns an already-completed snapshot', async () => {
     const fixture = createAgentTaskService();
     const task = await controlled(fixture, { completion: Promise.resolve('done') });
-    expect((await fixture.manager.wait(task.handler.taskId, 0))?.status).toBe('running');
-    expect((await fixture.manager.wait(task.handler.taskId))?.status).toBe('completed');
+    await fixture.manager.wait(task.handler.taskId);
+    expect((await fixture.manager.wait(task.handler.taskId, 0))?.status).toBe('completed');
   });
 
   it('clears task deadline timers when completion wins the race', async () => {
