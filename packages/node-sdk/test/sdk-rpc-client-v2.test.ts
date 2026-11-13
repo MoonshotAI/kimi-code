@@ -2465,12 +2465,12 @@ key = "${titleOAuthRef.key}"
       latestProject.additional_dirs = [extraDir, failureDir];
       await writeFile(projectsPath, JSON.stringify(latestProjects), 'utf8');
       const failureReloadDirs = vi.spyOn(currentProgram().dirs, 'reload');
-      vi.spyOn(currentProgram().instructions, 'reload').mockRejectedValueOnce(
-        new Error('instructions reload failed'),
-      );
+      const instructionsReload = vi.spyOn(currentProgram().instructions, 'reload');
+      instructionsReload.mockRejectedValue(new Error('instructions reload failed'));
       await expect(client.reloadSession({ sessionId: 'ses_dirs_reload' })).rejects.toThrow(
         'instructions reload failed',
       );
+      instructionsReload.mockRestore();
       expect(getLiveSessionById(client.engineAccessor, 'ses_dirs_reload')).toBe(beforeFailure);
       expect(failureReloadDirs).toHaveBeenCalledTimes(1);
       expect(dirsReminders()).toHaveLength(2);
