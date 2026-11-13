@@ -101,7 +101,12 @@ async function scanWithGit(
       exceedsLimit = { reason: 'file-count', limit: limits.maxFiles };
       break;
     }
-    if (isSensitivePath(relativePath)) continue;
+    if (
+      isSensitivePath(relativePath) ||
+      relativePath.split('/').slice(0, -1).some(isIgnoredDirName)
+    ) {
+      continue;
+    }
     const file = await statFile(root, relativePath);
     if (file) {
       if (file.size > limits.maxFileSize) continue;

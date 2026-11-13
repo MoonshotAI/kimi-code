@@ -2031,8 +2031,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * not part of the parity surface: the two engines lay their session
    * directories out differently by design.
    */
-  override async feedbackAvailability(modelAlias?: string) {
-    return this.engineAccessor.get(IFeedbackService).availability(modelAlias);
+  override async feedbackAvailability(modelAlias?: string, sessionId?: string) {
+    return this.engineAccessor.get(IFeedbackService).availability(modelAlias, sessionId);
   }
 
   override async submitFeedback(input: FeedbackSubmitInput, modelAlias?: string) {

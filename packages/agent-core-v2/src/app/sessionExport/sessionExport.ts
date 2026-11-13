@@ -19,6 +19,13 @@ export interface ExportSessionPayload {
   readonly shellEnv?: ShellEnvironment | undefined;
 }
 
+export interface ExportSessionPreview {
+  readonly sessionId: string;
+  readonly sessionDir: string;
+  readonly files: readonly string[];
+  readonly requestId?: string;
+}
+
 export interface ExportSessionManifest {
   readonly sessionId: string;
   readonly exportedAt: string;
@@ -58,6 +65,7 @@ export interface ISessionExportService {
     input: ExportSessionPayload,
     options?: ExportSessionOptions,
   ): Promise<ExportSessionResult>;
+  preview?(sessionId: string): Promise<ExportSessionPreview | undefined>;
 }
 
 export const ISessionExportService: ServiceIdentifier<ISessionExportService> =

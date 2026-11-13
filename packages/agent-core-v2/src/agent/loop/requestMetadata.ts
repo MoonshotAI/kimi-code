@@ -116,6 +116,7 @@ export function requestMetadataHeaders(metadata: RequestMetadata): Record<string
 interface AttributionState {
   readonly userInputId?: string;
   readonly parentRequestId?: string;
+  readonly lastRequestId?: string;
   readonly activeTurn?: {
     readonly turnId: number;
     readonly turnTrigger: TurnTrigger;
@@ -142,7 +143,11 @@ export class RequestMetadataTracker {
           this.attribution?.noteUserInput(this.scopeContext.agentId, next.userInputId);
         }
         if (next.activeTurn === undefined) {
-          this.attribution?.noteActiveRequest(this.scopeContext.agentId, undefined);
+          this.attribution?.noteActiveRequest(
+            this.scopeContext.agentId,
+            next.lastRequestId,
+            false,
+          );
         }
       },
       transition: (state: AttributionState, event: unknown, ctx: { readonly silent: boolean }) => {
@@ -162,6 +167,7 @@ export class RequestMetadataTracker {
               dispatched?.userInputId ??
               state.userInputId,
             parentRequestId: dispatched?.parentRequestId ?? state.parentRequestId,
+            lastRequestId: ctx.silent ? state.lastRequestId : undefined,
             activeTurn:
               event.turnId === undefined
                 ? undefined
@@ -181,8 +187,12 @@ export class RequestMetadataTracker {
           };
         }
         if (event instanceof TurnEnded) {
-          if (state.activeTurn?.turnId !== event.turnId) return state;
-          return { ...state, activeTurn: undefined };
+          const lastRequestId =
+            event.requestId ??
+            (event.error?.details?.['requestId'] as string | undefined) ??
+            state.lastRequestId;
+          if (state.activeTurn?.turnId !== event.turnId) return { ...state, lastRequestId };
+          return { ...state, activeTurn: undefined, lastRequestId };
         }
         return state;
       },

@@ -319,8 +319,8 @@ export class KimiHarness {
     return this.rpc.generateSessionTitle(input);
   }
 
-  feedbackAvailability(modelAlias?: string) {
-    return this.rpc.feedbackAvailability(modelAlias);
+  feedbackAvailability(modelAlias?: string, sessionId?: string) {
+    return this.rpc.feedbackAvailability(modelAlias, sessionId);
   }
 
   submitFeedback(input: FeedbackSubmitInput, modelAlias?: string) {

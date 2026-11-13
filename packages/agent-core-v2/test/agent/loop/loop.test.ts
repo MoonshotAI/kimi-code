@@ -948,10 +948,41 @@ describe('Agent loop', () => {
           },
         },
       });
+      expect((ended?.args as TurnEnded).requestId).toBe('req-final-503');
       expect((ended?.args as TurnEnded).error?.details).toEqual({
         statusCode: 503,
         requestId: 'req-final-503',
         traceId: 'trace-final-503',
+      });
+    } finally {
+      await local.dispose();
+    }
+  });
+
+  it('falls back to the status error request id without a trace id or diagnostics', async () => {
+    const records: TelemetryRecord[] = [];
+    const local = createTestAgent({
+      initialConfig: { providers: {}, loopControl: { maxAttemptsPerStep: 1 } },
+      telemetry: recordingTelemetry(records),
+    });
+    try {
+      local.mockNextProviderResponse({
+        error: new APIStatusError(429, 'rate limited', true, 'req-status-429'),
+      });
+      await local.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
+      await local.untilTurnEnd();
+
+      expect(local.allEvents.find(
+        (event) => event.type === '[rpc]' && event.event === 'turn.ended',
+      )?.args).toMatchObject({ reason: 'failed', requestId: 'req-status-429' });
+      expect(records).toContainEqual({
+        event: 'api_error',
+        properties: expect.objectContaining({
+          error_type: 'rate_limit',
+          request_id: 'req-status-429',
+          turn_id: 0,
+          step_no: 1,
+        }),
       });
     } finally {
       await local.dispose();
