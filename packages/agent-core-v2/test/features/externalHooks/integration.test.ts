@@ -1692,6 +1692,34 @@ describe('IExternalHooksRunnerService integration', () => {
       ]);
 
       ctx.mockNextProviderResponse({
+        parts: [
+          { type: 'text', text: 'Gemini tool call with STOP finishReason' },
+          {
+            type: 'function',
+            id: 'call_lookup_gemini',
+            name: 'Lookup',
+            arguments: JSON.stringify({ query: 'moon' }),
+          },
+        ],
+        finishReason: 'completed',
+        rawFinishReason: 'STOP',
+      });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Gemini style tool step' }] });
+      await ctx.untilToolCall({ output: 'silver' });
+      expect(readEvents()).toEqual([
+        { event: 'Stop', stop_hook_active: false },
+        { event: 'Stop', stop_hook_active: false },
+      ]);
+
+      ctx.mockNextResponse({ type: 'text', text: 'Final after Gemini tool' });
+      await ctx.untilTurnEnd();
+      expect(readEvents()).toEqual([
+        { event: 'Stop', stop_hook_active: false },
+        { event: 'Stop', stop_hook_active: false },
+        { event: 'Stop', stop_hook_active: false },
+      ]);
+
+      ctx.mockNextProviderResponse({
         parts: [{ type: 'text', text: 'blocked' }],
         finishReason: 'filtered',
       });
@@ -1699,6 +1727,7 @@ describe('IExternalHooksRunnerService integration', () => {
       await ctx.untilTurnEnd();
       await vi.waitFor(() => {
         expect(readEvents()).toEqual([
+          { event: 'Stop', stop_hook_active: false },
           { event: 'Stop', stop_hook_active: false },
           { event: 'Stop', stop_hook_active: false },
           { event: 'StopFailure', error_type: 'ProviderFilteredError' },
@@ -1803,9 +1832,17 @@ describe('IExternalHooksRunnerService integration', () => {
         event: 'Stop',
         command: stdinScript([
           'const fs = require("node:fs");',
-          `fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ stop_hook_active: parsed.stop_hook_active }) + "\\n");`,
+          `fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ event: "Stop", stop_hook_active: parsed.stop_hook_active }) + "\\n");`,
           'process.stderr.write("Verify result before stopping");',
           'process.exit(2);',
+        ].join('\n')),
+        timeout: 5,
+      },
+      {
+        event: 'Interrupt',
+        command: stdinScript([
+          'const fs = require("node:fs");',
+          `fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ event: "Interrupt", turn_id: parsed.turn_id, reason: parsed.reason }) + "\\n");`,
         ].join('\n')),
         timeout: 5,
       },
@@ -1822,13 +1859,13 @@ describe('IExternalHooksRunnerService integration', () => {
       await loop.settled();
 
       expect(ctx.llmCalls).toHaveLength(2);
-      const readStopLog = (): Array<Record<string, unknown>> =>
+      const readHookLog = (): Array<Record<string, unknown>> =>
         readFileSync(logPath, 'utf8')
           .trim()
           .split('\n')
           .filter(Boolean)
           .map((line) => JSON.parse(line) as Record<string, unknown>);
-      expect(readStopLog()).toEqual([{ stop_hook_active: false }]);
+      expect(readHookLog()).toEqual([{ event: 'Stop', stop_hook_active: false }]);
       expect(ctx.contextData().history).toContainEqual(
         expect.objectContaining({
           role: 'user',
@@ -1843,9 +1880,9 @@ describe('IExternalHooksRunnerService integration', () => {
       await loop.settled();
 
       expect(ctx.llmCalls).toHaveLength(4);
-      expect(readStopLog()).toEqual([
-        { stop_hook_active: false },
-        { stop_hook_active: false },
+      expect(readHookLog()).toEqual([
+        { event: 'Stop', stop_hook_active: false },
+        { event: 'Stop', stop_hook_active: false },
       ]);
 
       const originalNotify = loop.notify.bind(loop);
@@ -1862,9 +1899,34 @@ describe('IExternalHooksRunnerService integration', () => {
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Prompt cancelled after Stop' }] });
       await loop.settled();
       loop.notify = originalNotify;
+      await flushMicrotasks();
 
       expect(ctx.llmCalls).toHaveLength(5);
-      expect(readStopLog()).toHaveLength(3);
+      expect(readHookLog()).toEqual([
+        { event: 'Stop', stop_hook_active: false },
+        { event: 'Stop', stop_hook_active: false },
+        { event: 'Stop', stop_hook_active: false },
+      ]);
+
+      let cancelBeforeStop = true;
+      const midStepCancel = loop.hooks.onWillBeginStep.register('cancel-mid-step', async (_hookCtx, next) => {
+        if (cancelBeforeStop) {
+          cancelBeforeStop = false;
+          loop.cancel();
+        }
+        await next();
+      });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Prompt cancelled before Stop' }] });
+      await loop.settled();
+      midStepCancel.dispose();
+      await vi.waitFor(() => {
+        expect(readHookLog()).toEqual([
+          { event: 'Stop', stop_hook_active: false },
+          { event: 'Stop', stop_hook_active: false },
+          { event: 'Stop', stop_hook_active: false },
+          { event: 'Interrupt', turn_id: 5, reason: 'cancelled' },
+        ]);
+      });
 
       ctx.mockNextResponse({ type: 'text', text: 'Third initial answer' });
       ctx.mockNextResponse({ type: 'text', text: 'Third verified answer' });
@@ -1872,7 +1934,13 @@ describe('IExternalHooksRunnerService integration', () => {
       await loop.settled();
 
       expect(ctx.llmCalls).toHaveLength(7);
-      expect(readStopLog()).toHaveLength(4);
+      expect(readHookLog()).toEqual([
+        { event: 'Stop', stop_hook_active: false },
+        { event: 'Stop', stop_hook_active: false },
+        { event: 'Stop', stop_hook_active: false },
+        { event: 'Interrupt', turn_id: 5, reason: 'cancelled' },
+        { event: 'Stop', stop_hook_active: false },
+      ]);
     } finally {
       await ctx.dispose();
     }

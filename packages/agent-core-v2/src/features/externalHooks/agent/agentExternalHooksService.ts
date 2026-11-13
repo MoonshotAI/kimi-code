@@ -118,6 +118,8 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
 
   private stopHookContinuation: LoopNotifyHandle | undefined;
 
+  private stopCompletedTurnId: number | undefined;
+
   private withSessionFacts(inputData: Record<string, unknown>): Record<string, unknown> {
     return { sessionTitle: this.sessionTitle, ...inputData };
   }
@@ -260,6 +262,9 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
   }
 
   private notifyTurnStarted(event: TurnStarted): void {
+    if (this.stopCompletedTurnId === event.turnId) {
+      this.stopCompletedTurnId = undefined;
+    }
     this.fireAndForget(
       'TurnStarted',
       {
@@ -279,6 +284,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
         if (
           ctx.finishReason === 'tool_calls' ||
           ctx.finishReason === 'filtered' ||
+          ctx.tools.length > 0 ||
           loop.snapshot().hasPendingRequests
         ) {
           return;
@@ -438,6 +444,10 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
   }
 
   private notifyTurnEnded(event: TurnEnded): void {
+    const stopCompletedForTurn = this.stopCompletedTurnId === event.turnId;
+    if (stopCompletedForTurn) {
+      this.stopCompletedTurnId = undefined;
+    }
     if (event.reason === 'cancelled') {
       this.stopHookContinuation?.drop();
       this.stopContinuationUnconsumed = false;
@@ -454,7 +464,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     if (event.reason === 'failed' && event.error !== undefined) {
       this.notifyStopFailure(event.error, new AbortController().signal);
     }
-    if (event.reason === 'cancelled') {
+    if (event.reason === 'cancelled' && !stopCompletedForTurn) {
       this.fireAndForget('Interrupt', { turnId: event.turnId, reason: 'cancelled' });
     }
   }
@@ -488,6 +498,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
       inputData: this.withSessionFacts({ stopHookActive: false }),
     });
     ctx.signal.throwIfAborted();
+    this.stopCompletedTurnId = ctx.turnId;
     return block?.reason;
   }
 
