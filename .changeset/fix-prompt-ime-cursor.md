@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Fix IME candidate window placement and cursor movement while typing in the terminal input editor.
+Fix Windows IME candidate placement and cursor jumps; the Windows input editor now always uses the terminal hardware cursor instead of the simulated cursor.
