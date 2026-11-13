@@ -69,8 +69,11 @@ export interface TranscriptTurn {
  * defined turn. This matters because a user message is appended (with
  * `turnId: undefined`) before its turn actually starts, so without this
  * buffering every user message would become its own single-entry turn at the
- * front and get trimmed first. Any undefined entries left at the tail (no
- * following turn) become their own turn.
+ * front and get trimmed first. A buffered run is flushed into its own turn
+ * when the next user entry arrives: `!` shell echoes are user entries too,
+ * but no defined turn ever follows them, so each one starts a fresh group.
+ * Any undefined entries left at the tail (no following turn) become their
+ * own turn.
  */
 export function groupTurns(entries: readonly TranscriptEntry[]): TranscriptTurn[] {
   const turns: TranscriptTurn[] = [];
@@ -80,6 +83,14 @@ export function groupTurns(entries: readonly TranscriptEntry[]): TranscriptTurn[
   for (const entry of entries) {
     const turnId = entry.turnId;
     if (turnId === undefined) {
+      // A `!` shell echo is a user entry with no turnId, and no defined turn
+      // ever follows it. Flush the buffered entries at each one so a
+      // `!`-heavy stretch becomes many small trimmable turns instead of a
+      // single tail turn that turnsToTrim can never touch.
+      if (entry.kind === 'user' && pendingUndefined.length > 0) {
+        turns.push({ turnId: undefined, entries: pendingUndefined });
+        pendingUndefined = [];
+      }
       pendingUndefined.push(entry);
       continue;
     }

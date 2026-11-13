@@ -69,3 +69,22 @@ export function formatBashOutputForDisplay(stdout: string, stderr: string, isErr
     return plain.length > 0 ? plain : '(no output)';
   }
 }
+
+/** Cap on each stored stream once a command finishes; the tail is what matters. */
+export const MAX_STORED_STREAM_CHARS = 64 * 1024;
+
+/**
+ * Bound a finished command's stored output. The running buffer is already
+ * capped mid-stream (see ShellRunComponent), but the final copies used to be
+ * stored whole: one inside the component, one formatted into the transcript
+ * entry, so a `! cat bigfile` habit grew the session without bound. Keep the
+ * tail and say on the first line how much was dropped.
+ */
+export function capStoredShellOutput(text: string, maxChars = MAX_STORED_STREAM_CHARS): string {
+  if (text.length <= maxChars) return text;
+  let tail = text.slice(-maxChars);
+  // Do not start the kept text on the low half of a surrogate pair.
+  const first = tail.codePointAt(0);
+  if (first !== undefined && first >= 0xdc00 && first <= 0xdfff) tail = tail.slice(1);
+  return `… (${text.length - tail.length} earlier chars truncated)\n${tail}`;
+}
