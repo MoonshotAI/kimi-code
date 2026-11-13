@@ -1702,7 +1702,7 @@ describe('TowerReviewTool', () => {
       findings: 'none',
       decision: 'advisory review only',
     });
-    expect(advisory.output).toContain('still waiting for mission-matching explicit human acceptance');
+    expect(advisory.output).toContain('still waiting for mission-matching artifact acceptance');
     expect(advisory.output).not.toContain('is merge-ready —');
 
     currentAgentId = 'main';
@@ -1715,11 +1715,11 @@ describe('TowerReviewTool', () => {
       acceptance_tip: await git(repo, 'rev-parse', 'feat/artifact-engine'),
     });
     expect(accepted.isError).toBeFalsy();
-    expect(accepted.output).toContain('explicit human acceptance for feat/artifact-engine');
+    expect(accepted.output).toContain('artifact acceptance for feat/artifact-engine');
     expect(accepted.output).toContain('recorded on the exact tip');
   });
 
-  it('refuses artifact acceptance in auto permission mode', async () => {
+  it('records artifact acceptance in auto permission mode', async () => {
     const store = await setupArtifactMission();
     currentAgentId = 'main';
     currentPermissionMode = 'auto';
@@ -1730,13 +1730,14 @@ describe('TowerReviewTool', () => {
       status: 'clean',
       merge: 'merge',
       findings: 'none',
-      decision: 'accept without the human',
+      decision: 'auto mode presents the artifacts and records acceptance',
       acceptance_tip: tip,
     });
 
-    expect(result.isError).toBe(true);
-    expect(result.output).toContain('cannot be recorded in an automatic or noninteractive run');
-    expect(await store.latestReview('feat/artifact-engine')).toBeUndefined();
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('artifact acceptance for feat/artifact-engine');
+    expect(result.output).toContain('recorded on the exact tip');
+    expect(await store.latestReview('feat/artifact-engine')).toBeDefined();
   });
 
   it('refuses artifact acceptance in a noninteractive run', async () => {
@@ -1755,7 +1756,7 @@ describe('TowerReviewTool', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('cannot be recorded in an automatic or noninteractive run');
+    expect(result.output).toContain('cannot be recorded in a noninteractive run');
     expect(await store.latestReview('feat/artifact-engine')).toBeUndefined();
   });
 

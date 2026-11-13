@@ -184,7 +184,7 @@ export function evaluateMissionGate(input: TowerMissionGateInput): TowerMissionG
     return block(
       'no-review',
       mission.kind === 'artifact'
-        ? `${mission.branch} is waiting for explicit human acceptance — present the key artifacts and explain that approval covers the entire committed tip, then record acceptance with TowerReview(status="clean", merge="merge") only after the user approves; an independent reviewer is not required`
+        ? `${mission.branch} is waiting for explicit human acceptance — present the key artifacts and explain that approval covers the entire committed tip, then record acceptance with TowerReview(status="clean", merge="merge") — in auto mode after presenting the artifacts, otherwise only after the user approves; an independent reviewer is not required`
         : `${mission.branch} has no review — assign a reviewer first`,
     );
   }
@@ -194,7 +194,7 @@ export function evaluateMissionGate(input: TowerMissionGateInput): TowerMissionG
   ) {
     return block(
       'no-review',
-      `${mission.branch} is still waiting for mission-matching explicit human acceptance recorded by reviewer=tower — the latest applicable review by ${selectedReview.reviewer} cannot substitute for it; present the key artifacts and the whole-tip approval scope, and record TowerReview only after the user approves`,
+      `${mission.branch} is still waiting for mission-matching explicit human acceptance recorded by reviewer=tower — the latest applicable review by ${selectedReview.reviewer} cannot substitute for it; present the key artifacts and the whole-tip approval scope, and record TowerReview — in auto mode after presenting, otherwise only after the user approves`,
     );
   }
   if (selectedReview.merge === 'hold') {
