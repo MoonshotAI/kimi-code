@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TOOLS_SECTION } from '#/agent/toolPolicy/configSection';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
+import { AgentToolPolicyService } from '#/agent/toolPolicy/toolPolicyService';
 import { ConfigTarget, IConfigService } from '#/app/config/config';
 
 import { createTestAgent, type TestAgentContext } from '../../harness';
@@ -66,4 +67,110 @@ describe('AgentToolPolicyService', () => {
     expect(policy.isToolDenied('Bash')).toBe(false);
     expect(toolsSectionReads()).toBe(0);
   });
+  it('keeps the last validated policy when an unvalidated fallback arrives', () => {
+    let broken = false;
+    let sectionHandler: ((event: unknown) => void) | undefined;
+    const config = {
+      assertValid: vi.fn(() => {
+        if (broken) throw new Error('config could not be read');
+      }),
+      get: vi.fn(() => (broken ? undefined : { disabled: ['Bash'] })),
+      onDidSectionChange: vi.fn((handler: (event: unknown) => void) => {
+        sectionHandler = handler;
+        return { dispose: () => { } };
+      }),
+      onDidChangeConfiguration: vi.fn(() => ({ dispose: () => { } })),
+    };
+    const profile = { data: () => ({ activeToolNames: ['Bash'], disallowedTools: [] }) };
+    const sessionToolPolicy = { disabledTools: () => [] };
+    const toolPolicyGate = { disabledTools: [] };
+    const toolExecutor = { registerToolCallGuard: vi.fn(() => ({ dispose: () => { } })) };
+    const policy = new AgentToolPolicyService(
+      profile as never,
+      config as never,
+      sessionToolPolicy as never,
+      toolPolicyGate as never,
+      toolExecutor as never,
+    );
+
+    broken = true;
+    sectionHandler?.({
+      domain: TOOLS_SECTION,
+      source: 'set',
+      value: { disabled: [] },
+      previousValue: { disabled: ['Bash'] },
+    });
+
+    expect(policy.isToolDenied('Bash')).toBe(true);
+  });
+
+  it('refreshes the cached policy when an invalid section is removed', () => {
+    let broken = false;
+    let currentPolicy: { disabled: string[] } | undefined = { disabled: ['Bash'] };
+    let configHandler: ((event: unknown) => void) | undefined;
+    const config = {
+      assertValid: vi.fn(() => {
+        if (broken) throw new Error('config could not be read');
+      }),
+      get: vi.fn(() => currentPolicy),
+      onDidSectionChange: vi.fn(() => ({ dispose: () => { } })),
+      onDidChangeConfiguration: vi.fn((handler: (event: unknown) => void) => {
+        configHandler = handler;
+        return { dispose: () => { } };
+      }),
+    };
+    const profile = { data: () => ({ activeToolNames: ['Bash'], disallowedTools: [] }) };
+    const sessionToolPolicy = { disabledTools: () => [] };
+    const toolPolicyGate = { disabledTools: [] };
+    const toolExecutor = { registerToolCallGuard: vi.fn(() => ({ dispose: () => { } })) };
+    const policy = new AgentToolPolicyService(
+      profile as never,
+      config as never,
+      sessionToolPolicy as never,
+      toolPolicyGate as never,
+      toolExecutor as never,
+    );
+
+    broken = true;
+    configHandler?.({
+      domain: TOOLS_SECTION,
+      source: 'reload',
+      value: undefined,
+      previousValue: { disabled: ['Bash'] },
+    });
+    broken = false;
+    currentPolicy = undefined;
+    configHandler?.({
+      domain: TOOLS_SECTION,
+      source: 'reload',
+      value: undefined,
+      previousValue: undefined,
+    });
+
+    expect(policy.isToolDenied('Bash')).toBe(false);
+  });
+
+  it('fails closed when the tools section cannot be validated', () => {
+    const config = {
+      assertValid: vi.fn(() => {
+        throw new Error('config could not be read');
+      }),
+      get: vi.fn(),
+      onDidSectionChange: vi.fn(() => ({ dispose: () => { } })),
+      onDidChangeConfiguration: vi.fn(() => ({ dispose: () => { } })),
+    };
+    const profile = { data: () => ({ activeToolNames: [], disallowedTools: [] }) };
+    const sessionToolPolicy = { disabledTools: () => [] };
+    const toolPolicyGate = { disabledTools: [] };
+    const toolExecutor = { registerToolCallGuard: vi.fn(() => ({ dispose: () => { } })) };
+
+    expect(() => new AgentToolPolicyService(
+      profile as never,
+      config as never,
+      sessionToolPolicy as never,
+      toolPolicyGate as never,
+      toolExecutor as never,
+    )).toThrow('config could not be read');
+  });
+
 });
