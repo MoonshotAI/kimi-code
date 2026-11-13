@@ -101,6 +101,13 @@ import { resolvePasswordHash } from './services/auth/password';
 import { createTokenStore } from './services/auth/tokenStore';
 
 import { drainGlobalSearchDisposals, IGlobalSearchService } from './search/searchService';
+import {
+  createHostSessions,
+  registerHostExtension,
+  type HostExtension,
+  type HostDisposable,
+  type HostSessions,
+} from './hostExtension';
 
 export interface ServerHostIdentity extends KimiHostIdentity {
   readonly displayName?: string;
@@ -134,12 +141,15 @@ export interface ServerStartOptions {
   readonly webAssetsDir?: string;
   readonly serverVersion?: string;
   readonly telemetry?: boolean;
+  readonly hostExtension?: HostExtension;
 }
 
 export interface RunningServer {
   readonly app: FastifyInstance;
   readonly core: Scope;
   readonly connectionRegistry: IConnectionRegistry;
+  readonly sessions: HostSessions;
+  registerHostExtension(extension: HostExtension): HostDisposable;
   readonly authTokenService: IAuthTokenService;
   readonly host: string;
   readonly port: number;
@@ -228,6 +238,20 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     },
     [...logSeed(logging), ...(opts.seeds ?? [])],
   );
+  const hostSessions = createHostSessions(core);
+  const hostExtensions = new Set<HostDisposable>();
+  const registerExtension = (extension: HostExtension): HostDisposable => {
+    const registration = registerHostExtension(core, extension, hostSessions);
+    const disposable = {
+      dispose: () => {
+        registration.dispose();
+        hostExtensions.delete(disposable);
+      },
+    };
+    hostExtensions.add(disposable);
+    return disposable;
+  };
+  if (opts.hostExtension !== undefined) registerExtension(opts.hostExtension);
   const environments = core.accessor.get(IEnvironmentService);
   const remoteEnvironmentProvider = await environments.addProvider(
     new RemoteEnvironmentProviderFactory({
@@ -356,6 +380,15 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   }
 
   const close = async (): Promise<void> => {
+    const disposalErrors: unknown[] = [];
+    for (const extension of hostExtensions) {
+      try {
+        extension.dispose();
+      } catch (error) {
+        disposalErrors.push(error);
+      }
+    }
+    hostExtensions.clear();
     if (wssDebug !== undefined) {
       for (const client of wssDebug.clients) client.terminate();
     }
@@ -400,6 +433,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
         process.off('uncaughtException', onUncaughtException);
       }
     }
+    if (disposalErrors.length > 0) throw new AggregateError(disposalErrors, 'Host extension disposal failed');
   };
 
   const connectionRegistry = new ConnectionRegistry();
@@ -653,7 +687,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   process.on('unhandledRejection', onUnhandledRejection);
   process.on('uncaughtException', onUncaughtException);
 
-  return { app, core, connectionRegistry, authTokenService, host, port: boundPort, close };
+  return { app, core, connectionRegistry, sessions: hostSessions, registerHostExtension: registerExtension, authTokenService, host, port: boundPort, close };
 }
 
 export const PORT_RETRY_LIMIT = 100;
