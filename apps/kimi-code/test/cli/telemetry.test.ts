@@ -125,3 +125,119 @@ describe('initializeServerTelemetry', () => {
     );
   });
 });
+
+describe('telemetry shutdown deadline', () => {
+  it('gives each pipeline only the budget remaining from one deadline', async () => {
+    const { createTelemetryShutdownDeadline } = await import(
+      '#/cli/telemetry-shutdown'
+    );
+    let nowMs = 1_000;
+    const observedBudgets: number[] = [];
+    const deadline = createTelemetryShutdownDeadline(
+      3_000,
+      vi.fn(),
+      () => nowMs,
+    );
+
+    await deadline.run(async (remainingMs) => {
+      observedBudgets.push(remainingMs);
+      nowMs = 2_250;
+    });
+    await deadline.run(async (remainingMs) => {
+      observedBudgets.push(remainingMs);
+    });
+
+    expect(observedBudgets).toEqual([3_000, 1_750]);
+  });
+
+  it('still invokes a later pipeline with no budget after the deadline expires', async () => {
+    const { createTelemetryShutdownDeadline } = await import(
+      '#/cli/telemetry-shutdown'
+    );
+    let nowMs = 1_000;
+    const pipeline = vi.fn(async (_remainingMs: number) => {});
+    const deadline = createTelemetryShutdownDeadline(
+      3_000,
+      vi.fn(),
+      () => nowMs,
+    );
+    nowMs = 4_001;
+
+    await deadline.run(pipeline);
+
+    expect(pipeline).toHaveBeenCalledWith(0);
+  });
+
+  it('continues to a later pipeline after an earlier one rejects', async () => {
+    const { createTelemetryShutdownDeadline } = await import(
+      '#/cli/telemetry-shutdown'
+    );
+    const laterPipeline = vi.fn(async (_remainingMs: number) => {});
+    const reportError = vi.fn();
+    const deadline = createTelemetryShutdownDeadline(
+      3_000,
+      reportError,
+      () => 1_000,
+    );
+
+    await expect(
+      deadline.run(async () => {
+        throw new Error('telemetry unavailable');
+      }),
+    ).resolves.toBeUndefined();
+    await deadline.run(laterPipeline);
+
+    expect(laterPipeline).toHaveBeenCalledOnce();
+    expect(reportError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'telemetry unavailable' }),
+    );
+  });
+
+  it('bounds a stalled host telemetry lookup and still runs later cleanup', async () => {
+    const { createTelemetryShutdownDeadline } = await import(
+      '#/cli/telemetry-shutdown'
+    );
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_000);
+      const reportError = vi.fn();
+      const deadline = createTelemetryShutdownDeadline(50, reportError);
+      const stalledHostLookup = vi.fn(
+        async (_remainingMs: number): Promise<void> => new Promise<void>(() => {}),
+      );
+      const laterPipeline = vi.fn(async (_remainingMs: number) => {});
+      const first = deadline.run(stalledHostLookup);
+
+      await vi.advanceTimersByTimeAsync(50);
+      await first;
+      await deadline.run(laterPipeline);
+
+      expect(stalledHostLookup).toHaveBeenCalledWith(50);
+      expect(laterPipeline).toHaveBeenCalledWith(0);
+      expect(reportError).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'Telemetry shutdown timed out' }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('continues to a later pipeline when the error reporter also throws', async () => {
+    const { createTelemetryShutdownDeadline } = await import(
+      '#/cli/telemetry-shutdown'
+    );
+    const laterPipeline = vi.fn(async (_remainingMs: number) => {});
+    const deadline = createTelemetryShutdownDeadline(3_000, () => {
+      throw new Error('stderr unavailable');
+    });
+
+    await expect(
+      deadline.run(async () => {
+        throw new Error('telemetry unavailable');
+      }),
+    ).resolves.toBeUndefined();
+    await deadline.run(laterPipeline);
+
+    expect(laterPipeline).toHaveBeenCalledOnce();
+  });
+});
