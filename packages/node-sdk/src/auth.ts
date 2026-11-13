@@ -26,33 +26,6 @@ import {
 
 import { mapOAuthTokenError } from '#/oauth-error';
 
-export interface KimiAuthSubmitFeedbackInput {
-  readonly content: string;
-  readonly sessionId: string;
-  readonly version: string;
-  readonly os: string;
-  readonly model: string | null;
-  readonly contact?: string;
-  readonly info?: Record<string, unknown>;
-}
-
-export interface KimiAuthCreateFeedbackUploadUrlInput {
-  readonly feedbackId: number;
-  readonly filename: string;
-  readonly size: number;
-  readonly sha256: string;
-}
-
-export interface KimiAuthCompleteFeedbackUploadPart {
-  readonly partNumber: number;
-  readonly etag: string;
-}
-
-export interface KimiAuthCompleteFeedbackUploadInput {
-  readonly uploadId: number;
-  readonly parts: readonly KimiAuthCompleteFeedbackUploadPart[];
-}
-
 export type KimiAuthLoginOptions = Omit<KimiOAuthLoginOptions, 'provisionConfig'> & {
   /**
    * Explicit region choice from the login UI ('mainland-cn' / 'global'). Maps

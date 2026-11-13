@@ -2,15 +2,9 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 import type {
   FeedbackAvailability,
-  FeedbackCompleteResult,
+  FeedbackSubmitInput,
   FeedbackSubmitResult,
-  FeedbackUploadUrlResult,
 } from '@moonshot-ai/agent-core-v2/app/auth/feedback';
-import type {
-  KimiAuthCompleteFeedbackUploadInput,
-  KimiAuthCreateFeedbackUploadUrlInput,
-  KimiAuthSubmitFeedbackInput,
-} from '#/auth';
 import type { SwarmModeTrigger } from '@moonshot-ai/agent-core-v2/features/swarm/agent/swarm';
 
 import type { AgentContextData } from '#/context';
@@ -252,19 +246,9 @@ export abstract class SDKRpcClientBase {
   abstract feedbackAvailability(modelAlias?: string): Promise<FeedbackAvailability>;
 
   abstract submitFeedback(
-    input: KimiAuthSubmitFeedbackInput,
+    input: FeedbackSubmitInput,
     modelAlias?: string,
   ): Promise<FeedbackSubmitResult>;
-
-  abstract createFeedbackUploadUrl(
-    input: KimiAuthCreateFeedbackUploadUrlInput,
-    modelAlias?: string,
-  ): Promise<FeedbackUploadUrlResult>;
-
-  abstract completeFeedbackUpload(
-    input: KimiAuthCompleteFeedbackUploadInput,
-    modelAlias?: string,
-  ): Promise<FeedbackCompleteResult>;
 
   abstract getConfig(input?: GetConfigOptions): Promise<KimiConfig>;
 

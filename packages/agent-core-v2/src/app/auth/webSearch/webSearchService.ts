@@ -11,20 +11,14 @@ import { IOAuthService } from '#/app/auth/auth';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
-import {
-  DEFAULT_MODEL_SECTION,
-  MODELS_SECTION,
-  PROVIDERS_SECTION,
-} from '#/app/kosongConfig/configSection';
 import { CONFIG_INVALID_ERROR_CODE } from '#/llm-adapter/contract/errors';
-import { IModelService, type ModelRecord, type ModelsSection } from '#/llm-adapter/model/model';
-import { resolveModelAuthMaterial } from '#/llm-adapter/model/model-auth';
-import type { ResolvedModelAuthMaterial } from '#/llm-adapter/model/model.types';
+import { IModelService, type ModelRecord } from '#/llm-adapter/model/model';
 import {
-  IProviderService,
-  type ProviderConfig,
-  type ProvidersSection,
-} from '#/llm-adapter/provider/provider';
+  resolveActiveModelProvider,
+  resolveModelAuthMaterial,
+} from '#/llm-adapter/model/model-auth';
+import type { ResolvedModelAuthMaterial } from '#/llm-adapter/model/model.types';
+import { IProviderService, type ProviderConfig } from '#/llm-adapter/provider/provider';
 import { isOAuthCatalogVendor } from '#/llm-adapter/provider/provider-definition';
 
 import { SERVICES_SECTION, type ServicesConfig } from '../configSection';
@@ -78,22 +72,15 @@ export class WebSearchProviderService implements IWebSearchProviderService {
         searchUrl: string;
       }
     | undefined {
-    const modelId =
-      nonEmptyString(modelAlias) ??
-      nonEmptyString(this.models.getDefaultModel()) ??
-      nonEmptyString(this.config.get<string>(DEFAULT_MODEL_SECTION));
-    if (modelId === undefined) return undefined;
-    const model =
-      this.models.get(modelId) ?? this.config.get<ModelsSection>(MODELS_SECTION)?.[modelId];
-    if (model === undefined) return undefined;
-    const providerName = nonEmptyString(model.provider ?? model.providerId);
-    if (providerName === undefined) return undefined;
-    const provider =
-      this.providers.get(providerName) ??
-      this.config.get<ProvidersSection>(PROVIDERS_SECTION)?.[providerName];
-    const searchUrl = nonEmptyString(provider?.searchUrl);
-    if (provider === undefined || searchUrl === undefined) return undefined;
-    return { modelId, model, providerName, provider, searchUrl };
+    const resolved = resolveActiveModelProvider(
+      modelAlias,
+      this.models,
+      this.providers,
+      this.config,
+    );
+    const searchUrl = nonEmptyString(resolved?.provider.searchUrl);
+    if (resolved === undefined || searchUrl === undefined) return undefined;
+    return { ...resolved, searchUrl };
   }
 
   private fromModelProvider(modelAlias?: string): WebSearchProvider | undefined {

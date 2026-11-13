@@ -1216,6 +1216,7 @@ describe('WebSearchProviderService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
   let providers: Record<string, ProviderConfig>;
+  let defaultProvider: string | undefined;
   let models: Record<string, ModelRecord>;
   let defaultModel: string | undefined;
   let servicesConfig: ServicesConfig | undefined;
@@ -1224,6 +1225,7 @@ describe('WebSearchProviderService', () => {
   beforeEach(() => {
     disposables = new DisposableStore();
     providers = {};
+    defaultProvider = undefined;
     models = {};
     defaultModel = undefined;
     servicesConfig = undefined;
@@ -1234,6 +1236,7 @@ describe('WebSearchProviderService', () => {
       additionalServices: (reg) => {
         reg.definePartialInstance(IProviderService, {
           get: ((name: string) => providers[name]) as IProviderService['get'],
+          getDefaultProvider: (() => defaultProvider) as IProviderService['getDefaultProvider'],
         });
         reg.definePartialInstance(IModelService, {
           get: ((id: string) => models[id]) as IModelService['get'],
@@ -1550,6 +1553,48 @@ describe('WebSearchProviderService', () => {
     };
     await svc.getWebSearchProvider('registry-kimi/k3')!.search('q3');
     expect(fetchMock.mock.calls[2]?.[0]).toBe('https://override.example.test/search');
+  });
+
+  it('honors defaultProvider fallback and providerId precedence over provider', async () => {
+    defaultModel = 'default-k3';
+    defaultProvider = 'fallback-provider';
+    providers = {
+      'fallback-provider': {
+        type: 'kimi',
+        baseUrl: 'https://fallback.example.test/v1',
+        apiKey: 'YOUR_API_KEY',
+        searchUrl: 'https://fallback.example.test/v1/search',
+      },
+      'primary-provider': {
+        type: 'kimi',
+        baseUrl: 'https://primary.example.test/v1',
+        apiKey: 'YOUR_API_KEY',
+        searchUrl: 'https://primary.example.test/v1/search',
+      },
+    };
+    models = {
+      'default-k3': { model: 'k3', maxContextSize: 131072 },
+      'dual-k3': {
+        providerId: 'primary-provider',
+        provider: 'fallback-provider',
+        model: 'k3',
+        maxContextSize: 131072,
+      },
+    };
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      status: 200,
+      json: async () => ({ search_results: [] }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const svc = createService();
+    expect(svc.hasWebSearchProvider()).toBe(true);
+    await svc.getWebSearchProvider()!.search('q1');
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://fallback.example.test/v1/search');
+
+    await svc.getWebSearchProvider('dual-k3')!.search('q2');
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('https://primary.example.test/v1/search');
   });
 });
 

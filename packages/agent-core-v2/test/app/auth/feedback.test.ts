@@ -1,9 +1,15 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { FeedbackService } from '#/app/auth/feedbackService';
+import type { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import type { IConfigService } from '#/app/config/config';
 import type { IOAuthService } from '#/app/auth/auth';
+import type { ISessionExportService } from '#/app/sessionExport/sessionExport';
 import type { IModelService, ModelRecord } from '#/llm-adapter/model/model';
 import type { IProviderService, ProviderConfig } from '#/llm-adapter/provider/provider';
 
@@ -17,14 +23,24 @@ const SUBMIT = {
 
 function service(options: {
   providers?: Record<string, ProviderConfig>;
+  defaultProvider?: string;
   models?: Record<string, ModelRecord>;
+  defaultModel?: string;
   oauth?: Partial<IOAuthService>;
+  bootstrap?: Partial<IBootstrapService>;
+  sessionExport?: Partial<ISessionExportService>;
 }): FeedbackService {
   const providers = options.providers ?? {};
   const models = options.models ?? {};
   return new FeedbackService(
-    { get: (name: string) => providers[name] } as IProviderService,
-    { get: (id: string) => models[id] } as IModelService,
+    {
+      get: (name: string) => providers[name],
+      getDefaultProvider: () => options.defaultProvider,
+    } as IProviderService,
+    {
+      get: (id: string) => models[id],
+      getDefaultModel: () => options.defaultModel,
+    } as IModelService,
     { get: () => undefined } as unknown as IConfigService,
     {
       status: async () => ({ loggedIn: false }),
@@ -32,6 +48,8 @@ function service(options: {
       resolveTokenProvider: () => undefined,
       ...options.oauth,
     } as IOAuthService,
+    options.bootstrap as IBootstrapService | undefined,
+    options.sessionExport as ISessionExportService | undefined,
   );
 }
 
@@ -66,6 +84,54 @@ describe('FeedbackService', () => {
     const headers = new Headers(init.headers);
     expect(headers.get('authorization')).toBe('Bearer YOUR_API_KEY');
     expect(headers.get('x-custom-gateway')).toBe('internal');
+  });
+
+  it('honors defaultModel, defaultProvider, and providerId precedence over provider', async () => {
+    const fetchMock = vi.fn(async () => Response.json({ feedback_id: 12 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const svc = service({
+      defaultModel: 'default-alias',
+      defaultProvider: 'fallback-provider',
+      providers: {
+        'fallback-provider': {
+          type: 'kimi',
+          baseUrl: 'https://fallback.example.test/v1',
+          apiKey: 'YOUR_API_KEY',
+          feedbackUrl: 'https://fallback.example.test/v1/feedback',
+        },
+        'primary-provider': {
+          type: 'kimi',
+          baseUrl: 'https://primary.example.test/v1',
+          apiKey: 'YOUR_API_KEY',
+          feedbackUrl: 'https://primary.example.test/v1/feedback',
+        },
+      },
+      models: {
+        'default-alias': { model: 'k3', maxContextSize: 131072 },
+        'dual-provider': {
+          providerId: 'primary-provider',
+          provider: 'fallback-provider',
+          model: 'k3',
+          maxContextSize: 131072,
+        },
+      },
+    });
+
+    await expect(svc.availability()).resolves.toEqual({ kind: 'ready' });
+    await expect(svc.submit({ ...SUBMIT, model: null })).resolves.toEqual({
+      kind: 'ok',
+      feedbackId: 12,
+    });
+    expect((fetchMock.mock.calls[0] as unknown as [string])[0]).toBe(
+      'https://fallback.example.test/v1/feedback',
+    );
+
+    await expect(svc.submit({ ...SUBMIT, model: 'dual-provider' }, 'dual-provider')).resolves.toEqual(
+      { kind: 'ok', feedbackId: 12 },
+    );
+    expect((fetchMock.mock.calls[1] as unknown as [string])[0]).toBe(
+      'https://primary.example.test/v1/feedback',
+    );
   });
 
   it('reads provider.env credentials instead of falling through to managed OAuth', async () => {
@@ -162,5 +228,136 @@ describe('FeedbackService', () => {
       providers: { acme: { type: 'openai', apiKey: 'YOUR_API_KEY' } },
     });
     await expect(svc.availability('acme/gpt')).resolves.toEqual({ kind: 'needs-login' });
+  });
+
+  it('packages and uploads session.zip and repo.zip when attachmentLevel is logs+codebase', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'feedback-svc-attachments-'));
+    try {
+      const workDir = join(root, 'work');
+      const cacheDir = join(root, 'cache');
+      const logsDir = join(root, 'logs');
+      await rm(workDir, { recursive: true, force: true });
+      await writeFile(join(root, 'dummy.txt'), 'ok');
+      const uploadedFiles: string[] = [];
+      let nextUploadId = 10;
+
+      const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+        if (url === 'https://registry.example.test/v1/feedback') {
+          return Response.json({ feedback_id: 77 });
+        }
+        if (url === 'https://registry.example.test/v1/feedback/upload_url') {
+          const body = JSON.parse(init?.body as string) as {
+            file_name: string;
+            file_size: number;
+          };
+          uploadedFiles.push(body.file_name);
+          nextUploadId += 1;
+          return Response.json({
+            upload: {
+              id: nextUploadId,
+              parts: [
+                {
+                  part_number: 1,
+                  url: `https://storage.example.test/part/${body.file_name}`,
+                  method: 'PUT',
+                  size: body.file_size,
+                },
+              ],
+            },
+          });
+        }
+        if (url.startsWith('https://storage.example.test/part/')) {
+          if (init?.body instanceof ReadableStream) {
+            await new Response(init.body).arrayBuffer();
+          }
+          return new Response('', { status: 200, headers: { etag: '"part-1"' } });
+        }
+        if (url === 'https://registry.example.test/v1/feedback/upload_complete') {
+          return Response.json({});
+        }
+        throw new Error(`unexpected fetch url: ${url}`);
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const exportMock = vi.fn(async ({ outputPath }: { outputPath?: string }) => {
+        await writeFile(outputPath!, 'session archive bytes');
+        return {
+          zipPath: outputPath!,
+          entries: ['manifest.json', 'state.json'],
+          sessionDir: join(root, 'session'),
+          manifest: {} as never,
+        };
+      });
+
+      const svc = service({
+        providers: {
+          acme: {
+            type: 'kimi',
+            baseUrl: 'https://registry.example.test/v1',
+            apiKey: 'YOUR_API_KEY',
+            feedbackUrl: 'https://registry.example.test/v1/feedback',
+          },
+        },
+        models: {
+          'acme/k3': { provider: 'acme', model: 'k3', maxContextSize: 131072 },
+        },
+        bootstrap: { cacheDir, logsDir },
+        sessionExport: { export: exportMock },
+      });
+
+      const result = await svc.submit(
+        {
+          ...SUBMIT,
+          attachmentLevel: 'logs+codebase',
+          workDir: root,
+        },
+        'acme/k3',
+      );
+
+      expect(result).toEqual({ kind: 'ok', feedbackId: 77 });
+      expect(exportMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionId: 's1',
+          includeGlobalLog: true,
+          version: '1.0.0',
+        }),
+      );
+      expect(uploadedFiles.toSorted()).toEqual(['repo.zip', 'session.zip']);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('marks attachmentFailed when session export fails after feedback submission succeeds', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'feedback-svc-partial-'));
+    try {
+      const fetchMock = vi.fn(async () => Response.json({ feedback_id: 88 }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      const svc = service({
+        providers: {
+          acme: {
+            type: 'kimi',
+            baseUrl: 'https://registry.example.test/v1',
+            apiKey: 'YOUR_API_KEY',
+            feedbackUrl: 'https://registry.example.test/v1/feedback',
+          },
+        },
+        models: {
+          'acme/k3': { provider: 'acme', model: 'k3', maxContextSize: 131072 },
+        },
+        bootstrap: { cacheDir: join(root, 'cache'), logsDir: join(root, 'logs') },
+        sessionExport: {
+          export: async () => {
+            throw new Error('session not found');
+          },
+        },
+      });
+
+      const result = await svc.submit({ ...SUBMIT, attachmentLevel: 'logs' }, 'acme/k3');
+      expect(result).toEqual({ kind: 'ok', feedbackId: 88, attachmentFailed: true });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

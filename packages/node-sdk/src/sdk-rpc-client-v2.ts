@@ -272,12 +272,8 @@ import { createKlient } from '@moonshot-ai/klient/memory';
 import { assertKimiHostIdentity, createKimiDefaultHeaders } from '@moonshot-ai/kimi-code-oauth';
 import { RemoteEnvironmentProviderFactory } from '@moonshot-ai/agent-core-v2/remote';
 
-import {
-  KimiAuthFacade,
-  type KimiAuthCompleteFeedbackUploadInput,
-  type KimiAuthCreateFeedbackUploadUrlInput,
-  type KimiAuthSubmitFeedbackInput,
-} from '#/auth';
+import type { FeedbackSubmitInput } from '@moonshot-ai/agent-core-v2/app/auth/feedback';
+import { KimiAuthFacade } from '#/auth';
 import { ensureConfigFile, HookDefSchema } from '#/config/index';
 import type { AgentContextData } from '#/context';
 import { ErrorCodes, isKimiErrorCode, KimiError, type KimiErrorCode } from '#/errors';
@@ -2032,22 +2028,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return this.engineAccessor.get(IFeedbackService).availability(modelAlias);
   }
 
-  override async submitFeedback(input: KimiAuthSubmitFeedbackInput, modelAlias?: string) {
+  override async submitFeedback(input: FeedbackSubmitInput, modelAlias?: string) {
     return this.engineAccessor.get(IFeedbackService).submit(input, modelAlias);
-  }
-
-  override async createFeedbackUploadUrl(
-    input: KimiAuthCreateFeedbackUploadUrlInput,
-    modelAlias?: string,
-  ) {
-    return this.engineAccessor.get(IFeedbackService).createUploadUrl(input, modelAlias);
-  }
-
-  override async completeFeedbackUpload(
-    input: KimiAuthCompleteFeedbackUploadInput,
-    modelAlias?: string,
-  ) {
-    return this.engineAccessor.get(IFeedbackService).completeUpload(input, modelAlias);
   }
 
   override async exportSession(input: ExportSessionInput): Promise<ExportSessionResult> {
