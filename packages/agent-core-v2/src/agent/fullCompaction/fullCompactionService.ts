@@ -37,7 +37,7 @@ import {
   isRetryableGenerateError,
 } from '#/llm-adapter/contract/errors';
 import { createUserMessage, type Message } from '#human/llm/message';
-import { emptyUsage, inputTotal, type TokenUsage } from '#human/llm-requester/usage';
+import { emptyUsage, grandTotal, inputTotal, type TokenUsage } from '#human/llm-requester/usage';
 import { IEventBus } from '#/app/event/eventBus';
 import type { CompactionFailedEvent, CompactionFinishedEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -274,7 +274,23 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   }
 
   private currentRequestTokens(): number {
-    return this.requestTokens(this.loopService.history());
+    return this.historyRequestTokens(this.loopService.history());
+  }
+
+  private historyRequestTokens(messages: readonly Message[]): number {
+    const estimated = this.requestTokens(messages);
+    const usageAnchored = this.usageAnchoredRequestTokens(messages);
+    return usageAnchored === undefined ? estimated : Math.max(estimated, usageAnchored);
+  }
+
+  private usageAnchoredRequestTokens(messages: readonly Message[]): number | undefined {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const usageTokens = assistantUsageTotal(messages[i]!);
+      if (usageTokens !== undefined) {
+        return usageTokens + this.tokenCounting.estimateMessages(messages.slice(i + 1));
+      }
+    }
+    return undefined;
   }
 
   private requestTokens(messages: readonly Message[]): number {
@@ -377,7 +393,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
         'Cannot compact while a turn is active. Wait for it to finish, then retry.',
       );
     }
-    return this.requestTokens(history);
+    return this.historyRequestTokens(history);
   }
 
   private createActiveCompaction(
@@ -608,7 +624,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     const startedAt = Date.now();
     this.loopService.flushReminders();
     const originalHistory = [...this.loopService.history()];
-    const tokensBefore = this.requestTokens(originalHistory);
+    const tokensBefore = this.historyRequestTokens(originalHistory);
     let retryCount = 0;
     let thinkingEffort = this.loopService.data().thinkingLevel;
 
@@ -636,17 +652,28 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
       let overflowShrinkCount = 0;
       let requestAttempts = 0;
       let cacheProbePending = true;
+      const instructionMessage = createUserMessage(instruction);
+      const tokenProfile = buildHistoryTokenProfile(
+        originalHistory,
+        this.requestTokens([]),
+        (message) => this.tokenCounting.estimateMessage(message),
+      );
       const preShrunkHistory = this.preShrinkHistoryToWindowBudget(
         historyForModel,
-        instruction,
+        instructionMessage,
         compactionMaxOutputSize,
+        tokenProfile,
       );
       droppedCount += historyForModel.length - preShrunkHistory.length;
       historyForModel = preShrunkHistory;
       while (true) {
         const messagesToCompact = historyForModel;
-        const messages: Message[] = [...messagesToCompact, createUserMessage(instruction)];
-        const estimatedCompactionRequestTokens = this.requestTokens(messages);
+        const messages: Message[] = [...messagesToCompact, instructionMessage];
+        const estimatedCompactionRequestTokens =
+          messagesToCompact.length === originalHistory.length
+            ? this.historyRequestTokens(originalHistory) +
+              this.tokenCounting.estimateMessage(instructionMessage)
+            : tokenProfile.estimateRequest(messages);
         const effectiveMaxTokens = this.getEffectiveMaxContextTokens();
         const usedContextTokens =
           effectiveMaxTokens > 0
@@ -697,7 +724,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
             historyForModel = shrinkCompactionHistoryAfterOverflow(
               messagesToCompact,
               overflowShrinkCount,
-              (message) => this.tokenCounting.estimateMessage(message),
+              tokenProfile.estimateMessage,
             );
             if (historyForModel.length === 0) throw error;
             droppedCount += before - historyForModel.length;
@@ -845,8 +872,9 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
   private preShrinkHistoryToWindowBudget(
     history: readonly ContextMessage[],
-    instruction: string,
+    instructionMessage: Message,
     compactionMaxOutputSize: number | undefined,
+    tokenProfile: HistoryTokenProfile,
   ): readonly ContextMessage[] {
     const effectiveMaxTokens = this.getEffectiveMaxContextTokens();
     if (effectiveMaxTokens <= 0) return history;
@@ -855,18 +883,16 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
         ? Math.floor(effectiveMaxTokens / 8)
         : Math.min(compactionMaxOutputSize, Math.floor(effectiveMaxTokens / 8));
     const inputLimit = effectiveMaxTokens - outputReserve;
-    const overheadTokens = this.requestTokens([]);
-    const estimatedMessagesTokens =
-      this.tokenCounting.estimateMessages(history) +
-      this.tokenCounting.estimateMessage(createUserMessage(instruction));
-    if (estimatedMessagesTokens + overheadTokens <= inputLimit) return history;
+    const totalInputTokens =
+      this.historyRequestTokens(history) + this.tokenCounting.estimateMessage(instructionMessage);
+    if (totalInputTokens <= inputLimit) return history;
     const messageBudget =
-      Math.floor(inputLimit * OVERFLOW_CONTEXT_SAFETY_RATIO) - overheadTokens;
+      Math.floor(inputLimit * OVERFLOW_CONTEXT_SAFETY_RATIO) - tokenProfile.overheadTokens;
     if (messageBudget <= 0) return history;
     const preShrunk = takeRecentMessagesWithinTokenBudget(
       history,
       messageBudget,
-      (message) => this.tokenCounting.estimateMessage(message),
+      tokenProfile.estimateMessage,
     );
     return preShrunk.length === 0 ? history : preShrunk;
   }
@@ -902,8 +928,116 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   }
 
   private tokenCountWithPending(): number {
-    return this.tokenCounting.get(agentContextOfScope(this.agent)).size;
+    const counted = this.tokenCounting.get(agentContextOfScope(this.agent)).size;
+    const usageAnchored = this.usageAnchoredRequestTokens(this.loopService.history());
+    return usageAnchored === undefined ? counted : Math.max(counted, usageAnchored);
   }
+}
+
+interface HistoryTokenProfile {
+  readonly overheadTokens: number;
+  readonly estimateMessage: (message: Message) => number;
+  readonly estimateRequest: (messages: readonly Message[]) => number;
+}
+
+function assistantUsageTotal(message: Message): number | undefined {
+  if (message.role !== 'assistant') return undefined;
+  const usage = (message as ContextMessage).usage;
+  if (usage === undefined) return undefined;
+  const total = grandTotal(usage);
+  return total !== undefined && Number.isFinite(total) && total > 0 ? total : undefined;
+}
+
+function buildHistoryTokenProfile(
+  history: readonly ContextMessage[],
+  baseOverheadTokens: number,
+  estimateBase: (message: Message) => number,
+): HistoryTokenProfile {
+  const weights = history.map((message) => estimateBase(message));
+  const anchors: { index: number; tokens: number }[] = [];
+  for (let i = 0; i < history.length; i++) {
+    const tokens = assistantUsageTotal(history[i]!);
+    if (tokens !== undefined) {
+      anchors.push({ index: i, tokens });
+    }
+  }
+  if (anchors.length === 0) {
+    return {
+      overheadTokens: baseOverheadTokens,
+      estimateMessage: estimateBase,
+      estimateRequest: (messages) => {
+        let total = baseOverheadTokens;
+        for (const message of messages) total += estimateBase(message);
+        return total;
+      },
+    };
+  }
+
+  for (let k = anchors.length - 2; k >= 0; k--) {
+    if (anchors[k]!.tokens > anchors[k + 1]!.tokens) {
+      anchors[k]!.tokens = anchors[k + 1]!.tokens;
+    }
+  }
+
+  let prevIndex = -1;
+  let prevTokens = baseOverheadTokens;
+  for (let k = 0; k < anchors.length; k++) {
+    const { index, tokens } = anchors[k]!;
+    let spanEstimate = 0;
+    for (let j = prevIndex + 1; j <= index; j++) {
+      spanEstimate += weights[j]!;
+    }
+    const measuredDelta = tokens - prevTokens;
+    if (measuredDelta > spanEstimate) {
+      distributeExcessTokens(
+        weights,
+        prevIndex + 1,
+        index,
+        spanEstimate,
+        measuredDelta - spanEstimate,
+      );
+    }
+    prevIndex = index;
+    prevTokens = tokens;
+  }
+
+  const byMessage = new Map<Message, number>();
+  for (let i = 0; i < history.length; i++) {
+    byMessage.set(history[i]!, weights[i]!);
+  }
+  const estimateMessage = (message: Message): number =>
+    byMessage.get(message) ?? estimateBase(message);
+  return {
+    overheadTokens: baseOverheadTokens,
+    estimateMessage,
+    estimateRequest: (messages) => {
+      let total = baseOverheadTokens;
+      for (const message of messages) total += estimateMessage(message);
+      return total;
+    },
+  };
+}
+
+function distributeExcessTokens(
+  weights: number[],
+  start: number,
+  end: number,
+  spanEstimate: number,
+  excess: number,
+): void {
+  if (excess <= 0 || start > end) return;
+  if (spanEstimate <= 0) {
+    weights[end] = (weights[end] ?? 0) + excess;
+    return;
+  }
+  const baseSlice = weights.slice(start, end + 1);
+  let distributed = 0;
+  for (let j = start; j <= end; j++) {
+    const add = Math.floor((excess * baseSlice[j - start]!) / spanEstimate);
+    weights[j] = weights[j]! + add;
+    distributed += add;
+  }
+  weights[end] = weights[end]! + (excess - distributed);
 }
 
 function findAPIStatusError(error: unknown): APIStatusError | undefined {

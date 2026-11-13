@@ -296,7 +296,14 @@ export class AgentLoopRequestObserver {
     }
     void this.usage.record(this.scopeContext.agentContext, request.modelAlias, usage, request.source);
     if (usage !== undefined) {
-      this.tokenCounting.measured(this.scopeContext.agentContext, request.messages, [message], usage);
+      this.tokenCounting.measured(
+        this.scopeContext.agentContext,
+        observation.media.previousMediaRecovery === undefined
+          ? request.messages
+          : (recorded?.messages ?? request.messages),
+        [message],
+        usage,
+      );
     }
     this.logResponse(request.logFields, usage ?? emptyUsage(), timing);
   }

@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { IAgentLoopService } from '#/index';
-import { compactContext } from '../contextMemory/stubs';
+import { project } from '#/agent/loop/projection';
+import { appendContext, compactContext } from '../contextMemory/stubs';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import {
   anchorsEqual,
@@ -286,16 +287,88 @@ describe('Agent token counting', () => {
     }
   });
 
-  it('keeps the measured size across a close → resume round trip', async () => {
+  it('keeps measured sizes across projected tool results and a close → resume round trip', async () => {
     const persistence = new InMemoryWireRecordPersistence();
     const live = createTestAgent({ persistence });
     try {
+      await live.restorePersisted();
       live.appendTurnExchange('u1', 'a1', 1_000);
       live.appendTurnExchange('u2', 'a2', 2_000);
+      const liveContext = live.get(IAgentLoopService);
+      appendContext(
+        liveContext,
+        {
+          role: 'assistant',
+          content: [],
+          toolCalls: [
+            { type: 'function', id: 'call_read', name: 'Read', arguments: '{}' },
+            { type: 'function', id: 'call_bash', name: 'Bash', arguments: '{}' },
+            { type: 'function', id: 'call_err', name: 'Write', arguments: '{}' },
+          ],
+        },
+        {
+          role: 'tool',
+          toolCallId: 'call_read',
+          content: [{ type: 'text', text: '1\thello' }],
+          note: 'More lines follow from offset 2.',
+          durationMs: 12,
+        },
+        {
+          role: 'tool',
+          toolCallId: 'call_bash',
+          content: [{ type: 'text', text: '' }],
+          durationMs: 250,
+        },
+        {
+          role: 'tool',
+          toolCallId: 'call_err',
+          content: [{ type: 'text', text: 'disk full' }],
+          isError: true,
+          note: 'errno ENOSPC',
+        },
+      );
       const liveCounting = live.tokenCounting;
-      expect(liveCounting.statusSize()).toBe(2_000);
-      await live.get(IWireService).flush();
+      const history = liveContext.history();
+      const projected = project(history);
+      const mismatchedNote = projected.map((message) =>
+        message.role === 'tool' && message.toolCallId === 'call_read'
+          ? { ...message, content: [{ type: 'text' as const, text: '1\thello\nWrong note.' }] }
+          : message,
+      );
+      liveCounting.measured(mismatchedNote, [], {
+        inputOther: 2_499,
+        output: 1,
+        inputCacheRead: 0,
+        inputCacheCreation: 0,
+      });
+      expect(liveCounting.latestMeasured()).toBe(2_000);
 
+      const missingError = history.map((message) =>
+        message.role === 'tool' && message.toolCallId === 'call_err'
+          ? { role: 'tool' as const, toolCallId: message.toolCallId, content: message.content }
+          : message,
+      );
+      liveCounting.measured(missingError, [], {
+        inputOther: 2_499,
+        output: 1,
+        inputCacheRead: 0,
+        inputCacheCreation: 0,
+      });
+      expect(liveCounting.latestMeasured()).toBe(2_000);
+
+      liveCounting.measured(projected, [], {
+        inputOther: 2_999,
+        output: 1,
+        inputCacheRead: 0,
+        inputCacheCreation: 0,
+      });
+      expect(liveCounting.latestMeasured()).toBe(3_000);
+      expect(tokenCountingState(live).anchors.at(-1)).toEqual({
+        length: history.length,
+        tokens: 3_000,
+        measured: true,
+      });
+      await live.get(IWireService).flush();
       expect(persistence.records.map((record) => record.type)).toContain('token_counting.measured');
 
       const resumed = createTestAgent({ persistence, autoConfigure: false });
@@ -303,8 +376,16 @@ describe('Agent token counting', () => {
         await resumed.restorePersisted();
         const resumedCounting = resumed.tokenCounting;
         expect(tokenCountingState(resumed)).toEqual(tokenCountingState(live));
-        expect(resumedCounting.latestMeasured()).toBe(2_000);
+        expect(resumedCounting.latestMeasured()).toBe(3_000);
         expect(resumedCounting.statusSize()).toBe(liveCounting.statusSize());
+
+        resumedCounting.measured(project(resumed.get(IAgentLoopService).history()), [], {
+          inputOther: 3_999,
+          output: 1,
+          inputCacheRead: 0,
+          inputCacheCreation: 0,
+        });
+        expect(resumedCounting.latestMeasured()).toBe(4_000);
       } finally {
         await resumed.dispose();
       }
