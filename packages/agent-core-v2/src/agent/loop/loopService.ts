@@ -451,7 +451,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     initialTools?: readonly Tool[],
   ): Promise<void> {
     if (this.initialized) return;
-    const lease = this.runGate.acquire();
+    let lease = this.runGate.tryAcquire();
     try {
       await this.wire.drainPersisted().catch(() => undefined);
       const snapshot = this.journal.snapshot();
@@ -467,9 +467,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         pending: snapshot.input.inbox?.notify ?? [],
         isLive: (taskId) => this.toolExecutor.handler(taskId)?.snapshot().status === 'running',
       });
+      const pendingWork = (snapshot.input.inbox?.normal?.length ?? 0) + (snapshot.input.inbox?.notify?.length ?? 0);
+      if (lease === undefined && (completions.length > 0 || pendingWork > 0)) lease = this.runGate.acquire();
       this.createLoopFromSnapshot(snapshot, tools, completions, seededMessages);
     } finally {
-      lease.release();
+      lease?.release();
     }
   }
 
