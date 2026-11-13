@@ -392,6 +392,19 @@ describe('session conversion', () => {
     await expect(readdir(paths.attachmentDirectory)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
+  it('returns unreliable when a source sidecar directory cannot be read', async () => {
+    const paths = await fixture([user('task')]);
+    const folder = join(dirname(paths.sourcePath), 'source');
+    await writeFile(folder, 'not a directory');
+
+    const result = await convertSession({ ...paths, source: 'claude-code', contextWindow: 32768 });
+    expect(result).toMatchObject({
+      status: 'unreliable',
+      error: { code: 'ENOTDIR' },
+      issues: [{ code: 'ENOTDIR', stage: 'attachment' }],
+    });
+  });
+
   it.each([0, -1, NaN, Infinity, 1.5])('rejects invalid context windows before writing attachments (%s)', async contextWindow => {
     const paths = await fixture([user('task')]);
     const result = await convertSession({ ...paths, source: 'claude-code', contextWindow });
