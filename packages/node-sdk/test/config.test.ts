@@ -64,10 +64,28 @@ max_context_size = "large"
 [providers.acme]
 type = "openai"
 api_key_env = "ACME_API_KEY"
+
+[providers.bedrock]
+type = "bedrock"
+
+[providers.bedrock.env]
+AWS_REGION = "us-east-1"
+
+[models."bedrock/kimi"]
+provider = "bedrock"
+model = "global.moonshotai.kimi-k3"
+protocol = "openai"
+max_context_size = 1000000
 `;
 
     await expect(rpc.validateConfigToml({ text })).resolves.toBeUndefined();
-    expect(parseConfigString(text).providers['acme']?.apiKeyEnv).toBe('ACME_API_KEY');
+    const config = parseConfigString(text);
+    expect(config.providers['acme']?.apiKeyEnv).toBe('ACME_API_KEY');
+    expect(config.providers['bedrock']).toMatchObject({
+      type: 'bedrock',
+      env: { AWS_REGION: 'us-east-1' },
+    });
+    expect(config.models?.['bedrock/kimi']?.protocol).toBe('openai');
   });
 
   it('keeps a valid [environments] section through parseConfigString', () => {

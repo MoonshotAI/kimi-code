@@ -1743,8 +1743,15 @@ describe('AuthSummaryService', () => {
     });
   });
 
-  it('ensureReady accepts provider api keys', async () => {
+  it('ensureReady accepts provider api keys and ambient AWS credentials', async () => {
+    providers['bedrock-main'] = { type: 'bedrock', env: { AWS_REGION: 'us-east-1' } };
+    models['bedrock'] = {
+      provider: 'bedrock-main',
+      model: 'global.moonshotai.kimi-k3.1',
+      maxContextSize: 128000,
+    };
     await expect(createSummary().ensureReady('openai')).resolves.toBeUndefined();
+    await expect(createSummary().ensureReady('bedrock')).resolves.toBeUndefined();
     expect(getCachedAccessToken).not.toHaveBeenCalled();
   });
 

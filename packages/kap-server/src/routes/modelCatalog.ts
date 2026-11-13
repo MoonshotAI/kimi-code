@@ -283,6 +283,7 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
           };
           if (entry.display_name !== undefined) alias.displayName = entry.display_name;
           if (entry.capabilities !== undefined) alias.capabilities = [...entry.capabilities];
+          if (entry.protocol !== undefined) alias.protocol = entry.protocol;
           if (entry.max_output_size !== undefined) alias.maxOutputSize = entry.max_output_size;
           if (entry.support_efforts !== undefined)
             alias.supportEfforts = [...entry.support_efforts];
@@ -447,6 +448,7 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
           alias.displayName = entry.display_name !== undefined ? entry.display_name : undefined;
           alias.capabilities =
             entry.capabilities !== undefined ? [...entry.capabilities] : undefined;
+          alias.protocol = entry.protocol;
           alias.maxOutputSize = entry.max_output_size !== undefined ? entry.max_output_size : undefined;
           alias.supportEfforts =
             entry.support_efforts !== undefined ? [...entry.support_efforts] : undefined;

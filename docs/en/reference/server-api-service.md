@@ -442,7 +442,7 @@ Credentials are one of two forms: `api_key` stores the key directly, while `api_
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `id` | body | string | Required. Provider id. Only letters, digits, `-`, `_`, and spaces; must start with a letter or digit |
-| `type` | body | string | Required. Wire protocol: `kimi` / `openai` / `openai_responses` / `anthropic` / `google-genai` / `vertexai` |
+| `type` | body | string | Required. Wire protocol: `kimi` / `openai` / `openai_responses` / `anthropic` / `bedrock` / `google-genai` / `vertexai` |
 | `api_key` | body | string | API key, stored in `config.toml` |
 | `api_key_env` | body | string | Name of the environment variable to read the API key from. The server stores only the variable name, not the key |
 | `base_url` | body | string | API base URL; must not contain an environment variable placeholder (`${...}`) |
@@ -457,6 +457,7 @@ Each `models[]` entry declares one alias whose id is `id/model`:
 | `max_context_size` | integer | Required. Context window in tokens, ≥ 1 |
 | `display_name` | string | Display name |
 | `capabilities` | array | Capability flags such as `thinking` or `image_in` |
+| `protocol` | string | Wire-protocol override: `anthropic`, `openai`, or `openai_responses`; inferred from the model ID when omitted |
 | `max_output_size` | integer | Max output tokens, ≥ 1 |
 | `support_efforts` | array | Supported Thinking mode effort levels |
 | `adaptive_thinking` | boolean | Adaptive thinking switch |
@@ -488,7 +489,7 @@ Replaces a provider in one save. `type`, `base_url`, and the model list are rewr
 | --- | --- | --- | --- |
 | `provider_id` | path | string | Required. Current provider id |
 | `new_id` | body | string | Rename the provider. The providers key, model aliases, `default_provider`, a `default_model` pointing at an old alias, and the subagent secondary model pool all migrate. Same id rules as `POST /api/v1/providers` |
-| `type` | body | string | Required. Wire protocol: `kimi` / `openai` / `openai_responses` / `anthropic` / `google-genai` / `vertexai` |
+| `type` | body | string | Required. Wire protocol: `kimi` / `openai` / `openai_responses` / `anthropic` / `bedrock` / `google-genai` / `vertexai` |
 | `api_key` | body | string | API key; three forms, see above |
 | `api_key_env` | body | string | Name of the environment variable to read the API key from; three forms, see above |
 | `base_url` | body | string | API base URL; must not contain an environment variable placeholder (`${...}`) |

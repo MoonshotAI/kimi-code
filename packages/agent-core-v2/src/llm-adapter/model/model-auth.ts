@@ -8,6 +8,12 @@ import {
   matchKnownAnthropicModelProfile,
   matchUnknownClaudeProfile,
 } from '@moonshot-ai/core/llm/builtin/protocol/anthropic/legalize';
+import {
+  bedrockWireProtocolOf,
+  inferBedrockProtocol,
+  resolveBedrockBaseUrl,
+  stripBedrockInferenceProfilePrefix,
+} from '@moonshot-ai/core/llm/builtin/provider/bedrock/routing';
 
 import { CONFIG_INVALID_ERROR_CODE } from '../contract/errors';
 import { ProtocolSchema, type Protocol } from '../protocol/protocol';
@@ -45,7 +51,11 @@ export function resolveModelAuthMaterial(args: {
   const providerEndpoint =
     providerAuthType === undefined
       ? {}
-      : explainProviderEndpoint(providerAuthType, args.provider?.env ?? {});
+      : explainProviderEndpoint(
+          providerAuthType,
+          args.provider?.env ?? {},
+          resolveModelProtocol(args.model, args.provider),
+        );
   const declared = declaredProviderCredential(args.provider ?? {}, args.providerName);
   if (declared.kind === 'conflict') {
     throw new Error2(CONFIG_INVALID_ERROR_CODE, declared.message);
@@ -70,6 +80,17 @@ export function resolveModelAuthMaterial(args: {
     return {
       oauth: args.provider.oauth,
       oauthProviderKey: args.model.providerId ?? args.model.provider,
+    };
+  }
+  if (args.provider?.type === 'bedrock') {
+    const env = args.provider.env ?? {};
+    const region = nonEmpty(env['AWS_REGION']) ?? nonEmpty(env['AWS_DEFAULT_REGION']);
+    const profile = nonEmpty(env['AWS_PROFILE']);
+    return {
+      aws: {
+        region: region ?? process.env['AWS_REGION'] ?? process.env['AWS_DEFAULT_REGION'],
+        profile: profile ?? process.env['AWS_PROFILE'],
+      },
     };
   }
   return {};
@@ -99,7 +120,11 @@ export function effectiveModelConfig(
 }
 
 export function withAnthropicProfile(model: ModelRecord, providerType?: string): ModelRecord {
-  const wireName = model.name ?? model.model;
+  const rawWireName = model.name ?? model.model;
+  const wireName =
+    providerType === 'bedrock' && rawWireName !== undefined
+      ? stripBedrockInferenceProfilePrefix(rawWireName)
+      : rawWireName;
   const protocol = model.protocol ?? providerType;
   const profile =
     wireName === undefined
@@ -154,6 +179,11 @@ export function resolveModelProtocol(
     }
     const definition = getProviderDefinition(providerType);
     if (definition !== undefined) {
+      if (providerType === 'bedrock') {
+        const wireName = model.name ?? model.model;
+        const inferred = wireName === undefined ? undefined : inferBedrockProtocol(wireName);
+        if (inferred !== undefined) return inferred;
+      }
       return definition.baseProtocol;
     }
   }
@@ -163,6 +193,7 @@ export function resolveModelProtocol(
 export function resolveEndpointBaseUrl(
   model: ModelRecord,
   provider: ProviderConfig,
+  providerId?: string,
 ): string | undefined {
   const fromModel = nonEmpty(model.baseUrl);
   if (fromModel !== undefined) {
@@ -174,8 +205,29 @@ export function resolveEndpointBaseUrl(
   }
   const endpointType = provider.type ?? model.protocol;
   const endpoint =
-    endpointType === undefined ? {} : explainProviderEndpoint(endpointType, provider.env ?? {});
-  return nonEmpty(endpoint.baseUrl);
+    endpointType === undefined
+      ? {}
+      : explainProviderEndpoint(endpointType, provider.env ?? {}, resolveModelProtocol(model, provider));
+  const fromEndpoint = nonEmpty(endpoint.baseUrl);
+  if (fromEndpoint !== undefined) return fromEndpoint;
+  if (provider.type === 'bedrock') {
+    const wireName = nonEmpty(model.name ?? model.model);
+    const protocol =
+      bedrockWireProtocolOf(model.protocol) ??
+      (wireName === undefined ? undefined : inferBedrockProtocol(wireName)) ??
+      'openai';
+    const env = { ...process.env, ...provider.env };
+    const baseUrl = resolveBedrockBaseUrl(protocol, env);
+    if (baseUrl === undefined) {
+      const id = providerId ?? 'bedrock';
+      throw new Error2(
+        CONFIG_INVALID_ERROR_CODE,
+        `Provider "${id}" could not resolve an AWS region to build the endpoint URL. Set AWS_REGION (or AWS_DEFAULT_REGION) in the provider's [providers.${id}.env] sub-table, or export it in the environment.`,
+      );
+    }
+    return baseUrl;
+  }
+  return undefined;
 }
 
 export type ModelReadyFailureReason =

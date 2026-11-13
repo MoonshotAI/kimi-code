@@ -124,7 +124,7 @@ timeout = 5
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `type` | `string` | 是 | 供应商类型：`kimi`、`anthropic`、`openai`、`openai_responses`、`google-genai`、`vertexai` |
+| `type` | `string` | 是 | 供应商类型：`kimi`、`anthropic`、`openai`、`openai_responses`、`bedrock`、`google-genai`、`vertexai` |
 | `api_key` | `string` | 否 | API 密钥，明文写在配置文件里 |
 | `api_key_env` | `string` | 否 | 指定一个 shell 环境变量名，从该变量读取 API 密钥，密钥不写入配置文件；每次请求时读取。与 `api_key`、`oauth` 互斥；变量未设置或为空时请求报错并指明变量名 |
 | `base_url` | `string` | 否 | API 基础 URL |
