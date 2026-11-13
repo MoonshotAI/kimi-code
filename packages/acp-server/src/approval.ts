@@ -50,6 +50,28 @@ export const PLAN_APPROVE_OPTION_ID = 'plan_approve';
 export const PLAN_REVISE_OPTION_ID = 'plan_revise';
 export const PLAN_REJECT_AND_EXIT_OPTION_ID = 'plan_reject_and_exit';
 
+/**
+ * Shape of a client's response to `session/request_permission`.
+ *
+ * Extends the canonical {@link RequestPermissionResponse} so clients (such as
+ * mobile ACP apps) can supply revision text in `outcome.text` on `plan_revise`.
+ */
+export type AcpPermissionOutcome =
+  | { outcome: 'cancelled' }
+  | {
+      outcome: 'selected';
+      optionId: string;
+      text?: string;
+      _meta?: Record<string, unknown> | null;
+    };
+
+export type AcpPermissionResponse =
+  | RequestPermissionResponse
+  | {
+      outcome: AcpPermissionOutcome;
+      _meta?: Record<string, unknown> | null;
+    };
+
 function planOptOptionId(i: number): string {
   return `plan_opt_${i}`;
 }
@@ -132,15 +154,16 @@ export function approvalRequestToPermissionOptions(
  */
 export function permissionResponseToApprovalResponse(
   req: ApprovalRequest,
-  response: RequestPermissionResponse,
+  response: AcpPermissionResponse,
 ): ApprovalResponse {
   if (response.outcome.outcome === 'cancelled') {
     return { decision: 'cancelled' };
   }
-  const optionId = response.outcome.optionId;
+  const outcome = response.outcome;
   if (req.display.kind === 'plan_review') {
-    return mapPlanReviewOptionId(req.display, optionId);
+    return mapPlanReviewOptionId(req.display, outcome);
   }
+  const optionId = outcome.optionId;
   switch (optionId) {
     case APPROVE_ONCE_OPTION_ID:
     // Legacy Python kimi-cli (< v0.9.0) used 'approve' as the allow-once
@@ -164,13 +187,21 @@ export function permissionResponseToApprovalResponse(
 
 function mapPlanReviewOptionId(
   display: Extract<ApprovalRequest['display'], { kind: 'plan_review' }>,
-  optionId: string,
+  outcome: { optionId: string; text?: unknown },
 ): ApprovalResponse {
+  const optionId = outcome.optionId;
   if (optionId === PLAN_APPROVE_OPTION_ID) {
     return { decision: 'approved' };
   }
   if (optionId === PLAN_REVISE_OPTION_ID) {
-    return { decision: 'rejected', selectedLabel: 'Revise' };
+    const rawText = outcome.text;
+    const feedback =
+      typeof rawText === 'string' && rawText.trim().length > 0
+        ? rawText.trim()
+        : undefined;
+    return feedback !== undefined
+      ? { decision: 'rejected', selectedLabel: 'Revise', feedback }
+      : { decision: 'rejected', selectedLabel: 'Revise' };
   }
   if (optionId === PLAN_REJECT_AND_EXIT_OPTION_ID) {
     return { decision: 'rejected', selectedLabel: 'Reject and Exit' };
@@ -233,7 +264,7 @@ export function buildPermissionToolCallUpdate(req: ApprovalRequest): ToolCallUpd
  * Pure: returns a fresh object (never mutates the input).
  */
 export function attachSelectedLabel(
-  response: RequestPermissionResponse,
+  response: AcpPermissionResponse,
   approval: ApprovalResponse,
   options: readonly PermissionOption[],
 ): ApprovalResponse {
