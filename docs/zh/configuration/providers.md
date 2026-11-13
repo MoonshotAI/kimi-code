@@ -42,14 +42,23 @@ Kimi Code CLI 支持同时接入多家模型供应商服务，模型在供应商
 
   除了启动时自动刷新，你也可以在运行时手动触发同样的刷新：`/provider refresh` 重新拉取所有供应商的模型列表，`/provider refresh <providerId>` 只刷新指定供应商。命令会按供应商汇报新增和下架的模型；被下架的 alias 对绑定它的 agent 从下一轮起不再可解析，因此下架项会在输出中高亮标出。
 
+  registry 中的供应商条目还可以声明可选字符串字段 `search_url` 和 `feedback_url`（导入后存为 `[providers.<id>]` 下的 `search_url` 和 `feedback_url`）。字段非空时，该供应商下模型的 `WebSearch` 与 `/feedback` 会直接携带该供应商的凭证发往对应地址，无需登录托管的 Kimi Code OAuth 账号；省略或在上游移除字段后，下次刷新会自动清除。
+
   这些字段是 Kimi registry 的扩展，不属于 models.dev 的 schema：
 
   ```json
   {
-    "upgrade": {
-      "model": "new-model-id",
-      "migration_markdown": "建议从 {model_from} 切换到 {model_to}。",
-      "retirement_at": "2027-01-01T00:00:00Z"
+    "search_url": "https://registry.example.com/v1/search",
+    "feedback_url": "https://registry.example.com/v1/feedback",
+    "models": {
+      "current-model": {
+        "id": "current-model-id",
+        "upgrade": {
+          "model": "new-model-id",
+          "migration_markdown": "建议从 {model_from} 切换到 {model_to}。",
+          "retirement_at": "2027-01-01T00:00:00Z"
+        }
+      }
     }
   }
   ```

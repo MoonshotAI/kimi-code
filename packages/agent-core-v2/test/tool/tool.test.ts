@@ -706,6 +706,58 @@ describe('Agent tool description', () => {
     expect(agentDescription()).toContain('FetchURL');
   });
 
+  it('activates and executes WebSearch when the active model provider declares searchUrl', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      status: 200,
+      json: async () => ({
+        search_results: [{ title: 'Doc', url: 'https://example.test/doc', snippet: 'Body' }],
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      ctx = createTestAgent({
+        initialConfig: {
+          defaultModel: 'registry-kimi/k3',
+          providers: {
+            'registry-kimi': {
+              type: 'kimi',
+              baseUrl: 'https://registry.example.test/v1',
+              apiKey: 'YOUR_API_KEY',
+              searchUrl: 'https://registry.example.test/v1/search',
+            },
+          },
+          models: {
+            'registry-kimi/k3': {
+              provider: 'registry-kimi',
+              model: 'k3',
+              maxContextSize: 131_072,
+              capabilities: ['tool_use'],
+            },
+          },
+        },
+      });
+      ctx.get(IAgentLoopService).update({ modelAlias: 'registry-kimi/k3' });
+      await ctx.get(IAgentToolActivationService).activate();
+
+      const webSearch = ctx.get(IAgentToolRegistryService).resolve('WebSearch');
+      expect(webSearch).toBeDefined();
+      expect(agentDescription()).toContain('WebSearch');
+
+      const execution = await webSearch!.resolveExecution({ query: 'internal docs' });
+      if (!('execute' in execution)) throw new Error('expected runnable execution');
+      const result = await execution.execute({
+        turnId: 1,
+        toolCallId: 'tc-1',
+        signal: new AbortController().signal,
+      });
+      expect(result.isError).toBeFalsy();
+      expect(result.output).toContain('https://example.test/doc');
+      expect(fetchMock.mock.calls[0]?.[0]).toBe('https://registry.example.test/v1/search');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('keeps an unavailable contribution registered but omits it from descriptions', async () => {
     let available = true;
     ctx = createTestAgent(appService(IWebSearchProviderService, {

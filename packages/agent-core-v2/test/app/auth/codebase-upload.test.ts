@@ -7,9 +7,9 @@ import { promisify } from 'node:util';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { removeStaleFeedbackUploads } from '../../../src/feedback/archive';
-import { packageCodebase, scanCodebase } from '../../../src/feedback/codebase';
-import { uploadArchive } from '../../../src/feedback/upload';
+import { removeStaleFeedbackUploads } from '#/app/auth/feedback/archive';
+import { packageCodebase, scanCodebase } from '#/app/auth/feedback/codebase/index';
+import { uploadArchive } from '#/app/auth/feedback/upload';
 
 const execFileAsync = promisify(execFile);
 

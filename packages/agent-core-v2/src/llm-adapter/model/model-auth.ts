@@ -11,10 +11,10 @@ import {
 
 import { CONFIG_INVALID_ERROR_CODE } from '../contract/errors';
 import { ProtocolSchema, type Protocol } from '../protocol/protocol';
-import type { ProviderConfig } from '../provider/provider';
+import type { IProviderService, ProviderConfig, ProvidersSection } from '../provider/provider';
 import { explainProviderEndpoint, getProviderDefinition } from '../provider/provider-definition';
 
-import type { ModelRecord } from './model';
+import type { IModelService, ModelRecord, ModelsSection } from './model';
 import type { ResolvedModelAuthMaterial } from './model.types';
 import { drivesThinkingThroughTraits } from './thinking';
 
@@ -224,6 +224,38 @@ export function resolveModelForReady(
     return { resolved: false, reason: 'unresolvable' };
   }
   return { resolved: true };
+}
+
+export function resolveActiveModelProvider(
+  modelAlias: string | undefined,
+  models: Pick<IModelService, 'get'> & Partial<Pick<IModelService, 'getDefaultModel'>>,
+  providers: Pick<IProviderService, 'get'> & Partial<Pick<IProviderService, 'getDefaultProvider'>>,
+  config?: { get<T>(domain: string): T | undefined },
+):
+  | {
+      readonly modelId: string;
+      readonly model: ModelRecord;
+      readonly providerName: string;
+      readonly provider: ProviderConfig;
+    }
+  | undefined {
+  const modelId =
+    nonEmpty(modelAlias) ??
+    nonEmpty(models.getDefaultModel?.()) ??
+    nonEmpty(config?.get<string>('defaultModel'));
+  if (modelId === undefined) return undefined;
+  const model = models.get(modelId) ?? config?.get<ModelsSection>('models')?.[modelId];
+  if (model === undefined) return undefined;
+  const providerName =
+    nonEmpty(model.providerId) ??
+    nonEmpty(model.provider) ??
+    nonEmpty(providers.getDefaultProvider?.()) ??
+    nonEmpty(config?.get<string>('defaultProvider'));
+  if (providerName === undefined) return undefined;
+  const provider =
+    providers.get(providerName) ?? config?.get<ProvidersSection>('providers')?.[providerName];
+  if (provider === undefined) return undefined;
+  return { modelId, model, providerName, provider };
 }
 
 export function nonEmpty(value: string | undefined): string | undefined {

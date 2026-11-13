@@ -193,6 +193,7 @@ import {
   IBootstrapService,
   IConfigService,
   IEventService,
+  IFeedbackService,
   IFlagService,
   IHostEnvironment,
   IHostFileSystem,
@@ -271,6 +272,7 @@ import { createKlient } from '@moonshot-ai/klient/memory';
 import { assertKimiHostIdentity, createKimiDefaultHeaders } from '@moonshot-ai/kimi-code-oauth';
 import { RemoteEnvironmentProviderFactory } from '@moonshot-ai/agent-core-v2/remote';
 
+import type { FeedbackSubmitInput } from '@moonshot-ai/agent-core-v2/app/auth/feedback';
 import { KimiAuthFacade } from '#/auth';
 import { ensureConfigFile, HookDefSchema } from '#/config/index';
 import type { AgentContextData } from '#/context';
@@ -2022,6 +2024,14 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * not part of the parity surface: the two engines lay their session
    * directories out differently by design.
    */
+  override async feedbackAvailability(modelAlias?: string) {
+    return this.engineAccessor.get(IFeedbackService).availability(modelAlias);
+  }
+
+  override async submitFeedback(input: FeedbackSubmitInput, modelAlias?: string) {
+    return this.engineAccessor.get(IFeedbackService).submit(input, modelAlias);
+  }
+
   override async exportSession(input: ExportSessionInput): Promise<ExportSessionResult> {
     return this.engineAccessor.get(ISessionExportService).export({
       sessionId: input.id,

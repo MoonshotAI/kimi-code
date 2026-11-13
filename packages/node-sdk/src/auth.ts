@@ -17,9 +17,6 @@ import {
   type AuthManagedUsageResult,
   type AuthStatus,
   type BearerTokenProvider,
-  type FetchCompleteFeedbackUploadResult,
-  type FetchFeedbackUploadError,
-  type FetchSubmitFeedbackResult,
   type KimiHostIdentity,
   type KimiOAuthLoginOptions,
   type KimiRegion,
@@ -28,50 +25,6 @@ import {
 } from '@moonshot-ai/kimi-code-oauth';
 
 import { mapOAuthTokenError } from '#/oauth-error';
-
-export interface KimiAuthSubmitFeedbackInput {
-  readonly content: string;
-  readonly sessionId: string;
-  readonly version: string;
-  readonly os: string;
-  readonly model: string | null;
-  readonly contact?: string;
-  readonly info?: Record<string, unknown>;
-}
-
-export interface KimiAuthCreateFeedbackUploadUrlInput {
-  readonly feedbackId: number;
-  readonly filename: string;
-  readonly size: number;
-  readonly sha256: string;
-}
-
-export interface KimiAuthCompleteFeedbackUploadPart {
-  readonly partNumber: number;
-  readonly etag: string;
-}
-
-export interface KimiAuthCompleteFeedbackUploadInput {
-  readonly uploadId: number;
-  readonly parts: readonly KimiAuthCompleteFeedbackUploadPart[];
-}
-
-export interface KimiAuthFeedbackUploadPart {
-  readonly partNumber: number;
-  readonly url: string;
-  readonly method: string;
-  readonly size: number;
-}
-
-export interface KimiAuthCreateFeedbackUploadUrlOk {
-  readonly kind: 'ok';
-  readonly uploadId: number;
-  readonly parts: readonly KimiAuthFeedbackUploadPart[];
-}
-
-export type KimiAuthCreateFeedbackUploadUrlResult =
-  | KimiAuthCreateFeedbackUploadUrlOk
-  | FetchFeedbackUploadError;
 
 export type KimiAuthLoginOptions = Omit<KimiOAuthLoginOptions, 'provisionConfig'> & {
   /**
@@ -186,78 +139,6 @@ export class KimiAuthFacade {
       oauthRef: auth.oauthRef,
       baseUrl: auth.baseUrl,
     });
-  }
-
-  async submitFeedback(
-    input: KimiAuthSubmitFeedbackInput,
-    providerName?: string | undefined,
-  ): Promise<FetchSubmitFeedbackResult> {
-    const auth = this.resolveRuntimeManagedAuth(providerName);
-    return this.toolkit.submitFeedback(
-      {
-        session_id: input.sessionId,
-        content: input.content,
-        version: input.version,
-        os: input.os,
-        model: input.model,
-        contact: input.contact,
-        info: input.info,
-      },
-      providerName,
-      {
-        oauthRef: auth.oauthRef,
-        baseUrl: auth.baseUrl,
-      },
-    );
-  }
-
-  async createFeedbackUploadUrl(
-    input: KimiAuthCreateFeedbackUploadUrlInput,
-    providerName?: string | undefined,
-  ): Promise<KimiAuthCreateFeedbackUploadUrlResult> {
-    const auth = this.resolveRuntimeManagedAuth(providerName);
-    const result = await this.toolkit.createFeedbackUploadUrl(
-      {
-        file_hash: input.sha256,
-        file_name: input.filename,
-        file_size: input.size,
-        feedback_id: input.feedbackId,
-      },
-      providerName,
-      {
-        oauthRef: auth.oauthRef,
-        baseUrl: auth.baseUrl,
-      },
-    );
-    if (result.kind !== 'ok') return result;
-    return {
-      kind: 'ok',
-      uploadId: result.upload_id,
-      parts: result.parts.map((part) => ({
-        partNumber: part.part_number,
-        url: part.url,
-        method: part.method,
-        size: part.size,
-      })),
-    };
-  }
-
-  async completeFeedbackUpload(
-    input: KimiAuthCompleteFeedbackUploadInput,
-    providerName?: string | undefined,
-  ): Promise<FetchCompleteFeedbackUploadResult> {
-    const auth = this.resolveRuntimeManagedAuth(providerName);
-    return this.toolkit.completeFeedbackUpload(
-      {
-        upload_id: input.uploadId,
-        parts: input.parts.map((part) => ({ part_number: part.partNumber, etag: part.etag })),
-      },
-      providerName,
-      {
-        oauthRef: auth.oauthRef,
-        baseUrl: auth.baseUrl,
-      },
-    );
   }
 
   async getCachedAccessToken(

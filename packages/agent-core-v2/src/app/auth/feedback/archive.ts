@@ -1,8 +1,6 @@
 import { mkdir, mkdtemp, readdir, rm, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
-import { getCacheDir } from '../utils/paths';
-
 const STALE_ARCHIVE_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours.
 
 /**
@@ -20,11 +18,14 @@ export interface FeedbackArchive {
   readonly cleanupDir?: string;
 }
 
-export async function createFeedbackArchivePath(filename: string): Promise<{
+export async function createFeedbackArchivePath(
+  filename: string,
+  cacheDir: string,
+): Promise<{
   readonly archivePath: string;
   readonly cleanupDir: string;
 }> {
-  const archivePath = await createArchivePath(filename);
+  const archivePath = await createArchivePath(filename, cacheDir);
   return { archivePath, cleanupDir: archivePathCleanupDir(archivePath) };
 }
 
@@ -36,11 +37,12 @@ export async function createFeedbackArchivePath(filename: string): Promise<{
  *
  * `dir` is injectable for tests; production callers leave it as the default.
  */
-export async function removeStaleFeedbackUploads(
-  options: { readonly now?: number; readonly dir?: string } = {},
-): Promise<void> {
+export async function removeStaleFeedbackUploads(options: {
+  readonly now?: number;
+  readonly dir: string;
+}): Promise<void> {
   const now = options.now ?? Date.now();
-  const dir = options.dir ?? join(getCacheDir(), 'feedback-uploads');
+  const dir = options.dir;
   const entries = await readdir(dir, { withFileTypes: true }).catch((error: unknown) => {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw error;
@@ -59,9 +61,9 @@ export async function removeStaleFeedbackUploads(
   );
 }
 
-async function createArchivePath(filename: string): Promise<string> {
-  await removeStaleFeedbackUploads();
-  const root = join(getCacheDir(), 'feedback-uploads');
+async function createArchivePath(filename: string, cacheDir: string): Promise<string> {
+  const root = join(cacheDir, 'feedback-uploads');
+  await removeStaleFeedbackUploads({ dir: root });
   await mkdir(root, { recursive: true });
   const dir = await mkdtemp(join(root, 'upload-'));
   return join(dir, filename);
