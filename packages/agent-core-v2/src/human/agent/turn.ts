@@ -33,6 +33,7 @@ export interface UserMeta extends EntryMeta {
   userMessageId?: string;
   toolCallId?: string;
   bypassMaxSteps?: boolean;
+  promptOnly?: boolean;
 }
 
 export interface ToolMeta extends EntryMeta {
