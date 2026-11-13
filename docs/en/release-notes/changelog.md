@@ -6,6 +6,13 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 2.6.1 (2026-11-13)
+
+### Bug Fixes
+
+- Fix multi-second loading delays when reopening long sessions.
+- Fix long sessions stalling with empty replies instead of compacting when tool results include notes, errors, or timing headers.
+
 ## 2.6.0 (2026-11-12)
 
 We recommend switching to fullscreen mode via `/settings -> TUI mode -> Fullscreen` (takes effect after restarting) for a better experience.
