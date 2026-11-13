@@ -98,6 +98,16 @@ function detectCapabilitiesFromEnvironment(tmuxForwardsHyperlink: () => boolean)
 		return { images: "kitty", trueColor: true, hyperlinks: true };
 	}
 
+	// Orca advertises Kitty graphics only through ORCA_IMAGE_PROTOCOL and keeps the text fallback
+	// otherwise. Handle it as a terminal-level branch ahead of outer-terminal detection: variables
+	// like KITTY_WINDOW_ID can leak into its panes, so a release without the advertisement must not
+	// inherit that leak and reserve image rows nothing renders.
+	if (termProgram === "orca") {
+		return process.env['ORCA_IMAGE_PROTOCOL'] === "kitty"
+			? { images: "kitty", trueColor: true, hyperlinks: true }
+			: { images: null, trueColor: hasTrueColorHint, hyperlinks: false };
+	}
+
 	if (process.env['KITTY_WINDOW_ID'] || termProgram === "kitty") {
 		return { images: "kitty", trueColor: true, hyperlinks: true };
 	}
