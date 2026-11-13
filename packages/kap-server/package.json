@@ -48,6 +48,7 @@
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@copilotkit/aimock": "1.45.1",
     "@types/bcryptjs": "^2.4.6",
     "@types/semver": "^7.7.0",
     "@types/ws": "^8.18.0",
