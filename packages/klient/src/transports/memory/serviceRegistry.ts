@@ -18,7 +18,6 @@ import {
   IAuthSummaryService,
   IOAuthService,
 } from '@moonshot-ai/agent-core-v2/app/auth/auth';
-import { IFeedbackService } from '@moonshot-ai/agent-core-v2/app/auth/feedback';
 import { IFlagService } from '@moonshot-ai/agent-core-v2/app/flag/flag';
 import { IPluginService } from '@moonshot-ai/agent-core-v2/app/plugin/plugin';
 import { ICapabilityService } from '@moonshot-ai/agent-core-v2/app/capability/capability';
@@ -56,7 +55,6 @@ export const serviceTokens: Readonly<Record<string, ServiceIdentifier<unknown>>>
   modelsDevImport: IModelsDevImportService,
   providerService: IProviderService,
   oauthService: IOAuthService,
-  feedbackService: IFeedbackService,
   authSummaryService: IAuthSummaryService,
   flagService: IFlagService,
   pluginService: IPluginService,

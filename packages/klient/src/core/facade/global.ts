@@ -27,15 +27,6 @@ import type {
   IOAuthService,
   OAuthLoginOptions,
 } from '@moonshot-ai/agent-core-v2/app/auth/auth';
-import type {
-  FeedbackAvailability,
-  FeedbackCompleteResult,
-  FeedbackCompleteUploadInput,
-  FeedbackSubmitInput,
-  FeedbackSubmitResult,
-  FeedbackUploadUrlInput,
-  FeedbackUploadUrlResult,
-} from '@moonshot-ai/agent-core-v2/app/auth/feedback';
 import type { ExperimentalFeatureState } from '@moonshot-ai/agent-core-v2/app/flag/flag';
 import type {
   FsBrowseResponse,
@@ -357,26 +348,12 @@ export interface KlientEnvInfo {
   readonly logsDir: string;
 }
 
-export interface GlobalFeedbackFacade {
-  availability(modelAlias?: string): Promise<FeedbackAvailability>;
-  submit(input: FeedbackSubmitInput, modelAlias?: string): Promise<FeedbackSubmitResult>;
-  createUploadUrl(
-    input: FeedbackUploadUrlInput,
-    modelAlias?: string,
-  ): Promise<FeedbackUploadUrlResult>;
-  completeUpload(
-    input: FeedbackCompleteUploadInput,
-    modelAlias?: string,
-  ): Promise<FeedbackCompleteResult>;
-}
-
 export interface GlobalFacade {
   readonly sessions: GlobalSessionsFacade;
   readonly workspaces: GlobalWorkspacesFacade;
   readonly config: GlobalConfigFacade;
   readonly kosong: GlobalKosongFacade;
   readonly auth: GlobalAuthFacade;
-  readonly feedback: GlobalFeedbackFacade;
   readonly flags: GlobalFlagsFacade;
   readonly plugins: GlobalPluginsFacade;
   readonly capabilities: GlobalCapabilitiesFacade;
@@ -577,17 +554,6 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
           }
         })();
       },
-    },
-
-    feedback: {
-      availability: (modelAlias) =>
-        call('feedbackService', 'availability', [modelAlias]) as Promise<FeedbackAvailability>,
-      submit: (input, modelAlias) =>
-        call('feedbackService', 'submit', [input, modelAlias]) as Promise<FeedbackSubmitResult>,
-      createUploadUrl: (input, modelAlias) =>
-        call('feedbackService', 'createUploadUrl', [input, modelAlias]) as Promise<FeedbackUploadUrlResult>,
-      completeUpload: (input, modelAlias) =>
-        call('feedbackService', 'completeUpload', [input, modelAlias]) as Promise<FeedbackCompleteResult>,
     },
 
     auth: {

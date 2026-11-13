@@ -24,7 +24,6 @@ import {
   agentUsageContract,
 } from './agent/services.js';
 import { authContract, authSummaryContract } from './global/auth.js';
-import { feedbackContract } from './global/feedback.js';
 import { capabilitiesContract } from './global/capabilities.js';
 import { catalogContract } from './global/catalog.js';
 import { providerDiscoveryContract } from './global/providerDiscovery.js';
@@ -60,7 +59,6 @@ export const globalContract: KlientContract = {
   providerDiscovery: providerDiscoveryContract,
   modelsDevImport: registryImportContract,
   oauthService: authContract,
-  feedbackService: feedbackContract,
   authSummaryService: authSummaryContract,
   flagService: flagsContract,
   pluginService: pluginsContract,
