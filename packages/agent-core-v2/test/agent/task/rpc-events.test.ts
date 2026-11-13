@@ -240,7 +240,7 @@ function controlQuestions(ctx: TestAgentContext) {
 describe('AgentTaskService — event emission', () => {
   afterEach(async () => {
     vi.useRealTimers();
-    for (const ctx of contexts.splice(0).reverse()) await ctx.dispose();
+    for (const ctx of contexts.splice(0).toReversed()) await ctx.dispose();
   });
 
   it('emits process task changes and persists only detached tasks', async () => {
@@ -389,7 +389,7 @@ describe('AgentTaskService — event emission', () => {
 
 describe('AgentTaskService — notification delivery', () => {
   afterEach(async () => {
-    for (const ctx of contexts.splice(0).reverse()) await ctx.dispose();
+    for (const ctx of contexts.splice(0).toReversed()) await ctx.dispose();
   });
 
   it('delivers completed agent task notifications through an auto-launched turn', async () => {
@@ -557,6 +557,37 @@ describe('AgentTaskService — notification delivery', () => {
     expect(await ctx.get(IAgentTaskService).readOutput(task.handler.taskId)).toContain('persisted partial output');
   });
 
+  it('starts an occupied loop when no recovery work is pending and rejects new prompts', async () => {
+    const info = { ...agentInfo(), terminalNotificationSuppressed: true };
+    const records = taskHistoryRecords([info]);
+    const ctx = track(createTestAgent(
+      taskServices(),
+      sessionService(ISessionRunGate, {
+        _serviceBrand: undefined,
+        begin: () => {
+          throw sessionOccupiedError('test-session');
+        },
+        tryAcquire: () => undefined,
+        acquire: () => {
+          throw sessionOccupiedError('test-session');
+        },
+      }),
+      { persistence: new InMemoryWireRecordPersistence(records) },
+    ));
+    const loop = ctx.get(IAgentLoopService);
+    const createCompletion = vi.spyOn(ctx.get(IAgentTaskOutputService), 'createCompletion');
+    await loop.start();
+    expect(createCompletion).not.toHaveBeenCalled();
+    expect(ctx.llmCalls).toEqual([]);
+    expect(taskNotifications(ctx, info.taskId)).toEqual([]);
+    expect((await ctx.persistedWireRecords()).filter((record) => record.type === 'turn.prompt')).toEqual([]);
+    await expect(loop.submit({
+      input: [{ type: 'text', text: 'continue' }],
+      promptId: 'occupied-prompt',
+    })).rejects.toMatchObject({ code: ErrorCodes.SESSION_OCCUPIED });
+    expect((await ctx.persistedWireRecords()).filter((record) => record.type === 'turn.prompt')).toEqual([]);
+  });
+
   it('restores terminal agent task notifications once after a prompt-only crash and session lock retry', async () => {
     const info = agentInfo();
     const notificationId = `task:${info.taskId}:${info.status}`;
@@ -593,6 +624,10 @@ describe('AgentTaskService — notification delivery', () => {
       sessionService(ISessionRunGate, {
         _serviceBrand: undefined,
         begin,
+        tryAcquire: () => {
+          if (occupied) return undefined;
+          return { sessionId: 'test-session', release };
+        },
         acquire: () => {
           begin();
           return { sessionId: 'test-session', release };
@@ -606,7 +641,7 @@ describe('AgentTaskService — notification delivery', () => {
 
     await expect(ctx.restorePersisted()).rejects.toMatchObject({ code: ErrorCodes.SESSION_OCCUPIED });
     expect((loop as unknown as { loop?: unknown }).loop).toBeUndefined();
-    expect(createCompletion).not.toHaveBeenCalled();
+    expect(createCompletion).toHaveBeenCalledTimes(1);
     expect(release).not.toHaveBeenCalled();
     expect(taskNotifications(ctx, info.taskId)).toEqual([]);
     expect(ctx.llmCalls).toEqual([]);
@@ -618,7 +653,7 @@ describe('AgentTaskService — notification delivery', () => {
     await loop.start();
     await loop.settled();
 
-    expect(createCompletion).toHaveBeenCalledTimes(1);
+    expect(createCompletion).toHaveBeenCalledTimes(2);
     expect(release).toHaveBeenCalledTimes(1);
     expect(release.mock.invocationCallOrder[0]).toBeGreaterThan(createCompletion.mock.invocationCallOrder[0]!);
     expect(taskNotifications(ctx, info.taskId)).toHaveLength(1);
