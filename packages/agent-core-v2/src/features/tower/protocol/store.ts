@@ -2186,22 +2186,22 @@ export class TowerStore {
     ) {
       if (reviewMission.completionTip === undefined) {
         throw new TowerProtocolError(
-          `artifact mission ${reviewMission.id} has no completion tip recorded — its acceptance-request cannot be bound to an exact branch tip. Ask the worker to run TowerComplete at the current tip with key_artifacts, present those key artifacts and the whole-tip approval scope for explicit human approval, then record TowerReview again.`,
+          `artifact mission ${reviewMission.id} has no completion tip recorded — its acceptance-request cannot be bound to an exact branch tip. Ask the worker to run TowerComplete at the current tip with key_artifacts, present those key artifacts and the whole-tip approval scope, then record TowerReview again — in auto mode after presenting, otherwise only after the user approves.`,
         );
       }
       if (input.acceptanceTip === undefined) {
         throw new TowerProtocolError(
-          `artifact mission ${reviewMission.id} requires acceptance_tip from the TowerComplete acceptance-request the human approved — present the latest request and pass its completion tip explicitly`,
+          `artifact mission ${reviewMission.id} requires acceptance_tip from the latest TowerComplete acceptance-request — present the latest request and pass its completion tip explicitly`,
         );
       }
       if (input.acceptanceTip !== reviewMission.completionTip) {
         throw new TowerProtocolError(
-          `artifact acceptance references ${input.acceptanceTip.slice(0, 7)}, but the latest acceptance-request for mission ${reviewMission.id} covers ${reviewMission.completionTip.slice(0, 7)} — the approval is tied to a different presentation; present the latest request and pass its acceptance_tip`,
+          `artifact acceptance references ${input.acceptanceTip.slice(0, 7)}, but the latest acceptance-request for mission ${reviewMission.id} covers ${reviewMission.completionTip.slice(0, 7)} — the acceptance is tied to a different presentation; present the latest request and pass its acceptance_tip`,
         );
       }
       if (reviewedCommit !== reviewMission.completionTip) {
         throw new TowerProtocolError(
-          `branch "${input.target}" advanced after the artifact acceptance-request (completion ${reviewMission.completionTip.slice(0, 7)}, current ${reviewedCommit.slice(0, 7)}) — the user has not approved the delivery at the current tip. Ask the worker to run TowerComplete at the current tip with key_artifacts, present those key artifacts and the whole-tip approval scope for fresh explicit human approval, then record TowerReview again.`,
+          `branch "${input.target}" advanced after the artifact acceptance-request (completion ${reviewMission.completionTip.slice(0, 7)}, current ${reviewedCommit.slice(0, 7)}) — the delivery at the current tip has not been accepted. Ask the worker to run TowerComplete at the current tip with key_artifacts, present those key artifacts and the whole-tip approval scope, then record fresh acceptance with TowerReview — in auto mode after presenting, otherwise only after the user approves.`,
         );
       }
     }

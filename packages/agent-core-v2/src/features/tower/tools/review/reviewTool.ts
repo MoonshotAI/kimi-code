@@ -1,6 +1,5 @@
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ISessionEventBus } from '#/app/event/eventBus';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -29,7 +28,6 @@ export class TowerReviewTool implements ITowerReviewTool {
     @ISessionEventBus private readonly sessionBus: ISessionEventBus,
     @IAgentToolExecutorService private readonly tasks: IAgentToolExecutorService,
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
-    @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
   ) {}
 
@@ -54,10 +52,10 @@ export class TowerReviewTool implements ITowerReviewTool {
             artifactMission !== undefined &&
             args.status === 'clean' &&
             args.merge === 'merge' &&
-            (this.bootstrap.args.nonInteractive === true || this.permissionMode.mode === 'auto')
+            this.bootstrap.args.nonInteractive === true
           ) {
             return {
-              output: `artifact acceptance for ${args.target} cannot be recorded in an automatic or noninteractive run — leave mission ${artifactMission.id} completed and waiting for explicit human approval in an interactive session`,
+              output: `artifact acceptance for ${args.target} cannot be recorded in a noninteractive run — leave mission ${artifactMission.id} completed and waiting for explicit human approval in an interactive session`,
               isError: true,
             };
           }
@@ -102,19 +100,19 @@ export class TowerReviewTool implements ITowerReviewTool {
               result.review.mission === artifactMission.id
             ) {
               lines.push(
-                `next: explicit human acceptance for ${args.target} is recorded on the exact tip — the tower can TowerMerge it in Dependency Flow order.`,
+                `next: artifact acceptance for ${args.target} is recorded on the exact tip — the tower can TowerMerge it in Dependency Flow order.`,
               );
             } else if (args.status === 'clean' && args.merge === 'merge') {
               lines.push(
-                `next: ${args.target} is still waiting for mission-matching explicit human acceptance recorded by reviewer=tower; this review alone does not make the artifact merge-ready.`,
+                `next: ${args.target} is still waiting for mission-matching artifact acceptance recorded by reviewer=tower; this review alone does not make the artifact merge-ready.`,
               );
             } else if (args.status === 'clean') {
               lines.push(
-                `next: ${args.target} is not merge-approved — artifact acceptance requires status "clean" with merge verdict "merge", recorded by reviewer=tower after explicit user approval.`,
+                `next: ${args.target} is not merge-approved — artifact acceptance requires status "clean" with merge verdict "merge", recorded by reviewer=tower after presenting the key artifacts.`,
               );
             } else {
               lines.push(
-                `next: ${args.target} is not merge-ready — the author must rework the artifacts, then the tower must obtain fresh explicit human acceptance on the exact tip.`,
+                `next: ${args.target} is not merge-ready — the author must rework the artifacts, then the tower must record fresh artifact acceptance on the exact tip.`,
               );
             }
           } else if (args.status === 'clean' && args.merge === 'merge') {
