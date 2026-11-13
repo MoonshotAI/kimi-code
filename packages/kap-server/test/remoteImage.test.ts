@@ -1,3 +1,5 @@
+import { createServer, type AddressInfo } from 'node:net';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { fetchRemoteImage } from '../src/lib/remoteImage';
@@ -95,6 +97,61 @@ describe('remote image network boundaries', () => {
     expect(String(calls[1]!.input)).toBe('http://[2001:db8::1]:8080/pic.png');
     expect(calls[0]!.init?.headers).toMatchObject({ host: 'images.example.test:8080' });
     expect(calls[1]!.init?.headers).toMatchObject({ host: '[2001:db8::1]:8080' });
+  });
+
+  it('delivers the original Host authority over a real proxy dispatcher and retries validated addresses', async () => {
+    const connectTargets: string[] = [];
+    const tunneledHeaders: string[] = [];
+    const proxy = createServer((socket) => {
+      let buffer = '';
+      let tunneled = false;
+      socket.on('data', (chunk) => {
+        buffer += chunk.toString('latin1');
+        while (buffer.includes('\r\n\r\n')) {
+          const splitAt = buffer.indexOf('\r\n\r\n');
+          const head = buffer.slice(0, splitAt);
+          buffer = buffer.slice(splitAt + 4);
+          if (!tunneled && head.startsWith('CONNECT ')) {
+            const target = head.split('\r\n', 1)[0]?.split(' ')[1] ?? '';
+            connectTargets.push(target);
+            if (target.startsWith('[')) {
+              socket.write('HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n');
+              socket.end();
+              return;
+            }
+            tunneled = true;
+            socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+            continue;
+          }
+          tunneledHeaders.push(head);
+          socket.write(
+            `HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: ${PNG.length}\r\nConnection: close\r\n\r\n`,
+          );
+          socket.end(PNG);
+        }
+      });
+    });
+    await new Promise<void>((resolve) => proxy.listen(0, '127.0.0.1', resolve));
+    const port = (proxy.address() as AddressInfo).port;
+    vi.stubEnv('HTTP_PROXY', `http://127.0.0.1:${port}`);
+    try {
+      const result = await fetchRemoteImage('http://images.example.test:8080/pic.png', {
+        lookupImpl: async () => [
+          { address: '2001:db8::10', family: 6 },
+          { address: '198.51.100.10', family: 4 },
+        ],
+      });
+      expect(result.mimeType).toBe('image/png');
+      expect(connectTargets).toEqual(['[2001:db8::10]:8080', '198.51.100.10:8080']);
+      expect(tunneledHeaders).toHaveLength(1);
+      expect(tunneledHeaders[0]?.toLowerCase()).toContain('\r\nhost: images.example.test:8080\r\n');
+    } finally {
+      await new Promise<void>((resolve) => {
+        proxy.close(() => {
+          resolve();
+        });
+      });
+    }
   });
 
   it('keeps independent dispatchers for direct and proxied schemes', async () => {

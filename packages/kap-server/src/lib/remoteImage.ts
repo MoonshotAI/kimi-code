@@ -3,7 +3,7 @@ import { lookup } from 'node:dns/promises';
 import { BlockList, isIP, type LookupFunction } from 'node:net';
 
 import { createProxyDispatcher, isProxyConfiguredForUrl } from '@moonshot-ai/agent-core-v2/_base/utils/proxy';
-import { Agent, type Dispatcher } from 'undici';
+import { Agent, Dispatcher } from 'undici';
 
 const MAX_REMOTE_IMAGE_BYTES = 10 * 1024 * 1024;
 const MAX_REMOTE_IMAGE_REDIRECTS = 3;
@@ -68,17 +68,20 @@ export async function fetchRemoteImage(input: string, options: RemoteImageOption
     for (let redirects = 0; ; redirects++) {
       const target = await resolveRemoteImageTarget(current, lookupImpl, deadline);
       const useProxy = isProxyConfiguredForUrl(process.env, target.url);
-      const requestUrl = remoteImageRequestUrl(target, useProxy);
+      const requestUrls = remoteImageRequestUrls(target, useProxy);
       const headers: Record<string, string> = { accept: 'image/avif,image/png,image/jpeg,image/gif,image/webp' };
       if (useProxy) headers['host'] = new URL(target.url).host;
-      const response = await fetchImpl(requestUrl, {
-        headers,
-        redirect: 'manual',
-        signal,
-        dispatcher: remoteImageDispatcherFor(target, useProxy, dispatchers) as unknown,
-      } as RequestInit).catch((error: unknown) => {
-        throw new RemoteImageError('upstream', `Remote image request failed: ${errorMessage(error)}`);
-      });
+      const response = await fetchFromCandidateUrls(
+        fetchImpl,
+        requestUrls,
+        {
+          headers,
+          redirect: 'manual',
+          signal,
+          dispatcher: remoteImageDispatcherFor(target, useProxy, dispatchers) as unknown,
+        } as RequestInit,
+        deadline,
+      );
       if (REDIRECT_STATUSES.has(response.status)) {
         const location = response.headers.get('location');
         await response.body?.cancel().catch(() => undefined);
@@ -156,14 +159,88 @@ function isBlockedAddress(address: string): boolean {
   return BLOCKED_ADDRESSES.check(normalized, 'ipv6');
 }
 
+class HostAuthorityDispatcher extends Dispatcher {
+  constructor(
+    private readonly inner: Dispatcher,
+    private readonly hostAuthority: string,
+  ) {
+    super();
+  }
+
+  override dispatch(options: Dispatcher.DispatchOptions, handler: Dispatcher.DispatchHandler): boolean {
+    return this.inner.dispatch(
+      { ...options, headers: withHostHeader(options.headers, this.hostAuthority) },
+      handler,
+    );
+  }
+
+  override close(): Promise<void>;
+  override close(callback: () => void): void;
+  override close(callback?: () => void): Promise<void> | void {
+    if (callback !== undefined) {
+      this.inner.close(callback);
+      return;
+    }
+    return this.inner.close();
+  }
+
+  override destroy(): Promise<void>;
+  override destroy(err: Error | null): Promise<void>;
+  override destroy(callback: () => void): void;
+  override destroy(err: Error | null, callback: () => void): void;
+  override destroy(
+    errOrCallback?: Error | null | (() => void),
+    callback?: () => void,
+  ): Promise<void> | void {
+    if (typeof errOrCallback === 'function') {
+      this.inner.destroy(errOrCallback);
+      return;
+    }
+    if (callback !== undefined) {
+      this.inner.destroy(errOrCallback ?? null, callback);
+      return;
+    }
+    return this.inner.destroy(errOrCallback ?? null);
+  }
+}
+
+function withHostHeader(
+  headers: Dispatcher.DispatchOptions['headers'],
+  hostAuthority: string,
+): Record<string, string | string[] | undefined> {
+  const next: Record<string, string | string[] | undefined> = {};
+  if (Array.isArray(headers)) {
+    for (let index = 0; index + 1 < headers.length; index += 2) {
+      const name = String(headers[index]);
+      if (name.toLowerCase() === 'host') continue;
+      next[name] = String(headers[index + 1]);
+    }
+  } else if (headers !== undefined && headers !== null) {
+    if (typeof headers === 'object' && Symbol.iterator in headers) {
+      for (const [name, value] of headers as Iterable<[string, string | string[] | undefined]>) {
+        if (name.toLowerCase() === 'host') continue;
+        next[name] = value;
+      }
+    } else {
+      for (const [name, value] of Object.entries(headers)) {
+        if (name.toLowerCase() === 'host') continue;
+        next[name] = value;
+      }
+    }
+  }
+  next['host'] = hostAuthority;
+  return next;
+}
+
 function remoteImageDispatcherFor(
   target: RemoteImageTarget & { readonly url: string },
   useProxy: boolean,
   dispatchers: Dispatcher[],
 ): Dispatcher | undefined {
   if (useProxy) {
-    const dispatcher = createProxyDispatcher(process.env, {}, { requestTls: { servername: target.host } });
-    if (dispatcher === undefined) throw new RemoteImageError('invalid', 'Remote image proxy configuration is invalid');
+    const inner = createProxyDispatcher(process.env, {}, { requestTls: { servername: target.host } });
+    if (inner === undefined) throw new RemoteImageError('invalid', 'Remote image proxy configuration is invalid');
+    const dispatcher = new HostAuthorityDispatcher(inner, new URL(target.url).host);
     dispatchers.push(dispatcher);
     return dispatcher;
   }
@@ -175,12 +252,36 @@ function remoteImageDispatcherFor(
   return dispatcher;
 }
 
-function remoteImageRequestUrl(target: RemoteImageTarget & { readonly url: string }, useProxy: boolean): string {
-  if (!useProxy || target.addresses === undefined || target.addresses.length === 0) return target.url;
-  const url = new URL(target.url);
-  const address = target.addresses[0]!.address;
-  url.hostname = address.includes(':') ? `[${address}]` : address;
-  return url.toString();
+function remoteImageRequestUrls(target: RemoteImageTarget & { readonly url: string }, useProxy: boolean): string[] {
+  if (!useProxy || target.addresses === undefined || target.addresses.length === 0) return [target.url];
+  return target.addresses.map(({ address }) => {
+    const url = new URL(target.url);
+    url.hostname = address.includes(':') ? `[${address}]` : address;
+    return url.toString();
+  });
+}
+
+async function fetchFromCandidateUrls(
+  fetchImpl: typeof fetch,
+  requestUrls: readonly string[],
+  init: RequestInit,
+  deadline: number,
+): Promise<Response> {
+  let lastError: unknown;
+  for (let index = 0; index < requestUrls.length; index++) {
+    if (Date.now() >= deadline) {
+      throw new RemoteImageError('upstream', 'Remote image request timed out');
+    }
+    try {
+      return await fetchImpl(requestUrls[index]!, init);
+    } catch (error) {
+      lastError = error;
+      if (init.signal?.aborted || Date.now() >= deadline || index + 1 >= requestUrls.length) {
+        throw new RemoteImageError('upstream', `Remote image request failed: ${errorMessage(lastError)}`);
+      }
+    }
+  }
+  throw new RemoteImageError('upstream', `Remote image request failed: ${errorMessage(lastError)}`);
 }
 
 async function withRemoteImageDeadline<T>(promise: Promise<T>, deadline: number): Promise<T> {
