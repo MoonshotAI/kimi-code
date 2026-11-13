@@ -10,6 +10,9 @@ The `type` field in the `providers` table determines which protocol implementati
 | --- | --- | --- |
 | [`kimi`](#kimi) | OpenAI-compatible | Kimi Code managed service, Kimi Platform API key |
 | [`anthropic`](#anthropic) | Anthropic Messages | Claude model family |
+| [`deepseek`](#deepseek) | OpenAI Chat Completions, Anthropic Messages | DeepSeek V4 models |
+| [`glm`](#glm) | OpenAI Chat Completions | Zhipu GLM models, including GLM-5.3 |
+| [`minimax`](#minimax) | OpenAI Chat Completions, Anthropic Messages | MiniMax M3.1-Flash and M3 |
 | [`openai`](#openai) | OpenAI Chat Completions | OpenAI and compatible services, DeepSeek, Qwen, etc. |
 | [`openai_responses`](#openai_responses) | OpenAI Responses API | OpenAI's newer Responses interface |
 | [`google-genai`](#google-genai) | Google GenAI | Gemini API |
@@ -96,6 +99,94 @@ model = "claude-opus-4-7"
 max_context_size = 200000
 # max_output_size = 32000  # optional; omit to use the model-inferred default
 ```
+
+## `deepseek`
+
+For connecting directly to DeepSeek's OpenAI Chat Completions or Anthropic Messages API. The current `deepseek-flash` model supports vision and thinking; `deepseek-v4-pro` is text-only. Both support tool calling, a 1M-token context, and up to 393216 output tokens.
+
+- Default `base_url`: `https://api.deepseek.com` for OpenAI, or `https://api.deepseek.com/anthropic` when the model declares `protocol = "anthropic"`
+- Credential key names: `DEEPSEEK_API_KEY`, `DEEPSEEK_BASE_URL`
+- Thinking efforts: `none`, `low`, `high`, and `max`; Thinking can also be disabled
+
+```toml
+[providers.deepseek]
+type = "deepseek"
+api_key_env = "DEEPSEEK_API_KEY"
+
+[models."deepseek-flash"]
+provider = "deepseek"
+model = "deepseek-flash"
+max_context_size = 1000000
+max_output_size = 393216
+capabilities = [ "thinking", "image_in", "tool_use" ]
+support_efforts = [ "none", "low", "high", "max" ]
+default_effort = "high"
+```
+
+To use the Anthropic-compatible endpoint for the same provider, set `protocol = "anthropic"` on the model entry. Its default base URL then changes to `https://api.deepseek.com/anthropic` automatically.
+
+```toml
+[models."deepseek-flash-anthropic"]
+provider = "deepseek"
+model = "deepseek-flash"
+protocol = "anthropic"
+max_context_size = 1000000
+max_output_size = 393216
+capabilities = [ "thinking", "image_in", "tool_use" ]
+support_efforts = [ "none", "low", "high", "max" ]
+default_effort = "high"
+```
+
+## `glm`
+
+For connecting directly to Zhipu's OpenAI Chat Completions API. GLM-5.3 is text-only, always uses Thinking, and accepts the `low`, `high`, and `max` effort levels. It supports a 1M-token context and up to 131072 output tokens. GLM-5.3-Flash supports image and video input.
+
+- Default `base_url`: `https://open.bigmodel.cn/api/paas/v4`
+- Credential key names: `ZAI_API_KEY`, `ZAI_BASE_URL`
+
+```toml
+[providers.glm]
+type = "glm"
+api_key_env = "ZAI_API_KEY"
+
+[models."glm-5.3"]
+provider = "glm"
+model = "glm-5.3"
+max_context_size = 1000000
+max_output_size = 131072
+capabilities = [ "always_thinking", "tool_use" ]
+support_efforts = [ "low", "high", "max" ]
+default_effort = "max"
+```
+
+For Z.AI's international Coding Plan endpoint, override `base_url` with `https://api.z.ai/api/coding/paas/v4`.
+
+## `minimax`
+
+For connecting directly to MiniMax's OpenAI Chat Completions or Anthropic Messages API. MiniMax-M3.1-Flash and MiniMax-M3 support text, image, and video input, tool calling, and a 1M-token context. The recommended output limit is 131072 tokens, with a maximum of 524288.
+
+MiniMax-M3.1-Flash always uses adaptive Thinking and supports `low`, `medium`, `high`, `xhigh`, and `max` efforts; it cannot be disabled. MiniMax-M3 also supports adaptive Thinking but allows it to be disabled.
+
+- Default `base_url`: `https://api.minimax.cn/v1` for OpenAI, or `https://api.minimax.cn/anthropic` when the model declares `protocol = "anthropic"`
+- Credential key names: `MINIMAX_API_KEY`, `MINIMAX_BASE_URL`
+- Anthropic `cache_control` is not supported and is omitted automatically
+
+```toml
+[providers.minimax]
+type = "minimax"
+api_key_env = "MINIMAX_API_KEY"
+
+[models."MiniMax-M3.1-Flash"]
+provider = "minimax"
+model = "MiniMax-M3.1-Flash"
+max_context_size = 1000000
+max_output_size = 131072
+capabilities = [ "always_thinking", "image_in", "video_in", "tool_use" ]
+support_efforts = [ "low", "medium", "high", "xhigh", "max" ]
+default_effort = "max"
+```
+
+MiniMax recommends its Anthropic-compatible API for Interleaved Thinking. To use it, set `protocol = "anthropic"` on the model entry; the default base URL then changes to `https://api.minimax.cn/anthropic` automatically.
 
 ## `openai`
 

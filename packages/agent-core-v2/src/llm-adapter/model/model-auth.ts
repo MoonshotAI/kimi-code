@@ -45,7 +45,7 @@ export function resolveModelAuthMaterial(args: {
   const providerEndpoint =
     providerAuthType === undefined
       ? {}
-      : explainProviderEndpoint(providerAuthType, args.provider?.env ?? {});
+      : explainProviderEndpoint(providerAuthType, args.provider?.env ?? {}, args.model.protocol);
   const declared = declaredProviderCredential(args.provider ?? {}, args.providerName);
   if (declared.kind === 'conflict') {
     throw new Error2(CONFIG_INVALID_ERROR_CODE, declared.message);
@@ -174,7 +174,7 @@ export function resolveEndpointBaseUrl(
   }
   const endpointType = provider.type ?? model.protocol;
   const endpoint =
-    endpointType === undefined ? {} : explainProviderEndpoint(endpointType, provider.env ?? {});
+    endpointType === undefined ? {} : explainProviderEndpoint(endpointType, provider.env ?? {}, model.protocol);
   return nonEmpty(endpoint.baseUrl);
 }
 

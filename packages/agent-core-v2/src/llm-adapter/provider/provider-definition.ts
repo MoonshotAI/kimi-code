@@ -6,14 +6,28 @@ import {
 } from '@moonshot-ai/core/llm/endpoint';
 import {
   anthropicEndpoint,
+  deepseekAnthropicEndpoint,
+  deepseekEndpoint,
   geminiEndpoint,
+  glmEndpoint,
   kimiEndpoint,
+  miniMaxAnthropicEndpoint,
+  miniMaxEndpoint,
   openAIEndpoint,
   vertexEndpoint,
 } from '@moonshot-ai/core/llm/builtin/provider/endpoints';
 import type { ModelCapability } from '@moonshot-ai/core/llm/request';
 import type { LlmRequester } from '@moonshot-ai/core/llm/requester';
+import {
+  deepseekRequesters,
+  inferDeepSeekCapability,
+} from '@moonshot-ai/core/llm/builtin/provider/deepseek/index';
+import { glmRequester, inferGlmCapability } from '@moonshot-ai/core/llm/builtin/provider/glm/index';
 import { kimiRequesters } from '@moonshot-ai/core/llm/builtin/provider/kimi/index';
+import {
+  inferMiniMaxCapability,
+  miniMaxRequesters,
+} from '@moonshot-ai/core/llm/builtin/provider/minimax/index';
 
 import type { Protocol } from '../protocol/protocol';
 import type { ModelSource } from './provider';
@@ -90,16 +104,18 @@ export type ExplainedProviderEndpoint = ResolvedLlmEndpointDeclaration;
 export function explainProviderEndpoint(
   providerType: string,
   env: Readonly<Record<string, string | undefined>> = process.env,
+  protocol?: Protocol,
 ): ExplainedProviderEndpoint {
-  const definition = getProviderDefinition(providerType);
+  const definition = getProviderDefinition(providerType, protocol);
   return resolveEndpointDeclaration(definition?.endpoint ?? definition?.endpoints, env);
 }
 
 export function resolveProviderEndpoint(
   providerType: string,
   env: Readonly<Record<string, string | undefined>> = process.env,
+  protocol?: Protocol,
 ): ResolvedProviderEndpoint {
-  const { apiKey, baseUrl } = explainProviderEndpoint(providerType, env);
+  const { apiKey, baseUrl } = explainProviderEndpoint(providerType, env, protocol);
   return { apiKey, baseUrl };
 }
 
@@ -125,6 +141,51 @@ registerProviderDefinition({
   id: 'google-genai',
   baseProtocol: 'google-genai',
   endpoints: [vertexEndpoint, geminiEndpoint],
+});
+
+registerProviderDefinition({
+  id: 'deepseek',
+  baseProtocol: 'openai',
+  requester: deepseekRequesters.openai,
+  thinkingDriven: true,
+  capability: inferDeepSeekCapability,
+  endpoint: deepseekEndpoint,
+});
+
+registerProviderDefinition({
+  id: 'deepseek',
+  baseProtocol: 'anthropic',
+  requester: deepseekRequesters.anthropic,
+  thinkingDriven: true,
+  capability: inferDeepSeekCapability,
+  endpoint: deepseekAnthropicEndpoint,
+});
+
+registerProviderDefinition({
+  id: 'glm',
+  baseProtocol: 'openai',
+  requester: glmRequester,
+  thinkingDriven: true,
+  capability: inferGlmCapability,
+  endpoint: glmEndpoint,
+});
+
+registerProviderDefinition({
+  id: 'minimax',
+  baseProtocol: 'openai',
+  requester: miniMaxRequesters.openai,
+  thinkingDriven: true,
+  capability: inferMiniMaxCapability,
+  endpoint: miniMaxEndpoint,
+});
+
+registerProviderDefinition({
+  id: 'minimax',
+  baseProtocol: 'anthropic',
+  requester: miniMaxRequesters.anthropic,
+  thinkingDriven: true,
+  capability: inferMiniMaxCapability,
+  endpoint: miniMaxAnthropicEndpoint,
 });
 
 registerProviderDefinition({
