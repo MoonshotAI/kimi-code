@@ -260,6 +260,7 @@ export type ToolPreparation<TPrepared> =
 
 export interface ExecutableTool<TArgs = unknown, TContext = unknown, TFields extends object = object, TPrepared = undefined>
   extends ToolDescription {
+  readonly argAliases?: Readonly<Record<string, string>>;
   prepare?(
     context: ToolPrepareContext<TArgs, TContext>,
   ): ToolPreparation<TPrepared> | Promise<ToolPreparation<TPrepared>>;

@@ -24,3 +24,33 @@ export function parseToolCallArguments(raw: unknown): {
     };
   }
 }
+
+/**
+ * Rewrites well-known argument aliases onto their canonical names before schema validation. An alias
+ * only fills a canonical argument when that argument is absent, so an explicit canonical value always
+ * wins; the alias key is always removed. The input object is never mutated.
+ */
+export function applyToolArgAliases(
+  aliases: Readonly<Record<string, string>> | undefined,
+  args: unknown,
+): unknown {
+  if (aliases === undefined) {
+    return args;
+  }
+  if (typeof args !== 'object' || args === null || Array.isArray(args)) {
+    return args;
+  }
+  const record = args as Record<string, unknown>;
+  let next: Record<string, unknown> | undefined;
+  for (const [alias, canonical] of Object.entries(aliases)) {
+    if (!(alias in record)) {
+      continue;
+    }
+    next ??= { ...record };
+    if (!(canonical in record)) {
+      next[canonical] = record[alias];
+    }
+    delete next[alias];
+  }
+  return next ?? args;
+}
