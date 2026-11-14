@@ -265,7 +265,7 @@ function usesMaxCompletionTokens(model: string): boolean {
   const normalized = model.toLowerCase();
   return (
     /^o\d(?:$|[-.])/.test(normalized) ||
-    /^gpt-(?!35(?:$|[-.]))(?:[5-9]|\d{2,})(?:$|[-.])/.test(normalized)
+    /^gpt-(?!35(?:$|[-.]))(?:[5-9]|[1-9]\d+)(?:$|[-.])/.test(normalized)
   );
 }
 

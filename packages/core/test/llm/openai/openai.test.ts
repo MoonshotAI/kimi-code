@@ -33,6 +33,7 @@ describe('openai maximum output token parameters', () => {
     'GPT-6',
     'gpt-10',
     'gpt-99',
+    'gpt-100',
     'o3',
     'o4-mini',
   ])('uses max_completion_tokens for %s', (name) => {
@@ -46,6 +47,10 @@ describe('openai maximum output token parameters', () => {
     'gpt-35-turbo',
     'GPT-35-TURBO-0613',
     'gpt-35',
+    'gpt-04',
+    'gpt-03.5-turbo',
+    'gpt-06',
+    'gpt-010',
     'deepseek-reasoner',
     'gpt-6custom',
     'example-gpt-6',
