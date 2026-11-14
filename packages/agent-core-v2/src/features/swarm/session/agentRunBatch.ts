@@ -239,7 +239,7 @@ export class AgentRunBatch<T> {
 
     const now = Date.now();
     this.recoverRateLimitCapacity(now);
-    if (this.active.size >= this.rateLimitCapacity) {
+    if (this.isAtConcurrencyLimit() || this.active.size >= this.rateLimitCapacity) {
       this.scheduleRateLimitWakeup(this.nextRateLimitCapacityRecoveryAt(), now);
       return;
     }
@@ -500,7 +500,7 @@ export class AgentRunBatch<T> {
     if (!this.rateLimitMode) {
       this.rateLimitMode = true;
       this.clearNormalTimer();
-      this.rateLimitCapacity = Math.max(1, this.startedSuccessCount);
+      this.rateLimitCapacity = this.clampRateLimitCapacity(Math.max(1, this.startedSuccessCount));
       this.nextRateLimitLaunchAt = Math.max(
         this.nextRateLimitLaunchAt,
         now + RATE_LIMIT_RETRY_BASE_MS,
@@ -510,6 +510,10 @@ export class AgentRunBatch<T> {
     }
 
     this.shrinkRateLimitCapacity(now, false);
+  }
+
+  private clampRateLimitCapacity(capacity: number): number {
+    return this.maxConcurrency === undefined ? capacity : Math.min(this.maxConcurrency, capacity);
   }
 
   private shrinkRateLimitCapacity(now: number, force: boolean): void {
@@ -529,13 +533,17 @@ export class AgentRunBatch<T> {
     const nextRecoveryAt = this.nextRateLimitCapacityRecoveryAt();
     if (nextRecoveryAt > now) return;
 
-    this.rateLimitCapacity += 1;
+    this.rateLimitCapacity = this.clampRateLimitCapacity(this.rateLimitCapacity + 1);
     this.lastCapacityRecoveryAt = now;
     this.nextRateLimitLaunchAt = Math.min(this.nextRateLimitLaunchAt, now);
   }
 
   private nextRateLimitCapacityRecoveryAt(): number {
-    if (this.pending.length === 0 || this.lastRateLimitAt === undefined) {
+    if (
+      this.pending.length === 0 ||
+      this.lastRateLimitAt === undefined ||
+      (this.maxConcurrency !== undefined && this.rateLimitCapacity >= this.maxConcurrency)
+    ) {
       return Number.POSITIVE_INFINITY;
     }
 
@@ -558,7 +566,7 @@ export class AgentRunBatch<T> {
     if (this.pending.length === 0) return;
 
     const nextWakeupAt =
-      this.active.size >= this.rateLimitCapacity
+      this.isAtConcurrencyLimit() || this.active.size >= this.rateLimitCapacity
         ? this.nextRateLimitCapacityRecoveryAt()
         : Math.min(
             Math.max(this.nextRateLimitLaunchAt, this.nextPendingReadyAt()),
