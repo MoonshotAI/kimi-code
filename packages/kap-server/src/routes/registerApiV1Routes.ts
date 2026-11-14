@@ -15,6 +15,7 @@ import { registerCapabilitiesRoutes } from './capabilities';
 import { registerClientConfigsRoutes } from './clientConfigs';
 import { registerConfigRoutes } from './config';
 import { registerConnectionsRoutes } from './connections';
+import { registerContextRoutes } from './context';
 import { registerFileHistoryRoutes } from './fileHistory';
 import { registerFilesRoutes } from './files';
 import { registerFsRoutes } from './fs';
@@ -127,6 +128,10 @@ export async function registerApiV1Routes(
         apiV1 as unknown as Parameters<typeof registerSessionsRoutes>[0],
         core,
         opts.conversations,
+      );
+      registerContextRoutes(
+        apiV1 as unknown as Parameters<typeof registerContextRoutes>[0],
+        core,
       );
       registerEnvironmentRoutes(apiV1 as unknown as Parameters<typeof registerEnvironmentRoutes>[0], core);
       registerSessionRatingRoutes(
