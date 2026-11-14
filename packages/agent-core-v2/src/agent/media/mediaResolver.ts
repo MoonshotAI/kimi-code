@@ -13,6 +13,7 @@ export interface IAgentMediaResolverService {
     signal?: AbortSignal,
   ): Promise<readonly Message[]>;
   displayPaths(messages: readonly Message[]): Promise<ReadonlyMap<string, string>>;
+  invalidateUpload(llmFileId: string): void;
 }
 
 export const IAgentMediaResolverService = createDecorator<IAgentMediaResolverService>(

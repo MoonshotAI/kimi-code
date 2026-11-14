@@ -113,6 +113,16 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
   >();
   private imageMemoBytes = 0;
   private readonly imageUploadUnsupported = new Set<string>();
+  private readonly invalidUploads = new Set<string>();
+
+  invalidateUpload(llmFileId: string): void {
+    this.invalidUploads.add(llmFileId);
+    for (const [key, part] of this.resolved) {
+      if (part.type !== 'image_url' && part.type !== 'video_url' && part.type !== 'audio_url') continue;
+      const uploadedId = mediaFileIdOf(part) ?? msFileIdFromUrl(mediaUrlOf(part));
+      if (uploadedId === llmFileId) this.resolved.delete(key);
+    }
+  }
 
   async resolve(
     messages: readonly Message[],
@@ -383,6 +393,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
         return undefined;
       }
       const llmFileId = mediaFileIdOf(uploaded) ?? msFileIdFromUrl(mediaUrlOf(uploaded));
+      if (llmFileId !== undefined && this.invalidUploads.has(llmFileId)) return undefined;
       if (llmFileId !== undefined) {
         await this.writeCachedUpload(IMAGE_CACHE_SCOPE, upload.cacheKey, llmFileId);
       }
@@ -552,6 +563,12 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
         };
       }
       const llmFileId = mediaFileIdOf(uploaded) ?? msFileIdFromUrl(mediaUrlOf(uploaded));
+      if (llmFileId !== undefined && this.invalidUploads.has(llmFileId)) {
+        return {
+          part: inlineSupported ? inlineVideoPart(bytes, mimeType) : videoTag(tagPath),
+          memoize: true,
+        };
+      }
       if (llmFileId !== undefined) await this.writeCachedUpload(VIDEO_CACHE_SCOPE, cacheKey, llmFileId);
       return { part: uploaded, memoize: true };
     } catch (error) {
@@ -597,7 +614,9 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     const data = await this.blobs.get(scope, blobKey(cacheKey)).catch(() => undefined);
     if (data === undefined) return undefined;
     const llmFileId = textDecoder.decode(data);
-    return PROVIDER_ID_RE.test(llmFileId) ? llmFileId : undefined;
+    return PROVIDER_ID_RE.test(llmFileId) && !this.invalidUploads.has(llmFileId)
+      ? llmFileId
+      : undefined;
   }
 
   private async writeCachedUpload(

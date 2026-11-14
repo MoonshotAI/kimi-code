@@ -23,7 +23,7 @@ import { mcpResultToExecutableOutput } from '#/agent/mcp/output';
 import type { ImageUploader, VideoUploader } from '#/llm-adapter/model/media';
 import type { Model } from '#/llm-adapter/model/catalog';
 import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
-import type { LlmFiles } from '@moonshot-ai/core/llm/request';
+import type { LlmCredentialProvider, LlmFiles } from '@moonshot-ai/core/llm/request';
 import type { InitializedLlmRequester } from '@moonshot-ai/core/llm/requester';
 import { streamLlmRequest } from '@moonshot-ai/core/llm/stream';
 import { AgentMediaResolverService } from '#/agent/media/mediaResolverService';
@@ -36,7 +36,6 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import { type GetResult, IFileService } from '#/app/file/fileService';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ContentPart, ImageURLPart, Message, VideoURLPart } from '@moonshot-ai/core/llm/message';
-import type { LlmCredentialProvider } from '@moonshot-ai/core/llm/request';
 import type { Protocol } from '#/llm-adapter/protocol/protocol';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
@@ -1205,6 +1204,162 @@ describe('AgentMediaResolverService image upload', () => {
     expect(firstPart(first)).toEqual({ type: 'image_url', imageUrl: { url: PNG_DATA_URL } });
     expect(firstPart(second)).toEqual({ type: 'image_url', imageUrl: { url: PNG_DATA_URL } });
     expect(upload).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('AgentMediaResolverService expired upload recovery', () => {
+  async function runRequest(
+    service: IAgentMediaResolverService,
+    messages: readonly Message[],
+    resolution: TestMediaResolution,
+    reject: (body: string, call: number) => Response | undefined,
+  ): Promise<{ bodies: string[]; eventTypes: string[]; recovered: boolean }> {
+    const bodies: string[] = [];
+    const mockFetch: typeof fetch = async (input, init) => {
+      const httpRequest = new Request(input, init);
+      expect(new URL(httpRequest.url).pathname).toBe('/v1/chat/completions');
+      const body = await httpRequest.text();
+      bodies.push(body);
+      return reject(body, bodies.length) ?? Response.json({
+        id: 'completion_1',
+        model: 'stub',
+        object: 'chat.completion',
+        choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: 'Done.' } }],
+      });
+    };
+    const routed = resolution.requester.with({
+      protocol: { stream: false },
+      endpoint: { fetch: mockFetch },
+    });
+    const media = createAgentMediaPolicy(service, resolution.model, routed);
+    const eventTypes: string[] = [];
+    let recovered = false;
+    let done = false;
+    for await (const event of streamLlmRequest(
+      routed.request({
+        profile: { systemPrompt: '' },
+        content: { messages },
+        policy: { recoveries: [media.recovery], resolvers: [media.toolResolver, media.resolver] },
+      }),
+      { signal: new AbortController().signal },
+    )) {
+      eventTypes.push(event.type);
+      if (event.type === 'llm.retrying' && event.reason === 'recovery') recovered = true;
+      if (event.type === 'llm.ended' && event.outcome.type === 'done') done = true;
+    }
+    expect(done).toBe(true);
+    return { bodies, eventTypes, recovered };
+  }
+
+  function expiredUpload(messageType: 'image' | 'video'): Response {
+    return Response.json({
+      error: {
+        message: `Invalid request: failed to validate ${messageType}_url content: blob ID expired-upload does not exist`,
+      },
+    }, { status: 400 });
+  }
+
+  it('invalidates a memoized image upload and refreshes it from local media', async () => {
+    const upload = vi.fn()
+      .mockResolvedValueOnce(msImagePart('expired-upload'))
+      .mockResolvedValueOnce(msImagePart('fresh-upload'));
+    const res = resolver(new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]));
+
+    const result = await runRequest(
+      res,
+      [imageMessage(buildKimiFileUrl(FILE_ID))],
+      requester({ uploadImage: upload }),
+      (body) => body.includes('expired-upload') ? expiredUpload('image') : undefined,
+    );
+
+    expect(result.recovered).toBe(true);
+    expect(result.bodies).toHaveLength(2);
+    expect(result.bodies[0]).toContain('ms://expired-upload');
+    expect(result.bodies[1]).toContain('ms://fresh-upload');
+    expect(upload).toHaveBeenCalledTimes(2);
+  });
+
+  it('refreshes a persisted image upload when the new resolver has no memoized association', async () => {
+    const files = new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]);
+    const blobs = blobStore();
+    const message = imageMessage(buildKimiFileUrl(FILE_ID));
+    const first = new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore(), stubDispatcher, stubScopeContext);
+    await resolveMedia(first, [message], requester({ uploadImage: async () => msImagePart('expired-upload') }));
+    const second = new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore(), stubDispatcher, stubScopeContext);
+    const upload = vi.fn(async (): Promise<ImageURLPart> => msImagePart('fresh-upload'));
+
+    const result = await runRequest(
+      second,
+      [message],
+      requester({ uploadImage: upload }),
+      (body) => body.includes('expired-upload') ? expiredUpload('image') : undefined,
+    );
+
+    expect(result.recovered).toBe(true);
+    expect(result.bodies).toHaveLength(2);
+    expect(result.bodies[0]).toContain('ms://expired-upload');
+    expect(result.bodies[1]).toContain('ms://fresh-upload');
+    expect(upload).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to an inline image when re-upload returns the rejected ID', async () => {
+    const upload = vi.fn(async (): Promise<ImageURLPart> => msImagePart('expired-upload'));
+    const res = resolver(new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]));
+
+    const result = await runRequest(
+      res,
+      [imageMessage(buildKimiFileUrl(FILE_ID))],
+      requester({ uploadImage: upload }),
+      (body, call) => call === 1 ? expiredUpload('image') : undefined,
+    );
+
+    expect(result.recovered).toBe(true);
+    expect(result.bodies).toHaveLength(2);
+    expect(result.bodies[1]).toContain('data:image/png;base64,');
+    expect(result.bodies[1]).not.toContain('expired-upload');
+    expect(upload).toHaveBeenCalledTimes(2);
+  });
+
+  it('falls back to a local video tag when re-upload returns the rejected ID', async () => {
+    const canonical = await plantCanonical(FILE_ID, '.mp4', VIDEO_BYTES);
+    const upload = vi.fn(async (): Promise<VideoURLPart> => msPart('expired-upload'));
+    const res = resolver(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]), sessionDir);
+
+    const result = await runRequest(
+      res,
+      [videoMessage(buildKimiFileUrl(FILE_ID))],
+      requester({ uploadVideo: upload }),
+      (body, call) => call === 1 ? expiredUpload('video') : undefined,
+    );
+
+    expect(result.recovered).toBe(true);
+    expect(result.bodies).toHaveLength(2);
+    expect(result.bodies[1]).toContain(JSON.stringify(`<video path="${canonical}"></video>`));
+    expect(result.bodies[1]).not.toContain('expired-upload');
+    expect(upload).toHaveBeenCalledTimes(2);
+  });
+
+  it('omits only a directly persisted stale reference and preserves other content', async () => {
+    const stale = msImagePart('expired-upload');
+    const current = msImagePart('current-upload');
+    const message: Message = {
+      role: 'user',
+      content: [{ type: 'text', text: 'Keep this context.' }, stale, current],
+    };
+
+    const result = await runRequest(
+      resolver(new Map()),
+      [message],
+      requester({}),
+      (body) => body.includes('expired-upload') ? expiredUpload('image') : undefined,
+    );
+
+    expect(result.recovered).toBe(true);
+    expect(result.bodies).toHaveLength(2);
+    expect(result.bodies[1]).toContain('Keep this context.');
+    expect(result.bodies[1]).toContain('current-upload');
+    expect(result.bodies[1]).toContain('image omitted');
+    expect(result.bodies[1]).not.toContain('expired-upload');
   });
 });
 
