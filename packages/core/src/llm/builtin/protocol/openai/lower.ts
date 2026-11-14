@@ -263,7 +263,10 @@ const CHAT_COMPLETIONS_MAX_OUTPUT_TOKENS_CEILING = 128 * 1024;
 
 function usesMaxCompletionTokens(model: string): boolean {
   const normalized = model.toLowerCase();
-  return /^o\d(?:$|[-.])/.test(normalized) || /^gpt-5(?:$|[-.])/.test(normalized);
+  return (
+    /^o\d(?:$|[-.])/.test(normalized) ||
+    /^gpt-(?!35(?:$|[-.]))(?:[5-9]|[1-9]\d+)(?:$|[-.])/.test(normalized)
+  );
 }
 
 function encodeMaxTokens(cap: number, model: LlmModelSpec): Partial<OpenAIParams> {
