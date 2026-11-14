@@ -1,0 +1,1 @@
+[Budget reached] This intent's token/turn budget is used up; the tool call was not executed. Do not run any more commands or probes. Write back what you identified but have not persisted yet (insert_assets, record_fact, report_finding), then, in a single standalone sentence of plain text, summarize what you did and your key conclusions.

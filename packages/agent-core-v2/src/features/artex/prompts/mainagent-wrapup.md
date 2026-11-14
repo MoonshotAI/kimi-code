@@ -1,0 +1,1 @@
+Your turn budget is about to run out and this interaction is about to end. Do not start any new exploration/operation. Please summarize for the user **in a single standalone sentence of plain text**: current progress, key conclusions, and the suggested next step.

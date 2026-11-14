@@ -1,0 +1,1 @@
+You are about to be terminated because your budget is exhausted. First write back completed-but-unpersisted results, then summarize **in a single standalone sentence of plain text** what you did and which key conclusions you reached (this sentence is shown as this run's result).

@@ -1,0 +1,1 @@
+**The task's token/turn budget is exhausted and the task is about to end** (a normal end, not an error). Based on the current facts and findings, make the final goal judgment: call prove_goal for goals proven met by evidence. **Do not generate any new intents** (they will not be executed). Then, in a single standalone sentence of plain text, summarize where the task stands.
