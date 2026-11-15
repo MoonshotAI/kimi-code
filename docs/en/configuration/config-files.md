@@ -540,7 +540,7 @@ api_key = "sk-xxx"
 
 User rules are loaded from the user `config.toml` at session startup. For compatibility, legacy `turn-override` and `session-runtime` rules in the user config are silently ignored without a warning.
 
-If the user `config.toml` cannot be read or parsed, sessions continue with no user rules on initial load or the last-known-good rules after a reload, and the error remains visible in config diagnostics. Invalid permission rules still block session startup, and config writes remain blocked until the file is readable again.
+If the user `config.toml` cannot be read or parsed, explicit local sessions continue with no user rules on initial load or the last-known-good rules after a reload, and the error remains visible in config diagnostics. Other session creation paths still validate environment declarations normally. Invalid permission rules still block session startup, and config writes remain blocked until the file is readable again.
 
 Project rules are read from `.kimi-code/local.toml` only in the local environment when the workspace is trusted, with an omitted `scope` defaulting to `project`. Remote project rules are not supported. Project rule changes take effect in a new session and are not hot-reloaded.
 
