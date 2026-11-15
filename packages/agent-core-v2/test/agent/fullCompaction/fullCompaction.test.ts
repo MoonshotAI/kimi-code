@@ -2409,19 +2409,22 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
-  it('compacts and retries when the provider reports context overflow', async () => {
+  it('compacts and retries when provider context overflow follows an earlier LLM retry', async () => {
     let callCount = 0;
     const inputs: string[][] = [];
-    const generate: GenerateFn = requesterFromGenerateFn(async (_provider, _system, _tools, history, callbacks) => {
+    const legacyGenerate = requesterFromGenerateFn(async (_provider, _system, _tools, history, callbacks) => {
       callCount += 1;
       inputs.push(inputHistorySnapshot(history));
       if (callCount === 1) {
-        throw new APIContextOverflowError(400, 'Context length exceeded', 'req-context-overflow');
+        throw new APIStatusError(429, 'first attempt rate limited', true, 'req-first-429', 1);
       }
       if (callCount === 2) {
-        return textResult('Overflow compacted summary.');
+        throw new APIContextOverflowError(400, 'Context length exceeded', 'req-context-overflow');
       }
       if (callCount === 3) {
+        return textResult('Overflow compacted summary.');
+      }
+      if (callCount === 4) {
         await callbacks?.onMessagePart?.({
           type: 'text',
           text: 'Recovered after overflow compaction.',
@@ -2430,6 +2433,13 @@ describe('FullCompaction', () => {
       }
       throw new Error(`Unexpected generate call ${String(callCount)}`);
     });
+    const generate: GenerateFn = {
+      ...legacyGenerate,
+      generate: (config, content, control) => {
+        control.onEvent?.({ type: 'llm.sent' });
+        return legacyGenerate.generate(config, content, control);
+      },
+    };
     const ctx = testAgent({ generate });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
@@ -2441,7 +2451,7 @@ describe('FullCompaction', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Retry after provider overflow' }] });
     const events = await ctx.untilTurnEnd();
 
-    expect(callCount).toBe(3);
+    expect(callCount).toBe(4);
     expect(events).toContainEqual(
       expect.objectContaining({
         event: 'compaction.started',
@@ -2467,6 +2477,11 @@ describe('FullCompaction', () => {
     );
     expect(inputs).toMatchInlineSnapshot(`
       [
+        [
+          "user: old user one",
+          "assistant: old assistant one",
+          "user: Retry after provider overflow",
+        ],
         [
           "user: old user one",
           "assistant: old assistant one",
