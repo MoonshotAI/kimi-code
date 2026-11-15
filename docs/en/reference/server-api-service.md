@@ -26,6 +26,7 @@ Returns this instance's identity and capability map. Most fields are frozen at b
 
 | Field | Type | Description |
 | --- | --- | --- |
+| `kimi_agent_protocol_version` | string | Kimi Agent Protocol version (currently `"0.1.0"`) |
 | `server_version` | string | Server version |
 | `capabilities` | object | Capability map: `websocket`, `file_upload`, `fs_query`, `mcp`, `tasks`, all always `true` |
 | `server_id` | string | Unique id of this server instance |
@@ -299,7 +300,7 @@ These endpoints read and write the global configuration (`config.toml`) and read
 | Method and path | Description |
 | --- | --- |
 | `GET /api/v1/config` | Read the global config (secret fields redacted) |
-| `POST /api/v1/config` | Merge-patch the config and broadcast `event.config.changed` |
+| `POST /api/v1/config` | Merge-patch the config and broadcast `config` |
 | `POST /api/v1/client_configs` | Read a named client configuration controlled remotely by the Kimi Code service |
 
 ### `GET /api/v1/config`
@@ -345,7 +346,7 @@ The request body is a partial config object: it may contain any top-level domain
 
 On success, `data` is the full updated config, in the same shape as `GET /api/v1/config`.
 
-Every config change broadcasts the global event `event.config.changed` (see [Global events](./server-api-conversation.md#global-events)). This covers a successful update through this endpoint, an edit of `config.toml` outside the process, and server-side writes such as an OAuth login refresh. Changes within a short window are merged into one event: `changedFields` carries the affected domain names (camelCase config domains, for example `defaultModel`), and `config` carries the full current config projection (same shape as the `GET /api/v1/config` response).
+Every config change broadcasts the global event `config` (see [Global events](./server-api-conversation.md#global-events)). This covers a successful update through this endpoint, an edit of `config.toml` outside the process, and server-side writes such as an OAuth login refresh. Changes within a short window are merged. The frame carries the full current config projection (same shape as the `GET /api/v1/config` response), with any warnings from config loading in the optional `warnings` field.
 
 - `40001`: the patch was rejected (invalid value or persistence failure); the response carries the underlying error message
 
@@ -520,7 +521,7 @@ On success, the server returns HTTP 204 with no body; the status code itself rep
 
 Re-discovers one provider's model metadata from its upstream source and rewrites the provider's aliases. A provider with a static model source makes no network request and is reported as `unchanged` directly.
 
-This endpoint and the collection-level `:refresh` and `:refresh_oauth` follow the same broadcast rule. When the refresh report's `changed` is non-empty (at least one provider's aliases or managed model metadata changed), the server broadcasts the global event `event.model_catalog.changed` (see [Global events](./server-api-conversation.md#global-events)), with the same content as the refresh report.
+This endpoint and the collection-level `:refresh` and `:refresh_oauth` follow the same broadcast rule. When the refresh report's `changed` is non-empty (at least one provider's aliases or managed model metadata changed), the server broadcasts the global event `invalidated` with `kind: "models"` (see [Global events](./server-api-conversation.md#global-events)); clients then refetch `GET /api/v1/models`.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -535,7 +536,7 @@ On success, `data` is a refresh report:
 | `failed` | array | Providers whose refresh failed, each `{ provider, reason }` |
 | `retired_default` | object | Optional. Present when the refresh finds that the registry dropped the current default model and that model had declared an `upgrade` replacement: `{ from, to, from_display_name }` |
 
-When `retired_default` is present, the default model has been redirected to `to`, and open sessions still bound to `from` have also been switched to `to`. `from_display_name` is the dropped model's display name, for use in notices. The same field also appears in the `event.model_catalog.changed` event.
+When `retired_default` is present, the default model has been redirected to `to`, and open sessions still bound to `from` have also been switched to `to`. `from_display_name` is the dropped model's display name, for use in notices.
 
 - `40001`: malformed or unsupported action suffix in the path
 - `40412`: provider not found
@@ -971,7 +972,7 @@ These endpoints manage the workspace registry and read and write each workspace'
 
 ### Workspace object
 
-When a workspace is registered or updated, the server broadcasts the [global events](./server-api-conversation.md#global-events) `event.workspace.created` / `event.workspace.updated`.
+When a workspace is registered or updated, the server broadcasts the [global event](./server-api-conversation.md#global-events) `workspace` with `change: "created"` or `"updated"` and the full workspace object.
 
 | Field | Type | Description |
 | --- | --- | --- |
@@ -1220,17 +1221,12 @@ On success, `data` is `null`.
 
 ## Global search and other endpoints
 
-Cross-session full-text search, the list of live WebSocket connections, and entry points to other endpoints.
+Cross-session full-text search and live WebSocket connection inspection.
 
 | Method and path | Description |
 | --- | --- |
 | `POST /api/v1/search` | Cross-session full-text search; `mode` is `terms` (default) or `literal` (exact substring); paginated with `page_token` |
 | `GET /api/v1/connections` | List live WebSocket connections |
-| `GET /api/v1/sessions` | Session list and grouped queries; see [`GET /api/v1/sessions`](./server-api-sessions.md#get-api-v1-sessions) |
-| `POST /api/v1/sessions:archive` | Batch-archive sessions; see [`POST /api/v1/sessions:archive`](./server-api-sessions.md#post-api-v1-sessions-archive) |
-| `POST /api/v1/sessions:restore` | Batch-restore archived sessions; see [`POST /api/v1/sessions:restore`](./server-api-sessions.md#post-api-v1-sessions-restore) |
-| `/api/v1/mcp/*` | Unified MCP management plane; see [MCP management](#mcp-management) |
-| `/api/v1/debug/*` | Reflection debug RPC; mounted only with `--debug-endpoints` on loopback, not part of the stable protocol |
 
 ### `POST /api/v1/search`
 

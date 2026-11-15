@@ -198,8 +198,23 @@ export class ConversationFeed implements IDisposable {
     return { turns: page, has_more: start > 0 || page.length < selected.length };
   }
 
+  async interrupt(turnId: string): Promise<boolean> {
+    await this.handle.accessor.get(IEventDispatcher).flush();
+    this.flushPending();
+    const turn = this.state.turns.findLast((candidate) => candidate.turn_id === turnId);
+    if (turn?.status !== 'running') return false;
+    return this.handle.accessor
+      .get(IAgentLoopService)
+      .cancel(turn.turn_number === undefined ? undefined : { turnId: turn.turn_number });
+  }
+
+  flushPending(): void {
+    if (this.flushQueued) this.flush();
+  }
+
   dispose(): void {
     if (this.disposed) return;
+    this.flushPending();
     this.disposed = true;
     for (const disposable of this.disposables.splice(0)) disposable.dispose();
     this.listeners.clear();
@@ -303,10 +318,6 @@ export class ConversationFeed implements IDisposable {
     queueMicrotask(() => {
       this.flushPending();
     });
-  }
-
-  private flushPending(): void {
-    if (this.flushQueued) this.flush();
   }
 
   private flush(): void {

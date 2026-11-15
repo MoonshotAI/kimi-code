@@ -9,7 +9,7 @@ const agentFrameFields = {
 };
 
 export const agentStateSchema = z.object({
-  status: z.enum(['idle', 'running']),
+  status: z.enum(['idle', 'running', 'ended']),
   compacting: z.boolean(),
   model: z.string().optional(),
   thinking: z.string().optional(),

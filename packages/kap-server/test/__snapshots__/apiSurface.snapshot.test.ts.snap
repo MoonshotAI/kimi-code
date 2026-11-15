@@ -234,23 +234,7 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
-      "/api/v1/sessions/{session_id}/goal",
-    ],
-    [
-      "GET",
       "/api/v1/sessions/{session_id}/media/{file_id}",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/messages",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/messages/{message_id}",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/profile",
     ],
     [
       "GET",
@@ -295,10 +279,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "PATCH",
       "/api/v1/remote-control/devices/{id}",
-    ],
-    [
-      "PATCH",
-      "/api/v1/sessions/{session_id}/goal",
     ],
     [
       "PATCH",
@@ -462,6 +442,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
+      "/api/v1/sessions/{session_id}/agents/{tail}",
+    ],
+    [
+      "POST",
       "/api/v1/sessions/{session_id}/children",
     ],
     [
@@ -503,6 +487,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v1/sessions/{session_id}/title/generate",
+    ],
+    [
+      "POST",
+      "/api/v1/sessions/{session_id}/turns/{tail}",
     ],
     [
       "POST",

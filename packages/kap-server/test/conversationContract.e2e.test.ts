@@ -258,8 +258,14 @@ function replayFrames(frames: readonly any[]): any[] {
   return turns;
 }
 
-const getSessionFacts = (server: RunningServer, base: string, sid: string): Promise<{ busy: boolean; pending_interaction?: string }> =>
-  rest(server, base, `/api/v1/sessions/${encodeURIComponent(sid)}`);
+const getSessionFacts = async (server: RunningServer, base: string, sid: string): Promise<{ busy: boolean; pending_interaction?: string }> => {
+  const session = await rest<{ activity: 'idle' | 'turn' | 'background'; pending_interaction?: string }>(
+    server,
+    base,
+    `/api/v1/sessions/${encodeURIComponent(sid)}`,
+  );
+  return { busy: session.activity !== 'idle', pending_interaction: session.pending_interaction };
+};
 
 async function createSession(server: RunningServer, base: string): Promise<string> {
   const data = await rest<{ id: string }>(server, base, '/api/v1/sessions', {
@@ -339,8 +345,8 @@ async function subscribeConversation(
     frames.push(frame);
     if (CONVERSATION_FRAME_TYPES.has(frame.type) && frame.agent_id === agentId) conversation.push(frame);
     if (frame.type === 'task') tasks.push(frame);
-    if (frame.type === 'agent' && frame.agent_id === MAIN_AGENT_ID) agents.push(frame);
-    if (frame.type === 'todo' && frame.agent_id === MAIN_AGENT_ID) todos.push(frame);
+    if (frame.type === 'agent' && frame.agent_id === agentId) agents.push(frame);
+    if (frame.type === 'todo' && frame.agent_id === agentId) todos.push(frame);
   });
   await new Promise<void>((resolve, reject) => {
     ws.once('open', () => {
@@ -889,4 +895,108 @@ describe('conversation contract e2e', () => {
       'recall the token',
     ]);
   }, 60000);
+
+  it('S11: turns/{turn_id}:interrupt stops a running turn and is idempotent once ended', async () => {
+    await boot([
+      {
+        match: () => true,
+        respond: () => sseTextChunks('part-1 ', 'part-2'),
+        pause: { afterEvents: 1, ms: 5000 },
+      },
+    ]);
+    const created = await rest<{ id: string; cwd: string; activity: string }>(server!, base, '/api/v1/sessions', {
+      method: 'POST',
+      body: { cwd: '/tmp' },
+    });
+    expect(created.cwd).toBe('/tmp');
+    expect(created.activity).toBe('idle');
+    const sid = created.id;
+
+    const channel = await subscribeConversation(server!, sid);
+    await submitPrompt(server!, base, sid, 'slow turn');
+    await until('running turn started', () => channel.turns().some((t) => t.status === 'running'));
+    const turnId = channel.turns().find((t) => t.status === 'running')!.turn_id as string;
+
+    const first = await rest<{ interrupted: boolean }>(
+      server!,
+      base,
+      `/api/v1/sessions/${encodeURIComponent(sid)}/turns/${encodeURIComponent(turnId)}:interrupt`,
+      { method: 'POST', body: {} },
+    );
+    expect(first).toEqual({ interrupted: true });
+    await until(
+      'turn ended as interrupted',
+      () => channel.turns().find((t) => t.turn_id === turnId)?.status === 'ended',
+    );
+    expect(channel.turns().find((t) => t.turn_id === turnId)).toMatchObject({
+      status: 'ended',
+      outcome: 'interrupted',
+      end_reason: 'user_cancelled',
+    });
+
+    const second = await rest<{ interrupted: boolean }>(
+      server!,
+      base,
+      `/api/v1/sessions/${encodeURIComponent(sid)}/turns/${encodeURIComponent(turnId)}:interrupt`,
+      { method: 'POST', body: {} },
+    );
+    expect(second).toEqual({ interrupted: false });
+
+    const sessionAfter = await rest<{ activity: string; last_turn_outcome?: string }>(
+      server!,
+      base,
+      `/api/v1/sessions/${encodeURIComponent(sid)}`,
+    );
+    expect(sessionAfter.activity).toBe('idle');
+    expect(sessionAfter.last_turn_outcome).toBe('interrupted');
+    channel.close();
+  });
+
+  it('S12: agents/{agent_id}:close closes a btw side agent, emits status ended, and rejects non-btw agents with 40939', async () => {
+    await boot([{ match: () => true, respond: () => sseText('side answer') }]);
+    const sid = await createSession(server!, base);
+    const btw = await rest<{ agent_id: string }>(
+      server!,
+      base,
+      `/api/v1/sessions/${encodeURIComponent(sid)}:btw`,
+      { method: 'POST', body: {} },
+    );
+    const channel = await subscribeConversation(server!, sid, btw.agent_id);
+    await until('btw initial agent frame', () => channel.agents.length > 0);
+
+    const closeMainRes = await fetch(
+      `${base}/api/v1/sessions/${encodeURIComponent(sid)}/agents/main:close`,
+      { method: 'POST', headers: authHeaders(server!), body: '{}' },
+    );
+    expect(((await closeMainRes.json()) as { code: number }).code).toBe(40939);
+
+    const closed = await rest<{ closed: true }>(
+      server!,
+      base,
+      `/api/v1/sessions/${encodeURIComponent(sid)}/agents/${encodeURIComponent(btw.agent_id)}:close`,
+      { method: 'POST', body: {} },
+    );
+    expect(closed).toEqual({ closed: true });
+    await until('btw ended agent frame', () => channel.agents.at(-1)?.status === 'ended');
+    expect(channel.agents.at(-1)).toMatchObject({
+      type: 'agent',
+      session_id: sid,
+      agent_id: btw.agent_id,
+      status: 'ended',
+      compacting: false,
+    });
+
+    const closeAgainRes = await fetch(
+      `${base}/api/v1/sessions/${encodeURIComponent(sid)}/agents/${encodeURIComponent(btw.agent_id)}:close`,
+      { method: 'POST', headers: authHeaders(server!), body: '{}' },
+    );
+    expect(((await closeAgainRes.json()) as { code: number }).code).toBe(40401);
+
+    const turnsAfterCloseRes = await fetch(
+      `${base}/api/v1/sessions/${encodeURIComponent(sid)}/agents/${encodeURIComponent(btw.agent_id)}/turns`,
+      { headers: authHeaders(server!) },
+    );
+    expect(((await turnsAfterCloseRes.json()) as { code: number }).code).toBe(40401);
+    channel.close();
+  });
 }, 90000);

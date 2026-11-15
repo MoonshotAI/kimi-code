@@ -7,7 +7,7 @@ import { createTaskChannel, startControlledTask } from '../../agent-core-v2/test
 
 import { TASK_OUTPUT_DEFAULT_TAIL_BYTES, TASK_OUTPUT_MAX_TAIL_BYTES } from '../src/protocol/ws-task';
 import type { IConnectionRegistry } from '../src/transport/ws/connectionRegistry';
-import type { SessionEventBroadcaster } from '../src/transport/ws/v1/sessionEventBroadcaster';
+import type { BroadcastFrame, SessionEventBroadcaster } from '../src/transport/ws/v1/sessionEventBroadcaster';
 import type { TaskSource } from '../src/transport/ws/v1/taskRequests';
 import { type WsConnectionV1Options, WsConnectionV1 } from '../src/transport/ws/v1/wsConnectionV1';
 
@@ -89,12 +89,15 @@ function makeConn(socket: FakeSocket, opts: Partial<WsConnectionV1Options> = {})
   });
 }
 
-function frame(type: string, sessionId: string, seq: number) {
+function frame(_type: string, sessionId: string, seq: number): BroadcastFrame & { seq: number } {
   return {
-    type,
+    type: 'notice',
     session_id: sessionId,
-    timestamp: '2026-01-01T00:00:00.000Z',
-    payload: { type, agent_id: 'main', seq },
+    agent_id: 'main',
+    event_created_at: '2026-01-01T00:00:00.000Z',
+    level: 'info',
+    title: `frame-${seq}`,
+    seq,
   };
 }
 
@@ -189,7 +192,17 @@ describe('WsConnectionV1 control frames', () => {
     const { broadcaster } = makeCapturingBroadcaster();
     broadcaster.sendPendingInteractions = (sessionId, target) => {
       target.send(
-        { type: 'interaction', session_id: sessionId, timestamp: '', payload: {} },
+        {
+          type: 'interaction',
+          session_id: sessionId,
+          agent_id: 'main',
+          event_created_at: '2026-01-01T00:00:00.000Z',
+          interaction_id: 'interaction-1',
+          kind: 'approval',
+          status: 'pending',
+          tool_call_id: 'call-1',
+          request: { tool_name: 'Bash', action: 'run', tool_input_display: { kind: 'command' }, expires_at: '2026-01-02T00:00:00.000Z' },
+        },
         'immediate',
       );
     };
@@ -387,13 +400,13 @@ describe('WsConnectionV1 outbound buffer', () => {
     expect(socket.sent).toHaveLength(0);
     await vi.advanceTimersByTimeAsync(1);
 
-    const frames = socket.frames() as Array<{ type: string; payload: { seq: number } }>;
+    const frames = socket.frames() as Array<{ type: string; seq: number }>;
     expect(frames.map((f) => f.type)).toEqual([
-      'turn.started',
-      'item.delta',
-      'item.delta',
+      'notice',
+      'notice',
+      'notice',
     ]);
-    expect(frames.map((f) => f.payload.seq)).toEqual([7, 8, 9]);
+    expect(frames.map((f) => f.seq)).toEqual([7, 8, 9]);
     conn.close();
   });
 
@@ -406,8 +419,8 @@ describe('WsConnectionV1 outbound buffer', () => {
     conn.send(frame('event.session.work_changed', 's1', 2), 'immediate');
 
     expect(socket.frames().map((f) => (f as { type: string }).type)).toEqual([
-      'item.delta',
-      'event.session.work_changed',
+      'notice',
+      'notice',
     ]);
     await vi.advanceTimersByTimeAsync(16);
     expect(socket.sent).toHaveLength(2);
@@ -443,7 +456,7 @@ describe('WsConnectionV1 outbound buffer', () => {
     socket.bufferedAmount = 0;
     await vi.advanceTimersByTimeAsync(5);
     expect(
-      (socket.frames() as Array<{ payload: { seq: number } }>).map((f) => f.payload.seq),
+      (socket.frames() as Array<{ seq: number }>).map((f) => f.seq),
     ).toEqual([1, 2]);
     conn.close();
   });

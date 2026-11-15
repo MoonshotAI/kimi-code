@@ -28,6 +28,7 @@ export interface SessionRestored {
 export interface SessionDeletedPayload {
   readonly sessionId: string;
   readonly workspaceId: string;
+  readonly session?: unknown;
 }
 
 export class SessionDeleted extends Event2<{ readonly payload: SessionDeletedPayload }> {

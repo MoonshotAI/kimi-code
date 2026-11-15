@@ -26,6 +26,7 @@
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
+| `kimi_agent_protocol_version` | string | Kimi Agent Protocol 协议版本（当前为 `"0.1.0"`） |
 | `server_version` | string | 服务版本 |
 | `capabilities` | object | 能力集：`websocket`、`file_upload`、`fs_query`、`mcp`、`tasks`，值恒为 `true` |
 | `server_id` | string | 本服务实例的唯一 id |
@@ -299,7 +300,7 @@
 | 方法与路径 | 说明 |
 | --- | --- |
 | `GET /api/v1/config` | 读取全局配置（密钥字段脱敏） |
-| `POST /api/v1/config` | 合并式更新配置，并广播 `event.config.changed` |
+| `POST /api/v1/config` | 合并式更新配置，并广播 `config` |
 | `POST /api/v1/client_configs` | 读取由 Kimi Code 服务远程控制的指定客户端配置 |
 
 ### `GET /api/v1/config`
@@ -345,7 +346,7 @@
 
 成功时 `data` 为更新后的完整配置，形态与 `GET /api/v1/config` 相同。
 
-每一次配置变更都会广播全局事件 `event.config.changed`（见 [全局事件](./server-api-conversation.md#全局事件)），包括经本接口成功更新、在进程外编辑 `config.toml`，以及服务端内部写入（如 OAuth 登录刷新）。短时间内的多次变更合并为一个事件：`changedFields` 携带受影响的域名（camelCase 配置域，例如 `defaultModel`），`config` 携带当前完整的配置投影（形状与 `GET /api/v1/config` 的响应相同）。
+每一次配置变更都会广播全局事件 `config`（见 [全局事件](./server-api-conversation.md#全局事件)），包括经本接口成功更新、在进程外编辑 `config.toml`，以及服务端内部写入（如 OAuth 登录刷新）。短时间内的多次变更会合并。事件携带当前完整的配置投影（形状与 `GET /api/v1/config` 的响应相同），配置读取产生的警告通过可选的 `warnings` 一并下发。
 
 - `40001`：补丁被拒绝（值非法或持久化失败），响应带底层错误信息
 
@@ -520,7 +521,7 @@
 
 从上游来源重新发现单个供应商的模型元数据，并重写该供应商的别名。模型来源为静态的供应商不发起网络请求，直接报告 `unchanged`。
 
-本接口和集合级的 `:refresh`、`:refresh_oauth` 都遵循同一条广播规则：刷新报告的 `changed` 非空（至少一个供应商的别名或托管模型元数据发生变化）时，服务端广播全局事件 `event.model_catalog.changed`（见 [全局事件](./server-api-conversation.md#全局事件)），事件内容与刷新报告相同。
+本接口和集合级的 `:refresh`、`:refresh_oauth` 都遵循同一条广播规则：刷新报告的 `changed` 非空（至少一个供应商的别名或托管模型元数据发生变化）时，服务端广播全局事件 `invalidated`（`kind: "models"`，见 [全局事件](./server-api-conversation.md#全局事件)），客户端收到后重新读取 `GET /api/v1/models`。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -535,7 +536,7 @@
 | `failed` | array | 刷新失败的供应商，每项为 `{ provider, reason }` |
 | `retired_default` | object | 可选。刷新发现 registry 移除了当前默认模型、且该模型此前声明过 `upgrade` 替代模型时出现，为 `{ from, to, from_display_name }` |
 
-出现 `retired_default` 时，默认模型已重定向为 `to`，仍绑定 `from` 的已打开会话也已切换到 `to`；`from_display_name` 是被移除模型的显示名，供提示使用。`event.model_catalog.changed` 事件中也会出现同一字段。
+出现 `retired_default` 时，默认模型已重定向为 `to`，仍绑定 `from` 的已打开会话也已切换到 `to`；`from_display_name` 是被移除模型的显示名，供提示使用。
 
 - `40001`：路径中的动作后缀非法或不支持
 - `40412`：供应商不存在
@@ -971,7 +972,7 @@ cloud-only 条目不能在本机安装。旧 `kimi-webbridge` 条目不再返回
 
 ### 工作区对象
 
-注册和更新工作区时，服务端广播 [全局事件](./server-api-conversation.md#全局事件) `event.workspace.created` / `event.workspace.updated`。
+注册和更新工作区时，服务端广播 [全局事件](./server-api-conversation.md#全局事件) `workspace`（`change: "created"` / `"updated"`），并携带变化后的完整工作区对象。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -1220,17 +1221,12 @@ cloud-only 条目不能在本机安装。旧 `kimi-webbridge` 条目不再返回
 
 ## 全局搜索与其他
 
-跨会话全文搜索、列出在线的 WebSocket 连接，以及其他接口的入口。
+跨会话全文搜索与在线 WebSocket 连接查询。
 
 | 方法与路径 | 说明 |
 | --- | --- |
 | `POST /api/v1/search` | 跨会话全文搜索，`mode` 为 `terms`（默认）或 `literal`（精确子串），`page_token` 分页 |
 | `GET /api/v1/connections` | 列出当前在线的 WebSocket 连接 |
-| `GET /api/v1/sessions` | 会话列表与分组查询，见 [`GET /api/v1/sessions`](./server-api-sessions.md#get-api-v1-sessions) |
-| `POST /api/v1/sessions:archive` | 批量归档会话，见 [`POST /api/v1/sessions:archive`](./server-api-sessions.md#post-api-v1-sessions-archive) |
-| `POST /api/v1/sessions:restore` | 批量恢复已归档会话，见 [`POST /api/v1/sessions:restore`](./server-api-sessions.md#post-api-v1-sessions-restore) |
-| `/api/v1/mcp/*` | 统一的 MCP 管理面，见 [MCP 管理](#mcp-管理) |
-| `/api/v1/debug/*` | 反射式调试 RPC，仅在 `--debug-endpoints` 且 loopback 时挂载，不属于稳定协议 |
 
 ### `POST /api/v1/search`
 

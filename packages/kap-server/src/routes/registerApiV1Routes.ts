@@ -20,7 +20,6 @@ import { registerFilesRoutes } from './files';
 import { registerFsRoutes } from './fs';
 import { registerGuiStoreRoutes } from './guiStore';
 import { registerInteractionsRoutes } from './interactions';
-import { registerMessagesRoutes } from './messages';
 import type { IGuiStoreService } from '../services/guiStore/guiStore';
 import { registerDebugRoutes } from '../transport/registerDebugRoutes';
 import { registerMetaRoute } from './meta';
@@ -151,10 +150,6 @@ export async function registerApiV1Routes(
         core,
       );
       registerPluginsRoutes(apiV1 as unknown as Parameters<typeof registerPluginsRoutes>[0], core);
-      registerMessagesRoutes(
-        apiV1 as unknown as Parameters<typeof registerMessagesRoutes>[0],
-        core,
-      );
       registerSearchRoutes(apiV1 as unknown as Parameters<typeof registerSearchRoutes>[0], core);
       registerInteractionsRoutes(
         apiV1 as unknown as Parameters<typeof registerInteractionsRoutes>[0],
@@ -195,6 +190,7 @@ export async function registerApiV1Routes(
       );
       registerConversationRoutes(
         apiV1 as unknown as Parameters<typeof registerConversationRoutes>[0],
+        core,
         opts.conversations,
       );
       if (opts.enableShutdown !== false) {

@@ -9,7 +9,6 @@ import {
 } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
 
 import { ErrorCode } from './error-codes';
-import { goalSnapshotSchema } from './goal';
 import { cursorQuerySchema, pageResponseSchema } from './pagination';
 import {
   creationOnlyProfileSchema,
@@ -383,17 +382,6 @@ export type CreateSessionChildRequest = z.infer<typeof createSessionChildRequest
 
 export const createSessionChildResponseSchema = sessionSchema;
 export type CreateSessionChildResponse = z.infer<typeof createSessionChildResponseSchema>;
-
-export const getSessionGoalResponseSchema = goalSnapshotSchema.nullable();
-export type GetSessionGoalResponse = z.infer<typeof getSessionGoalResponseSchema>;
-
-export const editSessionGoalRequestSchema = z.object({
-  objective: z.string(),
-});
-export type EditSessionGoalRequest = z.infer<typeof editSessionGoalRequestSchema>;
-
-export const editSessionGoalResponseSchema = goalSnapshotSchema;
-export type EditSessionGoalResponse = z.infer<typeof editSessionGoalResponseSchema>;
 
 export const compactSessionRequestSchema = z.preprocess(
   (value) => value === undefined ? {} : value,

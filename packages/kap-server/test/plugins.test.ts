@@ -533,7 +533,7 @@ describe('server-v2 /api/v1 plugins', () => {
     ).toBe(40001);
   });
 
-  it('fans out event.plugin.changed over WS on install and remove', async () => {
+  it('fans out invalidated over WS on install and remove', async () => {
     const ws = new WebSocket(`${base.replace('http', 'ws')}/api/v1/ws`, [
       `kimi-code.bearer.${bearerToken(server!)}`,
     ]);
@@ -549,10 +549,10 @@ describe('server-v2 /api/v1 plugins', () => {
       });
       const source = await makePluginDir('demo-plugin', '1.0.0');
       await call('POST', '/api/v1/plugins', { source });
-      await vi.waitFor(() => expect(types).toContain('event.plugin.changed'));
+      await vi.waitFor(() => expect(types).toContain('invalidated'));
       await call('POST', '/api/v1/plugins/demo-plugin:remove');
       await vi.waitFor(() => {
-        expect(types.filter((type) => type === 'event.plugin.changed').length).toBeGreaterThanOrEqual(2);
+        expect(types.filter((type) => type === 'invalidated').length).toBeGreaterThanOrEqual(2);
       });
     } finally {
       ws.close();
