@@ -1,7 +1,10 @@
 import { IInstantiationService } from "#/_base/di/instantiation";
 import { Service } from "#/_base/di/service";
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IFlagService } from '#/app/flag/flag';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
+import { ARTEX_FLAG_ID } from '#/features/artex/artex';
+import { ArtexTargetGatePermissionPolicyService } from '#/features/artex/safety/artexTargetGatePolicy';
 import { AutoModeApprovePermissionPolicyService } from '#/agent/permissionPolicy/policies/auto-mode-approve';
 import { AutoModeAskUserQuestionDenyPermissionPolicyService } from '#/agent/permissionPolicy/policies/auto-mode-ask-user-question-deny';
 import { DangerousCommandAskPermissionPolicyService } from '#/agent/permissionPolicy/policies/dangerous-command-ask';
@@ -34,11 +37,15 @@ export class AgentPermissionPolicyService
   constructor(
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @IBootstrapService bootstrap: IBootstrapService,
+    @IFlagService flags: IFlagService,
   ) {
     super();
     this.policies = [
       this.instantiation.createInstance(AutoModeAskUserQuestionDenyPermissionPolicyService),
       this.instantiation.createInstance(UserConfiguredDenyPermissionPolicyService),
+      ...(flags.enabled(ARTEX_FLAG_ID)
+        ? [this.instantiation.createInstance(ArtexTargetGatePermissionPolicyService)]
+        : []),
       ...(bootstrap.args.nonInteractive
         ? []
         : [this.instantiation.createInstance(DangerousCommandAskPermissionPolicyService)]),

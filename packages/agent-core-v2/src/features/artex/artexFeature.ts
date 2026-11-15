@@ -6,12 +6,16 @@ import { registerFeature } from '#/features/featureRegistry';
 
 import { ARTEX_FLAG_ID } from './artex';
 import { ArtexGraphStoreProvider, IArtexGraphStoreProvider } from './store/artexGraphStoreProvider';
+import { ArtexWorkStoreProvider, IArtexWorkStoreProvider } from './store/artexWorkStoreProvider';
 import { ARTEX_CONFIG_DEFAULTS, ARTEX_SECTION, ArtexConfigSchema, artexEnvBindings, stripArtexEnv } from './config/configSection';
 import { ArtexOrchestrator, IArtexOrchestrator } from './engine/artexOrchestrator';
 import { ArtexModeService } from './agent/artexModeService';
 import { IArtexModeService } from './agent/artexMode';
 import { ARTEX_PROFILES } from './profiles/artexProfiles';
 import { ArtexSessionContext, IArtexSessionContext } from './session/artexSessionContext';
+import { ArtexEgressPacer, IArtexEgressPacer } from './safety/egressPacer';
+import { ArtexToolHooksService, IArtexToolHooksService } from './safety/artexToolHooks';
+import { IArtexTargetResolver, SystemArtexTargetResolver } from './safety/targetResolver';
 import { ARTEX_TOOL_DOMAIN, ARTEX_TOOLS } from './tools/index';
 
 export class ArtexFeature extends Feature {
@@ -32,13 +36,25 @@ export class ArtexFeature extends Feature {
     this.contributeService(LifecycleScope.App, IArtexGraphStoreProvider, ArtexGraphStoreProvider, {
       activation: ScopeActivation.OnDemand,
     });
+    this.contributeService(LifecycleScope.App, IArtexWorkStoreProvider, ArtexWorkStoreProvider, {
+      activation: ScopeActivation.OnDemand,
+    });
+    this.contributeService(LifecycleScope.App, IArtexTargetResolver, SystemArtexTargetResolver, {
+      activation: ScopeActivation.OnDemand,
+    });
     this.contributeService(LifecycleScope.Session, IArtexSessionContext, ArtexSessionContext, {
       activation: ScopeActivation.OnDemand,
     });
     this.contributeService(LifecycleScope.Session, IArtexOrchestrator, ArtexOrchestrator, {
       activation: ScopeActivation.OnDemand,
     });
+    this.contributeService(LifecycleScope.Session, IArtexEgressPacer, ArtexEgressPacer, {
+      activation: ScopeActivation.OnDemand,
+    });
     this.contributeAgentService(IArtexModeService, ArtexModeService, {
+      activation: ScopeActivation.OnScopeCreated,
+    });
+    this.contributeAgentService(IArtexToolHooksService, ArtexToolHooksService, {
       activation: ScopeActivation.OnScopeCreated,
     });
     this.contributeProfiles(ARTEX_PROFILES);
