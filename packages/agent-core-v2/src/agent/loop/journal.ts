@@ -220,6 +220,15 @@ export async function dehydrateLoopJournalRecord(
   transform: PartsTransformer,
 ): Promise<WireRecord> {
   switch (record.type) {
+    case 'queue.snapshot': {
+      const normal = record['normal'];
+      const notify = record['notify'];
+      return {
+        ...record,
+        normal: Array.isArray(normal) ? await Promise.all(normal.map((entry) => transformMessage(entry, transform))) : normal,
+        notify: Array.isArray(notify) ? await Promise.all(notify.map((entry) => transformMessage(entry, transform))) : notify,
+      };
+    }
     case 'context.append_message': {
       const message = await transformMessage(record['message'], transform);
       return message === record['message'] ? record : { ...record, message };
@@ -253,6 +262,13 @@ export async function dehydrateLoopJournalRecord(
 
 function stepKey(turnId: number, step: number): string {
   return `${turnId}:${step}`;
+}
+
+function queueMessages(value: unknown): UserMessage[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is UserMessage =>
+    isObject(entry) && entry['role'] === 'user' && Array.isArray(entry['content'])
+  );
 }
 
 function origin(entry: UserMessage): PromptOrigin {
@@ -309,6 +325,7 @@ function toolArguments(entry: AssistantMessage, toolCallId: string): unknown {
 export class LoopJournal {
   private readonly normal: UserMessage[] = [];
   private readonly notify: UserMessage[] = [];
+  private queuePaused = false;
   private readonly steps = new Map<string, StepJournal>();
   private readonly toolCallUuids = new Map<string, string>();
   private turn: PendingTurn | undefined;
@@ -334,6 +351,18 @@ export class LoopJournal {
 
   append(event: LoopEmitted): void {
     switch (event.type) {
+      case 'queue.changed':
+        this.normal.splice(0, this.normal.length, ...event.normal);
+        this.notify.splice(0, this.notify.length, ...event.notify);
+        this.queuePaused = event.paused;
+        this.write({
+          type: 'queue.snapshot',
+          agentId: this.agentId,
+          normal: event.normal,
+          notify: event.notify,
+          paused: event.paused,
+        });
+        return;
       case 'prompt.submitted':
         this.normal.push(event.message);
         return;
@@ -356,16 +385,22 @@ export class LoopJournal {
         this.notify.push(...entries);
         return;
       }
-      case 'turn.started':
+      case 'turn.started': {
         this.turnId = event.turnId;
-        if (event.trigger === 'normal') this.normal.shift();
+        const consumed = (event.consumed ?? []).filter((item) => item.kind !== 'remind');
+        for (const item of consumed) {
+          const queue = item.kind === 'normal' ? this.normal : this.notify;
+          const index = queue.findIndex((entry) => entryKey(entry) === entryKey(item.message));
+          if (index >= 0) queue.splice(index, 1);
+        }
         this.turn = {
           entry: event.message,
           trigger: event.trigger,
-          prompted: false,
+          prompted: event.message?.attributes?.queueItem?.kind === 'compact',
         };
         this.writeTurnPrompt();
         return;
+      }
       case 'step.started':
         this.writeTurnPrompt();
         this.steps.set(stepKey(event.turnId, event.step), {
@@ -513,7 +548,22 @@ export class LoopJournal {
   }
 
   snapshot(): LoopJournalSnapshot {
-    return restoreLoopJournal(this.wire.readLoopChain().map(({ record }) => record));
+    const records = this.wire.readLoopChain().map(({ record }) => record);
+    const restored = restoreLoopJournal(records);
+    const persisted = records.findLast((record) => record.type === 'queue.snapshot');
+    const normal = persisted === undefined ? [...this.normal] : queueMessages(persisted['normal']);
+    const notify = persisted === undefined ? [...this.notify] : queueMessages(persisted['notify']);
+    this.normal.splice(0, this.normal.length, ...normal);
+    this.notify.splice(0, this.notify.length, ...notify);
+    this.queuePaused = persisted === undefined ? this.queuePaused : persisted['paused'] === true;
+    return {
+      ...restored,
+      input: {
+        ...restored.input,
+        inbox: { normal, notify, remind: [] },
+        queuePaused: this.queuePaused,
+      },
+    };
   }
 
   settled(): Promise<void> {

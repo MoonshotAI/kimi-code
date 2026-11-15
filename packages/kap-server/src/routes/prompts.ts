@@ -5,6 +5,8 @@ import {
   IBootstrapService,
   getOrRestoreAgent,
   IAgentLoopService,
+  IAgentGoalService,
+  IAgentPlanService,
   IAgentPermissionModeService,
   IAgentEnvironmentBindingService,
   IAgentEnvironmentService,
@@ -42,12 +44,16 @@ import { ErrorCode } from '../protocol/error-codes';
 import { projectPromptContentParts, projectUserContent } from '../services/messages/messageProjection';
 import {
   promptAbortResponseSchema,
+  promptIdSchema,
   promptListResponseSchema,
   promptSteerRequestSchema,
   promptSteerResultSchema,
   promptSubmissionSchema,
   promptSubmitResultSchema,
+  queueMoveRequestSchema,
+  queuePauseResponseSchema,
   type PromptSkillActivation,
+  type QueueMoveRequest,
 } from '../protocol/rest-prompt';
 import { z } from 'zod';
 
@@ -70,6 +76,7 @@ import { requestLog } from '../lib/requestLog';
 import { defineRoute, type RouteDefinition } from '../middleware/defineRoute';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { type ActionTable, resolveActionTarget, runAction } from './action-dispatch';
+import type { ConversationService } from '../services/conversation/conversationService';
 import { sendEnvironmentError } from './environment';
 import { applyThinking } from './sessionAgentConfig';
 
@@ -90,11 +97,21 @@ interface PromptRouteHost {
       reply: { send(payload: unknown): unknown },
     ) => Promise<void> | void,
   ): unknown;
+  put(
+    path: string,
+    options: { preHandler: unknown[]; schema?: Record<string, unknown> },
+    handler: (
+      req: { id: string; body: unknown; params: unknown },
+      reply: { send(payload: unknown): unknown },
+    ) => Promise<void> | void,
+  ): unknown;
 }
 
 const sessionIdParamSchema = z.object({
   session_id: z.string().min(1),
 });
+
+const promptParamsSchema = sessionIdParamSchema.extend({ prompt_id: promptIdSchema.optional() });
 
 const validationDetailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 
@@ -128,6 +145,8 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
     binding: agent.accessor.get(IAgentEnvironmentBindingService),
     environment: agent.accessor.get(IAgentEnvironmentService),
     swarm: agent.accessor.get(IAgentSwarmService),
+    plan: agent.accessor.get(IAgentPlanService),
+    goal: agent.accessor.get(IAgentGoalService),
   };
 }
 
@@ -150,7 +169,7 @@ async function assertActivatableSkills(
   }
 }
 
-export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
+export function registerPromptsRoutes(app: PromptRouteHost, core: Scope, conversations: ConversationService): void {
   core.accessor.get(ISessionManager).onWillDeleteSession?.((event) => {
     promptAttempts.delete(event.sessionId);
   });
@@ -182,16 +201,21 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
 
   type PromptSubmissionHandler = RouteDefinition<
     typeof promptSubmissionSchema,
-    typeof sessionIdParamSchema,
+    typeof promptParamsSchema,
     undefined
   >['handler'];
   const submit = (directSteer: boolean): PromptSubmissionHandler => async (req, reply) => {
       const { session_id } = req.params;
       let attempt: PromptAttempt;
+      const promptId = req.params.prompt_id ?? req.body.prompt_id;
+      const direct = directSteer || req.body.delivery === 'steer';
       try {
-        attempt = beginPromptAttempt(session_id, req.body.prompt_id, {
+        if (req.params.prompt_id !== undefined && req.body.prompt_id !== undefined && req.params.prompt_id !== req.body.prompt_id) {
+          throw new Error2(ErrorCodes.REQUEST_INVALID, 'prompt_id in the path and body must match');
+        }
+        attempt = beginPromptAttempt(session_id, promptId, {
           route: directSteer ? 'steer' : 'prompts',
-          body: req.body,
+          body: { ...req.body, prompt_id: promptId },
         });
         if (attempt.earlier !== undefined) {
           reply.send(okEnvelope(await attempt.earlier, req.id));
@@ -269,23 +293,46 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           const promptAttachments =
             preparedMedia.attachments.length > 0 ? preparedMedia.attachments : undefined;
 
-          if (req.body.model !== undefined) await resolved.prompt.setModel(req.body.model);
-          if (req.body.thinking !== undefined) applyThinking(resolved.profile, req.body.thinking);
-          if (req.body.permission_mode !== undefined) resolved.permissionMode.setMode(req.body.permission_mode);
-          if (req.body.swarm_mode !== undefined && resolved.swarm.isActive !== req.body.swarm_mode) {
-            if (req.body.swarm_mode) resolved.swarm.enter('manual');
-            else resolved.swarm.exit();
-          }
-          if (req.body.disabled_tools !== undefined) {
-            try {
-              await resolved.toolPolicy.setSessionDisabledTools(req.body.disabled_tools);
-            } catch (error) {
-              if (error instanceof ProfileError) {
-                throw new Error2(ErrorCodes.REQUEST_INVALID, error.message);
+          const applySettings = async (): Promise<void> => {
+            if (req.body.model !== undefined) await resolved.prompt.setModel(req.body.model);
+            if (req.body.thinking !== undefined) applyThinking(resolved.profile, req.body.thinking);
+            if (req.body.permission_mode !== undefined) resolved.permissionMode.setMode(req.body.permission_mode);
+            if (req.body.plan_mode !== undefined) {
+              const plan = resolved.plan;
+              const active = await plan.status() !== null;
+              if (active !== req.body.plan_mode) {
+                if (req.body.plan_mode) await plan.enter();
+                else plan.exit();
               }
-              throw error;
             }
-          }
+            if (req.body.swarm_mode !== undefined && resolved.swarm.isActive !== req.body.swarm_mode) {
+              if (req.body.swarm_mode) resolved.swarm.enter('manual');
+              else resolved.swarm.exit();
+            }
+            if (req.body.disabled_tools !== undefined) {
+              try {
+                await resolved.toolPolicy.setSessionDisabledTools(req.body.disabled_tools);
+              } catch (error) {
+                if (error instanceof ProfileError) {
+                  throw new Error2(ErrorCodes.REQUEST_INVALID, error.message);
+                }
+                throw error;
+              }
+            }
+            const goal = resolved.goal;
+            if (req.body.goal_objective !== undefined && req.body.goal_control !== 'edit') {
+              await goal.createGoal({ objective: req.body.goal_objective });
+            }
+            switch (req.body.goal_control) {
+              case 'pause': await goal.pauseGoal({}); break;
+              case 'resume': await goal.resumeGoal({ continueIfPaused: true, continueIfBlocked: true }); break;
+              case 'cancel': await goal.cancelGoal({}); break;
+              case 'edit': await goal.editGoalObjective({ objective: req.body.goal_objective ?? '' }); break;
+            }
+          };
+          const status = resolved.prompt.snapshot();
+          const deferred = status.state === 'running' || status.paused || status.queuePaused || status.queue.length > 0;
+          if (!deferred) await applySettings();
           const parts = contentToCoreParts(resolvedContent);
           const clientMetadata = req.body.metadata === undefined ? undefined : [structuredClone(req.body.metadata)];
           if (req.body.skills !== undefined) {
@@ -305,7 +352,9 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
                 clientMetadata,
                 skills: req.body.skills,
                 attachments: promptAttachments,
-                steerIfActive: directSteer || undefined,
+                steerIfActive: direct || undefined,
+                delivery: direct ? 'steer' : undefined,
+                onStart: deferred ? applySettings : undefined,
               });
             } catch (error) {
               settlement.dispose();
@@ -314,6 +363,11 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             attempt.enqueued();
             enqueued = true;
             settlement.settle(result.prompt_id, () => preparedMedia?.discard());
+            const acceptedAs = result.steered === true ? 'steer' : result.state === 'queued' ? (direct ? 'steer' : 'queue') : 'turn';
+            const handle = resolved.prompt.promptHandle(result.prompt_id);
+            const launched = result.steered === true || result.state === 'running'
+              ? await Promise.race([handle?.launched, handle?.completion.then(() => undefined)])
+              : undefined;
             return {
               prompt_id: result.prompt_id,
               user_message_id: result.prompt_id,
@@ -321,6 +375,10 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
               content: projectPromptContentParts(parts),
               created_at: result.created_at,
               metadata: clientMetadata?.[0],
+              accepted_as: acceptedAs,
+              turn_id: launched?.id === undefined
+                ? undefined
+                : await conversationTurnId(conversations, session_id, req.body.agent_id ?? MAIN_AGENT_ID, launched.id, handle?.completion),
             };
           }
           await applyPromptMetadataUpdate({
@@ -328,7 +386,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             eventService: core.accessor.get(IEventService),
             sessionId: session_id,
           }, promptMetadataTextFromContentParts(parts, clientMetadata));
-          const status = resolved.prompt.snapshot();
           const entry = {
             role: 'user' as const,
             content: parts,
@@ -337,24 +394,33 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
               origin: { kind: 'user', attachments: promptAttachments, clientMetadata } as PromptOrigin,
             },
           };
-          const { id } = directSteer && status.state === 'running'
-            ? resolved.prompt.sendNow(entry)
-            : resolved.prompt.submit(entry);
+          let result;
+          if (direct && status.state === 'running') {
+            await applySettings();
+            result = resolved.prompt.sendNow(entry);
+          } else {
+            result = resolved.prompt.submit(entry, { delivery: direct ? 'steer' : undefined, onStart: deferred ? applySettings : undefined });
+          }
           attempt.enqueued();
           enqueued = true;
-          const handle = resolved.prompt.promptHandle(id)!;
-          if (
-            (directSteer && status.state === 'running') ||
-            (status.state === 'idle' && !status.paused && status.queue.length === 0)
-          ) {
+          const handle = resolved.prompt.promptHandle(result.id)!;
+          let launched: Awaited<typeof handle.launched> | undefined;
+          if (result.acceptedAs === 'turn' || (direct && (status.state === 'running' || (!status.paused && status.queue.length === 0)))) {
             await Promise.race([handle.launched, handle.completion]);
+            launched = await handle.launched;
           }
           const staging = preparedMedia;
           void Promise.race([handle.launched, handle.completion]).then(
             () => staging?.discard(),
             () => staging?.discard(),
           );
-          return projectPromptHandle(handle);
+          return {
+            ...projectPromptHandle(handle),
+            accepted_as: result.acceptedAs,
+            turn_id: launched?.id === undefined
+              ? undefined
+              : await conversationTurnId(conversations, session_id, req.body.agent_id ?? MAIN_AGENT_ID, launched.id, handle.completion),
+          };
         } catch (error) {
           if (!enqueued) await preparedMedia?.discardStaged();
           throw error;
@@ -395,6 +461,33 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
     submit(false),
   );
   app.post(submitRoute.path, submitRoute.options, submitRoute.handler as Parameters<PromptRouteHost['post']>[2]);
+
+  const putSubmitRoute = defineRoute(
+    {
+      method: 'PUT',
+      path: '/sessions/{session_id}/prompts/{prompt_id}',
+      body: promptSubmissionSchema,
+      params: promptParamsSchema,
+      success: { data: promptSubmitResultSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: { detailsSchema: validationDetailsSchema },
+        [ErrorCode.SKILL_NOT_FOUND]: {},
+        [ErrorCode.SKILL_NOT_ACTIVATABLE]: {},
+        [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.FILE_NOT_FOUND]: {},
+        [ErrorCode.PROMPT_ID_CONFLICT]: {},
+        [ErrorCode.AUTH_MODEL_NOT_RESOLVED]: {},
+        [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
+        [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
+        ...sessionConflictErrors,
+      },
+      description: 'Submit a prompt with an idempotency key',
+      tags: ['prompts'],
+      operationId: 'putPrompt',
+    },
+    submit(false),
+  );
+  app.put(putSubmitRoute.path, putSubmitRoute.options, putSubmitRoute.handler as Parameters<PromptRouteHost['put']>[2]);
 
   const directSteerRoute = defineRoute(
     {
@@ -493,6 +586,52 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
     },
   );
   app.post(actionRoute.path, actionRoute.options, actionRoute.handler as Parameters<PromptRouteHost['post']>[2]);
+
+  const queueActionRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/sessions/{session_id}/agents/{agent_id}/queue/{tail}',
+      params: z.object({ session_id: z.string().min(1), agent_id: z.string().min(1), tail: z.string().min(1) }),
+      body: queueMoveRequestSchema.default({}),
+      success: { data: z.union([z.object({}), queuePauseResponseSchema]) },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: {},
+        [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.PROMPT_NOT_FOUND]: {},
+        ...sessionConflictErrors,
+      },
+      description: 'Move a queued prompt or pause and resume ordinary queue consumption',
+      tags: ['prompts'],
+      operationId: 'queueAction',
+    },
+    async (req, reply) => {
+      const { session_id, agent_id, tail } = req.params;
+      try {
+        const resolved = await resolvePrompt(core, session_id, agent_id);
+        if (tail === 'pause' || tail === 'resume') {
+          if (tail === 'pause') resolved.prompt.pauseQueue();
+          else resolved.prompt.resumeQueue();
+          reply.send(okEnvelope({ paused: tail === 'pause' }, req.id));
+          return;
+        }
+        const target = resolveActionTarget({ tail, actions: queueActions, resourceLabel: 'queued prompt' });
+        if ('message' in target) {
+          reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, target.message, req.id));
+          return;
+        }
+        await runAction({
+          action: target.action,
+          id: target.id,
+          actions: queueActions,
+          extra: { resolved, session_id, req, reply },
+          body: req.body,
+        });
+      } catch (error) {
+        sendMappedError(reply, req, error);
+      }
+    },
+  );
+  app.post(queueActionRoute.path, queueActionRoute.options, queueActionRoute.handler as Parameters<PromptRouteHost['post']>[2]);
 }
 
 type PromptActionExtra = {
@@ -509,6 +648,16 @@ const promptActions: ActionTable<'abort' | 'steer', PromptActionExtra> = {
   steer: { handle: steerPromptAction },
 };
 
+const queueActions: ActionTable<'move', PromptActionExtra> = {
+  move: { body: queueMoveRequestSchema, handle: moveQueuedAction },
+};
+
+function moveQueuedAction(ctx: PromptActionCtx): void {
+  const { resolved, req, reply, id } = ctx;
+  resolved.prompt.moveQueued(id, (ctx.body as QueueMoveRequest).before_prompt_id);
+  reply.send(okEnvelope({}, req.id));
+}
+
 async function abortPromptAction(ctx: PromptActionCtx): Promise<void> {
   const { resolved, session_id, req, reply, id } = ctx;
   resolved.prompt.cancel({ promptId: id });
@@ -522,6 +671,31 @@ async function steerPromptAction(ctx: PromptActionCtx): Promise<void> {
   reply.send(okEnvelope({ steered: true, prompt_ids: [id] }, req.id));
 }
 
+async function conversationTurnId(
+  conversations: ConversationService,
+  sessionId: string,
+  agentId: string,
+  turnNumber: number,
+  settled: Promise<unknown> | undefined,
+): Promise<string | undefined> {
+  const feed = await conversations.feed(sessionId, agentId);
+  const find = (): string | undefined => feed.turns().find((turn) => turn.turn_number === turnNumber)?.turn_id;
+  const found = find();
+  if (found !== undefined || settled === undefined) return found;
+  return new Promise((resolve) => {
+    const subscription = feed.subscribe(() => {
+      const turnId = find();
+      if (turnId === undefined) return;
+      subscription.dispose();
+      resolve(turnId);
+    });
+    void settled.finally(() => {
+      subscription.dispose();
+      resolve(find());
+    });
+  });
+}
+
 function projectPromptList(loop: IAgentLoopService) {
   const snapshot = loop.snapshot();
   const active =
@@ -531,6 +705,7 @@ function projectPromptList(loop: IAgentLoopService) {
   return {
     active: active === undefined ? null : projectPromptSnapshot(active),
     queued: snapshot.queue
+      .filter((item) => item.attributes?.queueItem === undefined && item.attributes?.promptId !== snapshot.startingPromptId)
       .map((item) => {
         const { attributes: _attributes, ...coreMessage } = item;
         return projectPromptSnapshot({

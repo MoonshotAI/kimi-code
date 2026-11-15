@@ -156,7 +156,7 @@ export class AgentSkillService implements IAgentSkillService {
       void this.recordActivation(activation.origin);
     }
     const status = this.loop.snapshot();
-    const steerable = input.steerIfActive === true && status.state === 'running';
+    const steerable = (input.steerIfActive === true || input.delivery === 'steer') && status.state === 'running';
     const submission = {
       role: 'user' as const,
       content: [...prepared.map((activation) => activation.part), ...input.input],
@@ -170,9 +170,12 @@ export class AgentSkillService implements IAgentSkillService {
         } as PromptOrigin,
       },
     };
-    const { id } = steerable ? this.loop.sendNow(submission) : this.loop.submit(submission);
+    if (steerable) await input.onStart?.(new AbortController().signal);
+    const { id } = steerable
+      ? this.loop.sendNow(submission)
+      : this.loop.submit(submission, { delivery: input.delivery, onStart: input.onStart });
     const handle = this.loop.promptHandle(id)!;
-    if (!steerable && (status.state === 'running' || status.paused || status.queue.length > 0)) {
+    if (!steerable && (status.state === 'running' || status.paused || status.queuePaused || status.queue.length > 0)) {
       if (prepared.length === 1) {
         void handle.launched.then((turn) => {
           if (turn?.id !== undefined) this.rememberModelToolParent(prepared[0]!.origin, turn.id);

@@ -1,6 +1,6 @@
 # Session endpoints
 
-This page lists the REST endpoints under `/api/v1/sessions` (session file system endpoints are in [File endpoints](./server-api-files.md)), plus the session list and batch archive endpoints under `/api/v2/sessions`. For the WebSocket side (conversation frames, [subscribing to a session](./server-api-conversation.md#subscribing-to-a-session), and how a client drives a turn), see [Sessions and conversations](./server-api-conversation.md). For shared conventions such as the response envelope, authentication, error codes, and pagination, see [Server API](./server-api.md).
+This page lists the REST endpoints under `/api/v1/sessions` (session file system endpoints are in [File endpoints](./server-api-files.md)). For the WebSocket side (conversation frames, [subscribing to a session](./server-api-conversation.md#subscribing-to-a-session), and how a client drives a turn), see [Sessions and conversations](./server-api-conversation.md). For shared conventions such as the response envelope, authentication, error codes, and pagination, see [Server API](./server-api.md).
 
 ## Sessions
 
@@ -8,52 +8,49 @@ These endpoints manage sessions themselves: create, list, read, and update sessi
 
 ### Session object
 
-Every endpoint that returns a session uses this shape.
-
-The live status fields (`busy`, `main_turn_active`, `pending_interaction`, `last_turn_reason`) are resolved from the session's activity aggregate. When the session is not loaded in this server process (a cold session), these fields always report not busy with no pending interaction. A few fields are currently placeholders; each one is noted in its description.
+Every endpoint that returns a session uses this shape. The object contains only what session lists and background views need to display. Model, permission mode, and run mode live in each agent's [`agent` frame](./server-api-conversation.md#agent-state), context usage in its `usage` frame, and the current goal in its `goal` frame.
 
 | Field | Type | Description |
 | --- | --- | --- |
 | `id` | string | Session id (`session_...`) |
 | `workspace_id` | string | Owning workspace id |
+| `cwd` | string | Session working directory |
 | `title` | string | Session title; `""` when untitled |
 | `created_at` / `updated_at` | string | Creation and last-update times, ISO 8601 |
 | `archived` | boolean | Whether the session is archived. Archived sessions do not appear in the default session list |
 | `archived_at` | string | Archive time, ISO 8601. Present only when archived |
-| `busy` | boolean | `true` when any agent has an active turn, a running task (foreground tasks count), or a context compaction in progress |
-| `main_turn_active` | boolean | `true` when the main agent has an active turn |
+| `activity` | string | Current activity state: `idle` / `turn` (main agent has an active turn) / `background` (main agent has no active turn, but subagents, background tasks, or compaction are running) |
 | `pending_interaction` | string | The interaction waiting for an answer: `none` / `approval` / `question`. `approval` when an approval and a question are both pending |
-| `last_turn_reason` | string | Outcome of the main agent's latest turn: `completed` / `cancelled` / `failed`. Cleared when the main agent starts a new turn |
+| `last_turn_outcome` | string | Outcome of the main agent's latest turn: `completed` / `interrupted` / `failed` (matches `Turn.outcome`); omitted when no turn has ended |
 | `last_prompt` | string | Text of the most recent user prompt, when present |
-| `metadata` | object | Custom metadata; always carries `cwd` (the session's working directory) |
-| `agent_config` | object | Contains only `model`. When the session is loaded in the current server process and the main agent has a model, `model` is the main agent's current model; otherwise it is `""`. The create-session response carries this model too, unless no model was available at creation |
-| `usage` | object | Token rollup: `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_creation_tokens`, `context_tokens`, and the optional `context_limit`, `total_cost_usd`, and `turn_count`. Currently always zeros. The live context size comes with each agent's [`usage` frame](./server-api-conversation.md#agent-state) over the WebSocket |
-| `permission_rules` | array | Session permission rules; currently always `[]` |
-| `message_count` | integer | Message count; currently always `0` |
+| `metadata` | object | Optional custom metadata, stored exactly as supplied. The reserved keys `goal`, `parent_session_id`, and `child_session_kind` are managed by the server and are discarded when supplied at creation |
+| `git` | object | Present only when `GET /api/v1/sessions` is called with `include=git`. Carries optional `branch` (current branch; omitted for detached HEAD or non-Git directories) and optional `pull_request` (`{ number, state: "open" \| "closed" \| "merged", url }`; omitted when none) |
 
 ### Create, read, and update sessions
 
-Create sessions, list and read them, and update a session's title, metadata, and main agent config.
+Create sessions, list and read them, archive or restore sessions in batch, and update a session's title, metadata, and main agent config.
 
 | Method and path | Description |
 | --- | --- |
-| `POST /api/v1/sessions` | Create a session (requires `workspace_id` or `metadata.cwd`) |
-| `GET /api/v1/sessions` | List sessions; cursor pagination with filters such as `busy` and `archived_only` |
+| `POST /api/v1/sessions` | Create a session (requires `workspace_id` or `cwd`) |
+| `GET /api/v1/sessions` | List sessions with filtering, sorting, workspace grouping, `include=git`, and pagination |
+| `POST /api/v1/sessions:archive` | Archive sessions in batch |
+| `POST /api/v1/sessions:restore` | Restore archived sessions in batch |
 | `GET /api/v1/sessions/{session_id}` | Read one session |
-| `GET /api/v1/sessions/{session_id}/profile` | Read the session profile |
 | `POST /api/v1/sessions/{session_id}/profile` | Update the title, metadata, and main agent config |
 | `POST /api/v1/sessions/{session_id}/title/generate` | Generate a title through the managed `chat_title` tool |
 
 #### `POST /api/v1/sessions`
 
-Creates a session and returns it. On success, the server broadcasts the global `event.session.created` event (see [Global events](./server-api-conversation.md#global-events)).
+Creates a session and returns it. On success, the server broadcasts the global `session` with `change: "created"` event (see [Global events](./server-api-conversation.md#global-events)).
 
-The session's directory comes from `workspace_id` (a registered workspace) or `metadata.cwd` (the workspace is registered on first use). When both are given, they must agree.
+The session's directory comes from `workspace_id` (a registered workspace) or `cwd` / `metadata.cwd` (the workspace is registered on first use). When both are given, they must agree.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
-| `workspace_id` | body | string | Required when `metadata.cwd` is absent. A registered workspace id; the session is created at that workspace's root |
-| `metadata` | body | object | Custom metadata. `metadata.cwd` is the working directory and is required when `workspace_id` is absent; with `workspace_id` also given, it must equal the workspace root. Other keys are kept as the session's custom metadata; the reserved keys `goal`, `parent_session_id`, and `child_session_kind` are dropped |
+| `workspace_id` | body | string | Required when `cwd` is absent. A registered workspace id; the session is created at that workspace's root |
+| `cwd` | body | string | Working directory of the session; required when `workspace_id` is absent. With `workspace_id` also given, it must equal the workspace root |
+| `metadata` | body | object | Custom metadata. The working directory may also be passed as `metadata.cwd`; other keys are kept as custom metadata, and the reserved keys `goal`, `parent_session_id`, and `child_session_kind` are dropped |
 | `title` | body | string | Initial title, at least 1 character. Without it, the session is untitled |
 | `agent_config` | body | object | Partial main agent config, applied before the session is returned. Same fields as `agent_config` in [`POST /api/v1/sessions/{session_id}/profile`](#post-api-v1-sessions-session-id-profile), plus `profile` |
 | `environment_id` | body | string | Id of the environment the main agent runs in; `local` means this machine. Without it, the server uses `default` under `[environments]` in `config.toml`, or this machine when that is not configured. A non-local environment must be declared under `[environments]` or already registered. With a value other than `local`, the server creates the main agent before returning the session |
@@ -81,23 +78,65 @@ On success, `data` is the [session object](#session-object) of the new session.
 
 #### `GET /api/v1/sessions`
 
-Lists sessions across workspaces, newest `updated_at` first. Cursor pagination follows the [Pagination](./server-api.md#pagination) conventions, with one exception: when neither `page_size` nor `archived_only` is given, the response is a single unpaginated window and `has_more` is always `false`. To actually page, pass `page_size`.
+Queries sessions across workspaces with filtering, sorting, workspace grouping, optional Git metadata, and lightweight id projection. Paginate with an opaque `page_token`, a 1-based `page` number, or `before_id` / `after_id` cursors in the flat view (all four are mutually exclusive; see [Pagination](./server-api.md#pagination)).
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
-| `before_id` | query | string | Only sessions older than this id. Mutually exclusive with `after_id` |
-| `after_id` | query | string | Only sessions newer than this id. Mutually exclusive with `before_id` |
-| `page_size` | query | integer | 1–100. Default `20` when paging applies; see above for the behavior without it |
+| `workspace_id` | query | string | Filter by workspace; repeatable, accepts workspace aliases. Unknown workspaces return an empty list |
+| `archived` | query | string | `false` (default, unarchived only) / `true` (archived only) / `all` |
+| `has_prompt` | query | boolean | `true` keeps only sessions with a user prompt; `false` keeps only empty sessions |
 | `busy` | query | boolean | Keep only busy (or only idle) sessions |
-| `include_archive` | query | boolean | List archived sessions alongside active ones. Default `false` |
-| `archived_only` | query | boolean | List only archived sessions. Mutually exclusive with `include_archive`. Enables cursor pagination even without `page_size` |
-| `exclude_empty` | query | boolean | Drop sessions that have no user prompt |
-| `workspace_id` | query | string | List only this workspace's sessions; accepts workspace aliases |
+| `activity` | query | string | Filter by activity: `idle` / `turn` (main agent has an active turn) / `background` (only background work or compaction is active); repeatable |
+| `updated_after` | query | string | Only sessions updated at or after this time (ISO 8601) |
+| `updated_before` | query | string | Only sessions updated at or before this time (ISO 8601) |
+| `sort` | query | string | `updated_at_desc` (default) / `updated_at_asc` / `created_at_desc` |
+| `view` | query | string | `flat` (default) / `by_workspace` |
+| `group_page_size` | query | integer | Sessions returned per workspace under `view=by_workspace`: 1–100, default `5` (up to `10000` with the `id,archived` projection) |
+| `include` | query | string | Comma-separated extra field groups. Currently supports `git` (branch and PR info, deduplicated per environment and working directory and cached for 60 seconds) |
+| `fields` | query | string | Comma-separated field projection. Currently supports only `id,archived`, trimming each item to `{ id, archived }` (for select-all-matching flows) |
+| `page_size` | query | integer | 1–100, default `50`; up to `10000` with the `id,archived` projection. Under `view=by_workspace` it counts groups |
+| `page_token` | query | string | Pagination token returned by the previous page |
+| `page` | query | integer | Stateless page number, starting at 1 |
+| `before_id` | query | string | In the flat view, only sessions ordered after this session |
+| `after_id` | query | string | In the flat view, only sessions ordered before this session |
 
-On success, `data` is `{ items, has_more }`, where each item is a [session object](#session-object).
+In the flat view, `data` is `{ items, total, has_more, next_page_token? }`: each item is a [session object](#session-object) by default (with `git` attached when `include=git` is passed), or `{ id, archived }` when `fields=id,archived` is passed. `total` is the size of the filtered set. `next_page_token` is present only when paging with `page_token` (or default pagination) and `has_more` is `true`; changing any query condition mid-pagination returns `40922`. `page`, `before_id`, and `after_id` modes do not mint tokens.
 
-- `40001`: validation failure, for example `before_id` together with `after_id`, or `archived_only` together with `include_archive`
-- `40410`: unknown `workspace_id`
+With `view=by_workspace`, the filtered and sorted set is grouped by canonical workspace id, and `data` is `{ groups, total, has_more, next_page_token? }`:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `groups[].workspace_id` | string | Workspace id the group belongs to |
+| `groups[].sessions` | array | The workspace's first `group_page_size` sessions, ordered by the requested `sort` |
+| `groups[].total` | integer | Total number of the workspace's sessions that match the filters |
+| `total` | integer | Number of groups in the grouped view |
+
+Only workspaces with at least one matching session appear. Groups are ordered by the sort key of their first session, with ties broken by `workspace_id`. `page` and `page_token` paginate over groups.
+
+- `40001`: validation failure, such as passing more than one pagination cursor parameter, combining `before_id` / `after_id` with `view=by_workspace`, passing `group_page_size` without `view=by_workspace`, or combining `fields=id,archived` with `include=git`
+- `40922`: during pagination, the query conditions (including projection, `view`, and grouping parameters) do not match `page_token`
+
+#### `POST /api/v1/sessions:archive`
+
+Archives sessions in batch, for session management views. Sessions that are still live go through the full lifecycle; cold sessions that are not loaded have their on-disk metadata rewritten directly and are not loaded.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `ids` | body | array | Required. Array of session ids; must not be empty, at most 5000 after deduplication |
+
+Only a body validation failure fails the whole request. Other errors are returned per item:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `results` | array | Result for each id, in input order. A success is `{ id, ok }`; a failure is `{ id, ok: false, error }`. An id that does not exist reports `40401` in its own entry |
+| `succeeded` | integer | Number of successes |
+| `failed` | integer | Number of failures |
+
+- `40001`: request body validation failure
+
+#### `POST /api/v1/sessions:restore`
+
+Restores archived sessions in batch. The request body, the handling of live and cold sessions, the per-item results, and the error codes are the same as [`POST /api/v1/sessions:archive`](#post-api-v1-sessions-archive).
 
 #### `GET /api/v1/sessions/{session_id}`
 
@@ -111,23 +150,11 @@ On success, `data` is a [session object](#session-object).
 
 - `40401`: the session does not exist, or its workspace can no longer be resolved
 
-#### `GET /api/v1/sessions/{session_id}/profile`
-
-Reads the session profile. The response is the same as `GET /api/v1/sessions/{session_id}`.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | Required. Session id |
-
-On success, `data` is a [session object](#session-object).
-
-- `40401`: the session does not exist
-
 #### `POST /api/v1/sessions/{session_id}/profile`
 
 Updates the session profile: the title, custom metadata, and the main agent's config.
 
-A title set here is a custom title and takes precedence over generated titles. Setting a title broadcasts the global `session.meta.updated` event.
+A title set here is a custom title and takes precedence over generated titles. Setting a title broadcasts the global `session` with `change: "updated"` event.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -148,9 +175,9 @@ All `agent_config` fields are optional. The server applies them to the main agen
 | `tower_mode` | boolean | Enter or exit Tower mode. Requires the Tower experimental flag (`KIMI_CODE_EXPERIMENTAL_TOWER=1`, or `[experimental] tower = true` in `config.toml`) |
 | `tower_base` | string | Base branch used when entering Tower mode; used only together with `tower_mode: true`. When the branch does not exist, the server creates it in the repository, switches to it, and commits uncommitted changes onto it |
 | `goal_objective` | string | Create a goal with this text |
-| `goal_control` | string | Control the current goal: `pause` / `resume` / `cancel` |
+| `goal_control` | string | Control the current goal: `pause` / `resume` / `cancel` / `edit`; `edit` requires `goal_objective` |
 
-On success, `data` is the updated [session object](#session-object).
+On success, `data` is `{ session, agent }`: `session` is the updated [session object](#session-object), and `agent` is the main agent's current state with `status`, `compacting`, `model`, `thinking`, `permission_mode`, `plan_mode`, `swarm_mode`, and `tower_mode`, using the same fields as the [`agent` frame](./server-api-conversation.md#agent-state).
 
 - `40001`: `model` is not configured; the model does not support `thinking`; `agent_config.profile` is given (the agent profile can only be chosen when the session is created)
 - `40113`: the session has no model, and the request sets only `thinking` without `model`
@@ -160,7 +187,7 @@ On success, `data` is the updated [session object](#session-object).
 
 #### `POST /api/v1/sessions/{session_id}/title/generate`
 
-Generates a title from the session's prompts, applies it to the session, and broadcasts `session.meta.updated`. The title is generated by the managed provider's `chat_title` tool.
+Generates a title from the session's prompts, applies it to the session, and broadcasts `session` with `change: "updated"`. The title is generated by the managed provider's `chat_title` tool.
 
 Title generation requires the managed OAuth login. Without `force`, a session that already has a custom or generated title is reported unavailable, and its existing title is not overwritten.
 
@@ -206,7 +233,7 @@ All session actions go through one route: the end of the path is parsed as `{ses
 
 #### `POST /api/v1/sessions/{session_id}:fork`
 
-Copies the session, including its conversation, agent state, and files, into a new session in the same workspace, and broadcasts `event.session.created`. The source session keeps running.
+Copies the session, including its conversation, agent state, and files, into a new session in the same workspace, and broadcasts `session` with `change: "created"`. The source session keeps running.
 
 When the source session has an active turn, the fork keeps the most recent completed boundary before that turn and saves the current turn's user prompt as a prompt-only `cancelled` turn. That turn contains no assistant output, tool activity, queued input, or later events.
 
@@ -223,7 +250,7 @@ On success, `data` is the [session object](#session-object) of the new session.
 
 #### `POST /api/v1/sessions/{session_id}:compact`
 
-Starts a manual full compaction of the main agent's context. The call returns immediately without waiting for the compaction to finish.
+Starts a manual full compaction of the main agent's context, or queues it behind the current work. The call returns immediately without waiting for the compaction to finish. On success, `data` is `{ accepted_as, prompt_id }`: `accepted_as` is `compact` when it starts immediately or `queue` when it is queued, and `prompt_id` identifies the queue item when queued.
 
 During compaction, `compacting` is `true` in the WebSocket [`agent` frame](./server-api-conversation.md#agent-state). When compaction finishes, the result appears in the conversation as a [`system`](./server-api-conversation.md#system) item. When compaction is cancelled, nothing is left in the conversation, and subscribers receive a [`notice` frame](./server-api-conversation.md#live-updates) with `code` `compaction.cancelled`.
 
@@ -231,11 +258,11 @@ During compaction, `compacting` is `true` in the WebSocket [`agent` frame](./ser
 | --- | --- | --- | --- |
 | `instruction` | body | string | Extra guidance for the compaction summary. A blank value is ignored |
 
-Compaction is not queued. It can start only when the main agent is idle; see [Compaction](./server-api-conversation.md#compaction) for the flow.
+A queued compaction runs after the preceding work and is consumed without creating a user turn. See [Compaction](./server-api-conversation.md#compaction) for the flow.
 
 On success, `data` is `{}`.
 
-- `40910`: a compaction is already in progress; a turn is running; prompts are pending in the queue; another context change or session history operation (for example undo or fork) is in progress; the history has nothing to compact
+- `40910`: a compaction is already running or queued; the history has nothing to compact
 
 #### `POST /api/v1/sessions/{session_id}:undo`
 
@@ -267,23 +294,23 @@ Starts a "by the way" side conversation: forks the main agent into a subagent th
 
 On success, `data` is `{ agent_id }`, the id of the new subagent.
 
-Turns of agents other than the main agent, such as side conversations, have no public stop endpoint. [`:abort`](#post-api-v1-sessions-session-id-abort) stops only the main agent.
+To stop a running turn of a side conversation, call [`POST /api/v1/sessions/{session_id}/turns/{turn_id}:interrupt`](#post-api-v1-sessions-session-id-turns-turn-id-interrupt); to close and remove the side conversation, call [`POST /api/v1/sessions/{session_id}/agents/{agent_id}:close`](#post-api-v1-sessions-session-id-agents-agent-id-close).
 
 #### `POST /api/v1/sessions/{session_id}:archive`
 
-Marks the session archived and broadcasts the global `event.session.archived` event. An archived session does not appear in the default session list; it is still listed with `include_archive` or `archived_only`.
+Marks the session archived and broadcasts the global `session` with `change: "archived"` event. An archived session does not appear in the default session list; it is still listed with `archived=true` or `archived=all`.
 
 On success, `data` is `{ archived: true }`.
 
 #### `POST /api/v1/sessions/{session_id}:restore`
 
-Unarchives the session. When the session was archived, the server broadcasts the global `event.session.restored` event.
+Unarchives the session. When the session was archived, the server broadcasts the global `session` with `change: "restored"` event.
 
 On success, `data` is the [session object](#session-object), with `archived` set to `false`.
 
 #### `POST /api/v1/sessions/{session_id}:delete`
 
-Permanently deletes the session. When the session is loaded in this process, it is closed first. The server then deletes its on-disk data, index entry, and file history, and broadcasts the global `event.session.deleted` event (see [Global events](./server-api-conversation.md#global-events)). Deletion cannot be undone.
+Permanently deletes the session. When the session is loaded in this process, it is closed first. The server then deletes its on-disk data, index entry, and file history, and broadcasts the global `session` with `change: "deleted"` event (see [Global events](./server-api-conversation.md#global-events)). Deletion cannot be undone.
 
 On success, `data` is `{ deleted: true }`.
 
@@ -332,7 +359,7 @@ On success, `data` is `{ items, has_more }`, where each item is a [session objec
 
 #### `POST /api/v1/sessions/{session_id}/children`
 
-Creates a child session: forks the current session and records the fork as its child, so it is listed by `GET /api/v1/sessions/{session_id}/children`. On success, the server broadcasts `event.session.created`.
+Creates a child session: forks the current session and records the fork as its child, so it is listed by `GET /api/v1/sessions/{session_id}/children`. On success, the server broadcasts `session` with `change: "created"`.
 
 When the source session is running, the same boundary as [`:fork`](#post-api-v1-sessions-session-id-fork) applies: the most recent completed turn is kept, and the current turn is saved as a prompt-only `cancelled` turn. Creating a child session does not accept a historical `turn_index` parameter.
 
@@ -349,60 +376,12 @@ On success, `data` is the [session object](#session-object) of the new session.
 
 ### Goals
 
-Read and edit the session's current goal. Creating, pausing, resuming, or cancelling a goal goes through `goal_objective` and `goal_control` in [`POST /api/v1/sessions/{session_id}/profile`](#post-api-v1-sessions-session-id-profile). Unlike most payloads in this API, goal payloads use camelCase keys.
+The current goal is synchronized through the WebSocket [`goal` frame](./server-api-conversation.md#agent-state), including its objective, status, progress, and budget. Create, pause, resume, cancel, and edit goals through [`POST /api/v1/sessions/{session_id}/profile`](#post-api-v1-sessions-session-id-profile):
 
-| Method and path | Description |
-| --- | --- |
-| `GET /api/v1/sessions/{session_id}/goal` | Read the current goal snapshot (`null` when there is none) |
-| `PATCH /api/v1/sessions/{session_id}/goal` | Edit the current goal's objective in place |
+- `goal_objective`: creates a goal, or supplies the new objective when `goal_control` is `edit`. An in-place edit preserves the goal id, status, progress, and budget; the agent receives the new text on its next turn.
+- `goal_control`: `pause` / `resume` / `cancel` / `edit`. `edit` requires `goal_objective` and can only be used on an existing goal.
 
-#### `GET /api/v1/sessions/{session_id}/goal`
-
-Reads the session's current goal snapshot.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | Required. Session id |
-
-When there is no goal, `data` is `null`. A goal is cleared once it completes, so later reads also return `null`. Otherwise `data` is the goal snapshot:
-
-| Field | Type | Description |
-| --- | --- | --- |
-| `goalId` | string | Goal id |
-| `objective` | string | Goal content |
-| `completionCriterion` | string | Completion criterion; optional |
-| `status` | string | `active` / `paused` / `blocked` / `complete` |
-| `turnsUsed` | number | Turns used |
-| `tokensUsed` | number | Tokens used |
-| `wallClockMs` | number | Wall-clock time used, in milliseconds |
-| `budget.tokenBudget` / `budget.turnBudget` / `budget.wallClockBudgetMs` | number \| null | Token, turn, and wall-clock (milliseconds) budgets. `null` when the corresponding budget is not set |
-| `budget.remainingTokens` / `budget.remainingTurns` / `budget.remainingWallClockMs` | number \| null | Remaining amount of each budget, at least `0`. `null` when the corresponding budget is not set |
-| `budget.tokenBudgetReached` / `budget.turnBudgetReached` / `budget.wallClockBudgetReached` | boolean | `true` when usage has reached the corresponding budget. `false` when that budget is not set |
-| `budget.overBudget` | boolean | `true` when any budget has been reached |
-| `terminalReason` | string | Why the goal left the `active` status (paused, blocked); optional. Cleared when the goal returns to `active` |
-
-- `40401`: the session does not exist
-
-#### `PATCH /api/v1/sessions/{session_id}/goal`
-
-Replaces the current goal's objective. The `goalId`, status, progress, and budget stay unchanged. Works on goals in the `active`, `paused`, and `blocked` statuses.
-
-A running turn is not interrupted; the agent receives the new objective on its next turn. Clients subscribed to the session receive a new WebSocket [`goal` frame](./server-api-conversation.md#agent-state).
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | Required. Session id |
-| `objective` | body | string | Required. The new objective; leading and trailing whitespace is trimmed |
-
-On success, `data` is the updated goal snapshot, in the same shape as `GET /api/v1/sessions/{session_id}/goal` (camelCase).
-
-- `40401`: the session does not exist
-- `40914`: there is no current goal
-- `40915`: the goal is complete
-- `40917`: the objective is empty
-- `40918`: the objective exceeds 4000 characters
-
-### Warnings and environments
+### Warnings and environments### Warnings and environments
 
 Read session-level warnings, the environment the main agent runs in, and the environments available to the session.
 
@@ -644,168 +623,19 @@ On success, `data` is `{ activated: true, skill_name }`.
 - `40912`: the skill exists, but its type cannot be activated by the user
 - `40927`: `prompt_id` is already used by another request, including prompt submission and `/steer` requests
 
-### Session list (v2)
-
-`/api/v2/sessions` is the next-generation API for session list and management views: filtering, sorting, and field groups for list queries all go in query parameters, and batch archive and restore are provided.
-
-| Method and path | Description |
-| --- | --- |
-| `GET /api/v2/sessions` | Query sessions by filter, sort, and field group; can group by workspace |
-| `POST /api/v2/sessions:archive` | Archive sessions in batch |
-| `POST /api/v2/sessions:restore` | Restore sessions in batch |
-
-#### `GET /api/v2/sessions`
-
-A session query for list views, with filtering, sorting, and field groups all in query parameters. Paginate with `page_token` or `page` (see [Pagination](./server-api.md#pagination)).
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `workspace.id` | query | string | Filter by workspace; repeatable |
-| `activity.status` | query | string | Filter by activity status: `running` / `approval` / `question` / `failed` / `idle`; repeatable |
-| `meta.updated_after` | query | integer | Only sessions updated after this time (epoch milliseconds) |
-| `meta.updated_before` | query | integer | Only sessions updated before this time (epoch milliseconds) |
-| `meta.archived` | query | string | `true` / `false` (default) / `all` |
-| `meta.has_prompt` | query | boolean | `true` keeps only sessions with a user prompt, `false` keeps only empty sessions (equivalent to `exclude_empty` in `GET /api/v1/sessions`) |
-| `view` | query | string | `flat` (default) / `by_workspace`; see below |
-| `group.page_size` | query | integer | Sessions returned per workspace under `view=by_workspace`: 1–100, default 5 (up to 10000 with the `id,archived` projection) |
-| `sort` | query | string | `meta.updated_at_desc` (default) / `meta.updated_at_asc` / `meta.created_at_desc` |
-| `include` | query | string | Comma-separated extra field groups. Currently supports `git` (branch and PR info, deduplicated per environment and working directory and cached for 60 seconds) |
-| `fields` | query | string | Comma-separated field projection. Currently supports only `id,archived`, which trims each item to `{ id, archived }` (for select-all-matching flows) |
-| `page_size` | query | integer | 1–100, default 50; up to 10000 with the `id,archived` projection. Under `view=by_workspace` it counts groups |
-| `page_token` | query | string | Pagination token returned by the previous page |
-| `page` | query | integer | Stateless page number, starting at 1. Mutually exclusive with `page_token` |
-
-Every item in the list always carries the `workspace`, `meta`, and `activity` groups, plus the `git` group with `include=git`; with `fields=id,archived`, each item has only `{ id, archived }`. The `activity` group also carries `model`: the session's bound model alias while it is loaded in the current process, `null` for a cold (not loaded) session. For the fields of each group, see the session items in the grouped view example below.
-
-Every page also carries `total`, the size of the filtered set. The pagination token binds the first page's query conditions (including the projection); changing them mid-pagination returns `40922`. `page` mode is a stateless alternative for jumping to arbitrary pages: every request is an independent snapshot, no token is issued, and `next_page_token` is always `null`.
-
-With `view=by_workspace`, the same filtered and sorted set is re-projected into per-workspace groups. An overview page can therefore use one request instead of polling each workspace:
-
-```json
-{
-  "code": 0,
-  "msg": "success",
-  "data": {
-    "groups": [
-      {
-        "workspace": { "id": "wd_my-app_a1b2c3d4e5f6", "cwd": "/Users/dev/my-app" },
-        "sessions": [ { "id": "session_...", "workspace": { "id": "wd_my-app_a1b2c3d4e5f6", "cwd": "/Users/dev/my-app" }, "meta": { "title": "Fix the login page", "last_prompt": "adjust the button spacing", "created_at": 1787000000000, "updated_at": 1787000100000, "archived": false, "archived_at": null }, "activity": { "status": "idle", "model": "kimi-for-coding" } } ],
-        "total": 42
-      }
-    ],
-    "total": 7,
-    "has_more": true,
-    "next_page_token": "eyJ2IjoxLCJmIjoi..."
-  },
-  "request_id": "req_..."
-}
-```
-
-| Field | Type | Description |
-| --- | --- | --- |
-| `groups[].workspace` | object | The workspace the group belongs to |
-| `groups[].sessions` | array | The workspace's first `group.page_size` sessions, ordered by the requested `sort` |
-| `groups[].total` | integer | Total number of the workspace's sessions that match the filters; usable for a "view all" entry |
-| `total` | integer | Number of groups in the grouped view |
-
-Only workspaces with at least one matching session appear. Groups are ordered by the sort key of their first session, with ties broken by workspace id. `page` and `page_token` paginate over groups with the same token fingerprint binding, which also covers `view` and the grouping parameters; changing them mid-pagination also returns `40922`.
-
-- `40001`: `group.page_size` is given without the grouped view; `fields=id,archived` is combined with `include=git`; `page` is combined with `page_token`
-- `40922`: during pagination, the query conditions (including the projection, `view`, and grouping parameters) do not match `page_token`
-
-#### `POST /api/v2/sessions:archive`
-
-Archives sessions in batch, for session management views. Sessions that are still live go through the full lifecycle; cold sessions that are not loaded have their on-disk metadata rewritten directly and are not loaded.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `ids` | body | array | Required. Array of session ids; must not be empty, at most 5000 after deduplication |
-
-Only a body validation failure fails the whole request. Other errors are returned per item:
-
-| Field | Type | Description |
-| --- | --- | --- |
-| `results` | array | Result for each id, in input order. A success is `{ id, ok }`; a failure is `{ id, ok: false, error }`. An id that does not exist reports `40401` in its own entry |
-| `succeeded` | integer | Number of successes |
-| `failed` | integer | Number of failures |
-
-```json
-{
-  "code": 0,
-  "msg": "success",
-  "data": {
-    "results": [
-      { "id": "session_a", "ok": true },
-      { "id": "session_b", "ok": false, "error": { "code": 40401, "message": "session session_b does not exist" } }
-    ],
-    "succeeded": 1,
-    "failed": 1
-  },
-  "request_id": "req_..."
-}
-```
-
-- `40001`: request body validation failure
-
-#### `POST /api/v2/sessions:restore`
-
-Restores archived sessions in batch. The request body, the handling of live and cold sessions, the per-item results, and the error codes are the same as [`POST /api/v2/sessions:archive`](#post-api-v2-sessions-archive).
-
 ## Conversation
 
 These endpoints read the conversation history, submit prompts, and answer approvals and questions. Live conversation updates go over the WebSocket; see [Sessions and conversations](./server-api-conversation.md).
 
-### Messages and turns
+### Turns and agents
 
-The `messages` endpoints page the main agent's flattened message history. The `turns` endpoint pages one agent's conversation by turns and items, the same model as the [turns](./server-api-conversation.md#turns) the WebSocket pushes live. Read older history with these endpoints; everything after the `turns` frame received on subscription comes over the WebSocket.
+Page one agent's conversation by turns and items (the same model as the [turns](./server-api-conversation.md#turns) the WebSocket pushes live), interrupt a running turn by `turn_id`, or close a side-conversation agent.
 
 | Method and path | Description |
 | --- | --- |
-| `GET /api/v1/sessions/{session_id}/messages` | Page messages (`before_id` / `after_id` / `role`) |
-| `GET /api/v1/sessions/{session_id}/messages/{message_id}` | Read one message |
 | `GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns` | Page one agent's turns (`before_ordinal` / `page_size`) |
-
-#### `GET /api/v1/sessions/{session_id}/messages`
-
-Pages the main agent's message history (the flattened context transcript), newest first. Cursor pagination follows the [Pagination](./server-api.md#pagination) conventions. Reading the history resumes the session when it is cold.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | Required. Session id |
-| `before_id` | query | string | Only messages older than this message id. Mutually exclusive with `after_id` |
-| `after_id` | query | string | Only messages newer than this message id. Mutually exclusive with `before_id` |
-| `page_size` | query | integer | 1–100. Default `50` |
-| `role` | query | string | Keep only one role: `user` / `assistant` / `tool` / `system`. The filter applies after the page is sliced, so a filtered page can hold fewer than `page_size` items while `has_more` is still `true`; keep paging until `has_more` is `false` |
-
-On success, `data` is `{ items, has_more }`, where each item is a message object:
-
-| Field | Type | Description |
-| --- | --- | --- |
-| `id` | string | Message id |
-| `session_id` | string | Session id |
-| `role` | string | Message role |
-| `content` | array | Array of content blocks, in the same format as [prompt content blocks](#post-api-v1-sessions-session-id-prompts); types include `text`, `tool_use`, `tool_result`, `image`, `video`, `file`, and `thinking` |
-| `created_at` | string | Creation time |
-| `prompt_id` | string | Optional |
-| `parent_message_id` | string | Optional |
-| `metadata` | object | Optional |
-
-- `40001`: validation failure, for example `before_id` together with `after_id`
-- `40401`: the session does not exist
-
-#### `GET /api/v1/sessions/{session_id}/messages/{message_id}`
-
-Reads one message from the same history by id.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | Required. Session id |
-| `message_id` | path | string | Required. Message id |
-
-On success, `data` is a message object; see [`GET /api/v1/sessions/{session_id}/messages`](#get-api-v1-sessions-session-id-messages) for its shape.
-
-- `40401`: the session does not exist
-- `40403`: no message with that id in this session
+| `POST /api/v1/sessions/{session_id}/turns/{turn_id}:interrupt` | Stop a running turn by `turn_id` |
+| `POST /api/v1/sessions/{session_id}/agents/{agent_id}:close` | Close a side-conversation (`:btw`) agent |
 
 #### `GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns`
 
@@ -829,6 +659,37 @@ Tasks, the agent's running status and settings, context usage, the goal, todos, 
 - `40001`: validation failure
 - `40401`: the session or agent does not exist
 
+#### `POST /api/v1/sessions/{session_id}/turns/{turn_id}:interrupt`
+
+Stops the specified running turn (works for `main`, subagents, and side conversations). `turn_id` comes from the `turn.started` frame or the running turn in `turns`.
+
+When interrupted, the turn ends with `outcome: "interrupted"` and `end_reason: "user_cancelled"`, any in-flight `tool_call` ends with `outcome: "interrupted"` while keeping partial output, and the response is `{ interrupted: true }`. If the turn has already ended, the response is `{ interrupted: false }`, no event is emitted, and later turns are unaffected, making the request safe to resend.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `session_id` | path | string | Required. Session id |
+| `turn_id` | path | string | Required. `turn_id` of the turn to interrupt |
+
+- `40001`: validation failure, or an unsupported action suffix
+- `40401`: the session does not exist
+
+#### `POST /api/v1/sessions/{session_id}/agents/{agent_id}:close`
+
+Closes a side-conversation agent started via [`POST /api/v1/sessions/{session_id}:btw`](#post-api-v1-sessions-session-id-btw) and removes it from the session.
+
+If the agent has a running turn, it ends with `outcome: "interrupted"` and `end_reason: "aborted"` and emits `turn.ended`; any pending interactions end with `cancelled` and emit `interaction`; queued inputs are discarded; and a final `agent` frame with `status: "ended"` is emitted. Subsequent subscriptions no longer include this agent, and submitting prompts, reading turns, or closing it again returns `40401`.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `session_id` | path | string | Required. Session id |
+| `agent_id` | path | string | Required. Agent id created by `:btw` |
+
+On success, `data` is `{ closed: true }`.
+
+- `40001`: validation failure, or an unsupported action suffix
+- `40401`: the session or agent does not exist (also returned when resending after close)
+- `40939`: the agent is not a side-conversation agent and cannot be closed (for example `main` or an ordinary subagent)
+
 ### Prompts
 
 A prompt is one unit of user input. A submitted prompt enters the queue of the session's main agent (or a specified agent); queued prompts can be steered into the active turn, and running or queued prompts can be aborted. Turn progress is pushed over the WebSocket (see [Live updates](./server-api-conversation.md#live-updates)), not through these endpoints.
@@ -836,7 +697,11 @@ A prompt is one unit of user input. A submitted prompt enters the queue of the s
 | Method and path | Description |
 | --- | --- |
 | `GET /api/v1/sessions/{session_id}/prompts` | Active and queued prompts |
-| `POST /api/v1/sessions/{session_id}/prompts` | Submit a prompt (content block array, with optional overrides such as model and permission mode) |
+| `POST /api/v1/sessions/{session_id}/prompts` | Submit a prompt (legacy form; optional `prompt_id` in the body) |
+| `PUT /api/v1/sessions/{session_id}/prompts/{prompt_id}` | Submit a prompt with an idempotency key in the path |
+| `POST /api/v1/sessions/{session_id}/agents/{agent_id}/queue/{prompt_id}:move` | Move a queued prompt before another prompt, or to the end |
+| `POST /api/v1/sessions/{session_id}/agents/{agent_id}/queue/pause` | Pause ordinary queue consumption |
+| `POST /api/v1/sessions/{session_id}/agents/{agent_id}/queue/resume` | Resume ordinary queue consumption |
 | `POST /api/v1/sessions/{session_id}/steer` | Steer message content directly into the active turn |
 | `POST /api/v1/sessions/{session_id}/prompts:steer` | Steer queued prompts into the active turn |
 | `POST /api/v1/sessions/{session_id}/prompts/{prompt_id}:abort` | Abort a running or queued prompt |
@@ -844,7 +709,7 @@ A prompt is one unit of user input. A submitted prompt enters the queue of the s
 
 #### `GET /api/v1/sessions/{session_id}/prompts`
 
-Reads a snapshot of the main agent's prompt queue. Other agents' queues are not included. Queue changes are not pushed over the WebSocket; read again when you need the latest state.
+Reads a snapshot of the main agent's prompt queue. Other agents' queues are not included. Queue changes are also pushed as [`queue` frames](./server-api-conversation.md#queue-frames) for each subscribed agent.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -863,13 +728,13 @@ On success, `data` is `{ active, queued }`: `active` is the running prompt, `nul
 
 - `40401`: the session does not exist
 
-#### `POST /api/v1/sessions/{session_id}/prompts`
+#### `POST /api/v1/sessions/{session_id}/prompts` and `PUT /api/v1/sessions/{session_id}/prompts/{prompt_id}`
 
-Submits a user prompt to the session. The response does not wait for the turn to finish.
+Submits a user prompt to the session. `PUT` carries the idempotency key in the path; the legacy `POST` form accepts the optional `prompt_id` in the body. The response does not wait for the turn to finish.
 
 When the target agent is idle, its queue is empty, and it is not in the middle of an undo, a manual compaction, or a fork (only forking an idle agent puts it in this state), the prompt starts a turn immediately, and the response returns once the turn starts (`status` is `running`). Otherwise the prompt is queued, and the response returns immediately with `status` `queued`. Prompts submitted during an undo, compaction, or fork are also queued, not rejected. See [Starting or queueing](./server-api-conversation.md#starting-or-queueing).
 
-The server first validates media references, then applies the overrides to the target agent in the order `model`, `thinking`, `permission_mode`, `swarm_mode`, `disabled_tools`, and finally enqueues the prompt. Overrides take effect when the prompt is accepted, whether or not the prompt is queued, and they persist afterwards. `permission_mode` changes only the target agent; unlike the [profile endpoint](#post-api-v1-sessions-session-id-profile), it is not synced to all agents.
+The server first validates media references. Overrides are applied in the order `model`, `thinking`, `permission_mode`, `plan_mode`, `swarm_mode`, `disabled_tools`, and goal controls. They take effect when the prompt actually starts: immediately for the first executable prompt, or when a queued prompt is dequeued. They do not change the active turn while a prompt waits. `permission_mode` changes only the target agent; unlike the [profile endpoint](#post-api-v1-sessions-session-id-profile), it is not synced to all agents.
 
 With `skills`, the prompt runs as a bundled skill activation instead of a plain user prompt.
 
@@ -886,8 +751,12 @@ With `skills`, the prompt runs as a bundled skill activation instead of a plain 
 | `swarm_mode` | body | boolean | Enter or exit swarm mode |
 | `disabled_tools` | body | array | Tool names to disable for the session |
 | `metadata` | body | object | Client-defined metadata, saved with the prompt and returned in the prompt object's `metadata` |
+| `delivery` | body | string | `queue` (default) or `steer`; `steer` joins the active turn when possible, otherwise occupies the next steer slot |
+| `plan_mode` | body | boolean | Enter or exit Plan mode when this prompt starts |
+| `goal_objective` | body | string | Create a goal, or provide its replacement text when `goal_control` is `edit` |
+| `goal_control` | body | string | `pause` / `resume` / `cancel` / `edit`; `edit` keeps the goal id, progress, and budget |
 
-The schema also accepts `plan_mode`, `goal_objective`, and `goal_control`, but the submit endpoint currently does not apply them.
+On success, the accepted prompt includes `accepted_as`: `turn` when it starts a new turn, `steer` when it joins an active turn or takes a steer slot, and `queue` for ordinary queued input. `turn_id` is present when the corresponding conversation turn has been assigned.
 
 The idempotency rules for `prompt_id` are as follows; see [Retries and idempotency](./server-api-conversation.md#retries-and-idempotency) for the flow:
 
@@ -994,6 +863,10 @@ On success, `data` is `{ steered: true, prompt_ids: [prompt_id] }`.
 
 - `40401`: the session does not exist
 - `40402`: the main agent has no running turn, or there is no queued prompt with that id
+
+#### Queue move, pause, and resume
+
+`POST /api/v1/sessions/{session_id}/agents/{agent_id}/queue/{prompt_id}:move` accepts `{ before_prompt_id? }` and moves the ordinary queued prompt before that id, or to the end when omitted. The target must still be queued; steer slots cannot be moved. `POST .../queue/pause` returns `{ paused: true }` and `POST .../queue/resume` returns `{ paused: false }`. Pausing holds ordinary queued prompts without interrupting the active turn; direct steer notifications can still be consumed.
 
 ### Approvals and questions
 

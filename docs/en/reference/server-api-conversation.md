@@ -1,470 +1,531 @@
-# Sessions and conversations
+# Sessions and Conversations
 
-A client receives a session's conversation and state in real time over one WebSocket connection, and uses REST endpoints to submit input, answer approvals, stop, or undo. This page describes the protocol in the order a client uses it: connect, subscribe to a session, display the conversation, submit input, handle approvals and tasks, and recover after a disconnect. For the authentication, envelope, and error codes shared by all endpoints, see [Server API](./server-api.md). For the parameters of each REST endpoint, see [Session endpoints](./server-api-sessions.md).
+Clients receive live conversation turns, agent state frames, interaction requests, and task output over a single WebSocket connection (`/api/v1/ws`), and use REST endpoints (`/api/v1`) to submit input, answer approvals, stop, or undo. This page follows the lifecycle a client implements: every section pairs a **complete interactive wire trace** (click `{…}` or **Expand all** in the top-right corner to inspect full payloads) with concise client reduction rules. For REST parameter tables, see [Session Endpoints](./server-api-sessions.md); for authentication, envelopes, and error codes, see [Server API](./server-api.md).
 
 ## Connecting
 
-The WebSocket has a single endpoint: `ws://<host>:<port>/api/v1/ws`. Authentication happens at the upgrade request. Put the token in the `Authorization: Bearer <token>` header or in the subprotocol `kimi-code.bearer.<token>` (see [Authentication](./server-api.md#authentication)).
+The WebSocket endpoint is `ws://<host>:<port>/api/v1/ws`. Authentication happens during the HTTP upgrade handshake via `Authorization: Bearer <token>` or the subprotocol `kimi-code.bearer.<token>` (see [Authentication](./server-api.md#authentication)).
 
-There is no handshake. Once the connection opens, the client starts receiving [global events](#global-events) right away and can send commands directly.
+There is no handshake frame. Once connected, the client immediately receives [global events](#global-events) and can send commands right away.
 
 ### Heartbeat
 
 | Direction | Rule |
 | --- | --- |
-| Server → client | The server sends `{ "type": "ping" }` every 10 seconds, and the client answers `{ "type": "pong" }` |
-| Server detects a dead connection | The server checks every 10 seconds and closes the connection with code 1001 (reason `heartbeat timeout`) once 20 seconds have passed since the last inbound frame. The disconnect therefore happens after the client has been silent for 20–30 seconds |
-| Client detects a dead connection | When the client receives no frame for 25 seconds in a row, it should treat the connection as dead and reconnect. See [Reconnecting](#reconnecting) for the steps after reconnecting |
+| Server → Client | Sends `{ "type": "ping" }` every 10 seconds; the client replies with `{ "type": "pong" }` |
+| Server timeout | Checks every 10 seconds on a monotonic clock and closes connections silent for 20 seconds with code `1001` (`heartbeat timeout`, occurring after 20–30 seconds of silence) |
+| Client timeout | If no frame arrives for 25 seconds (also checked immediately when a background tab becomes visible or network connectivity returns), disconnect and reconnect as described in [Reconnecting](#reconnecting) |
 
-Any well-formed inbound frame counts as client activity, including frame types the server does not recognize. Frames that are not valid JSON or have no string `type` are dropped and do not count as activity.
+```wire
+S { "type": "ping" }
+C { "type": "pong" }
+```
 
-To avoid disconnecting healthy connections, the server also does the following. Clients do not need to do anything:
-
-- **System time does not matter**: the server times heartbeats on a monotonic clock (a clock that only moves forward and is not affected by changes to the system time), so changing the system time or waking the machine from sleep does not make a connection time out.
-- **Restart the clock after the server itself stalls**: while the server process is stalled it cannot send `ping`, so the client has nothing to answer. When the server resumes and finds more than 12.5 seconds (1.25 times the default interval) between two checks, it treats this as its own stall: instead of disconnecting, it sends a new `ping` and gives the client another 20 seconds to answer.
-- **Read messages that already arrived before disconnecting**: a `pong` the client sent while the server was stalled may not have been read yet. Before disconnecting, the server processes messages that have already arrived and checks again; if the client answered, the connection stays open.
+Any valid inbound JSON frame with a string `type` counts as client activity; invalid JSON or frames without `type` are ignored. The server times heartbeats on a monotonic clock (unaffected by wall-clock adjustments or system sleep); if the server's own event loop stalls for more than 12.5 seconds, it sends a fresh `ping` and grants a new 20-second window, draining already-buffered socket messages before closing.
 
 ### Commands and responses
 
-Commands from the client are flat JSON frames: the fields sit next to `type`, and every command carries a `request_id`. The server answers each command with one response:
+Client WebSocket commands are flat JSON frames and must include a non-empty `request_id` (missing `request_id` on a known command closes the socket with code `1008`). The server replies to every command with a `response` frame:
 
-```json
-{ "type": "response", "request_id": "1", "code": 0, "msg": "...", "task": {} }
+```wire focus=request_id,code,msg
+C { "type": "subscribe", "request_id": "sub-1", "session_id": "s1", "agent_ids": ["main"] }
+S { "type": "response", "request_id": "sub-1", "code": 0 }
+C { "type": "subscribe", "request_id": "sub-2", "session_id": "s404" }
+S { "type": "response", "request_id": "sub-2", "code": 40401, "msg": "session not found" }
 ```
 
-`code` `0` means success. `msg` and `task` appear only when needed. When a command has no readable `request_id`, the server closes the connection with code 1008. Frame types the server does not recognize are ignored.
-
-`subscribe` and `unsubscribe` on the same connection are handled one at a time in the order they were sent: each waits until the previous one (including opening the session) has finished, and responses come back in send order. Task commands use a separate queue and do not wait for them; see [Task output and control](#task-output-and-control). One connection can subscribe to several sessions at once, and the sessions do not affect each other.
+`subscribe` and `unsubscribe` commands on the same connection run sequentially in send order; task commands (`task.*`) serialize per task without blocking subscriptions.
 
 | Command | Fields | Purpose |
 | --- | --- | --- |
-| `subscribe` | `request_id`, `session_id`, `agent_ids?` | Subscribe to a session; see [Subscribing to a session](#subscribing-to-a-session) |
-| `unsubscribe` | `request_id`, `session_id`, `agent_ids?` | Stop receiving some or all agents |
-| `task.watch` | `request_id`, `session_id`, `agent_id`, `task_id`, `since_offset?`, `tail_bytes?` | Receive one task's output; see [Tasks](#tasks) |
-| `task.unwatch` | `request_id`, `session_id`, `agent_id`, `task_id` | Stop receiving a task's output |
-| `task.stop` | `request_id`, `session_id`, `agent_id`, `task_id` | Stop a task |
-| `task.background` | `request_id`, `session_id`, `agent_id`, `task_id` | Move a task to the background |
+| `subscribe` | `request_id`, `session_id`, `agent_ids?` | Subscribe to a session (defaults to `["main"]`); sending `subscribe` again adds agents incrementally |
+| `unsubscribe` | `request_id`, `session_id`, `agent_ids?` | Stop receiving the listed agents, or the entire session when `agent_ids` is omitted or the last agent is removed |
+| `task.watch` | `request_id`, `session_id`, `agent_id`, `task_id`, `since_offset?`, `tail_bytes?` | Stream a task's output; the `response` includes the current `task` state |
+| `task.unwatch` | `request_id`, `session_id`, `agent_id`, `task_id` | Stop streaming task output |
+| `task.stop` | `request_id`, `session_id`, `agent_id`, `task_id` | Stop a running task; the `response` includes the updated `task` state |
+| `task.background` | `request_id`, `session_id`, `agent_id`, `task_id` | Detach a foreground task into the background; the `response` includes the updated `task` state |
 
 ## Subscribing to a session
 
-A session can contain several agents: the main agent, subagents, swarm members, and side chats. `agent_ids` in the subscription selects which agents' frames to receive and defaults to `["main"]`. Sending `subscribe` again for the same session adds agents instead of replacing the existing ones.
+Besides the main agent (`main`), a session can contain subagents, swarm members, and side chats (`btw`), each with its own conversation and state. The walkthrough below shows opening a session, receiving its initial state, and expanding/collapsing a subagent panel:
 
-```json
-{ "type": "subscribe", "request_id": "1", "session_id": "session_...", "agent_ids": ["main"] }
+<ol class="kap-walk">
+<li>
+<strong>Subscribe to a session and receive initial content</strong>
+The user opens session <code>s1</code>. Upon receiving a successful <code>response</code>, the client clears its local state for <code>s1</code> and applies the pending interactions, running task list, agent state frames, and the latest page of <code>turns</code>:
+
+```wire focus=agent_ids,code,interaction_id,tasks,status,context_tokens,has_more
+C { "type": "subscribe", "request_id": "sub-1", "session_id": "s1", "agent_ids": ["main"] }
+S { "type": "response", "request_id": "sub-1", "code": 0 }
+S { "type": "interaction", "session_id": "s1", "agent_id": "sub_7", "interaction_id": "i12", "kind": "approval", "status": "pending", "tool_call_id": "c7", "request": { "tool_name": "Bash", "action": "Run command", "expires_at": "2026-10-30T10:30:00.000Z" } }
+S { "type": "task.list", "session_id": "s1", "agent_id": "main", "tasks": [ { "task_id": "task-7q2m", "kind": "subagent", "status": "running", "phase": "working", "detached": false, "description": "Find call sites", "child_agent_id": "sub_7", "parent_tool_call_id": "call_agent_1", "started_at": "2026-10-29T10:29:50.000Z" } ] }
+S { "type": "agent", "session_id": "s1", "agent_id": "main", "status": "running", "compacting": false, "model": "kimi-for-coding", "thinking": "high", "permission_mode": "manual", "plan_mode": false, "swarm_mode": false, "tower_mode": false }
+S { "type": "usage", "session_id": "s1", "agent_id": "main", "context_tokens": 18210, "max_context_tokens": 262144 }
+S { "type": "goal", "session_id": "s1", "agent_id": "main" }
+S { "type": "todo", "session_id": "s1", "agent_id": "main", "items": [] }
+S { "type": "queue", "session_id": "s1", "agent_id": "main", "inputs": [], "paused": false, "attached": true }
+S { "type": "turns", "session_id": "s1", "agent_id": "main", "turns": [ { "turn_id": "t_9", "ordinal": 9, "turn_number": 9, "kind": "agent", "status": "running", "started_at": "2026-10-29T10:29:45.000Z", "steps": [], "items": [] } ], "has_more": true }
 ```
 
-Once the session is open, the server responds right away, before any frame of this subscription. When the session cannot be opened, the response carries an error code and no subscription is made: `40401` when the session does not exist, and other codes such as `40930` or `40931` say why it could not be opened. A malformed frame gets `40001`.
+Even though only `main` is in `agent_ids`, the approval `i12` requested by subagent `sub_7` still arrives (`interaction` frames are session-wide and bypass `agent_ids`), while `sub_7`'s running status and description appear on `main`'s subagent entry in `task.list`.
+</li>
+<li>
+<strong>Expand and collapse a subagent panel</strong>
+When the user expands <code>sub_7</code>, send an incremental <code>subscribe</code> with <code>agent_ids: ["sub_7"]</code> (already-subscribed <code>main</code> does not resend <code>turns</code>); when collapsing the panel, unsubscribe <code>sub_7</code>:
 
-After a successful subscription, the client receives frames in this order:
+```wire focus=agent_ids,agent_id,code
+C { "type": "subscribe", "request_id": "sub-2", "session_id": "s1", "agent_ids": ["sub_7"] }
+S { "type": "response", "request_id": "sub-2", "code": 0 }
+S { "type": "task.list", "session_id": "s1", "agent_id": "sub_7", "tasks": [] }
+S { "type": "agent", "session_id": "s1", "agent_id": "sub_7", "status": "running", "compacting": false, "model": "kimi-for-coding", "plan_mode": false, "swarm_mode": false, "tower_mode": false }
+S { "type": "turns", "session_id": "s1", "agent_id": "sub_7", "turns": [], "has_more": false }
+... User collapses the subagent panel
+C { "type": "unsubscribe", "request_id": "unsub-1", "session_id": "s1", "agent_ids": ["sub_7"] }
+S { "type": "response", "request_id": "unsub-1", "code": 0 }
+```
+</li>
+</ol>
 
-1. **Response**: the `response` to `subscribe`.
-2. **Pending interactions**: every approval and question in the session that has not been answered yet, sent to this connection as `interaction` frames (see [Approvals and questions](#approvals-and-questions)).
-3. **Tasks and state**: for each agent the connection starts receiving, `task.list` (see [Tasks](#tasks)), followed by `agent`, `usage` (when the agent has a model context), `goal` (main agent only), and `todo` (see [Agent state](#agent-state)).
-4. **Conversation**: for each agent the connection starts receiving, one `turns` frame with the latest turns (see [Live updates](#live-updates)). When the conversation cannot be loaded, a `turns.failed` frame is sent instead.
+Frame ordering on subscription:
 
-`turns` loads asynchronously and may arrive after live `task`, `agent`, and `usage` frames. An agent's conversation frames (`turn.*`, `item.*`, `turns.removed`, `notice`), however, never arrive before its `turns`: conversation frames produced while it loads are buffered and sent in order once `turns` has gone out, so nothing is lost.
-
-When the main agent does not exist yet at subscription time, the server creates it first, so the main agent's state frames always follow a subscription. An agent listed in `agent_ids` that has not joined the session yet announces itself with `task` and state frames once it joins.
-
-When `subscribe` is sent again for a session that is already subscribed, only the newly added agents get `task.list`, state frames, and `turns`; agents already being received do not get `turns` again. Every successful `subscribe`, however, resends all pending interactions of the session. The client replaces its local interaction cards with the interactions received after this response.
-
-`unsubscribe` stops receiving the listed agents. Omitting `agent_ids`, or removing the last agent, drops the whole session subscription.
+1. **Reply (`response`)**: Always arrives first. If the session cannot be opened, `code` is non-zero (`40401`, `40930`, `40931`) and no subscription is created.
+2. **Pending interactions (`interaction`)**: Sent immediately after `response` for all unresolved approvals and questions in the session. Every successful `subscribe` resends all pending interactions so the client can replace its local interaction list.
+3. **Tasks and state (`task.list`, `agent`, `usage`, `goal`, `todo`, `queue`)**: Sent for each newly subscribed agent. Subscribing to a brand-new session materializes `main` automatically.
+4. **Conversation page (`turns` or `turns.failed`)**: Loaded asynchronously from disk (up to the latest 10 turns within 1 MiB) and may arrive after live state frames, but **live conversation frames (`turn.*`, `item.*`, `turns.removed`, `notice`) for an agent never arrive before its `turns` frame** — frames produced during loading are buffered and flushed in order right after `turns`.
 
 ### When the server closes and reopens a session
 
-The server closes a session that has been inactive for a while: 30 minutes by default, configurable with the environment variable `KIMI_CODE_SESSION_IDLE_RECLAIM_MS`. Sessions that are busy, have pending interactions, or have scheduled tasks are not closed, and whether the session has subscribers does not affect this. `:reload` also closes the session and then reopens it.
+The server reclaims sessions idle for 30 minutes (`KIMI_CODE_SESSION_IDLE_RECLAIM_MS`) when they have no running turn, pending interaction, or cron job; `:reload` also closes and reopens a session.
 
-While the session is closed, no session frames are sent, but subscriptions stay valid. When the session reopens, the server resends `task.list`, `agent`, `usage`, `goal`, `todo`, and `turns` for every subscribed agent to these connections. So `turns` does not only follow a subscription: whenever the client receives it, the client must replace that agent's conversation with it.
-
-When a session is archived or deleted, the server removes every connection's subscription to it, stops sending its session frames, and only emits the matching [global event](#global-events). After the session is restored, the client needs to subscribe again.
+- **Idle reclaim and reload**: Subscriptions remain active across close/reopen. When the session reopens, the server resends `task.list`, state frames, and `turns` for every subscribed agent. Whenever a client receives `turns`, it replaces the latest turns for that agent.
+- **Archive or delete**: Archiving or deleting a session removes all subscriptions and broadcasts the corresponding global event. After restoring an archived session, send `subscribe` again.
 
 ### Who receives which frames
 
-| Frame | Sent to |
+| Frame category | Recipients |
 | --- | --- |
-| [Global events](#global-events) | Every established connection, no subscription needed |
-| `turns`, `turns.removed`, `turns.failed`, `turn.*`, `item.*`, `notice` | Connections subscribed to the session that are receiving this agent |
-| `task.list`, `task`, `agent`, `usage`, `goal`, `todo` | Same as above |
-| `interaction` | Every connection subscribed to the session, regardless of which agents it receives |
-| `task.output` | Connections watching the task's output with `task.watch`, no session subscription needed |
-
-Global events are event frames `{ "type", "session_id"?, "timestamp", "payload" }`, where `type` is the event type. Session frames are flat frames `{ "type", "session_id", "agent_id", ... }`.
+| [Global events](#global-events) | Every open WebSocket connection (no subscription needed) |
+| `interaction` | Every connection subscribed to the session, **regardless of `agent_ids`** |
+| `turns`, `turns.removed`, `turns.failed`, `turn.*`, `item.*`, `notice` | Connections subscribed to the session whose `agent_ids` include `agent_id` |
+| `task.list`, `task`, `agent`, `usage`, `goal`, `todo`, `queue` | Same as above |
+| `task.output` | Connections watching that task via `task.watch` (no session subscription needed) |
 
 ### Frame ordering
 
-All frames of one session go through the same send queue and are sent in the order they were produced. The server sends a batch every 16 milliseconds or once 64 frames have accumulated. `response` and `interaction` are sent immediately, but never overtake frames already queued. Global events go through a separate global queue and are also sent in the order they occurred.
-
-When a turn ends, `turn.ended` always arrives before the `agent` frame whose `status` is `idle`. The exception is while the agent's `turns` is still loading: then the `agent` frame may arrive first.
-
-REST responses and WebSocket frames travel on different channels, so their arrival order is not fixed. For example, after submitting input, `turn.started` and the matching `user_message` may arrive before the HTTP response. Clients match the two by `prompt_id` and must not rely on arrival order.
+- Frames for the same session share one outbound queue (flushed every 16 ms or 64 frames; `response` and `interaction` flush immediately without overtaking queued frames).
+- When a turn finishes, `turn.ended` always precedes the `agent` frame with `status: "idle"` (unless the initial `turns` page is still loading).
+- HTTP responses and WebSocket frames travel over separate channels and may arrive in either order. Match them by `prompt_id`, `turn_id`, or `interaction_id`.
 
 ## Conversation
 
-An agent's conversation is a list of turns, and each turn holds an ordered list of items. Each time the user submits input, everything the agent does to handle it forms one turn. The user input, replies, reasoning, and tool calls within the turn are its items.
+An agent's conversation is an ordered list of **turns (`Turn`)**, each containing an ordered list of **items (`Item`)**. The walkthrough below shows a complete turn (user message, reasoning, tool call, assistant reply) followed by a turn that retries an upstream error and fails:
 
-Turns and items are generated from the agent's persisted session records, so REST pages, `turns` frames, and a reload after a server restart show the same turns with the same ids. Only the running step and the output a tool is still producing exist solely in memory. All times are ISO 8601 strings.
+<ol class="kap-walk">
+<li>
+<strong>Turn start and user message</strong>
+
+```wire focus=turn.turn_id,turn.kind,item.type,item.prompt_ids,item.placement
+S { "type": "turn.started", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_1", "ordinal": 0, "turn_number": 0, "kind": "agent", "status": "running", "started_at": "2026-10-29T10:30:00.000Z", "steps": [] } }
+S { "type": "item.ended", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "u_1", "type": "user_message", "step_index": 0, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:30:00.000Z", "prompt_ids": ["p-1"], "placement": "opener", "origin": { "kind": "user" }, "text": "Does the start command in README still work?", "attachments": [], "skills": [] } }
+```
+</li>
+<li>
+<strong>Reasoning and tool call (Step 1)</strong>
+
+```wire focus=item.type,item.name,item.stage,field,delta,set,item.output,step.finish_reason
+S { "type": "item.started", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "r_1", "type": "reasoning", "step_index": 1, "status": "running", "created_at": "2026-10-29T10:30:00.400Z", "text": "", "started_at": "2026-10-29T10:30:00.400Z" } }
+S { "type": "item.delta", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item_id": "r_1", "field": "text", "delta": "Let's read README.md first" }
+S { "type": "item.ended", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "r_1", "type": "reasoning", "step_index": 1, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:30:00.400Z", "text": "Let's read README.md first to check the script.", "started_at": "2026-10-29T10:30:00.400Z", "duration_ms": 1200 } }
+S { "type": "item.started", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "call_read_1", "type": "tool_call", "step_index": 1, "status": "running", "created_at": "2026-10-29T10:30:01.700Z", "name": "Read", "stage": "input", "started_at": "2026-10-29T10:30:01.700Z" } }
+S { "type": "item.delta", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item_id": "call_read_1", "field": "input_text", "delta": "{\"path\":\"README.md\"}" }
+S { "type": "item.updated", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item_id": "call_read_1", "set": { "stage": "executing", "input": { "path": "README.md" } } }
+S { "type": "item.ended", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "call_read_1", "type": "tool_call", "step_index": 1, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:30:01.700Z", "name": "Read", "stage": "executing", "input": { "path": "README.md" }, "output": "1\t# App\n2\tRun `pnpm dev`", "started_at": "2026-10-29T10:30:01.700Z", "ended_at": "2026-10-29T10:30:02.100Z" } }
+S { "type": "turn.updated", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "step": { "index": 1, "outcome": "completed", "finish_reason": "tool_calls", "started_at": "2026-10-29T10:30:00.300Z", "ended_at": "2026-10-29T10:30:02.100Z", "usage": { "input_other": 5210, "output": 96, "input_cache_read": 0, "input_cache_creation": 0 } } }
+```
+</li>
+<li>
+<strong>Assistant reply and turn completion (Step 2)</strong>
+
+```wire focus=item.type,delta,item.text,turn.outcome,turn.duration_ms
+S { "type": "item.started", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "a_1", "type": "assistant_message", "step_index": 2, "status": "running", "created_at": "2026-10-29T10:30:02.400Z", "text": "" } }
+S { "type": "item.delta", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item_id": "a_1", "field": "text", "delta": "Yes, `pnpm dev` in README matches package.json." }
+S { "type": "item.ended", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "a_1", "type": "assistant_message", "step_index": 2, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:30:02.400Z", "text": "Yes, `pnpm dev` in README matches package.json." } }
+S { "type": "turn.updated", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "step": { "index": 2, "outcome": "completed", "finish_reason": "stop", "started_at": "2026-10-29T10:30:02.200Z", "ended_at": "2026-10-29T10:30:04.200Z" } }
+S { "type": "turn.ended", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_1", "ordinal": 0, "turn_number": 0, "kind": "agent", "status": "ended", "outcome": "completed", "started_at": "2026-10-29T10:30:00.000Z", "ended_at": "2026-10-29T10:30:04.200Z", "duration_ms": 4200, "steps": [ { "index": 1, "outcome": "completed", "finish_reason": "tool_calls" }, { "index": 2, "outcome": "completed", "finish_reason": "stop" } ] } }
+```
+</li>
+<li>
+<strong>Provider error, retry countdown, and failed turn</strong>
+When an LLM request hits a retryable error, <code>turn.updated</code> carries <code>retry</code> (and <code>item.removed</code> drops any partial reply from the failed attempt before the retry starts). If retries are exhausted, the turn ends with <code>outcome: "failed"</code>:
+
+```wire focus=retry.attempt,retry.delay_ms,turn.outcome,turn.end_reason,turn.error
+S { "type": "turn.updated", "session_id": "s1", "agent_id": "main", "turn_id": "t_2", "retry": { "attempt": 1, "next_attempt": 2, "max_attempts": 3, "delay_ms": 2000, "error": { "name": "ProviderError", "message": "upstream overloaded", "status_code": 529 } } }
+S { "type": "turn.ended", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_2", "ordinal": 1, "turn_number": 1, "kind": "agent", "status": "ended", "outcome": "failed", "end_reason": "error", "error": { "code": "provider.overloaded", "message": "Provider overloaded, please try again later", "status_code": 529, "retryable": true }, "started_at": "2026-10-29T10:31:00.000Z", "ended_at": "2026-10-29T10:31:08.000Z", "steps": [] } }
+```
+</li>
+</ol>
 
 ### Turns
 
 | Field | Description |
 | --- | --- |
-| `turn_id` | Unique within the session and never reused. A turn opened after an undo gets a new id even when it reuses the `ordinal` of an undone turn |
-| `ordinal` | The turn's position in the agent's current history, which determines turn order. Pass it as `before_ordinal` to read older turns |
-| `kind` | `agent`: an ordinary turn. `system`: a turn between turns that holds a single `system` item, either a completed context compaction or the fork boundary that opens an agent forked from another agent |
-| `status` | `running` or `ended`. A turn the agent does not run (for example, a prompt rejected by a hook) is `ended` as soon as it appears. A `system` turn is never `running` |
-| `outcome` | Ended turns only: `completed`, `interrupted`, or `failed` |
-| `end_reason` | For `interrupted`: `user_cancelled` (the user stopped it) or `aborted` (stopped for another reason, such as the server stopping while it ran). For `failed`: `error`, `max_steps`, `filtered` (the provider's content filter blocked the output), or `blocked` (a hook or a policy rejected the input) |
-| `error` | Failed turns only: `{ code, message, name?, status_code?, request_id?, retryable? }` |
-| `retry` | Running turns only, present while a failed model request waits to be retried: `{ attempt, next_attempt, max_attempts, delay_ms, error: { name, message, status_code? } }`, where `attempt` is the attempt that just failed. It clears when the next step starts, when a step ends, or when the turn ends |
-| `turn_number` | The engine's turn number, used by the [file history endpoints](./server-api-sessions.md#get-api-v1-sessions-session-id-file-history-changes) |
-| `started_at`, `ended_at?`, `duration_ms?` | Start time, end time, and duration |
-| `usage` | The sum of the steps' usage |
-| `steps` | Ended steps (each model request is one step), ordered by `index`: `{ index, outcome, started_at, ended_at?, finish_reason?, usage? }`. A step's `outcome` is `completed`, `interrupted`, or `failed`, and its `usage` is `{ input_other, output, input_cache_read, input_cache_creation }` |
-| `items` | The turn's items; see the next section |
+| `turn_id` | Session-unique ID; never reused after an undo |
+| `ordinal` | Zero-based position in the agent's current history; sort turns by `ordinal` and pass it as `before_ordinal` when paging backward |
+| `turn_number` | Engine turn number used by the [file history endpoints](./server-api-sessions.md#get-api-v1-sessions-session-id-file-history-changes) |
+| `kind` | `agent` (normal turn) or `system` (a turn containing a single `system` item between turns, such as manual compaction or a fork boundary) |
+| `status` | `running` or `ended` |
+| `outcome` | Present when `status` is `ended`: `completed`, `interrupted`, or `failed` |
+| `end_reason` | When `interrupted`: `user_cancelled` or `aborted`; when `failed`: `error`, `max_steps`, `filtered`, or `blocked` |
+| `error` | On failed turns: `{ code, message, name?, status_code?, request_id?, retryable? }` |
+| `retry` | On running turns waiting to retry: `{ attempt, next_attempt, max_attempts, delay_ms, error: { name, message, status_code? } }` |
+| `started_at`, `ended_at?`, `duration_ms?` | Timestamps and duration in milliseconds |
+| `usage` | Sum of step token usage: `{ input_other, output, input_cache_read, input_cache_creation }` |
+| `steps` | Finished steps: `{ index, outcome, started_at, ended_at?, finish_reason?, usage? }` |
+| `items` | Ordered items in the turn (`turn.started` and `turn.ended` omit `items`; keep existing items for that turn) |
 
 ### Items
 
-Every item has these fields:
+Every item shares these base fields:
 
 | Field | Description |
 | --- | --- |
-| `item_id` | The item id. For a tool call, `item_id` is the tool call id |
-| `type` | The item type; see the sections below |
-| `step_index` | The step that produced the item |
+| `item_id` | Item ID (for `tool_call`, this is the tool call ID) |
+| `type` | `user_message` / `reasoning` / `assistant_message` / `tool_call` / `notification` / `system` |
+| `step_index` | Step number that produced the item |
 | `status` | `running` or `ended` |
-| `outcome` | `completed` for ended items unless noted otherwise below |
-| `created_at` | Creation time |
-| `debug` | When the server runs with `KIMI_CODE_DEBUG=1`, the last item of each ended step carries it to describe that step's model request: `{ finish_reason?, usage?, timing? }`. When measured, `timing` holds `first_token_ms`, `stream_ms`, `request_build_ms`, `server_first_token_ms`, `server_decode_ms`, `client_consume_ms`, and `client_blocked_ms`. When the step ends, the item is sent again as `item.ended` |
-
-Items are listed in the order they appeared. The remaining fields of each item type follow.
+| `outcome` | Present when `status` is `ended`: `completed`, `interrupted`, or `failed` |
+| `created_at` | Creation timestamp (ISO 8601) |
+| `debug` | Attached to the last item of each finished step when `KIMI_CODE_DEBUG=1`: `{ finish_reason?, usage?, timing? }` |
 
 #### `user_message`
 
-An input as it appears once it enters the conversation.
-
 | Field | Description |
 | --- | --- |
-| `prompt_ids` | The prompt ids this input carries, including the `prompt_id` of a bundled skill submission or a skill activation. Several steering inputs inserted at the same point merge into one `user_message` with `placement` `steer`, and `prompt_ids` lists all of them. A client retires a pending bubble it shows locally when `prompt_ids` contains the local id, and must not assume a one-to-one match. Empty for inputs the system triggered |
-| `placement` | `opener` (the input that opens the turn) or `steer` (input inserted into a running turn) |
-| `origin` | Where the input came from; see the table below |
-| `text` | The visible text parts joined with newlines. It excludes bundled skill instructions, prompt hook output, the notices that point the model at attached files, and image compression notes. Empty for retries and internal triggers |
-| `attachments` | The files and media in the input, in order: `{ kind: "image" \| "video" \| "audio" \| "file", file_id?, url?, name?, media_type?, size?, ordinal }`. Uploaded files carry `file_id`, inline and remote media carry `url`, media stored by the server is sent as a `data:` URL in pages, and a file attached by a server-local path carries only `name`, `media_type`, and `size` |
-| `skills` | The skills activated with the input: `{ name, path?, args? }` |
-| `metadata` | The `metadata` sent with the input, echoed as is |
-
-Values of `origin`:
-
-| `origin` | Source |
-| --- | --- |
-| `{ kind: "user" }` | User input |
-| `{ kind: "skill", name, path?, args? }` | Skill activation |
-| `{ kind: "plugin_command", plugin_id, command, args? }` | Plugin command |
-| `{ kind: "cron", job_id, schedule, recurring, coalesced_count, stale }` | Scheduled task. A scheduled task fires only when the main agent is idle: if it comes due while the agent is running, it waits until the agent is idle, then opens a new turn. Several due times while it waits fire only once, and the count is recorded in `coalesced_count`. One-shot tasks, and recurring tasks after their last run, are deleted automatically |
-| `{ kind: "hook", hook_event }` | Hook |
-| `{ kind: "goal" }` | Goal continuation |
-| `{ kind: "retry" }` | Retry |
-| `{ kind: "system" }` | System. A CLI shell command (`!`) and its output appear as raw text in this kind of `user_message`, each in its own ended turn |
+| `prompt_ids` | Client `prompt_id` values carried by this message (multiple steers merged at the same point list all of their IDs). Retire local optimistic bubbles whose `prompt_id` appears in `prompt_ids` |
+| `placement` | `opener` (started the turn) or `steer` (inserted into a running turn) |
+| `origin` | `{ kind: "user" }`, `{ kind: "skill", name, path?, args? }`, `{ kind: "plugin_command", plugin_id, command, args? }`, `{ kind: "cron", job_id, schedule, recurring, coalesced_count, stale }`, `{ kind: "hook", hook_event }`, `{ kind: "goal" }`, `{ kind: "retry" }`, or `{ kind: "system" }` |
+| `text` | User-visible text (strips system-injected attachment notices, image compression notes, and bundled skill bodies) |
+| `attachments` | `{ kind: "image" \| "video" \| "audio" \| "file", file_id?, url?, name?, media_type?, size?, ordinal }[]` |
+| `skills` | Bundled skills: `{ name, path?, args? }[]` |
+| `metadata` | Echoes the custom `metadata` submitted with the prompt |
 
 #### `assistant_message` and `reasoning`
 
 - **`assistant_message`**: `{ text }`, the model's reply.
-- **`reasoning`**: `{ text, started_at, duration_ms? }`, the model's reasoning output. `duration_ms` is how long the reasoning streamed and is present only after the item ends. Hidden reasoning is never sent.
+- **`reasoning`**: `{ text, started_at, duration_ms? }`, the model's reasoning output (`duration_ms` is populated once `ended`).
 
 #### `tool_call`
 
-One tool call. Its `item_id` is the tool call id.
-
 | Field | Description |
 | --- | --- |
-| `name` | Tool name |
-| `stage` | The call's stage while it runs: `input` while the model streams the arguments, `awaiting_approval` while waiting for approval, and `executing` otherwise |
-| `input` | Tool arguments |
-| `input_text` | The raw argument text while `stage` is `input` |
-| `output` | While running, the tool's live output streams into it; once the call completes, it is the text of the result |
-| `fields` | A JSON object of the handler's latest field snapshot |
-| `media` | After the call completes, the images, videos, and audio in the result: `{ kind, file_id?, url?, media_type? }` |
-| `error` | The text of the result when the call failed (`outcome` is `failed`) or was stopped (`interrupted`); the item then has no `output`. For a stopped Bash call, it holds the output produced so far followed by the interruption notice. A call still without a result when its turn ends is also `interrupted`, but has no `error` |
-| `note` | Extra text the tool attached to its result for the model, such as the size and dimensions of an image read by `ReadMediaFile` |
-| `task_id` | Present once the call's work runs as a background task, whether it started in the background or was moved there later. After the task has left `task.list`, it still works with `task.watch` and `task.stop` |
-| `interaction_id` | The approval or question raised for this call. Its content comes with the [`interaction`](#approvals-and-questions) frames |
-| `agent_refs` | The subagents this call started: `{ agent_id, role: "child" \| "member", swarm_index?, task_id? }` |
-| `display` | `ExitPlanMode` calls only: `{ kind: "plan_review", plan, path?, options: [{ label, description }], review: { state: "pending" \| "approved" \| "rejected" \| "cancelled", selected_option?, feedback? } }` |
-| `started_at`, `ended_at?` | Start and end time |
-
-When the turn ends before the tool produces a result, the item's `outcome` is `interrupted`. A call running in the foreground has no `task_id`; to find its task, look for the task whose `parent_tool_call_id` matches.
+| `name` | Tool name (e.g., `Bash`, `Read`, `Edit`, `Agent`, `ExitPlanMode`) |
+| `stage` | `input` (streaming arguments) → `awaiting_approval` (waiting for user decision) → `executing` |
+| `input`, `input_text` | Parsed input object and raw argument text streamed during `stage: "input"` |
+| `output`, `error` | Streaming output and normal result text in `output`; failure (`failed`) or stop (`interrupted`) output (including partial output before the stop) in `error` |
+| `fields`, `media`, `note` | Handler field snapshot, media attachments (`{ kind, file_id?, url?, media_type? }`), and model note |
+| `task_id` | Task ID when the tool runs as (or is detached to) a background task; use with `task.watch` / `task.stop` |
+| `interaction_id` | Associated approval or question ID (matches [`interaction`](#approvals-and-questions)) |
+| `agent_refs` | Spawned subagents or swarm members: `{ agent_id, role: "child" \| "member", swarm_index?, task_id? }[]` |
+| `display` | For `ExitPlanMode`: `{ kind: "plan_review", plan, path?, options, review }` |
+| `started_at`, `ended_at?` | Start and end timestamps |
 
 #### `notification`
 
-A background task notification delivered into the conversation.
-
-| Field | Description |
-| --- | --- |
-| `notification_id`, `title`, `body` | Notification id, title, and body |
-| `severity` | `info` / `warning` / `error` |
-| `notification_type` | Notification type |
-| `source` | `{ kind, id }` |
-| `task_id`, `agent_id` | The related task and agent |
-| `output` | `{ file?, preview?, bytes?, truncated? }` |
-| `answer` | The user's reply to a background question: `answers` maps each question to its answer, and `note` is an optional note |
+Background task notification delivered into the conversation: `{ notification_id, title, body, severity: "info" \| "warning" \| "error", notification_type, source: { kind, id }, task_id?, agent_id?, output?: { file?, preview?, bytes?, truncated? }, answer? }`.
 
 #### `system`
 
-| `kind` | Fields | Description |
+| `kind` | Extra fields | Description |
 | --- | --- | --- |
-| `compaction` | `trigger: "manual" \| "auto"`, `instruction?`, `tokens_before?`, `tokens_after?`, `compacted_count?`, `summary?` | A completed context compaction. A compaction that completes in the middle of a running turn is placed inside that turn. A compaction that is cancelled or fails leaves nothing in the conversation |
-| `fork_boundary` | `source: "btw" \| "fork"`, `forked_from: { agent_id }` | Opens the conversation of an agent forked from another agent (such as a side chat). The conversation inherited at the fork is not shown |
+| `compaction` | `trigger: "manual" \| "auto"`, `instruction?`, `tokens_before?`, `tokens_after?`, `compacted_count?`, `summary?` | Completed context compaction divider |
+| `fork_boundary` | `source: "btw" \| "fork"`, `forked_from: { agent_id }` | Opening boundary of a forked or side-chat (`btw`) agent |
 
 ### Live updates
 
-When a client starts receiving an agent, it first gets a `turns` frame:
+Clients reduce conversation frames with these rules:
 
-```json
-{ "type": "turns", "session_id": "...", "agent_id": "main", "event_created_at": "...", "turns": [], "has_more": true }
-```
-
-It carries the latest 10 turns, including the running turn and what it has produced so far, within 1 MiB like the REST pages. Read older turns page by page with [`GET .../agents/{agent_id}/turns`](./server-api-sessions.md#get-api-v1-sessions-session-id-agents-agent-id-turns). When a session or agent is closed and then reopened, the server sends `turns` again (see [When the server closes and reopens a session](#when-the-server-closes-and-reopens-a-session)), and any later `turns` replaces the client's latest turns.
-
-A paginated read takes a snapshot when the request starts, so the result may include turns that were undone afterward. After receiving `turns.removed`, discard page results requested before it that have not returned yet.
-
-When the conversation cannot be loaded, the client gets `{ type: "turns.failed", session_id, agent_id, event_created_at, code, msg }` instead, for example `40401` when the agent is not in the session, or when an agent loaded again after it was closed fails to restore. The agent stays subscribed.
-
-Later changes arrive as the frames below. Every frame carries `session_id`, `agent_id`, and `event_created_at`:
-
-| Frame | Content | How the client handles it |
+| Frame | Payload | Client action |
 | --- | --- | --- |
-| `turn.started`, `turn.ended` | `turn` without `items` | Replace the local turn and keep its existing items. `turn.ended` is sent again when an ended turn is corrected |
-| `turn.updated` | `turn_id`; `step`, once per ended step; `retry` | Write `step` into `steps` by `index`. Replace the turn's retry state with `retry`, and clear it when `retry` is absent |
-| `item.started`, `item.ended` | `turn_id` and the full `item` | Replace the local item with the same `item_id`, or append it to the end of the turn if it is not there |
-| `item.updated` | `turn_id`, `item_id`, `set` | `set` holds the fields of a running `tool_call` that changed; merge it shallowly into the item |
-| `item.delta` | `turn_id`, `item_id`, `field`, `delta` | Append `delta` to the item's `field`, which is `text`, `input_text`, or `output` |
-| `item.removed` | `turn_id`, `item_id` | Remove the item. For example, when a failed model request is retried, the output of the failed attempt is removed and replaced by the retry |
-| `turns.removed` | `turn_ids` | Remove the turns by `turn_id`; `turn_ids` is in ascending ordinal order. After an undo it lists the undone turns; after a context clear it lists every turn |
-| `notice` | `{ level: "info" \| "warning" \| "error", title, detail?, code? }` | A live warning or error raised by the agent, for example `compaction.cancelled` when a context compaction did not finish. Notices are not part of any turn and are not resent on subscribe |
-
-Items are pushed by these rules:
-
-- Items that do not stream (for example, `user_message`) only get `item.ended`.
-- A streamed item stays `running` until its step is persisted, then gets a single `item.ended` with the persisted values. When the next piece of content in the same step starts, earlier items do not end early, so the client treats only the last block as still streaming.
-- When a `system` turn is pushed live, `turn.started`, `item.ended`, and `turn.ended` are sent back to back.
-
-These frames may repeat content the `turns` frame already holds. Applying them as replacements, as the table describes, keeps the result correct.
+| `turns` | `turns: Turn[]`, `has_more: boolean` | Sent on subscribe or session reopen; replaces the latest turns for that agent |
+| `turn.started`, `turn.ended` | `turn` (without `items`) | Insert or update the turn header by `turn_id`, preserving its existing `items`; sort turns by `ordinal` |
+| `turn.updated` | `turn_id`, `step?`, `retry?` | Write `step` into `turn.steps` by `index`; replace `turn.retry` (or clear it when omitted) |
+| `item.started`, `item.ended` | `turn_id`, `item` | Replace the item with matching `(turn_id, item_id)` in place, or append to `turn.items` if new |
+| `item.delta` | `turn_id`, `item_id`, `field`, `delta` | Append `delta` to `item[field]` (`text`, `input_text`, or `output`) |
+| `item.updated` | `turn_id`, `item_id`, `set` | Shallow-merge `set` onto the item |
+| `item.removed` | `turn_id`, `item_id` | Remove the item from the turn (used when a retried step discards its partial reply) |
+| `turns.removed` | `turn_ids: string[]` | Delete the listed turns by `turn_id` and discard any in-flight pagination requests sent before this frame |
+| `notice` | `{ level, title, detail?, code? }` | Show a transient toast/banner (e.g., `compaction.cancelled`); do not insert into turns |
 
 ## Submitting input
 
-Submit an input with [`POST /api/v1/sessions/{session_id}/prompts`](./server-api-sessions.md#post-api-v1-sessions-session-id-prompts). It goes to the main agent by default; use `agent_id` to send it to another agent.
+Submit user input with [`POST /api/v1/sessions/{session_id}/prompts`](./server-api-sessions.md#post-api-v1-sessions-session-id-prompts). The walkthrough below shows submitting while idle, queueing while busy and converting to a steer, and retrying idempotently after a timeout:
 
-```sh
-curl -s -X POST http://127.0.0.1:58627/api/v1/sessions/<session_id>/prompts \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"prompt_id": "p-1", "content": [{"type": "text", "text": "Continue"}]}'
+<ol class="kap-walk">
+<li>
+<strong>Submit while idle: starts a new turn immediately</strong>
+
+```wire focus=prompt_id,status,item.prompt_ids,item.placement
+H POST /api/v1/sessions/s1/prompts
+  { "prompt_id": "p-1", "content": [ { "type": "text", "text": "Investigate this error" } ] }
+R { "prompt_id": "p-1", "user_message_id": "u_1", "status": "running", "accepted_as": "turn", "turn_id": "t_1", "content": [ { "type": "text", "text": "Investigate this error" } ], "created_at": "2026-10-29T10:35:00.000Z" }
+S { "type": "turn.started", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_1", "ordinal": 0, "turn_number": 0, "kind": "agent", "status": "running", "started_at": "2026-10-29T10:35:00.000Z", "steps": [] } }
+S { "type": "item.ended", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "u_1", "type": "user_message", "step_index": 0, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:35:00.000Z", "prompt_ids": ["p-1"], "placement": "opener", "origin": { "kind": "user" }, "text": "Investigate this error", "attachments": [], "skills": [] } }
 ```
+</li>
+<li>
+<strong>Submit while busy: queued, then steered into the active turn</strong>
 
-The server handles a submission in this order:
+```wire focus=status,steered,prompt_ids,item.placement,item.prompt_ids
+H POST /api/v1/sessions/s1/prompts
+  { "prompt_id": "p-2", "content": [ { "type": "text", "text": "Also check lint" } ] }
+R { "prompt_id": "p-2", "user_message_id": "u_2", "status": "queued", "accepted_as": "queue", "content": [ { "type": "text", "text": "Also check lint" } ], "created_at": "2026-10-29T10:35:10.000Z" }
+H POST /api/v1/sessions/s1/prompts/p-2:steer
+R { "steered": true, "prompt_ids": ["p-2"] }
+... Current step finishes; steer is injected at the next boundary
+S { "type": "item.ended", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "u_2", "type": "user_message", "step_index": 1, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:35:12.000Z", "prompt_ids": ["p-2"], "placement": "steer", "origin": { "kind": "user" }, "text": "Also check lint", "attachments": [], "skills": [] } }
+```
+</li>
+<li>
+<strong>Network timeout: resend with the same <code>prompt_id</code></strong>
 
-1. Validate the media references in the content parts. An unknown or mismatched `file_id` is rejected at this step, and none of the settings below take effect.
-2. Write the settings in the request to the target agent, in the order `model`, `thinking`, `permission_mode`, `swarm_mode`, `disabled_tools`. Settings take effect when the request is accepted, whether or not the input is queued. They persist, so requests after the running turn also use the new settings. `permission_mode` changes only the target agent. `plan_mode`, `goal_objective`, and `goal_control` in the request are ignored, and `metadata` is recorded on the input as is.
-3. The input opens a new turn or enters the queue; see the next section.
+```wire focus=prompt_id,status
+H POST /api/v1/sessions/s1/prompts
+  { "prompt_id": "p-3", "content": [ { "type": "text", "text": "Run unit tests too" } ] }
+... Request times out; client resends the exact same payload and prompt_id
+H POST /api/v1/sessions/s1/prompts
+  { "prompt_id": "p-3", "content": [ { "type": "text", "text": "Run unit tests too" } ] }
+R { "prompt_id": "p-3", "user_message_id": "u_3", "status": "queued", "accepted_as": "queue", "content": [ { "type": "text", "text": "Run unit tests too" } ], "created_at": "2026-10-29T10:35:20.000Z" }
+```
+</li>
+</ol>
 
 ### Starting or queueing
 
-An input opens a new turn immediately only when the target agent is idle, the queue is empty, and no undo, manual compaction, or fork is in progress. The response then waits until the turn starts, with `status` `running`. If it ends without opening a turn, `status` is `blocked` when a hook rejected the input, or `failed` when it failed before a turn started (for example, a prompt hook failed or an attachment could not be prepared).
+- **Immediate turn**: When the target agent is idle, its queue is empty, and no undo, compaction, or fork is running, the submission starts a turn immediately and returns `status: "running"` (or `blocked` / `failed` if rejected by a hook before starting).
+- **Queued**: Otherwise (including during undo, compaction, or fork), the submission enters the queue and returns `status: "queued"` immediately. Read `main`'s active and queued prompts with [`GET /api/v1/sessions/{session_id}/prompts`](./server-api-sessions.md#get-api-v1-sessions-session-id-prompts).
 
-Otherwise, the input enters the queue and the response returns immediately with `status` `queued`. Input submitted during an undo, compaction, or fork is not rejected either: it is queued and starts automatically once the operation ends.
+### Queue frames
 
-The server does not push queue changes. A client can read the main agent's running and queued inputs with [`GET /api/v1/sessions/{session_id}/prompts`](./server-api-sessions.md#get-api-v1-sessions-session-id-prompts). A `user_message` whose `prompt_ids` contains an id means that input has entered a turn.
+Each subscribed agent has a `queue` frame with `inputs`, `paused`, and `attached`. When `attached` is `true`, `inputs` is the server's current accepted queue; replace the corresponding client projection instead of draining it again locally. When `attached` is `false`, the engine is not ready and the frame does not replace local unsent work.
+
+Each input includes `prompt_id`, `user_message_id`, `kind` (`input` or `compact`), `delivery` (`queue` or `steer`), `content`, optional `skills`, `client_metadata`, `instruction`, and `created_at`. A queued `steer` joins the next ordinary input instead of creating a separate turn. `paused: true` holds ordinary queue consumption but does not interrupt the active turn or direct steer notifications. Use the queue move, pause, and resume endpoints in [Session endpoints](./server-api-sessions.md#queue-move-pause-and-resume) to change this state.
 
 ### Retries and idempotency
 
-A submission that carries `prompt_id` is idempotent. After a network error or timeout, resend the request unchanged with the same `prompt_id`:
+Generate a session-unique `prompt_id` on the client for every submission:
 
-- If the server already accepted it, it returns the result of the first submission without submitting again, and the settings in the request are not applied again;
-- If the first request is still being processed, the server waits for it to finish and returns the same result;
-- If the first request failed before being queued, the resend is handled as a new request; if it failed after being queued, the resend returns the same error;
-- If the same `prompt_id` comes with a different request, the server returns `40927`. The comparison covers the endpoint plus the full request body, regardless of field order. Within a session, `/prompts`, `/steer`, and the skill activation endpoint share one set of `prompt_id`s, so reusing an id on another endpoint also returns `40927`.
-
-The server keeps `prompt_id`s only in memory: at most 256 per session, evicting the oldest ended record when full. They are cleared when the server restarts or the session is deleted. Requests without `prompt_id` have no idempotency protection.
+- Resending the same `prompt_id` with an identical body returns the original response (or waits for an in-flight first request) without duplicating the prompt or re-applying overrides.
+- Reusing a `prompt_id` with a different body or across `/prompts`, `/steer`, and `skills/{name}:activate` returns `40927`.
 
 ### Steering
 
-While the agent is running, a queued input waits until the current turn ends before opening the next turn. To have the running turn read new content immediately, use one of two approaches:
+To inject input into a running turn before it finishes:
 
-- **Steer directly**: submit the content with [`POST /api/v1/sessions/{session_id}/steer`](./server-api-sessions.md#post-api-v1-sessions-session-id-steer); the request body is the same as for submitting input. When a turn is running, the response waits until the content is actually inserted into the turn at the next insertion point. If the turn ends first, the response waits until the next turn it opens has started. When no turn is running, it behaves like an ordinary submission.
-- **Turn queued input into steering**: use [`POST /api/v1/sessions/{session_id}/prompts:steer`](./server-api-sessions.md#post-api-v1-sessions-session-id-prompts-steer) (several) or `prompts/{prompt_id}:steer` (one). These are available only while the main agent has a running turn and return `40402` otherwise. When several are steered together, they are validated as a whole first: if any id is not in the queue or is repeated, none are processed and the server returns `40402`.
+- **Direct steer**: Call [`POST /api/v1/sessions/{session_id}/steer`](./server-api-sessions.md#post-api-v1-sessions-session-id-steer) with the same body as `/prompts`.
+- **Steer a queued prompt**: Call [`POST /api/v1/sessions/{session_id}/prompts/{prompt_id}:steer`](./server-api-sessions.md#post-api-v1-sessions-session-id-prompts-prompt-id-steer) (single) or [`POST /api/v1/sessions/{session_id}/prompts:steer`](./server-api-sessions.md#post-api-v1-sessions-session-id-prompts-steer) (batch). Once inserted, the prompt appears in the turn as a `user_message` with `placement: "steer"`.
 
-Inserted input appears in the conversation as a `user_message` with `placement` `steer`. When a skill is activated through the skill activation endpoint while the main agent is running, it does not open a new turn. It is inserted into the current turn as steering, and the response returns after the insertion.
+## Stopping, undoing, and compacting
 
-## Stopping, undo, and compaction
+The walkthrough below shows stopping a running turn, undoing turns, running manual compaction, and starting a read-only side chat (`btw`):
 
-| Operation | Endpoint | Effect |
-| --- | --- | --- |
-| Stop the current turn | [`POST /api/v1/sessions/{session_id}:abort`](./server-api-sessions.md#post-api-v1-sessions-session-id-abort) | Stops the main agent's running turn. The turn ends with `outcome: "interrupted"` and `end_reason: "user_cancelled"` |
-| Stop or withdraw one input | [`POST .../prompts/{prompt_id}:abort`](./server-api-sessions.md#post-api-v1-sessions-session-id-prompts-prompt-id-abort) | While the input is running, the same as stopping the current turn; while it is queued, removes it from the queue |
-| Undo | [`POST /api/v1/sessions/{session_id}:undo`](./server-api-sessions.md#post-api-v1-sessions-session-id-undo) | Deletes the given turn and every turn after it. Files are not rolled back |
-| Compact the context | [`POST /api/v1/sessions/{session_id}:compact`](./server-api-sessions.md#post-api-v1-sessions-session-id-compact) | Starts a manual compaction of the main agent's context and returns immediately |
-| Fork | [`POST /api/v1/sessions/{session_id}:fork`](./server-api-sessions.md#post-api-v1-sessions-session-id-fork) | Copies the session into a new session in the same workspace |
-| Side chat | [`POST /api/v1/sessions/{session_id}:btw`](./server-api-sessions.md#post-api-v1-sessions-session-id-btw) | Forks an agent from the main agent that can only use read-only tools |
+<ol class="kap-walk">
+<li>
+<strong>Withdraw a queued prompt and stop the active turn (<code>turns/{turn_id}:interrupt</code>)</strong>
+
+```wire focus=aborted,interrupted,item.outcome,turn.outcome,turn.end_reason
+H POST /api/v1/sessions/s1/prompts/p-9:abort
+R { "aborted": true }
+H POST /api/v1/sessions/s1/turns/t_3:interrupt
+R { "interrupted": true }
+S { "type": "item.ended", "session_id": "s1", "agent_id": "main", "turn_id": "t_3", "item": { "item_id": "call_bash_1", "type": "tool_call", "step_index": 1, "status": "ended", "outcome": "interrupted", "created_at": "2026-10-29T10:36:00.000Z", "name": "Bash", "stage": "executing", "error": "partial output...\n[Command interrupted by user]" } }
+S { "type": "turn.ended", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_3", "ordinal": 2, "turn_number": 2, "kind": "agent", "status": "ended", "outcome": "interrupted", "end_reason": "user_cancelled", "started_at": "2026-10-29T10:35:50.000Z", "ended_at": "2026-10-29T10:36:02.000Z", "steps": [] } }
+```
+</li>
+<li>
+<strong>Undo turn <code>t_5</code> and all subsequent turns (<code>:undo</code>)</strong>
+
+```wire focus=turn_id,removed_turn_ids,turn_ids
+H POST /api/v1/sessions/s1:undo
+  { "turn_id": "t_5" }
+R { "removed_turn_ids": ["t_5", "t_6", "t_7"] }
+S { "type": "turns.removed", "session_id": "s1", "agent_id": "main", "turn_ids": ["t_5", "t_6", "t_7"] }
+```
+</li>
+<li>
+<strong>Compact context manually (<code>:compact</code>)</strong>
+
+```wire focus=compacting,turn.kind,item.kind,item.tokens_before,item.tokens_after
+H POST /api/v1/sessions/s1:compact
+  { "instruction": "Keep database migration conclusions" }
+R { "accepted_as": "compact", "prompt_id": "cmp-1" }
+S { "type": "agent", "session_id": "s1", "agent_id": "main", "status": "idle", "compacting": true, "plan_mode": false, "swarm_mode": false, "tower_mode": false }
+S { "type": "turn.started", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_8", "ordinal": 5, "turn_number": 5, "kind": "system", "status": "ended", "outcome": "completed", "started_at": "2026-10-29T10:38:00.000Z", "ended_at": "2026-10-29T10:38:00.000Z", "steps": [] } }
+S { "type": "item.ended", "session_id": "s1", "agent_id": "main", "turn_id": "t_8", "item": { "item_id": "sys_1", "type": "system", "step_index": 0, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:38:00.000Z", "kind": "compaction", "trigger": "manual", "instruction": "Keep database migration conclusions", "tokens_before": 182340, "tokens_after": 8120, "summary": "…" } }
+S { "type": "turn.ended", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_8", "ordinal": 5, "turn_number": 5, "kind": "system", "status": "ended", "outcome": "completed", "started_at": "2026-10-29T10:38:00.000Z", "ended_at": "2026-10-29T10:38:00.000Z", "steps": [] } }
+S { "type": "agent", "session_id": "s1", "agent_id": "main", "status": "idle", "compacting": false, "plan_mode": false, "swarm_mode": false, "tower_mode": false }
+```
+</li>
+<li>
+<strong>Start and close a read-only side chat (<code>:btw</code> / <code>agents/{agent_id}:close</code>)</strong>
+
+```wire focus=agent_id,agent_ids,closed,status
+H POST /api/v1/sessions/s1:btw
+R { "agent_id": "btw_1" }
+C { "type": "subscribe", "request_id": "sub-btw", "session_id": "s1", "agent_ids": ["btw_1"] }
+S { "type": "response", "request_id": "sub-btw", "code": 0 }
+H POST /api/v1/sessions/s1/agents/btw_1:close
+R { "closed": true }
+S { "type": "agent", "session_id": "s1", "agent_id": "btw_1", "status": "ended", "compacting": false, "plan_mode": false, "swarm_mode": false, "tower_mode": false }
+```
+</li>
+</ol>
 
 ### Stopping a turn
 
-`:abort` acts only on the main agent's current turn. It returns `{ aborted: true }` whether or not a turn is running, so it is safe to resend. Whether the turn actually stopped is determined by the turn's `turn.ended`.
-
-Stopping a turn does not clear the queue: queued user input and user steering not yet inserted are kept, and the next turn opens automatically once the stopped turn ends. Queued skill activations are cancelled along with it. The server has no endpoint to pause the queue. To stop everything, first withdraw each queued input with `prompts/{prompt_id}:abort`, then call `:abort`.
-
-`prompts/{prompt_id}:abort` also acts only on the main agent. Withdrawing a queued input produces no turn and pushes no frames. When the input has already ended or does not exist, it returns `40402`.
-
-Turns of agents other than the main agent, such as side chats, currently have no public stop endpoint.
+- [`POST /api/v1/sessions/{session_id}/turns/{turn_id}:interrupt`](./server-api-sessions.md#post-api-v1-sessions-session-id-turns-turn-id-interrupt) stops the specified running turn (for `main`, subagents, or side conversations; idempotently returns `{ interrupted: false }` when that turn has already ended without stopping a later turn). [`POST /api/v1/sessions/{session_id}:abort`](./server-api-sessions.md#post-api-v1-sessions-session-id-abort) stops `main`'s active turn. In-flight `tool_call` items end with `outcome: "interrupted"` and keep partial output; pending interactions end with `cancelled`.
+- Stopping a turn does not clear queued user prompts. To stop everything, first withdraw queued prompts with [`POST .../prompts/{prompt_id}:abort`](./server-api-sessions.md#post-api-v1-sessions-session-id-prompts-prompt-id-abort), then stop the running turn.
 
 ### Undo
 
-After a successful undo, the response carries `removed_turn_ids`, and subscribers receive a `turns.removed` frame with the same `turn_ids`. The two may arrive in either order. The client removes turns by `turn_id`, and removing one twice does no harm. When the agent is working (it has a running turn, queued input, or a compaction in progress), undo returns `40901`; retry after it finishes.
+- [`POST /api/v1/sessions/{session_id}:undo`](./server-api-sessions.md#post-api-v1-sessions-session-id-undo) takes `{ turn_id, agent_id? }` and removes that turn and all later turns without rolling back disk files.
+- The target turn must have `kind: "agent"` and open with a `user_message` whose `origin.kind` is `user`, `skill`, or `plugin_command`; it cannot cross a prior compaction (`40911`), and returns `40901` while the agent is busy.
 
 ### Compaction
 
-Manual compaction is not queued. When a turn is running, the queue is not empty, or another history operation is in progress, it returns `40910` right away. It also returns `40910` when the history has nothing to compact. On success the response is `{}`, and progress then shows up in three places:
-
-- During compaction, `compacting` is `true` in the main agent's `agent` frame, and it returns to `false` when compaction ends;
-- When compaction completes, a `system` turn appears in the conversation (see [`system`](#system));
-- When compaction does not complete, subscribers receive a `notice` with `code` `compaction.cancelled`, and nothing is left in the conversation.
+- [`POST /api/v1/sessions/{session_id}:compact`](./server-api-sessions.md#post-api-v1-sessions-session-id-compact) starts manual compaction when `main` is idle or queues it behind current work; the response's `accepted_as` distinguishes the two cases. A queued compaction is consumed without creating a user turn.
+- During compaction `agent.compacting` is `true`; completion emits a `system` turn carrying a `compaction` item; cancellation emits a `notice` frame with `code: "compaction.cancelled"`.
 
 ## Approvals and questions
 
-When a tool call needs the user's permission, the server raises an approval request. When the agent needs the user to make a choice, it raises a question. Both are sent to every subscriber of the session as `interaction` frames:
+When a tool call requires permission (`approval`) or asks the user a structured question (`question`), the server pushes an `interaction` frame to every subscriber of the session. Clients reply via [`POST /api/v1/sessions/{session_id}/interactions/{interaction_id}`](./server-api-sessions.md#post-api-v1-sessions-session-id-interactions-interaction-id):
+
+<ol class="kap-walk">
+<li>
+<strong>Receive an approval request and approve for the session</strong>
+
+```wire focus=set,interaction_id,kind,status,decision,scope,outcome
+S { "type": "item.updated", "session_id": "s1", "agent_id": "main", "turn_id": "t_3", "item_id": "c7", "set": { "stage": "awaiting_approval", "interaction_id": "i9" } }
+S { "type": "interaction", "session_id": "s1", "agent_id": "main", "interaction_id": "i9", "kind": "approval", "status": "pending", "tool_call_id": "c7", "request": { "tool_name": "Bash", "action": "Run command", "tool_input_display": { "command": "rm -rf dist" }, "expires_at": "2026-10-30T10:31:00.000Z" } }
+H POST /api/v1/sessions/s1/interactions/i9
+  { "kind": "approval", "decision": "approved", "scope": "session" }
+R { "outcome": "approved", "ended_at": "2026-10-29T10:31:00.000Z" }
+S { "type": "interaction", "session_id": "s1", "agent_id": "main", "interaction_id": "i9", "kind": "approval", "status": "ended", "outcome": "approved", "ended_at": "2026-10-29T10:31:00.000Z", "response": { "decision": "approved", "scope": "session" } }
+S { "type": "item.updated", "session_id": "s1", "agent_id": "main", "turn_id": "t_3", "item_id": "c7", "set": { "stage": "executing" } }
+```
+</li>
+<li>
+<strong>Receive a question and submit an answer</strong>
+
+```wire focus=interaction_id,kind,request.questions,answers,outcome
+S { "type": "interaction", "session_id": "s1", "agent_id": "main", "interaction_id": "i10", "kind": "question", "status": "pending", "tool_call_id": "c8", "request": { "questions": [ { "id": "q1", "question": "Which package manager?", "multi_select": false, "allow_other": true, "options": [ { "id": "a", "label": "pnpm (Recommended)" }, { "id": "b", "label": "npm" } ] } ] } }
+H POST /api/v1/sessions/s1/interactions/i10
+  { "kind": "question", "answers": { "q1": { "kind": "single", "option_id": "a" } }, "method": "click" }
+R { "outcome": "answered", "ended_at": "2026-10-29T10:31:20.000Z" }
+S { "type": "interaction", "session_id": "s1", "agent_id": "main", "interaction_id": "i10", "kind": "question", "status": "ended", "outcome": "answered", "ended_at": "2026-10-29T10:31:20.000Z" }
+```
+</li>
+</ol>
 
 | Field | Description |
 | --- | --- |
-| `interaction_id` | The interaction id, used when answering |
+| `interaction_id` | Unique interaction ID used in the reply endpoint URL |
 | `kind` | `approval` or `question` |
 | `status` | `pending` or `ended` |
-| `agent_id` | The agent that raised the interaction |
-| `tool_call_id` | The waiting tool call. Its `tool_call` item carries the same `interaction_id` |
-| `request` | For an approval: `{ tool_name, action, tool_input_display?, expires_at }`, where `expires_at` is 24 hours after the request was raised. For a question: `{ questions }`; see below |
-| `response` | Always present once an approval ends; for a question, present only when `outcome` is `answered`, so dismissed questions and questions cancelled by the end of their turn have no `response`. Shapes below |
-| `outcome` | Present once ended: `approved` / `rejected` / `cancelled` / `answered` / `dismissed` |
-| `ended_at` | End time |
+| `agent_id`, `tool_call_id` | Originating agent and waiting `tool_call` item ID |
+| `request` | Approval: `{ tool_name, action, tool_input_display?, expires_at }`; Question: `{ questions: [{ id, question, header?, body?, options: [{ id, label, description? }], multi_select?, allow_other? }] }` |
+| `outcome`, `ended_at`, `response?` | Present when `status: "ended"`: `outcome` is `approved` / `rejected` / `cancelled` / `answered` / `dismissed` |
 
-A question's `request.questions` holds 1–4 questions, each `{ id, question, header?, body?, options, multi_select?, allow_other?, other_label?, other_description? }`. `options` has 2–4 options, each `{ id, label, description? }`. `multi_select` allows choosing several options, and `allow_other` allows a free-text answer.
+Client rules:
 
-Answer with [`POST /api/v1/sessions/{session_id}/interactions/{interaction_id}`](./server-api-sessions.md#post-api-v1-sessions-session-id-interactions-interaction-id). An interaction ends in one of two ways: it is answered, or it is cancelled because its turn ended. When it ends, the server sends the interaction's last frame with `status: "ended"`, `ended_at`, `outcome`, and `response` when the table above says it is present:
-
-- An approval's `response`: `{ decision, scope?, feedback?, selected_label? }`;
-- An answered question's `response`: `{ answers, method? }`, where `answers` maps each question's text to its answer.
-
-When several clients answer the same interaction, the first answer takes effect and later answers return `40902`. The server remembers ended interactions for only 60 seconds, up to 256 of them; answering after that returns `40404`. When a client gets either error code, it closes the card as "interaction ended".
-
-The server does not validate the content of question answers: an unknown option id is passed through as the answer text, and an unknown question id is passed through as the key, straight to the agent.
+- **Close the card on the `status: "ended"` `interaction` frame**, not on the HTTP reply, so all open windows stay in sync.
+- **Concurrent replies**: The first reply wins; later replies receive `40902` (already ended) or `40404` (evicted after 60 seconds / 256 entries). Treat both codes as resolved and close the card silently.
 
 ## Tasks
 
-All asynchronous work an agent is running is a task: shell commands (foreground and background), subagents (including swarm members), and other asynchronous work. Tasks are independent of turns, so undoing turns does not affect tasks.
+Shell commands (foreground and background) and subagents (including AgentSwarm members) are synchronized and controlled exclusively over WebSocket:
+
+<ol class="kap-walk">
+<li>
+<strong>Start a background command and watch its output (<code>task.watch</code>)</strong>
+
+```wire focus=task_id,detached,parent_tool_call_id,offset,text
+S { "type": "task", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab", "kind": "shell", "status": "running", "detached": true, "description": "Start dev server", "command": "pnpm dev", "parent_tool_call_id": "call_bash_1", "started_at": "2026-10-29T10:33:20.100Z" }
+C { "type": "task.watch", "request_id": "r2", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab" }
+S { "type": "response", "request_id": "r2", "code": 0, "task": { "task_id": "bash-k3f9x2ab", "kind": "shell", "status": "running", "detached": true } }
+S { "type": "task.output", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab", "offset": 0, "text": "> dev\n> vite\n\n" }
+S { "type": "task.output", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab", "offset": 14, "text": "  VITE ready in 312 ms\n" }
+```
+</li>
+<li>
+<strong>Unwatch, resume from <code>since_offset</code>, and stop the task (<code>task.stop</code>)</strong>
+
+```wire focus=since_offset,offset,text,status,outcome
+C { "type": "task.unwatch", "request_id": "r3", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab" }
+S { "type": "response", "request_id": "r3", "code": 0 }
+... Reopen the output panel and pass the UTF-8 byte end offset 37
+C { "type": "task.watch", "request_id": "r4", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab", "since_offset": 37 }
+S { "type": "response", "request_id": "r4", "code": 0, "task": { "task_id": "bash-k3f9x2ab", "kind": "shell", "status": "running", "detached": true } }
+S { "type": "task.output", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab", "offset": 37, "text": "10:41:07 [vite] hmr update\n" }
+C { "type": "task.stop", "request_id": "r5", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab" }
+S { "type": "task", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab", "kind": "shell", "status": "ended", "outcome": "killed", "detached": true, "started_at": "2026-10-29T10:33:20.100Z", "ended_at": "2026-10-29T10:52:03.410Z" }
+S { "type": "response", "request_id": "r5", "code": 0, "task": { "task_id": "bash-k3f9x2ab", "kind": "shell", "status": "ended", "outcome": "killed", "detached": true } }
+```
+</li>
+</ol>
 
 ### Task list
 
-When a client starts receiving an agent, it first gets a `{ type: "task.list", session_id, agent_id, tasks }` frame, where `tasks` is every task the agent is running right now; the client replaces its local list with it. After that, each change arrives as a `{ type: "task", session_id, agent_id, event_created_at, ...task state }` frame, and every frame carries the full state. An agent that had not joined the session at subscription time starts directly with `task` frames.
-
-When a task ends, its last `task` frame (`status: "ended"`) is sent, and it no longer appears in `task.list`. The result of an ended task lives in the session history (tool results and completion notifications). For its exact final state, send `task.watch` for it, and the response carries its state. Like `interaction`, task frames are not replayed.
-
 | Field | Description |
 | --- | --- |
-| `task_id` | Task id |
+| `task_id` | Task ID |
 | `kind` | `shell` / `subagent` / `other` |
-| `status` | `running` / `ended` |
-| `outcome` | Ended tasks only: `completed` / `failed` / `timed_out` / `killed` / `lost` |
-| `phase` | Running subagents only: `working` / `suspended`, with the suspension reason in `state_reason` |
-| `detached` | The tool call that started it no longer waits for it, which makes it a background task |
-| `description` | Task description |
-| `child_agent_id` | The agent id of a subagent task |
-| `parent_tool_call_id` | The tool call that started the task |
-| `swarm_index` | A swarm member's position in its swarm |
-| `command` | A shell task's command |
-| `started_at`, `ended_at` | Start and end time |
-| `result_summary`, `error`, `state_reason` | Result summary, error, and state reason |
-| `model`, `thinking` | The model and thinking effort a subagent uses |
+| `status` | `running` or `ended` (an ended task emits one final `task` frame and is absent from future `task.list` frames) |
+| `outcome` | On ended tasks: `completed` / `failed` / `timed_out` / `killed` / `lost` |
+| `phase`, `state_reason` | On running subagents: `working` or `suspended` |
+| `detached` | `false` while the spawning tool call is still awaiting it (foreground); `true` when running in the background |
+| `description`, `command` | Description and shell command string |
+| `child_agent_id`, `parent_tool_call_id`, `swarm_index` | Subagent ID, spawning tool call ID, and swarm member index |
+| `model`, `thinking` | Subagent model and thinking level |
+| `started_at`, `ended_at`, `result_summary`, `error` | Timestamps, summary, and error |
 
 ### Task output and control
 
-Task output is not pushed with `task` frames. To show a task's output, send `task.watch`; no session subscription is needed. `agent_id` is the agent the task belongs to, which is the `agent_id` on the task's `task` frames.
-
-1. The server first responds with `code: 0`. The response's `task` is the task's current state (the same shape as a `task` frame, without `type`, `session_id`, `agent_id`, and `event_created_at`).
-2. It then sends the last `tail_bytes` bytes of output as one `task.output` frame. `tail_bytes` defaults to 32 KiB and is at most 1 MiB. When `since_offset` falls inside that range, only the part after it is sent. When there is no output to send, `text` is empty.
-3. Live output follows. Ended tasks can be watched too.
-
-A `task.output` frame is `{ type: "task.output", session_id, agent_id, task_id, offset, text }`, where `offset` is the UTF-8 byte offset of `text` in the task's output. To resume after reconnecting, set `since_offset` to the end of the output you already have.
-
-When `since_offset` falls inside the readable tail and on a character boundary, the first chunk starts there; otherwise the whole tail is sent again. Clients merge output by these rules:
-
-- When the first chunk's `offset` equals the end of the local output, append it directly;
-- Otherwise, discard the local output and rebuild it from the first chunk;
-- For live output after the first chunk, drop the bytes that overlap the local output by `offset`, then append the rest.
-
-When `task.watch` is sent again for the same task, the server first drops the old watch, then resends the first chunk from the new `since_offset`.
-
-The other control commands:
-
-- **`task.unwatch`**: stops pushing the task's output.
-- **`task.stop`**: stops the task. When the task has already ended, it responds with the task's state directly. Stopping a foreground task ends only the tool call that started it: the tool call gets the stop result, and the turn continues.
-- **`task.background`**: makes the tool call that started the task stop waiting for it, so the task keeps running in the background. When the task is already in the background or has ended, it responds with the task's state directly. A task its caller cannot stop waiting for (such as an AgentSwarm member) gets `40933`, and the response still carries the task state.
-
-When `task.watch`, `task.stop`, and `task.background` succeed, the response's `task` is the task's current state. Commands for the same task are handled one at a time in arrival order, so a `task.unwatch` sent before the `task.watch` response takes effect after it. Different tasks, and task commands and other commands, never wait on each other.
-
-Error codes for task commands:
-
-- `40001`: malformed frame, including an out-of-range `tail_bytes`
-- `40401`: session not found
-- `40406`: the agent has no such task
-- `40933`: the task cannot be moved to the background
-- `50001`: internal error
-- `50003`: output cannot be read
+- **`task.watch` and byte-offset merging**: The server replies with `response` (carrying the current `task` state) followed by an initial `task.output` chunk (up to the last 32 KiB by default, max 1 MiB, or bytes after `since_offset` when within the tail window). If the initial chunk's `offset` matches your local UTF-8 byte length, append `text`; otherwise replace your local buffer with the chunk.
+- **Stopping or backgrounding a foreground tool**: Foreground tasks appear in `task.list` with `detached: false` and `parent_tool_call_id`. Sending `task.stop` stops only that tool call while the turn continues; sending `task.background` detaches it (`detached: true`, the tool call completes immediately, and a `notification` item arrives when the background task finishes; AgentSwarm members cannot be detached and return `40933`).
 
 ## Agent state
 
-An agent's own state is synced by four kinds of frames. Each frame carries the full value, and the client replaces its local copy; like task frames, they are not replayed. When a client starts receiving an agent, it first gets the agent's current frames of these kinds, then the matching frame again whenever a value changes. All four carry `type`, `session_id`, `agent_id`, and `event_created_at`.
+Each agent's state is split into four independent full-replacement frames by update cadence:
 
-| Frame | Fields | Description |
+| Frame | Core fields | Description |
 | --- | --- | --- |
-| `agent` | `status: "idle" \| "running"`, `compacting`, `model?`, `thinking?`, `permission_mode?`, `plan_mode`, `swarm_mode`, `tower_mode` | `status` is `running` while the agent handles a turn. `compacting` is `true` while the agent's context is being compacted, whether inside a turn or not. The running turn, and the retry state after a failed model request, come with the conversation frames |
-| `usage` | `context_tokens`, `max_context_tokens?` | Context usage, sent only when the agent has a model context. The server coalesces it over 250 milliseconds: after a change, it sends once within at most 250 milliseconds, with only the latest value and no intermediate values |
-| `goal` | `goal?` | Main agent only. `goal` is omitted when there is no goal; otherwise it is `{ objective, status: "active" \| "paused" \| "blocked" \| "complete", completion_criterion?, turns_used, tokens_used, wall_clock_ms }`. `wall_clock_ms` is the elapsed time when the frame was sent and is not resent just because time passes; the client advances the clock itself |
-| `todo` | `items: [{ title, status: "pending" \| "in_progress" \| "done" }]` | The todo list, read from the agent's todo store, so it follows undo and survives a server restart |
-
-`agent`, `goal`, and `todo` are sent only when their content actually changes.
-
-The model and thinking effort in the `agent` frame are the agent's current effective settings. A session's model is set when the session is created (see [Create a session](./server-api-sessions.md#post-api-v1-sessions)). A session created without a usable model omits `model` and `thinking` until a model is set.
+| `agent` | `status: "idle" \| "running" \| "ended"`, `compacting`, `model?`, `thinking?`, `permission_mode?`, `plan_mode`, `swarm_mode`, `tower_mode` | Running status and active settings (emits one final `status: "ended"` frame when a side conversation closes). Update settings via [`POST /api/v1/sessions/{session_id}/profile`](./server-api-sessions.md#post-api-v1-sessions-session-id-profile) |
+| `usage` | `context_tokens`, `max_context_tokens?` | Context token count for this agent alone, **coalesced over a 250 ms window** |
+| `goal` | `goal?: { objective, status, completion_criterion?, turns_used, tokens_used, wall_clock_ms }` | Main agent only (`goal` is omitted when no goal is active; increment `wall_clock_ms` locally for live timers) |
+| `todo` | `items: [{ title, status: "pending" \| "in_progress" \| "done" }]` | Agent todo list, replaced as a whole on writes and `:undo` |
 
 ## Reconnecting
 
-Subscriptions do not survive a disconnect. After reconnecting:
+Subscriptions and `task.watch` streams do not persist across disconnects. After reconnecting:
 
-1. Send `subscribe` again for each session you need. When the response succeeds, discard all local turns of that session (including pages you loaded earlier) and any paginated requests that have not returned. `turns.removed` frames from the disconnect are not resent, and `ordinal` values may be reused after an undo, so old local turns cannot be kept.
-2. After the response, the server resends pending interactions. Any local card not in this batch has already ended; close it.
-3. The server resends each agent's `task.list`, `agent`, `usage`, `goal`, and `todo`, and finally `turns` with the latest page. Read older turns over REST pagination.
-4. Task output watches are lost as well. Send `task.watch` again with `since_offset` set to the end of the output you already have.
-5. Global events missed during the disconnect are not replayed. Refresh the lists you keep locally over REST (for example, `GET /api/v1/sessions`).
+1. **Resend `subscribe`**: When the `response` succeeds, clear local turns and in-flight pagination requests for that session, and rebuild state from the incoming `interaction`, `task.list`, state frames, and `turns`.
+2. **Re-watch task output**: Resend `task.watch` for any open output panel with `since_offset` set to the UTF-8 byte length of your local buffer.
+3. **Refresh global lists**: Global events missed while offline are not replayed; re-fetch [`GET /api/v1/sessions`](./server-api-sessions.md#get-api-v1-sessions) and other global lists via REST.
 
 ## Global events
 
-Global events are sent to every established connection, with no subscription needed. An event frame looks like this:
+Global events are sent to every connected WebSocket client without subscription. Every frame is flat and starts with `type` and `event_created_at`; there is no `session_id`, `timestamp`, or `payload` envelope:
 
-```json
-{ "type": "event.session.archived", "session_id": "__global__", "timestamp": "...", "payload": { "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." } }
+```wire focus=type,change,session,kind
+S { "type": "session", "event_created_at": "2026-10-29T10:41:30.000Z", "change": "updated", "session": { "id": "s2", "workspace_id": "wd_aaa_000000000000", "cwd": "/work/app", "title": "Fix login", "created_at": "2026-10-29T10:30:00.000Z", "updated_at": "2026-10-29T10:41:30.000Z", "activity": "idle", "pending_interaction": "none", "last_turn_outcome": "completed", "archived": false } }
+S { "type": "invalidated", "event_created_at": "2026-10-29T10:42:00.000Z", "kind": "models" }
 ```
 
-`type` is the event type, and `payload` is the event content. For events tied directly to a session, `session_id` is that session's id. For other events, `session_id` is the global marker `__global__`, and the related session id is in `payload.sessionId`. Session and workspace events let a cross-workspace overview stay current without polling each workspace.
+| `type` | Additional fields | Client rule |
+| --- | --- | --- |
+| `session` | `change`: `created` / `updated` / `archived` / `restored` / `deleted`; `session` is the full [session object](./server-api-sessions.md#session-object) | Replace by `session.id`; delete when `change` is `deleted`. Creation, renames, archive/restore, activity, and latest-turn outcomes all use this frame |
+| `workspace` | `change`: `created` / `updated` / `deleted`; `workspace` is the full [workspace object](./server-api-service.md#workspace-object) | Replace by `workspace.id`; delete when `change` is `deleted` |
+| `config` | `config` is the full configuration with secrets redacted; optional `warnings` is `{ domain?, message }[]` | Replace local config and surface any warnings |
+| `invalidated` | `kind`: `models` / `plugins` | The list changed but its contents are not included: refetch `GET /api/v1/models` for `models`, or `GET /api/v1/plugins` for `plugins` |
 
-| Event | Frame `session_id` | `payload` fields | When it is sent |
-| --- | --- | --- | --- |
-| `session.meta.updated` | Session id | `title?`, `patch?` | The session's title or metadata changed, for example when a title is set through the profile endpoint |
-| `event.session.created` | Session id | `session`: the [session object](./server-api-sessions.md#session-object) | A session was created, including by a fork |
-| `event.session.work_changed` | Session id | `busy`, `main_turn_active?`, `pending_interaction?`, `last_turn_reason?` | The session's running state changed. The fields mean the same as in the [session object](./server-api-sessions.md#session-object). When a main agent turn ends, the end flag and the outcome come in the same event, so a client can use `main_turn_active` changing from `true` to `false` as a completion alert |
-| `event.session.archived` | `__global__` | `workspace_id`, `sessionId` | A session was archived, on both the online and the cold archive path |
-| `event.session.restored` | `__global__` | `workspace_id`, `sessionId` | An archived session was restored |
-| `event.session.deleted` | `__global__` | `workspace_id`, `sessionId` | A session was deleted |
-| `event.workspace.created`, `event.workspace.updated` | `__global__` | `workspace`: the full [workspace object](./server-api-service.md#workspace-object) | A workspace was created or updated. Creating a session touches the workspace, which also sends `updated` |
-| `event.workspace.deleted` | `__global__` | `workspace_id`, `root` | A workspace was deleted |
-| `event.config.changed` | `__global__` | `changedFields`, `config` (the same as the response of `GET /api/v1/config`) | The configuration changed |
-| `event.config.warning` | `__global__` | `warnings: [{ domain?, message }]` | Reading the configuration produced warnings |
-| `event.model_catalog.changed` | `__global__` | `changed: [{ provider_id, provider_name, added, removed }]`, `unchanged`, `failed: [{ provider, reason }]`, `retired_default?: { from, to, from_display_name }` | A model catalog refresh finished |
-| `event.plugin.changed` | `__global__` | None | Plugins changed; the client reads the plugin list again |
-| `event.capability.changed` | `__global__` | `capability_id`, `install: { running, step?, percent?, error?, note? }` | A built-in capability's install state changed |
-
-These events only cover changes made inside this server process. Changes from other processes (for example, a CLI writing to the same home directory) become visible only after index reconciliation (about a minute), so overview clients should keep a low-frequency fallback poll.
+Built-in capability installation progress uses a separate flat `event.capability.changed` frame with `event_created_at`, `capability_id`, and `install`. It is not an invalidation notice; clients should keep showing installation progress.

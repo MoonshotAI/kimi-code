@@ -28,6 +28,7 @@ export interface WorkspaceUpdated {
 export interface WorkspaceDeletedPayload {
   readonly workspaceId: string;
   readonly root: string;
+  readonly workspace?: Workspace;
 }
 
 export class WorkspaceDeleted extends Event2<{ readonly payload: WorkspaceDeletedPayload }> {

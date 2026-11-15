@@ -48,7 +48,7 @@ export interface StepContinuingEvent {
   readonly messages: readonly Message[];
 }
 
-export type TurnStartingVerdict = { readonly type: 'blocked'; readonly cause: Cause };
+export type TurnStartingVerdict = { readonly type: 'blocked'; readonly cause: Cause; readonly consume?: boolean };
 
 export type MessageAppendingDecision = { readonly message?: Message; readonly blocked?: Cause };
 

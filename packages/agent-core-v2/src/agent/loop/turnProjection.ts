@@ -241,7 +241,7 @@ export class AgentTurnProjection {
     this.historyView = undefined;
   }
 
-  snapshot(loop: Loop | undefined, queue: readonly UserMessage[], notificationCount: number, paused: boolean, hasPendingRequests: boolean): LoopSnapshot {
+  snapshot(loop: Loop | undefined, queue: readonly UserMessage[], notificationCount: number, paused: boolean, hasPendingRequests: boolean, startingPromptId?: string): LoopSnapshot {
     const active = this.active;
     const current = active?.current;
     const retry = active?.retry;
@@ -250,6 +250,9 @@ export class AgentTurnProjection {
       activeTurnId: loop?.state.turn?.id ?? active?.id,
       activePromptId: this.options.prompts.activePrompt()?.id,
       queue,
+      engineAttached: loop !== undefined,
+      startingPromptId,
+      queuePaused: loop?.state.queuePaused ?? false,
       notificationCount,
       paused,
       hasPendingRequests,

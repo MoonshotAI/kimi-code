@@ -850,6 +850,8 @@ describe('AgentConversationUndoService', () => {
           },
         },
       ],
+      engineAttached: true,
+      queuePaused: false,
       notificationCount: 0,
       paused: false,
       hasPendingRequests: true,

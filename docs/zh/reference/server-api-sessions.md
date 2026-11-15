@@ -1,6 +1,6 @@
 # 会话接口
 
-本页列出 `/api/v1/sessions` 下的 REST 接口（会话文件系统接口见 [文件接口](./server-api-files.md)），以及 `/api/v2/sessions` 的会话列表与批量归档接口。WebSocket 一侧（对话帧、[订阅会话](./server-api-conversation.md#订阅会话)、客户端如何驱动一轮对话）见 [会话与对话](./server-api-conversation.md)；响应信封、鉴权、错误码和分页等通用约定见 [服务 API](./server-api.md)。
+本页列出 `/api/v1/sessions` 下的 REST 接口（会话文件系统接口见 [文件接口](./server-api-files.md)）。WebSocket 一侧（对话帧、[订阅会话](./server-api-conversation.md#订阅会话)、客户端如何驱动一轮对话）见 [会话与对话](./server-api-conversation.md)；响应信封、鉴权、错误码和分页等通用约定见 [服务 API](./server-api.md)。
 
 ## 会话
 
@@ -8,52 +8,49 @@
 
 ### 会话对象
 
-所有返回会话的接口都使用这种格式。
-
-实时状态字段（`busy`、`main_turn_active`、`pending_interaction`、`last_turn_reason`）从会话的活动汇总中解析得出。会话未加载到本服务进程（冷会话）时，这些字段始终上报为不忙碌、无待处理交互。少数字段目前是占位值，已在说明中逐一注明。
+所有返回会话的接口都使用这种格式。对象只包含列表和后台会话需要展示的信息；模型、权限模式和运行模式在各 Agent 的 [`agent` 帧](./server-api-conversation.md#agent-状态) 中，上下文用量在 `usage` 帧中，目标在 `goal` 帧中。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `id` | string | 会话 id（`session_...`） |
 | `workspace_id` | string | 所属工作区 id |
+| `cwd` | string | 会话的工作目录 |
 | `title` | string | 会话标题，无标题时为 `""` |
 | `created_at` / `updated_at` | string | 创建时间与最后更新时间，ISO 8601 |
 | `archived` | boolean | 会话是否已归档。归档的会话不出现在默认会话列表中 |
 | `archived_at` | string | 归档时间，ISO 8601。仅在已归档时存在 |
-| `busy` | boolean | 任一 Agent 有进行中的轮次、有运行中的任务（前台任务也算）或正在压缩上下文时为 `true` |
-| `main_turn_active` | boolean | main agent 有进行中的轮次时为 `true` |
+| `activity` | string | 当前活动状态：`idle` / `turn`（main agent 有进行中的轮次）/ `background`（main agent 没有进行中的轮次，但有子 Agent、后台任务或上下文压缩在运行） |
 | `pending_interaction` | string | 正在等待答复的交互：`none` / `approval` / `question`。审批和提问同时待处理时为 `approval` |
-| `last_turn_reason` | string | main agent 最近一轮的结果：`completed` / `cancelled` / `failed`。main agent 开始新一轮时清除 |
+| `last_turn_outcome` | string | main agent 最近一轮的结局：`completed` / `interrupted` / `failed`（取值与 `Turn.outcome` 一致）；还没有结束的轮时省略 |
 | `last_prompt` | string | 最近一条用户提示词的文本（如有） |
-| `metadata` | object | 自定义元数据，始终带 `cwd`（会话的工作目录） |
-| `agent_config` | object | 只含 `model`。会话已加载到当前服务端进程、且 main agent 有模型时，`model` 为 main agent 当前的模型，否则为 `""`。创建会话的响应同样带上该模型，除非创建时没有可用的模型 |
-| `usage` | object | token 汇总：`input_tokens`、`output_tokens`、`cache_read_tokens`、`cache_creation_tokens`、`context_tokens`，以及可选的 `context_limit`、`total_cost_usd`、`turn_count`。目前始终为零。实时的上下文大小由每个 Agent 的 [`usage` 帧](./server-api-conversation.md#agent-状态) 通过 WebSocket 下发 |
-| `permission_rules` | array | 会话权限规则，目前始终为 `[]` |
-| `message_count` | integer | 消息数，目前始终为 `0` |
+| `metadata` | object | 可选的自定义元数据，原样保存调用方写入的内容。保留键 `goal`、`parent_session_id`、`child_session_kind` 由服务端管理，创建时写入会被丢弃 |
+| `git` | object | 仅在 `GET /api/v1/sessions` 传入 `include=git` 时携带。含可选的 `branch`（当前分支；分离 HEAD 或非 Git 仓库时省略）和可选的 `pull_request`（`{ number, state: "open" \| "closed" \| "merged", url }`，无关联 PR 时省略） |
 
 ### 创建、查询与修改会话
 
-创建会话、列出和读取会话，以及修改会话的标题、元数据和 main agent 配置。
+创建会话、列出和读取会话、批量归档与恢复，以及修改会话的标题、元数据和 main agent 配置。
 
 | 方法与路径 | 说明 |
 | --- | --- |
-| `POST /api/v1/sessions` | 创建会话（需要 `workspace_id` 或 `metadata.cwd`） |
-| `GET /api/v1/sessions` | 列出会话，游标分页，支持 `busy`、`archived_only` 等过滤 |
+| `POST /api/v1/sessions` | 创建会话（需要 `workspace_id` 或 `cwd`） |
+| `GET /api/v1/sessions` | 列出会话，支持筛选、排序、按工作区分组、`include=git` 与多种分页模式 |
+| `POST /api/v1/sessions:archive` | 批量归档会话 |
+| `POST /api/v1/sessions:restore` | 批量恢复已归档会话 |
 | `GET /api/v1/sessions/{session_id}` | 读取单个会话 |
-| `GET /api/v1/sessions/{session_id}/profile` | 读取会话档案 |
 | `POST /api/v1/sessions/{session_id}/profile` | 更新标题、元数据和 main agent 配置 |
 | `POST /api/v1/sessions/{session_id}/title/generate` | 通过托管的 `chat_title` 工具生成标题 |
 
 #### `POST /api/v1/sessions`
 
-创建会话并返回。创建成功时，服务端广播全局事件 `event.session.created`（见 [全局事件](./server-api-conversation.md#全局事件)）。
+创建会话并返回。创建成功时，服务端广播全局事件 `session`（`change: "created"`）（见 [全局事件](./server-api-conversation.md#全局事件)）。
 
-会话的目录来自 `workspace_id`（已注册的工作区）或 `metadata.cwd`（首次使用时注册该工作区）。两者同时提供时必须一致。
+会话的目录来自 `workspace_id`（已注册的工作区）或 `cwd` / `metadata.cwd`（首次使用时注册该工作区）。两者同时提供时必须一致。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
-| `workspace_id` | body | string | 未提供 `metadata.cwd` 时必填。已注册的工作区 id，会话创建在该工作区的根目录 |
-| `metadata` | body | object | 自定义元数据。`metadata.cwd` 是工作目录，未提供 `workspace_id` 时必填；与 `workspace_id` 同时提供时必须等于工作区根目录。其他键保存为会话的自定义元数据，保留键 `goal`、`parent_session_id`、`child_session_kind` 会被丢弃 |
+| `workspace_id` | body | string | 未提供 `cwd` 时必填。已注册的工作区 id，会话创建在该工作区的根目录 |
+| `cwd` | body | string | 会话的工作目录，未提供 `workspace_id` 时必填；与 `workspace_id` 同时提供时必须等于工作区根目录 |
+| `metadata` | body | object | 自定义元数据。也可通过 `metadata.cwd` 传入工作目录；其他键保存为会话的自定义元数据，保留键 `goal`、`parent_session_id`、`child_session_kind` 会被丢弃 |
 | `title` | body | string | 初始标题，至少 1 个字符。不提供时会话没有标题 |
 | `agent_config` | body | object | main agent 的部分配置，在返回会话之前应用。字段与 [`POST /api/v1/sessions/{session_id}/profile`](#post-api-v1-sessions-session-id-profile) 的 `agent_config` 相同，另加 `profile` |
 | `environment_id` | body | string | main agent 运行所在的环境 id，`local` 表示本机。不提供时使用 `config.toml` 中 `[environments]` 的 `default`，没有配置时为本机。非本机环境必须已在 `[environments]` 中声明或已注册。提供了非 `local` 的值时，服务端在返回会话之前就创建 main agent |
@@ -81,23 +78,65 @@
 
 #### `GET /api/v1/sessions`
 
-跨工作区列出会话，`updated_at` 最新的在前。游标分页遵循 [分页](./server-api.md#分页) 约定，但有一个例外：既不传 `page_size` 也不传 `archived_only` 时，响应是一个不分页的窗口，`has_more` 恒为 `false`。要真正翻页，必须传 `page_size`。
+跨工作区查询会话，支持筛选、排序、按工作区分组、可选的 Git 信息与轻量 id 投影。分页支持不透明 `page_token`、从 1 开始的 `page` 页码，以及扁平视图下的 `before_id` / `after_id` 游标（四者互斥，见 [分页](./server-api.md#分页)）。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
-| `before_id` | query | string | 只保留早于该 id 的会话。与 `after_id` 互斥 |
-| `after_id` | query | string | 只保留晚于该 id 的会话。与 `before_id` 互斥 |
-| `page_size` | query | integer | 1–100。分页生效时默认 `20`；不传时的行为见上文 |
+| `workspace_id` | query | string | 按工作区过滤，可重复，接受工作区别名；未知工作区返回空结果 |
+| `archived` | query | string | `false`（默认，只列未归档会话）/ `true`（只列已归档会话）/ `all` |
+| `has_prompt` | query | boolean | `true` 只保留有用户提示词的会话，`false` 只保留空会话 |
 | `busy` | query | boolean | 只保留忙碌（或只保留空闲）的会话 |
-| `include_archive` | query | boolean | 在活跃会话之外同时列出已归档会话。默认 `false` |
-| `archived_only` | query | boolean | 只列出已归档会话。与 `include_archive` 互斥。不传 `page_size` 时也启用游标分页 |
-| `exclude_empty` | query | boolean | 去掉没有任何用户提示词的会话 |
-| `workspace_id` | query | string | 只列出该工作区的会话，接受工作区别名 |
+| `activity` | query | string | 按活动状态过滤：`idle` / `turn`（main agent 有进行中的轮次）/ `background`（仅有后台工作或压缩），可重复 |
+| `updated_after` | query | string | 只看该时间（ISO 8601，含边界）之后更新过的会话 |
+| `updated_before` | query | string | 只看该时间（ISO 8601，含边界）之前更新过的会话 |
+| `sort` | query | string | `updated_at_desc`（默认）/ `updated_at_asc` / `created_at_desc` |
+| `view` | query | string | `flat`（默认）/ `by_workspace` |
+| `group_page_size` | query | integer | `view=by_workspace` 时每个工作区返回的会话数：1–100，默认 `5`（使用 `id,archived` 投影时上限 `10000`） |
+| `include` | query | string | 逗号分隔的附加字段组。目前支持 `git`（分支与 PR 信息，按环境与工作目录去重并缓存 60 秒） |
+| `fields` | query | string | 逗号分隔的字段投影。目前只支持 `id,archived`，每项裁剪为 `{ id, archived }`（用于全选匹配场景） |
+| `page_size` | query | integer | 1–100，默认 `50`；使用 `id,archived` 投影时上限放宽至 `10000`。`view=by_workspace` 时按组计数 |
+| `page_token` | query | string | 上一页返回的翻页令牌 |
+| `page` | query | integer | 无状态的页码，从 1 开始 |
+| `before_id` | query | string | 扁平视图下只返回排序位置在该会话之后的项 |
+| `after_id` | query | string | 扁平视图下只返回排序位置在该会话之前的项 |
 
-成功时 `data` 为 `{ items, has_more }`，`items` 的每项是 [会话对象](#会话对象)。
+扁平视图下，`data` 为 `{ items, total, has_more, next_page_token? }`：默认每项是 [会话对象](#会话对象)，传入 `include=git` 时附带 `git`，传入 `fields=id,archived` 时每项为 `{ id, archived }`。`total` 为过滤后的集合大小。`next_page_token` 只在使用 `page_token`（或缺省分页参数）且 `has_more` 为 `true` 时出现，中途改变任何查询条件返回 `40922`；`page`、`before_id`、`after_id` 模式不签发令牌。
 
-- `40001`：校验失败，例如 `before_id` 与 `after_id` 同时传入，或 `archived_only` 与 `include_archive` 同时传入
-- `40410`：`workspace_id` 未知
+`view=by_workspace` 时，同一份过滤、排序后的集合按规范化后的工作区 id 分组返回，`data` 为 `{ groups, total, has_more, next_page_token? }`：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `groups[].workspace_id` | string | 分组所属的工作区 id |
+| `groups[].sessions` | array | 该工作区按请求的 `sort` 排序的前 `group_page_size` 条会话 |
+| `groups[].total` | integer | 该工作区匹配过滤条件的会话总数 |
+| `total` | integer | 分组视图下为组数 |
+
+只有至少有一条匹配会话的工作区才会出现。组之间按组内第一条会话的排序键排序，相同时按 `workspace_id` 排序。`page` 与 `page_token` 按组翻页。
+
+- `40001`：校验失败，例如传入多个分页游标参数、在分组视图下传入 `before_id` / `after_id`、未开启分组视图时传入 `group_page_size`、`fields=id,archived` 与 `include=git` 同时传入
+- `40922`：翻页途中查询条件（含投影、`view` 与分组参数）与 `page_token` 不符
+
+#### `POST /api/v1/sessions:archive`
+
+批量归档会话，面向会话管理页。仍在线的会话走完整的生命周期；未加载的冷会话直接改写磁盘上的元数据，不会被加载。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `ids` | body | array | 必填。会话 id 数组，不能为空，去重后不超过 5000 条 |
+
+只有请求体校验失败才会让整个请求失败，其他错误按条返回：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `results` | array | 每个 id 的结果，保持输入顺序。成功项为 `{ id, ok }`，失败项为 `{ id, ok: false, error }`。不存在的 id 在自己的条目里报 `40401` |
+| `succeeded` | integer | 成功条数 |
+| `failed` | integer | 失败条数 |
+
+- `40001`：请求体校验失败
+
+#### `POST /api/v1/sessions:restore`
+
+批量恢复已归档的会话。请求体、在线与冷会话的处理方式、按条返回的结果和错误码都与 [`POST /api/v1/sessions:archive`](#post-api-v1-sessions-archive) 相同。
 
 #### `GET /api/v1/sessions/{session_id}`
 
@@ -111,23 +150,11 @@
 
 - `40401`：会话不存在，或会话的工作区已无法解析
 
-#### `GET /api/v1/sessions/{session_id}/profile`
-
-读取会话档案，返回内容与 `GET /api/v1/sessions/{session_id}` 相同。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | 必填。会话 id |
-
-成功时 `data` 为 [会话对象](#会话对象)。
-
-- `40401`：会话不存在
-
 #### `POST /api/v1/sessions/{session_id}/profile`
 
 更新会话档案：标题、自定义元数据和 main agent 的配置。
 
-这里设置的标题是自定义标题，优先于生成的标题。设置标题时，服务端广播全局事件 `session.meta.updated`。
+这里设置的标题是自定义标题，优先于生成的标题。设置标题时，服务端广播全局事件 `session`（`change: "updated"`）。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -148,9 +175,9 @@
 | `tower_mode` | boolean | 进入或退出 Tower 模式。需要开启 Tower 实验开关（`KIMI_CODE_EXPERIMENTAL_TOWER=1`，或 `config.toml` 中 `[experimental] tower = true`） |
 | `tower_base` | string | 进入 Tower 模式时使用的基础分支，只在同时设置 `tower_mode: true` 时使用。分支不存在时，服务端在仓库中创建并切换到该分支，并把未提交的改动提交到这个分支上 |
 | `goal_objective` | string | 以该文本为内容创建一个目标 |
-| `goal_control` | string | 控制当前目标：`pause` / `resume` / `cancel` |
+| `goal_control` | string | 控制当前目标：`pause` / `resume` / `cancel` / `edit`。`edit` 必须同时提供 `goal_objective` |
 
-成功时 `data` 为更新后的 [会话对象](#会话对象)。
+成功时 `data` 为 `{ session, agent }`：`session` 是更新后的 [会话对象](#会话对象)，`agent` 是 main agent 的当前状态，包含 `status`、`compacting`、`model`、`thinking`、`permission_mode`、`plan_mode`、`swarm_mode`、`tower_mode`，字段含义与 [`agent` 帧](./server-api-conversation.md#agent-状态) 相同。
 
 - `40001`：`model` 未配置；模型不支持 `thinking`；带了 `agent_config.profile`（Agent 档案只能在创建会话时指定）
 - `40113`：会话没有模型，而请求只设置了 `thinking`、没有同时设置 `model`
@@ -160,7 +187,7 @@
 
 #### `POST /api/v1/sessions/{session_id}/title/generate`
 
-根据会话的提示词生成标题并应用到会话，同时广播 `session.meta.updated`。标题由托管供应商的 `chat_title` 工具生成。
+根据会话的提示词生成标题并应用到会话，同时广播 `session`（`change: "updated"`）。标题由托管供应商的 `chat_title` 工具生成。
 
 生成标题需要托管 OAuth 登录。不传 `force` 时，已有自定义标题或生成标题的会话会上报为不可用，现有标题不会被覆盖。
 
@@ -206,7 +233,7 @@
 
 #### `POST /api/v1/sessions/{session_id}:fork`
 
-把会话复制到同一工作区中的新会话，包括对话、Agent 状态与文件，并广播 `event.session.created`。源会话会继续运行。
+把会话复制到同一工作区中的新会话，包括对话、Agent 状态与文件，并广播 `session`（`change: "created"`）。源会话会继续运行。
 
 源会话有进行中的轮次时，fork 保留该轮之前最近一个已完成的边界，并把当前轮的用户提示词保存为一个只含提示词的 `cancelled` 轮次。这个轮次不包含 Assistant 输出、工具活动、排队输入或之后的事件。
 
@@ -223,7 +250,7 @@
 
 #### `POST /api/v1/sessions/{session_id}:compact`
 
-对 main agent 的上下文发起一次手动全量压缩。调用立即返回，不等压缩完成。
+对 main agent 的上下文发起一次手动全量压缩，或将其排在当前工作之后。调用立即返回，不等压缩完成。成功时 `data` 为 `{ accepted_as, prompt_id }`：立即开始时 `accepted_as` 为 `compact`，排队时为 `queue`；`prompt_id` 标识排队项。
 
 压缩期间，WebSocket [`agent` 帧](./server-api-conversation.md#agent-状态) 的 `compacting` 为 `true`。压缩完成后，结果以 [`system`](./server-api-conversation.md#system) 条目出现在对话中。压缩被取消时，对话中不留任何内容，订阅者收到一条 `code` 为 `compaction.cancelled` 的 [`notice` 帧](./server-api-conversation.md#实时更新)。
 
@@ -231,11 +258,9 @@
 | --- | --- | --- | --- |
 | `instruction` | body | string | 给压缩摘要的额外指引。空值会被忽略 |
 
-压缩不排队，只能在 main agent 空闲时开始，流程见 [压缩](./server-api-conversation.md#压缩)。
+排队中的压缩会在前面的工作结束后执行，消费时不产生用户轮次，流程见 [压缩](./server-api-conversation.md#压缩)。
 
-成功时 `data` 为 `{}`。
-
-- `40910`：已有压缩正在进行；有正在运行的轮次；队列中有待处理的提示词；有其他上下文变更或会话历史操作（例如撤销、fork）正在进行；历史中没有可压缩的内容
+- `40910`：已有压缩正在运行或排队；历史中没有可压缩的内容
 
 #### `POST /api/v1/sessions/{session_id}:undo`
 
@@ -267,23 +292,23 @@
 
 成功时 `data` 为 `{ agent_id }`，即新 subagent 的 id。
 
-旁路对话等非 main agent 的轮次没有公开的停止接口，[`:abort`](#post-api-v1-sessions-session-id-abort) 只停止 main agent。
+停止旁路对话正在运行的轮次可调用 [`POST /api/v1/sessions/{session_id}/turns/{turn_id}:interrupt`](#post-api-v1-sessions-session-id-turns-turn-id-interrupt)；关闭并移除旁路对话可调用 [`POST /api/v1/sessions/{session_id}/agents/{agent_id}:close`](#post-api-v1-sessions-session-id-agents-agent-id-close)。
 
 #### `POST /api/v1/sessions/{session_id}:archive`
 
-将会话标记为已归档，并广播全局事件 `event.session.archived`。归档后会话不出现在默认会话列表中，使用 `include_archive` 或 `archived_only` 时仍会列出。
+将会话标记为已归档，并广播全局事件 `session`（`change: "archived"`）。归档后会话不出现在默认会话列表中，传入 `archived=true` 或 `archived=all` 时仍会列出。
 
 成功时 `data` 为 `{ archived: true }`。
 
 #### `POST /api/v1/sessions/{session_id}:restore`
 
-取消会话的归档状态。会话原本已归档时，服务端广播全局事件 `event.session.restored`。
+取消会话的归档状态。会话原本已归档时，服务端广播全局事件 `session`（`change: "restored"`）。
 
 成功时 `data` 为 [会话对象](#会话对象)，其中 `archived` 为 `false`。
 
 #### `POST /api/v1/sessions/{session_id}:delete`
 
-永久删除会话。会话已加载到本进程时先被关闭，然后服务端删除它在磁盘上的数据、索引条目和文件历史，并广播全局事件 `event.session.deleted`（见 [全局事件](./server-api-conversation.md#全局事件)）。删除无法撤销。
+永久删除会话。会话已加载到本进程时先被关闭，然后服务端删除它在磁盘上的数据、索引条目和文件历史，并广播全局事件 `session`（`change: "deleted"`）（见 [全局事件](./server-api-conversation.md#全局事件)）。删除无法撤销。
 
 成功时 `data` 为 `{ deleted: true }`。
 
@@ -332,7 +357,7 @@
 
 #### `POST /api/v1/sessions/{session_id}/children`
 
-创建子会话：fork 当前会话并记录为它的子会话，之后可以在 `GET /api/v1/sessions/{session_id}/children` 中列出。创建成功时，服务端广播 `event.session.created`。
+创建子会话：fork 当前会话并记录为它的子会话，之后可以在 `GET /api/v1/sessions/{session_id}/children` 中列出。创建成功时，服务端广播 `session`（`change: "created"`）。
 
 源会话正在运行时，采用与 [`:fork`](#post-api-v1-sessions-session-id-fork) 相同的边界：保留最近一个已完成的轮次，当前轮次保存为只含提示词的 `cancelled` 轮次。创建子会话不接受历史 `turn_index` 参数。
 
@@ -349,60 +374,12 @@
 
 ### 目标
 
-读取和修改会话当前的目标。创建、暂停、恢复或取消目标通过 [`POST /api/v1/sessions/{session_id}/profile`](#post-api-v1-sessions-session-id-profile) 的 `goal_objective` 和 `goal_control` 完成。与本 API 的大多数载荷不同，目标接口的载荷使用 camelCase 键。
+当前目标由 WebSocket 的 [`goal` 帧](./server-api-conversation.md#agent-状态) 同步，包含 objective、状态、进度和预算。创建、暂停、恢复、取消和原地编辑目标统一通过 [`POST /api/v1/sessions/{session_id}/profile`](#post-api-v1-sessions-session-id-profile) 完成：
 
-| 方法与路径 | 说明 |
-| --- | --- |
-| `GET /api/v1/sessions/{session_id}/goal` | 读取当前目标快照（没有时为 `null`） |
-| `PATCH /api/v1/sessions/{session_id}/goal` | 就地修改当前目标的 objective |
+- `goal_objective`：创建目标，或在 `goal_control: "edit"` 时提供新的 objective。原地编辑保留目标 id、状态、进度和预算，Agent 在下一轮收到新文本。
+- `goal_control`：`pause` / `resume` / `cancel` / `edit`。`edit` 必须同时提供 `goal_objective`，且只能用于已有目标。
 
-#### `GET /api/v1/sessions/{session_id}/goal`
-
-读取会话当前的目标快照。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | 必填。会话 id |
-
-没有目标时 `data` 为 `null`。目标完成后即被清除，因此之后读取也返回 `null`。否则 `data` 为目标快照：
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `goalId` | string | 目标 id |
-| `objective` | string | 目标内容 |
-| `completionCriterion` | string | 完成标准，可选 |
-| `status` | string | `active` / `paused` / `blocked` / `complete` |
-| `turnsUsed` | number | 已用轮次 |
-| `tokensUsed` | number | 已用 token |
-| `wallClockMs` | number | 已用的 wall-clock 时间，毫秒 |
-| `budget.tokenBudget` / `budget.turnBudget` / `budget.wallClockBudgetMs` | number \| null | token、轮次与 wall-clock（毫秒）预算。未设置对应预算时为 `null` |
-| `budget.remainingTokens` / `budget.remainingTurns` / `budget.remainingWallClockMs` | number \| null | 各项预算的剩余量，最小为 `0`。未设置对应预算时为 `null` |
-| `budget.tokenBudgetReached` / `budget.turnBudgetReached` / `budget.wallClockBudgetReached` | boolean | 已用量达到对应预算时为 `true`。未设置对应预算时为 `false` |
-| `budget.overBudget` | boolean | 任一预算已达到时为 `true` |
-| `terminalReason` | string | 目标离开 `active` 状态（暂停、受阻）的原因，可选。目标回到 `active` 时清除 |
-
-- `40401`：会话不存在
-
-#### `PATCH /api/v1/sessions/{session_id}/goal`
-
-替换当前目标的 objective，`goalId`、状态、进度和预算都保持不变。适用于 `active`、`paused`、`blocked` 状态的目标。
-
-正在运行的轮次不会被打断，Agent 在下一轮收到新的 objective。订阅了该会话的客户端会收到新的 WebSocket [`goal` 帧](./server-api-conversation.md#agent-状态)。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | 必填。会话 id |
-| `objective` | body | string | 必填。新的 objective，首尾空白会被去除 |
-
-成功时 `data` 为更新后的目标快照，结构与 `GET /api/v1/sessions/{session_id}/goal` 相同（camelCase）。
-
-- `40401`：会话不存在
-- `40914`：当前没有目标
-- `40915`：目标已完成
-- `40917`：objective 为空
-- `40918`：objective 超过 4000 字符
-
-### 告警与环境
+### 告警与环境### 告警与环境
 
 读取会话级告警，以及 main agent 运行所在的环境和会话可用的环境。
 
@@ -644,168 +621,19 @@ main agent 正在运行时，激活不会开启新轮次，而是作为插话插
 - `40912`：Skill 存在，但其类型不允许用户激活
 - `40927`：`prompt_id` 已被另一个请求使用，包括提交提示词和 `/steer` 的请求
 
-### 会话列表（v2）
-
-`/api/v2/sessions` 是面向会话列表页和管理页的新一代接口：列表查询的筛选、排序、字段组都放在查询参数里，并提供批量归档与恢复。
-
-| 方法与路径 | 说明 |
-| --- | --- |
-| `GET /api/v2/sessions` | 按筛选、排序和字段组查询会话，可按工作区分组 |
-| `POST /api/v2/sessions:archive` | 批量归档会话 |
-| `POST /api/v2/sessions:restore` | 批量恢复会话 |
-
-#### `GET /api/v2/sessions`
-
-面向列表页的会话查询，筛选、排序、字段组都在查询参数里。使用 `page_token` 或 `page` 分页（见 [分页](./server-api.md#分页)）。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `workspace.id` | query | string | 按工作区过滤，可重复 |
-| `activity.status` | query | string | 按活动状态过滤：`running` / `approval` / `question` / `failed` / `idle`，可重复 |
-| `meta.updated_after` | query | integer | 只看该时间（epoch 毫秒）之后更新过的会话 |
-| `meta.updated_before` | query | integer | 只看该时间（epoch 毫秒）之前更新过的会话 |
-| `meta.archived` | query | string | `true` / `false`（默认）/ `all` |
-| `meta.has_prompt` | query | boolean | `true` 只保留有用户提示词的会话，`false` 只保留空会话（等价于 `GET /api/v1/sessions` 的 `exclude_empty`） |
-| `view` | query | string | `flat`（默认）/ `by_workspace`，见下文 |
-| `group.page_size` | query | integer | `view=by_workspace` 时每个工作区返回的会话数：1–100，默认 5（使用 `id,archived` 投影时上限 10000） |
-| `sort` | query | string | `meta.updated_at_desc`（默认）/ `meta.updated_at_asc` / `meta.created_at_desc` |
-| `include` | query | string | 逗号分隔的附加字段组。目前支持 `git`（分支与 PR 信息，按环境与工作目录去重并缓存 60 秒） |
-| `fields` | query | string | 逗号分隔的字段投影。目前只支持 `id,archived`，每项裁剪为 `{ id, archived }`（用于全选匹配场景） |
-| `page_size` | query | integer | 1–100，默认 50；使用 `id,archived` 投影时上限放宽至 10000。`view=by_workspace` 时按组计数 |
-| `page_token` | query | string | 上一页返回的翻页令牌 |
-| `page` | query | integer | 无状态的页码，从 1 开始。与 `page_token` 互斥 |
-
-列表中的每一项固定包含 `workspace`、`meta`、`activity` 三组字段，`include=git` 时再附加 `git` 组；`fields=id,archived` 时每项只有 `{ id, archived }`。`activity` 组还带 `model`：会话仍加载在当前进程时为其绑定的模型别名，冷会话（未加载）为 `null`。各组的字段可参考下文分组视图示例中的会话项。
-
-每页额外带 `total`，即过滤后的集合大小。翻页令牌绑定首页的查询条件（含投影），中途改变条件返回 `40922`。`page` 模式是用于跳页的无状态替代：每次请求都是独立快照，不签发令牌，`next_page_token` 恒为 `null`。
-
-`view=by_workspace` 时，同一份过滤、排序后的集合会重新投影为按工作区分组的形态。概览页因此可以用一次请求代替逐个工作区轮询：
-
-```json
-{
-  "code": 0,
-  "msg": "success",
-  "data": {
-    "groups": [
-      {
-        "workspace": { "id": "wd_my-app_a1b2c3d4e5f6", "cwd": "/Users/dev/my-app" },
-        "sessions": [ { "id": "session_...", "workspace": { "id": "wd_my-app_a1b2c3d4e5f6", "cwd": "/Users/dev/my-app" }, "meta": { "title": "Fix the login page", "last_prompt": "adjust the button spacing", "created_at": 1787000000000, "updated_at": 1787000100000, "archived": false, "archived_at": null }, "activity": { "status": "idle", "model": "kimi-for-coding" } } ],
-        "total": 42
-      }
-    ],
-    "total": 7,
-    "has_more": true,
-    "next_page_token": "eyJ2IjoxLCJmIjoi..."
-  },
-  "request_id": "req_..."
-}
-```
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `groups[].workspace` | object | 分组所属的工作区 |
-| `groups[].sessions` | array | 该工作区按请求的 `sort` 排序的前 `group.page_size` 条会话 |
-| `groups[].total` | integer | 该工作区匹配过滤条件的会话总数，可用作「查看全部」入口 |
-| `total` | integer | 分组视图下为组数 |
-
-只有至少有一条匹配会话的工作区才会出现。组之间按组内第一条会话的排序键排序，相同时按工作区 id 排序。`page` 与 `page_token` 按组翻页，令牌的指纹绑定规则相同，并且同时覆盖 `view` 与分组参数，翻页途中改变它们同样返回 `40922`。
-
-- `40001`：未开启分组视图时传入 `group.page_size`；`fields=id,archived` 与 `include=git` 同时传入；`page` 与 `page_token` 同时传入
-- `40922`：翻页途中查询条件（含投影、`view` 与分组参数）与 `page_token` 不符
-
-#### `POST /api/v2/sessions:archive`
-
-批量归档会话，面向会话管理页。仍在线的会话走完整的生命周期；未加载的冷会话直接改写磁盘上的元数据，不会被加载。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `ids` | body | array | 必填。会话 id 数组，不能为空，去重后不超过 5000 条 |
-
-只有请求体校验失败才会让整个请求失败，其他错误按条返回：
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `results` | array | 每个 id 的结果，保持输入顺序。成功项为 `{ id, ok }`，失败项为 `{ id, ok: false, error }`。不存在的 id 在自己的条目里报 `40401` |
-| `succeeded` | integer | 成功条数 |
-| `failed` | integer | 失败条数 |
-
-```json
-{
-  "code": 0,
-  "msg": "success",
-  "data": {
-    "results": [
-      { "id": "session_a", "ok": true },
-      { "id": "session_b", "ok": false, "error": { "code": 40401, "message": "session session_b does not exist" } }
-    ],
-    "succeeded": 1,
-    "failed": 1
-  },
-  "request_id": "req_..."
-}
-```
-
-- `40001`：请求体校验失败
-
-#### `POST /api/v2/sessions:restore`
-
-批量恢复已归档的会话。请求体、在线与冷会话的处理方式、按条返回的结果和错误码都与 [`POST /api/v2/sessions:archive`](#post-api-v2-sessions-archive) 相同。
-
 ## 对话
 
 这部分接口读取对话历史、提交提示词、答复审批与提问。对话的实时推送走 WebSocket，见 [会话与对话](./server-api-conversation.md)。
 
-### 消息与轮次
+### 轮次与 Agent
 
-`messages` 接口分页返回 main agent 扁平化的消息历史；`turns` 接口按轮次与条目分页返回某个 Agent 的对话，与 WebSocket 实时推送的 [轮次](./server-api-conversation.md#轮次) 是同一套模型。更早的历史用这些接口读取，订阅后收到的 `turns` 帧之后的内容都走 WebSocket。
+按轮次与条目分页读取某个 Agent 的对话（与 WebSocket 实时推送的 [轮次](./server-api-conversation.md#轮次) 是同一套模型），按 `turn_id` 停止运行中的轮次，或关闭旁路对话 Agent。
 
 | 方法与路径 | 说明 |
 | --- | --- |
-| `GET /api/v1/sessions/{session_id}/messages` | 消息分页（`before_id` / `after_id` / `role`） |
-| `GET /api/v1/sessions/{session_id}/messages/{message_id}` | 读取单条消息 |
 | `GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns` | 某个 Agent 的轮次分页（`before_ordinal` / `page_size`） |
-
-#### `GET /api/v1/sessions/{session_id}/messages`
-
-分页返回 main agent 的消息历史（扁平化的上下文转录），最新的在前。游标分页遵循 [分页](./server-api.md#分页) 约定。会话为冷会话时，读取历史会恢复该会话。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | 必填。会话 id |
-| `before_id` | query | string | 只保留早于该消息 id 的消息。与 `after_id` 互斥 |
-| `after_id` | query | string | 只保留晚于该消息 id 的消息。与 `before_id` 互斥 |
-| `page_size` | query | integer | 1–100。默认 `50` |
-| `role` | query | string | 只保留一种角色：`user` / `assistant` / `tool` / `system`。过滤在分页切片之后进行，因此过滤后的一页可能少于 `page_size` 条而 `has_more` 仍为 `true`，需要一直翻到 `has_more` 为 `false` |
-
-成功时 `data` 为 `{ items, has_more }`，`items` 的每项是消息对象：
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `id` | string | 消息 id |
-| `session_id` | string | 会话 id |
-| `role` | string | 消息角色 |
-| `content` | array | 内容块数组，格式同 [提示词内容块](#post-api-v1-sessions-session-id-prompts)，类型包括 `text`、`tool_use`、`tool_result`、`image`、`video`、`file`、`thinking` |
-| `created_at` | string | 创建时间 |
-| `prompt_id` | string | 可选 |
-| `parent_message_id` | string | 可选 |
-| `metadata` | object | 可选 |
-
-- `40001`：校验失败，例如 `before_id` 与 `after_id` 同时传入
-- `40401`：会话不存在
-
-#### `GET /api/v1/sessions/{session_id}/messages/{message_id}`
-
-按 id 从同一份历史中读取单条消息。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | 必填。会话 id |
-| `message_id` | path | string | 必填。消息 id |
-
-成功时 `data` 为消息对象，结构见 [`GET /api/v1/sessions/{session_id}/messages`](#get-api-v1-sessions-session-id-messages)。
-
-- `40401`：会话不存在
-- `40403`：该会话中不存在此 id 的消息
+| `POST /api/v1/sessions/{session_id}/turns/{turn_id}:interrupt` | 停止指定的运行中轮次 |
+| `POST /api/v1/sessions/{session_id}/agents/{agent_id}:close` | 关闭由 `:btw` 开启的旁路对话 Agent |
 
 #### `GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns`
 
@@ -829,6 +657,37 @@ main agent 正在运行时，激活不会开启新轮次，而是作为插话插
 - `40001`：校验失败
 - `40401`：会话或 Agent 不存在
 
+#### `POST /api/v1/sessions/{session_id}/turns/{turn_id}:interrupt`
+
+停止指定的运行中轮次（适用于 `main`、子 Agent 或旁路对话 Agent）。`turn_id` 来自 `turn.started` 帧或 `turns` 帧中 `status: "running"` 的轮次。
+
+成功中断时，该轮以 `outcome: "interrupted"`、`end_reason: "user_cancelled"` 结束，进行中的 `tool_call` 以 `outcome: "interrupted"` 结束并保留已产生输出，响应为 `{ interrupted: true }`。若该轮已经结束（或不在运行中），响应为 `{ interrupted: false }`，不产生任何事件，也不会误停之后开启的轮次，因此可以安全重发。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `session_id` | path | string | 必填。会话 id |
+| `turn_id` | path | string | 必填。要停止的轮次 `turn_id` |
+
+- `40001`：校验失败，或动作后缀不支持
+- `40401`：会话不存在
+
+#### `POST /api/v1/sessions/{session_id}/agents/{agent_id}:close`
+
+关闭一个由 [`POST /api/v1/sessions/{session_id}:btw`](#post-api-v1-sessions-session-id-btw) 开启的旁路对话 Agent，并将其从会话中移除。
+
+关闭时，该 Agent 运行中的轮次以 `outcome: "interrupted"`、`end_reason: "aborted"` 结束并推送 `turn.ended`，其未决交互以 `cancelled` 结束并推送 `interaction`，排队中的输入一并丢弃，最后推送一条 `status: "ended"` 的 `agent` 帧作为该 Agent 的最后一条事件。此后订阅不再发送它的 `agent` 帧，向它提交输入、读取轮次或再次关闭均返回 `40401`。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `session_id` | path | string | 必填。会话 id |
+| `agent_id` | path | string | 必填。由 `:btw` 创建的 Agent id |
+
+成功时 `data` 为 `{ closed: true }`。
+
+- `40001`：校验失败，或动作后缀不支持
+- `40401`：会话或 Agent 不存在（已关闭后重发亦返回此码）
+- `40939`：该 Agent 不是旁路对话，不能关闭（如 `main` 或普通 subagent）
+
 ### 提示词
 
 提示词是一次用户输入的单位。提交的提示词进入会话 main agent（或指定 Agent）的队列；排队中的提示词可以插入进行中的轮次，运行中或排队中的提示词可以中止。轮次进度通过 WebSocket 推送（见 [实时更新](./server-api-conversation.md#实时更新)），不经过这些接口。
@@ -836,7 +695,11 @@ main agent 正在运行时，激活不会开启新轮次，而是作为插话插
 | 方法与路径 | 说明 |
 | --- | --- |
 | `GET /api/v1/sessions/{session_id}/prompts` | 进行中与排队中的提示词 |
-| `POST /api/v1/sessions/{session_id}/prompts` | 提交提示词（内容块数组，可带模型、权限模式等覆盖项） |
+| `POST /api/v1/sessions/{session_id}/prompts` | 提交提示词（旧形式，可在请求体中带 `prompt_id`） |
+| `PUT /api/v1/sessions/{session_id}/prompts/{prompt_id}` | 通过路径中的幂等键提交提示词 |
+| `POST /api/v1/sessions/{session_id}/agents/{agent_id}/queue/{prompt_id}:move` | 把排队提示词移到另一条之前，或移到队尾 |
+| `POST /api/v1/sessions/{session_id}/agents/{agent_id}/queue/pause` | 暂停普通队列消费 |
+| `POST /api/v1/sessions/{session_id}/agents/{agent_id}/queue/resume` | 恢复普通队列消费 |
 | `POST /api/v1/sessions/{session_id}/steer` | 直接把消息内容插入进行中的轮次 |
 | `POST /api/v1/sessions/{session_id}/prompts:steer` | 把排队的提示词插入进行中的轮次 |
 | `POST /api/v1/sessions/{session_id}/prompts/{prompt_id}:abort` | 中止运行中或排队中的提示词 |
@@ -844,7 +707,7 @@ main agent 正在运行时，激活不会开启新轮次，而是作为插话插
 
 #### `GET /api/v1/sessions/{session_id}/prompts`
 
-读取 main agent 的提示词队列快照，其他 Agent 的队列不在其中。队列变化没有 WebSocket 推送，需要最新状态时重新读取。
+读取 main agent 的提示词队列快照，其他 Agent 的队列不在其中。每个已订阅 Agent 的队列变化也会通过 [`queue` 帧](./server-api-conversation.md#队列帧) 推送。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -863,13 +726,13 @@ main agent 正在运行时，激活不会开启新轮次，而是作为插话插
 
 - `40401`：会话不存在
 
-#### `POST /api/v1/sessions/{session_id}/prompts`
+#### `POST /api/v1/sessions/{session_id}/prompts` 和 `PUT /api/v1/sessions/{session_id}/prompts/{prompt_id}`
 
-向会话提交一条用户提示词。响应不等待轮次执行完。
+向会话提交一条用户提示词。`PUT` 在路径中携带幂等键；旧形式 `POST` 可在请求体中携带可选的 `prompt_id`。响应不等待轮次执行完。
 
 目标 Agent 空闲、队列为空，并且不在撤销、手动压缩或 fork 的过程中时（只有 fork 一个空闲的 Agent 才会让它进入这种状态），提示词立即开始一轮，响应等到轮次开始（`status` 为 `running`）才返回。其他情况下提示词进入队列，响应立即返回，`status` 为 `queued`。撤销、压缩或 fork 期间提交的提示词同样排队，不会被拒绝。见 [开始执行还是排队](./server-api-conversation.md#开始执行还是排队)。
 
-服务端先校验媒体引用，然后按 `model`、`thinking`、`permission_mode`、`swarm_mode`、`disabled_tools` 的顺序把覆盖项应用到目标 Agent，最后让提示词入队。覆盖项在提示词被接受时就生效，不论提示词是否排队，并且之后一直保留。`permission_mode` 只改变目标 Agent，不像 [profile 接口](#post-api-v1-sessions-session-id-profile) 那样同步到所有 Agent。
+服务端先校验媒体引用。覆盖项按 `model`、`thinking`、`permission_mode`、`plan_mode`、`swarm_mode`、`disabled_tools` 和目标控制的顺序应用。它们在提示词实际开始执行时生效：首个可执行的提示词立即应用，排队的提示词则在出队时应用，不会在等待期间改变当前轮次。`permission_mode` 只改变目标 Agent，不像 [profile 接口](#post-api-v1-sessions-session-id-profile) 那样同步到所有 Agent。
 
 提供 `skills` 时，提示词以打包的 Skill 激活方式运行，而不是作为普通用户提示词。
 
@@ -886,8 +749,12 @@ main agent 正在运行时，激活不会开启新轮次，而是作为插话插
 | `swarm_mode` | body | boolean | 进入或退出 swarm 模式 |
 | `disabled_tools` | body | array | 要为会话禁用的工具名 |
 | `metadata` | body | object | 客户端自定义元数据，随提示词保存，并在提示词对象的 `metadata` 中返回 |
+| `delivery` | body | string | `queue`（默认）或 `steer`；`steer` 尽可能加入当前轮次，否则占据下一个插话槽位 |
+| `plan_mode` | body | boolean | 在此提示词开始时进入或退出 Plan 模式 |
+| `goal_objective` | body | string | 创建目标，或在 `goal_control` 为 `edit` 时提供替换文本 |
+| `goal_control` | body | string | `pause` / `resume` / `cancel` / `edit`；`edit` 保留目标 id、进度和预算 |
 
-schema 还接受 `plan_mode`、`goal_objective` 和 `goal_control`，但提交接口目前不会应用它们。
+成功时，被接受的提示词还包含 `accepted_as`：开始新轮次时为 `turn`，加入当前轮次或占据插话槽位时为 `steer`，普通排队输入为 `queue`。分配了对应的对话题次后，还会包含 `turn_id`。
 
 `prompt_id` 的幂等规则如下，流程见 [重试和幂等](./server-api-conversation.md#重试和幂等)：
 
@@ -994,6 +861,10 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 - `40401`：会话不存在
 - `40402`：main agent 没有正在运行的轮次，或没有该 id 的排队提示词
+
+#### 队列排序、暂停与恢复
+
+`POST /api/v1/sessions/{session_id}/agents/{agent_id}/queue/{prompt_id}:move` 接受 `{ before_prompt_id? }`，把普通排队提示词移到指定 id 之前；省略时移到队尾。目标必须仍在队列中，插话槽位不能排序。`POST .../queue/pause` 返回 `{ paused: true }`，`POST .../queue/resume` 返回 `{ paused: false }`。暂停只阻塞普通排队提示词，不会中断当前轮次；直接插话通知仍可被消费。
 
 ### 审批与提问
 

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
+import { Emitter } from '#/_base/event';
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { ILogService } from '#/_base/log/log';
 import { LifecycleScope } from '#/app/scopes';
@@ -121,6 +122,7 @@ import {
   type LoopNotifyMessage,
   type LoopNotifyHandle,
   type LoopSnapshot,
+  type LoopSubmitOptions,
   type LoopSubmitResult,
   type PromptHandle,
   type PromptLaunchResult,
@@ -176,6 +178,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     onWillBeginStep: new OrderedHookSlot(),
     onDidFinishStep: new OrderedHookSlot(),
     onBeforeSubmitPrompt: new OrderedHookSlot(),
+    onRunQueuedCompaction: new OrderedHookSlot(),
   };
 
   private readonly errorHandlers: LoopErrorHandler[] = [];
@@ -183,6 +186,14 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private readonly pendingReminders: Message[] = [];
   private readonly pendingNotifications: UserMessage[] = [];
   private readonly pendingSendNowNotifications = new Set<string>();
+  private readonly promptStarts = new Map<string, (signal: AbortSignal) => Promise<void>>();
+  private readonly queueChange = this._register(new Emitter<void>());
+  readonly onDidChangeQueue = this.queueChange.event;
+  private startingPromptId: string | undefined;
+  private queuePausedRequested: boolean | undefined;
+  private readonly steerSlots = new Map<number, readonly UserMessage[]>();
+  private queuedCompaction: AbortController | undefined;
+  private queueKey = '';
   private readonly settleWaiters: Array<() => void> = [];
   private quiescenceDepth = 0;
   private historySnapshotDepth = 0;
@@ -515,6 +526,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           notify: [...(snapshot.input.inbox?.notify ?? []), ...completions],
         },
         nextTurnId: Math.max(snapshot.input.nextTurnId ?? 0, minimumNextTurnId),
+        queuePaused: this.queuePausedRequested ?? snapshot.input.queuePaused,
         historyRevision,
       },
       hooks: [
@@ -536,11 +548,19 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       this.notifications.project(event);
       if (event.type === 'llm.retrying') this.journal.append(enriched);
       this.turns.project(enriched, loop);
+      if (event.type === 'step.started') {
+        const slots = this.steerSlots.get(event.turnId);
+        this.steerSlots.delete(event.turnId);
+        if (slots !== undefined) this.prompts.projectSteered({ messages: slots });
+      }
+      if (event.type === 'turn.ended') this.steerSlots.delete(event.turnId);
       this.projectTaskEvent(enriched);
       if (event.type !== 'llm.retrying') this.journal.append(enriched);
       if ((event.type === 'tool.async_ended' || (event.type === 'tool.ended' && !event.detached)) && event.taskId !== undefined) {
         this.toolExecutor.release(event.taskId);
       }
+      if (event.type === 'queue.changed') this.queuePausedRequested = undefined;
+      if (event.type === 'queue.changed' || event.type === 'turn.ended') this.signalQueueChange();
       this.maybeSettle();
     });
     this.drainPendingToLoop();
@@ -887,6 +907,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.notifications.close();
     this.pendingSubmissions.length = 0;
     this.pendingNotifications.length = 0;
+    this.promptStarts.clear();
+    this.queuedCompaction?.abort(reason);
     this.turns.close(reason);
     this.closePromise = (async () => {
       this.loop?.flushReminders();
@@ -905,14 +927,21 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   submit(payload: PromptPayload): Promise<PromptLaunchResult | undefined>;
-  submit(input: UserMessage): LoopSubmitResult;
-  submit(input: UserMessage | PromptPayload): LoopSubmitResult | Promise<PromptLaunchResult | undefined> {
+  submit(input: UserMessage, options?: LoopSubmitOptions): LoopSubmitResult;
+  submit(input: UserMessage | PromptPayload, options?: LoopSubmitOptions): LoopSubmitResult | Promise<PromptLaunchResult | undefined> {
     if ('input' in input) return this.submitClient(input);
-    const { id, entry } = this.admit(input);
+    const status = this.snapshot();
+    const queued = status.state === 'running' || status.paused || status.queuePaused || status.queue.length > 0;
+    const { id, entry } = this.admit(options?.delivery === 'steer'
+      ? { ...input, attributes: { ...input.attributes, delivery: 'steer' } }
+      : input);
+    if (options?.onStart !== undefined) this.promptStarts.set(id, options.onStart);
+    void this.promptHandle(id)!.completion.finally(() => this.promptStarts.delete(id));
     if (this.loop !== undefined && this.quiescenceDepth === 0) this.loop.submit(entry);
     else this.pendingSubmissions.push(entry);
+    this.signalQueueChange();
     this.maybeSettle();
-    return { id };
+    return { id, acceptedAs: options?.delivery === 'steer' ? 'steer' : queued ? 'queue' : 'turn' };
   }
 
   private async submitClient(payload: PromptPayload): Promise<PromptLaunchResult | undefined> {
@@ -923,7 +952,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       content: [...payload.input],
       attributes: { promptId: payload.promptId, origin: { kind: 'user' } },
     });
-    if (status.state === 'running' || status.paused || status.queue.length > 0) return undefined;
+    if (status.state === 'running' || status.paused || status.queuePaused || status.queue.length > 0) return undefined;
     return this.launchResult(id);
   }
 
@@ -932,7 +961,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     await this.updatePromptMetadata(promptMetadataTextFromContentParts(input.content));
     const status = this.snapshot();
     const steerable = status.state === 'running';
-    const queued = status.state === 'running' || status.paused || status.queue.length > 0;
+    const queued = status.state === 'running' || status.paused || status.queuePaused || status.queue.length > 0;
     const { id } = steerable ? this.sendNow(input) : this.submit(input);
     const handle = this.promptHandle(id)!;
     if (!steerable && queued) {
@@ -1001,8 +1030,83 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     loop.steer(promptIds);
   }
 
+  moveQueued(promptId: string, beforePromptId?: string): void {
+    if (this.disposing) throw abortError('Agent loop disposed');
+    const machineQueue = this.loop?.state.inbox.normal ?? [];
+    const entry = machineQueue.find((item) => item.attributes?.promptId === promptId) ??
+      this.pendingSubmissions.find((item) => item.attributes?.promptId === promptId);
+    const parked = !machineQueue.includes(entry!);
+    const queue = parked ? this.pendingSubmissions : machineQueue;
+    const before = queue.find((item) => item.attributes?.promptId === beforePromptId);
+    if (entry === undefined || (beforePromptId !== undefined && before === undefined) || promptId === this.startingPromptId) {
+      throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'prompt is not queued');
+    }
+    if (entry.attributes?.delivery === 'steer' || before?.attributes?.delivery === 'steer') {
+      throw new Error2(ErrorCodes.REQUEST_INVALID, 'steer entries keep their place ahead of queued prompts');
+    }
+    if (!parked && this.loop !== undefined && this.quiescenceDepth === 0) {
+      if (this.loop.move(promptId, beforePromptId) === undefined) {
+        throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'prompt is not queued');
+      }
+    } else {
+      const index = this.pendingSubmissions.indexOf(entry);
+      this.pendingSubmissions.splice(index, 1);
+      const beforeIndex = before === undefined ? -1 : this.pendingSubmissions.indexOf(before);
+      this.pendingSubmissions.splice(beforeIndex < 0 ? this.pendingSubmissions.length : beforeIndex, 0, entry);
+    }
+    this.signalQueueChange();
+  }
+
+  pauseQueue(): void {
+    if (this.disposing) throw abortError('Agent loop disposed');
+    this.queuePausedRequested = true;
+    this.loop?.pauseQueue();
+    this.signalQueueChange();
+  }
+
+  resumeQueue(): void {
+    if (this.disposing) throw abortError('Agent loop disposed');
+    this.queuePausedRequested = false;
+    this.loop?.resumeQueue();
+    this.signalQueueChange();
+  }
+
+  private signalQueueChange(): void {
+    const snapshot = this.snapshot();
+    const key = JSON.stringify([
+      snapshot.queue.map((entry) => [entry.attributes?.promptId, entry.attributes?.delivery]),
+      snapshot.startingPromptId,
+      snapshot.queuePaused,
+      snapshot.hasPendingRequests,
+    ]);
+    if (key === this.queueKey) return;
+    this.queueKey = key;
+    this.queueChange.fire();
+  }
+
   promptHandle(id: string): PromptHandle | undefined {
     return this.prompts.handle(id);
+  }
+
+  enqueueCompaction(instruction?: string): string {
+    if (this.disposing) throw abortError('Agent loop disposed');
+    this.runGate.begin();
+    const id = newMessageId();
+    const entry: UserMessage = {
+      role: 'user',
+      content: [],
+      attributes: {
+        promptId: id,
+        userMessageId: id,
+        createdAt: new Date().toISOString(),
+        queueItem: { kind: 'compact', instruction },
+      },
+    };
+    if (this.loop !== undefined && this.quiescenceDepth === 0) this.loop.submit(entry);
+    else this.pendingSubmissions.push(entry);
+    this.signalQueueChange();
+    this.maybeSettle();
+    return id;
   }
 
   notify(input: LoopNotifyMessage): LoopSubmitResult;
@@ -1011,8 +1115,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if ('role' in note) {
       const { id, entry } = this.admit(note);
       this.sendNotification(entry);
+      this.signalQueueChange();
       this.maybeSettle();
-      return { id };
+      return { id, acceptedAs: this.snapshot().state === 'idle' ? 'turn' : 'queue' };
     }
     if (this.disposing) throw abortError('Agent loop disposed');
     const id = note.message?.id ?? newMessageId();
@@ -1041,8 +1146,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const entry = input as LoopNotifyMessage;
     const { id, entry: admitted } = this.admit(entry);
     this.sendNotification(admitted, true);
+    this.signalQueueChange();
     this.maybeSettle();
-    return { id };
+    return { id, acceptedAs: 'steer' };
   }
 
   private async sendNowEntries(promptIds: readonly string[]): Promise<void> {
@@ -1117,7 +1223,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const notificationCount =
       (loop === undefined ? 0 : loop.state.inbox.notify.length + loop.state.inbox.remind.length) +
       this.pendingNotifications.length;
-    return this.turns.snapshot(loop, queue, notificationCount, this.quiescenceDepth > 0, this.hasPendingRequests());
+    const snapshot = this.turns.snapshot(loop, queue, notificationCount, this.quiescenceDepth > 0, this.hasPendingRequests(), this.startingPromptId);
+    return { ...snapshot, queuePaused: this.queuePausedRequested ?? snapshot.queuePaused };
   }
 
   private async materializeDaemonRefs(message: { readonly content: readonly ContentPart[] }): Promise<void> {
@@ -1128,30 +1235,66 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   private async turnStarting(event: TurnStartingEvent, signal: AbortSignal) {
-    const pending = this.prompts.prepareTurn(event);
-    if (pending === undefined) return undefined;
-    const promptMessage: ContextMessage = {
-      role: 'user',
-      content: [...pending.entry.content],
-      id: pending.entry.attributes?.promptId,
-      origin: pending.entry.attributes?.origin as PromptOrigin | undefined,
-    };
-    const ctx: PromptSubmitContext = { promptMessage, isSteer: false, hookParts: [], block: false };
+    const normal = event.pending.find((item) => item.kind === 'normal');
+    const promptId = normal?.message.attributes?.promptId;
+    this.startingPromptId = promptId;
+    const slots = event.pending.flatMap((item) =>
+      item.kind === 'notify' && item.message.attributes?.delivery === 'steer' ? [item.message] : []
+    );
+    if (slots.length > 0) this.steerSlots.set(event.turnId, slots);
+    this.signalQueueChange();
     try {
-      await this.hooks.onBeforeSubmitPrompt.run(ctx);
-      if (ctx.block) return { type: 'blocked' as const, cause: { by: 'prompt', reason: 'blocked' } };
-      await this.materializeDaemonRefs(promptMessage);
-      pending.message = {
-        ...pending.entry,
-        content: [
-          ...ctx.hookParts,
-          ...gateImageFormatParts(promptMessage.content, this.getModelProviderType()),
-        ],
+      if (normal?.message.attributes?.queueItem?.kind === 'compact') {
+        const controller = new AbortController();
+        this.queuedCompaction = controller;
+        const abort = (): void => controller.abort(signal.reason);
+        signal.addEventListener('abort', abort, { once: true });
+        try {
+          await this.hooks.onRunQueuedCompaction.run({
+            instruction: normal.message.attributes.queueItem.instruction,
+            signal: controller.signal,
+          });
+        } catch (error) {
+          this.logger.warn('queued compaction did not complete', { error, promptId });
+        } finally {
+          signal.removeEventListener('abort', abort);
+          if (this.queuedCompaction === controller) this.queuedCompaction = undefined;
+        }
+        return { type: 'blocked' as const, cause: { by: 'prompt', reason: 'compacted' }, consume: true };
+      }
+      const pending = this.prompts.prepareTurn(event);
+      if (pending === undefined) return undefined;
+      const promptMessage: ContextMessage = {
+        role: 'user',
+        content: [...pending.entry.content],
+        id: pending.entry.attributes?.promptId,
+        origin: pending.entry.attributes?.origin as PromptOrigin | undefined,
       };
-      return undefined;
-    } catch (error) {
-      if (signal.aborted) return { type: 'blocked' as const, cause: { by: 'prompt', reason: 'aborted', message: toErrorMessage(error) } };
-      return { type: 'blocked' as const, cause: { by: 'prompt', reason: 'gate_failed', message: toErrorMessage(error) } };
+      const ctx: PromptSubmitContext = { promptMessage, isSteer: false, hookParts: [], block: false };
+      try {
+        for (const slot of slots) {
+          const id = slot.attributes?.promptId;
+          if (id !== undefined) await this.promptStarts.get(id)?.(signal);
+        }
+        if (promptId !== undefined) await this.promptStarts.get(promptId)?.(signal);
+        await this.hooks.onBeforeSubmitPrompt.run(ctx);
+        if (ctx.block) return { type: 'blocked' as const, cause: { by: 'prompt', reason: 'blocked' } };
+        await this.materializeDaemonRefs(promptMessage);
+        pending.message = {
+          ...pending.entry,
+          content: [
+            ...ctx.hookParts,
+            ...gateImageFormatParts(promptMessage.content, this.getModelProviderType()),
+          ],
+        };
+        return undefined;
+      } catch (error) {
+        if (signal.aborted) return { type: 'blocked' as const, cause: { by: 'prompt', reason: 'aborted', message: toErrorMessage(error) } };
+        return { type: 'blocked' as const, cause: { by: 'prompt', reason: 'gate_failed', message: toErrorMessage(error) } };
+      }
+    } finally {
+      if (this.startingPromptId === promptId) this.startingPromptId = undefined;
+      this.signalQueueChange();
     }
   }
 
@@ -1177,6 +1320,21 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (target?.promptId !== undefined) {
       if (this.prompts.activePrompt()?.id === target.promptId) return this.cancelActiveTurn(undefined, cancellation);
       const handle = this.promptHandle(target.promptId);
+      if (handle === undefined && this.snapshot().queue.some((entry) =>
+        entry.attributes?.promptId === target.promptId && entry.attributes?.queueItem?.kind === 'compact'
+      )) {
+        for (let index = this.pendingSubmissions.length - 1; index >= 0; index -= 1) {
+          if (this.pendingSubmissions[index]!.attributes?.promptId === target.promptId) this.pendingSubmissions.splice(index, 1);
+        }
+        this.loop?.cancel(target.promptId);
+        this.signalQueueChange();
+        this.maybeSettle();
+        return true;
+      }
+      if (handle === undefined && target.promptId === this.startingPromptId && this.queuedCompaction !== undefined) {
+        this.queuedCompaction.abort(cancellation);
+        return true;
+      }
       if (
         handle === undefined ||
         handle.state === 'completed' ||
@@ -1193,6 +1351,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       this.prompts.cancel(target.promptId);
       return true;
     }
+    if (target?.turnId === undefined) this.queuedCompaction?.abort(cancellation);
     return this.cancelActiveTurn(target?.turnId, cancellation);
   }
 

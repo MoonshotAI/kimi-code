@@ -3,10 +3,12 @@ import {
   Error2,
   ErrorCodes,
   IAgentLifecycleService,
+  ISessionIndex,
   ISessionManager,
   ISessionStateService,
   MAIN_AGENT_ID,
   agentContextOf,
+  getLiveSessionById,
   getOrRestoreAgent,
   resumeSessionById,
   sessionMetadataDataKey,
@@ -73,6 +75,26 @@ export class ConversationService implements IDisposable {
     const handle = await getOrRestoreAgent(session, MAIN_AGENT_ID);
     if (handle === undefined) return undefined;
     return (await this.attach(sessionId, this.watch(sessionId, session), handle).ready).turns();
+  }
+
+  async interruptTurn(sessionId: string, turnId: string): Promise<boolean> {
+    const live = getLiveSessionById(this.core.accessor, sessionId);
+    if (live === undefined) {
+      const exists = (await this.core.accessor.get(ISessionIndex).get(sessionId)) !== undefined;
+      if (!exists) {
+        throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session not found: ${sessionId}`);
+      }
+      return false;
+    }
+    const entry = this.watch(sessionId, live);
+    const agents = live.accessor.get(IAgentLifecycleService);
+    for (const agent of agents.list()) {
+      const handle = agents.handleOf(agent.agentId);
+      if (handle === undefined) continue;
+      const feed = await this.attach(sessionId, entry, handle).ready;
+      if (await feed.interrupt(turnId)) return true;
+    }
+    return false;
   }
 
   onDidCreateFeed(listener: (created: ConversationFeedCreated) => void): IDisposable {

@@ -268,6 +268,7 @@ class FakeLoopService extends StubEffectiveProfileReader implements IAgentLoopSe
     onWillBeginStep: new OrderedHookSlot<BeforeStepContext>(),
     onDidFinishStep: new OrderedHookSlot<AfterStepContext>(),
     onBeforeSubmitPrompt: new OrderedHookSlot<PromptSubmitContext>(),
+    onRunQueuedCompaction: new OrderedHookSlot(),
   };
 
   submit(): never {
@@ -276,6 +277,18 @@ class FakeLoopService extends StubEffectiveProfileReader implements IAgentLoopSe
 
   steer(): never {
     throw new Error('unused in this suite');
+  }
+
+  moveQueued(): void {}
+
+  pauseQueue(): void {}
+
+  resumeQueue(): void {}
+
+  readonly onDidChangeQueue = () => toDisposable(() => {});
+
+  enqueueCompaction(): string {
+    return 'compact';
   }
 
   cancel(): never {
@@ -296,6 +309,8 @@ class FakeLoopService extends StubEffectiveProfileReader implements IAgentLoopSe
       activeTurnId: undefined,
       activePromptId: undefined,
       queue: [],
+      engineAttached: true,
+      queuePaused: false,
       notificationCount: 0,
       paused: false,
       hasPendingRequests: false,

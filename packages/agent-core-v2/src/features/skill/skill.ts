@@ -1,5 +1,6 @@
 import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import type { PromptFileAttachment } from '#/agent/contextMemory/types';
+import type { LoopSubmitOptions } from '#/agent/loop/loop';
 
 export interface SkillActivationInput {
   readonly name: string;
@@ -24,6 +25,8 @@ export interface PromptWithSkillsInput {
   readonly skills: readonly PromptSkillActivation[];
   readonly attachments?: readonly PromptFileAttachment[];
   readonly steerIfActive?: boolean;
+  readonly delivery?: LoopSubmitOptions['delivery'];
+  readonly onStart?: LoopSubmitOptions['onStart'];
 }
 
 export interface PromptWithSkillsResult {

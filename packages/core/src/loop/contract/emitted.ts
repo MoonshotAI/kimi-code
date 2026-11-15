@@ -6,7 +6,7 @@ import type { ContentPart, Message, ToolCall, ToolDescription, UserMessage } fro
 import type { LlmRunEvent, LlmTiming } from '#/llm/response';
 import type { ToolHookPoint, ToolUpdate } from '#/tool/executor';
 import type { HookLifecycleEvent, HookPoint } from './hook';
-import type { MessageSource, RemindMessage, TurnTrigger } from './inbox';
+import type { MessageSource, QueuedItem, RemindMessage, TurnTrigger } from './inbox';
 import type { AsyncToolOutcome, Cause, StepOutcome, ToolCallOutcome, TurnOutcome } from './outcome';
 
 export interface ToolStartDisplay {
@@ -62,7 +62,8 @@ export type LoopEmitted =
   | { type: 'prompt.reminded'; message: RemindMessage }
   | { type: 'prompt.steered'; promptIds: string[]; messages?: readonly UserMessage[] }
   | { type: 'prompt.canceled'; promptId: string; canceled: boolean }
-  | { type: 'turn.started'; turnId: number; trigger: TurnTrigger; promptOnly?: true; message?: UserMessage }
+  | { type: 'queue.changed'; normal: readonly UserMessage[]; notify: readonly UserMessage[]; paused: boolean }
+  | { type: 'turn.started'; turnId: number; trigger: TurnTrigger; promptOnly?: true; message?: UserMessage; consumed?: readonly QueuedItem[] }
   | { type: 'turn.resumed'; turnId: number; step: number }
   | {
       type: 'message.appended';

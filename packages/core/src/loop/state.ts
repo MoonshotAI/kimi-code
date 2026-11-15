@@ -37,6 +37,7 @@ export interface LoopState {
   readonly held: boolean;
   readonly resetting: boolean;
   readonly inbox: Readonly<Inbox>;
+  readonly queuePaused: boolean;
   readonly profile: LoopProfile;
   readonly messages: readonly Message[];
   readonly nextTurnId: number;
@@ -399,6 +400,7 @@ export function viewOf({ phase, held, inbox, durable, turn, tools }: AgentState)
     held,
     resetting: false,
     inbox,
+    queuePaused: false,
     profile,
     messages,
     nextTurnId,

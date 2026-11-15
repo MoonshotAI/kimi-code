@@ -1,0 +1,361 @@
+/**
+ * KAP interactive protocol blocks (.kap-wire), HTTP method/endpoint pills (.kap-ep),
+ * walkthrough steps (.kap-walk), and compact error badges.
+ * Adapts to VitePress light and .dark themes.
+ */
+
+:root {
+  --kap-code-bg: #f4f7fb;
+  --kap-badge-bg: #e8eef6;
+  --kap-line: #dfe5ee;
+  --kap-field: #1e293b;
+  --kap-str: #9a4a06;
+  --kap-num: #0c5bb5;
+  --kap-prim: #0f766e;
+  --kap-punct: #64748b;
+  --kap-tparam: #0e7490;
+  --kap-act: #0284c7;
+  --kap-focus-bg: rgba(245, 158, 11, 0.18);
+  --kap-get: #0f766e;
+  --kap-get-bg: #dcfce7;
+  --kap-post: #0a68d4;
+  --kap-post-bg: #dbeafe;
+  --kap-put: #7e22ce;
+  --kap-put-bg: #f3e8ff;
+  --kap-delete: #b91c1c;
+  --kap-delete-bg: #fee2e2;
+  --kap-patch: #b45309;
+  --kap-patch-bg: #fef3c7;
+}
+
+.dark {
+  --kap-code-bg: #0f1b2e;
+  --kap-badge-bg: #1b2e47;
+  --kap-line: #1e3350;
+  --kap-field: #cbd5e1;
+  --kap-str: #f59e0b;
+  --kap-num: #60a5fa;
+  --kap-prim: #34d399;
+  --kap-punct: #64748b;
+  --kap-tparam: #22d3ee;
+  --kap-act: #38bdf8;
+  --kap-focus-bg: rgba(245, 158, 11, 0.22);
+  --kap-get: #34d399;
+  --kap-get-bg: rgba(16, 185, 129, 0.16);
+  --kap-post: #60a5fa;
+  --kap-post-bg: rgba(59, 130, 246, 0.18);
+  --kap-put: #c084fc;
+  --kap-put-bg: rgba(168, 85, 247, 0.18);
+  --kap-delete: #f87171;
+  --kap-delete-bg: rgba(239, 68, 68, 0.18);
+  --kap-patch: #fbbf24;
+  --kap-patch-bg: rgba(245, 158, 11, 0.18);
+}
+
+/* --- Endpoint inline pills (`GET /api/v1/...`) --- */
+.vp-doc code.kap-ep {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 2px 8px 2px 5px;
+  border-radius: 6px;
+  background: var(--kap-code-bg);
+  border: 1px solid var(--kap-line);
+  color: var(--vp-c-text-1);
+  font-family: var(--vp-font-family-mono);
+  font-size: 0.85em;
+  font-weight: 600;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.vp-doc :is(h2, h3, h4) code.kap-ep {
+  padding: 3px 10px 3px 6px;
+  background: var(--kap-code-bg);
+  border: 1px solid var(--kap-line);
+  border-radius: 8px;
+  font-size: 0.88em;
+}
+
+.vp-doc code.kap-ep .vb {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-family: var(--vp-font-family-base);
+  font-size: 0.78em;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1.5;
+}
+
+.vp-doc code.kap-ep .vb-get { background: var(--kap-get-bg); color: var(--kap-get); }
+.vp-doc code.kap-ep .vb-post { background: var(--kap-post-bg); color: var(--kap-post); }
+.vp-doc code.kap-ep .vb-put { background: var(--kap-put-bg); color: var(--kap-put); }
+.vp-doc code.kap-ep .vb-delete { background: var(--kap-delete-bg); color: var(--kap-delete); }
+.vp-doc code.kap-ep .vb-patch { background: var(--kap-patch-bg); color: var(--kap-patch); }
+
+.vp-doc code.kap-ep .ep-path {
+  color: var(--vp-c-text-1);
+  font-weight: 600;
+}
+
+.vp-doc .tp {
+  color: var(--kap-tparam);
+  font-weight: 500;
+}
+
+.vp-doc .act {
+  color: var(--kap-act);
+  font-weight: 600;
+}
+
+/* --- Walkthrough step rail (.kap-walk) --- */
+.vp-doc ol.kap-walk {
+  margin: 18px 0 12px;
+  padding: 0;
+  list-style: none;
+  counter-reset: kap-walk;
+}
+
+.vp-doc ol.kap-walk > li {
+  position: relative;
+  margin: 0;
+  padding: 0 0 22px 40px;
+  counter-increment: kap-walk;
+}
+
+.vp-doc ol.kap-walk > li::before {
+  content: counter(kap-walk);
+  position: absolute;
+  left: 0;
+  top: 2px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--kimi-brand-soft-strong);
+  color: var(--vp-c-brand-1);
+  font: 700 13px/26px var(--vp-font-family-base);
+  text-align: center;
+}
+
+.vp-doc ol.kap-walk > li::after {
+  content: '';
+  position: absolute;
+  left: 12.5px;
+  top: 34px;
+  bottom: 6px;
+  width: 1px;
+  background: var(--kap-line);
+}
+
+.vp-doc ol.kap-walk > li:last-child::after {
+  display: none;
+}
+
+.vp-doc ol.kap-walk > li > strong:first-child {
+  display: block;
+  margin: 2px 0 6px;
+  color: var(--vp-c-text-1);
+  font-size: 15px;
+  font-weight: 650;
+}
+
+/* --- Interactive Wire sequence block (.kap-wire) --- */
+.vp-doc .kap-wire {
+  position: relative;
+  margin: 12px 0 16px;
+  padding: 8px 0;
+  border-radius: var(--kimi-radius-code);
+  border: 1px solid var(--kap-line);
+  background: var(--kap-code-bg);
+  font: 400 13px/1.68 var(--vp-font-family-mono);
+  box-shadow: var(--vp-shadow-1);
+}
+
+.vp-doc .kap-wire .fr {
+  display: grid;
+  grid-template-columns: 4.8em minmax(0, 1fr);
+  gap: 10px;
+  padding: 4px 16px 4px 12px;
+}
+
+.vp-doc .kap-wire .fr + .fr {
+  border-top: 1px dashed var(--kap-line);
+}
+
+.vp-doc .kap-wire .fr .who {
+  align-self: start;
+  margin-top: 2px;
+  padding: 0 6px;
+  border-radius: 4px;
+  font: 600 11px/1.75 var(--vp-font-family-base);
+  text-align: center;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.vp-doc .kap-wire .fr-c .who { background: var(--kap-post-bg); color: var(--kap-post); }
+.vp-doc .kap-wire .fr-s .who { background: var(--kap-get-bg); color: var(--kap-get); }
+.vp-doc .kap-wire .fr-h .who,
+.vp-doc .kap-wire .fr-r .who { background: var(--kap-put-bg); color: var(--kap-put); }
+
+.vp-doc .kap-wire .fr code {
+  padding: 0;
+  background: none;
+  border-radius: 0;
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--kap-field);
+}
+
+.vp-doc .kap-wire .fr code .ln {
+  display: block;
+  padding-left: calc(var(--i) + 4ch);
+  text-indent: -4ch;
+}
+
+.vp-doc .kap-wire .fr-gap .wire-note,
+.vp-doc .kap-wire .fr .wire-note {
+  color: var(--vp-c-text-2);
+  font-family: var(--vp-font-family-base);
+  font-size: 12.5px;
+}
+
+.vp-doc .kap-wire .verb {
+  font-weight: 700;
+}
+.vp-doc .kap-wire .verb.get { color: var(--kap-get); }
+.vp-doc .kap-wire .verb.post { color: var(--kap-post); }
+.vp-doc .kap-wire .verb.put { color: var(--kap-put); }
+.vp-doc .kap-wire .verb.delete { color: var(--kap-delete); }
+.vp-doc .kap-wire .verb.patch { color: var(--kap-patch); }
+.vp-doc .kap-wire .wpath { color: var(--vp-c-text-1); font-weight: 600; }
+
+/* Syntax token colors inside .kap-wire */
+.vp-doc .kap-wire .f { color: var(--kap-field); }
+.vp-doc .kap-wire .s { color: var(--kap-str); }
+.vp-doc .kap-wire .n { color: var(--kap-num); }
+.vp-doc .kap-wire .pr { color: var(--kap-prim); }
+.vp-doc .kap-wire .p { color: var(--kap-punct); }
+.vp-doc .kap-wire .wt { color: var(--vp-c-text-1); font-weight: 700; }
+.vp-doc .kap-wire .route-f,
+.vp-doc .kap-wire .route-f .f,
+.vp-doc .kap-wire .route-f .s {
+  color: var(--vp-c-text-3);
+}
+
+/* Folded / expanded JSON nodes inside .kap-wire */
+.vp-doc .kap-wire .fr code.jv {
+  display: block;
+  padding-left: 2ch;
+  text-indent: -2ch;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.vp-doc .kap-wire .fr code.jv .jl,
+.vp-doc .kap-wire .fr code.jv .jb {
+  display: block;
+  padding-left: 2ch;
+  text-indent: 0;
+}
+
+.vp-doc .kap-wire .fr code.jv .jb {
+  padding-left: 0;
+}
+
+.vp-doc .kap-wire .jn > .jx { display: none; }
+.vp-doc .kap-wire .jn.open > .jx { display: inline; }
+.vp-doc .kap-wire .jn.open > .jp,
+.vp-doc .kap-wire .jn.open > .jq { display: none; }
+
+.vp-doc .kap-wire .jp {
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--kap-badge-bg);
+  cursor: pointer;
+}
+
+.vp-doc .kap-wire .jp:hover,
+.vp-doc .kap-wire .jp:focus-visible,
+.vp-doc .kap-wire .jt:hover,
+.vp-doc .kap-wire .jt:focus-visible {
+  background: var(--kimi-brand-soft-strong);
+  outline: none;
+}
+
+.vp-doc .kap-wire .jp .pk {
+  color: var(--vp-c-text-2);
+}
+
+.vp-doc .kap-wire .jt {
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.vp-doc .kap-wire .je {
+  display: inline-block;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--kap-badge-bg);
+  color: var(--vp-c-text-2);
+  line-height: 1.35;
+  text-indent: 0;
+  cursor: pointer;
+}
+
+.vp-doc .kap-wire .je:hover,
+.vp-doc .kap-wire .je:focus-visible {
+  background: var(--kimi-brand-soft-strong);
+  color: var(--vp-c-brand-1);
+  outline: none;
+}
+
+.vp-doc .kap-wire .fx {
+  border-radius: 3px;
+  background: var(--kap-focus-bg);
+  box-shadow: 0 0 0 2px var(--kap-focus-bg);
+}
+
+.vp-doc .kap-wire .fr code.jv:has(> .jr.open) {
+  padding-left: 0;
+  text-indent: 0;
+}
+
+/* Toolbar buttons (Expand all / Copy) */
+.vp-doc .kap-wire .wire-tools {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  display: flex;
+  gap: 6px;
+  opacity: 0;
+  transition: opacity 0.14s ease;
+}
+
+.vp-doc .kap-wire:hover .wire-tools,
+.vp-doc .kap-wire .wire-tools:focus-within {
+  opacity: 1;
+}
+
+.vp-doc .kap-wire .wire-tools button {
+  padding: 2px 9px;
+  border: 1px solid var(--kap-line);
+  border-radius: 6px;
+  background: var(--vp-c-bg);
+  color: var(--vp-c-text-2);
+  font: 500 11.5px/1.6 var(--vp-font-family-base);
+  cursor: pointer;
+}
+
+.vp-doc .kap-wire .wire-tools button:hover {
+  color: var(--vp-c-text-1);
+  border-color: var(--vp-c-brand-1);
+}
+
+@media (hover: none) {
+  .vp-doc .kap-wire .wire-tools {
+    opacity: 1;
+  }
+}

@@ -7,6 +7,7 @@ import { registerLegacyStarting } from '#/agent/toolExecutor/legacyHooks';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 
 import {
   BTW_AGENT_LABEL,
@@ -21,6 +22,7 @@ export class SessionBtwService extends Disposable implements ISessionBtwService 
 
   constructor(
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
+    @ISessionMetadata private readonly sessionMetadata: ISessionMetadata,
   ) {
     super();
     this._register(
@@ -56,5 +58,30 @@ export class SessionBtwService extends Disposable implements ISessionBtwService 
       .get(IAgentReminderService)
       .notify(SIDE_QUESTION_SYSTEM_REMINDER, { variant: 'btw' });
     return childContext.agentId;
+  }
+
+  async close(agentId: string): Promise<void> {
+    if (agentId === MAIN_AGENT_ID) {
+      throw new Error2(
+        ErrorCodes.AGENT_NOT_CLOSABLE,
+        `Agent "${agentId}" is not a side-channel agent and cannot be closed`,
+      );
+    }
+    const persisted = (await this.sessionMetadata.read()).agents?.[agentId];
+    const live = this.agentLifecycle.get(agentId);
+    if (persisted === undefined && live === undefined) {
+      throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `Agent "${agentId}" was not found`);
+    }
+    const isBtw = persisted?.labels?.[BTW_AGENT_LABEL] === 'true';
+    if (!isBtw) {
+      throw new Error2(
+        ErrorCodes.AGENT_NOT_CLOSABLE,
+        `Agent "${agentId}" is not a side-channel agent and cannot be closed`,
+      );
+    }
+    if (live !== undefined) {
+      await this.agentLifecycle.remove(live);
+    }
+    await this.sessionMetadata.unregisterAgent(agentId);
   }
 }

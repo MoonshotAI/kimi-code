@@ -178,6 +178,8 @@ export interface UserMessageAttributes extends MessageAttributes {
   origin?: PromptOrigin;
   createdAt?: string;
   userMessageId?: string;
+  delivery?: 'steer';
+  queueItem?: { kind: 'compact'; instruction?: string };
   toolCallId?: string;
   bypassMaxSteps?: boolean;
 }

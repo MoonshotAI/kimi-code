@@ -73,7 +73,7 @@ export const pongMessageSchema = z.object({
   type: z.literal('pong'),
 });
 
-export const sessionEventMessageSchema = wsEventEnvelopeSchema(pushEventSchema);
+export const sessionEventMessageSchema = pushEventSchema;
 
 export type WsOperationDirection = 'client_to_server' | 'server_to_client';
 
@@ -168,7 +168,7 @@ export const sessionEventOperation = {
   kind: 'event',
   messageSchema: sessionEventMessageSchema,
   description:
-    'Global push event envelope sent to every connection; frame type is the payload event type.',
+    'Flat global event sent to every connection with event_created_at and its full state.',
 } as const satisfies WsOperationDefinition;
 
 export const interactionEventOperation = {

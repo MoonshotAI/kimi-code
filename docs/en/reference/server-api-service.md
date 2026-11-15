@@ -26,6 +26,7 @@ Returns this instance's identity and capability map. Most fields are frozen at b
 
 | Field | Type | Description |
 | --- | --- | --- |
+| `kimi_agent_protocol_version` | string | Kimi Agent Protocol version (currently `"0.1.0"`) |
 | `server_version` | string | Server version |
 | `capabilities` | object | Capability map: `websocket`, `file_upload`, `fs_query`, `mcp`, `tasks`, all always `true` |
 | `server_id` | string | Unique id of this server instance |
@@ -299,7 +300,7 @@ These endpoints read and write the global configuration (`config.toml`) and read
 | Method and path | Description |
 | --- | --- |
 | `GET /api/v1/config` | Read the global config (secret fields redacted) |
-| `POST /api/v1/config` | Merge-patch the config and broadcast `event.config.changed` |
+| `POST /api/v1/config` | Merge-patch the config and broadcast `config` |
 | `POST /api/v1/client_configs` | Read a named client configuration controlled remotely by the Kimi Code service |
 
 ### `GET /api/v1/config`
@@ -345,7 +346,7 @@ The request body is a partial config object: it may contain any top-level domain
 
 On success, `data` is the full updated config, in the same shape as `GET /api/v1/config`.
 
-Every config change broadcasts the global event `event.config.changed` (see [Global events](./server-api-conversation.md#global-events)). This covers a successful update through this endpoint, an edit of `config.toml` outside the process, and server-side writes such as an OAuth login refresh. Changes within a short window are merged into one event: `changedFields` carries the affected domain names (camelCase config domains, for example `defaultModel`), and `config` carries the full current config projection (same shape as the `GET /api/v1/config` response).
+Every config change broadcasts the global event `config` (see [Global events](./server-api-conversation.md#global-events)). This covers a successful update through this endpoint, an edit of `config.toml` outside the process, and server-side writes such as an OAuth login refresh. Changes within a short window are merged. The frame carries the full current config projection (same shape as the `GET /api/v1/config` response), with any warnings from config loading in the optional `warnings` field.
 
 - `40001`: the patch was rejected (invalid value or persistence failure); the response carries the underlying error message
 
@@ -520,7 +521,7 @@ On success, the server returns HTTP 204 with no body; the status code itself rep
 
 Re-discovers one provider's model metadata from its upstream source and rewrites the provider's aliases. A provider with a static model source makes no network request and is reported as `unchanged` directly.
 
-This endpoint and the collection-level `:refresh` and `:refresh_oauth` follow the same broadcast rule. When the refresh report's `changed` is non-empty (at least one provider's aliases or managed model metadata changed), the server broadcasts the global event `event.model_catalog.changed` (see [Global events](./server-api-conversation.md#global-events)), with the same content as the refresh report.
+This endpoint and the collection-level `:refresh` and `:refresh_oauth` follow the same broadcast rule. When the refresh report's `changed` is non-empty (at least one provider's aliases or managed model metadata changed), the server broadcasts the global event `invalidated` with `kind: "models"` (see [Global events](./server-api-conversation.md#global-events)); clients then refetch `GET /api/v1/models`.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -535,7 +536,7 @@ On success, `data` is a refresh report:
 | `failed` | array | Providers whose refresh failed, each `{ provider, reason }` |
 | `retired_default` | object | Optional. Present when the refresh finds that the registry dropped the current default model and that model had declared an `upgrade` replacement: `{ from, to, from_display_name }` |
 
-When `retired_default` is present, the default model has been redirected to `to`, and open sessions still bound to `from` have also been switched to `to`. `from_display_name` is the dropped model's display name, for use in notices. The same field also appears in the `event.model_catalog.changed` event.
+When `retired_default` is present, the default model has been redirected to `to`, and open sessions still bound to `from` have also been switched to `to`. `from_display_name` is the dropped model's display name, for use in notices.
 
 - `40001`: malformed or unsupported action suffix in the path
 - `40412`: provider not found
@@ -634,14 +635,13 @@ On success, `data` is the directory entry, in the same shape as a `GET /api/v1/c
 
 ## Skills, tools, and MCP
 
-These endpoints show the skill catalog a workspace sees, the tool list and MCP servers of the effective agent, and restart MCP servers. For the per-session skill catalog and skill activation (the REST equivalent of the `/<skill>` slash command), see [Session skills](./server-api-sessions.md#session-skills).
+These endpoints show the skill catalog a workspace sees and the tool list of the effective agent. For MCP server registry CRUD, connection probes, and OAuth, see [MCP management](#mcp-management). For the per-session skill catalog and skill activation (the REST equivalent of the `/<skill>` slash command), see [Session skills](./server-api-sessions.md#session-skills).
 
 | Method and path | Description |
 | --- | --- |
 | `GET /api/v1/workspaces/{workspace_id}/skills` | Session-less skill catalog for a workspace |
 | `GET /api/v1/tools` | List tools of the effective agent |
-| `GET /api/v1/mcp/servers` | List MCP servers |
-| `POST /api/v1/mcp/servers/{mcp_server_id}:restart` | Restart an MCP server |
+| `/api/v1/mcp/*` | MCP server registry CRUD, connection probes, and OAuth; see [MCP management](#mcp-management) |
 
 ### `GET /api/v1/workspaces/{workspace_id}/skills`
 
@@ -687,35 +687,6 @@ On success, `data` is `{ tools }`, each item with these fields:
 | `source` | string | `builtin` / `skill` / `mcp` |
 | `mcp_server_id` | string | Present only on MCP tools, parsed from the `mcp__<server>__<tool>` tool name |
 | `active` | boolean | Optional. The tool policy's verdict |
-
-### `GET /api/v1/mcp/servers`
-
-Lists the MCP servers configured for the effective agent. The effective agent is picked the same way as [`GET /api/v1/tools`](#get-api-v1-tools) with `session_id` omitted: the main agent of the most recently created session. When that session is not live in this server process, the list is empty; there is no fallback to an older live session.
-
-On success, `data` is `{ servers }`, each item with these fields:
-
-| Field | Type | Description |
-| --- | --- | --- |
-| `id` | string | MCP server id |
-| `name` | string | MCP server name |
-| `transport` | string | `stdio` / `http` / `sse` |
-| `status` | string | `connected` / `connecting` / `disconnected` / `error`. Disabled or removed servers report `disconnected`; servers whose connection failed or that need OAuth authorization report `error` |
-| `last_error` | string | Optional. Message of the most recent failure |
-| `tool_count` | integer | Number of tools the server provides |
-| `next_retry_at` | number | Optional. Present while the server waits for an automatic reconnect: the time of the next reconnect (epoch milliseconds) |
-
-### `POST /api/v1/mcp/servers/{mcp_server_id}:restart`
-
-Reconnects one MCP server of the effective agent. The server dispatches through the route `POST /api/v1/mcp/servers/{tail}`, and `restart` is the only action. A bare server id or an unknown action returns `40001`.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `mcp_server_id` | path | string | Required. MCP server id, which is its configured name |
-
-On success, `data` is `{ restarting: true }`.
-
-- `40001`: missing or unknown action suffix
-- `40408`: no MCP server with that id (also returned when no session is live)
 
 ## Capabilities and plugins
 
@@ -1001,7 +972,7 @@ These endpoints manage the workspace registry and read and write each workspace'
 
 ### Workspace object
 
-When a workspace is registered or updated, the server broadcasts the [global events](./server-api-conversation.md#global-events) `event.workspace.created` / `event.workspace.updated`.
+When a workspace is registered or updated, the server broadcasts the [global event](./server-api-conversation.md#global-events) `workspace` with `change: "created"` or `"updated"` and the full workspace object.
 
 | Field | Type | Description |
 | --- | --- | --- |
@@ -1250,17 +1221,12 @@ On success, `data` is `null`.
 
 ## Global search and other endpoints
 
-Cross-session full-text search, the list of live WebSocket connections, and entry points to other endpoints.
+Cross-session full-text search and live WebSocket connection inspection.
 
 | Method and path | Description |
 | --- | --- |
 | `POST /api/v1/search` | Cross-session full-text search; `mode` is `terms` (default) or `literal` (exact substring); paginated with `page_token` |
 | `GET /api/v1/connections` | List live WebSocket connections |
-| `GET /api/v2/sessions` | Next-generation session list; see [`GET /api/v2/sessions`](./server-api-sessions.md#get-api-v2-sessions) |
-| `POST /api/v2/sessions:archive` | Batch-archive sessions; see [`POST /api/v2/sessions:archive`](./server-api-sessions.md#post-api-v2-sessions-archive) |
-| `POST /api/v2/sessions:restore` | Batch-restore archived sessions; see [`POST /api/v2/sessions:restore`](./server-api-sessions.md#post-api-v2-sessions-restore) |
-| `/api/v2/mcp/*` | Unified MCP management plane; see [MCP management](#mcp-management) |
-| `/api/v1/debug/*` | Reflection debug RPC; mounted only with `--debug-endpoints` on loopback, not part of the stable protocol |
 
 ### `POST /api/v1/search`
 
@@ -1333,22 +1299,22 @@ On success, `data` is `{ connections }`, each item with these fields:
 
 ## MCP management
 
-`/api/v2/mcp/*` is the server's unified MCP management plane. It is independent of any session and manages the MCP server registry itself. It covers CRUD on user-level config (each entry is validated before it is written), connection tests, a locator-addressed inspection catalog, per-server auth status, and the full OAuth flow.
+`/api/v1/mcp/*` is the server's unified MCP management plane. It is independent of any session and manages the MCP server registry itself. It covers CRUD on user-level config (each entry is validated before it is written), connection tests, a locator-addressed inspection catalog, per-server auth status, and the full OAuth flow.
 
 | Method and path | Description |
 | --- | --- |
-| `GET /api/v2/mcp/servers` | List every known MCP server |
-| `GET /api/v2/mcp/servers/{name}` | Get one MCP server by runtime name |
-| `POST /api/v2/mcp/servers` | Add an MCP server to the user-level `mcp.json` |
-| `PUT /api/v2/mcp/servers/{name}` | Replace a user-level entry |
-| `DELETE /api/v2/mcp/servers/{name}` | Delete a user-level entry |
-| `POST /api/v2/mcp/servers:test` | Probe a real connection to one MCP server |
-| `POST /api/v2/mcp/servers:inspect` | Locator-addressed catalog with batched connection probes |
-| `GET /api/v2/mcp/auth-statuses` | OAuth state of each MCP server in the catalog |
-| `POST /api/v2/mcp/auth:begin` | Begin an interactive OAuth flow |
-| `POST /api/v2/mcp/auth:complete` | Wait for the browser callback and finish the code exchange |
-| `POST /api/v2/mcp/auth:cancel` | Terminate a begun OAuth flow |
-| `POST /api/v2/mcp/auth:reset` | Clear an MCP server's stored credentials |
+| `GET /api/v1/mcp/servers` | List every known MCP server |
+| `GET /api/v1/mcp/servers/{name}` | Get one MCP server by runtime name |
+| `POST /api/v1/mcp/servers` | Add an MCP server to the user-level `mcp.json` |
+| `PUT /api/v1/mcp/servers/{name}` | Replace a user-level entry |
+| `DELETE /api/v1/mcp/servers/{name}` | Delete a user-level entry |
+| `POST /api/v1/mcp/servers:test` | Probe a real connection to one MCP server |
+| `POST /api/v1/mcp/servers:inspect` | Locator-addressed catalog with batched connection probes |
+| `GET /api/v1/mcp/auth-statuses` | OAuth state of each MCP server in the catalog |
+| `POST /api/v1/mcp/auth:begin` | Begin an interactive OAuth flow |
+| `POST /api/v1/mcp/auth:complete` | Wait for the browser callback and finish the code exchange |
+| `POST /api/v1/mcp/auth:cancel` | Terminate a begun OAuth flow |
+| `POST /api/v1/mcp/auth:reset` | Clear an MCP server's stored credentials |
 
 The management plane uses two addressing schemes:
 
@@ -1361,7 +1327,7 @@ Every endpoint except `auth:complete` and `auth:cancel` accepts an optional `cwd
 
 Connection probes and OAuth calls wait until the server configuration has finished loading.
 
-### `GET /api/v2/mcp/servers`
+### `GET /api/v1/mcp/servers`
 
 Lists every MCP server the management plane knows about.
 
@@ -1382,7 +1348,7 @@ On success, `data` is an array of managed MCP servers, each with these fields:
 
 - `40001`: validation failure
 
-### `GET /api/v2/mcp/servers/{name}`
+### `GET /api/v1/mcp/servers/{name}`
 
 Gets one MCP server by runtime name.
 
@@ -1391,12 +1357,12 @@ Gets one MCP server by runtime name.
 | `name` | path | string | Required. Runtime name of the MCP server |
 | `cwd` | query | string | Include the project layers of this directory (must be trusted) |
 
-On success, `data` is a single managed MCP server, with the same fields as [`GET /api/v2/mcp/servers`](#get-api-v2-mcp-servers).
+On success, `data` is a single managed MCP server, with the same fields as [`GET /api/v1/mcp/servers`](#get-api-v1-mcp-servers).
 
 - `40001`: validation failure
 - `40408`: no MCP server with that name
 
-### `POST /api/v2/mcp/servers`
+### `POST /api/v1/mcp/servers`
 
 Adds an MCP server to the user-level `mcp.json`. The request body is a full server config including `name`. `transport` (`stdio` / `http` / `sse`) determines the config shape, and the config is validated before it is written.
 
@@ -1406,13 +1372,13 @@ A write that collides with a same-named project-layer entry is rejected because 
 | --- | --- | --- | --- |
 | `cwd` | query | string | Include the project layers of this directory (must be trusted); the returned list also includes project layers |
 
-On success, `data` is the refreshed MCP server list, with the same fields as [`GET /api/v2/mcp/servers`](#get-api-v2-mcp-servers).
+On success, `data` is the refreshed MCP server list, with the same fields as [`GET /api/v1/mcp/servers`](#get-api-v1-mcp-servers).
 
 - `40001`: validation failure, or the target entry is read-only
 
-### `PUT /api/v2/mcp/servers/{name}`
+### `PUT /api/v1/mcp/servers/{name}`
 
-Replaces a user-level entry. The request body is the same config as in [`POST /api/v2/mcp/servers`](#post-api-v2-mcp-servers), but without `name`, because the path names the entry. Collisions with same-named entries follow the same rules.
+Replaces a user-level entry. The request body is the same config as in [`POST /api/v1/mcp/servers`](#post-api-v1-mcp-servers), but without `name`, because the path names the entry. Collisions with same-named entries follow the same rules.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -1424,7 +1390,7 @@ On success, `data` is the refreshed MCP server list.
 - `40001`: validation failure, or the target entry is read-only
 - `40408`: no MCP server with that name
 
-### `DELETE /api/v2/mcp/servers/{name}`
+### `DELETE /api/v1/mcp/servers/{name}`
 
 Deletes a user-level entry. No request body.
 
@@ -1438,7 +1404,7 @@ On success, `data` is the refreshed MCP server list.
 - `40001`: validation failure, or the target entry is read-only
 - `40408`: no MCP server with that name
 
-### `POST /api/v2/mcp/servers:test`
+### `POST /api/v1/mcp/servers:test`
 
 Probes a real connection to one MCP server and persists nothing. Pass `name` to probe a registry entry (plugin and trusted project layers included), or pass `server` to probe an inline config as-is. Exactly one of the two must be passed.
 
@@ -1453,7 +1419,7 @@ On success, `data` is `{ success, output }`: when the connection succeeds, `outp
 - `40001`: both or neither target form passed, the inline config is invalid, or the runtime name is shared by multiple enabled MCP servers
 - `40408`: no MCP server with that name
 
-### `POST /api/v2/mcp/servers:inspect`
+### `POST /api/v1/mcp/servers:inspect`
 
 Returns the locator-addressed catalog (with redacted configs) and runs a batched real-connection probe of every OAuth candidate. A probe that hits an expired grant may refresh or invalidate the stored credentials.
 
@@ -1470,7 +1436,7 @@ On success, `data` is an array of inspection results, each with these fields:
 | `locator` | object | The entry's locator |
 | `runtimeName` | string | Runtime name |
 | `canonicalUrl` | string | Optional. Credential URL of a remote server |
-| `origin` | string | Entry source, with the same values as `source` in [`GET /api/v2/mcp/servers`](#get-api-v2-mcp-servers) |
+| `origin` | string | Entry source, with the same values as `source` in [`GET /api/v1/mcp/servers`](#get-api-v1-mcp-servers) |
 | `config` | object | Redacted config |
 | `enabled` | boolean | Whether the entry is enabled |
 | `editable` | boolean | Whether the entry is editable |
@@ -1481,18 +1447,18 @@ On success, `data` is an array of inspection results, each with these fields:
 - `40001`: validation failure
 - `40408`: a locator in `targets` matches no entry
 
-### `GET /api/v2/mcp/auth-statuses`
+### `GET /api/v1/mcp/auth-statuses`
 
-Reads the OAuth state of each MCP server in the registry catalog. When only the auth dimension is needed, it is lighter than [`servers:inspect`](#post-api-v2-mcp-servers-inspect). Verification probes may refresh or invalidate stored credentials.
+Reads the OAuth state of each MCP server in the registry catalog. When only the auth dimension is needed, it is lighter than [`servers:inspect`](#post-api-v1-mcp-servers-inspect). Verification probes may refresh or invalidate stored credentials.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `cwd` | query | string | Include the project layers of this directory (must be trusted) |
 | `verify` | query | string | `true`: verify every OAuth candidate through a real connection. `false`: fully offline, classifying only from config and stored tokens. Omitted: keep implicit OAuth detection, probing only unpinned remote servers without stored credentials |
 
-On success, `data` is an array of `{ name, authStatus }`, with the same `authStatus` values as [`servers:inspect`](#post-api-v2-mcp-servers-inspect).
+On success, `data` is an array of `{ name, authStatus }`, with the same `authStatus` values as [`servers:inspect`](#post-api-v1-mcp-servers-inspect).
 
-### `POST /api/v2/mcp/auth:begin`
+### `POST /api/v1/mcp/auth:begin`
 
 Begins an interactive OAuth flow for a remote MCP server. The target must use a remote transport (`http` / `sse`) and must not carry a static bearer token; static headers are allowed only when the config explicitly sets `auth: "oauth"`.
 
@@ -1513,7 +1479,7 @@ On success, `data.status` is one of two values:
 - `40408`: the locator matches no entry
 - `40929`: the OAuth flow itself failed
 
-### `POST /api/v2/mcp/auth:complete`
+### `POST /api/v1/mcp/auth:complete`
 
 Waits for the browser callback of a begun flow and finishes the code exchange. The wait defaults to 15 minutes and can be overridden with `timeoutMs`; an idle flow expires after 15 minutes regardless. Closing the HTTP connection on the client side aborts the wait.
 
@@ -1527,7 +1493,7 @@ On success, `data` is `null`.
 - `40001`: validation failure, including an unknown `flowId` or an out-of-range `timeoutMs`
 - `40929`: the OAuth flow itself failed
 
-### `POST /api/v2/mcp/auth:cancel`
+### `POST /api/v1/mcp/auth:cancel`
 
 Terminates a begun flow without finishing it. Unknown flows are ignored.
 
@@ -1540,7 +1506,7 @@ On success, `data` is `null`.
 - `40001`: validation failure
 - `40929`: the OAuth flow itself failed
 
-### `POST /api/v2/mcp/auth:reset`
+### `POST /api/v1/mcp/auth:reset`
 
 Clears an MCP server's stored credentials. The invalidation event reaches live sessions.
 
