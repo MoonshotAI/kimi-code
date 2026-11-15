@@ -7,8 +7,16 @@ export const ARTEX_ACTIVITY_LOG = 'activity.log';
 export const ARTEX_STATE_LOCK_SUFFIX = '.lock';
 export const ARTEX_WORK_STORE_FILE = 'work-store.json';
 
+export const ARTEX_EVIDENCE_DIR = 'evidence';
+export const ARTEX_EVIDENCE_BLOBS_DIR = 'blobs';
+export const ARTEX_EVIDENCE_STAGING_DIR = '.staging';
+export const ARTEX_TRAFFIC_DIR = 'traffic';
+export const ARTEX_TRAFFIC_STORE_FILE = 'traffic-index.json';
+export const ARTEX_TRAFFIC_CA_DIR = '_ca';
+
 export const ARTEX_STATE_SCHEMA_VERSION = 1;
 export const ARTEX_WORK_STORE_SCHEMA_VERSION = 1;
+export const ARTEX_TRAFFIC_STORE_SCHEMA_VERSION = 1;
 
 export function artexRootDir(workspaceRoot: string): string {
   return join(workspaceRoot, ARTEX_ROOT_DIR);
@@ -36,4 +44,32 @@ export function artexActivityLog(workspaceRoot: string, explorationId: number): 
 
 export function artexStateLockPath(workspaceRoot: string, explorationId: number): string {
   return `${artexStateFile(workspaceRoot, explorationId)}${ARTEX_STATE_LOCK_SUFFIX}`;
+}
+
+export function artexEvidenceDir(workspaceRoot: string): string {
+  return join(artexRootDir(workspaceRoot), ARTEX_EVIDENCE_DIR);
+}
+
+export function artexEvidenceBlobsDir(workspaceRoot: string): string {
+  return join(artexEvidenceDir(workspaceRoot), ARTEX_EVIDENCE_BLOBS_DIR);
+}
+
+export function artexEvidenceStagingDir(workspaceRoot: string): string {
+  return join(artexEvidenceDir(workspaceRoot), ARTEX_EVIDENCE_STAGING_DIR);
+}
+
+export function artexTrafficDir(workspaceRoot: string): string {
+  return join(artexRootDir(workspaceRoot), ARTEX_TRAFFIC_DIR);
+}
+
+export function artexTrafficStoreFile(workspaceRoot: string): string {
+  return join(artexTrafficDir(workspaceRoot), ARTEX_TRAFFIC_STORE_FILE);
+}
+
+export function artexTrafficStoreLockPath(workspaceRoot: string): string {
+  return `${artexTrafficStoreFile(workspaceRoot)}${ARTEX_STATE_LOCK_SUFFIX}`;
+}
+
+export function artexTrafficCaDir(workspaceRoot: string): string {
+  return join(artexTrafficDir(workspaceRoot), ARTEX_TRAFFIC_CA_DIR);
 }
