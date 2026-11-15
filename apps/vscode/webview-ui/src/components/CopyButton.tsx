@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { IconCopy, IconCheck } from "@tabler/icons-react";
 import { Button } from "@/components/ui/button";
+import { toast } from "@/components/ui/sonner";
+import { copyToClipboard } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 
 interface CopyButtonProps {
@@ -15,11 +17,16 @@ export function CopyButton({ content, className }: CopyButtonProps) {
     if (!content) return;
 
     try {
-      await navigator.clipboard.writeText(content);
-      setIsCopied(true);
-      setTimeout(() => setIsCopied(false), 2000);
-    } catch (err) {
-      console.error("Failed to copy:", err);
+      const success = await copyToClipboard(content);
+      if (success) {
+        setIsCopied(true);
+        setTimeout(() => setIsCopied(false), 2000);
+      } else {
+        toast.error("Failed to copy to clipboard");
+      }
+    } catch (error) {
+      console.error("Failed to copy:", error);
+      toast.error("Failed to copy to clipboard");
     }
   };
 

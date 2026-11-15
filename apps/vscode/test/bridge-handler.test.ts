@@ -58,6 +58,7 @@ const host = vi.hoisted(() => {
     harness,
     createKimiHarness: vi.fn(() => harness),
     showWarningMessage,
+    writeClipboardText: vi.fn(async (_text: string) => undefined),
     workspaceFolders: [] as Array<{ uri: Uri }>,
   };
 });
@@ -73,6 +74,7 @@ vi.mock("vscode", () => ({
     textDocuments: [],
   },
   window: { showWarningMessage: host.showWarningMessage },
+  env: { clipboard: { writeText: (text: string) => host.writeClipboardText(text) } },
 }));
 
 vi.mock("@moonshot-ai/kimi-code-sdk", async (importOriginal) => {
@@ -232,6 +234,16 @@ describe("Webview RPC boundary (validates requests before host dispatch)", () =>
       { name: "skill:review", aliases: [], description: "from A" },
     ]);
     expect(host.harness.listWorkspaceSkills).toHaveBeenCalledOnce();
+  });
+
+  it("dispatches copyToClipboard to vscode.env.clipboard.writeText", async () => {
+    const result = await bridge.handle(
+      { id: "rpc-copy", method: Methods.CopyToClipboard, params: { text: "hello clipboard" } },
+      "view-1",
+    );
+
+    expect(result).toEqual({ id: "rpc-copy", result: { ok: true } });
+    expect(host.writeClipboardText).toHaveBeenCalledWith("hello clipboard");
   });
 
   it("keeps provider identity when configured models share a display name", async () => {

@@ -11,6 +11,7 @@ import { LoginScreen } from "./components/LoginScreen";
 import { Toaster, toast } from "./components/ui/sonner";
 import { useChatStore, useSettingsStore } from "./stores";
 import { bridge, Events } from "./services";
+import { copyToClipboard } from "./lib/clipboard";
 import { useAppInit, resolveAppView } from "./hooks/useAppInit";
 import { isPreflightError } from "shared/errors";
 import type { UIStreamEvent, StreamError, ExtensionConfig } from "shared/types";
@@ -51,6 +52,32 @@ function MainContent({ onAuthAction }: { onAuthAction: () => void }) {
     ];
     return () => unsubs.forEach((u) => u());
   }, [queryClient, setExtensionConfig, startNewConversation]);
+
+  useEffect(() => {
+    const handleCopy = (e: ClipboardEvent) => {
+      const selection = window.getSelection()?.toString();
+      if (selection) {
+        if (e.clipboardData) {
+          e.clipboardData.setData("text/plain", selection);
+        }
+        void copyToClipboard(selection);
+      }
+    };
+    const handleKeydown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "c") {
+        const selection = window.getSelection()?.toString();
+        if (selection) {
+          void copyToClipboard(selection);
+        }
+      }
+    };
+    window.addEventListener("copy", handleCopy);
+    window.addEventListener("keydown", handleKeydown);
+    return () => {
+      window.removeEventListener("copy", handleCopy);
+      window.removeEventListener("keydown", handleKeydown);
+    };
+  }, []);
 
   useEffect(() => {
     if (!extensionConfig.enableNewConversationShortcut) return;
