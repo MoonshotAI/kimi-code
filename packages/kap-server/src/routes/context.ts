@@ -1,7 +1,7 @@
 import {
   Error2,
   ErrorCodes,
-  IAgentContextMemoryService,
+  IAgentLoopService,
   IAgentLifecycleService,
   IAgentProfileService,
   IAgentToolSelectService,
@@ -28,6 +28,7 @@ import {
 import { readLegacyStatus } from '../services/legacyStatus/legacyStatus';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { sendMappedError, sessionConflictErrors } from './sessionErrors';
+import { selectContextItems } from './contextItems';
 
 interface ContextRouteHost {
   get(
@@ -55,7 +56,7 @@ const summaryQuerySchema = z.object({
 
 const itemsQuerySchema = z.object({
   agent_id: z.string().min(1).regex(/^[^/\\]+$/).optional(),
-  role: z.string().optional(),
+  role: z.union([z.string(), z.array(z.string())]).optional(),
   offset: z.coerce.number().int().nonnegative().optional(),
   limit: z.coerce.number().int().min(1).max(500).optional(),
 });
@@ -126,7 +127,7 @@ function measureMessage(
   const appendPreview = (chunk: string): void => {
     if (!includePreview || preview.length >= PREVIEW_MAX_CHARS || !chunk) return;
     const needed = PREVIEW_MAX_CHARS - preview.length + 32;
-    const slice = chunk.slice(0, needed).replace(/\s+/g, ' ').trim();
+    const slice = chunk.slice(0, needed).replaceAll(/\s+/g, ' ').trim();
     if (!slice) return;
     preview = preview ? `${preview} ${slice}` : slice;
     if (preview.length > PREVIEW_MAX_CHARS) {
@@ -192,11 +193,10 @@ async function resolveAgent(
 function readAgentContextSources(agent: IAgentScopeHandle) {
   const profile = agent.accessor.get(IAgentProfileService);
   const toolSelect = agent.accessor.get(IAgentToolSelectService);
-  const contextMemory = agent.accessor.get(IAgentContextMemoryService);
   const legacyStatus = readLegacyStatus(agent);
   const systemPrompt = profile.getSystemPrompt();
   const tools = toolSelect.defaultTools().filter((t) => t.deferred !== true);
-  const messages = contextMemory.get();
+  const messages = agent.accessor.get(IAgentLoopService).history();
   const modelAlias = profile.data().modelAlias || legacyStatus?.model || undefined;
   return {
     systemPrompt,
@@ -384,7 +384,18 @@ export function registerContextRoutes(app: ContextRouteHost, core: Scope): void 
         const { agent, resolvedAgentId } = await resolveAgent(core, session_id, req.query.agent_id);
         const sources = readAgentContextSources(agent);
         const summary = buildContextSummary(session_id, resolvedAgentId, sources);
-        const filterRole = req.query.role ? req.query.role.trim() : '';
+        const filterRoles = [
+          ...new Set(
+            (req.query.role === undefined
+              ? []
+              : Array.isArray(req.query.role)
+                ? req.query.role
+                : [req.query.role]
+            )
+              .map((role) => role.trim())
+              .filter((role) => role.length > 0),
+          ),
+        ];
         const offset = req.query.offset ?? 0;
         const limit = req.query.limit ?? DEFAULT_ITEMS_LIMIT;
 
@@ -396,7 +407,7 @@ export function registerContextRoutes(app: ContextRouteHost, core: Scope): void 
             role: 'definition',
             name: typeof data['name'] === 'string' ? data['name'] : undefined,
             sequence: undefined,
-            preview: desc.slice(0, PREVIEW_MAX_CHARS).replace(/\s+/g, ' ').trim(),
+            preview: desc.slice(0, PREVIEW_MAX_CHARS).replaceAll(/\s+/g, ' ').trim(),
             chars: estimateValueChars(tool),
             has_media: false,
           };
@@ -409,7 +420,7 @@ export function registerContextRoutes(app: ContextRouteHost, core: Scope): void 
             role: 'system',
             name: undefined,
             sequence: undefined,
-            preview: sources.systemPrompt.slice(0, PREVIEW_MAX_CHARS).replace(/\s+/g, ' ').trim(),
+            preview: sources.systemPrompt.slice(0, PREVIEW_MAX_CHARS).replaceAll(/\s+/g, ' ').trim(),
             chars: sources.systemPrompt.length,
             has_media: false,
           });
@@ -445,22 +456,16 @@ export function registerContextRoutes(app: ContextRouteHost, core: Scope): void 
           });
         });
 
-        const candidateItems =
-          filterRole === 'definition'
-            ? toolItems
-            : filterRole
-              ? allNonToolItems.filter((item) => item.role === filterRole)
-              : allNonToolItems;
-
-        const pagedItems = candidateItems.slice(offset, offset + limit);
+        const selection = selectContextItems(allNonToolItems, toolItems, filterRoles);
+        const pagedItems = selection.items.slice(offset, offset + limit);
         reply.send(
           okEnvelope(
             {
               summary,
-              tools: !filterRole || filterRole === 'definition' ? toolItems : [],
+              tools: selection.tools,
               items: pagedItems,
-              total: candidateItems.length,
-              has_more: offset + pagedItems.length < candidateItems.length,
+              total: selection.items.length,
+              has_more: offset + pagedItems.length < selection.items.length,
             },
             req.id,
           ),
