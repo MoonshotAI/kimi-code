@@ -362,13 +362,16 @@ S {"type": "agent", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id"
 ```
 </li>
 <li>
-<strong>开启只读侧边对话（<code>:btw</code>）</strong>
+<strong>开启并在用完后关闭只读侧边对话（<code>:btw</code> / <code>agents/{agent_id}:close</code>）</strong>
 
-```wire focus=agent_id,agent_ids,code
+```wire focus=agent_id,agent_ids,closed,status
 H POST /api/v1/sessions/s1:btw
 R { "agent_id": "btw_1" }
 C { "type": "subscribe", "request_id": "sub-btw", "session_id": "s1", "agent_ids": ["btw_1"] }
 S {"type": "response", "request_id": "sub-btw", "code": 0}
+H POST /api/v1/sessions/s1/agents/btw_1:close
+R { "closed": true }
+S {"type": "agent", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "btw_1", "status": "ended", "compacting": false, "plan_mode": false, "swarm_mode": false, "tower_mode": false}
 ```
 </li>
 </ol>
@@ -493,7 +496,7 @@ S {"type": "response", "request_id": "r5", "code": 0, "task": {"task_id": "bash-
 
 | 帧 | 核心字段 | 说明 |
 | --- | --- | --- |
-| `agent` | `status: "idle" \| "running" \| "ended"`, `compacting`, `model?`, `thinking?`, `permission_mode?`, `plan_mode`, `swarm_mode`, `tower_mode` | Agent 运行状态与当前生效设置。修改设置调用 [`POST /api/v1/sessions/{session_id}/profile`](./server-api-sessions.md#post-api-v1-sessions-session-id-profile) |
+| `agent` | `status: "idle" \| "running" \| "ended"`, `compacting`, `model?`, `thinking?`, `permission_mode?`, `plan_mode`, `swarm_mode`, `tower_mode` | Agent 运行状态与当前生效设置（旁路对话关闭时发送最后一条 `status: "ended"`）。修改设置调用 [`POST /api/v1/sessions/{session_id}/profile`](./server-api-sessions.md#post-api-v1-sessions-session-id-profile) |
 | `context` | `context_tokens`, `max_context_tokens?` | 该 Agent 自身的上下文窗口水位（不含子 Agent），服务端按 **250 毫秒窗口合并节流**只发最新值 |
 | `goal` | `goal?: { objective, status, completion_criterion?, turns_used, tokens_used, wall_clock_ms }` | 仅 `main` 拥有。无目标时省略 `goal` 字段；`wall_clock_ms` 不随单纯时间流逝重发，客户端自行累加显示实时计时 |
 | `todo` | `items: [{ title, status: "pending" \| "in_progress" \| "done" }]` | Agent 的待办列表，随 Agent 写入或 `:undo` 撤销整体替换 |

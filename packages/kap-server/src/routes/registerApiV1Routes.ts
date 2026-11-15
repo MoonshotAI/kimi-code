@@ -179,6 +179,7 @@ export async function registerApiV1Routes(
       );
       registerConversationRoutes(
         apiV1 as unknown as Parameters<typeof registerConversationRoutes>[0],
+        core,
         opts.conversations,
       );
       if (opts.enableShutdown !== false) {

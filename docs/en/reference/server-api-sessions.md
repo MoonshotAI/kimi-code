@@ -301,7 +301,7 @@ Starts a "by the way" side conversation: forks the main agent into a subagent th
 
 On success, `data` is `{ agent_id }`, the id of the new subagent.
 
-To stop a running turn of a side conversation, call [`POST /api/v1/sessions/{session_id}:cancel`](#post-api-v1-sessions-session-id-cancel) with `{ "agent_id": "<btw_agent_id>" }`.
+To stop a running turn of a side conversation, call [`POST /api/v1/sessions/{session_id}:cancel`](#post-api-v1-sessions-session-id-cancel) with `{ "agent_id": "<btw_agent_id>" }`; to close and remove the side conversation, call [`POST /api/v1/sessions/{session_id}/agents/{agent_id}:close`](#post-api-v1-sessions-session-id-agents-agent-id-close).
 
 #### `POST /api/v1/sessions/{session_id}:archive`
 
@@ -594,11 +594,12 @@ These endpoints read the conversation history, submit prompts, and answer approv
 
 ### Turns and agents
 
-Page one agent's conversation by turns and items (the same model as the [turns](./server-api-conversation.md#turns) the WebSocket pushes live).
+Page one agent's conversation by turns and items (the same model as the [turns](./server-api-conversation.md#turns) the WebSocket pushes live), or close a side-conversation agent.
 
 | Method and path | Description |
 | --- | --- |
 | `GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns` | Page one agent's turns (`before_ordinal` / `page_size`) |
+| `POST /api/v1/sessions/{session_id}/agents/{agent_id}:close` | Close a side-conversation (`:btw`) agent |
 
 #### `GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns`
 
@@ -621,6 +622,23 @@ Tasks, the agent's running status and settings, context water-level, the goal, t
 
 - `40001`: validation failure
 - `40401`: the session or agent does not exist
+
+#### `POST /api/v1/sessions/{session_id}/agents/{agent_id}:close`
+
+Closes a side-conversation agent started via [`POST /api/v1/sessions/{session_id}:btw`](#post-api-v1-sessions-session-id-btw) and removes it from the session.
+
+If the agent has a running turn, it ends with `outcome: "interrupted"` and `end_reason: "aborted"` and emits `turn.ended`; any pending interactions end with `cancelled` and emit `interaction`; queued inputs are discarded; and a final `agent` frame with `status: "ended"` is emitted. Subsequent subscriptions no longer include this agent, and submitting prompts, reading turns, or closing it again returns `40401`.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `session_id` | path | string | Required. Session id |
+| `agent_id` | path | string | Required. Agent id created by `:btw` |
+
+On success, `data` is `{ closed: true }`.
+
+- `40001`: validation failure, or an unsupported action suffix
+- `40401`: the session or agent does not exist (also returned when resending after close)
+- `40939`: the agent is not a side-conversation agent and cannot be closed (for example `main` or an ordinary subagent)
 
 ### Prompts
 

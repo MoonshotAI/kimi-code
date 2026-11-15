@@ -362,13 +362,16 @@ S {"type": "agent", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id"
 ```
 </li>
 <li>
-<strong>Start a read-only side chat (<code>:btw</code>)</strong>
+<strong>Start and close a read-only side chat (<code>:btw</code> / <code>agents/{agent_id}:close</code>)</strong>
 
-```wire focus=agent_id,agent_ids,code
+```wire focus=agent_id,agent_ids,closed,status
 H POST /api/v1/sessions/s1:btw
 R { "agent_id": "btw_1" }
 C { "type": "subscribe", "request_id": "sub-btw", "session_id": "s1", "agent_ids": ["btw_1"] }
 S {"type": "response", "request_id": "sub-btw", "code": 0}
+H POST /api/v1/sessions/s1/agents/btw_1:close
+R { "closed": true }
+S {"type": "agent", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "btw_1", "status": "ended", "compacting": false, "plan_mode": false, "swarm_mode": false, "tower_mode": false}
 ```
 </li>
 </ol>
@@ -493,7 +496,7 @@ Each agent's state is split into four independent full-replacement frames by upd
 
 | Frame | Core fields | Description |
 | --- | --- | --- |
-| `agent` | `status: "idle" \| "running" \| "ended"`, `compacting`, `model?`, `thinking?`, `permission_mode?`, `plan_mode`, `swarm_mode`, `tower_mode` | Running status and active settings. Update settings via [`POST /api/v1/sessions/{session_id}/profile`](./server-api-sessions.md#post-api-v1-sessions-session-id-profile) |
+| `agent` | `status: "idle" \| "running" \| "ended"`, `compacting`, `model?`, `thinking?`, `permission_mode?`, `plan_mode`, `swarm_mode`, `tower_mode` | Running status and active settings (emits one final `status: "ended"` frame when a side conversation closes). Update settings via [`POST /api/v1/sessions/{session_id}/profile`](./server-api-sessions.md#post-api-v1-sessions-session-id-profile) |
 | `context` | `context_tokens`, `max_context_tokens?` | Context window water-level for this agent alone, **coalesced over a 250 ms window** |
 | `goal` | `goal?: { objective, status, completion_criterion?, turns_used, tokens_used, wall_clock_ms }` | Main agent only (`goal` is omitted when no goal is active; increment `wall_clock_ms` locally for live timers) |
 | `todo` | `items: [{ title, status: "pending" \| "in_progress" \| "done" }]` | Agent todo list, replaced as a whole on writes and `:undo` |

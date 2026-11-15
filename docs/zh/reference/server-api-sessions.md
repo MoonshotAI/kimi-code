@@ -301,7 +301,7 @@
 
 成功时 `data` 为 `{ agent_id }`，即新 subagent 的 id。
 
-停止旁路对话正在运行的轮次可调用 [`POST /api/v1/sessions/{session_id}:cancel`](#post-api-v1-sessions-session-id-cancel) 并传入 `{ "agent_id": "<btw_agent_id>" }`。
+停止旁路对话正在运行的轮次可调用 [`POST /api/v1/sessions/{session_id}:cancel`](#post-api-v1-sessions-session-id-cancel) 并传入 `{ "agent_id": "<btw_agent_id>" }`；关闭并移除旁路对话可调用 [`POST /api/v1/sessions/{session_id}/agents/{agent_id}:close`](#post-api-v1-sessions-session-id-agents-agent-id-close)。
 
 #### `POST /api/v1/sessions/{session_id}:archive`
 
@@ -594,11 +594,12 @@ main agent 正在运行时，激活不会开启新轮次，而是作为插话插
 
 ### 轮次与 Agent
 
-按轮次与条目分页读取某个 Agent 的对话（与 WebSocket 实时推送的 [轮次](./server-api-conversation.md#轮次) 是同一套模型）。
+按轮次与条目分页读取某个 Agent 的对话（与 WebSocket 实时推送的 [轮次](./server-api-conversation.md#轮次) 是同一套模型），或关闭旁路对话 Agent。
 
 | 方法与路径 | 说明 |
 | --- | --- |
 | `GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns` | 某个 Agent 的轮次分页（`before_ordinal` / `page_size`） |
+| `POST /api/v1/sessions/{session_id}/agents/{agent_id}:close` | 关闭由 `:btw` 开启的旁路对话 Agent |
 
 #### `GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns`
 
@@ -621,6 +622,23 @@ main agent 正在运行时，激活不会开启新轮次，而是作为插话插
 
 - `40001`：校验失败
 - `40401`：会话或 Agent 不存在
+
+#### `POST /api/v1/sessions/{session_id}/agents/{agent_id}:close`
+
+关闭一个由 [`POST /api/v1/sessions/{session_id}:btw`](#post-api-v1-sessions-session-id-btw) 开启的旁路对话 Agent，并将其从会话中移除。
+
+关闭时，该 Agent 运行中的轮次以 `outcome: "interrupted"`、`end_reason: "aborted"` 结束并推送 `turn.ended`，其未决交互以 `cancelled` 结束并推送 `interaction`，排队中的输入一并丢弃，最后推送一条 `status: "ended"` 的 `agent` 帧作为该 Agent 的最后一条事件。此后订阅不再发送它的 `agent` 帧，向它提交输入、读取轮次或再次关闭均返回 `40401`。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `session_id` | path | string | 必填。会话 id |
+| `agent_id` | path | string | 必填。由 `:btw` 创建的 Agent id |
+
+成功时 `data` 为 `{ closed: true }`。
+
+- `40001`：校验失败，或动作后缀不支持
+- `40401`：会话或 Agent 不存在（已关闭后重发亦返回此码）
+- `40939`：该 Agent 不是旁路对话，不能关闭（如 `main` 或普通 subagent）
 
 ### 提示词
 
