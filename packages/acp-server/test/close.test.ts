@@ -172,4 +172,20 @@ describe('acp-server session/close', () => {
     expect(await c.server.klient.session(created.id).restore()).toBe(true);
     expect((await mainBinding(created.id)).current).toEqual({ environmentId: 'test-remote', cwd: homeDir });
   }, 30_000);
+  it(
+    'client close / server shutdown closes all active sessions cleanly',
+    async () => {
+      const c = await boot();
+      const s1 = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as {
+        sessionId: string;
+      };
+      const s2 = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as {
+        sessionId: string;
+      };
+      expect(s1.sessionId).toBeDefined();
+      expect(s2.sessionId).toBeDefined();
+      await expect(c.close()).resolves.toBeUndefined();
+    },
+    30_000,
+  );
 });
