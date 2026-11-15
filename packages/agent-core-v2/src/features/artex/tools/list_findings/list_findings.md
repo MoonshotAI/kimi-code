@@ -1,0 +1,1 @@
+List this task's confirmed findings (exploration node id, vulnerability class, name, severity, summary, affected asset ids, and evidence status). Check it before reporting to avoid reporting the same finding twice.

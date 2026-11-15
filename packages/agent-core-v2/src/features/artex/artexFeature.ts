@@ -11,6 +11,8 @@ import { ArtexOrchestrator, IArtexOrchestrator } from './engine/artexOrchestrato
 import { ArtexModeService } from './agent/artexModeService';
 import { IArtexModeService } from './agent/artexMode';
 import { ARTEX_PROFILES } from './profiles/artexProfiles';
+import { ArtexSessionContext, IArtexSessionContext } from './session/artexSessionContext';
+import { ARTEX_TOOL_DOMAIN, ARTEX_TOOLS } from './tools/index';
 
 export class ArtexFeature extends Feature {
   static override readonly name = 'artex';
@@ -30,6 +32,9 @@ export class ArtexFeature extends Feature {
     this.contributeService(LifecycleScope.App, IArtexGraphStoreProvider, ArtexGraphStoreProvider, {
       activation: ScopeActivation.OnDemand,
     });
+    this.contributeService(LifecycleScope.Session, IArtexSessionContext, ArtexSessionContext, {
+      activation: ScopeActivation.OnDemand,
+    });
     this.contributeService(LifecycleScope.Session, IArtexOrchestrator, ArtexOrchestrator, {
       activation: ScopeActivation.OnDemand,
     });
@@ -37,6 +42,9 @@ export class ArtexFeature extends Feature {
       activation: ScopeActivation.OnScopeCreated,
     });
     this.contributeProfiles(ARTEX_PROFILES);
+    for (const tool of ARTEX_TOOLS) {
+      this.contributeTool(tool.id, tool.ctor, { name: tool.name, domain: ARTEX_TOOL_DOMAIN });
+    }
   }
 }
 

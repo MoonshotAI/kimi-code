@@ -18,6 +18,7 @@ import {
   IArtexGraphStoreProvider,
 } from '#/features/artex/store/artexGraphStoreProvider';
 import type { IArtexGraphStore } from '#/features/artex/store/artexGraphStore';
+import { IArtexSessionContext } from '#/features/artex/session/artexSessionContext';
 import {
   resolveArtexPlannerDebounceMs,
   resolveArtexSwarmTimeoutMs,
@@ -90,6 +91,7 @@ export class ArtexOrchestrator extends Disposable implements IArtexOrchestrator 
     @ISessionSubagentService private readonly subagents: ISessionSubagentService,
     @IConfigService private readonly config: IConfigService,
     @ISessionContext private readonly sessionContext: ISessionContext,
+    @IArtexSessionContext private readonly artexSession: IArtexSessionContext,
   ) {
     super();
   }
@@ -97,6 +99,7 @@ export class ArtexOrchestrator extends Disposable implements IArtexOrchestrator 
   async run(options: ArtexOrchestratorOptions): Promise<ArtexOrchestratorSummary> {
     const root = options.workspaceRoot ?? this.sessionContext.sessionDir;
     const store = this.storeProvider.open(root, options.explorationId);
+    this.artexSession.setActiveExplorationId(options.explorationId);
     const owner = `artex-orchestrator:${this.sessionContext.sessionId}`;
     const targetConcurrency = resolveArtexTargetConcurrency(this.config);
     const timeoutMs = resolveArtexSwarmTimeoutMs(this.config);

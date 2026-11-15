@@ -1,0 +1,1 @@
+List this task's recorded exploration facts (node id, summary, detail, evidence, confidence, source, and anchored asset ids). Use it while planning to review what has already been observed — including negative results — before deciding what to explore next.
