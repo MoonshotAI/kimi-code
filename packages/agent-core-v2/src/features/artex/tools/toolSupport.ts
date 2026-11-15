@@ -2,6 +2,8 @@ import type { ExecutableToolErrorResult } from '#/tool/toolContract';
 
 import type { IArtexGraphStore } from '#/features/artex/store/artexGraphStore';
 import type { IArtexGraphStoreProvider } from '#/features/artex/store/artexGraphStoreProvider';
+import type { IArtexWorkStore } from '#/features/artex/store/artexWorkStore';
+import type { IArtexWorkStoreProvider } from '#/features/artex/store/artexWorkStoreProvider';
 import type { IArtexSessionContext } from '#/features/artex/session/artexSessionContext';
 
 export const ARTEX_INACTIVE_RESULT: ExecutableToolErrorResult = {
@@ -24,6 +26,22 @@ export async function openActiveGraph(
   const store = provider.open(session.workspaceRoot, explorationId);
   if (!(await store.isInitialized())) return undefined;
   return { store, explorationId };
+}
+
+export interface ArtexWorkHandle {
+  readonly store: IArtexWorkStore;
+  readonly taskId: number;
+}
+
+export async function openActiveWork(
+  session: IArtexSessionContext,
+  provider: IArtexWorkStoreProvider,
+): Promise<ArtexWorkHandle | undefined> {
+  const taskId = session.getActiveExplorationId();
+  if (taskId === undefined) return undefined;
+  const store = provider.open(session.workspaceRoot);
+  await store.ensureSeeded();
+  return { store, taskId };
 }
 
 export function artexJson(value: unknown): string {

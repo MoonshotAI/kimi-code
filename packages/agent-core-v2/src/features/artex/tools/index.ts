@@ -19,6 +19,31 @@ import {
   ArtexGetWorkerOutputTool,
   IArtexGetWorkerOutputTool,
 } from './get_worker_output/get_worker_output';
+import { ArtexInsertAssetsTool, IArtexInsertAssetsTool } from './insert_assets/insert_assets';
+import { ArtexListAssetsTool, IArtexListAssetsTool } from './list_assets/list_assets';
+import { ArtexListCompaniesTool, IArtexListCompaniesTool } from './list_companies/list_companies';
+import {
+  ArtexAddCompanyScopeTool,
+  IArtexAddCompanyScopeTool,
+} from './add_company_scope/add_company_scope';
+import { ArtexAddTaskScopeTool, IArtexAddTaskScopeTool } from './add_task_scope/add_task_scope';
+import {
+  ArtexListUntestedAssetsTool,
+  IArtexListUntestedAssetsTool,
+} from './list_untested_assets/list_untested_assets';
+import {
+  ArtexRecordCoverageTool,
+  IArtexRecordCoverageTool,
+} from './record_coverage/record_coverage';
+import {
+  ArtexSaveTaskCredentialTool,
+  IArtexSaveTaskCredentialTool,
+} from './save_task_credential/save_task_credential';
+import {
+  ArtexListTaskCredentialsTool,
+  IArtexListTaskCredentialsTool,
+} from './list_task_credentials/list_task_credentials';
+import { ArtexSetConstraintsTool, IArtexSetConstraintsTool } from './set_constraints/set_constraints';
 
 export interface ArtexToolRegistration {
   readonly id: ServiceIdentifier<AnyAgentTool>;
@@ -44,4 +69,22 @@ export const ARTEX_TOOLS: readonly ArtexToolRegistration[] = [
   { id: IArtexSteerWorkTool, ctor: ArtexSteerWorkTool, name: 'steer_work' },
   { id: IArtexKillWorkTool, ctor: ArtexKillWorkTool, name: 'kill_work' },
   { id: IArtexGetWorkerOutputTool, ctor: ArtexGetWorkerOutputTool, name: 'get_worker_output' },
+  { id: IArtexInsertAssetsTool, ctor: ArtexInsertAssetsTool, name: 'insert_assets' },
+  { id: IArtexListAssetsTool, ctor: ArtexListAssetsTool, name: 'list_assets' },
+  { id: IArtexListCompaniesTool, ctor: ArtexListCompaniesTool, name: 'list_companies' },
+  { id: IArtexAddCompanyScopeTool, ctor: ArtexAddCompanyScopeTool, name: 'add_company_scope' },
+  { id: IArtexAddTaskScopeTool, ctor: ArtexAddTaskScopeTool, name: 'add_task_scope' },
+  {
+    id: IArtexListUntestedAssetsTool,
+    ctor: ArtexListUntestedAssetsTool,
+    name: 'list_untested_assets',
+  },
+  { id: IArtexRecordCoverageTool, ctor: ArtexRecordCoverageTool, name: 'record_coverage' },
+  { id: IArtexSaveTaskCredentialTool, ctor: ArtexSaveTaskCredentialTool, name: 'save_task_credential' },
+  {
+    id: IArtexListTaskCredentialsTool,
+    ctor: ArtexListTaskCredentialsTool,
+    name: 'list_task_credentials',
+  },
+  { id: IArtexSetConstraintsTool, ctor: ArtexSetConstraintsTool, name: 'set_constraints' },
 ];

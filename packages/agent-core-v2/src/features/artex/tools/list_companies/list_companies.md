@@ -1,0 +1,1 @@
+List the [companies] in the asset library with their asset scopes (scope) and attributed asset counts. Used to see which companies exist and to get a company_id (used when insert_assets links an app, or when list_assets filters by company_id).The optional search fuzzy-filters by company name (case-insensitive); empty returns all.

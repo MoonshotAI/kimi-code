@@ -1,0 +1,5 @@
+Add test scope to [this task] — coverage scope, not enforced: it is the denominator of asset test coverage; nothing blocks a tool call outside it.
+Supported kinds: company (all assets under the company) / root_domain (a whole root domain, including all subdomains) / subdomain (a single precise subdomain) / ip / cidr / icp / keyword.
+Note: hosts a worker touches one by one are [automatically] added to the scope by the system (precise subdomains), but they count toward coverage and list_untested_assets only under a declared domain or IP root (a root_domain/subdomain/ip/cidr goal target or scope added here or manually; a company/icp/keyword entry is not such a root); this tool is for [deliberate widening] — pulling in a whole root domain / whole company, or adding a specific subdomain/IP.
+value: for company pass the company name or id (the company must already exist); for root_domain/subdomain pass a domain; for ip/cidr pass an IP or range; for icp/keyword pass an ICP number or company keyword.
+Always give reason explaining the basis (auditable). Use the entries array for multiple entries.
