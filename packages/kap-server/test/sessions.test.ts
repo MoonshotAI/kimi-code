@@ -1960,6 +1960,37 @@ describe('server-v2 /api/v1/sessions', () => {
     }
   });
 
+  it('queues a manual compaction behind pending input', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+    });
+    const id = created.body.data.id;
+    const session = getLiveSessionById((server as RunningServer).core.accessor, id);
+    if (session === undefined) throw new Error('expected live session');
+    await session.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
+    const loop = session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!.accessor.get(IAgentLoopService);
+    loop.pauseQueue();
+    const pending = loop.submit({ role: 'user', content: [{ type: 'text', text: 'pending' }] });
+
+    const response = await postJson<{ accepted_as: string; prompt_id: string }>(
+      `/api/v1/sessions/${id}:compact`,
+      { instruction: 'keep the plan' },
+    );
+
+    expect(response.body.code).toBe(0);
+    expect(response.body.data.accepted_as).toBe('queue');
+    expect(loop.snapshot().queue.map((entry) => entry.attributes?.queueItem?.kind ?? 'input')).toEqual(['input', 'compact']);
+    await loop.resetLoop();
+    const reopened = await getJson<{ queued: { prompt_id: string }[] }>(`/api/v1/sessions/${id}/prompts`);
+    expect(reopened.body.code, JSON.stringify(reopened.body)).toBe(0);
+    expect(reopened.body.data.queued.map((entry) => entry.prompt_id)).toEqual([pending.id]);
+    const restored = getLiveSessionById((server as RunningServer).core.accessor, id)!;
+    const restoredLoop = restored.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!.accessor.get(IAgentLoopService);
+    expect(restoredLoop.snapshot().queue.map((entry) => entry.attributes?.queueItem?.kind ?? 'input')).toEqual(['input', 'compact']);
+    restoredLoop.cancel({ promptId: pending.id });
+    restoredLoop.cancel({ promptId: response.body.data.prompt_id });
+  });
+
   it('creates a child session tagged with parent_session_id and child_session_kind', async () => {
     const cwd = home as string;
     const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });

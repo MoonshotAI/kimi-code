@@ -62,6 +62,7 @@ const DISPATCH_STUCK_WARN_MS = 30_000;
 const replayImmer = new Immer({ autoFreeze: false });
 
 const UNREPORTED_WIRE_RECORD_TYPES: ReadonlySet<string> = new Set([
+  'queue.snapshot',
   'staleGuard.recorded',
   'staleGuard.cleared',
   AGENT_SWITCHED_TYPE,

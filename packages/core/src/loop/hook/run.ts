@@ -128,6 +128,7 @@ async function runFirst<P extends HookPoint, D extends { readonly cause: Cause }
 
 export interface TurnStartingRun {
   blocked?: Cause;
+  consumed?: boolean;
   failures: HookFailure[];
 }
 
@@ -138,7 +139,9 @@ export async function runTurnStarting(
 ): Promise<TurnStartingRun> {
   const run = await runFirst(source.active('turn.starting'), (item) => item.hook(event, signal), isTurnStartingVerdict);
   const blocked = run.decision?.cause ?? run.blocked;
-  return blocked === undefined ? { failures: run.failures } : { blocked, failures: run.failures };
+  return blocked === undefined
+    ? { failures: run.failures }
+    : { blocked, consumed: run.decision?.consume === true, failures: run.failures };
 }
 
 export interface MessageAppendingRun {

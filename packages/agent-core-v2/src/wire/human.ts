@@ -22,6 +22,7 @@ export const AGENT_WIRE_RECORD_TYPES: ReadonlySet<string> = new Set([
   'context.clear',
   'context.undo',
   'context.undone',
+  'queue.snapshot',
   'turn.prompt',
   'turn.steer',
   'turn.cancel',

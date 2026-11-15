@@ -75,6 +75,7 @@
 //   swarm_mode.enter                   swarm, swarmReminderDelivered                              src/features/swarm/swarmOps.ts
 //   swarm_mode.exit                    swarm, swarmReminderDelivered                              src/features/swarm/swarmOps.ts
 //   task.started                       task                                                       src/agent/task/taskOps.ts
+//   queue.snapshot                     (none)                                                     src/agent/loop/journal.ts
 //   task.terminated                    task                                                       src/agent/task/taskOps.ts
 //   token_counting.measured            (none)                                                     src/agent/tokenCounting/tokenCountingOps.ts
 //   token_counting.rebased             (none)                                                     src/agent/tokenCounting/tokenCountingOps.ts
@@ -993,6 +994,18 @@ interface UsageRecordPayload {
   usageScope?: 'session' | 'turn' | 'prediction';
 }
 
+/**
+ * states: (none)
+ * owner: src/agent/loop/journal.ts
+ */
+interface QueueSnapshotPayload {
+  _name: 'queue.snapshot';
+  agentId: string;
+  normal: object[];
+  notify: object[];
+  paused: boolean;
+}
+
 /** Record type → payload sketch. */
 interface WirePayloadMap {
   "changeNotifier.snapshot": ChangeNotifierSnapshotPayload;
@@ -1032,6 +1045,7 @@ interface WirePayloadMap {
   "plan.revision": PlanRevisionPayload;
   "plugin.session_start": PluginSessionStartPayload;
   "profile.bind": ProfileBindPayload;
+  "queue.snapshot": QueueSnapshotPayload;
   "prompt.aborted": PromptAbortedPayload;
   "prompt.completed": PromptCompletedPayload;
   "prompt.steered": PromptSteeredPayload;

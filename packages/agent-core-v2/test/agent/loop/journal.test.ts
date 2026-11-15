@@ -189,6 +189,20 @@ describe('loop journal restore', () => {
     });
   });
 
+  it('restores queued prompts, steer slots and pause state from queue snapshots', () => {
+    const records: WireRecord[] = [];
+    const journal = new LoopJournal(memoryWire(records), 'main');
+    const entry = prompt('queued', 'queued text');
+    entry.attributes = { ...entry.attributes, delivery: 'steer', queueItem: { kind: 'compact', instruction: 'shorten' } };
+    journal.append({ type: 'queue.changed', normal: [entry], notify: [], paused: true });
+
+    const restored = new LoopJournal(memoryWire(records), 'main').snapshot();
+
+    expect(restored.input.inbox?.normal).toEqual([entry]);
+    expect(restored.input.queuePaused).toBe(true);
+    expect(records[0]?.type).toBe('queue.snapshot');
+  });
+
   it('writes public records into the real Wire active chain and restores them after persistence', async () => {
     const persisted: WireRecord[] = [];
     const ix = new TestInstantiationService();

@@ -130,10 +130,13 @@ class LoopMailbox {
   private notifyEntries: UserMessage[];
   private reminders: RemindMessage[];
 
-  constructor(input: LoopInput['inbox'], private readonly emit: (event: LoopEmitted) => void) {
+  paused: boolean;
+
+  constructor(input: LoopInput['inbox'], paused: boolean, private readonly emit: (event: LoopEmitted) => void) {
     this.normal = [...(input?.normal ?? [])];
     this.notifyEntries = [...(input?.notify ?? [])];
     this.reminders = [...(input?.remind ?? [])];
+    this.paused = paused;
   }
 
   get snapshot(): Inbox {
@@ -145,7 +148,7 @@ class LoopMailbox {
   }
 
   get hasTrigger(): boolean {
-    return this.normal.length > 0 || this.notifyEntries.length > 0;
+    return (!this.paused && this.normal.length > 0) || this.notifyEntries.length > 0;
   }
 
   get hasNotify(): boolean {
@@ -153,9 +156,15 @@ class LoopMailbox {
   }
 
   submit(message: UserMessage): LoopAck<'prompt.submitted'> {
-    this.normal.push(message);
+    if (message.attributes?.delivery === 'steer') {
+      const index = this.normal.findIndex((entry) => entry.attributes?.delivery !== 'steer');
+      this.normal.splice(index < 0 ? this.normal.length : index, 0, message);
+    } else {
+      this.normal.push(message);
+    }
     const ack: LoopAck<'prompt.submitted'> = { type: 'prompt.submitted', message };
     this.emit(ack);
+    this.changed();
     return ack;
   }
 
@@ -163,6 +172,7 @@ class LoopMailbox {
     this.notifyEntries.push(message);
     const ack: LoopAck<'prompt.notified'> = { type: 'prompt.notified', message };
     this.emit(ack);
+    this.changed();
     return ack;
   }
 
@@ -190,7 +200,33 @@ class LoopMailbox {
     this.notifyEntries.push(...messages);
     const ack: LoopAck<'prompt.steered'> = { type: 'prompt.steered', promptIds: ids, messages };
     this.emit(ack);
+    this.changed();
     return ack;
+  }
+
+  move(promptId: string, beforePromptId?: string): boolean {
+    const index = this.normal.findIndex((entry) => entry.attributes?.promptId === promptId);
+    if (index < 0) return false;
+    const [entry] = this.normal.splice(index, 1);
+    const before = beforePromptId === undefined
+      ? -1
+      : this.normal.findIndex((item) => item.attributes?.promptId === beforePromptId);
+    if (beforePromptId !== undefined && before < 0) {
+      this.normal.splice(index, 0, entry!);
+      return false;
+    }
+    this.normal.splice(before < 0 ? this.normal.length : before, 0, entry!);
+    this.changed();
+    return true;
+  }
+
+  setPaused(paused: boolean): void {
+    this.paused = paused;
+    this.changed();
+  }
+
+  private changed(): void {
+    this.emit({ type: 'queue.changed', normal: [...this.normal], notify: [...this.notifyEntries], paused: this.paused });
   }
 
   cancel(promptId: string): LoopAck<'prompt.canceled'> {
@@ -201,6 +237,7 @@ class LoopMailbox {
     this.notifyEntries = notify;
     const ack: LoopAck<'prompt.canceled'> = { type: 'prompt.canceled', promptId, canceled };
     this.emit(ack);
+    if (canceled) this.changed();
     return ack;
   }
 
@@ -220,18 +257,25 @@ class LoopMailbox {
   }
 
   take(): MailboxTurn | undefined {
-    const normalHead = this.normal[0];
+    const normalIndex = this.paused
+      ? -1
+      : this.normal.findIndex((entry) => entry.attributes?.delivery !== 'steer');
+    const index = normalIndex < 0 && !this.paused && this.normal.length > 0 ? 0 : normalIndex;
+    const normalHead = index < 0 ? undefined : this.normal[index];
     const head = normalHead ?? this.notifyEntries[0];
     if (head === undefined) return undefined;
     const kind = normalHead === undefined ? 'notify' as const : 'normal' as const;
+    const steer = this.normal.slice(0, index).map((message) => ({ kind: 'notify' as const, message }));
     const remainingNotify = normalHead === undefined ? this.notifyEntries.slice(1) : this.notifyEntries;
     const promptOnly = remainingNotify.length > 0;
-    this.normal = normalHead === undefined ? this.normal : this.normal.slice(1);
+    if (normalHead !== undefined) this.normal = this.normal.filter((_entry, at) => at > index);
     this.notifyEntries = remainingNotify;
     const reminders = promptOnly ? [] : this.drainReminders();
+    this.changed();
     return {
       kind,
       pending: [
+        ...steer,
         { kind, message: head },
         ...reminders.map((message) => ({ kind: 'remind' as const, message })),
       ],
@@ -348,7 +392,7 @@ class LoopActor implements Loop {
       nextTurnId: Math.max(input.nextTurnId ?? 0, unfinished === undefined ? 0 : unfinished.turnId + 1),
       ...(unfinished === undefined ? {} : { unfinished: { ...unfinished } }),
     };
-    this.mailbox = new LoopMailbox(input.inbox, (event) => {
+    this.mailbox = new LoopMailbox(input.inbox, input.queuePaused === true, (event) => {
       this.record(event);
     });
     this.requesterTemplate = options.requester;
@@ -386,6 +430,7 @@ class LoopActor implements Loop {
       held: this.held,
       resetting: this.resetting,
       inbox: this.mailbox.snapshot,
+      queuePaused: this.mailbox.paused,
       profile,
       messages,
       nextTurnId,
@@ -792,6 +837,30 @@ class LoopActor implements Loop {
     this.kick();
   }
 
+  move(promptId: string, beforePromptId?: string): LoopAck<'queue.changed'> | undefined {
+    this.check({ type: 'input.move', promptId, beforePromptId });
+    if (!this.open() || !this.mailbox.move(promptId, beforePromptId)) return undefined;
+    this.kick();
+    return { type: 'queue.changed', ...this.mailbox.snapshot, paused: this.mailbox.paused };
+  }
+
+  pauseQueue(): LoopAck<'queue.changed'> | undefined {
+    this.check({ type: 'input.pause_queue' });
+    if (!this.open()) return undefined;
+    this.mailbox.setPaused(true);
+    this.kick();
+    return { type: 'queue.changed', ...this.mailbox.snapshot, paused: true };
+  }
+
+  resumeQueue(): LoopAck<'queue.changed'> | undefined {
+    this.check({ type: 'input.resume_queue' });
+    if (!this.open()) return undefined;
+    this.mailbox.setPaused(false);
+    this.releaseIntake();
+    this.kick();
+    return { type: 'queue.changed', ...this.mailbox.snapshot, paused: false };
+  }
+
   cancel(promptId: string): LoopAck<'prompt.canceled'> | undefined {
     this.check({ type: 'input.cancel', promptId });
     if (!this.open()) return undefined;
@@ -888,7 +957,7 @@ class LoopActor implements Loop {
         ...(unfinished === undefined ? {} : { unfinished: { ...unfinished } }),
       };
       this.revision = revision;
-      this.mailbox = new LoopMailbox({ normal, notify, remind }, (event) => {
+      this.mailbox = new LoopMailbox({ normal, notify, remind }, input.queuePaused ?? this.mailbox.paused, (event) => {
         this.record(event);
       });
       this.turn = undefined;
@@ -1043,6 +1112,7 @@ class LoopActor implements Loop {
       trigger: turn.trigger,
       promptOnly: turn.promptOnly,
       message: turn.pending.find((item): item is Extract<QueuedItem, { kind: 'normal' | 'notify' }> => item.kind !== 'remind')?.message,
+      consumed: turn.pending,
     });
   }
 
@@ -1077,6 +1147,7 @@ class LoopActor implements Loop {
   private settleBlockedTurn(
     turn: LiveTurn,
     outcome: Extract<TurnOutcome, { type: 'blocked' }>,
+    consume = false,
   ): void {
     const pending = turn.pending;
     turn.pending = [];
@@ -1086,10 +1157,10 @@ class LoopActor implements Loop {
       ...pending.flatMap((item) => item.kind === 'remind' ? [item.message] : []),
       ...this.mailbox.drainReminders(),
     ];
-    this.held = true;
+    this.held = !consume;
     this.announceTurn(turn);
     for (const item of pending) {
-      if (item.kind === 'normal') {
+      if (item.kind === 'normal' && !consume) {
         this.record({ type: 'message.appended', turnId: turn.id, step: 0, source: 'normal', message: item.message });
       }
     }
@@ -1204,7 +1275,7 @@ class LoopActor implements Loop {
     turn.pending.push(...reports.map(({ message }) => ({ kind: 'notify' as const, message })));
     this.report('turn.starting', turn, reports, false);
     if (blocked !== undefined) {
-      this.settleBlockedTurn(turn, { type: 'blocked', at: 'turn.starting', cause: blocked });
+      this.settleBlockedTurn(turn, { type: 'blocked', at: 'turn.starting', cause: blocked }, run.consumed === true);
       this.post({ type: 'turn.finish', turn });
     } else {
       this.announceTurn(turn);
@@ -2156,6 +2227,9 @@ function inputError(input: LoopInput): string | undefined {
   if (input.historyRevision !== undefined && !isCount(input.historyRevision)) {
     return 'historyRevision must be a non-negative integer';
   }
+  if (input.queuePaused !== undefined && typeof input.queuePaused !== 'boolean') {
+    return 'queuePaused must be a boolean';
+  }
   if (input.unfinished !== undefined && !isUnfinishedTurn(input.unfinished)) {
     return 'unfinished must describe an unfinished turn';
   }
@@ -2179,6 +2253,14 @@ function commandError(command: LoopCommand): string | undefined {
         : 'promptIds must be an array of strings';
     case 'input.cancel':
       return typeof command.promptId === 'string' ? undefined : 'promptId must be a string';
+    case 'input.move':
+      return typeof command.promptId === 'string' &&
+          (command.beforePromptId === undefined || typeof command.beforePromptId === 'string')
+        ? undefined
+        : 'promptId and beforePromptId must be strings';
+    case 'input.pause_queue':
+    case 'input.resume_queue':
+      return undefined;
     case 'input.abort_tool':
     case 'input.detach_tool':
       return typeof command.toolCallId === 'string' ? undefined : 'toolCallId must be a string';

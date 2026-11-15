@@ -57,6 +57,9 @@ export interface Loop {
   steer(promptIds: readonly string[]): LoopAck<'prompt.steered'> | undefined;
   sendNow(message: UserMessage): LoopAck<'prompt.notified'> | undefined;
   sendNow(promptIds: readonly string[]): void;
+  move(promptId: string, beforePromptId?: string): LoopAck<'queue.changed'> | undefined;
+  pauseQueue(): LoopAck<'queue.changed'> | undefined;
+  resumeQueue(): LoopAck<'queue.changed'> | undefined;
   cancel(promptId: string): LoopAck<'prompt.canceled'> | undefined;
   start(): void;
   resume(): void;

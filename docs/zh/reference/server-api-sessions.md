@@ -250,7 +250,7 @@
 
 #### `POST /api/v1/sessions/{session_id}:compact`
 
-对 main agent 的上下文发起一次手动全量压缩。调用立即返回，不等压缩完成。
+对 main agent 的上下文发起一次手动全量压缩，或将其排在当前工作之后。调用立即返回，不等压缩完成。成功时 `data` 为 `{ accepted_as, prompt_id }`：立即开始时 `accepted_as` 为 `compact`，排队时为 `queue`；`prompt_id` 标识排队项。
 
 压缩期间，WebSocket [`agent` 帧](./server-api-conversation.md#agent-状态) 的 `compacting` 为 `true`。压缩完成后，结果以 [`system`](./server-api-conversation.md#system) 条目出现在对话中。压缩被取消时，对话中不留任何内容，订阅者收到一条 `code` 为 `compaction.cancelled` 的 [`notice` 帧](./server-api-conversation.md#实时更新)。
 
@@ -258,11 +258,9 @@
 | --- | --- | --- | --- |
 | `instruction` | body | string | 给压缩摘要的额外指引。空值会被忽略 |
 
-压缩不排队，只能在 main agent 空闲时开始，流程见 [压缩](./server-api-conversation.md#压缩)。
+排队中的压缩会在前面的工作结束后执行，消费时不产生用户轮次，流程见 [压缩](./server-api-conversation.md#压缩)。
 
-成功时 `data` 为 `{}`。
-
-- `40910`：已有压缩正在进行；有正在运行的轮次；队列中有待处理的提示词；有其他上下文变更或会话历史操作（例如撤销、fork）正在进行；历史中没有可压缩的内容
+- `40910`：已有压缩正在运行或排队；历史中没有可压缩的内容
 
 #### `POST /api/v1/sessions/{session_id}:undo`
 
@@ -697,7 +695,11 @@ main agent 正在运行时，激活不会开启新轮次，而是作为插话插
 | 方法与路径 | 说明 |
 | --- | --- |
 | `GET /api/v1/sessions/{session_id}/prompts` | 进行中与排队中的提示词 |
-| `POST /api/v1/sessions/{session_id}/prompts` | 提交提示词（内容块数组，可带模型、权限模式等覆盖项） |
+| `POST /api/v1/sessions/{session_id}/prompts` | 提交提示词（旧形式，可在请求体中带 `prompt_id`） |
+| `PUT /api/v1/sessions/{session_id}/prompts/{prompt_id}` | 通过路径中的幂等键提交提示词 |
+| `POST /api/v1/sessions/{session_id}/agents/{agent_id}/queue/{prompt_id}:move` | 把排队提示词移到另一条之前，或移到队尾 |
+| `POST /api/v1/sessions/{session_id}/agents/{agent_id}/queue/pause` | 暂停普通队列消费 |
+| `POST /api/v1/sessions/{session_id}/agents/{agent_id}/queue/resume` | 恢复普通队列消费 |
 | `POST /api/v1/sessions/{session_id}/steer` | 直接把消息内容插入进行中的轮次 |
 | `POST /api/v1/sessions/{session_id}/prompts:steer` | 把排队的提示词插入进行中的轮次 |
 | `POST /api/v1/sessions/{session_id}/prompts/{prompt_id}:abort` | 中止运行中或排队中的提示词 |
@@ -705,7 +707,7 @@ main agent 正在运行时，激活不会开启新轮次，而是作为插话插
 
 #### `GET /api/v1/sessions/{session_id}/prompts`
 
-读取 main agent 的提示词队列快照，其他 Agent 的队列不在其中。队列变化没有 WebSocket 推送，需要最新状态时重新读取。
+读取 main agent 的提示词队列快照，其他 Agent 的队列不在其中。每个已订阅 Agent 的队列变化也会通过 [`queue` 帧](./server-api-conversation.md#队列帧) 推送。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -724,13 +726,13 @@ main agent 正在运行时，激活不会开启新轮次，而是作为插话插
 
 - `40401`：会话不存在
 
-#### `POST /api/v1/sessions/{session_id}/prompts`
+#### `POST /api/v1/sessions/{session_id}/prompts` 和 `PUT /api/v1/sessions/{session_id}/prompts/{prompt_id}`
 
-向会话提交一条用户提示词。响应不等待轮次执行完。
+向会话提交一条用户提示词。`PUT` 在路径中携带幂等键；旧形式 `POST` 可在请求体中携带可选的 `prompt_id`。响应不等待轮次执行完。
 
 目标 Agent 空闲、队列为空，并且不在撤销、手动压缩或 fork 的过程中时（只有 fork 一个空闲的 Agent 才会让它进入这种状态），提示词立即开始一轮，响应等到轮次开始（`status` 为 `running`）才返回。其他情况下提示词进入队列，响应立即返回，`status` 为 `queued`。撤销、压缩或 fork 期间提交的提示词同样排队，不会被拒绝。见 [开始执行还是排队](./server-api-conversation.md#开始执行还是排队)。
 
-服务端先校验媒体引用，然后按 `model`、`thinking`、`permission_mode`、`swarm_mode`、`disabled_tools` 的顺序把覆盖项应用到目标 Agent，最后让提示词入队。覆盖项在提示词被接受时就生效，不论提示词是否排队，并且之后一直保留。`permission_mode` 只改变目标 Agent，不像 [profile 接口](#post-api-v1-sessions-session-id-profile) 那样同步到所有 Agent。
+服务端先校验媒体引用。覆盖项按 `model`、`thinking`、`permission_mode`、`plan_mode`、`swarm_mode`、`disabled_tools` 和目标控制的顺序应用。它们在提示词实际开始执行时生效：首个可执行的提示词立即应用，排队的提示词则在出队时应用，不会在等待期间改变当前轮次。`permission_mode` 只改变目标 Agent，不像 [profile 接口](#post-api-v1-sessions-session-id-profile) 那样同步到所有 Agent。
 
 提供 `skills` 时，提示词以打包的 Skill 激活方式运行，而不是作为普通用户提示词。
 
@@ -747,8 +749,12 @@ main agent 正在运行时，激活不会开启新轮次，而是作为插话插
 | `swarm_mode` | body | boolean | 进入或退出 swarm 模式 |
 | `disabled_tools` | body | array | 要为会话禁用的工具名 |
 | `metadata` | body | object | 客户端自定义元数据，随提示词保存，并在提示词对象的 `metadata` 中返回 |
+| `delivery` | body | string | `queue`（默认）或 `steer`；`steer` 尽可能加入当前轮次，否则占据下一个插话槽位 |
+| `plan_mode` | body | boolean | 在此提示词开始时进入或退出 Plan 模式 |
+| `goal_objective` | body | string | 创建目标，或在 `goal_control` 为 `edit` 时提供替换文本 |
+| `goal_control` | body | string | `pause` / `resume` / `cancel` / `edit`；`edit` 保留目标 id、进度和预算 |
 
-schema 还接受 `plan_mode`、`goal_objective` 和 `goal_control`，但提交接口目前不会应用它们。
+成功时，被接受的提示词还包含 `accepted_as`：开始新轮次时为 `turn`，加入当前轮次或占据插话槽位时为 `steer`，普通排队输入为 `queue`。分配了对应的对话题次后，还会包含 `turn_id`。
 
 `prompt_id` 的幂等规则如下，流程见 [重试和幂等](./server-api-conversation.md#重试和幂等)：
 
@@ -855,6 +861,10 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 - `40401`：会话不存在
 - `40402`：main agent 没有正在运行的轮次，或没有该 id 的排队提示词
+
+#### 队列排序、暂停与恢复
+
+`POST /api/v1/sessions/{session_id}/agents/{agent_id}/queue/{prompt_id}:move` 接受 `{ before_prompt_id? }`，把普通排队提示词移到指定 id 之前；省略时移到队尾。目标必须仍在队列中，插话槽位不能排序。`POST .../queue/pause` 返回 `{ paused: true }`，`POST .../queue/resume` 返回 `{ paused: false }`。暂停只阻塞普通排队提示词，不会中断当前轮次；直接插话通知仍可被消费。
 
 ### 审批与提问
 

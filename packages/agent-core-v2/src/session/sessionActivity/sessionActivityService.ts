@@ -43,6 +43,7 @@ interface AgentWorkFold {
   turnActive: boolean;
   background: ReadonlySet<string>;
   compacting: boolean;
+  queuePending: boolean;
   lastTurnReason?: SessionTurnOutcome;
 }
 
@@ -182,6 +183,17 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
         this.patchFold(handle.id, (fold) => ({ ...fold, compacting: false })),
       ),
     );
+    const loop = handle.accessor.get(IAgentLoopService) as IAgentLoopService | undefined;
+    if (loop !== undefined) {
+      subscriptions.add(
+        loop.onDidChangeQueue(() => {
+          this.patchFold(handle.id, (fold) => ({
+            ...fold,
+            queuePending: loop.snapshot().hasPendingRequests,
+          }));
+        }),
+      );
+    }
     const dispatcher = handle.accessor.get(IEventDispatcher) as IEventDispatcher | undefined;
     if (dispatcher !== undefined) {
       subscriptions.add(
@@ -203,7 +215,7 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
     let cause: SessionActivityCause | undefined;
     if (!previous.turnActive && next.turnActive) cause = 'turn_started';
     else if (previous.turnActive && !next.turnActive) cause = 'turn_ended';
-    else if (previous.background.size !== next.background.size || previous.compacting !== next.compacting) {
+    else if (previous.background.size !== next.background.size || previous.compacting !== next.compacting || previous.queuePending !== next.queuePending) {
       cause = 'background';
     }
     else if (agentId === MAIN_AGENT_ID && previous.lastTurnReason !== next.lastTurnReason) {
@@ -223,7 +235,7 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
   private aggregate(): SessionActivityState {
     let busy = false;
     for (const fold of this.folds.values()) {
-      if (fold.turnActive || fold.background.size > 0 || fold.compacting) {
+      if (fold.turnActive || fold.background.size > 0 || fold.compacting || fold.queuePending) {
         busy = true;
         break;
       }
@@ -259,6 +271,7 @@ function seedFold(handle: IAgentScopeHandle): AgentWorkFold {
       handler.snapshot().fields.task === undefined ? [] : [handler.taskId]
     ) ?? []),
     compacting: (compaction?.compacting ?? null) !== null,
+    queuePending: loop?.snapshot().hasPendingRequests ?? false,
     lastTurnReason:
       loop?.snapshot().state === 'running' ? undefined : mapTurnReason(lastEnded?.reason),
   };

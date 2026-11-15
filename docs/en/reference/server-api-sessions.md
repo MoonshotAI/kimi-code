@@ -250,7 +250,7 @@ On success, `data` is the [session object](#session-object) of the new session.
 
 #### `POST /api/v1/sessions/{session_id}:compact`
 
-Starts a manual full compaction of the main agent's context. The call returns immediately without waiting for the compaction to finish.
+Starts a manual full compaction of the main agent's context, or queues it behind the current work. The call returns immediately without waiting for the compaction to finish. On success, `data` is `{ accepted_as, prompt_id }`: `accepted_as` is `compact` when it starts immediately or `queue` when it is queued, and `prompt_id` identifies the queue item when queued.
 
 During compaction, `compacting` is `true` in the WebSocket [`agent` frame](./server-api-conversation.md#agent-state). When compaction finishes, the result appears in the conversation as a [`system`](./server-api-conversation.md#system) item. When compaction is cancelled, nothing is left in the conversation, and subscribers receive a [`notice` frame](./server-api-conversation.md#live-updates) with `code` `compaction.cancelled`.
 
@@ -258,11 +258,11 @@ During compaction, `compacting` is `true` in the WebSocket [`agent` frame](./ser
 | --- | --- | --- | --- |
 | `instruction` | body | string | Extra guidance for the compaction summary. A blank value is ignored |
 
-Compaction is not queued. It can start only when the main agent is idle; see [Compaction](./server-api-conversation.md#compaction) for the flow.
+A queued compaction runs after the preceding work and is consumed without creating a user turn. See [Compaction](./server-api-conversation.md#compaction) for the flow.
 
 On success, `data` is `{}`.
 
-- `40910`: a compaction is already in progress; a turn is running; prompts are pending in the queue; another context change or session history operation (for example undo or fork) is in progress; the history has nothing to compact
+- `40910`: a compaction is already running or queued; the history has nothing to compact
 
 #### `POST /api/v1/sessions/{session_id}:undo`
 
@@ -697,7 +697,11 @@ A prompt is one unit of user input. A submitted prompt enters the queue of the s
 | Method and path | Description |
 | --- | --- |
 | `GET /api/v1/sessions/{session_id}/prompts` | Active and queued prompts |
-| `POST /api/v1/sessions/{session_id}/prompts` | Submit a prompt (content block array, with optional overrides such as model and permission mode) |
+| `POST /api/v1/sessions/{session_id}/prompts` | Submit a prompt (legacy form; optional `prompt_id` in the body) |
+| `PUT /api/v1/sessions/{session_id}/prompts/{prompt_id}` | Submit a prompt with an idempotency key in the path |
+| `POST /api/v1/sessions/{session_id}/agents/{agent_id}/queue/{prompt_id}:move` | Move a queued prompt before another prompt, or to the end |
+| `POST /api/v1/sessions/{session_id}/agents/{agent_id}/queue/pause` | Pause ordinary queue consumption |
+| `POST /api/v1/sessions/{session_id}/agents/{agent_id}/queue/resume` | Resume ordinary queue consumption |
 | `POST /api/v1/sessions/{session_id}/steer` | Steer message content directly into the active turn |
 | `POST /api/v1/sessions/{session_id}/prompts:steer` | Steer queued prompts into the active turn |
 | `POST /api/v1/sessions/{session_id}/prompts/{prompt_id}:abort` | Abort a running or queued prompt |
@@ -705,7 +709,7 @@ A prompt is one unit of user input. A submitted prompt enters the queue of the s
 
 #### `GET /api/v1/sessions/{session_id}/prompts`
 
-Reads a snapshot of the main agent's prompt queue. Other agents' queues are not included. Queue changes are not pushed over the WebSocket; read again when you need the latest state.
+Reads a snapshot of the main agent's prompt queue. Other agents' queues are not included. Queue changes are also pushed as [`queue` frames](./server-api-conversation.md#queue-frames) for each subscribed agent.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -724,13 +728,13 @@ On success, `data` is `{ active, queued }`: `active` is the running prompt, `nul
 
 - `40401`: the session does not exist
 
-#### `POST /api/v1/sessions/{session_id}/prompts`
+#### `POST /api/v1/sessions/{session_id}/prompts` and `PUT /api/v1/sessions/{session_id}/prompts/{prompt_id}`
 
-Submits a user prompt to the session. The response does not wait for the turn to finish.
+Submits a user prompt to the session. `PUT` carries the idempotency key in the path; the legacy `POST` form accepts the optional `prompt_id` in the body. The response does not wait for the turn to finish.
 
 When the target agent is idle, its queue is empty, and it is not in the middle of an undo, a manual compaction, or a fork (only forking an idle agent puts it in this state), the prompt starts a turn immediately, and the response returns once the turn starts (`status` is `running`). Otherwise the prompt is queued, and the response returns immediately with `status` `queued`. Prompts submitted during an undo, compaction, or fork are also queued, not rejected. See [Starting or queueing](./server-api-conversation.md#starting-or-queueing).
 
-The server first validates media references, then applies the overrides to the target agent in the order `model`, `thinking`, `permission_mode`, `swarm_mode`, `disabled_tools`, and finally enqueues the prompt. Overrides take effect when the prompt is accepted, whether or not the prompt is queued, and they persist afterwards. `permission_mode` changes only the target agent; unlike the [profile endpoint](#post-api-v1-sessions-session-id-profile), it is not synced to all agents.
+The server first validates media references. Overrides are applied in the order `model`, `thinking`, `permission_mode`, `plan_mode`, `swarm_mode`, `disabled_tools`, and goal controls. They take effect when the prompt actually starts: immediately for the first executable prompt, or when a queued prompt is dequeued. They do not change the active turn while a prompt waits. `permission_mode` changes only the target agent; unlike the [profile endpoint](#post-api-v1-sessions-session-id-profile), it is not synced to all agents.
 
 With `skills`, the prompt runs as a bundled skill activation instead of a plain user prompt.
 
@@ -747,8 +751,12 @@ With `skills`, the prompt runs as a bundled skill activation instead of a plain 
 | `swarm_mode` | body | boolean | Enter or exit swarm mode |
 | `disabled_tools` | body | array | Tool names to disable for the session |
 | `metadata` | body | object | Client-defined metadata, saved with the prompt and returned in the prompt object's `metadata` |
+| `delivery` | body | string | `queue` (default) or `steer`; `steer` joins the active turn when possible, otherwise occupies the next steer slot |
+| `plan_mode` | body | boolean | Enter or exit Plan mode when this prompt starts |
+| `goal_objective` | body | string | Create a goal, or provide its replacement text when `goal_control` is `edit` |
+| `goal_control` | body | string | `pause` / `resume` / `cancel` / `edit`; `edit` keeps the goal id, progress, and budget |
 
-The schema also accepts `plan_mode`, `goal_objective`, and `goal_control`, but the submit endpoint currently does not apply them.
+On success, the accepted prompt includes `accepted_as`: `turn` when it starts a new turn, `steer` when it joins an active turn or takes a steer slot, and `queue` for ordinary queued input. `turn_id` is present when the corresponding conversation turn has been assigned.
 
 The idempotency rules for `prompt_id` are as follows; see [Retries and idempotency](./server-api-conversation.md#retries-and-idempotency) for the flow:
 
@@ -855,6 +863,10 @@ On success, `data` is `{ steered: true, prompt_ids: [prompt_id] }`.
 
 - `40401`: the session does not exist
 - `40402`: the main agent has no running turn, or there is no queued prompt with that id
+
+#### Queue move, pause, and resume
+
+`POST /api/v1/sessions/{session_id}/agents/{agent_id}/queue/{prompt_id}:move` accepts `{ before_prompt_id? }` and moves the ordinary queued prompt before that id, or to the end when omitted. The target must still be queued; steer slots cannot be moved. `POST .../queue/pause` returns `{ paused: true }` and `POST .../queue/resume` returns `{ paused: false }`. Pausing holds ordinary queued prompts without interrupting the active turn; direct steer notifications can still be consumed.
 
 ### Approvals and questions
 

@@ -15,6 +15,7 @@ import type {
   AgentState,
   GoalEventMessage,
   GoalState,
+  QueueEventMessage,
   TodoEventMessage,
   UsageEventMessage,
   UsageState,
@@ -23,6 +24,7 @@ import {
   optionalService,
   readAgentState,
   readGoalState,
+  readQueuedInputs,
   readTodoItems,
   readUsageState,
 } from './agentState';
@@ -106,6 +108,7 @@ class AgentWatch implements IDisposable {
   private lastAgent?: string;
   private lastGoal?: string;
   private lastTodo?: string;
+  private lastQueue?: string;
   private lastUsage?: string;
   private pendingUsage?: UsageState;
   private usageTimer?: ReturnType<typeof setTimeout>;
@@ -139,6 +142,10 @@ class AgentWatch implements IDisposable {
         }),
       );
     }
+    const loop = optionalService(handle, IAgentLoopService);
+    if (loop !== undefined) {
+      this.subscriptions.push(loop.onDidChangeQueue(() => this.schedule()));
+    }
     if (announce) this.schedule();
     else this.prime();
   }
@@ -149,6 +156,7 @@ class AgentWatch implements IDisposable {
     if (usage !== undefined) messages.push(this.usageMessage(usage));
     if (this.agentId === MAIN_AGENT_ID) messages.push(this.goalMessage(readGoalState(this.handle)));
     messages.push(this.todoMessage());
+    messages.push(this.queueMessage());
     return messages;
   }
 
@@ -195,6 +203,7 @@ class AgentWatch implements IDisposable {
     this.lastAgent = agentKey(this.agentMessage());
     if (this.agentId === MAIN_AGENT_ID) this.lastGoal = goalKey(readGoalState(this.handle));
     this.lastTodo = todoKey(this.todoMessage());
+    this.lastQueue = queueKey(this.queueMessage());
     const usage = readUsageState(this.handle);
     this.lastUsage = usage === undefined ? undefined : JSON.stringify(usage);
   }
@@ -221,6 +230,13 @@ class AgentWatch implements IDisposable {
     if (nextTodo !== this.lastTodo) {
       this.lastTodo = nextTodo;
       this.send(this.agentId, todo);
+    }
+
+    const queue = this.queueMessage();
+    const nextQueue = queueKey(queue);
+    if (nextQueue !== this.lastQueue) {
+      this.lastQueue = nextQueue;
+      this.send(this.agentId, queue);
     }
 
     const usage = readUsageState(this.handle);
@@ -260,6 +276,17 @@ class AgentWatch implements IDisposable {
     return { type: 'todo', ...this.frameFields(), items: readTodoItems(this.handle) };
   }
 
+  private queueMessage(): QueueEventMessage {
+    const loop = optionalService(this.handle, IAgentLoopService);
+    return {
+      type: 'queue',
+      ...this.frameFields(),
+      inputs: readQueuedInputs(this.handle),
+      paused: loop?.snapshot().queuePaused ?? false,
+      attached: loop?.snapshot().engineAttached ?? false,
+    };
+  }
+
   private frameFields(): { session_id: string; agent_id: string; event_created_at: string } {
     return {
       session_id: this.sessionId,
@@ -279,6 +306,10 @@ function goalKey(goal: GoalState | undefined): string {
 
 function todoKey(message: TodoEventMessage): string {
   return JSON.stringify(message.items);
+}
+
+function queueKey(message: QueueEventMessage): string {
+  return JSON.stringify({ inputs: message.inputs, paused: message.paused, attached: message.attached });
 }
 
 function loopRunning(handle: IAgentScopeHandle): boolean {

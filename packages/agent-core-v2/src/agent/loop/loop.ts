@@ -1,5 +1,6 @@
 import { createDecorator } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
+import type { Event } from '#/_base/event';
 import { Error2, isError2, type Error2Options } from '#/_base/errors/errors';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { AgentTaskInfo } from '#/agent/task/types';
@@ -56,6 +57,9 @@ export interface LoopSnapshot {
   readonly activeTurnId?: number;
   readonly activePromptId?: string;
   readonly queue: readonly UserMessage[];
+  readonly engineAttached: boolean;
+  readonly startingPromptId?: string;
+  readonly queuePaused: boolean;
   readonly notificationCount: number;
   readonly paused: boolean;
   readonly hasPendingRequests: boolean;
@@ -162,8 +166,16 @@ export interface Turn {
   cancel(reason?: unknown): boolean;
 }
 
+export type PromptAcceptance = 'turn' | 'steer' | 'queue';
+
+export interface LoopSubmitOptions {
+  readonly delivery?: 'queue' | 'steer';
+  readonly onStart?: (signal: AbortSignal) => Promise<void>;
+}
+
 export interface LoopSubmitResult {
   readonly id: string;
+  readonly acceptedAs: PromptAcceptance;
 }
 
 export interface LoopCancelTarget {
@@ -214,6 +226,11 @@ export interface SteerResult {
   readonly created_at: string;
   readonly state: 'running' | 'queued' | 'blocked';
   readonly steered?: boolean;
+}
+
+export interface QueuedCompactionContext {
+  readonly instruction?: string;
+  readonly signal: AbortSignal;
 }
 
 export interface PromptSubmitContext {
@@ -284,9 +301,17 @@ export interface IAgentLoopService extends EffectiveProfileReader {
   initializeHistory(messages: readonly Message[]): Promise<void>;
 
   submit(payload: PromptPayload): Promise<PromptLaunchResult | undefined>;
-  submit(input: UserMessage): LoopSubmitResult;
+  submit(input: UserMessage, options?: LoopSubmitOptions): LoopSubmitResult;
 
   steer(promptIds: readonly string[]): Promise<void>;
+
+  moveQueued(promptId: string, beforePromptId?: string): void;
+
+  pauseQueue(): void;
+
+  resumeQueue(): void;
+
+  readonly onDidChangeQueue: Event<void>;
 
   cancel(target?: LoopCancelTarget, reason?: unknown): boolean;
 
@@ -312,6 +337,7 @@ export interface IAgentLoopService extends EffectiveProfileReader {
   notifyClient(input: LoopNotifyMessage): Promise<SteerResult>;
   notify(input: LoopNotifyMessage): LoopSubmitResult;
   notify(note?: LoopNotify): LoopNotifyHandle;
+  enqueueCompaction(instruction?: string): string;
   sendNow(input: LoopNotifyMessage): LoopSubmitResult;
   sendNow(promptIds: readonly string[]): Promise<void>;
 
@@ -331,6 +357,7 @@ export interface IAgentLoopService extends EffectiveProfileReader {
     /** After onDidFinishStep, Core consumes queued reminders before assembling the next LLM request. */
     onDidFinishStep: AfterStepContext;
     onBeforeSubmitPrompt: PromptSubmitContext;
+    onRunQueuedCompaction: QueuedCompactionContext;
   }>;
 }
 

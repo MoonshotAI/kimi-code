@@ -9,16 +9,19 @@ import {
   IAgentTowerService,
   planKey,
   type IAgentScopeHandle,
+  type PromptOrigin,
   type ServiceIdentifier,
 } from '@moonshot-ai/agent-core-v2';
 
 import type {
   AgentState,
   GoalState,
+  QueuedInput,
   TodoItemState,
   UsageState,
 } from '../../../protocol/ws-agent';
 import { readLegacyStatus } from '../../../services/legacyStatus/legacyStatus';
+import { projectUserContent } from '../../../services/messages/messageProjection';
 
 export function readAgentState(handle: IAgentScopeHandle, running: boolean): AgentState {
   const profile = optionalService(handle, IAgentLoopService);
@@ -61,6 +64,41 @@ export function readGoalState(handle: IAgentScopeHandle): GoalState | undefined 
 export function readTodoItems(handle: IAgentScopeHandle): TodoItemState[] {
   const todos = optionalService(handle, IAgentTodoService)?.get() ?? [];
   return todos.map((todo) => ({ title: todo.title, status: todo.status }));
+}
+
+export function readQueuedInputs(handle: IAgentScopeHandle): QueuedInput[] {
+  const snapshot = optionalService(handle, IAgentLoopService)?.snapshot();
+  if (snapshot === undefined || !snapshot.engineAttached) return [];
+  return snapshot.queue.flatMap((entry): QueuedInput[] => {
+    const attributes = entry.attributes;
+    const promptId = attributes?.promptId;
+    const createdAt = attributes?.createdAt;
+    if (attributes === undefined || promptId === undefined || promptId === snapshot.startingPromptId || createdAt === undefined) return [];
+    if (attributes.queueItem?.kind === 'compact') {
+      return [{
+        prompt_id: promptId,
+        user_message_id: attributes.userMessageId ?? promptId,
+        kind: 'compact',
+        delivery: 'queue',
+        content: [],
+        instruction: attributes.queueItem.instruction,
+        created_at: createdAt,
+      }];
+    }
+    const origin = attributes.origin as PromptOrigin | undefined;
+    if (origin?.kind !== 'user') return [];
+    const skills = origin.skillActivations?.map(({ skillName, skillArgs }) => ({ name: skillName, args: skillArgs }));
+    return [{
+      prompt_id: promptId,
+      user_message_id: attributes.userMessageId ?? promptId,
+      kind: 'input',
+      delivery: attributes.delivery ?? 'queue',
+      content: projectUserContent({ ...entry, origin }),
+      skills: skills !== undefined && skills.length > 0 ? skills : undefined,
+      client_metadata: origin.clientMetadata?.[0],
+      created_at: createdAt,
+    }];
+  });
 }
 
 function planActive(handle: IAgentScopeHandle): boolean {

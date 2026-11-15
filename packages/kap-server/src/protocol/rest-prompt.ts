@@ -18,6 +18,8 @@ export const promptSkillActivationSchema = z.object({
 });
 export type PromptSkillActivation = z.infer<typeof promptSkillActivationSchema>;
 
+export const promptIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
+
 export const promptSubmissionSchema = z.object({
   content: z.array(messageContentSchema).min(1),
   metadata: z.record(z.string(), z.unknown()).optional(),
@@ -29,10 +31,11 @@ export const promptSubmissionSchema = z.object({
   plan_mode: z.boolean().optional(),
   swarm_mode: z.boolean().optional(),
   goal_objective: z.string().optional(),
-  goal_control: z.enum(['pause', 'resume', 'cancel']).optional(),
+  goal_control: z.enum(['pause', 'resume', 'cancel', 'edit']).optional(),
   disabled_tools: z.array(z.string()).optional(),
   prompt_id: z.string().min(1).optional(),
   skills: z.array(promptSkillActivationSchema).min(1).optional(),
+  delivery: z.enum(['queue', 'steer']).optional(),
 });
 export type PromptSubmission = z.infer<typeof promptSubmissionSchema>;
 
@@ -55,7 +58,13 @@ export const promptListResponseSchema = z.object({
 });
 export type PromptListResponse = z.infer<typeof promptListResponseSchema>;
 
-export const promptSubmitResultSchema = promptItemSchema;
+export const promptAcceptanceSchema = z.enum(['turn', 'steer', 'queue']);
+export type PromptAcceptance = z.infer<typeof promptAcceptanceSchema>;
+
+export const promptSubmitResultSchema = promptItemSchema.extend({
+  accepted_as: promptAcceptanceSchema,
+  turn_id: z.string().min(1).optional(),
+});
 export type PromptSubmitResult = z.infer<typeof promptSubmitResultSchema>;
 
 export const promptSteerRequestSchema = z.object({
@@ -73,3 +82,11 @@ export const promptAbortResponseSchema = z.object({
   aborted: z.boolean(),
 });
 export type PromptAbortResponse = z.infer<typeof promptAbortResponseSchema>;
+
+export const queueMoveRequestSchema = z.object({
+  before_prompt_id: promptIdSchema.optional(),
+});
+export type QueueMoveRequest = z.infer<typeof queueMoveRequestSchema>;
+
+export const queuePauseResponseSchema = z.object({ paused: z.boolean() });
+export type QueuePauseResponse = z.infer<typeof queuePauseResponseSchema>;

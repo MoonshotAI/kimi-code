@@ -42,6 +42,7 @@ import {
   makeAgentScopeContext,
 } from '@moonshot-ai/agent-core-v2';
 import type { Event2Class } from '@moonshot-ai/agent-core-v2/app/event/event2';
+import type { UserMessage } from '@moonshot-ai/core/llm/message';
 import {
   AgentEventBusView,
   EventBusService,
@@ -228,7 +229,14 @@ class FakeAgentHandle {
       snapshot: () => ({
         state: this.activity.turn === undefined ? 'idle' : 'running',
         turn: this.activity.turn,
+        queue: [],
+        engineAttached: true,
+        queuePaused: false,
+        notificationCount: 0,
+        paused: false,
+        hasPendingRequests: this.activity.turn !== undefined,
       }),
+      onDidChangeQueue: () => ({ dispose: () => {} }),
     });
     this.accessor = {
       get: (token: unknown) => this.services.get(token),
@@ -1868,7 +1876,7 @@ describe('SessionEventBroadcaster', () => {
     });
 
     type StateFrame = { type: string; agent_id: string } & Record<string, unknown>;
-    const STATE_FRAME_TYPES = new Set(['agent', 'usage', 'goal', 'todo']);
+    const STATE_FRAME_TYPES = new Set(['agent', 'usage', 'goal', 'todo', 'queue']);
     const stateFramesOf = (view: ReturnType<typeof collectingTarget>): StateFrame[] =>
       view.envelopes.filter((frame) => STATE_FRAME_TYPES.has(frame.type)) as unknown as StateFrame[];
     const settle = (ms = 0): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -1880,6 +1888,9 @@ describe('SessionEventBroadcaster', () => {
       let contextTokens = 0;
       let statusReads = 0;
       const todoListeners = new Set<() => void>();
+      const queueListeners = new Set<() => void>();
+      let queued: UserMessage[] = [];
+      let queuePaused = false;
       handle.set(IAgentPermissionModeService, { get mode() { return permission; } });
       handle.set(IAgentTodoService, {
         get: () => todos,
@@ -1889,10 +1900,17 @@ describe('SessionEventBroadcaster', () => {
         },
       });
       handle.set(IAgentGoalService, { getGoal: () => ({ goal }) });
-      Object.assign(handle.accessor.get(IAgentLoopService) as Record<string, unknown>, {
+      const loop = handle.accessor.get(IAgentLoopService) as IAgentLoopService;
+      const baseSnapshot = loop.snapshot.bind(loop);
+      Object.assign(loop as unknown as Record<string, unknown>, {
         getModel: () => 'k2',
         getEffectiveThinkingLevel: () => 'high',
         resolveModelContext: () => ({ model: { maxContextSize: 1000 } }),
+        snapshot: () => ({ ...baseSnapshot(), queue: queued, queuePaused }),
+        onDidChangeQueue: (listener: () => void) => {
+          queueListeners.add(listener);
+          return { dispose: () => queueListeners.delete(listener) };
+        },
       });
       handle.set(ISessionUsageService, { status: () => undefined });
       handle.set(ISessionTokenCountingService, {
@@ -1918,6 +1936,11 @@ describe('SessionEventBroadcaster', () => {
         setContextTokens(tokens: number): void {
           contextTokens = tokens;
           handle.bus.emit(agentEvent('agent.status.updated', { contextTokens: tokens }));
+        },
+        setQueue(next: UserMessage[], paused: boolean): void {
+          queued = next;
+          queuePaused = paused;
+          for (const listener of queueListeners) listener();
         },
       };
     }
@@ -1957,9 +1980,47 @@ describe('SessionEventBroadcaster', () => {
           agent_id: 'main',
           items: [{ title: 'write tests', status: 'in_progress' }],
         }),
+        expect.objectContaining({ type: 'queue', agent_id: 'main', inputs: [], paused: false }),
       ]);
       expect(JSON.parse(JSON.stringify(frames[2]))).not.toHaveProperty('goal');
       expect(stateFramesOf(offView)).toEqual([]);
+    });
+
+    it('pushes queue content and pause state', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      const state = withAgentState(main);
+      sessions.set('s1', lc);
+      bc = makeBroadcasterForAgents();
+      const view = collectingTarget();
+      await bc.subscribe('s1', view.target, ['main']);
+
+      state.setQueue([{
+        role: 'user',
+        content: [{ type: 'text', text: 'queued text' }],
+        attributes: {
+          promptId: 'queued-1',
+          userMessageId: 'queued-1',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          origin: { kind: 'user', clientMetadata: [{ source: 'test' }] } as unknown as NonNullable<UserMessage['attributes']>['origin'],
+          delivery: 'steer',
+        },
+      }], true);
+      await settle();
+
+      expect(stateFramesOf(view).at(-1)).toMatchObject({
+        type: 'queue',
+        agent_id: 'main',
+        paused: true,
+        inputs: [{
+          prompt_id: 'queued-1',
+          user_message_id: 'queued-1',
+          kind: 'input',
+          delivery: 'steer',
+          content: [{ type: 'text', text: 'queued text' }],
+          client_metadata: { source: 'test' },
+        }],
+      });
     });
 
     it('pushes todo, goal and permission changes and stays quiet when nothing changed', async () => {
@@ -2081,7 +2142,7 @@ describe('SessionEventBroadcaster', () => {
         stateFramesOf(view)
           .slice(subscribed)
           .map((frame) => `${frame.type}:${frame.agent_id}`),
-      ).toEqual(['agent:agent-1', 'todo:agent-1']);
+      ).toEqual(['agent:agent-1', 'todo:agent-1', 'queue:agent-1']);
     });
 
     it('narrows the frames per agent on unsubscribe and stops them when the last agent goes', async () => {

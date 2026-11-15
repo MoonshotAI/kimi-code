@@ -55,6 +55,8 @@ interface PromptItemWire {
   content: unknown;
   created_at: string;
   metadata?: Record<string, unknown>;
+  accepted_as?: 'turn' | 'steer' | 'queue';
+  turn_id?: string;
 }
 
 type PromptContentPart =
@@ -250,7 +252,7 @@ describe('server-v2 /api/v1 prompts', () => {
   });
 
   async function call<T>(
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'PUT',
     path: string,
     arg?: unknown,
   ): Promise<{ status: number; body: Envelope<T> }> {
@@ -347,6 +349,59 @@ describe('server-v2 /api/v1 prompts', () => {
       expect(Array.isArray(list.body.data.queued)).toBe(true);
       expect(list.body.data.queued.map((item) => item.prompt_id)).toContain('goal-queued');
       quiescence?.dispose();
+    } finally {
+      restoreModel();
+    }
+  });
+
+  it('submits idempotent prompts, moves them and resumes with deferred settings', async () => {
+    const restoreModel = stubUnreachableModel();
+    try {
+      const id = await createSession(home as string);
+      await createMainAgent(id);
+      const agent = getLiveSessionById(server!.core.accessor, id)!.accessor.get(IAgentLifecycleService).handleOf('main')!;
+      const loop = agent.accessor.get(IAgentLoopService);
+      loop.pauseQueue();
+      const first = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/prompt_first`, {
+        content: [{ type: 'text', text: 'first' }],
+        thinking: 'high',
+        permission_mode: 'yolo',
+      });
+      const second = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/prompt_second`, {
+        content: [{ type: 'text', text: 'second' }],
+      });
+      const repeated = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/prompt_first`, {
+        content: [{ type: 'text', text: 'first' }],
+        thinking: 'high',
+        permission_mode: 'yolo',
+      });
+      expect(first.body.data.accepted_as).toBe('queue');
+      expect(second.body.data.accepted_as).toBe('queue');
+      expect(repeated.body.data).toEqual(first.body.data);
+      expect(loop.getEffectiveThinkingLevel()).toBe('off');
+      expect(agent.accessor.get(IAgentPermissionModeService).mode).toBe('manual');
+      const conflict = await call<null>('PUT', `/api/v1/sessions/${id}/prompts/prompt_first`, {
+        content: [{ type: 'text', text: 'different' }],
+      });
+      expect(conflict.body.code).not.toBe(0);
+
+      const moved = await call('POST', `/api/v1/sessions/${id}/agents/main/queue/prompt_second:move`, {
+        before_prompt_id: 'prompt_first',
+      });
+      expect(moved.body.code).toBe(0);
+      expect(loop.snapshot().queue.map((entry) => entry.attributes?.promptId)).toEqual(['prompt_second', 'prompt_first']);
+      const paused = await call<{ paused: boolean }>('POST', `/api/v1/sessions/${id}/agents/main/queue/pause`, {});
+      expect(paused.body.data.paused).toBe(true);
+      const resumed = await call<{ paused: boolean }>('POST', `/api/v1/sessions/${id}/agents/main/queue/resume`, {});
+      expect(resumed.body.data.paused).toBe(false);
+      await Promise.all([
+        loop.promptHandle('prompt_first')!.completion,
+        loop.promptHandle('prompt_second')!.completion,
+      ]);
+
+      expect(loop.getEffectiveThinkingLevel()).toBe('high');
+      expect(agent.accessor.get(IAgentPermissionModeService).mode).toBe('yolo');
+      expect(loop.snapshot().queue).toEqual([]);
     } finally {
       restoreModel();
     }

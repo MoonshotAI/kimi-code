@@ -116,7 +116,7 @@ export class StubEffectiveProfileReader {
 }
 
 export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
-  const hooks = createHooks(['onWillBeginStep', 'onDidFinishStep', 'onBeforeSubmitPrompt']) as IAgentLoopService['hooks'];
+  const hooks = createHooks(['onWillBeginStep', 'onDidFinishStep', 'onBeforeSubmitPrompt', 'onRunQueuedCompaction']) as IAgentLoopService['hooks'];
   const errorHandlers = registry(); const launches: number[] = []; const cancels: { turnId?: number; reason?: unknown }[] = [];
   const pending: PendingEntry[] = [];
   const batchStartingHooks: Array<LoopHooks['tool.batch-starting']> = [];
@@ -200,9 +200,14 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
         launched: Promise.resolve(turn),
         completion: new Promise(() => {}),
       });
-      return { id };
+      return { id, acceptedAs: 'turn' };
     }) as StubLoop['submit'],
     steer: async () => {},
+    moveQueued: () => {},
+    pauseQueue: () => {},
+    resumeQueue: () => {},
+    onDidChangeQueue: () => toDisposable(() => {}),
+    enqueueCompaction: () => 'compact',
     remind(...entries: readonly Message[]): void {
       for (const entry of entries) {
         pending.push({ kind: 'message', message: contextFromHistoryEntry(entry) });
@@ -263,6 +268,8 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
         activeTurnId: active?.id,
         activePromptId: undefined,
         queue: [],
+        engineAttached: true,
+        queuePaused: false,
         notificationCount: 0,
         paused: false,
         hasPendingRequests: hasPending(),

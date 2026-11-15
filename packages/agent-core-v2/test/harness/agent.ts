@@ -1512,8 +1512,8 @@ export class AgentTestContext {
         return this.restorePersisted();
       };
       const submit = loop.submit.bind(loop);
-      loop.submit = ((input: Parameters<IAgentLoopService['submit']>[0]) => {
-        const result = submit(input);
+      loop.submit = ((input: Parameters<IAgentLoopService['submit']>[0], options: Parameters<IAgentLoopService['submit']>[1]) => {
+        const result = submit(input, options);
         void Promise.resolve().then(restoreAfterWrites);
         return result;
       }) as IAgentLoopService['submit'];

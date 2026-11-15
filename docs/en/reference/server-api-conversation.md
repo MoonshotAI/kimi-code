@@ -63,6 +63,7 @@ S { "type": "agent", "session_id": "s1", "agent_id": "main", "status": "running"
 S { "type": "usage", "session_id": "s1", "agent_id": "main", "context_tokens": 18210, "max_context_tokens": 262144 }
 S { "type": "goal", "session_id": "s1", "agent_id": "main" }
 S { "type": "todo", "session_id": "s1", "agent_id": "main", "items": [] }
+S { "type": "queue", "session_id": "s1", "agent_id": "main", "inputs": [], "paused": false, "attached": true }
 S { "type": "turns", "session_id": "s1", "agent_id": "main", "turns": [ { "turn_id": "t_9", "ordinal": 9, "turn_number": 9, "kind": "agent", "status": "running", "started_at": "2026-10-29T10:29:45.000Z", "steps": [], "items": [] } ], "has_more": true }
 ```
 
@@ -89,7 +90,7 @@ Frame ordering on subscription:
 
 1. **Reply (`response`)**: Always arrives first. If the session cannot be opened, `code` is non-zero (`40401`, `40930`, `40931`) and no subscription is created.
 2. **Pending interactions (`interaction`)**: Sent immediately after `response` for all unresolved approvals and questions in the session. Every successful `subscribe` resends all pending interactions so the client can replace its local interaction list.
-3. **Tasks and state (`task.list`, `agent`, `usage`, `goal`, `todo`)**: Sent for each newly subscribed agent. Subscribing to a brand-new session materializes `main` automatically.
+3. **Tasks and state (`task.list`, `agent`, `usage`, `goal`, `todo`, `queue`)**: Sent for each newly subscribed agent. Subscribing to a brand-new session materializes `main` automatically.
 4. **Conversation page (`turns` or `turns.failed`)**: Loaded asynchronously from disk (up to the latest 10 turns within 1 MiB) and may arrive after live state frames, but **live conversation frames (`turn.*`, `item.*`, `turns.removed`, `notice`) for an agent never arrive before its `turns` frame** — frames produced during loading are buffered and flushed in order right after `turns`.
 
 ### When the server closes and reopens a session
@@ -106,7 +107,7 @@ The server reclaims sessions idle for 30 minutes (`KIMI_CODE_SESSION_IDLE_RECLAI
 | [Global events](#global-events) | Every open WebSocket connection (no subscription needed) |
 | `interaction` | Every connection subscribed to the session, **regardless of `agent_ids`** |
 | `turns`, `turns.removed`, `turns.failed`, `turn.*`, `item.*`, `notice` | Connections subscribed to the session whose `agent_ids` include `agent_id` |
-| `task.list`, `task`, `agent`, `usage`, `goal`, `todo` | Same as above |
+| `task.list`, `task`, `agent`, `usage`, `goal`, `todo`, `queue` | Same as above |
 | `task.output` | Connections watching that task via `task.watch` (no session subscription needed) |
 
 ### Frame ordering
@@ -266,7 +267,7 @@ Submit user input with [`POST /api/v1/sessions/{session_id}/prompts`](./server-a
 ```wire focus=prompt_id,status,item.prompt_ids,item.placement
 H POST /api/v1/sessions/s1/prompts
   { "prompt_id": "p-1", "content": [ { "type": "text", "text": "Investigate this error" } ] }
-R { "prompt_id": "p-1", "user_message_id": "u_1", "status": "running", "content": [ { "type": "text", "text": "Investigate this error" } ], "created_at": "2026-10-29T10:35:00.000Z" }
+R { "prompt_id": "p-1", "user_message_id": "u_1", "status": "running", "accepted_as": "turn", "turn_id": "t_1", "content": [ { "type": "text", "text": "Investigate this error" } ], "created_at": "2026-10-29T10:35:00.000Z" }
 S { "type": "turn.started", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_1", "ordinal": 0, "turn_number": 0, "kind": "agent", "status": "running", "started_at": "2026-10-29T10:35:00.000Z", "steps": [] } }
 S { "type": "item.ended", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "u_1", "type": "user_message", "step_index": 0, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:35:00.000Z", "prompt_ids": ["p-1"], "placement": "opener", "origin": { "kind": "user" }, "text": "Investigate this error", "attachments": [], "skills": [] } }
 ```
@@ -277,7 +278,7 @@ S { "type": "item.ended", "session_id": "s1", "agent_id": "main", "turn_id": "t_
 ```wire focus=status,steered,prompt_ids,item.placement,item.prompt_ids
 H POST /api/v1/sessions/s1/prompts
   { "prompt_id": "p-2", "content": [ { "type": "text", "text": "Also check lint" } ] }
-R { "prompt_id": "p-2", "user_message_id": "u_2", "status": "queued", "content": [ { "type": "text", "text": "Also check lint" } ], "created_at": "2026-10-29T10:35:10.000Z" }
+R { "prompt_id": "p-2", "user_message_id": "u_2", "status": "queued", "accepted_as": "queue", "content": [ { "type": "text", "text": "Also check lint" } ], "created_at": "2026-10-29T10:35:10.000Z" }
 H POST /api/v1/sessions/s1/prompts/p-2:steer
 R { "steered": true, "prompt_ids": ["p-2"] }
 ... Current step finishes; steer is injected at the next boundary
@@ -293,7 +294,7 @@ H POST /api/v1/sessions/s1/prompts
 ... Request times out; client resends the exact same payload and prompt_id
 H POST /api/v1/sessions/s1/prompts
   { "prompt_id": "p-3", "content": [ { "type": "text", "text": "Run unit tests too" } ] }
-R { "prompt_id": "p-3", "user_message_id": "u_3", "status": "queued", "content": [ { "type": "text", "text": "Run unit tests too" } ], "created_at": "2026-10-29T10:35:20.000Z" }
+R { "prompt_id": "p-3", "user_message_id": "u_3", "status": "queued", "accepted_as": "queue", "content": [ { "type": "text", "text": "Run unit tests too" } ], "created_at": "2026-10-29T10:35:20.000Z" }
 ```
 </li>
 </ol>
@@ -302,6 +303,12 @@ R { "prompt_id": "p-3", "user_message_id": "u_3", "status": "queued", "content":
 
 - **Immediate turn**: When the target agent is idle, its queue is empty, and no undo, compaction, or fork is running, the submission starts a turn immediately and returns `status: "running"` (or `blocked` / `failed` if rejected by a hook before starting).
 - **Queued**: Otherwise (including during undo, compaction, or fork), the submission enters the queue and returns `status: "queued"` immediately. Read `main`'s active and queued prompts with [`GET /api/v1/sessions/{session_id}/prompts`](./server-api-sessions.md#get-api-v1-sessions-session-id-prompts).
+
+### Queue frames
+
+Each subscribed agent has a `queue` frame with `inputs`, `paused`, and `attached`. When `attached` is `true`, `inputs` is the server's current accepted queue; replace the corresponding client projection instead of draining it again locally. When `attached` is `false`, the engine is not ready and the frame does not replace local unsent work.
+
+Each input includes `prompt_id`, `user_message_id`, `kind` (`input` or `compact`), `delivery` (`queue` or `steer`), `content`, optional `skills`, `client_metadata`, `instruction`, and `created_at`. A queued `steer` joins the next ordinary input instead of creating a separate turn. `paused: true` holds ordinary queue consumption but does not interrupt the active turn or direct steer notifications. Use the queue move, pause, and resume endpoints in [Session endpoints](./server-api-sessions.md#queue-move-pause-and-resume) to change this state.
 
 ### Retries and idempotency
 
@@ -350,7 +357,7 @@ S { "type": "turns.removed", "session_id": "s1", "agent_id": "main", "turn_ids":
 ```wire focus=compacting,turn.kind,item.kind,item.tokens_before,item.tokens_after
 H POST /api/v1/sessions/s1:compact
   { "instruction": "Keep database migration conclusions" }
-R {}
+R { "accepted_as": "compact", "prompt_id": "cmp-1" }
 S { "type": "agent", "session_id": "s1", "agent_id": "main", "status": "idle", "compacting": true, "plan_mode": false, "swarm_mode": false, "tower_mode": false }
 S { "type": "turn.started", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_8", "ordinal": 5, "turn_number": 5, "kind": "system", "status": "ended", "outcome": "completed", "started_at": "2026-10-29T10:38:00.000Z", "ended_at": "2026-10-29T10:38:00.000Z", "steps": [] } }
 S { "type": "item.ended", "session_id": "s1", "agent_id": "main", "turn_id": "t_8", "item": { "item_id": "sys_1", "type": "system", "step_index": 0, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:38:00.000Z", "kind": "compaction", "trigger": "manual", "instruction": "Keep database migration conclusions", "tokens_before": 182340, "tokens_after": 8120, "summary": "…" } }
@@ -385,7 +392,7 @@ S { "type": "agent", "session_id": "s1", "agent_id": "btw_1", "status": "ended",
 
 ### Compaction
 
-- [`POST /api/v1/sessions/{session_id}:compact`](./server-api-sessions.md#post-api-v1-sessions-session-id-compact) starts manual compaction when `main` is idle (returns `40910` when busy or already compacting).
+- [`POST /api/v1/sessions/{session_id}:compact`](./server-api-sessions.md#post-api-v1-sessions-session-id-compact) starts manual compaction when `main` is idle or queues it behind current work; the response's `accepted_as` distinguishes the two cases. A queued compaction is consumed without creating a user turn.
 - During compaction `agent.compacting` is `true`; completion emits a `system` turn carrying a `compaction` item; cancellation emits a `notice` frame with `code: "compaction.cancelled"`.
 
 ## Approvals and questions

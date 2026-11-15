@@ -63,6 +63,7 @@ S { "type": "agent", "session_id": "s1", "agent_id": "main", "status": "running"
 S { "type": "usage", "session_id": "s1", "agent_id": "main", "context_tokens": 18210, "max_context_tokens": 262144 }
 S { "type": "goal", "session_id": "s1", "agent_id": "main" }
 S { "type": "todo", "session_id": "s1", "agent_id": "main", "items": [] }
+S { "type": "queue", "session_id": "s1", "agent_id": "main", "inputs": [], "paused": false, "attached": true }
 S { "type": "turns", "session_id": "s1", "agent_id": "main", "turns": [ { "turn_id": "t_9", "ordinal": 9, "turn_number": 9, "kind": "agent", "status": "running", "started_at": "2026-10-29T10:29:45.000Z", "steps": [], "items": [] } ], "has_more": true }
 ```
 
@@ -89,7 +90,7 @@ S { "type": "response", "request_id": "unsub-1", "code": 0 }
 
 1. **应答（`response`）**：最先到达。会话无法打开时返回错误码（如 `40401`、`40930`、`40931`），不建立订阅。
 2. **待处理交互（`interaction`）**：紧随 `response` 之后，全量补发该会话所有未决审批和提问。每次重新 `subscribe`（含增量订阅子 Agent）都会重发一次全量未决交互，客户端以这批数据替换本地待处理交互列表。
-3. **任务与状态（`task.list`、`agent`、`usage`、`goal`、`todo`）**：对本次新加入订阅的每个 Agent 立即发送。新建会话尚未创建 `main` 时，订阅会自动创建它。
+3. **任务与状态（`task.list`、`agent`、`usage`、`goal`、`todo`、`queue`）**：对本次新加入订阅的每个 Agent 立即发送。新建会话尚未创建 `main` 时，订阅会自动创建它。
 4. **对话页（`turns` 或 `turns.failed`）**：异步从磁盘折叠加载最近最多 10 轮（上限 1 MiB），可能晚于实时状态帧到达；但**该 Agent 的增量对话帧（`turn.*`、`item.*`、`turns.removed`、`notice`）绝不会早于 `turns`**——加载期间产生的对话帧由服务端暂存，在 `turns` 发出后按顺序无缝补发。
 
 ### 会话在服务端关闭和重新打开
@@ -106,7 +107,7 @@ S { "type": "response", "request_id": "unsub-1", "code": 0 }
 | [全局事件](#全局事件) | 每条已建立的 WebSocket 连接，无需订阅 |
 | `interaction` | 订阅了该会话的所有连接，**不受 `agent_ids` 过滤** |
 | `turns`、`turns.removed`、`turns.failed`、`turn.*`、`item.*`、`notice` | 订阅了该会话、且 `agent_ids` 包含该 `agent_id` 的连接 |
-| `task.list`、`task`、`agent`、`usage`、`goal`、`todo` | 同上 |
+| `task.list`、`task`、`agent`、`usage`、`goal`、`todo`、`queue` | 同上 |
 | `task.output` | 发送了 `task.watch` 关注该任务的连接（无需先订阅会话） |
 
 ### 帧的顺序
@@ -266,7 +267,7 @@ S { "type": "turn.ended", "session_id": "s1", "agent_id": "main", "turn": { "tur
 ```wire focus=prompt_id,status,item.prompt_ids,item.placement
 H POST /api/v1/sessions/s1/prompts
   { "prompt_id": "p-1", "content": [ { "type": "text", "text": "帮我看看这个报错" } ] }
-R { "prompt_id": "p-1", "user_message_id": "u_1", "status": "running", "content": [ { "type": "text", "text": "帮我看看这个报错" } ], "created_at": "2026-10-29T10:35:00.000Z" }
+R { "prompt_id": "p-1", "user_message_id": "u_1", "status": "running", "accepted_as": "turn", "turn_id": "t_1", "content": [ { "type": "text", "text": "帮我看看这个报错" } ], "created_at": "2026-10-29T10:35:00.000Z" }
 S { "type": "turn.started", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_1", "ordinal": 0, "turn_number": 0, "kind": "agent", "status": "running", "started_at": "2026-10-29T10:35:00.000Z", "steps": [] } }
 S { "type": "item.ended", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "u_1", "type": "user_message", "step_index": 0, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:35:00.000Z", "prompt_ids": ["p-1"], "placement": "opener", "origin": { "kind": "user" }, "text": "帮我看看这个报错", "attachments": [], "skills": [] } }
 ```
@@ -277,7 +278,7 @@ S { "type": "item.ended", "session_id": "s1", "agent_id": "main", "turn_id": "t_
 ```wire focus=status,steered,prompt_ids,item.placement,item.prompt_ids
 H POST /api/v1/sessions/s1/prompts
   { "prompt_id": "p-2", "content": [ { "type": "text", "text": "顺便也检查一下 lint" } ] }
-R { "prompt_id": "p-2", "user_message_id": "u_2", "status": "queued", "content": [ { "type": "text", "text": "顺便也检查一下 lint" } ], "created_at": "2026-10-29T10:35:10.000Z" }
+R { "prompt_id": "p-2", "user_message_id": "u_2", "status": "queued", "accepted_as": "queue", "content": [ { "type": "text", "text": "顺便也检查一下 lint" } ], "created_at": "2026-10-29T10:35:10.000Z" }
 H POST /api/v1/sessions/s1/prompts/p-2:steer
 R { "steered": true, "prompt_ids": ["p-2"] }
 … 当前步骤结束，到达下一个插话点
@@ -293,7 +294,7 @@ H POST /api/v1/sessions/s1/prompts
 … 网络超时，客户端不确定服务端是否已收到，原样重发：
 H POST /api/v1/sessions/s1/prompts
   { "prompt_id": "p-3", "content": [ { "type": "text", "text": "再跑一下单测" } ] }
-R { "prompt_id": "p-3", "user_message_id": "u_3", "status": "queued", "content": [ { "type": "text", "text": "再跑一下单测" } ], "created_at": "2026-10-29T10:35:20.000Z" }
+R { "prompt_id": "p-3", "user_message_id": "u_3", "status": "queued", "accepted_as": "queue", "content": [ { "type": "text", "text": "再跑一下单测" } ], "created_at": "2026-10-29T10:35:20.000Z" }
 ```
 </li>
 </ol>
@@ -302,6 +303,12 @@ R { "prompt_id": "p-3", "user_message_id": "u_3", "status": "queued", "content":
 
 - **立即开启新轮次**：当目标 Agent 空闲、队列为空，且不在撤销、压缩或分叉过程中时，输入立即开启新的一轮，HTTP 响应等待轮次启动（`status: "running"`）后返回；若被 Hook 拦截或启动前失败，则以 `status: "blocked"` 或 `"failed"` 返回。
 - **进入队列**：其他情况下（包括撤销、压缩或分叉进行期间），输入进入队列并立即返回 `status: "queued"`，待当前操作结束后自动按序执行。可用 [`GET /api/v1/sessions/{session_id}/prompts`](./server-api-sessions.md#get-api-v1-sessions-session-id-prompts) 读取 `main` 正在运行与排队的输入。
+
+### 队列帧
+
+每个已订阅 Agent 都有 `queue` 帧，包含 `inputs`、`paused` 和 `attached`。`attached` 为 `true` 时，`inputs` 是服务端当前已接受的队列，客户端应替换对应的队列视图，而不是在本地再次排空它。`attached` 为 `false` 表示引擎尚未就绪，该帧不会覆盖本地尚未发送的内容。
+
+每项输入包含 `prompt_id`、`user_message_id`、`kind`（`input` 或 `compact`）、`delivery`（`queue` 或 `steer`）、`content`，以及可选的 `skills`、`client_metadata`、`instruction` 和 `created_at`。排队的 `steer` 会并入下一条普通输入，不单独创建轮次。`paused: true` 只阻塞普通队列消费，不会中断当前轮次或直接插话通知。可通过 [会话接口](./server-api-sessions.md#队列排序暂停与恢复) 中的排序、暂停和恢复端点改变这些状态。
 
 ### 重试和幂等
 
@@ -350,7 +357,7 @@ S { "type": "turns.removed", "session_id": "s1", "agent_id": "main", "turn_ids":
 ```wire focus=compacting,turn.kind,item.kind,item.tokens_before,item.tokens_after
 H POST /api/v1/sessions/s1:compact
   { "instruction": "保留数据库迁移相关的结论" }
-R {}
+R { "accepted_as": "compact", "prompt_id": "cmp-1" }
 S { "type": "agent", "session_id": "s1", "agent_id": "main", "status": "idle", "compacting": true, "plan_mode": false, "swarm_mode": false, "tower_mode": false }
 S { "type": "turn.started", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_8", "ordinal": 5, "turn_number": 5, "kind": "system", "status": "ended", "outcome": "completed", "started_at": "2026-10-29T10:38:00.000Z", "ended_at": "2026-10-29T10:38:00.000Z", "steps": [] } }
 S { "type": "item.ended", "session_id": "s1", "agent_id": "main", "turn_id": "t_8", "item": { "item_id": "sys_1", "type": "system", "step_index": 0, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:38:00.000Z", "kind": "compaction", "trigger": "manual", "instruction": "保留数据库迁移相关的结论", "tokens_before": 182340, "tokens_after": 8120, "summary": "…" } }
@@ -385,7 +392,7 @@ S { "type": "agent", "session_id": "s1", "agent_id": "btw_1", "status": "ended",
 
 ### 压缩
 
-- [`POST /api/v1/sessions/{session_id}:compact`](./server-api-sessions.md#post-api-v1-sessions-session-id-compact) 在 `main` 空闲时发起手动压缩（忙或已有压缩进行中时返回 `40910`）。
+- [`POST /api/v1/sessions/{session_id}:compact`](./server-api-sessions.md#post-api-v1-sessions-session-id-compact) 在 `main` 空闲时发起手动压缩，或将其排在当前工作之后；响应中的 `accepted_as` 用于区分这两种情况。排队中的压缩消费时不产生用户轮次。
 - 压缩期间 `agent.compacting` 为 `true`；完成后对话流中出现一个含 `compaction` 条目的 `system` 轮次；若压缩被取消，则收到 `code: "compaction.cancelled"` 的 `notice` 帧。
 
 ## 审批与提问

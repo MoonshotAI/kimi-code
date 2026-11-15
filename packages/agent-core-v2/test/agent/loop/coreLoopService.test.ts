@@ -207,6 +207,94 @@ describe('core LoopService integration', () => {
     expect(ctx.llmCalls).toHaveLength(3);
   });
 
+  it('moves, pauses and resumes queued prompts with deferred settings and steer slots', async () => {
+    const loop = ctx.get(IAgentLoopService);
+    await loop.start();
+    const started = createControlledPromise<void>();
+    const release = createControlledPromise<void>();
+    loop.hooks.onWillBeginStep.register('hold-queue', async (hookCtx, next) => {
+      if (hookCtx.turnId === 0) {
+        started.resolve();
+        await release;
+      }
+      await next();
+    });
+    const startedSettings: string[] = [];
+    const enqueue = (id: string, delivery?: 'queue' | 'steer') => {
+      const result = loop.submit(
+        { role: 'user', content: [{ type: 'text', text: id }], attributes: { promptId: id } },
+        { delivery, onStart: async () => { startedSettings.push(id); } },
+      );
+      return { result, completion: loop.promptHandle(id)!.completion };
+    };
+    ctx.mockNextResponse({ type: 'text', text: 'first response' });
+    ctx.mockNextResponse({ type: 'text', text: 'third response' });
+    ctx.mockNextResponse({ type: 'text', text: 'second response' });
+    const first = enqueue('first');
+    await started;
+    const second = enqueue('second');
+    const third = enqueue('third');
+    expect(first.result.acceptedAs).toBe('turn');
+    expect(second.result.acceptedAs).toBe('queue');
+    loop.moveQueued('third', 'second');
+    expect(loop.snapshot().queue.map((entry) => entry.attributes?.promptId)).toEqual(['third', 'second']);
+    loop.pauseQueue();
+    const steer = enqueue('steer', 'steer');
+    expect(loop.snapshot().queuePaused).toBe(true);
+    release.resolve();
+    await first.completion;
+    expect(ctx.llmCalls).toHaveLength(1);
+    expect(startedSettings).toEqual(['first']);
+
+    loop.resumeQueue();
+    await Promise.all([second.completion, third.completion, steer.completion]);
+
+    expect(startedSettings).toEqual(['first', 'steer', 'third', 'second']);
+    expect(ctx.llmCalls).toHaveLength(3);
+    const inputs = ctx.llmInputs().inputs.map((input) => JSON.stringify(input));
+    expect(inputs[1]).toContain('steer');
+    expect(inputs[1]).toContain('third');
+    expect(inputs[2]).toContain('second');
+    expect(loop.promptHandle('steer')?.state).toBe('completed');
+    expect(loop.snapshot().queue).toEqual([]);
+  });
+
+  it('consumes queued compactions without publishing a user turn', async () => {
+    const loop = ctx.get(IAgentLoopService);
+    await loop.start();
+    const started = createControlledPromise<void>();
+    const release = createControlledPromise<void>();
+    loop.hooks.onWillBeginStep.register('hold-compaction-queue', async (hookCtx, next) => {
+      if (hookCtx.turnId === 0) {
+        started.resolve();
+        await release;
+      }
+      await next();
+    });
+    const compactions: Array<string | undefined> = [];
+    loop.hooks.onRunQueuedCompaction.register('test-compaction', (context) => {
+      compactions.push(context.instruction);
+    });
+    const turns: number[] = [];
+    ctx.get(IEventBus).subscribe(TurnStarted, (event) => turns.push(event.turnId));
+    ctx.mockNextResponse({ type: 'text', text: 'first response' });
+    ctx.mockNextResponse({ type: 'text', text: 'next response' });
+    const first = loop.submit({ role: 'user', content: [{ type: 'text', text: 'first' }] });
+    await started;
+    const compactId = loop.enqueueCompaction('shorten the context');
+    const next = loop.submit({ role: 'user', content: [{ type: 'text', text: 'next' }] });
+    expect(loop.snapshot().queue.map((entry) => entry.attributes?.queueItem?.kind ?? 'input')).toEqual(['compact', 'input']);
+    release.resolve();
+
+    await Promise.all([loop.promptHandle(first.id)!.completion, loop.promptHandle(next.id)!.completion]);
+
+    expect(compactions).toEqual(['shorten the context']);
+    expect(turns).toHaveLength(2);
+    expect(ctx.llmCalls).toHaveLength(2);
+    expect(loop.promptHandle(compactId)).toBeUndefined();
+    expect(loop.snapshot().queue).toEqual([]);
+  });
+
   it('retries a failed step through the registered loop error handler', async () => {
     const loop = ctx.get(IAgentLoopService);
     const seen: unknown[] = [];

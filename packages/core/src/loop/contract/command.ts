@@ -23,6 +23,7 @@ export interface LoopInput {
     readonly remind?: readonly RemindMessage[];
   };
   readonly nextTurnId?: number;
+  readonly queuePaused?: boolean;
   readonly historyRevision?: number;
   readonly unfinished?: UnfinishedTurn;
 }
@@ -32,6 +33,9 @@ export type LoopCommand =
   | { type: 'input.submit'; message: UserMessage }
   | { type: 'input.cancel'; promptId: string }
   | { type: 'input.steer'; promptIds: readonly string[] }
+  | { type: 'input.move'; promptId: string; beforePromptId?: string }
+  | { type: 'input.pause_queue' }
+  | { type: 'input.resume_queue' }
   | { type: 'input.notify'; message: UserMessage }
   | { type: 'input.remind'; message: RemindMessage }
   | { type: 'input.abort_tool'; toolCallId: string }

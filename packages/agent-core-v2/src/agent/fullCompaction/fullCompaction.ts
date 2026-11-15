@@ -11,6 +11,11 @@ export interface FullCompactionInput {
   readonly instruction?: string;
 }
 
+export interface ManualCompactionRequest {
+  readonly acceptedAs: 'compact' | 'queue';
+  readonly promptId: string;
+}
+
 export interface FullCompactionTask {
   readonly abortController: AbortController;
   readonly promise: Promise<CompactionResult>;
@@ -24,6 +29,7 @@ export interface IAgentFullCompactionService {
 
   readonly compacting: FullCompactionTask | null;
   begin(input: FullCompactionInput): boolean;
+  requestManual(instruction?: string): ManualCompactionRequest;
   cancel(): void;
 
   readonly hooks: Hooks<{

@@ -69,6 +69,8 @@ describe('AgentTitlePromptSource', () => {
                 userMessageId: item.userMessageId,
               },
             })),
+            engineAttached: true,
+            queuePaused: false,
             notificationCount: 0,
             paused: false,
             hasPendingRequests: queue.pending.length > 0,

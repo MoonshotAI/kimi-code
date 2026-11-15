@@ -750,20 +750,14 @@ async function compactSessionAction(
   ctx: SessionActionCtx<z.infer<typeof compactSessionRequestSchema>>,
 ): Promise<void> {
   const { core, req, reply, id, body } = ctx;
-  await reloadOnStale(core.accessor, id, async () => {
+  const result = await reloadOnStale(core.accessor, id, async () => {
     const agent = await resolveMainAgent(core, id);
-    const started = agent.accessor
+    return agent.accessor
       .get(IAgentFullCompactionService)
-      .begin({ source: 'manual', instruction: normalizeOptional(body.instruction) });
-    if (!started) {
-      throw new Error2(
-        ErrorCodes.COMPACTION_UNABLE,
-        'A compaction is already running. Wait for it to finish, then retry.',
-      );
-    }
+      .requestManual(normalizeOptional(body.instruction));
   });
   requestLog(req)?.info({ session_id: id, action: 'compact' }, 'session action completed');
-  reply.send(okEnvelope({}, req.id));
+  reply.send(okEnvelope({ accepted_as: result.acceptedAs, prompt_id: result.promptId }, req.id));
 }
 
 async function undoSessionAction(
